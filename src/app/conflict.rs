@@ -36,6 +36,7 @@ impl ConflictPlanJob {
             },
             Err(error) => PlanState::Error {
                 error: error.to_string(),
+                blocker: error.blocker().cloned(),
                 open_failed: matches!(
                     error,
                     kagi_git::GitError::PathNotFound(_)

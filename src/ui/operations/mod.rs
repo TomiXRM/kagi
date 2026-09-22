@@ -5,6 +5,7 @@
 //! behaviour and signatures are unchanged.
 
 mod app_bridge;
+mod app_conflict;
 pub mod branch;
 pub mod checkout;
 pub mod cherry_revert;

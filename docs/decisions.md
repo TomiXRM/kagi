@@ -1,7 +1,7 @@
 # Decision Log
 
 > **Status:** Active — append-only  
-> **Last updated:** 2026-09-16
+> **Last updated:** 2026-09-22
 
 ADR にするほどではないが、再計測や同じ失敗を避けるために残すべき決定と実測事実のログです。ADR を置き換えるものではありません。
 
@@ -15,6 +15,7 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-09-22 | conflict 拒否の `PlanNote` を `PlanState::Error` / `ConflictReport` から通知まで保持する | #711 の Save / Abort は拒否件数しか表示せず、計画時からの状態変化や marker 残存を説明できなかった。既存の [ADR-0129](adr/0129-plan-note-i18n.md) の型付き理由と EN/JA renderer を再利用し、refused の AppNotice / bounded toast だけに具体理由を出す。footer / klog の契約文と oplog の文字列 schema は維持し、非型付きエラーも receipt の理由を省略せず提示する。stale modal sweep / Esc は #755 に分割する。 |
 | 2026-09-16 | PR 行の右クリックメニュー `pr_menu` は tab 切替で閉じる transient ではなく per-session state とする | 既存の右クリックメニュー `file_menu` は既に owner 付き per-session（ADR-0197 決定 1）で、片方だけ window-global にすると同種の state の分類が 2 通りになる。A に戻ると A の PR 行メニューが復元されるが、中身は A の PR なので B へは漏れない（[ADR-0197](adr/0197-session-owned-ui-state.md) S6、#724）。 |
 | 2026-09-13 | operation strip は conflict editor が mount されていない間だけ描き、editor 中の Abort は conflict dashboard(Continue / Next conflict の隣)に置く | #707 review の裁定は「strip が唯一の control、conflict mode でも出す」だったが、editor が出ている間は右 pane の dashboard が既に次の行動(Continue / Skip / Next conflict)を持っており、その上に同じ escape の 2 本目が toolbar 下にも並ぶのは冗長というのが owner 判断。**admission は動かない**: どちらの配置でも `TabViewState::operation`(read model)由来で、`ConflictView` の有無に依存しない — #704 の本体はそこであって、button がどこにあるかではない。dashboard の Abort は `open_conflict_abort_modal` を dispatch するだけで、2 段確認も family action も plan modal 側のまま(entity-local な arming state は #707 で消えたきり戻さない)。実行経路は 1 本。strip は #704 の dead end(editor が無い MERGING repo / 起動時 / `MergeResolvedReady`)で従来どおり出る。回帰は GUI E2E `operation_strip_hidden_in_editor`(editor あり → strip 無し + dashboard Abort が modal を開く)と `operation_strip_startup` / `operation_strip_abort`(editor なし → strip あり + その Abort が modal を開く)（[#704](https://github.com/TomiXRM/kagi/issues/704)、[#707](https://github.com/TomiXRM/kagi/pull/707)）。 |
 | 2026-09-13 | GitHub op の reconcile read は remote 名を一切経由せず、凍結した `<host>/<owner>/<repo>` を `gh` に直接渡す | remote 名は address ではない。`remote.<name>.url` の外部変更と `url.*.insteadOf` の追加はどちらも凍結後に効き、指し先が変われば「元から無い ref」が `Absent` を満たして branch deletion を一度も観測せず resolve する(#703 は executor の停止証明であって、読んだ先が違う問題は解決しない)。よって `RemoteExpectation::PullRequest` に `base_repo` を持たせ `gh pr view -R <host/owner/repo> <n> --json mergedAt` で読み、branch 側は remote 名を使う `Ref` ではなく新設の `GithubRef` として `gh api graphql --hostname <host> -f query=… -f owner=… -f name=… -f ref=refs/heads/<branch>` を直接叩く。**absent は 200 の構造化結果だけ**(`errors` 無し + `repository` 非 null + `ref` が null)で、REST の 404 は使わない: `#` は URL fragment 区切りなので `feature#x` を path に入れると `…/heads/feature` が送られ別 ref の 404 を不在と誤認するし、refs API の 404 は repository 不可視 / access 喪失 / `Contents: read` 欠如でも返る(先行する `gh pr view` は別 API・別権限なので保証にならない)。branch は GraphQL variable として渡すので path に入らない。`gh pr merge` 自体にも同じ identity を `-R` で渡し、mutation と read が同じ repository を指すことを構造で保証する。identity が空なら expectation は空(= never confirmed)。remote 名を使う `Ref` は git-native な family(#702 の push/tag/delete-remote-branch)専用に残す（[#701](https://github.com/TomiXRM/kagi/pull/701)、[ADR-0177](adr/0177-transport-recording-boundary.md)）。 |

@@ -109,6 +109,7 @@ pub enum PlanState {
     },
     Error {
         error: String,
+        blocker: Option<kagi_domain::plan_note::PlanNote>,
         open_failed: bool,
         recording: Option<Recording>,
     },
@@ -214,6 +215,7 @@ pub fn apply_plan(s: &mut Sessions, c: PlanCompletion) -> bool {
         if let Err(error) = identity_matches(s, prepared) {
             s.state = PlanState::Error {
                 error: error.to_string(),
+                blocker: None,
                 open_failed: false,
                 recording: None,
             };

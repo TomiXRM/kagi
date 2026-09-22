@@ -13,6 +13,16 @@
 /// Plan notes for the conflicts (continue/abort/skip) op family.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConflictsNote {
+    /// blocker (save/resolve/abort) — the request's read observation is stale.
+    ObservationChanged,
+    /// blocker (save/resolve/abort) — live preflight found a changed revision.
+    PlanChanged,
+    /// blocker (save/resolve/abort) — the repository or worktree identity changed.
+    RepositoryIdentityChanged,
+    /// blocker (save/resolve/abort) — the observed conflict ended before execution.
+    ConflictGone,
+    /// blocker (save) — the resolution draft still contains conflict markers.
+    ResolutionMarkers,
     /// blocker (continue) — one or more files have no resolution draft.
     UnresolvedFiles { files: Vec<String> },
     /// blocker (continue) — one or more resolved buffer texts still contain
@@ -48,6 +58,19 @@ impl ConflictsNote {
     /// Byte-identical to the legacy `conflicts.rs` strings (golden-tested).
     pub fn message_en(&self) -> String {
         match self {
+            ConflictsNote::ObservationChanged => {
+                "conflict changed since it was observed — re-open the conflict".into()
+            }
+            ConflictsNote::PlanChanged => {
+                "conflict changed since planning; no files were modified".into()
+            }
+            ConflictsNote::RepositoryIdentityChanged => {
+                "repository identity changed after planning".into()
+            }
+            ConflictsNote::ConflictGone => "the conflict is no longer present".into(),
+            ConflictsNote::ResolutionMarkers => {
+                "conflict markers remain in the resolution buffer".into()
+            }
             ConflictsNote::UnresolvedFiles { files } => format!(
                 "{} file(s) still unresolved: {}. Resolve every file before continuing.",
                 files.len(),
@@ -155,6 +178,34 @@ mod tests {
     // ── message_en golden tests (ADR-0129 §3): every variant, dynamic values,
     //    joined file lists, `\n` recovery bodies, byte-exact vs. the legacy
     //    `conflicts.rs` producer strings. ──
+
+    #[test]
+    fn recorded_refusal_messages_are_stable() {
+        for (note, expected) in [
+            (
+                ConflictsNote::ObservationChanged,
+                "conflict changed since it was observed — re-open the conflict",
+            ),
+            (
+                ConflictsNote::PlanChanged,
+                "conflict changed since planning; no files were modified",
+            ),
+            (
+                ConflictsNote::RepositoryIdentityChanged,
+                "repository identity changed after planning",
+            ),
+            (
+                ConflictsNote::ConflictGone,
+                "the conflict is no longer present",
+            ),
+            (
+                ConflictsNote::ResolutionMarkers,
+                "conflict markers remain in the resolution buffer",
+            ),
+        ] {
+            assert_eq!(note.message_en(), expected, "{note:?}");
+        }
+    }
 
     #[test]
     fn unresolved_files_note() {

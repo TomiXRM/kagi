@@ -6,6 +6,21 @@ use kagi_domain::plan_note::{ConflictsNote, ConflictsRecovery, ConflictsTitle};
 /// Japanese rendering of one conflicts note.
 pub fn note_ja(note: &ConflictsNote) -> String {
     match note {
+        ConflictsNote::ObservationChanged => {
+            "表示後に conflict の状態が変わりました。conflict を開き直して、操作をやり直してください。".into()
+        }
+        ConflictsNote::PlanChanged => {
+            "計画後に conflict の状態が変わりました。ファイルは変更していません。操作を選び直して、最新の計画を確認してください。".into()
+        }
+        ConflictsNote::RepositoryIdentityChanged => {
+            "計画後にリポジトリの識別情報が変わりました。リポジトリを開き直して、操作をやり直してください。".into()
+        }
+        ConflictsNote::ConflictGone => {
+            "conflict は既に終了しています。リポジトリを再読み込みしてください。".into()
+        }
+        ConflictsNote::ResolutionMarkers => {
+            "解決用バッファーに conflict marker が残っています。すべて削除してから保存してください。".into()
+        }
         ConflictsNote::UnresolvedFiles { files } => format!(
             "{} 件が未解決です。続行前にすべて解決してください。\nfiles {}",
             files.len(),

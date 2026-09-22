@@ -4,6 +4,7 @@ use kagi_domain::conflict_family::{
     ConflictDraft, ConflictEvidence, ConflictObservation, ConflictProgress, ConflictRequest,
     ConflictRevision,
 };
+use kagi_domain::plan_note::{ConflictsNote, PlanNote};
 
 // Reading the repository — the one operation observation, the fingerprints,
 // and the post-execute verification — lives next door so the per-tab read
@@ -88,6 +89,8 @@ pub enum ConflictFaultPoint {
 pub struct ConflictReport {
     pub recording: recording::Recording,
     pub evidence: ConflictEvidence,
+    /// UI-only typed refusal; the durable receipt retains its English strings.
+    pub blocker: Option<PlanNote>,
 }
 
 impl Backend {
@@ -164,6 +167,7 @@ impl Backend {
         );
         ConflictReport {
             recording,
+            blocker: None,
             evidence: ConflictEvidence {
                 action: plan.request.action(),
                 progress: ConflictProgress::NotStarted,
@@ -228,9 +232,9 @@ impl Backend {
         let snapshot = observation(&backend.repo)?
             .ok_or_else(|| GitError::Other("the repository is not in conflict".into()))?;
         if &snapshot.observation.revision != request.revision() {
-            return Err(GitError::Other(
-                "conflict changed since it was observed — re-open the conflict".into(),
-            ));
+            return Err(GitError::Blocked(Box::new(PlanNote::Conflicts(
+                ConflictsNote::ObservationChanged,
+            ))));
         }
         let action = match &request {
             ConflictRequest::Save {
@@ -261,9 +265,9 @@ impl Backend {
                         GitError::Other("text resolution is not valid UTF-8".into())
                     })?;
                     if crate::checklist::text_has_conflict_marker(text) {
-                        return Err(GitError::Other(
-                            "conflict markers remain in the resolution buffer".into(),
-                        ));
+                        return Err(GitError::Blocked(Box::new(PlanNote::Conflicts(
+                            ConflictsNote::ResolutionMarkers,
+                        ))));
                     }
                 }
                 ConflictPreparedAction::Save {
@@ -371,6 +375,7 @@ impl Backend {
                 );
                 return ConflictReport {
                     recording,
+                    blocker: None,
                     evidence: ConflictEvidence {
                         action,
                         progress,
@@ -386,16 +391,17 @@ impl Backend {
             if backend.write_worktree_id()? != plan.worktree
                 || backend.write_repo_id()? != plan.common_dir
             {
-                return Err(GitError::Other(
-                    "repository identity changed after planning".into(),
-                ));
+                return Err(GitError::Blocked(Box::new(PlanNote::Conflicts(
+                    ConflictsNote::RepositoryIdentityChanged,
+                ))));
             }
-            let live = observation(&backend.repo)?
-                .ok_or_else(|| GitError::Other("the conflict is no longer present".into()))?;
+            let live = observation(&backend.repo)?.ok_or_else(|| {
+                GitError::Blocked(Box::new(PlanNote::Conflicts(ConflictsNote::ConflictGone)))
+            })?;
             if live.observation.revision != *plan.request.revision() {
-                return Err(GitError::Other(
-                    "conflict changed since planning; no files were modified".into(),
-                ));
+                return Err(GitError::Blocked(Box::new(PlanNote::Conflicts(
+                    ConflictsNote::PlanChanged,
+                ))));
             }
             if fault == Some(ConflictFaultPoint::BeforeMutation) {
                 return Err(GitError::Other("injected before conflict mutation".into()));
@@ -553,6 +559,7 @@ impl Backend {
         let recording = backend.record_run_oplog(&plan.op_name, &plan.before, outcome);
         ConflictReport {
             recording,
+            blocker: result.as_ref().err().and_then(GitError::blocker).cloned(),
             evidence: ConflictEvidence {
                 action,
                 progress,

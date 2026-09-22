@@ -210,6 +210,13 @@ pub fn deliver_app_notice(app: &mut KagiApp, message: &str) {
     app.present_app_notice();
 }
 #[cfg(feature = "gui-e2e")]
+pub fn deliver_reconcile_notice(app: &mut KagiApp, id: crate::app::OperationId) {
+    let mut notice = super::modals::AppNotice::from("Unconfirmed remote operation".to_string());
+    notice.inspect = Some(id);
+    app.app_notices.push_back(notice);
+    app.present_app_notice();
+}
+#[cfg(feature = "gui-e2e")]
 pub fn present_app_notice(app: &mut KagiApp) {
     app.present_app_notice();
 }
@@ -225,6 +232,7 @@ pub fn deliver_acknowledge_notice(app: &mut KagiApp, message: &str) -> bool {
         message: message.to_string(),
         inspect: None,
         acknowledge: Some(read),
+        release_armed: false,
     });
     app.present_app_notice();
     true

@@ -117,6 +117,30 @@ receipt の `after` に予測を書かない。
 `stopped == false` の間、scope の lease は解放されず、同 scope への `BeginWrite` は
 `NeedsReconcile` を返す。`ReconcileRead` が `stop_proven` を持って初めて解放する。
 
+**観測不能な remote write の明示解放（#706、2026-09-23）**:
+通常の `acknowledge` は引き続き `stop_proven && resolved` だけを受け付ける。
+別 tier の `prepare_unobservable_release` → audit job → `acknowledge_unobserved`
+は、停止証明済みの既知 remote-write family にだけ提供する。承認時の expectation
+が空、または frozen remote 名が存在しない・SSH host を識別できない場合が対象。
+未知の family、live writer、観測した値の不一致、通信失敗は対象外。
+batch の一部が観測不能でも、別の promise の不一致・通信失敗を優先して拒否する。
+
+UI は既存 `AppNotice` で EN/JA の「remote 側の結果を Kagi は確認していない」
+警告を示し、解放準備 → 最終確認の二段階を要求する。Esc・別 modal への置換は
+準備状態だけを破棄し、requirement は残す。最終確認後も先に
+`reconcile-release-unobservable` の oplog append を行い、元の operation 名・id・
+観測不能の英語理由・未検証である事実を `Unknown` outcome に記録する。
+append 失敗時は制限を解除せず、永続化エラーと再確認の入口を残す。
+元の write の `Unknown` receipt は変更せず、再実行・local snapshot による成功認定も行わない。
+`may_close_host` は緩和しない。
+
+SSH identity は既存の pure `repo_identity` と分離した I/O-aware resolver を
+PR fetch の remote 選択で使う。既存の `parse_effective_ssh_config` を再利用し、
+`ssh -G` を既存 process runner の 60 秒 deadline で実行する。失敗・未対応の
+設定を alias token に fallback しない。全 candidate を識別してから一意性を判定する。
+remote-ref の観測でも transport より先に解決し、実際の `ls-remote` 失敗は
+常に `Err` のまま保持する。
+
 ### 2.5 settle の遷移（`flow::apply`、既存の挙動を契約化）
 
 ```

@@ -3031,17 +3031,7 @@ impl KagiApp {
             return;
         };
         match modal {
-            M::AppNotice(_) => {
-                // Keep a non-mutating reconciliation available after Escape.
-                if let Some(notice) = self
-                    .app_notice()
-                    .filter(|n| n.inspect.is_some() || n.acknowledge.is_some())
-                    .cloned()
-                {
-                    self.app_notices.push_back(notice);
-                }
-                self.clear_app_notice();
-            }
+            M::AppNotice(_) => self.cancel_app_notice(),
             M::RemoteBrowse(_) => self.cancel_remote_browse(),
             M::Update(_) => self.cancel_update_modal(),
             M::SmartCommit(_) => self.clear_smart_commit_modal(),

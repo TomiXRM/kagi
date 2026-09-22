@@ -83,6 +83,16 @@ The current suite covers:
 - durable stash-drop recovery; history persistence; cleanup stale-tab,
   preflight, open-failure, and partial presentation; remove's public boundary;
   editor writer admission; commit-row and editor-history layout;
+- unobservable remote-write release (`KAGI_GUI_E2E_ONLY=reconcile_unobservable_release,app_notice_modal_replacement`,
+  `tests/recovery/reconcile_unobservable.rs`): measured native clicks exercise
+  Inspect → arm → final confirmation in EN/JA. The armed warning is drawn;
+  Escape and modal displacement discard the arm without releasing the requirement.
+  Final confirmation persists exactly one `reconcile-release-unobservable` audit
+  row before admitting another write; the original Unknown and repository fingerprint
+  stay unchanged. AppNotice uses `measure_inside` on the absolute modal root so
+  instrumentation cannot relocate its controls outside the window.
+  App-level tests in `app_unobservable_release_test` additionally reject live writers,
+  mismatches, failed transports, unknown families, and failed audit persistence.
 - conflict refusal reasons (`KAGI_GUI_E2E_ONLY=conflict_save_boundary`,
   `tests/recovery/conflict_refusal.rs`): Save with remaining markers and Abort
   after an external staged resolution show the specific EN/JA reason in the

@@ -68,6 +68,32 @@ pub enum RemoteExpect {
     Absent,
 }
 
+/// What a live read of a remote ref established — or why it established
+/// nothing.
+///
+/// [`Self::Observed`] is evidence: the remote answered, and carries the OID it
+/// has or `None` for a ref it does not have. An `Err` from the read is the
+/// opposite of evidence — the transport failed, and nothing at all is known —
+/// which is why the two have never been allowed to collapse into one
+/// `Option` (ADR-0177).
+///
+/// [`Self::Unobservable`] is the third answer, and it is about the *address*
+/// rather than the network. A promise freezes a remote **name**; by the time
+/// it is reconciled that name can be gone, or point through an `ssh_config`
+/// alias the configuration no longer maps. There is then no remote to have
+/// said "no such ref", so the question cannot be put at all — and saying so is
+/// what lets a write scope be released deliberately instead of held forever
+/// (#706).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RemoteRefObservation {
+    /// The remote answered: the OID it has for the ref, or `None` for a ref it
+    /// does not have.
+    Observed(Option<String>),
+    /// The remote could not be addressed. English, and specific enough to be
+    /// the reason a release is recorded under.
+    Unobservable { reason: String },
+}
+
 /// `<host>/<owner>/<repo>`, lower-cased, from any GitHub-ish URL: a Git remote
 /// URL in either shape (`https://host/o/r.git`, `git@host:o/r.git`,
 /// `ssh://git@host/o/r`) or a pull-request page URL, whose extra
@@ -105,7 +131,10 @@ fn scp_identity(url: &str) -> Option<String> {
     owner_repo(authority.rsplit('@').next()?, path)
 }
 
-fn owner_repo(host: &str, path: &str) -> Option<String> {
+/// The identity string itself, given a host that has already been established
+/// — literally, from the URL, or through `ssh_config` by
+/// [`remote_identity`](super::remote_identity).
+pub(super) fn owner_repo(host: &str, path: &str) -> Option<String> {
     let mut segments = path.split('/').filter(|s| !s.is_empty());
     let owner = segments.next()?;
     let repo = segments.next()?.trim_end_matches(".git");
@@ -557,20 +586,45 @@ impl Backend {
         }
     }
 
-    /// The OID a remote currently has for `refname`, or `None` when the remote
-    /// does not have it. `Err` when the remote could not be read at all —
-    /// which is not the same answer and must never pass for one (ADR-0177).
+    /// What a remote says `refname` is now — or why it could not be asked.
     ///
     /// A local snapshot cannot say whether a push landed; this is the only
     /// thing that can, and it is what the reconcile read for a remote-writing
-    /// operation asks (#702 re-review).
+    /// operation asks (#702 re-review). The three answers it can come back
+    /// with are kept apart deliberately:
+    ///
+    /// - [`RemoteRefObservation::Observed`] — the remote answered. The OID it
+    ///   has, or `None` for a ref it does not have.
+    /// - `Err` — the transport failed. Not evidence, and never an absent ref.
+    /// - [`RemoteRefObservation::Unobservable`] — there was no address to ask.
+    ///   The frozen remote name is not in this repository any more, or it is
+    ///   reached over an SSH target whose host the configuration no longer
+    ///   maps. Neither can be confirmed or denied by anything (#706).
+    ///
+    /// The name is checked against the repository *before* the transport,
+    /// because `git ls-remote -- <gone> <ref>` reads a missing remote as a URL
+    /// and fails at it, which would arrive here as an ordinary transport
+    /// failure and hold the scope forever. SSH configuration is resolved before
+    /// transport: once `ls-remote` is attempted, every failure stays an error,
+    /// never permission to release an unobserved operation.
     pub fn read_remote_ref(
         path: &Path,
         remote: &str,
         refname: &str,
-    ) -> Result<Option<String>, GitError> {
+    ) -> Result<RemoteRefObservation, GitError> {
         ops::check_operand("remote", remote)?;
         ops::check_operand("ref", refname)?;
+        let (config, url) = remote_target(path, remote)?;
+        let Some(url) = url else {
+            return Ok(RemoteRefObservation::Unobservable {
+                reason: format!("no matching remote \"{remote}\" in this repository"),
+            });
+        };
+        if let Err(unmappable) = super::remote_identity::resolve_repo_identity(&url, &config) {
+            return Ok(RemoteRefObservation::Unobservable {
+                reason: unmappable.to_string(),
+            });
+        }
         let out = crate::cli::run_git(path, &["ls-remote", "--", remote, refname])
             .map_err(|e| crate::cli::context("ls-remote failed", e))?;
         if out.status != 0 {
@@ -580,16 +634,82 @@ impl Backend {
                 out.stderr.trim()
             )));
         }
-        Ok(out
-            .stdout
-            .lines()
-            .find_map(|line| line.split_whitespace().next().map(str::to_string)))
+        Ok(RemoteRefObservation::Observed(out.stdout.lines().find_map(
+            |line| line.split_whitespace().next().map(str::to_string),
+        )))
     }
+}
+
+/// This repository's configuration, and the URL it has for `remote` now —
+/// `None` when it has no remote by that name any more.
+///
+/// The repository is opened here rather than taken from a [`Backend`]: the
+/// reconcile read is a static call against a path, checking a promise frozen
+/// by a different run of the program. A repository that cannot be opened or
+/// read is an `Err` — that is kagi's own storage failing, which says nothing
+/// about whether the remote could be addressed.
+///
+/// The configuration travels with the URL because identifying an SSH host
+/// depends on it: `core.sshCommand` decides whether plain `ssh` is even the
+/// program git reaches this remote with.
+fn remote_target(path: &Path, remote: &str) -> Result<(git2::Config, Option<String>), GitError> {
+    let repo = Repository::open(path).map_err(|e| GitError::Other(e.message().to_string()))?;
+    let config = repo
+        .config()
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    // Bound, not matched in place: the borrow of `repo` ends with this local,
+    // which is dropped before the repository it came from.
+    let found = repo.find_remote(remote);
+    let url = match found {
+        Ok(found) => Some(found.url().unwrap_or_default().to_string()),
+        Err(error) if error.code() == git2::ErrorCode::NotFound => None,
+        Err(error) => return Err(GitError::Other(error.to_string())),
+    };
+    Ok((config, url))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::repo_identity;
+    use super::*;
+
+    /// The two answers a reconcile read may act on, taken from a repository
+    /// that really answers: a remote that is there, and a promise whose remote
+    /// is not there at all — which is not "the ref is gone" (#706).
+    #[test]
+    fn a_remote_that_is_gone_is_unobservable_not_an_absent_ref() {
+        let root = tempfile::tempdir().unwrap();
+        let origin = root.path().join("origin.git");
+        let bare = Repository::init_bare(&origin).unwrap();
+        let tree_id = bare.treebuilder(None).unwrap().write().unwrap();
+        let tree = bare.find_tree(tree_id).unwrap();
+        let who = git2::Signature::now("Kagi Test", "kagi@example.com").unwrap();
+        let tip = bare
+            .commit(Some("refs/heads/main"), &who, &who, "base", &tree, &[])
+            .unwrap();
+
+        let work = root.path().join("work");
+        let repo = Repository::init(&work).unwrap();
+        repo.config()
+            .unwrap()
+            .set_str("remote.origin.url", &format!("file://{}", origin.display()))
+            .unwrap();
+
+        assert_eq!(
+            Backend::read_remote_ref(&work, "origin", "refs/heads/main").unwrap(),
+            RemoteRefObservation::Observed(Some(tip.to_string()))
+        );
+        assert_eq!(
+            Backend::read_remote_ref(&work, "origin", "refs/heads/never").unwrap(),
+            RemoteRefObservation::Observed(None),
+            "a remote that answers about a ref it lacks has observed its absence"
+        );
+        match Backend::read_remote_ref(&work, "upstream", "refs/heads/main").unwrap() {
+            RemoteRefObservation::Unobservable { reason } => {
+                assert!(reason.contains("no matching remote"), "{reason}")
+            }
+            other => panic!("a remote that is not configured cannot have answered: {other:?}"),
+        }
+    }
 
     #[test]
     fn identity_keeps_the_host_across_every_url_shape() {

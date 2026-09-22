@@ -156,6 +156,10 @@ mod worktree_graph;
 mod workspace_mode_toolbar;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/issues_pagination.rs"]
+mod issues_pagination;
+
+#[cfg(target_os = "macos")]
 #[path = "perf/oplog_detail.rs"]
 mod perf_oplog_detail;
 
@@ -1129,6 +1133,10 @@ mod macos {
             (
                 "workspace_mode_toolbar",
                 Box::new(crate::workspace_mode_toolbar::scenario_workspace_mode_toolbar),
+            ),
+            (
+                "issues_pagination",
+                Box::new(crate::issues_pagination::scenario_issues_pagination),
             ),
             ("bottom_panel", Box::new(scenario_bottom_panel)),
             (

@@ -12,8 +12,6 @@ use super::render_helpers::safe_text;
 use super::theme::{self, theme};
 use super::KagiApp;
 
-const ISSUE_LIST_LIMIT: usize = 100;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IssueListPresentation {
     Loading,
@@ -81,7 +79,7 @@ fn issues_for_tab(app: &KagiApp, tab: IssueListTab) -> Vec<&Issue> {
 /// pure read of `ui().github_issues`.
 pub(super) fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
     let ui = app.ui();
-    let issue_count = ui.github_issues.len().min(ISSUE_LIST_LIMIT);
+    let issue_count = ui.github_issues.len();
     let selected = ui.selected_github_issue;
     let loading = ui.github_issues_loading;
     let loaded = ui.github_issues_loaded;
@@ -144,7 +142,7 @@ pub(super) fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> Any
                 let header = super::workspace_mode::sidebar_section_header(
                     ("issue-filter-tab", tab.index()),
                     issue_tab_label(tab),
-                    issues.len(),
+                    (issues.len(), ui.github_issues_cursor.is_some()),
                     active,
                     false,
                     cx,
@@ -174,7 +172,7 @@ pub(super) fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> Any
                             .child(message),
                     ));
                 }
-                for issue in issues.into_iter().take(ISSUE_LIST_LIMIT) {
+                for issue in issues.into_iter().take(100) {
                     let number = issue.number;
                     let active_row = selected == Some(number);
                     let select = cx.listener(
@@ -265,21 +263,19 @@ fn issue_tab_label(tab: IssueListTab) -> &'static str {
     }
 }
 
-/// The Issues home keeps the original full open-Issue feed below Composer.
-/// `RecentlyUpdated` is the canonical all-Issue projection, so sorting and
-/// limits stay shared with the sidebar without inheriting its selected filter.
-fn render_main_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
+/// Status is a separate virtual row so refreshing or retrying never replaces
+/// the retained Issue rows.
+fn render_main_list_status(app: &KagiApp, _cx: &mut Context<KagiApp>) -> AnyElement {
     let ui = app.ui();
-    let issues = issues_for_tab(app, IssueListTab::RecentlyUpdated);
     let presentation = list_presentation(
         ui.github_issues_loading,
         ui.github_issues_loaded,
         ui.github_issues_error.is_some(),
-        issues.len(),
+        ui.github_issues.len(),
     );
     let error = ui.github_issues_error.as_deref();
     let mut list = div()
-        .id("issue-main-list")
+        .id("issue-main-list-status")
         .w_full()
         .flex_shrink_0()
         .flex()
@@ -328,135 +324,292 @@ fn render_main_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElemen
                         .child(safe_text(message)),
                 );
             }
-            if issues.is_empty() {
+            if ui.github_issues.is_empty() {
                 list = list.child(status_text(
                     "issue-main-list-empty",
                     Msg::IssuesEmpty.t(),
                     theme().text_muted,
                 ));
             }
-            for issue in issues.into_iter().take(ISSUE_LIST_LIMIT) {
-                let number = issue.number;
-                let select = cx.listener(
-                    move |this: &mut KagiApp, _: &gpui::ClickEvent, window, cx| {
-                        this.load_github_issue_detail(number, window, cx);
-                    },
-                );
-                let age = kagi_ui_core::time_parse::iso_to_epoch(&issue.updated_at)
-                    .map(|at| {
-                        kagi_ui_core::time::relative_time(at, kagi_ui_core::time::now_unix_secs())
-                    })
-                    .unwrap_or_else(|| issue.updated_at.clone());
-                let (state_label, state_color) = match issue.state {
-                    IssueState::Open => (Msg::IssueStateOpen.t(), theme().color_success),
-                    IssueState::Closed => (Msg::IssueStateClosed.t(), theme().text_muted),
-                    IssueState::Unknown => (Msg::IssueStateUnknown.t(), theme().text_muted),
-                };
-                let content = div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .flex()
-                            .items_baseline()
-                            .gap_2()
-                            .text_xs()
-                            .child(
-                                div()
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(rgb(theme().text_main))
-                                    .child(safe_text(&format!("@{}", issue.author))),
-                            )
-                            .child(
-                                div()
-                                    .text_color(rgb(theme().text_muted))
-                                    .child(safe_text(&format!("#{} · {age}", issue.number))),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .w_full()
-                            .whitespace_normal()
-                            .text_size(theme::scaled_px(15.))
-                            .line_height(theme::scaled_px(22.5))
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(rgb(theme().text_main))
-                            .child(safe_text(&issue.title)),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(theme::scaled_px(18.))
-                            .pt_1()
-                            .text_xs()
-                            .text_color(rgb(theme().text_muted))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_1()
-                                    .child(
-                                        Icon::empty().path("icons/message-square.svg").with_size(
-                                            gpui_component::Size::Size(theme::scaled_px(14.)),
-                                        ),
-                                    )
-                                    .child(issue.comment_count.to_string()),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_1()
-                                    .child(
-                                        div()
-                                            .w(theme::scaled_px(8.))
-                                            .h(theme::scaled_px(8.))
-                                            .rounded_full()
-                                            .bg(rgb(state_color)),
-                                    )
-                                    .child(state_label),
-                            ),
-                    );
-                let row = div()
-                    .id(("issue-main-row", number as usize))
-                    .w_full()
-                    .min_h(theme::scaled_px(104.))
-                    .flex()
-                    .flex_row()
-                    .gap(theme::scaled_px(14.))
-                    .px(theme::scaled_px(24.))
-                    .py(theme::scaled_px(16.))
-                    .border_b_1()
-                    .border_color(rgb(theme().selected))
-                    .cursor_pointer()
-                    .hover(|style| style.bg(rgb(theme().surface)))
-                    .on_click(select)
-                    .child(kagi_ui_core::commit_header::avatar_circle_with_initials(
-                        40.,
-                        &issue.author,
-                        &issue.author,
-                        &app.avatars.images,
-                    ))
-                    .child(content);
-                list = list.child(super::e2e::measure_control(
-                    format!("issue-main-row-{number}"),
-                    row,
-                ));
-            }
             list
         }
     };
 
-    super::e2e::measure_control("issue-main-list", list).into_any_element()
+    list.into_any_element()
+}
+
+fn render_main_issue_row(app: &KagiApp, issue: &Issue, cx: &mut Context<KagiApp>) -> AnyElement {
+    let number = issue.number;
+    let select = cx.listener(
+        move |this: &mut KagiApp, _: &gpui::ClickEvent, window, cx| {
+            this.load_github_issue_detail(number, window, cx);
+        },
+    );
+    let age = kagi_ui_core::time_parse::iso_to_epoch(&issue.updated_at)
+        .map(|at| kagi_ui_core::time::relative_time(at, kagi_ui_core::time::now_unix_secs()))
+        .unwrap_or_else(|| issue.updated_at.clone());
+    let (state_label, state_color) = match issue.state {
+        IssueState::Open => (Msg::IssueStateOpen.t(), theme().color_success),
+        IssueState::Closed => (Msg::IssueStateClosed.t(), theme().text_muted),
+        IssueState::Unknown => (Msg::IssueStateUnknown.t(), theme().text_muted),
+    };
+    let content = div()
+        .flex_1()
+        .min_w(px(0.))
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .flex()
+                .items_baseline()
+                .gap_2()
+                .text_xs()
+                .child(
+                    div()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(rgb(theme().text_main))
+                        .child(safe_text(&format!("@{}", issue.author))),
+                )
+                .child(
+                    div()
+                        .text_color(rgb(theme().text_muted))
+                        .child(safe_text(&format!("#{} · {age}", issue.number))),
+                ),
+        )
+        .child(
+            div()
+                .w_full()
+                .whitespace_normal()
+                .text_size(theme::scaled_px(15.))
+                .line_height(theme::scaled_px(22.5))
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(rgb(theme().text_main))
+                .child(safe_text(&issue.title)),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(theme::scaled_px(18.))
+                .pt_1()
+                .text_xs()
+                .text_color(rgb(theme().text_muted))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            Icon::empty()
+                                .path("icons/message-square.svg")
+                                .with_size(gpui_component::Size::Size(theme::scaled_px(14.))),
+                        )
+                        .child(issue.comment_count.to_string()),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            div()
+                                .w(theme::scaled_px(8.))
+                                .h(theme::scaled_px(8.))
+                                .rounded_full()
+                                .bg(rgb(state_color)),
+                        )
+                        .child(state_label),
+                ),
+        );
+    let row = div()
+        .id(("issue-main-row", number as usize))
+        .w_full()
+        .min_h(theme::scaled_px(104.))
+        .flex()
+        .flex_row()
+        .gap(theme::scaled_px(14.))
+        .px(theme::scaled_px(24.))
+        .py(theme::scaled_px(16.))
+        .border_b_1()
+        .border_color(rgb(theme().selected))
+        .cursor_pointer()
+        .hover(|style| style.bg(rgb(theme().surface)))
+        .on_click(select)
+        .child(kagi_ui_core::commit_header::avatar_circle_with_initials(
+            40.,
+            &issue.author,
+            &issue.author,
+            &app.avatars.images,
+        ))
+        .child(content);
+    super::e2e::measure_control(format!("issue-main-row-{number}"), row).into_any_element()
+}
+
+/// Composer and variable-height Issue rows share one scrolling viewport.
+/// Appending splices the tail instead of resetting the current scroll anchor.
+fn render_main_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
+    let ui = app.ui();
+    let state = ui.github_issues_list.clone();
+    let mut order: Vec<_> = (0..ui.github_issues.len()).collect();
+    order.sort_by(|&a, &b| {
+        ui.github_issues[b]
+            .updated_at
+            .cmp(&ui.github_issues[a].updated_at)
+            .then_with(|| ui.github_issues[b].number.cmp(&ui.github_issues[a].number))
+    });
+    // Composer, status, Issue rows, then the loading/retry tail.
+    let count = order.len() + 3;
+    let old_count = state.item_count();
+    if count > old_count {
+        state.splice(old_count..old_count, count - old_count);
+        state.remeasure_items(old_count.saturating_sub(1)..count);
+        // Unmeasured rows otherwise contribute zero height, so wheel/scrollbar
+        // movement stops at the few rows measured in the initial viewport.
+        state
+            .clone()
+            .with_uniform_item_height(theme::scaled_px(104.));
+    } else if count < old_count {
+        state.splice(count..old_count, 0);
+    }
+    state.remeasure_items(0..2);
+    state.remeasure_items(count - 1..count);
+    let owner = app.active_session();
+    let repo = app.repo_path.clone();
+    let on_scroll = cx.processor(
+        move |app: &mut KagiApp, visible: std::ops::Range<usize>, _, cx| {
+            let (Some(owner), Some(repo)) = (owner, repo.as_ref()) else {
+                return;
+            };
+            let Some(ui) = app.ui.get(&owner) else {
+                return;
+            };
+            if app.active_session() == Some(owner)
+                && ui.github_issues_error.is_none()
+                && visible.end.saturating_sub(2) >= ui.github_issues.len()
+            {
+                app.load_more_github_issues_for(owner, repo.clone(), cx);
+            }
+        },
+    );
+    state.set_scroll_handler(move |event, window, cx| {
+        on_scroll(event.visible_range.clone(), window, cx);
+    });
+    let render = cx.processor(move |app: &mut KagiApp, index: usize, _, cx| {
+        if app.active_session() != owner {
+            return div().into_any_element();
+        }
+        match index {
+            0 => super::issues_composer::render_composer(app, None, cx),
+            1 => render_main_list_status(app, cx),
+            index if index == count - 1 => render_issue_page_tail(app, cx),
+            index => order
+                .get(index - 2)
+                .and_then(|&index| app.ui().github_issues.get(index))
+                .map(|issue| render_main_issue_row(app, issue, cx))
+                .unwrap_or_else(|| div().into_any_element()),
+        }
+    });
+    let scrollbar = state.clone();
+    div()
+        .id("issue-main-list")
+        .flex_1()
+        .min_h(px(0.))
+        .h_full()
+        .w_full()
+        .overflow_hidden()
+        .flex()
+        .flex_col()
+        .child(super::e2e::measure_inside("issue-main-list"))
+        .child(super::render_helpers::with_vertical_scrollbar(
+            "issue-main-list-scroll",
+            &scrollbar,
+            gpui::list(state, move |index, window, cx| render(index, window, cx))
+                .flex_1()
+                .min_h(px(0.)),
+            true,
+        ))
+        .into_any_element()
+}
+
+fn render_issue_page_tail(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
+    let ui = app.ui();
+    let mut tail = div().id("issue-main-page-tail").px_3().py_2().text_xs();
+    if ui.github_issues_loading_more {
+        tail = tail
+            .flex()
+            .items_center()
+            .gap_1()
+            .text_color(rgb(theme().text_muted))
+            .child(super::render_overlay::sync_spinner(
+                10.,
+                theme().text_muted,
+                "issue-main-page-spinner",
+            ))
+            .child(Msg::IssuesLoadingMore.t());
+    } else if ui.github_issues_cursor.is_some() {
+        if let (Some(owner), Some(repo)) = (app.active_session(), app.repo_path.clone()) {
+            if let Some(error) = &ui.github_issues_error {
+                tail = tail
+                    .text_color(rgb(theme().color_blocker))
+                    .child(div().whitespace_normal().child(safe_text(error)))
+                    .child(
+                        div()
+                            .id("issue-main-page-retry")
+                            .cursor_pointer()
+                            .py_2()
+                            .text_color(rgb(theme().text_main))
+                            .child(Msg::IssuesRetryLoadMore.t())
+                            .child(super::e2e::measure_inside("issue-main-page-retry"))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                app.load_more_github_issues_for(owner, repo.clone(), cx);
+                            })),
+                    );
+            } else if !ui.github_issues_loading {
+                // Layout may expose the tail without a wheel event (resize,
+                // scrollbar drag, or a short page). Ignore overdraw outside
+                // the actual clip and defer I/O to the event boundary.
+                let entity = cx.entity().downgrade();
+                let generation = ui.github_issues_gen;
+                let cursor = ui.github_issues_cursor.clone();
+                tail = tail.child(
+                    gpui::canvas(
+                        move |bounds, window, cx| {
+                            if bounds.intersects(&window.content_mask().bounds) {
+                                let entity = entity.clone();
+                                let repo = repo.clone();
+                                let cursor = cursor.clone();
+                                cx.defer(move |cx| {
+                                    let _ = entity.update(cx, |app, cx| {
+                                        if app.active_session() == Some(owner)
+                                            && app.ui().github_issues_gen == generation
+                                            && app.ui().github_issues_cursor == cursor
+                                            && app.ui().github_issues_error.is_none()
+                                            && app.ui().selected_github_issue.is_none()
+                                            && app.workspace_mode()
+                                                == super::workspace_mode::WorkspaceMode::Issues
+                                        {
+                                            app.load_more_github_issues_for(owner, repo, cx);
+                                        }
+                                    });
+                                });
+                            }
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .w_full()
+                    .h(px(1.)),
+                );
+            }
+        }
+    }
+    tail.into_any_element()
 }
 
 fn render_center(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
     let selected = app.ui().selected_github_issue;
     let editors = &app.ui().issue_composer.editors;
+    let home_focused = editors.get(&None).is_some_and(|editor| editor.focused);
     let mut center = div()
         .id("issue-mode-center-pane")
         .relative()
@@ -464,7 +617,7 @@ fn render_center(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
         .min_w(px(0.))
         .min_h(px(0.))
         .h_full()
-        .overflow_y_scrollbar()
+        .overflow_hidden()
         .flex()
         .flex_col()
         .bg(rgb(theme().bg_base))
@@ -494,13 +647,18 @@ fn render_center(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
             }
         }
         None => {
-            center = center.child(super::issues_composer::render_composer(app, None, cx));
-            if !editors.get(&None).is_some_and(|editor| editor.focused) {
+            if home_focused {
+                center = center.child(super::issues_composer::render_composer(app, None, cx));
+            } else {
                 center = center.child(render_main_issue_list(app, cx));
             }
         }
     }
-    center.into_any_element()
+    if selected.is_some() || home_focused {
+        center.overflow_y_scrollbar().into_any_element()
+    } else {
+        center.into_any_element()
+    }
 }
 
 /// Render the sidebar navigator and Composer/Thread main workspace.
@@ -539,6 +697,8 @@ impl KagiApp {
             ui.github_issues.clear();
             ui.github_issues_loaded = true;
             ui.github_issues_loading = false;
+            ui.github_issues_loading_more = false;
+            ui.github_issues_cursor = None;
             ui.github_issues_error = None;
             ui.selected_github_issue = None;
             ui.github_issue_detail_loading = None;
@@ -549,38 +709,5 @@ impl KagiApp {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn list_status_distinguishes_loading_empty_success_and_error() {
-        assert_eq!(
-            list_presentation(true, false, false, 0),
-            IssueListPresentation::Loading
-        );
-        assert_eq!(
-            list_presentation(false, true, false, 0),
-            IssueListPresentation::Empty
-        );
-        assert_eq!(
-            list_presentation(false, false, true, 0),
-            IssueListPresentation::Error
-        );
-        assert_eq!(
-            list_presentation(false, true, false, 1),
-            IssueListPresentation::Issues
-        );
-        assert_eq!(
-            list_presentation(true, true, false, 1),
-            IssueListPresentation::Issues
-        );
-        assert_eq!(
-            list_presentation(true, false, false, 1),
-            IssueListPresentation::Issues
-        );
-        assert_eq!(
-            list_presentation(false, false, true, 1),
-            IssueListPresentation::Issues
-        );
-    }
-}
+#[path = "issues_mode_tests.rs"]
+mod tests;

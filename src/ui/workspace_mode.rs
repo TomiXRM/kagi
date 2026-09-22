@@ -62,7 +62,7 @@ fn sidebar_mode_nav_cell(
 pub(super) fn sidebar_section_header(
     id: (&'static str, usize),
     label: &'static str,
-    count: usize,
+    (count, has_more): (usize, bool),
     open: bool,
     emphasize_count: bool,
     cx: &mut Context<KagiApp>,
@@ -109,7 +109,11 @@ pub(super) fn sidebar_section_header(
                 } else {
                     theme::theme().text_muted
                 }))
-                .child(SharedString::from(count.to_string())),
+                .child(SharedString::from(if has_more && count > 0 {
+                    format!("({count}+)")
+                } else {
+                    count.to_string()
+                })),
         )
         .into_any_element()
 }
@@ -502,6 +506,8 @@ impl KagiApp {
                 ui.github_issues_gen = ui.github_issues_gen.wrapping_add(1);
                 ui.github_issue_detail_gen = ui.github_issue_detail_gen.wrapping_add(1);
                 ui.github_issues_loading = false;
+                ui.github_issues_loading_more = false;
+                ui.github_issues_cursor = None;
                 ui.github_issues_loaded = false;
                 ui.github_issues_error = None;
                 ui.github_issue_detail_loading = None;

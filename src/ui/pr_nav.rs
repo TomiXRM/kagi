@@ -27,7 +27,7 @@ fn render_section_header(
     super::workspace_mode::sidebar_section_header(
         ("pr-mode-section", section.index()),
         pr_section_label(section),
-        count,
+        (count, false),
         open,
         section == PrSection::Inbox,
         cx,

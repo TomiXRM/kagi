@@ -48,6 +48,7 @@ pub mod file_history;
 pub mod file_menu;
 mod fonts;
 mod github;
+mod github_issue_state;
 mod github_issues;
 mod github_pr_detail;
 mod issues_composer;

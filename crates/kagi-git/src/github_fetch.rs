@@ -357,15 +357,35 @@ pub fn list_merged_prs(workdir: &Path, limit: usize) -> Result<Vec<PullRequest>,
     )
 }
 
-/// Open Issues for the repository at `workdir`, newest-updated first.
+/// One page of open Issues for the repository at `workdir`, newest-updated
+/// first.
 ///
-/// This is a bounded initial slice, not a count or an exhaustive repository
-/// history. The repository list and the one `mentions:@me` search alias share
-/// one GraphQL request; the parser rejects PR-shaped nodes defensively.
+/// Each call is a bounded 100-Issue page, not a count or an exhaustive
+/// repository history. `cursor` is `None` for the first page and the previous
+/// snapshot's [`IssueListSnapshot::next_cursor`] for every page after it, so a
+/// repository with more than 100 open Issues is reachable without ever
+/// widening one request (#752). The repository list and the one `mentions:@me`
+/// search alias share one GraphQL request; the parser rejects PR-shaped nodes
+/// defensively.
+///
+/// `frozen_base_repo` pins the identity across the whole pagination run: page
+/// two of a repository must not be able to land on a different repository
+/// because `gh`'s default resolved differently in between.
+///
+/// [`IssueListSnapshot::next_cursor`]: kagi_domain::github::IssueListSnapshot::next_cursor
 pub fn list_issues(
     workdir: &Path,
     frozen_base_repo: Option<&str>,
+    cursor: Option<&str>,
 ) -> Result<IssueListSnapshot, PrFetchError> {
+    // A snapshot never carries an empty cursor, so an empty one here is a
+    // caller bug. Silently restarting at page one would duplicate the first
+    // page into the list instead of reporting it. Normalising once also means
+    // the request and the advance check compare the same cursor.
+    let cursor = match cursor.map(str::trim) {
+        Some("") => return Err(PrFetchError::Invalid("empty issue page cursor".into())),
+        cursor => cursor,
+    };
     // Keep gh's canonical default-repository semantics (including
     // `gh repo set-default` and forks). Guessing from `origin` can address a
     // different repository and would freeze the wrong mutation destination.
@@ -388,6 +408,14 @@ pub fn list_issues(
     let name_field = format!("name={name}");
     let mentions_field = format!("mentions=repo:{owner}/{name} is:issue is:open mentions:@me");
     let query_field = format!("query={ISSUE_LIST_QUERY}");
+    // `-F` types its value, which is how the first page sends a real JSON
+    // `null` for the nullable `$cursor`. A real cursor goes through `-f`, which
+    // never types anything: an opaque cursor that happened to read as a number
+    // or as `null` must still arrive as the string GitHub issued.
+    let (cursor_flag, cursor_field) = match cursor {
+        Some(cursor) => ("-f", format!("cursor={cursor}")),
+        None => ("-F", "cursor=null".to_string()),
+    };
     let args = [
         "api",
         "graphql",
@@ -399,11 +427,13 @@ pub fn list_issues(
         name_field.as_str(),
         "-F",
         mentions_field.as_str(),
+        cursor_flag,
+        cursor_field.as_str(),
         "-f",
         query_field.as_str(),
     ];
     fetch_json(workdir, &args, |json| {
-        parse_issue_list_snapshot(json, &base_repo)
+        parse_issue_list_snapshot(json, &base_repo, cursor)
     })
 }
 

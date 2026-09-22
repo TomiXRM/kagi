@@ -106,6 +106,10 @@ impl TabUiState {
             github_issues_loading,
             github_issues_error,
             github_issues_gen: _,
+            github_issues_cursor,
+            github_issues_loading_more,
+            github_issues_page: _,
+            github_issues_list: _,
             github_issue_mentions: _,
             github_issue_tab,
             selected_github_issue,
@@ -152,7 +156,11 @@ impl TabUiState {
             (*smart_commit_generating, "smart_commit_generating"),
             (smart_commit_status.is_some(), "smart_commit_status"),
             (
-                *github_issues_loaded || *github_issues_loading || github_issues_error.is_some(),
+                *github_issues_loaded
+                    || *github_issues_loading
+                    || *github_issues_loading_more
+                    || github_issues_error.is_some()
+                    || github_issues_cursor.is_some(),
                 "issues_mode",
             ),
             (

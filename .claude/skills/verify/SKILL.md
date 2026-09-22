@@ -104,6 +104,18 @@ The current suite covers:
   settlement consuming its draft without reopening Issues after Graph is selected,
   all without a live GitHub write (ADR-0201; `src/ui/issues_composer_e2e.rs` seeds
   read-side state and enters the production settlement path);
+- Issues cursor pagination (`KAGI_GUI_E2E_ONLY=issues_pagination`,
+  `tests/recovery/issues_pagination.rs`): the production virtual viewport loads
+  100 → 200 → final-page rows without resetting the scroll anchor; an offline
+  response retains rows/cursor and the measured retry control resumes the same
+  page. Refresh returns to the first page. Only the transport future is queued
+  through `src/ui/issues_composer_e2e.rs`; owner/generation settlement and actual
+  scroll/click handlers remain production code. Pair with `workspace_mode_toolbar`
+  for Composer, sidebar filters, thread return and focus regressions. For a live
+  read-only Tier B check, use a repository with more than 100 open Issues, scroll
+  the main viewport to its tail, and compare the loaded badge with
+  `[kagi] github: issues page=N loaded=M has_more=true|false`. A successful manual
+  refresh starts again at page 1.
 - Issue write failure ownership
   (`KAGI_GUI_E2E_ONLY=issue_failure_notice_survives_tab_switch`,
   `tests/recovery/issue_write_owner.rs`): a recorded Create failure that lands after

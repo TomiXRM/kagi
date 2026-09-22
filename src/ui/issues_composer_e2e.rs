@@ -8,7 +8,25 @@ use super::i18n::{self, Lang};
 use super::issues_composer::IssueEditor;
 use super::KagiApp;
 
+type IssueListResult =
+    Result<kagi_domain::github::IssueListSnapshot, kagi_git::github::PrFetchError>;
+
+thread_local! {
+    static ISSUE_LIST_FETCH: std::cell::RefCell<Option<gpui::Task<IssueListResult>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+pub(super) fn take_issue_list_fetch() -> Option<gpui::Task<IssueListResult>> {
+    ISSUE_LIST_FETCH.with(|slot| slot.borrow_mut().take())
+}
+
 impl KagiApp {
+    /// Replace only the transport future; production owner/generation and
+    /// viewport-triggered request paths still run.
+    pub fn queue_issue_list_fetch_for_e2e(task: gpui::Task<IssueListResult>) {
+        ISSUE_LIST_FETCH.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
+    }
+
     pub fn set_issue_input_lang_for_e2e(
         &mut self,
         lang: Lang,
@@ -61,6 +79,9 @@ impl KagiApp {
         ui.github_issue_mentions = vec![3];
         ui.github_issues_loaded = true;
         ui.github_issues_loading = false;
+        ui.github_issues_loading_more = false;
+        ui.github_issues_cursor = None;
+        ui.github_issues_list.reset(0);
         ui.github_issues_error = None;
         ui.github_issue_details
             .insert(4, make(4, "recent", "dave", &[], "2026-09-20T00:00:00Z"));

@@ -271,7 +271,7 @@ case "$*" in
 api\ graphql*)
   case "$*" in *"mentions=repo:o/r is:issue is:open mentions:@me"*) ;; *) echo "missing mentions alias input: $*" >&2; exit 1 ;; esac
   cat <<'JSON'
-{"data":{"repository":{"issues":{"nodes":[
+{"data":{"repository":{"issues":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[
   {"number":12,"title":"issue","state":"OPEN","url":"https://github.com/o/r/issues/12","comments":{"totalCount":4}},
   {"number":13,"title":"pr","state":"OPEN","isPullRequest":true,"url":"https://github.com/o/r/pull/13"}
 ]}},"mentions":{"nodes":[{"number":12}]}}}
@@ -281,12 +281,16 @@ JSON
 esac
 "#;
     let (_root, workdir, _restore) = fixture(script);
-    let snapshot = list_issues(&workdir, None).expect("issue list");
+    let snapshot = list_issues(&workdir, None, None).expect("issue list");
     assert_eq!(snapshot.issues.len(), 1);
     assert_eq!(snapshot.issues[0].number, 12);
     assert_eq!(snapshot.issues[0].comment_count, 4);
     assert_eq!(snapshot.mentioned_numbers, vec![12]);
     assert_eq!(snapshot.base_repo, "github.com/o/r");
+    assert_eq!(
+        snapshot.next_cursor, None,
+        "a repository that fits in one page offers nothing more to load"
+    );
 }
 
 #[test]
@@ -297,15 +301,149 @@ case "$*" in
 "repo view --json url") echo "unexpected identity refresh" >&2; exit 1 ;;
 api\ graphql*)
   case "$*" in *"--hostname ghe.example"*"owner=acme"*"name=widgets"*) ;; *) echo "wrong frozen repository: $*" >&2; exit 1 ;; esac
-  echo '{"data":{"repository":{"issues":{"nodes":[]}},"mentions":{"nodes":[]}}}' ;;
+  echo '{"data":{"repository":{"issues":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}},"mentions":{"nodes":[]}}}' ;;
 *) echo "wrong command: $*" >&2; exit 1 ;;
 esac
 "#;
     let (_root, workdir, _restore) = fixture(script);
-    let snapshot = list_issues(&workdir, Some("ghe.example/acme/widgets"))
+    let snapshot = list_issues(&workdir, Some("ghe.example/acme/widgets"), None)
         .expect("refresh uses frozen repository");
     assert!(snapshot.issues.is_empty());
     assert_eq!(snapshot.base_repo, "ghe.example/acme/widgets");
+}
+
+/// #752 — a repository with more than 100 open Issues is reachable one page at
+/// a time. Each request carries the previous page's cursor, the page size and
+/// the frozen repository identity never move, and the run ends exactly when
+/// the server says there is no further page.
+#[test]
+fn issue_pages_walk_a_repository_past_the_hundred_issue_page_size() {
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let script = r#"
+for arg in "$@"; do
+  case "$arg" in query=*) ;; *) printf '%s ' "$arg" >> gh-args.log ;; esac
+done
+printf '\n' >> gh-args.log
+case "$*" in
+  "repo view"*) echo "unexpected identity refresh: $*" >&2; exit 1 ;;
+esac
+case "$*" in
+  *"first: 100, after: \$cursor"*) ;;
+  *) echo "page request is not a cursored 100-issue slice: $*" >&2; exit 1 ;;
+esac
+nodes() {
+  n=$1
+  out=""
+  while [ "$n" -le "$2" ]; do
+    out="$out{\"number\":$n,\"title\":\"issue $n\",\"state\":\"OPEN\"},"
+    n=$((n + 1))
+  done
+  printf '%s' "${out%,}"
+}
+page() {
+  printf '{"data":{"repository":{"issues":{"pageInfo":{"hasNextPage":%s,"endCursor":%s},"nodes":[%s]}},"mentions":{"nodes":[]}}}\n' \
+    "$1" "$2" "$(nodes "$3" "$4")"
+}
+case "$*" in
+  *"-F cursor=null"*) page true '"c1"' 1 100 ;;
+  *"-f cursor=c1"*) page true '"c2"' 101 103 ;;
+  *"-f cursor=c2"*) page false null 104 104 ;;
+  *) echo "unexpected cursor: $*" >&2; exit 1 ;;
+esac
+"#;
+    let (_root, workdir, _restore) = fixture(script);
+    let repo = "ghe.example/acme/widgets";
+    let numbers = |snapshot: &kagi_domain::github::IssueListSnapshot| {
+        snapshot
+            .issues
+            .iter()
+            .map(|issue| issue.number)
+            .collect::<Vec<_>>()
+    };
+
+    let first = list_issues(&workdir, Some(repo), None).expect("first page");
+    assert_eq!(first.issues.len(), 100);
+    assert_eq!(first.next_cursor.as_deref(), Some("c1"));
+
+    let next = list_issues(&workdir, Some(repo), first.next_cursor.as_deref()).expect("next page");
+    assert_eq!(numbers(&next), vec![101, 102, 103]);
+    assert_eq!(next.next_cursor.as_deref(), Some("c2"));
+
+    let last = list_issues(
+        &workdir,
+        Some(next.base_repo.as_str()),
+        next.next_cursor.as_deref(),
+    )
+    .expect("final page");
+    assert_eq!(numbers(&last), vec![104]);
+    assert_eq!(
+        last.next_cursor, None,
+        "the server's last page is what ends the run"
+    );
+
+    let recorded = std::fs::read_to_string(workdir.join("gh-args.log")).expect("recorded requests");
+    let calls: Vec<&str> = recorded.lines().collect();
+    assert_eq!(calls.len(), 3, "one request per page: {recorded}");
+    assert!(calls[0].contains("-F cursor=null"), "{}", calls[0]);
+    assert!(calls[1].contains("-f cursor=c1 "), "{}", calls[1]);
+    assert!(calls[2].contains("-f cursor=c2 "), "{}", calls[2]);
+    for call in calls {
+        assert!(
+            call.contains("--hostname ghe.example")
+                && call.contains("owner=acme")
+                && call.contains("name=widgets")
+                && call.contains("mentions=repo:acme/widgets is:issue is:open mentions:@me"),
+            "every page addresses the frozen repository and keeps the mentions alias: {call}"
+        );
+    }
+}
+
+/// A page that cannot advance is a failure, never a quietly truncated list: a
+/// `hasNextPage` with no usable cursor, or a cursor that repeats the one just
+/// requested, would otherwise append the same page forever.
+#[test]
+fn issue_pagination_rejects_pages_that_cannot_advance() {
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let script = r#"
+printf 'call\n' >> gh-calls.log
+case "$*" in
+  *"-F cursor=null"*)
+    echo '{"data":{"repository":{"issues":{"pageInfo":{"hasNextPage":true,"endCursor":null},"nodes":[]}},"mentions":{"nodes":[]}}}' ;;
+  *"-f cursor=stuck"*)
+    echo '{"data":{"repository":{"issues":{"pageInfo":{"hasNextPage":true,"endCursor":"stuck"},"nodes":[]}},"mentions":{"nodes":[]}}}' ;;
+  *) echo "unexpected cursor: $*" >&2; exit 1 ;;
+esac
+"#;
+    let (_root, workdir, _restore) = fixture(script);
+    let repo = "ghe.example/acme/widgets";
+    let calls = || {
+        std::fs::read_to_string(workdir.join("gh-calls.log"))
+            .map(|log| log.lines().count())
+            .unwrap_or(0)
+    };
+
+    let missing = list_issues(&workdir, Some(repo), None).expect_err("unusable endCursor");
+    assert!(
+        matches!(&missing, PrFetchError::Invalid(detail) if detail.contains("usable endCursor")),
+        "{missing:?}"
+    );
+    let stuck = list_issues(&workdir, Some(repo), Some("stuck")).expect_err("repeated cursor");
+    assert!(
+        matches!(&stuck, PrFetchError::Invalid(detail) if detail.contains("did not advance")),
+        "{stuck:?}"
+    );
+
+    assert_eq!(calls(), 2);
+    let empty = list_issues(&workdir, Some(repo), Some("  ")).expect_err("empty cursor");
+    assert!(
+        matches!(&empty, PrFetchError::Invalid(detail) if detail.contains("empty issue page")),
+        "{empty:?}"
+    );
+    assert_eq!(
+        calls(),
+        2,
+        "an empty cursor is refused before it can refetch page one"
+    );
 }
 
 #[test]

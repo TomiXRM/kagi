@@ -118,11 +118,35 @@ jobs:
       - name: cargo test --workspace
         run: cargo test --workspace
 
+  # ── BLOCKING: Windows release build + job-object stop proof (#703b, #728) ────
+  # The `proc::job::` step below is the only place the Windows stop proof runs,
+  # so this leg feeds `blocking-ci` alongside `test (macOS)`: while it was advisory a
+  # regression in that proof could land unnoticed (ADR-0196 decision 5, Wave 3).
+  build-windows:
+    name: build (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo build --release -p kagi
+        run: cargo build --release -p kagi
+      # #703b: the Windows stop proof is a job object, and this is the only
+      # place it actually runs. Release, so it reuses the dependencies the build
+      # above already compiled; `proc::job::` only, because the rest of the
+      # suite is unix-shaped (it spawns `sleep`, `sh`, `true`).
+      - name: "cargo test --release -p kagi-git --lib proc::job::"
+        run: "cargo test --release -p kagi-git --lib proc::job::"
+      - name: Bundle Windows zip
+        run: cargo run -p xtask -- bundle-windows --bin target/release/kagi.exe
+      - name: List dist
+        run: dir target\dist
+
   # This dependency list is the sole authority for release-blocking CI.
   # `always()` is essential: a failed/skipped dependency must produce a red
   # aggregate, not skip the verification step. Matrix success covers every leg.
   blocking-ci:
-    needs: [invariants, gates-lint, test-macos]
+    needs: [invariants, gates-lint, test-macos, build-windows]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
@@ -157,28 +181,6 @@ jobs:
             libzstd-dev
       - name: cargo test --workspace
         run: cargo test --workspace
-
-  # ── ADVISORY: Windows release build (validates the cross-platform port) ──────
-  build-windows:
-    name: build (Windows, advisory)
-    runs-on: windows-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.96.0
-      - uses: Swatinem/rust-cache@v2
-      - name: cargo build --release -p kagi
-        run: cargo build --release -p kagi
-      # #703b: the Windows stop proof is a job object, and this is the only
-      # place it actually runs. Release, so it reuses the dependencies the build
-      # above already compiled; `proc::job::` only, because the rest of the
-      # suite is unix-shaped (it spawns `sleep`, `sh`, `true`).
-      - name: "cargo test --release -p kagi-git --lib proc::job::"
-        run: "cargo test --release -p kagi-git --lib proc::job::"
-      - name: Bundle Windows zip
-        run: cargo run -p xtask -- bundle-windows --bin target/release/kagi.exe
-      - name: List dist
-        run: dir target\dist
 
   # ── ADVISORY: fmt + clippy (pre-existing v0.2.0 debt; tracked for S7 cleanup) ─
   lint:

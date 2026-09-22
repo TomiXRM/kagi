@@ -1,6 +1,6 @@
 # ADR-0196: operation lifecycle を唯一化する — Wave 0 契約の固定
 
-- Status: Accepted (Wave 0 契約; Wave 1–4 実装済み、Wave 3 の残件は #703 のみ — 決定 5 の表を参照)
+- Status: Accepted (Wave 0 契約; Wave 1–4 実装済み、Wave 3 は #728 で完了 — 決定 5 の表を参照)
 - Date: 2026-09-12
 - Related: [#643](https://github.com/TomiXRM/kagi/issues/643)（A0 / A1 / A2）、ADR-0104（run pipeline）、ADR-0149（oplog）、ADR-0177（TerminationUnknown）、ADR-0183（session-owned read）、ADR-0195（FailureCode）
 - 適用範囲: `src/app`、`src/ui/operations/*`、`crates/kagi-git/src/backend/*`、`src/remote/*`
@@ -224,7 +224,7 @@ merge が resolve されると `ConflictView` が破棄され、abort が構造�
 | 0 | 契約固定（本書） | **完了** |
 | 1 | core reducer: fake completion で admission / settle / reconcile / OwnerStamp の全遷移 | **完了** (#693: `OwnerStamp` / `begin_write` / `RunningWrite`) |
 | 2 | report boundary: 全 family が `ExecutionReport`、UI 側 append ゼロ | **UI 側は完了** (#694 #695 #696 #697、下記メモ) |
-| 3 | vertical cutover: legacy 17 file を `BeginWrite` / settle へ。`busy_op` 除去 | **完了（#703 を除く）**: run family / pull / pr-merge / branch-cleanup / plan latch すべて移行済み (#698 #699 #700 #701 #702 + 本 slice)。`busy_op` / `LegacyBusy` / `finish_op_on_main(_settled)` / `op_result_applies` を削除。残るのは下記「終端未確定の出口」の #703 のみ。task unwind は #703a の process supervisor が閉じ（`Abandoned` は supervisor 経由の `Unaccounted` / `Stopped` に置き換わり、型から削除）、Windows の probe は #703b の job object が閉じた。**ただし Wave 3 完了は留保**: Windows の probe は advisory な CI job でしか実行されず、実機での検証が無い（下記「終端未確定の出口」を参照） |
+| 3 | vertical cutover: legacy 17 file を `BeginWrite` / settle へ。`busy_op` 除去 | **完了**: run family / pull / pr-merge / branch-cleanup / plan latch すべて移行済み (#698 #699 #700 #701 #702)。`busy_op` / `LegacyBusy` / `finish_op_on_main(_settled)` / `op_result_applies` を削除。task unwind は #703a の process supervisor が閉じ（`Abandoned` は supervisor 経由の `Unaccounted` / `Stopped` に置き換わり、型から削除）、Windows の probe は #703b の job object が閉じた。**Windows probe の blocking CI 化で留保を解除** (#728、下記「終端未確定の出口」を参照) |
 | 4 | UI state: `TabUiState` per session | **完了** (#714 #716 #717 #718 #720 #721 #722 #724)。契約は **ADR-0197**（所有の 5 分類 / `TabStores` / entity retention / leak matrix oracle / slice 順）。`reset_per_repo_ui` は削除され、tab 切替に残るのは window-global 1 slot（plan slot と repo-scoped modal）の close だけ |
 | C2 Abort | read-model-derived availability / entity-independent admission / typed report / reconcile | **完了** (#704。Wave 4 の前倒しではなく、ADR-0183 の read ownership と Wave 3 / C2 mutation lifecycle の correctness slice) |
 | 5 | crate 抽出（境界安定後のみ） | |
@@ -295,11 +295,22 @@ operation は承認時に凍結した `RemoteExpectation` を live `ls-remote` �
 job を retire 済み）は従来どおり **alive** と答える — 証拠が無いことは「消えた」では
 ない。unix / Windows のどちらでもない platform も同じ安全側 fallback のまま。
 
-**Wave 3 完了は留保**: 実装は #703a / #703b で揃ったが、Windows の probe が走るのは
-CI の `build (Windows, advisory)` job に足した `cargo test -p kagi-git --lib proc::job::`
-だけで、**advisory（`continue-on-error`）であり、実ユーザーの Windows 環境では
-一度も実行されていない**。受入条件（全 family の host-close / unknown / settle
-matrix 統一）を満たしたと宣言するかは、この検証水準で足りるかの判断による。
+**Wave 3 完了（2026-09-23, #728）**: 実装は #703a / #703b で揃い、Windows の probe は
+**blocking** になった。`.github/workflows/ci.yml` の `build (Windows)` job は
+`continue-on-error` を外して `blocking-ci.needs` に入っており（必須集合の唯一の定義 —
+ADR-0077 決定）、Windows job が落ちれば `blocking-ci` が fail し、既存の release CI gate
+（`check-release-ci`）がその SHA を拒否する。実際に走るのは
+`cargo test --release -p kagi-git --lib proc::job::` = `crates/kagi-git/src/proc/job.rs` の
+`#[cfg(all(test, windows))] mod tests`（6 test: suspended child の resume、job に残る
+descendant、deadline kill 後の `ActiveProcesses == 0`、retry を跨ぐ proof、sweep 後の
+handle、pid 再利用）。根拠は
+[#728 の job 単位集計](https://github.com/TomiXRM/kagi/issues/728#issuecomment-5781578431):
+latest 20 run（20 distinct SHA）の Windows job が **20/20 success**（failure / cancel / skip は
+ゼロ）、各 log が `running 6 tests … 6 passed; 0 failed`。
+
+**残る未検証**: 実ユーザーの Windows 実機および「全 family の host-close / Unknown /
+settle matrix」の実機統合は今回の検証に含まれない。#728 は blocking CI の選択肢で
+完了とする。
 
 **pull（A' 採用 = 上記 (a) の改訂結果）**: `FamilyEvidence::Pull(PullReport)`。
 `PullReport { steps: Vec<RunReport>, terminal }` は実際に走った child の receipt を
@@ -399,5 +410,5 @@ command、fixture manifest、raw artifact、result、limitation、affected API�
 
 - Wave 1 以降の PR は本 ADR の型名・状態表・identity 表を引用する。**逸脱は本 ADR の改訂を伴う**
 - `FamilyEvidence` に variant を足さない family は移行できない（Wave 2 の完了条件）
-- `LegacyBusy` と `busy_op` の削除が Wave 3 の完了条件 — **2026-09-13 達成**（残るは #703）
+- `LegacyBusy` と `busy_op` の削除が Wave 3 の完了条件 — **2026-09-13 達成**（#703 の Windows stop proof は #728 の blocking CI 化で完了）
 - 本 ADR の時点で**コードは 1 行も変えていない**。固定したのは型・表・順序だけである

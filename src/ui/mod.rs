@@ -1237,14 +1237,10 @@ pub struct KagiApp {
     /// (Stored in `active_modal` — see the `conflict_continue_modal()` accessor.)
     /// ADR-0128: Branch Cleanup table column widths (persisted).
     pub cleanup_cols: branch_cleanup::CleanupCols,
-    /// #454 Phase 1: modal sections whose open/closed state the user has
-    /// *flipped away from its default*, keyed by the static section id passed
-    /// to `modal_renderers::modal_section`. Storing overrides (not absolute
-    /// state) means a section's safety-relevant default — e.g. the discard
-    /// target list opens, the rest stay closed — is owned by the renderer, and
-    /// no `clear_*` path has to reset this (an entry only ever means "the user
-    /// chose otherwise for this section"). Read via `modal_section_open`.
-    pub modal_section_overrides: std::collections::HashSet<&'static str>,
+    /// Per-confirm disclosure choices. Missing entries use the renderer's
+    /// responsive default; explicit choices survive a compact-layout change.
+    /// Reset when opening another confirmation, never persisted (#454, #462).
+    pub modal_section_overrides: std::collections::HashMap<&'static str, bool>,
     /// #454 Phase 2: scroll position of the modal file list. The list is a
     /// `uniform_list` so a plan touching thousands of files stays scrollable
     /// (and cheap) instead of being silently cut to the first 10 rows.
@@ -1398,7 +1394,7 @@ impl KagiApp {
             update_installing: false,
             update_status: None,
             cleanup_cols: branch_cleanup::CleanupCols::load(),
-            modal_section_overrides: std::collections::HashSet::new(),
+            modal_section_overrides: std::collections::HashMap::new(),
             modal_list_scroll: UniformListScrollHandle::new(),
             squash_gen: 0,
             scans_stale: true,

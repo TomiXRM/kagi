@@ -52,11 +52,18 @@ pub fn confirm_bounds(id: gpui::WindowId) -> Option<gpui::Bounds<gpui::Pixels>> 
     CONFIRM_BOUNDS.with(|map| map.borrow().get(&id).copied())
 }
 #[cfg(feature = "gui-e2e")]
+pub(crate) fn record_control_bounds(
+    id: gpui::WindowId,
+    name: &str,
+    bounds: gpui::Bounds<gpui::Pixels>,
+) {
+    CONTROL_BOUNDS.with(|map| map.borrow_mut().insert((id, name.to_string()), bounds));
+}
+#[cfg(feature = "gui-e2e")]
 pub fn control_bounds(id: gpui::WindowId, name: &str) -> Option<gpui::Bounds<gpui::Pixels>> {
     CONTROL_BOUNDS.with(|map| map.borrow().get(&(id, name.to_string())).copied())
 }
-/// Forget a recorded bound, so the next draw proves whether the control is
-/// still rendered (the map otherwise keeps the last frame that drew it).
+/// Clear a bound so the next draw proves presence rather than reusing the previous frame.
 #[cfg(feature = "gui-e2e")]
 pub fn clear_control_bounds(id: gpui::WindowId, name: &str) {
     CONTROL_BOUNDS.with(|map| map.borrow_mut().remove(&(id, name.to_string())));
@@ -85,10 +92,7 @@ pub(crate) fn measure_control(
             .child(
                 gpui::canvas(
                     move |bounds, window, _| {
-                        CONTROL_BOUNDS.with(|map| {
-                            map.borrow_mut()
-                                .insert((window.window_handle().window_id(), name.clone()), bounds);
-                        });
+                        record_control_bounds(window.window_handle().window_id(), &name, bounds);
                     },
                     |_, _, _, _| {},
                 )

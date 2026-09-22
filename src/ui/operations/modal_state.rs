@@ -75,24 +75,21 @@ impl KagiApp {
             self.active_modal = None;
         }
     }
-    /// #454 Phase 1: flip modal section `id` between its default and the
-    /// opposite. Read side is `modal_renderers::section_open` (renderers hold
-    /// the defaults); this only records the user's override.
+    /// Toggle the explicit choice, seeding it from the displayed state rather
+    /// than a default that changes with window height (#462).
     #[inline]
-    pub fn toggle_modal_section(&mut self, id: &'static str) {
-        if !self.modal_section_overrides.remove(id) {
-            self.modal_section_overrides.insert(id);
-        }
+    pub fn toggle_modal_section(&mut self, id: &'static str, currently_open: bool) {
+        let open = self
+            .modal_section_overrides
+            .entry(id)
+            .or_insert(currently_open);
+        *open = !*open;
     }
 
-    /// Forget every section flip. Called when a modal opens.
+    /// Forget every explicit disclosure choice. Called when a modal opens.
     ///
-    /// #454 review: the overrides are per-*confirm*, not a preference. Without
-    /// this, collapsing the discard card's warnings once hid
-    /// "untracked files will be deleted" by default on every later discard —
-    /// a one-click permanent opt-out of the safety text, which is exactly what
-    /// the "a sticky override must never carry a collapsed state into the next
-    /// confirm" rule in `modal_shell` exists to prevent.
+    /// Per-confirm, not a preference: closing a safety warning must not hide it
+    /// on later confirmations (#454).
     pub fn reset_modal_sections(&mut self) {
         self.modal_section_overrides.clear();
     }

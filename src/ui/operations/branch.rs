@@ -904,7 +904,6 @@ impl KagiApp {
         }
 
         if modal.arm_if_required() {
-            self.reset_modal_sections();
             self.set_delete_branch_modal(modal);
             klog!("delete-branch: armed (second confirm required — unmerged)");
             cx.notify();

@@ -14,7 +14,7 @@ use super::modal_renderers::{
 };
 use super::modal_shell::{
     modal_body, modal_card, modal_change_summary, modal_chip, modal_file_row, modal_list_max_h,
-    modal_list_panel, modal_path_text, modal_prose_box, modal_section, modal_section_chipped,
+    modal_list_panel, modal_path_text, modal_prose_box, modal_recovery_section, modal_section,
     section_open, MODAL_LIST_ROW_H, MODAL_W_MD,
 };
 use super::modals::*;
@@ -35,9 +35,8 @@ const DESTRUCTIVE_ICON: ModalIcon = ModalIcon::Path("icons/trash-2.svg");
 /// #454 section id. Only *supporting* detail may hide behind disclosure: the
 /// list of files an operation acts on stays visible (see `render_amend_modal`).
 const SECTION_SKIPPED: &str = "discard-skipped";
-/// #454: section ids for the panels a card can collapse. Warnings and recovery
-/// default to **open** on destructive cards (safety), but the user may fold
-/// them — `modal_section_overrides` records only the flip.
+/// Supporting recovery defaults closed in compact layout; safety warnings stay
+/// open. Explicit disclosure choices are retained for this confirmation only.
 const SECTION_AMEND_WARNINGS: &str = "amend-warnings";
 const SECTION_AMEND_RECOVERY: &str = "amend-recovery";
 const SECTION_DISCARD_WARNINGS: &str = "discard-warnings";
@@ -54,7 +53,7 @@ pub(crate) fn render_amend_modal(
     // #454: user's section open/closed overrides (`KagiApp` owns them; the
     // renderer owns the defaults). The folded-file list is NOT collapsible;
     // the warnings and recovery panels are.
-    overrides: &std::collections::HashSet<&'static str>,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     // #454: scroll handle for the folded-file `uniform_list` (owned by
     // `KagiApp` so the position survives re-renders while the modal is open).
     list_scroll: gpui::UniformListScrollHandle,
@@ -177,6 +176,8 @@ pub(crate) fn render_amend_modal(
             .h(list_h),
             true,
         );
+        #[cfg(feature = "gui-e2e")]
+        let list = list.child(super::modal_shell::modal_probe("modal-target-list"));
         // The target list is a section panel like every other block in the
         // card (mock: `対象ファイル` + count chip), but NOT collapsible — see
         // the SAFETY note above. `section_open(.., true)`-style disclosure is
@@ -190,21 +191,14 @@ pub(crate) fn render_amend_modal(
             Msg::AmendFoldedFiles.t(),
             total,
             Some(("amend-files-copy", paths.join("\n"))),
-            // Per-kind tally above the list (#454 Phase 2 item 6).
-            div()
-                .min_h(gpui::px(0.))
-                .flex()
-                .flex_col()
-                .gap_2()
-                .children(modal_change_summary(
-                    &plan
-                        .preview_files
-                        .iter()
-                        .map(|f| f.change.clone())
-                        .collect::<Vec<_>>(),
-                ))
-                .child(list)
-                .into_any_element(),
+            modal_change_summary(
+                &plan
+                    .preview_files
+                    .iter()
+                    .map(|f| f.change.clone())
+                    .collect::<Vec<_>>(),
+            ),
+            list.into_any_element(),
             cx,
         ));
     }
@@ -228,15 +222,22 @@ pub(crate) fn render_amend_modal(
                     ))),
             );
         }
+        #[cfg(feature = "gui-e2e")]
+        let warn_col = warn_col
+            .relative()
+            .child(super::modal_shell::modal_probe("modal-warning-content"));
         let open = section_open(overrides, SECTION_AMEND_WARNINGS, true);
-        body = body.child(modal_section(
-            SECTION_AMEND_WARNINGS,
-            Msg::ModalWarningsSection.t(),
-            plan.warnings.len(),
-            open,
-            open.is_open().then(|| warn_col.into_any_element()),
-            cx,
-        ));
+        body = body.child(
+            modal_section(
+                SECTION_AMEND_WARNINGS,
+                Msg::ModalWarningsSection.t(),
+                plan.warnings.len(),
+                open,
+                open.is_open().then(|| warn_col.into_any_element()),
+                cx,
+            )
+            .flex_shrink_0(),
+        );
     }
 
     // Blockers.
@@ -254,17 +255,23 @@ pub(crate) fn render_amend_modal(
                     ))),
             );
         }
+        #[cfg(feature = "gui-e2e")]
+        let block_col = block_col
+            .relative()
+            .child(super::modal_shell::modal_probe("modal-blocker-content"));
         body = body.child(block_col);
     }
 
     // Recovery: the mock's `復元方法` panel with an `oplog` chip.
     let recovery_text = plan_recovery_text(plan.recovery.as_ref());
     if !recovery_text.is_empty() {
-        let open = section_open(overrides, SECTION_AMEND_RECOVERY, true);
-        body = body.child(modal_section_chipped(
+        let open = section_open(
+            overrides,
             SECTION_AMEND_RECOVERY,
-            Msg::ModalRecoverySection.t(),
-            Some(SharedString::from(Msg::ModalRecoveryChip.t())),
+            !super::modal_shell::modal_compact(),
+        );
+        body = body.child(modal_recovery_section(
+            SECTION_AMEND_RECOVERY,
             open,
             // Built only while open, so a folded section costs nothing.
             open.is_open().then(|| {
@@ -280,8 +287,7 @@ pub(crate) fn render_amend_modal(
 
     // When armed: explicit "what is lost" second-stage notice (ADR-0023).
     if armed && !has_blockers {
-        body = body.child(
-            div()
+        let notice = div()
                 .flex()
                 .flex_col()
                 .gap_1()
@@ -294,14 +300,19 @@ pub(crate) fn render_amend_modal(
                         .child(SharedString::from(
                             "The current commit's SHA will be replaced. The old commit becomes unreachable from the branch (recoverable via git reflog / reset --soft <old>).",
                         )),
-                ),
-        );
+                );
+        #[cfg(feature = "gui-e2e")]
+        let notice = notice
+            .relative()
+            .child(super::modal_shell::modal_probe("modal-armed-notice"));
+        body = body.child(notice);
     }
 
     // Error.
     if let Some(err) = &error {
         body = body.child(
             div()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
                 .overflow_hidden()
@@ -310,13 +321,20 @@ pub(crate) fn render_amend_modal(
     }
 
     // Buttons.
-    let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
-        Button::new("amend-cancel")
-            .label(Msg::PlanCancel.t())
-            .ghost()
-            .small()
-            .on_click(cancel_handler),
-    );
+    let mut button_row =
+        div()
+            .flex()
+            .flex_row()
+            .gap_2()
+            .justify_end()
+            .child(super::e2e::measure_control(
+                "amend-cancel",
+                Button::new("amend-cancel")
+                    .label(Msg::PlanCancel.t())
+                    .ghost()
+                    .small()
+                    .on_click(cancel_handler),
+            ));
 
     if !has_blockers {
         // Stage 1 label = "Amend\u{2026}", stage 2 (armed) = red "Rewrite history".
@@ -330,10 +348,17 @@ pub(crate) fn render_amend_modal(
         } else {
             Button::new("amend-confirm").label(label).primary()
         };
-        button_row = button_row.child(confirm.small().on_click(confirm_handler));
+        button_row = button_row.child(super::e2e::measure_control(
+            "amend-confirm",
+            confirm.small().on_click(confirm_handler),
+        ));
     }
 
-    let card = card.child(body).child(button_row);
+    #[cfg(feature = "gui-e2e")]
+    let button_row = button_row
+        .relative()
+        .child(super::modal_shell::modal_probe("modal-footer"));
+    let card = card.child(body).child(button_row.flex_shrink_0());
 
     // ── Full-screen overlay wrapper (shared chrome, T-SPLIT-HELPERS-001) ──
     modal_overlay(card).into_any_element()
@@ -350,7 +375,7 @@ pub(crate) fn render_discard_modal(
     modal: DiscardModal,
     // #454: user's section open/closed overrides (`KagiApp` owns them; the
     // renderer owns the defaults). Only the skipped list is collapsible here.
-    overrides: &std::collections::HashSet<&'static str>,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     // #454: scroll handle for the target-file `uniform_list` ("Discard all" is
     // the biggest list in the app, so it is virtualized like amend's).
     list_scroll: gpui::UniformListScrollHandle,
@@ -442,6 +467,8 @@ pub(crate) fn render_discard_modal(
         .h(target_h),
         true,
     );
+    #[cfg(feature = "gui-e2e")]
+    let file_list = file_list.child(super::modal_shell::modal_probe("modal-target-list"));
 
     // ── Card ─────────────────────────────────────────────────
     // Icon badge (trash-2 / color_blocker) now carries the danger signal that
@@ -494,26 +521,15 @@ pub(crate) fn render_discard_modal(
             Msg::ModalTargetFiles.t(),
             target_count,
             Some(("discard-files-copy", modal.paths.join("\n"))),
-            // Per-kind tally above the list (#454 Phase 2 item 6): `M 115  D 5`
-            // says what kind of change is at stake without scrolling.
-            div()
-                .min_h(gpui::px(0.))
-                .flex()
-                .flex_col()
-                .gap_2()
-                // #454 round-2 review: count exactly what the rows show. The
-                // plan's `preview_files` carries a neutral kind for targets
-                // the status never classified, so tallying it printed `M 10`
-                // over ten rows badged `A`.
-                .children(modal_change_summary(
-                    &modal
-                        .paths
-                        .iter()
-                        .filter_map(|p| modal.kinds.get(p).cloned())
-                        .collect::<Vec<_>>(),
-                ))
-                .child(file_list)
-                .into_any_element(),
+            // Count the same kinds the rows show, including untracked additions.
+            modal_change_summary(
+                &modal
+                    .paths
+                    .iter()
+                    .filter_map(|p| modal.kinds.get(p).cloned())
+                    .collect::<Vec<_>>(),
+            ),
+            file_list.into_any_element(),
             cx,
         ));
     }
@@ -594,15 +610,22 @@ pub(crate) fn render_discard_modal(
                     ))),
             );
         }
+        #[cfg(feature = "gui-e2e")]
+        let warn_col = warn_col
+            .relative()
+            .child(super::modal_shell::modal_probe("modal-warning-content"));
         let open = section_open(overrides, SECTION_DISCARD_WARNINGS, true);
-        body = body.child(modal_section(
-            SECTION_DISCARD_WARNINGS,
-            Msg::ModalWarningsSection.t(),
-            plan.warnings.len(),
-            open,
-            open.is_open().then(|| warn_col.into_any_element()),
-            cx,
-        ));
+        body = body.child(
+            modal_section(
+                SECTION_DISCARD_WARNINGS,
+                Msg::ModalWarningsSection.t(),
+                plan.warnings.len(),
+                open,
+                open.is_open().then(|| warn_col.into_any_element()),
+                cx,
+            )
+            .flex_shrink_0(),
+        );
     }
     if has_blockers {
         let mut block_col = div().flex().flex_col().gap_px();
@@ -618,19 +641,25 @@ pub(crate) fn render_discard_modal(
                     ))),
             );
         }
+        #[cfg(feature = "gui-e2e")]
+        let block_col = block_col
+            .relative()
+            .child(super::modal_shell::modal_probe("modal-blocker-content"));
         body = body.child(block_col);
     }
 
     // ── Recovery note ───────────────────────────────────────
-    // Mock's `復元方法` panel: titled, `oplog` chip, open by default — the
-    // backup blob reference is the reason discard is allowed to exist.
+    // Recovery remains available through disclosure, initially closed when
+    // compact so targets keep the usable space.
     let recovery_text = plan_recovery_text(plan.recovery.as_ref());
     if !recovery_text.is_empty() {
-        let open = section_open(overrides, SECTION_DISCARD_RECOVERY, true);
-        body = body.child(modal_section_chipped(
+        let open = section_open(
+            overrides,
             SECTION_DISCARD_RECOVERY,
-            Msg::ModalRecoverySection.t(),
-            Some(SharedString::from(Msg::ModalRecoveryChip.t())),
+            !super::modal_shell::modal_compact(),
+        );
+        body = body.child(modal_recovery_section(
+            SECTION_DISCARD_RECOVERY,
             open,
             // Built only while open, so a folded section costs nothing.
             open.is_open().then(|| {
@@ -648,6 +677,7 @@ pub(crate) fn render_discard_modal(
     if let Some(err) = &modal.error {
         body = body.child(
             div()
+                .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
                 .overflow_hidden()
@@ -659,24 +689,34 @@ pub(crate) fn render_discard_modal(
     // Mirrors amend's armed notice (ADR-0023). Only shown after the first
     // click armed the action, so the user sees an explicit final warning.
     if armed && can_discard {
-        body = body.child(
-            div()
+        let notice = div()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
                 .child(SharedString::from(
                     "\u{26a0} Working-tree changes will be lost. Click \u{201c}Permanently discard\u{201d} to confirm.",
-                )),
-        );
+                ));
+        #[cfg(feature = "gui-e2e")]
+        let notice = notice
+            .relative()
+            .child(super::modal_shell::modal_probe("modal-armed-notice"));
+        body = body.child(notice);
     }
 
     // ── Buttons ─────────────────────────────────────────────
-    let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
-        Button::new("discard-cancel")
-            .label(Msg::PlanCancel.t())
-            .ghost()
-            .small()
-            .on_click(cancel_handler),
-    );
+    let mut button_row =
+        div()
+            .flex()
+            .flex_row()
+            .gap_2()
+            .justify_end()
+            .child(super::e2e::measure_control(
+                "discard-cancel",
+                Button::new("discard-cancel")
+                    .label(Msg::PlanCancel.t())
+                    .ghost()
+                    .small()
+                    .on_click(cancel_handler),
+            ));
     if can_discard {
         // Two-stage confirm (T-REARCH-014): first click arms the red Discard
         // button (label becomes the explicit "Permanently discard N files");
@@ -687,13 +727,18 @@ pub(crate) fn render_discard_modal(
         } else {
             format!("Discard {} file(s)", target_count)
         };
-        button_row = button_row.child(
+        button_row = button_row.child(super::e2e::measure_control(
+            "discard-confirm",
             KagiButton::accent("discard-confirm", label, current_theme().color_blocker, cx)
                 .small()
                 .on_click(confirm_handler),
-        );
+        ));
     }
-    let card = card.child(body).child(button_row);
+    #[cfg(feature = "gui-e2e")]
+    let button_row = button_row
+        .relative()
+        .child(super::modal_shell::modal_probe("modal-footer"));
+    let card = card.child(body).child(button_row.flex_shrink_0());
 
     // ── Full-screen overlay (shared chrome, T-SPLIT-HELPERS-001) ──
     // ESC cancels via the root key handler; the card itself also occludes

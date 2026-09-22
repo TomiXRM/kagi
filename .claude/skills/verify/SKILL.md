@@ -55,6 +55,11 @@ KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='bottom_panel' \
 KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='bottom_panel,graph_copy' \
   CARGO_TARGET_DIR="$PWD/target" \
   cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
+
+# Issue #462 compact cards plus the disclosure baseline they must not break.
+# 600/700/750/900 x EN/JA, one hidden window at a time, all unmounted.
+KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='modal_compact,modal_sections' \
+  cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
 ```
 
 It uses `VisualTestAppContext` with deterministic assertions. Its test windows
@@ -141,6 +146,24 @@ The current suite covers:
   obscured by another pane.
 - linked-worktree WIP rows plus commit-panel commit, amend, and discard;
 - modal and branch-menu Enter isolation from the selected commit checkout;
+- compact confirmation cards (`KAGI_GUI_E2E_ONLY=modal_compact,modal_sections`,
+  `tests/recovery/modal_compact.rs`, `tests/recovery/layout.rs`): issue #462. The
+  amend, discard-all and push cards are mounted at 1200x600/700/750/900
+  in EN and JA, also covering 600px at 80% zoom — one window per viewport and locale, because
+  `MacWindow::resize` never settles under `VisualTestAppContext`. Each card's
+  measured `modal-card`, `modal-footer` and footer buttons
+  (`amend-*`/`discard-*`/`plan-*`) must lie inside the window; the
+  target rows must fit the actual scroller, with at least three visible at 600px
+  and more than three at 700px. Real wheel events must expose the final file
+  or commit, not merely a row near the end.
+  Recovery is folded by default only while compact, warnings never are, an
+  explicit disclosure click survives a zoom change that crosses the compact
+  threshold, and reopening the card restores the default. Both destructive cards
+  are armed (first confirm click) and cancelled. Warning, recovery, blocker and
+  armed text bounds must fit their visible body, not merely remain mounted.
+  A blocked plan has no confirm button, and the fixture's HEAD + porcelain
+  status remains unchanged. Git operations use only a local bare repo.
+  `modal_sections` is the pre-migration disclosure baseline and remains unchanged;
 - modal-slot arbitration (`KAGI_GUI_E2E_ONLY=push_failure_keeps_modal,merge_plan_latch,delete_branch_plan_latch,remote_browse_modal_routing`): Push failures and delayed Merge/Delete Branch plans wait behind Remote Browse without losing its input, stale plan state, latches, footers, or notices; a reopened Remote Browse rejects an older in-place completion by generation;
 - unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.
 - toolbar centre actions (Pull…Terminal) drawn only in Graph, not PRs/Editor/Analyze

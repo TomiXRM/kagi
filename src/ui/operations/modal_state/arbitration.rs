@@ -51,6 +51,7 @@ impl KagiApp {
             self.app_notices.push_front(notice);
         }
         self.modal_list_scroll = gpui::UniformListScrollHandle::new();
+        self.reset_modal_sections();
         self.active_modal.replace(modal);
     }
 
@@ -58,6 +59,7 @@ impl KagiApp {
         if self.active_modal.is_none() {
             self.sidebar.swipe.cancel();
             self.modal_list_scroll = gpui::UniformListScrollHandle::new();
+            self.reset_modal_sections();
             self.active_modal = Some(offer.modal);
             return true;
         }

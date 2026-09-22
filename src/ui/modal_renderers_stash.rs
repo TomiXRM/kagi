@@ -201,6 +201,30 @@ pub(crate) fn render_stash_push_modal(
     modal_overlay(focusable_card)
 }
 
+/// The "planning…" placeholder every stash confirmation shows between the
+/// modal opening and its plan arriving (or the error that replaced it).
+///
+/// #462: it lives here rather than in `modal_renderers_plan.rs`, which holds
+/// wrappers around the shared plan card — this card has no plan to wrap, and
+/// its callers are the three stash confirmations.
+pub(crate) fn render_stash_planning(
+    error: Option<SharedString>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let card = modal_card(MODAL_W_MD)
+        .child(error.unwrap_or_else(|| Msg::EditorWorkspaceLoading.t().into()))
+        .child(
+            Button::new("stash-planning-cancel")
+                .label(Msg::PlanCancel.t())
+                .ghost()
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.cancel_active_modal(cx);
+                    cx.notify();
+                })),
+        );
+    modal_overlay(card).into_any_element()
+}
+
 // ──────────────────────────────────────────────────────────────
 // Stash apply modal renderer (T015)
 // ──────────────────────────────────────────────────────────────
@@ -221,7 +245,7 @@ pub(crate) fn render_stash_apply_modal(
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let Some(plan) = modal.plan.clone() else {
-        return super::modal_renderers_plan::render_stash_planning(modal.error, cx);
+        return render_stash_planning(modal.error, cx);
     };
     let has_blockers = !plan.blockers.is_empty();
 

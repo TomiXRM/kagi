@@ -3,12 +3,19 @@
 //! wrappers that build a cancel/confirm listener pair and delegate the card to
 //! the shared `render_plan_modal_card` / `render_input_plan_modal` helpers (which
 //! stay in `modal_renderers.rs`). Pure physical move — behaviour unchanged.
+//!
+//! #462: every wrapper that delegates to the shared plan card also carries
+//! `overrides` — the user's modal-section disclosure choices, borrowed from
+//! `KagiApp` for the frame rather than read back out of `cx`, which is
+//! already mutably borrowed while the app renders. The two input-card
+//! wrappers have no collapsible section and so take none.
 
 #![allow(clippy::too_many_arguments)]
 
 use super::i18n::Msg;
 use super::modal_renderers::{render_plan_modal_wrapper_styled, ModalIcon};
 use super::modal_renderers_input::render_input_plan_modal;
+use super::modal_renderers_stash::render_stash_planning;
 use super::modals::*;
 use super::theme::{self as theme_mod, theme};
 use super::{KagiApp, MONO_FONT};
@@ -18,6 +25,7 @@ use kagi_git::{MergeKind, OperationPlan};
 
 pub(crate) fn render_plan_modal(
     modal: CheckoutPlanModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let create_branch_target = match &modal.target {
@@ -32,6 +40,7 @@ pub(crate) fn render_plan_modal(
         Some((IconName::ChevronsUpDown.into(), theme().color_branch)),
         |this, _cx| this.cancel_modal(),
         |this, cx| this.start_checkout(cx),
+        overrides,
         cx,
     )
 }
@@ -42,6 +51,7 @@ pub(crate) fn render_plan_modal(
 /// Pull button (`color_branch`, same as the ↓N chip).
 pub(crate) fn render_pull_modal(
     modal: PullPlanModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let confirm_label = if modal.auto_stash {
@@ -58,6 +68,7 @@ pub(crate) fn render_pull_modal(
         Some((IconName::ArrowDown.into(), theme().color_branch)),
         |this, _cx| this.cancel_pull_modal(),
         |this, cx| this.start_pull(cx),
+        overrides,
         cx,
     )
 }
@@ -67,6 +78,7 @@ pub(crate) fn render_pull_modal(
 /// and advances/retreats the history cursor.
 pub(crate) fn render_history_modal(
     modal: HistoryPlanModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let confirm_label = if modal.is_undo {
@@ -87,6 +99,7 @@ pub(crate) fn render_history_modal(
         Some((icon.into(), theme().color_branch)),
         |this, _cx| this.clear_history_modal(),
         |this, cx| this.confirm_history(cx),
+        overrides,
         cx,
     )
 }
@@ -96,6 +109,7 @@ pub(crate) fn render_history_modal(
 /// revert; confirming advances the sequencer.
 pub(crate) fn render_conflict_continue_modal(
     modal: ConflictContinuePlanModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -106,12 +120,17 @@ pub(crate) fn render_conflict_continue_modal(
         Some((IconName::Redo2.into(), theme().color_branch)),
         |this, _cx| this.cancel_conflict_continue(),
         |this, cx| this.confirm_conflict_continue(cx),
+        overrides,
         cx,
     )
 }
 
 /// Stash-pop confirmation overlay (T-HT-007).
-pub(crate) fn render_pop_modal(modal: PopPlanModal, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+pub(crate) fn render_pop_modal(
+    modal: PopPlanModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
     let Some(plan) = modal.plan else {
         return render_stash_planning(modal.error, cx);
     };
@@ -123,6 +142,7 @@ pub(crate) fn render_pop_modal(modal: PopPlanModal, cx: &mut Context<KagiApp>) -
         Some((IconName::Inbox.into(), theme().color_branch)),
         |this, _cx| this.cancel_pop_modal(),
         |this, cx| this.start_pop(cx),
+        overrides,
         cx,
     )
 }
@@ -132,6 +152,7 @@ pub(crate) fn render_pop_modal(modal: PopPlanModal, cx: &mut Context<KagiApp>) -
 /// `start_stash_drop`.
 pub(crate) fn render_stash_drop_modal(
     modal: StashDropModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let Some(plan) = modal.plan else {
@@ -145,27 +166,9 @@ pub(crate) fn render_stash_drop_modal(
         Some((ModalIcon::Path("icons/trash-2.svg"), theme().color_blocker)),
         |this, _cx| this.cancel_stash_drop_modal(),
         |this, cx| this.start_stash_drop(cx),
+        overrides,
         cx,
     )
-}
-
-pub(crate) fn render_stash_planning(
-    error: Option<SharedString>,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    use gpui_component::button::{Button, ButtonVariants};
-    let card = super::modal_shell::modal_card(super::modal_shell::MODAL_W_MD)
-        .child(error.unwrap_or_else(|| Msg::EditorWorkspaceLoading.t().into()))
-        .child(
-            Button::new("stash-planning-cancel")
-                .label(Msg::PlanCancel.t())
-                .ghost()
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.cancel_active_modal(cx);
-                    cx.notify();
-                })),
-        );
-    super::modal_renderers::modal_overlay(card).into_any_element()
 }
 
 /// PR-merge confirmation overlay (GitHub Phase 2). Same plan wrapper as every
@@ -173,6 +176,7 @@ pub(crate) fn render_stash_planning(
 /// `plan_pr_merge` output.
 pub(crate) fn render_pr_merge_modal(
     modal: PrMergeModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -186,6 +190,7 @@ pub(crate) fn render_pr_merge_modal(
         )),
         |this, _cx| this.cancel_pr_merge_modal(),
         |this, cx| this.start_pr_merge(cx),
+        overrides,
         cx,
     )
 }
@@ -195,6 +200,7 @@ pub(crate) fn render_pr_merge_modal(
 /// touches any working tree).
 pub(crate) fn render_unlock_worktree_modal(
     modal: UnlockWorktreeModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -205,6 +211,7 @@ pub(crate) fn render_unlock_worktree_modal(
         Some((IconName::WindowRestore.into(), theme().color_branch)),
         |this, _cx| this.cancel_unlock_worktree_modal(),
         |this, cx| this.confirm_unlock_worktree(cx),
+        overrides,
         cx,
     )
 }
@@ -214,6 +221,7 @@ pub(crate) fn render_unlock_worktree_modal(
 /// the containment-checked path (and optionally the branch).
 pub(crate) fn render_remove_worktree_modal(
     modal: RemoveWorktreeModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -224,6 +232,7 @@ pub(crate) fn render_remove_worktree_modal(
         Some((IconName::WindowMinimize.into(), theme().color_blocker)),
         |this, _cx| this.cancel_remove_worktree_modal(),
         |this, cx| this.confirm_remove_worktree(cx),
+        overrides,
         cx,
     )
 }
@@ -231,6 +240,7 @@ pub(crate) fn render_remove_worktree_modal(
 /// Lock-worktree confirmation overlay (issue #340).
 pub(crate) fn render_lock_worktree_modal(
     modal: LockWorktreeModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -241,6 +251,7 @@ pub(crate) fn render_lock_worktree_modal(
         Some((IconName::WindowRestore.into(), theme().color_warning)),
         |this, _cx| this.cancel_lock_worktree_modal(),
         |this, cx| this.confirm_lock_worktree(cx),
+        overrides,
         cx,
     )
 }
@@ -249,6 +260,7 @@ pub(crate) fn render_lock_worktree_modal(
 /// the dry-run preview (count + paths).
 pub(crate) fn render_prune_worktrees_modal(
     modal: PruneWorktreesModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -259,6 +271,7 @@ pub(crate) fn render_prune_worktrees_modal(
         Some((IconName::WindowMinimize.into(), theme().color_warning)),
         |this, _cx| this.cancel_prune_worktrees_modal(),
         |this, cx| this.confirm_prune_worktrees(cx),
+        overrides,
         cx,
     )
 }
@@ -266,6 +279,7 @@ pub(crate) fn render_prune_worktrees_modal(
 /// Repair-worktree-links confirmation overlay (issue #340).
 pub(crate) fn render_repair_worktrees_modal(
     modal: RepairWorktreesModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -276,6 +290,7 @@ pub(crate) fn render_repair_worktrees_modal(
         Some((IconName::WindowRestore.into(), theme().color_branch)),
         |this, _cx| this.cancel_repair_worktrees_modal(),
         |this, cx| this.confirm_repair_worktrees(cx),
+        overrides,
         cx,
     )
 }
@@ -286,6 +301,7 @@ pub(crate) fn render_repair_worktrees_modal(
 /// two are scannable at a glance.
 pub(crate) fn render_push_modal(
     modal: PushPlanModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     // W3-NOTIFY: confirm runs on a background thread (start/finish toasts).
@@ -297,12 +313,14 @@ pub(crate) fn render_push_modal(
         Some((IconName::ArrowUp.into(), theme().color_success)),
         |this, _cx| this.cancel_push_modal(),
         |this, cx| this.start_push(cx),
+        overrides,
         cx,
     )
 }
 
 pub(crate) fn render_branch_plan_modal(
     modal: BranchPlanModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let (label, accent) = match modal.kind {
@@ -319,6 +337,7 @@ pub(crate) fn render_branch_plan_modal(
         Some((accent.0.into(), accent.1)),
         |this, _cx| this.cancel_branch_plan_modal(),
         |this, cx| this.start_branch_plan(cx),
+        overrides,
         cx,
     )
 }
@@ -398,6 +417,7 @@ pub(crate) fn render_rename_branch_modal(
 
 pub(crate) fn render_merge_modal(
     modal: MergePlanModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     // W31-MERGE-INTO-CONFLICT: a conflict-producing merge gets a localized
@@ -428,12 +448,14 @@ pub(crate) fn render_merge_modal(
         Some((ModalIcon::Path("icons/waypoints.svg"), theme().color_branch)),
         |this, _cx| this.cancel_merge_modal(),
         |this, cx| this.start_merge(cx),
+        overrides,
         cx,
     )
 }
 
 pub(crate) fn render_tracking_checkout_modal(
     modal: TrackingCheckoutPlanModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -444,6 +466,7 @@ pub(crate) fn render_tracking_checkout_modal(
         Some((IconName::ChevronsUpDown.into(), theme().color_branch)),
         |this, _cx| this.cancel_tracking_checkout_modal(),
         |this, cx| this.start_tracking_checkout(cx),
+        overrides,
         cx,
     )
 }
@@ -451,6 +474,7 @@ pub(crate) fn render_tracking_checkout_modal(
 /// Switch-to-latest confirmation overlay (ADR-0101).
 pub(crate) fn render_switch_to_latest_modal(
     modal: SwitchToLatestPlanModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -461,6 +485,7 @@ pub(crate) fn render_switch_to_latest_modal(
         Some((IconName::ChevronsUpDown.into(), theme().color_branch)),
         |this, _cx| this.cancel_switch_to_latest_modal(),
         |this, cx| this.start_switch_to_latest(cx),
+        overrides,
         cx,
     )
 }
@@ -468,6 +493,7 @@ pub(crate) fn render_switch_to_latest_modal(
 /// Delete-branch confirmation overlay (W2-DELETE).
 pub(crate) fn render_delete_branch_modal(
     modal: DeleteBranchModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let label = if modal.confirm_armed {
@@ -483,6 +509,7 @@ pub(crate) fn render_delete_branch_modal(
         Some((ModalIcon::Path("icons/trash-2.svg"), theme().color_blocker)),
         |this, _cx| this.cancel_delete_branch_modal(),
         |this, cx| this.start_delete_branch(cx),
+        overrides,
         cx,
     )
 }
@@ -494,6 +521,7 @@ pub(crate) fn render_delete_branch_modal(
 /// via the shared plan-modal card rather than a bespoke renderer.
 pub(crate) fn render_delete_remote_branch_modal(
     modal: DeleteRemoteBranchModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let confirm_label: SharedString = if modal.confirm_armed {
@@ -509,6 +537,7 @@ pub(crate) fn render_delete_remote_branch_modal(
         Some((ModalIcon::Path("icons/trash-2.svg"), theme().color_blocker)),
         |this, _cx| this.cancel_delete_remote_branch_modal(),
         |this, cx| this.start_delete_remote_branch(cx),
+        overrides,
         cx,
     )
 }
@@ -518,6 +547,7 @@ pub(crate) fn render_delete_remote_branch_modal(
 /// `render_delete_remote_branch_modal`.
 pub(crate) fn render_reset_current_modal(
     modal: ResetCurrentModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let confirm_label: SharedString = if modal.confirm_armed {
@@ -536,6 +566,7 @@ pub(crate) fn render_reset_current_modal(
         )),
         |this, _cx| this.cancel_reset_current_modal(),
         |this, cx| this.start_reset_current(cx),
+        overrides,
         cx,
     )
 }
@@ -545,6 +576,7 @@ pub(crate) fn render_reset_current_modal(
 /// `render_reset_current_modal`.
 pub(crate) fn render_force_lease_push_modal(
     modal: ForceLeasePushModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let confirm_label: SharedString = if modal.confirm_armed {
@@ -560,6 +592,7 @@ pub(crate) fn render_force_lease_push_modal(
         Some((IconName::ArrowUp.into(), theme().color_blocker)),
         |this, _cx| this.cancel_force_lease_push_modal(),
         |this, cx| this.start_force_lease_push(cx),
+        overrides,
         cx,
     )
 }
@@ -569,6 +602,7 @@ pub(crate) fn render_force_lease_push_modal(
 /// forced, so a tag that moved is refused by the remote rather than overwritten.
 pub(crate) fn render_push_tag_modal(
     modal: PushTagModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -579,6 +613,7 @@ pub(crate) fn render_push_tag_modal(
         Some((IconName::ArrowUp.into(), theme().color_tag)),
         |this, _cx| this.cancel_push_tag_modal(),
         |this, cx| this.start_push_tag(cx),
+        overrides,
         cx,
     )
 }
@@ -589,6 +624,7 @@ pub(crate) fn render_push_tag_modal(
 /// existing conflict editor rather than losing anything).
 pub(crate) fn render_rebase_modal(
     modal: RebaseCurrentOntoModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -602,6 +638,7 @@ pub(crate) fn render_rebase_modal(
         )),
         |this, _cx| this.cancel_rebase_modal(),
         |this, cx| this.start_rebase(cx),
+        overrides,
         cx,
     )
 }
@@ -611,6 +648,7 @@ pub(crate) fn render_rebase_modal(
 /// local/origin tips), and blockers hide the confirm button.
 pub(crate) fn render_branch_cleanup_modal(
     modal: BranchCleanupModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -621,6 +659,7 @@ pub(crate) fn render_branch_cleanup_modal(
         Some((ModalIcon::Path("icons/trash-2.svg"), theme().color_blocker)),
         |this, _cx| this.cancel_branch_cleanup_modal(),
         |this, cx| this.confirm_branch_cleanup(cx),
+        overrides,
         cx,
     )
 }
@@ -628,6 +667,7 @@ pub(crate) fn render_branch_cleanup_modal(
 /// Revert confirmation overlay (T-CM-034).
 pub(crate) fn render_revert_modal(
     modal: RevertModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(
@@ -638,6 +678,7 @@ pub(crate) fn render_revert_modal(
         Some((IconName::Undo2.into(), theme().color_branch)),
         |this, _cx| this.cancel_revert_modal(),
         |this, cx| this.start_revert(cx),
+        overrides,
         cx,
     )
 }

@@ -299,6 +299,7 @@ pub struct TabUiState {
     pub pr_mode: Option<super::pr_mode::PrModeState>,
     /// Right-click menu on one of this tab's PR rows: `Some((pr, cursor))`.
     pub pr_menu: Option<(kagi_domain::github::PullRequest, gpui::Point<gpui::Pixels>)>,
+    pub(super) filter_controls: super::list_filter_strip::FilterControls,
     /// Smart Commit generation status belongs to the session whose panel
     /// initiated it; background completion never writes through the active tab.
     pub smart_commit_generating: bool,
@@ -325,6 +326,12 @@ pub struct TabUiState {
     pub github_prs_epoch: u64,
     pub github_prs_gen: u64,
     pub github_prs_loading: bool,
+    /// #753 this session's PR-list filter intent. A fresh tab holds
+    /// [`default_pr_filter`], not the domain default: `common.state` is the
+    /// only predicate the *fetch* carries, and the list a tab opens on is the
+    /// open one.
+    pub github_pr_filter: kagi_domain::list_filter::PrFilter,
+    pub(super) github_prs_strip: super::github_pr_strip::PrStripRead,
     pub(super) pr_details: super::github_pr_detail::PrDetailController,
     /// Read-only Issues workspace data. Requests are session-owned and each
     /// generation accepts only its newest completion.
@@ -342,6 +349,17 @@ pub struct TabUiState {
     pub github_issues_list: gpui::ListState,
     pub github_issue_mentions: Vec<u64>,
     pub github_issue_tab: kagi_domain::github::IssueListTab,
+    /// #753 this session's Issue-list filter intent ([`default_issue_filter`]
+    /// on a fresh tab) and, beside it, the state the rows above were actually
+    /// fetched with.
+    ///
+    /// The frozen value is what an append is requested with, so a page cannot
+    /// extend the held list with rows from another state collection while the
+    /// intent has already moved on. A refresh re-freezes it together with
+    /// `github_issues_gen`, which is what makes the earlier state's in-flight
+    /// completions unacceptable.
+    pub github_issue_filter: kagi_domain::list_filter::IssueFilter,
+    pub github_issues_request_state: kagi_domain::list_filter::StateFilter,
     pub selected_github_issue: Option<u64>,
     pub github_issue_details: HashMap<u64, kagi_domain::github::Issue>,
     pub github_issue_detail_loading: Option<u64>,
@@ -381,6 +399,30 @@ pub struct TabUiState {
     pub compare_view: Option<Entity<super::ComparePane>>,
 }
 
+/// #753: the filter a **fresh tab** holds. `StateFilter`'s own default is
+/// `All` — the predicate that hides nothing, which is the right default for a
+/// domain filter and the wrong one for a list a user just opened. `Default for
+/// TabUiState` and the pristine probe both read the UI default from here
+/// instead of respelling it, so "untouched" means one value in one place.
+pub(super) fn default_issue_filter() -> kagi_domain::list_filter::IssueFilter {
+    kagi_domain::list_filter::IssueFilter {
+        common: kagi_domain::list_filter::ListFilter {
+            state: kagi_domain::list_filter::StateFilter::Open,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+/// The PR half of [`default_issue_filter`]: same open-by-default state, and
+/// the draft / checks predicates left at "everything".
+pub(super) fn default_pr_filter() -> kagi_domain::list_filter::PrFilter {
+    kagi_domain::list_filter::PrFilter {
+        common: default_issue_filter().common,
+        ..Default::default()
+    }
+}
+
 impl Default for TabUiState {
     fn default() -> Self {
         Self {
@@ -396,6 +438,7 @@ impl Default for TabUiState {
             branch_cleanup_open: false,
             pr_mode: None,
             pr_menu: None,
+            filter_controls: Default::default(),
             view_publish_gen: 0,
             cache_epoch: 0,
             diff_caches: super::diff_cache::DiffCaches::default(),
@@ -410,6 +453,8 @@ impl Default for TabUiState {
             github_prs_epoch: 0,
             github_prs_gen: 0,
             github_prs_loading: false,
+            github_pr_filter: default_pr_filter(),
+            github_prs_strip: Default::default(),
             pr_details: Default::default(),
             github_issues: Vec::new(),
             github_issues_loaded: false,
@@ -422,6 +467,8 @@ impl Default for TabUiState {
             github_issues_list: gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(400.)),
             github_issue_mentions: Vec::new(),
             github_issue_tab: Default::default(),
+            github_issue_filter: default_issue_filter(),
+            github_issues_request_state: default_issue_filter().common.state,
             selected_github_issue: None,
             github_issue_details: HashMap::new(),
             github_issue_detail_loading: None,

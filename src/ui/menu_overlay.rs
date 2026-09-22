@@ -234,10 +234,18 @@ where
         row.hover(|style| style.bg(rgb(theme().surface)))
     };
 
-    match item.state {
+    let row = match item.state {
         ItemState::Disabled(reason) => row
             .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx))
             .into_any_element(),
         _ => row.into_any_element(),
+    };
+    #[cfg(feature = "gui-e2e")]
+    {
+        super::e2e::measure_control(format!("{item_id_prefix}-{group_ix}-{item_ix}"), row)
+    }
+    #[cfg(not(feature = "gui-e2e"))]
+    {
+        row
     }
 }

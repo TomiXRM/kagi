@@ -21,6 +21,10 @@
 //! * An append failure keeps the rows *and* the cursor, so a retry resumes from
 //!   the same position. Nothing here retries by itself; clearing the error is
 //!   the caller's gate for the next attempt.
+//! * `github_issues_request_state` is the state predicate the held rows were
+//!   fetched with, frozen by the refresh that produced them (#753). Every
+//!   append is requested with it, so one list is always one state collection
+//!   even while the filter strip already points somewhere else.
 
 use super::tab_view::TabUiState;
 use kagi_domain::github::IssueListSnapshot;
@@ -33,9 +37,14 @@ impl TabUiState {
     ///
     /// A refresh restarts pagination: the cursor and the append slot describe
     /// the list this request is about to replace, so both are dropped here
-    /// rather than at the call site.
+    /// rather than at the call site. #753 freezes the state predicate with
+    /// them: the rows that land are the answer to *this* request's state, so a
+    /// later chip change is a new request rather than a reinterpretation of
+    /// this one, and `github_issues_request_state` is what the appends of the
+    /// list this request produces are fetched with.
     pub(super) fn begin_github_issues_request(&mut self) -> u64 {
         self.github_issues_gen = self.github_issues_gen.wrapping_add(1);
+        self.github_issues_request_state = self.github_issue_filter.common.state;
         self.github_issues_loading = true;
         self.github_issues_loading_more = false;
         self.github_issues_cursor = None;
@@ -109,6 +118,11 @@ impl TabUiState {
     /// Clearing the error is what makes a failed append retryable: the caller
     /// gates viewport-driven loads on `github_issues_error`, so the flag must
     /// not survive the attempt it triggered.
+    ///
+    /// The state predicate is *not* returned because it is not claimed here:
+    /// `github_issues_request_state` is frozen for the whole list, and the
+    /// caller reads it in this same borrow to build the fetch. Reading the
+    /// filter strip instead would append another state's rows to these.
     pub(super) fn begin_github_issues_page_request(&mut self) -> Option<(u64, String, String)> {
         if self.github_issues_loading
             || self.github_issues_loading_more

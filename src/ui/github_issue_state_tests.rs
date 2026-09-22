@@ -3,6 +3,7 @@
 
 use super::*;
 use kagi_domain::github::{Issue, IssueState};
+use kagi_domain::list_filter::StateFilter;
 
 fn issue(number: u64, title: &str) -> Issue {
     Issue {
@@ -365,6 +366,81 @@ fn refresh_supersedes_an_in_flight_page() {
     ));
     assert_eq!(numbers(&state), vec![5]);
     assert_eq!(state.github_issues_cursor.as_deref(), Some("c9"));
+}
+
+/// #753: the state a list was fetched with belongs to that list, not to the
+/// strip. Moving the chip leaves the rows on screen — and any append that
+/// extends them — on the collection they came from; only the refresh that
+/// follows adopts the new state, and it is what refuses the earlier one's
+/// page.
+#[test]
+fn a_refreshed_state_supersedes_the_page_of_the_previous_one() {
+    let mut state = with_first_page("github.com/a/one", Some("c1"));
+    assert_eq!(
+        state.github_issues_request_state,
+        StateFilter::Open,
+        "a fresh tab fetches the open list"
+    );
+
+    state.github_issue_filter.common.state = StateFilter::Closed;
+    let (page_gen, cursor, _) = state
+        .begin_github_issues_page_request()
+        .expect("a settled list still pages while the strip moves");
+    assert_eq!(
+        state.github_issues_request_state,
+        StateFilter::Open,
+        "the append continues the collection on screen, not the one just picked"
+    );
+
+    let refresh = state.begin_github_issues_request();
+    assert_eq!(
+        state.github_issues_request_state,
+        StateFilter::Closed,
+        "the refresh is what adopts the new state"
+    );
+    assert!(
+        !state.finish_github_issues_page_request(
+            page_gen,
+            &cursor,
+            Ok(snapshot(
+                vec![issue(3, "an open row")],
+                vec![3],
+                "github.com/a/one",
+                Some("c2")
+            ))
+        ),
+        "the previous state's page cannot mix into the list replacing it"
+    );
+
+    assert!(state.finish_github_issues_request(
+        refresh,
+        Ok(snapshot(
+            vec![issue(7, "a closed row")],
+            Vec::new(),
+            "github.com/a/one",
+            None
+        ))
+    ));
+    assert_eq!(numbers(&state), vec![7]);
+    assert_eq!(state.github_issue_mentions, Vec::<u64>::new());
+    assert_eq!(state.github_issues_request_state, StateFilter::Closed);
+}
+
+/// The UI default (`Open`) and the domain default (`All`, the predicate that
+/// hides nothing) are deliberately different values, so "untouched" cannot be
+/// spelled as `Default::default()` here: a tab nobody touched is pristine,
+/// and a picked state is intent the next tab must not inherit.
+#[test]
+fn the_open_default_is_pristine_but_a_picked_state_is_not() {
+    let mut state = TabUiState::default();
+    assert_eq!(state.is_pristine(), Ok(()));
+
+    state.github_issue_filter.common.state = StateFilter::All;
+    assert_eq!(state.is_pristine(), Err("github_issue_filter"));
+
+    let mut state = TabUiState::default();
+    state.github_pr_filter.common.labels.push("bug".into());
+    assert_eq!(state.is_pristine(), Err("github_pr_filter"));
 }
 
 #[test]

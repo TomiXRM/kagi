@@ -50,6 +50,21 @@ fn tab(head: &str) -> PrTab {
 }
 
 #[test]
+fn closing_a_pr_cancels_status_reads_but_keeps_body_readable() {
+    let mut controller = PrDetailController::default();
+    let mut row = pr(1, "a");
+    row.state = IssueState::Open;
+    controller.enqueue(path(), &row, PrDetailStage::Status, false, false);
+    row.state = IssueState::Closed;
+    controller.reconcile_heads(std::slice::from_ref(&row));
+    controller.enqueue(path(), &row, PrDetailStage::Status, true, true);
+    controller.enqueue(path(), &row, PrDetailStage::Body, true, true);
+    let read = controller.take_next(Instant::now()).unwrap();
+    assert_eq!(read.request.key.stage, PrDetailStage::Body);
+    assert!(controller.take_next(Instant::now()).is_none());
+}
+
+#[test]
 fn queue_never_starts_more_than_two_or_duplicates_a_stage() {
     let mut controller = PrDetailController::default();
     controller.enqueue(path(), &pr(1, "a"), PrDetailStage::Status, false, false);

@@ -1,6 +1,6 @@
 //! GitHub Phase 1 — sidebar PULL REQUESTS section plumbing.
 //!
-//! The data comes from `kagi_git::github` (a `gh pr list` shell-out); this
+//! Open-PR data comes through `kagi_git::github` and its hardened gh boundary; this
 //! module owns the periodic refresh and the row actions. Read-only end to end.
 
 use std::time::Duration;
@@ -15,8 +15,8 @@ use super::operations::RunPresentation;
 use super::types::ToastKind;
 use super::{CompareTarget, CompareView, FooterStatus, KagiApp, OpOutcome};
 
-/// Refresh cadence. `gh pr list` is one API call; a minute keeps CI status
-/// fresh without hammering the rate limit.
+/// Refresh cadence for shared open-PR evidence and visible volatile status.
+/// Strip-only Closed/All collections are refreshed explicitly, not by this ticker.
 const GITHUB_REFRESH_SECS: u64 = 60;
 
 /// A localized (EN/JA) sentence for a classified fetch failure, with `gh`'s own
@@ -40,7 +40,7 @@ pub(super) fn fetch_error_text(e: &kagi_git::github::PrFetchError) -> String {
 }
 
 impl KagiApp {
-    /// One-shot `gh pr list` refresh for the current repo. Safe to call
+    /// One-shot shared Open collection refresh for the current repo. Safe to call
     /// often: completion is routed to the session that started it, even when
     /// another tab is active. Called by the ticker and on every tab switch
     /// (`switch_repo`) so a new tab does not wait for the next 60s tick.
@@ -71,6 +71,7 @@ impl KagiApp {
         if injected.is_none() && !kagi_git::github::gh_available() {
             return;
         }
+        // Shared evidence is always Open, independent of the workspace strip.
         let generation = {
             let Some(ui) = self.ui.get_mut(&owner) else {
                 return;
@@ -83,7 +84,12 @@ impl KagiApp {
                 Some(task) => task.await,
                 None => {
                     acx.background_executor()
-                        .spawn(async move { kagi_git::github::list_open_prs(&fetch_repo) })
+                        .spawn(async move {
+                            kagi_git::github::list_prs(
+                                &fetch_repo,
+                                kagi_domain::list_filter::StateFilter::Open,
+                            )
+                        })
                         .await
                 }
             };
@@ -150,6 +156,40 @@ impl KagiApp {
             });
         })
         .detach();
+    }
+
+    /// Change workspace intent without changing the shared open-PR collection.
+    pub(super) fn set_github_pr_filter(
+        &mut self,
+        filter: kagi_domain::list_filter::PrFilter,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(owner) = self.active_session() else {
+            return;
+        };
+        let Some(ui) = self.ui.get_mut(&owner) else {
+            return;
+        };
+        if ui.github_pr_filter == filter {
+            return;
+        }
+        let refetch = ui.github_pr_filter.common.state != filter.common.state;
+        if refetch {
+            ui.reset_pr_strip();
+        }
+        ui.github_pr_filter = filter;
+        if let Some(mode) = &mut ui.pr_mode {
+            mode.dashboard_scroll
+                .scroll_to_item(0, gpui::ScrollStrategy::Top);
+        }
+        if refetch {
+            if ui.github_pr_filter.common.state != kagi_domain::list_filter::StateFilter::Open {
+                ui.github_prs_strip.rows = Some(Vec::new());
+            }
+            self.refresh_pr_strip(cx);
+        } else {
+            cx.notify();
+        }
     }
 
     /// Lazily spawn the PR refresh ticker (called from `render`, like the

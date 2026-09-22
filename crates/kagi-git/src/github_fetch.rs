@@ -1,4 +1,4 @@
-//! The `gh pr list` fetch contract (#506).
+//! The GitHub list/detail fetch contract (#506).
 //!
 //! Split out of `github.rs`: the PR list is read on a 60s ticker and by the
 //! Branch Cleanup scan, and the question "is this an empty list or a failed
@@ -9,14 +9,17 @@ use std::path::Path;
 use std::time::Duration;
 
 use kagi_domain::github::{Issue, IssueListSnapshot, PullRequest};
+use kagi_domain::list_filter::StateFilter;
 
 use crate::github::{
-    parse_pr_body_detail, parse_pr_list, parse_pr_status_detail, PR_BODY_FIELDS, PR_LIST_FIELDS,
+    parse_pr_body_detail, parse_pr_status_detail, PR_BODY_FIELDS, PR_MERGED_FIELDS,
     PR_STATUS_FIELDS,
 };
 use crate::github_issue::{
-    parse_issue_detail, parse_issue_list_snapshot, ISSUE_DETAIL_FIELDS, ISSUE_LIST_QUERY,
+    issue_states, mentions_scope, parse_issue_detail, parse_issue_list_snapshot,
+    ISSUE_DETAIL_FIELDS, ISSUE_LIST_QUERY,
 };
+use crate::github_pr_list::{parse_pr_list, parse_pr_list_page, pr_states, PR_LIST_QUERY};
 
 /// The bound every `gh` invocation runs under — reads here, and the `gh pr
 /// comment` write in `github_comment`. One definition, so a write can never
@@ -242,35 +245,64 @@ pub(crate) fn fetch_json<T>(
     parse(&out.stdout_lossy()).map_err(|e| PrFetchError::Invalid(e.to_string()))
 }
 
-/// One `gh pr list` call, classified. The shared half of [`list_open_prs`] and
-/// [`list_merged_prs`] so both carry the same contract (#506).
-fn fetch_prs(workdir: &Path, args: &[&str]) -> Result<Vec<PullRequest>, PrFetchError> {
-    fetch_json(workdir, args, parse_pr_list)
-}
-
-/// Open PRs for the repository at `workdir`, newest-updated first.
+/// Pull requests for the repository at `workdir`, newest-updated first, in one
+/// bounded 100-PR page.
 ///
-/// `Ok(vec![])` means the repository really has no open pull requests — the
-/// only answer that may replace a cached list. Every failure is classified
-/// ([`PrFetchError`]) so an expired token or an offline machine keeps the last
-/// good data instead of being shown as an empty inbox (#506).
-pub fn list_open_prs(workdir: &Path) -> Result<Vec<PullRequest>, PrFetchError> {
-    let args = [
-        "pr",
-        "list",
-        "--state",
-        "open",
-        "--limit",
-        "100",
-        "--json",
-        PR_LIST_FIELDS,
+/// `state` is the server-side half of the shared filter strip (#753): a closed
+/// or merged pull request is not in the open collection at all, so the state
+/// chip has to change *which collection is fetched*, never merely which rows
+/// are drawn.
+///
+/// `Ok(vec![])` means the repository really has no pull requests in that
+/// collection — the only answer that may replace a cached list. Every failure
+/// is classified ([`PrFetchError`]) so an expired token or an offline machine
+/// keeps the last good data instead of being shown as an empty inbox (#506).
+pub fn list_prs(workdir: &Path, state: StateFilter) -> Result<Vec<PullRequest>, PrFetchError> {
+    // gh's default-repository rules decide which repository this is, for the
+    // reason the Issue list resolves it the same way: on a fork, `origin` is
+    // not the repository the pull requests live in.
+    let base_repo = repository_identity(workdir)?;
+    let (host, owner, name) = split_identity(&base_repo)?;
+    let owner_field = format!("owner={owner}");
+    let name_field = format!("name={name}");
+    let query_field = format!("query={PR_LIST_QUERY}");
+    let states: Vec<String> = pr_states(state)
+        .iter()
+        .map(|state| format!("states[]={state}"))
+        .collect();
+    let mut args = vec![
+        "api",
+        "graphql",
+        "--hostname",
+        host,
+        "-F",
+        owner_field.as_str(),
+        "-F",
+        name_field.as_str(),
     ];
-    let first = fetch_prs(workdir, &args);
+    for state in &states {
+        args.extend(["-f", state.as_str()]);
+    }
+    args.extend(["-f", query_field.as_str()]);
+    let first = fetch_json(workdir, &args, parse_pr_list_page);
     if first.as_ref().is_err_and(PrFetchError::is_gateway_timeout) {
         std::thread::sleep(l1_retry_delay());
-        fetch_prs(workdir, &args)
+        fetch_json(workdir, &args, parse_pr_list_page)
     } else {
         first
+    }
+}
+
+/// `<host>/<owner>/<name>`, split for a GraphQL request. Anything else is an
+/// identity kagi cannot address, and refusing it is better than sending a
+/// request that names half a repository.
+fn split_identity(base_repo: &str) -> Result<(&str, &str, &str), PrFetchError> {
+    let mut parts = base_repo.split('/');
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some(host), Some(owner), Some(name), None) => Ok((host, owner, name)),
+        _ => Err(PrFetchError::Invalid(format!(
+            "invalid repository identity: {base_repo}"
+        ))),
     }
 }
 
@@ -329,20 +361,16 @@ pub fn pr_body_detail(
 
 /// Recently **merged** PRs, keyed by their head branch by the caller.
 ///
-/// A separate call from [`list_open_prs`] because Branch Cleanup asks the
-/// opposite question: its rows are branches that are already merged, so their
-/// pull requests are by definition *not* open and never appear in that list.
+/// A separate, deliberately cheaper call than [`list_prs`]: Branch Cleanup
+/// needs four columns for rows it already knows are merged, not the L1 page's
+/// identity, review routing and comment totals.
 ///
-/// Only the fields the cleanup table shows are requested — number, title,
-/// author, head branch — so this stays one cheap call rather than the full
-/// `FIELDS` set with its per-PR check rollup.
-///
-/// Same contract as [`list_open_prs`] (#506): Branch Cleanup shows this as
+/// Same contract as [`list_prs`] (#506): Branch Cleanup shows this as
 /// *evidence* that a branch was merged through a PR, so a failed fetch must not
 /// arrive as "this branch has no PR".
 pub fn list_merged_prs(workdir: &Path, limit: usize) -> Result<Vec<PullRequest>, PrFetchError> {
     let limit = limit.to_string();
-    fetch_prs(
+    fetch_json(
         workdir,
         &[
             "pr",
@@ -352,21 +380,24 @@ pub fn list_merged_prs(workdir: &Path, limit: usize) -> Result<Vec<PullRequest>,
             "--limit",
             &limit,
             "--json",
-            "number,title,headRefName,author",
+            PR_MERGED_FIELDS,
         ],
+        parse_pr_list,
     )
 }
 
-/// One page of open Issues for the repository at `workdir`, newest-updated
-/// first.
+/// One page of Issues for the repository at `workdir`, newest-updated first.
 ///
 /// Each call is a bounded 100-Issue page, not a count or an exhaustive
 /// repository history. `cursor` is `None` for the first page and the previous
 /// snapshot's [`IssueListSnapshot::next_cursor`] for every page after it, so a
-/// repository with more than 100 open Issues is reachable without ever
-/// widening one request (#752). The repository list and the one `mentions:@me`
-/// search alias share one GraphQL request; the parser rejects PR-shaped nodes
-/// defensively.
+/// repository with more than 100 Issues is reachable without ever widening one
+/// request (#752). The repository list and the one `mentions:@me` search alias
+/// share one GraphQL request; the parser rejects PR-shaped nodes defensively.
+///
+/// `state` selects the collection both halves of that request read (#753):
+/// the repository page and the mention search always name the same states, so
+/// the Mentioned tab can never mark a row the list did not fetch.
 ///
 /// `frozen_base_repo` pins the identity across the whole pagination run: page
 /// two of a repository must not be able to land on a different repository
@@ -377,6 +408,7 @@ pub fn list_issues(
     workdir: &Path,
     frozen_base_repo: Option<&str>,
     cursor: Option<&str>,
+    state: StateFilter,
 ) -> Result<IssueListSnapshot, PrFetchError> {
     // A snapshot never carries an empty cursor, so an empty one here is a
     // caller bug. Silently restarting at page one would duplicate the first
@@ -394,20 +426,20 @@ pub fn list_issues(
         .filter(|repo| !repo.is_empty())
     {
         Some(repo) => repo.to_string(),
-        None => issue_repository(workdir)?,
+        None => repository_identity(workdir)?,
     };
-    let mut parts = base_repo.split('/');
-    let (Some(host), Some(owner), Some(name), None) =
-        (parts.next(), parts.next(), parts.next(), parts.next())
-    else {
-        return Err(PrFetchError::Invalid(format!(
-            "invalid repository identity: {base_repo}"
-        )));
-    };
+    let (host, owner, name) = split_identity(&base_repo)?;
     let owner_field = format!("owner={owner}");
     let name_field = format!("name={name}");
-    let mentions_field = format!("mentions=repo:{owner}/{name} is:issue is:open mentions:@me");
+    let mentions_field = format!(
+        "mentions=repo:{owner}/{name} is:issue{} mentions:@me",
+        mentions_scope(state)
+    );
     let query_field = format!("query={ISSUE_LIST_QUERY}");
+    let states: Vec<String> = issue_states(state)
+        .iter()
+        .map(|state| format!("states[]={state}"))
+        .collect();
     // `-F` types its value, which is how the first page sends a real JSON
     // `null` for the nullable `$cursor`. A real cursor goes through `-f`, which
     // never types anything: an opaque cursor that happened to read as a number
@@ -416,7 +448,7 @@ pub fn list_issues(
         Some(cursor) => ("-f", format!("cursor={cursor}")),
         None => ("-F", "cursor=null".to_string()),
     };
-    let args = [
+    let mut args = vec![
         "api",
         "graphql",
         "--hostname",
@@ -429,18 +461,21 @@ pub fn list_issues(
         mentions_field.as_str(),
         cursor_flag,
         cursor_field.as_str(),
-        "-f",
-        query_field.as_str(),
     ];
+    for state in &states {
+        args.extend(["-f", state.as_str()]);
+    }
+    args.extend(["-f", query_field.as_str()]);
     fetch_json(workdir, &args, |json| {
         parse_issue_list_snapshot(json, &base_repo, cursor)
     })
 }
 
-/// Resolve the Issues destination with gh's default-repository rules. The
-/// caller carries this identity through the same owner/generation as the
-/// GraphQL list result; mutations never re-resolve it at dispatch.
-pub fn issue_repository(workdir: &Path) -> Result<String, PrFetchError> {
+/// Resolve the GitHub destination with gh's default-repository rules — the
+/// repository both list reads address. The Issue caller carries this identity
+/// through the same owner/generation as the GraphQL list result; mutations
+/// never re-resolve it at dispatch.
+pub fn repository_identity(workdir: &Path) -> Result<String, PrFetchError> {
     fetch_json(workdir, &["repo", "view", "--json", "url"], |json| {
         let value: serde_json::Value =
             serde_json::from_str(json).map_err(|e| crate::GitError::Other(e.to_string()))?;
@@ -465,7 +500,6 @@ pub fn issue_detail(workdir: &Path, number: u64) -> Result<Issue, PrFetchError> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::github::parse_pr_list;
 
     /// `gh` validates `--json` field names *before* it calls the API and exits
     /// on the first unknown one, so a bad name in any field set breaks that PR
@@ -473,6 +507,8 @@ mod tests {
     /// straight to `parse_pr_list` (#701 final review 3, where
     /// `baseRepository` shipped). `--limit 0` is rejected *after* field
     /// validation, so this negotiates the names without touching the network.
+    /// The L1 page is GraphQL and is not negotiable this way; its shape is
+    /// covered by `parse_pr_list_page`'s tests and by the server itself.
     ///
     /// The negative control runs **first** and gates the whole test: without
     /// it a `gh` that never reports unknown fields would make the real
@@ -492,7 +528,7 @@ mod tests {
         if !ask("number,noSuchFieldAtAll").is_some_and(|out| out.contains(UNKNOWN)) {
             return; // this `gh` cannot tell us; a developer machine's can
         }
-        for fields in [PR_LIST_FIELDS, PR_STATUS_FIELDS, PR_BODY_FIELDS] {
+        for fields in [PR_MERGED_FIELDS, PR_STATUS_FIELDS, PR_BODY_FIELDS] {
             let stderr = ask(fields).expect("gh answered a moment ago");
             assert!(
                 !stderr.contains(UNKNOWN),

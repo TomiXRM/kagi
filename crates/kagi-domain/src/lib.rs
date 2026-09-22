@@ -39,6 +39,7 @@ pub mod hotspot;
 pub mod hotspot_layout;
 pub mod hotspot_report;
 pub mod issue_composer;
+pub mod list_filter;
 pub mod load_request;
 pub mod merge_state;
 pub mod message;

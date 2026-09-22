@@ -8,6 +8,11 @@ use super::*;
 
 impl KagiApp {
     fn cancel_workspace_key_target(&mut self, cx: &mut Context<Self>) {
+        if self.ui().filter_controls.menu.is_some() {
+            self.with_ui(|ui| ui.filter_controls.menu = None);
+            cx.notify();
+            return;
+        }
         if diff_selection::clear() {
             cx.notify();
             return;

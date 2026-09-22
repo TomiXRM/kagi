@@ -3,8 +3,8 @@
 
 pub use crate::github_attention::{PrAttention, PrReason};
 pub use crate::github_detail::{
-    apply_pr_body, apply_pr_list, apply_pr_status, PrBodyDetail, PrDetailAvailability,
-    PrStatusDetail,
+    apply_pr_body, apply_pr_list, apply_pr_status, inherit_pr_details, PrBodyDetail,
+    PrDetailAvailability, PrStatusDetail,
 };
 pub use crate::github_edit::PrFieldEdit;
 
@@ -75,6 +75,8 @@ impl ReviewVerdict {
 pub struct PullRequest {
     pub number: u64,
     pub title: String,
+    pub state: IssueState,
+    pub comment_count: usize,
     /// Head (source) branch name, without the remote prefix.
     pub head: String,
     /// Head commit SHA (`headRefOid`). Passed to `gh pr merge` as
@@ -138,6 +140,8 @@ impl Default for PullRequest {
         Self {
             number: 0,
             title: String::new(),
+            state: IssueState::Unknown,
+            comment_count: 0,
             head: String::new(),
             head_sha: String::new(),
             base: String::new(),
@@ -534,12 +538,16 @@ pub struct Issue {
 /// The four mutually-exclusive Issue navigator filters. The selected value is
 /// session-owned UI intent; membership itself is a pure projection of the
 /// latest successful list read and the process-wide viewer login cache.
+///
+/// The default is [`Self::RecentlyUpdated`]: it is the only filter whose
+/// membership does not depend on a viewer login, so a fresh session shows the
+/// list it actually read instead of an empty pane while the login resolves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IssueListTab {
-    #[default]
     AssignedToMe,
     CreatedByMe,
     MentioningMe,
+    #[default]
     RecentlyUpdated,
 }
 
@@ -560,7 +568,7 @@ impl IssueListTab {
         }
     }
 
-    fn accepts(self, issue: &Issue, viewer: Option<&str>, mentioned: &[u64]) -> bool {
+    pub fn accepts(self, issue: &Issue, viewer: Option<&str>, mentioned: &[u64]) -> bool {
         match self {
             Self::AssignedToMe => viewer.is_some_and(|viewer| {
                 issue
@@ -592,25 +600,6 @@ pub struct IssueListSnapshot {
     pub mentioned_numbers: Vec<u64>,
     pub base_repo: String,
     pub next_cursor: Option<String>,
-}
-
-/// Filter and sort the existing open-Issue list without another fetch.
-pub fn filtered_issues<'a>(
-    issues: &'a [Issue],
-    tab: IssueListTab,
-    viewer: Option<&str>,
-    mentioned: &[u64],
-) -> Vec<&'a Issue> {
-    let mut filtered: Vec<&Issue> = issues
-        .iter()
-        .filter(|issue| tab.accepts(issue, viewer, mentioned))
-        .collect();
-    filtered.sort_by(|a, b| {
-        b.updated_at
-            .cmp(&a.updated_at)
-            .then_with(|| b.number.cmp(&a.number))
-    });
-    filtered
 }
 
 #[cfg(test)]
@@ -649,9 +638,11 @@ mod issue_tests {
             issue(2, "bob", &["alice"], "2026-01-03T00:00:00Z"),
             issue(3, "ALICE", &[], "2026-01-02T00:00:00Z"),
         ];
-        let numbers = |tab| {
-            filtered_issues(&issues, tab, Some("Alice"), &[1])
+        let numbers = |tab: IssueListTab| {
+            crate::list_filter::apply_issues(&issues, &Default::default())
                 .into_iter()
+                .map(|index| &issues[index])
+                .filter(|issue| tab.accepts(issue, Some("Alice"), &[1]))
                 .map(|issue| issue.number)
                 .collect::<Vec<_>>()
         };
@@ -659,7 +650,17 @@ mod issue_tests {
         assert_eq!(numbers(IssueListTab::CreatedByMe), vec![3, 1]);
         assert_eq!(numbers(IssueListTab::MentioningMe), vec![1]);
         assert_eq!(numbers(IssueListTab::RecentlyUpdated), vec![2, 3, 1]);
-        assert!(filtered_issues(&issues, IssueListTab::AssignedToMe, None, &[]).is_empty());
+        assert!(issues
+            .iter()
+            .all(|issue| !IssueListTab::AssignedToMe.accepts(issue, None, &[])));
+    }
+
+    #[test]
+    fn default_tab_shows_every_issue_without_a_viewer_login() {
+        let tab = IssueListTab::default();
+        assert_eq!(tab, IssueListTab::RecentlyUpdated);
+        let issue = issue(7, "alice", &[], "2026-01-01T00:00:00Z");
+        assert!(tab.accepts(&issue, None, &[]));
     }
 }
 

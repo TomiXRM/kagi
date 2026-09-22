@@ -29,7 +29,7 @@ impl KagiApp {
             // PR mode across a switch is out of scope for #643 Wave 4 S6 — the
             // tab reopens the PR. The *ownership* stays session-scoped, so B
             // never sees A's PRs.
-            ui.pr_mode = None;
+            ui.leave_pr_mode();
         }
     }
 

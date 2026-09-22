@@ -1,6 +1,8 @@
 //! Pure attention verdicts for pull-request lists.
 
-use crate::github::{CiState, Mergeable, PrDetailAvailability, PullRequest, ReviewState};
+use crate::github::{
+    CiState, IssueState, Mergeable, PrDetailAvailability, PullRequest, ReviewState,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PrAttention {
@@ -38,12 +40,19 @@ impl PullRequest {
         self.attention_with_status(mine, review_requested, PrDetailAvailability::Fresh)
     }
 
+    /// A closed PR is never actionable: nothing about its draft flag, CI,
+    /// reviews or mergeability can be acted on any more, and stale L2 detail
+    /// for it is not worth a Pending badge either. Everything below this
+    /// short-circuit therefore describes open (or not-yet-known) PRs only.
     pub fn attention_with_status(
         &self,
         mine: bool,
         review_requested: bool,
         status: PrDetailAvailability,
     ) -> (PrAttention, PrReason) {
+        if self.state == IssueState::Closed {
+            return (PrAttention::Dormant, PrReason::None);
+        }
         if mine {
             if self.review == ReviewState::ChangesRequested {
                 return (PrAttention::NeedsYou, PrReason::ChangesRequested);
@@ -182,6 +191,61 @@ mod tests {
         assert_eq!(pr.attention(false, false).0, PrAttention::Dormant);
         assert_eq!(
             pr.attention(false, true),
+            (PrAttention::Waiting, PrReason::ReviewRequested)
+        );
+    }
+
+    #[test]
+    fn closed_prs_are_dormant_whatever_the_l1_signals_say() {
+        let mut closed = pr();
+        closed.state = IssueState::Closed;
+        closed.review = ReviewState::ChangesRequested;
+        closed.mergeable = Mergeable::Conflicting;
+        closed.ci = CiState::Failure;
+        closed.checks = vec![check(CiState::Failure)];
+        for status in [
+            PrDetailAvailability::Fresh,
+            PrDetailAvailability::Missing,
+            PrDetailAvailability::Loading,
+            PrDetailAvailability::Stale,
+        ] {
+            for (mine, review_requested) in [(true, false), (false, true), (false, false)] {
+                assert_eq!(
+                    closed.attention_with_status(mine, review_requested, status),
+                    (PrAttention::Dormant, PrReason::None)
+                );
+            }
+        }
+
+        let mut merged_ready = pr();
+        merged_ready.state = IssueState::Closed;
+        merged_ready.review = ReviewState::Approved;
+        assert_eq!(
+            merged_ready.attention(true, false),
+            (PrAttention::Dormant, PrReason::None)
+        );
+
+        let mut draft = pr();
+        draft.state = IssueState::Closed;
+        draft.is_draft = true;
+        assert_eq!(draft.attention(true, false).0, PrAttention::Dormant);
+    }
+
+    #[test]
+    fn open_prs_keep_their_verdicts() {
+        let mut open = pr();
+        open.state = IssueState::Open;
+        assert_eq!(
+            open.attention(true, false),
+            (PrAttention::Ready, PrReason::ReadyToMerge)
+        );
+        open.mergeable = Mergeable::Conflicting;
+        assert_eq!(
+            open.attention(true, false),
+            (PrAttention::NeedsYou, PrReason::Conflicting)
+        );
+        assert_eq!(
+            open.attention(false, true),
             (PrAttention::Waiting, PrReason::ReviewRequested)
         );
     }

@@ -22,7 +22,7 @@ impl KagiApp {
         // as dead. Close everything Analyze has to displace.
         self.close_file_history();
         self.with_ui(|ui| ui.branch_cleanup_open = false);
-        self.with_ui(|ui| ui.pr_mode = None);
+        self.with_ui(|ui| ui.leave_pr_mode());
         let head = self.view().head_oid.clone();
         // HEAD is the cache key inside this owner. A stale cache is discarded;
         // another session's cache is never consulted.

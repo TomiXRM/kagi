@@ -171,8 +171,9 @@ pub fn scenario_oplog_append_failure_is_visible(cx: &mut VisualTestAppContext) {
 /// so `gh` refuses locally: the transport fails fast and offline, and the
 /// lease lifecycle — not the merge result — is the oracle.
 fn unmergeable_pr() -> kagi_domain::github::PullRequest {
-    use kagi_domain::github::{CiState, Mergeable, PullRequest, ReviewState};
+    use kagi_domain::github::{CiState, IssueState, Mergeable, PullRequest, ReviewState};
     PullRequest {
+        state: IssueState::Open,
         number: 7,
         title: "a merge that never reaches GitHub".into(),
         head: "feature".into(),

@@ -19,6 +19,7 @@ fn issue_list_task(
     repo: PathBuf,
     base_repo: Option<String>,
     cursor: Option<String>,
+    state: kagi_domain::list_filter::StateFilter,
     cx: &mut Context<KagiApp>,
 ) -> gpui::Task<Result<kagi_domain::github::IssueListSnapshot, kagi_git::github::PrFetchError>> {
     #[cfg(feature = "gui-e2e")]
@@ -26,7 +27,7 @@ fn issue_list_task(
         return task;
     }
     cx.background_executor().spawn(async move {
-        kagi_git::github::list_issues(&repo, base_repo.as_deref(), cursor.as_deref())
+        kagi_git::github::list_issues(&repo, base_repo.as_deref(), cursor.as_deref(), state)
     })
 }
 
@@ -48,14 +49,18 @@ impl KagiApp {
         repo: PathBuf,
         cx: &mut Context<Self>,
     ) {
-        let (generation, frozen_base_repo) = {
+        // #753: `begin_github_issues_request` froze the state this list is
+        // fetched with, so the task is built from that frozen value rather
+        // than re-reading the strip — the two cannot disagree.
+        let (generation, frozen_base_repo, state) = {
             let Some(ui) = self.ui.get_mut(&owner) else {
                 return;
             };
             let frozen_base_repo = ui.issue_composer.base_repo.clone();
-            (ui.begin_github_issues_request(), frozen_base_repo)
+            let generation = ui.begin_github_issues_request();
+            (generation, frozen_base_repo, ui.github_issues_request_state)
         };
-        let task = issue_list_task(repo, frozen_base_repo, None, cx);
+        let task = issue_list_task(repo, frozen_base_repo, None, state, cx);
         cx.notify();
         cx.spawn(async move |this, acx| {
             let result = task.await;
@@ -80,14 +85,18 @@ impl KagiApp {
         repo: PathBuf,
         cx: &mut Context<Self>,
     ) {
-        let Some((generation, cursor, base_repo)) = self
-            .ui
-            .get_mut(&owner)
-            .and_then(TabUiState::begin_github_issues_page_request)
-        else {
+        // The page extends the rows this session already holds, so it is
+        // fetched with the state those rows answered (#753), not with whatever
+        // the strip points at now; the refresh that follows a chip change is
+        // what replaces the collection.
+        let Some((generation, cursor, base_repo, state)) = self.ui.get_mut(&owner).and_then(|ui| {
+            let state = ui.github_issues_request_state;
+            ui.begin_github_issues_page_request()
+                .map(|(generation, cursor, base_repo)| (generation, cursor, base_repo, state))
+        }) else {
             return;
         };
-        let task = issue_list_task(repo, Some(base_repo), Some(cursor.clone()), cx);
+        let task = issue_list_task(repo, Some(base_repo), Some(cursor.clone()), state, cx);
         cx.notify();
         cx.spawn(async move |this, acx| {
             let result = task.await;
@@ -141,8 +150,44 @@ impl KagiApp {
         tab: kagi_domain::github::IssueListTab,
         cx: &mut Context<Self>,
     ) {
-        self.with_ui(|ui| ui.github_issue_tab = tab);
+        self.with_ui(|ui| {
+            ui.github_issue_tab = tab;
+            ui.github_issues_list.reset(0);
+        });
         cx.notify();
+    }
+
+    /// #753: replace the Issue-list filter of the session on screen.
+    ///
+    /// The state predicate is the only one the *fetch* carries, so changing it
+    /// is a different list and restarts the request (which re-freezes
+    /// `github_issues_request_state` and invalidates the previous state's
+    /// in-flight page). Every other predicate — labels, author, title, sort —
+    /// is applied by the renderer to the rows this session already holds, so
+    /// it costs a repaint and no API call. Going through here is what keeps
+    /// the chip and the rows describing the same collection.
+    pub(super) fn set_github_issue_filter(
+        &mut self,
+        filter: kagi_domain::list_filter::IssueFilter,
+        cx: &mut Context<Self>,
+    ) {
+        let (Some(owner), Some(repo)) = (self.active_session(), self.repo_path.clone()) else {
+            return;
+        };
+        let Some(ui) = self.ui.get_mut(&owner) else {
+            return;
+        };
+        if ui.github_issue_filter == filter {
+            return;
+        }
+        let refetch = ui.github_issue_filter.common.state != filter.common.state;
+        ui.github_issue_filter = filter;
+        ui.github_issues_list.reset(0);
+        if refetch {
+            self.refresh_github_issues_for(owner, repo, cx);
+        } else {
+            cx.notify();
+        }
     }
 
     pub(super) fn return_to_issues_home(&mut self, window: &mut Window, cx: &mut Context<Self>) {

@@ -488,9 +488,18 @@ pub(crate) fn plan_pr_merge(
             }));
         }
         if let Some(branch) = &local_branch {
-            warnings.push(PlanNote::Github(GithubNote::DeletesLocalBranch {
-                branch: branch.name.clone(),
-                tip: branch.tip.clone(),
+            warnings.push(PlanNote::Github(match &branch.keep_reason {
+                // Plan time already knows the deletion would be refused, so
+                // the modal says the branch stays rather than promising a
+                // deletion whose receipt then contradicts it (#705 review P2).
+                Some(reason) => GithubNote::KeepsLocalBranch {
+                    branch: branch.name.clone(),
+                    reason: reason.clone(),
+                },
+                None => GithubNote::DeletesLocalBranch {
+                    branch: branch.name.clone(),
+                    tip: branch.tip.clone(),
+                },
             }));
         }
     } else {
@@ -519,8 +528,6 @@ pub(crate) fn plan_pr_merge(
         recovery: Some(PlanRecovery {
             kind: RecoveryKind::Github(GithubRecovery::MergePr {
                 number: pr.number,
-                // Freeze the *whole* promise: a merge that also deletes the
-                // head branch is not confirmed by the merge alone (#701).
                 // Execution and reconciliation use this exact repository
                 // identity, never a mutable local remote name.
                 base_repo: pr.base_repo.clone(),

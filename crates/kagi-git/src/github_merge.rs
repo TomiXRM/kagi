@@ -396,10 +396,11 @@ pub fn merge_args(
 /// callback is presentation-only.
 ///
 /// ADR-0196 Wave 3: the returned `result` **follows the receipt**, not the raw
-/// `gh` exit. A merge the server confirms is `Ok` even when `gh` exited
-/// non-zero, and a merge nobody can confirm or refute is
+/// `gh` exit. A merge nobody can confirm or refute is
 /// [`GitError::TerminationUnknown`] — so `apply` keeps the write lease and
-/// parks a reconcile entry instead of releasing a merge that may be in flight.
+/// parks a reconcile entry instead of releasing a merge that may be in
+/// flight. A merge the server confirms while `gh` failed is *partial*: it
+/// happened, and the words that describe what did not are kept (#705 review).
 pub fn merge_pr(
     workdir: &Path,
     number: u64,
@@ -411,74 +412,22 @@ pub fn merge_pr(
     // The identity the plan froze addresses both the mutation and the re-read,
     // so they cannot end up talking about different repositories (#701 review 4).
     let base_repo = frozen_base_repo(plan);
-    let approved_request = matches!(
-        plan.recovery.as_ref().map(|r| &r.kind),
-        Some(RecoveryKind::Github(kagi_domain::plan_note::GithubRecovery::MergePr {
-            number: approved_number, delete_branch: approved_delete, ..
-        })) if *approved_number == number && approved_delete.is_some() == delete_branch
-    );
-    if !approved_request
-        || !plan.blockers.is_empty()
-        || (delete_branch && (base_repo.is_empty() || frozen_local_branch(plan).is_none()))
-    {
-        let reason = "merge plan has blockers or no frozen local deletion approval";
-        let entry = crate::oplog::OpLogEntry::new(
-            "pr-merge",
-            workdir.display().to_string(),
-            plan.current.clone(),
-            crate::oplog::OpOutcome::Refused {
-                blockers: vec![reason.into()],
-            },
-        )
-        .with_worktree(Some(workdir.display().to_string()));
-        return crate::backend::recording::RunReport {
-            result: Err(GitError::Other(reason.into())),
-            recording: crate::backend::recording::finalize(entry),
-            stash: None,
-        };
+    if !merge_is_approved(plan, number, delete_branch, &base_repo) {
+        return refused_report(workdir, plan);
     }
     let result = merge_pr_transport(workdir, &base_repo, number, method, delete_branch, head_sha);
-    // gh exit zero can also mean queued. Never delete the local branch until
-    // GitHub confirms the merge itself, even when the command succeeded.
+    // gh exit zero can also mean *queued*, and a non-zero exit does not mean
+    // "not merged" — so the server is asked whenever its answer decides
+    // anything. It decides nothing only when gh succeeded and no local
+    // cleanup was promised.
     let merged = if result.is_ok() && !delete_branch {
         Some(true)
     } else {
         pr_merged_on_server(workdir, &base_repo, number)
     };
-    let after = StateSummary {
-        head: plan.predicted.head.clone(),
-        dirty: format!("{} (head {head_sha})", plan.predicted.dirty),
-    };
-    let mut outcome = match (merged, &result) {
-        (Some(true), Err(error)) if delete_branch => crate::oplog::OpOutcome::Partial {
-            after: after.clone(),
-            error: format!("merged; gh failed after the merge (branch deletion unconfirmed): {error}"),
-        },
-        (Some(true), _) => crate::oplog::OpOutcome::Success { after: after.clone() },
-        (Some(false), Err(error)) => crate::oplog::OpOutcome::Failed { error: error.to_string() },
-        _ => crate::oplog::OpOutcome::Unknown {
-            after: StateSummary {
-                head: plan.predicted.head.clone(),
-                dirty: format!("#{number} state unconfirmed (head {head_sha})"),
-            },
-            evidence: format!(
-                "merge not confirmed by `gh pr view --json mergedAt` (transport: {result:?}); do not retry"
-            ),
-        },
-    };
-    let mut backup_refs = Vec::new();
-    let local_branch = frozen_local_branch(plan)
-        .filter(|_| merged == Some(true) && delete_branch)
-        .map(|branch| {
-            finish_local_cleanup(
-                workdir,
-                plan,
-                branch,
-                head_sha,
-                &mut outcome,
-                &mut backup_refs,
-            )
-        });
+    let mut outcome = merge_outcome(plan, number, head_sha, merged, &result);
+    let local = local_half(workdir, plan, head_sha, delete_branch, merged, &result);
+    compose_local_half(&mut outcome, &local);
     let repo = workdir.display().to_string();
     // The receipt decides. `detail` keeps `gh`'s own words for the UI.
     let detail = match &result {
@@ -490,13 +439,13 @@ pub fn merge_pr(
             number,
             detail,
             confirmed: true,
-            local_branch,
+            local_branch: local.outcome,
         }),
         crate::oplog::OpOutcome::Partial { error, .. } => Ok(crate::OperationOutcome::PrMerge {
             number,
             detail: error.clone(),
             confirmed: false,
-            local_branch,
+            local_branch: local.outcome,
         }),
         // Both `gh` invocations exited — what is unknown is the *repository*
         // state, not the child. `Stopped` says so, so the lease is released at
@@ -511,11 +460,176 @@ pub fn merge_pr(
     let mut entry =
         crate::oplog::OpLogEntry::new("pr-merge", repo.clone(), plan.current.clone(), outcome)
             .with_worktree(Some(repo));
-    entry.backup_refs = backup_refs;
+    entry.backup_refs = local.backup_refs;
     crate::backend::recording::RunReport {
         result,
         recording: crate::backend::recording::finalize(entry),
         stash: None,
+    }
+}
+
+/// Is this exactly the merge the user approved, deletion promise included?
+fn merge_is_approved(
+    plan: &OperationPlan,
+    number: u64,
+    delete_branch: bool,
+    base_repo: &str,
+) -> bool {
+    let approved_request = matches!(
+        plan.recovery.as_ref().map(|r| &r.kind),
+        Some(RecoveryKind::Github(kagi_domain::plan_note::GithubRecovery::MergePr {
+            number: approved_number, delete_branch: approved_delete, ..
+        })) if *approved_number == number && approved_delete.is_some() == delete_branch
+    );
+    approved_request
+        && plan.blockers.is_empty()
+        && (!delete_branch || (!base_repo.is_empty() && frozen_local_branch(plan).is_some()))
+}
+
+/// A merge that was never approved in this shape is not attempted at all.
+fn refused_report(workdir: &Path, plan: &OperationPlan) -> crate::backend::recording::RunReport {
+    let reason = "merge plan has blockers or no frozen local deletion approval";
+    let entry = crate::oplog::OpLogEntry::new(
+        "pr-merge",
+        workdir.display().to_string(),
+        plan.current.clone(),
+        crate::oplog::OpOutcome::Refused {
+            blockers: vec![reason.into()],
+        },
+    )
+    .with_worktree(Some(workdir.display().to_string()));
+    crate::backend::recording::RunReport {
+        result: Err(GitError::Other(reason.into())),
+        recording: crate::backend::recording::finalize(entry),
+        stash: None,
+    }
+}
+
+/// The receipt for the merge itself, before the local half is composed in.
+fn merge_outcome(
+    plan: &OperationPlan,
+    number: u64,
+    head_sha: &str,
+    merged: Option<bool>,
+    result: &Result<String, GitError>,
+) -> crate::oplog::OpOutcome {
+    use crate::oplog::OpOutcome;
+    let after = |dirty: String| StateSummary {
+        head: plan.predicted.head.clone(),
+        dirty,
+    };
+    match (merged, result) {
+        // The server says merged and `gh` says error. `mergedAt` is a fact,
+        // not a clock: it cannot say whether the error happened before or
+        // after the merge landed, so the receipt claims neither — it states
+        // both halves. Partial in every case, fork or not: the merge is not
+        // retryable, and gh's words are the only account of what did not
+        // finish, so they are kept in the error *and* in the state summary
+        // (#705 review P3).
+        (Some(true), Err(error)) => OpOutcome::Partial {
+            after: after(format!(
+                "{} (head {head_sha}); gh reported an error: {error}",
+                plan.predicted.dirty
+            )),
+            error: format!("merge is confirmed; gh reported an error: {error}"),
+        },
+        (Some(true), Ok(_)) => OpOutcome::Success {
+            after: after(format!("{} (head {head_sha})", plan.predicted.dirty)),
+        },
+        // gh accepted the submission and GitHub queued it. Both halves of that
+        // are *known*, so it is a success whose state summary says so — not an
+        // unknown termination that parks a reconcile entry and holds the
+        // repository's write scope until the queue drains (#705 review P2).
+        (Some(false), Ok(_)) => OpOutcome::Success {
+            after: after(format!("#{number} queued for merge (head {head_sha})")),
+        },
+        (Some(false), Err(error)) => OpOutcome::Failed {
+            error: error.to_string(),
+        },
+        (None, _) => OpOutcome::Unknown {
+            after: after(format!("#{number} state unconfirmed (head {head_sha})")),
+            evidence: format!(
+                "merge not confirmed by `gh pr view --json mergedAt` (transport: {result:?}); do not retry"
+            ),
+        },
+    }
+}
+
+/// What became of the local head branch, and the recovery refs it wrote.
+#[derive(Default)]
+struct LocalHalf {
+    outcome: Option<kagi_domain::operation::PrMergeLocalOutcome>,
+    backup_refs: Vec<String>,
+}
+
+/// Account for the promised local deletion — and run it only when the merge
+/// is confirmed *and* `gh` authorized it by exiting zero.
+///
+/// The `--match-head-commit` guarantee reaches this far (#705 review): a
+/// `mergedAt` timestamp does not say that the approved head is what landed,
+/// so a `gh` that reported an error leaves the branch untouched rather than
+/// deleting a tip whose merge nothing attests to. Nothing local is attempted
+/// for a queued, failed or unconfirmed merge either.
+fn local_half(
+    workdir: &Path,
+    plan: &OperationPlan,
+    head_sha: &str,
+    delete_branch: bool,
+    merged: Option<bool>,
+    result: &Result<String, GitError>,
+) -> LocalHalf {
+    use kagi_domain::operation::PrMergeLocalOutcome;
+    use kagi_domain::plan_note::PrMergeLocalReason;
+    let Some(branch) = frozen_local_branch(plan).filter(|_| delete_branch) else {
+        return LocalHalf::default();
+    };
+    let kept = |reason| LocalHalf {
+        outcome: Some(PrMergeLocalOutcome::Kept {
+            name: branch.name.clone(),
+            reason,
+        }),
+        backup_refs: Vec::new(),
+    };
+    match (merged, result) {
+        // Queued: a known successful submission with nothing merged yet, so
+        // the branch is explicitly kept rather than silently skipped.
+        (Some(false), Ok(_)) => return kept(PrMergeLocalReason::Queued),
+        (Some(true), _) => {}
+        // Nothing merged, or nobody could say: the promise never came due.
+        _ => return LocalHalf::default(),
+    }
+    if let Some(reason) = &branch.keep_reason {
+        // The approval said the branch stays. It is never eligible for
+        // cleanup, even if the blocker cleared in the meantime: what the user
+        // confirmed is what happens.
+        return kept(reason.clone());
+    }
+    if let Err(error) = result {
+        return LocalHalf {
+            outcome: Some(PrMergeLocalOutcome::NotDeleted {
+                name: branch.name.clone(),
+                reason: PrMergeLocalReason::DeletionUnauthorized {
+                    detail: error.to_string(),
+                },
+            }),
+            backup_refs: Vec::new(),
+        };
+    }
+    let mut backup_refs = Vec::new();
+    let outcome = crate::Backend::open(workdir)
+        .and_then(|backend| {
+            backend.execute_pr_merge_local_branch(branch, head_sha, &mut backup_refs)
+        })
+        .unwrap_or_else(|error| PrMergeLocalOutcome::NotDeleted {
+            name: branch.name.clone(),
+            reason: match error {
+                GitError::Blocked(note) => PrMergeLocalReason::Plan(note),
+                error => PrMergeLocalReason::Detail(error.to_string()),
+            },
+        });
+    LocalHalf {
+        outcome: Some(outcome),
+        backup_refs,
     }
 }
 
@@ -529,56 +643,37 @@ fn frozen_local_branch(plan: &OperationPlan) -> Option<&kagi_domain::plan::PrMer
     }
 }
 
-/// Compose cleanup into the merge's receipt; never append a second delete receipt.
-fn finish_local_cleanup(
-    workdir: &Path,
-    plan: &OperationPlan,
-    branch: &kagi_domain::plan::PrMergeLocalBranch,
-    head_sha: &str,
-    outcome: &mut crate::oplog::OpOutcome,
-    backup_refs: &mut Vec<String>,
-) -> kagi_domain::operation::PrMergeLocalOutcome {
+/// Fold the local half into the merge's receipt; never append a second one.
+///
+/// A *kept* branch leaves the receipt as it is — the plan said so, or the
+/// merge was queued, and neither is a failure. Only a deletion that was
+/// promised and did not happen turns the receipt partial.
+fn compose_local_half(outcome: &mut crate::oplog::OpOutcome, local: &LocalHalf) {
     use crate::oplog::OpOutcome;
     use kagi_domain::operation::PrMergeLocalOutcome;
-    let local = crate::Backend::open(workdir)
-        .and_then(|backend| backend.execute_pr_merge_local_branch(branch, head_sha, backup_refs))
-        .unwrap_or_else(|error| PrMergeLocalOutcome::NotDeleted {
-            name: branch.name.clone(),
-            reason: error.to_string(),
-        });
-    let note = local.note().message_en();
+    let Some(local_outcome) = &local.outcome else {
+        return;
+    };
+    let note = local_outcome.note().message_en();
     let after = match outcome {
         OpOutcome::Success { after } | OpOutcome::Partial { after, .. } => after,
-        _ => unreachable!("cleanup only follows a confirmed merge"),
+        // Nothing local is attempted for a failed or unconfirmed merge.
+        _ => return,
     };
     after.dirty.push_str("; ");
     after.dirty.push_str(&note);
-    for reference in backup_refs {
+    for reference in &local.backup_refs {
         after.dirty.push_str("; restorable from backup ref ");
         after.dirty.push_str(reference);
     }
-    if matches!(local, PrMergeLocalOutcome::NotDeleted { .. }) {
+    if matches!(local_outcome, PrMergeLocalOutcome::NotDeleted { .. }) {
         let after = after.clone();
         let error = match outcome {
             OpOutcome::Partial { error, .. } => format!("{error}; {note}"),
             _ => note,
         };
         *outcome = OpOutcome::Partial { after, error };
-    } else if matches!(
-        plan.recovery.as_ref().map(|r| &r.kind),
-        Some(RecoveryKind::Github(
-            kagi_domain::plan_note::GithubRecovery::MergePr {
-                cross_repository: true,
-                ..
-            }
-        ))
-    ) {
-        // The fork has no promised remote deletion left to verify.
-        *outcome = OpOutcome::Success {
-            after: after.clone(),
-        };
     }
-    local
 }
 
 /// Did GitHub actually merge the PR? `None` means the question could not be

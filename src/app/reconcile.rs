@@ -303,22 +303,6 @@ fn observe_expectation(
                 matched,
             ))
         }
-        RemoteExpectation::LocalBranch { branch } => {
-            let backend = kagi_git::Backend::open(path).map_err(|e| e.to_string())?;
-            let live = backend
-                .read_pr_merge_local_branch(branch)
-                .map_err(|e| e.to_string())?;
-            let matched = live.is_none();
-            Ok((
-                format!(
-                    "local refs/heads/{} approved={} expected=absent live={} confirmed={matched}",
-                    branch.name,
-                    branch.tip.as_deref().unwrap_or("absent"),
-                    live.as_deref().unwrap_or("absent"),
-                ),
-                matched,
-            ))
-        }
     }
 }
 

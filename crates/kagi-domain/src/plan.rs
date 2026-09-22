@@ -382,6 +382,13 @@ pub struct PrMergeLocalBranch {
     /// HEAD at plan time — a branch that became checked out afterwards is not
     /// the state the user approved.
     pub head: Head,
+    /// Set when the approval **keeps** the branch: plan time already knows
+    /// the delete would be refused (checked out somewhere, or not at the PR
+    /// head), so the modal says so and nothing local is promised. A branch
+    /// frozen with a `keep_reason` is never eligible for cleanup — the reason
+    /// travels to the receipt instead of being rediscovered as a failure
+    /// (#705 review P2: plan and receipt must agree).
+    pub keep_reason: Option<crate::plan_note::PrMergeLocalReason>,
 }
 
 /// A complete plan describing an operation, its blockers and warnings.

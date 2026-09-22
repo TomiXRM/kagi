@@ -42,15 +42,31 @@ pub enum GithubNote {
     /// already absent locally, which is a promise about *that* branch — a
     /// same-named branch created later is never deleted.
     DeletesLocalBranch { branch: String, tip: Option<String> },
+    /// warning (#705) — plan time already knows the local branch will be
+    /// kept, so the plan says so instead of promising a deletion it would
+    /// then refuse (#705 review P2: plan and receipt must agree).
+    KeepsLocalBranch {
+        branch: String,
+        reason: PrMergeLocalReason,
+    },
     /// receipt (#705) — the frozen local branch was deleted; `tip` is the OID
     /// its recovery ref retains.
     LocalBranchDeleted { name: String, tip: String },
     /// receipt (#705) — the local branch was already gone, so the promise was
     /// kept by absence and nothing was written.
     LocalBranchAbsent { name: String },
-    /// receipt (#705) — the merge succeeded and the local branch was kept;
-    /// `reason` says why (checked out, moved since planning, delete failed).
-    LocalBranchNotDeleted { reason: String },
+    /// receipt (#705) — the approval itself kept the branch: the plan said so
+    /// up front, or the merge was only queued. Nothing was attempted and
+    /// nothing failed, so this belongs to a **successful** receipt — which is
+    /// what separates it from [`Self::LocalBranchNotDeleted`].
+    LocalBranchKept {
+        name: String,
+        reason: PrMergeLocalReason,
+    },
+    /// receipt (#705) — the merge landed but the promised local deletion did
+    /// not happen: the branch or HEAD moved under the approval, or the delete
+    /// itself failed. A partial receipt, never a merge to retry.
+    LocalBranchNotDeleted { reason: PrMergeLocalReason },
     /// blocker (#351) — the working-tree file the suggestion anchors to is
     /// gone, or the anchored range is out of bounds.
     SuggestionRangeGone { path: String },
@@ -125,14 +141,22 @@ impl GithubNote {
                     branch
                 ),
             },
+            GithubNote::KeepsLocalBranch { branch, reason } => format!(
+                "The local branch '{}' is kept, not deleted: {}",
+                branch,
+                reason.message_en()
+            ),
             GithubNote::LocalBranchDeleted { name, tip } => {
                 format!("local branch deleted: {}@{}", name, tip)
             }
             GithubNote::LocalBranchAbsent { name } => {
                 format!("local branch already absent: {}", name)
             }
+            GithubNote::LocalBranchKept { name, reason } => {
+                format!("local branch kept: {} ({})", name, reason.message_en())
+            }
             GithubNote::LocalBranchNotDeleted { reason } => {
-                format!("local branch not deleted: {}", reason)
+                format!("local branch not deleted: {}", reason.message_en())
             }
             GithubNote::SuggestionRangeGone { path } => format!(
                 "The lines '{}' was reviewed at no longer exist. Re-open the review against the current file.",
@@ -160,6 +184,67 @@ impl GithubNote {
                 "Nothing on #{} would change. Pick a reviewer, assignee or label to add or remove first.",
                 number
             ),
+        }
+    }
+}
+
+/// Why a PR merge's local head branch was **not** deleted (#705 review P3).
+///
+/// Typed rather than a flattened English sentence: the delete-branch family
+/// already refuses in a [`PlanNote`](crate::plan_note::PlanNote) that knows
+/// how to render itself in every language (#606), and the reasons kagi itself
+/// decides are a closed set. Flattening any of them here would put English
+/// inside a Japanese notice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrMergeLocalReason {
+    /// The delete-branch family refuses this branch, in its own words:
+    /// checked out here or in a linked worktree, detached at the tip, … .
+    /// Boxed because `PlanNote` contains this type.
+    Plan(Box<crate::plan_note::PlanNote>),
+    /// The local branch does not point at the PR head that was merged, so
+    /// deleting it would drop commits the merge never saw.
+    NotAtPrHead { tip: String, head: String },
+    /// `gh` accepted the merge and GitHub queued it: a known, successful
+    /// submission with nothing merged yet, so there is nothing to clean up.
+    Queued,
+    /// The branch moved between approval and execution.
+    Changed,
+    /// HEAD moved between approval and execution.
+    HeadChanged,
+    /// The approval names a worktree identity that is not the one open here.
+    IdentityChanged,
+    /// The PR reads as merged, but `gh` reported an error, so the transport
+    /// never authorized the local deletion. `mergedAt` says a merge happened;
+    /// it does not say the approved head is what landed, and it cannot order
+    /// the error against the merge — so the local half is left alone and the
+    /// `--match-head-commit` guarantee holds for it too (#705 review).
+    DeletionUnauthorized { detail: String },
+    /// A failure with no typed shape: the delete family's own error text.
+    Detail(String),
+}
+
+impl PrMergeLocalReason {
+    /// Sole English renderer; a sentence fragment, quoted by the notes above.
+    pub fn message_en(&self) -> String {
+        match self {
+            Self::Plan(note) => note.message_en(),
+            Self::NotAtPrHead { tip, head } => format!(
+                "the local branch is at {}, not the merged PR head {}",
+                tip, head
+            ),
+            Self::Queued => {
+                "GitHub queued the merge, so nothing has been merged yet".to_string()
+            }
+            Self::Changed => "the branch moved after approval".to_string(),
+            Self::HeadChanged => "HEAD moved after approval".to_string(),
+            Self::IdentityChanged => {
+                "this is not the repository the approval named".to_string()
+            }
+            Self::DeletionUnauthorized { detail } => format!(
+                "gh reported an error, so the transport did not authorize deleting the local branch: {}",
+                detail
+            ),
+            Self::Detail(detail) => detail.clone(),
         }
     }
 }
@@ -361,11 +446,57 @@ mod tests {
             "local branch already absent: feat/x"
         );
         assert_eq!(
-            GithubNote::LocalBranchNotDeleted {
-                reason: "it is checked out".into()
+            GithubNote::LocalBranchKept {
+                name: "feat/x".into(),
+                reason: PrMergeLocalReason::Queued,
             }
             .message_en(),
-            "local branch not deleted: it is checked out"
+            "local branch kept: feat/x (GitHub queued the merge, so nothing has been merged yet)"
+        );
+        assert_eq!(
+            GithubNote::LocalBranchNotDeleted {
+                reason: PrMergeLocalReason::Changed,
+            }
+            .message_en(),
+            "local branch not deleted: the branch moved after approval"
+        );
+    }
+
+    /// A blocker the delete-branch family raised keeps *its* words, at every
+    /// nesting depth — the flattening this replaces put English into the JA
+    /// notice (#705 review P3).
+    #[test]
+    fn a_kept_branch_quotes_the_delete_familys_own_note() {
+        let blocker = crate::plan_note::PlanNote::Branch(
+            crate::plan_note::BranchNote::DeleteBranchCheckedOut {
+                name: "feat/x".into(),
+                path: "/w/other".into(),
+            },
+        );
+        let reason = PrMergeLocalReason::Plan(Box::new(blocker.clone()));
+        assert_eq!(reason.message_en(), blocker.message_en());
+        assert_eq!(
+            GithubNote::KeepsLocalBranch {
+                branch: "feat/x".into(),
+                reason,
+            }
+            .message_en(),
+            format!(
+                "The local branch 'feat/x' is kept, not deleted: {}",
+                blocker.message_en()
+            )
+        );
+        assert_eq!(
+            PrMergeLocalReason::NotAtPrHead {
+                tip: "a".repeat(40),
+                head: "b".repeat(40),
+            }
+            .message_en(),
+            format!(
+                "the local branch is at {}, not the merged PR head {}",
+                "a".repeat(40),
+                "b".repeat(40)
+            )
         );
     }
 

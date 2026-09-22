@@ -226,17 +226,19 @@ fn a_failed_gh_whose_reread_says_merged_is_not_recorded_as_a_failure() {
         matches!(
             report.result,
             Ok(kagi_git::OperationOutcome::PrMerge {
-                confirmed: true,
+                confirmed: false,
                 ..
             })
         ),
         "a confirmed merge must not be handed back as a failure: {:?}",
         report.result
     );
-    let OpOutcome::Success { after } = latest_outcome() else {
+    let OpOutcome::Partial { after, error } = latest_outcome() else {
         panic!("a merged PR must not be recorded as failed");
     };
     assert!(after.dirty.contains(HEAD_SHA));
+    assert!(error.contains("Head branch was modified"));
+    assert!(after.dirty.contains("Head branch was modified"));
 }
 
 #[test]
@@ -244,10 +246,8 @@ fn a_merged_pr_whose_branch_deletion_is_unproven_is_partial() {
     if !crate::test_support::run_isolated() {
         return;
     }
-    // `--delete-branch` was requested and `gh` failed after the merge landed:
-    // the merge is done, the *remote* deletion is not confirmed. Neither
-    // Success nor Failed is honest. The local half has its own answer: there
-    // is no such branch here, and the plan froze that absence (#705).
+    // A failed transport cannot authorize local cleanup even when a later
+    // read confirms the merge. The receipt preserves that transport error.
     let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let root = tempfile::tempdir().unwrap();
     let (bin, workdir, _restore) = fixture(root.path());
@@ -273,21 +273,21 @@ fn a_merged_pr_whose_branch_deletion_is_unproven_is_partial() {
         );
     };
     assert!(!confirmed, "the remote deletion was never proven");
-    assert_eq!(
-        local_branch.as_ref(),
-        Some(&kagi_domain::operation::PrMergeLocalOutcome::Absent {
-            name: "feat/x".to_string(),
-        }),
-        "a branch that was already gone is fulfilled by its absence, not by a deletion"
+    assert!(
+        matches!(
+            local_branch,
+            Some(kagi_domain::operation::PrMergeLocalOutcome::NotDeleted { .. })
+        ),
+        "the transport did not authorize cleanup"
     );
     let OpOutcome::Partial { after, error } = latest_outcome() else {
         panic!("an unconfirmed branch deletion after a merge must be partial");
     };
     assert!(after.dirty.contains(HEAD_SHA));
-    assert!(error.contains("branch deletion unconfirmed"), "{error}");
+    assert!(error.contains("Head branch was modified"), "{error}");
     assert!(
-        after.dirty.contains("local branch already absent: feat/x"),
-        "the receipt names the absence it settled for: {}",
+        after.dirty.contains("Head branch was modified"),
+        "{}",
         after.dirty
     );
 }

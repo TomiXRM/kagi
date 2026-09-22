@@ -26,10 +26,10 @@ pub struct RunRequest {
     /// Frozen at approval — the lease scope.
     pub repo: RepoId,
     pub plan: Arc<OperationPlan>,
-    /// Effects of a remote workflow, frozen at approval
-    /// (`Backend::remote_expectation`), including PR merge's local cleanup.
-    /// Empty for a local-only operation or an effect that cannot be named:
-    /// reconciliation stays unresolved rather than guessing.
+    /// Remote effects frozen at approval (`Backend::remote_expectation`).
+    /// PR merge's local cleanup never starts on an Unknown transport, so it
+    /// is not a reconciliation requirement. Empty means no observable remote
+    /// effect was named; reconciliation stays unresolved rather than guessing.
     ///
     /// A list: one operation can promise several refs, and a reconcile is
     /// confirmed only when **every** one of them is.

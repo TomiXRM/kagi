@@ -180,10 +180,6 @@ impl KagiApp {
         }
     }
 
-    pub fn set_pr_merge_modal(&mut self, m: PrMergeModal) {
-        self.replace_modal_from_user(ActiveModal::PrMerge(m));
-    }
-
     pub fn clear_pr_merge_modal(&mut self) {
         if matches!(self.active_modal, Some(ActiveModal::PrMerge(_))) {
             self.active_modal = None;

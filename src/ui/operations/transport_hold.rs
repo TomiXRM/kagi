@@ -77,6 +77,8 @@ impl KagiApp {
         use kagi_domain::{operation::PrMergeLocalOutcome, plan_note::PlanNote};
         let mut message = local_branch
             .as_ref()
+            // Routine absence is recorded, but does not need acknowledgement.
+            .filter(|local| !matches!(local, PrMergeLocalOutcome::Absent { .. }))
             .map(|local| crate::ui::i18n::plan_note_text(&PlanNote::Github(local.note())));
         if !confirmed && !matches!(local_branch, Some(PrMergeLocalOutcome::NotDeleted { .. })) {
             if let Some(message) = &mut message {

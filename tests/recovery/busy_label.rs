@@ -209,6 +209,14 @@ pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, cx| {
         app.open_pr_merge_modal(&pr, kagi_git::github::MergeMethod::Merge, false, cx);
         assert!(
+            app.pr_merge_modal().is_none(),
+            "the plan is built off the UI thread, so nothing is confirmable yet (ADR-0141)"
+        );
+        assert_eq!(app.planning, Some("merge-plan"));
+    });
+    pr_merge_local::settle_plan(cx, &app);
+    app.update(cx, |app, cx| {
+        assert!(
             app.pr_merge_modal()
                 .is_some_and(|m| m.plan.blockers.is_empty()),
             "the fixture PR must plan cleanly so the merge is actually dispatched"
@@ -264,7 +272,7 @@ pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
         "gh cannot answer here, so the merge is neither confirmed nor refuted: {:?}",
         recorded.outcome
     );
-    app.update(cx, |app, cx| {
+    let (parked, read) = app.update(cx, |app, cx| {
         // The exit: `apply` parked a reconcile entry for this operation, and
         // because the transport reported a *stopped* child it is readable
         // straight away — not a dead end.
@@ -292,7 +300,18 @@ pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
             !app.app_sessions.has_leases(),
             "a stopped child releases the lease at settlement"
         );
+        // #718: an async plan lands only in an empty slot, so whatever the
+        // settled merge left on screen is dismissed first, exactly as the
+        // user would — otherwise the plan is discarded, not shown.
+        app.clear_app_notice();
         app.open_pr_merge_modal(&pr, kagi_git::github::MergeMethod::Merge, false, cx);
+        // Planning is read-only, so a parked reconcile entry does not refuse
+        // it; the admission the *write* asks for is what refuses.
+        assert_eq!(app.planning, Some("merge-plan"));
+        (parked, read)
+    });
+    pr_merge_local::settle_plan(cx, &app);
+    app.update(cx, |app, cx| {
         app.start_pr_merge(cx);
         let refusal = match &app.status_footer {
             kagi::ui::FooterStatus::Failed(text) => text.to_string(),
@@ -330,6 +349,9 @@ pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
     e2e::arm_pr_merge_terminal(e2e::PrMergeTerminal::Failed);
     app.update(cx, |app, cx| {
         app.open_pr_merge_modal(&pr, kagi_git::github::MergeMethod::Merge, false, cx);
+    });
+    pr_merge_local::settle_plan(cx, &app);
+    app.update(cx, |app, cx| {
         app.start_pr_merge(cx);
         assert!(app.app_sessions.has_leases());
         assert!(app.open_repository(other.path().to_path_buf(), cx));
@@ -371,6 +393,9 @@ pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
     e2e::arm_pr_merge_terminal(e2e::PrMergeTerminal::Partial);
     app.update(cx, |app, cx| {
         app.open_pr_merge_modal(&pr, kagi_git::github::MergeMethod::Merge, true, cx);
+    });
+    pr_merge_local::settle_plan(cx, &app);
+    app.update(cx, |app, cx| {
         app.start_pr_merge(cx);
         // Leave the tab in the same turn: the presentation is dropped.
         assert!(app.open_repository(other.path().to_path_buf(), cx));
@@ -392,8 +417,13 @@ pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
             "a merge that happened is not awaiting reconcile"
         );
         app.switch_repo(0, cx);
-        // The hold survives the tab move: the button refuses to plan again.
+        // The hold survives the tab move: the button refuses even to *plan*
+        // again, so no background plan is started and no modal can land.
         app.open_pr_merge_modal(&pr, kagi_git::github::MergeMethod::Merge, true, cx);
+        assert_eq!(
+            app.planning, None,
+            "the hold refuses before any planning starts"
+        );
         assert!(
             app.pr_merge_modal().is_none(),
             "an unfinished merge must not be offered again, even off-tab (#501)"
@@ -415,6 +445,9 @@ pub fn scenario_pr_merge_admission_keeps_the_modal(cx: &mut VisualTestAppContext
     let pr = unmergeable_pr();
     app.update(cx, |app, cx| {
         app.open_pr_merge_modal(&pr, kagi_git::github::MergeMethod::Squash, true, cx);
+    });
+    pr_merge_local::settle_plan(cx, &app);
+    app.update(cx, |app, _| {
         assert!(app.pr_merge_modal().is_some());
     });
     // The repository stops being openable between the confirmation and the

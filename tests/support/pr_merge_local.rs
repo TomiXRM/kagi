@@ -297,8 +297,8 @@ fn a_local_branch_checked_out_elsewhere_survives_a_merge_that_landed() {
     };
     assert_eq!(name, LOCAL_BRANCH);
     assert!(
-        reason.contains("checked out"),
-        "and the reason must say why it was kept: {reason}"
+        reason.message_en().contains("checked out"),
+        "and the reason must say why it was kept: {reason:?}"
     );
     assert_eq!(
         fixture.local_tip().as_deref(),
@@ -311,7 +311,7 @@ fn a_local_branch_checked_out_elsewhere_survives_a_merge_that_landed() {
         panic!("merged with a branch still there is partial: {entry:?}");
     };
     assert!(
-        error.contains("local branch not deleted:") && error.contains(reason.as_str()),
+        error.contains("local branch not deleted:") && error.contains(&reason.message_en()),
         "the receipt carries the reason the branch is still there: {error}"
     );
     assert!(
@@ -366,7 +366,7 @@ fn a_local_branch_that_moved_while_gh_ran_is_kept() {
         panic!("merged with a branch still there is partial: {entry:?}");
     };
     assert!(
-        error.contains("local branch not deleted:") && error.contains(reason.as_str()),
+        error.contains("local branch not deleted:") && error.contains(&reason.message_en()),
         "{error}"
     );
     assert!(
@@ -437,12 +437,115 @@ fn a_queued_merge_does_not_delete_the_local_branch() {
     // Exit zero means submission succeeded, not necessarily that GitHub merged.
     fake_gh(&fixture.bin, &gh_script(MERGE_OK, VIEW_OPEN));
     let report = fixture.merge(&head, &plan);
+    let (confirmed, local) = pr_merge(&report);
+    assert!(confirmed, "queue submission is a known successful outcome");
     assert!(matches!(
-        report.result,
-        Err(kagi_git::GitError::TerminationUnknown(_))
+        local,
+        PrMergeLocalOutcome::Kept {
+            reason: kagi_domain::plan_note::github::PrMergeLocalReason::Queued,
+            ..
+        }
     ));
     assert_eq!(fixture.local_tip().as_deref(), Some(head.as_str()));
     let entry = only_entry();
-    assert!(matches!(entry.outcome, OpOutcome::Unknown { .. }));
+    let OpOutcome::Success { after } = entry.outcome else {
+        panic!("queued submission must release the write scope");
+    };
+    assert!(after.dirty.contains("queued"));
     assert!(entry.backup_refs.is_empty(), "cleanup never started");
+}
+
+#[test]
+fn a_branch_checked_out_at_approval_is_explicitly_kept_even_after_switching_away() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let fixture = Fixture::new();
+    let head = fixture.head_branch();
+    git(&fixture.work, &["checkout", "-q", LOCAL_BRANCH]);
+    let plan = fixture.plan(&head, true);
+    assert!(
+        plan.warnings.iter().any(|note| {
+            let message = note.message_en();
+            message.contains("kept") && message.contains(LOCAL_BRANCH)
+        }),
+        "approval must explain the branch is kept"
+    );
+    git(&fixture.work, &["checkout", "-q", "main"]);
+    fake_gh(&fixture.bin, &gh_script(MERGE_OK, VIEW_MERGED));
+    let (confirmed, local) = pr_merge(&fixture.merge(&head, &plan));
+    assert!(confirmed, "an approved keep is not an incomplete merge");
+    assert!(matches!(local, PrMergeLocalOutcome::Kept { .. }));
+    assert_eq!(fixture.local_tip().as_deref(), Some(head.as_str()));
+    let entry = only_entry();
+    assert!(matches!(entry.outcome, OpOutcome::Success { .. }));
+    assert!(entry.backup_refs.is_empty());
+}
+
+#[test]
+fn a_branch_not_at_the_pr_head_is_kept_even_if_it_later_matches() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let fixture = Fixture::new();
+    fixture.head_branch();
+    let pr_head = fixture.commit("remote-head.txt");
+    let plan = fixture.plan(&pr_head, true);
+    assert!(plan.warnings.iter().any(|note| {
+        let message = note.message_en();
+        message.contains("kept") && message.contains(LOCAL_BRANCH)
+    }));
+    git(&fixture.work, &["branch", "-f", LOCAL_BRANCH, &pr_head]);
+    fake_gh(&fixture.bin, &gh_script(MERGE_OK, VIEW_MERGED));
+    let (confirmed, local) = pr_merge(&fixture.merge(&pr_head, &plan));
+    assert!(confirmed);
+    assert!(matches!(
+        local,
+        PrMergeLocalOutcome::Kept {
+            reason: kagi_domain::plan_note::github::PrMergeLocalReason::NotAtPrHead { .. },
+            ..
+        }
+    ));
+    assert_eq!(fixture.local_tip().as_deref(), Some(pr_head.as_str()));
+    let entry = only_entry();
+    assert!(matches!(entry.outcome, OpOutcome::Success { .. }));
+    assert!(entry.backup_refs.is_empty());
+}
+
+#[test]
+fn a_failed_fork_merge_transport_never_authorizes_local_cleanup() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let fixture = Fixture::new();
+    let head = fixture.head_branch();
+    let mut pr = kagi_git::github::parse_pr_list(&PR_TEMPLATE.replace("{oid}", &head))
+        .unwrap()
+        .remove(0);
+    pr.cross_repository = true;
+    let plan = kagi_git::Backend::open(&fixture.work)
+        .unwrap()
+        .plan_pr_merge(&pr, MergeMethod::Squash, true, "main".into())
+        .unwrap();
+    fake_gh(&fixture.bin, &gh_script(MERGE_FAILS, VIEW_MERGED));
+    let report = fixture.merge(&head, &plan);
+    assert!(matches!(
+        report.result,
+        Ok(kagi_git::OperationOutcome::PrMerge {
+            confirmed: false,
+            local_branch: Some(PrMergeLocalOutcome::NotDeleted { .. }),
+            ..
+        })
+    ));
+    assert_eq!(fixture.local_tip().as_deref(), Some(head.as_str()));
+    let entry = only_entry();
+    let OpOutcome::Partial { after, error } = entry.outcome else {
+        panic!("the fork must not promote the failed transport to success");
+    };
+    assert!(error.contains("Head branch was modified"));
+    assert!(after.dirty.contains("Head branch was modified"));
+    assert!(entry.backup_refs.is_empty());
 }

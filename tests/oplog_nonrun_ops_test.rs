@@ -1233,18 +1233,8 @@ fn pr_merge_reads_the_repository_it_froze_not_a_remote_name() {
         .unwrap();
     let repo_id = backend.write_repo_id().unwrap();
     let remote = backend.remote_expectation("pr-merge", &plan);
-    let remote_halves: Vec<_> = remote
-        .iter()
-        .filter(|expectation| {
-            !matches!(
-                expectation,
-                kagi_git::backend::remote_ref::RemoteExpectation::LocalBranch { .. }
-            )
-        })
-        .cloned()
-        .collect();
     assert_eq!(
-        remote_halves,
+        remote,
         vec![
             kagi_git::backend::remote_ref::RemoteExpectation::PullRequest {
                 base_repo: BASE_REPO.to_string(),
@@ -1258,22 +1248,6 @@ fn pr_merge_reads_the_repository_it_froze_not_a_remote_name() {
             },
         ],
         "both halves carry the repository, and neither carries a remote name"
-    );
-    // #705: `gh` deletes the local branch too, so that is a third promise —
-    // here the branch is not in this repository at all, and the frozen
-    // absence is what the reconcile read has to keep finding.
-    let local = remote
-        .iter()
-        .find_map(|expectation| match expectation {
-            kagi_git::backend::remote_ref::RemoteExpectation::LocalBranch { branch } => {
-                Some(branch)
-            }
-            _ => None,
-        })
-        .expect("a --delete-branch merge promises the local branch too");
-    assert_eq!(
-        (local.name.as_str(), local.tip.as_deref()),
-        (HEAD_BRANCH, None)
     );
     drop(backend);
 

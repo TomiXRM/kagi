@@ -749,6 +749,13 @@ remote pull after Unknown/Partial; Failed alone permits retry. Holds persist for
 the app lifetime; inspect remote state before restarting. GUI runner build only
 when execution is reserved for PM.
 
+Continue の post-read (#569 (2)) は
+`cargo test -p kagi --test app_writer_admission_test continue_` で確認する。
+実 stash conflict の解決後、壊れた ref で summary を失敗させ、stage 済みであること、
+Stopped Unknown・lease 保持・reconcile 登録を検証する。未解決 buffer の実行前拒否と
+既知の `Staged` 成功は通常解放する。既存 `conflicts_test` / `stash_conflict_test` も併用する。
+これは backend と app settlement の G 検証で、GUI の実行・表示確認ではない。
+
 ### PR merge local branch cleanup (#705)
 
 G: `cargo test -p kagi --test transport_recording_test --test oplog_nonrun_ops_test`

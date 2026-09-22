@@ -589,3 +589,137 @@ fn a_sequencer_step_is_not_released_by_a_stopped_process_alone() {
         "an unclassified writer settles under the strict rule"
     );
 }
+
+fn continue_stash_fixture() -> (
+    Fixture,
+    kagi_git::ConflictSession,
+    kagi_git::ResolutionBuffer,
+) {
+    let fixture = Fixture::new();
+    std::fs::write(fixture.repo.join("file"), "stashed change\n").unwrap();
+    git(&fixture.repo, &["stash", "push", "-m", "continue fixture"]);
+    std::fs::write(fixture.repo.join("file"), "committed change\n").unwrap();
+    git(&fixture.repo, &["add", "file"]);
+    git(&fixture.repo, &["commit", "-qm", "conflicting change"]);
+    let mut repo = git2::Repository::open(&fixture.repo).unwrap();
+    repo.stash_apply(0, None).unwrap();
+    let session = kagi_git::detect_conflict_session(&repo).unwrap();
+    assert_eq!(session.op, kagi_git::ConflictOp::StashConflict);
+    let buffer = kagi_git::ResolutionBuffer::from_repo(&repo).unwrap();
+    (fixture, session, buffer)
+}
+
+#[test]
+fn continue_post_read_failure_retains_lease_and_registers_unknown() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _log = TestLog::new();
+    let (fixture, session, mut buffer) = continue_stash_fixture();
+    buffer
+        .apply_choice(Path::new("file"), kagi_git::ResolutionChoice::Incoming)
+        .unwrap();
+    let backend = Backend::open(&fixture.repo).unwrap();
+    let mut sessions = Sessions::new();
+    let guard = sessions
+        .write_lease(&fixture.repo)
+        .unwrap()
+        .for_op("conflict-continue");
+
+    // Staging does not need HEAD, but the post-execution summary does. Break
+    // only that read after constructing the real conflict and its resolution.
+    let head_ref = fixture.repo.join(".git/refs/heads/main");
+    let original = std::fs::read(&head_ref).unwrap();
+    std::fs::write(&head_ref, "unreadable object id\n").unwrap();
+    let result = backend.execute_conflict_continue(&session, &buffer);
+    std::fs::write(&head_ref, original).unwrap();
+    assert!(
+        matches!(&result, Err(GitError::TerminationUnknown(t)) if t.child_stopped()),
+        "{result:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(fixture.repo.join("file")).unwrap(),
+        "stashed change\n",
+        "the resolution was actually written before the read failed"
+    );
+    assert!(!git2::Repository::open(&fixture.repo)
+        .unwrap()
+        .index()
+        .unwrap()
+        .has_conflicts());
+
+    let outcome = settle_conflict_write(
+        guard,
+        &result,
+        StateSummary {
+            head: "unknown".into(),
+            dirty: "unknown".into(),
+        },
+    );
+    assert!(matches!(outcome, Some(OpOutcome::Unknown { .. })));
+    assert!(sessions.has_leases());
+    assert!(matches!(
+        sessions.write_lease(&fixture.linked),
+        Err(AdmissionError::Busy)
+    ));
+    let parked = sessions.drain_unaccounted();
+    let [(id, _, _)] = parked.as_slice() else {
+        panic!("the unresolved continuation must be reconcilable");
+    };
+    assert_eq!(sessions.reconcile_ids(), vec![*id]);
+    assert!(sessions.has_leases());
+}
+
+#[test]
+fn continue_pre_execution_failure_and_known_staged_result_release_normally() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _log = TestLog::new();
+    let (fixture, session, mut buffer) = continue_stash_fixture();
+    let backend = Backend::open(&fixture.repo).unwrap();
+    let mut sessions = Sessions::new();
+    let index_before = std::fs::read(fixture.repo.join(".git/index")).unwrap();
+    let file_before = std::fs::read(fixture.repo.join("file")).unwrap();
+    let guard = sessions
+        .write_lease(&fixture.repo)
+        .unwrap()
+        .for_op("conflict-continue");
+    let refused = backend.execute_conflict_continue(&session, &buffer);
+    assert!(matches!(refused, Err(GitError::Other(_))));
+    assert!(settle_conflict_write(
+        guard,
+        &refused,
+        StateSummary {
+            head: "before".into(),
+            dirty: "conflicted".into()
+        },
+    )
+    .is_none());
+    assert!(!sessions.has_leases());
+    assert!(sessions.drain_unaccounted().is_empty());
+    assert_eq!(
+        std::fs::read(fixture.repo.join(".git/index")).unwrap(),
+        index_before
+    );
+    assert_eq!(
+        std::fs::read(fixture.repo.join("file")).unwrap(),
+        file_before
+    );
+
+    buffer
+        .apply_choice(Path::new("file"), kagi_git::ResolutionChoice::Incoming)
+        .unwrap();
+    let guard = sessions
+        .write_lease(&fixture.repo)
+        .expect("the refused attempt must admit a resolved continuation")
+        .for_op("conflict-continue");
+    let result = backend.execute_conflict_continue(&session, &buffer);
+    let known = result.as_ref().unwrap();
+    assert!(matches!(known.outcome, kagi_git::ContinueOutcome::Staged));
+    assert!(settle_conflict_write(guard, &result, known.after.clone()).is_none());
+    assert!(!sessions.has_leases());
+    assert!(sessions.drain_unaccounted().is_empty());
+    assert!(sessions.reconcile_ids().is_empty());
+    sessions.write_lease(&fixture.linked).unwrap().complete();
+}

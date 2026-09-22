@@ -1008,6 +1008,17 @@ pub(crate) fn execute_conflict_continue(
     //    entries.
     stage_conflict_resolution(repo, session, buffer)?;
 
+    // These reads happen only after the continuation has changed repository
+    // state. Failure means the effect is unknown, not that execution failed.
+    let read_after = || {
+        current_state_summary(repo).map_err(|error| {
+            GitError::TerminationUnknown(crate::Termination::stopped(format!(
+                "{} continue: post-execution state is unknown: {error}",
+                session.op.slug()
+            )))
+        })
+    };
+
     // 1b. #309 stash conflict: staging IS the continuation. A stash apply is not
     // a commit — do NOT create a merge commit and do NOT run `git stash
     // --continue` (which is not a command). The unmerged entries are now
@@ -1016,7 +1027,7 @@ pub(crate) fn execute_conflict_continue(
     if let ConflictOp::StashConflict = session.op {
         return Ok(ContinueResult {
             outcome: ContinueOutcome::Staged,
-            after: current_state_summary(repo)?,
+            after: read_after()?,
         });
     }
 
@@ -1030,7 +1041,7 @@ pub(crate) fn execute_conflict_continue(
             .map_err(|e| GitError::Other(format!("cleanup_state failed: {}", e.message())))?;
         return Ok(ContinueResult {
             outcome: ContinueOutcome::Committed(oid),
-            after: current_state_summary(repo)?,
+            after: read_after()?,
         });
     }
 
@@ -1088,7 +1099,7 @@ pub(crate) fn execute_conflict_continue(
 
     // Measure the REAL post-continue state (#296): `Clean` means the whole
     // sequence finished; anything else means it's still mid-sequence.
-    let after = current_state_summary(repo)?;
+    let after = read_after()?;
     let outcome = if repo.state() == git2::RepositoryState::Clean {
         match repo.head().ok().and_then(|h| h.target()) {
             Some(oid) => ContinueOutcome::Committed(CommitId(oid.to_string())),

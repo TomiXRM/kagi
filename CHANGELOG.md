@@ -18,6 +18,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Issues 一覧の filter/sort と sidebar 4タブの件数を session 所有の派生キャッシュで共有し、スクロール描画ごとの全件再計算をなくしました。追加ページ・同件数の更新・filter/tab/login/mentions 変更で再計算し、仮想 list には表示順を `Rc` で渡して毎フレームの全件コピーも避けます。取得・ページング・表示順の契約は変更していません。（#791）
 - resolution buffer の autosave JSON を serde で保存・読み込みするようにし、surrogate pair で表現された文字が解決草稿から脱落する問題を修正しました。既存の schema、未解決と空テキストの区別、行 provenance、raw OID＋mode、欠落時の既定値を維持します。保存先・書き込み方式・解決操作・oplog は変更していません。（#513 resolution slice）
 - draft の外側 JSON record を serde で保存・読み込みするようにし、surrogate pair で表現された文字が commit-message draft から脱落する問題を修正しました。既存のフィールド・省略時の値・保存先・atomic replacement は維持します。Issue 本文 payload、oplog、resolution の形式は変更していません。（#513 draft slice）
 - conflict Skip の結果が `Unclear` のとき、結果分類より先に writer lease を解放していた問題を修正しました。停止済みでも sequencer の結果が不明な場合は lease を保持して既存の reconcile 経路へ渡し、停止未確認の `TerminationUnknown` も `Unknown` のまま扱います。Continue / Abort や read/ack の改修は含みません。（#569 (1)）

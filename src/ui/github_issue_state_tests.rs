@@ -2,7 +2,7 @@
 //! (`#[path]`-attached test module of that file, split out for the LOC budget).
 
 use super::*;
-use kagi_domain::github::{Issue, IssueState};
+use kagi_domain::github::{Issue, IssueListTab, IssueState};
 use kagi_domain::list_filter::StateFilter;
 
 fn issue(number: u64, title: &str) -> Issue {
@@ -61,6 +61,17 @@ fn numbers(state: &TabUiState) -> Vec<u64> {
         .collect()
 }
 
+fn visible_evidence(state: &TabUiState, login: Option<&str>) -> (Vec<u64>, usize) {
+    let view = state.issue_view(login);
+    let numbers = view
+        .order
+        .iter()
+        .map(|&index| state.github_issues[index].number)
+        .collect();
+    let active_count = view.tab_counts[state.github_issue_tab.index()];
+    (numbers, active_count)
+}
+
 #[test]
 fn empty_success_is_loaded_but_failure_keeps_last_success() {
     let mut state = TabUiState::default();
@@ -76,8 +87,18 @@ fn empty_success_is_loaded_but_failure_keeps_last_success() {
     ));
 
     let failed = state.begin_github_issues_request();
+    assert_eq!(
+        visible_evidence(&state, None),
+        (vec![1], 1),
+        "the retained successful rows remain visible during a retry"
+    );
     assert!(state
         .finish_github_issues_request(failed, Err(PrFetchError::Auth("login required".into()))));
+    assert_eq!(
+        visible_evidence(&state, None),
+        (vec![1], 1),
+        "an error completion preserves the visible evidence it did not replace"
+    );
     assert_eq!(state.github_issues[0].number, 1);
     assert!(state.github_issues_loaded);
     assert!(state
@@ -133,6 +154,82 @@ fn later_list_request_rejects_delayed_completion() {
     assert!(
         state.github_issues_cursor.is_none(),
         "a superseded response cannot install its cursor either"
+    );
+}
+
+#[test]
+fn accepted_same_length_refresh_updates_cached_filter_membership() {
+    let mut state = with_first_page("github.com/a/one", None);
+    state.github_issue_filter.common.text = "one".into();
+
+    let refresh = state.begin_github_issues_request();
+    assert_eq!(
+        visible_evidence(&state, None),
+        (vec![1], 1),
+        "the retained rows remain visible while their refresh is in flight"
+    );
+
+    assert!(state.finish_github_issues_request(
+        refresh,
+        Ok(snapshot(
+            vec![issue(1, "renamed"), issue(2, "two")],
+            vec![1],
+            "github.com/a/one",
+            None,
+        )),
+    ));
+    assert_eq!(
+        visible_evidence(&state, None),
+        (Vec::new(), 0),
+        "an accepted replacement with the same length must refresh title-filter membership"
+    );
+}
+
+#[test]
+fn accepted_mention_only_append_updates_cached_tab_membership() {
+    let mut state = with_first_page("github.com/a/one", Some("c1"));
+    state.github_issue_tab = IssueListTab::MentioningMe;
+    assert_eq!(visible_evidence(&state, None), (vec![1], 1));
+
+    let (generation, cursor, _) = state.begin_github_issues_page_request().unwrap();
+    assert!(state.finish_github_issues_page_request(
+        generation,
+        &cursor,
+        Ok(snapshot(
+            vec![issue(2, "duplicate")],
+            vec![2],
+            "github.com/a/one",
+            None,
+        )),
+    ));
+    assert_eq!(
+        visible_evidence(&state, None),
+        (vec![1, 2], 2),
+        "a page can change the visible mention tab without appending an issue row"
+    );
+}
+
+#[test]
+fn stale_refresh_keeps_cached_visible_evidence() {
+    let mut state = with_first_page("github.com/a/one", None);
+    state.github_issue_tab = IssueListTab::MentioningMe;
+    let stale = state.begin_github_issues_request();
+    let _current = state.begin_github_issues_request();
+    assert_eq!(visible_evidence(&state, None), (vec![1], 1));
+
+    assert!(!state.finish_github_issues_request(
+        stale,
+        Ok(snapshot(
+            vec![issue(7, "stale")],
+            vec![7],
+            "github.com/a/stale",
+            None,
+        )),
+    ));
+    assert_eq!(
+        visible_evidence(&state, None),
+        (vec![1], 1),
+        "a rejected completion cannot replace the rows or mention count already on screen"
     );
 }
 
@@ -328,6 +425,11 @@ fn refresh_supersedes_an_in_flight_page() {
         .expect("an append is in flight");
 
     let refresh = state.begin_github_issues_request();
+    assert_eq!(
+        visible_evidence(&state, None),
+        (vec![1, 2], 2),
+        "the retained first page stays visible while its refresh is in flight"
+    );
     assert!(!state.github_issues_loading_more);
     assert!(
         state.github_issues_cursor.is_none(),
@@ -353,6 +455,11 @@ fn refresh_supersedes_an_in_flight_page() {
     );
     assert_eq!(numbers(&state), vec![1, 2]);
     assert_eq!(state.github_issue_mentions, vec![1]);
+    assert_eq!(
+        visible_evidence(&state, None),
+        (vec![1, 2], 2),
+        "a detached page completion cannot replace the cached visible evidence"
+    );
     assert!(state.github_issues_cursor.is_none());
 
     assert!(state.finish_github_issues_request(

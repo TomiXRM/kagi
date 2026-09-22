@@ -298,6 +298,15 @@ The current suite covers:
   `issue-filter-load-more` click continues exactly once. Returning to Recent
   restores automatic continuation. Native clicks scroll the sidebar first if
   an expanded collection puts the next tab header outside its viewport.
+  #791 extends the final page to 300 loaded rows. A real wheel event must move
+  `logical_scroll_top().item_ix` while the drawn frame adds zero Issue-view
+  recomputations; typing into the real filter input must add exactly one across
+  main and sidebar. The gui-e2e-only counter is adjacent to the production
+  `apply_issues` call. Tier B uses a repository with 300+ open Issues: after
+  two additional pages settle, wheel within the loaded rows and require no new
+  `[kagi] issues: view recomputed loaded=N visible=M` lines. A filter change is
+  the positive control. Keep paging/refresh/login changes outside that scroll
+  interval, since they legitimately invalidate the derived view.
 - Issue write failure ownership
   (`KAGI_GUI_E2E_ONLY=issue_failure_notice_survives_tab_switch`,
   `tests/recovery/issue_write_owner.rs`): a recorded Create failure that lands after

@@ -113,6 +113,8 @@ impl TabUiState {
             github_issues_loading,
             github_issues_error,
             github_issues_gen: _,
+            github_issues_epoch: _,
+            issue_view: _,
             github_issues_cursor,
             github_issues_loading_more,
             github_issues_page: _,

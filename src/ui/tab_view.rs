@@ -395,6 +395,9 @@ pub struct TabUiState {
     pub github_issues_loading: bool,
     pub github_issues_error: Option<String>,
     pub github_issues_gen: u64,
+    /// Accepted Issue data revision, including same-length refreshes.
+    pub(super) github_issues_epoch: u64,
+    pub(super) issue_view: std::cell::RefCell<Option<super::issues_mode::IssueViewCache>>,
     /// #752 cursor pagination: the `next_cursor` of the last accepted list
     /// response (`None` = no further page) and the one append slot. Both are
     /// emptied by a refresh, which is what invalidates an in-flight append.
@@ -517,6 +520,8 @@ impl Default for TabUiState {
             github_issues_loading: false,
             github_issues_error: None,
             github_issues_gen: 0,
+            github_issues_epoch: 0,
+            issue_view: Default::default(),
             github_issues_cursor: None,
             github_issues_loading_more: false,
             github_issues_page: 0,

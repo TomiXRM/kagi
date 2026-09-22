@@ -44,3 +44,21 @@ KagiのPR表示は、`gh`を認証・取得境界として使い、純粋な `Pu
 - label・author・title・sort は読み込み済みページだけに作用する。label/author/title または Recent 以外の collection が有効な間は、0件でも部分一致が残っていても明示的な「さらに読み込む」を使い、自動ページングしない。state は server collection、sort は順序なので、それらだけの変更では通常の自動ページングを維持する。
 - filter intent と input/menu resource は既存の `TabUiState` に保持し、session を跨がず永続化もしない。sort/filter/tab の変更は main の `ListState` を先頭へ戻す。共通 policy と PR の追加条件は ADR-0200 の #753 追記に記録する。
 - 既定の collection は `RecentlyUpdated` とする。viewer login 解決前でも取得した一覧を表示し、担当・作成・mention の選択時には従来どおり main/sidebar ともその集合で絞る。
+
+## #791: render 間で共有する派生 Issue view
+
+- filter/sort と4タブ件数は `TabUiState` の `RefCell<Option<IssueViewCache>>`
+  に保持する。`TabUiState::default` で初期化し、`build_tab_view` へは複製しない。
+  read と intent から再計算できる値であり、別の Issue 状態源ではない。
+- キーは accepted Issue epoch・request generation・件数、共通 filter/sort、
+  collection tab、viewer login、mention membership。accepted replacement /
+  append は epoch を進める。同じ件数の差し替えも失効し、拒否された完了は触らない。
+  refresh 開始や filter/tab/login/mentions の変更はキー不一致で失効する。
+- miss 時だけ `apply_issues` を1回実行し、同じ結果から表示順と4タブ件数を作る。
+  sidebar と main はそれを共有する。main の仮想 list closure は
+  `Rc<Vec<usize>>` を保持し、全件 index Vec のフレームごとの複製を避ける。
+  `RefCell` の借用は短い render 内の区間で終了し、closure へ持ち越さない。
+- miss は `klog!("issues: view recomputed loaded={} visible={}")` で観測できる。
+  native pagination 回帰は300件で実 wheel による viewport 移動を確認し、
+  その描画で再計算0回、実 filter input の変更で main/sidebar 合計1回を要求する。
+  ページング、sidebar の100行 cap、sort 順、失敗時の保持、GitHub transport は不変。

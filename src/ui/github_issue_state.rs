@@ -78,6 +78,7 @@ impl TabUiState {
                 self.github_issues_list.reset(0);
                 self.github_issues = snapshot.issues;
                 self.github_issue_mentions = snapshot.mentioned_numbers;
+                self.invalidate_issue_view();
                 self.github_issues_cursor = snapshot.next_cursor;
                 self.issue_composer.base_repo = Some(snapshot.base_repo);
                 self.issue_composer.repo_loading = false;
@@ -200,6 +201,7 @@ impl TabUiState {
                 self.github_issue_mentions.push(number);
             }
         }
+        self.invalidate_issue_view();
         self.github_issues_cursor = snapshot.next_cursor;
         self.github_issues_page += 1;
         self.github_issues_error = None;

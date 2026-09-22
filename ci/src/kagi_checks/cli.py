@@ -34,6 +34,7 @@ from kagi_checks.rules import (
     ui_lateral_crate_count,
     ui_lateral_hits,
     ui_lateral_manifest_hits,
+    ui_lateral_selftest,
 )
 from kagi_checks.skill_refs import issues as skill_ref_issues
 from kagi_checks.skill_refs import selftest as skill_ref_selftest
@@ -373,10 +374,13 @@ def selftest() -> int:
     for issue in adr_selftest():
         print(f"::error::adr-unique-number selftest: {issue}")
         failed = True
+    for issue in ui_lateral_selftest():
+        print(f"::error::ui-lateral selftest: {issue}")
+        failed = True
     if failed:
         return 1
     print(
-        f"OK: {len(RULES) + len(MANIFEST_RULES) + 3} gates match their samples; "
+        f"OK: {len(RULES) + len(MANIFEST_RULES) + 4} gates match their samples; "
         f"{len(RATCHETS)} ratchet counters match their expected counts."
     )
     return 0

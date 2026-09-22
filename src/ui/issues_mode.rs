@@ -172,7 +172,7 @@ pub(super) fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> Any
                             .child(message),
                     ));
                 }
-                for issue in issues {
+                for issue in issues.into_iter().take(100) {
                     let number = issue.number;
                     let active_row = selected == Some(number);
                     let select = cx.listener(

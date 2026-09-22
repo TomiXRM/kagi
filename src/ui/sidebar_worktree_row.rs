@@ -27,6 +27,12 @@ pub(super) struct InspectionEntry {
 }
 
 /// Cached observations and the cancellable request belong to one tab session.
+///
+/// `entries` is a per-path cache, never a claim about the tab as a whole: a
+/// request retired mid-sweep (tab switch, new read, selection) leaves the
+/// worktrees it never reached unmeasured, and a worktree created since the
+/// last sweep was never a target at all. Coverage is therefore asked per
+/// target, not by "the cache is non-empty" (#779).
 #[derive(Default)]
 pub(super) struct WorktreeInspections {
     entries: HashMap<PathBuf, InspectionEntry>,
@@ -35,7 +41,6 @@ pub(super) struct WorktreeInspections {
     revision: u64,
     read: Option<crate::app::ReadKey>,
     cancel: Option<Arc<AtomicBool>>,
-    started: bool,
 }
 
 impl WorktreeInspections {
@@ -50,7 +55,6 @@ impl WorktreeInspections {
     pub(super) fn invalidate_read(&mut self, read: crate::app::ReadKey) {
         if self.read.is_some_and(|old| old != read) {
             self.cancel();
-            self.started = !self.entries.is_empty();
         }
     }
 }
@@ -62,10 +66,31 @@ impl Drop for WorktreeInspections {
 }
 
 impl KagiApp {
+    /// Measure every worktree this tab has no observation for. A cached entry
+    /// covers its own path only, so this both resumes a sweep that a tab
+    /// switch retired after its first result and picks up worktrees added
+    /// since. Entries already held are kept: re-measuring what is cached is
+    /// the explicit refresh's job, and staleness is a display rule
+    /// (`observed_verdict`), not a reason to re-walk the disk.
     pub(super) fn ensure_worktree_inspections(&mut self, cx: &mut Context<Self>) {
-        if !self.ui().worktree_inspections.started {
-            self.refresh_worktree_inspections(None, cx);
+        let state = &self.ui().worktree_inspections;
+        // A live request already owns its targets; retiring it here would throw
+        // away the measurement in flight and, under a reload storm, restart the
+        // sweep forever instead of finishing it.
+        if !state.pending.is_empty() {
+            return;
         }
+        let unmeasured: Vec<PathBuf> = self
+            .view()
+            .worktrees
+            .iter()
+            .filter(|worktree| !state.entries.contains_key(&worktree.path))
+            .map(|worktree| worktree.path.clone())
+            .collect();
+        if unmeasured.is_empty() {
+            return;
+        }
+        self.refresh_worktree_inspections(Some(&unmeasured), cx);
     }
 
     /// Selection retires the old request even when the selected value is cached.
@@ -84,14 +109,17 @@ impl KagiApp {
             .get(&path)
             .is_some_and(|entry| Some(entry.read) == read);
         if !cached {
-            self.refresh_worktree_inspections(Some(path), cx);
+            self.refresh_worktree_inspections(Some(std::slice::from_ref(&path)), cx);
         }
         cx.notify();
     }
 
+    /// `only` names the worktrees to measure; `None` takes every worktree in
+    /// the view. Cached entries outside the request are left alone — the sweep
+    /// adds coverage, it never resets the tab's cache.
     pub(super) fn refresh_worktree_inspections(
         &mut self,
-        path: Option<PathBuf>,
+        only: Option<&[PathBuf]>,
         cx: &mut Context<Self>,
     ) {
         if self.remote_view.is_some() {
@@ -104,7 +132,7 @@ impl KagiApp {
             .view()
             .worktrees
             .iter()
-            .filter(|worktree| path.as_ref().is_none_or(|path| path == &worktree.path))
+            .filter(|worktree| only.is_none_or(|only| only.contains(&worktree.path)))
             .cloned()
             .collect();
         if targets.is_empty() {
@@ -117,7 +145,6 @@ impl KagiApp {
         };
         let state = &mut ui.worktree_inspections;
         state.cancel();
-        state.started = true;
         state.read = Some(read);
         state.cancel = Some(cancel.clone());
         state.pending = targets.iter().map(|target| target.path.clone()).collect();
@@ -329,7 +356,10 @@ pub(super) fn inspection_panel(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                         .text_color(rgb(theme().color_branch))
                         .child(Msg::WorktreeInspectionRefresh.t())
                         .on_click(cx.listener(move |app, _, _, cx| {
-                            app.refresh_worktree_inspections(Some(target.clone()), cx);
+                            app.refresh_worktree_inspections(
+                                Some(std::slice::from_ref(&target)),
+                                cx,
+                            );
                         })),
                 )
                 .child(

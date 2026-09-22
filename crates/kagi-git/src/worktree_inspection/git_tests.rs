@@ -234,6 +234,102 @@ fn a_local_dot_upstream_is_never_proof_of_publication() {
     assert_eq!(seen.removal.pushed, WorktreeEvidence::No);
 }
 
+/// `remote.origin.fetch = +refs/heads/*:refs/heads/*` is a legal (mirror-ish)
+/// refspec, and libgit2 transforms `branch.feat.merge` through it: the
+/// "upstream" it reports is `refs/heads/feat`, the very branch that is checked
+/// out. Reading that ref's tip would call every unpublished commit pushed.
+#[test]
+fn an_upstream_refspec_mapping_onto_local_branches_is_never_proof_of_publication() {
+    let (_base, main, wt) = merged_fixture();
+    // Take the branch off `main`'s history, so `pushed` is the only fact that
+    // could make this worktree read as safely removable.
+    std::fs::write(wt.join("new.txt"), "unpublished\n").unwrap();
+    git(&wt, &["add", "."]);
+    git(&wt, &["commit", "-qm", "never left this machine"]);
+
+    git(
+        &wt,
+        &[
+            "config",
+            "remote.origin.url",
+            "https://example.invalid/r.git",
+        ],
+    );
+    git(
+        &wt,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/heads/*",
+        ],
+    );
+    git(&wt, &["config", "branch.feat.remote", "origin"]);
+    git(&wt, &["config", "branch.feat.merge", "refs/heads/feat"]);
+
+    let seen = inspect(&main, &wt);
+    assert_eq!(seen.removal.merged, WorktreeEvidence::No);
+    assert_eq!(
+        seen.removal.pushed,
+        WorktreeEvidence::Unknown(WorktreeUnknownReason::UpstreamUnavailable),
+        "the checked-out branch's own ref is not evidence that it was published: {:?}",
+        seen.errors
+    );
+    assert_eq!(
+        worktree_removal_verdict(&seen.removal),
+        WorktreeRemovalVerdict::Unknown(WorktreeUnknownReason::UpstreamUnavailable),
+        "an unmerged, unpublished worktree must never read as removable"
+    );
+}
+
+/// A ref under `refs/remotes/` passes the name check but can still be a
+/// symbolic alias for a local branch, so what it resolves to is checked too.
+#[test]
+fn a_remote_tracking_ref_aliasing_a_local_branch_is_never_proof_of_publication() {
+    let (_base, main, wt) = merged_fixture();
+    std::fs::write(wt.join("new.txt"), "unpublished\n").unwrap();
+    git(&wt, &["add", "."]);
+    git(&wt, &["commit", "-qm", "never left this machine"]);
+
+    git(
+        &wt,
+        &[
+            "config",
+            "remote.origin.url",
+            "https://example.invalid/r.git",
+        ],
+    );
+    git(
+        &wt,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ],
+    );
+    git(&wt, &["config", "branch.feat.remote", "origin"]);
+    git(&wt, &["config", "branch.feat.merge", "refs/heads/feat"]);
+    git(
+        &wt,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/feat",
+            "refs/heads/feat",
+        ],
+    );
+
+    let seen = inspect(&main, &wt);
+    assert_eq!(
+        seen.removal.pushed,
+        WorktreeEvidence::Unknown(WorktreeUnknownReason::UpstreamUnavailable),
+        "a remote-tracking name that resolves to a local branch proves nothing: {:?}",
+        seen.errors
+    );
+    assert_eq!(
+        worktree_removal_verdict(&seen.removal),
+        WorktreeRemovalVerdict::Unknown(WorktreeUnknownReason::UpstreamUnavailable)
+    );
+}
+
 #[test]
 fn pushed_follows_the_remote_tracking_ref_and_goes_back_to_no_when_ahead() {
     let (base, main, wt) = merged_fixture();

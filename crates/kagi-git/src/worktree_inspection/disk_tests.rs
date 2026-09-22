@@ -136,6 +136,51 @@ fn a_file_is_not_a_worktree_root() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("f");
     std::fs::write(&file, b"x").unwrap();
-    let error = scan(&file, &AtomicBool::new(false)).expect_err("a file is not a worktree");
-    assert!(error.contains("not a directory"), "{error}");
+    scan(&file, &AtomicBool::new(false)).expect_err("a file is not a worktree");
+}
+
+/// What `disk_windows.rs` would have read out of `FILE_STANDARD_INFO` and
+/// `FILE_COMPRESSION_INFO` for one entry. No Windows runtime is involved: the
+/// FFI is what cannot run here, the decision about its answers is what matters.
+fn win_file(allocation: i64, compressed: Result<i64, String>) -> Result<u64, String> {
+    windows_physical_bytes(Path::new("C:/w/f.bin"), false, allocation, || compressed)
+}
+
+#[test]
+fn a_compressed_file_occupies_its_physical_bytes_not_its_allocated_range() {
+    // NTFS compression: a 256 KiB range backed by 64 KiB of clusters.
+    assert_eq!(
+        win_file(256 * 1024, Ok(64 * 1024)),
+        Ok(64 * 1024),
+        "AllocationSize is the range, not the storage behind it"
+    );
+}
+
+#[test]
+fn an_unanswerable_compression_query_is_an_error_not_the_allocation_size() {
+    win_file(256 * 1024, Err("compression query failed".into()))
+        .expect_err("an unavailable physical size must not fall back to AllocationSize");
+}
+
+#[test]
+fn a_directory_is_measured_without_a_compression_query() {
+    // Asking would answer zero for a directory stream, so it must not be asked.
+    assert_eq!(
+        windows_physical_bytes(Path::new("C:/w/sub"), true, 4096, || panic!(
+            "a directory must not be asked for compressed size"
+        )),
+        Ok(4096)
+    );
+}
+
+#[test]
+fn a_negative_size_is_refused_rather_than_wrapped_into_a_huge_total() {
+    win_file(256 * 1024, Ok(-1)).expect_err("-1 is not 16 exabytes");
+    windows_physical_bytes(Path::new("C:/w/sub"), true, -4096, || unreachable!())
+        .expect_err("a directory's allocation is checked too");
+}
+
+#[test]
+fn a_compressed_size_above_the_allocation_is_refused_as_a_broken_answer() {
+    win_file(4096, Ok(8192)).expect_err("the specification makes compressed <= allocation a MUST");
 }

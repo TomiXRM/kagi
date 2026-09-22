@@ -48,9 +48,11 @@ windows-sys = { version = "0.61", features = [
     "Win32_Security",
     "Win32_System_JobObjects",
     # Worktree occupancy (#633): `GetFileInformationByHandleEx` answers
-    # `FILE_STANDARD_INFO.AllocationSize` (what a file occupies, not its
-    # logical length) and `FILE_ID_INFO` (the hardlink identity that keeps a
-    # multiply-linked file from being counted twice).
+    # `FILE_COMPRESSION_INFO.CompressedFileSize` (the bytes actually on the
+    # storage, which compression and sparseness make smaller than the
+    # allocated range `FILE_STANDARD_INFO` reports) and `FILE_ID_INFO` (the
+    # hardlink identity that keeps a multiply-linked file from being counted
+    # twice). All three classes are in this one feature.
     "Win32_Storage_FileSystem",
     # Resuming the child that was spawned `CREATE_SUSPENDED`: its initial thread
     # is found through the ToolHelp snapshot (`std` exposes no thread handle).

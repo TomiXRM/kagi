@@ -54,11 +54,68 @@ pub(super) struct LinkKey(pub u64, pub u128);
 
 /// What the traversal needs from one entry, per platform.
 pub(super) struct EntryFacts {
-    /// Bytes the filesystem has allocated for this entry.
+    /// Bytes this entry occupies on the physical storage — `st_blocks * 512`
+    /// on Unix, and the same contract on Windows, never a logical length or
+    /// the size of an allocated range that compression left partly empty.
     pub allocated: u64,
     /// Present only when the entry has more than one link, so its bytes are
     /// reachable under several names and must be counted once.
     pub link: Option<LinkKey>,
+}
+
+/// The Windows "how many bytes does this entry physically occupy" decision.
+///
+/// It lives here rather than in `disk_windows.rs` because it is the part worth
+/// pinning and the only part that needs no Windows runtime: `disk_windows.rs`
+/// holds the two `GetFileInformationByHandleEx` calls, this holds what their
+/// answers mean.
+///
+/// `FILE_STANDARD_INFO.AllocationSize` is the size of the allocated *range*,
+/// not necessarily the physical storage behind it: a compressed file can occupy
+/// less. `FILE_COMPRESSION_INFO.CompressedFileSize` instead reports "the number
+/// of bytes actually allocated on the underlying physical storage", a multiple
+/// of the cluster size and never above `AllocationSize`
+/// ([MS-FSA §2.1.5.11.7](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fsa/484bc722-6440-49a0-982a-9ba27cddf513)).
+/// For an ordinary uncompressed file the two agree.
+///
+/// When the compression query cannot be answered the entry has no known
+/// physical size, and this reports that. Falling back to `AllocationSize`
+/// would put the number this module refuses to estimate back into the total
+/// under a different name.
+#[cfg(any(windows, test))]
+pub(super) fn windows_physical_bytes(
+    path: &Path,
+    directory: bool,
+    allocation: i64,
+    compressed: impl FnOnce() -> Result<i64, String>,
+) -> Result<u64, String> {
+    if directory {
+        // A directory stream is not compressible and the query leaves
+        // `CompressedFileSize` at zero for one (MS-FSA §2.1.5.11.7 sets only
+        // `CompressionState` for a DirectoryStream), so asking would report
+        // every directory as occupying nothing. Its own allocation is the
+        // only physical answer Windows offers for it.
+        return nonnegative_bytes(path, allocation, "allocation size");
+    }
+    let compressed = nonnegative_bytes(path, compressed()?, "compressed file size")?;
+    let allocation = nonnegative_bytes(path, allocation, "allocation size")?;
+    if compressed > allocation {
+        // The specification makes `CompressedFileSize <= AllocationSize` a
+        // MUST. A filesystem that breaks it has told us two incompatible
+        // things about one entry and neither can be summed.
+        return Err(format!(
+            "{}: compressed file size {compressed} exceeds allocation size {allocation}",
+            path.display()
+        ));
+    }
+    Ok(compressed)
+}
+
+/// Windows reports sizes as signed; a negative one is a broken answer, never a
+/// huge file.
+#[cfg(any(windows, test))]
+fn nonnegative_bytes(path: &Path, value: i64, what: &str) -> Result<u64, String> {
+    u64::try_from(value).map_err(|_| format!("{}: negative {what} ({value})", path.display()))
 }
 
 /// Sum the allocation of everything under `root`, splitting out `target/`.

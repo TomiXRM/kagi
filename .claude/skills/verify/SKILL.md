@@ -189,6 +189,13 @@ The current suite covers:
   Actual bounds must cap the panel at 40% of the sidebar in both languages.
   Check the fixed name/path heading and independently scrolling detail body;
   Tier B must confirm that selecting another worktree is not obscured.
+  A partial-cache regression accepts one worktree report, switches to another
+  repository and returns through the real tab lifecycle. Missing and newly added
+  worktrees must then be measured while the completed report remains unchanged,
+  even after its directory grows. Backend fixtures also reject mirror-refspec
+  and symbolic-alias local refs as pushed evidence. Host unit tests cover Windows
+  physical-size selection and unavailable-query errors; cross-checking the
+  Windows module is not Windows runtime verification.
   Tier B uses those four states with allocated plus sparse build files and an
   ignored `.env`; inspect capacity/target breakdown, measurement time, localized
   reason, local-ref basis, `.gitignore` warning and existing removal-menu guidance.

@@ -477,13 +477,20 @@ fn observe_merged(main: &Repository, head: Option<&HeadState>, out: &mut Worktre
 /// ref, read locally. No network request is made, so this proves only what the
 /// last fetch/push left behind — the UI discloses that basis.
 ///
-/// Three distinctions this keeps:
+/// Four distinctions this keeps:
 /// - No upstream configured (or a detached HEAD, which can have none) is a
 ///   positive observation: `No`.
 /// - An upstream configured whose remote-tracking ref is missing or unreadable
 ///   is ignorance: `Unknown(UpstreamUnavailable)`.
 /// - `branch.<name>.remote = .` is a *local* upstream, never proof of
 ///   publication, so it reads as `No` regardless of what it contains.
+/// - An upstream that resolves to something outside `refs/remotes/` is also
+///   ignorance, not proof. A refspec like
+///   `remote.origin.fetch = +refs/heads/*:refs/heads/*` makes libgit2 answer
+///   `refs/heads/feat` — the local branch itself — so reading its tip would
+///   call every unpublished commit pushed. The same trap hides one level down:
+///   a `refs/remotes/` ref that is only a symbolic alias for a local branch is
+///   no better, so the ref is resolved and its target name checked as well.
 fn observe_pushed(
     worktree_repo: &Repository,
     head: Option<&HeadState>,
@@ -558,12 +565,49 @@ fn observe_pushed(
             return;
         }
     };
+    if !is_remote_tracking(&upstream_ref) {
+        out.observation_failed(format!(
+            "{branch_ref}: upstream '{remote}' maps to '{upstream_ref}', \
+             which is not a remote-tracking ref; publication is unknown"
+        ));
+        out.removal.pushed = unknown(WorktreeUnknownReason::UpstreamUnavailable);
+        return;
+    }
 
-    let upstream_tip = worktree_repo
+    // `refs/remotes/origin/HEAD` is a legitimate symbolic ref, so resolve first
+    // and judge what it actually lands on: a symbolic ref pointing back into
+    // `refs/heads/` is a local branch wearing a remote name.
+    let resolved = worktree_repo
         .find_reference(&upstream_ref)
-        .ok()
-        .and_then(|reference| reference.target());
-    let Some(upstream_tip) = upstream_tip else {
+        .and_then(|reference| reference.resolve());
+    let Ok(resolved) = resolved else {
+        out.observation_failed(format!(
+            "{upstream_ref}: remote-tracking ref missing or unresolvable"
+        ));
+        out.removal.pushed = unknown(WorktreeUnknownReason::UpstreamUnavailable);
+        return;
+    };
+    match resolved.name() {
+        Ok(name) if is_remote_tracking(name) => {}
+        Ok(name) => {
+            out.observation_failed(format!(
+                "{upstream_ref}: resolves to '{name}', which is not a remote-tracking ref; \
+                 publication is unknown"
+            ));
+            out.removal.pushed = unknown(WorktreeUnknownReason::UpstreamUnavailable);
+            return;
+        }
+        Err(error) => {
+            out.observation_failed(format!(
+                "{upstream_ref}: resolved refname unreadable: {}",
+                error.message()
+            ));
+            out.removal.pushed = unknown(WorktreeUnknownReason::ObservationFailed);
+            return;
+        }
+    }
+
+    let Some(upstream_tip) = resolved.target() else {
         out.observation_failed(format!(
             "{upstream_ref}: remote-tracking ref missing or unresolvable"
         ));
@@ -572,6 +616,13 @@ fn observe_pushed(
     };
 
     out.removal.pushed = contains(worktree_repo, upstream_tip, head.oid, &upstream_ref, out);
+}
+
+/// Only refs the remote populated can prove publication. Everything else —
+/// `refs/heads/`, `refs/tags/`, an exotic namespace — is local state that a
+/// refspec or a symbolic ref can point an upstream at.
+fn is_remote_tracking(name: &str) -> bool {
+    name.starts_with("refs/remotes/")
 }
 
 /// Whether `tip`'s history contains `commit` — the shared half of both history

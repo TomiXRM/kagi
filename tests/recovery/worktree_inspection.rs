@@ -303,7 +303,93 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
             (false, None, None)
         );
     });
+
+    // #779: one accepted observation is not tab-wide coverage. A request
+    // retired by leaving the tab left every worktree it never reached
+    // unmeasured, and returning refused to schedule them because the cache was
+    // merely non-empty.
+    let other = root.join("other");
+    std::fs::create_dir(&other).unwrap();
+    git(&other, &["init", "-q", "-b", "main"]);
+    std::fs::write(other.join("file.txt"), "other\n").unwrap();
+    git(&other, &["add", "."]);
+    git(&other, &["commit", "-qm", "other"]);
+
+    // A reopened tab starts with an empty cache, and its automatic sweep is
+    // held on the production transport seam so nothing is measured behind the
+    // test's back.
+    let (held, retired) = deferred(cx);
+    e2e::worktree_inspection::queue(held);
+    assert!(app.update(cx, |app, cx| app.open_repository(repo.clone(), cx)));
+    cx.run_until_parked();
+    let repo_tab = app.update(cx, |app, _| app.active_tab);
+    assert_eq!(
+        shown(cx, &app, &pushed),
+        (true, None, None),
+        "reopened tab did not start an automatic sweep"
+    );
+
+    // Selecting retires that sweep and measures exactly one worktree — the
+    // partial cache a tab switch leaves behind once a first result has landed.
+    let (first, deliver) = deferred(cx);
+    e2e::worktree_inspection::queue(first);
+    select_worktree(cx, &app, window, "pushed");
+    retired.send(observation(cx, &app, &repo, &pushed));
+    cx.run_until_parked();
+    deliver.send(observation(cx, &app, &repo, &pushed));
+    cx.run_until_parked();
+    let measured = shown(cx, &app, &pushed);
+    assert!(
+        !measured.0 && measured.1.is_some(),
+        "the selected worktree was not measured"
+    );
+    for name in ["dirty", "locked", "detached"] {
+        assert_eq!(
+            shown(cx, &app, &root.join(name)),
+            (false, None, None),
+            "{name}: the retired sweep measured more than the selection"
+        );
+    }
+
+    // Change the repository before leaving through the real tab lifecycle:
+    // returning must discover the added worktree without re-walking cached ones.
+    std::fs::write(pushed.join("target/while-away.bin"), vec![9; 131_072]).unwrap();
+    let resumed = root.join("resumed");
+    git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "resumed",
+            resumed.to_str().unwrap(),
+            "main",
+        ],
+    );
+    assert!(app.update(cx, |app, cx| app.open_repository(other.clone(), cx)));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.switch_repo(repo_tab, cx));
+    cx.run_until_parked();
+    draw(cx, window);
+    for name in ["dirty", "locked", "detached", "resumed"] {
+        let (pending, bytes, _) = shown(cx, &app, &root.join(name));
+        assert!(
+            !pending && bytes.is_some(),
+            "{name}: returning to the tab never measured it"
+        );
+    }
+    assert_eq!(
+        shown(cx, &app, &pushed).1,
+        measured.1,
+        "the completed observation was discarded or re-walked on return"
+    );
+    assert!(
+        shown(cx, &app, &pushed).2.is_some(),
+        "the completed observation lost its verdict"
+    );
+
     i18n::set_lang(original_lang);
-    eprintln!("[gui-e2e] PASS worktree_inspection EN/JA, ignored allocation, refresh, stale/selection/close rejection");
+    eprintln!("[gui-e2e] PASS worktree_inspection EN/JA, ignored allocation, refresh, stale/selection/close rejection, partial-cache resume on return");
     unmount(cx, app, window);
 }

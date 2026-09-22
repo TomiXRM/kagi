@@ -151,22 +151,29 @@ so the navigator retains space for choosing another worktree.
 - `kagi-git::worktree_inspection` reopens the repository and re-observes registry
   identity, lock, status and HEAD rather than trusting cached WIP metadata.
   Merged means ancestry in the existing default-branch policy; pushed means
-  ancestry in the locally available remote-tracking upstream. A local upstream
-  is not publication. There is no network request, automatic fetch or PR query.
+  ancestry in the locally available remote-tracking upstream. Both the refspec
+  result and its resolved symbolic target must remain under `refs/remotes/`;
+  mirror refspecs or aliases into local refs are not publication evidence.
+  There is no network request, automatic fetch or PR query.
 - Capacity is allocated filesystem space, including ignored contents, not file
   length or promised reclaimable space. The in-process walk splits `target/`
   subtrees from other contents, does not follow symlinks and counts hardlinks
-  once per worktree. Unix uses allocated blocks; Windows uses file allocation
-  and identity APIs. Unreadable, disappearing or unsupported entries fail the
-  capacity result instead of returning a misleading partial total. APFS clones
+  once per worktree. Unix uses allocated blocks. Windows reads
+  `FILE_COMPRESSION_INFO.CompressedFileSize` for files on the same no-follow
+  handle used for identity, and directory allocation separately. Unsupported
+  physical-size queries never fall back to a file's `AllocationSize`.
+  Unreadable, disappearing or unsupported entries fail the capacity result
+  instead of returning a misleading partial total. APFS clones
   and externally linked files mean removing a tree may free less than its sum.
 - The existing session-owned `TabUiState` stores cached reports and measurement
   time. A background scan checks cancellation per entry. Supersession,
   selection departure, tab departure and close retire the request; both read
   freshness and request revision guard delivery. A stale read or active writer
   suppresses a cached positive verdict, while the last capacity remains visible.
-  Initial observation and explicit remeasurement share this path; the renderer
-  performs no I/O and does not repeatedly rescan cached worktrees.
+  Initial observation and explicit remeasurement share this path. Coverage is
+  per worktree: tab return schedules missing and newly added targets while
+  preserving completed cached observations. The renderer performs no I/O and
+  does not repeatedly rescan cached worktrees.
 - The panel displays the local-ref basis and the approved warning:
   `.gitignore 配下(target/ 等)は Git が守らない — 削除前に確認`.
   Git cleanliness is not a claim that ignored `.env` or other local files are

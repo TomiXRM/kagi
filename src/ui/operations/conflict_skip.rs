@@ -2,6 +2,27 @@
 
 use crate::{app, ui::*};
 
+/// Classify before settling the guard: `Ok` means the child returned, not that
+/// the sequencer's effect is known. Keep the original outcome for its observed
+/// `after` state and evidence; this result only controls the existing C0 bridge.
+fn skip_settlement(
+    result: &Result<kagi_git::SkipOutcome, kagi_git::GitError>,
+) -> Result<(), kagi_git::GitError> {
+    match result {
+        Ok(outcome) if outcome.progress == SkipProgress::Unclear => Err(
+            kagi_git::GitError::TerminationUnknown(kagi_git::Termination::stopped(
+                outcome
+                    .error
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_default(),
+            )),
+        ),
+        Ok(_) => Ok(()),
+        Err(error) => Err(error.clone()),
+    }
+}
+
 impl KagiApp {
     /// Skip the current sequencer step (rebase / cherry-pick / revert) through
     /// the plan pipeline (T-042, ADR-0067): `plan_conflict_skip` → execute →
@@ -55,7 +76,8 @@ impl KagiApp {
             .expect("repo session existed while planning conflict skip")
             .backend()
             .execute_conflict_skip(&mode.session, &mode.buffer);
-        let unknown = app::settle_conflict_write(guard, &result, plan.current.clone());
+        let settlement = skip_settlement(&result);
+        let unknown = app::settle_conflict_write(guard, &settlement, plan.current.clone());
         self.refresh_write_busy();
         let (outcome, failure, ran) = match result {
             Ok(o) => {
@@ -124,3 +146,10 @@ impl KagiApp {
         cx.notify();
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/support/isolated.rs"]
+mod isolated;
+#[cfg(test)]
+#[path = "../../../tests/recovery/conflict_skip_g.rs"]
+mod tests;

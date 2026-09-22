@@ -84,6 +84,15 @@ BeginWrite { owner: Attachment, scope: WriteScope, kind: OperationKind }
 `Unknown` は `Failed` の別名ではない（#643 §3 不変）。`TerminationUnknown` と
 `StashIdentityUnverified` は必ず `Unknown` に落ちる（`WriteGuard::complete_git`）。
 
+Skip の C0 adapter は `Ok(SkipOutcome)` だけでは lease を解放しない
+（#569 (1)）。`conflict_skip.rs` 内で `SkipProgress` を先に分類し、
+`Unclear` は停止済み・sequencer の効果不明として既存 guarded settlement へ渡す。
+`GuardKind::Sequencer` の既存ルールが lease を保持し、`UnaccountedWrite` の
+drain が reconcile requirement を登録する。元の `SkipOutcome.after` と表示用
+evidence は維持する。typed `TerminationUnknown` の停止証拠は変更せず、
+既知結果の解放も維持する。これは Skip の分類順だけの修正であり、conflict family
+全体の移行や read/ack の変更ではない（#569 (2)(3) は別 scope）。
+
 ### 2.2 `Recording`（変更なし）
 
 | 値 | 意味 | 呼び出し元の義務 |

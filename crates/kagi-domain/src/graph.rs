@@ -149,6 +149,36 @@ pub enum EdgeKind {
     OutOfNode,
 }
 
+/// One row's graph occupancy, as [`wip_anchor`] needs to see it: where the
+/// node sits, the colour its lane carries, and the edges crossing the row.
+///
+/// Borrowed rather than owned so a caller with its own row type (the UI's
+/// `CommitRow`) lends its edge vector instead of cloning it per row.
+#[derive(Clone, Copy, Debug)]
+pub struct RowOccupancy<'a> {
+    /// Lane the row's node (●) is drawn on.
+    pub lane: usize,
+    /// Stable colour index of that node's lane.
+    pub color: usize,
+    /// Every edge passing through (or ending at) this row.
+    pub edges: &'a [GraphEdge],
+}
+
+/// Where a WIP row's dashed connector to HEAD lands: the column it runs down
+/// and the colour it is drawn in.
+///
+/// The colour is HEAD's own lane colour rather than the worktree's ordinal:
+/// the connector exists to say *which commit* the next commit will sit on, so
+/// it reads as part of that branch's line. Worktrees sharing a HEAD therefore
+/// share one anchor — one column, one colour, one trace.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct WipAnchor {
+    /// Column the connector occupies above HEAD.
+    pub lane: usize,
+    /// Stable colour index (`% NUM_COLORS`) — HEAD's node colour.
+    pub color: usize,
+}
+
 // ────────────────────────────────────────────────────────────
 // Public API
 // ────────────────────────────────────────────────────────────
@@ -167,6 +197,57 @@ pub enum EdgeKind {
 /// typical lane counts (< 50) this runs in well under a millisecond.
 pub fn layout(commits: &[Commit]) -> GraphLayout {
     layout_stable(commits)
+}
+
+// ────────────────────────────────────────────────────────────
+// WIP → HEAD connector anchoring
+// ────────────────────────────────────────────────────────────
+
+/// Whether `lane`'s **top half** already carries a line in this row.
+pub fn lane_top_busy(edges: &[GraphEdge], lane: usize) -> bool {
+    edges
+        .iter()
+        .any(|e| matches!(e.kind, EdgeKind::Pass | EdgeKind::IntoNode) && e.from_lane == lane)
+}
+
+/// Whether `lane`'s **bottom half** already carries a line in this row.
+pub fn lane_bottom_busy(edges: &[GraphEdge], lane: usize) -> bool {
+    edges
+        .iter()
+        .any(|e| matches!(e.kind, EdgeKind::Pass | EdgeKind::OutOfNode) && e.to_lane == lane)
+}
+
+/// Pick the column and colour for a WIP row's dashed connector down to HEAD.
+///
+/// `rows` is the loaded window in row order; `head` is the row index HEAD
+/// resolved to, or `None` when it did not resolve at all — an unborn HEAD, or
+/// a commit outside the loaded window. Either of those (and an index past the
+/// window) gives `None`: half a connector is worse than none, the rule stashes
+/// already apply to an out-of-window base.
+///
+/// The column is HEAD's own whenever nothing occupies it between the top of
+/// the window and HEAD's node. The line enters from *outside* the graph (the
+/// WIP rows sit above row 0), so row 0's top half has to be free too. When
+/// `origin` is ahead that column carries HEAD's descendants, and `fresh_lane`
+/// — a column the caller guarantees is unused — is both the normal outcome
+/// and the right one: the connector must not overdraw a real line.
+pub fn wip_anchor<'a>(
+    rows: impl Iterator<Item = RowOccupancy<'a>> + Clone,
+    head: Option<usize>,
+    fresh_lane: usize,
+) -> Option<WipAnchor> {
+    let head = head?;
+    let node = rows.clone().nth(head)?;
+    let free = !lane_top_busy(node.edges, node.lane)
+        && rows.take(head).all(|r| {
+            r.lane != node.lane
+                && !lane_top_busy(r.edges, node.lane)
+                && !lane_bottom_busy(r.edges, node.lane)
+        });
+    Some(WipAnchor {
+        lane: if free { node.lane } else { fresh_lane },
+        color: node.color,
+    })
 }
 
 /// Allocate the next stable colour index (monotonic counter, `% NUM_COLORS`).
@@ -711,3 +792,7 @@ mod tests {
 
     // ── test 8: compact linear history ───────────────────────────────────
 }
+
+#[cfg(test)]
+#[path = "graph_wip_anchor_tests.rs"]
+mod wip_anchor_tests;

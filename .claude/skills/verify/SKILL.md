@@ -125,6 +125,20 @@ The current suite covers:
   completes a reload after staging a different blob and before confirming.
 - bottom-panel toggle, graph copy, oplog expand/copy, snapshot creation, theme
   switching, agent provenance, and WIP-to-HEAD connectors;
+- WIP virtual commit anchors (`KAGI_GUI_E2E_ONLY=commit_row_layout_wip`,
+  `tests/recovery/wip_layout.rs`, under the layout suite): actual canvas paints
+  must show three hollow nodes on distinct HEAD lanes, with HEAD-coloured
+  badge→node and node→HEAD dashes. The same run covers shared HEAD (stacked
+  rings, one trace), detached/unborn state, 1.25× zoom, hover and selection.
+  Ring diameter matches the visible HEAD ring (classic) or commit avatar disc
+  (swimlane); stroke stays 2px, lane-coloured, without a fill. The trace is
+  compile-time `gui-e2e` only and opt-in per window through
+  `graph_view::take_paint_trace`; clear it before drawing and drain afterward.
+  Pair with `wip_head_connector,worktree_wip_inline,worktree_panel_commit` for
+  collision routing, linked-panel interactions and target-keyed row removal.
+  Tier B inspects an isolated repository with three dirty worktrees on distinct
+  branch tips; retain the screenshot in the PR and verify the graph is not
+  obscured by another pane.
 - linked-worktree WIP rows plus commit-panel commit, amend, and discard;
 - modal and branch-menu Enter isolation from the selected commit checkout;
 - modal-slot arbitration (`KAGI_GUI_E2E_ONLY=push_failure_keeps_modal,merge_plan_latch,delete_branch_plan_latch,remote_browse_modal_routing`): Push failures and delayed Merge/Delete Branch plans wait behind Remote Browse without losing its input, stale plan state, latches, footers, or notices; a reopened Remote Browse rejects an older in-place completion by generation;

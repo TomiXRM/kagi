@@ -21,7 +21,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::graph::{EdgeKind, GraphEdge};
+use crate::graph::{self, EdgeKind, GraphEdge};
 use gpui::{AppContext, Context};
 use kagi_git::ops::SquashLink;
 use kagi_git::CommitId;
@@ -38,32 +38,23 @@ use super::KagiApp;
 /// ghost" is not answerable per lane the way `stash_lanes` is.
 pub const GHOST_COLOR: usize = usize::MAX;
 
-/// Whether `lane`'s **top half** is already carrying a line at this row.
-///
-/// Shared with `graph_wip` (#472), which injects the same shape of connector
-/// from the WIP rows down to each worktree's HEAD.
-pub(super) fn top_busy(row: &CommitRow, lane: usize) -> bool {
-    row.edges
-        .iter()
-        .any(|e| matches!(e.kind, EdgeKind::Pass | EdgeKind::IntoNode) && e.from_lane == lane)
-}
-
-/// Whether `lane`'s **bottom half** is already carrying a line at this row.
-pub(super) fn bottom_busy(row: &CommitRow, lane: usize) -> bool {
-    row.edges
-        .iter()
-        .any(|e| matches!(e.kind, EdgeKind::Pass | EdgeKind::OutOfNode) && e.to_lane == lane)
-}
-
 /// Whether a connector can run down `lane` from row `top` to row `bottom`
 /// without crossing an existing line.
+///
+/// The half-row occupancy predicates live in `kagi_domain::graph` — shared
+/// with `graph_wip` (#472), whose connector runs the same shape from outside
+/// the graph down to a worktree's HEAD.
 fn lane_free(rows: &[CommitRow], top: usize, bottom: usize, lane: usize) -> bool {
-    if bottom_busy(&rows[top], lane) || top_busy(&rows[bottom], lane) {
+    if graph::lane_bottom_busy(&rows[top].edges, lane)
+        || graph::lane_top_busy(&rows[bottom].edges, lane)
+    {
         return false;
     }
-    rows[top + 1..bottom]
-        .iter()
-        .all(|r| r.lane != lane && !top_busy(r, lane) && !bottom_busy(r, lane))
+    rows[top + 1..bottom].iter().all(|r| {
+        r.lane != lane
+            && !graph::lane_top_busy(&r.edges, lane)
+            && !graph::lane_bottom_busy(&r.edges, lane)
+    })
 }
 
 /// Inject one dashed connector per proven squash merge. Returns how many were

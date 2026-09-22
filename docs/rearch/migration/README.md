@@ -68,8 +68,9 @@ zero-copy tab ownership target.
     `KAGI_LOG_DIR`; test runs refuse the HOME fallback with `tests must set KAGI_LOG_DIR` ([ADR-0149](../../adr/0149-oplog-in-backend-run-and-schema.md)).
   - [x] **Conflict design r1 — #577.** [FAMILY-conflict](../app-layer/FAMILY-conflict.md) defines revision-bound jobs and settlement;
     the PR's PM ruling requires implementation in C0 → C1 → C2 → C3 order below.
-  - [ ] **#482 stage 2 — #489.** Make snapshot/read ownership single-owner and
-    replace the read generation guard with `RequestSlot`.
+  - [x] **#482 stage 2 — #489 / #580.** Snapshot/read ownership is single-owner —
+    `Reads<V>` keyed by the owner's `SessionId` — and the read generation guard is
+    `RequestSlot`; `active_view`/`tab_cache` are gone ([ADR-0183](../../adr/0183-session-owned-read-model.md)).
   - [x] **#482 stage 3 — #643 Wave 4 ([ADR-0197](../../adr/0197-session-owned-ui-state.md)).** Selection, scroll,
     pane, menu and cache state are session-owned in `TabUiState`; `reset_per_repo_ui` is gone
     (#714 #716 #717 #718 #720 #721 #722 #724).

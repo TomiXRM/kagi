@@ -9,8 +9,16 @@ use kagi::ui::{
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
 use std::path::Path;
 
+struct RestoreLanguage(Lang);
+
+impl Drop for RestoreLanguage {
+    fn drop(&mut self) {
+        i18n::set_lang(self.0);
+    }
+}
+
 pub(super) fn save_and_abort(cx: &mut VisualTestAppContext) {
-    let original_language = i18n::lang();
+    let _restore_language = RestoreLanguage(i18n::lang());
     for (language, markers, changed) in [
         (
             Lang::En,
@@ -28,7 +36,6 @@ pub(super) fn save_and_abort(cx: &mut VisualTestAppContext) {
         abort(cx, changed, false);
         abort(cx, changed, true);
     }
-    i18n::set_lang(original_language);
 }
 
 fn save(cx: &mut VisualTestAppContext, expected: &str) {

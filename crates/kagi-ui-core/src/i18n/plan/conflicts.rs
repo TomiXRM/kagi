@@ -7,7 +7,7 @@ use kagi_domain::plan_note::{ConflictsNote, ConflictsRecovery, ConflictsTitle};
 pub fn note_ja(note: &ConflictsNote) -> String {
     match note {
         ConflictsNote::ObservationChanged => {
-            "確認後に conflict の状態が変わりました。conflict を開き直して、操作をやり直してください。".into()
+            "表示後に conflict の状態が変わりました。conflict を開き直して、操作をやり直してください。".into()
         }
         ConflictsNote::PlanChanged => {
             "計画後に conflict の状態が変わりました。ファイルは変更していません。操作を選び直して、最新の計画を確認してください。".into()

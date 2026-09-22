@@ -13,46 +13,36 @@
 /// Plan notes for the conflicts (continue/abort/skip) op family.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConflictsNote {
-    /// The read model used to request a conflict action is no longer current.
+    /// blocker (save/resolve/abort) — the request's read observation is stale.
     ObservationChanged,
-    /// Live preflight rejected an approved conflict action before any mutation.
+    /// blocker (save/resolve/abort) — live preflight found a changed revision.
     PlanChanged,
+    /// blocker (save/resolve/abort) — the repository or worktree identity changed.
     RepositoryIdentityChanged,
+    /// blocker (save/resolve/abort) — the observed conflict ended before execution.
     ConflictGone,
-    /// Save cannot stage a resolution draft containing conflict markers.
+    /// blocker (save) — the resolution draft still contains conflict markers.
     ResolutionMarkers,
     /// blocker (continue) — one or more files have no resolution draft.
-    UnresolvedFiles {
-        files: Vec<String>,
-    },
+    UnresolvedFiles { files: Vec<String> },
     /// blocker (continue) — one or more resolved buffer texts still contain
     /// conflict markers.
-    MarkerResidue {
-        files: Vec<String>,
-    },
+    MarkerResidue { files: Vec<String> },
     /// blocker (continue) — the index has unmerged entries the session does
     /// not track.
-    IndexUnmerged {
-        files: Vec<String>,
-    },
+    IndexUnmerged { files: Vec<String> },
     /// blocker (continue) — a binary conflict has no side chosen.
-    BinaryUnresolved {
-        files: Vec<String>,
-    },
+    BinaryUnresolved { files: Vec<String> },
     /// blocker (continue) — a modify/delete or rename/delete file's
     /// keep-or-delete decision is still pending.
-    DeletionUndecided {
-        files: Vec<String>,
-    },
+    DeletionUndecided { files: Vec<String> },
     /// blocker (continue) — a merge commit is required but its message is
     /// empty.
     EmptyMergeMessage,
     /// blocker (continue) — the commit checklist (ADR-0043) reports a hard
     /// blocker; the message is passed through verbatim (checklist prose is
     /// out of scope for this migration, mirrors `CommonNote::GitErrorPassthrough`).
-    ChecklistBlocker {
-        message: String,
-    },
+    ChecklistBlocker { message: String },
     /// warning (continue) — no conflicting files were detected; continue will
     /// finish the operation as-is.
     NoConflictingFilesDetected,
@@ -188,6 +178,34 @@ mod tests {
     // ── message_en golden tests (ADR-0129 §3): every variant, dynamic values,
     //    joined file lists, `\n` recovery bodies, byte-exact vs. the legacy
     //    `conflicts.rs` producer strings. ──
+
+    #[test]
+    fn recorded_refusal_messages_are_stable() {
+        for (note, expected) in [
+            (
+                ConflictsNote::ObservationChanged,
+                "conflict changed since it was observed — re-open the conflict",
+            ),
+            (
+                ConflictsNote::PlanChanged,
+                "conflict changed since planning; no files were modified",
+            ),
+            (
+                ConflictsNote::RepositoryIdentityChanged,
+                "repository identity changed after planning",
+            ),
+            (
+                ConflictsNote::ConflictGone,
+                "the conflict is no longer present",
+            ),
+            (
+                ConflictsNote::ResolutionMarkers,
+                "conflict markers remain in the resolution buffer",
+            ),
+        ] {
+            assert_eq!(note.message_en(), expected, "{note:?}");
+        }
+    }
 
     #[test]
     fn unresolved_files_note() {

@@ -121,8 +121,8 @@ receipt の `after` に予測を書かない。
 通常の `acknowledge` は引き続き `stop_proven && resolved` だけを受け付ける。
 別 tier の `prepare_unobservable_release` → audit job → `acknowledge_unobserved`
 は、停止証明済みの既知 remote-write family にだけ提供する。承認時の expectation
-が空、または frozen remote 名が存在しない・SSH host を識別できない場合が対象。
-未知の family、live writer、観測した値の不一致、通信失敗は対象外。
+が空の場合に加え、remote の観測では frozen remote 名の不在、`ssh -G` の失敗・
+timeout、不正 URL を対象とする。未知の family、live writer、観測不一致、通信失敗は対象外。
 batch の一部が観測不能でも、別の promise の不一致・通信失敗を優先して拒否する。
 
 UI は既存 `AppNotice` で EN/JA の「remote 側の結果を Kagi は確認していない」
@@ -135,11 +135,14 @@ append 失敗時は制限を解除せず、永続化エラーと再確認の入�
 `may_close_host` は緩和しない。
 
 SSH identity は既存の pure `repo_identity` と分離した I/O-aware resolver を
-PR fetch の remote 選択で使う。既存の `parse_effective_ssh_config` を再利用し、
-`ssh -G` を既存 process runner の 60 秒 deadline で実行する。失敗・未対応の
-設定を alias token に fallback しない。全 candidate を識別してから一意性を判定する。
-remote-ref の観測でも transport より先に解決し、実際の `ls-remote` 失敗は
-常に `Err` のまま保持する。
+PR fetch の remote 選択で使う。`ssh -G` は既存 runner の 60 秒 deadline で実行し、
+出力の `hostname` だけを読む。remote-stash の write-profile parser は使わず、
+ControlMaster・ProxyJump・agent-only 認証を理由に host 識別を拒否しない。
+SSH command override 下の remote-ref は Git 自身の `ls-remote` を試み、
+その失敗は `Err`（通信失敗 tier）のまま保持する。PR fetch の非 alias 候補は
+literal host の読みを維持する。override 自体を観測不能の根拠にしない。
+未定義・削除済み alias でも `ssh -G` は exit 0 / hostname=alias を返し得る。
+その状態を検出したとは主張せず、後続の DNS・接続失敗は解放不可とする。
 
 ### 2.5 settle の遷移（`flow::apply`、既存の挙動を契約化）
 

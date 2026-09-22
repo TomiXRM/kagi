@@ -77,13 +77,14 @@ pub enum RemoteExpect {
 /// which is why the two have never been allowed to collapse into one
 /// `Option` (ADR-0177).
 ///
-/// [`Self::Unobservable`] is the third answer, and it is about the *address*
-/// rather than the network. A promise freezes a remote **name**; by the time
-/// it is reconciled that name can be gone, or point through an `ssh_config`
-/// alias the configuration no longer maps. There is then no remote to have
-/// said "no such ref", so the question cannot be put at all — and saying so is
-/// what lets a write scope be released deliberately instead of held forever
-/// (#706).
+/// [`Self::Unobservable`] permits an explicit audited release after the writer
+/// has stopped. It is limited to a missing configured remote, an unusable SSH
+/// target, or failure to obtain a usable hostname from bounded `ssh -G`.
+///
+/// Undefined aliases are not detected: `ssh -G` can succeed with the alias
+/// itself as `hostname`. The subsequent DNS or connection failure remains
+/// `Err`. SSH command overrides likewise still use Git's `ls-remote`;
+/// an override alone never makes the remote unobservable.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RemoteRefObservation {
     /// The remote answered: the OID it has for the ref, or `None` for a ref it
@@ -596,17 +597,14 @@ impl Backend {
     /// - [`RemoteRefObservation::Observed`] — the remote answered. The OID it
     ///   has, or `None` for a ref it does not have.
     /// - `Err` — the transport failed. Not evidence, and never an absent ref.
-    /// - [`RemoteRefObservation::Unobservable`] — there was no address to ask.
-    ///   The frozen remote name is not in this repository any more, or it is
-    ///   reached over an SSH target whose host the configuration no longer
-    ///   maps. Neither can be confirmed or denied by anything (#706).
+    /// - [`RemoteRefObservation::Unobservable`] — the frozen remote is missing,
+    ///   its SSH target is unusable, or bounded `ssh -G` cannot supply a host.
     ///
-    /// The name is checked against the repository *before* the transport,
-    /// because `git ls-remote -- <gone> <ref>` reads a missing remote as a URL
-    /// and fails at it, which would arrive here as an ordinary transport
-    /// failure and hold the scope forever. SSH configuration is resolved before
-    /// transport: once `ls-remote` is attempted, every failure stays an error,
-    /// never permission to release an unobserved operation.
+    /// Check the configured name first: otherwise Git treats a missing remote
+    /// name as a URL. Undefined aliases are not detected by `ssh -G`; their
+    /// connection failures remain errors. Command overrides still reach Git's
+    /// `ls-remote`, and every failed transport remains `Err`, not permission to
+    /// release an unobserved operation.
     pub fn read_remote_ref(
         path: &Path,
         remote: &str,
@@ -620,10 +618,12 @@ impl Backend {
                 reason: format!("no matching remote \"{remote}\" in this repository"),
             });
         };
-        if let Err(unmappable) = super::remote_identity::resolve_repo_identity(&url, &config) {
-            return Ok(RemoteRefObservation::Unobservable {
-                reason: unmappable.to_string(),
-            });
+        if let Err(unidentified) = super::remote_identity::resolve_repo_identity(&url, &config) {
+            if unidentified.unaddressable() {
+                return Ok(RemoteRefObservation::Unobservable {
+                    reason: unidentified.to_string(),
+                });
+            }
         }
         let out = crate::cli::run_git(path, &["ls-remote", "--", remote, refname])
             .map_err(|e| crate::cli::context("ls-remote failed", e))?;
@@ -650,8 +650,8 @@ impl Backend {
 /// about whether the remote could be addressed.
 ///
 /// The configuration travels with the URL because identifying an SSH host
-/// depends on it: `core.sshCommand` decides whether plain `ssh` is even the
-/// program git reaches this remote with.
+/// depends on it: `core.sshCommand` decides whether the `ssh` whose
+/// configuration can be read is the program git reaches this remote with.
 fn remote_target(path: &Path, remote: &str) -> Result<(git2::Config, Option<String>), GitError> {
     let repo = Repository::open(path).map_err(|e| GitError::Other(e.message().to_string()))?;
     let config = repo

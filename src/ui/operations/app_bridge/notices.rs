@@ -140,18 +140,15 @@ impl KagiApp {
         cx.spawn(async move |this, cx| {
             let report = task.await;
             let _ = this.update(cx, |app, cx| {
-                let entry = report.recording().entry().clone();
+                let recording = report.recording();
                 app.notice_recording_failure(
                     "reconcile-release-unobservable",
-                    report.recording(),
-                    Path::new(&entry.repo),
+                    recording,
+                    Path::new(&recording.entry().repo),
                 );
-                if let Some(panel) = &app.op_log {
-                    panel.update(cx, |panel, cx| {
-                        panel.push(entry);
-                        cx.notify();
-                    });
-                }
+                // Transform failed receipts without duplicating the recording-failure
+                // notice with present_recorded's footer and toast.
+                app.insert_recorded_row(recording, cx);
                 if let Err(error) = app::acknowledge_unobserved(&mut app.app_sessions, report) {
                     let mut notice = modals::AppNotice::from(error);
                     notice.inspect = Some(id);

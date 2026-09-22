@@ -219,6 +219,12 @@ fn reference_commit(repo: &Repository, name: &str) -> Result<CommitId, GitError>
 /// unexamined candidate excludes nothing, so over it neither "no remote
 /// matches" nor a unique winner may be claimed — and least of all the alias
 /// token read as though it were a hostname.
+///
+/// Only an alias can be unexamined, though. Where git reaches remotes through
+/// a replacement for `ssh`, a candidate whose URL spells its host out is
+/// matched from the URL exactly as it was before any of this existed, so an
+/// unrelated `GIT_SSH_COMMAND` or user-level `core.sshCommand` cannot stop a
+/// PR fetch that had always found its remote (#706 review 2).
 fn remote_for_repo(repo: &Repository, base_repo: &str) -> Result<String, GitError> {
     let config = repo
         .config()

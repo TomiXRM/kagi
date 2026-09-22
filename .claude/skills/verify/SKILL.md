@@ -87,10 +87,13 @@ The current suite covers:
   `tests/recovery/reconcile_unobservable.rs`): measured native clicks exercise
   Inspect → arm → final confirmation in EN/JA. The armed warning is drawn;
   Escape and modal displacement discard the arm without releasing the requirement.
-  Final confirmation persists exactly one `reconcile-release-unobservable` audit
-  row before admitting another write; the original Unknown and repository fingerprint
-  stay unchanged. AppNotice uses `measure_inside` on the absolute modal root so
-  instrumentation cannot relocate its controls outside the window.
+  A real append-lock failure preserves the requirement and writer exclusion,
+  leaves no durable release row, and renders a Partial receipt rather than raw
+  Unknown in the panel. Restoring persistence and confirming again records exactly
+  one `reconcile-release-unobservable` audit row before admitting another write;
+  the original Unknown and repository fingerprint stay unchanged. AppNotice uses
+  `measure_inside` on the absolute modal root so instrumentation cannot relocate
+  its controls outside the window.
   App-level tests in `app_unobservable_release_test` additionally reject live writers,
   mismatches, failed transports, unknown families, and failed audit persistence.
 - conflict refusal reasons (`KAGI_GUI_E2E_ONLY=conflict_save_boundary`,

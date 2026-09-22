@@ -111,6 +111,20 @@ fn assert_blocked(
     );
 }
 
+/// Hold the real append lock until the bounded audit write fails.
+fn hold_oplog_append_lock() -> std::fs::File {
+    let log_dir = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap());
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(log_dir.join("operations.jsonl.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    lock
+}
+
 pub fn scenario_reconcile_unobservable_release(cx: &mut VisualTestAppContext) {
     let old_lang = i18n::lang();
     for lang in [Lang::En, Lang::Ja] {
@@ -164,6 +178,36 @@ pub fn scenario_reconcile_unobservable_release(cx: &mut VisualTestAppContext) {
             e2e::control_bounds(window.window_id(), "app-notice-release-warning").is_some(),
             "the displaced notice must require arming again"
         );
+        // Failed audit persistence must retain the requirement and render an
+        // unrecorded receipt, not a durable Unknown release.
+        let lock = hold_oplog_append_lock();
+        click_confirm(cx, window); // Final confirmation with the audit log unwritable.
+        drop(lock);
+        assert_blocked(cx, &view, &repo, id);
+        cx.read(|cx| {
+            let state = view.read(cx);
+            let panel = state.op_log.as_ref().unwrap().read(cx);
+            let shown = panel
+                .entries()
+                .iter()
+                .find(|entry| entry.op == "reconcile-release-unobservable")
+                .expect("the attempted audit receipt still reaches the panel");
+            assert!(
+                matches!(shown.outcome, OpOutcome::Partial { .. }),
+                "an unrecorded release was shown as durable: {:?}",
+                shown.outcome
+            );
+        });
+        click_confirm(cx, window); // Dismiss the recording-failure notice.
+        click_confirm(cx, window); // The refusal leads back into the entry.
+        cx.read(|cx| {
+            assert!(
+                e2e::app_notice_is_acknowledgeable(view.read(cx)),
+                "a refused release must offer the same audited exit again"
+            );
+        });
+        click_confirm(cx, window); // The retry arms from scratch.
+        assert_blocked(cx, &view, &repo, id);
         click_confirm(cx, window); // Explicit final confirmation persists then releases.
         view.update(cx, |view, _| {
             assert!(
@@ -184,6 +228,17 @@ pub fn scenario_reconcile_unobservable_release(cx: &mut VisualTestAppContext) {
                 .count(),
             1
         );
+        cx.read(|cx| {
+            let panel = view.read(cx).op_log.as_ref().unwrap().read(cx);
+            assert!(
+                panel
+                    .entries()
+                    .iter()
+                    .any(|entry| entry.op == "reconcile-release-unobservable"
+                        && matches!(entry.outcome, OpOutcome::Unknown { .. })),
+                "only the recorded release may be shown as the audit row it is"
+            );
+        });
         assert!(
             records
                 .iter()

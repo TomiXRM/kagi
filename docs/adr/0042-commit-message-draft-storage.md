@@ -5,8 +5,9 @@
 ## Context
 
 書きかけの commit message を、branch ごとに保存して再起動後も復元し、commit 成功時に clear したい。
-保存先・形式・タイミング(debounce)を、既存の oplog / avatar キャッシュ流儀(手書き JSON・serde 禁止・
-`~/.kagi/`・env override)に合わせて決める。
+保存先・形式・タイミング(debounce)を、当初は oplog / avatar キャッシュの流儀に合わせた。
+2026-09-23、#513 の draft 限定 slice で外側 JSON の実装を既存依存の serde へ移行した。
+oplog / resolution の JSON 実装は本変更に含めない。
 
 ## Decision
 
@@ -16,14 +17,19 @@
   (`operations.jsonl` と同じ仕組み)を踏襲。headless テストは `KAGI_LOG_DIR` で決定的に。
 - 1 draft = 1 ファイル。ファイル名は **`<sha1(repo_path + "\0" + branch_name)>.json`**(repo + branch で一意。
   同名 branch を別 repo で衝突させない)。
-- 形式: **手書き JSON(serde 禁止、oplog と同方式)**。最小フィールド:
+- 形式: **serde の struct + derive による JSON**。既存ファイルのキーと型は維持する:
   ```json
   {"repo":"<abs path>","branch":"<name>","message":"<本文>","mode":"plain|template","updated":<unix秒>}
   ```
   - template モードの場合、本文はテンプレ展開後の plain text を `message` に持つ(復元時はそのまま Input に流す。
     構造化フィールドの分解保存は MVP では行わない — 復元の確実性優先)。
-  - 文字列のエスケープは oplog の手書き JSON writer を再利用(`"` / `\` / 制御文字)。読みは寛容パーサ
-    (壊れていたら draft 無視 = 空から開始。draft 破損で commit を妨げない)。
+  - 保存は借用フィールドの `Serialize` struct を使い、autosave のたびに本文をコピーしない。
+    読み込みは既存 `Draft` に `Deserialize` を derive する。Unicode surrogate pair も正しく復元する。
+  - `branch` / `message` は必須。省略された `repo` は空文字列、`mode` は `"plain"`、
+    `updated` は `0` とし、未知のフィールドは無視する。従来どおり外側は object に限定する。
+    壊れた JSON・型違いは draft 無視 = 空から開始し、commit を妨げない。
+  - Issue draft の `message` 内に保存する `[title, body]` tuple は既存の serde_json のまま。
+    保存先・SHA-1 key・同一ディレクトリの temporary file + rename 境界・queue は変更しない。
 
 ### タイミング(debounce)
 
@@ -42,7 +48,6 @@
 
 ## Consequences
 
-- oplog / avatar と同じ `~/.kagi/`・手書き JSON・env override・background 書き込みの流儀で一貫
-- serde を入れない(コードベース方針の維持)。手書き JSON の writer/parser は oplog から流用 or 小ヘルパ共有
-- per-worktree の draft 分離(同 branch を複数 worktree で開く)は MVP 外。repo_path をキーに含めることで
-  将来 worktree path をキーに拡張可能(YAGNI、今は branch 単位)
+- oplog / avatar と保存先・env override・background 書き込みの流儀を共有する。
+- 既にある serde / serde_json 依存を使い、draft の手書き escape / unescape / field extractor を廃止する。
+- repo / branch / linked-worktree の draft 分離は、従来どおり working-tree path をキーに含めて維持する。

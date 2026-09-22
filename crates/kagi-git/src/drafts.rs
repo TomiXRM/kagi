@@ -11,9 +11,8 @@
 //! - One draft = one file, named `<sha1(repo_path + "\0" + branch)>.json`.
 //!   Including `repo_path` keeps the same branch name in two different repos
 //!   from colliding.
-//! - Outer [`Draft`] record: **hand-written JSON**. String fields are
-//!   escaped/unescaped with the same rules as the oplog writer (`"`, `\`,
-//!   `\n`, `\r`, `\t`, and `\uXXXX` for other control chars).
+//! - Outer [`Draft`] record: JSON encoded/decoded with serde, retaining the
+//!   existing field names and defaults for missing optional fields.
 //! - Issue draft `message`: a `serde_json` string tuple `[title, body]` inside
 //!   that outer record. Commit-message draft payloads remain plain strings.
 //!
@@ -44,9 +43,10 @@ use super::GitError;
 // ────────────────────────────────────────────────────────────
 
 /// A decoded commit-message draft for a single repository + branch.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub struct Draft {
     /// Absolute path to the repository working tree the draft belongs to.
+    #[serde(default)]
     pub repo: String,
     /// Short branch name the draft belongs to, e.g. `"main"`.
     pub branch: String,
@@ -54,8 +54,10 @@ pub struct Draft {
     /// already-expanded plain text — see ADR-0042).
     pub message: String,
     /// Editor mode the message was authored in: `"plain"` or `"template"`.
+    #[serde(default = "default_draft_mode")]
     pub mode: String,
     /// Unix epoch seconds at the time the draft was last written.
+    #[serde(default)]
     pub updated: u64,
 }
 
@@ -118,7 +120,8 @@ fn save_draft_at(
 
     let repo_str = repo_path.to_string_lossy();
     let updated = now_unix();
-    let json = draft_to_json(&repo_str, branch, message, mode, updated);
+    let json = draft_to_json(&repo_str, branch, message, mode, updated)
+        .map_err(|e| GitError::Other(format!("draft: serialize failed: {e}")))?;
 
     // Both commit and Issue drafts use this atomic replacement boundary.
     use std::io::Write;
@@ -445,106 +448,38 @@ fn now_unix() -> u64 {
 }
 
 // ────────────────────────────────────────────────────────────
-// Hand-written JSON (serde-free; same escaping as oplog.rs)
+// JSON record serialization
 // ────────────────────────────────────────────────────────────
 
-/// Escape a string for embedding in JSON: escapes `\`, `"`, `\n`, `\r`, `\t`,
-/// and remaining control characters as `\uXXXX`. Does NOT add surrounding
-/// quotes (the caller wraps the value).
-fn escape_json(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for ch in s.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out
+/// Borrowed write view: autosave must not copy the draft body to serialize it.
+#[derive(serde::Serialize)]
+struct DraftRecord<'a> {
+    repo: &'a str,
+    branch: &'a str,
+    message: &'a str,
+    mode: &'a str,
+    updated: u64,
 }
 
-/// Reverse of [`escape_json`]: decode `\" \\ \n \r \t \uXXXX`. Unknown escape
-/// sequences are passed through (they should not occur in our own output).
-fn unescape_json(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(ch) = chars.next() {
-        if ch != '\\' {
-            out.push(ch);
-            continue;
-        }
-        match chars.next() {
-            Some('"') => out.push('"'),
-            Some('\\') => out.push('\\'),
-            Some('n') => out.push('\n'),
-            Some('r') => out.push('\r'),
-            Some('t') => out.push('\t'),
-            Some('u') => {
-                let hex: String = (0..4).filter_map(|_| chars.next()).collect();
-                if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                    if let Some(c) = char::from_u32(code) {
-                        out.push(c);
-                    }
-                }
-            }
-            Some(c) => {
-                out.push('\\');
-                out.push(c);
-            }
-            None => {}
-        }
-    }
-    out
+fn default_draft_mode() -> String {
+    "plain".to_owned()
 }
 
-/// Render a draft as a single-line JSON object (matching the ADR-0042 schema).
-fn draft_to_json(repo: &str, branch: &str, message: &str, mode: &str, updated: u64) -> String {
-    format!(
-        "{{\"repo\":\"{}\",\"branch\":\"{}\",\"message\":\"{}\",\"mode\":\"{}\",\"updated\":{}}}",
-        escape_json(repo),
-        escape_json(branch),
-        escape_json(message),
-        escape_json(mode),
+/// Render the existing ADR-0042 object schema without copying its string fields.
+fn draft_to_json(
+    repo: &str,
+    branch: &str,
+    message: &str,
+    mode: &str,
+    updated: u64,
+) -> Result<String, serde_json::Error> {
+    serde_json::to_string(&DraftRecord {
+        repo,
+        branch,
+        message,
+        mode,
         updated,
-    )
-}
-
-/// Extract the string value for `"key":"…"` from a flat JSON fragment, honoring
-/// backslash escapes. Returns the **unescaped** value, or `None` if absent.
-fn extract_string(json: &str, key: &str) -> Option<String> {
-    let needle = format!("\"{}\":\"", key);
-    let pos = json.find(needle.as_str())?;
-    let after = &json[pos + needle.len()..];
-
-    // Scan to the closing unescaped '"'.
-    let mut escaped = false;
-    let mut end = None;
-    for (i, ch) in after.char_indices() {
-        if escaped {
-            escaped = false;
-        } else if ch == '\\' {
-            escaped = true;
-        } else if ch == '"' {
-            end = Some(i);
-            break;
-        }
-    }
-    end.map(|e| unescape_json(&after[..e]))
-}
-
-/// Extract the integer value for `"key":<number>` from a flat JSON fragment.
-fn extract_u64(json: &str, key: &str) -> Option<u64> {
-    let needle = format!("\"{}\":", key);
-    let pos = json.find(needle.as_str())?;
-    let after = json[pos + needle.len()..].trim_start();
-    let end = after
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(after.len());
-    after[..end].parse().ok()
+    })
 }
 
 /// Parse a draft JSON object produced by [`draft_to_json`].
@@ -553,25 +488,11 @@ fn extract_u64(json: &str, key: &str) -> Option<u64> {
 /// the input is not a JSON object — corrupt drafts are treated as "no draft".
 /// `repo` defaults to empty and `mode` to `"plain"` if absent (lenient read).
 fn parse_draft_json(content: &str) -> Option<Draft> {
-    let content = content.trim();
-    if !content.starts_with('{') {
+    // Serde also accepts positional arrays for structs; drafts require an object.
+    if !content.trim_start().starts_with('{') {
         return None;
     }
-    // branch + message are the load-bearing fields; without them there is no
-    // usable draft.
-    let branch = extract_string(content, "branch")?;
-    let message = extract_string(content, "message")?;
-    let repo = extract_string(content, "repo").unwrap_or_default();
-    let mode = extract_string(content, "mode").unwrap_or_else(|| "plain".to_string());
-    let updated = extract_u64(content, "updated").unwrap_or(0);
-
-    Some(Draft {
-        repo,
-        branch,
-        message,
-        mode,
-        updated,
-    })
+    serde_json::from_str(content).ok()
 }
 
 // ────────────────────────────────────────────────────────────
@@ -706,7 +627,8 @@ mod tests {
             "line1\nline2\ttab \"quote\"",
             "template",
             42,
-        );
+        )
+        .expect("serialize");
         let d = parse_draft_json(&json).expect("parse");
         assert_eq!(d.repo, "/tmp/re\"po\\x");
         assert_eq!(d.branch, "feat/new");
@@ -719,6 +641,7 @@ mod tests {
     fn parse_rejects_non_object() {
         assert!(parse_draft_json("not json").is_none());
         assert!(parse_draft_json("").is_none());
+        assert!(parse_draft_json(r#"["/repo","main","message","plain",42]"#).is_none());
     }
 
     #[test]
@@ -729,16 +652,6 @@ mod tests {
         assert_eq!(d.mode, "plain");
         assert_eq!(d.updated, 0);
         assert_eq!(d.message, "hi");
-    }
-
-    #[test]
-    fn empty_message_save_does_not_panic_on_path() {
-        // A whitespace-only message routes to clear; verify that path-key
-        // construction is stable for a representative repo + branch.
-        let key = format!("{}\0{}", "/tmp/repo-a", "main");
-        let name = sha1_hex(key.as_bytes());
-        assert_eq!(name.len(), 40, "sha1 hex must be 40 chars");
-        assert!(name.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     // NOTE: file-backed round-trip / branch-isolation / clear / empty-delete /

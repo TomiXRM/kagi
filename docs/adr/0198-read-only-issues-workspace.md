@@ -41,5 +41,6 @@ KagiのPR表示は、`gh`を認証・取得境界として使い、純粋な `Pu
 
 - PR と同じ `list_filter_strip` を Composer の下に置き、state・複数 label・author・title 部分一致と updated/created/number/comments の昇降順を選ぶ。pure な `kagi_domain::list_filter` を共用し、既存の Assigned/Created/Mentioning/Recent collection と AND する。sidebar と main は同じ collection・predicate・sort を表示し、件数は適用後の読み込み済み行数とする。
 - state は `issues(..., states:$states)` と `mentions:@me` の search scope に渡す。Open/Closed/All の変更では先頭ページへ戻り、request generation を進める。開始時の state を `github_issues_request_state` に固定し、追加ページは同じ state・repository・cursor を引き継ぐ。古い state の完了は新しい collection に append しない。
-- label・author・title・sort は読み込み済みページだけに作用し、新しい API request を起動しない。絞り込みで0件になっても cursor が残る場合は明示的な「さらに読み込む」を置く。空の表示だけで全ページを自動取得しない。
+- label・author・title・sort は読み込み済みページだけに作用する。label/author/title または Recent 以外の collection が有効な間は、0件でも部分一致が残っていても明示的な「さらに読み込む」を使い、自動ページングしない。state は server collection、sort は順序なので、それらだけの変更では通常の自動ページングを維持する。
 - filter intent と input/menu resource は既存の `TabUiState` に保持し、session を跨がず永続化もしない。sort/filter/tab の変更は main の `ListState` を先頭へ戻す。共通 policy と PR の追加条件は ADR-0200 の #753 追記に記録する。
+- 既定の collection は `RecentlyUpdated` とする。viewer login 解決前でも取得した一覧を表示し、担当・作成・mention の選択時には従来どおり main/sidebar ともその集合で絞る。

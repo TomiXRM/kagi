@@ -354,7 +354,7 @@ pub(super) fn render_strip(
                         return;
                     }
                     match kind {
-                        ListKind::Prs => app.refresh_github_prs(cx),
+                        ListKind::Prs => app.refresh_pr_strip(cx),
                         ListKind::Issues => app.refresh_github_issues(cx),
                     }
                 })),
@@ -439,7 +439,7 @@ fn candidates(app: &KagiApp, kind: ListKind, field: Field) -> BTreeSet<&str> {
             }
         }
         ListKind::Prs => {
-            for row in &app.ui().github_prs {
+            for row in app.ui().pr_list_rows() {
                 if matches!(field, Field::Labels) {
                     values.extend(row.labels.iter().map(|label| label.name.as_str()));
                 } else {

@@ -10,6 +10,7 @@ use kagi_domain::list_filter::apply_issues;
 
 use super::i18n::Msg;
 use super::render_helpers::safe_text;
+use super::tab_view::TabUiState;
 use super::theme::{self, theme};
 use super::KagiApp;
 
@@ -83,6 +84,24 @@ fn issues_for_tab(app: &KagiApp, tab: IssueListTab) -> Vec<&Issue> {
         .into_iter()
         .map(|index| &app.ui().github_issues[index])
         .collect()
+}
+
+/// #753: is the visible list a *client-side subset* of the rows this session
+/// holds?
+///
+/// The state chip is a server collection — changing it restarts the request,
+/// so the rows that come back already answer it — and sorting only reorders,
+/// so neither one makes a loaded page a partial answer. Labels, author, title
+/// and any tab other than `RecentlyUpdated` do: the row at the tail is then
+/// the last *match*, not the last row, and letting layout keep paging on its
+/// behalf drains the repository hunting for further matches. Continuation
+/// under those predicates is a user request, never a side effect of drawing.
+fn client_membership_active(ui: &TabUiState) -> bool {
+    let filter = &ui.github_issue_filter.common;
+    !filter.labels.is_empty()
+        || filter.author.is_some()
+        || !filter.text.is_empty()
+        || ui.github_issue_tab != IssueListTab::RecentlyUpdated
 }
 
 /// One sidebar page's content (ADR-0199): built for the Issues page whether it
@@ -442,8 +461,12 @@ fn render_main_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElemen
             let Some(ui) = app.ui.get(&owner) else {
                 return;
             };
+            // Read the filter here, not from the closure's capture: a
+            // predicate switched on after this list rendered must still
+            // suppress the fetch this event would have started.
             if app.active_session() == Some(owner)
                 && ui.github_issues_error.is_none()
+                && !client_membership_active(ui)
                 && filtered_count > 0
                 && visible.end.saturating_sub(3) >= filtered_count
             {
@@ -534,55 +557,65 @@ fn render_issue_page_tail(
                                 app.load_more_github_issues_for(owner, repo.clone(), cx);
                             })),
                     );
-            } else if filtered_count == 0 && !ui.github_issues_loading {
-                // A client-side filter with no matches must not drain the
-                // repository through render-driven automatic pagination.
-                tail = tail.child(
-                    div()
-                        .id("issue-filter-load-more")
-                        .cursor_pointer()
-                        .child(Msg::ListLoadMore.t())
-                        .on_click(cx.listener(move |app, _, _, cx| {
-                            if app.active_session() == Some(owner) {
-                                app.load_more_github_issues_for(owner, repo.clone(), cx);
-                            }
-                        })),
-                );
             } else if !ui.github_issues_loading {
-                // Layout may expose the tail without a wheel event (resize,
-                // scrollbar drag, or a short page). Ignore overdraw outside
-                // the actual clip and defer I/O to the event boundary.
-                let entity = cx.entity().downgrade();
-                let generation = ui.github_issues_gen;
-                let cursor = ui.github_issues_cursor.clone();
-                tail = tail.child(
-                    gpui::canvas(
-                        move |bounds, window, cx| {
-                            if bounds.intersects(&window.content_mask().bounds) {
-                                let entity = entity.clone();
-                                let repo = repo.clone();
-                                let cursor = cursor.clone();
-                                cx.defer(move |cx| {
-                                    let _ = entity.update(cx, |app, cx| {
-                                        if app.active_session() == Some(owner)
-                                            && app.ui().github_issues_gen == generation
-                                            && app.ui().github_issues_cursor == cursor
-                                            && app.ui().github_issues_error.is_none()
-                                            && app.ui().selected_github_issue.is_none()
-                                            && app.workspace_mode()
-                                                == super::workspace_mode::WorkspaceMode::Issues
-                                        {
-                                            app.load_more_github_issues_for(owner, repo, cx);
-                                        }
+                if filtered_count == 0 || client_membership_active(ui) {
+                    // A client-side predicate makes these rows a subset, so
+                    // reaching their tail is not evidence that the next page
+                    // is wanted. Offer the continuation instead of taking it.
+                    tail = tail.child(
+                        div()
+                            .id("issue-filter-load-more")
+                            .cursor_pointer()
+                            .py_2()
+                            .text_color(rgb(theme().text_main))
+                            .child(Msg::ListLoadMore.t())
+                            .child(super::e2e::measure_inside("issue-filter-load-more"))
+                            .on_click(cx.listener(move |app, _, _, cx| {
+                                if app.active_session() == Some(owner) {
+                                    app.load_more_github_issues_for(owner, repo.clone(), cx);
+                                }
+                            })),
+                    );
+                } else {
+                    // Layout may expose the tail without a wheel event (resize,
+                    // scrollbar drag, or a short page). Ignore overdraw outside
+                    // the actual clip and defer I/O to the event boundary.
+                    let entity = cx.entity().downgrade();
+                    let generation = ui.github_issues_gen;
+                    let cursor = ui.github_issues_cursor.clone();
+                    tail = tail.child(
+                        gpui::canvas(
+                            move |bounds, window, cx| {
+                                if bounds.intersects(&window.content_mask().bounds) {
+                                    let entity = entity.clone();
+                                    let repo = repo.clone();
+                                    let cursor = cursor.clone();
+                                    cx.defer(move |cx| {
+                                        let _ = entity.update(cx, |app, cx| {
+                                            // The filter may have become active
+                                            // between paint and this deferred
+                                            // run; re-check it with the rest.
+                                            if app.active_session() == Some(owner)
+                                                && app.ui().github_issues_gen == generation
+                                                && app.ui().github_issues_cursor == cursor
+                                                && app.ui().github_issues_error.is_none()
+                                                && !client_membership_active(app.ui())
+                                                && app.ui().selected_github_issue.is_none()
+                                                && app.workspace_mode()
+                                                    == super::workspace_mode::WorkspaceMode::Issues
+                                            {
+                                                app.load_more_github_issues_for(owner, repo, cx);
+                                            }
+                                        });
                                     });
-                                });
-                            }
-                        },
-                        |_, _, _, _| {},
-                    )
-                    .w_full()
-                    .h(px(1.)),
-                );
+                                }
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .w_full()
+                        .h(px(1.)),
+                    );
+                }
             }
         }
     }

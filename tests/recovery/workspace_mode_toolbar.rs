@@ -103,6 +103,74 @@ fn settle_sidebar(cx: &mut VisualTestAppContext) {
     cx.run_until_parked();
 }
 
+fn assert_pr_state_isolation(
+    cx: &mut VisualTestAppContext,
+    win: AnyWindowHandle,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+) {
+    use kagi_domain::{github::IssueState, list_filter::StateFilter};
+    let open = cx.read(|cx| app.read(cx).ui().github_prs.clone());
+    let (task, closed_reply) = crate::evidence_support::deferred(cx);
+    e2e::queue_github_pr_fetch(task);
+    click_control(cx, win, "list-filter-state");
+    click_control(cx, win, "list-filter-option-0-1");
+    assert!(measure(cx, win, "pr-list-refreshing").is_some());
+    assert_eq!(cx.read(|cx| app.read(cx).ui().github_prs.clone()), open);
+    let mut closed = pull_request(77, "closed record", "main");
+    closed.state = IssueState::Closed;
+    closed_reply.send(Ok(vec![closed.clone()]));
+    cx.run_until_parked();
+    assert!(measure(cx, win, "pr-home-row-77").is_some());
+    assert!(measure(cx, win, "pr-home-row-7").is_none());
+    assert!(measure(cx, win, "pr-list-refreshing").is_none());
+    assert_eq!(cx.read(|cx| app.read(cx).ui().github_prs.clone()), open);
+
+    // This is the ticker's public entry point, not a strip refresh.
+    let mut refreshed = open.clone();
+    refreshed[2].title = "ticker refreshed open record".into();
+    e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(refreshed.clone())));
+    app.update(cx, |app, cx| app.refresh_github_prs(cx));
+    cx.run_until_parked();
+    assert!(measure(cx, win, "pr-home-row-77").is_some());
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().github_prs.clone()),
+        refreshed
+    );
+
+    let mut all = refreshed.clone();
+    all.push(closed.clone());
+    e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(all)));
+    click_control(cx, win, "list-filter-state");
+    click_control(cx, win, "list-filter-option-0-2");
+    assert!(measure(cx, win, "pr-home-row-77").is_some());
+    assert!(measure(cx, win, "pr-home-row-7").is_some());
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().github_prs.clone()),
+        refreshed
+    );
+
+    // A departed Closed request cannot replace Graph's open evidence or
+    // restore the strip collection when PR mode is entered again.
+    let (task, stale_reply) = crate::evidence_support::deferred(cx);
+    e2e::queue_github_pr_fetch(task);
+    click_control(cx, win, "list-filter-state");
+    click_control(cx, win, "list-filter-option-0-1");
+    app.update(cx, |app, cx| app.show_graph_mode(cx));
+    stale_reply.send(Ok(vec![closed]));
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().github_prs.clone()),
+        refreshed
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().github_pr_filter.common.state),
+        StateFilter::Open
+    );
+    app.update(cx, |app, cx| app.show_pr_mode(cx));
+    assert!(measure(cx, win, "pr-home-row-77").is_none());
+    assert!(measure(cx, win, "pr-home-row-7").is_some());
+}
+
 pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
@@ -252,7 +320,7 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
         );
     }
     assert!(measure(cx, win, "issue-mode-card-1").is_some());
-    assert!(measure(cx, win, "issue-mode-card-2").is_none());
+    assert!(measure(cx, win, "issue-mode-card-2").is_some());
     assert!(measure(cx, win, "issue-composer").is_some());
     assert!(measure(cx, win, "issue-main-list").is_some());
     let original_lang = i18n::lang();
@@ -283,7 +351,7 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     })
     .unwrap();
     assert!(measure(cx, win, "issue-main-row-1").is_some());
-    assert!(measure(cx, win, "issue-main-row-2").is_none());
+    assert!(measure(cx, win, "issue-main-row-2").is_some());
 
     let created_tab = measure(cx, win, "issue-filter-tab-1").expect("Created by me tab");
     cx.simulate_click(win, created_tab.center(), gpui::Modifiers::none());
@@ -747,6 +815,7 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
             WorkspaceMode::Prs
         );
         assert_list_filters(cx, win, "pr-home-row", &[7, 8, 9], &[7, 9], 9, 7);
+        assert_pr_state_isolation(cx, win, &app);
 
         // ADR-0200: the lane pane belongs to the PR on screen. Home keeps its
         // tabs, so a pane gated on "any tab open" stood there with the lanes

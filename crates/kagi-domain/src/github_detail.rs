@@ -45,19 +45,32 @@ pub fn apply_pr_list(cache: &mut Vec<PullRequest>, incoming: Vec<PullRequest>) -
             .iter()
             .find(|old| old.number == listed.number && old.head_sha == listed.head_sha)
         {
-            listed.ci = old.ci;
-            listed.checks.clone_from(&old.checks);
-            listed.mergeable = old.mergeable;
-            listed.body.clone_from(&old.body);
-            listed.changed_files = old.changed_files;
-            listed.additions = old.additions;
-            listed.deletions = old.deletions;
+            inherit_pr_details(&mut listed, old);
         }
         merged.push(listed);
     }
     let changed = previous != merged;
     *cache = merged;
     changed
+}
+
+/// Carry already-fetched details between L1 collections without replacing
+/// either collection's identity/state. A different repository or head is not
+/// evidence for this row.
+pub fn inherit_pr_details(listed: &mut PullRequest, old: &PullRequest) {
+    if listed.number != old.number
+        || listed.base_repo != old.base_repo
+        || listed.head_sha != old.head_sha
+    {
+        return;
+    }
+    listed.ci = old.ci;
+    listed.checks.clone_from(&old.checks);
+    listed.mergeable = old.mergeable;
+    listed.body.clone_from(&old.body);
+    listed.changed_files = old.changed_files;
+    listed.additions = old.additions;
+    listed.deletions = old.deletions;
 }
 
 pub fn apply_pr_status(pr: &mut PullRequest, detail: &PrStatusDetail) -> bool {
@@ -85,6 +98,33 @@ pub fn apply_pr_body(pr: &mut PullRequest, detail: &PrBodyDetail) -> bool {
 mod tests {
     use super::*;
     use crate::github::ReviewState;
+
+    #[test]
+    fn state_collection_changes_keep_checks_only_for_the_same_identity() {
+        use crate::github::IssueState;
+        use crate::list_filter::{apply_prs, ChecksFilter, ListFilter, PrFilter, StateFilter};
+        let filter = PrFilter {
+            common: ListFilter {
+                state: StateFilter::Closed,
+                ..Default::default()
+            },
+            checks: ChecksFilter::Failing,
+            ..Default::default()
+        };
+        let old = detailed("same");
+        let mut closed = listed("same");
+        closed.state = IssueState::Closed;
+        inherit_pr_details(&mut closed, &old);
+        assert_eq!(
+            apply_prs(&[closed], &filter, |_| PrDetailAvailability::Fresh),
+            vec![0]
+        );
+
+        let mut moved = listed("different-head");
+        moved.state = IssueState::Closed;
+        inherit_pr_details(&mut moved, &old);
+        assert!(apply_prs(&[moved], &filter, |_| PrDetailAvailability::Fresh).is_empty());
+    }
 
     fn listed(head: &str) -> PullRequest {
         PullRequest {

@@ -101,6 +101,7 @@ impl TabUiState {
             github_prs_gen: _,
             github_prs_loading: _,
             github_pr_filter,
+            github_prs_strip: _,
             pr_details: _,
             cleanup_gen: _,
             github_issues: _,

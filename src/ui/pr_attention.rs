@@ -46,7 +46,7 @@ pub(super) fn focus_queue(app: &KagiApp) -> Vec<(PrAttention, Vec<(PullRequest, 
     .into_iter()
     .map(|attention| (attention, Vec::new()))
     .collect();
-    for pr in &app.ui().github_prs {
+    for pr in app.ui().pr_list_rows() {
         let group = pr.group_for(login.as_deref(), &local);
         let (attention, reason) = pr.attention_with_status(
             group == PrGroup::Mine,

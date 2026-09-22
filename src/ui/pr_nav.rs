@@ -3,7 +3,7 @@
 //! Split out of `pr_mode.rs` when the navigator's sections pushed that file
 //! past its LOC ceiling. It is one sidebar page's content (ADR-0199), built
 //! whether the page is on screen or is the neighbour a gesture is sliding
-//! toward, so everything here must stay a pure read of `ui().github_prs`.
+//! toward, so everything here stays a pure read of `ui().pr_list_rows()`.
 
 use gpui::{div, prelude::*, px, rgb, Context, SharedString};
 use kagi_domain::github::{PrAttention, PrGroup, PullRequest, ReviewState};
@@ -66,7 +66,7 @@ pub(super) struct PrListRow {
 pub(super) fn pr_sections(app: &KagiApp) -> Vec<(PrSection, bool, Vec<PrListRow>)> {
     let me = app.github_login.clone();
     let local: Vec<String> = app.view().branches.iter().map(|(n, _)| n.clone()).collect();
-    let indices = apply_prs(&app.ui().github_prs, &app.ui().github_pr_filter, |pr| {
+    let indices = apply_prs(app.ui().pr_list_rows(), &app.ui().github_pr_filter, |pr| {
         app.pr_status_availability(pr)
     });
     let open = app
@@ -78,7 +78,7 @@ pub(super) fn pr_sections(app: &KagiApp) -> Vec<(PrSection, bool, Vec<PrListRow>
         .map(|section| {
             let members: Vec<PrListRow> = indices
                 .iter()
-                .map(|&index| &app.ui().github_prs[index])
+                .map(|&index| &app.ui().pr_list_rows()[index])
                 .filter(|pr| {
                     section.accepts_with_status(
                         pr,
@@ -119,13 +119,13 @@ pub(super) fn pr_list_order(app: &KagiApp) -> Vec<PullRequest> {
 //
 // One sidebar page's content (ADR-0199): built here for the PR page whether it
 // is the page on screen or the neighbour a gesture is sliding toward, so it
-// must stay a pure read of `ui().github_prs`.
+// must stay a pure read of `ui().pr_list_rows()`.
 pub(super) fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let focused = app.pr_mode().map(|m| m.focus) == Some(PrFocus::List);
     let focus_click = cx.listener(|this: &mut KagiApp, _: &gpui::MouseDownEvent, _w, cx| {
         this.pr_mode_focus(PrFocus::List, cx);
     });
-    let all = &app.ui().github_prs;
+    let all = app.ui().pr_list_rows();
     let active_pr = app
         .pr_mode()
         .and_then(|m| m.active.and_then(|i| m.tabs.get(i)))

@@ -51,6 +51,7 @@ mod github;
 mod github_issue_state;
 mod github_issues;
 mod github_pr_detail;
+mod github_pr_strip;
 mod issues_composer;
 #[cfg(feature = "gui-e2e")]
 mod issues_composer_e2e;

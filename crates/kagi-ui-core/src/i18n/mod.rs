@@ -538,7 +538,6 @@ pub enum Msg {
     /// Home list: header, chips, sort and column names (ADR-0200).
     PrHomeOpen,
     PrHomeDraft,
-    PrHomeNeedsReview,
     PrHomeSortUpdated,
     PrHomeSortCreated,
     PrHomeSortNumber,
@@ -1658,8 +1657,6 @@ impl Msg {
             (Ja, PrHomeOpen) => "OPEN",
             (En, PrHomeDraft) => "DRAFT",
             (Ja, PrHomeDraft) => "DRAFT",
-            (En, PrHomeNeedsReview) => "need your review",
-            (Ja, PrHomeNeedsReview) => "件がレビュー待ち",
             (En, PrHomeSortUpdated) => "SORT: UPDATED",
             (Ja, PrHomeSortUpdated) => "並び: 更新順",
             (En, PrHomeSortCreated) => "SORT: CREATED",

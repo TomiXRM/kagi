@@ -109,6 +109,12 @@ The current suite covers:
   inside the shared row — and the pinned PR composer's real toggle click
   (`pr-composer-mode-toggle` → `pr-composer-preview`) keeping the typed text
   across a preview round trip;
+  The same scenario exercises the shared Issue/PR label and created-sort menus.
+  Its PR-state regression holds a Closed response and checks Refreshing, then
+  proves Closed/All results cannot replace shared Open evidence, an Open ticker
+  update cannot replace the visible Closed collection, and a late response after
+  leaving PR mode cannot restore that collection. Pair with
+  `KAGI_GUI_E2E_ONLY=github_evidence_` for session restore/background/detach.
 - Issues cursor pagination (`KAGI_GUI_E2E_ONLY=issues_pagination`,
   `tests/recovery/issues_pagination.rs`): the production virtual viewport loads
   100 → 200 → final-page rows without resetting the scroll anchor; an offline
@@ -121,6 +127,10 @@ The current suite covers:
   the main viewport to its tail, and compare the loaded badge with
   `[kagi] github: issues page=N loaded=M has_more=true|false`. A successful manual
   refresh starts again at page 1.
+  A nonempty Mentioning subset must not auto-page at its tail; its measured
+  `issue-filter-load-more` click continues exactly once. Returning to Recent
+  restores automatic continuation. Native clicks scroll the sidebar first if
+  an expanded collection puts the next tab header outside its viewport.
 - Issue write failure ownership
   (`KAGI_GUI_E2E_ONLY=issue_failure_notice_survives_tab_switch`,
   `tests/recovery/issue_write_owner.rs`): a recorded Create failure that lands after

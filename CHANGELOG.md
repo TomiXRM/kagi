@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Added
 
 - Issues / PRs の一覧に共通フィルターを追加しました。Open/Closed/All、複数ラベル、author、タイトル部分一致を組み合わせ、PR は draft と取得済み checks でも絞れます。updated / created / number / comments の昇降順、適用後の件数、既存の collection との AND に対応し、設定はタブ内だけで保持します。Closed は実際の closed 一覧を取得し、PR の merged も含みます。（#753、ADR-0198 / ADR-0200）
+- PR の Closed/All は専用の読み取り結果として保持し、Graph の open PR 一覧・branch badge・inspector chip・定期更新には混入させません。PR mode を離れると state は Open に戻ります。closed PR は actionable な bucket から外し、Issues は Recent を既定とし、絞り込み中の追加ページ取得は明示操作にしました。（#753 review follow-up）
 
 ### Fixed
 

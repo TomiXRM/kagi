@@ -12,7 +12,9 @@ use std::time::{Duration, Instant};
 use super::pr_mode::PrTab;
 use super::{KagiApp, TabUiState};
 use gpui::Context;
-use kagi_domain::github::{PrBodyDetail, PrDetailAvailability, PrStatusDetail, PullRequest};
+use kagi_domain::github::{
+    IssueState, PrBodyDetail, PrDetailAvailability, PrStatusDetail, PullRequest,
+};
 use kagi_git::{Commit, CommitId, FileStatus};
 
 const DETAIL_CONCURRENCY: usize = 2;
@@ -161,6 +163,9 @@ impl PrDetailController {
         priority: bool,
         force: bool,
     ) {
+        if stage == PrDetailStage::Status && pr.state == IssueState::Closed {
+            return;
+        }
         let key = DetailKey {
             base_repo: pr.base_repo.clone(),
             number: pr.number,
@@ -301,10 +306,15 @@ impl PrDetailController {
     }
 
     fn reconcile_heads(&mut self, prs: &[PullRequest]) {
-        let listed: HashSet<u64> = prs.iter().map(|pr| pr.number).collect();
-        self.pending.retain(|request| {
-            listed.contains(&request.key.number) || self.opened.contains(&request.key.number)
-        });
+        let listed: HashMap<u64, bool> = prs
+            .iter()
+            .map(|pr| (pr.number, pr.state == IssueState::Closed))
+            .collect();
+        self.pending
+            .retain(|request| match listed.get(&request.key.number) {
+                Some(closed) => !closed || request.key.stage != PrDetailStage::Status,
+                None => self.opened.contains(&request.key.number),
+            });
         for pr in prs {
             for stage in [PrDetailStage::Status, PrDetailStage::Body] {
                 let key = DetailKey {
@@ -401,8 +411,11 @@ pub(super) fn sync_open_pr_tabs(ui: &mut TabUiState) -> Vec<PullRequest> {
     let mut moved = Vec::new();
     for tab in &mut mode.tabs {
         if let Some(listed) = ui
-            .github_prs
+            .github_prs_strip
+            .rows
             .iter()
+            .flatten()
+            .chain(ui.github_prs.iter())
             .find(|pr| pr.number == tab.pr.number && pr.base_repo == tab.pr.base_repo)
         {
             let head_changed = tab.pr.head_sha != listed.head_sha;
@@ -544,7 +557,12 @@ impl KagiApp {
                 .map(|mode| mode.tabs.iter().map(|tab| tab.pr.number).collect())
                 .unwrap_or_default();
             ui.pr_details.opened = opened;
-            ui.pr_details.reconcile_heads(&ui.github_prs);
+            ui.pr_details.reconcile_heads(
+                ui.github_prs_strip
+                    .rows
+                    .as_deref()
+                    .unwrap_or(&ui.github_prs),
+            );
             ui.pr_details.targets()
         };
         self.enqueue_pr_details(owner, repo_path.clone(), &visible, false, true, cx);
@@ -566,8 +584,11 @@ impl KagiApp {
         let prs: Vec<PullRequest> = numbers
             .iter()
             .filter_map(|number| {
-                ui.github_prs
+                ui.github_prs_strip
+                    .rows
                     .iter()
+                    .flatten()
+                    .chain(ui.github_prs.iter())
                     .find(|pr| pr.number == *number)
                     .cloned()
                     .or_else(|| {
@@ -655,14 +676,16 @@ impl KagiApp {
                     let opened = ui
                         .pr_mode
                         .iter_mut()
-                        .flat_map(|mode| mode.tabs.iter_mut().map(|tab| &mut tab.pr));
+                        .flat_map(|mode| mode.tabs.iter_mut().map(|tab| &mut tab.pr))
+                        .chain(ui.github_prs_strip.rows.iter_mut().flatten());
                     apply_status_copies(&mut ui.github_prs, opened, &detail);
                 }
                 DetailResult::Body(detail) => {
                     let opened = ui
                         .pr_mode
                         .iter_mut()
-                        .flat_map(|mode| mode.tabs.iter_mut().map(|tab| &mut tab.pr));
+                        .flat_map(|mode| mode.tabs.iter_mut().map(|tab| &mut tab.pr))
+                        .chain(ui.github_prs_strip.rows.iter_mut().flatten());
                     apply_body_copies(&mut ui.github_prs, opened, &detail);
                 }
             }

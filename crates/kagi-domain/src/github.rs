@@ -3,8 +3,8 @@
 
 pub use crate::github_attention::{PrAttention, PrReason};
 pub use crate::github_detail::{
-    apply_pr_body, apply_pr_list, apply_pr_status, PrBodyDetail, PrDetailAvailability,
-    PrStatusDetail,
+    apply_pr_body, apply_pr_list, apply_pr_status, inherit_pr_details, PrBodyDetail,
+    PrDetailAvailability, PrStatusDetail,
 };
 pub use crate::github_edit::PrFieldEdit;
 
@@ -538,12 +538,16 @@ pub struct Issue {
 /// The four mutually-exclusive Issue navigator filters. The selected value is
 /// session-owned UI intent; membership itself is a pure projection of the
 /// latest successful list read and the process-wide viewer login cache.
+///
+/// The default is [`Self::RecentlyUpdated`]: it is the only filter whose
+/// membership does not depend on a viewer login, so a fresh session shows the
+/// list it actually read instead of an empty pane while the login resolves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IssueListTab {
-    #[default]
     AssignedToMe,
     CreatedByMe,
     MentioningMe,
+    #[default]
     RecentlyUpdated,
 }
 
@@ -649,6 +653,14 @@ mod issue_tests {
         assert!(issues
             .iter()
             .all(|issue| !IssueListTab::AssignedToMe.accepts(issue, None, &[])));
+    }
+
+    #[test]
+    fn default_tab_shows_every_issue_without_a_viewer_login() {
+        let tab = IssueListTab::default();
+        assert_eq!(tab, IssueListTab::RecentlyUpdated);
+        let issue = issue(7, "alice", &[], "2026-01-01T00:00:00Z");
+        assert!(tab.accepts(&issue, None, &[]));
     }
 }
 

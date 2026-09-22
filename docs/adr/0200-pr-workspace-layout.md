@@ -433,3 +433,28 @@ Issues（thread / home 一覧 / composer）と PR（feed / composer / home 表�
 - `workspace_mode_toolbar` clicks the actual shared label and sort menus in
   both homes, proves row membership changes, then proves created-desc changes
   the first row. The PR half remains mandatory when gh is available.
+
+### Review follow-up: preserve the open-PR evidence contract
+
+- `TabUiState::github_prs` remains the shared **Open-only** collection consumed
+  by Graph sidebar counts, branch badges and inspector chips. Both periodic
+  and owner-targeted shared refreshes always request Open, never strip intent.
+- Closed/All responses live in the session-owned `github_prs_strip` read, with
+  separate rows, loading, error and generation. Only PR workspace projections
+  use `pr_list_rows`; Open uses the shared collection without copying it.
+  Every PR-mode departure restores state Open, drops the strip rows and
+  invalidates pending strip completions, including departure by tab activation.
+- Closed PRs are `(Dormant, None)` regardless of CI, reviews, draft or status
+  availability. L2 admission and queued-read reconciliation reject closed
+  status work; opening a closed conversation may still request its L3 body.
+  Fresh strip L1 rows inherit already-loaded L2/L3 details only for the same
+  repository, PR number and head SHA, so switching state retains known checks
+  without refetching closed status or changing shared Open evidence.
+- State-switch loading says Refreshing rather than claiming an empty result.
+  The old separate “N need your review” headline is intentionally removed:
+  filtered attention buckets and navigator collection counts own those counts.
+  Its unused `PrHomeNeedsReview` translation key is removed too.
+- Native coverage holds a Closed response, checks the loading indicator,
+  accepts Closed/All rows without changing shared Open rows, applies the
+  ticker's shared refresh while Closed remains visible, and rejects a response
+  completed after departure. New PR/menu measurement names allocate only in gui-e2e.

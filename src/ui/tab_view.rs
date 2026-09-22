@@ -331,6 +331,7 @@ pub struct TabUiState {
     /// only predicate the *fetch* carries, and the list a tab opens on is the
     /// open one.
     pub github_pr_filter: kagi_domain::list_filter::PrFilter,
+    pub(super) github_prs_strip: super::github_pr_strip::PrStripRead,
     pub(super) pr_details: super::github_pr_detail::PrDetailController,
     /// Read-only Issues workspace data. Requests are session-owned and each
     /// generation accepts only its newest completion.
@@ -453,6 +454,7 @@ impl Default for TabUiState {
             github_prs_gen: 0,
             github_prs_loading: false,
             github_pr_filter: default_pr_filter(),
+            github_prs_strip: Default::default(),
             pr_details: Default::default(),
             github_issues: Vec::new(),
             github_issues_loaded: false,

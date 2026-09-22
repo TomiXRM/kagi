@@ -497,7 +497,7 @@ impl KagiApp {
         self.with_ui(|ui| ui.branch_cleanup_open = false);
         if keep != WorkspaceMode::Prs {
             // PR mode outranks Editor, so Editor has to displace it too.
-            self.with_ui(|ui| ui.pr_mode = None);
+            self.with_ui(|ui| ui.leave_pr_mode());
         }
         if keep != WorkspaceMode::Issues {
             // Invalidate completions as well as hiding the mode: a request that

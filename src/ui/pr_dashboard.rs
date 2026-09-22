@@ -116,7 +116,8 @@ pub(super) fn refresh_button(cx: &mut Context<KagiApp>) -> gpui::Stateful<gpui::
 
 pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let ui = app.ui();
-    let all = &ui.github_prs;
+    let all = ui.pr_list_rows();
+    let error = ui.pr_list_error();
     let rows = apply_prs(all, &ui.github_pr_filter, |pr| {
         app.pr_status_availability(pr)
     });
@@ -142,55 +143,68 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
         .flex()
         .flex_col()
         .pb_4();
+    if ui.pr_list_loading() {
+        body = body.child(super::e2e::measure_control(
+            "pr-list-refreshing",
+            div()
+                .px_4()
+                .py_2()
+                .text_xs()
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from(Msg::PrRefreshing.t())),
+        ));
+    }
 
     if all.is_empty() {
-        body = body.child(
-            div()
-                .flex_1()
-                .flex()
-                .flex_col()
-                .items_center()
-                .justify_center()
-                .gap_2()
-                .py_8()
-                .child(
-                    gpui::svg()
-                        .path("icons/inbox.svg")
-                        .w(theme::scaled_px(28.))
-                        .h(theme::scaled_px(28.))
-                        .text_color(rgb(theme().text_muted)),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(if ui.github_error.is_some() {
-                            theme().color_blocker
-                        } else {
-                            theme().text_muted
-                        }))
-                        // #506: three different empty screens — a failed fetch,
-                        // a repo with no GitHub remote, and a real empty inbox.
-                        .child(SharedString::from(if ui.github_error.is_some() {
-                            Msg::PrFetchFailed.t()
-                        } else if ui.github_unavailable {
-                            Msg::PrGithubUnavailable.t()
-                        } else {
-                            Msg::PrPaneEmpty.t()
-                        })),
-                )
-                .children(ui.github_error.clone().map(|e| {
-                    div()
-                        .max_w(theme::scaled_px(420.))
-                        .text_xs()
-                        .text_color(rgb(theme().text_muted))
-                        .child(e)
-                }))
-                .child(refresh_button(cx)),
-        );
+        body = body.when(!ui.pr_list_loading(), |body| {
+            body.child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap_2()
+                    .py_8()
+                    .child(
+                        gpui::svg()
+                            .path("icons/inbox.svg")
+                            .w(theme::scaled_px(28.))
+                            .h(theme::scaled_px(28.))
+                            .text_color(rgb(theme().text_muted)),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(if error.is_some() {
+                                theme().color_blocker
+                            } else {
+                                theme().text_muted
+                            }))
+                            // #506: three different empty screens — a failed fetch,
+                            // a repo with no GitHub remote, and a real empty inbox.
+                            .child(SharedString::from(if error.is_some() {
+                                Msg::PrFetchFailed.t()
+                            } else if ui.github_prs_strip.rows.is_none() && ui.github_unavailable {
+                                Msg::PrGithubUnavailable.t()
+                            } else {
+                                Msg::PrPaneEmpty.t()
+                            })),
+                    )
+                    .children(error.map(|e| {
+                        div()
+                            .max_w(theme::scaled_px(420.))
+                            .text_xs()
+                            .text_color(rgb(theme().text_muted))
+                            .child(safe_text(e))
+                    }))
+                    .child(refresh_button(cx)),
+            )
+        });
     } else {
         // #506: the list survived a failed fetch, so it is last-known data —
         // say so above the tiles instead of showing it as fresh.
-        if let Some(detail) = ui.github_error.clone() {
+        if let Some(detail) = error {
             body = body.child(
                 div()
                     .px_4()
@@ -208,7 +222,7 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                         div()
                             .text_xs()
                             .text_color(rgb(theme().text_muted))
-                            .child(detail),
+                            .child(safe_text(detail)),
                     ),
             );
         }
@@ -242,13 +256,14 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                 .map(|mode| mode.dashboard_scroll.clone())
                 .unwrap_or_default();
             let owner = app.active_session();
-            let generation = ui.github_prs_gen;
+            let generation = ui.pr_list_revision();
             body = body.child(
                 uniform_list(
                     "pr-home-list",
                     row_count,
                     cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
-                        if this.active_session() != owner || this.ui().github_prs_gen != generation
+                        if this.active_session() != owner
+                            || this.ui().pr_list_revision() != generation
                         {
                             return Vec::new();
                         }
@@ -257,14 +272,14 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                         let visible: BTreeSet<u64> = render_rows[start..end]
                             .iter()
                             .filter_map(|(index, _, _)| {
-                                this.ui().github_prs.get(*index).map(|pr| pr.number)
+                                this.ui().pr_list_rows().get(*index).map(|pr| pr.number)
                             })
                             .collect();
                         this.observe_visible_prs(visible, cx);
                         range
                             .filter_map(|index| {
                                 render_rows.get(index).and_then(|(source, bucket, why)| {
-                                    let pr = this.ui().github_prs.get(*source)?;
+                                    let pr = this.ui().pr_list_rows().get(*source)?;
                                     // Borrowed, not cloned: a `clone()` here
                                     // copied the whole avatar map for every
                                     // visible row, every frame (#750 review).
@@ -523,10 +538,12 @@ fn render_table_row(
         cells,
     ))
     .relative()
-    .child(super::e2e::measure_inside(format!(
-        "pr-home-row-{}",
-        pr.number
-    )))
+    .when(cfg!(feature = "gui-e2e"), |row| {
+        row.child(super::e2e::measure_inside(format!(
+            "pr-home-row-{}",
+            pr.number
+        )))
+    })
     .items_center()
     .flex_shrink_0()
     // A triage table is denser than a feed, so the row carries 12px rather

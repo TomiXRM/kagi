@@ -205,7 +205,7 @@ pub(super) const COMMIT_LIMIT: usize = 500;
 impl KagiApp {
     pub fn toggle_pr_mode(&mut self, cx: &mut Context<Self>) {
         if self.pr_mode().is_some() {
-            self.with_ui(|ui| ui.pr_mode = None);
+            self.with_ui(|ui| ui.leave_pr_mode());
             klog!("pr-mode: closed");
         } else {
             if self.repo_path.is_none() {
@@ -527,7 +527,7 @@ impl KagiApp {
         // In flight, so it takes the spinning sync icon rather than a glyph
         // that cannot turn (user report).
         self.push_toast(ToastKind::Sync, Msg::PrRefreshing.t(), cx);
-        self.refresh_github_prs(cx);
+        self.refresh_pr_strip(cx);
     }
 
     pub fn pr_mode_close_tab(&mut self, ix: usize, cx: &mut Context<Self>) {

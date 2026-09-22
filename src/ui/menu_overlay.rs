@@ -240,5 +240,12 @@ where
             .into_any_element(),
         _ => row.into_any_element(),
     };
-    super::e2e::measure_control(format!("{item_id_prefix}-{group_ix}-{item_ix}"), row)
+    #[cfg(feature = "gui-e2e")]
+    {
+        super::e2e::measure_control(format!("{item_id_prefix}-{group_ix}-{item_ix}"), row)
+    }
+    #[cfg(not(feature = "gui-e2e"))]
+    {
+        row
+    }
 }

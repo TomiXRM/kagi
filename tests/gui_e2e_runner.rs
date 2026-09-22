@@ -346,6 +346,11 @@ mod macos {
         std::fs::write(repo.join("f.txt"), "base\n").unwrap();
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-q", "-m", "base"]);
+        // Older history leaves room to scroll every WIP offscreen while its
+        // HEAD remains visible (#773).
+        for _ in 0..24 {
+            git(&repo, &["commit", "--allow-empty", "-qm", "older history"]);
+        }
         // A distinct commit per branch, so each WIP row's connector has its own
         // HEAD row to land on (a shared HEAD would still work, but distinct
         // rows make a shifted lane unambiguous).
@@ -355,6 +360,17 @@ mod macos {
             git(&repo, &["commit", "-q", "-am", &format!("{b} commit")]);
             git(&repo, &["checkout", "-q", "main"]);
         }
+        git(&repo, &["checkout", "-qb", "intervening", "wt-a"]);
+        git(
+            &repo,
+            &[
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "other branch above WIP HEAD",
+            ],
+        );
+        git(&repo, &["checkout", "-q", "main"]);
         git(
             &repo,
             &["worktree", "add", "-q", wt_a.to_str().unwrap(), "wt-a"],
@@ -1937,21 +1953,20 @@ mod macos {
         let before_fp = repo_fingerprint(&repo_path);
         let (kagi, win) = mount(cx, &repo_path);
 
-        // The WIP-ghost edges of `row` of one kind, leaving one lane. Keyed by
-        // lane, not by colour: two connectors landing on the same branch now
-        // legitimately carry the same colour, and the lane is what tells them
-        // apart.
+        // Same lane/colour may serve multiple HEADs; the trace continues to
+        // the deepest one instead of allocating another column.
         fn ghost(
             row: &commit_list::CommitRow,
-            kind: EdgeKind,
+            kind: Option<EdgeKind>,
             from_lane: usize,
+            color: usize,
         ) -> Vec<&GraphEdge> {
             row.edges
                 .iter()
                 .filter(|e| {
-                    e.kind == kind
+                    kind.as_ref().is_none_or(|kind| e.kind == *kind)
                         && e.from_lane == from_lane
-                        && graph_wip::wip_color_index(e.color).is_some()
+                        && graph_wip::wip_color_index(e.color) == Some(color)
                 })
                 .collect()
         }
@@ -1981,20 +1996,6 @@ mod macos {
                 .expect("open repo's WIP row got no anchor");
             let wt_anchor = anchor_for(graph_wip::WipTarget::Worktree(1))
                 .expect("linked worktree's WIP row got no anchor");
-            // The lane-only accessor still answers for the same anchor.
-            assert_eq!(
-                graph_wip::wip_lane(&view.wip_lanes, graph_wip::WipTarget::Current),
-                Some(open.lane),
-                "wip_lane must report the anchor's lane"
-            );
-            assert_eq!(
-                graph_wip::wip_lane(&view.wip_lanes, graph_wip::WipTarget::Worktree(1)),
-                Some(wt_anchor.lane)
-            );
-            assert_ne!(
-                open.lane, wt_anchor.lane,
-                "two connectors must not share a column"
-            );
 
             // The open repo's HEAD is buried under the `ahead` branch.
             let head = view
@@ -2007,14 +2008,15 @@ mod macos {
                 "fixture should bury HEAD at row >= 3, got row {head}"
             );
             let head_color = view.rows[head].node_color;
+            assert_eq!(open.lane, view.rows[head].lane);
             assert_eq!(
                 open.color, head_color,
                 "#767: the anchor's colour is the colour of the HEAD lane it points at"
             );
 
-            // Every row above HEAD carries the connector; HEAD carries the curve.
+            // Every row above HEAD carries the connector down its own lane.
             for (i, row) in view.rows[..head].iter().enumerate() {
-                let passes = ghost(row, EdgeKind::Pass, open.lane);
+                let passes = ghost(row, Some(EdgeKind::Pass), open.lane, open.color);
                 assert_eq!(
                     passes.len(),
                     1,
@@ -2027,15 +2029,11 @@ mod macos {
                     "row {i}'s connector must be drawn in HEAD's lane colour"
                 );
             }
-            let into = ghost(&view.rows[head], EdgeKind::IntoNode, open.lane);
-            assert_eq!(
-                into.len(),
-                1,
-                "HEAD's row must carry the connector's IntoNode curve"
-            );
+            let into = ghost(&view.rows[head], None, open.lane, open.color);
+            assert_eq!(into.len(), 1, "HEAD's row must carry the shared connector");
             assert_eq!(
                 into[0].to_lane, view.rows[head].lane,
-                "the curve must land on HEAD's own node"
+                "the connector must reach HEAD's own node"
             );
             assert_eq!(ghost_color(into[0]), head_color);
 
@@ -2050,26 +2048,22 @@ mod macos {
                 "the two worktrees should sit on different commits"
             );
             let wt_head_color = view.rows[wt_head].node_color;
+            assert_eq!(wt_anchor.lane, view.rows[wt_head].lane);
             assert_eq!(
                 wt_anchor.color, wt_head_color,
                 "#767: the worktree's anchor takes its own HEAD row's lane colour"
             );
-            let wt_into = ghost(&view.rows[wt_head], EdgeKind::IntoNode, wt_anchor.lane);
+            let wt_into = ghost(&view.rows[wt_head], None, wt_anchor.lane, wt_anchor.color);
             assert_eq!(
                 wt_into.len(),
                 1,
-                "the linked worktree's HEAD row must carry its own IntoNode"
+                "the linked worktree's HEAD must lie on its connector"
             );
             assert_eq!(
                 wt_into[0].to_lane, view.rows[wt_head].lane,
-                "the curve must land on that worktree's HEAD node"
+                "the connector must reach that worktree's HEAD node"
             );
             assert_eq!(ghost_color(wt_into[0]), wt_head_color);
-            assert_eq!(
-                ghost(&view.rows[head], EdgeKind::IntoNode, wt_anchor.lane).len(),
-                0,
-                "the worktree's connector must not land on the other worktree's HEAD"
-            );
 
             eprintln!(
                 "[gui-e2e] PASS wip_head_connector head_row={head} lanes={}/{} colours={}/{} \
@@ -2403,7 +2397,6 @@ mod macos {
             lane_open.is_some() && lane_a.is_some() && lane_b.is_some(),
             "every WIP row should have drawn a connector: {lanes_before:?}"
         );
-        assert_ne!(lane_a, lane_b, "two connectors must not share a column");
 
         // Open worktree A's panel, stage its file, give it a message.
         let path_a = wt_a.clone();

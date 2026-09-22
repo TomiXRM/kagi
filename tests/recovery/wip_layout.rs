@@ -227,6 +227,30 @@ fn check_anchors(
         let head_node = solid[head_row];
         let (head_lane, head_color) = facts.rows[head_row];
         let expected = theme::theme().lane_color(head_color);
+        assert!(
+            lane.abs_diff(head_lane) <= 1,
+            "{what}: WIP detoured beyond a neighbouring lane"
+        );
+        assert!(
+            near(f32::from(node.center.x), f32::from(head_node.center.x)),
+            "{what}: WIP must prefer directly above its HEAD"
+        );
+        for crossed in &solid[..head_row] {
+            if near(f32::from(crossed.center.x), f32::from(node.center.x)) {
+                for dash in dashes.iter().filter(|dash| {
+                    near(f32::from(dash.from.x), f32::from(node.center.x))
+                        && near(f32::from(dash.to.x), f32::from(node.center.x))
+                        && dash.from.y >= crossed.bounds.top()
+                        && dash.to.y <= crossed.bounds.bottom()
+                        && hsla_eq(dash.color, expected)
+                }) {
+                    assert!(
+                        dash.paint_order < crossed.paint_order,
+                        "{what}: WIP was painted over an intervening commit"
+                    );
+                }
+            }
+        }
 
         // The anchor is the HEAD's colour — not the worktree's position.
         assert_eq!(
@@ -272,14 +296,7 @@ fn check_anchors(
             column.len(),
             "{what}: the same dash segment is painted twice — one WIP column is one trace"
         );
-        // Same lane as HEAD: the dashes run all the way into the node. A
-        // dedicated lane keeps #472's solid landing arc, so there the dashes
-        // only have to reach the HEAD row's top edge.
-        let target = if lane == head_lane {
-            f32::from(head_node.center.y)
-        } else {
-            f32::from(head_node.center.y) - pitch / 2.
-        };
+        let target = f32::from(head_node.center.y);
         assert!(
             reaches(&column, f32::from(node.center.y), target, max_gap),
             "{what}: the dashed connector does not run from the hollow node \
@@ -322,11 +339,8 @@ fn check_anchors(
         .collect()
 }
 
-/// Issue #767 (Tier A): three dirty working trees on three different branch
-/// HEADs paint three hollow anchor nodes, in three different columns, each in
-/// its own HEAD's lane colour, each joined to its badge by a dashed rail and to
-/// its HEAD commit node by a dashed connector that survives the WIP rows in
-/// between.
+/// Three dirty worktrees retain HEAD-aligned anchors even with another branch
+/// above them. The dashed annotation paints behind intervening commit nodes.
 ///
 /// Re-checked at 1.25× zoom (the geometry moves, the relationships must not),
 /// with the pointer hovering a WIP row, and with a WIP row's commit panel open
@@ -361,16 +375,6 @@ pub fn scenario_commit_row_layout_wip(cx: &mut VisualTestAppContext, repo_path: 
         .find(|n| n.hollow)
         .expect("a hollow node")
         .radius;
-    // Three columns, not three rings stacked in one: any two rings are further
-    // apart than a ring is wide.
-    for (i, a) in centers.iter().enumerate() {
-        for b in &centers[i + 1..] {
-            assert!(
-                (a.0 - b.0).abs() > 2. * radius,
-                "three WIP rows on three HEADs must use three columns, got {centers:?}"
-            );
-        }
-    }
 
     // ── zoom ────────────────────────────────────────────────────────────────
     theme::set_zoom(1.25);
@@ -385,12 +389,84 @@ pub fn scenario_commit_row_layout_wip(cx: &mut VisualTestAppContext, repo_path: 
         (zoom_radius / radius - 1.25).abs() <= 0.05,
         "the ring must scale with zoom: {radius} -> {zoom_radius}"
     );
-    let spread = |c: &[(f32, f32)]| (c.last().unwrap().0 - c.first().unwrap().0).abs();
+    let spread = |centers: &[(f32, f32)]| {
+        centers
+            .iter()
+            .map(|center| center.0)
+            .fold(f32::NEG_INFINITY, f32::max)
+            - centers
+                .iter()
+                .map(|center| center.0)
+                .fold(f32::INFINITY, f32::min)
+    };
     assert!(
         spread(&zoom_centers) > spread(&centers),
         "lane pitch must grow with zoom: {centers:?} -> {zoom_centers:?}"
     );
     theme::set_zoom(1.);
+
+    // Scroll the real list by its painted WIP height. WIP must leave the
+    // viewport, but every still-visible HEAD keeps its connector from the top.
+    let (before_scroll, _) = painted(cx, win, DIMENSIONS);
+    let viewport =
+        e2e::control_bounds(win.window_id(), "commit-list-viewport").expect("graph viewport drawn");
+    let mut commits: Vec<_> = before_scroll.iter().filter(|node| !node.hollow).collect();
+    commits.sort_by(|a, b| a.center.y.partial_cmp(&b.center.y).expect("finite y"));
+    let pitch = f32::from(commits[1].center.y - commits[0].center.y);
+    let scroll = pitch * facts.wips.len() as f32;
+    cx.simulate_event(
+        win,
+        gpui::ScrollWheelEvent {
+            position: viewport.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-scroll))),
+            touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
+        },
+    );
+    cx.run_until_parked();
+    let (scrolled_nodes, scrolled_dashes) = painted(cx, win, DIMENSIONS);
+    assert!(
+        !scrolled_nodes.iter().any(|node| node.hollow
+            && node.center.y >= viewport.top()
+            && node.center.y < viewport.bottom()),
+        "WIP remained pinned while scrolling history"
+    );
+    for fact in &facts.wips {
+        let head = commits[fact.head_row.unwrap()];
+        let expected_y = f32::from(head.center.y) - scroll;
+        let visible_head = scrolled_nodes
+            .iter()
+            .find(|node| {
+                !node.hollow
+                    && near(f32::from(node.center.x), f32::from(head.center.x))
+                    && near(f32::from(node.center.y), expected_y)
+            })
+            .expect("HEAD still visible after WIP scroll");
+        let column = vertical_dashes(
+            &scrolled_dashes,
+            f32::from(visible_head.center.x),
+            head.color,
+        );
+        assert!(
+            reaches(
+                &column,
+                f32::from(viewport.top()),
+                expected_y,
+                theme::scaled(7.) + PAINT_EPS
+            ),
+            "hidden WIP lost its viewport-to-HEAD connector"
+        );
+    }
+    cx.simulate_event(
+        win,
+        gpui::ScrollWheelEvent {
+            position: viewport.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(scroll))),
+            touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
+        },
+    );
+    cx.run_until_parked();
 
     // ── hover ───────────────────────────────────────────────────────────────
     // The WIP row's own hover style repaints the row; the ring is not part of
@@ -543,7 +619,7 @@ pub fn scenario_commit_row_layout_wip_edges(
             .expect("an anchored row has a ring");
         centers[ix]
     };
-    let (current_ring, shared_ring, detached_ring) = (ring(current), ring(shared), ring(detached));
+    let (current_ring, shared_ring) = (ring(current), ring(shared));
     let top = if current_ring.1 <= shared_ring.1 {
         current_ring
     } else {
@@ -574,12 +650,6 @@ pub fn scenario_commit_row_layout_wip_edges(
         above, 0,
         "the shared column's trace must begin at the topmost WIP ring, \
          but {above} dash segments were painted above it: {column:?}"
-    );
-    // The detached ring is its own column.
-    assert!(
-        (detached_ring.0 - shared_x).abs() > 1.,
-        "the detached worktree anchors on another commit, so another column: \
-         {detached_ring:?} vs shared column x={shared_x}"
     );
 
     unmount(cx, kagi, win);

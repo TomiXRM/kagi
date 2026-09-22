@@ -149,19 +149,14 @@ pub enum EdgeKind {
     OutOfNode,
 }
 
-/// One row's graph occupancy, as [`wip_anchor`] needs to see it: where the
-/// node sits, the colour its lane carries, and the edges crossing the row.
-///
-/// Borrowed rather than owned so a caller with its own row type (the UI's
-/// `CommitRow`) lends its edge vector instead of cloning it per row.
+/// A borrowed row projection for WIP anchoring. Edges do not reserve WIP
+/// columns: the connector is painted behind real history instead of detouring.
 #[derive(Clone, Copy, Debug)]
-pub struct RowOccupancy<'a> {
+pub struct RowOccupancy {
     /// Lane the row's node (●) is drawn on.
     pub lane: usize,
     /// Stable colour index of that node's lane.
     pub color: usize,
-    /// Every edge passing through (or ending at) this row.
-    pub edges: &'a [GraphEdge],
 }
 
 /// Where a WIP row's dashed connector to HEAD lands: the column it runs down
@@ -225,27 +220,16 @@ pub fn lane_bottom_busy(edges: &[GraphEdge], lane: usize) -> bool {
 /// window) gives `None`: half a connector is worse than none, the rule stashes
 /// already apply to an out-of-window base.
 ///
-/// The column is HEAD's own whenever nothing occupies it between the top of
-/// the window and HEAD's node. The line enters from *outside* the graph (the
-/// WIP rows sit above row 0), so row 0's top half has to be free too. When
-/// `origin` is ahead that column carries HEAD's descendants, and `fresh_lane`
-/// — a column the caller guarantees is unused — is both the normal outcome
-/// and the right one: the connector must not overdraw a real line.
-pub fn wip_anchor<'a>(
-    rows: impl Iterator<Item = RowOccupancy<'a>> + Clone,
+/// Anchor directly above HEAD, even when intervening history occupies its
+/// column. This keeps the next-commit point near its parent without widening
+/// the graph; the painter puts the annotation behind real edges and nodes.
+pub fn wip_anchor(
+    mut rows: impl Iterator<Item = RowOccupancy>,
     head: Option<usize>,
-    fresh_lane: usize,
 ) -> Option<WipAnchor> {
-    let head = head?;
-    let node = rows.clone().nth(head)?;
-    let free = !lane_top_busy(node.edges, node.lane)
-        && rows.take(head).all(|r| {
-            r.lane != node.lane
-                && !lane_top_busy(r.edges, node.lane)
-                && !lane_bottom_busy(r.edges, node.lane)
-        });
+    let node = rows.nth(head?)?;
     Some(WipAnchor {
-        lane: if free { node.lane } else { fresh_lane },
+        lane: node.lane,
         color: node.color,
     })
 }

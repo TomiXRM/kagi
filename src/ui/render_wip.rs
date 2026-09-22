@@ -9,8 +9,8 @@ use super::render_helpers::*;
 use super::*;
 
 impl KagiApp {
-    /// Render the stash graph rows (ADR-0088): one fixed row per stash, shown
-    /// directly below the WIP row, in the stash colour with an inbox icon and a
+    /// Render the visible stash prefix below WIP in the shared graph list,
+    /// in the stash colour with an inbox icon and a
     /// graph node that connects down to the stash's base commit. Left-click pops,
     /// right-click opens the stash menu (same as the sidebar).
     pub(super) fn render_stash_graph_rows(
@@ -19,6 +19,7 @@ impl KagiApp {
         graph_col_w: f32,
         graph_scroll_x: f32,
         wip_pass_lanes: &[(usize, usize)],
+        range: std::ops::Range<usize>,
         cx: &mut Context<Self>,
     ) -> Vec<gpui::AnyElement> {
         let visible_lanes = graph_view::lanes_for_width(graph_col_w);
@@ -29,11 +30,20 @@ impl KagiApp {
         // Lanes of connected stashes rendered *above* the current row, whose
         // branch lines must keep passing straight down through this row (fixes
         // the topmost stash's line vanishing at the next stash row).
-        let mut passing_lanes: Vec<usize> = Vec::new();
+        let mut passing_lanes: Vec<usize> = self
+            .view()
+            .stash_graph_rows
+            .iter()
+            .take(range.start)
+            .filter(|row| row.connected)
+            .map(|row| row.lane)
+            .collect();
 
         self.view()
             .stash_graph_rows
             .iter()
+            .skip(range.start)
+            .take(range.len())
             .map(|sr| {
                 let index = sr.index;
                 let label = sr.label.clone();
@@ -394,7 +404,7 @@ impl KagiApp {
                         color: graph_wip::wip_color(ci),
                     })
                     .collect();
-                let start_lane = lane.filter(|lane| !pass_lanes.iter().any(|(l, _)| l == lane));
+                let start_lane = lane.filter(|lane| !pass_lanes.contains(&(*lane, color_idx)));
                 if let Some(l) = start_lane {
                     edges.push(crate::graph::GraphEdge {
                         from_lane: l,

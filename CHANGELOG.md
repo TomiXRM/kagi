@@ -15,6 +15,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - conflict の Abort 確認が、reload で前提が変わったあとも古い内容のまま残っていたのを直しました。取り込んだ reload で確認を閉じ、内容の差し替えはしません（閉じるだけで、中止は実行しません）。開き直すと現在の状態で計画し直します。合わせて Abort 確認を開くときに window の focus を root へ戻すので、Result pane を編集して Preview に戻したあとのように focus が描画されていない要素に残っている状態でも Esc で閉じられます。（#755）
+- WIP の点を HEAD と同じ lane の真上に置き、履歴との衝突で遠い専用列へ迂回しないようにしました。点線は実 commit・edge の背後を通ります。WIP / stash 行も commit 一覧と一緒にスクロールし、WIP が画面外でも可視の HEAD までは viewport 上端から点線が続きます。（#773、ADR-0174）
 - preflight refusal の native 回帰テストを現在の通知契約へ更新しました。旧 dismiss-only modal の代わりに EN/JA の footer / error toast、oplog の具体的な拒否理由、repository 不変を検証します。製品の通知動作は変更していません。（#764）
 - remote write の結果を観測できない場合、停止証明後に「未確認のまま制限を解除」を二段階で選べるようにしました。EN/JA の警告と解放理由の監査ログを残し、元の Unknown は保持します。実行中・結果不一致・通信失敗・ログ保存失敗では解除しません。SSH alias の実 host を期限付きで解決し、PR fetch の remote 識別にも使います。（#706、ADR-0196）
 - 短いウィンドウでも確認ダイアログの対象リストと Cancel / Confirm を確認できるようにしました。zoom 換算800px以下では余白と見出しをコンパクトにし、復旧説明だけを既定で折り畳みます。警告・拒否理由・最終確認の注意文は表示領域内に保持し、対象は最後の行までスクロールできます。開閉の選択は高さ変更で反転せず、次の確認ではリセットされます。（#462）

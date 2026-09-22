@@ -2616,7 +2616,7 @@ impl KagiApp {
         // Scroll the list so the row is visible (centered in viewport).
         self.ui()
             .commit_scroll_handle
-            .scroll_to_item(row_ix, ScrollStrategy::Center);
+            .scroll_to_item(self.commit_list_index(row_ix), ScrollStrategy::Center);
 
         // Select the row (opens detail panel, emits selected log).
         // `select` toggles on a repeated index; a jump must stay selected.
@@ -2647,7 +2647,7 @@ impl KagiApp {
         klog!("jump: commit {} -> row {}", target.short(), row_ix);
         self.ui()
             .commit_scroll_handle
-            .scroll_to_item(row_ix, ScrollStrategy::Center);
+            .scroll_to_item(self.commit_list_index(row_ix), ScrollStrategy::Center);
         // `select` toggles on a repeated index; a jump must stay selected.
         if self.ui().selected != Some(row_ix) {
             self.select(row_ix);
@@ -3094,7 +3094,7 @@ impl KagiApp {
         if self.ui().selected != Some(next) {
             self.ui()
                 .commit_scroll_handle
-                .scroll_to_item(next, ScrollStrategy::Center);
+                .scroll_to_item(self.commit_list_index(next), ScrollStrategy::Center);
             // `select` toggles on a repeated index; guarded above.
             self.select(next);
         }

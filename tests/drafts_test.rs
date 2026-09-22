@@ -50,6 +50,38 @@ fn round_trip_preserves_message_mode_and_branch() {
 }
 
 #[test]
+fn legacy_outer_record_preserves_surrogate_pairs() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|log_dir| {
+        let repo = Path::new("/tmp/kagi-it/repo");
+        save_draft(repo, "main", "seed", "plain").expect("locate draft storage");
+        let file = std::fs::read_dir(log_dir.join("drafts"))
+            .expect("draft directory")
+            .next()
+            .expect("draft entry")
+            .expect("read entry")
+            .path();
+        std::fs::write(
+            file,
+            r#"{"repo":"/tmp/kagi-it/repo","branch":"main","message":"score \uD834\uDD1E\n\"quoted\"\\path\t\u0001","mode":"template","updated":42}"#,
+        )
+        .expect("write existing-format record");
+
+        let draft = load_draft(repo, "main").expect("load existing draft");
+        let expected = "score \u{1D11E}\n\"quoted\"\\path\t\u{1}";
+        assert_eq!(draft.message, expected);
+        assert_eq!(draft.repo, "/tmp/kagi-it/repo");
+        assert_eq!(draft.branch, "main");
+        assert_eq!(draft.mode, "template");
+        assert_eq!(draft.updated, 42);
+        save_draft(repo, &draft.branch, &draft.message, &draft.mode).expect("resave draft");
+        assert_eq!(load_draft(repo, "main").expect("reload").message, expected);
+    });
+}
+
+#[test]
 fn drafts_are_isolated_by_branch_and_repo() {
     if !crate::test_support::run_isolated() {
         return;

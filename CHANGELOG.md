@@ -17,6 +17,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- draft の外側 JSON record を serde で保存・読み込みするようにし、surrogate pair で表現された文字が commit-message draft から脱落する問題を修正しました。既存のフィールド・省略時の値・保存先・atomic replacement は維持します。Issue 本文 payload、oplog、resolution の形式は変更していません。（#513 draft slice）
 - conflict Skip の結果が `Unclear` のとき、結果分類より先に writer lease を解放していた問題を修正しました。停止済みでも sequencer の結果が不明な場合は lease を保持して既存の reconcile 経路へ渡し、停止未確認の `TerminationUnknown` も `Unknown` のまま扱います。Continue / Abort や read/ack の改修は含みません。（#569 (1)）
 - 右クリックメニューのグループ間に区切り線を追加し、見出しのないグループも見分けられるようにしました。Worktree の削除2項目は、移動・Lock/Unlock・保守項目から分離して末尾に配置します。操作や確認画面は変更していません。（#454 Phase 3 の一部）
 - Worktree inspection の review 指摘を修正しました。local ref に解決される upstream を push 済みの根拠にせず、Windows の圧縮ファイルは物理使用量を取得できない場合に不明とします。初回計測が途中で中断されても、tab 復帰時に cache を保持して未計測 worktree の走査を再開します。（#633 / #779）

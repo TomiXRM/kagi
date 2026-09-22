@@ -441,6 +441,36 @@ fn buffer_autosave_round_trip() {
     ResolutionBuffer::clear(tmp.path()).unwrap();
 }
 
+#[test]
+fn buffer_autosave_preserves_legacy_surrogate_pairs() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().expect("repo key");
+    let saved_at = ResolutionBuffer::new(tmp.path())
+        .autosave()
+        .expect("autosave path");
+    std::fs::write(
+        saved_at,
+        r#"{"repo":"/old/location","updated":42,"files":[{"path":"score.txt","binary":false,"current":"ours \uD834\uDD1E\n","incoming":null,"result":[{"t":"merged \uD834\uDD1E \"quoted\"\\path\t\u0001","o":"m"}],"raw_result":null}]}"#,
+    )
+    .expect("write legacy record");
+    let path = Path::new("score.txt");
+    let expected = "merged \u{1D11E} \"quoted\"\\path\t\u{1}\n";
+    let loaded = ResolutionBuffer::load(tmp.path()).expect("load legacy buffer");
+    assert_eq!(loaded.repo_path(), tmp.path());
+    assert_eq!(loaded.resolved_text(path).as_deref(), Some(expected));
+    assert_eq!(
+        loaded.sides(path),
+        Some((Some("ours \u{1D11E}\n".into()), None))
+    );
+    assert_eq!(loaded.provenance(path), Some(vec![LineOrigin::Manual]));
+    loaded.autosave().expect("resave");
+    let reloaded = ResolutionBuffer::load(tmp.path()).expect("reload");
+    assert_eq!(reloaded.resolved_text(path).as_deref(), Some(expected));
+    assert_eq!(reloaded.sides(path), loaded.sides(path));
+}
+
 // ────────────────────────────────────────────────────────────
 // T-CONFLICT-008: continue gate + abort
 // ────────────────────────────────────────────────────────────

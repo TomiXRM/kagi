@@ -111,24 +111,25 @@ pub(super) fn markdown_style(heading_base: f32, cx: &gpui::App) -> TextViewStyle
     }
 }
 
-/// A body through the GitHub-markdown pipeline the feeds share: normalise the
-/// text (CRLF, inline code across lines, bot HTML footers — all of which the
-/// inline layouter rejects), pad inline code so the glyph range is painted,
-/// flatten HTML blocks, then render with remote images and window selection.
+/// A body through the GitHub-markdown pipeline the feeds share
+/// (`kagi_ui_editor::markdown::prepare_github_markdown`): normalise the text,
+/// turn images into links so a remote-origin comment cannot make the app
+/// fetch anything, pad inline code, flatten HTML blocks — then render with
+/// window selection, in the typography literal code needs
+/// (`literal_text_features`: no contextual alternates, so `<!--` stays four
+/// characters).
 pub(super) fn body_markdown(
     id: impl Into<ElementId>,
     body: &str,
     style: TextViewStyle,
 ) -> AnyElement {
-    let body = kagi_domain::message::sanitize_markdown_for_view(body);
-    let body = kagi_ui_editor::markdown::pad_inline_code(&body);
     TextView::markdown(
         id,
-        SharedString::from(kagi_ui_core::markdown::flatten_html_blocks(&body)),
+        SharedString::from(kagi_ui_editor::markdown::prepare_github_markdown(body)),
     )
-    .plugin(kagi_ui_core::markdown::MarkdownImages::remote())
     .selectable(true)
     .style(style)
+    .font_features(kagi_ui_editor::markdown::literal_text_features())
     .into_any_element()
 }
 

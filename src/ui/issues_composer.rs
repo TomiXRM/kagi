@@ -8,7 +8,7 @@ use super::{
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Entity, SharedString, Window};
 use gpui_component::input::{Enter, Input, InputEvent, InputState, Paste};
 use gpui_component::{button::Button, Disableable, Icon, Sizable};
-use kagi_domain::issue_composer::{fenced_code_paste, IssueDraft};
+use kagi_domain::issue_composer::{fenced_code_paste, title_paste_split, IssueDraft};
 use std::collections::HashMap;
 
 gpui::actions!(issues_composer, [FocusIssueEditor]);
@@ -304,6 +304,12 @@ pub(super) fn render_composer(
         let Some(title) = editor.title_input.clone() else {
             return div().into_any_element();
         };
+        // A whole Issue pasted onto the title is a title *and* a body: the
+        // single-line Input would otherwise flatten the document into the
+        // title bar and leave the body empty (#751). Capture the action before
+        // the Input consumes it; the body keeps its own fenced-code rule.
+        let paste_title = title.clone();
+        let paste_body = input.clone();
         content = content.child(
             div()
                 .h(theme::scaled_px(32.))
@@ -316,6 +322,43 @@ pub(super) fn render_composer(
                         // Stop that plain Enter at the title boundary.
                         cx.stop_propagation();
                     }
+                }))
+                .capture_action(cx.listener(move |app, _: &Paste, window, cx| {
+                    if app.has_active_modal() {
+                        return;
+                    }
+                    let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+                        return;
+                    };
+                    // One line is an ordinary title edit — the Input's own
+                    // paste still owns it, selection and undo included.
+                    let Some(split) = title_paste_split(&text) else {
+                        return;
+                    };
+                    if let Some(editor) = app
+                        .ui_mut()
+                        .and_then(|ui| ui.issue_composer.editors.get_mut(&number))
+                    {
+                        editor.body_revealed = true;
+                    }
+                    // A first line that names nothing (blank, or a fence that
+                    // owns the lines below it) leaves the title input alone,
+                    // selection included: the whole clipboard went to the body.
+                    if let Some(pasted) = split.title {
+                        paste_title.update(cx, |st, cx| st.replace(pasted, window, cx));
+                    }
+                    paste_body.update(cx, |st, cx| {
+                        let mut body = split.body;
+                        // The remainder is Markdown, so it has to start its
+                        // own line when the caret sits after existing text.
+                        if st.cursor_position().character > 0 {
+                            body.insert(0, '\n');
+                        }
+                        st.replace(body, window, cx);
+                        st.focus(window, cx);
+                    });
+                    cx.stop_propagation();
+                    cx.notify();
                 }))
                 .child(
                     Input::new(&title)
@@ -331,10 +374,13 @@ pub(super) fn render_composer(
     let body = if editor.preview {
         div()
             .min_h(px(80.))
-            .child(super::timeline_row::body_markdown(
-                ("issue-preview", number.unwrap_or(0) as usize),
-                &editor.draft.body,
-                super::timeline_row::markdown_style(15., cx),
+            .child(super::e2e::measure_control(
+                format!("issue-composer-preview-md-{}", number.unwrap_or(0)),
+                super::timeline_row::body_markdown(
+                    ("issue-preview", number.unwrap_or(0) as usize),
+                    &editor.draft.body,
+                    super::timeline_row::markdown_style(15., cx),
+                ),
             ))
             .into_any_element()
     } else {

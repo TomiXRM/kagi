@@ -136,6 +136,20 @@ impl KagiApp {
         cx.notify();
     }
 
+    /// Replace a seeded Issue's body, so a scenario can draw a real Markdown
+    /// document through the production Thread path (#751). The body is the
+    /// caller's: the fixture under `tests/support` is the one document every
+    /// surface is checked against.
+    pub fn set_issue_body_for_e2e(&mut self, number: u64, body: &str, cx: &mut Context<Self>) {
+        let ui = self.ui_mut().expect("fixture session");
+        let issue = ui
+            .github_issue_details
+            .get_mut(&number)
+            .expect("seeded Issue detail");
+        issue.body = body.to_string();
+        cx.notify();
+    }
+
     /// Exercise InputState's normal edit/Change event, not a direct draft write.
     /// `set_value` deliberately suppresses Change and would miss the subscription.
     pub fn insert_issue_body_for_e2e(
@@ -156,6 +170,55 @@ impl KagiApp {
             state.focus(window, cx);
             state.replace(text.to_owned(), window, cx);
         });
+    }
+
+    /// Replace the whole Composer body, the way a formatter would: through
+    /// the production InputState, so the draft subscription still runs.
+    /// `insert_issue_body_for_e2e` types at the cursor and therefore appends
+    /// — that is what it is for; this is for a scenario that needs to start
+    /// from a known document (#751).
+    pub fn replace_issue_body_for_e2e(
+        &mut self,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sync_issue_inputs(window, cx);
+        let input = self
+            .ui()
+            .issue_composer
+            .editors
+            .get(&None)
+            .and_then(|editor| editor.body_input.clone())
+            .expect("Composer body input created by window-bearing render");
+        input.update(cx, |state, cx| {
+            state.replace_all(text.to_owned(), window, cx);
+        });
+    }
+
+    /// Put the New Issue Composer back where a scenario found it: empty
+    /// title, empty body, body hidden again. A scenario that exercises the
+    /// pristine Composer has to leave it pristine, or every measure after it
+    /// quietly asserts against a dirty draft (#751).
+    pub fn reset_issue_composer_for_e2e(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_issue_inputs(window, cx);
+        let (title, body) = self
+            .ui()
+            .issue_composer
+            .editors
+            .get(&None)
+            .map(|editor| (editor.title_input.clone(), editor.body_input.clone()))
+            .expect("seeded Composer");
+        for input in title.into_iter().chain(body) {
+            input.update(cx, |state, cx| state.replace_all(String::new(), window, cx));
+        }
+        if let Some(editor) = self
+            .ui_mut()
+            .and_then(|ui| ui.issue_composer.editors.get_mut(&None))
+        {
+            editor.body_revealed = false;
+        }
+        cx.notify();
     }
 
     pub fn issue_composer_snapshot_for_e2e(&self) -> (IssueDraft, bool) {

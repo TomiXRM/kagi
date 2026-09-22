@@ -19,8 +19,10 @@ use gpui_component::text::{markdown_ast, MarkdownNode, MarkdownParseContext, Mar
 const MAX_IMAGE_H: f32 = 360.0;
 
 mod extract;
+mod images;
 mod resolve;
 
+pub use images::images_as_links;
 pub use resolve::MarkdownImageBase;
 
 use crate::theme;

@@ -24,9 +24,11 @@ impl IssueDraft {
     }
 
     /// Keep an explicit title; otherwise use the first meaningful body line.
-    /// Markdown structure prefixes are omitted and fence marker lines are skipped.
-    /// The fallback is at most 60 Unicode scalar values, never a byte slice.
-    /// This projection does not modify the original body or draft revision.
+    /// Markdown structure prefixes are omitted and fence marker lines are
+    /// skipped. The fallback is [`derived_title`]'s: at most 60 Unicode scalar
+    /// values, never a byte slice. A title the author typed is their own text
+    /// and is never capped. This projection does not modify the original body
+    /// or draft revision.
     pub fn effective_title(&self) -> String {
         let explicit = self.title.trim();
         if !explicit.is_empty() {
@@ -34,11 +36,8 @@ impl IssueDraft {
         }
         self.body
             .lines()
-            .find_map(title_candidate)
+            .find_map(derived_title)
             .unwrap_or_default()
-            .chars()
-            .take(60)
-            .collect()
     }
 
     /// Clear only the draft that was sent. Failed/unknown writes must not call this.
@@ -54,6 +53,17 @@ impl IssueDraft {
             .expect("Issue draft revision exhausted");
         true
     }
+}
+
+/// The bound on a title Kagi *derives*, shared by the body fallback and the
+/// title paste: 60 Unicode scalar values, never a byte slice.
+const DERIVED_TITLE_CHARS: usize = 60;
+
+/// The one rule for deriving a title from a Markdown line: [`title_candidate`]
+/// without its structure prefixes, bounded by [`DERIVED_TITLE_CHARS`]. `None`
+/// means the line names nothing — blank, syntax-only, or a fence marker.
+fn derived_title(line: &str) -> Option<String> {
+    title_candidate(line).map(|candidate| candidate.chars().take(DERIVED_TITLE_CHARS).collect())
 }
 
 fn title_candidate(line: &str) -> Option<&str> {
@@ -127,6 +137,57 @@ pub fn fenced_code_paste(text: &str, filename_hint: Option<&str>) -> String {
         .unwrap_or_else(|| infer_language(text));
     let separator = if text.ends_with('\n') { "" } else { "\n" };
     format!("{fence}{language}\n{text}{separator}{fence}\n")
+}
+
+/// What a multiline clipboard becomes when it is dropped on the New Issue
+/// *title*: its first line names the Issue under this module's one title rule
+/// ([`derived_title`], the rule `effective_title` already used), everything
+/// after that first newline is its body, byte-for-byte (#751).
+///
+/// The title is a single-line input, so pasting a whole Issue into it
+/// otherwise flattens the document into the title and leaves the body empty.
+/// Splitting — rather than fencing, which stays [`fenced_code_paste`]'s rule
+/// for the body input — is what keeps the pasted Markdown renderable in
+/// Preview: an outer fence would draw the whole clipboard as code.
+///
+/// CRLF is normalised so the split never strands a `\r` at the end of the
+/// title. The body is otherwise untouched: no trimming, no dropped blank
+/// line, no added trailing newline. `None` means "one line" — an ordinary
+/// paste the input itself still owns, on the same rule `fenced_code_paste`
+/// uses.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TitlePaste {
+    /// Inserted into the title input at its current selection. `None` when the
+    /// first line names nothing — a blank line, or a fence marker that owns
+    /// the lines below it. The title input is then left untouched, selection
+    /// included, and the whole clipboard goes to the body: the fence still
+    /// opens *and* closes there, and `effective_title` derives the Issue's
+    /// title from that body at submit, as it always has.
+    pub title: Option<String>,
+    /// Inserted into the body input, newlines and Markdown intact.
+    pub body: String,
+}
+
+/// Split a title paste; see [`TitlePaste`].
+pub fn title_paste_split(text: &str) -> Option<TitlePaste> {
+    // Split before normalising. Every paste reaches this, most of them one
+    // line, so the rejected path must not build anything: it stops at the
+    // first newline and allocates nothing. `rest.is_empty()` is
+    // `lines().count() < 2` without the second walk — a trailing newline does
+    // not start a line. Normalising is part of copying the body, not an extra
+    // pass over a document-sized temporary.
+    let (first_line, rest) = text.split_once('\n')?;
+    if rest.is_empty() {
+        return None;
+    }
+    let title = derived_title(first_line);
+    // A first line that names nothing keeps its place in the body: removing it
+    // would strand a fence opener and drop the author's text.
+    let body = if title.is_some() { rest } else { text };
+    Some(TitlePaste {
+        title,
+        body: body.replace("\r\n", "\n"),
+    })
 }
 
 fn contains_fenced_block(text: &str) -> bool {
@@ -368,5 +429,125 @@ mod tests {
             let output = fenced_code_paste(text, Some("unknown.ext"));
             assert!(output.starts_with(&format!("```{language}\n")));
         }
+    }
+
+    #[test]
+    fn single_line_title_paste_stays_the_input_s_own_paste() {
+        for text in ["", "text", "一行だけ", "text\n", "text\r\n"] {
+            assert_eq!(title_paste_split(text), None);
+        }
+    }
+
+    #[test]
+    fn multiline_title_paste_keeps_the_body_verbatim() {
+        assert_eq!(
+            title_paste_split("USB が復帰しない\n## 再現\n- [ ] 抜き差し\n"),
+            Some(TitlePaste {
+                title: Some("USB が復帰しない".into()),
+                body: "## 再現\n- [ ] 抜き差し\n".into(),
+            }),
+            "the body keeps its Markdown and its trailing newline: Preview renders it"
+        );
+        assert_eq!(
+            title_paste_split("Title\r\nBody line\r\n"),
+            Some(TitlePaste {
+                title: Some("Title".into()),
+                body: "Body line\n".into(),
+            }),
+            "CRLF must not strand a carriage return at the end of the title"
+        );
+        assert_eq!(
+            title_paste_split("Title\n\nFirst paragraph"),
+            Some(TitlePaste {
+                title: Some("Title".into()),
+                body: "\nFirst paragraph".into(),
+            }),
+            "the blank line separating title from prose is the author's, not ours"
+        );
+    }
+
+    /// The title paste derives its title with the rule `effective_title`
+    /// already used, so a pasted `# Heading` names the Issue `Heading` — the
+    /// same text submitting the identical clipboard as a body would send.
+    #[test]
+    fn title_paste_derives_its_title_with_the_body_rule() {
+        for (clipboard, title) in [
+            ("# 見出し\n本文\n", "見出し"),
+            ("- 箇条書き\nrest\n", "箇条書き"),
+            ("> 1. quoted\nrest\n", "quoted"),
+            ("  spaced  \nrest\n", "spaced"),
+        ] {
+            let split = title_paste_split(clipboard).expect("multiline");
+            assert_eq!(split.title.as_deref(), Some(title));
+            let derived = IssueDraft {
+                body: clipboard.into(),
+                ..Default::default()
+            };
+            assert_eq!(
+                derived.effective_title(),
+                title,
+                "the pasted title must be what the same clipboard would have derived"
+            );
+        }
+    }
+
+    /// A derived title is bounded like every other derived title; an explicit
+    /// one the author typed stays whole.
+    #[test]
+    fn pasted_title_is_capped_like_the_body_fallback() {
+        let long = "題".repeat(70);
+        let split = title_paste_split(&format!("{long}\nbody\n")).expect("multiline");
+        assert_eq!(split.title, Some("題".repeat(60)));
+        assert_eq!(split.body, "body\n");
+        let mut draft = IssueDraft::default();
+        draft.update(long.clone(), "body".into());
+        assert_eq!(
+            draft.effective_title(),
+            long,
+            "a title the author typed is never capped"
+        );
+    }
+
+    /// A first line that names nothing must not be consumed: the title input
+    /// keeps whatever it held, and the clipboard reaches the body whole — a
+    /// fence that opens there still closes there.
+    #[test]
+    fn a_first_line_that_names_nothing_stays_in_the_body() {
+        for clipboard in [
+            "```rust\nfn main() {}\n```\n",
+            "\n# 見出し\n本文\n",
+            "~~~\nplain\n~~~\n",
+            "   \nrest\n",
+        ] {
+            assert_eq!(
+                title_paste_split(clipboard),
+                Some(TitlePaste {
+                    title: None,
+                    body: clipboard.to_owned(),
+                }),
+                "the whole clipboard belongs to the body: {clipboard:?}"
+            );
+        }
+        assert_eq!(
+            title_paste_split("```rust\r\nfn main() {}\r\n```\r\n"),
+            Some(TitlePaste {
+                title: None,
+                body: "```rust\nfn main() {}\n```\n".into(),
+            }),
+            "the retained first line is normalised with the rest of the body"
+        );
+    }
+
+    #[test]
+    fn title_paste_never_fences_what_the_body_would() {
+        let code = "fn main() {\n    run();\n}";
+        let split = title_paste_split(code).expect("multiline");
+        assert_eq!(split.title.as_deref(), Some("fn main() {"));
+        assert_eq!(split.body, "    run();\n}");
+        assert_ne!(
+            fenced_code_paste(code, None),
+            code,
+            "the body input still fences the same clipboard"
+        );
     }
 }

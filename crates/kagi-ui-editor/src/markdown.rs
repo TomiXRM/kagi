@@ -12,7 +12,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-use gpui::{img, prelude::*, px, rgb, AnyElement, Context, SharedString, Window};
+use gpui::{img, prelude::*, px, rgb, AnyElement, Context, FontFeatures, SharedString, Window};
 use gpui_component::text::TextView;
 
 use crate::EditorWorkspaceView;
@@ -274,55 +274,157 @@ pub fn render_markdown_preview(
 /// and trailing space from a code span, but a thin space survives and
 /// widens the highlight. Selection/copy picks up the thin spaces — accepted
 /// trade-off. One line only; multi-line code spans are left untouched.
+///
+/// Fenced blocks are not text — a backtick inside one is part of the
+/// program, and padding it wrote thin spaces into the displayed (and
+/// copied) code (#751).
 pub fn pad_inline_code(src: &str) -> String {
-    const PAD: char = '\u{2009}';
-    let chars: Vec<char> = src.chars().collect();
+    use kagi_domain::message::Fence;
+
     let mut out = String::with_capacity(src.len());
-    let mut i = 0;
-    while i < chars.len() {
-        if chars[i] != '`' {
-            out.push(chars[i]);
-            i += 1;
+    let mut fence: Option<Fence> = None;
+    for (i, line) in src.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        if let Some(open) = fence {
+            if open.closed_by(line) {
+                fence = None;
+            }
+            out.push_str(line);
             continue;
         }
-        let start = i;
-        while i < chars.len() && chars[i] == '`' {
-            i += 1;
+        if let Some(open) = Fence::opened_by(line) {
+            fence = Some(open);
+            out.push_str(line);
+            continue;
         }
-        let delim = i - start;
-        // Find a closing run of exactly `delim` backticks on the same line.
-        let mut j = i;
-        let mut close = None;
-        while j < chars.len() && chars[j] != '\n' {
-            if chars[j] == '`' {
-                let s = j;
-                while j < chars.len() && chars[j] == '`' {
-                    j += 1;
-                }
-                if j - s == delim {
-                    close = Some(s);
-                    break;
-                }
-            } else {
-                j += 1;
-            }
-        }
-        if let Some(cs) = close {
-            for _ in 0..delim {
-                out.push('`');
-            }
-            out.push(PAD);
-            out.extend(&chars[i..cs]);
-            out.push(PAD);
-            for _ in 0..delim {
-                out.push('`');
-            }
-            i = cs + delim;
-        } else {
-            out.extend(&chars[start..i]);
-        }
+        pad_code_spans(line, &mut out);
     }
     out
+}
+
+/// One line of prose, appended to `out`: the code spans that open *and* close
+/// on it are padded. Backticks are ASCII, so the line is scanned as bytes and
+/// copied in slices — a line without one is a single `push_str`.
+///
+/// Escaping is an *opening* rule only. In prose a backslash-escaped backtick
+/// is a character, not a delimiter — the image rewrite escapes alt text that
+/// way (#751), and padding *that* would write thin spaces into the author's
+/// words. Inside a code span a backslash escapes nothing (CommonMark), so the
+/// closing run is found by a raw scan.
+fn pad_code_spans(line: &str, out: &mut String) {
+    const PAD: char = '\u{2009}';
+    let bytes = line.as_bytes();
+
+    /// Whether the byte at `at` is escaped by an odd run of backslashes.
+    fn escaped(bytes: &[u8], at: usize) -> bool {
+        bytes[..at]
+            .iter()
+            .rev()
+            .take_while(|b| **b == b'\\')
+            .count()
+            % 2
+            == 1
+    }
+
+    /// The next *opening* backtick run at or after `from`, as `(start, len)`.
+    /// Escaped backticks are prose, so they cannot open a span.
+    fn next_opening_run(line: &str, bytes: &[u8], from: usize) -> Option<(usize, usize)> {
+        let mut i = from;
+        while let Some(offset) = line[i..].find('`') {
+            let start = i + offset;
+            let len = bytes[start..].iter().take_while(|b| **b == b'`').count();
+            if !escaped(bytes, start) {
+                return Some((start, len));
+            }
+            i = start + len;
+        }
+        None
+    }
+
+    let mut i = 0;
+    while let Some((start, delim)) = next_opening_run(line, bytes, i) {
+        out.push_str(&line[i..start]);
+        let open_end = start + delim;
+        // A closing run of exactly `delim` backticks, on this line. The scan
+        // is deliberately raw: a backslash inside a code span is an ordinary
+        // character, so `` `C:\dir\` `` closes on the backtick right after it.
+        // Skipping that backtick resolved the close to the *next* span's
+        // opener and dropped a thin space into the prose between them (#751).
+        let mut close = None;
+        let mut j = open_end;
+        while let Some(offset) = line[j..].find('`') {
+            let at = j + offset;
+            let run = bytes[at..].iter().take_while(|b| **b == b'`').count();
+            if run == delim {
+                close = Some(at);
+                break;
+            }
+            j = at + run;
+        }
+        match close {
+            Some(close) => {
+                out.push_str(&line[start..open_end]);
+                out.push(PAD);
+                out.push_str(&line[open_end..close]);
+                out.push(PAD);
+                out.push_str(&line[close..close + delim]);
+                i = close + delim;
+            }
+            None => {
+                out.push_str(&line[start..open_end]);
+                i = open_end;
+            }
+        }
+    }
+    out.push_str(&line[i..]);
+}
+
+/// The source a GitHub conversation body is rendered from: Issues Thread,
+/// the Issue composer's Preview and the PR conversation all go through here,
+/// so a Markdown defect is fixed once for every surface (#751).
+///
+/// Order matters. Normalisation first (CRLF, inline code carried across
+/// lines, raw HTML — all of which the inline layouter rejects), then images
+/// become links so nothing on these surfaces issues a network request, then
+/// the code-span padding, then the HTML-block newline flattening that keeps
+/// GPUI's shaper from panicking on a multi-line run.
+///
+/// The Editor preview deliberately does *not* use this: it renders real
+/// images, including repository-relative ones (ADR-0142).
+pub fn prepare_github_markdown(body: &str) -> String {
+    let body = kagi_domain::message::sanitize_markdown_for_view(body);
+    let body = kagi_ui_core::markdown::images_as_links(&body);
+    let body = pad_inline_code(&body);
+    kagi_ui_core::markdown::flatten_html_blocks(&body)
+}
+
+/// The typography half of the GitHub conversation policy
+/// ([`prepare_github_markdown`] is the source half): contextual alternates
+/// off for the whole body.
+///
+/// Literal code has to read as the characters the author typed — `<!--` opens
+/// an HTML comment, it is not an em dash. Both bundled families ship `calt`,
+/// and the shaper ligated `<!--` / `-->` into `<!—` / `—>` in code spans and
+/// fenced blocks alike (#751).
+///
+/// **This switches `calt` off for the body-wide text style, prose included —
+/// it is not scoped to code.** It cannot be: a `TextView` code span is a
+/// `HighlightStyle` over the paragraph's own runs, and `gpui::HighlightStyle`
+/// has no font-feature field, so nothing per-run reaches one. The hook that
+/// does is the text style of the element that owns the document, which every
+/// child inherits — the fenced block included, since it overrides family and
+/// size but never features. The accepted cost is that prose stops ligating
+/// too: every character in the body is drawn as the character in the source.
+///
+/// One caller by design: the conversation surfaces (Issues Thread, the Issue
+/// composer's Preview, the PR conversation and the PR comment Preview) all
+/// draw through the single shared renderer, so the policy is applied once or
+/// not at all. The Editor preview is deliberately outside it: that surface
+/// renders local documents under its own rules (ADR-0142).
+pub fn literal_text_features() -> FontFeatures {
+    FontFeatures::disable_ligatures()
 }
 
 fn render_mermaid_block(
@@ -442,9 +544,23 @@ mod tests {
         assert_eq!(pad_inline_code("``a`b``"), "``\u{2009}a`b\u{2009}``");
         // unterminated span left alone
         assert_eq!(pad_inline_code("a `b c"), "a `b c");
-        // fenced blocks are not passed through this fn in practice, but a
-        // backtick run with no same-line closer stays untouched
+        // A fenced block is program text: a backtick in it is code, and the
+        // padding used to be written into what the reader copies (#751).
         assert_eq!(pad_inline_code("```\nlet x;\n```"), "```\nlet x;\n```");
+        let fenced = "```md\n`inline` inside\n```\n";
+        assert_eq!(pad_inline_code(fenced), fenced);
+        assert_eq!(pad_inline_code("~~~\n`a`\n~~~\n"), "~~~\n`a`\n~~~\n");
+        // A backslash is an ordinary character inside a span, so the span
+        // closes on the backtick right after it — and the next span keeps its
+        // own delimiters instead of being swallowed as this one's close.
+        assert_eq!(pad_inline_code(r"a `a\` b"), "a `\u{2009}a\\\u{2009}` b");
+        assert_eq!(
+            pad_inline_code(r"`C:\dir\` or `D:\`"),
+            "`\u{2009}C:\\dir\\\u{2009}` or `\u{2009}D:\\\u{2009}`"
+        );
+        // An escaped backtick in prose is still a character, not an opener:
+        // the image rewrite escapes alt text that way.
+        assert_eq!(pad_inline_code(r"[a \` b](u)"), r"[a \` b](u)");
     }
 
     #[test]

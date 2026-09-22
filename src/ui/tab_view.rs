@@ -258,6 +258,58 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
     }
 }
 
+/// Shown where a ref's tip date would go when this read never loaded that
+/// commit — the commit budget (`DEFAULT_COMMIT_LIMIT`) is one reason, a ref
+/// that moved between the commit walk and the ref read is another, so the
+/// glyph deliberately states nothing about the cause.
+const UNKNOWN_TIP_DATE: &str = "—";
+
+impl TabViewState {
+    /// `("3d ago", "2026-09-20 11:04")` for a ref tip, or the unknown glyph for
+    /// both when the tip is not in this read.
+    ///
+    /// The date is the **tip commit's** committer time — not when the ref was
+    /// created, moved or fetched, so repointing a branch at an old commit
+    /// shows that old commit's date. The absolute form is borrowed from the
+    /// string the detail panel already built for the same commit: the caller
+    /// formats both into its own row label and tooltip, so nothing here
+    /// allocates for the unknown case or clones a live `SharedString`.
+    pub fn tip_labels(
+        &self,
+        tip: Option<&CommitId>,
+        now_secs: i64,
+    ) -> (std::borrow::Cow<'static, str>, &str) {
+        let loaded = tip.and_then(|id| {
+            let live = self
+                .commit_row_index
+                .get(id)
+                .and_then(|&index| self.rows.get(index).zip(self.details.get(index)));
+            // Solo replaces rows / details / commit_row_index with the
+            // filtered sub-graph and keeps the full set in `branch_solo` for
+            // restore (`graph_solo`), so a commit Solo is merely hiding
+            // resolves through the retained index instead of reading as
+            // "never loaded".
+            live.or_else(|| {
+                let solo = self.branch_solo.as_ref()?;
+                let &index = solo.saved_row_index.get(id)?;
+                solo.saved_rows
+                    .get(index)
+                    .zip(solo.saved_details.get(index))
+            })
+        });
+        match loaded {
+            Some((row, detail)) => (
+                commit_list::relative_time(row.committed_secs, now_secs).into(),
+                detail.committed_date.as_ref(),
+            ),
+            None => (
+                std::borrow::Cow::Borrowed(UNKNOWN_TIP_DATE),
+                UNKNOWN_TIP_DATE,
+            ),
+        }
+    }
+}
+
 /// #643 Wave 4 S1 (ADR-0197): one session's **presentation intent** — what the
 /// user pointed at in this tab, as opposed to what the repository said (that is
 /// [`TabViewState`]).

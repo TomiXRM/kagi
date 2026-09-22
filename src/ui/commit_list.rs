@@ -342,6 +342,11 @@ pub struct CommitRow {
     pub author_email: String,
     /// Relative date string, e.g. `"3d ago"`, `"2y ago"`.
     pub date: SharedString,
+    /// Committer time (Unix seconds) of this commit. The sidebar renders a
+    /// ref tip's age from it; `date` above is the **author**-time string the
+    /// graph column shows, and the two clocks differ after a rebase or a
+    /// cherry-pick.
+    pub committed_secs: i64,
     /// Ref badges for this commit, if any.
     pub badges: Vec<RefBadge>,
     /// AI-agent provenance verdict (issue #337). `None` = show no agent badge
@@ -377,6 +382,7 @@ impl CommitRow {
             author: SharedString::default(),
             author_email: String::new(),
             date: SharedString::default(),
+            committed_secs: 0,
             badges: Vec::new(),
             provenance: None,
             lane: 0,
@@ -626,6 +632,7 @@ fn commit_to_row(
         author,
         author_email,
         date,
+        committed_secs: c.committer.time,
         badges,
         provenance,
         lane,

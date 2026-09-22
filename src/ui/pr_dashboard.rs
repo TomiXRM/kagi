@@ -15,12 +15,12 @@
 //! └─────────────────────────────────────────────────────────┘
 //! ```
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
 use gpui::{div, prelude::*, px, rgb, uniform_list, Context, SharedString};
 use kagi_domain::github::{PrAttention, PrDetailAvailability, PrReason, PullRequest};
-use kagi_domain::pr_list::{sort_prs, PrListFilter, PrSection, PrSort};
+use kagi_domain::list_filter::apply_prs;
 
 use super::i18n::Msg;
 use super::pr_attention::{
@@ -116,11 +116,17 @@ pub(super) fn refresh_button(cx: &mut Context<KagiApp>) -> gpui::Stateful<gpui::
 
 pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let ui = app.ui();
-    let all = ui.github_prs.clone();
-    let filter = app.pr_mode().map(|m| m.filter).unwrap_or_default();
-    let sort = app.pr_mode().map(|m| m.sort).unwrap_or_default();
+    let all = &ui.github_prs;
+    let rows = apply_prs(all, &ui.github_pr_filter, |pr| {
+        app.pr_status_availability(pr)
+    });
+    let filtered_count = rows.len();
+    let numbers: HashSet<_> = rows.iter().map(|&index| all[index].number).collect();
     let now = kagi_ui_core::time::now_unix_secs();
-    let buckets = focus_queue(app);
+    let mut buckets = focus_queue(app);
+    for (_, members) in &mut buckets {
+        members.retain(|(pr, _)| numbers.contains(&pr.number));
+    }
     // Attention is what colours a card and writes its "why" line; the queue
     // already computes both, so the dashboard reads them off it by number
     // rather than classifying a second time.
@@ -208,12 +214,6 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
         }
         body = body.child(render_tiles(&buckets));
         body = body.child(render_column_header());
-        let mut rows: Vec<PullRequest> = all
-            .iter()
-            .filter(|pr| filter.accepts(pr))
-            .cloned()
-            .collect();
-        sort_prs(&mut rows, sort);
         if rows.is_empty() {
             body = body.child(
                 div()
@@ -224,14 +224,14 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                     .child(SharedString::from(Msg::PrPaneEmpty.t())),
             );
         } else {
-            let rows: Rc<Vec<(PullRequest, PrAttention, PrReason)>> = Rc::new(
+            let rows: Rc<Vec<(usize, PrAttention, PrReason)>> = Rc::new(
                 rows.into_iter()
-                    .map(|pr| {
+                    .map(|index| {
                         let (bucket, why) = att
-                            .get(&pr.number)
+                            .get(&all[index].number)
                             .cloned()
                             .unwrap_or((PrAttention::Dormant, PrReason::None));
-                        (pr, bucket, why)
+                        (index, bucket, why)
                     })
                     .collect(),
             );
@@ -241,26 +241,35 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                 .pr_mode()
                 .map(|mode| mode.dashboard_scroll.clone())
                 .unwrap_or_default();
+            let owner = app.active_session();
+            let generation = ui.github_prs_gen;
             body = body.child(
                 uniform_list(
                     "pr-home-list",
                     row_count,
                     cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                        if this.active_session() != owner || this.ui().github_prs_gen != generation
+                        {
+                            return Vec::new();
+                        }
                         let start = range.start.saturating_sub(2);
                         let end = (range.end + 2).min(render_rows.len());
                         let visible: BTreeSet<u64> = render_rows[start..end]
                             .iter()
-                            .map(|(pr, _, _)| pr.number)
+                            .filter_map(|(index, _, _)| {
+                                this.ui().github_prs.get(*index).map(|pr| pr.number)
+                            })
                             .collect();
                         this.observe_visible_prs(visible, cx);
                         range
                             .filter_map(|index| {
-                                render_rows.get(index).map(|(pr, bucket, why)| {
+                                render_rows.get(index).and_then(|(source, bucket, why)| {
+                                    let pr = this.ui().github_prs.get(*source)?;
                                     // Borrowed, not cloned: a `clone()` here
                                     // copied the whole avatar map for every
                                     // visible row, every frame (#750 review).
                                     let status = this.pr_status_availability(pr);
-                                    render_table_row(
+                                    Some(render_table_row(
                                         pr,
                                         *bucket,
                                         why,
@@ -268,7 +277,7 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                                         now,
                                         &this.avatars.images,
                                         cx,
-                                    )
+                                    ))
                                 })
                             })
                             .collect::<Vec<_>>()
@@ -287,7 +296,12 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
         .flex_1()
         .min_h(px(0.))
         .bg(rgb(page_bg()))
-        .child(render_hero(app, cx))
+        .child(super::list_filter_strip::render_strip(
+            app,
+            super::list_filter_strip::ListKind::Prs,
+            filtered_count,
+            cx,
+        ))
         .child(body)
         .into_any_element()
 }
@@ -401,10 +415,12 @@ fn render_table_row(
     let age = kagi_ui_core::time_parse::iso_to_epoch(&pr.updated_at)
         .map(|at| kagi_ui_core::time::relative_time(at, now))
         .unwrap_or_default();
-    let state = if pr.is_draft {
-        Msg::PrDraft.t().to_string()
-    } else {
-        reason_text(why)
+    use kagi_domain::github::IssueState;
+    let state = match pr.state {
+        IssueState::Closed => Msg::IssueStateClosed.t().to_string(),
+        IssueState::Unknown => Msg::IssueStateUnknown.t().to_string(),
+        IssueState::Open if pr.is_draft => Msg::PrDraft.t().to_string(),
+        IssueState::Open => reason_text(why),
     };
     // The cells fill everything right of the shared row's avatar column. The
     // strip must take the table's width, not its own content's: without
@@ -506,6 +522,11 @@ fn render_table_row(
         avatars,
         cells,
     ))
+    .relative()
+    .child(super::e2e::measure_inside(format!(
+        "pr-home-row-{}",
+        pr.number
+    )))
     .items_center()
     .flex_shrink_0()
     // A triage table is denser than a feed, so the row carries 12px rather
@@ -517,121 +538,6 @@ fn render_table_row(
     .on_mouse_down(gpui::MouseButton::Right, menu)
     .when(pr.is_draft, |el| el.opacity(0.75))
     .into_any_element()
-}
-
-/// The list's header strip: what this is, how much of it there is, which slice
-/// is showing, and in what order.
-fn render_hero(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::Div {
-    let all = &app.ui().github_prs;
-    let counts = |filter: PrListFilter| all.iter().filter(|pr| filter.accepts(pr)).count();
-    let active = app.pr_mode().map(|m| m.filter).unwrap_or_default();
-    let sort = app.pr_mode().map(|m| m.sort).unwrap_or_default();
-    // "need your review" counts review requests, which is what the chip's own
-    // section in the navigator lists — one definition, two places.
-    let mine_to_review = all
-        .iter()
-        .filter(|pr| {
-            PrSection::Review.accepts(
-                pr,
-                app.github_login.as_deref(),
-                &[], // local branches do not make a review request
-            )
-        })
-        .count();
-    div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_2()
-        .flex_shrink_0()
-        .px_4()
-        .py_2()
-        .border_b_1()
-        .border_color(rgb(theme().selected))
-        .child(
-            div()
-                .text_sm()
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(rgb(theme().text_main))
-                .child(SharedString::from(Msg::PrPaneTitle.t())),
-        )
-        .when(mine_to_review > 0, |el| {
-            el.child(div().text_xs().text_color(rgb(theme().color_branch)).child(
-                SharedString::from(format!("{} {}", mine_to_review, Msg::PrHomeNeedsReview.t())),
-            ))
-        })
-        .child(div().flex_1().min_w(px(0.)))
-        .child(filter_chip(PrListFilter::Open, active, counts, cx))
-        .child(filter_chip(PrListFilter::Draft, active, counts, cx))
-        .child(sort_chip(sort, cx))
-        .child(refresh_button(cx))
-}
-
-/// One slice chip, carrying its own count. The active one is filled, the way
-/// the workspace navigator marks the page you are on.
-fn filter_chip(
-    filter: PrListFilter,
-    active: PrListFilter,
-    count: impl Fn(PrListFilter) -> usize,
-    cx: &mut Context<KagiApp>,
-) -> gpui::Stateful<gpui::Div> {
-    let label = match filter {
-        PrListFilter::Open => Msg::PrHomeOpen.t(),
-        PrListFilter::Draft => Msg::PrHomeDraft.t(),
-    };
-    let id = match filter {
-        PrListFilter::Open => "pr-home-filter-open",
-        PrListFilter::Draft => "pr-home-filter-draft",
-    };
-    let on = filter == active;
-    let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        this.pr_mode_set_filter(filter, cx);
-    });
-    div()
-        .id(id)
-        .flex_shrink_0()
-        .px_2()
-        .py_px()
-        .rounded_sm()
-        .border_1()
-        .border_color(rgb(theme().selected))
-        .when(on, |el| el.bg(rgb(theme().selected)))
-        .text_xs()
-        .text_color(rgb(if on {
-            theme().text_main
-        } else {
-            theme().text_sub
-        }))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().surface)))
-        .on_click(click)
-        .child(SharedString::from(format!("{label} {}", count(filter))))
-}
-
-/// The order chip: one control that cycles, so the strip carries a single
-/// sort affordance rather than three competing ones.
-fn sort_chip(sort: PrSort, cx: &mut Context<KagiApp>) -> gpui::Stateful<gpui::Div> {
-    let click = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        this.pr_mode_cycle_sort(cx);
-    });
-    div()
-        .id("pr-home-sort")
-        .flex_shrink_0()
-        .px_2()
-        .py_px()
-        .rounded_sm()
-        .border_1()
-        .border_color(rgb(theme().selected))
-        .text_xs()
-        .text_color(rgb(theme().text_sub))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().surface)))
-        .on_click(click)
-        .child(SharedString::from(match sort {
-            PrSort::Updated => Msg::PrHomeSortUpdated.t(),
-            PrSort::Created => Msg::PrHomeSortCreated.t(),
-            PrSort::Number => Msg::PrHomeSortNumber.t(),
-        }))
 }
 
 /// One badge per non-empty attention bucket — dot, count, label, all on one

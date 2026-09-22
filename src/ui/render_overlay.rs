@@ -464,6 +464,7 @@ impl KagiApp {
         .when_some(self.ui().pr_menu.clone(), |el, (pr, pos)| {
             el.child(render_pr_menu_overlay(pr, pos, window.viewport_size(), cx))
         })
+        .children(super::list_filter_strip::render_menu(self, window, cx))
         // ── Inspector/Compare file context menu (History/Edit/Copy) ──
         .when_some(self.inspector_file_menu, |el, (fi, pos)| {
             el.child(render_inspector_file_menu_overlay(

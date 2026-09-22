@@ -83,6 +83,7 @@ impl TabUiState {
             branch_cleanup_open,
             pr_mode,
             pr_menu,
+            filter_controls,
             smart_commit_generating,
             smart_commit_status,
             view_publish_gen: _,
@@ -99,6 +100,7 @@ impl TabUiState {
             github_prs_epoch: _,
             github_prs_gen: _,
             github_prs_loading: _,
+            github_pr_filter,
             pr_details: _,
             cleanup_gen: _,
             github_issues: _,
@@ -112,6 +114,11 @@ impl TabUiState {
             github_issues_list: _,
             github_issue_mentions: _,
             github_issue_tab,
+            github_issue_filter,
+            // Frozen *from* the intent above by the request that produced the
+            // held rows: a tab that never fetched still holds the UI default,
+            // and a tab that fetched is already dirty through `issues_mode`.
+            github_issues_request_state: _,
             selected_github_issue,
             github_issue_details: _,
             github_issue_detail_loading: _,
@@ -153,6 +160,7 @@ impl TabUiState {
             (*branch_cleanup_open, "branch_cleanup_open"),
             (pr_mode.is_some(), "pr_mode"),
             (pr_menu.is_some(), "pr_menu"),
+            (filter_controls.menu.is_some(), "filter_controls"),
             (*smart_commit_generating, "smart_commit_generating"),
             (smart_commit_status.is_some(), "smart_commit_status"),
             (
@@ -166,6 +174,14 @@ impl TabUiState {
             (
                 *github_issue_tab != kagi_domain::github::IssueListTab::default(),
                 "github_issue_tab",
+            ),
+            (
+                *github_issue_filter != super::tab_view::default_issue_filter(),
+                "github_issue_filter",
+            ),
+            (
+                *github_pr_filter != super::tab_view::default_pr_filter(),
+                "github_pr_filter",
             ),
             (selected_github_issue.is_some(), "selected_github_issue"),
             (ecosystem_cache.is_some(), "ecosystem_cache"),

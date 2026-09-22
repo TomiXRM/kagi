@@ -49,7 +49,7 @@ impl KagiApp {
     /// the row that the scenario opens. This drives only production filtering
     /// and rendering; no alternate E2E row implementation exists.
     pub fn seed_issue_navigation_for_e2e(&mut self, cx: &mut Context<Self>) {
-        use kagi_domain::github::{Issue, IssueState};
+        use kagi_domain::github::{Issue, IssueLabel, IssueState};
 
         let make =
             |number, title: &str, author: &str, assignees: &[&str], updated_at: &str| Issue {
@@ -59,11 +59,20 @@ impl KagiApp {
                 url: format!("https://github.com/example/fixture/issues/{number}"),
                 author: author.into(),
                 assignees: assignees.iter().map(|name| (*name).into()).collect(),
-                labels: Vec::new(),
+                labels: vec![IssueLabel {
+                    name: if matches!(number, 1 | 3) {
+                        "bug"
+                    } else {
+                        "docs"
+                    }
+                    .into(),
+                    color: "aabbcc".into(),
+                    description: String::new(),
+                }],
                 body: format!("body for #{number}"),
                 comments: Vec::new(),
                 comment_count: number as usize,
-                created_at: "2026-09-01T00:00:00Z".into(),
+                created_at: format!("2026-09-{:02}T00:00:00Z", 5 - number),
                 updated_at: updated_at.into(),
             };
         let issues = vec![

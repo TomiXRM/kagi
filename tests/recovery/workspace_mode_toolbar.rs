@@ -49,6 +49,52 @@ fn measure(
     e2e::control_bounds(win.window_id(), control)
 }
 
+fn click_control(cx: &mut VisualTestAppContext, win: AnyWindowHandle, id: &str) {
+    let bounds = measure(cx, win, id).unwrap_or_else(|| panic!("missing {id}"));
+    cx.simulate_click(win, bounds.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+}
+
+fn assert_list_filters(
+    cx: &mut VisualTestAppContext,
+    win: AnyWindowHandle,
+    prefix: &str,
+    all: &[u64],
+    retained: &[u64],
+    updated_first: u64,
+    created_first: u64,
+) {
+    click_control(cx, win, "list-filter-label");
+    click_control(cx, win, "list-filter-option-0-1"); // Loaded label "bug".
+    cx.simulate_keystrokes(win, "escape");
+    cx.run_until_parked();
+    for number in all {
+        assert_eq!(
+            measure(cx, win, &format!("{prefix}-{number}")).is_some(),
+            retained.contains(number),
+            "the selected label must change the rendered rows"
+        );
+    }
+    let updated = measure(cx, win, &format!("{prefix}-{updated_first}")).unwrap();
+    let created = measure(cx, win, &format!("{prefix}-{created_first}")).unwrap();
+    assert!(
+        updated.origin.y < created.origin.y,
+        "updated-desc is the initial order"
+    );
+    click_control(cx, win, "list-filter-sort");
+    click_control(cx, win, "list-filter-option-0-1"); // Created.
+    let updated = measure(cx, win, &format!("{prefix}-{updated_first}")).unwrap();
+    let created = measure(cx, win, &format!("{prefix}-{created_first}")).unwrap();
+    assert!(
+        created.origin.y < updated.origin.y,
+        "created-desc must change the first row"
+    );
+    click_control(cx, win, "list-filter-clear");
+    for number in all {
+        assert!(measure(cx, win, &format!("{prefix}-{number}")).is_some());
+    }
+}
+
 /// Run the sidebar's settle animation to rest (ADR-0199). The settle is a
 /// timer-driven spring, so the test clock has to be advanced past it before
 /// the page it committed to becomes the active workspace.
@@ -196,9 +242,8 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
         "the empty Issue home must keep its list empty state below Composer"
     );
 
-    // The sidebar's four session-owned filters keep the PR navigator's
-    // section/row geometry. The home pane independently keeps the full open
-    // Issue feed below Composer, regardless of the selected sidebar filter.
+    // Navigator tabs select a collection; the shared strip further filters
+    // that collection in both the sidebar and the main viewport.
     app.update(cx, |app, cx| app.seed_issue_navigation_for_e2e(cx));
     for index in 0..4 {
         assert!(
@@ -237,12 +282,8 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
         });
     })
     .unwrap();
-    for number in 1..=4 {
-        assert!(
-            measure(cx, win, &format!("issue-main-row-{number}")).is_some(),
-            "the unselected home must show open Issue #{number}"
-        );
-    }
+    assert!(measure(cx, win, "issue-main-row-1").is_some());
+    assert!(measure(cx, win, "issue-main-row-2").is_none());
 
     let created_tab = measure(cx, win, "issue-filter-tab-1").expect("Created by me tab");
     cx.simulate_click(win, created_tab.center(), gpui::Modifiers::none());
@@ -250,10 +291,12 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     assert!(measure(cx, win, "issue-mode-card-1").is_none());
     assert!(measure(cx, win, "issue-mode-card-2").is_some());
     assert!(
-        measure(cx, win, "issue-main-row-1").is_some()
+        measure(cx, win, "issue-main-row-1").is_none()
             && measure(cx, win, "issue-main-row-2").is_some(),
-        "sidebar filtering must not filter the full home feed"
+        "the main feed and sidebar must share the selected collection"
     );
+    click_control(cx, win, "issue-filter-tab-3");
+    assert_list_filters(cx, win, "issue-main-row", &[1, 2, 3, 4], &[1, 3], 3, 1);
 
     // Click the first (newest) main row. It is guaranteed to be in the center
     // viewport even when the compact Composer grows; lower rows are reachable
@@ -637,20 +680,52 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
         // Cache one PR through the real fetch path, then gesture again.
         app.update(cx, |app, cx| app.show_graph_mode(cx));
         e2e::queue_github_pr_fetch(cx.background_executor.spawn(async move {
-            Ok(vec![kagi_domain::github::PullRequest {
-                // One check, so the page's checks card exists to fold and
-                // unfold (mock 7a/7b).
-                checks: vec![kagi_domain::github::Check {
-                    name: "build".into(),
-                    workflow: "ci".into(),
-                    state: kagi_domain::github::CiState::Success,
-                    url: "https://example.com/run/1".into(),
-                }],
-                // `main` is the fixture's only branch, and a head the repository
-                // actually has is what lets the PR open a tab at all - which is
-                // what the feed assertions below need.
-                ..pull_request(7, "cached", "main")
-            }])
+            Ok(vec![
+                kagi_domain::github::PullRequest {
+                    state: kagi_domain::github::IssueState::Open,
+                    labels: vec![kagi_domain::github::IssueLabel {
+                        name: "bug".into(),
+                        color: "aabbcc".into(),
+                        description: String::new(),
+                    }],
+                    updated_at: "2026-09-01T00:00:00Z".into(),
+                    created_at: "2026-09-03T00:00:00Z".into(),
+                    // One check, so the page's checks card exists to fold and
+                    // unfold (mock 7a/7b).
+                    checks: vec![kagi_domain::github::Check {
+                        name: "build".into(),
+                        workflow: "ci".into(),
+                        state: kagi_domain::github::CiState::Success,
+                        url: "https://example.com/run/1".into(),
+                    }],
+                    // `main` is the fixture's only branch, and a head the repository
+                    // actually has is what lets the PR open a tab at all - which is
+                    // what the feed assertions below need.
+                    ..pull_request(7, "cached", "main")
+                },
+                kagi_domain::github::PullRequest {
+                    state: kagi_domain::github::IssueState::Open,
+                    labels: vec![kagi_domain::github::IssueLabel {
+                        name: "docs".into(),
+                        color: "aabbcc".into(),
+                        description: String::new(),
+                    }],
+                    updated_at: "2026-09-02T00:00:00Z".into(),
+                    created_at: "2026-09-02T00:00:00Z".into(),
+                    ..pull_request(8, "documentation", "main")
+                },
+                kagi_domain::github::PullRequest {
+                    state: kagi_domain::github::IssueState::Open,
+                    labels: vec![kagi_domain::github::IssueLabel {
+                        name: "bug".into(),
+                        color: "aabbcc".into(),
+                        description: String::new(),
+                    }],
+                    updated_at: "2026-09-03T00:00:00Z".into(),
+                    created_at: "2026-09-01T00:00:00Z".into(),
+                    ..pull_request(9, "repair", "main")
+                },
+            ])
         }));
         app.update(cx, |app, cx| app.refresh_github_prs(cx));
         cx.run_until_parked();
@@ -671,6 +746,7 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
             cx.read(|cx| app.read(cx).workspace_mode()),
             WorkspaceMode::Prs
         );
+        assert_list_filters(cx, win, "pr-home-row", &[7, 8, 9], &[7, 9], 9, 7);
 
         // ADR-0200: the lane pane belongs to the PR on screen. Home keeps its
         // tabs, so a pane gated on "any tab open" stood there with the lanes

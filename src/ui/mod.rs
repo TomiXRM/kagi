@@ -56,6 +56,7 @@ mod issues_composer;
 mod issues_composer_e2e;
 pub mod issues_mode;
 mod issues_thread;
+mod list_filter_strip;
 mod pr_attention;
 pub mod pr_conflicts;
 pub mod pr_conversation;

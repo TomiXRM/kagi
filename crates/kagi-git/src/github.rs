@@ -15,7 +15,7 @@ use std::sync::OnceLock;
 
 use kagi_domain::github::{
     fold_ci, Check, Comment, IssueLabel, Mergeable, PrBodyDetail, PrStatusDetail, PullRequest,
-    Review, ReviewComment, ReviewState,
+    Review, ReviewComment,
 };
 
 use crate::GitError;
@@ -37,12 +37,14 @@ pub fn gh_available() -> bool {
 }
 
 /// Every name here must be a field `gh pr list --json` accepts: `gh` rejects
-/// an unknown one *before* the API call, which would break every PR fetch.
-/// `field_names_are_accepted_by_gh` guards that. There is no `baseRepository`
-/// field — the base repository's identity comes out of `url` instead.
-pub(crate) const PR_LIST_FIELDS: &str =
-    "number,title,headRefName,headRefOid,baseRefName,isDraft,author,updatedAt,createdAt,\
-labels,assignees,reviewRequests,reviewDecision,url,isCrossRepository";
+/// an unknown one *before* the API call, which would break that fetch.
+/// `field_names_are_accepted_by_gh` guards that.
+///
+/// Branch Cleanup's merged evidence: the four columns its table shows, and
+/// nothing else. The L1 list is a GraphQL page ([`crate::github_pr_list`])
+/// because `gh pr list --json comments` would download every comment body of
+/// every PR just to show a count.
+pub(crate) const PR_MERGED_FIELDS: &str = "number,title,headRefName,author";
 
 /// L2: volatile merge/check state for one PR. Kept separate from the list so
 /// one expensive rollup cannot make the entire repository query time out.
@@ -64,14 +66,6 @@ pub fn current_login() -> Option<String> {
     }
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (!s.is_empty()).then_some(s)
-}
-
-/// Parse `gh pr list --json <FIELDS>` output. Pure; unit-tested below.
-pub fn parse_pr_list(json: &str) -> Result<Vec<PullRequest>, GitError> {
-    let v: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| GitError::Other(format!("gh json: {}", e)))?;
-    let arr = v.as_array().cloned().unwrap_or_default();
-    Ok(arr.iter().filter_map(pr_from_value).collect())
 }
 
 /// Parse one `gh pr view --json PR_STATUS_FIELDS` response.
@@ -110,7 +104,7 @@ fn required_number(value: &serde_json::Value) -> Result<u64, GitError> {
         .ok_or_else(|| GitError::Other("gh json: missing PR number".into()))
 }
 
-fn string_at(value: &serde_json::Value, key: &str) -> String {
+pub(crate) fn string_at(value: &serde_json::Value, key: &str) -> String {
     value
         .get(key)
         .and_then(serde_json::Value::as_str)
@@ -118,7 +112,7 @@ fn string_at(value: &serde_json::Value, key: &str) -> String {
         .to_string()
 }
 
-fn count_at(value: &serde_json::Value, key: &str) -> u32 {
+pub(crate) fn count_at(value: &serde_json::Value, key: &str) -> u32 {
     value
         .get(key)
         .and_then(serde_json::Value::as_u64)
@@ -144,86 +138,90 @@ pub(crate) fn logins_at(value: &serde_json::Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// `labels` → labels with their GitHub colours; an entry with no name is not a
-/// label. Shared by the issue and pull-request parsers for the same reason as
-/// [`logins_at`].
+/// `labels` entries → labels with their GitHub colours; an entry with no name
+/// is not a label.
+fn labels_from(entries: &[serde_json::Value]) -> Vec<IssueLabel> {
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let text = |key: &str| {
+                entry
+                    .get(key)
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_string()
+            };
+            Some(IssueLabel {
+                name: entry.get("name")?.as_str()?.to_string(),
+                color: text("color"),
+                description: text("description"),
+            })
+        })
+        .collect()
+}
+
+/// `labels` → labels, from gh's flat array. Shared by the issue and
+/// pull-request parsers for the same reason as [`logins_at`].
 pub(crate) fn labels_at(value: &serde_json::Value) -> Vec<IssueLabel> {
     value
         .get("labels")
         .and_then(serde_json::Value::as_array)
-        .map(|entries| {
-            entries
-                .iter()
-                .filter_map(|entry| {
-                    let text = |key: &str| {
-                        entry
-                            .get(key)
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("")
-                            .to_string()
-                    };
-                    Some(IssueLabel {
-                        name: entry.get("name")?.as_str()?.to_string(),
-                        color: text("color"),
-                        description: text("description"),
-                    })
-                })
-                .collect()
-        })
+        .map(|entries| labels_from(entries))
         .unwrap_or_default()
 }
 
-fn pr_from_value(v: &serde_json::Value) -> Option<PullRequest> {
-    let s = |k: &str| string_at(v, k);
-    let (ci, checks) = checks_at(v);
-    let mergeable = mergeable_at(v);
-    let review = match s("reviewDecision").as_str() {
-        "APPROVED" => ReviewState::Approved,
-        "CHANGES_REQUESTED" => ReviewState::ChangesRequested,
-        "REVIEW_REQUIRED" => ReviewState::ReviewRequired,
-        _ => ReviewState::None,
-    };
-    Some(PullRequest {
-        number: v.get("number")?.as_u64()?,
-        title: s("title"),
-        head: s("headRefName"),
-        head_sha: s("headRefOid"),
-        base: s("baseRefName"),
-        is_draft: v.get("isDraft").and_then(|x| x.as_bool()).unwrap_or(false),
-        ci,
-        review,
-        url: s("url"),
-        author: v
-            .get("author")
-            .and_then(|a| a.get("login"))
-            .and_then(|x| x.as_str())
-            .unwrap_or("")
-            .to_string(),
-        reviewers: logins_at(v, "reviewRequests"),
-        body: s("body"),
-        checks,
-        mergeable,
-        // Unknown topology is conservatively treated as a fork: never promise
-        // a head deletion in the base repository without same-repo evidence.
-        cross_repository: v
-            .get("isCrossRepository")
-            .and_then(|x| x.as_bool())
-            .unwrap_or(true),
-        // `https://<host>/<owner>/<repo>/pull/<n>` already names the base
-        // repository, host included — and `gh pr list --json` has no
-        // `baseRepository` field to ask for it (#701 final review 3).
-        base_repo: crate::backend::remote_ref::repo_identity(&s("url")).unwrap_or_default(),
-        assignees: logins_at(v, "assignees"),
-        labels: labels_at(v),
-        changed_files: count_at(v, "changedFiles"),
-        additions: count_at(v, "additions"),
-        deletions: count_at(v, "deletions"),
-        created_at: s("createdAt"),
-        updated_at: s("updatedAt"),
-    })
+/// A GraphQL `{nodes: [...]}` connection, or `None` for anything else —
+/// including the flat array `gh --json` produces for the same field.
+pub(crate) fn connection_nodes<'a>(
+    value: &'a serde_json::Value,
+    key: &str,
+) -> Option<&'a Vec<serde_json::Value>> {
+    value.get(key)?.get("nodes")?.as_array()
 }
 
-fn checks_at(v: &serde_json::Value) -> (kagi_domain::github::CiState, Vec<Check>) {
+/// Logins from either shape: a GraphQL connection, or gh's flat `[{login}]`.
+/// The Issue and pull-request list reads differ only in that wrapper, and a
+/// row means the same thing whichever transport produced it.
+pub(crate) fn logins_anywhere(value: &serde_json::Value, key: &str) -> Vec<String> {
+    match connection_nodes(value, key) {
+        Some(nodes) => nodes
+            .iter()
+            .filter_map(|entry| entry.get("login").and_then(serde_json::Value::as_str))
+            .filter(|login| !login.is_empty())
+            .map(str::to_string)
+            .collect(),
+        None => logins_at(value, key),
+    }
+}
+
+/// Labels from either shape, for the same reason as [`logins_anywhere`].
+pub(crate) fn labels_anywhere(value: &serde_json::Value) -> Vec<IssueLabel> {
+    match connection_nodes(value, "labels") {
+        Some(nodes) => labels_from(nodes),
+        None => labels_at(value),
+    }
+}
+
+/// A GraphQL `errors` block as the failure it is: a partial response is never
+/// a short list. Shared by the Issue page (#752) and the pull-request page.
+pub(crate) fn graphql_failure(value: &serde_json::Value) -> Option<GitError> {
+    let errors = value
+        .get("errors")
+        .and_then(serde_json::Value::as_array)
+        .filter(|errors| !errors.is_empty())?;
+    let detail = errors
+        .iter()
+        .filter_map(|error| error.get("message").and_then(serde_json::Value::as_str))
+        .collect::<Vec<_>>()
+        .join("; ");
+    Some(GitError::Other(if detail.is_empty() {
+        "gh graphql: partial response".into()
+    } else {
+        format!("gh graphql: {detail}")
+    }))
+}
+
+pub(crate) fn checks_at(v: &serde_json::Value) -> (kagi_domain::github::CiState, Vec<Check>) {
     let conclusions: Vec<Option<String>> = v
         .get("statusCheckRollup")
         .and_then(|x| x.as_array())
@@ -273,7 +271,7 @@ fn checks_at(v: &serde_json::Value) -> (kagi_domain::github::CiState, Vec<Check>
     (fold_ci(&refs), checks)
 }
 
-fn mergeable_at(v: &serde_json::Value) -> Mergeable {
+pub(crate) fn mergeable_at(v: &serde_json::Value) -> Mergeable {
     match string_at(v, "mergeable").as_str() {
         "MERGEABLE" => Mergeable::Clean,
         "CONFLICTING" => Mergeable::Conflicting,
@@ -552,13 +550,16 @@ pub(crate) fn plan_pr_merge(
     }
 }
 
-// #506 fetch contract (typed failures, classification, cache fold, the two
-// `gh pr list` calls) lives in `github_fetch`, re-exported here so the public
-// path stays `kagi_git::github::*`.
+// #506 fetch contract (typed failures, classification, cache fold, the list
+// reads) lives in `github_fetch`, re-exported here so the public path stays
+// `kagi_git::github::*`.
 pub use crate::github_fetch::{
-    apply_pr_fetch, classify_gh_failure, issue_detail, list_issues, list_merged_prs, list_open_prs,
+    apply_pr_fetch, classify_gh_failure, issue_detail, list_issues, list_merged_prs, list_prs,
     pr_body_detail, pr_status_detail, PrFetchError, PrFetchOutcome,
 };
+// The pull-request list shapes (the L1 GraphQL page and gh's flat `--json`
+// array) are parsed in `github_pr_list`, re-exported for the same reason.
+pub use crate::github_pr_list::{parse_pr_list, parse_pr_list_page};
 pub use crate::github_status_batch::{
     parse_pr_status_batch, pr_status_details_batch, PrStatusBatchResult,
 };
@@ -593,53 +594,6 @@ pub use crate::github_edit::{
 mod tests {
     use super::*;
     use kagi_domain::github::CiState;
-    const SAMPLE: &str = r#"[
-      {"number":236,"title":"feat(ui): stash peek","headRefName":"feat/stash-peek",
-       "baseRefName":"main","isDraft":false,"reviewDecision":"",
-       "mergeable":"MERGEABLE",
-       "statusCheckRollup":[
-         {"__typename":"CheckRun","name":"build","workflowName":"ci","conclusion":"SUCCESS","status":"COMPLETED"},
-         {"__typename":"CheckRun","name":"test","workflowName":"ci","conclusion":null,"status":"IN_PROGRESS"}],
-       "url":"https://github.com/o/r/pull/236","author":{"login":"tomixrm"},
-       "reviewRequests":[{"login":"bob"}]},
-      {"number":240,"title":"wip","headRefName":"feat/b","baseRefName":"feat/stash-peek",
-       "isDraft":true,"reviewDecision":"APPROVED","mergeable":"CONFLICTING",
-       "statusCheckRollup":[{"__typename":"StatusContext","context":"legacy","state":"FAILURE"}],
-       "url":"https://github.com/o/r/pull/240","author":{"login":"bot"}}
-    ]"#;
-
-    #[test]
-    fn parses_gh_json_into_domain_prs() {
-        let prs = parse_pr_list(SAMPLE).unwrap();
-        assert_eq!(prs.len(), 2);
-        assert_eq!(prs[0].number, 236);
-        assert_eq!(prs[0].head, "feat/stash-peek");
-        assert_eq!(prs[0].ci, CiState::Pending, "one check still running");
-        assert_eq!(prs[0].review, ReviewState::None);
-        assert!(prs[1].is_draft);
-        assert_eq!(
-            prs[1].ci,
-            CiState::Failure,
-            "StatusContext state is honoured"
-        );
-        assert_eq!(prs[1].review, ReviewState::Approved);
-        assert!(prs[1].is_stacked_on(&prs));
-        assert_eq!(prs[0].reviewers, vec!["bob".to_string()]);
-    }
-
-    #[test]
-    fn parses_checks_and_mergeable() {
-        let prs = parse_pr_list(SAMPLE).unwrap();
-        assert_eq!(prs[0].checks.len(), 2);
-        assert_eq!(prs[0].checks[0].name, "build");
-        assert_eq!(prs[0].checks[0].workflow, "ci");
-        assert_eq!(prs[0].checks[0].state, CiState::Success);
-        assert_eq!(prs[0].checks[1].state, CiState::Pending, "null conclusion");
-        assert_eq!(prs[0].mergeable, Mergeable::Clean);
-        assert_eq!(prs[1].mergeable, Mergeable::Conflicting);
-        assert_eq!(prs[1].failed_checks(), 1);
-    }
-
     #[test]
     fn parses_status_and_body_details_without_conflating_empty_with_missing() {
         let status = parse_pr_status_detail(
@@ -754,46 +708,5 @@ mod tests {
             note,
             PlanNote::Github(kagi_domain::plan_note::GithubNote::HeadUnavailable { number: 42 })
         )));
-    }
-
-    #[test]
-    fn head_sha_parsed_from_list() {
-        let json = r#"[{"number":1,"title":"t","headRefName":"h","headRefOid":"abc123",
-          "baseRefName":"main","isDraft":false,"mergeable":"MERGEABLE"}]"#;
-        let prs = parse_pr_list(json).unwrap();
-        assert_eq!(prs[0].head_sha, "abc123");
-    }
-
-    #[test]
-    fn empty_and_garbage_inputs() {
-        assert!(parse_pr_list("[]").unwrap().is_empty());
-        assert!(parse_pr_list("not json").is_err());
-    }
-}
-
-#[cfg(test)]
-mod merged_pr_tests {
-    use super::parse_pr_list;
-
-    /// `list_merged_prs` asks for only four fields, so the shared parser has to
-    /// survive the absence of `statusCheckRollup`, `mergeable`, `url` and the
-    /// rest. Real `gh pr list --state merged` output, trimmed to two entries.
-    #[test]
-    fn parses_the_reduced_merged_field_set() {
-        let json = r#"[
-          {"author":{"id":"MDQ6VXNlcjI=","is_bot":false,"login":"TomiXRM","name":"D T"},
-           "headRefName":"chore/bump-0.24.0","number":255,"title":"chore: bump to 0.24.0"},
-          {"author":{"id":"MDQ6VXNlcjI=","is_bot":false,"login":"TomiXRM","name":"D T"},
-           "headRefName":"fix/audit-bugs","number":254,"title":"fix+refactor: races"}
-        ]"#;
-        let prs = parse_pr_list(json).expect("parse");
-        assert_eq!(prs.len(), 2);
-        assert_eq!(prs[0].number, 255);
-        assert_eq!(prs[0].title, "chore: bump to 0.24.0");
-        assert_eq!(prs[0].head, "chore/bump-0.24.0");
-        assert_eq!(prs[0].author, "TomiXRM");
-        // Fields the reduced query does not ask for must default, not panic.
-        assert!(prs[0].url.is_empty());
-        assert!(prs[0].checks.is_empty());
     }
 }

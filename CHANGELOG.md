@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- Issues / PRs の一覧に共通フィルターを追加しました。Open/Closed/All、複数ラベル、author、タイトル部分一致を組み合わせ、PR は draft と取得済み checks でも絞れます。updated / created / number / comments の昇降順、適用後の件数、既存の collection との AND に対応し、設定はタブ内だけで保持します。Closed は実際の closed 一覧を取得し、PR の merged も含みます。（#753、ADR-0198 / ADR-0200）
+
 ### Fixed
 
 - fork PR の merge 後も local branch を安全に扱えるようにしました。計画を background で作り、承認時の branch 名・full OID・不在を固定します。checkout 中・PR head 不一致は事前に「保持」と表示し、queue 投入時も branch を残します。gh 成功と server の merge 成立を両方確認した場合だけ既存の削除ガードを通し、後発の OID 変更・同名 branch 出現は削除せず Partial とします。receipt と EN/JA 通知に結果を残し、fork remote は削除しません。Unknown の照合で未着手 local branch の削除を要求することもありません。（#705、ADR-0202）

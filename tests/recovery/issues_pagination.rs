@@ -67,6 +67,9 @@ pub fn scenario_issues_pagination(cx: &mut VisualTestAppContext) {
         app.show_issues_mode(cx);
     });
     cx.run_until_parked();
+    let recent = measure(cx, win, "issue-filter-tab-3");
+    cx.simulate_click(win, recent.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
     let owner = cx.read(|cx| *app.read(cx).ui.keys().next().expect("fixture owner"));
     let (task, failed_page) = deferred(cx);
     KagiApp::queue_issue_list_fetch_for_e2e(task);

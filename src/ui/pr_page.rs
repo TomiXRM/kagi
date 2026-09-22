@@ -222,12 +222,13 @@ pub(super) fn render_pr_properties(
 /// (user report). Here it has the width of the page, and the facts that
 /// answer "what am I looking at" sit under it rather than in four places.
 pub(super) fn render_pr_headline(app: &KagiApp, pr: &PullRequest) -> gpui::AnyElement {
-    // Draft / merged / open, as GitHub states it. `gh pr list` gives kagi only
-    // open PRs plus the draft flag, so those are the two states it can claim.
-    let (state, state_ink) = if pr.is_draft {
-        (Msg::PrHomeDraft.t(), theme().text_muted)
-    } else {
-        (Msg::PrHomeOpen.t(), theme().color_success)
+    use kagi_domain::github::IssueState;
+    // Closed includes merged PRs, matching the server-side list collection.
+    let (state, state_ink) = match pr.state {
+        IssueState::Closed => (Msg::IssueStateClosed.t(), theme().text_muted),
+        IssueState::Unknown => (Msg::IssueStateUnknown.t(), theme().text_muted),
+        IssueState::Open if pr.is_draft => (Msg::PrHomeDraft.t(), theme().text_muted),
+        IssueState::Open => (Msg::PrHomeOpen.t(), theme().color_success),
     };
     let chip = |text: SharedString, ink: u32, border: u32| {
         div()

@@ -32,7 +32,7 @@ it; the rail can name assignees and labels without a second call.
 
 Timestamps are kept as `gh` returns them — verbatim RFC-3339, UTC, fixed
 width. In that form **lexicographic order is chronological order**, so
-`kagi_domain::pr_list::sort_prs` compares text and this crate needs no date
+`kagi_domain::list_filter` compares text and this crate needs no date
 parser; rendering an age uses the existing `iso_to_epoch` + `relative_time`. A
 missing stamp sorts last: an empty string is the smallest value, and absence is
 not evidence of age.
@@ -59,15 +59,16 @@ sections are empty rather than guessing whose they are.
 
 ### 3. The home screen is a table
 
-NO / TITLE+BRANCH / STATE / AUTHOR / CHECKS / FILES / AGE under a strip with
-the counts, the OPEN/DRAFT chips and one cycling sort chip. STATE shows the
-Focus Queue's verdict rather than GitHub's word for it: "changes requested" is
-what the reader acts on, "open" is not.
+NO / TITLE+BRANCH / STATE / AUTHOR / CHECKS / FILES / AGE under the shared
+Issue/PR filter strip (#753). State, labels, author and title compose with AND;
+PRs additionally offer draft and already-fetched checks. The former OPEN/DRAFT
+chips and cycling sort control are replaced, not kept as parallel state.
+Open rows retain the Focus Queue's actionable verdict in STATE; closed rows
+say Closed rather than being presented as open or ready.
 
-**No merged chip.** Merged PRs are a different fetch with a reduced field set
-(`list_merged_prs`, deliberately cheap for Branch Cleanup), so a MERGED chip
-would render half-empty columns. `PrListFilter` therefore has two variants, not
-three — a dead variant is a promise the data does not keep.
+Closed includes merged PRs, fetched through the same complete L1 projection
+as Open and All. Branch Cleanup still uses its independent, reduced
+`list_merged_prs` read; that reduced evidence is not the dashboard's data source.
 
 ### 4. The swimlane is the PR's lane in its neighbourhood
 
@@ -398,3 +399,37 @@ Issues（thread / home 一覧 / composer）と PR（feed / composer / home 表�
   owner 固定、transport 記録は変更しない。
 - **i18n**: 両方が使う文言は `ComposerWrite` / `ComposerPreview` /
   `ComposerDraftSaved` / `ComposerDraftSaving` に改名した（EN/JA の文字列は不変）。
+
+## #753: shared Issue/PR filtering and sorting
+
+- `kagi_domain::list_filter::{IssueFilter, PrFilter, apply_issues, apply_prs}` is
+  the sole predicate/order policy. It returns source indices, retaining cached
+  payload ownership instead of cloning every body/check into virtual rows.
+  Empty predicates retain membership; stable equal-key order is preserved.
+- Both lists support state Open/Closed/All, multiple labels (all selected
+  labels must match), one author and a case-insensitive title substring.
+  PR draft Ready/Draft/All and checks Passing/Failing/Pending/All are additional
+  AND predicates. An active checks predicate requires fresh, fetched status;
+  missing, loading, stale and fetched-no-checks are not Pending. Filtering
+  never starts a check request.
+- Updated, created, number and comment count each sort ascending or descending,
+  defaulting to updated descending. Missing timestamps stay last in either
+  direction. Navigator collection membership is ANDed with these predicates,
+  and navigator counts/keyboard order and the home table use the chosen order.
+- `TabUiState` owns each filter plus the retained input/menu resources. UI
+  defaults to Open with draft/checks unrestricted. Filters are not persisted
+  and are not copied into `TabViewState`, saved searches or a second cache.
+- `src/ui/list_filter_strip.rs` extracts the old PR chip chrome. Both homes
+  render it; Issues places it below Composer. Candidate labels/authors come
+  from loaded rows; selection uses the existing `menu_overlay`. Clear restores
+  defaults and filter/sort changes reset the corresponding viewport.
+- `list_prs(workdir, state)` replaces the open-only API. Its bounded L1 GraphQL
+  page requests real state and `comments { totalCount }`, not comment bodies,
+  check rollups or mergeability. It resolves gh's repository identity first,
+  preserving default-repository/enterprise behavior at the cost of one extra
+  gh invocation per refresh. Closed requests CLOSED and MERGED; both become
+  `IssueState::Closed`. Unknown state remains unknown. Gateway retry policy
+  stays confined to the existing single L1 retry.
+- `workspace_mode_toolbar` clicks the actual shared label and sort menus in
+  both homes, proves row membership changes, then proves created-desc changes
+  the first row. The PR half remains mandatory when gh is available.

@@ -22,7 +22,7 @@ use gpui::{
     div, prelude::*, px, relative, rgb, Context, ListState, SharedString, UniformListScrollHandle,
 };
 use kagi_domain::github::{Comment, Mergeable, PullRequest, Review, ReviewComment, ReviewState};
-use kagi_domain::pr_list::{PrListFilter, PrSection, PrSort};
+use kagi_domain::pr_list::PrSection;
 use kagi_git::{Commit, CommitId, FileStatus, PrConflictFile};
 use kagi_ui_core::file_tree::status_badge;
 
@@ -146,12 +146,6 @@ pub struct PrModeState {
     /// Which body the center shows. Mode-wide, NOT per tab: switching PRs
     /// while reading reviews should keep showing reviews (user request).
     pub view: PrView,
-    /// Right column width (unscaled px); the left shares `SidebarState::width`.
-    /// Which slice the home list shows, and in what order. Mode-wide for the
-    /// same reason `view` is: it is a reading preference, not a property of a
-    /// PR.
-    pub filter: PrListFilter,
-    pub sort: PrSort,
     /// The PR home table is virtualized so its layout processor can report the
     /// visible PR-number set to the lazy detail controller.
     pub dashboard_scroll: UniformListScrollHandle,
@@ -179,8 +173,6 @@ impl Default for PrModeState {
             comment_preview: false,
             feed_anchor: None,
             view: PrView::Overview,
-            filter: PrListFilter::default(),
-            sort: PrSort::default(),
             dashboard_scroll: UniformListScrollHandle::new(),
             sections_open: [true, false, false, false],
             lane_scroll_x: None,
@@ -676,26 +668,6 @@ impl KagiApp {
         if let Some(m) = self.pr_mode_mut() {
             let slot = &mut m.sections_open[section.index()];
             *slot = !*slot;
-        }
-        cx.notify();
-    }
-
-    /// Which slice the home list shows.
-    pub fn pr_mode_set_filter(&mut self, filter: PrListFilter, cx: &mut Context<Self>) {
-        if let Some(m) = self.pr_mode_mut() {
-            m.filter = filter;
-        }
-        cx.notify();
-    }
-
-    /// Cycle the home list's order — the chip is one control, not three.
-    pub fn pr_mode_cycle_sort(&mut self, cx: &mut Context<Self>) {
-        if let Some(m) = self.pr_mode_mut() {
-            m.sort = match m.sort {
-                PrSort::Updated => PrSort::Created,
-                PrSort::Created => PrSort::Number,
-                PrSort::Number => PrSort::Updated,
-            };
         }
         cx.notify();
     }

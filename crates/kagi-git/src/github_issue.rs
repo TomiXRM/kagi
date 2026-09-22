@@ -7,8 +7,9 @@
 //! `github_fetch.rs`.
 
 use kagi_domain::github::{Issue, IssueComment, IssueListSnapshot, IssueState};
+use kagi_domain::list_filter::StateFilter;
 
-use super::github::{labels_at, logins_at};
+use super::github::{graphql_failure, labels_anywhere, logins_anywhere};
 use crate::GitError;
 
 /// One GraphQL request replaces `gh issue list` and adds exactly one search
@@ -19,10 +20,14 @@ use crate::GitError;
 /// page passes the previous response's `endCursor`. `pageInfo` travels with
 /// the same page it describes, so the caller never has to guess whether a
 /// short page was the last one (#752).
+///
+/// `$states` is what the filter strip's state chip selects (#753). It is the
+/// server-side half of that filter: a closed Issue is not in the open
+/// collection at all, so hiding rows locally could never show one.
 pub(crate) const ISSUE_LIST_QUERY: &str = r#"
-query($owner: String!, $name: String!, $mentions: String!, $cursor: String) {
+query($owner: String!, $name: String!, $mentions: String!, $states: [IssueState!], $cursor: String) {
   repository(owner: $owner, name: $name) {
-    issues(first: 100, after: $cursor, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+    issues(first: 100, after: $cursor, states: $states, orderBy: {field: UPDATED_AT, direction: DESC}) {
       pageInfo { hasNextPage endCursor }
       nodes {
         number title state url createdAt updatedAt
@@ -38,6 +43,28 @@ query($owner: String!, $name: String!, $mentions: String!, $cursor: String) {
   }
 }
 "#;
+
+/// The Issue collection each filter names. Issues have two lifecycle states,
+/// so `All` is both of them named explicitly rather than an absent argument —
+/// the request then says what it asked for.
+pub(crate) fn issue_states(state: StateFilter) -> &'static [&'static str] {
+    match state {
+        StateFilter::Open => &["OPEN"],
+        StateFilter::Closed => &["CLOSED"],
+        StateFilter::All => &["OPEN", "CLOSED"],
+    }
+}
+
+/// The same state, in the search syntax the `mentions:@me` alias speaks. The
+/// alias must select the same collection as `$states`, or the Mentioned tab
+/// would mark rows the list cannot show.
+pub(crate) fn mentions_scope(state: StateFilter) -> &'static str {
+    match state {
+        StateFilter::Open => " is:open",
+        StateFilter::Closed => " is:closed",
+        StateFilter::All => "",
+    }
+}
 
 /// The list metadata plus the conversation loaded for a selected issue.
 pub(crate) const ISSUE_DETAIL_FIELDS: &str =
@@ -66,21 +93,8 @@ pub fn parse_issue_list_snapshot(
 ) -> Result<IssueListSnapshot, GitError> {
     let value: serde_json::Value =
         serde_json::from_str(json).map_err(|e| GitError::Other(format!("gh json: {}", e)))?;
-    if let Some(errors) = value
-        .get("errors")
-        .and_then(serde_json::Value::as_array)
-        .filter(|errors| !errors.is_empty())
-    {
-        let detail = errors
-            .iter()
-            .filter_map(|error| error.get("message").and_then(serde_json::Value::as_str))
-            .collect::<Vec<_>>()
-            .join("; ");
-        return Err(GitError::Other(if detail.is_empty() {
-            "gh graphql: partial response".into()
-        } else {
-            format!("gh graphql: {detail}")
-        }));
+    if let Some(failure) = graphql_failure(&value) {
+        return Err(failure);
     }
     let values = value
         .pointer("/data/repository/issues/nodes")
@@ -172,38 +186,8 @@ fn issue_from_value(value: &serde_json::Value) -> Option<Issue> {
             .to_string()
     };
     let state = IssueState::from_github(&string("state"));
-    let assignees = connection_nodes(value, "assignees")
-        .map(|nodes| {
-            nodes
-                .iter()
-                .map(login)
-                .filter(|name| !name.is_empty())
-                .collect()
-        })
-        .unwrap_or_else(|| logins_at(value, "assignees"));
-    let labels = connection_nodes(value, "labels")
-        .map(|nodes| {
-            nodes
-                .iter()
-                .filter_map(|entry| {
-                    let name = entry.get("name")?.as_str()?.to_string();
-                    Some(kagi_domain::github::IssueLabel {
-                        name,
-                        color: entry
-                            .get("color")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("")
-                            .to_string(),
-                        description: entry
-                            .get("description")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("")
-                            .to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_else(|| labels_at(value));
+    let assignees = logins_anywhere(value, "assignees");
+    let labels = labels_anywhere(value);
     let comments: Vec<IssueComment> = value
         .get("comments")
         .and_then(serde_json::Value::as_array)
@@ -255,13 +239,6 @@ fn issue_from_value(value: &serde_json::Value) -> Option<Issue> {
         created_at: string("createdAt"),
         updated_at: string("updatedAt"),
     })
-}
-
-fn connection_nodes<'a>(
-    value: &'a serde_json::Value,
-    key: &str,
-) -> Option<&'a Vec<serde_json::Value>> {
-    value.get(key)?.get("nodes")?.as_array()
 }
 
 #[cfg(test)]
@@ -427,5 +404,28 @@ mod tests {
         assert!(parse_issue_list("{}").is_err());
         assert!(parse_issue_detail("[]").is_err());
         assert!(parse_issue_detail(r#"{"title":"missing number"}"#).is_err());
+    }
+
+    /// GitHub rejects a query that declares a variable it never uses, so a
+    /// half-edited query fails *every* list read at runtime. Fixtures cannot
+    /// catch it: they answer canned JSON whatever the query says. The
+    /// `mentions:@me` alias is the half that is easy to lose.
+    #[test]
+    fn every_declared_variable_is_used_by_the_issue_query() {
+        let (declaration, body) = ISSUE_LIST_QUERY
+            .split_once(") {")
+            .expect("a variable declaration");
+        let declared: Vec<&str> = declaration
+            .split('$')
+            .skip(1)
+            .map(|variable| variable.split(':').next().unwrap_or_default().trim())
+            .collect();
+        assert_eq!(declared, ["owner", "name", "mentions", "states", "cursor"]);
+        for name in declared {
+            assert!(
+                body.contains(&format!("${name}")),
+                "${name} is declared but never used"
+            );
+        }
     }
 }

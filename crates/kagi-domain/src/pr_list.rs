@@ -7,31 +7,6 @@
 
 use crate::github::{PrAttention, PrDetailAvailability, PrGroup, PullRequest};
 
-/// Which slice of the *open* pull requests the list is showing.
-///
-/// The two are disjoint, so their counts add up to what was fetched: GitHub
-/// calls a draft "open" too, and a header that said `OPEN 12 · DRAFT 3` out of
-/// twelve would be counting three of them twice. A merged slice is not here
-/// because merged PRs are a different fetch (`list_merged_prs`) with a
-/// different field set; a chip for them arrives with that data, not before.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum PrListFilter {
-    /// Open and ready for review.
-    #[default]
-    Open,
-    /// Open, but marked draft.
-    Draft,
-}
-
-impl PrListFilter {
-    pub fn accepts(self, pr: &PullRequest) -> bool {
-        match self {
-            Self::Open => !pr.is_draft,
-            Self::Draft => pr.is_draft,
-        }
-    }
-}
-
 /// One section of the pull-request navigator.
 ///
 /// These are **filters, not a partition**: a PR the viewer owns, was asked to
@@ -108,51 +83,14 @@ impl PrSection {
     }
 }
 
-/// How the list is ordered.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum PrSort {
-    /// Most recently updated first — what `gh pr list` already returns, and
-    /// the order the header calls `SORT: UPDATED`.
-    #[default]
-    Updated,
-    /// Newest PR first.
-    Created,
-    /// Highest number first.
-    Number,
-}
-
-/// Order `prs` in place.
-///
-/// `created_at` / `updated_at` are `gh`'s RFC-3339 UTC strings — fixed width,
-/// zero-padded, same offset — so comparing them as text is comparing the
-/// instants they name, and this crate needs no date parsing to sort. A PR
-/// whose timestamp is missing (a reduced field set) sorts last rather than
-/// first: an empty string is the smallest, and it is not evidence of age.
-pub fn sort_prs(prs: &mut [PullRequest], sort: PrSort) {
-    match sort {
-        PrSort::Updated => {
-            prs.sort_by(|a, b| stamp_key(&b.updated_at).cmp(&stamp_key(&a.updated_at)))
-        }
-        PrSort::Created => {
-            prs.sort_by(|a, b| stamp_key(&b.created_at).cmp(&stamp_key(&a.created_at)))
-        }
-        PrSort::Number => prs.sort_by(|a, b| b.number.cmp(&a.number)),
-    }
-}
-
-/// A missing timestamp must not read as "oldest possible"; ordering is
-/// descending, so the absent ones are keyed below every real stamp.
-fn stamp_key(stamp: &str) -> Option<&str> {
-    (!stamp.is_empty()).then_some(stamp)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::github::CiState;
+    use crate::list_filter::{apply_prs, DraftFilter, ListSort, PrFilter, SortField};
 
     #[test]
-    fn the_two_list_slices_partition_what_was_fetched() {
+    fn ready_and_draft_filters_partition_loaded_rows() {
         let open = PullRequest {
             number: 1,
             ..Default::default()
@@ -162,16 +100,17 @@ mod tests {
             is_draft: true,
             ..Default::default()
         };
-        for (slice, wanted) in [
-            (PrListFilter::Open, vec![1]),
-            (PrListFilter::Draft, vec![2]),
-        ] {
-            let kept: Vec<u64> = [&open, &draft]
+        let prs = [open, draft];
+        for (draft, wanted) in [(DraftFilter::Ready, vec![1]), (DraftFilter::Draft, vec![2])] {
+            let filter = PrFilter {
+                draft,
+                ..Default::default()
+            };
+            let kept: Vec<u64> = apply_prs(&prs, &filter, |_| PrDetailAvailability::Fresh)
                 .into_iter()
-                .filter(|pr| slice.accepts(pr))
-                .map(|pr| pr.number)
+                .map(|index| prs[index].number)
                 .collect();
-            assert_eq!(kept, wanted, "{slice:?}");
+            assert_eq!(kept, wanted, "{draft:?}");
         }
     }
 
@@ -226,13 +165,6 @@ mod tests {
     }
 
     #[test]
-    fn section_indices_are_distinct_and_dense() {
-        let mut seen: Vec<usize> = PrSection::ALL.into_iter().map(PrSection::index).collect();
-        seen.sort_unstable();
-        assert_eq!(seen, vec![0, 1, 2, 3]);
-    }
-
-    #[test]
     fn sorting_reads_githubs_timestamps_as_instants() {
         let stamped = |n: u64, created: &str, updated: &str| PullRequest {
             number: n,
@@ -243,23 +175,38 @@ mod tests {
         // #2 was created last but touched first; #3 has no timestamps at all.
         // Note the day/month digits: a naive numeric or length-based compare
         // would put 2026-02-09 after 2026-10-01.
-        let mut prs = vec![
+        let prs = vec![
             stamped(1, "2026-02-09T00:00:00Z", "2026-10-01T00:00:00Z"),
             stamped(2, "2026-10-01T00:00:00Z", "2026-02-09T00:00:00Z"),
             stamped(3, "", ""),
         ];
 
-        sort_prs(&mut prs, PrSort::Updated);
-        assert_eq!(numbers(&prs), vec![1, 2, 3], "newest update first");
-
-        sort_prs(&mut prs, PrSort::Created);
-        assert_eq!(numbers(&prs), vec![2, 1, 3], "newest PR first");
-
-        sort_prs(&mut prs, PrSort::Number);
-        assert_eq!(numbers(&prs), vec![3, 2, 1]);
-    }
-
-    fn numbers(prs: &[PullRequest]) -> Vec<u64> {
-        prs.iter().map(|pr| pr.number).collect()
+        let numbers = |field| {
+            apply_prs(
+                &prs,
+                &PrFilter {
+                    sort: ListSort {
+                        field,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                |_| PrDetailAvailability::Missing,
+            )
+            .into_iter()
+            .map(|index| prs[index].number)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            numbers(SortField::Updated),
+            vec![1, 2, 3],
+            "newest update first"
+        );
+        assert_eq!(
+            numbers(SortField::Created),
+            vec![2, 1, 3],
+            "newest PR first"
+        );
+        assert_eq!(numbers(SortField::Number), vec![3, 2, 1]);
     }
 }

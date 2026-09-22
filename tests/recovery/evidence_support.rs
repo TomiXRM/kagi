@@ -38,8 +38,12 @@ pub fn deferred<T: Send + 'static>(cx: &mut VisualTestAppContext) -> (Task<T>, R
 /// A plain, clean pull request — the shape a fetch returns, for scenarios that
 /// need GitHub evidence to be already cached.
 pub fn pull_request(number: u64, title: &str, head: &str) -> kagi_domain::github::PullRequest {
-    use kagi_domain::github::{CiState, Mergeable, PullRequest, ReviewState};
+    use kagi_domain::github::{CiState, IssueState, Mergeable, PullRequest, ReviewState};
     PullRequest {
+        // An open PR, as a fetch of the open collection returns it: the shared
+        // filter strip's default state is Open, and a row with no state is not
+        // in it (#753).
+        state: IssueState::Open,
         number,
         title: title.to_string(),
         head: head.to_string(),

@@ -4,6 +4,7 @@
 //! The pure conflict hunk model lives in `kagi-domain` (ADR-0072). This backend
 //! half keeps git2 materialization, autosave, and repository-index access.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -11,6 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use git2::{FileMode, IndexEntry, MergeFileInput, MergeFileOptions, Repository};
 
 use super::GitError;
+use serde_json::Value;
 
 pub use kagi_domain::resolution::{
     lines_to_text, text_to_lines, ConflictHunk, HunkChoice, HunkModel, LineOrder, LineOrigin,
@@ -637,7 +639,7 @@ impl ResolutionBuffer {
 }
 
 // ────────────────────────────────────────────────────────────
-// Autosave / load (hand-written JSON, serde-free — like drafts.rs)
+// Autosave / load
 // ────────────────────────────────────────────────────────────
 
 impl ResolutionBuffer {
@@ -661,7 +663,9 @@ impl ResolutionBuffer {
                 ))
             })?;
         }
-        let json = self.to_json();
+        let json = self
+            .to_json()
+            .map_err(|e| GitError::Other(format!("serialize conflict buffer: {e}")))?;
         std::fs::write(&path, json.as_bytes()).map_err(|e| {
             GitError::Other(format!(
                 "conflicts: write failed for {}: {}",
@@ -702,18 +706,14 @@ impl ResolutionBuffer {
     /// Schema (one line):
     /// `{"repo":"<path>","updated":<u64>,"files":[{...},...]}`
     /// where each file is
-    /// `{"path":"<p>","binary":<bool>,"current":<str|null>,"incoming":<str|null>,"result":[{"t":"<line>","o":"c|i|m"},...]|null}`.
-    fn to_json(&self) -> String {
-        let mut files_json: Vec<String> = Vec::new();
-        for (path, fr) in &self.files {
-            files_json.push(file_to_json(path, fr));
-        }
-        format!(
-            "{{\"repo\":\"{}\",\"updated\":{},\"files\":[{}]}}",
-            escape_json(&self.repo_path.to_string_lossy()),
-            now_unix(),
-            files_json.join(",")
-        )
+    /// `{"path":"<p>","binary":<bool>,"current":<str|null>,"incoming":<str|null>,`
+    /// `"result":[{"t":"<line>","o":"c|i|m"},...]|null,"raw_result":{"oid":"<hex>","mode":<u32>}|null}`.
+    fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(&BufferRecord {
+            repo: self.repo_path.to_string_lossy(),
+            updated: now_unix(),
+            files: &self.files,
+        })
     }
 }
 
@@ -988,318 +988,161 @@ fn now_unix() -> u64 {
 }
 
 // ────────────────────────────────────────────────────────────
-// JSON encode / decode (serde-free; same escaping as drafts.rs)
+// JSON records
 // ────────────────────────────────────────────────────────────
 
-fn escape_json(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for ch in s.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out
+// Borrow the persisted data without cloning draft text or serializing live-index
+// metadata, hunk models, or undo history. Domain types remain serde-free.
+#[derive(serde::Serialize)]
+struct BufferRecord<'a> {
+    repo: Cow<'a, str>,
+    updated: u64,
+    #[serde(serialize_with = "serialize_files")]
+    files: &'a BTreeMap<PathBuf, FileResolution>,
 }
 
-fn unescape_json(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(ch) = chars.next() {
-        if ch != '\\' {
-            out.push(ch);
-            continue;
-        }
-        match chars.next() {
-            Some('"') => out.push('"'),
-            Some('\\') => out.push('\\'),
-            Some('n') => out.push('\n'),
-            Some('r') => out.push('\r'),
-            Some('t') => out.push('\t'),
-            Some('u') => {
-                let hex: String = (0..4).filter_map(|_| chars.next()).collect();
-                if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                    if let Some(c) = char::from_u32(code) {
-                        out.push(c);
-                    }
-                }
-            }
-            Some(c) => {
-                out.push('\\');
-                out.push(c);
-            }
-            None => {}
-        }
-    }
-    out
+#[derive(serde::Serialize)]
+struct FileRecord<'a> {
+    path: Cow<'a, str>,
+    binary: bool,
+    current: Option<&'a str>,
+    incoming: Option<&'a str>,
+    #[serde(serialize_with = "serialize_result")]
+    result: &'a Option<Vec<ResolvedLine>>,
+    raw_result: Option<RawRecord<'a>>,
 }
 
-/// Serialize one file resolution to its JSON object.
-fn file_to_json(path: &Path, fr: &FileResolution) -> String {
-    let current = opt_str_json(&fr.current_text);
-    let incoming = opt_str_json(&fr.incoming_text);
-    let result = match &fr.result {
-        None => "null".to_string(),
-        Some(lines) => {
-            let items: Vec<String> = lines
-                .iter()
-                .map(|l| {
-                    format!(
-                        "{{\"t\":\"{}\",\"o\":\"{}\"}}",
-                        escape_json(&l.text),
-                        l.origin.tag()
-                    )
-                })
-                .collect();
-            format!("[{}]", items.join(","))
-        }
-    };
-    // #297: persist the chosen raw side (binary/symlink/gitlink) so a taken
-    // side survives re-detection/restart. `current_raw`/`incoming_raw`/`raw`
-    // themselves stay index-derived (re-filled by `from_repo_with_autosave`).
-    let raw_result = match &fr.raw_result {
-        None => "null".to_string(),
-        Some(r) => format!("{{\"oid\":\"{}\",\"mode\":{}}}", r.oid, r.mode),
-    };
-    format!(
-        "{{\"path\":\"{}\",\"binary\":{},\"current\":{},\"incoming\":{},\"result\":{},\"raw_result\":{}}}",
-        escape_json(&path.to_string_lossy()),
-        fr.binary,
-        current,
-        incoming,
-        result,
-        raw_result
-    )
+#[derive(serde::Serialize)]
+struct LineRecord<'a> {
+    t: &'a str,
+    o: char,
 }
 
-/// `null` or a quoted+escaped string.
-fn opt_str_json(s: &Option<String>) -> String {
-    match s {
-        None => "null".to_string(),
-        Some(v) => format!("\"{}\"", escape_json(v)),
+#[derive(serde::Serialize)]
+struct RawRecord<'a> {
+    #[serde(serialize_with = "serialize_oid")]
+    oid: &'a git2::Oid,
+    mode: u32,
+}
+
+fn serialize_files<S: serde::Serializer>(
+    files: &BTreeMap<PathBuf, FileResolution>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.collect_seq(files.iter().map(|(path, fr)| FileRecord {
+        path: path.to_string_lossy(),
+        binary: fr.binary,
+        current: fr.current_text.as_deref(),
+        incoming: fr.incoming_text.as_deref(),
+        result: &fr.result,
+        raw_result: fr.raw_result.as_ref().map(|raw| RawRecord {
+            oid: &raw.oid,
+            mode: raw.mode,
+        }),
+    }))
+}
+
+fn serialize_result<S: serde::Serializer>(
+    result: &Option<Vec<ResolvedLine>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match result {
+        Some(lines) => serializer.collect_seq(lines.iter().map(|line| LineRecord {
+            t: &line.text,
+            o: line.origin.tag(),
+        })),
+        None => serializer.serialize_none(),
     }
 }
 
-/// Parse a buffer JSON object produced by [`ResolutionBuffer::to_json`].
-///
-/// Lenient: missing / unparseable fields default sensibly; a non-object input
-/// yields `None`.  The history (undo/redo) is intentionally not persisted —
-/// only the current Result and side texts round-trip (ADR-0057: resume the
-/// resolution, not the keystroke history).
-fn parse_buffer_json(repo_path: &Path, content: &str) -> Option<ResolutionBuffer> {
-    let content = content.trim();
-    if !content.starts_with('{') {
+fn serialize_oid<S: serde::Serializer>(oid: &git2::Oid, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.collect_str(oid)
+}
+
+// Decode entries independently to retain the legacy defaults and per-file recovery.
+#[derive(serde::Deserialize)]
+struct SavedBuffer {
+    files: Vec<Value>,
+}
+
+fn parse_buffer_json(repo_path: &Path, json: &str) -> Option<ResolutionBuffer> {
+    // Serde structs also accept sequences; the persisted record must be an object.
+    if !json.trim_start().starts_with('{') {
         return None;
     }
+    let saved: SavedBuffer = serde_json::from_str(json).ok()?;
     let mut buffer = ResolutionBuffer::new(repo_path);
-
-    // Find the `"files":[ ... ]` array and split it into top-level objects.
-    let files_start = content.find("\"files\":[")? + "\"files\":[".len();
-    let array = &content[files_start..];
-    for obj in split_top_level_objects(array) {
-        if let Some((path, fr)) = parse_file_object(&obj) {
-            buffer.files.insert(path, fr);
+    for file in saved.files {
+        if let Some((path, resolution)) = parse_file_object(file) {
+            buffer.files.insert(path, resolution);
         }
     }
     Some(buffer)
 }
 
-/// Parse a single file object fragment (without surrounding braces handling
-/// beyond what `extract_*` needs).
-fn parse_file_object(obj: &str) -> Option<(PathBuf, FileResolution)> {
-    let path_str = extract_string(obj, "path")?;
-    let path = PathBuf::from(path_str);
-
-    let binary = obj.contains("\"binary\":true");
-    let current = extract_nullable_string(obj, "current");
-    let incoming = extract_nullable_string(obj, "incoming");
-    let result = parse_result_array(obj);
-    let raw_result = parse_raw_result(obj);
-
-    // Raw (binary/symlink/gitlink) side OIDs are not persisted — a recovered
-    // session re-derives them from the live index via `from_repo` (the conflict
-    // still stands until Continue). Autosave restores text edits only (ADR-0057).
-    let fr = FileResolution {
-        current_text: current,
-        incoming_text: incoming,
-        binary,
+fn parse_file_object(value: Value) -> Option<(PathBuf, FileResolution)> {
+    let Value::Object(mut fields) = value else {
+        return None;
+    };
+    let path = PathBuf::from(json_string(fields.remove("path"))?);
+    let resolution = FileResolution {
+        binary: fields
+            .get("binary")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        current_text: json_string(fields.remove("current")),
+        incoming_text: json_string(fields.remove("incoming")),
+        result: parse_result_array(fields.remove("result")),
+        raw_result: parse_raw_result(fields.remove("raw_result")),
         raw: false,
         current_raw: None,
         incoming_raw: None,
-        raw_result,
-        result,
         undo: Vec::new(),
         redo: Vec::new(),
     };
-    Some((path, fr))
+    Some((path, resolution))
 }
 
-/// Parse a persisted `"raw_result":{"oid":"<hex>","mode":<u32>}` (or `null`).
-/// The `raw`/`current_raw`/`incoming_raw` metadata is NOT persisted — it is
-/// re-derived from the live index by [`ResolutionBuffer::from_repo_with_autosave`];
-/// only the *chosen* side round-trips here (#297).
-fn parse_raw_result(obj: &str) -> Option<RawResolution> {
-    let key = "\"raw_result\":";
-    let pos = obj.find(key)?;
-    let after = obj[pos + key.len()..].trim_start();
-    if after.starts_with("null") || !after.starts_with('{') {
+fn json_string(value: Option<Value>) -> Option<String> {
+    match value {
+        Some(Value::String(text)) => Some(text),
+        _ => None,
+    }
+}
+
+fn parse_raw_result(value: Option<Value>) -> Option<RawResolution> {
+    let value = value?;
+    Some(RawResolution {
+        oid: git2::Oid::from_str(value.get("oid")?.as_str()?).ok()?,
+        mode: u32::try_from(value.get("mode")?.as_u64()?).ok()?,
+    })
+}
+
+fn parse_result_array(value: Option<Value>) -> Option<Vec<ResolvedLine>> {
+    let Value::Array(lines) = value? else {
         return None;
-    }
-    let oid_hex = extract_string(after, "oid")?;
-    let oid = git2::Oid::from_str(&oid_hex).ok()?;
-    let mode = extract_u32(after, "mode")?;
-    Some(RawResolution { oid, mode })
+    };
+    Some(
+        lines
+            .into_iter()
+            .filter_map(|line| {
+                let Value::Object(mut fields) = line else {
+                    return None;
+                };
+                let origin = fields
+                    .get("o")
+                    .and_then(Value::as_str)
+                    .and_then(|tag| tag.chars().next())
+                    .map(LineOrigin::from_tag)
+                    .unwrap_or(LineOrigin::Manual);
+                Some(ResolvedLine {
+                    text: json_string(fields.remove("t")).unwrap_or_default(),
+                    origin,
+                })
+            })
+            .collect(),
+    )
 }
-
-/// Extract an unquoted integer field `"<key>":<n>` as u32.
-fn extract_u32(obj: &str, key: &str) -> Option<u32> {
-    let needle = format!("\"{}\":", key);
-    let pos = obj.find(&needle)? + needle.len();
-    let rest = obj[pos..].trim_start();
-    let end = rest
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(rest.len());
-    rest[..end].parse().ok()
-}
-
-/// Parse the `"result":[...]` array of `{"t":..,"o":..}` items, or `None` when
-/// it is `null`.
-fn parse_result_array(obj: &str) -> Option<Vec<ResolvedLine>> {
-    let key = "\"result\":";
-    let pos = obj.find(key)?;
-    let after = obj[pos + key.len()..].trim_start();
-    if after.starts_with("null") {
-        return None;
-    }
-    if !after.starts_with('[') {
-        return None;
-    }
-    // Slice from '[' to the matching ']'.
-    let mut depth = 0usize;
-    let mut end = None;
-    let mut in_str = false;
-    let mut escaped = false;
-    for (i, ch) in after.char_indices() {
-        if in_str {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_str = false;
-            }
-            continue;
-        }
-        match ch {
-            '"' => in_str = true,
-            '[' => depth += 1,
-            ']' => {
-                depth -= 1;
-                if depth == 0 {
-                    end = Some(i);
-                    break;
-                }
-            }
-            _ => {}
-        }
-    }
-    let arr = &after[..=end?];
-    let mut lines = Vec::new();
-    // `split_top_level_objects` scans to the first `{`, so the leading `[` is
-    // tolerated — no byte slicing of the string is needed here.
-    for item in split_top_level_objects(arr) {
-        let t = extract_string(&item, "t").unwrap_or_default();
-        let o = extract_string(&item, "o").unwrap_or_else(|| "m".to_string());
-        let origin = LineOrigin::from_tag(o.chars().next().unwrap_or('m'));
-        lines.push(ResolvedLine { text: t, origin });
-    }
-    Some(lines)
-}
-
-/// Split a JSON array body (the text after the opening `[`) into its top-level
-/// `{...}` object fragments, respecting nested strings / braces.
-fn split_top_level_objects(s: &str) -> Vec<String> {
-    let mut objects = Vec::new();
-    let mut depth = 0usize;
-    let mut start = None;
-    let mut in_str = false;
-    let mut escaped = false;
-    for (i, ch) in s.char_indices() {
-        if in_str {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_str = false;
-            }
-            continue;
-        }
-        match ch {
-            '"' => in_str = true,
-            '{' => {
-                if depth == 0 {
-                    start = Some(i);
-                }
-                depth += 1;
-            }
-            '}' => {
-                if depth > 0 {
-                    depth -= 1;
-                    if depth == 0 {
-                        if let Some(st) = start {
-                            objects.push(s[st..=i].to_string());
-                        }
-                        start = None;
-                    }
-                }
-            }
-            // Stop at the array's closing bracket when not nested.
-            ']' if depth == 0 => break,
-            _ => {}
-        }
-    }
-    objects
-}
-
-/// Extract the **unescaped** string value for `"key":"…"`, or `None`.
-fn extract_string(json: &str, key: &str) -> Option<String> {
-    let needle = format!("\"{}\":\"", key);
-    let pos = json.find(needle.as_str())?;
-    let after = &json[pos + needle.len()..];
-    let mut escaped = false;
-    let mut end = None;
-    for (i, ch) in after.char_indices() {
-        if escaped {
-            escaped = false;
-        } else if ch == '\\' {
-            escaped = true;
-        } else if ch == '"' {
-            end = Some(i);
-            break;
-        }
-    }
-    end.map(|e| unescape_json(&after[..e]))
-}
-
-/// Extract a nullable string: returns `Some(string)` for `"key":"v"`, `None`
-/// for `"key":null` or absent.
-fn extract_nullable_string(json: &str, key: &str) -> Option<String> {
-    let null_needle = format!("\"{}\":null", key);
-    if json.contains(&null_needle) {
-        return None;
-    }
-    extract_string(json, key)
-}
-
-// ────────────────────────────────────────────────────────────
-// Self-contained SHA-1 (filename key only; matches drafts.rs)
-// ────────────────────────────────────────────────────────────
 
 // ────────────────────────────────────────────────────────────
 // Unit tests (pure logic; repo-backed behaviour in tests/conflicts_test.rs)
@@ -1431,7 +1274,7 @@ mod tests {
         let (mut b, p) = buf_with_sides("A\nC\n", "B\n");
         b.apply_choice(&p, ResolutionChoice::BothCurrentFirst)
             .unwrap();
-        let json = b.to_json();
+        let json = b.to_json().expect("encode buffer");
         let parsed = parse_buffer_json(Path::new("/tmp/repo"), &json).expect("parse");
         assert_eq!(parsed.resolved_text(&p).unwrap(), "A\nC\nB\n");
         assert_eq!(
@@ -1465,7 +1308,7 @@ mod tests {
             redo: Vec::new(),
         };
         b.files.insert(p.clone(), fr);
-        let json = b.to_json();
+        let json = b.to_json().expect("encode buffer");
         let parsed = parse_buffer_json(Path::new("/tmp/re\"po"), &json).expect("parse");
         let (cur, inc) = parsed.sides(&p).unwrap();
         assert_eq!(cur.as_deref(), Some("quote \"x\"\ttab\n"));
@@ -1476,6 +1319,51 @@ mod tests {
     #[test]
     fn parse_rejects_non_object() {
         assert!(parse_buffer_json(Path::new("/tmp/repo"), "nope").is_none());
+        assert!(parse_buffer_json(Path::new("/tmp/repo"), "[[]]").is_none());
+    }
+
+    #[test]
+    fn legacy_records_preserve_resolution_states_and_optional_defaults() {
+        let json = r#"{"files":[
+            null,
+            {"result":[]},
+            {"path":"unresolved"},
+            {"path":"empty","result":[]},
+            {"path":"text","current":"A","result":[
+                {"t":"A","o":"c"},{"t":"B","o":"i"},{"t":"C","o":"?"},{},42
+            ],"raw_result":{"oid":"not-an-oid","mode":33188}},
+            {"path":"raw","binary":true,"raw_result":{
+                "oid":"0123456789012345678901234567890123456789","mode":40960
+            }}
+        ]}"#;
+        let buffer = parse_buffer_json(Path::new("/tmp/repo"), json).expect("legacy buffer");
+        assert!(!buffer.has_resolution(Path::new("")));
+        assert!(!buffer.has_resolution(Path::new("unresolved")));
+        assert!(buffer.has_resolution(Path::new("empty")));
+        assert_eq!(
+            buffer.resolved_text(Path::new("empty")).as_deref(),
+            Some("")
+        );
+        let text = Path::new("text");
+        assert_eq!(buffer.resolved_text(text).as_deref(), Some("A\nB\nC\n\n"));
+        assert_eq!(buffer.sides(text), Some((Some("A".into()), None)));
+        assert_eq!(
+            buffer.provenance(text),
+            Some(vec![
+                LineOrigin::Current,
+                LineOrigin::Incoming,
+                LineOrigin::Manual,
+                LineOrigin::Manual,
+            ])
+        );
+        assert_eq!(buffer.raw_resolution(text), None);
+        assert_eq!(
+            buffer.raw_resolution(Path::new("raw")),
+            Some(RawResolution {
+                oid: git2::Oid::from_str("0123456789012345678901234567890123456789").unwrap(),
+                mode: 40960,
+            })
+        );
     }
 
     // ── Hunk-level model (W32-CONFLICT-EDITOR) ──────────────────────

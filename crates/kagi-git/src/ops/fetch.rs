@@ -208,35 +208,69 @@ fn reference_commit(repo: &Repository, name: &str) -> Result<CommitId, GitError>
         .ok_or_else(|| GitError::Other(format!("fetched ref has no commit: {name}")))
 }
 
+/// Which local remote **is** `base_repo` (`<host>/<owner>/<repo>`) — by
+/// identity, never by name (#701 final review 4).
+///
+/// Exclude candidates with a different owner/repo before resolving SSH hosts.
+/// Among the remaining candidates, a literal URL and an alias may name the same
+/// repository, and a literal hostname can itself be remapped by `HostName`.
+///
+/// An alias that could not be resolved is a **refusal**, not a miss. An
+/// unexamined candidate excludes nothing, so over it neither "no remote
+/// matches" nor a unique winner may be claimed — and least of all the alias
+/// token read as though it were a hostname.
+///
+/// Only an alias can be unexamined, though. Where git reaches remotes through
+/// a replacement for `ssh`, a candidate whose URL spells its host out is
+/// matched from the URL exactly as it was before any of this existed, so an
+/// unrelated `GIT_SSH_COMMAND` or user-level `core.sshCommand` cannot stop a
+/// PR fetch that had always found its remote (#706 review 2).
 fn remote_for_repo(repo: &Repository, base_repo: &str) -> Result<String, GitError> {
     let config = repo
         .config()
         .map_err(|e| GitError::Other(e.message().to_string()))?;
-    let mut matches = Vec::new();
-    if let Ok(remotes) = repo.remotes() {
-        for name in remotes.iter().flatten().flatten() {
-            let key = format!("remote.{name}.url");
-            if config
-                .get_string(&key)
-                .ok()
-                .and_then(|url| crate::backend::remote_ref::repo_identity(&url))
-                .as_deref()
-                == Some(base_repo)
-            {
-                matches.push(name.to_string());
+    let mut remotes = Vec::new();
+    if let Ok(names) = repo.remotes() {
+        for name in names.iter().flatten().flatten() {
+            if let Ok(url) = config.get_string(&format!("remote.{name}.url")) {
+                remotes.push((name.to_string(), url));
             }
         }
     }
-    match matches.as_slice() {
-        [remote] => Ok(remote.clone()),
-        [] => Err(GitError::Other(format!(
+    let (mut matched, mut unidentified) = (Vec::new(), Vec::new());
+    let base_path = base_repo.split_once('/').map(|(_, path)| path);
+    for (name, url) in &remotes {
+        if crate::backend::remote_ref::repo_identity(url)
+            .is_some_and(|identity| identity.split_once('/').map(|(_, path)| path) != base_path)
+        {
+            continue;
+        }
+        match crate::backend::remote_identity::resolve_repo_identity(url, &config) {
+            Ok(identity) if identity.as_deref() == Some(base_repo) => matched.push(name.clone()),
+            Ok(_) => {}
+            Err(error) => unidentified.push(format!("{name} ({error})")),
+        }
+    }
+    if !unidentified.is_empty() {
+        return Err(GitError::Other(format!(
+            "cannot tell which local remote is {base_repo}: {}",
+            unidentified.join(", ")
+        )));
+    }
+    match matched.len() {
+        1 => Ok(matched.remove(0)),
+        0 => Err(GitError::Other(format!(
             "no local remote matches {base_repo}"
         ))),
-        _ => Err(GitError::Other(format!(
-            "multiple local remotes match {base_repo}: {}",
-            matches.join(", ")
-        ))),
+        _ => Err(ambiguous(base_repo, &matched)),
     }
+}
+
+fn ambiguous(base_repo: &str, matches: &[String]) -> GitError {
+    GitError::Other(format!(
+        "multiple local remotes match {base_repo}: {}",
+        matches.join(", ")
+    ))
 }
 
 /// Best-effort resolution of the remote to fetch: the current branch's
@@ -288,6 +322,170 @@ mod tests {
             &parents.iter().collect::<Vec<_>>(),
         )
         .unwrap()
+    }
+
+    /// A stand-in `ssh` answering `-G` from a fixed script: no host is
+    /// contacted, and the user's own `ssh_config` is never read.
+    #[cfg(unix)]
+    fn fake_ssh(dir: &Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt as _;
+        let path = dir.join("ssh");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        crate::backend::remote_identity::set_ssh_program_for_test(&path);
+    }
+
+    /// An `ssh_config` alias is a real address, and the PR fetch follows it to
+    /// exactly one remote — while an alias for a *different* host stays a
+    /// different repository (#706).
+    #[cfg(unix)]
+    #[test]
+    fn pr_ref_fetch_follows_an_ssh_alias_to_the_base_repository() {
+        let root = tempfile::tempdir().unwrap();
+        let remote_path = root.path().join("remote.git");
+        let remote = Repository::init_bare(&remote_path).unwrap();
+        let base = commit(&remote, "refs/heads/main", "base", None);
+        let head = commit(&remote, "refs/pull/7/head", "fork head", Some(base));
+
+        let local_path = root.path().join("local");
+        let local = Repository::init(&local_path).unwrap();
+        let mut config = local.config().unwrap();
+        let alias_url = "git@kagi-alias:acme/widgets.git";
+        config.set_str("remote.origin.url", alias_url).unwrap();
+        config
+            .set_str(
+                "remote.enterprise.url",
+                "git@kagi-enterprise:acme/widgets.git",
+            )
+            .unwrap();
+        // Repository-level, so a `core.sshCommand` in the developer's own
+        // global config cannot decide what this fixture is about.
+        config.set_str("core.sshCommand", "").unwrap();
+        // The identity comes from `ssh -G`; the transport stays local, so the
+        // fetch itself never leaves the fixture.
+        let file_url = format!("file://{}", remote_path.display());
+        config
+            .set_str(&format!("url.{file_url}.insteadOf"), alias_url)
+            .unwrap();
+        fake_ssh(
+            root.path(),
+            "case \"$*\" in *kagi-enterprise*) host=ghe.example ;; *) host=github.com ;; esac\n\
+             printf 'user git\\nhostname %s\\nport 22\\nidentityfile /dev/null\\n' \"$host\"",
+        );
+
+        let (outcome, fetched_base, fetched_head) = fetch_pr_refs(
+            &local,
+            &local_path,
+            "github.com/acme/widgets",
+            7,
+            "main",
+            &head.to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            outcome.remote, "origin",
+            "the alias resolves to github.com; the enterprise alias is another repository"
+        );
+        assert_eq!(fetched_base.0, base.to_string());
+        assert_eq!(fetched_head.0, head.to_string());
+        assert_eq!(
+            local
+                .find_reference("refs/kagi/pr/origin/7/head")
+                .unwrap()
+                .target(),
+            Some(head)
+        );
+        config
+            .set_str(
+                "remote.duplicate.url",
+                "https://github.com/acme/widgets.git",
+            )
+            .unwrap();
+        assert!(
+            remote_for_repo(&local, "github.com/acme/widgets")
+                .unwrap_err()
+                .to_string()
+                .contains("multiple local remotes"),
+            "a literal URL cannot hide an alias naming the same repository"
+        );
+    }
+
+    /// `ssh -G` failing is not "this remote is not the repository": the alias
+    /// token must never be read as a hostname to fill the gap (#706).
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_ssh_config_refuses_rather_than_guessing_the_host() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = Repository::init(root.path().join("local")).unwrap();
+        let mut config = repo.config().unwrap();
+        config
+            .set_str("remote.origin.url", "git@kagi-alias:acme/widgets.git")
+            .unwrap();
+        config.set_str("core.sshCommand", "").unwrap();
+        fake_ssh(
+            root.path(),
+            "echo 'Bad configuration option: kagi' >&2\nexit 255",
+        );
+
+        let error = remote_for_repo(&repo, "github.com/acme/widgets")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("kagi-alias") && error.contains("255"),
+            "the refusal must name the target it could not map: {error}"
+        );
+        assert!(
+            !error.contains("no local remote matches"),
+            "an unexamined candidate is not an absent one: {error}"
+        );
+        config
+            .set_str("remote.literal.url", "https://github.com/acme/widgets.git")
+            .unwrap();
+        assert!(
+            remote_for_repo(&repo, "github.com/acme/widgets").is_err(),
+            "an unidentified alias prevents proving the literal match is unique"
+        );
+    }
+
+    #[test]
+    fn unrelated_alias_paths_do_not_block_selection_with_an_ssh_override() {
+        let root = tempfile::tempdir().unwrap();
+        let mut repo = Repository::init(root.path().join("local")).unwrap();
+        let global = root.path().join("global-config");
+        std::fs::write(&global, "[core]\nsshCommand = kagi-unused-ssh\n").unwrap();
+        let mut config = repo.config().unwrap();
+        config
+            .add_file(&global, git2::ConfigLevel::Global, true)
+            .unwrap();
+        config
+            .set_str("remote.origin.url", "git@github.com:acme/widgets.git")
+            .unwrap();
+        repo.set_config(&config).unwrap();
+        crate::backend::remote_identity::set_ssh_program_for_test(Path::new(
+            "/nonexistent/kagi-must-not-run-ssh",
+        ));
+        config
+            .set_str("remote.fork.url", "git@gh-personal:me/widgets.git")
+            .unwrap();
+        assert_eq!(
+            remote_for_repo(&repo, "github.com/acme/widgets").unwrap(),
+            "origin"
+        );
+        config
+            .set_str("remote.fork.url", "git@gh-personal:acme/other.git")
+            .unwrap();
+        assert_eq!(
+            remote_for_repo(&repo, "github.com/acme/widgets").unwrap(),
+            "origin"
+        );
+        config
+            .set_str("remote.fork.url", "git@gh-personal:acme/widgets.git")
+            .unwrap();
+        assert!(
+            remote_for_repo(&repo, "github.com/acme/widgets").is_err(),
+            "a same-path alias must still prevent claiming a unique match"
+        );
     }
 
     #[test]

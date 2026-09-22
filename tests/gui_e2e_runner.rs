@@ -52,6 +52,10 @@ fn main() {
 mod recovery_operations;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/reconcile_unobservable.rs"]
+mod reconcile_unobservable;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pull.rs"]
 mod recovery_pull;
 
@@ -629,6 +633,10 @@ mod macos {
             (
                 "app_notice_modal_replacement",
                 Box::new(crate::recovery_operations::scenario_app_notice_modal_replacement),
+            ),
+            (
+                "reconcile_unobservable_release",
+                Box::new(crate::reconcile_unobservable::scenario_reconcile_unobservable_release),
             ),
             (
                 "smart_commit_generation_owner",

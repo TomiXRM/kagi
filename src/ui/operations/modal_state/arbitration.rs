@@ -46,7 +46,8 @@ impl KagiApp {
     /// offer/update/notice seams below (#718 / ADR-0196).
     pub(super) fn replace_modal_from_user(&mut self, modal: ActiveModal) {
         self.sidebar.swipe.cancel();
-        if let Some(ActiveModal::AppNotice(notice)) = self.active_modal.take() {
+        if let Some(ActiveModal::AppNotice(mut notice)) = self.active_modal.take() {
+            notice.release_armed = false;
             self.app_notices.push_front(notice);
         }
         self.modal_list_scroll = gpui::UniformListScrollHandle::new();

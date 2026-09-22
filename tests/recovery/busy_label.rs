@@ -6,6 +6,9 @@ use kagi::ui::{
     i18n::{self, Lang},
 };
 
+#[path = "pr_merge_local.rs"]
+mod pr_merge_local;
+
 pub fn scenario_fetch_busy_label(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
@@ -193,6 +196,7 @@ fn unmergeable_pr() -> kagi_domain::github::PullRequest {
 /// because both `gh` children exited), while a `Partial` — merged, deletion
 /// unconfirmed — is held by the transport, at settlement, even off-tab.
 pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
+    pr_merge_local::local_cleanup_notices(cx);
     // Part 1 — the honest fixture terminal. No GitHub remote exists, so the
     // merge fails AND the `gh pr view` re-read cannot say whether it landed:
     // `Unknown`. The children are accounted for, so the lease is released at

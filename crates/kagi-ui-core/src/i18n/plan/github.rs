@@ -30,13 +30,31 @@ pub fn note_ja(note: &GithubNote) -> String {
             "merge は GitHub 上で実行されます。次の fetch までローカルは変わりません。".to_string()
         }
         GithubNote::DeletesBranch { branch } => format!(
-            "head branch をremote で削除します。どこにも checkout されていなければlocal も削除します。\nbranch `{}`",
+            "head branch を remote で削除します。\nbranch `{}`",
             branch
         ),
-        GithubNote::ForkDeletesBranch { branch } => format!(
-            "fork からの PR です。gh は remote の head branch を削除せず、local branch だけ削除します。この local 削除はまだ検証できないため拒否します。「branch を削除」を外して merge し、branch は手で削除してください。\nbranch `{}`",
-            branch
-        ),
+        GithubNote::ForkKeepsRemoteBranch => {
+            "fork 側の remote branch は gh では削除されません。".to_string()
+        }
+        GithubNote::DeletesLocalBranch { branch, tip } => match tip {
+            Some(tip) => format!(
+                "GitHub 上で merge が確認できたあと、local branch を削除します。削除するのは、この commit を指したままで、どこにも checkout されていない場合だけです。\nbranch `{}`\ntip `{}`",
+                branch, tip
+            ),
+            None => format!(
+                "local branch はこのリポジトリに存在しません。merge 後も local では何も削除しません。\nbranch `{}`",
+                branch
+            ),
+        },
+        GithubNote::LocalBranchDeleted { name, tip } => {
+            format!("local branch を削除しました: {}@{}", name, tip)
+        }
+        GithubNote::LocalBranchAbsent { name } => {
+            format!("local branch は既に存在しません: {}", name)
+        }
+        GithubNote::LocalBranchNotDeleted { reason } => {
+            format!("merge は完了しました。local branch は削除していません: {}", reason)
+        }
         GithubNote::SuggestionRangeGone { path } => format!(
             "レビュー対象だった行が作業ツリーにありません。現在のファイルでレビューを開き直してください。\nfile `{}`",
             path

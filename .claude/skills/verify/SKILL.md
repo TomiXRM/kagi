@@ -550,6 +550,22 @@ remote pull after Unknown/Partial; Failed alone permits retry. Holds persist for
 the app lifetime; inspect remote state before restarting. GUI runner build only
 when execution is reserved for PM.
 
+### PR merge local branch cleanup (#705)
+
+G: `cargo test -p kagi --test transport_recording_test --test oplog_nonrun_ops_test`
+exercises fake gh against real refs: retained deletion, linked-worktree refusal,
+OID drift during transport, a branch created after approved absence, and queued
+merges that must not delete. Fork reconciliation must remain unresolved while the
+local branch exists, even when `mergedAt` is confirmed; no base-side ref substitutes
+for it. The persisted `pr-merge` entry owns both the local result and backup refs.
+
+Tier A filter: `KAGI_GUI_E2E_ONLY=pr_merge_write_lease`. In addition to the existing
+lease/hold cases, this drives actual fake-gh fork merges in EN/JA: successful
+deletion and OID-drift refusal must each produce the owner notice and one receipt;
+the Partial case cannot reopen merge. For M, inspect the frozen local name/OID,
+the fork-remote warning, and the localized deletion/refusal notice. Tier B remains
+PM-owned when execution is reserved; compile the runner with `--no-run` in that case.
+
 ### Remote source drag merge (#590)
 
 Tier A filter: `KAGI_GUI_E2E_ONLY=remote_source_merge_into`. The scenario uses

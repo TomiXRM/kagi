@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- fork PR の merge 後も local branch を安全に削除できるようにしました。承認時の branch 名・full OID・不在を固定し、server の merge 確認後に既存の削除ガードを通します。checkout 中・OID 変更・後から作られた同名 branch は残し、merge 成功と削除拒否を同じ receipt と EN/JA 通知に記録します。fork 側の remote branch は削除しません。（#705、ADR-0202）
 - conflict の Save / Abort が拒否された理由を EN/JA の通知に表示し、計画後の状態変化や conflict marker の残存を判別できるようにしました。footer のログ契約と oplog の英語詳細は維持します。（#711）
 
 ## [0.39.0] - 2026-09-20

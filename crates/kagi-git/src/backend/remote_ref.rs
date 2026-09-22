@@ -52,6 +52,11 @@ pub enum RemoteExpectation {
         branch: String,
         expect: RemoteExpect,
     },
+    /// The local half of PR cleanup, bound to the approved worktree and tip.
+    /// A merged PR cannot prove that this ref was deleted (#705).
+    LocalBranch {
+        branch: kagi_domain::plan::PrMergeLocalBranch,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -133,6 +138,129 @@ impl RemoteExpect {
 }
 
 impl Backend {
+    /// Freeze local cleanup before the PR merge confirmation is shown.
+    pub fn plan_pr_merge(
+        &self,
+        pr: &kagi_domain::github::PullRequest,
+        method: crate::github::MergeMethod,
+        delete_branch: bool,
+        head_summary: String,
+    ) -> Result<OperationPlan, GitError> {
+        let local_branch = if delete_branch {
+            let local = self.plan_delete_branch(&pr.head)?;
+            let tip = match local.recovery.as_ref().map(|r| &r.kind) {
+                Some(kagi_domain::plan_note::RecoveryKind::Branch(
+                    kagi_domain::plan_note::BranchRecovery::DeleteBranch { tip, .. },
+                )) => tip.clone(),
+                _ => return Err(GitError::Other("missing local deletion plan".into())),
+            };
+            // A missing branch is an observation, not an unreadable ref.
+            if self.local_branch_tip(&pr.head)? != tip {
+                return Err(GitError::Other(
+                    "local branch changed while planning".into(),
+                ));
+            }
+            Some(kagi_domain::plan::PrMergeLocalBranch {
+                worktree: self.write_worktree_id()?,
+                name: pr.head.clone(),
+                tip,
+                head: local.head_at_plan,
+            })
+        } else {
+            None
+        };
+        Ok(crate::github::plan_pr_merge(
+            pr,
+            method,
+            delete_branch,
+            head_summary,
+            local_branch,
+        ))
+    }
+
+    fn local_branch_tip(&self, name: &str) -> Result<Option<String>, GitError> {
+        ops::check_operand("branch", name)?;
+        let name = format!("refs/heads/{name}");
+        match self.repo.find_reference(&name) {
+            Ok(reference) => reference
+                .target()
+                .map(|oid| Some(oid.to_string()))
+                .ok_or_else(|| GitError::Other(format!("{name} is not a direct branch ref"))),
+            Err(error) if error.code() == git2::ErrorCode::NotFound => Ok(None),
+            Err(error) => Err(GitError::Other(error.to_string())),
+        }
+    }
+
+    /// Observe only the local repository named by the frozen merge approval.
+    pub fn read_pr_merge_local_branch(
+        &self,
+        branch: &kagi_domain::plan::PrMergeLocalBranch,
+    ) -> Result<Option<String>, GitError> {
+        if self.write_worktree_id()? != branch.worktree {
+            return Err(GitError::Other(
+                "local branch repository identity changed".into(),
+            ));
+        }
+        self.local_branch_tip(&branch.name)
+    }
+
+    /// Revalidate the frozen input, then use the existing locked delete family.
+    pub(crate) fn execute_pr_merge_local_branch(
+        &self,
+        branch: &kagi_domain::plan::PrMergeLocalBranch,
+        pr_head: &str,
+        backup_refs: &mut Vec<String>,
+    ) -> Result<kagi_domain::operation::PrMergeLocalOutcome, GitError> {
+        use kagi_domain::operation::PrMergeLocalOutcome;
+        self.require_trust()?;
+        let live = self.read_pr_merge_local_branch(branch)?;
+        if live != branch.tip {
+            return Err(GitError::Other(
+                "local branch changed after approval; not deleted".into(),
+            ));
+        }
+        let Some(tip) = &branch.tip else {
+            return Ok(PrMergeLocalOutcome::Absent {
+                name: branch.name.clone(),
+            });
+        };
+        if tip != pr_head {
+            return Err(GitError::Other(
+                "local branch tip differs from the approved PR head".into(),
+            ));
+        }
+        let plan = self.plan_delete_branch(&branch.name)?;
+        if plan.head_at_plan != branch.head {
+            return Err(GitError::Other(
+                "HEAD changed after approval; local branch not deleted".into(),
+            ));
+        }
+        if let Some(blocker) = plan.blockers.first() {
+            return Err(GitError::Blocked(Box::new(blocker.clone())));
+        }
+        let expected = match plan.recovery.as_ref().map(|r| &r.kind) {
+            Some(kagi_domain::plan_note::RecoveryKind::Branch(
+                kagi_domain::plan_note::BranchRecovery::DeleteBranch { tip, .. },
+            )) => tip.as_ref(),
+            _ => None,
+        };
+        if expected != Some(tip) {
+            return Err(GitError::Other(
+                "local branch changed during preflight; not deleted".into(),
+            ));
+        }
+        let mut partial = None;
+        self.execute_delete_branch(&plan, &branch.name, backup_refs, &mut partial)
+            .map_err(|error| match partial {
+                Some(after) => GitError::Other(format!("{error}; {}", after.dirty)),
+                None => error,
+            })?;
+        Ok(PrMergeLocalOutcome::Deleted {
+            name: branch.name.clone(),
+            tip: tip.clone(),
+        })
+    }
+
     /// Fetch the immutable local inputs used to open a GitHub PR. The
     /// synthetic PR ref works for both same-repository and fork PRs.
     pub fn fetch_pr_refs(
@@ -187,16 +315,15 @@ impl Backend {
                     .collect();
             }
         }
-        // The other multi-entry operation: `gh pr merge --delete-branch` is two
-        // promises, and confirming the merge alone would let a re-read call an
-        // undeleted branch "done" (#701 final review). `observe_remote_run`
-        // requires *every* entry, so "merged but the branch is still there" —
-        // and "the branch cannot be read" — stay unresolved.
+        // PR merge may promise both remote and local cleanup. Every effect
+        // must be read; a fork has no deletable head in the base repository.
         if op == "pr-merge" {
             if let Some(RecoveryKind::Github(GithubRecovery::MergePr {
                 number,
                 base_repo,
                 delete_branch,
+                cross_repository,
+                local_branch,
             })) = plan.recovery.as_ref().map(|recovery| &recovery.kind)
             {
                 // Without the repository's identity there is no address to
@@ -211,11 +338,16 @@ impl Backend {
                     number: *number,
                     expect: PrExpect::Merged,
                 }];
-                if let Some(branch) = delete_branch {
+                if let Some(branch) = delete_branch.as_ref().filter(|_| !cross_repository) {
                     expectations.push(RemoteExpectation::GithubRef {
                         base_repo: base_repo.clone(),
                         branch: branch.clone(),
                         expect: RemoteExpect::Absent,
+                    });
+                }
+                if let Some(branch) = local_branch {
+                    expectations.push(RemoteExpectation::LocalBranch {
+                        branch: branch.as_ref().clone(),
                     });
                 }
                 return expectations;

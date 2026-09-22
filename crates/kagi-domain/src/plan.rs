@@ -358,6 +358,32 @@ pub struct StashIdentity {
     pub selected: Option<usize>,
 }
 
+/// The local head branch a PR merge also promises to delete, frozen at plan
+/// time (#705).
+///
+/// `gh pr merge --delete-branch -R <base-repo>` never touches this machine, so
+/// the local deletion is kagi's own write and must be checkable like every
+/// other one: the *identity* it happens in (`worktree`), the branch `name`,
+/// its full tip OID, and the `head` the plan was read against.
+///
+/// `tip` is `None` when the branch does not exist locally at plan time. That
+/// absence is part of the frozen promise, not a missing value: a branch of the
+/// same name appearing after planning is a *different* branch and is never
+/// deleted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrMergeLocalBranch {
+    /// The worktree identity the deletion is bound to — a branch name alone
+    /// does not say which checkout it belongs to.
+    pub worktree: crate::remove::WorktreeId,
+    /// Short local branch name (`refs/heads/<name>`).
+    pub name: String,
+    /// Full OID the branch pointed at when planned; `None` freezes absence.
+    pub tip: Option<String>,
+    /// HEAD at plan time — a branch that became checked out afterwards is not
+    /// the state the user approved.
+    pub head: Head,
+}
+
 /// A complete plan describing an operation, its blockers and warnings.
 /// If blockers are non-empty the UI must not offer Execute.
 /// ADR-0129: the display layer localizes structured title/notes/recovery;

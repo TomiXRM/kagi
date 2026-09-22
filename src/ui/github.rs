@@ -311,8 +311,8 @@ impl KagiApp {
 // ────────────────────────────────────────────────────────────
 
 impl KagiApp {
-    /// Build the merge plan and open the confirmation modal. Pure over the PR
-    /// snapshot, so it opens instantly; `start_pr_merge` executes.
+    /// Freeze the local cleanup inputs through the owning Backend before
+    /// showing the PR merge confirmation.
     pub fn open_pr_merge_modal(
         &mut self,
         pr: &kagi_domain::github::PullRequest,
@@ -327,7 +327,22 @@ impl KagiApp {
             }
         }
         let head_summary = self.view().status_summary.branch.clone();
-        let plan = kagi_git::github::plan_pr_merge(pr, method, delete_branch, head_summary);
+        let Some(session) = self.ui().repo_session.as_ref() else {
+            self.report_plan_failure(i18n::Op::Merge, "repository session unavailable");
+            cx.notify();
+            return;
+        };
+        let plan = match session
+            .backend()
+            .plan_pr_merge(pr, method, delete_branch, head_summary)
+        {
+            Ok(plan) => plan,
+            Err(error) => {
+                self.report_plan_failure(i18n::Op::Merge, error);
+                cx.notify();
+                return;
+            }
+        };
         klog!(
             "plan: pr-merge #{} blockers={} warnings={}",
             pr.number,

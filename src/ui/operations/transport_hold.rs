@@ -65,21 +65,38 @@ impl KagiApp {
         repo: &Path,
     ) {
         self.notice_recording_failure(op, &report.recording, repo);
-        if let Ok(kagi_git::OperationOutcome::PrMerge {
+        let Ok(kagi_git::OperationOutcome::PrMerge {
             number,
             detail,
-            confirmed: false,
+            confirmed,
+            local_branch,
         }) = &report.result
-        {
+        else {
+            return;
+        };
+        use kagi_domain::{operation::PrMergeLocalOutcome, plan_note::PlanNote};
+        let mut message = local_branch
+            .as_ref()
+            .map(|local| crate::ui::i18n::plan_note_text(&PlanNote::Github(local.note())));
+        if !confirmed && !matches!(local_branch, Some(PrMergeLocalOutcome::NotDeleted { .. })) {
+            if let Some(message) = &mut message {
+                message.push_str("; ");
+                message.push_str(detail);
+            }
+        }
+        if !confirmed {
             let operation = format!("{op} #{number}");
             self.transport_holds.hold(repo, &operation);
             self.report_unknown_notice(
                 repo,
                 format!(
-                    "{operation}: {detail}. {}",
+                    "{operation}: {}. {}",
+                    message.as_deref().unwrap_or(detail),
                     crate::ui::i18n::Msg::TransportRetryHeld.t()
                 ),
             );
+        } else if let Some(message) = message {
+            self.report_unknown_notice(repo, message);
         }
     }
 

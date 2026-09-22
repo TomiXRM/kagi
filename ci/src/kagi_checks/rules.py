@@ -25,6 +25,7 @@ import tomllib
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -40,17 +41,26 @@ def is_excluded(rel: Path, excludes: tuple[str, ...]) -> bool:
     return any(rel.as_posix().startswith(exclude) for exclude in excludes)
 
 
-def iter_files(globs: list[str], excludes: tuple[str, ...] = ()) -> list[Path]:
-    """Repo-relative files matching any glob, minus build output and `excludes`.
+def iter_files(
+    globs: list[str],
+    excludes: tuple[str, ...] = (),
+    root: Path = ROOT,
+) -> list[Path]:
+    """Root-relative files matching any glob, minus build output and `excludes`.
 
     Replaces `find … -not -path …`: one traversal, identical on every OS.
+
+    `root` defaults to the repository, which is what every gate scans. It is a
+    parameter so a selftest can point the *same* traversal at a fixture tree
+    (`ui_lateral_selftest`): a second walker written for the test would prove
+    the test's walker works, not the gate's.
     """
     seen: dict[Path, None] = {}
     for pattern in globs:
-        for path in sorted(ROOT.glob(pattern)):
+        for path in sorted(root.glob(pattern)):
             if not path.is_file():
                 continue
-            rel = path.relative_to(ROOT)
+            rel = path.relative_to(root)
             if SKIP_PARTS & set(rel.parts):
                 continue
             if is_excluded(rel, excludes):
@@ -59,8 +69,8 @@ def iter_files(globs: list[str], excludes: tuple[str, ...] = ()) -> list[Path]:
     return list(seen)
 
 
-def read_text(rel: Path) -> str:
-    return (ROOT / rel).read_text(encoding="utf-8", errors="replace")
+def read_text(rel: Path, root: Path = ROOT) -> str:
+    return (root / rel).read_text(encoding="utf-8", errors="replace")
 
 
 @dataclass(frozen=True)
@@ -481,7 +491,7 @@ def crate_name(name: str) -> str:
     return name.replace("_", "-")
 
 
-def workspace_dep_aliases() -> dict[str, str]:
+def workspace_dep_aliases(root: Path = ROOT) -> dict[str, str]:
     """`[workspace.dependencies]` alias -> effective crate name, from the root manifest.
 
     Round-2 review: a `{ workspace = true }` dependency carries no `package`
@@ -489,7 +499,7 @@ def workspace_dep_aliases() -> dict[str, str]:
     (`backend = { package = "kagi-git" }`) made every inheriting crate look
     like it depended on `backend` — a clean bypass of both layering gates.
     """
-    root_manifest = ROOT / "Cargo.toml"
+    root_manifest = root / "Cargo.toml"
     if not root_manifest.is_file():
         return {}
     try:
@@ -565,9 +575,16 @@ class ManifestRule:
     samples: tuple[str, ...] = ()
     samples_ok: tuple[str, ...] = ()
     excludes: tuple[str, ...] = ()
+    # The root `[workspace.dependencies]` table the *samples* resolve against.
+    # A `{ workspace = true }` dependency carries no `package` of its own, so
+    # the inherited rename only exists in that table: without a map here, no
+    # sample can state the inherited case at all. Samples are judged against
+    # this map and never against the live root manifest, so a sample means the
+    # same thing in every checkout — `hits()` still reads the real table.
+    sample_aliases: tuple[tuple[str, str], ...] = ()
 
     def fires_on(self, text: str) -> bool:
-        return bool(manifest_dep_hits(text, self.banned))
+        return bool(manifest_dep_hits(text, self.banned, dict(self.sample_aliases)))
 
     def hits(self) -> list[tuple[Path, str, str]]:
         """(file, declared key, banned crate name) for every offending dependency."""
@@ -589,8 +606,18 @@ MANIFEST_RULES: tuple[ManifestRule, ...] = (
             '[dependencies]\nbackend = { package = "kagi-git", path = "../kagi-git" }\n',
             '[dependencies.kagi-git]\npath = "../kagi-git"\n',
             '[target.\'cfg(unix)\'.dev-dependencies]\n"git2" = "0.19"\n',
+            # The rename lives in the root table, so this manifest names only
+            # `backend` — the bypass `workspace_dep_aliases` exists to close.
+            "[dependencies]\nbackend = { workspace = true }\n",
         ),
-        samples_ok=('[dependencies]\nkagi-ui-core = { path = "../kagi-ui-core" }\n',),
+        samples_ok=(
+            '[dependencies]\nkagi-ui-core = { path = "../kagi-ui-core" }\n',
+            # Inherited too, and resolved through the same table: the map is
+            # consulted and yields an allowed crate, so `{ workspace = true }`
+            # is not banned wholesale.
+            "[dependencies]\nui = { workspace = true }\n",
+        ),
+        sample_aliases=(("backend", "kagi-git"), ("ui", "kagi-ui-core")),
     ),
     ManifestRule(
         name="mcp-gpui-manifest",
@@ -598,8 +625,15 @@ MANIFEST_RULES: tuple[ManifestRule, ...] = (
         globs=("crates/kagi-mcp/**/Cargo.toml",),
         banned=("gpui",),
         message="crates/kagi-mcp must not depend on gpui (ADR-0163 / #331).",
-        samples=('[dependencies]\nui = { package = "gpui", git = "https://github.com/zed" }\n',),
-        samples_ok=('[dependencies]\ngpui-component = { git = "https://example" }\n',),
+        samples=(
+            '[dependencies]\nui = { package = "gpui", git = "https://github.com/zed" }\n',
+            "[dependencies]\nui = { workspace = true }\n",
+        ),
+        samples_ok=(
+            '[dependencies]\ngpui-component = { git = "https://example" }\n',
+            "[dependencies]\ncomponent = { workspace = true }\n",
+        ),
+        sample_aliases=(("ui", "gpui"), ("component", "gpui-component")),
     ),
 )
 
@@ -690,16 +724,20 @@ RATCHETS: tuple[Ratchet, ...] = (
 # ── Custom checks: rules a single regex cannot express ──────────────────────
 
 
-def ui_lateral_crates() -> list[Path]:
-    return sorted(d for d in (ROOT / "crates").glob("kagi-ui-*") if d.is_dir())
+def ui_lateral_crates(root: Path = ROOT) -> list[Path]:
+    return sorted(d for d in (root / "crates").glob("kagi-ui-*") if d.is_dir())
 
 
-def ui_lateral_hits() -> list[tuple[Path, int, str, str]]:
+def ui_lateral_hits(root: Path = ROOT) -> list[tuple[Path, int, str, str]]:
     """Feature crates may import kagi-ui-core, never a sibling kagi-ui-* crate.
 
     The allowed set depends on which crate is being scanned, which is why this
     is a function and not a `Rule`. `kagi-ui-core` is the shared base, and a
     crate naming itself is not an import (ADR-0121).
+
+    `root` is the workspace to scan; `ui_lateral_selftest` points it at a
+    fixture so the pattern, the allowed set and the normalisation are proven
+    against known hits instead of the repository's happy zero (#470).
     """
     # Actual usage only — a path, a `use`, or an `extern crate`. Matching the
     # bare crate name also flagged doc comments that merely *mention* a sibling
@@ -712,11 +750,11 @@ def ui_lateral_hits() -> list[tuple[Path, int, str, str]]:
         re.MULTILINE,
     )
     out: list[tuple[Path, int, str, str]] = []
-    for crate in ui_lateral_crates():
+    for crate in ui_lateral_crates(root):
         hyphen = crate.name
         allowed = {"kagi-ui-core", hyphen}
-        for rel in iter_files([f"crates/{hyphen}/**/*.rs"]):
-            text = read_text(rel)
+        for rel in iter_files([f"crates/{hyphen}/**/*.rs"], root=root):
+            text = read_text(rel, root)
             lines = text.splitlines()
             for match in rust.finditer(text):
                 name = next(g for g in match.groups() if g)
@@ -727,19 +765,23 @@ def ui_lateral_hits() -> list[tuple[Path, int, str, str]]:
     return out
 
 
-def ui_lateral_manifest_hits() -> list[tuple[Path, str, str, str]]:
+def ui_lateral_manifest_hits(root: Path = ROOT) -> list[tuple[Path, str, str, str]]:
     """(manifest, declared key, sibling crate, scanned crate) for lateral deps.
 
     Parsed, not matched, for the reason `manifest_dep_names` exists: a rename
     (`sib = { package = "kagi-ui-editor" }`) is a lateral dependency that no
-    dependency-line pattern can see.
+    dependency-line pattern can see. The scanned workspace's own
+    `[workspace.dependencies]` table is resolved once and handed down, so an
+    inherited rename is read from the root being scanned rather than whichever
+    manifest happens to sit at `ROOT`.
     """
+    aliases = workspace_dep_aliases(root)
     out: list[tuple[Path, str, str, str]] = []
-    for crate in ui_lateral_crates():
+    for crate in ui_lateral_crates(root):
         hyphen = crate.name
         allowed = {"kagi-ui-core", hyphen}
-        for rel in iter_files([f"crates/{hyphen}/**/Cargo.toml"]):
-            for key, name in manifest_dep_names(read_text(rel)):
+        for rel in iter_files([f"crates/{hyphen}/**/Cargo.toml"], root=root):
+            for key, name in manifest_dep_names(read_text(rel, root), aliases):
                 norm = crate_name(name)
                 if not norm.startswith("kagi-ui-") or norm in allowed:
                     continue
@@ -747,8 +789,135 @@ def ui_lateral_manifest_hits() -> list[tuple[Path, str, str, str]]:
     return out
 
 
-def ui_lateral_crate_count() -> int:
-    return len(ui_lateral_crates())
+def ui_lateral_crate_count(root: Path = ROOT) -> int:
+    return len(ui_lateral_crates(root))
+
+
+def ui_lateral_selftest() -> list[str]:
+    """Drive the real lateral walkers over a fixture workspace.
+
+    The gate's only guard was "did it find any kagi-ui-* crates", so a
+    regression in the Rust pattern, the manifest traversal, the hyphen /
+    underscore normalisation or the allowed set returned no hits while the
+    crates still existed — and printed OK (#470). The fixture holds one
+    lateral import, one inherited rename and one direct rename, with every
+    allowed shape beside them; the violations are then removed and the same
+    walkers must go quiet with the crates still in place.
+    """
+    lateral_use = "use kagi_ui_editor::Buffer;\n"
+    inherited_dep = "sib = { workspace = true }\n"
+    renamed_dep = 'editor = { package = "kagi-ui-editor", path = "../kagi-ui-editor" }\n'
+    history_lib = (
+        "//! moved here from `kagi-ui-editor` (once `kagi_ui_editor`): prose naming a\n"
+        "//! sibling is not an import — the #443 false-positive class.\n"
+        "use kagi_ui_core::Theme;\n"
+        f"{lateral_use}"
+        "\n"
+        "pub fn rows(theme: &Theme) -> Buffer {\n"
+        "    kagi_ui_file_history::build(theme)\n"
+        "}\n"
+    )
+    # `kagi_ui_editor` under [dev-dependencies] is the crate's own name in the
+    # underscore spelling: allowed, and only the normalisation makes it so.
+    editor_manifest = (
+        '[package]\nname = "kagi-ui-editor"\n\n'
+        "[dependencies]\n"
+        'kagi-ui-core = { path = "../kagi-ui-core" }\n'
+        f"{inherited_dep}"
+        "\n[dev-dependencies]\n"
+        'kagi_ui_editor = { path = "." }\n'
+    )
+    history_manifest = (
+        '[package]\nname = "kagi-ui-file-history"\n\n'
+        "[dependencies]\n"
+        'kagi_ui_core = { path = "../kagi-ui-core" }\n'
+        f"{renamed_dep}"
+    )
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+
+        def write(rel: str, text: str) -> None:
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+
+        write(
+            "Cargo.toml",
+            "[workspace]\n"
+            'members = ["crates/kagi-ui-core", "crates/kagi-ui-editor", '
+            '"crates/kagi-ui-file-history"]\n\n'
+            "[workspace.dependencies]\n"
+            'sib = { package = "kagi-ui-file-history", path = "crates/kagi-ui-file-history" }\n',
+        )
+        write("crates/kagi-ui-core/Cargo.toml", '[package]\nname = "kagi-ui-core"\n')
+        write("crates/kagi-ui-core/src/lib.rs", "pub struct Theme;\n")
+        write("crates/kagi-ui-editor/Cargo.toml", editor_manifest)
+        write(
+            "crates/kagi-ui-editor/src/lib.rs",
+            "use kagi_ui_core::Theme;\n"
+            "\n"
+            "pub fn open(theme: &Theme) {\n"
+            "    kagi_ui_editor::detail::apply(theme);\n"
+            "}\n",
+        )
+        write("crates/kagi-ui-file-history/Cargo.toml", history_manifest)
+        write("crates/kagi-ui-file-history/src/lib.rs", history_lib)
+
+        expected_crates = ["kagi-ui-core", "kagi-ui-editor", "kagi-ui-file-history"]
+        crates = [crate.name for crate in ui_lateral_crates(root)]
+        if crates != expected_crates:
+            # Every assertion below is vacuous without the crates, so stop here.
+            return [f"fixture root yielded {crates}, expected {expected_crates}"]
+
+        issues: list[str] = []
+        history_source = Path("crates/kagi-ui-file-history/src/lib.rs")
+        expected_hits = [
+            (
+                history_source,
+                history_lib.splitlines().index(lateral_use.strip()) + 1,
+                lateral_use.strip(),
+                "kagi-ui-file-history",
+            )
+        ]
+        hits = ui_lateral_hits(root)
+        if hits != expected_hits:
+            issues.append(f"source walker returned {hits}, expected {expected_hits}")
+        expected_manifest_hits = [
+            (
+                Path("crates/kagi-ui-editor/Cargo.toml"),
+                "sib",
+                "kagi-ui-file-history",
+                "kagi-ui-editor",
+            ),
+            (
+                Path("crates/kagi-ui-file-history/Cargo.toml"),
+                "editor",
+                "kagi-ui-editor",
+                "kagi-ui-file-history",
+            ),
+        ]
+        manifest_hits = ui_lateral_manifest_hits(root)
+        if manifest_hits != expected_manifest_hits:
+            issues.append(
+                f"manifest walker returned {manifest_hits}, expected {expected_manifest_hits}"
+            )
+
+        # The same tree minus exactly its three violations. Every allowed shape
+        # stays — the crate's own name in source and in a manifest key,
+        # kagi-ui-core in both spellings, and the prose mention — so anything
+        # still reported here is the allowed-set logic failing open the other way.
+        write("crates/kagi-ui-file-history/src/lib.rs", history_lib.replace(lateral_use, ""))
+        write("crates/kagi-ui-editor/Cargo.toml", editor_manifest.replace(inherited_dep, ""))
+        write("crates/kagi-ui-file-history/Cargo.toml", history_manifest.replace(renamed_dep, ""))
+        if ui_lateral_crate_count(root) != len(expected_crates):
+            issues.append("the cleaned fixture lost its kagi-ui-* crates — nothing was scanned")
+        clean_hits = ui_lateral_hits(root)
+        if clean_hits:
+            issues.append(f"allowed imports reported as lateral: {clean_hits}")
+        clean_manifest_hits = ui_lateral_manifest_hits(root)
+        if clean_manifest_hits:
+            issues.append(f"allowed dependencies reported as lateral: {clean_manifest_hits}")
+    return issues
 
 
 # ── ADR numbering: one 4-digit number, one ADR ──────────────────────────────

@@ -363,6 +363,68 @@ mod macos {
         )
     }
 
+    /// Issue #767: the three WIP-anchor cases the ordinary three-worktree
+    /// fixture cannot show, in one repo — a linked worktree sitting on the
+    /// **same commit** as the open repo's HEAD (one shared anchor column), a
+    /// **detached** worktree on an older commit (its HEAD is an OID, so it
+    /// still anchors), and an **orphan** worktree whose HEAD is unborn (no
+    /// anchor at all). All four working trees are dirty → four WIP rows.
+    ///
+    /// Git refuses to check one branch out twice, so the shared case is a
+    /// second branch pointing at the same commit — which is exactly the
+    /// on-screen situation: two WIP rows, one HEAD commit.
+    fn build_wip_anchor_edge_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf, PathBuf) {
+        let root = tempfile::tempdir().expect("tempdir");
+        let repo = root.path().join("repo");
+        let shared = root.path().join("wt-shared");
+        let detached = root.path().join("wt-detached");
+        let orphan = root.path().join("wt-orphan");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        std::fs::write(repo.join("f.txt"), "base\n").unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-q", "-m", "base"]);
+        let base = rev_parse(&repo, "HEAD");
+        std::fs::write(repo.join("f.txt"), "tip\n").unwrap();
+        git(&repo, &["commit", "-q", "-am", "tip"]);
+        git(&repo, &["branch", "shared", "main"]);
+        git(
+            &repo,
+            &["worktree", "add", "-q", shared.to_str().unwrap(), "shared"],
+        );
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "--detach",
+                detached.to_str().unwrap(),
+                &base,
+            ],
+        );
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "--orphan",
+                orphan.to_str().unwrap(),
+            ],
+        );
+        for dir in [&repo, &shared, &detached, &orphan] {
+            std::fs::write(dir.join("dirty.txt"), "wip\n").unwrap();
+        }
+        (
+            root,
+            repo.canonicalize().unwrap(),
+            shared.canonicalize().unwrap(),
+            detached.canonicalize().unwrap(),
+            orphan.canonicalize().unwrap(),
+        )
+    }
+
     /// `git rev-parse <rev>` for a working tree (#476 slice 3: `HEAD^`, to prove
     /// an amend replaced the tip instead of stacking on it).
     fn rev_parse(dir: &Path, rev: &str) -> String {
@@ -911,6 +973,52 @@ mod macos {
             (
                 "commit_row_layout",
                 Box::new(crate::recovery_layout::scenario_commit_row_layout),
+            ),
+            (
+                // #767: the WIP anchor node, asserted against the window's own
+                // paint trace. Read-only over four working trees, so every one
+                // of them is fingerprinted before and after.
+                "commit_row_layout_wip",
+                Box::new(|cx| {
+                    let (_fixture, repo, wt_a, wt_b) = build_two_worktree_fixture();
+                    let before = [
+                        repo_fingerprint(&repo),
+                        repo_fingerprint(&wt_a),
+                        repo_fingerprint(&wt_b),
+                    ];
+                    crate::recovery_layout::wip::scenario_commit_row_layout_wip(cx, &repo);
+                    assert_eq!(
+                        before,
+                        [
+                            repo_fingerprint(&repo),
+                            repo_fingerprint(&wt_a),
+                            repo_fingerprint(&wt_b)
+                        ],
+                        "drawing the WIP anchors mutated a working tree"
+                    );
+
+                    let (_edge_fixture, repo, shared, detached, orphan) =
+                        build_wip_anchor_edge_fixture();
+                    let before = [
+                        repo_fingerprint(&repo),
+                        repo_fingerprint(&shared),
+                        repo_fingerprint(&detached),
+                        repo_fingerprint(&orphan),
+                    ];
+                    crate::recovery_layout::wip::scenario_commit_row_layout_wip_edges(
+                        cx, &repo, &shared, &detached, &orphan,
+                    );
+                    assert_eq!(
+                        before,
+                        [
+                            repo_fingerprint(&repo),
+                            repo_fingerprint(&shared),
+                            repo_fingerprint(&detached),
+                            repo_fingerprint(&orphan)
+                        ],
+                        "drawing the WIP anchors mutated a working tree"
+                    );
+                }),
             ),
             (
                 "editor_history_layout",
@@ -1779,38 +1887,51 @@ mod macos {
         eprintln!("[gui-e2e] PASS agent_provenance head=ClaudeCode human=None");
     }
 
-    /// Issue #472: each WIP row draws a dashed connector down to its own
-    /// worktree's HEAD, in that worktree's lane colour.
+    /// Issue #472, with #767's anchor colours: each WIP row draws a dashed
+    /// connector down to its own worktree's HEAD, in the lane colour of the
+    /// HEAD it lands on.
     ///
     /// Asserts, through the real snapshot → `build_tab_view` pipeline: two WIP
-    /// rows each get a lane, the lanes differ, every row above the open repo's
-    /// HEAD carries exactly one WIP-ghost `Pass` on that lane, the HEAD row
-    /// carries the `IntoNode` landing on HEAD's own node, and each connector's
-    /// colour index equals its worktree's index (main = 0, the linked worktree
-    /// = 1) — which is what makes the two lines tellable apart on screen.
+    /// rows each get an anchor, the two lanes differ, every row above the open
+    /// repo's HEAD carries exactly one WIP-ghost `Pass` on that lane, the HEAD
+    /// row carries the `IntoNode` landing on HEAD's own node, and each
+    /// connector's colour index is its HEAD row's `node_color`. That colour
+    /// used to be the worktree's index in `worktrees` — a number that said
+    /// nothing about where the line ends; #767 makes the anchor take the
+    /// colour of the lane it points at, which is what pairs the hollow node
+    /// with its swimlane on screen.
     fn scenario_wip_head_connector(cx: &mut VisualTestAppContext) {
         let (_fixture, repo_path, _wt_path) = build_wip_connector_fixture();
         let before_fp = repo_fingerprint(&repo_path);
         let (kagi, win) = mount(cx, &repo_path);
 
-        // One WIP-ghost edge of `row`, by kind and colour index.
+        // The WIP-ghost edges of `row` of one kind, leaving one lane. Keyed by
+        // lane, not by colour: two connectors landing on the same branch now
+        // legitimately carry the same colour, and the lane is what tells them
+        // apart.
         fn ghost(
             row: &commit_list::CommitRow,
             kind: EdgeKind,
-            color_idx: usize,
+            from_lane: usize,
         ) -> Vec<&GraphEdge> {
             row.edges
                 .iter()
                 .filter(|e| {
-                    e.kind == kind && graph_wip::wip_color_index(e.color) == Some(color_idx)
+                    e.kind == kind
+                        && e.from_lane == from_lane
+                        && graph_wip::wip_color_index(e.color).is_some()
                 })
                 .collect()
+        }
+
+        fn ghost_color(edge: &GraphEdge) -> usize {
+            graph_wip::wip_color_index(edge.color).expect("filtered to WIP-ghost edges")
         }
 
         cx.read(|app| {
             let view = &kagi.read(app).view();
 
-            // Two dirty working trees → two WIP rows, each with a lane.
+            // Two dirty working trees → two WIP rows, each with an anchor.
             assert_eq!(
                 view.wip_lanes.len(),
                 2,
@@ -1818,11 +1939,30 @@ mod macos {
                 view.wip_lanes
             );
             // #476 slice 2: the map is keyed by target, not by row position.
-            let open_lane = graph_wip::wip_lane(&view.wip_lanes, graph_wip::WipTarget::Current)
-                .expect("open repo's WIP row got no connector lane");
-            let wt_lane = graph_wip::wip_lane(&view.wip_lanes, graph_wip::WipTarget::Worktree(1))
-                .expect("linked worktree's WIP row got no lane");
-            assert_ne!(open_lane, wt_lane, "two connectors must not share a column");
+            let anchor_for = |target: graph_wip::WipTarget| {
+                view.wip_lanes
+                    .iter()
+                    .find(|(t, _)| *t == target)
+                    .and_then(|(_, a)| *a)
+            };
+            let open = anchor_for(graph_wip::WipTarget::Current)
+                .expect("open repo's WIP row got no anchor");
+            let wt_anchor = anchor_for(graph_wip::WipTarget::Worktree(1))
+                .expect("linked worktree's WIP row got no anchor");
+            // The lane-only accessor still answers for the same anchor.
+            assert_eq!(
+                graph_wip::wip_lane(&view.wip_lanes, graph_wip::WipTarget::Current),
+                Some(open.lane),
+                "wip_lane must report the anchor's lane"
+            );
+            assert_eq!(
+                graph_wip::wip_lane(&view.wip_lanes, graph_wip::WipTarget::Worktree(1)),
+                Some(wt_anchor.lane)
+            );
+            assert_ne!(
+                open.lane, wt_anchor.lane,
+                "two connectors must not share a column"
+            );
 
             // The open repo's HEAD is buried under the `ahead` branch.
             let head = view
@@ -1834,32 +1974,41 @@ mod macos {
                 head >= 3,
                 "fixture should bury HEAD at row >= 3, got row {head}"
             );
+            let head_color = view.rows[head].node_color;
+            assert_eq!(
+                open.color, head_color,
+                "#767: the anchor's colour is the colour of the HEAD lane it points at"
+            );
 
             // Every row above HEAD carries the connector; HEAD carries the curve.
             for (i, row) in view.rows[..head].iter().enumerate() {
-                let passes = ghost(row, EdgeKind::Pass, 0);
+                let passes = ghost(row, EdgeKind::Pass, open.lane);
                 assert_eq!(
                     passes.len(),
                     1,
                     "row {i} above HEAD must carry exactly one WIP-ghost Pass"
                 );
-                assert_eq!(passes[0].from_lane, open_lane);
-                assert_eq!(passes[0].to_lane, open_lane);
+                assert_eq!(passes[0].to_lane, open.lane);
+                assert_eq!(
+                    ghost_color(passes[0]),
+                    head_color,
+                    "row {i}'s connector must be drawn in HEAD's lane colour"
+                );
             }
-            let into = ghost(&view.rows[head], EdgeKind::IntoNode, 0);
+            let into = ghost(&view.rows[head], EdgeKind::IntoNode, open.lane);
             assert_eq!(
                 into.len(),
                 1,
                 "HEAD's row must carry the connector's IntoNode curve"
             );
-            assert_eq!(into[0].from_lane, open_lane);
             assert_eq!(
                 into[0].to_lane, view.rows[head].lane,
                 "the curve must land on HEAD's own node"
             );
+            assert_eq!(ghost_color(into[0]), head_color);
 
-            // The linked worktree's connector reaches ITS head, in colour 1 —
-            // the worktree's index in `worktrees`, i.e. its lane colour.
+            // The linked worktree's connector reaches ITS head, in ITS head's
+            // lane colour.
             let wt = &view.worktrees[1];
             assert!(!wt.is_current, "worktrees[1] should be the linked worktree");
             let wt_head_id = wt.head.clone().expect("linked worktree HEAD not read");
@@ -1868,22 +2017,32 @@ mod macos {
                 wt_head, head,
                 "the two worktrees should sit on different commits"
             );
-            let wt_into = ghost(&view.rows[wt_head], EdgeKind::IntoNode, 1);
+            let wt_head_color = view.rows[wt_head].node_color;
+            assert_eq!(
+                wt_anchor.color, wt_head_color,
+                "#767: the worktree's anchor takes its own HEAD row's lane colour"
+            );
+            let wt_into = ghost(&view.rows[wt_head], EdgeKind::IntoNode, wt_anchor.lane);
             assert_eq!(
                 wt_into.len(),
                 1,
-                "the linked worktree's HEAD row must carry its own IntoNode, in colour index 1"
+                "the linked worktree's HEAD row must carry its own IntoNode"
             );
-            assert_eq!(wt_into[0].from_lane, wt_lane);
             assert_eq!(
-                ghost(&view.rows[head], EdgeKind::IntoNode, 1).len(),
+                wt_into[0].to_lane, view.rows[wt_head].lane,
+                "the curve must land on that worktree's HEAD node"
+            );
+            assert_eq!(ghost_color(wt_into[0]), wt_head_color);
+            assert_eq!(
+                ghost(&view.rows[head], EdgeKind::IntoNode, wt_anchor.lane).len(),
                 0,
                 "the worktree's connector must not land on the other worktree's HEAD"
             );
 
             eprintln!(
-                "[gui-e2e] PASS wip_head_connector head_row={head} lanes={open_lane}/{wt_lane} \
-                 wt_head_row={wt_head}"
+                "[gui-e2e] PASS wip_head_connector head_row={head} lanes={}/{} colours={}/{} \
+                 wt_head_row={wt_head}",
+                open.lane, wt_anchor.lane, open.color, wt_anchor.color
             );
         });
 
@@ -2317,7 +2476,10 @@ mod macos {
             graph_wip::WipTarget::Worktree(idx_b),
         ];
         assert_eq!(
-            graph_wip::lanes_for_rows(&lanes_before, &rows_now),
+            graph_wip::lanes_for_rows(&lanes_before, &rows_now)
+                .into_iter()
+                .map(|anchor| anchor.map(|a| a.lane))
+                .collect::<Vec<_>>(),
             vec![lane_open, lane_b],
             "a committed worktree's row leaving the list must not shift the \
              lanes of the rows that remain (lanes were {lanes_before:?})"

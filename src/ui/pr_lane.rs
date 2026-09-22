@@ -403,7 +403,7 @@ fn render_lane_row(
             // below gets, so a line and its node are one lane.
             let column = column_of(rail.columns, row.lane);
             let node_cx = (column as f32) * lane_w + lane_w / 2.0 - scroll;
-            let ring = theme::scaled(18.);
+            let ring = graph_view::avatar_node_diameter();
             let inner_d = theme::scaled(15.);
             let avatar = avatars.map(|images| {
                 let inner = div()
@@ -473,8 +473,10 @@ fn render_lane_row(
                                     color: edge.color,
                                 })
                                 .collect(),
-                            row.is_head,
-                            row.is_merge,
+                            graph_view::GraphNode::Commit {
+                                is_head: row.is_head,
+                                is_merge: row.is_merge,
+                            },
                             false,
                             // The canvas takes the same scroll the node is
                             // offset by, so a line and its node move together.

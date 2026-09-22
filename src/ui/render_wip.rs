@@ -170,8 +170,10 @@ impl KagiApp {
                                         // node_color is unused for them.
                                         sr.lane,
                                         edges,
-                                        false,
-                                        false,
+                                        graph_view::GraphNode::Commit {
+                                            is_head: false,
+                                            is_merge: false,
+                                        },
                                         true,
                                         graph_scroll_x,
                                         graph_lane_pad_l(),
@@ -269,10 +271,17 @@ impl KagiApp {
             .flex_row()
             .items_center()
             .w_full()
-            .pr_3()
-            .border_l(theme::scaled_px(3.))
-            .border_color(color)
-            .pl(theme::scaled_px(9.))
+            .relative()
+            .px_3()
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top_0()
+                    .bottom_0()
+                    .w(theme::scaled_px(3.))
+                    .bg(color),
+            )
             .h(px(row_height(self.graph_compact)));
         row = if is_commit_panel && commit_panel_open {
             row.bg(rgb(theme().selected))
@@ -330,13 +339,13 @@ impl KagiApp {
             .child(
                 div()
                     .w(theme::scaled_px(badge_col_w))
+                    .h_full()
                     .flex_shrink_0()
                     .overflow_hidden()
                     .flex()
                     .flex_row()
                     .items_center()
                     .justify_start()
-                    .gap_1()
                     .child(
                         div()
                             .px_1()
@@ -347,20 +356,28 @@ impl KagiApp {
                             .text_color(chip_text)
                             .text_sm()
                             .font_weight(gpui::FontWeight::MEDIUM)
-                            .flex_shrink_0()
+                            .min_w_0()
                             .overflow_hidden()
                             .truncate()
                             .child(chip_label),
-                    ),
+                    )
+                    .when(lane.is_some(), |el| {
+                        el.child(graph_view::dashed_connector(color).flex_1().h_full())
+                    }),
             )
             // Inner divider spacer (badge|graph handle width)
             .child(
                 div()
+                    .relative()
+                    .h_full()
                     .w(theme::scaled_px(INNER_DIV_W))
                     .flex_shrink_0()
                     .flex()
                     .justify_center()
-                    .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))),
+                    .child(div().w(px(1.)).h_full().bg(rgb(theme().surface)))
+                    .when(lane.is_some(), |el| {
+                        el.child(graph_view::dashed_connector(color).absolute().inset_0())
+                    }),
             )
             // Graph column: the WIP dot plus its dashed connector down to HEAD
             // (#472), drawn through the ordinary graph painter so the lane
@@ -377,7 +394,8 @@ impl KagiApp {
                         color: graph_wip::wip_color(ci),
                     })
                     .collect();
-                if let Some(l) = lane {
+                let start_lane = lane.filter(|lane| !pass_lanes.iter().any(|(l, _)| l == lane));
+                if let Some(l) = start_lane {
                     edges.push(crate::graph::GraphEdge {
                         from_lane: l,
                         to_lane: l,
@@ -396,9 +414,12 @@ impl KagiApp {
                                 lane.unwrap_or(0),
                                 color_idx,
                                 edges,
-                                false,
-                                false,
-                                false,
+                                if lane.is_some() {
+                                    graph_view::GraphNode::Wip
+                                } else {
+                                    graph_view::GraphNode::Hidden
+                                },
+                                lane.is_some(),
                                 graph_scroll_x,
                                 graph_lane_pad_l(),
                                 Vec::new(),

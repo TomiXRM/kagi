@@ -12,8 +12,10 @@ use super::workspace::WorkspaceItem;
 use super::*;
 
 /// One WIP row's render parameters: its [`graph_wip::WipTarget`] key (#476 —
-/// what its connector lane is looked up by), lane colour index, chip label,
-/// change count, diffstat, click action, and whether to draw the worktree glyph.
+/// what its connector anchor is looked up by), the worktree's ordinal lane
+/// colour (#767: a *fallback*, used only when the row has no anchor to take
+/// HEAD's colour from), chip label, change count, diffstat, click action, and
+/// whether to draw the worktree glyph.
 type WipRowParams = (
     graph_wip::WipTarget,
     usize,
@@ -150,18 +152,28 @@ impl KagiApp {
                 ));
             }
 
-            // #472: each row gets its own connector lane plus the lanes of the
-            // rows above it, whose connectors pass straight through — the same
-            // accumulation the stash rows do with `passing_lanes`.
+            // #472: each row gets its connector's column plus the columns of
+            // the rows above it, whose connectors pass straight through — the
+            // same accumulation the stash rows do with `passing_lanes`.
+            //
+            // #767: worktrees sharing a HEAD share one anchor, so the same
+            // column would otherwise be pushed once per row and the trace
+            // painted on top of itself. One entry per column is what "one
+            // shared trace, beginning at the topmost WIP row" means.
             let row_targets: Vec<graph_wip::WipTarget> = params.iter().map(|p| p.0).collect();
-            let wip_lanes = graph_wip::lanes_for_rows(&self.view().wip_lanes, &row_targets);
+            let wip_anchors = graph_wip::lanes_for_rows(&self.view().wip_lanes, &row_targets);
             let graph_scroll_x = self.ui().graph_scroll_x;
             let mut passing: Vec<(usize, usize)> = Vec::new();
             let mut rows: Vec<gpui::AnyElement> = Vec::with_capacity(params.len());
-            for (i, (_, color_idx, label, count, ds, click, is_worktree)) in
+            for (i, (_, ordinal_color, label, count, ds, click, is_worktree)) in
                 params.into_iter().enumerate()
             {
-                let lane = wip_lanes[i];
+                let anchor = wip_anchors[i];
+                // The connector's colour is HEAD's lane colour. A row with no
+                // connector (unborn HEAD, HEAD out of the loaded window) has no
+                // such colour, so it falls back to its own worktree ordinal.
+                let color_idx = anchor.map_or(ordinal_color, |a| a.color);
+                let lane = anchor.map(|a| a.lane);
                 rows.push(self.render_wip_row(
                     color_idx,
                     label,
@@ -178,7 +190,9 @@ impl KagiApp {
                     cx,
                 ));
                 if let Some(l) = lane {
-                    passing.push((l, color_idx));
+                    if !passing.iter().any(|(pl, _)| *pl == l) {
+                        passing.push((l, color_idx));
+                    }
                 }
             }
             (rows, passing)

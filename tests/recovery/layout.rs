@@ -582,3 +582,6 @@ pub fn scenario_footer_status_line(cx: &mut VisualTestAppContext, repo_path: &Pa
     drop(restore);
     eprintln!("[gui-e2e] PASS footer_status_line 8 messages x 1440/640/320: one line inside the 22 px bar, first line first");
 }
+
+#[path = "wip_layout.rs"]
+pub(crate) mod wip;

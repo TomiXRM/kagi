@@ -310,8 +310,10 @@ pub(crate) fn render_rows(
                                         row.lane,
                                         row.node_color,
                                         row.edges.clone(),
-                                        row.is_head,
-                                        row.is_merge,
+                                        graph_view::GraphNode::Commit {
+                                            is_head: row.is_head,
+                                            is_merge: row.is_merge,
+                                        },
                                         has_badges,
                                         graph_scroll_x,
                                         graph_pad_l,
@@ -325,7 +327,7 @@ pub(crate) fn render_rows(
                         // node centre with a lane-colour ring (the coloured disc
                         // shows as a ~1.5px ring around the inner avatar).
                         .when(avatar_in_graph, |el| {
-                            let ring_d = theme::scaled(18.);
+                            let ring_d = graph_view::avatar_node_diameter();
                             let av_d = theme::scaled(15.);
                             let inner = div()
                                 .w(px(av_d))

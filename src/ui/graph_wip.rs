@@ -15,22 +15,29 @@
 //! Mechanically this is the squash ghost connector (ADR-0139,
 //! `graph_squash.rs`) with a different pair of endpoints: a post-pass over the
 //! built `CommitRow`s that picks a lane, pushes `Pass` through every row above
-//! HEAD and an `IntoNode` at HEAD. `kagi-domain`'s layout is untouched, and the
-//! lane helpers (`top_busy` / `bottom_busy`) are shared rather than copied.
+//! HEAD and an `IntoNode` at HEAD. `kagi-domain`'s layout is untouched; the
+//! column choice itself is [`crate::graph::wip_anchor`] — pure, and sharing
+//! the half-row occupancy rules with the squash connector rather than copying
+//! them.
 //!
 //! The one thing squash's `GHOST_COLOR` could not express is *which* worktree a
 //! line belongs to — it is a single fixed grey. So the sentinel becomes a
 //! range: `WIP_GHOST_BASE + <lane colour index>` means "dashed, in that lane
 //! colour", which is what makes two connectors tellable apart.
+//!
+//! #767: that colour is **HEAD's** lane colour, not the worktree's ordinal,
+//! and worktrees sharing a HEAD share the whole anchor — one column, one
+//! colour, one trace down to the single node they all sit on. Drawing k
+//! identical lines in k different worktree colours said "k targets" about one.
 
 use std::collections::HashMap;
 
 use kagi_git::{CommitId, Head, RepoSnapshot};
 
-use crate::graph::{EdgeKind, GraphEdge};
+use crate::graph::{self, EdgeKind, GraphEdge, RowOccupancy, WipAnchor};
 
 use super::commit_list::CommitRow;
-use super::graph_squash::{bottom_busy, top_busy, GHOST_COLOR};
+use super::graph_squash::GHOST_COLOR;
 
 /// Start of the WIP-ghost sentinel range on `GraphEdge::color`.
 ///
@@ -42,8 +49,8 @@ use super::graph_squash::{bottom_busy, top_busy, GHOST_COLOR};
 pub const WIP_GHOST_BASE: usize = usize::MAX - 64;
 
 /// Highest colour index the sentinel range can carry (`WIP_GHOST_BASE + 63`);
-/// 64 would land on `GHOST_COLOR`. Lane colours cycle every 6, so clamping a
-/// 64th worktree here only reuses a colour it was going to share anyway.
+/// 64 would land on `GHOST_COLOR`. HEAD colours are bounded by
+/// `graph::NUM_COLORS` (8), so every graph colour fits without clamping.
 const MAX_COLOR_IDX: usize = 63;
 
 /// Encode a lane colour index as a WIP-ghost edge colour.
@@ -57,18 +64,6 @@ pub fn wip_color(color_idx: usize) -> usize {
 #[inline]
 pub fn wip_color_index(color: usize) -> Option<usize> {
     (color >= WIP_GHOST_BASE && color != GHOST_COLOR).then(|| color - WIP_GHOST_BASE)
-}
-
-/// Whether a connector can run down `lane` from above row 0 to row `bottom`
-/// without crossing an existing line.
-///
-/// Unlike `graph_squash::lane_free` the line enters from *outside* the graph
-/// (the WIP row), so row 0's top half has to be free too.
-fn lane_free_to(rows: &[CommitRow], bottom: usize, lane: usize) -> bool {
-    !top_busy(&rows[bottom], lane)
-        && rows[..bottom]
-            .iter()
-            .all(|r| r.lane != lane && !top_busy(r, lane) && !bottom_busy(r, lane))
 }
 
 /// Which WIP row a connector belongs to (#476 slice 2).
@@ -88,18 +83,27 @@ pub enum WipTarget {
     Worktree(usize),
 }
 
-/// The lane recorded for `target`, or `None` when this view has no connector
-/// for it (its row was not drawn, or the snapshot predates its row).
-pub fn wip_lane(lanes: &[(WipTarget, Option<usize>)], target: WipTarget) -> Option<usize> {
+/// The anchor recorded for `target` — the column its connector took and the
+/// colour it is drawn in — or `None` when this view has no connector for it
+/// (its row was not drawn, or the snapshot predates its row).
+pub fn wip_anchor_for(
+    lanes: &[(WipTarget, Option<WipAnchor>)],
+    target: WipTarget,
+) -> Option<WipAnchor> {
     lanes
         .iter()
         .find(|(t, _)| *t == target)
-        .and_then(|(_, lane)| *lane)
+        .and_then(|(_, anchor)| *anchor)
 }
 
-/// The connector lane for each WIP row about to be drawn, in row order.
+/// The lane recorded for `target`, or `None` when no connector was drawn.
+pub fn wip_lane(lanes: &[(WipTarget, Option<WipAnchor>)], target: WipTarget) -> Option<usize> {
+    wip_anchor_for(lanes, target).map(|a| a.lane)
+}
+
+/// The connector anchor for each WIP row about to be drawn, in row order.
 ///
-/// This is the whole row ↔ lane join, in one place so `render_body` and its
+/// This is the whole row ↔ anchor join, in one place so `render_body` and its
 /// tests agree: each row is looked up **by its own target**, so a `lanes` map
 /// that is a frame out of date (built before the row list changed — the commit
 /// panel's write ops refresh a worktree's WIP row in place, the re-snapshot
@@ -107,20 +111,24 @@ pub fn wip_lane(lanes: &[(WipTarget, Option<usize>)], target: WipTarget) -> Opti
 /// By position, one vanished row shifted every row below it onto a stranger's
 /// lane and colour.
 pub fn lanes_for_rows(
-    lanes: &[(WipTarget, Option<usize>)],
+    lanes: &[(WipTarget, Option<WipAnchor>)],
     rows: &[WipTarget],
-) -> Vec<Option<usize>> {
-    rows.iter().map(|t| wip_lane(lanes, *t)).collect()
+) -> Vec<Option<WipAnchor>> {
+    rows.iter().map(|t| wip_anchor_for(lanes, *t)).collect()
 }
 
-/// The WIP rows `render_body` draws, in order, as
-/// `(target, lane colour index, HEAD)`.
+/// The WIP rows `render_body` draws, in order, as `(target, HEAD)`.
 ///
-/// Kept next to the injector because the two must agree: the lanes this module
-/// returns are looked up by `target`. The order mirrors `render_body`: the open
-/// repo's own row first (when its working tree is dirty), then every *other*
-/// dirty worktree in `snap.worktrees` order.
-pub fn wip_targets(snap: &RepoSnapshot) -> Vec<(WipTarget, usize, Option<CommitId>)> {
+/// Kept next to the injector because the two must agree: the anchors this
+/// module returns are looked up by `target`. The order mirrors `render_body`:
+/// the open repo's own row first (when its working tree is dirty), then every
+/// *other* dirty worktree in `snap.worktrees` order.
+///
+/// HEAD is always an object id — `Head::Attached` carries the branch tip's own
+/// sha, and a detached HEAD is already the commit — so a detached worktree
+/// anchors exactly like an attached one. An unborn HEAD has no commit at all
+/// and yields `None` here, which the injector turns into "no connector".
+pub fn wip_targets(snap: &RepoSnapshot) -> Vec<(WipTarget, Option<CommitId>)> {
     let mut out = Vec::new();
     if snap.status.is_dirty() {
         // The open repo's row is driven by the live status, not by a worktree
@@ -132,76 +140,90 @@ pub fn wip_targets(snap: &RepoSnapshot) -> Vec<(WipTarget, usize, Option<CommitI
             }
             Head::Unborn { .. } => None,
         };
-        let cur = snap.worktrees.iter().position(|w| w.is_current);
-        out.push((WipTarget::Current, cur.unwrap_or(0), head));
+        out.push((WipTarget::Current, head));
     }
     for (idx, wt) in snap.worktrees.iter().enumerate() {
         if wt.is_current || !wt.wip.is_some_and(|w| w.is_dirty()) {
             continue;
         }
-        out.push((WipTarget::Worktree(idx), idx, wt.head.clone()));
+        out.push((WipTarget::Worktree(idx), wt.head.clone()));
     }
     out
 }
 
-/// Inject one dashed connector per WIP row. Returns the lane each connector
-/// took, **keyed by its target** — `None` where no line was drawn (unborn HEAD,
-/// or a HEAD outside the loaded window, the same "half a line is worse than
-/// none" rule stashes use for `connected == false`).
+/// Inject the dashed connectors and return the anchor each WIP row landed on,
+/// **keyed by its target** — `None` where no line was drawn (unborn HEAD, or a
+/// HEAD outside the loaded window, the same "half a line is worse than none"
+/// rule stashes use for `connected == false`).
 ///
-/// Lane choice follows the squash precedent: reuse HEAD's own column when it is
-/// free all the way up, otherwise take a fresh one. When `origin` is ahead that
-/// column is occupied by HEAD's descendants, so a fresh lane is the normal
-/// outcome — and the right one, since the connector must not overdraw them.
-/// Connectors never collide with each other because each one's `Pass` edges
-/// make its lane busy for the next.
+/// One connector per *distinct* HEAD row, not per row (#767): worktrees parked
+/// on the same commit all map to the same anchor, so the graph carries one
+/// trace in HEAD's colour instead of k lines stacked in one column. The lane
+/// choice itself is [`crate::graph::wip_anchor`]; distinct HEADs still never
+/// collide, because each injection's own `Pass` edges make its column busy for
+/// the next one.
 pub fn inject_wip_edges(
     rows: &mut [CommitRow],
-    targets: &[(WipTarget, usize, Option<CommitId>)],
+    targets: &[(WipTarget, Option<CommitId>)],
     index: &HashMap<CommitId, usize>,
-) -> Vec<(WipTarget, Option<usize>)> {
-    let mut lanes: Vec<(WipTarget, Option<usize>)> =
-        targets.iter().map(|(t, _, _)| (*t, None)).collect();
+) -> Vec<(WipTarget, Option<WipAnchor>)> {
+    let mut anchors: Vec<(WipTarget, Option<WipAnchor>)> =
+        targets.iter().map(|(t, _)| (*t, None)).collect();
     if rows.is_empty() {
-        return lanes;
+        return anchors;
     }
     let mut next_lane = rows[0].lane_count;
     let start_lane_count = next_lane;
+    // HEAD row → the anchor already drawn for it, in injection order. A `Vec`
+    // because k is the number of dirty worktrees: single digits, always.
+    let mut drawn: Vec<(usize, WipAnchor)> = Vec::new();
 
-    for ((_, slot), (_, color_idx, head)) in lanes.iter_mut().zip(targets) {
-        // `rows` and `index` are reconciled across an async boundary elsewhere,
-        // so bound-check rather than trusting they agree.
-        let Some(&bottom) = head.as_ref().and_then(|h| index.get(h)) else {
+    for (i, (_, head)) in targets.iter().enumerate() {
+        // `rows` and `index` are reconciled across an async boundary
+        // elsewhere, so bound-check rather than trusting that they agree.
+        let bottom = head.as_ref().and_then(|h| index.get(h)).copied();
+        let Some(bottom) = bottom.filter(|&b| b < rows.len()) else {
             continue;
         };
-        if bottom >= rows.len() {
+        if let Some((_, shared)) = drawn.iter().find(|(b, _)| *b == bottom) {
+            anchors[i].1 = Some(*shared);
             continue;
         }
-        let head_lane = rows[bottom].lane;
-        let lane = if lane_free_to(rows, bottom, head_lane) {
-            head_lane
-        } else {
-            let l = next_lane;
+        // Project borrowed rows lazily: no per-worktree occupancy allocation.
+        let anchor = graph::wip_anchor(
+            rows[..=bottom].iter().map(|r| RowOccupancy {
+                lane: r.lane,
+                color: r.node_color,
+                edges: &r.edges,
+            }),
+            Some(bottom),
+            next_lane,
+        );
+        let Some(anchor) = anchor else { continue };
+        // HEAD's own column is always below `lane_count`, so equality here can
+        // only mean the selector took the fresh column that was offered.
+        if anchor.lane == next_lane {
             next_lane += 1;
-            l
-        };
-        let color = wip_color(*color_idx);
+        }
+        let color = wip_color(anchor.color);
+        let head_lane = rows[bottom].lane;
 
         for r in rows[..bottom].iter_mut() {
             r.edges.push(GraphEdge {
-                from_lane: lane,
-                to_lane: lane,
+                from_lane: anchor.lane,
+                to_lane: anchor.lane,
                 kind: EdgeKind::Pass,
                 color,
             });
         }
         rows[bottom].edges.push(GraphEdge {
-            from_lane: lane,
+            from_lane: anchor.lane,
             to_lane: head_lane,
             kind: EdgeKind::IntoNode,
             color,
         });
-        *slot = Some(lane);
+        drawn.push((bottom, anchor));
+        anchors[i].1 = Some(anchor);
     }
 
     if next_lane != start_lane_count {
@@ -209,16 +231,19 @@ pub fn inject_wip_edges(
             r.lane_count = next_lane;
         }
     }
-    lanes
+    anchors
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn row(ix: usize, lane: usize) -> CommitRow {
+    /// A blank row on `lane`, whose node carries lane colour `color` — the
+    /// colour a connector aiming at this row is drawn in (#767).
+    fn row(ix: usize, lane: usize, color: usize) -> CommitRow {
         let mut r = CommitRow::empty_for_test(CommitId(format!("{ix:040}")));
         r.lane = lane;
+        r.node_color = color;
         r.lane_count = 2;
         r
     }
@@ -247,7 +272,7 @@ mod tests {
     #[test]
     fn takes_a_fresh_lane_when_heads_column_is_busy() {
         // Rows 0..3 are one straight line on lane 0; HEAD is row 3.
-        let mut rows = vec![row(0, 0), row(1, 0), row(2, 0), row(3, 0)];
+        let mut rows = vec![row(0, 0, 4), row(1, 0, 4), row(2, 0, 4), row(3, 0, 4)];
         for r in rows[..3].iter_mut() {
             r.edges.push(GraphEdge {
                 from_lane: 0,
@@ -258,11 +283,11 @@ mod tests {
         }
         let ix = index(&rows);
 
-        let lanes = inject_wip_edges(&mut rows, &[(WipTarget::Current, 0, Some(id(3)))], &ix);
+        let anchors = inject_wip_edges(&mut rows, &[(WipTarget::Current, Some(id(3)))], &ix);
         assert_eq!(
-            lanes,
-            vec![(WipTarget::Current, Some(2))],
-            "lane 0 is busy → a fresh lane (2)"
+            anchors,
+            vec![(WipTarget::Current, Some(WipAnchor { lane: 2, color: 4 }))],
+            "lane 0 is busy → a fresh lane (2), in HEAD's own colour"
         );
 
         // One Pass per row above HEAD, and the curve into HEAD's own node.
@@ -282,70 +307,123 @@ mod tests {
         // A fresh lane widens the graph — every row carries the new count.
         assert!(rows.iter().all(|r| r.lane_count == 3));
         // The colour index rides the sentinel, so the line is drawn in the
-        // worktree's own lane colour.
-        assert_eq!(wip_color_index(into[0].color), Some(0));
+        // colour of the branch line it lands on.
+        assert_eq!(wip_color_index(into[0].color), Some(4));
     }
 
     /// HEAD's own column is empty above it (nothing branched off it), so the
     /// connector reuses it and the graph does not get wider.
     #[test]
     fn reuses_heads_lane_when_free() {
-        let mut rows = vec![row(0, 0), row(1, 0), row(2, 1)];
+        let mut rows = vec![row(0, 0, 0), row(1, 0, 0), row(2, 1, 6)];
         let ix = index(&rows);
-        let lanes = inject_wip_edges(&mut rows, &[(WipTarget::Worktree(3), 3, Some(id(2)))], &ix);
-        assert_eq!(lanes, vec![(WipTarget::Worktree(3), Some(1))]);
+        let anchors = inject_wip_edges(&mut rows, &[(WipTarget::Worktree(3), Some(id(2)))], &ix);
+        assert_eq!(
+            anchors,
+            vec![(
+                WipTarget::Worktree(3),
+                Some(WipAnchor { lane: 1, color: 6 })
+            )]
+        );
         assert!(
             rows.iter().all(|r| r.lane_count == 2),
             "reusing a column must not widen the graph"
         );
-        assert_eq!(wip_color_index(ghosts(&rows[2])[0].color), Some(3));
+        assert_eq!(wip_color_index(ghosts(&rows[2])[0].color), Some(6));
     }
 
-    /// HEAD outside the loaded window draws nothing rather than half a line.
+    /// HEAD outside the loaded window draws nothing rather than half a line,
+    /// and an unborn HEAD has nothing to draw to at all.
     #[test]
     fn draws_nothing_when_head_is_not_loaded() {
-        let mut rows = vec![row(0, 0), row(1, 0)];
+        let mut rows = vec![row(0, 0, 0), row(1, 0, 0)];
         let ix = index(&rows);
-        let lanes = inject_wip_edges(
+        let anchors = inject_wip_edges(
             &mut rows,
             &[
-                (WipTarget::Current, 0, Some(id(99))),
-                (WipTarget::Worktree(1), 1, None),
+                (WipTarget::Current, Some(id(99))),
+                (WipTarget::Worktree(1), None),
             ],
             &ix,
         );
         assert_eq!(
-            lanes,
+            anchors,
             vec![(WipTarget::Current, None), (WipTarget::Worktree(1), None)]
         );
         assert!(rows.iter().all(|r| r.edges.is_empty()));
     }
 
-    /// Two dirty worktrees pointing at the *same* HEAD still get two distinct
-    /// lanes — otherwise the second line would be drawn straight over the first
-    /// and the colours would be unreadable.
+    /// #767: two dirty worktrees parked on the *same* HEAD describe one
+    /// target, so they share one anchor — one column, one colour, one trace.
+    /// They used to take a lane each and stack two dashed lines of different
+    /// colours on top of the same commit.
     #[test]
-    fn two_wip_rows_never_share_a_lane() {
-        let mut rows = vec![row(0, 0), row(1, 0), row(2, 1)];
+    fn worktrees_on_one_head_share_a_single_anchor() {
+        let mut rows = vec![row(0, 0, 0), row(1, 0, 0), row(2, 1, 6)];
         let ix = index(&rows);
-        let lanes = inject_wip_edges(
+        let anchors = inject_wip_edges(
             &mut rows,
             &[
-                (WipTarget::Current, 0, Some(id(2))),
-                (WipTarget::Worktree(1), 1, Some(id(2))),
+                (WipTarget::Current, Some(id(2))),
+                (WipTarget::Worktree(1), Some(id(2))),
             ],
             &ix,
         );
-        assert_eq!(lanes.len(), 2);
-        let a = wip_lane(&lanes, WipTarget::Current).expect("open repo's lane");
-        let b = wip_lane(&lanes, WipTarget::Worktree(1)).expect("worktree's lane");
-        assert_ne!(a, b, "two connectors must not share a column");
-        // Colour indices stay tied to their worktree, not to the lane.
-        let colors: Vec<Option<usize>> = ghosts(&rows[2])
-            .iter()
-            .map(|e| wip_color_index(e.color))
-            .collect();
-        assert_eq!(colors, vec![Some(0), Some(1)]);
+        let shared = WipAnchor { lane: 1, color: 6 };
+        assert_eq!(
+            anchors,
+            vec![
+                (WipTarget::Current, Some(shared)),
+                (WipTarget::Worktree(1), Some(shared)),
+            ],
+            "both rows anchor on HEAD's own column, in HEAD's colour"
+        );
+        // Exactly one trace, not one per worktree.
+        assert_eq!(ghosts(&rows[0]).len(), 1);
+        assert_eq!(ghosts(&rows[1]).len(), 1);
+        let into = ghosts(&rows[2]);
+        assert_eq!(into.len(), 1);
+        assert_eq!(into[0].kind, EdgeKind::IntoNode);
+        assert_eq!(wip_color_index(into[0].color), Some(6));
+        assert!(
+            rows.iter().all(|r| r.lane_count == 2),
+            "a shared anchor must not widen the graph"
+        );
+    }
+
+    /// Worktrees on *different* HEADs still never share a column, even when
+    /// both HEADs sit in the same one: the first connector's own `Pass` edges
+    /// make that column busy, so the second is pushed out to a fresh lane and
+    /// keeps its own HEAD's colour.
+    #[test]
+    fn distinct_heads_never_share_a_column() {
+        // Lane 1 carries two separate lines: row 1's, and (after it ends) row
+        // 3's. Both are somebody's HEAD.
+        let mut rows = vec![row(0, 0, 2), row(1, 1, 5), row(2, 0, 2), row(3, 1, 7)];
+        let ix = index(&rows);
+        let anchors = inject_wip_edges(
+            &mut rows,
+            &[
+                (WipTarget::Current, Some(id(1))),
+                (WipTarget::Worktree(1), Some(id(3))),
+            ],
+            &ix,
+        );
+        assert_eq!(
+            anchors,
+            vec![
+                (WipTarget::Current, Some(WipAnchor { lane: 1, color: 5 })),
+                (
+                    WipTarget::Worktree(1),
+                    Some(WipAnchor { lane: 2, color: 7 })
+                ),
+            ],
+            "the shallower HEAD keeps lane 1; the deeper one is pushed out"
+        );
+        assert!(
+            rows.iter().all(|r| r.lane_count == 3),
+            "the fresh column widens the graph"
+        );
     }
 
     /// #476 slice 2: committing from a linked worktree's panel makes that
@@ -355,13 +433,14 @@ mod tests {
     /// positionally, each row below would have inherited its neighbour's.
     #[test]
     fn a_missing_target_does_not_shift_the_other_lanes() {
+        let anchor = |lane, color| Some(WipAnchor { lane, color });
         let lanes = vec![
-            (WipTarget::Current, Some(4)),
-            (WipTarget::Worktree(1), Some(5)),
-            (WipTarget::Worktree(2), Some(6)),
+            (WipTarget::Current, anchor(4, 1)),
+            (WipTarget::Worktree(1), anchor(5, 2)),
+            (WipTarget::Worktree(2), anchor(6, 3)),
         ];
         assert_eq!(wip_lane(&lanes, WipTarget::Current), Some(4));
-        assert_eq!(wip_lane(&lanes, WipTarget::Worktree(2)), Some(6));
+        assert_eq!(wip_anchor_for(&lanes, WipTarget::Worktree(2)), anchor(6, 3));
         // Worktree 1 just committed: it is no longer a row, and nothing else
         // moved — worktree 2 still reads lane 6, not 5.
         let lanes: Vec<_> = lanes
@@ -370,7 +449,7 @@ mod tests {
             .collect();
         assert_eq!(wip_lane(&lanes, WipTarget::Worktree(1)), None);
         assert_eq!(wip_lane(&lanes, WipTarget::Current), Some(4));
-        assert_eq!(wip_lane(&lanes, WipTarget::Worktree(2)), Some(6));
+        assert_eq!(wip_anchor_for(&lanes, WipTarget::Worktree(2)), anchor(6, 3));
         // A target the map never had is `None`, not a panic or a neighbour.
         assert_eq!(wip_lane(&lanes, WipTarget::Worktree(9)), None);
         // A drawn-but-laneless row stays `None` too.

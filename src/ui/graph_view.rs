@@ -35,6 +35,46 @@ use crate::ui::graph_squash::GHOST_COLOR;
 use crate::ui::graph_wip;
 use crate::ui::theme::{self, theme};
 
+/// Virtual WIP points never acquire a commit fill, even on a selected row.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GraphNode {
+    Commit { is_head: bool, is_merge: bool },
+    Wip,
+    Hidden,
+}
+
+#[cfg(feature = "gui-e2e")]
+#[derive(Clone, Debug)]
+pub struct PaintedGraphNode {
+    pub bounds: Bounds<Pixels>,
+    pub center: gpui::Point<Pixels>,
+    pub radius: f32,
+    pub hollow: bool,
+    pub color: gpui::Hsla,
+}
+
+#[cfg(feature = "gui-e2e")]
+#[derive(Clone, Debug)]
+pub struct PaintedGraphDash {
+    pub from: gpui::Point<Pixels>,
+    pub to: gpui::Point<Pixels>,
+    pub color: gpui::Hsla,
+}
+
+#[cfg(feature = "gui-e2e")]
+type PaintTrace = (Vec<PaintedGraphNode>, Vec<PaintedGraphDash>);
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static PAINT_TRACE: std::cell::RefCell<std::collections::HashMap<gpui::WindowId, PaintTrace>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Drain actual canvas paints, not layout predictions. Clear before a redraw.
+#[cfg(feature = "gui-e2e")]
+pub fn take_paint_trace(window: gpui::WindowId) -> PaintTrace {
+    PAINT_TRACE.with(|traces| std::mem::take(traces.borrow_mut().entry(window).or_default()))
+}
+
 // ──────────────────────────────────────────────────────────────
 // Layout constants
 // ──────────────────────────────────────────────────────────────
@@ -212,60 +252,102 @@ fn draw_shift(builder: &mut PathBuilder, x_from: f32, y_top: f32, x_to: f32, y_b
 // Per-row canvas element
 // ──────────────────────────────────────────────────────────────
 
-/// Return a `canvas` element that paints the graph lane for one commit row.
-///
-/// The returned [`Canvas<()>`] implements [`Styled`] so the caller can chain
-/// `.size_full()`, `.w(...)`, etc. directly on the return value.
-///
-/// `visible_lanes` — how many lanes fit in the rendered column width.
-/// Edges/nodes with lane indices >= visible_lanes are skipped so that no
-/// drawing bleeds beyond the right edge of the graph column (T030).
-///
-/// `is_head` — whether this commit is the current HEAD (draws larger node + ring).
-///
-/// `is_merge` — whether this commit has 2+ parents (draws double-circle node).
-///
-/// `has_badges` — whether the badge column holds any badge chips for this row.
-///   When true a thin horizontal connector line is drawn from lane 0's left
-///   edge to the node centre (W2-GRAPH item 5: label→node connection).
-#[allow(clippy::too_many_arguments)]
-/// Paint a vertical dashed segment. Used for ghost connectors (ADR-0139),
-/// which stand for patch-id equivalence rather than a parent link — a solid
-/// line there would claim a relationship git does not have.
-///
-/// Each dash is its own path: `PathBuilder::stroke` is used for one stroke at
-/// a time everywhere else in this file, and four short paints per row is
-/// cheaper than reasoning about multi-subpath strokes.
-fn paint_dashed_vertical(
+/// Paint individual dash paths; shared by vertical and badge connectors.
+fn paint_dashed_line(
     window: &mut Window,
-    x: f32,
-    y_top: f32,
-    y_bottom: f32,
+    from: gpui::Point<Pixels>,
+    to: gpui::Point<Pixels>,
     color: gpui::Hsla,
 ) {
-    let dash = theme::scaled(4.0);
-    let gap = theme::scaled(3.0);
-    let mut y = y_top;
-    while y < y_bottom {
-        let y2 = (y + dash).min(y_bottom);
+    let dx = f32::from(to.x - from.x);
+    let dy = f32::from(to.y - from.y);
+    let length = dx.hypot(dy);
+    let mut offset = 0.0;
+    while offset < length {
+        let end = (offset + theme::scaled(4.0)).min(length);
+        let p =
+            |distance: f32| from + point(px(dx * distance / length), px(dy * distance / length));
         let mut b = PathBuilder::stroke(theme::scaled_px(EDGE_W));
-        b.move_to(point(px(x), px(y)));
-        b.line_to(point(px(x), px(y2)));
+        b.move_to(p(offset));
+        b.line_to(p(end));
         if let Ok(path) = b.build() {
             window.paint_path(path, color);
+            #[cfg(feature = "gui-e2e")]
+            PAINT_TRACE.with(|traces| {
+                if let Some(trace) = traces
+                    .borrow_mut()
+                    .get_mut(&window.window_handle().window_id())
+                {
+                    trace.1.push(PaintedGraphDash {
+                        from: p(offset),
+                        to: p(end),
+                        color,
+                    });
+                }
+            });
         }
-        y = y2 + gap;
+        offset = end + theme::scaled(3.0);
     }
 }
 
+/// The badge-column and divider portions of the WIP's horizontal connector.
+pub fn dashed_connector(color: gpui::Hsla) -> Canvas<()> {
+    canvas(
+        |_, _, _| {},
+        move |bounds, (), window, _| {
+            window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
+                let y = node_center_y(f32::from(bounds.origin.y), f32::from(bounds.size.height));
+                paint_dashed_line(
+                    window,
+                    point(bounds.left(), px(y)),
+                    point(bounds.right(), px(y)),
+                    color,
+                );
+            });
+        },
+    )
+}
+
+fn paint_circle(
+    window: &mut Window,
+    x: f32,
+    y: f32,
+    radius: f32,
+    color: gpui::Hsla,
+    stroke: Option<f32>,
+) -> bool {
+    let mut builder = stroke.map_or_else(PathBuilder::fill, |width| {
+        PathBuilder::stroke(theme::scaled_px(width))
+    });
+    const SEGMENTS: usize = 12;
+    for i in 0..=SEGMENTS {
+        let angle = i as f32 * std::f32::consts::TAU / SEGMENTS as f32;
+        let p = point(px(x + radius * angle.cos()), px(y + radius * angle.sin()));
+        if i == 0 {
+            builder.move_to(p);
+        } else {
+            builder.line_to(p);
+        }
+    }
+    builder.close();
+    if let Ok(path) = builder.build() {
+        window.paint_path(path, color);
+        true
+    } else {
+        false
+    }
+}
+
+/// Paint a row using shared zoom/scroll geometry. WIP uses a stroke-only node;
+/// Hidden preserves passing edges without inventing an unresolved anchor.
+#[allow(clippy::too_many_arguments)]
 pub fn graph_canvas(
     node_lane: usize,
     // Stable colour index for this node's lane (carried with the branch). Used
     // for the ● node and the label→node connector; edges carry their own colour.
     node_color: usize,
     edges: Vec<GraphEdge>,
-    is_head: bool,
-    is_merge: bool,
+    node: GraphNode,
     has_badges: bool,
     // kagi: horizontal scroll offset in px — lanes hidden by a narrow column
     // can be brought into view by scrolling the graph column sideways.
@@ -362,7 +444,27 @@ pub fn graph_canvas(
                             _ => None,
                         };
                         if let Some((x, y0, y1)) = seg {
-                            paint_dashed_vertical(window, x, y0, y1, color);
+                            let draw = |window: &mut Window, top: f32, bottom: f32| {
+                                paint_dashed_line(
+                                    window,
+                                    point(px(x), px(top)),
+                                    point(px(x), px(bottom)),
+                                    color,
+                                );
+                            };
+                            if node == GraphNode::Wip && edge.from_lane == node_lane {
+                                // Shared-HEAD passes cross this row, but never the
+                                // hollow interior. No background fill is needed.
+                                let r = wip_node_radius() + theme::scaled(1.0);
+                                if y0 < mid_y - r {
+                                    draw(window, y0, y1.min(mid_y - r));
+                                }
+                                if y1 > mid_y + r {
+                                    draw(window, y0.max(mid_y + r), y1);
+                                }
+                            } else {
+                                draw(window, y0, y1);
+                            }
                             continue;
                         }
                     }
@@ -421,7 +523,10 @@ pub fn graph_canvas(
                 // connector already runs the label up to the lane band's left edge,
                 // and the band itself carries the eye across to the avatar node — an
                 // extra in-graph line just adds noise.
-                if has_badges && scroll_x < 0.5 && pad_l <= 0.5 {
+                if has_badges
+                    && node != GraphNode::Hidden
+                    && (node == GraphNode::Wip || (scroll_x < 0.5 && pad_l <= 0.5))
+                {
                     let x_node = lane_x(node_lane);
                     // Draw from the left edge of the graph area (ox) to the node.
                     // If the node is in lane 0 the line has zero length; only draw
@@ -432,17 +537,29 @@ pub fn graph_canvas(
                         } else {
                             lane_color(node_color)
                         };
-                        let mut builder = PathBuilder::stroke(theme::scaled_px(1.0));
-                        builder.move_to(point(px(ox), px(mid_y)));
-                        builder.line_to(point(px(x_node), px(mid_y)));
-                        if let Ok(path) = builder.build() {
-                            window.paint_path(path, color);
+                        if node == GraphNode::Wip {
+                            paint_dashed_line(
+                                window,
+                                point(px(ox), px(mid_y)),
+                                point(
+                                    px(x_node - wip_node_radius() - theme::scaled(1.0)),
+                                    px(mid_y),
+                                ),
+                                color,
+                            );
+                        } else {
+                            let mut builder = PathBuilder::stroke(theme::scaled_px(1.0));
+                            builder.move_to(point(px(ox), px(mid_y)));
+                            builder.line_to(point(px(x_node), px(mid_y)));
+                            if let Ok(path) = builder.build() {
+                                window.paint_path(path, color);
+                            }
                         }
                     }
                 }
 
                 // ── Draw node ● (mask clips it at the column edges) ──
-                {
+                if node != GraphNode::Hidden {
                     let cx_abs = lane_x(node_lane);
                     let color = if is_stash_lane(node_lane) {
                         stash_color
@@ -450,103 +567,43 @@ pub fn graph_canvas(
                         lane_color(node_color)
                     };
 
-                    // W2-GRAPH: HEAD node gets a larger radius + outer ring.
-                    // W2-GRAPH: merge node gets a double-circle (filled inner + stroked outer).
-                    // W28: node radii scale with zoom so the ● keeps its size ratio
-                    // to the (scaled) lane pitch and row height. `node_radius()` is
-                    // the same helper the unit tests assert against.
-                    let base_r = node_radius();
-                    let head_r = base_r * 1.5; // 1.5× radius for HEAD
-
-                    const SEGMENTS: usize = 12;
-
-                    if is_head {
-                        // HEAD: large filled circle + outer ring (same colour, slightly transparent).
-                        // Outer ring (stroke).
-                        let ring_r = head_r + theme::scaled(1.5);
-                        let mut rb = PathBuilder::stroke(theme::scaled_px(1.2));
-                        for i in 0..=SEGMENTS {
-                            let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
-                            let px_val = cx_abs + ring_r * angle.cos();
-                            let py_val = mid_y + ring_r * angle.sin();
-                            if i == 0 {
-                                rb.move_to(point(px(px_val), px(py_val)));
-                            } else {
-                                rb.line_to(point(px(px_val), px(py_val)));
-                            }
-                        }
-                        rb.close();
-                        if let Ok(path) = rb.build() {
-                            window.paint_path(path, color);
-                        }
-                        // Filled inner circle.
-                        let mut fb = PathBuilder::fill();
-                        for i in 0..=SEGMENTS {
-                            let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
-                            let px_val = cx_abs + head_r * angle.cos();
-                            let py_val = mid_y + head_r * angle.sin();
-                            if i == 0 {
-                                fb.move_to(point(px(px_val), px(py_val)));
-                            } else {
-                                fb.line_to(point(px(px_val), px(py_val)));
-                            }
-                        }
-                        fb.close();
-                        if let Ok(path) = fb.build() {
-                            window.paint_path(path, color);
-                        }
-                    } else if is_merge {
-                        // Merge: double circle — stroked outer ring + stroked inner circle.
-                        // Outer ring.
-                        let outer_r = base_r + theme::scaled(2.5);
-                        let mut rb = PathBuilder::stroke(theme::scaled_px(1.2));
-                        for i in 0..=SEGMENTS {
-                            let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
-                            let px_val = cx_abs + outer_r * angle.cos();
-                            let py_val = mid_y + outer_r * angle.sin();
-                            if i == 0 {
-                                rb.move_to(point(px(px_val), px(py_val)));
-                            } else {
-                                rb.line_to(point(px(px_val), px(py_val)));
-                            }
-                        }
-                        rb.close();
-                        if let Ok(path) = rb.build() {
-                            window.paint_path(path, color);
-                        }
-                        // Filled inner circle (standard size).
-                        let mut fb = PathBuilder::fill();
-                        for i in 0..=SEGMENTS {
-                            let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
-                            let px_val = cx_abs + base_r * angle.cos();
-                            let py_val = mid_y + base_r * angle.sin();
-                            if i == 0 {
-                                fb.move_to(point(px(px_val), px(py_val)));
-                            } else {
-                                fb.line_to(point(px(px_val), px(py_val)));
-                            }
-                        }
-                        fb.close();
-                        if let Ok(path) = fb.build() {
-                            window.paint_path(path, color);
-                        }
+                    let radius = if matches!(node, GraphNode::Commit { is_head: true, .. }) {
+                        node_radius() * 1.5
+                    } else if node == GraphNode::Wip {
+                        wip_node_radius()
                     } else {
-                        // Normal node: filled circle (existing behaviour).
-                        let mut builder = PathBuilder::fill();
-                        for i in 0..=SEGMENTS {
-                            let angle = (i as f32) * 2.0 * std::f32::consts::PI / (SEGMENTS as f32);
-                            let px_val = cx_abs + base_r * angle.cos();
-                            let py_val = mid_y + base_r * angle.sin();
-                            if i == 0 {
-                                builder.move_to(point(px(px_val), px(py_val)));
-                            } else {
-                                builder.line_to(point(px(px_val), px(py_val)));
+                        node_radius()
+                    };
+                    let ring = match node {
+                        GraphNode::Commit { is_head: true, .. } => Some(head_ring_radius()),
+                        GraphNode::Commit { is_merge: true, .. } => {
+                            Some(radius + theme::scaled(2.5))
+                        }
+                        _ => None,
+                    };
+                    if let Some(ring) = ring {
+                        paint_circle(window, cx_abs, mid_y, ring, color, Some(1.2));
+                    }
+                    let stroke = (node == GraphNode::Wip).then_some(2.0);
+                    let painted = paint_circle(window, cx_abs, mid_y, radius, color, stroke);
+                    #[cfg(not(feature = "gui-e2e"))]
+                    let _ = painted;
+                    #[cfg(feature = "gui-e2e")]
+                    if painted {
+                        PAINT_TRACE.with(|traces| {
+                            if let Some(trace) = traces
+                                .borrow_mut()
+                                .get_mut(&window.window_handle().window_id())
+                            {
+                                trace.0.push(PaintedGraphNode {
+                                    bounds,
+                                    center: point(px(cx_abs), px(mid_y)),
+                                    radius: ring.unwrap_or(radius),
+                                    hollow: stroke.is_some(),
+                                    color,
+                                });
                             }
-                        }
-                        builder.close();
-                        if let Ok(path) = builder.build() {
-                            window.paint_path(path, color);
-                        }
+                        });
                     }
                 }
             }); // with_content_mask
@@ -581,6 +638,23 @@ pub fn node_center_y(oy: f32, row_h: f32) -> f32 {
 #[inline]
 pub fn node_radius() -> f32 {
     theme::scaled(NODE_R)
+}
+
+/// Diameter of the visible avatar disc in both graph surfaces.
+pub fn avatar_node_diameter() -> f32 {
+    theme::scaled(18.0)
+}
+
+fn head_ring_radius() -> f32 {
+    node_radius() * 1.5 + theme::scaled(1.5)
+}
+
+fn wip_node_radius() -> f32 {
+    if theme::graph_lane_compact() {
+        avatar_node_diameter() / 2.0
+    } else {
+        head_ring_radius()
+    }
 }
 
 // ──────────────────────────────────────────────────────────────

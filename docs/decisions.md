@@ -15,6 +15,7 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-09-23 | 共有 context-menu renderer が表示グループ間の separator を所有し、Worktree の削除群を末尾に置く | #454 Phase 3 の最小 slice。既存 `MenuGroup` の無題グループも区切り、空・Hidden-only 群には線や高さを割り当てない。高さ計算は実際の見出しと境界に合わせる。Editor の既存 Danger 末尾と、破壊的項目がない Tag の一群は維持する。操作・確認経路・文言は変えず、submenu は対象外（[ADR-0020](adr/0020-commit-context-menu.md)）。 |
 | 2026-09-23 | Worktree の lock reason は入力と実行承認を別 phase にし、auto-lock は #772 に分離する | #372 item2。`ActiveModal::WorktreeLockReason` の実 `InputState` から確認時の値を取り、既存 `LockWorktree` plan に理由を固定して最終確認する。入力中の Enter は計画への遷移だけを行い、破棄される input から root へ focus を戻して同じ Enter の実行への伝播を止める。Git の既存 trim／空理由規則は変更しない。item3 は Child 所有・render 非依存の終了観測・所有 token と admission／recording の統合を要するため、承認済み設計を #772 に移管する。 |
 | 2026-09-23 | Abort 確認の plan modal は accepted reload で閉じ、開く経路は root focus を取る | 既存の accepted reload sweep に ConflictAbort を揃え、確認内容を自動で差し替えず再度開き直す。Result の Edit→Preview で focus 対象が描画から外れると Esc が dispatch path に届かないため、modal を開く経路が既存 cancel / confirm と同じ root focus を取る（#755、[ADR-0093](adr/0093-active-modal-enum.md) / [ADR-0197](adr/0197-session-owned-ui-state.md)）。 |
 | 2026-09-23 | modal の入力が非描画化される遷移は、その入力が保持する focus だけを root に戻す | #755 follow-up。Remote Browse の Connect→Browse と PR Fields の Cancel/Apply 後に Esc が届かないことを Tier A で修正前に実測した。既存の window-bearing input sync が非描画化・破棄の境界で root focus を回収する。別の modal が既に取得した focus は奪わず、接続失敗・superseded completion では入力 focus を維持する。Push/Pull の背後で描画されたままの Commit Panel 入力はこの不具合と区別し、変更しない。 |

@@ -24,6 +24,7 @@ pub const MENU_MARGIN: f32 = 8.0;
 pub const MENU_ROW_H: f32 = 24.0;
 pub const MENU_HEADER_H: f32 = 30.0;
 pub const MENU_GROUP_H: f32 = 18.0;
+const MENU_SEPARATOR_H: f32 = 9.0;
 
 /// Render a positioned context-menu overlay from a generic group list.
 ///
@@ -57,18 +58,25 @@ where
         .flat_map(|group| group.items.iter())
         .filter(|item| item.state != ItemState::Hidden)
         .count() as f32;
-    let visible_groups = groups
-        .iter()
-        .filter(|group| {
-            group
-                .items
-                .iter()
-                .any(|item| item.state != ItemState::Hidden)
-        })
-        .count() as f32;
+    let mut visible_groups = 0_usize;
+    let mut titled_groups = 0_usize;
+    for group in &groups {
+        if group
+            .items
+            .iter()
+            .any(|item| item.state != ItemState::Hidden)
+        {
+            visible_groups += 1;
+            titled_groups += usize::from(group.title.is_some());
+        }
+    }
 
-    // Estimated unscaled height; clamping (zoom-aware) is the shared helper.
-    let menu_h = MENU_HEADER_H + visible_items * MENU_ROW_H + visible_groups * MENU_GROUP_H + 16.0;
+    // Include only drawn headings and boundaries, including untitled groups.
+    let menu_h = MENU_HEADER_H
+        + visible_items * MENU_ROW_H
+        + titled_groups as f32 * MENU_GROUP_H
+        + visible_groups.saturating_sub(1) as f32 * MENU_SEPARATOR_H
+        + 16.0;
     let clamped = kagi_ui_core::theme::clamp_menu_pos(position, menu_w, menu_h, viewport);
     let (x, y) = (f32::from(clamped.x), f32::from(clamped.y));
     let viewport_h = f32::from(viewport.height);
@@ -120,6 +128,7 @@ where
                 .child(header),
         );
 
+    let mut previous_group = false;
     for (group_ix, group) in groups.into_iter().enumerate() {
         if !group
             .items
@@ -128,6 +137,23 @@ where
         {
             continue;
         }
+        if previous_group {
+            menu = menu.child(
+                div()
+                    .h(theme::scaled_px(MENU_SEPARATOR_H))
+                    .flex_shrink_0()
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .child(
+                        div()
+                            .w_full()
+                            .h(theme::scaled_px(1.0))
+                            .bg(rgb(theme().selected)),
+                    ),
+            );
+        }
+        previous_group = true;
         if let Some(title) = group.title {
             let title_color = if title == danger_title {
                 theme().color_warning

@@ -128,6 +128,16 @@ The current suite covers:
   its controls outside the window.
   App-level tests in `app_unobservable_release_test` additionally reject live writers,
   mismatches, failed transports, unknown families, and failed audit persistence.
+- conflict Continue cache (`KAGI_GUI_E2E_ONLY=conflict_continue_cache`,
+  `tests/recovery/conflict_continue_cache.rs`): real Result InputState changes
+  cover omitted final LF, empty text versus a blank line, marker addition/removal,
+  undo/redo and side selection, with an unchanged repository fingerprint.
+  An unchanged parent repaint must not add an undo entry. The #497 temporary
+  counter experiment instrumented both derived and fresh marker scans: each of
+  five input changes scanned one file, then twenty unchanged native renders
+  scanned zero. The counter was removed after acceptance; the behavioral
+  scenario remains. Pair with `KAGI_GUI_E2E_ONLY=conflict_` for existing safety
+  and ownership coverage; Save/Continue still perform fresh validation.
 - conflict refusal reasons (`KAGI_GUI_E2E_ONLY=conflict_save_boundary`,
   `tests/recovery/conflict_refusal.rs`): Save with remaining markers and Abort
   after an external staged resolution show the specific EN/JA reason in the

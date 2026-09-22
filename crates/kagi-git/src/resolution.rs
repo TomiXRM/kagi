@@ -76,6 +76,8 @@ struct FileResolution {
     /// The current Result lines (the editable draft).  `None` until a choice or
     /// manual edit produces a resolution.
     result: Option<Vec<ResolvedLine>>,
+    /// Derived from this exact Result revision; not persisted or used by safety gates.
+    marker_residue: bool,
     /// Undo stack: prior `result` states (most recent last).
     undo: Vec<Option<Vec<ResolvedLine>>>,
     /// Redo stack: states popped by undo (most recent last).
@@ -93,6 +95,7 @@ impl FileResolution {
             incoming_raw: None,
             raw_result: None,
             result: None,
+            marker_residue: false,
             undo: Vec::new(),
             redo: Vec::new(),
         }
@@ -103,6 +106,17 @@ impl FileResolution {
     fn checkpoint(&mut self) {
         self.undo.push(self.result.clone());
         self.redo.clear();
+    }
+
+    /// Publish a Result edit and its presentation verdict together. Undo/redo
+    /// also pass here; unrelated files never need to be scanned again.
+    fn replace_result(&mut self, result: Option<Vec<ResolvedLine>>, marker_count: &mut usize) {
+        let residue = result
+            .as_ref()
+            .is_some_and(|lines| super::checklist::text_has_conflict_marker(&lines_to_text(lines)));
+        *marker_count = *marker_count - usize::from(self.marker_residue) + usize::from(residue);
+        self.result = result;
+        self.marker_residue = residue;
     }
 }
 
@@ -116,6 +130,8 @@ pub struct ResolutionBuffer {
     repo_path: PathBuf,
     /// Per-file resolutions, ordered by path for deterministic serialization.
     files: BTreeMap<PathBuf, FileResolution>,
+    /// Presentation-only aggregate, updated at each Result replacement.
+    marker_residue_count: usize,
     /// Per-file **hunk-level** editing state for the Conflict Editor (W32).  In
     /// memory only (rebuilt from the materialization on demand): the persisted
     /// artifact is the assembled `result` in [`FileResolution`].  A file appears
@@ -135,6 +151,7 @@ impl ResolutionBuffer {
         ResolutionBuffer {
             repo_path: repo_path.to_path_buf(),
             files: BTreeMap::new(),
+            marker_residue_count: 0,
             hunks: BTreeMap::new(),
         }
     }
@@ -214,6 +231,9 @@ impl ResolutionBuffer {
                 if let Some(s) = saved.files.get(path) {
                     if s.result.is_some() {
                         fr.result = s.result.clone();
+                        // Carry the already-validated autosave snapshot, not a new edit.
+                        fr.marker_residue = s.marker_residue;
+                        base.marker_residue_count += usize::from(fr.marker_residue);
                     }
                     if s.raw_result.is_some() {
                         fr.raw_result = s.raw_result;
@@ -274,7 +294,7 @@ impl ResolutionBuffer {
             };
             fr.checkpoint();
             fr.raw_result = Some(raw);
-            fr.result = None;
+            fr.replace_result(None, &mut self.marker_residue_count);
             return Ok(());
         }
 
@@ -307,7 +327,7 @@ impl ResolutionBuffer {
         };
 
         fr.checkpoint();
-        fr.result = Some(lines);
+        fr.replace_result(Some(lines), &mut self.marker_residue_count);
         Ok(())
     }
 
@@ -320,7 +340,7 @@ impl ResolutionBuffer {
         })?;
         let lines = text_to_lines(text, LineOrigin::Manual);
         fr.checkpoint();
-        fr.result = Some(lines);
+        fr.replace_result(Some(lines), &mut self.marker_residue_count);
         Ok(())
     }
 
@@ -331,7 +351,7 @@ impl ResolutionBuffer {
             Some(fr) => match fr.undo.pop() {
                 Some(prev) => {
                     fr.redo.push(fr.result.clone());
-                    fr.result = prev;
+                    fr.replace_result(prev, &mut self.marker_residue_count);
                     true
                 }
                 None => false,
@@ -347,7 +367,7 @@ impl ResolutionBuffer {
             Some(fr) => match fr.redo.pop() {
                 Some(next) => {
                     fr.undo.push(fr.result.clone());
-                    fr.result = next;
+                    fr.replace_result(next, &mut self.marker_residue_count);
                     true
                 }
                 None => false,
@@ -404,7 +424,7 @@ impl ResolutionBuffer {
         // Commit the re-assembled Result into the file resolution.
         if let Some(fr) = self.files.get_mut(path) {
             fr.checkpoint();
-            fr.result = Some(assembled);
+            fr.replace_result(Some(assembled), &mut self.marker_residue_count);
             true
         } else {
             false
@@ -418,7 +438,7 @@ impl ResolutionBuffer {
         let assembled = model.assemble();
         if let Some(fr) = self.files.get_mut(path) {
             fr.checkpoint();
-            fr.result = Some(assembled);
+            fr.replace_result(Some(assembled), &mut self.marker_residue_count);
             true
         } else {
             false
@@ -515,6 +535,16 @@ impl ResolutionBuffer {
 // ────────────────────────────────────────────────────────────
 
 impl ResolutionBuffer {
+    /// Fast presentation verdict; Save/Continue must still use fresh validation.
+    pub fn has_cached_marker_residue(&self) -> bool {
+        self.marker_residue_count != 0
+    }
+
+    /// Cached verdict for a file's current Result; unknown/unresolved is false.
+    pub fn cached_marker_residue(&self, path: &Path) -> bool {
+        self.files.get(path).is_some_and(|file| file.marker_residue)
+    }
+
     /// Whether `path` has a Result draft (a side was chosen or text edited).
     /// A raw (binary / symlink / gitlink) file counts as resolved once a side is
     /// chosen via [`Self::apply_choice`] (#297).
@@ -1073,26 +1103,31 @@ fn parse_buffer_json(repo_path: &Path, json: &str) -> Option<ResolutionBuffer> {
     let saved: SavedBuffer = serde_json::from_str(json).ok()?;
     let mut buffer = ResolutionBuffer::new(repo_path);
     for file in saved.files {
-        if let Some((path, resolution)) = parse_file_object(file) {
-            buffer.files.insert(path, resolution);
+        if let Some((path, resolution)) = parse_file_object(file, &mut buffer.marker_residue_count)
+        {
+            if let Some(previous) = buffer.files.insert(path, resolution) {
+                buffer.marker_residue_count -= usize::from(previous.marker_residue);
+            }
         }
     }
     Some(buffer)
 }
 
-fn parse_file_object(value: Value) -> Option<(PathBuf, FileResolution)> {
+fn parse_file_object(value: Value, marker_count: &mut usize) -> Option<(PathBuf, FileResolution)> {
     let Value::Object(mut fields) = value else {
         return None;
     };
     let path = PathBuf::from(json_string(fields.remove("path"))?);
-    let resolution = FileResolution {
+    let result = parse_result_array(fields.remove("result"));
+    let mut resolution = FileResolution {
         binary: fields
             .get("binary")
             .and_then(Value::as_bool)
             .unwrap_or(false),
         current_text: json_string(fields.remove("current")),
         incoming_text: json_string(fields.remove("incoming")),
-        result: parse_result_array(fields.remove("result")),
+        result: None,
+        marker_residue: false,
         raw_result: parse_raw_result(fields.remove("raw_result")),
         raw: false,
         current_raw: None,
@@ -1100,6 +1135,7 @@ fn parse_file_object(value: Value) -> Option<(PathBuf, FileResolution)> {
         undo: Vec::new(),
         redo: Vec::new(),
     };
+    resolution.replace_result(result, marker_count);
     Some((path, resolution))
 }
 
@@ -1164,6 +1200,7 @@ mod tests {
             incoming_raw: None,
             raw_result: None,
             result: None,
+            marker_residue: false,
             undo: Vec::new(),
             redo: Vec::new(),
         };
@@ -1261,6 +1298,7 @@ mod tests {
             incoming_raw: None,
             raw_result: None,
             result: None,
+            marker_residue: false,
             undo: Vec::new(),
             redo: Vec::new(),
         };
@@ -1304,6 +1342,7 @@ mod tests {
             incoming_raw: None,
             raw_result: None,
             result: None,
+            marker_residue: false,
             undo: Vec::new(),
             redo: Vec::new(),
         };

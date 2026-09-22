@@ -26,3 +26,19 @@
 - live index 由来の raw metadata は再検出し、保存済みの選択だけを重ねる。
   undo/redo・hunk model は保存しない。保存先・debounce・書き込み方式、
   Continue/Abort の動作、oplog はこの移行では変更しない。
+
+## 描画用 marker 派生状態（#497）
+
+- `FileResolution` の private Result 差替え境界で、その内容の marker 判定と
+  `ResolutionBuffer` の集約件数を同時更新する。選択・手編集・hunk 操作・undo/redo
+  は同じ境界を通り、変更していない file は再走査しない。別の数値 revision や
+  repository の `ConflictRevision` を key にせず、Result と派生状態を一緒に所有する。
+- load は判定を再構築し、live index への autosave overlay は該当する draft と
+  検証済みの派生状態だけを運ぶ。派生値は JSON に保存しない。
+- render は cached marker verdict を読み、dashboard の Continue と理由表示は
+  同じ blocker 評価を共有する。未解決・binary・deletion の優先順位は変えない。
+- Edit 中の同期は hunk の元データではなく現在の Result と比較する。
+  `text_to_lines` と同じ末尾改行の扱いで比較し、同じ手編集を再描画ごとに
+  undo stack へ積み直さない。空テキストと空行は区別し、Preview の組立表示は維持する。
+- cache は表示専用。`files_with_marker_residue` と Save/Continue の実データに対する
+  fresh validation は維持し、cache を書き込みの安全ゲートにしない。

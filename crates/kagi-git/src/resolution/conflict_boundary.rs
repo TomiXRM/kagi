@@ -59,7 +59,10 @@ impl ResolutionBuffer {
                         path.display()
                     ))
                 })?;
-                file.result = Some(text_to_lines(text, LineOrigin::Manual));
+                file.replace_result(
+                    Some(text_to_lines(text, LineOrigin::Manual)),
+                    &mut buffer.marker_residue_count,
+                );
             }
             kagi_domain::conflict_family::ConflictDraft::Raw { oid, mode } => {
                 file.raw = true;

@@ -104,7 +104,8 @@ git merge-base --is-ancestor vX.Y.Z HEAD && echo "tag is in main"
   locally + remotely (`git tag -d vX.Y.Z; git push origin :refs/tags/vX.Y.Z`),
   delete the draft release, then re-tag.
 - **The lint CI job is advisory** (`continue-on-error`) — fmt must be clean to
-  keep it green, but clippy warnings won't block. The **macOS test job is
-  blocking**.
+  keep it green, but clippy warnings won't block. The **macOS test job and the
+  Windows build job are blocking** (`blocking-ci.needs`; Windows became blocking
+  in #728 because the job-object stop proof only runs there).
 - A failed/duplicate artifact upload silently overwrites on same-name collisions;
   the per-target arch in artifact names prevents that (fixed historically).

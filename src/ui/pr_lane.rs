@@ -102,7 +102,7 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
     };
     // The commit list draws the node as the author's avatar in compact-lane
     // mode; the same setting means the same thing here.
-    let avatars = theme::graph_lane_compact().then(|| app.avatars.images.clone());
+    let avatars = theme::graph_lane_compact().then_some(app.avatars.images.as_ref());
     let lane_body = window.map(|(lo, hi)| {
         let mut body = div()
             .id("pr-lane-body")
@@ -124,7 +124,7 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
                     width: rail,
                     scroll,
                     columns: &columns,
-                    avatars: avatars.as_ref(),
+                    avatars,
                 },
                 cx,
             ));
@@ -142,7 +142,7 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
                             width: rail,
                             scroll,
                             columns: &columns,
-                            avatars: avatars.as_ref(),
+                            avatars,
                         },
                         cx,
                     ));

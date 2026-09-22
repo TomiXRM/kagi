@@ -450,20 +450,16 @@ pub(super) fn render_feed_item(
             )
         }
         FeedItem::Entry(i) => {
-            // One `Rc` bump for the entries, one `Arc`-map clone for the
-            // avatars; the entry itself is borrowed out of the `Rc`.
+            // Retain the entries for this row; avatars are borrowed from the host.
             let entries = app
                 .pr_mode()
                 .and_then(|m| m.tabs.get(tab_ix))
                 .map(|t| t.feed_entries.clone());
             match entries.as_ref().and_then(|e| e.get(i)) {
-                Some(entry) => {
-                    let avatars = app.avatars.images.clone();
-                    block(super::e2e::measure_control(
-                        format!("pr-feed-entry-{i}"),
-                        render_entry(number, i, entry, &avatars, cx),
-                    ))
-                }
+                Some(entry) => block(super::e2e::measure_control(
+                    format!("pr-feed-entry-{i}"),
+                    render_entry(number, i, entry, &app.avatars.images, cx),
+                )),
                 None => div().into_any_element(),
             }
         }

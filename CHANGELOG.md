@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
+- Worktree のロック理由を自由入力できるようにしました。入力後に計画を確認してからロックし、日本語・引用符を含む理由や理由なしのロックに対応します。入力画面や計画画面の Cancel / Esc ではロックしません。terminal の自動ロックは別 Issue #772 で追跡します。（#372）
 - WIP 行に「次のコミットが載る点」を追加しました。HEAD の lane 色で中空 ring と badge→ring→HEAD の点線を描き、同じ HEAD の複数 WIP は一本の縦線を共有します。ring は実 commit の表示径に揃えた 2px stroke で、hover／選択でも塗りつぶしません。detached HEAD にも対応し、未ロード／unborn の HEAD に架空の点は描きません。（#767、ADR-0174）
 - Issues / PRs の一覧に共通フィルターを追加しました。Open/Closed/All、複数ラベル、author、タイトル部分一致を組み合わせ、PR は draft と取得済み checks でも絞れます。updated / created / number / comments の昇降順、適用後の件数、既存の collection との AND に対応し、設定はタブ内だけで保持します。Closed は実際の closed 一覧を取得し、PR の merged も含みます。（#753、ADR-0198 / ADR-0200）
 - PR の Closed/All は専用の読み取り結果として保持し、Graph の open PR 一覧・branch badge・inspector chip・定期更新には混入させません。PR mode を離れると state は Open に戻ります。closed PR は actionable な bucket から外し、Issues は Recent を既定とし、絞り込み中の追加ページ取得は明示操作にしました。（#753 review follow-up）

@@ -256,6 +256,8 @@ pub enum Msg {
     InWorktree,
     /// Default lock reason kagi records for a manual lock (issue #340).
     WorktreeLockDefaultReason,
+    WorktreeLockReason,
+    WorktreeLockReview,
     BusyMerge,
     MergeDestinationChanged,
 
@@ -1232,6 +1234,10 @@ impl Msg {
             (Ja, InWorktree) => "対象 worktree",
             (En, WorktreeLockDefaultReason) => "locked in kagi",
             (Ja, WorktreeLockDefaultReason) => "locked in kagi",
+            (En, WorktreeLockReason) => "Lock reason (optional)",
+            (Ja, WorktreeLockReason) => "ロック理由（任意）",
+            (En, WorktreeLockReview) => "Review lock…",
+            (Ja, WorktreeLockReview) => "ロック内容を確認…",
             (En, BusyMerge) => "merge in progress…",
             (Ja, BusyMerge) => "merge 実行中…",
             (En, MergeDestinationChanged) => "The destination worktree or branch changed. Refresh and try the merge again.",

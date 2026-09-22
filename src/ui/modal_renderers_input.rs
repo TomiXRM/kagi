@@ -10,7 +10,9 @@ use super::modal_renderers::{
 };
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_MD};
 use super::theme::theme as current_theme;
-use gpui::{div, prelude::*, rgb, Entity, SharedString, Window};
+use gpui::{
+    div, prelude::*, rgb, Context, Entity, FocusHandle, KeyDownEvent, SharedString, Window,
+};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::Sizable as _;
@@ -140,4 +142,105 @@ pub(crate) fn render_input_plan_modal(
     let card = card.child(body).child(div().flex_shrink_0().child(buttons));
 
     modal_overlay(card).into_any_element()
+}
+
+/// Input-only lock step; the existing plan card owns the final confirmation.
+pub(crate) fn render_worktree_lock_reason_modal(
+    modal: super::modals::worktree::WorktreeLockReasonModal,
+    focus_handle: Option<FocusHandle>,
+    cx: &mut Context<super::KagiApp>,
+) -> gpui::AnyElement {
+    use super::e2e::measure_control;
+    let cancel = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
+        this.clear_worktree_lock_reason_modal();
+        if let Some(focus) = &this.root_focus {
+            window.focus(focus, cx);
+        }
+        cx.notify();
+    });
+    let review = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
+        this.confirm_worktree_lock_reason(cx);
+        if this.lock_worktree_modal().is_some() {
+            if let Some(focus) = &this.root_focus {
+                window.focus(focus, cx);
+            }
+        }
+        cx.notify();
+    });
+    let mut body =
+        modal_scroll_body()
+            .child(div().flex_shrink_0().child(SharedString::from(modal.name)))
+            .child(div().flex_shrink_0().child(Msg::WorktreeLockReason.t()))
+            .children(modal.input_state.as_ref().map(|input| {
+                measure_control("worktree-lock-reason-input", Input::new(input).small())
+            }));
+    if let Some(error) = modal.error {
+        body = body.child(
+            div()
+                .flex_shrink_0()
+                .text_color(rgb(current_theme().color_blocker))
+                .child(error),
+        );
+    }
+    let buttons = div()
+        .flex_shrink_0()
+        .flex()
+        .gap_2()
+        .justify_end()
+        .child(measure_control(
+            "worktree-lock-reason-cancel",
+            Button::new("worktree-lock-reason-cancel")
+                .label(Msg::PlanCancel.t())
+                .ghost()
+                .small()
+                .on_click(cancel),
+        ))
+        .child(measure_control(
+            "worktree-lock-reason-review",
+            Button::new("worktree-lock-reason-review")
+                .label(Msg::WorktreeLockReview.t())
+                .primary()
+                .small()
+                .on_click(review),
+        ));
+    let card = modal_card(MODAL_W_MD)
+        .child(div().flex_shrink_0().child(render_modal_title_row(
+            SharedString::from(Msg::MenuLockWorktree.t()),
+            Some((
+                gpui_component::IconName::WindowRestore.into(),
+                current_theme().color_warning,
+            )),
+        )))
+        .child(body)
+        .child(buttons);
+    let keys = cx.listener(|this, event: &KeyDownEvent, window, cx| {
+        let key = &event.keystroke;
+        if key.key == "escape" {
+            this.clear_worktree_lock_reason_modal();
+        } else if key.key == "enter"
+            && !key.modifiers.platform
+            && !key.modifiers.control
+            && !key.modifiers.alt
+            && !key.modifiers.shift
+        {
+            this.confirm_worktree_lock_reason(cx);
+        } else {
+            return;
+        }
+        // Replacing the input drops its focus handle. Move focus before the
+        // next key, and never let this Enter also execute the new plan.
+        if this.worktree_lock_reason_modal().is_none() {
+            if let Some(focus) = &this.root_focus {
+                window.focus(focus, cx);
+            }
+        }
+        cx.stop_propagation();
+        cx.notify();
+    });
+    let wrapper = div().on_key_down(keys);
+    let wrapper = match focus_handle {
+        Some(focus) => wrapper.track_focus(&focus),
+        None => wrapper,
+    };
+    modal_overlay(wrapper.child(card)).into_any_element()
 }

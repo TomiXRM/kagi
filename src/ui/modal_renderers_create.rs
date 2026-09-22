@@ -11,6 +11,7 @@ use super::modal_renderers::{
     modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box,
 };
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_LG, MODAL_W_MD};
+use super::modals::worktree::CreateWorktreeModal;
 use super::modals::*;
 use super::theme::theme as current_theme;
 use super::KagiApp;

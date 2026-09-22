@@ -387,6 +387,15 @@ impl KagiApp {
                 cx,
             ))
         })
+        .when_some(self.worktree_lock_reason_modal().cloned(), |el, modal| {
+            el.child(
+                super::modal_renderers_input::render_worktree_lock_reason_modal(
+                    modal,
+                    modal_focus.clone(),
+                    cx,
+                ),
+            )
+        })
         .when_some(self.lock_worktree_modal().cloned(), |el, modal| {
             el.child(render_lock_worktree_modal(
                 modal,

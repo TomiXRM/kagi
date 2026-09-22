@@ -29,12 +29,23 @@ gh exit 0 + `mergedAt: null` は queue 投入済みという既知の `Success` 
 この場合は local 削除、reconcile park、transport hold のいずれも行わない。
 再読不能の `Unknown` では local は未着手であり、reconcile 自体も書き込まない。
 
+gh exit 0 でも `mergedAt` の再読が失敗した場合は `Success` ではなく `Unknown` とする。
+exit 0 だけでは merge 完了と queue 投入を区別できず、local 削除の可否も決められないため、
+queue 検出には server の再読が必要である。後から凍結した repository に対する
+`PullRequest { Merged }` の reconcile read で merge 成立を確認し、未着手 local を
+残したまま acknowledge できる（same-repository の remote 削除要求があれば、それも照合する）。
+照合不能な空の expectation を作らないよう、`base_repo` は `delete_branch` の有無に
+関係なく merge 実行前の必須条件とし、空なら gh を呼ばずに拒否する。
+
 後段失敗は merge 成功を取り消さない。単一 `pr-merge` receipt を boundary で finalize
 し、成功時は `local branch deleted: <name>@<oid>` と復旧 ref、失敗時は
 `local branch not deleted: <reason>` を記録する。結果は
 `PrMergeLocalOutcome::{Deleted, Absent, Kept, NotDeleted}` のまま UI に渡す。
 `PrMergeLocalReason` は `PlanNote` を保持し、既知の拒否理由も EN/JA で描画する。
 routine な `Absent` は receipt / footer だけに残し、acknowledgement notice を出さない。
+gh エラー時も承認時の tip が `None` なら local 結果は `Absent` とし、transport 由来の
+`Partial` と gh エラーの記録は維持する。gh 成功時の不在再検証は省かず、承認後に
+現れた同名 branch は引き続き削除しない。
 後段で初めて分かった削除失敗は `Partial` と既存の再 merge 抑止を維持する。
 元 branch の reflog は既存 family と同様に削除する。復旧保証は reflog ではなく、
 ADR-0184 の backup ref と、その ref を保持する oplog receipt である。

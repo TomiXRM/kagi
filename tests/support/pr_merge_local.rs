@@ -549,3 +549,44 @@ fn a_failed_fork_merge_transport_never_authorizes_local_cleanup() {
     assert!(after.dirty.contains("Head branch was modified"));
     assert!(entry.backup_refs.is_empty());
 }
+
+#[test]
+fn repository_identity_is_required_with_and_without_local_cleanup() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for delete_branch in [false, true] {
+        let fixture = Fixture::new();
+        let head = fixture.head_branch();
+        let mut pr = kagi_git::github::parse_pr_list(&PR_TEMPLATE.replace("{oid}", &head))
+            .unwrap()
+            .remove(0);
+        pr.base_repo.clear();
+        let plan = kagi_git::Backend::open(&fixture.work)
+            .unwrap()
+            .plan_pr_merge(&pr, MergeMethod::Squash, delete_branch, "main".into())
+            .unwrap();
+        let called = fixture.root.path().join("gh-called");
+        fake_gh(
+            &fixture.bin,
+            &gh_script(
+                &format!("touch '{}'; {MERGE_OK}", called.display()),
+                VIEW_MERGED,
+            ),
+        );
+        let report = merge_pr(
+            &fixture.work,
+            pr.number,
+            MergeMethod::Squash,
+            delete_branch,
+            &head,
+            &plan,
+        );
+        assert!(report.result.is_err());
+        assert!(matches!(only_entry().outcome, OpOutcome::Refused { .. }));
+        assert!(!called.exists(), "an unaddressed merge must never reach gh");
+        assert_eq!(fixture.local_tip().as_deref(), Some(head.as_str()));
+        assert!(report.recording.entry().backup_refs.is_empty());
+    }
+}

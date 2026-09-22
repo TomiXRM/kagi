@@ -280,9 +280,10 @@ fn a_merged_pr_whose_branch_deletion_is_unproven_is_partial() {
     assert!(
         matches!(
             local_branch,
-            Some(kagi_domain::operation::PrMergeLocalOutcome::NotDeleted { .. })
+            Some(kagi_domain::operation::PrMergeLocalOutcome::Absent { name })
+                if name == "feat/x"
         ),
-        "the transport did not authorize cleanup"
+        "the approved absence is unchanged by a transport error"
     );
     let OpOutcome::Partial { after, error } = latest_outcome() else {
         panic!("an unconfirmed branch deletion after a merge must be partial");
@@ -294,6 +295,9 @@ fn a_merged_pr_whose_branch_deletion_is_unproven_is_partial() {
         "{}",
         after.dirty
     );
+    assert!(after.dirty.contains("local branch already absent: feat/x"));
+    assert!(!after.dirty.contains("local branch not deleted"));
+    assert!(report.recording.entry().backup_refs.is_empty());
 }
 
 #[test]

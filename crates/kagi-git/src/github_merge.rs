@@ -477,12 +477,14 @@ fn merge_is_approved(
     );
     approved_request
         && plan.blockers.is_empty()
-        && (!delete_branch || (!base_repo.is_empty() && frozen_local_branch(plan).is_some()))
+        && !base_repo.is_empty()
+        && (!delete_branch || frozen_local_branch(plan).is_some())
 }
 
 /// A merge that was never approved in this shape is not attempted at all.
 fn refused_report(workdir: &Path, plan: &OperationPlan) -> crate::backend::recording::RunReport {
-    let reason = "merge plan has blockers or no frozen local deletion approval";
+    let reason =
+        "merge plan has blockers, no repository identity, or no frozen local deletion approval";
     let entry = crate::oplog::OpLogEntry::new(
         "pr-merge",
         workdir.display().to_string(),
@@ -597,6 +599,17 @@ fn local_half(
         // cleanup, even if the blocker cleared in the meantime: what the user
         // confirmed is what happens.
         return kept(reason.clone());
+    }
+    // A failed transport never starts cleanup. Preserve the approved absence
+    // rather than describing a deletion that was never promised as refused.
+    // Successful transport still rechecks absence for a newly appearing ref.
+    if branch.tip.is_none() && result.is_err() {
+        return LocalHalf {
+            outcome: Some(PrMergeLocalOutcome::Absent {
+                name: branch.name.clone(),
+            }),
+            backup_refs: Vec::new(),
+        };
     }
     if let Err(error) = result {
         return LocalHalf {

@@ -90,9 +90,19 @@ login は既存 `KagiApp::github_login` cache を使う。
 本文 input の Paste は上の決定のまま、複数行を fenced block として selection に
 置換する。title input は単一行なので、同じ clipboard がそこへ落ちると全文が
 title 1 行に潰れ body が空のままになっていた。title への複数行 paste は fence
-せず**分割**する: 1 行目を title、最初の `\n` より後ろを body とする。
+せず**分割**する: 1 行目から導いた title 候補を title、最初の `\n` より後ろを
+body とする。
 
-- CRLF を LF に正規化してから最初の `\n` で分割する。それ以外は byte 単位で
+- title の導出規則は本文から既定 title を導く既存の 1 か所
+  (`title_candidate` / `IssueDraft::effective_title`) をそのまま使う。空行と
+  fence marker 行は「何も名付けない」、`#` / `-` / `>` / `1.` の prefix は剥がす、
+  60 Unicode scalar で打ち切る。手で入力した title は従来どおり cap しない。
+  第二の実装を作らないため、paste 側に別の parser や fallback は置かない。
+- 1 行目が何も名付けないとき(空行 / fence opener)は title input に触れず
+  (selection も保持)、clipboard 全文を body へ渡す。fence が body 側で開いて
+  閉じるので Preview の code/prose が反転せず、submit 時は従来どおり
+  `effective_title` が body から title を導く。
+- CRLF を LF に正規化してから最初の `\n` で分割する。body はそれ以外 byte 単位で
   保持する(trim しない、空行を落とさない、改行を足さない)。全文を fence で
   包まないのは、包むと Preview が全部 code になり #751 で確認したい構文が
   描画されないため。

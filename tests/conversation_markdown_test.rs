@@ -92,6 +92,48 @@ fn a_backtick_in_alt_text_survives_the_padding_pass() {
     );
 }
 
+/// A backslash escapes nothing *inside* a code span (CommonMark), so a
+/// Windows path closes on the backtick that follows it. Skipping that
+/// backtick resolved the close to the next span's opener: the thin space
+/// landed in the prose between the two spans, and the second span — a real
+/// one — was left unpadded (#751).
+#[test]
+fn a_trailing_backslash_keeps_each_code_span_inside_its_own_backticks() {
+    const PAD: char = '\u{2009}';
+    fn inline_code(tree: &Node, found: &mut Vec<String>) {
+        if let Node::InlineCode(code) = tree {
+            found.push(code.value.clone());
+        }
+        for child in tree.children().into_iter().flatten() {
+            inline_code(child, found);
+        }
+    }
+    fn prose(tree: &Node, found: &mut String) {
+        if let Node::Text(text) = tree {
+            found.push_str(&text.value);
+        }
+        for child in tree.children().into_iter().flatten() {
+            prose(child, found);
+        }
+    }
+
+    let (out, _) = prepared(r"`C:\dir\` or `D:\` is the path");
+    let tree = parse(&out);
+    let mut spans = Vec::new();
+    inline_code(&tree, &mut spans);
+    assert_eq!(
+        spans,
+        vec![format!(r"{PAD}C:\dir\{PAD}"), format!(r"{PAD}D:\{PAD}")],
+        "each span must open and close on its own backticks: {out}"
+    );
+    let mut words = String::new();
+    prose(&tree, &mut words);
+    assert_eq!(
+        words, " or  is the path",
+        "padding belongs inside the backticks, never in the author's prose: {out}"
+    );
+}
+
 /// A destination is decoded by the time it is written back, so an
 /// entity-encoded `>` plus image syntax used to close the `<…>` wrapper and
 /// parse a brand-new image — one the renderer would have fetched.
@@ -108,6 +150,63 @@ fn a_decoded_destination_cannot_rebuild_an_image() {
             "x".to_string()
         )]
     );
+}
+
+/// The same decoding, one character further: a `&#10;` destination cannot be
+/// carried by a `<…>` wrapper at all — CommonMark ends the destination at the
+/// line ending — so the address broke apart and the payload after it parsed
+/// as a brand-new image. Percent-encoding keeps the whole address inside one
+/// link on every path an author can reach: inline, alt-less, and a reference
+/// resolved from its definition. `prepared` re-parses and refuses any image
+/// node, which is the contract these surfaces have: nothing to fetch.
+#[test]
+fn a_destination_that_decodes_to_a_newline_cannot_rebuild_an_image() {
+    const ENCODED: &str = "https://e.test/a%0A![y](https://attacker.test/image.png)";
+    let payload = concat!(
+        "https://e.test/a&#10;!&#91;y&#93;",
+        "&#40;https://attacker.test/image.png&#41;"
+    );
+    for (body, label) in [
+        (format!("![x]({payload})"), "x".to_string()),
+        // No alt text: the address is also the label, and a label is the
+        // author's characters — escaped, not encoded, so it still reads as
+        // the address they wrote.
+        (
+            format!("![]({payload})"),
+            "https://e.test/a\n![y](https://attacker.test/image.png)".to_string(),
+        ),
+        (format!("![x][ref]\n\n[ref]: {payload}\n"), "x".to_string()),
+    ] {
+        let (out, links) = prepared(&body);
+        assert_eq!(
+            links,
+            vec![(ENCODED.to_string(), label)],
+            "one link keeps the whole address: {out}"
+        );
+    }
+}
+
+/// Two decoded newlines end the *paragraph*, not just the destination: the
+/// `<…>` wrapper could not carry them, the link fell apart and its tail
+/// parsed as a real image node — the fetch this pipeline exists to prevent.
+/// `prepared` refuses any image, on every path an author can reach.
+#[test]
+fn a_blank_line_inside_a_destination_cannot_rebuild_an_image() {
+    let payload = concat!(
+        "https://e.test/a&#10;&#10;!&#91;y&#93;",
+        "&#40;https://attacker.test/image.png&#41;"
+    );
+    for body in [
+        format!("![x]({payload})"),
+        format!("![]({payload})"),
+        format!("![x][ref]\n\n[ref]: {payload}\n"),
+    ] {
+        let (out, _) = prepared(&body);
+        assert!(
+            out.contains("%0A%0A"),
+            "the address is kept, encoded, not broken: {out}"
+        );
+    }
 }
 
 /// Alt text that is itself an HTML image would re-enter the document as raw

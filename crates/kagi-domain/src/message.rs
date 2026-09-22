@@ -79,21 +79,31 @@ pub fn sanitize_markdown_for_view(src: &str) -> String {
     // text content (a `<details><summary>x</summary>` degrades to "x …").
     let src = strip_html(&src);
     let mut out = String::with_capacity(src.len());
-    let mut in_fence = false;
+    // The fenced block we are inside, tracked by its own marker and run
+    // length — the same [`Fence`] `strip_html` uses. A boolean toggled on
+    // every ``` line calls the inner ```rust of a ````-quoted block a *close*,
+    // and then rewrites the newlines of the program it quotes (#751).
+    let mut fence: Option<Fence> = None;
     // Open inline code span carried across lines (its `\n` becomes a space).
     let mut in_span = false;
     for (i, line) in src.split('\n').enumerate() {
         if i > 0 {
-            out.push(if in_span && !in_fence { ' ' } else { '\n' });
+            out.push(if in_span && fence.is_none() {
+                ' '
+            } else {
+                '\n'
+            });
         }
-        let t = line.trim_start();
-        if t.starts_with("```") || t.starts_with("~~~") {
-            in_fence = !in_fence;
-            in_span = false;
+        if let Some(open) = fence {
+            if open.closed_by(line) {
+                fence = None;
+            }
             out.push_str(line);
             continue;
         }
-        if in_fence {
+        if let Some(open) = Fence::opened_by(line) {
+            fence = Some(open);
+            in_span = false;
             out.push_str(line);
             continue;
         }
@@ -275,6 +285,22 @@ mod markdown_sanitize_tests {
     fn a_longer_fence_keeps_the_shorter_one_inside_it_literal() {
         let s = "````md\n```rust\n// <!-- kept -->\n```\n````\n";
         assert_eq!(sanitize_markdown_for_view(s), s);
+    }
+
+    /// The newline rewrite has to read the same fence the HTML strip does.
+    /// With a boolean toggled on every fence-looking line, the inner
+    /// ```` ```rust ```` closed the block, and the multi-line code span in the
+    /// program it quotes had its newline replaced by a space (#751).
+    #[test]
+    fn a_quoted_fence_keeps_the_newlines_of_the_program_inside_it() {
+        let s = "````md\n```rust\nlet s = `one\ntwo`;\n```\n````\nprose `a\nb` c\n";
+        assert_eq!(
+            sanitize_markdown_for_view(s),
+            "````md\n```rust\nlet s = `one\ntwo`;\n```\n````\nprose `a b` c\n",
+            "only the span in the prose below the block is folded"
+        );
+        let tildes = "~~~~\n~~~\n`one\ntwo`\n~~~\n~~~~\n";
+        assert_eq!(sanitize_markdown_for_view(tildes), tildes);
     }
 
     #[test]

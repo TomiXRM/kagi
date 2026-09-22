@@ -79,6 +79,22 @@ list and the PR home table draw titles and metadata, not Markdown bodies.)
 - `kagi_ui_editor::markdown::prepare_github_markdown` is the one entry point
   those five call sites render from, so the policy cannot hold on the Issues
   side and not the PR side, or on a thread but not its composer's Preview.
+- A destination arrives at the rewrite **decoded** — entities resolved,
+  escapes removed — so it is re-expressed, never echoed. Characters a
+  destination can carry are wrapped in `<…>` and backslash-escaped; control
+  characters, which no destination can carry at all (a `<…>` destination ends
+  at a line ending, and two of them end the paragraph), are percent-encoded.
+  Without that, `![x](https://e.test/a&#10;&#10;![y](…))` broke its own link
+  and its tail re-parsed as a real `Image` node — the fetch this amendment
+  exists to prevent. The alt-less autolink path admits neither whitespace nor
+  a control character and defers to the same writer. The contract is checked
+  on the re-parsed AST for the inline, alt-less and reference paths
+  (`tests/conversation_markdown_test.rs`), not by watching the network.
+- `sanitize_markdown_for_view`'s newline normalisation reads fenced blocks
+  through the same `kagi_domain::message::Fence` tracker `strip_html` uses. A
+  boolean flipped on every fence-looking line called the inner ```` ```rust ````
+  of a ````` ```` `````-quoted block a *close*, and then rewrote the newlines
+  of the program that block quotes.
 
 ## Amendment 2 (#751, 2026-09-22): conversation bodies draw with `calt` off
 

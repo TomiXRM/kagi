@@ -11,6 +11,7 @@
 //! and fetched — by `gpui-component`'s own inline flow. The Editor preview
 //! keeps rendering real images (ADR-0142); it never calls this.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use markdown::mdast::Node;
@@ -142,11 +143,20 @@ fn escape(text: &str) -> String {
 /// The link destination. `url` arrives decoded — entities resolved, escapes
 /// removed — so anything a destination cannot carry literally is wrapped and
 /// escaped: a `>` would otherwise close the wrapper and truncate the address.
+///
+/// A control character is the one thing no destination can carry *at all*:
+/// CommonMark ends a `<…>` destination at a line ending, so wrapping a URL
+/// that a `&#10;` decoded a newline into produced a broken link and handed
+/// the rest of the address back to the parser as markup — enough to rebuild
+/// a real `Image` node, and with it the fetch this module exists to prevent
+/// (#751). Percent-encoding is the representation every URL already has, so
+/// the address survives and the document cannot be reopened.
 fn destination(url: &str) -> String {
+    let url = percent_encode_controls(url);
     let plain =
         !url.contains(|c: char| c.is_whitespace() || matches!(c, '(' | ')' | '<' | '>' | '\\'));
     if plain {
-        return url.to_string();
+        return url.into_owned();
     }
     let mut out = String::with_capacity(url.len() + 2);
     out.push('<');
@@ -160,7 +170,34 @@ fn destination(url: &str) -> String {
     out
 }
 
+/// Percent-encode every C0/C1 control and DEL, by UTF-8 byte. Markdown link
+/// destinations and autolinks both exclude them, so this is what makes an
+/// arbitrary decoded address expressible as one. An address without one —
+/// every ordinary URL — is borrowed, not copied.
+fn percent_encode_controls(url: &str) -> Cow<'_, str> {
+    if !url.contains(char::is_control) {
+        return Cow::Borrowed(url);
+    }
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(url.len());
+    let mut buf = [0u8; 4];
+    for c in url.chars() {
+        if !c.is_control() {
+            out.push(c);
+            continue;
+        }
+        for byte in c.encode_utf8(&mut buf).as_bytes() {
+            out.push('%');
+            out.push(HEX[usize::from(byte >> 4)] as char);
+            out.push(HEX[usize::from(byte & 0x0f)] as char);
+        }
+    }
+    Cow::Owned(out)
+}
+
 /// `<https://…>`: the address as its own link, for an image with no alt text.
+/// An autolink admits neither whitespace nor a control character, so a URL
+/// carrying one is left to [`destination`], which can encode it.
 fn autolink(url: &str) -> Option<String> {
     let (scheme, _) = url.split_once("://")?;
     let valid = !scheme.is_empty()
@@ -168,7 +205,8 @@ fn autolink(url: &str) -> Option<String> {
         && scheme
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'));
-    let printable = !url.contains(|c: char| c.is_whitespace() || c == '<' || c == '>');
+    let printable =
+        !url.contains(|c: char| c.is_whitespace() || c.is_control() || matches!(c, '<' | '>'));
     (valid && printable).then(|| format!("<{url}>"))
 }
 
@@ -263,6 +301,58 @@ mod tests {
                 "https://e.test/a> ![y](https://e.test/other.png)".to_string(),
                 "x".to_string()
             )]
+        );
+    }
+
+    /// A newline is the one character no destination can carry — `<…>` ends
+    /// at a line ending. Wrapping a URL an `&#10;` decoded into produced a
+    /// broken link, and the payload after the newline parsed as a brand-new
+    /// image the renderer would fetch (#751).
+    #[test]
+    fn a_destination_that_decodes_to_a_newline_is_percent_encoded() {
+        let source = concat!(
+            "![x](https://e.test/a&#10;!&#91;y&#93;",
+            "&#40;https://attacker.test/image.png&#41;)"
+        );
+        assert_eq!(
+            links(source),
+            vec![(
+                "https://e.test/a%0A![y](https://attacker.test/image.png)".to_string(),
+                "x".to_string()
+            )],
+            "the whole address survives, encoded, as one link"
+        );
+    }
+
+    /// The alt-less fast path writes an autolink, which admits neither
+    /// whitespace nor a control character, so the same payload with no alt
+    /// text takes the escaping path instead of becoming a broken `<…>`.
+    #[test]
+    fn an_alt_less_destination_with_a_newline_is_not_autolinked() {
+        let found = links(concat!(
+            "![](https://e.test/a&#10;!&#91;y&#93;",
+            "&#40;https://attacker.test/image.png&#41;)"
+        ));
+        assert_eq!(found.len(), 1, "one link: {found:?}");
+        assert_eq!(
+            found[0].0,
+            "https://e.test/a%0A![y](https://attacker.test/image.png)"
+        );
+    }
+
+    /// The reference path resolves its destination from a definition, which
+    /// is decoded the same way — and reaches the same writer.
+    #[test]
+    fn a_reference_definition_that_decodes_to_a_newline_is_percent_encoded() {
+        let source = concat!(
+            "![x][ref]\n\n[ref]: https://e.test/a&#10;!&#91;y&#93;",
+            "&#40;https://attacker.test/image.png&#41;\n"
+        );
+        let found = links(source);
+        assert_eq!(found.len(), 1, "one link: {found:?}");
+        assert_eq!(
+            found[0].0,
+            "https://e.test/a%0A![y](https://attacker.test/image.png)"
         );
     }
 

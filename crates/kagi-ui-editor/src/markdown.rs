@@ -308,9 +308,11 @@ pub fn pad_inline_code(src: &str) -> String {
 /// on it are padded. Backticks are ASCII, so the line is scanned as bytes and
 /// copied in slices — a line without one is a single `push_str`.
 ///
-/// A backslash-escaped backtick is a character, not a delimiter — the image
-/// rewrite escapes alt text that way (#751), and padding *that* would write
-/// thin spaces into the author's words.
+/// Escaping is an *opening* rule only. In prose a backslash-escaped backtick
+/// is a character, not a delimiter — the image rewrite escapes alt text that
+/// way (#751), and padding *that* would write thin spaces into the author's
+/// words. Inside a code span a backslash escapes nothing (CommonMark), so the
+/// closing run is found by a raw scan.
 fn pad_code_spans(line: &str, out: &mut String) {
     const PAD: char = '\u{2009}';
     let bytes = line.as_bytes();
@@ -326,8 +328,9 @@ fn pad_code_spans(line: &str, out: &mut String) {
             == 1
     }
 
-    /// The next unescaped backtick run at or after `from`, as `(start, len)`.
-    fn next_run(line: &str, bytes: &[u8], from: usize) -> Option<(usize, usize)> {
+    /// The next *opening* backtick run at or after `from`, as `(start, len)`.
+    /// Escaped backticks are prose, so they cannot open a span.
+    fn next_opening_run(line: &str, bytes: &[u8], from: usize) -> Option<(usize, usize)> {
         let mut i = from;
         while let Some(offset) = line[i..].find('`') {
             let start = i + offset;
@@ -341,13 +344,19 @@ fn pad_code_spans(line: &str, out: &mut String) {
     }
 
     let mut i = 0;
-    while let Some((start, delim)) = next_run(line, bytes, i) {
+    while let Some((start, delim)) = next_opening_run(line, bytes, i) {
         out.push_str(&line[i..start]);
         let open_end = start + delim;
-        // A closing run of exactly `delim` backticks, on this line.
+        // A closing run of exactly `delim` backticks, on this line. The scan
+        // is deliberately raw: a backslash inside a code span is an ordinary
+        // character, so `` `C:\dir\` `` closes on the backtick right after it.
+        // Skipping that backtick resolved the close to the *next* span's
+        // opener and dropped a thin space into the prose between them (#751).
         let mut close = None;
         let mut j = open_end;
-        while let Some((at, run)) = next_run(line, bytes, j) {
+        while let Some(offset) = line[j..].find('`') {
+            let at = j + offset;
+            let run = bytes[at..].iter().take_while(|b| **b == b'`').count();
             if run == delim {
                 close = Some(at);
                 break;
@@ -541,6 +550,17 @@ mod tests {
         let fenced = "```md\n`inline` inside\n```\n";
         assert_eq!(pad_inline_code(fenced), fenced);
         assert_eq!(pad_inline_code("~~~\n`a`\n~~~\n"), "~~~\n`a`\n~~~\n");
+        // A backslash is an ordinary character inside a span, so the span
+        // closes on the backtick right after it — and the next span keeps its
+        // own delimiters instead of being swallowed as this one's close.
+        assert_eq!(pad_inline_code(r"a `a\` b"), "a `\u{2009}a\\\u{2009}` b");
+        assert_eq!(
+            pad_inline_code(r"`C:\dir\` or `D:\`"),
+            "`\u{2009}C:\\dir\\\u{2009}` or `\u{2009}D:\\\u{2009}`"
+        );
+        // An escaped backtick in prose is still a character, not an opener:
+        // the image rewrite escapes alt text that way.
+        assert_eq!(pad_inline_code(r"[a \` b](u)"), r"[a \` b](u)");
     }
 
     #[test]

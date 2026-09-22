@@ -656,6 +656,64 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
         format!("{pasted_body}```rust\nfn main() {{}}\n```\n"),
         "the remainder appends to the existing body verbatim, fence and all"
     );
+    // A first line that names nothing — here a fence opener, which owns the
+    // lines under it — must leave the title input alone and reach the body
+    // whole, so the fence still closes and Preview keeps code as code.
+    // "Alone" includes the selection: the whole title is highlighted here,
+    // and the paste must neither replace it nor consume it.
+    let fenced_paste = "```text\nplain\n```\n";
+    let titled = title_value.clone();
+    let bodied = body_value.clone();
+    app.update(cx, |_, cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(fenced_paste.into()));
+    });
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_issue_title_for_e2e(window, cx));
+    })
+    .unwrap();
+    cx.simulate_keystrokes(win, "secondary-a");
+    cx.update_window(win, |_, window, cx| {
+        window.dispatch_action(Box::new(gpui_component::input::Paste), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let (_, _, title_value, body_value) = cx
+        .update_window(win, |_, window, cx| {
+            app.read(cx).issue_composer_enter_state_for_e2e(window, cx)
+        })
+        .unwrap();
+    assert_eq!(
+        title_value, titled,
+        "a fence opener names nothing: the title input keeps what it held"
+    );
+    assert_eq!(
+        body_value,
+        format!("{bodied}{fenced_paste}"),
+        "the whole clipboard reaches the body, fence opener included"
+    );
+    // The highlighted range is still the author's: one typed character
+    // replaces the whole title it covered, which a consumed or collapsed
+    // selection could not do.
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_issue_title_for_e2e(window, cx));
+    })
+    .unwrap();
+    cx.simulate_keystrokes(win, "z");
+    cx.run_until_parked();
+    let (_, _, title_value, body_value) = cx
+        .update_window(win, |_, window, cx| {
+            app.read(cx).issue_composer_enter_state_for_e2e(window, cx)
+        })
+        .unwrap();
+    assert_eq!(
+        title_value, "z",
+        "the selection the paste left alone still covered the whole title"
+    );
+    assert_eq!(
+        body_value,
+        format!("{bodied}{fenced_paste}"),
+        "typing in the title must not touch the body the paste filled"
+    );
     // Hand the pristine Composer back to the measures that follow.
     cx.update_window(win, |_, window, cx| {
         app.update(cx, |app, cx| app.reset_issue_composer_for_e2e(window, cx));

@@ -341,7 +341,12 @@ pub(super) fn render_composer(
                     {
                         editor.body_revealed = true;
                     }
-                    paste_title.update(cx, |st, cx| st.replace(split.title, window, cx));
+                    // A first line that names nothing (blank, or a fence that
+                    // owns the lines below it) leaves the title input alone,
+                    // selection included: the whole clipboard went to the body.
+                    if let Some(pasted) = split.title {
+                        paste_title.update(cx, |st, cx| st.replace(pasted, window, cx));
+                    }
                     paste_body.update(cx, |st, cx| {
                         let mut body = split.body;
                         // The remainder is Markdown, so it has to start its

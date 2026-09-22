@@ -84,6 +84,20 @@ in different modules/entities and some outside `KagiApp`):
   supports these APIs without a dependency change. Existing modal-footer
   `gpui_component::Button` controls already supply button roles and labels and
   remain unchanged.
+- **2026-09-23 toolbar enabled-state slice**: the existing `make_btn` owner
+  distinguishes `Availability(bool)` from Terminal's `Selection(bool)` at its
+  13 call sites. The pinned GPUI's public `a11y_synthetic_children` callback
+  sets `parent_node().set_disabled()` on the existing button node when its
+  current visual availability is false; it creates no synthetic child, wrapper
+  or dependency update. Terminal remains available when unselected. Existing
+  mouse-click refusal footers and Undo/Redo's independent busy guard are
+  unchanged; history AX state mirrors cursor eligibility, not a unified busy
+  policy. Accessible refusal reasons and AX activation remain deferred.
+  Native AXEnabled evidence was not obtained: PM observed no AXWindow with
+  either this binary or the main comparator and classified it as a session
+  environment issue. Source inspection, offline probe checks and non-GUI tests
+  do not establish native behavior; the state transitions and mouse contract
+  still require native verification in a later session. Issue #354 stays open.
 - **Readable confirmation dialogs and list UIs** remain deferred: this small
   slice does not establish readable dialog content, destructive two-stage
   confirmation with VoiceOver, additional `on_a11y_action` wiring, stable per-row

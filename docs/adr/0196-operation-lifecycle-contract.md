@@ -93,6 +93,14 @@ evidence は維持する。typed `TerminationUnknown` の停止証拠は変更�
 既知結果の解放も維持する。これは Skip の分類順だけの修正であり、conflict family
 全体の移行や read/ack の変更ではない（#569 (2)(3) は別 scope）。
 
+**Continue post-read（#569 (2)）**: `execute_conflict_continue` の stash stage 後、
+merge commit 後、sequencer 実行後の `current_state_summary` 失敗だけを
+`TerminationUnknown(Termination::Stopped)` とする。実行は戻ったが after は不明で、
+既存 `settle_conflict_write` と Sequencer guard により lease を保持し reconcile に登録する。
+実行前の拒否・通常 Err・既知の `Staged` は従来どおり解放する。session の汎用 lifecycle、
+Abort、read/ack は変更しない。実 stash conflict と壊れた ref を使う回帰で、stage 済みの
+post-read 失敗、Unknown・lease 保持・登録、および実行前拒否／既知結果の解放を確認する。
+
 ### 2.2 `Recording`（変更なし）
 
 | 値 | 意味 | 呼び出し元の義務 |

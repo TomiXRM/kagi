@@ -19,6 +19,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - conflict Skip の結果が `Unclear` のとき、結果分類より先に writer lease を解放していた問題を修正しました。停止済みでも sequencer の結果が不明な場合は lease を保持して既存の reconcile 経路へ渡し、停止未確認の `TerminationUnknown` も `Unknown` のまま扱います。Continue / Abort や read/ack の改修は含みません。（#569 (1)）
 - 右クリックメニューのグループ間に区切り線を追加し、見出しのないグループも見分けられるようにしました。Worktree の削除2項目は、移動・Lock/Unlock・保守項目から分離して末尾に配置します。操作や確認画面は変更していません。（#454 Phase 3 の一部）
+- Conflict Continue の実行後に状態を読み取れない場合、通常失敗として再操作を許可せず、結果不明として lease を保持し既存の照合に登録します。実行前の拒否・通常エラー・既知の `Staged` 結果の扱いは変更しません。（#569）
 - Worktree inspection の review 指摘を修正しました。local ref に解決される upstream を push 済みの根拠にせず、Windows の圧縮ファイルは物理使用量を取得できない場合に不明とします。初回計測が途中で中断されても、tab 復帰時に cache を保持して未計測 worktree の走査を再開します。（#633 / #779）
 - Remote Browse が接続フォームからディレクトリ表示へ移った後や、PR の reviewer / assignee / label 入力を Cancel / Apply で閉じた後に、非表示の入力へ focus が残って Esc が届かなくなるのを直しました。非表示になる入力の focus だけを root へ戻し、別の入力が既に得た focus は維持します。（#755 follow-up）
 - conflict の Abort 確認が、reload で前提が変わったあとも古い内容のまま残っていたのを直しました。取り込んだ reload で確認を閉じ、内容の差し替えはしません（閉じるだけで、中止は実行しません）。開き直すと現在の状態で計画し直します。合わせて Abort 確認を開くときに window の focus を root へ戻すので、Result pane を編集して Preview に戻したあとのように focus が描画されていない要素に残っている状態でも Esc で閉じられます。（#755）

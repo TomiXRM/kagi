@@ -223,18 +223,81 @@ pub fn scenario_issues_pagination(cx: &mut VisualTestAppContext) {
         cx.read(|cx| app.read(cx).ui().github_issue_tab),
         IssueListTab::RecentlyUpdated
     );
-    KagiApp::queue_issue_list_fetch_for_e2e(gpui::Task::ready(Ok(page(201..202, None))));
+    KagiApp::queue_issue_list_fetch_for_e2e(gpui::Task::ready(Ok(page(201..301, None))));
     scroll_bottom(cx, win);
     cx.read(|cx| {
         let ui = &app.read(cx).ui[&owner];
         assert_eq!(
             ui.github_issues.len(),
-            201,
+            300,
             "an unfiltered tail still pages on its own"
         );
         assert!(ui.github_issues_cursor.is_none());
         assert!(!ui.github_issues_loading_more);
     });
+
+    // Settle the append's one derived-view recomputation, then exercise a
+    // separately drawn wheel frame. Scrolling back toward the top also puts
+    // the real filter input back in the virtual viewport for the positive
+    // control below.
+    let list = measure(cx, win, "issue-main-list");
+    let scroll_before = cx.read(|cx| {
+        app.read(cx).ui[&owner]
+            .github_issues_list
+            .logical_scroll_top()
+            .item_ix
+    });
+    let recomputations_before_scroll = KagiApp::issue_view_recomputations_for_e2e();
+    cx.simulate_event(
+        win,
+        gpui::ScrollWheelEvent {
+            position: list.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(100_000.))),
+            touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
+        },
+    );
+    measure(cx, win, "issue-main-list");
+    let scroll_after = cx.read(|cx| {
+        app.read(cx).ui[&owner]
+            .github_issues_list
+            .logical_scroll_top()
+            .item_ix
+    });
+    assert!(
+        scroll_after < scroll_before,
+        "the 300-row production viewport must actually move on wheel input: before={scroll_before}, after={scroll_after}"
+    );
+    assert_eq!(
+        KagiApp::issue_view_recomputations_for_e2e(),
+        recomputations_before_scroll,
+        "a drawn scroll frame must reuse the derived Issue view"
+    );
+
+    // One real InputState Change mutates IssueFilter. The following full-window
+    // draw renders both the sidebar and main feed; their shared cache must run
+    // apply_issues once, rather than once per consumer.
+    let filter_input = measure(cx, win, "list-filter-text");
+    cx.simulate_click(win, filter_input.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    let recomputations_before_filter = KagiApp::issue_view_recomputations_for_e2e();
+    cx.simulate_keystrokes(win, "3");
+    cx.run_until_parked();
+    measure(cx, win, "issue-main-list");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui[&owner]
+            .github_issue_filter
+            .common
+            .text
+            .clone()),
+        "3",
+        "the positive control must mutate the production IssueFilter"
+    );
+    assert_eq!(
+        KagiApp::issue_view_recomputations_for_e2e(),
+        recomputations_before_filter + 1,
+        "one filter mutation must recompute once across the sidebar and main feed"
+    );
     unmount(cx, app, win);
     eprintln!("[gui-e2e] PASS issues_pagination");
 }

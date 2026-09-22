@@ -109,3 +109,68 @@ fn list_presentation_keeps_appended_rows_through_page_failure_and_retry() {
     assert!(ui.github_issues_cursor.is_none());
     assert!(ui.github_issues_error.is_none());
 }
+
+fn projected_numbers(ui: &TabUiState, login: Option<&str>) -> Vec<u64> {
+    ui.issue_view(login)
+        .order
+        .iter()
+        .map(|&index| ui.github_issues[index].number)
+        .collect()
+}
+
+#[test]
+fn issue_projection_reuses_one_sort_for_main_and_sidebar_consumers() {
+    let mut ui = TabUiState::default();
+    ui.github_issues = (1..=300)
+        .map(|number| page(number, None).issues.remove(0))
+        .collect();
+    let before = issue_view_recomputations();
+    assert_eq!(projected_numbers(&ui, None), (1..=300).collect::<Vec<_>>());
+    for _ in 0..4 {
+        assert_eq!(ui.issue_view(None).tab_counts, [0, 0, 0, 300]);
+    }
+    assert_eq!(issue_view_recomputations() - before, 1);
+    let before_scroll = issue_view_recomputations();
+    for _ in 0..10 {
+        assert_eq!(projected_numbers(&ui, None)[150], 151);
+    }
+    assert_eq!(issue_view_recomputations() - before_scroll, 0);
+
+    ui.github_issue_filter.common.text = "issue 30".into();
+    assert_eq!(projected_numbers(&ui, None), vec![30, 300]);
+    assert_eq!(ui.issue_view(None).tab_counts, [0, 0, 0, 2]);
+    assert_eq!(issue_view_recomputations() - before_scroll, 1);
+}
+
+#[test]
+fn issue_projection_tracks_login_tab_mentions_and_sort_changes() {
+    let mut ui = TabUiState::default();
+    ui.github_issues = (1..=3)
+        .map(|number| page(number, None).issues.remove(0))
+        .collect();
+    ui.github_issues[0].assignees = vec!["alice".into()];
+    ui.github_issues[1].author = "bob".into();
+    ui.github_issues[1].assignees = vec!["alice".into()];
+    ui.github_issues[2].author = "bob".into();
+    ui.github_issues[2].assignees = vec!["bob".into()];
+    ui.github_issue_tab = IssueListTab::AssignedToMe;
+    assert_eq!(projected_numbers(&ui, None), Vec::<u64>::new());
+    assert_eq!(projected_numbers(&ui, Some("alice")), vec![1, 2]);
+    assert_eq!(ui.issue_view(Some("alice")).tab_counts, [2, 1, 0, 3]);
+    assert_eq!(projected_numbers(&ui, Some("bob")), vec![3]);
+    assert_eq!(ui.issue_view(Some("bob")).tab_counts, [1, 2, 0, 3]);
+
+    ui.github_issue_tab = IssueListTab::CreatedByMe;
+    assert_eq!(projected_numbers(&ui, Some("bob")), vec![2, 3]);
+    ui.github_issue_tab = IssueListTab::MentioningMe;
+    ui.github_issue_mentions = vec![2];
+    assert_eq!(projected_numbers(&ui, Some("bob")), vec![2]);
+    ui.github_issue_mentions[0] = 1;
+    assert_eq!(projected_numbers(&ui, Some("bob")), vec![1]);
+    assert_eq!(ui.issue_view(Some("bob")).tab_counts, [1, 2, 1, 3]);
+
+    ui.github_issue_tab = IssueListTab::RecentlyUpdated;
+    assert_eq!(projected_numbers(&ui, Some("bob")), vec![1, 2, 3]);
+    ui.github_issue_filter.sort.field = kagi_domain::list_filter::SortField::Number;
+    assert_eq!(projected_numbers(&ui, Some("bob")), vec![3, 2, 1]);
+}

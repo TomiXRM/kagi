@@ -6,7 +6,8 @@
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, SharedString};
 use gpui_component::{scroll::ScrollableElement, Icon, Sizable};
 use kagi_domain::github::{Issue, IssueListTab, IssueState};
-use kagi_domain::list_filter::apply_issues;
+use kagi_domain::list_filter::{apply_issues, IssueFilter};
+use std::{cell::Ref, rc::Rc};
 
 use super::i18n::Msg;
 use super::render_helpers::safe_text;
@@ -66,24 +67,85 @@ fn status_text(id: &'static str, text: impl Into<SharedString>, color: u32) -> A
     .into_any_element()
 }
 
-fn issue_indices(app: &KagiApp, tab: IssueListTab) -> Vec<usize> {
-    let ui = app.ui();
-    let mut indices = apply_issues(&ui.github_issues, &ui.github_issue_filter);
-    indices.retain(|&index| {
-        tab.accepts(
-            &ui.github_issues[index],
-            app.github_login.as_deref(),
-            &ui.github_issue_mentions,
-        )
-    });
-    indices
+/// Disposable projection of one session's Issue evidence and filter intent.
+pub(super) struct IssueViewCache {
+    revision: (u64, u64, usize),
+    filter: IssueFilter,
+    tab: IssueListTab,
+    login: Option<String>,
+    mentions: Vec<u64>,
+    pub(super) order: Rc<Vec<usize>>,
+    pub(super) tab_counts: [usize; 4],
 }
 
-fn issues_for_tab(app: &KagiApp, tab: IssueListTab) -> Vec<&Issue> {
-    issue_indices(app, tab)
-        .into_iter()
-        .map(|index| &app.ui().github_issues[index])
-        .collect()
+#[cfg(any(test, feature = "gui-e2e"))]
+thread_local! {
+    static ISSUE_VIEW_RECOMPUTATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(any(test, feature = "gui-e2e"))]
+pub(super) fn issue_view_recomputations() -> usize {
+    ISSUE_VIEW_RECOMPUTATIONS.with(|count| count.get())
+}
+
+impl TabUiState {
+    pub(super) fn invalidate_issue_view(&mut self) {
+        self.github_issues_epoch = self.github_issues_epoch.wrapping_add(1);
+        *self.issue_view.get_mut() = None;
+    }
+
+    pub(super) fn issue_view(&self, login: Option<&str>) -> Ref<'_, IssueViewCache> {
+        let revision = (
+            self.github_issues_epoch,
+            self.github_issues_gen,
+            self.github_issues.len(),
+        );
+        let stale = self.issue_view.borrow().as_ref().is_none_or(|view| {
+            view.revision != revision
+                || view.filter != self.github_issue_filter
+                || view.tab != self.github_issue_tab
+                || view.login.as_deref() != login
+                || view.mentions != self.github_issue_mentions
+        });
+        if stale {
+            let mut order = apply_issues(&self.github_issues, &self.github_issue_filter);
+            #[cfg(any(test, feature = "gui-e2e"))]
+            ISSUE_VIEW_RECOMPUTATIONS.with(|count| count.set(count.get() + 1));
+            let mut tab_counts = [0; 4];
+            order.retain(|&index| {
+                let mut keep = false;
+                for tab in IssueListTab::ALL {
+                    let accepted = tab.accepts(
+                        &self.github_issues[index],
+                        login,
+                        &self.github_issue_mentions,
+                    );
+                    tab_counts[tab.index()] += usize::from(accepted);
+                    if tab == self.github_issue_tab {
+                        keep = accepted;
+                    }
+                }
+                keep
+            });
+            klog!(
+                "issues: view recomputed loaded={} visible={}",
+                self.github_issues.len(),
+                order.len()
+            );
+            *self.issue_view.borrow_mut() = Some(IssueViewCache {
+                revision,
+                filter: self.github_issue_filter.clone(),
+                tab: self.github_issue_tab,
+                login: login.map(str::to_owned),
+                mentions: self.github_issue_mentions.clone(),
+                order: Rc::new(order),
+                tab_counts,
+            });
+        }
+        Ref::map(self.issue_view.borrow(), |view| {
+            view.as_ref().expect("Issue view prepared")
+        })
+    }
 }
 
 /// #753: is the visible list a *client-side subset* of the rows this session
@@ -166,13 +228,16 @@ pub(super) fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> Any
                         .child(safe_text(message)),
                 );
             }
-            let tabs = IssueListTab::ALL.map(|tab| (tab, issues_for_tab(app, tab)));
-            for (tab, issues) in tabs {
+            let (order, tab_counts) = {
+                let view = ui.issue_view(app.github_login.as_deref());
+                (Rc::clone(&view.order), view.tab_counts)
+            };
+            for tab in IssueListTab::ALL {
                 let active = tab == ui.github_issue_tab;
                 let header = super::workspace_mode::sidebar_section_header(
                     ("issue-filter-tab", tab.index()),
                     issue_tab_label(tab),
-                    (issues.len(), ui.github_issues_cursor.is_some()),
+                    (tab_counts[tab.index()], ui.github_issues_cursor.is_some()),
                     active,
                     false,
                     cx,
@@ -185,7 +250,7 @@ pub(super) fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> Any
                 if !active {
                     continue;
                 }
-                if issues.is_empty() {
+                if order.is_empty() {
                     let (id, message) = if issue_count == 0 {
                         ("issue-mode-list-empty", Msg::IssuesEmpty.t())
                     } else {
@@ -202,7 +267,8 @@ pub(super) fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> Any
                             .child(message),
                     ));
                 }
-                for issue in issues.into_iter().take(100) {
+                for &index in order.iter().take(100) {
+                    let issue = &ui.github_issues[index];
                     let number = issue.number;
                     let active_row = selected == Some(number);
                     let select = cx.listener(
@@ -433,7 +499,7 @@ fn render_main_issue_row(app: &KagiApp, issue: &Issue, cx: &mut Context<KagiApp>
 fn render_main_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
     let ui = app.ui();
     let state = ui.github_issues_list.clone();
-    let order = issue_indices(app, ui.github_issue_tab);
+    let order = Rc::clone(&ui.issue_view(app.github_login.as_deref()).order);
     let filtered_count = order.len();
     // Composer, shared strip, status, Issue rows, then the loading/retry tail.
     let count = filtered_count + 4;

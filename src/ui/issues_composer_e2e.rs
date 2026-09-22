@@ -27,6 +27,10 @@ impl KagiApp {
         ISSUE_LIST_FETCH.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
     }
 
+    pub fn issue_view_recomputations_for_e2e() -> usize {
+        super::issues_mode::issue_view_recomputations()
+    }
+
     pub fn set_issue_input_lang_for_e2e(
         &mut self,
         lang: Lang,

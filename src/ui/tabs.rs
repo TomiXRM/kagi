@@ -149,6 +149,9 @@ impl KagiApp {
     fn depart_active_tab(&mut self) {
         if let Some(session) = self.active_session() {
             self.app_sessions.depart(session);
+            if let Some(ui) = self.ui.get_mut(&session) {
+                ui.worktree_inspections.cancel();
+            }
         }
         self.close_window_slots_of_departing_tab();
     }
@@ -474,6 +477,7 @@ impl KagiApp {
                         if app.active_session() != Some(session) {
                             return; // background owner: data only, no display.
                         }
+                        app.ensure_worktree_inspections(cx);
                         if matches!(app.status_footer, FooterStatus::Busy(_)) {
                             app.status_footer =
                                 FooterStatus::Idle(SharedString::from(Msg::Ready.t()));

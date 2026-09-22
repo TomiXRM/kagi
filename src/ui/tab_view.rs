@@ -312,6 +312,7 @@ pub struct TabUiState {
     pub cache_epoch: u64,
     /// Recomputable diff data. Contains only owned collections and `Arc<FileDiff>`.
     pub diff_caches: super::diff_cache::DiffCaches,
+    pub(super) worktree_inspections: super::sidebar_worktree_row::WorktreeInspections,
     /// Aggregated staged + unstaged additions/deletions for the synthetic WIP row.
     pub wip_diffstat: Option<super::WipDiffStat>,
     /// Watcher baseline; absent until this activation observes the worktree.
@@ -444,6 +445,7 @@ impl Default for TabUiState {
             view_publish_gen: 0,
             cache_epoch: 0,
             diff_caches: super::diff_cache::DiffCaches::default(),
+            worktree_inspections: Default::default(),
             wip_diffstat: None,
             last_working_status: None,
             operation_history: kagi_git::OperationHistory::new(),

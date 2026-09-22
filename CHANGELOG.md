@@ -10,12 +10,14 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Toolbar と sidebar navigation に accessibility role と名前を付与し、sidebar の既存の選択状態を公開しました。modal footer は既存 Button の意味情報を維持します。VoiceOver・確認ダイアログ・リスト全体の対応は含みません。（#354）
 - Embedded terminal に worktree 固有の `KAGI_WORKTREE_PATH` / `KAGI_WORKTREE_NAME` / `KAGI_MAIN_WORKTREE` / `KAGI_DEFAULT_BRANCH` / `KAGI_PORT` を渡すようにしました。親 shell の値は上書きし、再起動でも保存済み port を再利用します。port 枯渇や metadata 取得失敗は既存の terminal 起動失敗として表示します。localhost link と nonconcurrent は対象外です。（#342、ADR-0171）
 - Worktree のロック理由を自由入力できるようにしました。入力後に計画を確認してからロックし、日本語・引用符を含む理由や理由なしのロックに対応します。入力画面や計画画面の Cancel / Esc ではロックしません。terminal の自動ロックは別 Issue #772 で追跡します。（#372）
+- WORKTREES の行に占有容量と Git 上の削除条件を表示し、クリックで `target/` 内訳・計測時刻・EN/JA の理由・手動再計測を確認できるようにしました。ignored ファイルも background で計測し、選択変更や tab 離脱で古い計測を破棄します。判定は clean・lock なし・merge 済みまたは push 済みを取得済み ref で確認する参考情報です。ignored 内容の警告と既存の削除メニューへの案内を表示し、削除・backup・lock の動作は変更しません。（#633、ADR-0175）
 - WIP 行に「次のコミットが載る点」を追加しました。HEAD の lane 色で中空 ring と badge→ring→HEAD の点線を描き、同じ HEAD の複数 WIP は一本の縦線を共有します。ring は実 commit の表示径に揃えた 2px stroke で、hover／選択でも塗りつぶしません。detached HEAD にも対応し、未ロード／unborn の HEAD に架空の点は描きません。（#767、ADR-0174）
 - Issues / PRs の一覧に共通フィルターを追加しました。Open/Closed/All、複数ラベル、author、タイトル部分一致を組み合わせ、PR は draft と取得済み checks でも絞れます。updated / created / number / comments の昇降順、適用後の件数、既存の collection との AND に対応し、設定はタブ内だけで保持します。Closed は実際の closed 一覧を取得し、PR の merged も含みます。（#753、ADR-0198 / ADR-0200）
 - PR の Closed/All は専用の読み取り結果として保持し、Graph の open PR 一覧・branch badge・inspector chip・定期更新には混入させません。PR mode を離れると state は Open に戻ります。closed PR は actionable な bucket から外し、Issues は Recent を既定とし、絞り込み中の追加ページ取得は明示操作にしました。（#753 review follow-up）
 
 ### Fixed
 
+- Worktree inspection の review 指摘を修正しました。local ref に解決される upstream を push 済みの根拠にせず、Windows の圧縮ファイルは物理使用量を取得できない場合に不明とします。初回計測が途中で中断されても、tab 復帰時に cache を保持して未計測 worktree の走査を再開します。（#633 / #779）
 - conflict の Abort 確認が、reload で前提が変わったあとも古い内容のまま残っていたのを直しました。取り込んだ reload で確認を閉じ、内容の差し替えはしません（閉じるだけで、中止は実行しません）。開き直すと現在の状態で計画し直します。合わせて Abort 確認を開くときに window の focus を root へ戻すので、Result pane を編集して Preview に戻したあとのように focus が描画されていない要素に残っている状態でも Esc で閉じられます。（#755）
 - WIP の点を HEAD と同じ lane の真上に置き、履歴との衝突で遠い専用列へ迂回しないようにしました。点線は実 commit・edge の背後を通ります。WIP / stash 行も commit 一覧と一緒にスクロールし、WIP が画面外でも可視の HEAD までは viewport 上端から点線が続きます。（#773、ADR-0174）
 - preflight refusal の native 回帰テストを現在の通知契約へ更新しました。旧 dismiss-only modal の代わりに EN/JA の footer / error toast、oplog の具体的な拒否理由、repository 不変を検証します。製品の通知動作は変更していません。（#764）

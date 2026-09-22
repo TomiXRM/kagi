@@ -50,6 +50,9 @@ const FIRST_PARENT_WALK_CAP: usize = 4000;
 
 /// Resolve the default branch name: `origin/HEAD` symref if present, else the
 /// first of `main` / `master` that exists locally or on origin.
+///
+/// Crate-visible so worktree removal safety (#633) asks the same question this
+/// module's cleanup asks, rather than growing a second default-branch policy.
 pub(crate) fn default_branch_name(repo: &Repository) -> String {
     if let Ok(head_ref) = repo.find_reference("refs/remotes/origin/HEAD") {
         if let Ok(Some(sym)) = head_ref.symbolic_target() {
@@ -72,7 +75,7 @@ pub(crate) fn default_branch_name(repo: &Repository) -> String {
 
 /// Tip OID of the default branch — local branch preferred, `origin/<name>`
 /// as fallback. `None` when neither exists (unborn / exotic repo).
-fn resolve_main_tip(repo: &Repository, default: &str) -> Option<git2::Oid> {
+pub(crate) fn resolve_main_tip(repo: &Repository, default: &str) -> Option<git2::Oid> {
     if let Ok(b) = repo.find_branch(default, BranchType::Local) {
         if let Some(oid) = b.get().target() {
             return Some(oid);

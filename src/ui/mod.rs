@@ -3399,6 +3399,7 @@ fn open_main_window(app_state: KagiApp, cx: &mut App) {
                     // `switch_repo`, so render used to do this work on the first
                     // frame; arm it here off the UI thread instead.
                     app.ensure_startup_repo_io(cx);
+                    app.ensure_worktree_inspections(cx);
                 }
             });
 

@@ -75,6 +75,7 @@ mod status;
 pub mod trust;
 use kagi_domain::trailers; // ADR-0121: was a shim file
 pub mod worker;
+pub mod worktree_inspection;
 pub mod worktree_ports;
 
 #[allow(unused_imports)]

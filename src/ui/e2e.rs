@@ -4,20 +4,15 @@
 //! runner (`tests/gui_e2e_runner.rs`) needs to mount the real [`KagiApp`]
 //! offscreen against a fixture repo.
 //!
-//! Why a seam at all: an integration-test target (`tests/`) links only the
-//! `kagi` lib + its **dev**-dependencies. It cannot name the bin's normal deps
-//! (`gpui_component`, `gpui_platform`, `kagi_git`). These `pub` helpers wrap
-//! those so the runner touches nothing but `gpui` (a dev-dep, which unlocks
-//! `VisualTestAppContext`) and `kagi`.
-//!
-//! Why it lives here and not behind `#[cfg(test)]`: `#[cfg(test)]` items are
-//! invisible to integration-test crates. So these compile into every build.
-//! That is safe — they touch only plain `gpui` + normal deps, never
-//! `gpui/test-support`, so production stays free of test-support (verified by
-//! `cargo tree -e no-dev -i gpui`). Being `pub`, they raise no dead-code lint.
+//! Instrumentation and deferred report transports are gated by `gui-e2e`.
+//! Plain helpers may compile in normal builds, but must not require
+//! `gpui/test-support`; the native runner opts into that dependency explicitly.
 
 use std::cell::RefCell;
 use std::path::Path;
+
+#[cfg(feature = "gui-e2e")]
+pub mod worktree_inspection;
 
 /// #707 review: the revision-laundering and cross-session regressions need to
 /// produce a detector payload for one state and land it against another.

@@ -199,6 +199,7 @@ impl KagiApp {
         if self.active_session() != Some(session) {
             return;
         }
+        self.ensure_worktree_inspections(cx);
 
         self.restore_open_panes(open_panes, cx);
         // ADR-0119 follow-up: the full-screen Analyze + File History overlays are

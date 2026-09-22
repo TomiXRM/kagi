@@ -70,6 +70,9 @@ impl TabUiState {
     /// session), so a fresh tab legitimately holds them; a leak there is caught
     /// by the leak matrix comparing values, not by this probe.
     pub fn is_pristine(&self) -> Result<(), &'static str> {
+        if self.worktree_inspections.selected.is_some() {
+            return Err("worktree_inspections.selected");
+        }
         let Self {
             selected,
             // Scroll handles expose their position only under gpui `test-support`;
@@ -89,6 +92,7 @@ impl TabUiState {
             view_publish_gen: _,
             cache_epoch: _,
             diff_caches: _,
+            worktree_inspections: _,
             wip_diffstat: _,
             last_working_status: _,
             operation_history: _,

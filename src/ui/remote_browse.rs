@@ -183,9 +183,21 @@ impl KagiApp {
         };
         cx.notify();
 
-        let task = cx.background_spawn(async move { remote_connect_blocking(&host) });
+        let connect = async move { remote_connect_blocking(&host) };
+        // Scenarios supply the read a real round-trip would have returned; the
+        // launch, generation guard and completion below stay production code.
+        #[cfg(feature = "gui-e2e")]
+        let task = e2e_transport::take_remote_connect().unwrap_or_else(|| {
+            cx.background_spawn(async move {
+                e2e_transport::RemoteConnectOutcome::from_transport(connect.await)
+            })
+        });
+        #[cfg(not(feature = "gui-e2e"))]
+        let task = cx.background_spawn(connect);
         cx.spawn(async move |this, acx| {
             let result = task.await;
+            #[cfg(feature = "gui-e2e")]
+            let result = result.into_result();
             let _ = this.update(acx, |app, cx| {
                 app.update_remote_browse_from_async(generation, |m| {
                     m.busy = false;
@@ -754,3 +766,9 @@ fn remote_open_blocking(
         .map_err(|e| e.to_string())?;
     Ok((path.to_string(), snap))
 }
+
+/// Test-only connect transport (see the module's own docs). It is a child
+/// module so `RemoteBrowseData` can stay private to this file.
+#[cfg(feature = "gui-e2e")]
+#[path = "remote_browse_e2e.rs"]
+pub mod e2e_transport;

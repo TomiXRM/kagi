@@ -5,7 +5,7 @@
 //! a read of what the repository offers plus a toggle list; confirming sends
 //! one `gh pr edit` through the write family.
 
-use gpui::{div, prelude::*, px, rgb, Context, SharedString};
+use gpui::{div, prelude::*, px, rgb, Context, Focusable as _, SharedString};
 
 use super::i18n::Msg;
 use super::modal_shell::{modal_body, modal_card, MODAL_W_SM};
@@ -126,6 +126,17 @@ impl KagiApp {
                 self.pr_fields_input = Some(input);
             }
             (false, true) => {
+                // #755: the filter is leaving the dispatch tree. Do not steal
+                // focus if a replacement modal already focused its own input.
+                if self
+                    .pr_fields_input
+                    .as_ref()
+                    .is_some_and(|input| input.read(cx).focus_handle(cx).is_focused(window))
+                {
+                    if let Some(root) = self.root_focus.as_ref() {
+                        window.focus(root, cx);
+                    }
+                }
                 self.pr_fields_input = None;
             }
             _ => {}
@@ -303,17 +314,19 @@ pub(crate) fn render_pr_fields_modal(
                 .flex_row()
                 .justify_end()
                 .gap_2()
-                .child(
+                .child(super::e2e::measure_control(
+                    "pr-fields-cancel",
                     gpui_component::button::Button::new("pr-fields-cancel")
                         .label(Msg::PlanCancel.t())
                         .on_click(cancel),
-                )
-                .child(
+                ))
+                .child(super::e2e::measure_control(
+                    "pr-fields-confirm",
                     gpui_component::button::Button::new("pr-fields-confirm")
                         .label(Msg::PrFieldsApply.t())
                         .disabled(!changed)
                         .on_click(confirm),
-                ),
+                )),
         );
     super::modal_renderers::modal_overlay(card).into_any_element()
 }

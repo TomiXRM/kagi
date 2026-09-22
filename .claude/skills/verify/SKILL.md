@@ -156,6 +156,22 @@ The current suite covers:
   Escape prints nothing. That is exactly what the accepted run recorded —
   no key line, modal closed. A printed `escape` with the modal still open is
   the interesting failure: the key arrived and no binding matched.
+- modal input transitions (`KAGI_GUI_E2E_ONLY=remote_browse_escape_focus,pr_fields_escape_focus`,
+  `tests/recovery/remote_browse_focus.rs`, `tests/recovery/pr_fields_focus.rs`):
+  #755 follow-up. Real InputStates own focus before Remote Browse's
+  Connect→Browse transition and PR Fields' Cancel/Apply exits. Raw Escape is
+  delivered without test-side refocusing: it closes the browser or the notice
+  queued behind the field picker. Both scenarios failed before the fix; PR
+  Fields measured lost `CloseMainDiff` routing for both exits. The remote case
+  also preserves input focus on failed and superseded connection results.
+  Only the connect transport task is queued through
+  `src/ui/remote_browse_e2e.rs`; validation, generation checks and completion
+  remain production code. PR Fields uses a temporary offline `gh` that refuses
+  Apply, so the real dispatch runs without a GitHub write. Its Cancel/Apply
+  controls use the existing measured-button seam. Pair with
+  `remote_browse_modal_routing,conflict_abort_escape_focus` for the earlier
+  routing contracts. This follow-up uses Tier A; it does not claim Tier B or
+  live SSH/GitHub coverage.
 - bottom-panel toggle, graph copy, oplog expand/copy, snapshot creation, theme
   switching, agent provenance, and WIP-to-HEAD connectors;
 - WIP virtual commit anchors (`KAGI_GUI_E2E_ONLY=commit_row_layout_wip`,

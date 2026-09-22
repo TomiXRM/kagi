@@ -202,6 +202,56 @@ impl Operation {
     }
 }
 
+/// What became of the local head branch a PR merge promised to delete (#705).
+///
+/// None of these is a failure of the merge itself. [`Self::Kept`] is part of a
+/// **successful** receipt — the approval already said the branch stays, or
+/// GitHub queued the merge so there is nothing to clean up yet — while
+/// [`Self::NotDeleted`] is the merge landing without the promised deletion,
+/// which the receipt reports as partial rather than as a merge to retry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrMergeLocalOutcome {
+    /// The frozen branch was deleted; `tip` is the full OID it held, retained
+    /// by the delete executor's recovery ref.
+    Deleted { name: String, tip: String },
+    /// The branch was already gone locally — the promise was fulfilled by
+    /// absence, and nothing was written.
+    Absent { name: String },
+    /// The branch was kept because the approval itself kept it, or because
+    /// the merge is only queued. Nothing was attempted; nothing failed.
+    Kept {
+        name: String,
+        reason: crate::plan_note::PrMergeLocalReason,
+    },
+    /// The promised deletion did not happen: the branch or HEAD moved under
+    /// the approval, or the delete failed.
+    NotDeleted {
+        name: String,
+        reason: crate::plan_note::PrMergeLocalReason,
+    },
+}
+
+impl PrMergeLocalOutcome {
+    /// One wording source for the durable EN receipt and localized UI notice.
+    pub fn note(&self) -> crate::plan_note::GithubNote {
+        use crate::plan_note::GithubNote;
+        match self {
+            Self::Deleted { name, tip } => GithubNote::LocalBranchDeleted {
+                name: name.clone(),
+                tip: tip.clone(),
+            },
+            Self::Absent { name } => GithubNote::LocalBranchAbsent { name: name.clone() },
+            Self::Kept { name, reason } => GithubNote::LocalBranchKept {
+                name: name.clone(),
+                reason: reason.clone(),
+            },
+            Self::NotDeleted { reason, .. } => GithubNote::LocalBranchNotDeleted {
+                reason: reason.clone(),
+            },
+        }
+    }
+}
+
 /// The successful result of executing an [`Operation`].
 #[derive(Debug, Clone)]
 pub enum OperationOutcome {
@@ -234,15 +284,23 @@ pub enum OperationOutcome {
     /// [`Operation`] — the batch is its own execute — but it rides the same
     /// run-family completion so an unconfirmed delete lands in reconcile.
     BranchCleanup(crate::branch_cleanup::CleanupOutcome),
-    /// `gh pr merge`'s own words for a merge the receipt calls done (ADR-0149).
+    /// The accounted result of `gh pr merge` or a queue submission (ADR-0149).
     /// Like Branch Cleanup, a non-`Operation` write that rides the run family.
-    /// `confirmed` is false when the merge landed but a later step (branch
-    /// deletion) did not answer — merged, yet not finished; the `number` names
-    /// the PR that must not be offered again in that case.
+    /// `confirmed` describes receipt completion, not necessarily PR merge:
+    /// a known queued submission or an approved local keep is also true.
+    /// It is false for a confirmed merge with a transport error or an unfulfilled
+    /// cleanup promise; `number` names the PR that must not be offered again.
+    ///
+    /// `local_branch` is the local half of a `--delete-branch` merge (#705):
+    /// `None` when none was promised, otherwise what actually became of the
+    /// frozen branch. A local deletion that failed leaves the merge itself
+    /// done, so it is reported here rather than as an `Err` — the merge must
+    /// never be retried for it.
     PrMerge {
         number: u64,
         detail: String,
         confirmed: bool,
+        local_branch: Option<PrMergeLocalOutcome>,
     },
     /// `gh pr comment`'s receipt for a comment posted to a PR. Like
     /// [`Self::PrMerge`], a non-`Operation` remote write recorded at its own

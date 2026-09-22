@@ -564,6 +564,7 @@ pub(crate) fn pr_merge_terminal_fault(
                 number,
                 detail: PARTIAL.to_string(),
                 confirmed: false,
+                local_branch: None,
             }),
         ),
     };

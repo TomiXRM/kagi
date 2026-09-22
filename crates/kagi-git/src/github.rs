@@ -4,7 +4,7 @@
 //! rather than speaking the API directly: authentication is delegated to
 //! `gh auth` (tokens, SSO, Enterprise hosts all just work), and it is the same
 //! tool AI agents use, so what kagi shows and what an agent sees never differ.
-//! `--json` keeps the output stable. Everything here is read-only.
+//! `--json` keeps read output stable; recorded mutations live in feature siblings.
 
 pub use crate::github_issue_write::{
     issue_comment, issue_comment_args, issue_create, issue_create_args, plan_issue_comment,
@@ -203,9 +203,8 @@ fn pr_from_value(v: &serde_json::Value) -> Option<PullRequest> {
         body: s("body"),
         checks,
         mergeable,
-        // Absent (a reduced field set, or an older `gh`) reads as
-        // cross-repository: the plan then refuses `--delete-branch` rather
-        // than promising a deletion it cannot account for (#701).
+        // Unknown topology is conservatively treated as a fork: never promise
+        // a head deletion in the base repository without same-repo evidence.
         cross_repository: v
             .get("isCrossRepository")
             .and_then(|x| x.as_bool())
@@ -437,14 +436,14 @@ impl MergeMethod {
     }
 }
 
-/// Plan a PR merge (the `plan_` half of the write-op triple). Pure over the
-/// PR snapshot kagi already holds — no extra `gh` call, so the confirm modal
-/// opens instantly; `merge_pr` is the `execute_` half.
-pub fn plan_pr_merge(
+/// Build the display half after Backend has frozen the local cleanup inputs.
+/// No extra `gh` call is needed to show the confirmation.
+pub(crate) fn plan_pr_merge(
     pr: &PullRequest,
     method: MergeMethod,
     delete_branch: bool,
     head_summary: String,
+    local_branch: Option<kagi_domain::plan::PrMergeLocalBranch>,
 ) -> OperationPlan {
     use kagi_domain::github::{CiState, Mergeable, ReviewState};
     use kagi_domain::plan_note::{GithubNote, GithubRecovery, GithubTitle};
@@ -480,20 +479,31 @@ pub fn plan_pr_merge(
             number: pr.number,
         }));
     }
-    warnings.push(PlanNote::Github(GithubNote::RemoteSideEffect));
-    // `gh pr merge` skips the *remote* head deletion for a cross-repository
-    // PR but still deletes the local branch, and nothing here can account for
-    // that local effect yet (#705). Refuse the whole option rather than
-    // freeze a promise the transport will not keep (#701 final review 2).
-    let fork_delete = delete_branch && pr.cross_repository;
-    if fork_delete {
-        blockers.push(PlanNote::Github(GithubNote::ForkDeletesBranch {
-            branch: pr.head.clone(),
-        }));
-    } else if delete_branch {
-        warnings.push(PlanNote::Github(GithubNote::DeletesBranch {
-            branch: pr.head.clone(),
-        }));
+    if delete_branch {
+        if pr.cross_repository {
+            warnings.push(PlanNote::Github(GithubNote::ForkKeepsRemoteBranch));
+        } else {
+            warnings.push(PlanNote::Github(GithubNote::DeletesBranch {
+                branch: pr.head.clone(),
+            }));
+        }
+        if let Some(branch) = &local_branch {
+            warnings.push(PlanNote::Github(match &branch.keep_reason {
+                // Plan time already knows the deletion would be refused, so
+                // the modal says the branch stays rather than promising a
+                // deletion whose receipt then contradicts it (#705 review P2).
+                Some(reason) => GithubNote::KeepsLocalBranch {
+                    branch: branch.name.clone(),
+                    reason: reason.clone(),
+                },
+                None => GithubNote::DeletesLocalBranch {
+                    branch: branch.name.clone(),
+                    tip: branch.tip.clone(),
+                },
+            }));
+        }
+    } else {
+        warnings.push(PlanNote::Github(GithubNote::RemoteSideEffect));
     }
     OperationPlan {
         disposition: if blockers.is_empty() {
@@ -518,12 +528,12 @@ pub fn plan_pr_merge(
         recovery: Some(PlanRecovery {
             kind: RecoveryKind::Github(GithubRecovery::MergePr {
                 number: pr.number,
-                // Freeze the *whole* promise: a merge that also deletes the
-                // head branch is not confirmed by the merge alone (#701).
-                // The repository identity, not a remote name — which local
-                // remote points at it is resolved when the promise is checked.
+                // Execution and reconciliation use this exact repository
+                // identity, never a mutable local remote name.
                 base_repo: pr.base_repo.clone(),
-                delete_branch: (delete_branch && !fork_delete).then(|| pr.head.clone()),
+                delete_branch: delete_branch.then(|| pr.head.clone()),
+                cross_repository: pr.cross_repository,
+                local_branch: local_branch.map(Box::new),
             }),
             commands: Vec::new(),
         }),
@@ -533,8 +543,8 @@ pub fn plan_pr_merge(
         stash_count_at_plan: 0,
         stash_identity: None,
         worktree_digest: None,
-        // Not destructive in kagi's sense: nothing local is rewritten or
-        // dropped, and GitHub keeps a Revert button.
+        // Local cleanup uses its own guarded ref-only deletion and mandatory
+        // backup root, and only follows server confirmation of the PR merge.
         destructive: false,
         equivalent_command: None,
         preview_files: Vec::new(),
@@ -739,7 +749,7 @@ mod tests {
             head_sha: String::new(),
             ..Default::default()
         };
-        let plan = plan_pr_merge(&pr, MergeMethod::Merge, false, "main".into());
+        let plan = plan_pr_merge(&pr, MergeMethod::Merge, false, "main".into(), None);
         assert!(plan.blockers.iter().any(|note| matches!(
             note,
             PlanNote::Github(kagi_domain::plan_note::GithubNote::HeadUnavailable { number: 42 })

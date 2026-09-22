@@ -2787,7 +2787,7 @@ mod macos {
     /// Try to capture a PNG; tolerate the locked gpui rev's unimplemented
     /// `render_to_image` for the real Mac window. When capture works, assert the
     /// frame is non-blank and save it to `$CARGO_TARGET_DIR/gui_e2e_poc/<tag>.png`.
-    fn capture_screenshot_best_effort(
+    pub(super) fn capture_screenshot_best_effort(
         cx: &mut VisualTestAppContext,
         win: gpui::AnyWindowHandle,
         tag: &str,

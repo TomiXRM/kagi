@@ -5,10 +5,12 @@
 
 use std::time::Duration;
 
-use gpui::{Context, SharedString};
+use gpui::{AppContext as _, Context, SharedString};
 use kagi_domain::github::PullRequest;
 
 use super::i18n::{self, Msg};
+use super::modals::{ActiveModal, PrMergeModal};
+use super::operations::modal_state::{AsyncPlanOffer, PlanningPresentation};
 use super::operations::RunPresentation;
 use super::types::ToastKind;
 use super::{CompareTarget, CompareView, FooterStatus, KagiApp, OpOutcome};
@@ -311,8 +313,23 @@ impl KagiApp {
 // ────────────────────────────────────────────────────────────
 
 impl KagiApp {
-    /// Build the merge plan and open the confirmation modal. Pure over the PR
-    /// snapshot, so it opens instantly; `start_pr_merge` executes.
+    /// Freeze the local cleanup inputs through the owning Backend before
+    /// showing the PR merge confirmation.
+    ///
+    /// The plan is built **off the UI thread** (ADR-0141, the same shape as
+    /// `open_delete_branch_modal` and `open_merge_modal`): with local cleanup
+    /// requested, `Backend::plan_pr_merge` runs the whole delete-branch plan
+    /// for the PR head — including the squash-merge patch-id probe (ADR-0138),
+    /// which walks up to `SQUASH_SCAN_LIMIT` commits computing tree diffs —
+    /// and then re-reads the branch tip. That is tens to hundreds of ms of git
+    /// I/O, i.e. a visible freeze on every press of the Merge button.
+    ///
+    /// The confirmation is built *from* the finished plan, so no partial,
+    /// confirmable plan is ever on screen: until it lands there is no modal to
+    /// confirm, only the planning busy state. The owner (session, visit and
+    /// worktree identity) is frozen here and re-checked on the background
+    /// thread, so a plan started in one tab can neither land in another nor
+    /// freeze a deletion against a worktree that has since been replaced.
     pub fn open_pr_merge_modal(
         &mut self,
         pr: &kagi_domain::github::PullRequest,
@@ -326,23 +343,65 @@ impl KagiApp {
                 return;
             }
         }
+        // A plan owns the modal slot it is about to fill, so it is refused by
+        // the same gate every other operation is (ADR-0196 Wave 3).
+        if self.reject_if_busy(cx) {
+            return;
+        }
+        let Some(owner) = self
+            .active_session()
+            .and_then(|id| self.app_sessions.attachment(id))
+            .filter(|owner| owner.worktree.is_some())
+        else {
+            self.report_plan_failure(i18n::Op::Merge, "repository session unavailable");
+            cx.notify();
+            return;
+        };
         let head_summary = self.view().status_summary.branch.clone();
-        let plan = kagi_git::github::plan_pr_merge(pr, method, delete_branch, head_summary);
-        klog!(
-            "plan: pr-merge #{} blockers={} warnings={}",
-            pr.number,
-            plan.blockers.len(),
-            plan.warnings.len()
-        );
-        self.set_pr_merge_modal(crate::ui::modals::PrMergeModal {
-            plan: std::sync::Arc::new(plan),
-            error: None,
-            number: pr.number,
-            head_sha: pr.head_sha.clone(),
-            method,
-            delete_branch,
+        // The PR merge plan is a merge plan: it takes the merge planning tag,
+        // and with it the existing EN/JA snackbar label.
+        self.planning = Some("merge-plan");
+        self.status_footer = FooterStatus::Busy(SharedString::from(
+            kagi_ui_core::i18n::busy_label("merge-plan"),
+        ));
+        klog!("async: pr-merge plan started for #{}", pr.number);
+        let bg_owner = owner.clone();
+        let bg_pr = pr.clone();
+        let number = pr.number;
+        let head_sha = pr.head_sha.clone();
+        let task = cx.background_spawn(async move {
+            // Reopening through the frozen attachment is what refuses a plan
+            // whose worktree identity moved — the same identity
+            // `plan_pr_merge` freezes into the local deletion it approves.
+            let repo = crate::ui::blocking_ops::open_merge_backend(&bg_owner)?;
+            repo.plan_pr_merge(&bg_pr, method, delete_branch, head_summary)
+                .map_err(|e| e.to_string())
         });
-        cx.notify();
+        self.finish_planning(cx, task, "merge-plan", move |result| match result {
+            Ok(plan) => {
+                klog!(
+                    "plan: pr-merge #{} blockers={} warnings={}",
+                    number,
+                    plan.blockers.len(),
+                    plan.warnings.len()
+                );
+                PlanningPresentation::Offer(Box::new(AsyncPlanOffer::new(
+                    i18n::Op::Merge,
+                    ActiveModal::PrMerge(PrMergeModal {
+                        plan: std::sync::Arc::new(plan),
+                        error: None,
+                        number,
+                        head_sha,
+                        method,
+                        delete_branch,
+                    }),
+                )))
+            }
+            Err(error) => PlanningPresentation::Failed {
+                operation: i18n::Op::Merge,
+                error,
+            },
+        });
     }
 
     pub fn cancel_pr_merge_modal(&mut self) {

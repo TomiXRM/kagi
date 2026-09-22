@@ -51,7 +51,7 @@ pub use common::{CommonNote, DirtyParts, OpPhrase, PlanOp, UntrackedCtx};
 pub use conflicts::{ConflictsNote, ConflictsRecovery, ConflictsTitle};
 pub use discard::DiscardNote;
 pub use force_lease::{ForceLeaseNote, ForceLeaseRecovery, ForceLeaseTitle};
-pub use github::{GithubNote, GithubRecovery, GithubTitle};
+pub use github::{GithubNote, GithubRecovery, GithubTitle, PrMergeLocalReason};
 pub use history::{HistoryMoveDir, HistoryNote, HistoryOp, HistoryRecovery, HistoryTitle};
 pub use merge::{InProgressOp, MergeNote, MergeRecovery, MergeTitle};
 pub use pull::{

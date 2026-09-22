@@ -14,8 +14,8 @@ use std::sync::Mutex;
 
 use kagi_domain::github::{PrFieldEdit, ReviewVerdict};
 use kagi_git::github::{
-    merge_pr, plan_pr_comment, plan_pr_edit, plan_pr_merge, plan_pr_review, pr_comment, pr_edit,
-    pr_review, MergeMethod,
+    merge_pr, plan_pr_comment, plan_pr_edit, plan_pr_review, pr_comment, pr_edit, pr_review,
+    MergeMethod,
 };
 use kagi_git::oplog::{read_oplog_tail, Actor, OpOutcome};
 
@@ -26,7 +26,7 @@ const HEAD_SHA: &str = "1111111111111111111111111111111111111111";
 
 const PR_JSON: &str = r#"[{"number":501,"title":"transport recording",
   "headRefName":"feat/x","headRefOid":"1111111111111111111111111111111111111111",
-  "baseRefName":"main","isDraft":false,"reviewDecision":"APPROVED",
+  "baseRefName":"main","isDraft":false,"isCrossRepository":false,"reviewDecision":"APPROVED",
   "mergeable":"MERGEABLE","statusCheckRollup":[],
   "url":"https://example.invalid/acme/widgets/pull/501","author":{"login":"a"},
   "reviewRequests":[],"body":""}]"#;
@@ -94,9 +94,26 @@ const VIEW_MERGED: &str = r#"echo '{"mergedAt":"2026-09-07T00:00:00Z"}'"#;
 const VIEW_OPEN: &str = r#"echo '{"mergedAt":null}'"#;
 const VIEW_UNREACHABLE: &str = "echo 'could not connect to github.com' >&2; exit 1";
 
-fn merge_plan() -> kagi_git::OperationPlan {
+/// The plan a merge executes. `Backend::plan_pr_merge` reads the repository
+/// the merge will run in — the local head branch it may delete is part of the
+/// promise now (#705) — so the merge tests need a real repository where the
+/// comment/review/edit tests below need only a directory.
+fn merge_plan(workdir: &Path) -> kagi_git::OperationPlan {
+    merge_plan_deleting(workdir, false)
+}
+
+fn merge_plan_deleting(workdir: &Path, delete_branch: bool) -> kagi_git::OperationPlan {
+    pr_merge_local::init_repo(workdir);
     let pr = kagi_git::github::parse_pr_list(PR_JSON).unwrap().remove(0);
-    plan_pr_merge(&pr, MergeMethod::Squash, false, "branch 'main'".into())
+    kagi_git::Backend::open(workdir)
+        .unwrap()
+        .plan_pr_merge(
+            &pr,
+            MergeMethod::Squash,
+            delete_branch,
+            "branch 'main'".into(),
+        )
+        .unwrap()
 }
 
 /// bin / logs / workdir under one tempdir, with PATH and KAGI_LOG_DIR pointed
@@ -138,7 +155,7 @@ fn pr_merge_records_before_returning_when_the_ui_completion_is_dropped() {
         std::fs::create_dir_all(dir).unwrap();
     }
     let _restore = Environment::install(&bin, &logs);
-    let plan = merge_plan();
+    let plan = merge_plan(&workdir);
 
     fake_gh(&bin, &gh_script(MERGE_OK, VIEW_OPEN));
     let report = merge_pr(&workdir, 501, MergeMethod::Squash, false, HEAD_SHA, &plan);
@@ -162,6 +179,10 @@ fn pr_merge_records_before_returning_when_the_ui_completion_is_dropped() {
     let OpOutcome::Success { after } = &entry.outcome else {
         panic!("expected a recorded success, got {:?}", entry.outcome);
     };
+    assert!(
+        after.dirty.contains("queued"),
+        "a submission is not a merged PR"
+    );
     assert!(
         after.dirty.contains(HEAD_SHA),
         "the head the merge was bound to is the recovery handle: {}",
@@ -200,7 +221,7 @@ fn a_failed_gh_whose_reread_says_merged_is_not_recorded_as_a_failure() {
         MergeMethod::Squash,
         false,
         HEAD_SHA,
-        &merge_plan(),
+        &merge_plan(&workdir),
     );
     // ADR-0196 Wave 3: the result follows the receipt, so a merge the server
     // confirms is `Ok` even though `gh` itself exited non-zero — the lease is
@@ -209,17 +230,19 @@ fn a_failed_gh_whose_reread_says_merged_is_not_recorded_as_a_failure() {
         matches!(
             report.result,
             Ok(kagi_git::OperationOutcome::PrMerge {
-                confirmed: true,
+                confirmed: false,
                 ..
             })
         ),
         "a confirmed merge must not be handed back as a failure: {:?}",
         report.result
     );
-    let OpOutcome::Success { after } = latest_outcome() else {
+    let OpOutcome::Partial { after, error } = latest_outcome() else {
         panic!("a merged PR must not be recorded as failed");
     };
     assert!(after.dirty.contains(HEAD_SHA));
+    assert!(error.contains("Head branch was modified"));
+    assert!(after.dirty.contains("Head branch was modified"));
 }
 
 #[test]
@@ -227,9 +250,8 @@ fn a_merged_pr_whose_branch_deletion_is_unproven_is_partial() {
     if !crate::test_support::run_isolated() {
         return;
     }
-    // `--delete-branch` was requested and `gh` failed after the merge landed:
-    // the merge is done, the deletion is not confirmed. Neither Success nor
-    // Failed is honest.
+    // A failed transport cannot authorize local cleanup even when a later
+    // read confirms the merge. The receipt preserves that transport error.
     let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let root = tempfile::tempdir().unwrap();
     let (bin, workdir, _restore) = fixture(root.path());
@@ -241,24 +263,41 @@ fn a_merged_pr_whose_branch_deletion_is_unproven_is_partial() {
         MergeMethod::Squash,
         true,
         HEAD_SHA,
-        &merge_plan(),
+        &merge_plan_deleting(&workdir, true),
     );
+    let Ok(kagi_git::OperationOutcome::PrMerge {
+        confirmed,
+        local_branch,
+        ..
+    }) = &report.result
+    else {
+        panic!(
+            "merged but unfinished is `Ok` and unconfirmed, never a plain failure: {:?}",
+            report.result
+        );
+    };
+    assert!(!confirmed, "the remote deletion was never proven");
     assert!(
         matches!(
-            report.result,
-            Ok(kagi_git::OperationOutcome::PrMerge {
-                confirmed: false,
-                ..
-            })
+            local_branch,
+            Some(kagi_domain::operation::PrMergeLocalOutcome::Absent { name })
+                if name == "feat/x"
         ),
-        "merged but unfinished is `Ok` and unconfirmed, never a plain failure: {:?}",
-        report.result
+        "the approved absence is unchanged by a transport error"
     );
     let OpOutcome::Partial { after, error } = latest_outcome() else {
         panic!("an unconfirmed branch deletion after a merge must be partial");
     };
     assert!(after.dirty.contains(HEAD_SHA));
-    assert!(error.contains("branch deletion unconfirmed"), "{error}");
+    assert!(error.contains("Head branch was modified"), "{error}");
+    assert!(
+        after.dirty.contains("Head branch was modified"),
+        "{}",
+        after.dirty
+    );
+    assert!(after.dirty.contains("local branch already absent: feat/x"));
+    assert!(!after.dirty.contains("local branch not deleted"));
+    assert!(report.recording.entry().backup_refs.is_empty());
 }
 
 #[test]
@@ -279,7 +318,7 @@ fn a_failed_gh_that_cannot_be_re_read_is_unknown_not_failed() {
         MergeMethod::Squash,
         false,
         HEAD_SHA,
-        &merge_plan(),
+        &merge_plan(&workdir),
     );
     // The lease-retaining terminal: `apply` keeps the scope reserved and parks
     // a reconcile entry only because the result says `TerminationUnknown`.
@@ -324,7 +363,7 @@ fn pr_merge_reports_recording_failure_without_hiding_the_merge() {
         MergeMethod::Squash,
         false,
         HEAD_SHA,
-        &merge_plan(),
+        &merge_plan(&workdir),
     );
     assert!(
         report.result.is_ok(),
@@ -704,3 +743,8 @@ fn a_comment_never_asks_gh_where_the_repo_is_when_the_pr_already_knows() {
 
 #[path = "support/isolated.rs"]
 mod test_support;
+
+/// #705 — the local branch half of the same boundary: its own fixture, since
+/// those cases need a real repository and these need only a directory.
+#[path = "support/pr_merge_local.rs"]
+mod pr_merge_local;

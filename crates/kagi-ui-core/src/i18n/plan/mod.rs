@@ -39,32 +39,41 @@ use super::{lang, Lang};
 pub fn plan_note_text(note: &PlanNote) -> String {
     match lang() {
         Lang::En => note.message_en(),
-        Lang::Ja => match note {
-            PlanNote::Common(n) => common::note_ja(n),
-            PlanNote::Discard(n) => discard::note_ja(n),
-            PlanNote::Branch(n) => branch::note_ja(n),
-            PlanNote::Stash(n) => stash::note_ja(n),
-            PlanNote::History(n) => history::note_ja(n),
-            PlanNote::Pull(n) => pull::note_ja(n),
-            PlanNote::Push(n) => push::note_ja(n),
-            PlanNote::Switch(n) => switch::note_ja(n),
-            PlanNote::Checkout(n) => checkout::note_ja(n),
-            PlanNote::Merge(n) => merge::note_ja(n),
-            PlanNote::Worktree(n) => worktree::note_ja(n),
-            PlanNote::CherryRevert(n) => cherry_revert::note_ja(n),
-            PlanNote::Cleanup(n) => cleanup::note_ja(n),
-            PlanNote::Conflicts(n) => conflicts::note_ja(n),
-            PlanNote::Commit(n) => commit::note_ja(n),
-            PlanNote::Checklist(n) => checklist::note_ja(n),
-            PlanNote::Tag(n) => tag::note_ja(n),
-            PlanNote::RemoteBranch(n) => remote_branch::note_ja(n),
-            PlanNote::Reset(n) => reset::note_ja(n),
-            PlanNote::ForceLease(n) => force_lease::note_ja(n),
-            PlanNote::Github(n) => github::note_ja(n),
-            PlanNote::Rebase(n) => rebase::note_ja(n),
-            PlanNote::Snapshot(n) => snapshot::note_ja(n),
-            PlanNote::Ruleset(n) => ruleset::note_ja(n),
-        },
+        Lang::Ja => note_ja_any(note),
+    }
+}
+
+/// The JA half of [`plan_note_text`], callable without going through `lang()`.
+///
+/// A note can **carry** another note — a PR merge keeps the local branch for
+/// the delete-branch family's own typed reason (#705) — so the Japanese
+/// dispatch has to be reachable from inside a category renderer.
+pub(crate) fn note_ja_any(note: &PlanNote) -> String {
+    match note {
+        PlanNote::Common(n) => common::note_ja(n),
+        PlanNote::Discard(n) => discard::note_ja(n),
+        PlanNote::Branch(n) => branch::note_ja(n),
+        PlanNote::Stash(n) => stash::note_ja(n),
+        PlanNote::History(n) => history::note_ja(n),
+        PlanNote::Pull(n) => pull::note_ja(n),
+        PlanNote::Push(n) => push::note_ja(n),
+        PlanNote::Switch(n) => switch::note_ja(n),
+        PlanNote::Checkout(n) => checkout::note_ja(n),
+        PlanNote::Merge(n) => merge::note_ja(n),
+        PlanNote::Worktree(n) => worktree::note_ja(n),
+        PlanNote::CherryRevert(n) => cherry_revert::note_ja(n),
+        PlanNote::Cleanup(n) => cleanup::note_ja(n),
+        PlanNote::Conflicts(n) => conflicts::note_ja(n),
+        PlanNote::Commit(n) => commit::note_ja(n),
+        PlanNote::Checklist(n) => checklist::note_ja(n),
+        PlanNote::Tag(n) => tag::note_ja(n),
+        PlanNote::RemoteBranch(n) => remote_branch::note_ja(n),
+        PlanNote::Reset(n) => reset::note_ja(n),
+        PlanNote::ForceLease(n) => force_lease::note_ja(n),
+        PlanNote::Github(n) => github::note_ja(n),
+        PlanNote::Rebase(n) => rebase::note_ja(n),
+        PlanNote::Snapshot(n) => snapshot::note_ja(n),
+        PlanNote::Ruleset(n) => ruleset::note_ja(n),
     }
 }
 

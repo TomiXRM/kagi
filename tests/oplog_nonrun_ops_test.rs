@@ -1079,13 +1079,15 @@ fn pr_merge_unknown_resolves_only_on_a_merged_re_read() {
     let bin = dir.join("fake-bin");
 
     let pr = one_pr(false);
-    let plan = kagi_git::github::plan_pr_merge(
-        &pr,
-        kagi_git::github::MergeMethod::Squash,
-        false,
-        "branch 'main'".into(),
-    );
     let backend = Backend::open(dir).unwrap();
+    let plan = backend
+        .plan_pr_merge(
+            &pr,
+            kagi_git::github::MergeMethod::Squash,
+            false,
+            "branch 'main'".into(),
+        )
+        .unwrap();
     let repo_id = backend.write_repo_id().unwrap();
     let remote = backend.remote_expectation("pr-merge", &plan);
     assert_eq!(
@@ -1220,13 +1222,15 @@ fn pr_merge_reads_the_repository_it_froze_not_a_remote_name() {
     let log = dir.join("gh-argv");
     git(dir, &["remote", "add", "upstream", BASE_URL]);
 
-    let plan = kagi_git::github::plan_pr_merge(
-        &one_pr(false),
-        kagi_git::github::MergeMethod::Squash,
-        true,
-        "branch 'main'".into(),
-    );
     let backend = Backend::open(dir).unwrap();
+    let plan = backend
+        .plan_pr_merge(
+            &one_pr(false),
+            kagi_git::github::MergeMethod::Squash,
+            true,
+            "branch 'main'".into(),
+        )
+        .unwrap();
     let repo_id = backend.write_repo_id().unwrap();
     let remote = backend.remote_expectation("pr-merge", &plan);
     assert_eq!(
@@ -1372,84 +1376,8 @@ fn pr_merge_reads_the_repository_it_froze_not_a_remote_name() {
     assert!(sessions.reconcile_ids().is_empty());
 }
 
-/// #701 final review 2: a fork PR's head branch is not in the base repository,
-/// so `refs/heads/<head>` there is absent from the start — and
-/// `RemoteExpect::Absent` would happily call that "deleted". Upstream `gh`
-/// makes it worse: it skips the remote head deletion for a cross-repository PR
-/// but still deletes the *local* branch, which nothing here can account for
-/// yet (#705). So `--delete-branch` is refused at plan time and no deletion
-/// promise is frozen: fail closed rather than confirm a deletion nobody did.
-#[test]
-fn pr_merge_from_a_fork_refuses_to_promise_a_branch_deletion() {
-    if !crate::test_support::run_isolated() {
-        return;
-    }
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let fixture = Fixture::new();
-    let dir = &fixture.path;
-    // A fork's head branch is in the fork, so `heads/<head>` in the base
-    // repository is 404 from the start — the shape that makes an `Absent`
-    // expectation confirm without observing anything.
-    let plan = kagi_git::github::plan_pr_merge(
-        &one_pr(true),
-        kagi_git::github::MergeMethod::Squash,
-        true,
-        "branch 'main'".into(),
-    );
-    assert_eq!(
-        plan.disposition,
-        kagi_domain::plan_note::PlanDisposition::Blocked,
-        "a fork merge that promises a branch deletion must not be confirmable"
-    );
-    assert!(
-        plan.blockers.iter().any(|note| matches!(
-            note,
-            kagi_domain::plan_note::PlanNote::Github(
-                kagi_domain::plan_note::GithubNote::ForkDeletesBranch { branch }
-            ) if branch == HEAD_BRANCH
-        )),
-        "and it must say why: {:?}",
-        plan.blockers
-    );
-    assert!(
-        matches!(
-            plan.recovery.as_ref().map(|r| &r.kind),
-            Some(kagi_domain::plan_note::RecoveryKind::Github(
-                kagi_domain::plan_note::GithubRecovery::MergePr {
-                    delete_branch: None,
-                    ..
-                }
-            ))
-        ),
-        "a refused option freezes no promise: {:?}",
-        plan.recovery
-    );
-    assert_eq!(
-        Backend::open(dir)
-            .unwrap()
-            .remote_expectation("pr-merge", &plan),
-        vec![
-            kagi_git::backend::remote_ref::RemoteExpectation::PullRequest {
-                base_repo: BASE_REPO.to_string(),
-                number: 501,
-                expect: kagi_git::backend::remote_ref::PrExpect::Merged,
-            }
-        ],
-        "no ref that was never there may stand in for a deletion"
-    );
-
-    // Same PR without the option: an ordinary merge is still allowed.
-    let plain = kagi_git::github::plan_pr_merge(
-        &one_pr(true),
-        kagi_git::github::MergeMethod::Squash,
-        false,
-        "branch 'main'".into(),
-    );
-    assert_eq!(
-        plain.disposition,
-        kagi_domain::plan_note::PlanDisposition::Ready
-    );
-}
+#[path = "support/pr_merge_reconcile.rs"]
+mod pr_merge_reconcile;
 
 #[path = "support/isolated.rs"]
 mod test_support;

@@ -72,3 +72,13 @@ with `OpInProgress`, so two plans cannot race to set the modal.
   matching the `async: merge plan started for …` precedent. The existing
   `[kagi] plan: delete-branch <name> blockers=N` line is unchanged in format
   and still precedes the modal.
+
+## PR merge local-cleanup planning (#705 / ADR-0202)
+
+`open_pr_merge_modal` also calls `plan_delete_branch` when cleanup is requested,
+so it follows the same off-thread rule. It freezes the owner attachment, uses
+`cx.background_spawn` with a separately opened Backend, and shows the existing
+`merge-plan` busy state until the whole plan finishes. `finish_planning` clears
+stale/failed planning state and hands a completed `PrMergeModal` to
+`AsyncPlanOffer`; a competing modal is not replaced. No provisional deletion
+plan can be confirmed while its status scan or squash probe is still running.

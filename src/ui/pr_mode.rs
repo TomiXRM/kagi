@@ -135,6 +135,10 @@ pub struct PrModeState {
     /// Whether the checks card on the PR page is expanded (mock 7b). Folded
     /// by default: "all checks have passed" is the whole answer most days.
     pub checks_open: bool,
+    /// The pinned composer is showing its markdown preview rather than the
+    /// box. One flag, like `checks_open`: there is one composer, whichever
+    /// tab is on screen (#750).
+    pub comment_preview: bool,
     /// Which section of the feed the next frame must scroll to: child 0 is the
     /// description, child 1 the conversation. `None` once consumed - a tab
     /// press is a jump, not a position the renderer keeps re-asserting.
@@ -172,6 +176,7 @@ impl Default for PrModeState {
             active: None,
             focus: PrFocus::List,
             checks_open: false,
+            comment_preview: false,
             feed_anchor: None,
             view: PrView::Overview,
             filter: PrListFilter::default(),

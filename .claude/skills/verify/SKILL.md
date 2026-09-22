@@ -103,7 +103,12 @@ The current suite covers:
   Preview, scoped Focus Editor, multiline Paste and Undo, and successful write
   settlement consuming its draft without reopening Issues after Graph is selected,
   all without a live GitHub write (ADR-0201; `src/ui/issues_composer_e2e.rs` seeds
-  read-side state and enters the production settlement path);
+  read-side state and enters the production settlement path); since #750 it also
+  covers the PR page's shared timeline feed — a seeded line comment's diff hunk
+  (`pr-convo-hunk-<n>`) and ```suggestion marker (`pr-convo-suggestion-<n>`) drawn
+  inside the shared row — and the pinned PR composer's real toggle click
+  (`pr-composer-mode-toggle` → `pr-composer-preview`) keeping the typed text
+  across a preview round trip;
 - Issues cursor pagination (`KAGI_GUI_E2E_ONLY=issues_pagination`,
   `tests/recovery/issues_pagination.rs`): the production virtual viewport loads
   100 → 200 → final-page rows without resetting the scroll anchor; an offline

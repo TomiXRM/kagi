@@ -622,6 +622,8 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     );
 
     // A GitHub page has a shell only until its list has arrived.
+    // Proof that the doubly-guarded PR half below actually ran.
+    let mut pr_section_ran = false;
     if kagi_git::github::gh_available() {
         app.update(cx, |app, cx| app.show_graph_mode(cx));
         swipe_phase(cx, win, swipe_position, -70.0, gpui::TouchPhase::Started);
@@ -680,13 +682,16 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
         cx.run_until_parked();
         let cached = cx.read(|cx| app.read(cx).ui().github_prs.first().cloned());
         if let Some(pr) = cached {
-            // The conversation lands through the injected read: two reviews
-            // and one issue comment, which must become three entries of the
-            // page's list. The first virtualized feed flattened the entries
-            // *before* assigning what had landed and showed none (review
-            // finding, w5:p19).
+            // The conversation lands through the injected read: two reviews,
+            // one issue comment and one line comment carrying both a
+            // ```suggestion fence and a diff hunk, which must become four
+            // entries of the page's list. The first virtualized feed
+            // flattened the entries *before* assigning what had landed and
+            // showed none (review finding, w5:p19). The line comment sorts
+            // first, so #750's shared row chrome has to keep its hunk and its
+            // suggestion marker on the entry the page always draws.
             e2e::queue_github_pr_conversation(cx.background_executor.spawn(async move {
-                use kagi_domain::github::{Comment, Review};
+                use kagi_domain::github::{Comment, Review, ReviewComment};
                 (
                     Ok((
                         vec![
@@ -709,7 +714,16 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
                             created_at: "2026-09-03T00:00:00Z".into(),
                         }],
                     )),
-                    Ok(Vec::new()),
+                    Ok(vec![ReviewComment {
+                        author: "copilot".into(),
+                        path: "src/lib.rs".into(),
+                        line: 12,
+                        start_line: None,
+                        body: "prefer the helper\n\n```suggestion\nlet x = helper();\n```\n".into(),
+                        diff_hunk: "@@ -10,3 +10,3 @@\n-let x = 1;\n+let x = 2;\n context".into(),
+                        created_at: "2026-08-31T00:00:00Z".into(),
+                        in_reply_to: None,
+                    }]),
                 )
             }));
             app.update(cx, |app, cx| app.pr_mode_open(&pr, cx));
@@ -720,8 +734,8 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
                 assert!(tab.conversation_loaded, "the injected conversation landed");
                 assert_eq!(
                     tab.feed_entries.len(),
-                    3,
-                    "every review and comment that landed is an entry of the page"
+                    4,
+                    "every review, comment and line comment that landed is an entry of the page"
                 );
             });
             // ADR-0200: 概要 and レビュー are two anchors into ONE virtualized
@@ -764,21 +778,33 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
                 cx.update_window(win, |_, window, cx| window.draw(cx).clear())
                     .unwrap();
             }
-            let drawn: Vec<bool> = (0..3)
-                .map(|i| {
-                    e2e::control_bounds(win.window_id(), &format!("pr-feed-entry-{i}")).is_some()
-                })
-                .collect();
-            let heights: Vec<Option<f32>> = (0..3)
-                .map(|i| {
-                    e2e::control_bounds(win.window_id(), &format!("pr-feed-entry-{i}"))
-                        .map(|b| f32::from(b.size.height))
-                })
-                .collect();
-            let _ = heights;
+            // The line comment sorts first, so entry 0 is the one that must be
+            // under the heading the レビュー tab just revealed.
+            for id in [
+                "pr-feed-entry-0",
+                "pr-convo-hunk-7000",
+                "pr-convo-suggestion-7000",
+            ] {
+                e2e::clear_control_bounds(win.window_id(), id);
+            }
+            for _ in 0..2 {
+                cx.update_window(win, |_, window, cx| window.draw(cx).clear())
+                    .unwrap();
+            }
             assert!(
-                drawn.iter().any(|d| *d),
-                "at least the first entry under the heading is drawn: {drawn:?}"
+                e2e::control_bounds(win.window_id(), "pr-feed-entry-0").is_some(),
+                "the first entry under the heading is drawn"
+            );
+            // #750: moving the entry onto the shared row must not drop what
+            // only a PR entry carries — the diff hunk above the body and the
+            // ```suggestion marker on the meta line are drawn with it.
+            assert!(
+                e2e::control_bounds(win.window_id(), "pr-convo-hunk-7000").is_some(),
+                "the line comment's diff hunk is drawn inside the shared row"
+            );
+            assert!(
+                e2e::control_bounds(win.window_id(), "pr-convo-suggestion-7000").is_some(),
+                "the suggestion marker rides on the shared row's meta line"
             );
             // ...and the heading sits at the top of the page, not at its
             // bottom edge with the reviews below the fold: pressing レビュー
@@ -798,6 +824,18 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
             // the per-check rows in place. The fixture PR carries one check,
             // so the card exists and the disclosure must change the pane's
             // height rather than open a second surface.
+            //
+            // The card is near the top of the virtualized page and the レビュー
+            // jump above left the feed at its conversation: go back to 概要 and
+            // let the list lay out, or there is nothing on screen to measure.
+            app.update(cx, |app, cx| {
+                app.pr_mode_show(kagi::ui::pr_mode::PrView::Overview, cx)
+            });
+            e2e::clear_control_bounds(win.window_id(), "pr-mode-checks");
+            for _ in 0..2 {
+                cx.update_window(win, |_, window, cx| window.draw(cx).clear())
+                    .unwrap();
+            }
             let folded = measure(cx, win, "pr-mode-checks").expect("the checks card is drawn");
             app.update(cx, |app, cx| app.pr_mode_toggle_checks(cx));
             e2e::clear_control_bounds(win.window_id(), "pr-mode-checks");
@@ -844,13 +882,104 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
             });
             cx.read(|cx| assert!(app.read(cx).pr_fields_modal().is_none()));
 
+            // #750: the composer is the Issues chrome — one box, one toggle,
+            // an amber POST that is only live when it can be pressed.
+            assert!(
+                measure(cx, win, "pr-mode-composer").is_some(),
+                "the PR page pins its composer"
+            );
+            assert!(
+                measure(cx, win, "pr-composer-mode-toggle").is_some(),
+                "edit/preview is one control, like the Issues composer"
+            );
+            // Type into the composer's own box, then drive the toggle the way
+            // the reader does: a click on the control that is on screen. What
+            // is written must survive the trip to the preview and back — the
+            // preview reads the live box, it does not replace it.
+            let typed = "hunk を直す\n\n```suggestion\nlet x = helper();\n```\n";
+            cx.update_window(win, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    let input = app
+                        .pr_comment_input
+                        .clone()
+                        .expect("the composer's box exists once it has been drawn");
+                    input.update(cx, |state, cx| {
+                        state.focus(window, cx);
+                        state.replace(typed.to_owned(), window, cx);
+                    });
+                });
+            })
+            .unwrap();
+            cx.run_until_parked();
+            let composer_text = |cx: &mut VisualTestAppContext| {
+                cx.read(|cx| {
+                    app.read(cx)
+                        .pr_comment_input
+                        .as_ref()
+                        .expect("the composer's box")
+                        .read(cx)
+                        .value()
+                        .to_string()
+                })
+            };
+            assert_eq!(composer_text(cx), typed, "the box holds what was typed");
+            assert!(
+                measure(cx, win, "pr-composer-preview").is_none(),
+                "the composer opens on its box, not on its preview"
+            );
+            let toggle = measure(cx, win, "pr-composer-mode-toggle")
+                .expect("the single edit/preview control");
+            cx.simulate_click(win, toggle.center(), gpui::Modifiers::none());
+            cx.run_until_parked();
+            e2e::clear_control_bounds(win.window_id(), "pr-composer-mode-toggle");
+            cx.update_window(win, |_, window, cx| window.draw(cx).clear())
+                .unwrap();
+            assert!(
+                measure(cx, win, "pr-composer-preview").is_some(),
+                "clicking the toggle shows the typed text as markdown"
+            );
+            assert!(
+                measure(cx, win, "pr-composer-mode-toggle").is_some(),
+                "preview keeps the same single toggle control"
+            );
+            let toggle = measure(cx, win, "pr-composer-mode-toggle")
+                .expect("the toggle is still the way back");
+            cx.simulate_click(win, toggle.center(), gpui::Modifiers::none());
+            cx.run_until_parked();
+            e2e::clear_control_bounds(win.window_id(), "pr-composer-preview");
+            cx.update_window(win, |_, window, cx| window.draw(cx).clear())
+                .unwrap();
+            assert!(
+                e2e::control_bounds(win.window_id(), "pr-composer-preview").is_none(),
+                "the second click gives the box back"
+            );
+            assert_eq!(
+                composer_text(cx),
+                typed,
+                "a preview round trip must not touch what was written"
+            );
+
             app.update(cx, |app, cx| app.pr_mode_home(cx));
             assert!(
                 measure(cx, win, "pr-mode-lane-pane").is_none(),
                 "back on the home list there is no PR to draw a lane for"
             );
+            // The PR half of this scenario is guarded twice (gh, and a cached
+            // PR). Say so in the log: a silent skip must not read as proof.
+            eprintln!("[gui-e2e] workspace_mode_toolbar: PR section exercised");
+            pr_section_ran = true;
+        } else {
+            eprintln!(
+                "[gui-e2e] workspace_mode_toolbar: PR section SKIPPED (no cached PR to open)"
+            );
         }
+    } else {
+        eprintln!("[gui-e2e] workspace_mode_toolbar: PR section SKIPPED (gh unavailable)");
     }
+    assert!(
+        pr_section_ran || !kagi_git::github::gh_available(),
+        "with gh on PATH the PR section must run, not skip"
+    );
 
     // Releasing under the 20% commit boundary returns to the origin page.
     app.update(cx, |app, cx| app.show_pr_mode(cx));

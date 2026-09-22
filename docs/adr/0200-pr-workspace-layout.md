@@ -361,3 +361,30 @@ after reload without exposing a synthetic branch in the sidebar.
     the flat list moved out of the removed rail into the swimlane pane's lower
     third (§5), still wired to `PrFocus::Files` and still reused by the
     Conflicts view for its shorter set. A tree is a separate change.
+
+## 追記 1 — PR ページは Issues のタイムライン chrome を共有する (#750)
+
+ADR-0201 の Issues 行・composer の chrome を `src/ui/timeline_row.rs` に切り出し、
+Issues（thread / home 一覧 / composer）と PR（feed / composer / home 表）が同じ 1
+実装を使う。第二の実装は作らない。行は 40px avatar + 24px gutter + 14px gap、
+区切りは 1px の panel line で、card の枠と背景は廃止する。
+
+- **PR 会話 feed**: description / review / comment はいずれも共有 row。line
+  comment の diff hunk、```suggestion marker、severity tag、`path:line` anchor、
+  review の verdict は row の meta 行と本文の上に残る。時刻表示は生の ISO から
+  Issues と同じ相対表記になる。markdown は既存の
+  sanitize → pad_inline_code → flatten_html_blocks 経路のまま。
+- **PR composer**: viewer avatar、単一 placeholder の box、eye ↔ square-pen の
+  単一トグル、有効時のみ amber の送信。preview は input entity の現在値を読む
+  だけで `set_value` しないので undo は保たれる。Approve / Request changes は
+  従来の色と hold 判定のまま（空文でも Approve は可能）。
+- **PR home**: triage の表のまま。行は共有 row frame と共有 hover を使い、
+  高さは 64px（avatar 40 + 上下 12）。header は avatar 列幅を確保して列を揃える。
+- **下書き表示**: PR の下書きは従来どおり `PrTab::comment_draft` のメモリ保持で、
+  永続化も新しい fetch も追加しない。composer の「下書き保存済み」はその保持を
+  指し、Issues 側だけが `drafts.rs` への保存中/保存済みを出し分ける。
+- **state**: 追加したのは `PrModeState::comment_preview`（`checks_open` と同じ
+  view flag）1 つだけ。書き込み経路 `start_pr_comment` / `start_pr_review`、
+  owner 固定、transport 記録は変更しない。
+- **i18n**: 両方が使う文言は `ComposerWrite` / `ComposerPreview` /
+  `ComposerDraftSaved` / `ComposerDraftSaving` に改名した（EN/JA の文字列は不変）。

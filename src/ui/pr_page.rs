@@ -507,7 +507,10 @@ pub(super) fn render_checks_card(
     Some(super::e2e::measure_control("pr-mode-checks", card))
 }
 
-/// The comment composer, pinned at the foot of the PR's page (ADR-0200).
+/// The comment composer, pinned at the foot of the PR's page (ADR-0200), in
+/// the Issues timeline's chrome (#750): the viewer's avatar, one box with one
+/// placeholder, edit/preview as a single icon toggle, and an amber POST that
+/// is amber only while it can be pressed.
 ///
 /// `None` until the window-bearing render pass has built the input
 /// (`sync_pr_comment_input`): `InputState::new` needs a `&mut Window`, and this
@@ -524,7 +527,12 @@ pub(super) fn render_composer(
         .pr_mode()
         .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
         .map(|t| t.pr.number)?;
-    let empty = input.read(cx).value().trim().is_empty();
+    // The box is the truth, not the tab's parked copy: a preview of what was
+    // parked would show yesterday's text while you type today's. The value is
+    // already a `SharedString`; keep it, don't rebuild it every frame.
+    let typed = input.read(cx).value().clone();
+    let empty = typed.trim().is_empty();
+    let preview = app.pr_mode().is_some_and(|m| m.comment_preview);
     let held = app.repo_path.as_ref().is_some_and(|repo| {
         app.transport_holds
             .contains(repo, &format!("pr-comment #{number}"))
@@ -542,71 +550,116 @@ pub(super) fn render_composer(
     let request_changes = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
         this.start_pr_review(kagi_domain::github::ReviewVerdict::RequestChanges, cx);
     });
-    Some(
-        div()
-            .id("pr-mode-composer")
-            .flex_shrink_0()
-            .w_full()
-            .px_4()
-            .py_2()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .border_t_1()
-            .border_color(rgb(theme().selected))
-            .bg(rgb(theme().panel))
-            .child(gpui_component::input::Input::new(&input))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_end()
-                    .gap_2()
-                    // GitHub requires words on a "request changes" review and
-                    // allows a wordless approval, so only one of the three is
-                    // usable with an empty box (mock 7a).
-                    // Small, with an icon each: three full-size text buttons
-                    // outweighed the box they act on (user request). The
-                    // verdicts carry their colour; a plain comment does not.
-                    .child(
-                        super::button_style::KagiButton::accent_icon(
-                            "pr-review-request-changes",
-                            "icons/review-request-changes.svg",
-                            Msg::PrReviewRequestChanges.t(),
-                            theme().color_warning,
-                            cx,
-                        )
-                        .small()
-                        .disabled(empty || review_held)
-                        .on_click(request_changes),
-                    )
-                    .child(
-                        super::button_style::KagiButton::accent_icon(
-                            "pr-review-approve",
-                            "icons/review-approve.svg",
-                            Msg::PrReviewApprove.t(),
-                            theme().color_success,
-                            cx,
-                        )
-                        .small()
-                        .disabled(review_held)
-                        .on_click(approve),
-                    )
-                    .child(
-                        super::button_style::KagiButton::accent_icon(
-                            "pr-comment-post",
-                            "icons/comment-send.svg",
-                            Msg::PrCommentPost.t(),
-                            theme().color_branch,
-                            cx,
-                        )
-                        .small()
-                        .disabled(empty || held)
-                        .on_click(post),
+    // Preview renders the typed text; the box itself is never rebuilt or
+    // re-`set_value`d by the toggle, so undo history survives a round trip.
+    let body: gpui::AnyElement = if preview {
+        super::e2e::measure_control(
+            "pr-composer-preview",
+            div()
+                .min_h(px(56.))
+                .child(super::timeline_row::body_markdown(
+                    ("pr-comment-preview", number as usize),
+                    typed.as_ref(),
+                    super::timeline_row::markdown_style(15., cx),
+                )),
+        )
+    } else {
+        super::timeline_row::body_input(&input).into_any_element()
+    };
+    let viewer = app.github_login.as_deref().unwrap_or("?");
+    let mut content = super::timeline_row::content_column()
+        .gap_2()
+        .child(body)
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .child(super::e2e::measure_control(
+                    "pr-composer-mode-toggle",
+                    super::timeline_row::mode_toggle(
+                        "pr-composer-mode-toggle-button",
+                        preview,
+                        cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+                            this.pr_comment_toggle_preview(cx);
+                        }),
                     ),
-            )
-            .into_any_element(),
+                ))
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        // GitHub requires words on a "request changes" review and
+                        // allows a wordless approval, so only one of the three is
+                        // usable with an empty box (mock 7a).
+                        // The verdicts carry their colour; a plain comment is the
+                        // composer's own amber submit.
+                        .child(
+                            super::button_style::KagiButton::accent_icon(
+                                "pr-review-request-changes",
+                                "icons/review-request-changes.svg",
+                                Msg::PrReviewRequestChanges.t(),
+                                theme().color_warning,
+                                cx,
+                            )
+                            .small()
+                            .disabled(empty || review_held)
+                            .on_click(request_changes),
+                        )
+                        .child(
+                            super::button_style::KagiButton::accent_icon(
+                                "pr-review-approve",
+                                "icons/review-approve.svg",
+                                Msg::PrReviewApprove.t(),
+                                theme().color_success,
+                                cx,
+                            )
+                            .small()
+                            .disabled(review_held)
+                            .on_click(approve),
+                        )
+                        .child(super::timeline_row::submit(
+                            "pr-comment-post",
+                            Msg::PrCommentPost.t(),
+                            empty || held,
+                            post,
+                        )),
+                ),
+        );
+    // What the box holds lives on the PR's tab for as long as the app runs
+    // (`PrTab::comment_draft`) - it is kept, not filed away on disk like an
+    // Issue draft. Say so only when there is something to keep.
+    if !empty {
+        content = content.child(super::timeline_row::draft_status(
+            Msg::ComposerDraftSaved.t(),
+        ));
+    }
+    Some(
+        super::timeline_row::composer_frame(
+            "pr-mode-composer",
+            viewer,
+            &app.avatars.images,
+            content,
+        )
+        .flex_shrink_0()
+        .border_t_1()
+        .border_color(rgb(theme().selected))
+        .bg(rgb(theme().panel))
+        .into_any_element(),
     )
     .map(|el| super::e2e::measure_control("pr-mode-composer", el))
+}
+
+impl KagiApp {
+    /// Flip the pinned composer between its box and its markdown preview
+    /// (#750). The input entity is untouched, so undo survives the trip.
+    pub fn pr_comment_toggle_preview(&mut self, cx: &mut Context<Self>) {
+        if let Some(mode) = self.pr_mode_mut() {
+            mode.comment_preview = !mode.comment_preview;
+        }
+        cx.notify();
+    }
 }

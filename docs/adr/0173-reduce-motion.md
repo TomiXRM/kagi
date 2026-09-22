@@ -77,9 +77,17 @@ in different modules/entities and some outside `KagiApp`):
 
 ## Out of scope / follow-ups (issue #354)
 
-- **a11y `role` / `on_a11y_action` wiring** (readable confirmation dialogs, list
-  UIs): a larger GPUI foundation (stable per-row IDs from commit OIDs, `Role::List`
-  + item totals on `uniform_list`). Deferred.
+- **2026-09-23 role-only slice**: the existing toolbar controls in
+  `src/ui/render_header.rs` expose button roles and explicit accessible names;
+  the sidebar mode navigator in `src/ui/workspace_mode.rs` exposes a tab list,
+  named tabs and the existing active selection. The pinned GPUI `90b3aa0`
+  supports these APIs without a dependency change. Existing modal-footer
+  `gpui_component::Button` controls already supply button roles and labels and
+  remain unchanged.
+- **Readable confirmation dialogs and list UIs** remain deferred: this small
+  slice does not establish readable dialog content, destructive two-stage
+  confirmation with VoiceOver, additional `on_a11y_action` wiring, stable per-row
+  IDs from commit OIDs, or `Role::List` + item totals on `uniform_list`.
 - **Colorblind / high-contrast theme**: an aesthetic/design call (GitHub-style
   orange↔blue swap, dual-encoded graph lanes). GPUI has no high-contrast API, so
   it must be solved as a theme. Deferred.

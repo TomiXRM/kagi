@@ -7,11 +7,7 @@ use super::{
 };
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Entity, SharedString, Window};
 use gpui_component::input::{Enter, Input, InputEvent, InputState, Paste};
-use gpui_component::{
-    button::{Button, ButtonVariants as _},
-    text::TextView,
-    Disableable, Icon, Sizable,
-};
+use gpui_component::{button::Button, Disableable, Icon, Sizable};
 use kagi_domain::issue_composer::{fenced_code_paste, IssueDraft};
 use std::collections::HashMap;
 
@@ -283,53 +279,27 @@ pub(super) fn render_composer(
         && editor.draft.title.trim().is_empty()
         && editor.draft.body.trim().is_empty();
     let viewer = app.github_login.as_deref().unwrap_or("?");
-    let avatar = kagi_ui_core::commit_header::avatar_circle_with_initials(
-        40.,
-        viewer,
-        viewer,
-        &app.avatars.images,
-    );
-    let mut composer = div()
-        .id(id)
-        .key_context("IssueComposer")
-        .w_full()
-        .flex()
-        .flex_row()
-        .gap(theme::scaled_px(14.))
-        .px(theme::scaled_px(24.))
-        .pt(theme::scaled_px(20.))
-        .pb(theme::scaled_px(14.))
-        .border_b_1()
-        .border_color(rgb(theme().selected))
-        .on_action(cx.listener(move |app, _: &FocusIssueEditor, window, cx| {
-            app.toggle_issue_focus(number, window, cx)
-        }));
     let repo = state
         .base_repo
         .clone()
         .unwrap_or_else(|| Msg::IssueRepoUnavailable.t().into());
-    let mut content = div()
-        .flex_1()
-        .min_w(px(0.))
-        .flex()
-        .flex_col()
-        .gap(theme::scaled_px(10.))
-        .child(
-            div()
-                .self_start()
-                .h(theme::scaled_px(28.))
-                .px(theme::scaled_px(10.))
-                .flex()
-                .items_center()
-                .rounded_full()
-                .border_1()
-                .border_color(rgb(theme().selected))
-                .text_xs()
-                .text_color(rgb(theme().text_sub))
-                .gap_1()
-                .child(Icon::empty().path("icons/folder-open.svg").xsmall())
-                .child(repo),
-        );
+    let mut content = super::timeline_row::content_column().gap(theme::scaled_px(10.));
+    content = content.child(
+        div()
+            .self_start()
+            .h(theme::scaled_px(28.))
+            .px(theme::scaled_px(10.))
+            .flex()
+            .items_center()
+            .rounded_full()
+            .border_1()
+            .border_color(rgb(theme().selected))
+            .text_xs()
+            .text_color(rgb(theme().text_sub))
+            .gap_1()
+            .child(Icon::empty().path("icons/folder-open.svg").xsmall())
+            .child(repo),
+    );
     if number.is_none() {
         let Some(title) = editor.title_input.clone() else {
             return div().into_any_element();
@@ -359,18 +329,13 @@ pub(super) fn render_composer(
         );
     }
     let body = if editor.preview {
-        let markdown = kagi_ui_editor::markdown::pad_inline_code(
-            &kagi_domain::message::sanitize_markdown_for_view(&editor.draft.body),
-        );
         div()
             .min_h(px(80.))
-            .child(
-                TextView::markdown(
-                    ("issue-preview", number.unwrap_or(0) as usize),
-                    SharedString::from(kagi_ui_core::markdown::flatten_html_blocks(&markdown)),
-                )
-                .selectable(true),
-            )
+            .child(super::timeline_row::body_markdown(
+                ("issue-preview", number.unwrap_or(0) as usize),
+                &editor.draft.body,
+                super::timeline_row::markdown_style(15., cx),
+            ))
             .into_any_element()
     } else {
         let paste_input = input.clone();
@@ -405,41 +370,22 @@ pub(super) fn render_composer(
                 });
                 cx.stop_propagation();
             }))
-            .child(
-                Input::new(&input)
-                    .appearance(false)
-                    .bordered(false)
-                    .focus_bordered(false)
-                    .h_full()
-                    .text_size(theme::scaled_px(15.))
-                    .line_height(theme::scaled_px(25.5)),
-            )
+            .child(super::timeline_row::body_input(&input).h_full())
             .into_any_element()
     };
     if !empty_create {
         content = content.child(body);
     }
-    let (mode_icon, mode_tooltip) = if editor.preview {
-        ("icons/square-pen.svg", Msg::IssueWrite.t())
-    } else {
-        ("icons/eye.svg", Msg::IssuePreview.t())
-    };
-    let submit = Button::new(SharedString::from(format!("{id}-submit")))
-        .icon(Icon::empty().path("icons/comment-send.svg"))
-        .label(if number.is_some() {
+    let submit = super::timeline_row::submit(
+        format!("{id}-submit"),
+        if number.is_some() {
             Msg::IssueReply.t()
         } else {
             Msg::IssueCreate.t()
-        });
-    // The standard warning variant is filled from Kagi's synchronized warning
-    // button tokens. Keep the unavailable state on Button's neutral disabled
-    // path instead of leaving an amber tint that looks actionable.
-    let submit = if disabled { submit } else { submit.warning() }
-        .rounded(px(999.))
-        .h(theme::scaled_px(36.))
-        .px_3()
-        .disabled(disabled)
-        .on_click(cx.listener(move |app, _, _, cx| app.start_issue_write(number, cx)));
+        },
+        disabled,
+        cx.listener(move |app, _, _, cx| app.start_issue_write(number, cx)),
+    );
     content = content.child(
         div()
             .flex()
@@ -455,11 +401,10 @@ pub(super) fn render_composer(
                         } else {
                             "issue-composer-mode-toggle"
                         },
-                        Button::new(SharedString::from(format!("{id}-mode-toggle")))
-                            .icon(Icon::empty().path(mode_icon))
-                            .small()
-                            .tooltip(mode_tooltip)
-                            .on_click(cx.listener(move |app, _, _, cx| {
+                        super::timeline_row::mode_toggle(
+                            format!("{id}-mode-toggle"),
+                            editor.preview,
+                            cx.listener(move |app, _, _, cx| {
                                 if let Some(editor) = app
                                     .ui_mut()
                                     .and_then(|ui| ui.issue_composer.editors.get_mut(&number))
@@ -467,7 +412,8 @@ pub(super) fn render_composer(
                                     editor.preview = !editor.preview;
                                 }
                                 cx.notify();
-                            })),
+                            }),
+                        ),
                     )),
             )
             .child(div().flex_1())
@@ -532,14 +478,18 @@ pub(super) fn render_composer(
     } else if editor.save_error.is_none()
         && (!editor.draft.body.trim().is_empty() || !editor.draft.title.trim().is_empty())
     {
-        content = content.child(div().text_xs().text_color(rgb(theme().text_muted)).child(
-            if editor.saving {
-                Msg::IssueDraftSaving.t()
-            } else {
-                Msg::IssueDraftSaved.t()
-            },
-        ));
+        content = content.child(super::timeline_row::draft_status(if editor.saving {
+            Msg::ComposerDraftSaving.t()
+        } else {
+            Msg::ComposerDraftSaved.t()
+        }));
     }
-    composer = composer.child(avatar).child(content);
+    let composer = super::timeline_row::composer_frame(id, viewer, &app.avatars.images, content)
+        .border_b_1()
+        .border_color(rgb(theme().selected))
+        .key_context("IssueComposer")
+        .on_action(cx.listener(move |app, _: &FocusIssueEditor, window, cx| {
+            app.toggle_issue_focus(number, window, cx)
+        }));
     super::e2e::measure_control(id, composer).into_any_element()
 }

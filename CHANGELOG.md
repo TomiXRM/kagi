@@ -9,6 +9,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - conflict の Save / Abort が拒否された理由を EN/JA の通知に表示し、計画後の状態変化や conflict marker の残存を判別できるようにしました。footer のログ契約と oplog の英語詳細は維持します。（#711）
 - Issues 一覧を最下行までスクロールすると次の100件を追加取得するようにしました。読み込み済み件数は続きがある間 `(N+)` と表示し、失敗時は一覧と cursor を保持して再試行できます。戻り・手動更新は先頭ページから取り直します。（#752）
+### Changed
+
+- **PR ページを Issues と同じタイムライン chrome に揃えました。** description / review / comment は Issues Thread と同じ borderless な行（40px avatar、`@login · 経過時間`、1px の区切り線）になり、line comment の diff hunk・suggestion・severity tag・`path:line` はその行に残ります。pinned composer は avatar・単一の eye ↔ square-pen トグル・有効なときだけ amber になる送信ボタンを Issues と共有し、PR home は triage 用の表のまま行の avatar・余白・hover を共通部品に合わせました。行と composer の chrome は `src/ui/timeline_row.rs` の 1 実装で Issues と PR の両方が使います。PR の下書きは従来どおりタブのメモリ上にあり（永続化なし）、「下書き保存済み」はその保持を指します。既存の投稿・review 経路、owner 固定、transport 記録は変更ありません。（ADR-0200 追記 / ADR-0201）
 
 ## [0.39.0] - 2026-09-20
 

@@ -180,14 +180,7 @@ pub(super) fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> Any
                             this.load_github_issue_detail(number, window, cx);
                         },
                     );
-                    let age = kagi_ui_core::time_parse::iso_to_epoch(&issue.updated_at)
-                        .map(|at| {
-                            kagi_ui_core::time::relative_time(
-                                at,
-                                kagi_ui_core::time::now_unix_secs(),
-                            )
-                        })
-                        .unwrap_or_else(|| issue.updated_at.clone());
+                    let age = super::timeline_row::age(&issue.updated_at);
                     let content = div()
                         .flex_1()
                         .min_w(px(0.))
@@ -331,6 +324,7 @@ fn render_main_list_status(app: &KagiApp, _cx: &mut Context<KagiApp>) -> AnyElem
                     theme().text_muted,
                 ));
             }
+
             list
         }
     };
@@ -345,38 +339,18 @@ fn render_main_issue_row(app: &KagiApp, issue: &Issue, cx: &mut Context<KagiApp>
             this.load_github_issue_detail(number, window, cx);
         },
     );
-    let age = kagi_ui_core::time_parse::iso_to_epoch(&issue.updated_at)
-        .map(|at| kagi_ui_core::time::relative_time(at, kagi_ui_core::time::now_unix_secs()))
-        .unwrap_or_else(|| issue.updated_at.clone());
+    let age = super::timeline_row::age(&issue.updated_at);
     let (state_label, state_color) = match issue.state {
         IssueState::Open => (Msg::IssueStateOpen.t(), theme().color_success),
         IssueState::Closed => (Msg::IssueStateClosed.t(), theme().text_muted),
         IssueState::Unknown => (Msg::IssueStateUnknown.t(), theme().text_muted),
     };
-    let content = div()
-        .flex_1()
-        .min_w(px(0.))
-        .flex()
-        .flex_col()
+    let content = super::timeline_row::content_column()
         .gap_1()
-        .child(
-            div()
-                .flex()
-                .items_baseline()
-                .gap_2()
-                .text_xs()
-                .child(
-                    div()
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(rgb(theme().text_main))
-                        .child(safe_text(&format!("@{}", issue.author))),
-                )
-                .child(
-                    div()
-                        .text_color(rgb(theme().text_muted))
-                        .child(safe_text(&format!("#{} · {age}", issue.number))),
-                ),
-        )
+        .child(super::timeline_row::meta(
+            &issue.author,
+            &format!("#{} · {age}", issue.number),
+        ))
         .child(
             div()
                 .w_full()
@@ -407,42 +381,16 @@ fn render_main_issue_row(app: &KagiApp, issue: &Issue, cx: &mut Context<KagiApp>
                         )
                         .child(issue.comment_count.to_string()),
                 )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_1()
-                        .child(
-                            div()
-                                .w(theme::scaled_px(8.))
-                                .h(theme::scaled_px(8.))
-                                .rounded_full()
-                                .bg(rgb(state_color)),
-                        )
-                        .child(state_label),
-                ),
+                .child(super::timeline_row::state_dot(state_label, state_color)),
         );
-    let row = div()
-        .id(("issue-main-row", number as usize))
-        .w_full()
-        .min_h(theme::scaled_px(104.))
-        .flex()
-        .flex_row()
-        .gap(theme::scaled_px(14.))
-        .px(theme::scaled_px(24.))
-        .py(theme::scaled_px(16.))
-        .border_b_1()
-        .border_color(rgb(theme().selected))
-        .cursor_pointer()
-        .hover(|style| style.bg(rgb(theme().surface)))
-        .on_click(select)
-        .child(kagi_ui_core::commit_header::avatar_circle_with_initials(
-            40.,
-            &issue.author,
-            &issue.author,
-            &app.avatars.images,
-        ))
-        .child(content);
+    let row = super::timeline_row::clickable(super::timeline_row::row(
+        ("issue-main-row", number as usize),
+        &issue.author,
+        &app.avatars.images,
+        content,
+    ))
+    .min_h(theme::scaled_px(104.))
+    .on_click(select);
     super::e2e::measure_control(format!("issue-main-row-{number}"), row).into_any_element()
 }
 

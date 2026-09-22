@@ -5,36 +5,32 @@
 //! no state of their own.
 
 use gpui::{div, prelude::*, px, rgb, Context, SharedString};
+use gpui_component::text::TextViewStyle;
 use kagi_domain::github::{Comment, PullRequest, Review, ReviewComment};
 
 use super::i18n::Msg;
-use super::pr_attention::{card_border, ci_glyph};
-use super::pr_mode::{card_bg, card_pane_bg};
-// issue #414: `@login` handles come straight from `gh` JSON — sanitize before render.
-use super::render_helpers::safe_text;
+use super::pr_attention::ci_glyph;
+use super::pr_mode::card_pane_bg;
 use super::theme::{self, theme};
 use super::types::ToastKind;
 use super::KagiApp;
 
-/// The PR description as rendered markdown - the card alone, with no scroll
-/// container of its own: it is the first section of the feed (ADR-0200).
-fn description_card(pr: &PullRequest, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    use gpui_component::text::{TextView, TextViewStyle};
-    use gpui_component::ActiveTheme as _;
+/// The PR description as the first row of the feed (#750): the author's
+/// avatar, `@login · age`, the body. Its CI glyph and Draft badge ride on the
+/// meta line, where the reader is already looking for what kind of post this
+/// is.
+fn description_card(
+    pr: &PullRequest,
+    avatars: &kagi_ui_core::avatar::AvatarImages,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
     let body = if pr.body.trim().is_empty() {
         format!("_{}_", Msg::PrModeNoDescription.t())
     } else {
-        // GitHub bodies are CRLF, wrap inline code across lines and carry bot
-        // HTML footers — all of which crash gpui-component's inline layouter
-        // ("text argument should not contain newlines"). Normalise first.
-        // Thin-space padding inside `code` spans (the renderer paints the bare
-        // glyph range) — same trick as the Editor's markdown preview.
-        kagi_ui_editor::markdown::pad_inline_code(
-            &kagi_domain::message::sanitize_markdown_for_view(&pr.body),
-        )
+        pr.body.clone()
     };
     // Table borders: gpui-component draws them in `theme().border`, which
-    // kagi maps to the near-background `selected` — invisible on the card.
+    // kagi maps to the near-background `selected` — invisible on the page.
     // The style refinements override the container + cell borders.
     let mut table = gpui::StyleRefinement::default();
     let mut table_cell = gpui::StyleRefinement::default();
@@ -43,39 +39,17 @@ fn description_card(pr: &PullRequest, cx: &mut Context<KagiApp>) -> gpui::AnyEle
     table.border_color = Some(grid);
     table_cell.border_color = Some(grid);
     let style = TextViewStyle {
-        heading_base_font_size: theme::scaled_px(17.),
-        highlight_theme: cx.theme().highlight_theme.clone(),
-        is_dark: cx.theme().mode.is_dark(),
         table,
         table_cell,
-        ..Default::default()
+        ..super::timeline_row::markdown_style(17., cx)
     };
     let (g, c) = ci_glyph(pr.ci);
-    // A reading card: rounded surface floating on the base background, a
-    // measure-limited column and its own small header — visually a document,
-    // not another list, so the boundary with the commit strip is obvious.
-    let card_header = div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_2()
-        .pb_2()
-        .mb_3()
-        .border_b_1()
-        .border_color(rgb(theme().selected))
+    let meta = super::timeline_row::meta(&pr.author, &super::timeline_row::age(&pr.created_at))
         .child(
             div()
                 .text_xs()
-                .font_weight(gpui::FontWeight::BOLD)
                 .text_color(rgb(theme().text_muted))
                 .child(SharedString::from(Msg::PrModeDescription.t())),
-        )
-        .child(div().flex_1())
-        .child(
-            div()
-                .text_xs()
-                .text_color(rgb(theme().text_sub))
-                .child(safe_text(&format!("@{}", pr.author))),
         )
         .child(
             div()
@@ -95,36 +69,15 @@ fn description_card(pr: &PullRequest, cx: &mut Context<KagiApp>) -> gpui::AnyEle
                     .child(SharedString::from(Msg::PrDraft.t())),
             )
         });
-    div()
-        .id("pr-mode-description")
-        .w_full()
-        .child(
-            div()
-                // Fill the pane (edge-aligned with the commit strip above); a
-                // measure cap left the card visibly narrower than the strip.
-                .w_full()
-                .rounded_lg()
-                .bg(rgb(card_bg()))
-                .border_1()
-                .border_color(card_border())
-                .px_6()
-                .py_5()
-                .text_color(rgb(theme().text_main))
-                .child(card_header)
-                .child(
-                    TextView::markdown(
-                        ("pr-mode-description-md", pr.number as usize),
-                        SharedString::from(kagi_ui_core::markdown::flatten_html_blocks(&body)),
-                    )
-                    .plugin(kagi_ui_core::markdown::MarkdownImages::remote())
-                    // Drag to select, ⌘C to copy — gpui-component's Root
-                    // collects the window selection across every selectable
-                    // TextView (user request: all text, code included).
-                    .selectable(true)
-                    .style(style),
-                ),
-        )
-        .into_any_element()
+    let content = super::timeline_row::content_column()
+        .gap_2()
+        .child(meta)
+        .child(super::timeline_row::body_markdown(
+            ("pr-mode-description-md", pr.number as usize),
+            &body,
+            style,
+        ));
+    super::timeline_row::row("pr-mode-description", &pr.author, avatars, content).into_any_element()
 }
 
 /// "Loading…" with the bobbing dots, while a tab's own fetch is still out
@@ -238,8 +191,10 @@ pub(super) fn conversation_entries(
     entries
 }
 
-/// One conversation card. Bodies go through the same markdown pipeline (and
-/// the same sanitiser) as the description.
+/// One conversation entry as a row of the shared timeline (#750): the same
+/// avatar, `@login · age` meta line and markdown pipeline the Issues thread
+/// draws, with the PR-only payloads — severity tag, review verdict,
+/// suggestion marker, `path:line` anchor and the diff hunk — hung off it.
 fn render_entry(
     number: u64,
     i: usize,
@@ -247,119 +202,84 @@ fn render_entry(
     avatars: &kagi_ui_core::avatar::AvatarImages,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    use gpui_component::text::{TextView, TextViewStyle};
-    use gpui_component::ActiveTheme as _;
-
-    let style = TextViewStyle {
-        heading_base_font_size: theme::scaled_px(15.),
-        highlight_theme: cx.theme().highlight_theme.clone(),
-        is_dark: cx.theme().mode.is_dark(),
-        ..Default::default()
-    };
-    let body = kagi_domain::message::sanitize_markdown_for_view(&e.body);
-    let body = kagi_ui_editor::markdown::pad_inline_code(&body);
-    div()
-        .w_full()
-        .rounded_lg()
-        .bg(rgb(card_bg()))
-        .border_1()
-        .border_color(card_border())
-        .px_4()
-        .py_3()
-        .flex()
-        .flex_col()
-        .child(
+    let style = super::timeline_row::markdown_style(15., cx);
+    let body = e.body.trim().to_string();
+    let meta = super::timeline_row::meta(&e.author, &super::timeline_row::age(&e.at))
+        .children(e.tag.as_ref().map(|t| {
+            use kagi_domain::github::TagSeverity;
+            let c = match t.severity {
+                TagSeverity::High => theme().color_blocker,
+                TagSeverity::Medium => theme().color_warning,
+                TagSeverity::Low => theme().text_sub,
+            };
+            let (bg, border, fg) = super::theme::badge_style(c);
             div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .pb_2()
-                .mb_2()
-                .border_b_1()
-                .border_color(rgb(theme().selected))
-                .child(kagi_ui_core::commit_header::avatar_circle(
-                    18., &e.author, &e.author, avatars,
-                ))
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_main))
-                        .child(safe_text(&e.author)),
-                )
-                .children(e.tag.as_ref().map(|t| {
-                    use kagi_domain::github::TagSeverity;
-                    let c = match t.severity {
-                        TagSeverity::High => theme().color_blocker,
-                        TagSeverity::Medium => theme().color_warning,
-                        TagSeverity::Low => theme().text_sub,
-                    };
-                    let (bg, border, fg) = super::theme::badge_style(c);
-                    div()
-                        .px_1()
-                        .rounded_sm()
-                        .bg(gpui::rgba(bg))
-                        .border_1()
-                        .border_color(gpui::rgba(border))
-                        .text_xs()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(rgb(fg))
-                        .child(SharedString::from(t.label.clone()))
-                }))
-                .children(e.verdict.as_ref().map(|(t, c)| {
-                    div()
-                        .px_1()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(rgb(*c))
-                        .text_xs()
-                        .text_color(rgb(*c))
-                        .child(SharedString::from(t.clone()))
-                }))
-                .when(e.suggestion, |el| {
-                    el.child(
-                        div()
-                            .px_1()
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(rgb(theme().color_branch))
-                            .text_xs()
-                            .text_color(rgb(theme().color_branch))
-                            .child(SharedString::from(Msg::PrSuggestion.t())),
-                    )
-                })
-                .child(div().flex_1())
-                .children(e.anchor.as_ref().map(|a| {
-                    div()
-                        .min_w(px(0.))
-                        .truncate()
-                        .font_family(super::MONO_FONT)
-                        .text_xs()
-                        .text_color(rgb(theme().text_sub))
-                        .child(SharedString::from(a.clone()))
-                }))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(theme().text_muted))
-                        .child(SharedString::from(e.at.clone())),
-                ),
-        )
+                .px_1()
+                .rounded_sm()
+                .bg(gpui::rgba(bg))
+                .border_1()
+                .border_color(gpui::rgba(border))
+                .text_xs()
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(rgb(fg))
+                .child(SharedString::from(t.label.clone()))
+        }))
+        .children(e.verdict.as_ref().map(|(t, c)| {
+            div()
+                .px_1()
+                .rounded_sm()
+                .border_1()
+                .border_color(rgb(*c))
+                .text_xs()
+                .text_color(rgb(*c))
+                .child(SharedString::from(t.clone()))
+        }))
+        .when(e.suggestion, |el| {
+            el.child(super::e2e::measure_control(
+                format!("pr-convo-suggestion-{}", number as usize * 1000 + i),
+                div()
+                    .px_1()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(rgb(theme().color_branch))
+                    .text_xs()
+                    .text_color(rgb(theme().color_branch))
+                    .child(SharedString::from(Msg::PrSuggestion.t())),
+            ))
+        })
+        .child(div().flex_1())
+        .children(e.anchor.as_ref().map(|a| {
+            div()
+                .min_w(px(0.))
+                .truncate()
+                .font_family(super::MONO_FONT)
+                .text_xs()
+                .text_color(rgb(theme().text_sub))
+                .child(SharedString::from(a.clone()))
+        }));
+    let content = super::timeline_row::content_column()
+        .gap_2()
+        .child(meta)
         .when(!e.hunk.trim().is_empty(), |el| {
-            el.child(render_diff_hunk(&e.hunk, number as usize * 1000 + i, cx))
+            el.child(super::e2e::measure_control(
+                format!("pr-convo-hunk-{}", number as usize * 1000 + i),
+                render_diff_hunk(&e.hunk, number as usize * 1000 + i, cx),
+            ))
         })
-        .when(!body.trim().is_empty(), |el| {
-            el.child(
-                TextView::markdown(
-                    ("pr-convo-md", number as usize * 1000 + i),
-                    SharedString::from(kagi_ui_core::markdown::flatten_html_blocks(&body)),
-                )
-                .plugin(kagi_ui_core::markdown::MarkdownImages::remote())
-                .selectable(true)
-                .style(style.clone()),
-            )
-        })
-        .into_any_element()
+        .when(!body.is_empty(), |el| {
+            el.child(super::timeline_row::body_markdown(
+                ("pr-convo-md", number as usize * 1000 + i),
+                &body,
+                style,
+            ))
+        });
+    super::timeline_row::row(
+        ("pr-convo-entry", number as usize * 1000 + i),
+        &e.author,
+        avatars,
+        content,
+    )
+    .into_any_element()
 }
 
 /// What sits at each index of the PR page's virtualized list (ADR-0200).
@@ -482,7 +402,8 @@ pub(super) fn render_feed_item(
                 .unwrap_or_else(|| div().into_any_element())
         }
         FeedItem::Description => match pr_for_card(app) {
-            Some(pr) => block(description_card(&pr, cx)),
+            // Borrowed: the avatar map is not copied per frame (#750 review).
+            Some(pr) => block(description_card(&pr, &app.avatars.images, cx)),
             None => div().into_any_element(),
         },
         FeedItem::Conversation => {

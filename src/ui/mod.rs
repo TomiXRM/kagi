@@ -117,6 +117,7 @@ mod tab_view;
 pub mod tabs;
 pub mod tag_menu;
 pub mod terminal;
+mod timeline_row;
 pub mod trust_prompt;
 pub use kagi_ui_core::theme; // ADR-0121: was a shim file
 pub mod toast_stack;

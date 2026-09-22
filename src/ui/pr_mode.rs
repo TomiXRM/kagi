@@ -135,6 +135,10 @@ pub struct PrModeState {
     /// Whether the checks card on the PR page is expanded (mock 7b). Folded
     /// by default: "all checks have passed" is the whole answer most days.
     pub checks_open: bool,
+    /// The pinned composer is showing its markdown preview rather than the
+    /// box. One flag, like `checks_open`: there is one composer, whichever
+    /// tab is on screen (#750).
+    pub comment_preview: bool,
     /// Which section of the feed the next frame must scroll to: child 0 is the
     /// description, child 1 the conversation. `None` once consumed - a tab
     /// press is a jump, not a position the renderer keeps re-asserting.
@@ -172,6 +176,7 @@ impl Default for PrModeState {
             active: None,
             focus: PrFocus::List,
             checks_open: false,
+            comment_preview: false,
             feed_anchor: None,
             view: PrView::Overview,
             filter: PrListFilter::default(),
@@ -179,6 +184,27 @@ impl Default for PrModeState {
             dashboard_scroll: UniformListScrollHandle::new(),
             sections_open: [true, false, false, false],
             lane_scroll_x: None,
+        }
+    }
+}
+
+impl PrModeState {
+    /// A write for `number` settled: its text is on the server, so the tab's
+    /// copy goes. The one preview flag belongs to the one composer, which
+    /// shows the open tab — so it is reset only when the settled tab is that
+    /// tab: a completion for PR A must not flip the box the reader is writing
+    /// PR B in, and leaving it on after the open tab's own post shows an
+    /// empty markdown area with no placeholder (#750 review).
+    pub(crate) fn settle_composer_for(&mut self, number: u64) {
+        let settled_tab_is_open = self
+            .active
+            .and_then(|ix| self.tabs.get(ix))
+            .is_some_and(|tab| tab.pr.number == number);
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.pr.number == number) {
+            tab.comment_draft.clear();
+        }
+        if settled_tab_is_open {
+            self.comment_preview = false;
         }
     }
 }
@@ -825,11 +851,8 @@ impl KagiApp {
         number: u64,
         cx: &mut Context<Self>,
     ) {
-        if let Some(tab) = self
-            .pr_mode_of(owner)
-            .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.number == number))
-        {
-            tab.comment_draft.clear();
+        if let Some(mode) = self.pr_mode_of(owner) {
+            mode.settle_composer_for(number);
         }
         if self.pr_comment_for == Some(number) {
             // `InputState::set_value` needs a `&mut Window`, which a completion
@@ -886,7 +909,12 @@ impl KagiApp {
             }
             return;
         }
-        // Another PR took the box: park the old text, load this tab's draft.
+        // Another PR took the box: park the old text, load this tab's draft,
+        // and land on the box — opening on a preview of a draft nobody has
+        // written is a composer you cannot type in (#750 review).
+        if let Some(mode) = self.pr_mode_mut() {
+            mode.comment_preview = false;
+        }
         let parked = input.read(cx).value().to_string();
         if let Some(previous) = self.pr_comment_for.take() {
             if let Some(tab) = self

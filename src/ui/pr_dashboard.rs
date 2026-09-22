@@ -256,12 +256,17 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                         range
                             .filter_map(|index| {
                                 render_rows.get(index).map(|(pr, bucket, why)| {
+                                    // Borrowed, not cloned: a `clone()` here
+                                    // copied the whole avatar map for every
+                                    // visible row, every frame (#750 review).
+                                    let status = this.pr_status_availability(pr);
                                     render_table_row(
                                         pr,
                                         *bucket,
                                         why,
-                                        this.pr_status_availability(pr),
+                                        status,
                                         now,
+                                        &this.avatars.images,
                                         cx,
                                     )
                                 })
@@ -295,7 +300,10 @@ const COL_AUTHOR: f32 = 116.0;
 const COL_CHECKS: f32 = 72.0;
 const COL_FILES: f32 = 52.0;
 const COL_AGE: f32 = 52.0;
-const ROW_H: f32 = 44.0;
+/// Row padding for the triage table: denser than the feed's `ROW_PY`, because
+/// this page is scanned rather than read (PM Tier B, #750). With the shared
+/// 40px avatar and the hairline the row settles at 65px.
+const ROW_PY: f32 = 12.0;
 
 fn col(width: f32, label: &'static str) -> gpui::Div {
     div()
@@ -313,36 +321,56 @@ fn render_column_header() -> gpui::Div {
         .items_center()
         .flex_shrink_0()
         .h(theme::scaled_px(26.))
-        .px_4()
+        .px(theme::scaled_px(super::timeline_row::GUTTER))
+        .gap(theme::scaled_px(super::timeline_row::GAP))
         .border_b_1()
         .border_color(rgb(theme().selected))
         .text_xs()
         .font_weight(gpui::FontWeight::BOLD)
         .text_color(rgb(theme().text_label))
-        .child(col(COL_NO, Msg::PrColNo.t()))
+        // The rows' avatar column has no name; the header reserves its width,
+        // and the labels sit in one strip like the row's cells, so the two
+        // line up by construction rather than by two lists of paddings.
+        .child(
+            div()
+                .w(theme::scaled_px(super::timeline_row::AVATAR))
+                .flex_shrink_0(),
+        )
         .child(
             div()
                 .flex_1()
                 .min_w(px(0.))
-                .child(SharedString::from(Msg::PrColTitle.t())),
+                .flex()
+                .flex_row()
+                .items_center()
+                .child(col(COL_NO, Msg::PrColNo.t()))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .child(SharedString::from(Msg::PrColTitle.t())),
+                )
+                .child(col(COL_STATE, Msg::PrColState.t()))
+                .child(col(COL_AUTHOR, Msg::PrColAuthor.t()))
+                .child(col(COL_CHECKS, Msg::PrColChecks.t()))
+                .child(col(COL_FILES, Msg::PrColFiles.t()))
+                .child(col(COL_AGE, Msg::PrColAge.t())),
         )
-        .child(col(COL_STATE, Msg::PrColState.t()))
-        .child(col(COL_AUTHOR, Msg::PrColAuthor.t()))
-        .child(col(COL_CHECKS, Msg::PrColChecks.t()))
-        .child(col(COL_FILES, Msg::PrColFiles.t()))
-        .child(col(COL_AGE, Msg::PrColAge.t()))
 }
 
 /// One PR as a table row: identity, then the four facts the reader triages on.
 ///
 /// The counts and the age come straight off the fetched list (ADR-0200), so a
-/// row says how big a PR is and how stale it is without opening it.
+/// row says how big a PR is and how stale it is without opening it. The
+/// leading avatar, gutter and hairline are the shared timeline chrome (#750) —
+/// the page stays a table, it just stops being a different table.
 fn render_table_row(
     pr: &PullRequest,
     bucket: PrAttention,
     why: &PrReason,
     status: PrDetailAvailability,
     now: i64,
+    avatars: &kagi_ui_core::avatar::AvatarImages,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let open = pr.clone();
@@ -378,27 +406,18 @@ fn render_table_row(
     } else {
         reason_text(why)
     };
-    div()
-        .id(("pr-home-row", pr.number as usize))
-        // The row must take the table's width, not its own content's: without
-        // `w_full` the title cell's `flex_1` had nothing to fill, every row was
-        // as wide as its title, and the fixed columns landed at a different x
-        // on each row (user report).
-        .w_full()
+    // The cells fill everything right of the shared row's avatar column. The
+    // strip must take the table's width, not its own content's: without
+    // `flex_1` + `overflow_hidden` a long title sets the column's intrinsic
+    // width and the fixed columns land at a different x on each row (user
+    // report).
+    let cells = div()
+        .flex_1()
+        .min_w(px(0.))
         .overflow_hidden()
         .flex()
         .flex_row()
         .items_center()
-        .flex_shrink_0()
-        .h(theme::scaled_px(ROW_H))
-        .px_4()
-        .border_b_1()
-        .border_color(rgb(theme().panel))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().surface)))
-        .on_click(click)
-        .on_mouse_down(gpui::MouseButton::Right, menu)
-        .when(pr.is_draft, |el| el.opacity(0.75))
         .text_xs()
         .text_color(rgb(theme().text_muted))
         .child(
@@ -480,8 +499,24 @@ fn render_table_row(
                 .w(theme::scaled_px(COL_AGE))
                 .flex_shrink_0()
                 .child(SharedString::from(age)),
-        )
-        .into_any_element()
+        );
+    super::timeline_row::clickable(super::timeline_row::row(
+        ("pr-home-row", pr.number as usize),
+        &pr.author,
+        avatars,
+        cells,
+    ))
+    .items_center()
+    .flex_shrink_0()
+    // A triage table is denser than a feed, so the row carries 12px rather
+    // than the feed's 16px — and no fixed height: the avatar, that padding
+    // and the hairline decide it (a 64px box clipped the 40px avatar by 1px,
+    // #750 review). `uniform_list` measures its first item.
+    .py(theme::scaled_px(ROW_PY))
+    .on_click(click)
+    .on_mouse_down(gpui::MouseButton::Right, menu)
+    .when(pr.is_draft, |el| el.opacity(0.75))
+    .into_any_element()
 }
 
 /// The list's header strip: what this is, how much of it there is, which slice

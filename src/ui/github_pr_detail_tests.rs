@@ -221,3 +221,44 @@ fn one_apply_function_updates_list_and_open_copies_only_for_the_same_head() {
     assert_eq!(list[1].ci, kagi_domain::github::CiState::None);
     assert_eq!(opened[1].ci, kagi_domain::github::CiState::None);
 }
+
+/// The composer's preview is one flag for the one composer the mode draws, so
+/// which tab settled decides whether it may be reset (#750 review).
+fn mode_with(active: usize, numbers: [u64; 2]) -> crate::ui::pr_mode::PrModeState {
+    let mut mode = crate::ui::pr_mode::PrModeState::default();
+    for number in numbers {
+        let mut t = tab("head");
+        t.pr = pr(number, "head");
+        t.comment_draft = format!("draft for #{number}");
+        mode.tabs.push(t);
+    }
+    mode.active = Some(active);
+    mode.comment_preview = true;
+    mode
+}
+
+#[test]
+fn settling_the_open_tab_empties_its_draft_and_returns_the_box() {
+    let mut mode = mode_with(0, [7, 8]);
+    mode.settle_composer_for(7);
+    assert!(mode.tabs[0].comment_draft.is_empty());
+    assert!(
+        !mode.comment_preview,
+        "a posted comment must not leave an empty preview the reader has to press the pen to escape"
+    );
+}
+
+#[test]
+fn settling_a_background_tab_leaves_the_open_tab_composing() {
+    let mut mode = mode_with(1, [7, 8]);
+    mode.settle_composer_for(7);
+    assert!(mode.tabs[0].comment_draft.is_empty(), "#7's text is posted");
+    assert_eq!(
+        mode.tabs[1].comment_draft, "draft for #8",
+        "the open tab's own draft is untouched"
+    );
+    assert!(
+        mode.comment_preview,
+        "a completion for another PR must not flip the box the reader is in"
+    );
+}

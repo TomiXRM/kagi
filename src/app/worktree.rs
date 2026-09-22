@@ -44,7 +44,7 @@ impl PlanJob {
             Err(e) => PlanState::Error {
                 open_failed: false,
                 error: e.to_string(),
-                blocker: None,
+                blocker: e.blocker().cloned(),
                 recording: Some(kagi_git::backend::remove::record_plan_error(
                     &self.request.owner.path,
                     self.policy.actor,

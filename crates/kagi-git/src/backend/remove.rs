@@ -3,6 +3,7 @@ use super::recording::finalize as record;
 pub use super::recording::Recording;
 use super::*;
 use crate::oplog::{recovery, Actor, OpLogEntry, OpOutcome, RecoveryHandle};
+use kagi_domain::plan_note::PlanNote;
 use kagi_domain::remove::{RemoveFaultPoint, RemoveProgress};
 use kagi_domain::remove::{RepoId, WorktreeId};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -41,6 +42,8 @@ pub struct RemoveReport {
     pub target_exists: Option<bool>,
     pub recording: Recording,
     pub progress: RemoveProgress,
+    /// UI-only typed refusal; the durable receipt retains all English reasons.
+    pub blocker: Option<PlanNote>,
 }
 #[derive(Clone, Copy)]
 pub enum RemoveEvent {
@@ -156,6 +159,7 @@ impl Backend {
     ) -> RemoveReport {
         let mut progress = RemoveProgress::default();
         let mut opened = false;
+        let mut plan_blocked = false;
         let result = catch_unwind(AssertUnwindSafe(|| -> Result<DiscardOutcome, GitError> {
             let mut backend = Self::open(&plan.repo)?;
             opened = true;
@@ -163,8 +167,9 @@ impl Backend {
                 backend.set_trust_for_test(crate::trust::RepoTrust::Untrusted);
             }
             backend.require_trust()?;
-            if !plan.preview.blockers.is_empty() {
-                return Err(io("plan has blockers"));
+            if let Some(blocker) = plan.preview.blockers.first() {
+                plan_blocked = true;
+                return Err(GitError::Blocked(Box::new(blocker.clone())));
             }
             let mut linked = Self::open(&plan.target)?;
             if fault == Some(RemoveFaultPoint::UntrustedTarget) {
@@ -213,6 +218,12 @@ impl Backend {
         if let Ok(head) = Self::open(&plan.repo).and_then(|backend| resolve_head(&backend.repo)) {
             after.head = head.display();
         }
+        let blocker = result
+            .as_ref()
+            .ok()
+            .and_then(|result| result.as_ref().err())
+            .and_then(GitError::blocker)
+            .cloned();
         let outcome = match result {
             Ok(Ok(value)) if value.error.is_none() => OpOutcome::Success { after },
             Ok(Ok(value)) => OpOutcome::Partial {
@@ -236,7 +247,15 @@ impl Backend {
                 error: error.to_string(),
             },
             Ok(Err(error)) => OpOutcome::Refused {
-                blockers: vec![error.to_string()],
+                blockers: if plan_blocked {
+                    plan.preview
+                        .blockers
+                        .iter()
+                        .map(PlanNote::message_en)
+                        .collect()
+                } else {
+                    vec![error.to_string()]
+                },
             },
             Err(_) if progress.started() => OpOutcome::Unknown {
                 after,
@@ -276,6 +295,7 @@ impl Backend {
             target_exists: plan.target.try_exists().ok(),
             recording: record(entry),
             progress,
+            blocker,
         }
     }
 
@@ -306,6 +326,7 @@ impl Backend {
             target_exists: plan.target.try_exists().ok(),
             recording: record(entry),
             progress: Default::default(),
+            blocker: None,
         }
     }
 }

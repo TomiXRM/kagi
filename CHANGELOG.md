@@ -18,6 +18,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Worktree 削除の初期 blocker が `plan has blockers` に潰れる問題を修正しました。具体的な全理由を oplog に残し、先頭の typed blocker を既存 EN/JA の通知と toast に表示します。削除条件・確認・安全検査・他 family は変更しません。（#353）
 - Avatar の map を File History / Editor と共有し、PR conversation / lane は借用するようにしました。描画ごとの map・key の複製をなくし、新しい解決 batch が届いたときだけ snapshot を更新します。取得方法・画像の fallback・Git 操作は変更していません。（#498）
 - Toolbar の既存の利用可能状態を AccessKit の disabled に反映する処理を追加しました。Terminal の選択状態とは区別し、無効時のクリック理由 footer と Undo/Redo の busy guard は変更しません。native AXEnabled は main でも AXWindow が取得できない環境のため未検証で、次回セッションで確認します。（#354）
 - Issues 一覧の filter/sort と sidebar 4タブの件数を session 所有の派生キャッシュで共有し、スクロール描画ごとの全件再計算をなくしました。追加ページ・同件数の更新・filter/tab/login/mentions 変更で再計算し、仮想 list には表示順を `Rc` で渡して毎フレームの全件コピーも避けます。取得・ページング・表示順の契約は変更していません。（#791）

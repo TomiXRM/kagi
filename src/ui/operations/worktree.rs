@@ -357,8 +357,12 @@ impl KagiApp {
                     .with_session_token(),
                 );
             }
-            PlanState::Error { error, .. } => {
-                let message = i18n::op_plan_failed(i18n::Op::RemoveWorktree, error);
+            PlanState::Error { error, blocker, .. } => {
+                let reason = blocker.as_ref().map(i18n::plan_note_text);
+                let message = i18n::op_plan_failed(
+                    i18n::Op::RemoveWorktree,
+                    reason.as_deref().unwrap_or(error),
+                );
                 self.status_footer = FooterStatus::Failed(SharedString::from(message.clone()));
                 self.app_notices.push_back(message.into());
             }

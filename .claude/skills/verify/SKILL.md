@@ -78,11 +78,31 @@ the runner's `macos::open_offscreen` helper, which panics past a budget of 8
 live windows and opens them hidden — set `KAGI_GUI_E2E_VISIBLE=1` to see them
 for triage.
 
+For history bisection, strip repository-location variables exported by
+`git bisect run` before launching a Git fixture. Otherwise a fixture's `git init`
+can address the bisected repository instead of its temporary directory (#764).
+Keep Cargo's worktree-local `target/` and the scenario filter:
+
+```bash
+KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY=preflight_presentation \
+  git bisect run env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+    -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+    cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
+```
+
 The current suite covers:
 
 - durable stash-drop recovery; history persistence; cleanup stale-tab,
   preflight, open-failure, and partial presentation; remove's public boundary;
   editor writer admission; commit-row and editor-history layout;
+- preflight refusal presentation (`KAGI_GUI_E2E_ONLY=preflight_presentation`,
+  `tests/recovery/operations.rs`): stale stash-drop plans deliver the specific
+  localized reason through a Failed footer and Error toast in EN/JA, with no
+  dismiss-only AppNotice. The complete English blocker remains in one durable
+  Refused receipt and its Operation Log panel row; stash list and repository
+  fingerprint stay unchanged. History Undo retains its inline plan error.
+  This follows the #747 delivery contract; #764 bisected the obsolete modal
+  expectation to `e5644c6f`, rather than changing production back.
 - unobservable remote-write release (`KAGI_GUI_E2E_ONLY=reconcile_unobservable_release,app_notice_modal_replacement`,
   `tests/recovery/reconcile_unobservable.rs`): measured native clicks exercise
   Inspect → arm → final confirmation in EN/JA. The armed warning is drawn;

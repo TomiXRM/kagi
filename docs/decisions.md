@@ -1,7 +1,7 @@
 # Decision Log
 
 > **Status:** Active — append-only  
-> **Last updated:** 2026-09-22
+> **Last updated:** 2026-09-23
 
 ADR にするほどではないが、再計測や同じ失敗を避けるために残すべき決定と実測事実のログです。ADR を置き換えるものではありません。
 
@@ -15,6 +15,7 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-09-23 | Abort 確認の plan modal は accepted reload で閉じ、開く経路は root focus を取る | 既存の accepted reload sweep に ConflictAbort を揃え、確認内容を自動で差し替えず再度開き直す。Result の Edit→Preview で focus 対象が描画から外れると Esc が dispatch path に届かないため、modal を開く経路が既存 cancel / confirm と同じ root focus を取る（#755、[ADR-0093](adr/0093-active-modal-enum.md) / [ADR-0197](adr/0197-session-owned-ui-state.md)）。 |
 | 2026-09-23 | モーダルは zoom 換算の viewport 高さが 800 logical px 以下なら compact layout に切り替える | #462。初案の720では600px・80% zoom（論理750px）で警告全文が復旧見出しを押し出したため800へ変更する。閾値は `src/ui/modal_shell.rs` の単一定数が所有する。compact は既存LG幅・小さい見出し・詰めた余白を使い、復旧説明だけを既定で折り畳む。通常時の文字・余白・既定展開は維持し、全カードの高さ上限は上下16 logical pxの余白まで使って安全本文を優先する。対象・blocker・危険警告・armed noticeと固定 footer は隠さず、「1 panel 1 scroll、nested 禁止」を維持する。開示 override は高さ変更で反転しない明示 open/closed とし、次の確認では破棄する。 |
 | 2026-09-22 | PR merge の Unknown は未着手 local 削除を要求せず、queued と計画済み keep は Success とする | PR #760 レビューの P1 に従い、local ref の不在を acknowledge の条件にする初案を撤回する。write scope を閉じたまま外部削除を強いるのではなく、merged 照合後に Kagi の通常 guarded delete を使えるようにする。local 削除は gh 成功 + merge 成立後のみ。gh Err + merged は error を保持した Partial、queue 投入は queued を明記した Success、承認時 checked-out / PR head 不一致は warning と Kept に固定する。plan は ADR-0141 の background 経路に載せ、拒否理由は型を保って EN/JA にする（[レビュー](https://github.com/TomiXRM/kagi/pull/760#issuecomment-5776675518)、[ADR-0202](adr/0202-pr-merge-local-branch-deletion.md)）。 |
 | 2026-09-22 | fork PR の `--delete-branch` を解禁し、local 削除は Kagi の guarded delete family が所有する | 2026-09-13 の fork blocker を置き換える。Kagi が固定する `gh -R` は gh の local 削除を無効にするため、`-R` を外さず、承認時の WorktreeId / name / full OID（不在も）/ HEAD を固定して server の merge 確認後にだけ削除する。backup ref と oplog に復元元を残す。local 拒否は merge 成功 + Partial として同じ receipt と EN/JA 通知に記録する。fork remote は削除されず、base 側の最初からない ref を照合に使わない（[#705](https://github.com/TomiXRM/kagi/issues/705)、[ADR-0202](adr/0202-pr-merge-local-branch-deletion.md)）。**同日の上段「PR merge の Unknown は未着手 local 削除を要求せず」で修正**: 初案は未着手 local の不存在を要求して write scope を塞いだため撤回。計画時点で分かる keep / queue は Success とし、local 削除には gh の成功も要求する。 |

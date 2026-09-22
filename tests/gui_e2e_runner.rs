@@ -84,6 +84,10 @@ mod app_writer_admission;
 mod app_conflict;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/conflict_abort_slot.rs"]
+mod conflict_abort_slot;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/layout.rs"]
 mod recovery_layout;
 
@@ -911,6 +915,14 @@ mod macos {
             (
                 "operation_strip_hidden_in_editor",
                 Box::new(crate::app_conflict::scenario_operation_strip_hidden_in_editor),
+            ),
+            (
+                "conflict_abort_escape_focus",
+                Box::new(crate::conflict_abort_slot::scenario_conflict_abort_escape_focus),
+            ),
+            (
+                "conflict_abort_superseded_reload",
+                Box::new(crate::conflict_abort_slot::scenario_conflict_abort_superseded_reload),
             ),
             (
                 "operation_strip_abort",

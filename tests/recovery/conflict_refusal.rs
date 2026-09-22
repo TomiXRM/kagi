@@ -94,27 +94,20 @@ fn abort(cx: &mut VisualTestAppContext, expected: &str, banner: bool) {
     let (app, window) = mount(cx, &repo);
     app.update(cx, |app, cx| app.detect_conflict_mode(cx));
     cx.run_until_parked();
-    click_control(
-        cx,
-        window,
-        if banner {
-            "operation-strip-abort"
-        } else {
-            "conflict-abort"
-        },
-    );
+    let control = if banner {
+        "operation-strip-abort"
+    } else {
+        "conflict-abort"
+    };
+    click_control(cx, window, control);
     cx.run_until_parked();
     assert!(cx.read(|cx| app.read(cx).conflict_abort_modal().is_some()));
-    // Drift after the confirmation opens, including a completed read refresh
-    // for the banner path. Refresh must not silently approve the new revision.
+    // Drift after the confirmation opens. What the user confirms is still the
+    // revision they saw, so the family must refuse it by name.
     std::fs::write(repo.join("file.txt"), "resolved outside Kagi\n").unwrap();
     git(&repo, &["add", "file.txt"]);
     let index = std::fs::read(repo.join(".git/index")).unwrap();
     let merge_head = std::fs::read(repo.join(".git/MERGE_HEAD")).unwrap();
-    if banner {
-        app.update(cx, |app, cx| app.reload(cx));
-        cx.run_until_parked();
-    }
     app.update(cx, |app, cx| app.confirm_conflict_abort(cx));
     wait_idle(cx, &app);
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
@@ -137,6 +130,36 @@ fn abort(cx: &mut VisualTestAppContext, expected: &str, banner: bool) {
     assert!(
         matches!(&entries[0].outcome, OpOutcome::Refused { blockers }
         if blockers.iter().any(|reason| reason.contains("conflict changed since it was observed")))
+    );
+
+    // #755: a reload that lands while such a confirmation is open closes it
+    // rather than refreshing it in place, and executes nothing on the way.
+    click_control(cx, window, "app-notice-confirm");
+    cx.run_until_parked();
+    click_control(cx, window, control);
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).conflict_abort_modal().is_some()),
+        "the control reopens a confirmation against the current state"
+    );
+    app.update(cx, |app, cx| app.reload(cx));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).conflict_abort_modal().is_none()),
+        "an accepted reload must sweep the stale abort confirmation"
+    );
+    assert_eq!(
+        read_oplog_tail_for_repo(&repo, 100)
+            .into_iter()
+            .filter(|entry| entry.op == "merge-abort")
+            .count(),
+        1,
+        "sweeping a confirmation must not run the operation it was showing"
+    );
+    assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+    assert_eq!(
+        std::fs::read(repo.join(".git/MERGE_HEAD")).unwrap(),
+        merge_head
     );
     unmount(cx, app, window);
 }

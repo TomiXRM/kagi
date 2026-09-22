@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 #[path = "conflict_refusal.rs"]
 mod refusal;
 
-fn content_fixture() -> tempfile::TempDir {
+pub(crate) fn content_fixture() -> tempfile::TempDir {
     let fixture = tempfile::tempdir().unwrap();
     let repo = fixture.path();
     git(repo, &["init", "-q", "-b", "main"]);
@@ -67,7 +67,11 @@ fn dir_file_fixture() -> tempfile::TempDir {
     fixture
 }
 
-fn click_control(cx: &mut VisualTestAppContext, window: gpui::AnyWindowHandle, name: &'static str) {
+pub(crate) fn click_control(
+    cx: &mut VisualTestAppContext,
+    window: gpui::AnyWindowHandle,
+    name: &'static str,
+) {
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
     let bounds = e2e::control_bounds(window.window_id(), name)
@@ -674,20 +678,23 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
     // ADR-0196 Wave 3: the abort is a write, so both its stages consult the one
     // gate. A plan in flight takes no lease, so only `planning` refuses it —
     // and nothing may reach the family while it does.
-    app.update(cx, |app, cx| {
-        app.planning = Some("merge-plan");
-        let owner = app
-            .active_session()
-            .and_then(|session| app.app_sessions.attachment(session))
-            .expect("abort owner");
-        app.open_conflict_abort_modal(owner, cx);
-        assert!(
-            app.conflict_abort_modal().is_none(),
-            "a plan in flight must refuse the abort confirmation (#283)"
-        );
-        app.confirm_conflict_abort(cx);
-        app.planning = None;
-    });
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.planning = Some("merge-plan");
+            let owner = app
+                .active_session()
+                .and_then(|session| app.app_sessions.attachment(session))
+                .expect("abort owner");
+            app.open_conflict_abort_modal(owner, window, cx);
+            assert!(
+                app.conflict_abort_modal().is_none(),
+                "a plan in flight must refuse the abort confirmation (#283)"
+            );
+            app.confirm_conflict_abort(cx);
+            app.planning = None;
+        });
+    })
+    .unwrap();
     cx.run_until_parked();
     assert!(
         repo.join(".git/MERGE_HEAD").exists(),
@@ -782,9 +789,12 @@ pub fn scenario_conflict_deferred_action_owner(cx: &mut VisualTestAppContext) {
     });
 
     // A's deferred Abort lands after the switch to B.
-    app.update(cx, |app, cx| {
-        app.open_conflict_abort_modal(owner_a.clone(), cx)
-    });
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.open_conflict_abort_modal(owner_a.clone(), window, cx)
+        });
+    })
+    .unwrap();
     cx.run_until_parked();
     cx.read(|cx| {
         let state = app.read(cx);

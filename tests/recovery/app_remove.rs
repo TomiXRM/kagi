@@ -1,7 +1,11 @@
 //! Raw Enter and actual confirmation-button clicks through the real root.
-use crate::macos::{build_fixture, git, mount, unmount};
+use crate::macos::{build_fixture, git, mount, repo_fingerprint, unmount};
 use gpui::{Entity, VisualTestAppContext};
 use kagi::ui::KagiApp;
+use kagi::ui::{
+    e2e,
+    i18n::{self, Lang},
+};
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
 use std::time::{Duration, Instant};
 
@@ -140,6 +144,12 @@ pub fn scenario_remove_public_boundary(cx: &mut VisualTestAppContext) {
             if button { "button" } else { "raw Enter" }
         );
     }
+    let previous = i18n::lang();
+    for language in [Lang::En, Lang::Ja] {
+        i18n::set_lang(language);
+        refused_locked_remove(cx);
+    }
+    i18n::set_lang(previous);
 }
 
 fn wait_idle(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
@@ -152,4 +162,111 @@ fn wait_idle(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
         assert!(Instant::now() < deadline, "remove did not settle");
         std::thread::sleep(Duration::from_millis(2));
     }
+}
+
+/// Enter on a blocked plan must retain the reason after the plan disappears.
+fn refused_locked_remove(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let worktrees = tempfile::tempdir().unwrap();
+    let linked = worktrees.path().join("locked-target");
+    git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "locked-target",
+            linked.to_str().unwrap(),
+        ],
+    );
+    git(
+        &repo,
+        &[
+            "worktree",
+            "lock",
+            "--reason",
+            "keep this checkout",
+            linked.to_str().unwrap(),
+        ],
+    );
+    let before = (repo_fingerprint(&repo), repo_fingerprint(&linked));
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| {
+        app.open_remove_worktree_modal("locked-target".into(), true, cx);
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        cx.run_until_parked();
+        if cx.read(|cx| app.read(cx).remove_worktree_modal().is_some()) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "blocked remove plan did not arrive"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let expected = cx.read(|cx| {
+        let state = app.read(cx);
+        let note = &state.remove_worktree_modal().unwrap().plan.blockers[0];
+        assert!(matches!(
+            note,
+            kagi_domain::plan_note::PlanNote::Worktree(
+                kagi_domain::plan_note::WorktreeNote::RemoveLocked { .. }
+            )
+        ));
+        i18n::plan_note_text(note)
+    });
+    cx.update_window(window, |_, window, cx| {
+        window.focus(&app.read(cx).root_focus.clone().unwrap(), cx);
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.simulate_keystrokes(window, "enter");
+    wait_idle(cx, &app);
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(state.remove_worktree_modal().is_none());
+        let notice = e2e::app_notice_message(state).expect("localized refusal notice");
+        assert!(notice.contains(&expected), "notice: {notice}");
+        let toast = state
+            .toast_stack
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .toasts()
+            .last()
+            .unwrap();
+        let action = match i18n::lang() {
+            Lang::En => "unlock",
+            Lang::Ja => "ロックを解除",
+        };
+        assert!(
+            toast.message.contains("keep this checkout") && toast.message.contains(action),
+            "bounded toast must identify the lock and next action: {}",
+            toast.message
+        );
+        assert!(!state.app_sessions.has_leases());
+    });
+    let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+        .into_iter()
+        .filter(|entry| entry.op == "remove-worktree")
+        .collect();
+    assert_eq!(entries.len(), 1);
+    assert!(
+        matches!(&entries[0].outcome, OpOutcome::Refused { blockers }
+        if blockers.iter().any(|reason| reason.contains("keep this checkout") && reason.contains("unlock")))
+    );
+    assert_eq!((repo_fingerprint(&repo), repo_fingerprint(&linked)), before);
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".git/worktrees/locked-target/locked"))
+            .unwrap()
+            .trim(),
+        "keep this checkout"
+    );
+    unmount(cx, app, window);
 }

@@ -18,6 +18,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Worktree 削除の初期 blocker が `plan has blockers` に潰れる問題を修正しました。具体的な全理由を oplog に残し、先頭の typed blocker を既存 EN/JA の通知と toast に表示します。削除条件・確認・安全検査・他 family は変更しません。（#353）
 - Avatar の map を File History / Editor と共有し、PR conversation / lane は借用するようにしました。描画ごとの map・key の複製をなくし、新しい解決 batch が届いたときだけ snapshot を更新します。取得方法・画像の fallback・Git 操作は変更していません。（#498）
 - Issues 一覧の filter/sort と sidebar 4タブの件数を session 所有の派生キャッシュで共有し、スクロール描画ごとの全件再計算をなくしました。追加ページ・同件数の更新・filter/tab/login/mentions 変更で再計算し、仮想 list には表示順を `Rc` で渡して毎フレームの全件コピーも避けます。取得・ページング・表示順の契約は変更していません。（#791）
 - resolution buffer の autosave JSON を serde で保存・読み込みするようにし、surrogate pair で表現された文字が解決草稿から脱落する問題を修正しました。既存の schema、未解決と空テキストの区別、行 provenance、raw OID＋mode、欠落時の既定値を維持します。保存先・書き込み方式・解決操作・oplog は変更していません。（#513 resolution slice）

@@ -186,3 +186,20 @@ clicks visible virtual rows, checks EN/JA reasons and manual remeasurement, and
 holds only report delivery to prove superseded, departed and closed owners do
 not accept late results. Tier B reviews the four-state fixture and ignored-file
 warning; Windows cross-compilation is not a claim of Windows runtime validation.
+
+## Typed remove refusal delivery (#353)
+
+Initial preview blockers must not become the generic `plan has blockers` error.
+The existing `GitError::Blocked` → `RemoveReport.blocker` sidecar follows the
+conflict-family precedent (#711); planning errors preserve `PlanState::Error.blocker`.
+The durable Refused receipt retains **every** initial blocker in English, while
+the first typed blocker reaches the existing EN/JA `plan_note_text` presenter.
+That typed refusal uses the same AppNotice and bounded-toast presentation as
+conflict refusals. Untyped failures, partial/unknown settlement, admission and
+the preflight/execution order remain unchanged. No other family is migrated.
+
+`app_remove_test::refused_dirty_locked_main_missing` covers multiple simultaneous
+reasons and main/missing targets. Native `remove_public_boundary` additionally
+confirms a locked plan through Enter in EN/JA, verifies the notice and bounded
+toast, one reason-bearing receipt, released lease, and unchanged repositories
+and worktree lock. Its existing successful Enter/button removals remain covered.

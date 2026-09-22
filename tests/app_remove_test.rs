@@ -296,19 +296,36 @@ fn refused_dirty_locked_main_missing() {
     }
     let f = Fixture::new(None);
     std::fs::write(f.linked.join("dirty"), "keep").unwrap();
+    git(&f.repo, &["worktree", "lock", f.linked.to_str().unwrap()]);
     for name in ["linked", "main", "missing"] {
         let mut s = Sessions::new();
         let mut request = f.request(&mut s);
         request.name = name.into();
         let plan = plan_remove(&mut s, request, RemovePolicy::default()).run();
         apply_plan(&mut s, plan);
-        let PlanState::Ready { token, .. } = s.plan_state() else {
+        let PlanState::Ready {
+            token,
+            prepared: Planned::Remove { plan, .. },
+        } = s.plan_state()
+        else {
             panic!()
         };
         let token = token.clone();
+        let reasons: Vec<_> = plan
+            .preview
+            .blockers
+            .iter()
+            .map(|note| note.message_en())
+            .collect();
         let approved = approve(&mut s, token, RemovePolicy::default()).unwrap();
         let done = prepare_remove(&mut s, approved).unwrap().run();
-        assert!(matches!(outcome(&done), OpOutcome::Refused { .. }));
+        let OpOutcome::Refused { blockers } = outcome(&done) else {
+            panic!("blocked removal must be refused");
+        };
+        assert_eq!(
+            blockers, &reasons,
+            "the durable refusal must retain every reason"
+        );
     }
     assert!(f.linked.join("dirty").exists());
 }

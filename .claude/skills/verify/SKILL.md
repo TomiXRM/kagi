@@ -100,6 +100,13 @@ The current suite covers:
 - durable stash-drop recovery; history persistence; cleanup stale-tab,
   preflight, open-failure, and partial presentation; remove's public boundary;
   editor writer admission; commit-row and editor-history layout;
+- remove refusal reasons (`KAGI_GUI_E2E_ONLY=remove_public_boundary`,
+  `tests/recovery/app_remove.rs`): Enter on a locked removal plan delivers the
+  specific EN/JA blocker and unlock guidance in AppNotice and bounded toast.
+  One durable English refusal retains the reason; both repositories and the lock
+  remain unchanged, and admission releases. Existing successful Enter/button
+  removal legs still run. Tier B: right-click a locked linked worktree, open
+  Remove, press Enter on the blocked plan, and inspect the notice in EN/JA.
 - preflight refusal presentation (`KAGI_GUI_E2E_ONLY=preflight_presentation`,
   `tests/recovery/operations.rs`): stale stash-drop plans deliver the specific
   localized reason through a Failed footer and Error toast in EN/JA, with no

@@ -404,7 +404,10 @@ impl KagiApp {
                     }
                 };
                 let text = if matches!(entry.outcome, OpOutcome::Refused { .. }) {
-                    footer.clone()
+                    report.blocker.as_ref().map_or_else(
+                        || footer.clone(),
+                        |blocker| format!("{}: {}", entry.repo, i18n::plan_note_text(blocker)),
+                    )
                 } else {
                     format!("{}: {}", entry.repo, summary)
                 };
@@ -427,6 +430,11 @@ impl KagiApp {
                         panel.push(entry);
                         cx.notify();
                     });
+                }
+                if report.blocker.is_some()
+                    && matches!(report.recording.entry().outcome, OpOutcome::Refused { .. })
+                {
+                    self.app_notices.push_back(text.clone().into());
                 }
                 self.push_toast(
                     if success {

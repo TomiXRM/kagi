@@ -877,6 +877,7 @@ pub fn build_sidebar_rows(
 fn build_sidebar_row(
     this: &KagiApp,
     row: &SidebarRow,
+    now_secs: i64,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     match row {
@@ -897,7 +898,7 @@ fn build_sidebar_row(
             display_label,
             is_head,
             indented,
-        } => build_local_branch_leaf(this, name, *is_head, display_label, *indented, cx),
+        } => build_local_branch_leaf(this, name, *is_head, display_label, *indented, now_secs, cx),
         SidebarRow::RemoteHeader {
             key,
             remote,
@@ -915,7 +916,7 @@ fn build_sidebar_row(
             display_label,
             target,
             depth,
-        } => build_remote_leaf(this, display, display_label, target.clone(), *depth, cx),
+        } => build_remote_leaf(this, display, display_label, target, *depth, now_secs, cx),
         SidebarRow::Tag { name, target } => build_tag_row(this, name, target.clone(), cx),
         SidebarRow::Worktree {
             name,
@@ -1021,18 +1022,58 @@ fn build_group_header(
         .into_any()
 }
 
-/// A local branch leaf — preserves the full behaviour of the old
-/// `local_leaf_row`: HEAD rows are drop targets (`drag_over`/`on_drop` →
-/// `start_merge_from_drag`) with click=jump + right-click menu; non-HEAD rows
-/// are draggable (`BranchDrag` + ghost), click=jump / dbl-click=checkout
-/// (`open_plan_modal`), have a right-click menu and a ✕ delete button; both
-/// show the ✓ HEAD marker, ↑↓ upstream counts, truncation + tooltip.
+/// Bound the root flex width and give the suffix a preferential shrink share.
+fn branch_row_meta(
+    row: gpui::Stateful<gpui::Div>,
+    age: std::borrow::Cow<'static, str>,
+    upstream: Option<SharedString>,
+    pr: Option<(SharedString, u32)>,
+) -> gpui::Stateful<gpui::Div> {
+    row.w_full()
+        .child(
+            div()
+                .flex_shrink(1000.)
+                .min_w(px(0.))
+                .truncate()
+                .text_xs()
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from(format!("  \u{00b7} {age}"))),
+        )
+        .when_some(upstream, |el, text| {
+            el.child(
+                div()
+                    .flex_shrink_0()
+                    .ml_2()
+                    .text_xs()
+                    .text_color(rgb(theme().text_sub))
+                    .child(text),
+            )
+        })
+        .when_some(pr, |el, (text, color)| {
+            el.child(
+                div()
+                    .flex_shrink_0()
+                    .ml_2()
+                    .px_1()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(rgb(theme().selected))
+                    .text_xs()
+                    .text_color(rgb(color))
+                    .child(text),
+            )
+        })
+}
+
+/// A local branch leaf. HEAD is a merge drop target that only jumps on click;
+/// a non-HEAD row drags, checks out on double click, and carries the delete.
 fn build_local_branch_leaf(
     this: &KagiApp,
     branch_name: &str,
     is_head: bool,
     display_label: &str,
     indented: bool,
+    now_secs: i64,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let upstream_label: Option<SharedString> = this
@@ -1073,17 +1114,19 @@ fn build_local_branch_leaf(
     // issue #356: branch names are remote-origin — neutralize control bytes in
     // the visible label (the raw `branch_name` operand stays untouched).
     let display_label = kagi_domain::text_safety::sanitize_control_bytes(display_label);
-    let label = if is_head {
-        SharedString::from(format!("\u{2713} {}", display_label))
+    let view = this.view();
+    let (age, committed) = view.tip_labels(view.branch_targets.get(branch_name), now_secs);
+    let label = SharedString::from(if is_head {
+        format!("\u{2713} {display_label}")
     } else {
-        SharedString::from(display_label)
-    };
+        display_label
+    });
     let text_color = if is_head {
         theme().color_success
     } else {
         theme().text_main
     };
-    let full_name = SharedString::from(branch_name.to_string());
+    let full_name = SharedString::from(format!("{branch_name}\n{committed}"));
     let left_pad = if indented {
         theme::scaled_px(28.)
     } else {
@@ -1134,31 +1177,8 @@ fn build_local_branch_leaf(
             .on_drop::<BranchDrag>(drop_handler)
             .hover(|style| style.bg(rgb(theme().surface)))
             .tooltip(name_tooltip(full_name))
-            .child(div().flex_1().truncate().child(label))
-            .when_some(upstream_label, |el, ul| {
-                el.child(
-                    div()
-                        .flex_shrink_0()
-                        .ml_2()
-                        .text_xs()
-                        .text_color(rgb(theme().text_sub))
-                        .child(ul),
-                )
-            })
-            .when_some(pr_badge.clone(), |el, (txt, color)| {
-                el.child(
-                    div()
-                        .flex_shrink_0()
-                        .ml_2()
-                        .px_1()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(rgb(theme().selected))
-                        .text_xs()
-                        .text_color(rgb(color))
-                        .child(txt),
-                )
-            })
+            .child(div().flex_auto().truncate().child(label))
+            .map(|el| branch_row_meta(el, age, upstream_label, pr_badge))
             .into_any()
     } else {
         let branch_for_dbl = branch_name.to_string();
@@ -1231,31 +1251,8 @@ fn build_local_branch_leaf(
             )
             .hover(|style| style.bg(rgb(theme().surface)))
             .tooltip(name_tooltip(full_name))
-            .child(div().flex_1().truncate().child(label))
-            .when_some(upstream_label, |el, ul| {
-                el.child(
-                    div()
-                        .flex_shrink_0()
-                        .ml_2()
-                        .text_xs()
-                        .text_color(rgb(theme().text_sub))
-                        .child(ul),
-                )
-            })
-            .when_some(pr_badge.clone(), |el, (txt, color)| {
-                el.child(
-                    div()
-                        .flex_shrink_0()
-                        .ml_2()
-                        .px_1()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(rgb(theme().selected))
-                        .text_xs()
-                        .text_color(rgb(color))
-                        .child(txt),
-                )
-            })
+            .child(div().flex_auto().truncate().child(label))
+            .map(|el| branch_row_meta(el, age, upstream_label, pr_badge))
             .child(
                 div()
                     .id(SharedString::from(format!(
@@ -1276,26 +1273,24 @@ fn build_local_branch_leaf(
     }
 }
 
-/// A remote branch leaf — preserves the old `remote_leaf_row`: jumpable rows
-/// get click=jump + right-click `open_remote_branch_menu`; all rows are
-/// draggable merge sources (`BranchDrag` + ghost) with the menu; indentation
-/// by `depth`; truncation + tooltip; remote lane colour.
+/// A remote branch leaf: a merge drag source, clickable while its tip is loaded.
 fn build_remote_leaf(
     this: &KagiApp,
     display: &str,
     display_label: &str,
-    rb_target: CommitId,
+    rb_target: &CommitId,
     depth: u8,
+    now_secs: i64,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let can_jump = this.view().commit_row_index.contains_key(&rb_target);
+    let can_jump = this.view().commit_row_index.contains_key(rb_target);
+    let (age, committed) = this.view().tip_labels(Some(rb_target), now_secs);
     // issue #414: remote branch names are the most literally remote-derived
     // strings in the sidebar. Neutralize control bytes in the *displayed* label
     // and tooltip; the raw `display` operand (drag/menu/id) stays untouched.
-    let full_name = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(display));
-    let label = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(
-        display_label,
-    ));
+    let safe_display = kagi_domain::text_safety::sanitize_control_bytes(display);
+    let full_name = SharedString::from(format!("{safe_display}\n{committed}"));
+    let label = kagi_domain::text_safety::sanitize_control_bytes(display_label);
     let drag_name = display.to_string();
     let left_pad = match depth {
         0 => theme::scaled_px(12.),
@@ -1340,12 +1335,14 @@ fn build_remote_leaf(
         )
         .hover(|style| style.bg(rgb(theme().surface)))
         .tooltip(name_tooltip(full_name))
-        .child(div().flex_1().truncate().child(label));
+        .child(div().flex_auto().truncate().child(label))
+        .map(|el| branch_row_meta(el, age, None, None));
 
     if can_jump {
+        let target_for_jump = rb_target.clone();
         let click_handler = cx.listener(
             move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
-                this.jump_to_commit(&rb_target);
+                this.jump_to_commit(&target_for_jump);
                 cx.notify();
             },
         );
@@ -1579,14 +1576,16 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
         uniform_list(
             "sidebar-list",
             row_count,
-            cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+            cx.processor(|this, range: std::ops::Range<usize>, _window, cx| {
+                // #358: one wall-clock read per rendered batch, not per row.
+                let now_secs = super::commit_list::now_unix_secs();
                 range
                     .filter_map(|i| {
                         this.sidebar
                             .rows
                             .get(i)
                             .cloned()
-                            .map(|row| build_sidebar_row(this, &row, cx))
+                            .map(|row| build_sidebar_row(this, &row, now_secs, cx))
                     })
                     .collect::<Vec<_>>()
             }),

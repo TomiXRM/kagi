@@ -180,6 +180,21 @@ The current suite covers:
   the top and WIP-offscreen states; retain screenshots in the PR and verify
   that another pane does not obscure the graph.
 - linked-worktree WIP rows plus commit-panel commit, amend, and discard;
+- Worktree occupancy and removal advisory (`KAGI_GUI_E2E_ONLY=worktree_inspection`,
+  `tests/recovery/worktree_inspection.rs`): real pushed/dirty/locked/detached
+  fixtures cover EN/JA reasons, ignored `target/` allocation, explicit refresh,
+  the existing measuring spinner and late-delivery rejection after supersession,
+  selection departure and tab close. Bring virtual sidebar rows into view before
+  clicking; the selected detail panel reduces the navigator's viewport.
+  Actual bounds must cap the panel at 40% of the sidebar in both languages.
+  Check the fixed name/path heading and independently scrolling detail body;
+  Tier B must confirm that selecting another worktree is not obscured.
+  Tier B uses those four states with allocated plus sparse build files and an
+  ignored `.env`; inspect capacity/target breakdown, measurement time, localized
+  reason, local-ref basis, `.gitignore` warning and existing removal-menu guidance.
+  This is read-only: no new delete button, backup policy, lock operation or fetch.
+  Unix fixtures compare allocation with `du`; a Windows compile check alone does
+  not establish Windows runtime behavior.
 - modal and branch-menu Enter isolation from the selected commit checkout;
 - compact confirmation cards (`KAGI_GUI_E2E_ONLY=modal_compact,modal_sections`,
   `tests/recovery/modal_compact.rs`, `tests/recovery/layout.rs`): issue #462. The

@@ -100,6 +100,10 @@ mod recovery_modal_compact;
 mod recovery_worktree_lock_reason;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/worktree_inspection.rs"]
+mod worktree_inspection;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/read_owner.rs"]
 mod read_owner;
 
@@ -1332,6 +1336,7 @@ mod macos {
                 "graph_worktree_open",
                 Box::new(crate::worktree_graph::scenario_graph_worktree_open),
             ),
+            ("worktree_inspection", Box::new(crate::worktree_inspection::scenario)),
             (
                 "worktree_wip_inline",
                 Box::new(scenario_worktree_wip_inline),

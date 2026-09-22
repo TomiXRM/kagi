@@ -130,3 +130,52 @@ lease がなくなった時だけ一致する mirror を解除し、lease を持
 表示名は ui-core の EN/JA 対応表に集約し、未知名は汎用の「処理中…」にする。
 uv `check-busy-labels` は busy 名の literal と有限な operation/job 名を照合する。
 この表示変更は lease admission・実行・記録・既存 klog 契約を変更しない。
+
+## Read-only worktree inspection (#633)
+
+The WORKTREES navigator adds a capacity badge and a selectable detail panel;
+neither creates an approval token nor changes removal eligibility. The panel
+directs users to the existing right-click removal menu. Planning, confirmation,
+preflight, execution, verification, oplog, backups and lock semantics stay on
+the boundary above. In particular, this change neither deletes build output
+nor changes which ignored files the existing removal implementation preserves.
+The panel occupies at most 40% of the sidebar height. Its fixed EN/JA heading
+identifies the selected worktree by name and path; only the detail body scrolls,
+so the navigator retains space for choosing another worktree.
+
+- `kagi-domain::remove` owns typed `WorktreeEvidence`, unknown reasons and the
+  pure advisory predicate: clean **and** unlocked **and** (merged **or** pushed).
+  The main worktree is excluded. Missing observations never become positive
+  evidence; missing upstream, unborn HEAD and observation failures remain
+  distinct EN/JA reasons.
+- `kagi-git::worktree_inspection` reopens the repository and re-observes registry
+  identity, lock, status and HEAD rather than trusting cached WIP metadata.
+  Merged means ancestry in the existing default-branch policy; pushed means
+  ancestry in the locally available remote-tracking upstream. A local upstream
+  is not publication. There is no network request, automatic fetch or PR query.
+- Capacity is allocated filesystem space, including ignored contents, not file
+  length or promised reclaimable space. The in-process walk splits `target/`
+  subtrees from other contents, does not follow symlinks and counts hardlinks
+  once per worktree. Unix uses allocated blocks; Windows uses file allocation
+  and identity APIs. Unreadable, disappearing or unsupported entries fail the
+  capacity result instead of returning a misleading partial total. APFS clones
+  and externally linked files mean removing a tree may free less than its sum.
+- The existing session-owned `TabUiState` stores cached reports and measurement
+  time. A background scan checks cancellation per entry. Supersession,
+  selection departure, tab departure and close retire the request; both read
+  freshness and request revision guard delivery. A stale read or active writer
+  suppresses a cached positive verdict, while the last capacity remains visible.
+  Initial observation and explicit remeasurement share this path; the renderer
+  performs no I/O and does not repeatedly rescan cached worktrees.
+- The panel displays the local-ref basis and the approved warning:
+  `.gitignore 配下(target/ 等)は Git が守らない — 削除前に確認`.
+  Git cleanliness is not a claim that ignored `.env` or other local files are
+  expendable. SSH worktree paths never enter this local observer.
+
+Pure verdict tests and filesystem/Git fixtures cover evidence precedence,
+hardlinks, symlinks, ignored allocation and cancellation. The focused native
+`worktree_inspection` scenario uses real pushed/dirty/locked/detached worktrees,
+clicks visible virtual rows, checks EN/JA reasons and manual remeasurement, and
+holds only report delivery to prove superseded, departed and closed owners do
+not accept late results. Tier B reviews the four-state fixture and ignored-file
+warning; Windows cross-compilation is not a claim of Windows runtime validation.

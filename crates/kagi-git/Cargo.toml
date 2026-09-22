@@ -47,6 +47,11 @@ windows-sys = { version = "0.61", features = [
     # declaration lives behind this feature even though kagi passes null.
     "Win32_Security",
     "Win32_System_JobObjects",
+    # Worktree occupancy (#633): `GetFileInformationByHandleEx` answers
+    # `FILE_STANDARD_INFO.AllocationSize` (what a file occupies, not its
+    # logical length) and `FILE_ID_INFO` (the hardlink identity that keeps a
+    # multiply-linked file from being counted twice).
+    "Win32_Storage_FileSystem",
     # Resuming the child that was spawned `CREATE_SUSPENDED`: its initial thread
     # is found through the ToolHelp snapshot (`std` exposes no thread handle).
     "Win32_System_Diagnostics_ToolHelp",

@@ -931,7 +931,7 @@ fn build_sidebar_row(
             *is_current,
             *is_main,
             *locked,
-            this.remote_view.is_some(),
+            this,
             cx,
         ),
         SidebarRow::Stash { index, message } => build_stash_row(*index, message, cx),
@@ -1602,6 +1602,8 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
 
     // ── Graph page content (the shell around it is the pages renderer) ──
     div()
+        .relative()
+        .child(super::e2e::measure_inside("worktree-sidebar"))
         .flex_1()
         .min_h(px(0.))
         .w_full()
@@ -1611,6 +1613,7 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
         .child(filter_area)
         .child(cleanup_entry)
         .child(list)
+        .child(super::sidebar_worktree_row::inspection_panel(app, cx))
         .into_any_element()
 }
 

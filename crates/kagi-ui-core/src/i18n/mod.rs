@@ -227,6 +227,29 @@ pub enum Msg {
     /// Footer label while a worktree removal runs off the main thread (issue
     /// #404): a `pre_remove` command can take minutes, so removal is async.
     BusyRemoveWorktree,
+    WorktreeInspectionTitle,
+    WorktreeMeasuring,
+    WorktreeNotMeasured,
+    WorktreeInspectionRefresh,
+    WorktreeInspectionStale,
+    WorktreeSafeMerged,
+    WorktreeSafePushed,
+    WorktreeMainExcluded,
+    WorktreeDirty,
+    WorktreeLocked,
+    WorktreeUnpublished,
+    WorktreeUnborn,
+    WorktreeUpstreamUnavailable,
+    WorktreeObservationFailed,
+    WorktreeAllocated,
+    WorktreeOtherBytes,
+    WorktreeMeasuredAt,
+    WorktreeLocalRefEvidence,
+    WorktreeIgnoredWarning,
+    WorktreeRemovalGuide,
+    WorktreeSafeShort,
+    WorktreeKeepShort,
+    WorktreeUnknownShort,
     /// Worktree context menu: unlock action label.
     MenuUnlockWorktree,
     /// Worktree context menu: disabled reason when the worktree has no lock.
@@ -1101,6 +1124,25 @@ pub enum Msg {
     EditorWorkspaceBlame,
 }
 
+/// Localize the pure, typed removal assessment; backend error text is not a verdict.
+pub fn worktree_removal_verdict_text(
+    verdict: kagi_domain::remove::WorktreeRemovalVerdict,
+) -> &'static str {
+    use kagi_domain::remove::{WorktreeRemovalVerdict as V, WorktreeUnknownReason as U};
+    match verdict {
+        V::SafeMerged => Msg::WorktreeSafeMerged,
+        V::SafePushed => Msg::WorktreeSafePushed,
+        V::MainWorktree => Msg::WorktreeMainExcluded,
+        V::Dirty => Msg::WorktreeDirty,
+        V::Locked => Msg::WorktreeLocked,
+        V::Unpublished => Msg::WorktreeUnpublished,
+        V::Unknown(U::Unborn) => Msg::WorktreeUnborn,
+        V::Unknown(U::UpstreamUnavailable) => Msg::WorktreeUpstreamUnavailable,
+        V::Unknown(U::ObservationFailed) => Msg::WorktreeObservationFailed,
+    }
+    .t()
+}
+
 impl Msg {
     /// Resolve this message to a `&'static str` in the active [`lang()`].
     ///
@@ -1253,6 +1295,52 @@ impl Msg {
             (Ja, BusyCreateWorktree) => "create worktree 実行中…",
             (En, BusyRemoveWorktree) => "remove worktree in progress…",
             (Ja, BusyRemoveWorktree) => "remove worktree 実行中…",
+            (En, WorktreeInspectionTitle) => "Worktree details",
+            (Ja, WorktreeInspectionTitle) => "worktree 詳細",
+            (En, WorktreeMeasuring) => "Measuring…",
+            (Ja, WorktreeMeasuring) => "計測中…",
+            (En, WorktreeNotMeasured) => "Not measured",
+            (Ja, WorktreeNotMeasured) => "未計測",
+            (En, WorktreeInspectionRefresh) => "Refresh measurement",
+            (Ja, WorktreeInspectionRefresh) => "再計測",
+            (En, WorktreeInspectionStale) => "Refresh required — Git state may have changed",
+            (Ja, WorktreeInspectionStale) => "更新が必要 — Git の状態が変わった可能性があります",
+            (En, WorktreeSafeMerged) => "Git removal conditions met: clean, merged, unlocked",
+            (Ja, WorktreeSafeMerged) => "Git 上の削除条件を満たしています: clean・merge 済み・lock なし",
+            (En, WorktreeSafePushed) => "Git removal conditions met: clean, pushed, unlocked",
+            (Ja, WorktreeSafePushed) => "Git 上の削除条件を満たしています: clean・push 済み・lock なし",
+            (En, WorktreeMainExcluded) => "Not removable: main worktree",
+            (Ja, WorktreeMainExcluded) => "削除対象外: main worktree",
+            (En, WorktreeDirty) => "Not safe: uncommitted or untracked changes",
+            (Ja, WorktreeDirty) => "削除不可: 未 commit の変更または untracked ファイルがあります",
+            (En, WorktreeLocked) => "Not safe: worktree is locked",
+            (Ja, WorktreeLocked) => "削除不可: worktree が lock されています",
+            (En, WorktreeUnpublished) => "Not safe: HEAD is neither pushed nor merged",
+            (Ja, WorktreeUnpublished) => "削除不可: HEAD は push 済みでも merge 済みでもありません",
+            (En, WorktreeUnborn) => "Unknown: HEAD has no commit yet",
+            (Ja, WorktreeUnborn) => "不明: HEAD に commit がありません",
+            (En, WorktreeUpstreamUnavailable) => "Unknown: upstream has not been fetched",
+            (Ja, WorktreeUpstreamUnavailable) => "不明: upstream が未取得です",
+            (En, WorktreeObservationFailed) => "Unknown: observation failed",
+            (Ja, WorktreeObservationFailed) => "不明: 観測に失敗しました",
+            (En, WorktreeAllocated) => "Disk allocation",
+            (Ja, WorktreeAllocated) => "占有容量",
+            (En, WorktreeOtherBytes) => "Other",
+            (Ja, WorktreeOtherBytes) => "その他",
+            (En, WorktreeMeasuredAt) => "Measured at",
+            (Ja, WorktreeMeasuredAt) => "計測日時",
+            (En, WorktreeLocalRefEvidence) => "Assessment uses locally observed refs; no automatic fetch.",
+            (Ja, WorktreeLocalRefEvidence) => "取得済みの ref に基づく判定です。自動 fetch はしません。",
+            (En, WorktreeIgnoredWarning) => "Git does not protect .gitignore contents (target/, etc.) — review before removal.",
+            (Ja, WorktreeIgnoredWarning) => ".gitignore 配下(target/ 等)は Git が守らない — 削除前に確認",
+            (En, WorktreeRemovalGuide) => "To review removal, right-click the worktree and use the existing removal menu.",
+            (Ja, WorktreeRemovalGuide) => "削除の確認は worktree を右クリックし、既存の削除メニューから行ってください。",
+            (En, WorktreeSafeShort) => "Git-safe",
+            (Ja, WorktreeSafeShort) => "Git条件OK",
+            (En, WorktreeKeepShort) => "Keep",
+            (Ja, WorktreeKeepShort) => "保持",
+            (En, WorktreeUnknownShort) => "Unknown",
+            (Ja, WorktreeUnknownShort) => "不明",
             (En, MenuUnlockWorktree) => "Unlock worktree…",
             (Ja, MenuUnlockWorktree) => "worktree のロックを解除…",
             (En, MenuWorktreeNotLocked) => "This worktree is not locked",

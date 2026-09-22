@@ -316,6 +316,10 @@ impl KagiApp {
             .as_ref()
             .map(|operation| operation.observation.clone());
         self.app_sessions.observe_conflict(session, observed);
+        let inspection_read = self.reads.current_key(session);
+        if let Some(ui) = self.ui.get_mut(&session) {
+            ui.worktree_inspections.invalidate_read(inspection_read);
+        }
         if self.active_session() != Some(session) {
             return;
         }

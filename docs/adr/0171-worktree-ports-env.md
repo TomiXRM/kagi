@@ -1,10 +1,10 @@
 # ADR-0171: Per-worktree port allocation + KAGI_* environment map
 
-- Status: Accepted (backend foundation only — see Scope / Follow-ups)
+- Status: Accepted (backend allocation and terminal injection; remaining follow-ups below)
 - Date: 2026-09-04
 - Closes (partial): #342
 - Depends on: #341 / ADR-0161 (worktree steps — the `command` step consumes the
-  same `KAGI_*` vars), ADR-0035 (vendored `gpui-terminal`, the eventual injection point)
+  same `KAGI_*` vars), ADR-0035 (vendored `gpui-terminal`, the injection point)
 
 ## Context
 
@@ -21,16 +21,16 @@ no external dependency: just allocate a block and inject the environment.
 
 ## Scope of this ADR / PR
 
-This PR lands the **deterministic, fully testable backend** only:
+The original PR landed the **deterministic, fully testable backend**:
 
 - a pure port allocator + pure `KAGI_*` env-map builder (`kagi-domain`);
 - persistence of assignments keyed by canonical worktree path (`kagi-git`);
 - the two settings + typed accessors (`kagi-ui-core`);
 - wiring: on worktree **create**, the block is computed and persisted.
 
-Deliberately **out of scope** (see Follow-ups): injecting the vars into the
-embedded terminal, the `nonconcurrent` run-mode UX, and the sidebar
-`http://localhost:<port>` link.
+The terminal follow-up now injects the existing five-variable payload at shell
+spawn. The `nonconcurrent` run-mode UX and sidebar `http://localhost:<port>`
+link remain **out of scope**.
 
 ## Decision
 
@@ -105,8 +105,17 @@ Keys are canonicalized best-effort (collapses symlinks / `..`, e.g. macOS
 On successful worktree **create** (`create_worktree_blocking`), the resolved
 worktree path is assigned + persisted immediately, logged via the `klog!`
 contract channel (`worktree-port: assigned <path> → <port>`, or an
-`… exhausted …` line). Assignment is idempotent + lazy, so the deferred terminal
-PR can call `worktree_env` at spawn time for worktrees that predate this feature.
+`… exhausted …` line). Assignment is idempotent + lazy, so terminal spawn also
+calls the existing `worktree_env` builder for worktrees that predate this feature.
+
+`worktree_ports::terminal_env` resolves the actual worktree registry name,
+main working tree and the existing branch-cleanup default-branch policy in
+the Git layer. `src/ui/terminal.rs` supplies the typed port settings and applies
+the returned variables to `CommandBuilder` before spawning; the cwd remains
+the owning terminal session's repository path. All five values override inherited
+`KAGI_*` values. A retained shell keeps its environment; a restarted shell recalls
+the persisted block. Metadata failures or range exhaustion use the existing
+terminal-start failure/oplog path rather than spawning with a stale inherited port.
 
 ## Alternatives considered
 
@@ -126,10 +135,9 @@ PR can call `worktree_env` at spawn time for worktrees that predate this feature
 
 ## Follow-ups (out of scope — tracked under #342 / parent #359)
 
-1. **Terminal injection** — inject the `KAGI_*` map + cwd into the embedded
-   `gpui-terminal` (ADR-0035). §5's process-group handling is still uninvestigated
-   (how running processes are treated on worktree removal, coordinating with the
-   #340 lock).
+1. **Terminal process-group handling** — environment injection and cwd are
+   implemented. How running processes are treated on worktree removal and
+   coordination with the #340 lock remain separate follow-ups.
 2. **`run_mode: "nonconcurrent"`** — the "correctly give up on parallelism" escape
    hatch for projects with a single shared DB / fixed callback URL; blocking or
    warning on a second launch is a UX decision left open.

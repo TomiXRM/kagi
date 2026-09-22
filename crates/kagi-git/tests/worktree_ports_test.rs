@@ -153,5 +153,58 @@ fn removed_worktree_block_is_reclaimed_on_exhaustion() {
     std::env::remove_var("KAGI_LOG_DIR");
 }
 
+#[test]
+fn terminal_environment_uses_registry_identity_and_remote_default_branch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = tempfile::tempdir().unwrap();
+    let main_path = fixture.path().join("repository");
+    let repo = git2::Repository::init_opts(
+        &main_path,
+        git2::RepositoryInitOptions::new().initial_head("trunk"),
+    )
+    .unwrap();
+    let tree_id = repo.index().unwrap().write_tree().unwrap();
+    let tree = repo.find_tree(tree_id).unwrap();
+    let signature = git2::Signature::now("Fixture", "fixture@example.invalid").unwrap();
+    let oid = repo
+        .commit(Some("HEAD"), &signature, &signature, "initial", &tree, &[])
+        .unwrap();
+    repo.reference("refs/remotes/origin/trunk", oid, true, "fixture")
+        .unwrap();
+    repo.reference_symbolic(
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/trunk",
+        true,
+        "fixture",
+    )
+    .unwrap();
+    let linked_path = fixture.path().join("different-directory");
+    repo.worktree("registered-name", &linked_path, None)
+        .unwrap();
+    let main_path = main_path.canonicalize().unwrap();
+    let linked_path = linked_path.canonicalize().unwrap();
+
+    for (path, name, port) in [
+        (&main_path, "main", "3000"),
+        (&linked_path, "registered-name", "3010"),
+    ] {
+        let environment = kagi_git::worktree_ports::terminal_env(path, RANGE, 10).unwrap();
+        let vars: std::collections::BTreeMap<_, _> = environment.vars.into_iter().collect();
+        assert_eq!(std::path::Path::new(&vars["KAGI_WORKTREE_PATH"]), path);
+        assert_eq!(vars["KAGI_WORKTREE_NAME"], name);
+        assert_eq!(std::path::Path::new(&vars["KAGI_MAIN_WORKTREE"]), main_path);
+        assert_eq!(vars["KAGI_DEFAULT_BRANCH"], "trunk");
+        assert_eq!(vars["KAGI_PORT"], port);
+    }
+    assert_eq!(
+        kagi_git::worktree_ports::terminal_env(&linked_path, RANGE, 10)
+            .unwrap()
+            .port,
+        3010
+    );
+}
+
 #[path = "../../../tests/support/isolated.rs"]
 mod test_support;

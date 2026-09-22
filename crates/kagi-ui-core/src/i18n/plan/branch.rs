@@ -11,6 +11,13 @@
 
 use kagi_domain::plan_note::{BranchNote, BranchRecovery, BranchTitle};
 
+use crate::i18n::Msg;
+
+/// JA template for `Msg::AdviceDeleteUnmerged`. The `{}` take, in order:
+/// commit count, branch name, tip.
+pub(crate) const ADVICE_DELETE_UNMERGED: &str =
+    "未 merge の branch です。削除すると {} commit が他の ref から到達不能になりますが、復元用 ref で保持します。2 回確認すると削除します。\nbranch `{}` / 先端 `{}`";
+
 /// Japanese rendering of one branch note.
 pub fn note_ja(note: &BranchNote) -> String {
     match note {
@@ -46,10 +53,9 @@ pub fn note_ja(note: &BranchNote) -> String {
             "HEAD がこの branch の先端を指しています(detached)。削除できません。\nbranch `{}`",
             name
         ),
-        BranchNote::DeleteUnmerged { name, tip, commits } => format!(
-            "未 merge の branch です。削除すると {} commit が他の ref から到達不能になりますが、復元用 ref で保持します。2 回確認すると削除します。\nbranch `{}` / 先端 `{}`",
-            commits, name, tip
-        ),
+        BranchNote::DeleteUnmerged { name, tip, commits } => {
+            super::advice_text(Msg::AdviceDeleteUnmerged, &[commits, name, tip])
+        }
         BranchNote::DeleteSquashMerged { name, squash } => format!(
             "squash merge 済みです。変更は取り込み済みで、削除しても失われません。\nbranch `{}` / merge 先 `{}`",
             name, squash

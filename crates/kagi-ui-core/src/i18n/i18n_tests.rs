@@ -185,3 +185,41 @@ fn keyed_validation_localizes() {
     assert!(worktree_path_error(&W::Exists("/p".into())).contains("/p"));
     set_lang_no_persist(Lang::En);
 }
+
+#[test]
+fn advice_keeps_identifiers_literal_and_their_roles_distinct() {
+    use kagi_domain::plan_note::{BranchNote, SwitchNote};
+
+    let branch = "feature/{}-レビュー";
+    let remote = "origin/{}-追跡";
+    let tip = "abc123456789";
+    let deletion = plan::branch::note_ja(&BranchNote::DeleteUnmerged {
+        name: branch.into(),
+        tip: tip.into(),
+        commits: 17,
+    });
+    assert!(deletion.contains(&format!("branch `{branch}` / 先端 `{tip}`")));
+    assert!(deletion.contains("17 commit"));
+
+    let switch = plan::switch::note_ja(&SwitchNote::DivergedSwitchOnly {
+        name: branch.into(),
+        remote: remote.into(),
+        ahead: 3,
+        behind: 7,
+    });
+    assert!(switch.starts_with(&format!("{remote} から分岐")));
+    assert!(switch.contains("3 commit 進み、7 commit 遅れ"));
+    assert!(switch.ends_with(&format!("branch `{branch}`")));
+}
+
+#[test]
+fn explicit_japanese_advice_preserves_stash_syntax_under_english_locale() {
+    use kagi_domain::plan_note::CommonNote;
+
+    let _guard = LOCK.lock();
+    set_lang_no_persist(Lang::En);
+    let advice = plan::common::note_ja(&CommonNote::DirtyStashFirst);
+    assert!(advice.contains("先に変更を stash"));
+    assert!(advice.contains("stash@{0}"));
+    assert!(advice.contains("`git stash pop`"));
+}

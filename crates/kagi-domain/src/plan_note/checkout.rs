@@ -78,11 +78,9 @@ impl CheckoutNote {
                 "Working tree is dirty ({}). Safe checkout may fail; stash or commit first.",
                 display
             ),
-            CheckoutNote::WillDetachHead => "This will leave you in a detached HEAD state. \
-                 Create a branch first if you want to keep new work."
-                .to_string(),
+            CheckoutNote::WillDetachHead => crate::advice_template_en!(WillDetachHead).to_string(),
             CheckoutNote::RecommendCreateBranchHereFirst => {
-                "Using 'Create branch here' first is recommended.".to_string()
+                crate::advice_template_en!(RecommendCreateBranchHereFirst).to_string()
             }
         }
     }

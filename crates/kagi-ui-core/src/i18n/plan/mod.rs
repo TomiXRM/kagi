@@ -33,7 +33,28 @@ pub mod worktree;
 
 use kagi_domain::plan_note::{PlanNote, PlanRecovery, PlanTitle, RecoveryKind};
 
-use super::{lang, Lang};
+use super::{lang, Lang, Msg};
+
+/// Interpolate the JA catalog once; inserted branch names are never templates.
+pub(super) fn advice_text(msg: Msg, args: &[&dyn std::fmt::Display]) -> String {
+    use std::fmt::Write;
+
+    let template = msg.t_for(Lang::Ja);
+    let mut parts = template.split("{}");
+    let mut out = String::with_capacity(template.len());
+    out.push_str(parts.next().unwrap_or_default());
+    for arg in args {
+        let suffix = parts
+            .next()
+            .expect("advice argument requires a template slot");
+        write!(out, "{arg}{suffix}").expect("standard advice arguments format into a String");
+    }
+    assert!(
+        parts.next().is_none(),
+        "advice template requires an argument"
+    );
+    out
+}
 
 /// Localized text for one plan note (blocker / warning).
 pub fn plan_note_text(note: &PlanNote) -> String {

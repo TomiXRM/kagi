@@ -134,7 +134,7 @@ impl PullNote {
                     changes.push(format!("{untracked} untracked"));
                 }
                 format!(
-                    "Working tree has {}. Kagi will stash these changes, pull, then restore them. If restoration conflicts, the stash is kept.",
+                    crate::advice_template_en!(PullAutoStash),
                     changes.join(", ")
                 )
             }

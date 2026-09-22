@@ -59,10 +59,55 @@ the user's interactive shell, not a kagi-driven git call. Forcing
 `GIT_ADVICE=0` there would suppress advice in the user's own CLI, where it is
 helpful (issue §5 open question — answered "no" for the interactive shell).
 
+## Advice Msg catalog slice (2026-09-23)
+
+The existing `OperationPlan` advice is typed `PlanNote` data, with EN rendered
+by `kagi-domain::plan_note` and JA by `kagi-ui-core::i18n::plan` (ADR-0129).
+These notes were already translated; this slice makes ten common guidance
+kinds explicit `Msg::Advice…` keys and routes their existing JA consumers
+through those keys. It does not introduce new prose or change severity.
+
+Selection uses production constructor reuse, then everyday operation visibility
+and actionable guidance. These are **static source counts, not usage telemetry**;
+test constructors, renderers and declarations are excluded. The seven
+single-site kinds below are a product-priority selection, not a measured ranking.
+
+| Msg key (all prefixed `Advice`) | Existing note | Production sites |
+|---|---|---:|
+| `UntrackedRemain(ctx)` | `CommonNote::UntrackedRemain` | 8 |
+| `SuggestStashPush` | `CommonNote::SuggestStashPush` | 3 |
+| `NoForceUsed(punct)` | `PushNote::NoForceUsed` | 2 |
+| `WillDetachHead` | `CheckoutNote::WillDetachHead` | 1 |
+| `RecommendCreateBranchHereFirst` | `CheckoutNote::RecommendCreateBranchHereFirst` | 1 |
+| `DirtyStashFirst` | `CommonNote::DirtyStashFirst` | 1 |
+| `PullAutoStash` | `PullNote::AutoStash` | 1 |
+| `DivergedSwitchOnly` | `SwitchNote::DivergedSwitchOnly` | 1 |
+| `DeleteUnmerged` | `BranchNote::DeleteUnmerged` | 1 |
+| `UntrackedExcluded` | `StashNote::UntrackedExcluded` | 1 |
+
+The ten kinds cover 20 production constructor sites. Untracked context and push
+punctuation preserve 17 English forms rather than flattening distinct messages.
+`DirtyRollbackHint` is not selected: its sole helper caller filters it out;
+the actual dirty Pull UI uses `AutoStash`, not the superseded `DirtyPullGuard`.
+
+`advice_template_en!` in the existing domain note module owns the selected
+English literals. Both the original `message_en()` formatters and the static
+`Msg` templates use them; EN UI/CLI/oplog still use `message_en()` with unchanged
+bytes. Literal macro expansion preserves Rust's format-argument checks without
+an English runtime template engine. JA templates stay in their existing
+per-family files. `Msg::t_for(Ja)` keeps explicit JA renderers independent of
+the process language. JA argument insertion is single-pass: identifiers
+containing `{}` and literal Git syntax such as `stash@{0}` are not reinterpreted.
+
+Plan variants, warning/blocker classification, execution, and equivalent
+commands are unchanged. The all-context EN/JA smoke, identifier/locale edge
+regressions, and existing native plan scenarios exercise the cutover.
+
 ## Deferred (NOT in this slice)
 
-- **advice.adoc 40-item catalog i18n** (`error.advice.*`) — the inventory of
-  which advice items map to kagi situations, and their EN/JA strings.
+- **Remaining advice.adoc catalog** (`error.advice.*`) — the ten kinds above
+  are keyed; the complete ≈40-item Git-advice inventory and remaining mappings
+  are still deferred.
 - **Blocker wording rewrite** ("forbidden" → "next action") across all
   `PlanNote` blockers, plus optional action buttons.
 - **Extending `equivalent_command` to the remaining plan kinds** — each needs a

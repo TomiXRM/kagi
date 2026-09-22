@@ -52,11 +52,9 @@ impl PushNote {
     pub fn message_en(&self) -> String {
         match self {
             PushNote::NoForceUsed { punct } => match punct {
-                PushPunct::EmDash => {
-                    "Non-fast-forward pushes will fail — force is not used.".to_string()
-                }
+                PushPunct::EmDash => crate::advice_template_en!(NoForceUsedEmDash).to_string(),
                 PushPunct::Semicolon => {
-                    "Non-fast-forward pushes will fail; force is not used.".to_string()
+                    crate::advice_template_en!(NoForceUsedSemicolon).to_string()
                 }
             },
             PushNote::NoUpstreamNoRemotes { branch } => format!(

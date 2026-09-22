@@ -92,7 +92,7 @@ impl BranchNote {
                 name
             ),
             BranchNote::DeleteUnmerged { name, tip, commits } => format!(
-                "Branch '{}' is unmerged (tip {}). Deleting it makes {} commits unreachable from other refs; a recovery ref will retain them. Confirm twice to delete.",
+                crate::advice_template_en!(DeleteUnmerged),
                 name, tip, commits
             ),
             BranchNote::DeleteSquashMerged { name, squash } => format!(

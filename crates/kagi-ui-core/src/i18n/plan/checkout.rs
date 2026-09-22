@@ -9,6 +9,18 @@
 
 use kagi_domain::plan_note::{CheckoutNote, CheckoutRecovery, CheckoutTitle, DirtyParts};
 
+use crate::i18n::Msg;
+
+/// §G-1 exception: current Japanese wording preserved byte-for-byte.
+/// JA text for `Msg::AdviceWillDetachHead`.
+pub(crate) const ADVICE_WILL_DETACH_HEAD: &str =
+    "detached HEAD になります。新しい作業を残す場合は branch を作成してください。";
+
+/// §G-1 exception: current Japanese wording preserved byte-for-byte.
+/// JA text for `Msg::AdviceRecommendCreateBranchHereFirst`.
+pub(crate) const ADVICE_RECOMMEND_CREATE_BRANCH_HERE_FIRST: &str =
+    "Create branch here を先に使うことを推奨します。";
+
 /// `「stage 済み 2 件、変更 1 件」` — the dirty-parts fragment in JA
 /// (mirrors `plan/common.rs::parts_ja`; kept local since `CheckoutNote` is
 /// the only checkout-category note that needs it).
@@ -42,13 +54,9 @@ pub fn note_ja(note: &CheckoutNote) -> String {
             "作業ツリーが dirty です({})。checkout に失敗する場合があります。先に stash か commit してください。",
             display
         ),
-        // §G-1 exception: current Japanese wording preserved byte-for-byte.
-        CheckoutNote::WillDetachHead => {
-            "detached HEAD になります。新しい作業を残す場合は branch を作成してください。"
-                .to_string()
-        }
+        CheckoutNote::WillDetachHead => super::advice_text(Msg::AdviceWillDetachHead, &[]),
         CheckoutNote::RecommendCreateBranchHereFirst => {
-            "Create branch here を先に使うことを推奨します。".to_string()
+            super::advice_text(Msg::AdviceRecommendCreateBranchHereFirst, &[])
         }
     }
 }

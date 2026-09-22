@@ -4,6 +4,13 @@
 use kagi_domain::plan_note::stash::StashDirtyOp;
 use kagi_domain::plan_note::{DirtyParts, StashNote, StashRecovery, StashTitle};
 
+use crate::i18n::Msg;
+
+/// JA template for `Msg::AdviceUntrackedExcluded`. The single `{}` takes the
+/// untracked file count.
+pub(crate) const ADVICE_UNTRACKED_EXCLUDED: &str =
+    "未追跡ファイル {} 件は stash に含めません。作業ツリーに残ります。";
+
 /// `「stage 済み 2 件、変更 1 件」` — the dirty-parts fragment in JA
 /// (mirrors `plan/common.rs::parts_ja`; stash has its own module so it stays
 /// local rather than reaching into a sibling category file).
@@ -28,10 +35,9 @@ pub fn note_ja(note: &StashNote) -> String {
             "未追跡ファイル {} 件も stash に含めます(git stash push -u 相当)。",
             count
         ),
-        StashNote::UntrackedExcluded { count } => format!(
-            "未追跡ファイル {} 件は stash に含めません。作業ツリーに残ります。",
-            count
-        ),
+        StashNote::UntrackedExcluded { count } => {
+            super::advice_text(Msg::AdviceUntrackedExcluded, &[count])
+        }
         // JA には単複の別がないため、count は複数形サフィックスを持たず自然に読める。
         StashNote::IndexOutOfRange { index, count } => {
             format!("stash index {} は範囲外です(entry は {} 件)。", index, count)

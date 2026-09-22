@@ -2,6 +2,13 @@
 
 use kagi_domain::plan_note::{SwitchNote, SwitchRecovery, SwitchTitle};
 
+use crate::i18n::Msg;
+
+/// JA template for `Msg::AdviceDivergedSwitchOnly`. The `{}` take, in order:
+/// remote, ahead, behind, branch name.
+pub(crate) const ADVICE_DIVERGED_SWITCH_ONLY: &str =
+    "{} から分岐しています({} commit 進み、{} commit 遅れ)。切り替えのみ行います。統合するには merge か rebase してください。\nbranch `{}`";
+
 /// Japanese rendering of one switch note.
 pub fn note_ja(note: &SwitchNote) -> String {
     match note {
@@ -34,9 +41,9 @@ pub fn note_ja(note: &SwitchNote) -> String {
             remote,
             ahead,
             behind,
-        } => format!(
-            "{} から分岐しています({} commit 進み、{} commit 遅れ)。切り替えのみ行います。統合するには merge か rebase してください。\nbranch `{}`",
-            remote, ahead, behind, name
+        } => super::advice_text(
+            Msg::AdviceDivergedSwitchOnly,
+            &[remote, ahead, behind, name],
         ),
     }
 }

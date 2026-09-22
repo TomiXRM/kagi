@@ -73,8 +73,7 @@ impl SwitchNote {
                 ahead,
                 behind,
             } => format!(
-                "'{}' has diverged from {} ({} ahead, {} behind); switching only — \
-                 merge or rebase to integrate.",
+                crate::advice_template_en!(DivergedSwitchOnly),
                 name, remote, ahead, behind
             ),
         }

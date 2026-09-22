@@ -310,6 +310,15 @@ impl KagiApp {
             cx.notify();
         });
 
+        // Why a toolbar button renders bright or muted. `Availability(false)`
+        // means the action cannot run right now; `Selection(false)` means an
+        // equally usable toggle is merely off (Terminal still opens the panel
+        // when pressed), so only the former is a disabled control.
+        enum ButtonState {
+            Availability(bool),
+            Selection(bool),
+        }
+
         // ── Helper: build a single Finder/Keynote-style toolbar button ──────
         // W10-TOOLBAR: icon on top (20px ≈ Size::Medium), text_xs label below,
         // vertically stacked. Whole button gets a hover bg + rounded; width is
@@ -318,8 +327,9 @@ impl KagiApp {
         // `id` must be a unique string for GPUI element tracking.
         // `count` (>0) renders a small chip overlay at the icon's top-right;
         // 0 hides it (ADR-0013: Pull ↓N / Push ↑N).
-        // `enabled` drives muted colour; disabled buttons keep their click
-        // handler (which sets the reason footer) but render in muted colour.
+        // `state` drives the muted colour, and for `Availability(false)` also
+        // the AccessKit disabled flag; unavailable buttons still keep their
+        // click handler, which sets the reason footer.
         // Takes a full `gpui_component::Icon` (not `IconName`) so buttons can
         // use custom embedded SVGs (`Icon::default().path("icons/…")`) for
         // glyphs gpui-component has no variant for (e.g. the Editor button's
@@ -327,8 +337,14 @@ impl KagiApp {
         let make_btn = |id: &'static str,
                         label: &'static str,
                         icon: gpui_component::Icon,
-                        enabled: bool,
+                        state: ButtonState,
                         count: usize| {
+            // Both variants carry the same "renders bright" bool as the old
+            // `enabled` argument, so the palette is unchanged.
+            let (enabled, unavailable) = match state {
+                ButtonState::Availability(on) => (on, !on),
+                ButtonState::Selection(on) => (on, false),
+            };
             let text_color = if enabled {
                 theme().text_main
             } else {
@@ -384,6 +400,14 @@ impl KagiApp {
                 // share the visible label explicitly.
                 .role(gpui::Role::Button)
                 .aria_label(label)
+                .when(unavailable, |el| {
+                    // gpui has no aria_disabled setter. `parent_node()` is this
+                    // element's own AccessKit node — it needs the id and role
+                    // above, adds no children, and the hook slot is single-use.
+                    el.a11y_synthetic_children(|builder: &mut gpui::A11ySubtreeBuilder| {
+                        builder.parent_node().set_disabled();
+                    })
+                })
                 .flex()
                 .flex_col()
                 .items_center()
@@ -589,7 +613,7 @@ impl KagiApp {
                                         gpui_component::Icon::new(
                                             gpui_component::IconName::ArrowDown,
                                         ),
-                                        toolbar.pull_on,
+                                        ButtonState::Availability(toolbar.pull_on),
                                         toolbar.behind,
                                     )
                                     .on_click(pull_click),
@@ -603,7 +627,7 @@ impl KagiApp {
                                         gpui_component::Icon::new(
                                             gpui_component::IconName::ArrowUp,
                                         ),
-                                        toolbar.push_on,
+                                        ButtonState::Availability(toolbar.push_on),
                                         toolbar.ahead,
                                     )
                                     .on_click(push_click),
@@ -615,7 +639,7 @@ impl KagiApp {
                                         "tb-branch",
                                         "Branch",
                                         gpui_component::Icon::new(gpui_component::IconName::Plus),
-                                        true,
+                                        ButtonState::Availability(true),
                                         0,
                                     )
                                     .on_click(branch_click),
@@ -627,7 +651,7 @@ impl KagiApp {
                                         "tb-stash",
                                         "Stash",
                                         gpui_component::Icon::new(gpui_component::IconName::Inbox),
-                                        toolbar.stash_on,
+                                        ButtonState::Availability(toolbar.stash_on),
                                         0,
                                     )
                                     .on_click(stash_click),
@@ -641,7 +665,7 @@ impl KagiApp {
                                         gpui_component::Icon::new(
                                             gpui_component::IconName::FolderOpen,
                                         ),
-                                        toolbar.pop_on,
+                                        ButtonState::Availability(toolbar.pop_on),
                                         0,
                                     )
                                     .on_click(pop_click),
@@ -654,7 +678,7 @@ impl KagiApp {
                                         "tb-undo",
                                         Msg::Undo.t(),
                                         gpui_component::Icon::new(gpui_component::IconName::Undo2),
-                                        undo_on,
+                                        ButtonState::Availability(undo_on),
                                         0,
                                     )
                                     .when_some(undo_tooltip_text, |btn, text| {
@@ -670,7 +694,7 @@ impl KagiApp {
                                         "tb-redo",
                                         Msg::Redo.t(),
                                         gpui_component::Icon::new(gpui_component::IconName::Redo2),
-                                        redo_on,
+                                        ButtonState::Availability(redo_on),
                                         0,
                                     )
                                     .when_some(redo_tooltip_text, |btn, text| {
@@ -689,7 +713,7 @@ impl KagiApp {
                                         gpui_component::Icon::new(
                                             gpui_component::IconName::SquareTerminal,
                                         ),
-                                        terminal_on,
+                                        ButtonState::Selection(terminal_on),
                                         0,
                                     )
                                     .on_click(terminal_click),
@@ -749,7 +773,7 @@ impl KagiApp {
                             "tb-graph-mode",
                             "Graph",
                             gpui_component::Icon::default().path("icons/waypoints.svg"),
-                            true,
+                            ButtonState::Availability(true),
                             0,
                         )
                         .when(mode == WorkspaceMode::Graph, mode_on)
@@ -763,7 +787,7 @@ impl KagiApp {
                                 "tb-pr-mode",
                                 "PRs",
                                 gpui_component::Icon::default().path("icons/git-pull-request.svg"),
-                                true,
+                                ButtonState::Availability(true),
                                 0,
                             )
                             .when(mode == WorkspaceMode::Prs, mode_on)
@@ -777,7 +801,7 @@ impl KagiApp {
                             "tb-editor-ws",
                             "Editor",
                             gpui_component::Icon::default().path("icons/square-pen.svg"),
-                            editor_ws_on,
+                            ButtonState::Availability(editor_ws_on),
                             0,
                         )
                         .when(mode == WorkspaceMode::Editor, mode_on)
@@ -791,7 +815,7 @@ impl KagiApp {
                             "tb-ecosystem",
                             "Analyze",
                             gpui_component::Icon::new(gpui_component::IconName::ChartPie),
-                            ecosystem_on,
+                            ButtonState::Availability(ecosystem_on),
                             0,
                         )
                         .on_click(ecosystem_click),
@@ -812,7 +836,7 @@ impl KagiApp {
                             "tb-settings",
                             "Settings",
                             gpui_component::Icon::new(gpui_component::IconName::Settings),
-                            true,
+                            ButtonState::Availability(true),
                             0,
                         )
                         .on_click(settings_click)

@@ -19,6 +19,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Avatar の map を File History / Editor と共有し、PR conversation / lane は借用するようにしました。描画ごとの map・key の複製をなくし、新しい解決 batch が届いたときだけ snapshot を更新します。取得方法・画像の fallback・Git 操作は変更していません。（#498）
+- Toolbar の既存の利用可能状態を AccessKit の disabled に反映する処理を追加しました。Terminal の選択状態とは区別し、無効時のクリック理由 footer と Undo/Redo の busy guard は変更しません。native AXEnabled は main でも AXWindow が取得できない環境のため未検証で、次回セッションで確認します。（#354）
 - Issues 一覧の filter/sort と sidebar 4タブの件数を session 所有の派生キャッシュで共有し、スクロール描画ごとの全件再計算をなくしました。追加ページ・同件数の更新・filter/tab/login/mentions 変更で再計算し、仮想 list には表示順を `Rc` で渡して毎フレームの全件コピーも避けます。取得・ページング・表示順の契約は変更していません。（#791）
 - resolution buffer の autosave JSON を serde で保存・読み込みするようにし、surrogate pair で表現された文字が解決草稿から脱落する問題を修正しました。既存の schema、未解決と空テキストの区別、行 provenance、raw OID＋mode、欠落時の既定値を維持します。保存先・書き込み方式・解決操作・oplog は変更していません。（#513 resolution slice）
 - draft の外側 JSON record を serde で保存・読み込みするようにし、surrogate pair で表現された文字が commit-message draft から脱落する問題を修正しました。既存のフィールド・省略時の値・保存先・atomic replacement は維持します。Issue 本文 payload、oplog、resolution の形式は変更していません。（#513 draft slice）

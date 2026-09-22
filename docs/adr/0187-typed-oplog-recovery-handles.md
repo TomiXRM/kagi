@@ -19,10 +19,11 @@ display text.
 
 This follows the `backup_refs` precedent (ADR-0179) exactly rather than
 inventing a second shape: one new top-level field, written by the same
-hand-rolled serializer, read by the same reader, invisible to older code.
+serde-backed oplog serializer (#513), read by the same reader, invisible to older code.
 
-Every value in the array is a JSON string, so a path containing `,`, `=` or
-non-ASCII is unambiguous — the comma-joined `path=blob` summary was not.
+Handle fields are JSON strings (or null for absent optional path/reference), so
+a path containing `,`, `=` or non-ASCII is unambiguous — the comma-joined
+`path=blob` summary was not.
 
 `kind` is a plain string for the same reason `op` is: a tag written by a newer
 Kagi must round-trip through an older reader instead of collapsing into a wrong
@@ -57,9 +58,9 @@ a claim the executor never made.
 
 A line written before this field reads back with `recovery` empty. The prose is
 never mined for a substitute: an old entry is not retroactively recoverable, and
-saying so would be worse than saying nothing. A `recovery` value that does not
-fit the shape (wrong type, an element without `oid`) also degrades to empty
-rather than dropping the whole entry — the entry's other fields still matter.
+saying so would be worse than saying nothing. A non-array `recovery` value
+degrades to empty. Invalid members (such as an object without `oid`) are ignored
+individually, preserving valid siblings rather than dropping the receipt.
 
 Retirement (`execute_forget_oplog_entry`) keeps preserving unknown JSON fields
 on retained lines verbatim, so a field a newer Kagi writes survives an older

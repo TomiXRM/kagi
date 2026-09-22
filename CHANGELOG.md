@@ -12,6 +12,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- preflight refusal の native 回帰テストを現在の通知契約へ更新しました。旧 dismiss-only modal の代わりに EN/JA の footer / error toast、oplog の具体的な拒否理由、repository 不変を検証します。製品の通知動作は変更していません。（#764）
 - remote write の結果を観測できない場合、停止証明後に「未確認のまま制限を解除」を二段階で選べるようにしました。EN/JA の警告と解放理由の監査ログを残し、元の Unknown は保持します。実行中・結果不一致・通信失敗・ログ保存失敗では解除しません。SSH alias の実 host を期限付きで解決し、PR fetch の remote 識別にも使います。（#706、ADR-0196）
 - fork PR の merge 後も local branch を安全に扱えるようにしました。計画を background で作り、承認時の branch 名・full OID・不在を固定します。checkout 中・PR head 不一致は事前に「保持」と表示し、queue 投入時も branch を残します。gh 成功と server の merge 成立を両方確認した場合だけ既存の削除ガードを通し、後発の OID 変更・同名 branch 出現は削除せず Partial とします。receipt と EN/JA 通知に結果を残し、fork remote は削除しません。Unknown の照合で未着手 local branch の削除を要求することもありません。（#705、ADR-0202）
 - conflict の Save / Abort が拒否された理由を EN/JA の通知に表示し、計画後の状態変化や conflict marker の残存を判別できるようにしました。footer のログ契約と oplog の英語詳細は維持します。（#711）

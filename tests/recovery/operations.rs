@@ -278,27 +278,61 @@ pub fn scenario_preflight_presentation(cx: &mut VisualTestAppContext) {
             .unwrap()
             .preflight_check_stash(&plan, plan.stash_count_at_plan())
             .unwrap_err();
-        let detail = error
-            .blocker()
-            .map(i18n::plan_note_text)
-            .unwrap_or_else(|| error.to_string());
+        let blocker = error.blocker().expect("typed stale-stash refusal");
+        let expected_blocker = blocker.message_en();
+        let detail = i18n::plan_note_text(blocker);
         let expected = i18n::op_failed(Op::Preflight, detail);
         cx.run_until_parked();
+        let fingerprint = repo_fingerprint(repo);
         // Local stash now shares the root Enter/button approval boundary.
         app.update(cx, |app, cx| app.start_stash_drop(cx));
         wait_idle(cx, &app);
-        cx.read(|cx| {
-            let app = app.read(cx);
-            assert!(
-                kagi::ui::e2e::app_notice_message(app)
-                    .is_some_and(|message| message.ends_with(&expected)),
-                "localized preflight refusal must reach the shared error modal"
-            );
-        });
-        assert_eq!(output(repo, &["stash", "list"]), before);
         let entries = records(repo, "stash-drop");
         assert_eq!(entries.len(), 1);
-        assert!(matches!(entries[0].outcome, OpOutcome::Refused { .. }));
+        let OpOutcome::Refused { blockers } = &entries[0].outcome else {
+            panic!("expected a durable refusal, got {:?}", entries[0].outcome);
+        };
+        assert_eq!(blockers.as_slice(), std::slice::from_ref(&expected_blocker));
+        cx.read(|cx| {
+            let app = app.read(cx);
+            // #747 deliberately replaced dismiss-only notices with oplog + toast.
+            assert!(
+                app.app_notice().is_none(),
+                "a recorded preflight refusal must not open a dismiss-only modal"
+            );
+            assert!(
+                matches!(&app.status_footer, FooterStatus::Failed(message)
+                    if message.as_ref() == expected.as_str()),
+                "localized preflight detail must reach the footer: {:?}",
+                app.status_footer
+            );
+            let toast = app
+                .toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .last()
+                .unwrap();
+            assert!(
+                matches!(toast.kind, kagi::ui::ToastKind::Error)
+                    && toast.message.ends_with(&expected),
+                "localized preflight detail must reach the error toast: {}",
+                toast.message
+            );
+            let panel = app.op_log.as_ref().unwrap().read(cx);
+            let shown = panel
+                .entries()
+                .iter()
+                .find(|entry| entry.id == entries[0].id)
+                .expect("the durable refusal must be available in Operation Log");
+            let OpOutcome::Refused { blockers } = &shown.outcome else {
+                panic!("the panel lost the refusal: {:?}", shown.outcome);
+            };
+            assert_eq!(blockers.as_slice(), std::slice::from_ref(&expected_blocker));
+        });
+        assert_eq!(output(repo, &["stash", "list"]), before);
+        assert_eq!(repo_fingerprint(repo), fingerprint);
         unmount(cx, app, window);
 
         let fixture = build_fixture();

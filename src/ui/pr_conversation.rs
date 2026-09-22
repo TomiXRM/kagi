@@ -402,10 +402,8 @@ pub(super) fn render_feed_item(
                 .unwrap_or_else(|| div().into_any_element())
         }
         FeedItem::Description => match pr_for_card(app) {
-            Some(pr) => {
-                let avatars = app.avatars.images.clone();
-                block(description_card(&pr, &avatars, cx))
-            }
+            // Borrowed: the avatar map is not copied per frame (#750 review).
+            Some(pr) => block(description_card(&pr, &app.avatars.images, cx)),
             None => div().into_any_element(),
         },
         FeedItem::Conversation => {

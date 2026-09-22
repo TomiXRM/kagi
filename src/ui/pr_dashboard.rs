@@ -256,14 +256,17 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                         range
                             .filter_map(|index| {
                                 render_rows.get(index).map(|(pr, bucket, why)| {
-                                    let avatars = this.avatars.images.clone();
+                                    // Borrowed, not cloned: a `clone()` here
+                                    // copied the whole avatar map for every
+                                    // visible row, every frame (#750 review).
+                                    let status = this.pr_status_availability(pr);
                                     render_table_row(
                                         pr,
                                         *bucket,
                                         why,
-                                        this.pr_status_availability(pr),
+                                        status,
                                         now,
-                                        &avatars,
+                                        &this.avatars.images,
                                         cx,
                                     )
                                 })
@@ -297,10 +300,10 @@ const COL_AUTHOR: f32 = 116.0;
 const COL_CHECKS: f32 = 72.0;
 const COL_FILES: f32 = 52.0;
 const COL_AGE: f32 = 52.0;
-/// Row height for the triage table: the shared 40px avatar plus 12px above
-/// and below. Denser than the feed's rows on purpose — this page is scanned,
-/// not read (PM Tier B, #750).
-const ROW_H: f32 = 64.0;
+/// Row padding for the triage table: denser than the feed's `ROW_PY`, because
+/// this page is scanned rather than read (PM Tier B, #750). With the shared
+/// 40px avatar and the hairline the row settles at 65px.
+const ROW_PY: f32 = 12.0;
 
 fn col(width: f32, label: &'static str) -> gpui::Div {
     div()
@@ -505,10 +508,11 @@ fn render_table_row(
     ))
     .items_center()
     .flex_shrink_0()
-    // A triage table is denser than a feed: the row is the avatar plus the
-    // padding that centres it, not the feed's full 16px (PM, Tier B #750).
-    .h(theme::scaled_px(ROW_H))
-    .py(theme::scaled_px((ROW_H - super::timeline_row::AVATAR) / 2.))
+    // A triage table is denser than a feed, so the row carries 12px rather
+    // than the feed's 16px — and no fixed height: the avatar, that padding
+    // and the hairline decide it (a 64px box clipped the 40px avatar by 1px,
+    // #750 review). `uniform_list` measures its first item.
+    .py(theme::scaled_px(ROW_PY))
     .on_click(click)
     .on_mouse_down(gpui::MouseButton::Right, menu)
     .when(pr.is_draft, |el| el.opacity(0.75))

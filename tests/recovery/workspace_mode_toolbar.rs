@@ -959,6 +959,54 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
                 "a preview round trip must not touch what was written"
             );
 
+            // #750 review: the preview belongs to the composer, and the
+            // composer follows the PR on screen. Leaving it on while another
+            // PR takes the box would open that PR on a preview of a draft
+            // nobody has written. Every activation path (lane, tab close,
+            // home then another PR) funnels through
+            // `sync_pr_comment_input`, which is where the reset lives.
+            let toggle =
+                measure(cx, win, "pr-composer-mode-toggle").expect("the edit/preview control");
+            cx.simulate_click(win, toggle.center(), gpui::Modifiers::none());
+            cx.run_until_parked();
+            cx.update_window(win, |_, window, cx| window.draw(cx).clear())
+                .unwrap();
+            assert!(
+                measure(cx, win, "pr-composer-preview").is_some(),
+                "the composer is in its preview before the switch"
+            );
+            e2e::queue_github_pr_conversation(
+                cx.background_executor
+                    .spawn(async move { (Ok((Vec::new(), Vec::new())), Ok(Vec::new())) }),
+            );
+            let second = pull_request(8, "second", "main");
+            app.update(cx, |app, cx| app.pr_mode_open(&second, cx));
+            cx.run_until_parked();
+            e2e::clear_control_bounds(win.window_id(), "pr-composer-preview");
+            for _ in 0..2 {
+                cx.update_window(win, |_, window, cx| window.draw(cx).clear())
+                    .unwrap();
+            }
+            assert!(
+                e2e::control_bounds(win.window_id(), "pr-composer-preview").is_none(),
+                "another PR takes the box, not a preview of nothing"
+            );
+            assert!(
+                composer_text(cx).is_empty(),
+                "the new PR's composer starts on its own (empty) draft"
+            );
+            // ...and the first PR's text was parked, not lost: coming back
+            // restores exactly what was typed.
+            app.update(cx, |app, cx| app.pr_mode_open(&pr, cx));
+            cx.run_until_parked();
+            cx.update_window(win, |_, window, cx| window.draw(cx).clear())
+                .unwrap();
+            assert_eq!(
+                composer_text(cx),
+                typed,
+                "switching away and back keeps the draft with its own PR"
+            );
+
             app.update(cx, |app, cx| app.pr_mode_home(cx));
             assert!(
                 measure(cx, win, "pr-mode-lane-pane").is_none(),

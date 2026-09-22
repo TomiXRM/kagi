@@ -378,8 +378,18 @@ Issues（thread / home 一覧 / composer）と PR（feed / composer / home 表�
   単一トグル、有効時のみ amber の送信。preview は input entity の現在値を読む
   だけで `set_value` しないので undo は保たれる。Approve / Request changes は
   従来の色と hold 判定のまま（空文でも Approve は可能）。
-- **PR home**: triage の表のまま。行は共有 row frame と共有 hover を使い、
-  高さは 64px（avatar 40 + 上下 12）。header は avatar 列幅を確保して列を揃える。
+  preview は composer に属する状態なので、(a) その composer が表示していた
+  tab の書き込みが settle したとき（`PrModeState::settle_composer_for`。active
+  tab と一致する場合だけで、背景の PR A の完了が読み手の見ている PR B の
+  composer を切り替えることはない）と、(b) 別の PR が box を取ったとき
+  （`sync_pr_comment_input` の switch 経路。lane 選択・active tab を閉じた場合・
+  home から別 PR を開いた場合はすべてここを通る）に false へ戻す。home から
+  同じ PR に戻る場合は box の内容も preview も保持する（読み手が離れただけで、
+  下書きは失われていない)。
+- **PR home**: triage の表のまま。行は共有 row frame と共有 hover を使う。
+  高さは固定せず、共有の 40px avatar + 上下 12px + 1px の hairline から 65px に
+  決まる（固定 64px は avatar を 1px 切っていた）。header は avatar 列幅を
+  確保して列を揃える。
 - **下書き表示**: PR の下書きは従来どおり `PrTab::comment_draft` のメモリ保持で、
   永続化も新しい fetch も追加しない。composer の「下書き保存済み」はその保持を
   指し、Issues 側だけが `drafts.rs` への保存中/保存済みを出し分ける。

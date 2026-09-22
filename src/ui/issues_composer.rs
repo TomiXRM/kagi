@@ -7,7 +7,7 @@ use super::{
 };
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Entity, SharedString, Window};
 use gpui_component::input::{Enter, Input, InputEvent, InputState, Paste};
-use gpui_component::{button::Button, text::TextView, Disableable, Icon, Sizable};
+use gpui_component::{button::Button, Disableable, Icon, Sizable};
 use kagi_domain::issue_composer::{fenced_code_paste, IssueDraft};
 use std::collections::HashMap;
 
@@ -329,18 +329,13 @@ pub(super) fn render_composer(
         );
     }
     let body = if editor.preview {
-        let markdown = kagi_ui_editor::markdown::pad_inline_code(
-            &kagi_domain::message::sanitize_markdown_for_view(&editor.draft.body),
-        );
         div()
             .min_h(px(80.))
-            .child(
-                TextView::markdown(
-                    ("issue-preview", number.unwrap_or(0) as usize),
-                    SharedString::from(kagi_ui_core::markdown::flatten_html_blocks(&markdown)),
-                )
-                .selectable(true),
-            )
+            .child(super::timeline_row::body_markdown(
+                ("issue-preview", number.unwrap_or(0) as usize),
+                &editor.draft.body,
+                super::timeline_row::markdown_style(15., cx),
+            ))
             .into_any_element()
     } else {
         let paste_input = input.clone();

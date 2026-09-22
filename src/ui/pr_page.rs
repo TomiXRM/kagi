@@ -241,12 +241,10 @@ pub(super) fn render_pr_headline(app: &KagiApp, pr: &PullRequest) -> gpui::AnyEl
             .text_color(rgb(ink))
             .child(text)
     };
-    let age = (!pr.updated_at.is_empty())
-        .then(|| kagi_ui_core::time_parse::iso_to_epoch(&pr.updated_at))
-        .flatten()
-        .map(|at| {
-            kagi_ui_core::time::relative_time(at, kagi_ui_core::time::now_unix_secs()).to_string()
-        });
+    // Same relative-time rendering as every other row (#750 review); an
+    // unparseable stamp falls back to the stamp itself, an absent one to
+    // no chip at all.
+    let age = (!pr.updated_at.is_empty()).then(|| super::timeline_row::age(&pr.updated_at));
     div()
         .id("pr-mode-headline")
         .w_full()

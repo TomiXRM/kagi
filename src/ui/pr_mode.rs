@@ -188,6 +188,27 @@ impl Default for PrModeState {
     }
 }
 
+impl PrModeState {
+    /// A write for `number` settled: its text is on the server, so the tab's
+    /// copy goes. The one preview flag belongs to the one composer, which
+    /// shows the open tab — so it is reset only when the settled tab is that
+    /// tab: a completion for PR A must not flip the box the reader is writing
+    /// PR B in, and leaving it on after the open tab's own post shows an
+    /// empty markdown area with no placeholder (#750 review).
+    pub(crate) fn settle_composer_for(&mut self, number: u64) {
+        let settled_tab_is_open = self
+            .active
+            .and_then(|ix| self.tabs.get(ix))
+            .is_some_and(|tab| tab.pr.number == number);
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.pr.number == number) {
+            tab.comment_draft.clear();
+        }
+        if settled_tab_is_open {
+            self.comment_preview = false;
+        }
+    }
+}
+
 pub(super) const COMMIT_LIMIT: usize = 500;
 impl KagiApp {
     pub fn toggle_pr_mode(&mut self, cx: &mut Context<Self>) {
@@ -830,11 +851,8 @@ impl KagiApp {
         number: u64,
         cx: &mut Context<Self>,
     ) {
-        if let Some(tab) = self
-            .pr_mode_of(owner)
-            .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.number == number))
-        {
-            tab.comment_draft.clear();
+        if let Some(mode) = self.pr_mode_of(owner) {
+            mode.settle_composer_for(number);
         }
         if self.pr_comment_for == Some(number) {
             // `InputState::set_value` needs a `&mut Window`, which a completion
@@ -891,7 +909,12 @@ impl KagiApp {
             }
             return;
         }
-        // Another PR took the box: park the old text, load this tab's draft.
+        // Another PR took the box: park the old text, load this tab's draft,
+        // and land on the box — opening on a preview of a draft nobody has
+        // written is a composer you cannot type in (#750 review).
+        if let Some(mode) = self.pr_mode_mut() {
+            mode.comment_preview = false;
+        }
         let parked = input.read(cx).value().to_string();
         if let Some(previous) = self.pr_comment_for.take() {
             if let Some(tab) = self

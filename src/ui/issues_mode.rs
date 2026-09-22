@@ -180,14 +180,7 @@ pub(super) fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> Any
                             this.load_github_issue_detail(number, window, cx);
                         },
                     );
-                    let age = kagi_ui_core::time_parse::iso_to_epoch(&issue.updated_at)
-                        .map(|at| {
-                            kagi_ui_core::time::relative_time(
-                                at,
-                                kagi_ui_core::time::now_unix_secs(),
-                            )
-                        })
-                        .unwrap_or_else(|| issue.updated_at.clone());
+                    let age = super::timeline_row::age(&issue.updated_at);
                     let content = div()
                         .flex_1()
                         .min_w(px(0.))

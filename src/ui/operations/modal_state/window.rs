@@ -1,8 +1,10 @@
 //! Window-global variants in the shared modal slot (#643 / ADR-0197 S3a).
 
 use super::super::super::modals::{ActiveModal, UpdateModal};
-use super::super::super::remote_browse::RemoteBrowseModal;
+use super::super::super::remote_browse::{RemoteBrowseModal, RemoteBrowseStage};
 use super::super::super::KagiApp;
+use gpui::{AppContext as _, Context, Focusable as _, Window};
+use gpui_component::input::InputState;
 
 impl KagiApp {
     /// ADR-0197 決定 1: the two **window-global single slots** that can only
@@ -96,6 +98,70 @@ impl KagiApp {
 
     pub fn cancel_update_modal(&mut self) {
         self.clear_update_modal();
+    }
+
+    pub(super) fn sync_remote_browse_inputs(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(m) = self.remote_browse_mut() else {
+            return;
+        };
+        if m.stage == RemoteBrowseStage::Browse {
+            // #755: Connect's retained inputs are no longer drawn. Only reclaim
+            // their focus; a rejected/stale completion must not steal another's.
+            let input_focused = [&m.host_state, &m.port_state, &m.identity_state]
+                .into_iter()
+                .flatten()
+                .any(|input| input.read(cx).focus_handle(cx).is_focused(window));
+            if input_focused {
+                if let Some(root) = self.root_focus.as_ref() {
+                    window.focus(root, cx);
+                }
+            }
+            return;
+        }
+        if m.host_state.is_none() {
+            let st = cx.new(|cx| InputState::new(window, cx).placeholder("user@host"));
+            st.update(cx, |s, cx| s.focus(window, cx));
+            m.host_state = Some(st);
+        }
+        if m.port_state.is_none() {
+            m.port_state =
+                Some(cx.new(|cx| InputState::new(window, cx).placeholder("22 (optional)")));
+        }
+        if m.identity_state.is_none() {
+            m.identity_state =
+                Some(cx.new(|cx| {
+                    InputState::new(window, cx).placeholder("~/.ssh/id_ed25519 (optional)")
+                }));
+        }
+        let hv = m
+            .host_state
+            .as_ref()
+            .map(|st| st.read(cx).value().to_string())
+            .unwrap_or_default();
+        if hv != m.host_input {
+            m.host_input = hv;
+            m.error = None;
+        }
+        let pv = m
+            .port_state
+            .as_ref()
+            .map(|st| st.read(cx).value().to_string())
+            .unwrap_or_default();
+        if pv != m.port_input {
+            m.port_input = pv;
+        }
+        let iv = m
+            .identity_state
+            .as_ref()
+            .map(|st| st.read(cx).value().to_string())
+            .unwrap_or_default();
+        if iv != m.identity_input {
+            m.identity_input = iv;
+        }
     }
 }
 

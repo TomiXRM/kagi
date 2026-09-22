@@ -759,48 +759,7 @@ impl KagiApp {
             }
         }
 
-        // ── Remote SSH connect form (host / port / identity) ─
-        if let Some(m) = self.remote_browse_mut() {
-            if m.host_state.is_none() {
-                let st = cx.new(|cx| InputState::new(window, cx).placeholder("user@host"));
-                st.update(cx, |s, cx| s.focus(window, cx));
-                m.host_state = Some(st);
-            }
-            if m.port_state.is_none() {
-                m.port_state =
-                    Some(cx.new(|cx| InputState::new(window, cx).placeholder("22 (optional)")));
-            }
-            if m.identity_state.is_none() {
-                m.identity_state = Some(cx.new(|cx| {
-                    InputState::new(window, cx).placeholder("~/.ssh/id_ed25519 (optional)")
-                }));
-            }
-            let hv = m
-                .host_state
-                .as_ref()
-                .map(|st| st.read(cx).value().to_string())
-                .unwrap_or_default();
-            if hv != m.host_input {
-                m.host_input = hv;
-                m.error = None;
-            }
-            let pv = m
-                .port_state
-                .as_ref()
-                .map(|st| st.read(cx).value().to_string())
-                .unwrap_or_default();
-            if pv != m.port_input {
-                m.port_input = pv;
-            }
-            let iv = m
-                .identity_state
-                .as_ref()
-                .map(|st| st.read(cx).value().to_string())
-                .unwrap_or_default();
-            if iv != m.identity_input {
-                m.identity_input = iv;
-            }
-        }
+        self.sync_remote_browse_inputs(window, cx);
 
         // ── Create-worktree (branch + path fields) ──────────
         // Auto-path: while the user has not touched the path field, it

@@ -88,6 +88,14 @@ mod app_conflict;
 mod conflict_abort_slot;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/remote_browse_focus.rs"]
+mod remote_browse_focus;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/pr_fields_focus.rs"]
+mod pr_fields_focus;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/layout.rs"]
 mod recovery_layout;
 
@@ -951,6 +959,14 @@ mod macos {
             (
                 "conflict_abort_superseded_reload",
                 Box::new(crate::conflict_abort_slot::scenario_conflict_abort_superseded_reload),
+            ),
+            (
+                "remote_browse_escape_focus",
+                Box::new(crate::remote_browse_focus::scenario_remote_browse_escape_focus),
+            ),
+            (
+                "pr_fields_escape_focus",
+                Box::new(crate::pr_fields_focus::scenario_pr_fields_escape_focus),
             ),
             (
                 "operation_strip_abort",

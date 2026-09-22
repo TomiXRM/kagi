@@ -73,6 +73,12 @@ fn exercise_cleanup(cx: &mut VisualTestAppContext, language: Lang, moved: bool) 
             .iter()
             .any(|note| i18n::plan_note_text(note) == warning));
     });
+    cx.run_until_parked();
+    let capture_tag = format!(
+        "pr-merge-local-{language:?}-{}",
+        if moved { "kept" } else { "deleted" }
+    );
+    crate::macos::capture_screenshot_best_effort(cx, window, &format!("{capture_tag}-plan"));
     if moved {
         git(&repo, &["branch", "-f", "feature", "HEAD"]);
     }
@@ -93,6 +99,7 @@ fn exercise_cleanup(cx: &mut VisualTestAppContext, language: Lang, moved: bool) 
         );
         assert!(!state.app_sessions.has_leases());
     });
+    crate::macos::capture_screenshot_best_effort(cx, window, &format!("{capture_tag}-notice"));
     let entries = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100);
     let merges: Vec<_> = entries
         .iter()

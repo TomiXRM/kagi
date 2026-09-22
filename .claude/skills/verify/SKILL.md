@@ -565,6 +565,12 @@ deletion and OID-drift refusal must each produce the owner notice and one receip
 the Partial case cannot reopen merge. For M, inspect the frozen local name/OID,
 the fork-remote warning, and the localized deletion/refusal notice. Tier B remains
 PM-owned when execution is reserved; compile the runner with `--no-run` in that case.
+The same scenario attempts best-effort captures before confirmation and after
+settlement, tagged `pr-merge-local-{En,Ja}-{deleted,kept}-{plan,notice}`. Report
+the explicit `skipped` diagnostic when this GPUI backend cannot render an image;
+never present state assertions as screenshot evidence. A live GitHub PR may be
+used to inspect the modal without confirming; do not consume a real PR to test
+the post-merge notice.
 
 ### Remote source drag merge (#590)
 

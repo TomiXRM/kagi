@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 
-use gpui::{Context, SharedString};
+use gpui::{Context, SharedString, Window};
 use gpui_component::IconName;
 
 use kagi_domain::conflict_family::{ConflictOperationKind, ObservedOperation};
@@ -59,9 +59,22 @@ impl KagiApp {
     /// last conflict is resolved, and #704 is what happened when it was the
     /// gate. The preview plan is a live read; the request that follows freezes
     /// the revision the strip showed.
+    ///
+    /// #755: opening also returns window focus to the root, the same handle
+    /// every modal's Cancel / Confirm already restores. Escape reaches
+    /// `cancel_active_modal` through one action (`CloseMainDiff`), and an
+    /// action only runs along the dispatch path of the *rendered* focused
+    /// element. The conflict screen can leave focus on an element that is no
+    /// longer drawn — the Result pane mounts its `InputState` only in Edit
+    /// mode (`conflict_editor.rs`) — and gpui then falls back to the dispatch
+    /// tree's root, where no handler and no key context exist, so Escape (and
+    /// every other window action) silently does nothing. Taking focus with
+    /// the confirmation keeps the one Esc route alive whatever the user was
+    /// last in.
     pub fn open_conflict_abort_modal(
         &mut self,
         owner: crate::app::Attachment,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if !self.conflict_action_owner_on_screen(&owner) {
@@ -111,6 +124,9 @@ impl KagiApp {
             operation,
             error: None,
         });
+        if let Some(handle) = self.root_focus.clone() {
+            window.focus(&handle, cx);
+        }
         cx.notify();
     }
 

@@ -1283,8 +1283,8 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
             let weak_app = view.app.clone();
             let owner = view.owner.clone();
             cx.spawn_in(window, async move |_view, acx| {
-                let _ = weak_app.update_in(acx, |app, _window, cx| {
-                    app.open_conflict_abort_modal(owner, cx)
+                let _ = weak_app.update_in(acx, |app, window, cx| {
+                    app.open_conflict_abort_modal(owner, window, cx)
                 });
             })
             .detach();

@@ -126,8 +126,36 @@ The current suite covers:
   after an external staged resolution show the specific EN/JA reason in the
   AppNotice and bounded toast, retain the English footer contract and oplog
   detail, and leave the index, working file and merge state unchanged.
-  Abort covers both the dashboard and the operation strip; the strip case
-  completes a reload after staging a different blob and before confirming.
+  Abort covers both the dashboard and the operation strip; both drift after the
+  confirmation opens and confirm it *without* an intervening reload, because a
+  reload now closes such a confirmation instead (#755): each leg reopens it,
+  reloads, and requires the confirmation to be gone with no second
+  `merge-abort` record and index / `MERGE_HEAD` unchanged.
+- conflict Abort modal slot (`KAGI_GUI_E2E_ONLY=conflict_abort_escape_focus,conflict_abort_superseded_reload`,
+  `tests/recovery/conflict_abort_slot.rs`): Escape closes the confirmation from
+  the focus the app actually left behind, and only an *accepted* reload sweeps
+  it — a superseded read leaves it standing, the next accepted one closes it,
+  and neither runs the abort. The Escape half is the interesting one: the
+  Result pane mounts its code editor only in Edit mode, so editing and
+  returning to Preview leaves window focus on an
+  element that is no longer drawn; gpui then dispatches from the tree root and
+  every window action, Escape included, silently does nothing. The scenario
+  reaches that state through the product's own toggle, opens the dashboard
+  Abort, and delivers a real `escape` **without** re-focusing anything — unlike
+  `press_key` in `tests/recovery/operations.rs`, which focuses `root_focus`
+  first and therefore cannot see this class. Opening the confirmation takes
+  focus back to the root, which is what makes Escape land.
+  Tier B measured the same key on 2026-09-23 with `KAGI_NO_ACTIVATE=1` still
+  set — a **non-key** window — and `pidclick key 53` closed the confirmation,
+  so this check does not need the foreground. Do not read that as a guarantee
+  that key delivery to a non-key window is reliable in general; it is what this
+  window and this key did. `KAGI_DEBUG_KEYS=1` makes the routing wrapper print
+  `[kagi] key: <key> char=<..>` (`src/ui/modal_key_routing.rs`), but **absence
+  of that line is not absence of delivery**: gpui dispatches matched actions
+  before key listeners and an action handler stops propagation, so a working
+  Escape prints nothing. That is exactly what the accepted run recorded —
+  no key line, modal closed. A printed `escape` with the modal still open is
+  the interesting failure: the key arrived and no binding matched.
 - bottom-panel toggle, graph copy, oplog expand/copy, snapshot creation, theme
   switching, agent provenance, and WIP-to-HEAD connectors;
 - WIP virtual commit anchors (`KAGI_GUI_E2E_ONLY=commit_row_layout_wip`,

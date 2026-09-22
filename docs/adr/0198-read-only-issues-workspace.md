@@ -26,3 +26,12 @@ KagiのPR表示は、`gh`を認証・取得境界として使い、純粋な `Pu
 - GitHub APIのHTTPクライアント、OAuth、永続ETagキャッシュ、Issue/PR共通の大規模型は導入しない。
 - 失敗、認証不可、空一覧、owner離脱、同一sessionの後発要求、詳細取得中に別Issueを選ぶ場合をテストする。
 - 書き込み機能を追加する将来の変更は、`plan → confirm → preflight → execute → verify → oplog` に従う別ADRを必要とする。
+
+## #752: 一覧の cursor ページング
+
+- 一覧取得は既存の `gh api graphql` query と `mentions:@me` alias を維持し、`issues(first:100, after:$cursor, states:OPEN)` の `pageInfo` を `IssueListSnapshot::next_cursor` に変換する。不正・進まない cursor は取得失敗であり、終端と推測しない。
+- `TabUiState` が cursor、追加取得中フラグ、`ListState` を所有する。`build_tab_view` の read model へ複製せず、session attach 時の `TabUiState::default` で初期化する。
+- Composer と main 一覧は同じ仮想スクロール内に置く。最終行の visible range または clip 内の末尾表示を検知し、session・repository・generation を固定して次ページを取得する。append は既存行の位置を維持し、重複する Issue 番号を増やさない。
+- 追加取得失敗では rows と cursor を維持し、既存 error 表示と末尾の再試行操作へ戻す。自動再試行はしない。全4フィルターの件数は読み込み済み件数で、cursor があり件数が正の場合だけ `(N+)` と表示する。
+- 戻り・手動更新は先頭ページを再取得し、cursor と scroll をリセットする。先頭ページ更新で generation を進めて古い追加取得を無効化し、detach 済み session の完了を別タブに適用しない。
+- 未計測行には既存の最小行高を仮高さとして渡す。高さゼロの行が wheel / scrollbar の移動範囲を計測済み領域に制限することを防ぎ、描画時は実際の可変行高で置き換える。成功した一覧・追加ページは `klog!("github: issues page={} loaded={} has_more={}")` を出す。

@@ -15,6 +15,21 @@ fn issue_write_title(ui: &TabUiState, number: Option<u64>, draft: &IssueDraft) -
         .unwrap_or_default()
 }
 
+fn issue_list_task(
+    repo: PathBuf,
+    base_repo: Option<String>,
+    cursor: Option<String>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::Task<Result<kagi_domain::github::IssueListSnapshot, kagi_git::github::PrFetchError>> {
+    #[cfg(feature = "gui-e2e")]
+    if let Some(task) = super::issues_composer_e2e::take_issue_list_fetch() {
+        return task;
+    }
+    cx.background_executor().spawn(async move {
+        kagi_git::github::list_issues(&repo, base_repo.as_deref(), cursor.as_deref())
+    })
+}
+
 impl KagiApp {
     /// Refresh the read-only Issue list for the session that starts the
     /// request. A later request for that session supersedes this completion;
@@ -40,20 +55,50 @@ impl KagiApp {
             let frozen_base_repo = ui.issue_composer.base_repo.clone();
             (ui.begin_github_issues_request(), frozen_base_repo)
         };
+        let task = issue_list_task(repo, frozen_base_repo, None, cx);
         cx.notify();
         cx.spawn(async move |this, acx| {
-            let result =
-                acx.background_executor()
-                    .spawn(async move {
-                        kagi_git::github::list_issues(&repo, frozen_base_repo.as_deref())
-                    })
-                    .await;
+            let result = task.await;
             let _ = this.update(acx, |app, cx| {
                 let owner_is_active = app.active_session() == Some(owner);
                 let Some(ui) = app.ui.get_mut(&owner) else {
                     return;
                 };
                 if ui.finish_github_issues_request(generation, result) && owner_is_active {
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Continue only the frozen session/repository snapshot. The renderer and
+    /// retry control carry this owner rather than resolving the active tab.
+    pub(super) fn load_more_github_issues_for(
+        &mut self,
+        owner: crate::app::SessionId,
+        repo: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((generation, cursor, base_repo)) = self
+            .ui
+            .get_mut(&owner)
+            .and_then(TabUiState::begin_github_issues_page_request)
+        else {
+            return;
+        };
+        let task = issue_list_task(repo, Some(base_repo), Some(cursor.clone()), cx);
+        cx.notify();
+        cx.spawn(async move |this, acx| {
+            let result = task.await;
+            let _ = this.update(acx, |app, cx| {
+                let owner_is_active = app.active_session() == Some(owner);
+                let Some(ui) = app.ui.get_mut(&owner) else {
+                    return;
+                };
+                if ui.finish_github_issues_page_request(generation, &cursor, result)
+                    && owner_is_active
+                {
                     cx.notify();
                 }
             });
@@ -105,7 +150,7 @@ impl KagiApp {
             window.focus(&focus, cx);
         }
         self.with_ui(TabUiState::clear_github_issue_selection);
-        cx.notify();
+        self.refresh_github_issues(cx);
     }
 
     pub(super) fn load_github_issue_detail_for(

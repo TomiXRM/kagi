@@ -580,11 +580,18 @@ impl IssueListTab {
 /// One successful Issue-list response. These fields move through the same
 /// request generation so a failed refresh cannot combine old Issues with new
 /// mention membership or a different write destination.
+///
+/// `next_cursor` is the pagination position *after* this page: `Some(cursor)`
+/// only when the response proved there is another page and handed back a
+/// usable cursor for it, `None` on the final page. A snapshot therefore never
+/// carries an empty cursor, and "no more pages" is never confused with "the
+/// server did not say".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssueListSnapshot {
     pub issues: Vec<Issue>,
     pub mentioned_numbers: Vec<u64>,
     pub base_repo: String,
+    pub next_cursor: Option<String>,
 }
 
 /// Filter and sort the existing open-Issue list without another fetch.

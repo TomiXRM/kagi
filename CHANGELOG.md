@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - conflict の Save / Abort が拒否された理由を EN/JA の通知に表示し、計画後の状態変化や conflict marker の残存を判別できるようにしました。footer のログ契約と oplog の英語詳細は維持します。（#711）
+- Issues 一覧を最下行までスクロールすると次の100件を追加取得するようにしました。読み込み済み件数は続きがある間 `(N+)` と表示し、失敗時は一覧と cursor を保持して再試行できます。戻り・手動更新は先頭ページから取り直します。（#752）
 
 ## [0.39.0] - 2026-09-20
 

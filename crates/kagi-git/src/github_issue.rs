@@ -14,10 +14,16 @@ use crate::GitError;
 /// One GraphQL request replaces `gh issue list` and adds exactly one search
 /// alias for `mentions:@me`. Comment totals and the repository Issue nodes are
 /// part of that same read, so rendering any tab never starts more I/O.
+///
+/// `$cursor` is nullable on purpose: `null` is the first page, and every later
+/// page passes the previous response's `endCursor`. `pageInfo` travels with
+/// the same page it describes, so the caller never has to guess whether a
+/// short page was the last one (#752).
 pub(crate) const ISSUE_LIST_QUERY: &str = r#"
-query($owner: String!, $name: String!, $mentions: String!) {
+query($owner: String!, $name: String!, $mentions: String!, $cursor: String) {
   repository(owner: $owner, name: $name) {
-    issues(first: 100, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+    issues(first: 100, after: $cursor, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      pageInfo { hasNextPage endCursor }
       nodes {
         number title state url createdAt updatedAt
         author { login }
@@ -50,10 +56,13 @@ pub fn parse_issue_list(json: &str) -> Result<Vec<Issue>, GitError> {
 
 /// Parse the atomic list + mention-membership response. `base_repo` is the
 /// frozen identity used to address this very request and is carried
-/// with the successful snapshot for later writes.
+/// with the successful snapshot for later writes. `requested_cursor` is the
+/// `after:` position this very response answered — `None` for the first page —
+/// and is what proves the next cursor actually advanced.
 pub fn parse_issue_list_snapshot(
     json: &str,
     base_repo: &str,
+    requested_cursor: Option<&str>,
 ) -> Result<IssueListSnapshot, GitError> {
     let value: serde_json::Value =
         serde_json::from_str(json).map_err(|e| GitError::Other(format!("gh json: {}", e)))?;
@@ -91,7 +100,43 @@ pub fn parse_issue_list_snapshot(
         issues: values.iter().filter_map(issue_from_value).collect(),
         mentioned_numbers,
         base_repo: base_repo.to_string(),
+        next_cursor: next_page_cursor(&value, requested_cursor)?,
     })
+}
+
+/// The cursor for the page *after* this one, or `None` when this was the last.
+///
+/// Every disagreement with the contract is an error, never an assumed end of
+/// list: a missing or non-boolean `pageInfo.hasNextPage`, a `hasNextPage` with
+/// no usable `endCursor`, and an `endCursor` equal to the cursor that was just
+/// requested — that last one is a server answer that cannot advance, and
+/// treating it as a page would append the same page forever.
+fn next_page_cursor(
+    value: &serde_json::Value,
+    requested_cursor: Option<&str>,
+) -> Result<Option<String>, GitError> {
+    let page_info = value
+        .pointer("/data/repository/issues/pageInfo")
+        .ok_or_else(|| GitError::Other("gh json: expected issue pageInfo".into()))?;
+    let has_next = page_info
+        .get("hasNextPage")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| GitError::Other("gh json: expected pageInfo.hasNextPage".into()))?;
+    if !has_next {
+        return Ok(None);
+    }
+    let end_cursor = page_info
+        .get("endCursor")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|cursor| !cursor.is_empty())
+        .ok_or_else(|| GitError::Other("gh json: hasNextPage without a usable endCursor".into()))?;
+    if requested_cursor.is_some_and(|requested| requested == end_cursor) {
+        return Err(GitError::Other(
+            "gh json: pagination cursor did not advance".into(),
+        ));
+    }
+    Ok(Some(end_cursor.to_string()))
 }
 
 /// Parse `gh issue view --json <ISSUE_DETAIL_FIELDS>` output.
@@ -269,7 +314,9 @@ mod tests {
     fn parses_graphql_list_mentions_and_comment_totals_together() {
         let json = r#"{
           "data": {
-            "repository": {"issues": {"nodes": [{
+            "repository": {"issues": {
+              "pageInfo": {"hasNextPage": true, "endCursor": "Y3Vyc29yOjI="},
+              "nodes": [{
               "number": 7, "title": "broken", "state": "OPEN",
               "url": "https://github.com/o/r/issues/7",
               "author": {"login": "alice"},
@@ -281,19 +328,86 @@ mod tests {
             "mentions": {"nodes": [{"number": 7}, {"number": 7}, {"number": 9}]}
           }
         }"#;
-        let snapshot = parse_issue_list_snapshot(json, "github.com/o/r").unwrap();
+        let snapshot = parse_issue_list_snapshot(json, "github.com/o/r", None).unwrap();
         assert_eq!(snapshot.base_repo, "github.com/o/r");
         assert_eq!(snapshot.mentioned_numbers, vec![7, 9]);
         assert_eq!(snapshot.issues[0].assignees, vec!["bob"]);
         assert_eq!(snapshot.issues[0].labels[0].name, "bug");
         assert_eq!(snapshot.issues[0].comment_count, 12);
         assert!(snapshot.issues[0].comments.is_empty());
+        assert_eq!(snapshot.next_cursor.as_deref(), Some("Y3Vyc29yOjI="));
+    }
+
+    /// The page boundary is only ever taken from the server's own answer.
+    #[test]
+    fn graphql_list_cursor_is_none_on_the_final_page() {
+        let json = r#"{
+          "data": {
+            "repository": {"issues": {
+              "pageInfo": {"hasNextPage": false, "endCursor": "Y3Vyc29yOjk="},
+              "nodes": []
+            }},
+            "mentions": {"nodes": []}
+          }
+        }"#;
+        let snapshot =
+            parse_issue_list_snapshot(json, "github.com/o/r", Some("Y3Vyc29yOjg=")).unwrap();
+        assert_eq!(
+            snapshot.next_cursor, None,
+            "a last page never hands back a cursor, even with an endCursor present"
+        );
+    }
+
+    #[test]
+    fn graphql_list_rejects_malformed_and_non_advancing_page_info() {
+        let cases = [
+            (
+                r#"{"data":{"repository":{"issues":{"nodes":[]}},"mentions":{"nodes":[]}}}"#,
+                "expected issue pageInfo",
+                None,
+            ),
+            (
+                r#"{"data":{"repository":{"issues":{"pageInfo":{"endCursor":"c2"},"nodes":[]}},
+                   "mentions":{"nodes":[]}}}"#,
+                "pageInfo.hasNextPage",
+                None,
+            ),
+            (
+                r#"{"data":{"repository":{"issues":{
+                   "pageInfo":{"hasNextPage":true,"endCursor":null},"nodes":[]}},
+                   "mentions":{"nodes":[]}}}"#,
+                "usable endCursor",
+                None,
+            ),
+            (
+                r#"{"data":{"repository":{"issues":{
+                   "pageInfo":{"hasNextPage":true,"endCursor":"  "},"nodes":[]}},
+                   "mentions":{"nodes":[]}}}"#,
+                "usable endCursor",
+                None,
+            ),
+            (
+                r#"{"data":{"repository":{"issues":{
+                   "pageInfo":{"hasNextPage":true,"endCursor":"c2"},"nodes":[]}},
+                   "mentions":{"nodes":[]}}}"#,
+                "did not advance",
+                Some("c2"),
+            ),
+        ];
+        for (json, expected, requested) in cases {
+            let error = parse_issue_list_snapshot(json, "github.com/o/r", requested)
+                .expect_err("malformed pageInfo is never an implicit last page");
+            assert!(
+                error.to_string().contains(expected),
+                "{error} does not mention {expected}"
+            );
+        }
     }
 
     #[test]
     fn graphql_list_rejects_missing_mentions_and_partial_errors() {
         let missing = r#"{"data":{"repository":{"issues":{"nodes":[]}}}}"#;
-        assert!(parse_issue_list_snapshot(missing, "github.com/o/r")
+        assert!(parse_issue_list_snapshot(missing, "github.com/o/r", None)
             .unwrap_err()
             .to_string()
             .contains("mention search nodes"));
@@ -302,7 +416,7 @@ mod tests {
           "data":{"repository":{"issues":{"nodes":[]}},"mentions":null},
           "errors":[{"message":"search unavailable"}]
         }"#;
-        assert!(parse_issue_list_snapshot(partial, "github.com/o/r")
+        assert!(parse_issue_list_snapshot(partial, "github.com/o/r", None)
             .unwrap_err()
             .to_string()
             .contains("search unavailable"));

@@ -27,9 +27,9 @@ pub use kagi_ui_core::avatar::{avatar_color, avatar_initial, AvatarImages};
 pub struct AvatarStore {
     /// Resolved avatar images keyed by author email.  Populated by a background
     /// resolution pass; rows/inspector swap the initial circle for `img(...)`
-    /// when an entry exists.  Memory cache (the disk cache lives under
-    /// `~/.kagi/avatars/`).
-    pub images: AvatarImages,
+    /// when an entry exists. Panes retain this shared snapshot; only a resolved
+    /// batch makes the map writable. The disk cache lives under `~/.kagi/avatars/`.
+    pub images: std::sync::Arc<AvatarImages>,
     /// Repo path the `attempted` set belongs to. Switching repos resets the
     /// set so an email unresolved in one repo can retry with the next repo's
     /// Commits API map (ADR-0123).

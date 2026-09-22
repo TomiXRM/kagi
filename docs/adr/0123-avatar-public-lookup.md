@@ -60,6 +60,12 @@ kagi は ADR-0037 で「author のメールアドレスを検索クエリとし�
 4. 依存は既存ロックの範囲で賄う: `sha2`(Gravatar ハッシュ)と
    `percent-encoding`(search クエリの email エンコード)を bin の直接依存に
    昇格するのみ。新規 crate なし。
+5. **描画側には借用または共有 snapshot を渡す** (#498)。
+   `AvatarStore.images` と独立した File History / Editor Entity は
+   `Arc<AvatarImages>` を保持し、既存 render helper は `&AvatarImages` を借用する。
+   非空の解決 batch だけ `Arc::make_mut` で書き込み、render 中に map/key を複製しない。
+   host は snapshot の pointer が変わった場合だけ子 Entity に共有して notify する。
+   Editor は Diff 選択中も最新 snapshot を受け取り、子だけの History 切替にも備える。
 
 ## Consequences
 

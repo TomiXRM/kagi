@@ -13,10 +13,9 @@ use std::sync::Arc;
 
 use gpui::{hsla, Hsla};
 
-/// Resolved avatar images keyed by author email — the render-facing half of
-/// the bin's `AvatarStore`. Pane crates receive a clone of this (pushed in by
-/// the host right before the entity is embedded, like `show_tree` /
-/// `panel_width`) since they can't reach `KagiApp` themselves.
+/// Resolved avatar images keyed by author email or GitHub login.
+/// Render helpers borrow this map. The host and independent pane entities hold
+/// `Arc<AvatarImages>` snapshots, sharing the map rather than copying its keys.
 pub type AvatarImages = HashMap<String, Arc<gpui::Image>>;
 
 // ──────────────────────────────────────────────────────────────

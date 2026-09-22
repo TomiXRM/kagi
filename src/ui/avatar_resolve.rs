@@ -5,6 +5,7 @@
 //! feature wiring out of `mod.rs`).
 
 use gpui::{prelude::*, Context};
+use std::sync::Arc;
 
 use super::{avatar_fetch, KagiApp};
 use kagi_ui_core::klog;
@@ -89,8 +90,8 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             let outcome = task.await;
             let _ = this.update(acx, |app, cx| {
-                for (email, img) in outcome.images {
-                    app.avatars.images.insert(email, img);
+                if !outcome.images.is_empty() {
+                    Arc::make_mut(&mut app.avatars.images).extend(outcome.images);
                 }
                 // Emails skipped by the search-budget cap retry on the next
                 // incremental pass (ADR-0123).
@@ -147,9 +148,7 @@ impl KagiApp {
                     return;
                 }
                 let n = images.len();
-                for (login, image) in images {
-                    app.avatars.images.insert(login, image);
-                }
+                Arc::make_mut(&mut app.avatars.images).extend(images);
                 klog!("avatar: {} logins resolved={}", source, n);
                 cx.notify();
             });

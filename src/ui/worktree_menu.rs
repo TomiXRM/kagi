@@ -110,46 +110,23 @@ pub fn build_worktree_menu(
         });
     }
     if !is_main {
-        groups.extend([
-            MenuGroup {
-                title: None,
-                items: vec![
-                    MenuItem {
-                        action: WorktreeAction::Remove {
-                            delete_branch: false,
-                        },
-                        label: SharedString::from(Msg::MenuRemoveWorktreeKeepBranch.t()),
-                        state: ItemState::Enabled,
-                        dangerous: true,
-                    },
-                    MenuItem {
-                        action: WorktreeAction::Remove {
-                            delete_branch: true,
-                        },
-                        label: SharedString::from(Msg::MenuRemoveWorktreeAndBranch.t()),
-                        state: ItemState::Enabled,
-                        dangerous: true,
-                    },
-                ],
-            },
-            MenuGroup {
-                title: None,
-                items: vec![
-                    MenuItem {
-                        action: WorktreeAction::Lock,
-                        label: SharedString::from(Msg::MenuLockWorktree.t()),
-                        state: lock_state,
-                        dangerous: false,
-                    },
-                    MenuItem {
-                        action: WorktreeAction::Unlock,
-                        label: SharedString::from(Msg::MenuUnlockWorktree.t()),
-                        state: unlock_state,
-                        dangerous: false,
-                    },
-                ],
-            },
-        ]);
+        groups.push(MenuGroup {
+            title: None,
+            items: vec![
+                MenuItem {
+                    action: WorktreeAction::Lock,
+                    label: SharedString::from(Msg::MenuLockWorktree.t()),
+                    state: lock_state,
+                    dangerous: false,
+                },
+                MenuItem {
+                    action: WorktreeAction::Unlock,
+                    label: SharedString::from(Msg::MenuUnlockWorktree.t()),
+                    state: unlock_state,
+                    dangerous: false,
+                },
+            ],
+        });
     }
     groups.push(MenuGroup {
         title: None,
@@ -168,6 +145,30 @@ pub fn build_worktree_menu(
             },
         ],
     });
+    // Keep destructive actions after navigation, locking and maintenance.
+    if !is_main {
+        groups.push(MenuGroup {
+            title: None,
+            items: vec![
+                MenuItem {
+                    action: WorktreeAction::Remove {
+                        delete_branch: false,
+                    },
+                    label: SharedString::from(Msg::MenuRemoveWorktreeKeepBranch.t()),
+                    state: ItemState::Enabled,
+                    dangerous: true,
+                },
+                MenuItem {
+                    action: WorktreeAction::Remove {
+                        delete_branch: true,
+                    },
+                    label: SharedString::from(Msg::MenuRemoveWorktreeAndBranch.t()),
+                    state: ItemState::Enabled,
+                    dangerous: true,
+                },
+            ],
+        });
+    }
     groups
 }
 

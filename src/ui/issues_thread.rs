@@ -222,10 +222,13 @@ fn post(
                 .whitespace_normal()
                 .child(safe_text(title))
         }))
-        .child(super::timeline_row::body_markdown(
-            SharedString::from(format!("{id}-md")),
-            body,
-            super::timeline_row::markdown_style(15., cx),
+        .child(super::e2e::measure_control(
+            format!("{id}-md"),
+            super::timeline_row::body_markdown(
+                SharedString::from(format!("{id}-md")),
+                body,
+                super::timeline_row::markdown_style(15., cx),
+            ),
         ))
         .children(issue_meta.map(|(_, label, color)| super::timeline_row::state_dot(label, color)));
     super::timeline_row::row(SharedString::from(id), author, &app.avatars.images, content)

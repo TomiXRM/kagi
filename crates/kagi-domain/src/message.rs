@@ -117,74 +117,129 @@ pub fn sanitize_markdown_for_view(src: &str) -> String {
     crate::text_safety::sanitize_control_bytes(&out)
 }
 
-/// Remove `<!-- … -->` comments and HTML tags, keeping text content. Code
-/// spans / fences are left alone (a `<T>` in code is not a tag).
+/// The ``` / ~~~ run a fenced block opens with.
+///
+/// A boolean "inside a fence" flag cannot tell a ```` ```` ```` block that
+/// *quotes* ``` from a second fence: the run's character and length are what
+/// decides where the block ends, so everything between stays literal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Fence {
+    marker: u8,
+    len: usize,
+}
+
+impl Fence {
+    /// The fence this line opens, if it opens one.
+    pub fn opened_by(line: &str) -> Option<Self> {
+        let run = line.trim_start().as_bytes();
+        let marker = *run.first()?;
+        if marker != b'`' && marker != b'~' {
+            return None;
+        }
+        let len = run.iter().take_while(|b| **b == marker).count();
+        (len >= 3).then_some(Self { marker, len })
+    }
+
+    /// Whether this line closes the block: the same marker, a run at least
+    /// as long, and nothing else on the line.
+    pub fn closed_by(&self, line: &str) -> bool {
+        let line = line.trim();
+        line.len() >= self.len && line.bytes().all(|b| b == self.marker)
+    }
+}
+
+/// Remove `<!-- … -->` comments and HTML tags, keeping text content.
+///
+/// Fenced blocks and inline code spans are verbatim: a `<T>` — or a literal
+/// `<!-- … -->` someone is *documenting* — is code, not markup (#751). An
+/// HTML comment opened and never closed keeps swallowing to the end of the
+/// document, which is what CommonMark (and therefore GitHub) shows.
 fn strip_html(src: &str) -> String {
     let mut out = String::with_capacity(src.len());
-    let mut in_fence = false;
+    let mut fence: Option<Fence> = None;
+    // An HTML comment left open by an earlier line.
+    let mut in_comment = false;
     for (i, line) in src.split('\n').enumerate() {
         if i > 0 {
             out.push('\n');
         }
-        let t = line.trim_start();
-        if t.starts_with("```") || t.starts_with("~~~") {
-            in_fence = !in_fence;
-        }
-        if in_fence || t.starts_with("```") || t.starts_with("~~~") {
+        if let Some(open) = fence {
+            if open.closed_by(line) {
+                fence = None;
+            }
             out.push_str(line);
             continue;
         }
-        out.push_str(&strip_html_line(line));
-    }
-    // Comments may span lines: second pass over the joined text.
-    let mut result = String::with_capacity(out.len());
-    let mut rest = out.as_str();
-    while let Some(start) = rest.find("<!--") {
-        result.push_str(&rest[..start]);
-        match rest[start..].find("-->") {
-            Some(end) => rest = &rest[start + end + 3..],
-            None => {
-                rest = "";
-            }
-        }
-    }
-    result.push_str(rest);
-    result
-}
-
-fn strip_html_line(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
-    let mut in_code = false;
-    let mut chars = line.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '`' {
-            in_code = !in_code;
-            out.push(c);
+        if in_comment {
+            let Some(end) = line.find("-->") else {
+                continue;
+            };
+            in_comment = false;
+            strip_html_line(&line[end + 3..], &mut out, &mut in_comment);
             continue;
         }
-        if !in_code && c == '<' && !line.starts_with("<!--") {
-            // A tag: `<` followed by a letter, `/` or `!` — otherwise it is
-            // a literal (e.g. "a < b").
-            let is_tag = matches!(chars.peek(), Some(n) if n.is_ascii_alphabetic() || *n == '/' || *n == '!');
-            if is_tag {
-                let mut depth_closed = false;
-                for n in chars.by_ref() {
-                    if n == '>' {
-                        depth_closed = true;
-                        break;
-                    }
-                }
-                if depth_closed {
-                    // Block-ish tags become a space so words don't glue.
-                    out.push(' ');
-                    continue;
-                }
-                return out;
-            }
+        if let Some(open) = Fence::opened_by(line) {
+            fence = Some(open);
+            out.push_str(line);
+            continue;
         }
-        out.push(c);
+        strip_html_line(line, &mut out, &mut in_comment);
     }
     out
+}
+
+fn strip_html_line(line: &str, out: &mut String, in_comment: &mut bool) {
+    let bytes = line.as_bytes();
+    // The backtick run that opened the code span we are inside, if any. A
+    // span closes on a run of the same length, so ``a`b`` is one span.
+    let mut span: Option<usize> = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'`' {
+            let run = bytes[i..].iter().take_while(|b| **b == b'`').count();
+            out.push_str(&line[i..i + run]);
+            span = match span {
+                Some(open) if open == run => None,
+                open @ Some(_) => open,
+                None => Some(run),
+            };
+            i += run;
+            continue;
+        }
+        if bytes[i] != b'<' || span.is_some() {
+            let next = line[i..]
+                .find(['`', '<'])
+                .map_or(line.len(), |offset| i + offset)
+                .max(i + 1);
+            out.push_str(&line[i..next]);
+            i = next;
+            continue;
+        }
+        if line[i..].starts_with("<!--") {
+            match line[i..].find("-->") {
+                Some(end) => i += end + 3,
+                None => {
+                    *in_comment = true;
+                    return;
+                }
+            }
+            continue;
+        }
+        // A tag: `<` followed by a letter, `/` or `!` — otherwise it is a
+        // literal (e.g. "a < b").
+        let is_tag = matches!(bytes.get(i + 1), Some(n) if n.is_ascii_alphabetic() || *n == b'/' || *n == b'!');
+        if !is_tag {
+            out.push('<');
+            i += 1;
+            continue;
+        }
+        let Some(end) = line[i..].find('>') else {
+            return;
+        };
+        // Block-ish tags become a space so words don't glue.
+        out.push(' ');
+        i += end + 1;
+    }
 }
 
 #[cfg(test)]
@@ -199,6 +254,27 @@ mod markdown_sanitize_tests {
         assert!(!out.contains("<a "), "{out}");
         assert!(out.contains("Need help? Tag  @codesmith"), "{out}");
         assert!(out.contains("`<T>` stays"), "{out}");
+    }
+
+    /// A comment is hidden; a comment someone is *quoting* inside code is
+    /// content. The whole-document second pass could not tell them apart and
+    /// deleted both (#751).
+    #[test]
+    fn a_comment_is_hidden_but_a_quoted_one_inside_code_is_kept() {
+        let out = sanitize_markdown_for_view(
+            "before <!-- hidden --> after\n\n`literal <!-- kept -->`\n\n```rust\n// <!-- fenced -->\n```\n",
+        );
+        assert!(!out.contains("hidden"), "{out}");
+        assert!(out.contains("`literal <!-- kept -->`"), "{out}");
+        assert!(out.contains("// <!-- fenced -->"), "{out}");
+    }
+
+    /// A four-backtick fence quotes ``` — the block ends at a run as long as
+    /// the one that opened it, not at the first fence-looking line.
+    #[test]
+    fn a_longer_fence_keeps_the_shorter_one_inside_it_literal() {
+        let s = "````md\n```rust\n// <!-- kept -->\n```\n````\n";
+        assert_eq!(sanitize_markdown_for_view(s), s);
     }
 
     #[test]

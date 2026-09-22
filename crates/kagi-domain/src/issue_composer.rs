@@ -129,6 +129,47 @@ pub fn fenced_code_paste(text: &str, filename_hint: Option<&str>) -> String {
     format!("{fence}{language}\n{text}{separator}{fence}\n")
 }
 
+/// What a multiline clipboard becomes when it is dropped on the New Issue
+/// *title*: its first line names the Issue, everything after that first
+/// newline is its body, byte-for-byte (#751).
+///
+/// The title is a single-line input, so pasting a whole Issue into it
+/// otherwise flattens the document into the title and leaves the body empty.
+/// Splitting — rather than fencing, which stays [`fenced_code_paste`]'s rule
+/// for the body input — is what keeps the pasted Markdown renderable in
+/// Preview: an outer fence would draw the whole clipboard as code.
+///
+/// CRLF is normalised so the split never strands a `\r` at the end of the
+/// title. Nothing else is rewritten: no trimming, no dropped blank line, no
+/// added trailing newline. `None` means "one line" — an ordinary paste the
+/// input itself still owns, on the same rule `fenced_code_paste` uses.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TitlePaste {
+    /// Inserted into the title input at its current selection.
+    pub title: String,
+    /// Inserted into the body input, newlines and Markdown intact.
+    pub body: String,
+}
+
+/// Split a title paste; see [`TitlePaste`].
+pub fn title_paste_split(text: &str) -> Option<TitlePaste> {
+    // Split before normalising. Every paste reaches this, most of them one
+    // line, so the rejected path must not build anything: it stops at the
+    // first newline and allocates nothing. `body.is_empty()` is
+    // `lines().count() < 2` without the second walk — a trailing newline does
+    // not start a line. The two `String`s the caller gets are the only
+    // allocations, and normalising the body is part of copying it, not an
+    // extra pass over a document-sized temporary.
+    let (title, body) = text.split_once('\n')?;
+    if body.is_empty() {
+        return None;
+    }
+    Some(TitlePaste {
+        title: title.strip_suffix('\r').unwrap_or(title).to_owned(),
+        body: body.replace("\r\n", "\n"),
+    })
+}
+
 fn contains_fenced_block(text: &str) -> bool {
     let mut opener = None;
     for line in text.lines() {
@@ -368,5 +409,53 @@ mod tests {
             let output = fenced_code_paste(text, Some("unknown.ext"));
             assert!(output.starts_with(&format!("```{language}\n")));
         }
+    }
+
+    #[test]
+    fn single_line_title_paste_stays_the_input_s_own_paste() {
+        for text in ["", "text", "一行だけ", "text\n", "text\r\n"] {
+            assert_eq!(title_paste_split(text), None);
+        }
+    }
+
+    #[test]
+    fn multiline_title_paste_keeps_the_body_verbatim() {
+        assert_eq!(
+            title_paste_split("USB が復帰しない\n## 再現\n- [ ] 抜き差し\n"),
+            Some(TitlePaste {
+                title: "USB が復帰しない".into(),
+                body: "## 再現\n- [ ] 抜き差し\n".into(),
+            }),
+            "the body keeps its Markdown and its trailing newline: Preview renders it"
+        );
+        assert_eq!(
+            title_paste_split("Title\r\nBody line\r\n"),
+            Some(TitlePaste {
+                title: "Title".into(),
+                body: "Body line\n".into(),
+            }),
+            "CRLF must not strand a carriage return at the end of the title"
+        );
+        assert_eq!(
+            title_paste_split("Title\n\nFirst paragraph"),
+            Some(TitlePaste {
+                title: "Title".into(),
+                body: "\nFirst paragraph".into(),
+            }),
+            "the blank line separating title from prose is the author's, not ours"
+        );
+    }
+
+    #[test]
+    fn title_paste_never_fences_what_the_body_would() {
+        let code = "fn main() {\n    run();\n}";
+        let split = title_paste_split(code).expect("multiline");
+        assert_eq!(split.title, "fn main() {");
+        assert_eq!(split.body, "    run();\n}");
+        assert_ne!(
+            fenced_code_paste(code, None),
+            code,
+            "the body input still fences the same clipboard"
+        );
     }
 }

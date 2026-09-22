@@ -141,7 +141,21 @@ The current suite covers:
   (`pr-convo-hunk-<n>`) and ```suggestion marker (`pr-convo-suggestion-<n>`) drawn
   inside the shared row — and the pinned PR composer's real toggle click
   (`pr-composer-mode-toggle` → `pr-composer-preview`) keeping the typed text
-  across a preview round trip;
+  across a preview round trip; since #751 it also proves the conversation
+  Markdown is *laid out*, not merely parsed: the canonical body
+  `tests/support/issues_markdown.md` is cut along its own `## ` headings, each
+  section is seeded into the production Thread (`issue-thread-body-4-md`) and
+  the production Composer Preview (`issue-composer-preview-md-0`), and the
+  drawn box is then selected with a real pointer drag (down / move / up) and
+  copied with ⌘C — the clipboard is poisoned with `NOTHING_WAS_COPIED` before
+  each drag, so a selection that found nothing fails instead of reusing the
+  previous copy. The task list, table and fenced code are asserted from what
+  the selection returned, because selection resolves against laid-out text
+  runs. `gpui-component`'s `BlockNode` is `pub(crate)`, so a Markdown plugin
+  cannot wrap the built-in table/list/code renderer to measure it directly,
+  and a plugin that claimed those nodes would be a parallel renderer; the drag
+  is the layout-derived seam that remains. Images are never fetched on these
+  surfaces (ADR-0142 amendment), so no screenshot ever waits on the network;
   The same scenario exercises the shared Issue/PR label and created-sort menus.
   Its PR-state regression holds a Closed response and checks Refreshing, then
   proves Closed/All results cannot replace shared Open evidence, an Open ticker

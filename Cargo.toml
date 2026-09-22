@@ -91,6 +91,10 @@ kagi-mcp = { path = "crates/kagi-mcp" }
 # ADR-0166 GUI E2E runner: throwaway fixture repos. Already a normal dep (cargo
 # unifies it), listed here so the `tests/` crate can name it directly.
 tempfile = "3"
+# #751: the conversation-Markdown pipeline test re-parses what the renderer
+# would be handed, to prove no image node reaches it. Same parser version as
+# `kagi-ui-core` uses.
+markdown = "1.0.0"
 
 # ADR-0166: the GUI E2E scenario runs on the process MAIN thread. libtest's
 # default harness runs `#[test]` fns on worker threads, where AppKit NSWindow

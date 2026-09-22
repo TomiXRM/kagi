@@ -84,3 +84,23 @@ identity は既存 `gh repo view` の default-repository semantics で解決す�
 `mentions:@me` の番号集合を含め、全結果を一つの owner/generation で原子的に受理する。
 失敗時は全て最後の成功値を保持し、render や tab 切替から追加 fetch しない。viewer
 login は既存 `KagiApp::github_login` cache を使う。
+
+## 追記 2: title への複数行 paste (#751)
+
+本文 input の Paste は上の決定のまま、複数行を fenced block として selection に
+置換する。title input は単一行なので、同じ clipboard がそこへ落ちると全文が
+title 1 行に潰れ body が空のままになっていた。title への複数行 paste は fence
+せず**分割**する: 1 行目を title、最初の `\n` より後ろを body とする。
+
+- CRLF を LF に正規化してから最初の `\n` で分割する。それ以外は byte 単位で
+  保持する(trim しない、空行を落とさない、改行を足さない)。全文を fence で
+  包まないのは、包むと Preview が全部 code になり #751 で確認したい構文が
+  描画されないため。
+- 複数行の判定は本文 paste と同じ `lines().count() >= 2`。1 行の clipboard は
+  従来どおり Input 自身の paste が処理し、selection も undo も変わらない。
+- 挿入は両 input の現在の selection に対して行い、既存の title / body を
+  置き換えない。body は caret が行頭でないときだけ先頭に改行を足す(本文 paste
+  と同じ規則)。挿入後は body を reveal して focus する。clipboard は書き換えない。
+- 分割規則は `kagi_domain::issue_composer::title_paste_split` に置き、
+  `fenced_code_paste` と同じ pure な domain 境界に留める。UI 側は title の
+  既存 wrapper div(Enter guard と同じ div)で Paste を capture する。

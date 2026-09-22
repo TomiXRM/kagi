@@ -3394,6 +3394,7 @@ dependencies = [
  "kagi-ui-ecosystem",
  "kagi-ui-editor",
  "kagi-ui-file-history",
+ "markdown",
  "notify",
  "percent-encoding",
  "portable-pty",

@@ -171,6 +171,57 @@ fn assert_pr_state_isolation(
     assert!(measure(cx, win, "pr-home-row-7").is_some());
 }
 
+/// The one Markdown document every #751 surface is checked against. Tier B
+/// opens it whole; here it is cut along its own `## ` headings so a single
+/// screenful can be drawn and selected per construct.
+const MARKDOWN_FIXTURE: &str = include_str!("../support/issues_markdown.md");
+
+/// The fixture section that carries `sentinel`.
+fn fixture_section(sentinel: &str) -> String {
+    let section = MARKDOWN_FIXTURE
+        .split("\n## ")
+        .find(|section| section.contains(sentinel))
+        .unwrap_or_else(|| panic!("the Markdown fixture must contain {sentinel}"));
+    format!("## {}", section.trim_start_matches("## "))
+}
+
+/// Drag the pointer across a drawn region and copy what the selection
+/// covered. Selection resolves against laid-out text runs, so the copied
+/// string is evidence of what the renderer actually put on screen — a parse
+/// alone produces nothing here.
+///
+/// The clipboard is poisoned first: two constructs can share one seeded body,
+/// so a drag that selected nothing would otherwise be "proved" by the
+/// previous copy.
+fn drag_and_copy(
+    cx: &mut VisualTestAppContext,
+    win: AnyWindowHandle,
+    bounds: gpui::Bounds<gpui::Pixels>,
+) -> String {
+    const NOTHING_WAS_COPIED: &str = "NOTHING_WAS_COPIED";
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+        NOTHING_WAS_COPIED.to_string(),
+    ));
+    let inset = gpui::px(2.);
+    let from = gpui::point(bounds.left() + inset, bounds.top() + inset);
+    let to = gpui::point(bounds.right() - inset, bounds.bottom() - inset);
+    cx.simulate_mouse_down(win, from, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_move(win, to, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_up(win, to, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.run_until_parked();
+    cx.simulate_keystrokes(win, "secondary-c");
+    cx.run_until_parked();
+    let copied = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap_or_default();
+    assert_ne!(
+        copied, NOTHING_WAS_COPIED,
+        "the drag selected nothing — ⌘C left the poisoned clipboard in place"
+    );
+    copied
+}
+
 pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
@@ -418,6 +469,44 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
         "the sidebar remains while the Thread is shown"
     );
 
+    // #751: the Thread's Markdown must reach the screen, not merely parse.
+    // One drag per section of the fixture, and everything that section is
+    // supposed to draw has to be in what the selection copied. The table and
+    // the fenced code share a section, so they share a drag.
+    for sentinels in [
+        ["TASK_PENDING_SENTINEL", "TASK_DONE_SENTINEL"],
+        ["TABLE_CELL_SENTINEL", "FENCED_RUST_SENTINEL"],
+    ] {
+        let section = fixture_section(sentinels[0]);
+        assert!(
+            sentinels.iter().all(|s| section.contains(s)),
+            "one seeded section must carry {sentinels:?}"
+        );
+        app.update(cx, |app, cx| app.set_issue_body_for_e2e(4, &section, cx));
+        cx.run_until_parked();
+        let body = measure(cx, win, "issue-thread-body-4-md")
+            .unwrap_or_else(|| panic!("the Thread must draw a body for {sentinels:?}"));
+        assert!(
+            body.size.height > gpui::px(0.) && body.size.width > gpui::px(0.),
+            "the body for {sentinels:?} must occupy the layout"
+        );
+        let copied = drag_and_copy(cx, win, body);
+        for sentinel in sentinels {
+            assert!(
+                copied.contains(sentinel),
+                "dragging across the drawn body must select {sentinel}; copied {copied:?}"
+            );
+        }
+    }
+    app.update(cx, |app, cx| {
+        app.set_issue_body_for_e2e(4, MARKDOWN_FIXTURE, cx)
+    });
+    cx.run_until_parked();
+    assert!(
+        measure(cx, win, "issue-thread-body-4-md").is_some(),
+        "the whole fixture must still draw as one body"
+    );
+
     cx.update_window(win, |_, window, cx| {
         app.update(cx, |app, cx| {
             app.focus_issue_reply_input_for_e2e(4, window, cx)
@@ -459,6 +548,120 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     assert!(measure(cx, win, "issue-composer-mode-toggle").is_some());
     assert!(measure(cx, win, "issue-composer-write").is_none());
     assert!(measure(cx, win, "issue-composer-preview").is_none());
+
+    // #751: a whole Issue pasted onto the still-empty title must not be
+    // flattened into the title bar. The first line names the Issue; the rest
+    // reaches the body with its Markdown — and its newlines — intact and
+    // unfenced, so Preview can draw the constructs. The clipboard is never
+    // rewritten. Dispatch the real Paste action: the wrapper has to capture it
+    // before the single-line Input consumes it.
+    let title_paste = "USB が復帰しない\n## 再現\n\n- [ ] 抜き差し\n";
+    let pasted_body = "## 再現\n\n- [ ] 抜き差し\n";
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_issue_title_for_e2e(window, cx));
+    })
+    .unwrap();
+    app.update(cx, |_, cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(title_paste.into()));
+    });
+    cx.update_window(win, |_, window, cx| {
+        window.dispatch_action(Box::new(gpui_component::input::Paste), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let (body_revealed, body_focused, title_value, body_value) = cx
+        .update_window(win, |_, window, cx| {
+            app.read(cx).issue_composer_enter_state_for_e2e(window, cx)
+        })
+        .unwrap();
+    assert_eq!(
+        title_value, "USB が復帰しない",
+        "only the first line belongs in the single-line title"
+    );
+    assert_eq!(
+        body_value, pasted_body,
+        "the rest of the clipboard must reach the body unflattened and unfenced"
+    );
+    assert!(
+        body_revealed,
+        "a title paste that carries a body must reveal the body editor"
+    );
+    assert!(
+        body_focused,
+        "editing continues in the body the paste just filled"
+    );
+    let (pasted_draft, _) = cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e());
+    assert_eq!(pasted_draft.title, "USB が復帰しない");
+    assert_eq!(
+        pasted_draft.body, pasted_body,
+        "both halves must reach the session draft through the Change subscription"
+    );
+    app.update(cx, |_, cx| {
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some(title_paste)
+        );
+    });
+    // A single-line clipboard is still an ordinary title edit: the Input's own
+    // paste owns it, and the body it would have split into is left alone.
+    app.update(cx, |_, cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(" だけ".into()));
+    });
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_issue_title_for_e2e(window, cx));
+        window.dispatch_action(Box::new(gpui_component::input::Paste), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let (_, _, title_value, body_value) = cx
+        .update_window(win, |_, window, cx| {
+            app.read(cx).issue_composer_enter_state_for_e2e(window, cx)
+        })
+        .unwrap();
+    assert_eq!(
+        title_value, "USB が復帰しない だけ",
+        "a single-line paste still lands in the title at the caret"
+    );
+    assert_eq!(
+        body_value, pasted_body,
+        "a single-line title paste must not touch the body"
+    );
+    // The split inserts at the live selection of both inputs: a title that
+    // already names something keeps its text, and a body that already holds a
+    // draft keeps every line of it. The remainder is still raw — the author's
+    // own fence is carried across, no outer fence is wrapped around it.
+    let second_paste = "追記あり\n```rust\nfn main() {}\n```\n";
+    app.update(cx, |_, cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(second_paste.into()));
+    });
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_issue_title_for_e2e(window, cx));
+        window.dispatch_action(Box::new(gpui_component::input::Paste), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let (_, _, title_value, body_value) = cx
+        .update_window(win, |_, window, cx| {
+            app.read(cx).issue_composer_enter_state_for_e2e(window, cx)
+        })
+        .unwrap();
+    assert_eq!(
+        title_value, "USB が復帰しない だけ追記あり",
+        "the first line joins the existing title at the caret, replacing nothing"
+    );
+    assert_eq!(
+        body_value,
+        format!("{pasted_body}```rust\nfn main() {{}}\n```\n"),
+        "the remainder appends to the existing body verbatim, fence and all"
+    );
+    // Hand the pristine Composer back to the measures that follow.
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| app.reset_issue_composer_for_e2e(window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
     cx.update_window(win, |_, window, cx| {
         app.update(cx, |app, cx| {
             app.focus_issue_title_for_e2e(window, cx);
@@ -522,6 +725,47 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     );
     assert!(measure(cx, win, "issue-composer-write").is_none());
     assert!(measure(cx, win, "issue-composer-preview").is_none());
+
+    // #751: the Preview renders the same pipeline as the Thread, and is held
+    // to the same standard — drag across what was drawn, copy it, and every
+    // construct the seeded section draws has to be in what comes back.
+    for sentinels in [
+        ["TASK_PENDING_SENTINEL", "TASK_DONE_SENTINEL"],
+        ["TABLE_CELL_SENTINEL", "FENCED_RUST_SENTINEL"],
+    ] {
+        let section = fixture_section(sentinels[0]);
+        cx.update_window(win, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                app.replace_issue_body_for_e2e(&section, window, cx)
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let body = measure(cx, win, "issue-composer-preview-md-0")
+            .unwrap_or_else(|| panic!("the Preview must draw a body for {sentinels:?}"));
+        let copied = drag_and_copy(cx, win, body);
+        for sentinel in sentinels {
+            assert!(
+                copied.contains(sentinel),
+                "dragging across the drawn Preview must select {sentinel}; copied {copied:?}"
+            );
+        }
+    }
+    // Put the draft — and the cursor — back where the scenario left them: a
+    // full replacement rewinds the caret, and what follows types at it.
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.replace_issue_body_for_e2e("", window, cx);
+            app.insert_issue_body_for_e2e(original, window, cx);
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e().0.body),
+        original,
+        "the Preview measure must leave the draft as it found it"
+    );
     let mode_toggle = measure(cx, win, "issue-composer-mode-toggle").expect("Composer mode toggle");
     cx.simulate_click(win, mode_toggle.center(), gpui::Modifiers::none());
     cx.run_until_parked();

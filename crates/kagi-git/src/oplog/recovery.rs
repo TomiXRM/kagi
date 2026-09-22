@@ -12,7 +12,7 @@
 //! a tag written by a newer Kagi must round-trip through an older reader
 //! instead of collapsing into a wrong variant.
 
-use super::escape_json_string;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Pre-restore savepoint of the overwritten working tree (`OperationOutcome::RestoreSnapshot`).
 pub const SAVEPOINT: &str = "savepoint";
@@ -72,56 +72,51 @@ impl RecoveryHandle {
     }
 }
 
-/// The elements of the `"recovery":[…]` array, comma-joined (no brackets).
-///
-/// Every value is a JSON string, so a path containing `,`, `=` or non-ASCII
-/// stays unambiguous — the ambiguity of the comma-joined `path=blob` summary
-/// is exactly what #500 is about.
-pub(super) fn to_json(handles: &[RecoveryHandle]) -> String {
-    handles
-        .iter()
-        .map(|h| {
-            format!(
-                "{{\"kind\":{},\"oid\":{},\"path\":{},\"reference\":{}}}",
-                escape_json_string(&h.kind),
-                escape_json_string(&h.oid),
-                optional(h.path.as_deref()),
-                optional(h.reference.as_deref()),
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",")
+// Private serde DTO: the public recovery model has no persistence policy.
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "RecoveryHandle")]
+struct RecoveryRecord {
+    kind: String,
+    oid: String,
+    #[serde(default, deserialize_with = "optional_string")]
+    path: Option<String>,
+    #[serde(default, deserialize_with = "optional_string")]
+    reference: Option<String>,
 }
 
-fn optional(value: Option<&str>) -> String {
-    value.map(escape_json_string).unwrap_or("null".to_string())
+struct RecoveryRef<'a>(&'a RecoveryHandle);
+
+impl Serialize for RecoveryRef<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        RecoveryRecord::serialize(self.0, serializer)
+    }
 }
 
-/// Read the additive `recovery` array off a JSONL line.
-///
-/// Anything that does not fit the shape — a pre-#500 line, a `recovery` key
-/// that is not an array of `{kind, oid}` objects — reads as *no typed data*.
-/// The prose summary is never mined for a substitute: an entry that predates
-/// this field is not retroactively recoverable.
-pub(super) fn parse(line: &str) -> Vec<RecoveryHandle> {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
-        return Vec::new();
-    };
-    let Some(items) = value.get("recovery").and_then(|v| v.as_array()) else {
-        return Vec::new();
-    };
-    items
-        .iter()
-        .filter_map(|item| {
-            Some(RecoveryHandle {
-                kind: item.get("kind")?.as_str()?.to_string(),
-                oid: item.get("oid")?.as_str()?.to_string(),
-                path: item.get("path").and_then(|v| v.as_str()).map(str::to_owned),
-                reference: item
-                    .get("reference")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_owned),
-            })
-        })
-        .collect()
+pub(super) fn serialize<S: Serializer>(
+    handles: &[RecoveryHandle],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.collect_seq(handles.iter().map(RecoveryRef))
+}
+
+fn optional_string<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(text) => Some(text),
+        _ => None,
+    })
+}
+
+/// Missing/malformed additive data never invents recovery from display prose.
+/// Invalid members are ignored without discarding valid sibling handles.
+pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+    d: D,
+) -> Result<Vec<RecoveryHandle>, D::Error> {
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::Array(items) => items
+            .into_iter()
+            .filter(|item| item.is_object())
+            .filter_map(|item| RecoveryRecord::deserialize(item).ok())
+            .collect(),
+        _ => Vec::new(),
+    })
 }

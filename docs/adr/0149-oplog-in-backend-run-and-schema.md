@@ -105,6 +105,38 @@ consume them are later work.
   one (as does a file that is entirely legacy) falls back to the whole-file
   read above, and the reconstruction rule is unchanged.
 
+### Private serde codec (#513)
+
+The on-disk schema is unchanged; this migration introduces no version field.
+`oplog/codec.rs` owns private serde DTOs (including remote derives for the
+dependency-free domain state). The writer borrows the receipt, including recovery
+handles, rather than cloning payloads or assembling escaped JSON fragments.
+The reader decodes the already parsed JSON value directly: no canonical string
+round-trip and no substring lookup into unrelated nested fields.
+
+- Legacy missing fields and primitive-to-text coercions remain readable.
+  Only an **absent** top-level `id` triggers identity reconstruction; an explicit
+  null or malformed id retains the prior default, and quoted integers still load.
+- Before/Success/Partial state members and Failed/Partial errors retain their
+  empty defaults. Unknown still requires its after-state members and evidence.
+  State/outcome containers must be objects, not positional arrays.
+- Absent/future actor and failure codes retain their previous fallbacks.
+  `failure_code` is omitted when absent; parent/worktree still use JSON null.
+- `backup_refs` remains strict: malformed roots reject the row, so retention
+  cannot mistake unreadable ownership for an empty root set. Additive recovery
+  remains lossy per member: malformed members are ignored, valid siblings and
+  unknown kind strings survive. Recovery is never inferred from display prose.
+- Invalid JSON/unknown outcome kinds are skipped by tail reads; retention still
+  fails closed. Reading never truncates or replaces the source log. Unknown
+  fields are accepted; retention continues preserving modern raw lines and
+  patching only legacy identity in a JSON value, not reserializing a DTO.
+
+Compatibility is about restored receipt content, not a particular JSON escape
+spelling. `tests/oplog_serde_compat_test.rs` exercises fixed log fixtures through
+the public reader/writer, alongside existing identity, retention and multi-process
+receipt tests. Append locking, sequence assignment, error reporting and storage
+confinement are unchanged.
+
 ## Explicitly deferred (do NOT implement here)
 
 ### Slice 1a addendum (#484)

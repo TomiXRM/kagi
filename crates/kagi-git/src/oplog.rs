@@ -6,9 +6,8 @@
 //! The file is created (and its parent directory auto-created) on first write.
 //! Write failures are reported to stderr only — they never abort the application.
 //!
-//! JSON serialisation is hand-written to avoid adding a `serde` dependency.
-//! Every string field passes through [`escape_json_string`] which escapes
-//! `"`, `\`, and control characters (`\n`, `\r`, `\t` and U+0000–U+001F).
+//! The private serde wire schema preserves legacy receipt fields and defaults.
+//! Append/retention own durability and identity; decoding never rewrites the log.
 //!
 //! # Public API
 //!
@@ -21,6 +20,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{ops::StateSummary, GitError};
 
+mod codec;
 mod reading;
 pub mod recovery;
 pub mod retention;
@@ -283,114 +283,9 @@ impl OpLogEntry {
     }
 }
 
-// ────────────────────────────────────────────────────────────
-// JSON serialisation helpers
-// ────────────────────────────────────────────────────────────
-
-/// Escape a string for embedding in JSON: wrap in `"` and escape
-/// `\`, `"`, `\n`, `\r`, `\t`, and remaining control characters.
-///
-/// This is the only place where string values enter the JSON output.
-fn escape_json_string(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for ch in s.chars() {
-        match ch {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => {
-                // Encode remaining control chars as \uXXXX.
-                out.push_str(&format!("\\u{:04x}", c as u32));
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
-
-/// Serialise a [`StateSummary`] as a JSON object string.
-fn state_summary_to_json(s: &StateSummary) -> String {
-    format!(
-        "{{\"head\":{},\"dirty\":{}}}",
-        escape_json_string(&s.head),
-        escape_json_string(&s.dirty),
-    )
-}
-
 /// Serialise an [`OpLogEntry`] as a single-line JSON object (no trailing newline).
 pub fn entry_to_json(entry: &OpLogEntry) -> String {
-    // Emitted only when present, so an entry without a code is byte-identical
-    // to what earlier versions wrote (#650).
-    let failure_code_json = match entry.failure_code {
-        Some(code) => format!(",\"failure_code\":\"{}\"", code.as_str()),
-        None => String::new(),
-    };
-    let outcome_json = match &entry.outcome {
-        OpOutcome::Success { after } => {
-            format!(
-                "{{\"kind\":\"Success\",\"after\":{}}}",
-                state_summary_to_json(after)
-            )
-        }
-        OpOutcome::Partial { after, error } => {
-            format!(
-                "{{\"kind\":\"Partial\",\"after\":{},\"error\":{}}}",
-                state_summary_to_json(after),
-                escape_json_string(error)
-            )
-        }
-        OpOutcome::Unknown { after, evidence } => {
-            format!(
-                "{{\"kind\":\"Unknown\",\"after\":{},\"evidence\":{}}}",
-                state_summary_to_json(after),
-                escape_json_string(evidence)
-            )
-        }
-        OpOutcome::Failed { error } => {
-            format!(
-                "{{\"kind\":\"Failed\",\"error\":{}}}",
-                escape_json_string(error)
-            )
-        }
-        OpOutcome::Refused { blockers } => {
-            let blocker_strs: Vec<String> =
-                blockers.iter().map(|b| escape_json_string(b)).collect();
-            format!(
-                "{{\"kind\":\"Refused\",\"blockers\":[{}]}}",
-                blocker_strs.join(",")
-            )
-        }
-    };
-
-    // ADR-0149: `parent` / `worktree` serialize as JSON `null` when absent.
-    let parent_json = match entry.parent {
-        Some(p) => p.to_string(),
-        None => "null".to_string(),
-    };
-    let worktree_json = match &entry.worktree {
-        Some(w) => escape_json_string(w),
-        None => "null".to_string(),
-    };
-
-    format!(
-        "{{\"id\":{},\"parent\":{},\"timestamp\":{},\"op\":{},\"repo\":{},\"actor\":{},\"worktree\":{},\"before\":{},\"outcome\":{},\"backup_refs\":[{}],\"recovery\":[{}]{}}}",
-        entry.id,
-        parent_json,
-        entry.timestamp,
-        escape_json_string(&entry.op),
-        escape_json_string(&entry.repo),
-        escape_json_string(entry.actor.as_str()),
-        worktree_json,
-        state_summary_to_json(&entry.before),
-        outcome_json,
-        entry.backup_refs.iter().map(|r| escape_json_string(r)).collect::<Vec<_>>().join(","),
-        recovery::to_json(&entry.recovery),
-        failure_code_json,
-    )
+    codec::to_json(entry)
 }
 
 // ────────────────────────────────────────────────────────────
@@ -445,298 +340,9 @@ pub(crate) fn dirs_home() -> Option<PathBuf> {
 // Public API
 // ────────────────────────────────────────────────────────────
 
-// ────────────────────────────────────────────────────────────
-// Minimal hand-written JSON parser (T-BP-004)
-// ────────────────────────────────────────────────────────────
-//
-// Parses ONLY the format produced by `entry_to_json` above.
-// This is NOT a general JSON parser — it rejects any line it cannot
-// fully understand and the caller skips that line (fail-safe).
-//
-// Supported escapes (matching `escape_json_string`): \" \\ \n \r \t \uXXXX.
-// All other sequences are passed through unchanged (they should not appear
-// in well-formed output, but skipping them beats panicking).
-
-/// Unescape a JSON string value that was produced by `escape_json_string`.
-///
-/// `s` must NOT include the surrounding `"` delimiters.
-fn unescape_json_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch != '\\' {
-            out.push(ch);
-        } else {
-            match chars.next() {
-                Some('"') => out.push('"'),
-                Some('\\') => out.push('\\'),
-                Some('n') => out.push('\n'),
-                Some('r') => out.push('\r'),
-                Some('t') => out.push('\t'),
-                Some('u') => {
-                    // Consume exactly 4 hex digits.
-                    let hex: String = (0..4).filter_map(|_| chars.next()).collect();
-                    if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                        if let Some(c) = char::from_u32(code) {
-                            out.push(c);
-                        }
-                    }
-                }
-                Some(c) => {
-                    out.push('\\');
-                    out.push(c);
-                }
-                None => {}
-            }
-        }
-    }
-    out
-}
-
-/// Extract the string value for a simple `"key":"value"` or `"key":number` pair
-/// from a flat JSON fragment.  Returns the raw (unescaped) string for string
-/// values, or the decimal text for integer values.
-///
-/// Only searches within `json` — does NOT recurse into nested objects.
-/// Returns `None` if the key is not found or parsing fails.
-fn extract_str_field(json: &str, key: &str) -> Option<String> {
-    let needle = format!("\"{}\":", key);
-    let pos = json.find(needle.as_str())?;
-    let after = json[pos + needle.len()..].trim_start();
-
-    if after.starts_with('"') {
-        // String value: scan for the closing (unescaped) '"'.
-        let inner_start = 1; // skip opening '"'
-        let mut escaped = false;
-        let mut end = None;
-        for (i, ch) in after[inner_start..].char_indices() {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                end = Some(inner_start + i);
-                break;
-            }
-        }
-        let end = end?;
-        Some(unescape_json_str(&after[inner_start..end]))
-    } else {
-        // Number or other scalar: read until `,`, `}`, or end.
-        let end = after.find([',', '}']).unwrap_or(after.len());
-        let val = after[..end].trim();
-        if val.is_empty() {
-            None
-        } else {
-            Some(val.to_string())
-        }
-    }
-}
-
-/// Extract the JSON object substring starting right after `"key":` in `json`.
-///
-/// Scans forward until the matching `}` at depth 0, skipping nested objects.
-fn extract_object_field(json: &str, key: &str) -> Option<String> {
-    let needle = format!("\"{}\":", key);
-    let pos = json.find(needle.as_str())?;
-    let after = json[pos + needle.len()..].trim_start();
-    if !after.starts_with('{') {
-        return None;
-    }
-    let mut depth = 0usize;
-    let mut in_str = false;
-    let mut escape = false;
-    let mut end = None;
-    for (i, ch) in after.char_indices() {
-        if escape {
-            escape = false;
-            continue;
-        }
-        if in_str {
-            match ch {
-                '\\' => escape = true,
-                '"' => in_str = false,
-                _ => {}
-            }
-            continue;
-        }
-        match ch {
-            '"' => in_str = true,
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    end = Some(i + 1); // include closing '}'
-                    break;
-                }
-            }
-            _ => {}
-        }
-    }
-    Some(after[..end?].to_string())
-}
-
-/// Extract the JSON array of strings under `"key":[...]` from `json`.
-///
-/// Returns only the string elements; other element types are skipped.
-fn extract_string_array(json: &str, key: &str) -> Vec<String> {
-    let needle = format!("\"{}\":", key);
-    let pos = match json.find(needle.as_str()) {
-        Some(p) => p,
-        None => return Vec::new(),
-    };
-    let Some(after) = json[pos + needle.len()..].trim_start().strip_prefix('[') else {
-        return Vec::new();
-    };
-
-    // Scan elements until the closing ']'.
-    let mut result = Vec::new();
-    let mut rest = after;
-    loop {
-        let rest_t = rest.trim_start();
-        if rest_t.starts_with(']') || rest_t.is_empty() {
-            break;
-        }
-        if let Some(inner) = rest_t.strip_prefix('"') {
-            // String element: find end.
-            let mut escaped = false;
-            let mut end = None;
-            for (i, ch) in inner.char_indices() {
-                if escaped {
-                    escaped = false;
-                } else if ch == '\\' {
-                    escaped = true;
-                } else if ch == '"' {
-                    end = Some(i);
-                    break;
-                }
-            }
-            if let Some(e) = end {
-                result.push(unescape_json_str(&inner[..e]));
-                rest = &inner[e + 1..]; // skip past closing '"'
-                                        // Skip optional comma.
-                rest = rest.trim_start();
-                if rest.starts_with(',') {
-                    rest = &rest[1..];
-                }
-            } else {
-                break;
-            }
-        } else {
-            // Non-string token: skip to next comma or ']'.
-            let skip = rest_t.find([',', ']']).unwrap_or(rest_t.len());
-            rest = &rest_t[skip..];
-            if rest.starts_with(',') {
-                rest = &rest[1..];
-            }
-        }
-    }
-    result
-}
-
-/// Parse a single JSONL line produced by `entry_to_json`.
-///
-/// Returns `None` if any required field is missing or malformed.
-/// Malformed but non-critical fields (e.g. before.dirty) receive empty defaults.
+#[cfg(test)]
 fn parse_oplog_line(line: &str) -> Option<OpLogEntry> {
-    let line = line.trim();
-    if !line.starts_with('{') {
-        return None;
-    }
-
-    // Top-level fields.
-    let timestamp: i64 = extract_str_field(line, "timestamp")?.parse().ok()?;
-    let op = extract_str_field(line, "op")?;
-    let repo = extract_str_field(line, "repo")?;
-
-    // ADR-0149 fields. Absent (pre-ADR-0149 lines) → id/parent are fixed up by
-    // `read_oplog_tail`; actor defaults to Human; worktree stays None.
-    // A literal `null` scalar decodes to None. (A worktree path literally named
-    // "null" would be misread as None — accepted edge; paths are absolute.)
-    let id: u64 = extract_str_field(line, "id")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    let parent: Option<u64> = match extract_str_field(line, "parent") {
-        Some(s) if s != "null" => s.parse().ok(),
-        _ => None,
-    };
-    let actor = extract_str_field(line, "actor")
-        .map(|s| Actor::from_wire(&s))
-        .unwrap_or_default();
-    let worktree: Option<String> = match extract_str_field(line, "worktree") {
-        Some(s) if s != "null" => Some(s),
-        _ => None,
-    };
-
-    // "before" object.
-    let before_obj = extract_object_field(line, "before")?;
-    let before_head = extract_str_field(&before_obj, "head").unwrap_or_default();
-    let before_dirty = extract_str_field(&before_obj, "dirty").unwrap_or_default();
-    let before = super::ops::StateSummary {
-        head: before_head,
-        dirty: before_dirty,
-    };
-
-    // "outcome" object.
-    let outcome_obj = extract_object_field(line, "outcome")?;
-    let kind = extract_str_field(&outcome_obj, "kind")?;
-
-    let outcome = match kind.as_str() {
-        "Success" => {
-            let after_obj = extract_object_field(&outcome_obj, "after")?;
-            let head = extract_str_field(&after_obj, "head").unwrap_or_default();
-            let dirty = extract_str_field(&after_obj, "dirty").unwrap_or_default();
-            OpOutcome::Success {
-                after: super::ops::StateSummary { head, dirty },
-            }
-        }
-        "Partial" => {
-            let after_obj = extract_object_field(&outcome_obj, "after")?;
-            let head = extract_str_field(&after_obj, "head").unwrap_or_default();
-            let dirty = extract_str_field(&after_obj, "dirty").unwrap_or_default();
-            let error = extract_str_field(&outcome_obj, "error").unwrap_or_default();
-            OpOutcome::Partial {
-                after: super::ops::StateSummary { head, dirty },
-                error,
-            }
-        }
-        "Unknown" => {
-            let after_obj = extract_object_field(&outcome_obj, "after")?;
-            OpOutcome::Unknown {
-                after: StateSummary {
-                    head: extract_str_field(&after_obj, "head")?,
-                    dirty: extract_str_field(&after_obj, "dirty")?,
-                },
-                evidence: extract_str_field(&outcome_obj, "evidence")?,
-            }
-        }
-        "Failed" => {
-            let error = extract_str_field(&outcome_obj, "error").unwrap_or_default();
-            OpOutcome::Failed { error }
-        }
-        "Refused" => {
-            let blockers = extract_string_array(&outcome_obj, "blockers");
-            OpOutcome::Refused { blockers }
-        }
-        _ => return None,
-    };
-
-    let failure_code =
-        extract_str_field(line, "failure_code").map(|value| FailureCode::from_str_lossy(&value));
-    Some(OpLogEntry {
-        id,
-        parent,
-        timestamp,
-        op,
-        repo,
-        actor,
-        worktree,
-        before,
-        outcome,
-        backup_refs: extract_string_array(line, "backup_refs"),
-        recovery: recovery::parse(line),
-        failure_code,
-    })
+    codec::from_value(serde_json::from_str(line).ok()?)
 }
 
 /// Read the last `n` entries from the oplog file (newest last in file,
@@ -870,7 +476,7 @@ pub fn append_oplog_receipt(entry: &OpLogEntry) -> Result<(PathBuf, OpLogEntry),
 // ────────────────────────────────────────────────────────────
 
 // Unit tests live in a child file to keep this file under the LOC ratchet
-// (escape/serialize/parse/append coverage).
+// (reader, retention, and receipt compatibility coverage).
 #[cfg(test)]
 #[path = "oplog_tests.rs"]
 mod tests;
@@ -916,8 +522,7 @@ mod failure_code_tests {
         let line = entry_to_json(&failed_entry());
         assert!(
             !line.contains("failure_code"),
-            "an entry with no code must be byte-identical to what earlier \
-             versions wrote, so existing readers are unaffected: {line}"
+            "an absent failure code must stay omitted, not become a null code: {line}"
         );
     }
 

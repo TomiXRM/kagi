@@ -9,10 +9,17 @@ pub(super) fn repositories(repo: &Repository) -> Result<Vec<Repository>, GitErro
         let name = name
             .map_err(error)?
             .ok_or_else(|| GitError::Other("non-UTF-8 worktree name".into()))?;
-        repositories.push(
-            Repository::open_from_worktree(&repo.find_worktree(name).map_err(error)?)
-                .map_err(error)?,
-        );
+        let worktree = repo.find_worktree(name).map_err(error)?;
+        let opened = match Repository::open_from_worktree(&worktree) {
+            // A deleted, never-pruned worktree dir makes libgit2 fail to resolve
+            // its workdir. Its admin dir still holds HEAD, so open that bare:
+            // its branch stays protected (as `git branch -D` does).
+            Err(_) if worktree.validate().is_err() => {
+                Repository::open_bare(repo.commondir().join("worktrees").join(name))
+            }
+            opened => opened,
+        };
+        repositories.push(opened.map_err(error)?);
     }
     repositories.sort_by_key(|repo| repo.path().to_path_buf());
     repositories.dedup_by(|a, b| a.path() == b.path());

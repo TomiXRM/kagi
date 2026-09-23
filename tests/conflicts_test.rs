@@ -877,11 +877,18 @@ fn hunk_reset_keeps_marker_residue_and_blocks_continue() {
     buffer.apply_hunk_choice(path, 0, HunkChoice::AcceptCurrent);
     buffer.apply_hunk_choice(path, 1, HunkChoice::AcceptIncoming);
     assert!(buffer.files_with_marker_residue().is_empty());
+    assert!(!buffer.has_cached_marker_residue());
 
     // Reset hunk 1 → it re-emits markers → residue → continue gate trips.
     assert!(buffer.reset_hunk(path, 1));
     assert!(!buffer.hunks_all_resolved(path));
     assert_eq!(buffer.files_with_marker_residue(), vec![path.to_path_buf()]);
+    assert!(buffer.cached_marker_residue(path));
+    assert!(buffer.undo(path));
+    assert!(!buffer.has_cached_marker_residue());
+    assert!(buffer.files_with_marker_residue().is_empty());
+    assert!(buffer.redo(path));
+    assert!(buffer.has_cached_marker_residue());
 
     let session = detect_conflict_session(&repo).unwrap();
     let plan = plan_conflict_continue(&repo, &session, &buffer).unwrap();
@@ -2093,4 +2100,98 @@ fn skip_advancing_to_the_next_conflict_is_not_a_failure() {
         git_output(dir, &["rev-parse", "main"]),
         "side is now exactly main"
     );
+}
+
+#[test]
+fn marker_cache_tracks_undo_restore_and_multiple_saved_files() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = merge_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let path = Path::new("file.txt");
+    let old_path = Path::new("previous-conflict.txt");
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .set_manual_text(path, "<<<<<<< current\nunfinished\n")
+        .unwrap();
+    assert!(buffer.has_cached_marker_residue());
+    assert!(buffer.undo(path));
+    assert!(!buffer.has_resolution(path));
+    assert!(!buffer.has_cached_marker_residue());
+    assert!(buffer.redo(path));
+    assert!(buffer.cached_marker_residue(path));
+
+    let saved_path = buffer.autosave().unwrap();
+    let mut saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&saved_path).unwrap()).unwrap();
+    let mut old_file = saved["files"][0].clone();
+    old_file["path"] = serde_json::json!("previous-conflict.txt");
+    saved["files"].as_array_mut().unwrap().push(old_file);
+    std::fs::write(&saved_path, serde_json::to_vec(&saved).unwrap()).unwrap();
+
+    let mut loaded = ResolutionBuffer::load(tmp.path()).unwrap();
+    loaded.set_manual_text(path, "resolved\n").unwrap();
+    assert!(!loaded.cached_marker_residue(path));
+    assert!(
+        loaded.has_cached_marker_residue(),
+        "another marked file must keep the aggregate set"
+    );
+    assert_eq!(
+        loaded.files_with_marker_residue(),
+        vec![old_path.to_path_buf()]
+    );
+    loaded.set_manual_text(old_path, "also resolved\n").unwrap();
+    assert!(!loaded.has_cached_marker_residue());
+    assert!(loaded.undo(path));
+    assert!(loaded.has_cached_marker_residue());
+    assert!(loaded.redo(path));
+    assert!(!loaded.has_cached_marker_residue());
+
+    // Re-entry overlays only current index conflicts, not every saved file.
+    let mut restored = ResolutionBuffer::from_repo_with_autosave(&repo).unwrap();
+    assert!(restored.cached_marker_residue(path));
+    assert!(!restored.cached_marker_residue(old_path));
+    restored
+        .apply_choice(path, ResolutionChoice::Current)
+        .unwrap();
+    assert!(!restored.has_cached_marker_residue());
+    assert!(
+        continue_blockers(&repo, &detect_conflict_session(&repo).unwrap(), &restored).is_empty()
+    );
+
+    // Legacy duplicate entries are last-wins, including the aggregate count.
+    let mut replacement = saved["files"][0].clone();
+    replacement["result"] = serde_json::json!([]);
+    saved["files"].as_array_mut().unwrap().push(replacement);
+    std::fs::write(&saved_path, serde_json::to_vec(&saved).unwrap()).unwrap();
+    let mut loaded = ResolutionBuffer::load(tmp.path()).unwrap();
+    assert_eq!(loaded.resolved_text(path).as_deref(), Some(""));
+    loaded.set_manual_text(old_path, "resolved\n").unwrap();
+    assert!(
+        !loaded.has_cached_marker_residue(),
+        "replaced entries cannot retain residue counts"
+    );
+}
+
+#[test]
+fn raw_choice_removes_prior_text_residue_from_the_cached_verdict() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = binary_merge_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    let path = &session.files[0].path;
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer.set_manual_text(path, "<<<<<<< current\n").unwrap();
+    assert!(buffer.has_cached_marker_residue());
+    buffer
+        .apply_choice(path, ResolutionChoice::Current)
+        .unwrap();
+    assert!(buffer.has_resolution(path));
+    assert!(!buffer.has_cached_marker_residue());
+    assert!(!buffer.cached_marker_residue(path));
+    assert!(buffer.files_with_marker_residue().is_empty());
+    assert!(continue_blockers(&repo, &session, &buffer).is_empty());
 }

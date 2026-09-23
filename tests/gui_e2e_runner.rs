@@ -88,6 +88,10 @@ mod app_conflict;
 mod conflict_abort_slot;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/conflict_continue_cache.rs"]
+mod conflict_continue_cache;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/remote_browse_focus.rs"]
 mod remote_browse_focus;
 
@@ -935,6 +939,10 @@ mod macos {
             (
                 "editor_banner_rename_and_save",
                 Box::new(crate::app_writer_admission::scenario_editor_banner_rename_and_save),
+            ),
+            (
+                "conflict_continue_cache",
+                Box::new(crate::conflict_continue_cache::scenario_conflict_continue_cache),
             ),
             (
                 "conflict_save_boundary",

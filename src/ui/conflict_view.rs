@@ -265,14 +265,7 @@ impl ConflictView {
             return Some(Err(e));
         }
         // Refresh status for this file from the buffer.
-        let residue = c.buffer.files_with_marker_residue();
-        if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
-            f.status = if residue.contains(&f.path) {
-                kagi_git::ConflictStatus::NeedsReview
-            } else {
-                kagi_git::ConflictStatus::Resolved
-            };
-        }
+        c.refresh_file_status(path);
         // Autosave (ADR-0057): never lose a partial resolution.
         let _ = c.buffer.autosave();
         Some(Ok(()))
@@ -364,16 +357,7 @@ impl ConflictView {
         let Some(c) = self.mode.as_mut() else {
             return;
         };
-        let residue = c.buffer.files_with_marker_residue();
-        if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
-            f.status = if !c.buffer.has_resolution(path) {
-                kagi_git::ConflictStatus::Unresolved
-            } else if residue.contains(&f.path) {
-                kagi_git::ConflictStatus::NeedsReview
-            } else {
-                kagi_git::ConflictStatus::Resolved
-            };
-        }
+        c.refresh_file_status(path);
         let _ = c.buffer.autosave();
     }
 }
@@ -415,6 +399,18 @@ pub struct ConflictMode {
 }
 
 impl ConflictMode {
+    fn refresh_file_status(&mut self, path: &std::path::Path) {
+        if let Some(file) = self.session.files.iter_mut().find(|file| file.path == path) {
+            file.status = if !self.buffer.has_resolution(path) {
+                ConflictStatus::Unresolved
+            } else if self.buffer.cached_marker_residue(path) {
+                ConflictStatus::NeedsReview
+            } else {
+                ConflictStatus::Resolved
+            };
+        }
+    }
+
     /// Number of files with a resolution draft in the buffer.
     pub fn resolved_count(&self) -> usize {
         self.session
@@ -473,7 +469,7 @@ impl ConflictMode {
             return Some(Msg::ConflictBlockerUnresolved);
         }
         // 2. Marker residue in any resolved buffer text.
-        if !self.buffer.files_with_marker_residue().is_empty() {
+        if self.buffer.has_cached_marker_residue() {
             return Some(Msg::ConflictBlockerMarker);
         }
         None
@@ -769,16 +765,7 @@ impl ConflictView {
         }
         // Reset leaves marker residue → status becomes NeedsReview (still has a
         // result draft, but unresolved markers remain).
-        let residue = c.buffer.files_with_marker_residue();
-        if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
-            f.status = if residue.contains(&f.path) {
-                kagi_git::ConflictStatus::NeedsReview
-            } else if c.buffer.has_resolution(path) {
-                kagi_git::ConflictStatus::Resolved
-            } else {
-                kagi_git::ConflictStatus::Unresolved
-            };
-        }
+        c.refresh_file_status(path);
         let _ = c.buffer.autosave();
     }
 
@@ -962,9 +949,16 @@ impl ConflictView {
             return;
         };
 
-        // Assemble the Result text block (chars/line-safe join).
-        let result_text = model.assembled_text();
         let edit_mode = self.result_editing;
+        // Compare edits with the current draft, not the unchanged hunk model:
+        // otherwise every repaint republishes the same manual edit.
+        let result_text = if edit_mode {
+            c.buffer
+                .resolved_text(&path)
+                .unwrap_or_else(|| model.assembled_text())
+        } else {
+            model.assembled_text()
+        };
 
         // Edit mode: pull the user's edits into the buffer and return — unless a
         // side selection zeroed `content_sig`: then the input is stale (#722).
@@ -972,21 +966,17 @@ impl ConflictView {
             if let Some(inputs) = self.editor_inputs.as_ref() {
                 if inputs.path == path && inputs.content_sig != 0 {
                     let edited = inputs.result.read(cx).value().to_string();
-                    if edited != result_text {
+                    // Match text_to_lines' optional final newline without
+                    // allocating another line vector or inventing a new edit.
+                    if !edited
+                        .split_terminator('\n')
+                        .eq(result_text.split_terminator('\n'))
+                    {
                         if let Some(c) = self.mode.as_mut() {
                             let _ = c.buffer.set_manual_text(&path, &edited);
                             let _ = c.buffer.autosave();
                             // Refresh the file status from the buffer.
-                            let residue = c.buffer.files_with_marker_residue();
-                            if let Some(f) = c.session.files.iter_mut().find(|f| f.path == path) {
-                                f.status = if residue.contains(&f.path) {
-                                    kagi_git::ConflictStatus::NeedsReview
-                                } else if c.buffer.has_resolution(&path) {
-                                    kagi_git::ConflictStatus::Resolved
-                                } else {
-                                    kagi_git::ConflictStatus::Unresolved
-                                };
-                            }
+                            c.refresh_file_status(&path);
                         }
                     }
                     // A/B row lists never change while editing the Result; keep as-is.
@@ -1258,7 +1248,8 @@ where
 /// status note (ready / specific blocker) sits below, and — for sequencer ops or
 /// while blocked — a secondary row offers Next-conflict / Skip.
 fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::AnyElement {
-    let can_continue = mode.can_continue();
+    let blocker = mode.continue_blocker();
+    let can_continue = blocker.is_none();
     let is_sequencer = mode.session.op.is_sequencer();
 
     // Continue reloads (merge → commit panel / sequencer → confirm modal), so
@@ -1331,7 +1322,7 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
         .child(primary_row);
 
     // Status note: the specific blocker reason, or the ready confirmation.
-    let (note, note_color) = match mode.continue_blocker() {
+    let (note, note_color) = match blocker {
         Some(msg) => (msg.t(), theme().color_blocker),
         None => (Msg::ConflictContinueReady.t(), theme().color_success),
     };

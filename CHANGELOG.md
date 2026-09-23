@@ -18,6 +18,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Conflict の Continue 判定用 marker 状態を Result 編集と同期して保持し、判定時の再描画ごとの全文連結・走査をなくしました。同じ手編集を再描画で undo stack に積み直すことも防ぎます。未解決・binary・deletion の優先順位と、保存／実行前の fresh validation は維持します。（#497）
 - Worktree 削除の初期 blocker が `plan has blockers` に潰れる問題を修正しました。具体的な全理由を oplog に残し、先頭の typed blocker を既存 EN/JA の通知と toast に表示します。削除条件・確認・安全検査・他 family は変更しません。（#353）
 - Avatar の map を File History / Editor と共有し、PR conversation / lane は借用するようにしました。描画ごとの map・key の複製をなくし、新しい解決 batch が届いたときだけ snapshot を更新します。取得方法・画像の fallback・Git 操作は変更していません。（#498）
 - Toolbar の既存の利用可能状態を AccessKit の disabled に反映する処理を追加しました。Terminal の選択状態とは区別し、無効時のクリック理由 footer と Undo/Redo の busy guard は変更しません。native AXEnabled は main でも AXWindow が取得できない環境のため未検証で、次回セッションで確認します。（#354）

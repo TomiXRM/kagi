@@ -520,6 +520,50 @@ fn clean_worktree_blocks_delete() {
     assert!(repo.find_branch("merged", git2::BranchType::Local).is_ok());
 }
 
+/// A registered worktree whose directory was deleted (never pruned) must not
+/// block deleting an unrelated branch (user report: "failed to resolve path").
+#[test]
+fn missing_worktree_dir_does_not_block_unrelated_delete() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = setup_repo();
+    let wt_path = fixture.path.join("wt-unmerged");
+    git(
+        &fixture.path,
+        &["worktree", "add", wt_path.to_str().unwrap(), "unmerged"],
+    );
+    std::fs::remove_dir_all(&wt_path).unwrap();
+    let repo = Repository::open(&fixture.path).unwrap();
+    let plan = plan_delete_branch(&repo, "merged").unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    execute_delete_branch(&repo, &plan, "merged").unwrap();
+    assert!(repo.find_branch("merged", git2::BranchType::Local).is_err());
+}
+
+/// Like `git branch -D`, the missing worktree's HEAD still protects its branch.
+#[test]
+fn missing_worktree_dir_still_blocks_its_branch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = setup_repo();
+    let wt_path = fixture.path.join("wt-merged");
+    git(
+        &fixture.path,
+        &["worktree", "add", wt_path.to_str().unwrap(), "merged"],
+    );
+    std::fs::remove_dir_all(&wt_path).unwrap();
+    let repo = Repository::open(&fixture.path).unwrap();
+    let plan = plan_delete_branch(&repo, "merged").unwrap();
+    assert!(plan.blockers.iter().any(|note| matches!(
+        note,
+        PlanNote::Branch(BranchNote::DeleteBranchCheckedOut { .. })
+    )));
+    assert!(execute_delete_branch(&repo, &plan, "merged").is_err());
+    assert!(repo.find_branch("merged", git2::BranchType::Local).is_ok());
+}
+
 /// A DIRTY linked worktree blocks the plan with a readable message and
 /// execute refuses (no data loss).
 #[test]

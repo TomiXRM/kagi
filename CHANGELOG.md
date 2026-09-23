@@ -5,6 +5,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-09-23
+
 ### Added
 
 - Toolbar と sidebar navigation に accessibility role と名前を付与し、sidebar の既存の選択状態を公開しました。modal footer は既存 Button の意味情報を維持します。VoiceOver・確認ダイアログ・リスト全体の対応は含みません。（#354）

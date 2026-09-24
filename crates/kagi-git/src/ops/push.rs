@@ -18,6 +18,30 @@ use super::*;
 use kagi_domain::plan_note::push::PushPunct;
 use kagi_domain::plan_note::{CommonNote, PlanOp, PushNote, PushRecovery, PushTitle, RecoveryKind};
 
+/// A branch created from `origin/master` tracks it as its *base*, not as where
+/// it is published. Pushing it publishes `origin/<branch>` and moves the
+/// upstream there, as VS Code's Publish does (a plain `git push` refuses it
+/// under the default `push.default=simple`).
+fn tracks_other_branch(repo: &Repository, branch_name: &str) -> bool {
+    let own = format!("refs/heads/{branch_name}");
+    repo.branch_upstream_merge(&own)
+        .ok()
+        .is_some_and(|merge| merge.as_str().ok() != Some(own.as_str()))
+}
+
+/// The push view of the upstream: one that tracks another branch is none.
+fn push_upstream_info(
+    repo: &Repository,
+    branch_name: &str,
+) -> Result<(String, String, usize), GitError> {
+    if tracks_other_branch(repo, branch_name) {
+        return Err(GitError::Other(format!(
+            "upstream of '{branch_name}' is another branch"
+        )));
+    }
+    resolve_upstream_info(repo, branch_name)
+}
+
 // ────────────────────────────────────────────────────────────
 // plan_push  (T-HT-004)
 // ────────────────────────────────────────────────────────────
@@ -138,7 +162,7 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
     // ── 5. Upstream check ────────────────────────────────────
     // Try to resolve upstream info; Ok → upstream configured,
     // Err → no upstream (set-upstream flow or hard blocker).
-    let upstream_info = resolve_upstream_info(repo, &branch_name);
+    let upstream_info = push_upstream_info(repo, &branch_name);
 
     let (has_upstream, remote_name, ahead_count) = match upstream_info {
         Ok((_, remote, _behind)) => {
@@ -321,7 +345,7 @@ pub(crate) fn execute_push(repo: &Repository, repo_path: &Path) -> Result<PushOu
         .to_string();
 
     // ── 2. Check for upstream ─────────────────────────────────
-    let upstream_result = resolve_upstream_info(repo, &branch_name);
+    let upstream_result = push_upstream_info(repo, &branch_name);
     let (has_upstream, remote_name) = match upstream_result {
         Ok((_, remote, _)) => (true, remote),
         Err(_) => {
@@ -515,6 +539,7 @@ fn build_push_preview_for_oid(
     repo: &Repository,
     head_oid: git2::Oid,
     upstream_oid: Option<git2::Oid>,
+    remote_name: &str,
 ) -> Result<Vec<String>, GitError> {
     const MAX_PREVIEW: usize = 100;
 
@@ -523,8 +548,14 @@ fn build_push_preview_for_oid(
         .map_err(|e| GitError::Other(format!("revwalk init failed: {}", e.message())))?;
     walk.push(head_oid)
         .map_err(|e| GitError::Other(format!("revwalk push failed: {}", e.message())))?;
-    if let Some(upstream_oid) = upstream_oid {
-        let _ = walk.hide(upstream_oid);
+    match upstream_oid {
+        Some(upstream_oid) => {
+            let _ = walk.hide(upstream_oid);
+        }
+        // First push: what the remote already has via other branches is not new.
+        None => {
+            let _ = walk.hide_glob(&format!("refs/remotes/{remote_name}/*"));
+        }
     }
     walk.set_sorting(git2::Sort::TOPOLOGICAL)
         .map_err(|e| GitError::Other(format!("revwalk sort failed: {}", e.message())))?;
@@ -560,6 +591,7 @@ pub fn plan_push_branch(
     branch_name: &str,
     set_upstream: bool,
 ) -> Result<OperationPlan, GitError> {
+    let set_upstream = set_upstream || tracks_other_branch(repo, branch_name);
     let head = resolve_head(repo)?;
     let status = working_tree_status(repo)?;
     let current = StateSummary {
@@ -618,7 +650,7 @@ pub fn plan_push_branch(
                 .map(|(ahead, _)| ahead)
                 .unwrap_or(0)
         } else {
-            build_push_preview_for_oid(repo, local_oid, None)
+            build_push_preview_for_oid(repo, local_oid, None, &remote_name)
                 .map(|commits| commits.len())
                 .unwrap_or(0)
         }
@@ -636,7 +668,7 @@ pub fn plan_push_branch(
     }
 
     let preview_commits = if blockers.is_empty() {
-        build_push_preview_for_oid(repo, local_oid, upstream_oid).unwrap_or_default()
+        build_push_preview_for_oid(repo, local_oid, upstream_oid, &remote_name).unwrap_or_default()
     } else {
         Vec::new()
     };
@@ -683,6 +715,7 @@ pub(crate) fn execute_push_branch(
     branch_name: &str,
     set_upstream: bool,
 ) -> Result<PushOutcome, GitError> {
+    let set_upstream = set_upstream || tracks_other_branch(repo, branch_name);
     preflight_check(repo, plan)?;
     let local_oid = local_branch_oid(repo, branch_name)?;
 
@@ -699,7 +732,7 @@ pub(crate) fn execute_push_branch(
             .map(|(ahead, _)| ahead)
             .unwrap_or(0)
     } else {
-        build_push_preview_for_oid(repo, local_oid, None)
+        build_push_preview_for_oid(repo, local_oid, None, &remote_name)
             .map(|commits| commits.len())
             .unwrap_or(0)
     };

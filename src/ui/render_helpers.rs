@@ -577,9 +577,16 @@ pub(crate) fn render_diff_list<V: 'static>(
     // W-IMG: one labelled image column ("Before"/"After"); either side of the
     // pair may be missing for added/deleted files.
     let image_col = |label: &'static str, img: std::sync::Arc<gpui::Image>| {
+        // The column stretches to the panel height and the image fills what the
+        // label leaves, contained. `max_h_full` on the img had no definite
+        // height to resolve against, so a portrait image overflowed and the
+        // centred panel clipped its top and bottom (user report). The img is
+        // absolutely placed: percent sizes on in-flow children of a
+        // flex_basis(0) column can resolve to 0 (#362).
         div()
             .flex_1()
             .min_w(px(0.))
+            .self_stretch()
             .flex()
             .flex_col()
             .items_center()
@@ -591,10 +598,18 @@ pub(crate) fn render_diff_list<V: 'static>(
                     .child(SharedString::from(label)),
             )
             .child(
-                gpui::img(gpui::ImageSource::Image(img))
-                    .max_w_full()
-                    .max_h_full()
-                    .object_fit(gpui::ObjectFit::Contain),
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .self_stretch()
+                    .child(
+                        gpui::img(gpui::ImageSource::Image(img))
+                            .absolute()
+                            .inset_0()
+                            .size_full()
+                            .object_fit(gpui::ObjectFit::Contain),
+                    ),
             )
     };
 

@@ -1,7 +1,7 @@
 # Decision Log
 
 > **Status:** Active — append-only  
-> **Last updated:** 2026-09-23
+> **Last updated:** 2026-09-24
 
 ADR にするほどではないが、再計測や同じ失敗を避けるために残すべき決定と実測事実のログです。ADR を置き換えるものではありません。
 
@@ -15,6 +15,7 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-09-24 | Push は別名のブランチを追跡する upstream(`origin/master` から作ったブランチ)を「push 先なし」とみなし、`push -u` で `origin/<branch>` へ公開して upstream をそこへ移す | 追跡先を base のまま `git push origin <branch>` すると remote には載るが、upstream が `origin/master` のままなので ahead が減らず、「pushed N」が毎回出て完了しないように見えた(ユーザー報告)。VS Code の Publish と同じ挙動で、素の `git push` も `push.default=simple` ではこの状態を拒否する。ブランチメニューはこの状態で Push しか出さないので、`plan_push_branch` も同じ判定で set-upstream に切り替える。 |
 | 2026-09-23 | AppNotice は共有 modal card shell で描き、種別を名乗らない中立 title と Operation Log への 1 行案内を持つ | #792。`div().bg(bg_base)` の独自 card を削除し、`modal_card` / `render_modal_title_row` / `modal_scroll_body` に載せて #454 の card と #462 の compact に従わせる（第二の card 実装を残さない）。`AppNotice` は message と `inspect` / `acknowledge` / `release_armed` しか持たず outcome kind が無いため、「拒否」「中断」などの種別を推測せず 1 つの中立 title（EN `Operation notice` / JA「操作に関する通知」）を使い、producer 側に型を足す改修は別 issue とする。本文末尾の muted 1 行は全 notice に無条件で出し、閲覧とコピーの場所だけを案内して保存済みであるとは言わない（append 失敗時も panel には entry が残るため。`KagiApp::record_op_impl`）。コピー機能は Operation Log が所有し card には足さない。action button は従来の 1 個・同じ label 順・同じ callback・同じ id のままで、`tab_stop(false)` により focus 挙動も従来どおりにする。表示・dismiss・ActiveModal slot・#755 の root focus・#706 の二段階解放は変更しない。 |
 | 2026-09-23 | 共有 context-menu renderer が表示グループ間の separator を所有し、Worktree の削除群を末尾に置く | #454 Phase 3 の最小 slice。既存 `MenuGroup` の無題グループも区切り、空・Hidden-only 群には線や高さを割り当てない。高さ計算は実際の見出しと境界に合わせる。Editor の既存 Danger 末尾と、破壊的項目がない Tag の一群は維持する。操作・確認経路・文言は変えず、submenu は対象外（[ADR-0020](adr/0020-commit-context-menu.md)）。 |
 | 2026-09-23 | Branch 行の tip 日時は読み込み済み commit の committer 時刻だけを使い、日時は name より先に省略される suffix cell に描く | #358。tip の時刻は refs 側に無いが、読み込み済みの commit には committer の epoch 秒があり、絶対表記は `CommitDetail::committed_date` として既に算出済みなので、`CommitRow::committed_secs` 1 個の追加と `TabViewState::tip_labels` の索引参照（`commit_row_index`、Solo 中は `BranchSolo::saved_row_index`）だけで済む。collector に peel を足さず、Backend / RepoSession / background 経路も呼ばないので Git 読み取りは増えない（高速化は主張しない）。読みモデルに tip が無い場合だけ `—` を出し、予算切れか commit 走査と refs 読みの間の ref 移動かは断定しない。意味は「tip commit の日時」であり ref の移動・作成・fetch 時刻ではなく、graph の日付列（author 表記）は変更しない。描画は name label への文字列連結ではなく独立の suffix cell（`flex_shrink(1000.)` + `min_w(0)` + `truncate`、区切りの空白も cell 内）とし、行は `w_full` で幅を確定する。行幅が確定していないと flex は grow も shrink もせず、長い name が `×` を pane 外へ押し出していた（PM 却下 240px、`/tmp/kagi-358-pm/s240.png`）。name cell は `flex_auto` で intrinsic 幅を保つため、不足分は suffix が先に手放し、`↑↓` chip・PR badge・`×` は `flex_shrink_0` のまま縮まない。検証範囲: native 240px は PM 承認（長い local branch で ellipsis と `×` が復帰、suffix が先に消える、tooltip にフル名と `2025-11-02 14:30`）。**120px は設定が適用されず 240px で描画されたため未検証のまま PM が明示的に受理した。** taffy 0.10.1 単体の layout probe で 240/120 の境界を確認している。 |

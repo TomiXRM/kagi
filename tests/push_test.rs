@@ -270,6 +270,55 @@ fn test_push_set_upstream() {
     );
 }
 
+/// Test 3a: a branch created from `origin/main` tracks main as its base. Push
+/// must publish `origin/<branch>` and move the upstream there (user report:
+/// the push landed on the remote but the branch stayed "3 ahead" of
+/// origin/main, so every retry reported "pushed 3" again).
+#[test]
+fn test_push_branch_tracking_base_publishes_and_moves_upstream() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    git(
+        &r.local,
+        &[
+            "checkout",
+            "-q",
+            "-b",
+            "feature/base",
+            "--track",
+            "origin/main",
+        ],
+    );
+    write_file(&r.local, "feat.txt", "feature work\n");
+    git(&r.local, &["add", "-A"]);
+    git(&r.local, &["commit", "-qm", "feature commit"]);
+
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_push(&repo).expect("plan_push");
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    assert!(
+        plan.title.message_en().contains("set upstream"),
+        "{}",
+        plan.title
+    );
+    assert_eq!(plan.preview_commits.len(), 1);
+
+    let outcome = execute_push(&repo, &r.local).expect("push");
+    assert!(outcome.set_upstream);
+    let repo = Repository::open(&r.local).unwrap();
+    let branch = repo
+        .find_branch("feature/base", git2::BranchType::Local)
+        .unwrap();
+    assert_eq!(
+        branch.upstream().unwrap().name().unwrap(),
+        Some("origin/feature/base")
+    );
+    // Now up to date: a retry is a no-op, not another "pushed 1".
+    assert!(!plan_push(&repo).unwrap().blockers.is_empty());
+}
+
 /// Test 3b: no upstream, but the branch's ancestry already contains commits
 /// the remote knows about via `main` (e.g. branched after a rebase/merge) —
 /// preview_commits must exclude those, not walk to the root (user report

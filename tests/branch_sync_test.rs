@@ -167,6 +167,45 @@ fn non_current_push_uses_branch_upstream() {
     assert_eq!(rev_parse(&r.local, "HEAD"), rev_parse(&r.local, "main"));
 }
 
+/// The menu offers plain Push whenever an upstream exists; one that tracks
+/// its base (`origin/main`) is published to `origin/<branch>` and moved there.
+#[test]
+fn non_current_push_of_branch_tracking_base_moves_upstream() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    git(
+        &r.local,
+        &[
+            "checkout",
+            "-q",
+            "-b",
+            "topic/base",
+            "--track",
+            "origin/main",
+        ],
+    );
+    write_file(&r.local, "topic.txt", "topic\n");
+    git(&r.local, &["add", "-A"]);
+    git(&r.local, &["commit", "-qm", "topic"]);
+    let tip = rev_parse(&r.local, "topic/base");
+    git(&r.local, &["checkout", "-q", "main"]);
+
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_push_branch(&repo, "topic/base", false).expect("plan");
+    assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+    let outcome = execute_push_branch(&repo, &r.local, &plan, "topic/base", false).expect("push");
+    assert!(outcome.set_upstream);
+    assert_eq!(outcome.pushed, 1);
+    assert_eq!(rev_parse(&r.remote, "refs/heads/topic/base"), tip);
+    let branch = repo.find_branch("topic/base", BranchType::Local).unwrap();
+    assert_eq!(
+        branch.upstream().unwrap().name().unwrap(),
+        Some("origin/topic/base")
+    );
+}
+
 #[test]
 fn set_upstream_is_config_only() {
     if !crate::test_support::run_isolated() {

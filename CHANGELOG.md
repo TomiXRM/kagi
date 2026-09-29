@@ -5,6 +5,14 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.40.1] - 2026-09-29
+
+### Fixed
+
+- 登録だけ残り作業ディレクトリが削除された worktree があると、無関係なブランチの削除まで `failed to resolve path` で失敗する問題を修正しました。消えた worktree は管理ディレクトリから HEAD を読み、そのブランチは `git branch -D` と同じく引き続き削除を拒否します。（#802）
+- `origin/master` などの別名ブランチを upstream に持つローカル専用ブランチを Push すると、remote には載るのに upstream が変わらず、毎回「pushed N」が出て完了しないように見える問題を修正しました。この場合は `push -u` で `origin/<branch>` に公開し、upstream をそこへ移します（VS Code の Publish と同じ）。ブランチメニューの Push も同じ扱いで、初回 push のコミット数は remote に既にある分を数えなくなりました。（#803）
+- 縦長画像の diff で画像の上下が見切れる問題を修正しました。Before/After の各列で、ラベルの下の領域に縦横比を保って収めます。（#804）
+
 ## [0.40.0] - 2026-09-23
 
 ### Added

@@ -95,7 +95,7 @@ fn render_help(cx: &mut Context<EcosystemView>) -> AnyElement {
 /// right cluster drops to a second line as a unit instead of being clipped off
 /// the right edge (which hid the Copy / ✕ buttons before).
 fn render_header(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyElement {
-    let copy_enabled = view.data.ecosystem.is_some();
+    let copy_enabled = view.data.ecosystem.is_some() && view.data.mode != EcosystemMode::Health;
     let copy_click = cx.listener(|v, _: &gpui::ClickEvent, _w, cx| v.copy_diagnostic(cx));
     let help_click = cx.listener(|v, _: &gpui::ClickEvent, _w, cx| v.toggle_help(cx));
     let close_click = cx.listener(|v, _: &gpui::ClickEvent, _w, cx| v.request_close(cx));
@@ -260,7 +260,10 @@ fn render_granularity_toggle(view: &EcosystemView, cx: &mut Context<EcosystemVie
 
 /// Body: loading / error / the mode panel.
 fn render_body(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyElement {
-    let inner = if view.data.loading {
+    // Health has its own read, independent of the history mine's loading state.
+    let inner = if view.data.mode == EcosystemMode::Health {
+        super::health::render_health(view, cx)
+    } else if view.data.loading {
         loading_view()
     } else if let Some(err) = &view.data.error {
         centered(&format!("{}: {}", Msg::EcoLoadFailed.t(), err))
@@ -298,6 +301,7 @@ fn render_body(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyElem
                     super::lists::render_ownership_list(&view.data.ownership)
                 }
             }
+            EcosystemMode::Health => super::health::render_health(view, cx),
         }
     };
     div()
@@ -523,7 +527,7 @@ fn loading_progress() -> gpui::Div {
 }
 
 /// A centered single-line message filling the body.
-fn centered(text: &str) -> AnyElement {
+pub(super) fn centered(text: &str) -> AnyElement {
     div()
         .flex()
         .size_full()

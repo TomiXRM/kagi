@@ -148,6 +148,18 @@ The current suite covers:
   scanned zero. The counter was removed after acceptance; the behavioral
   scenario remains. Pair with `KAGI_GUI_E2E_ONLY=conflict_` for existing safety
   and ownership coverage; Save/Continue still perform fresh validation.
+- repository-health proposal (`KAGI_GUI_E2E_ONLY=repo_health_proposal`,
+  `tests/recovery/repo_health.rs`): #358 / ADR-0205. Analyze's Health axis
+  reads a fixture without a commit-graph and suggests writing one; asking
+  opens the shared plan card (equivalent command, no blockers) and nothing
+  else — no commit-graph file, no receipt, unchanged repository fingerprint,
+  also after Cancel. A real root Enter on the card writes it once (one
+  durable `write-commit-graph` success) and the Health axis re-reads without
+  the finding. Backend coverage (fsmonitor local-config-only, existing value
+  left alone, unborn HEAD blocked, platform gate) is `tests/repo_health_test.rs`.
+  Tier B: open Analyze → Health on a repository without a commit-graph and
+  with `core.fsmonitor` unset, check the EN/JA texts, open each fix, read
+  the plan card (equivalent command, recovery) and Cancel, then confirm one.
 - text-first diff highlight (`KAGI_GUI_E2E_ONLY=diff_highlight`,
   `tests/recovery/diff_highlight.rs`): #495. WIP, Compare and File History
   diffs are read off the UI thread and first appear as unhighlighted text
@@ -448,7 +460,7 @@ the row. On a clean fixture both plans must resolve the undecorated branch and
 show the typed other-worktree occupancy blocker. Enter must not change either
 worktree's HEAD/index/files; no untracked-file warning may mask auto-execution.
 The existing tree-glyph navigation checks still run. Backend regressions in
-`tests/ops_test.rs` cover main/linked occupancy, occupancy arising after approval,
+`crates/kagi-git/tests/ops_test.rs` cover main/linked occupancy, occupancy arising after approval,
 and successful checkout after the sibling detaches.
 
 App keybindings, command-registry keybindings, and native menus share their
@@ -715,7 +727,7 @@ never call raw executors or clear plan blockers. `tests/support/remove.rs` freez
 the opaque remove plan before any fixture drift. Compile-fail doctests guard old
 root/ops/conflicts/staging/step-runner imports. D/F fixtures check owner trust and
 frozen OID/child-list rejection through the dedicated Backend boundary.
-`tests/backend_fixture_storage_test.rs` drives the migrated branch adapter in
+`crates/kagi-git/tests/backend_fixture_storage_test.rs` drives the migrated branch adapter in
 the shared isolated child, asserts a record in its log directory and preserves
 a fake HOME oplog sentinel. Every new migrated fixture must use the same helper.
 

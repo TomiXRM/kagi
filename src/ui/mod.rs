@@ -1928,7 +1928,11 @@ impl KagiApp {
             klog!("changed files: {}", n);
             // W16-DIFFSTAT: aggregate per-file additions/deletions alongside.
             let stats = self.fetch_diffstat(index);
-            self.with_ui(|ui| ui.diff_caches.insert_row(index, files_opt, stats, None));
+            let generated = self.fetch_generated_flags(index, files_opt.as_deref());
+            self.with_ui(|ui| {
+                ui.diff_caches
+                    .insert_row(index, files_opt, stats, generated)
+            });
         } else {
             // Already cached — still emit the log (matches the old select()).
             let n = self
@@ -2224,34 +2228,6 @@ impl KagiApp {
         .detach();
     }
 
-    /// Fetch changed files for the commit at `index`.  Returns `None` on
-    /// failure (so the UI can show "(diff unavailable)").
-    fn fetch_changed_files(&self, index: usize) -> Option<Vec<FileStatus>> {
-        use kagi_git::CommitId;
-
-        // Early-exit if no repo is open (the session is None in that case too).
-        self.ui().repo_session.as_ref()?;
-        let detail = self.view().details.get(index)?;
-        let id = CommitId(detail.full_sha.as_ref().to_string());
-
-        // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let repo = self.ui().repo_session.as_ref()?.backend();
-        repo.commit_changed_files(&id).ok()
-    }
-
-    /// W16-DIFFSTAT: aggregate per-file additions/deletions for the commit at
-    /// `index`.  Returns `None` on failure (the UI simply omits the bar).
-    fn fetch_diffstat(&self, index: usize) -> Option<Vec<FileDiffStat>> {
-        use kagi_git::CommitId;
-
-        let repo_path = self.repo_path.as_ref()?;
-        let detail = self.view().details.get(index)?;
-        let id = CommitId(detail.full_sha.as_ref().to_string());
-
-        let repo = kagi_git::Backend::open(repo_path).ok()?;
-        repo.commit_diffstat(&id).ok()
-    }
-
     fn wip_diffstat_from_backend(repo: &kagi_git::Backend) -> WipDiffStat {
         let mut out = WipDiffStat::default();
         for stat in repo.staged_diffstat().unwrap_or_default() {
@@ -2341,7 +2317,11 @@ impl KagiApp {
             let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
             klog!("changed files: {}", n);
             let stats = self.fetch_diffstat(row_index);
-            self.with_ui(|ui| ui.diff_caches.insert_row(row_index, files_opt, stats, None));
+            let generated = self.fetch_generated_flags(row_index, files_opt.as_deref());
+            self.with_ui(|ui| {
+                ui.diff_caches
+                    .insert_row(row_index, files_opt, stats, generated)
+            });
         }
     }
 
@@ -2937,6 +2917,7 @@ impl KagiApp {
             M::LockWorktree(_) => self.confirm_lock_worktree(cx),
             M::PruneWorktrees(_) => self.confirm_prune_worktrees(cx),
             M::RepairWorktrees(_) => self.confirm_repair_worktrees(cx),
+            M::RepoHealth(_) => self.start_repo_health(cx),
             M::StashPush(_) => self.confirm_stash_push(cx),
             M::StashApply(_) => self.confirm_stash_apply(cx),
             M::CherryPick(_) => self.start_cherry_pick(cx),
@@ -3019,6 +3000,7 @@ impl KagiApp {
             M::LockWorktree(_) => self.cancel_lock_worktree_modal(),
             M::PruneWorktrees(_) => self.cancel_prune_worktrees_modal(),
             M::RepairWorktrees(_) => self.cancel_repair_worktrees_modal(),
+            M::RepoHealth(_) => self.cancel_repo_health_modal(),
             M::StashPush(_) => self.cancel_stash_push_modal(),
             M::StashApply(_) => self.cancel_stash_apply_modal(),
             M::CherryPick(_) => self.cancel_cherry_pick_modal(),

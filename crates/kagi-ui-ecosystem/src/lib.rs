@@ -19,6 +19,7 @@
 //! (close, toast) — no `KagiApp` back-reference.
 
 mod graph;
+mod health;
 mod lists;
 mod mermaid_url;
 mod render;
@@ -39,6 +40,7 @@ use kagi_domain::hotspot_report::{
     render as render_report, render_coupling_mermaid, render_couplings, render_ownership,
     ReportFormat,
 };
+use kagi_domain::repo_health::{HealthFinding, HealthFix};
 use kagi_ui_core::i18n::Msg;
 use kagi_ui_core::klog;
 use kagi_ui_core::theme::{self, theme};
@@ -127,6 +129,11 @@ pub struct EcosystemData {
     pub granularity: Granularity,
     pub loading: bool,
     pub error: Option<String>,
+    /// Health axis (#358): `None` while the backend reads the repository,
+    /// then its findings or the read error. Independent of the history mine.
+    pub health: Option<Result<Vec<HealthFinding>, String>>,
+    /// The newest health read; an older one landing later is dropped.
+    pub health_request: u64,
 }
 
 impl EcosystemData {
@@ -148,6 +155,8 @@ impl EcosystemData {
             granularity: Granularity::All,
             loading: true,
             error: None,
+            health: None,
+            health_request: 0,
         }
     }
 }
@@ -172,6 +181,9 @@ pub enum EcosystemEvent {
     /// "Copy diagnostic" wrote the clipboard — the host should confirm with a
     /// toast (the write itself is done here; only the snackbar is app-owned).
     DiagnosticCopied,
+    /// The user asked to fix a health finding — the host plans the fix and
+    /// opens its confirmation; nothing runs from here (#358).
+    HealthFixRequested(HealthFix),
 }
 
 /// The Code Ecosystem view entity (ADR-0119). A thin reflector of cached /
@@ -204,6 +216,32 @@ impl EcosystemView {
         self.data.ecosystem = None;
         self.data.loading = false;
         self.data.error = Some(error);
+    }
+
+    /// Start a health read: back to "checking", and a token that only the
+    /// newest read's result may present.
+    pub fn begin_health_read(&mut self) -> u64 {
+        self.data.health = None;
+        self.data.health_request = self.data.health_request.wrapping_add(1);
+        self.data.health_request
+    }
+
+    /// Show a health read's findings (or why they could not be read), unless
+    /// a newer read has started since `request`.
+    pub fn set_health(&mut self, request: u64, health: Result<Vec<HealthFinding>, String>) {
+        if request == self.data.health_request {
+            self.data.health = Some(health);
+        }
+    }
+
+    /// The Health axis as shown: `None` while checking.
+    pub fn health(&self) -> Option<&Result<Vec<HealthFinding>, String>> {
+        self.data.health.as_ref()
+    }
+
+    /// Ask the host to plan `fix` and open its confirmation.
+    pub fn request_health_fix(&self, fix: HealthFix, cx: &mut Context<Self>) {
+        cx.emit(EcosystemEvent::HealthFixRequested(fix));
     }
 
     /// True when this view belongs to `repo` — guards an app-driven seed so a
@@ -396,6 +434,8 @@ impl EcosystemView {
                 ),
                 "ownership",
             ),
+            // The Health axis lists fixes to confirm, not a ranking to export.
+            EcosystemMode::Health => return,
         };
         cx.write_to_clipboard(ClipboardItem::new_string(text));
         klog!(

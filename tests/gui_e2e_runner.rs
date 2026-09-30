@@ -92,6 +92,10 @@ mod conflict_abort_slot;
 mod conflict_continue_cache;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/repo_health.rs"]
+mod repo_health;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/refusal_reasons.rs"]
 mod refusal_reasons;
 
@@ -957,6 +961,10 @@ mod macos {
                 Box::new(crate::conflict_continue_cache::scenario_conflict_continue_cache),
             ),
             (
+                "repo_health_proposal",
+                Box::new(crate::repo_health::scenario_repo_health_proposal),
+            ),
+            (
                 "refusal_reasons",
                 Box::new(crate::refusal_reasons::scenario_refusal_reasons),
             ),
@@ -1421,6 +1429,12 @@ mod macos {
             (
                 "inspector_derived",
                 Box::new(crate::perf_inspector_derived::scenario_inspector_derived),
+            ),
+            (
+                "inspector_generated_lockfile_plain",
+                Box::new(
+                    crate::perf_inspector_derived::scenario_inspector_generated_lockfile_plain,
+                ),
             ),
         ];
         let mut executed = 0;

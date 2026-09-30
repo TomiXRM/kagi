@@ -13,7 +13,6 @@ use crate::ui::*;
 use gpui_component::IconName;
 use kagi_domain::repo_health::HealthFix;
 use kagi_git::backend::recording::RunReport;
-use kagi_git::oplog::OpOutcome;
 use kagi_git::Operation;
 
 fn operation(fix: HealthFix) -> Operation {
@@ -92,12 +91,10 @@ impl KagiApp {
         let name = op.oplog_name();
         if !modal.plan.blockers.is_empty() {
             klog!("refused: {} plan has blockers, not executing", name);
-            self.record_op(
+            self.record_refused(
                 name,
                 modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &modal.plan.blockers,
                 &repo_path,
                 cx,
             );

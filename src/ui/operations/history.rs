@@ -247,12 +247,10 @@ impl KagiApp {
         };
 
         if !modal.plan.blockers.is_empty() {
-            self.record_op(
+            self.record_refused(
                 &op_name,
                 modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &modal.plan.blockers,
                 &repo_path,
                 cx,
             );
@@ -449,12 +447,10 @@ impl KagiApp {
         // Defence: never execute with blockers present.
         if !modal.plan.blockers.is_empty() {
             klog!("refused: amend plan has blockers, not executing");
-            self.record_op(
+            self.record_refused(
                 "amend",
                 modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &modal.plan.blockers,
                 &repo_path,
                 cx,
             );

@@ -24,6 +24,7 @@ pub mod merge;
 pub mod modal_state;
 pub mod pull_push;
 pub mod rebase;
+pub(in crate::ui) mod record;
 pub mod remote_branch;
 pub(crate) mod repo_health;
 pub mod reset;
@@ -710,7 +711,7 @@ impl KagiApp {
         // Presentation consumes the attempted receipt, never reconstructs its
         // structured recovery/owner metadata and never retries persistence.
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
-        self.record_op_impl(entry, cx, false);
+        self.record_op_impl(entry, cx, false, None);
     }
 }
 

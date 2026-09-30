@@ -96,6 +96,10 @@ mod conflict_continue_cache;
 mod repo_health;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/refusal_reasons.rs"]
+mod refusal_reasons;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/diff_highlight.rs"]
 mod diff_highlight;
 
@@ -955,6 +959,10 @@ mod macos {
             (
                 "repo_health_proposal",
                 Box::new(crate::repo_health::scenario_repo_health_proposal),
+            ),
+            (
+                "refusal_reasons",
+                Box::new(crate::refusal_reasons::scenario_refusal_reasons),
             ),
             (
                 "diff_highlight_once",

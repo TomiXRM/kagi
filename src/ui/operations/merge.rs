@@ -306,12 +306,10 @@ impl KagiApp {
         let repo_path = modal.owner.path.clone();
         if !modal.plan.blockers.is_empty() {
             klog!("refused: merge plan has blockers, not executing");
-            self.record_op(
+            self.record_refused(
                 "merge",
                 modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &modal.plan.blockers,
                 &repo_path,
                 cx,
             );

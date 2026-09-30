@@ -16,8 +16,13 @@
 //!   └─ Terminal tab shown again → restarts
 //! ```
 
+mod autolock;
+
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::task::Poll;
 
 use gpui::{px, AppContext, Context, Entity, Window};
 use gpui_terminal::{ColorPalette, TerminalConfig, TerminalView};
@@ -132,6 +137,107 @@ pub struct KagiTerminalSession {
     /// Second handle to the PTY writer, used by the cmd-v paste path
     /// (gpui-terminal 0.1.0 has no built-in paste; we write directly).
     pub paste_writer: Option<SharedWriter>,
+    /// #772: the shell process this session owns — PID, spawn generation and
+    /// the wait result delivered off the render path. `None` before the first
+    /// spawn. Survives `view = None` so an exit can still be attributed.
+    pub shell: Option<ShellProcess>,
+    /// #772: how many shells this session has spawned; the next spawn is
+    /// `spawns + 1`. Stale wait deliveries compare against it.
+    pub spawns: u64,
+    /// #772: the lock this session offered for its worktree (token +
+    /// identity), set when the lock card opens. Whether the lock exists is
+    /// never cached here — the release plan reads git every time.
+    pub auto_lock: Option<kagi_domain::worktree_autolock::AutoUnlockTarget>,
+}
+
+/// The shell child a [`KagiTerminalSession`] spawned (#772 欠落 1).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShellProcess {
+    /// The shell's PID, when the platform reported one.
+    pub pid: Option<u32>,
+    /// Spawn generation within the owning session (1 for the first shell).
+    pub generation: u64,
+    /// Set once the background `wait` on the child returns. `None` = still
+    /// running as far as Kagi has observed.
+    pub exit: Option<ShellExit>,
+}
+
+/// What the background `wait` on the shell child reported (#772 欠落 2).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ShellExit {
+    /// The child exited with this code.
+    Exited { code: u32 },
+    /// `wait` itself failed: the child's fate is unknown. Held, not treated
+    /// as an exit (ADR-0206 決定 3).
+    Unknown(String),
+}
+
+impl ShellProcess {
+    /// The shell's current directory as the OS reports it, or why it could
+    /// not be read. Never a substitute value (contract A / C).
+    pub fn observe_cwd(&self) -> Result<PathBuf, kagi_git::proc::CwdProbe> {
+        match self.pid {
+            Some(pid) => kagi_git::proc::cwd_of_pid(pid),
+            None => Err(kagi_git::proc::CwdProbe::Unknown(
+                "the platform reported no PID for the shell".to_string(),
+            )),
+        }
+    }
+}
+
+/// A future that resolves when a dedicated thread's `child.wait()` returns.
+///
+/// The thread stores the result and wakes whichever task last polled; a
+/// result that lands before the first poll is picked up on that poll. No
+/// executor dependency: the shell's lifetime is not a pool thread's to hold.
+pub(crate) struct ShellWait(Arc<Mutex<ShellWaitSlot>>);
+
+#[derive(Default)]
+struct ShellWaitSlot {
+    exit: Option<ShellExit>,
+    waker: Option<std::task::Waker>,
+}
+
+impl ShellWait {
+    fn spawn(mut child: Box<dyn portable_pty::Child + Send + Sync>) -> Self {
+        let slot = Arc::new(Mutex::new(ShellWaitSlot::default()));
+        let writer = slot.clone();
+        std::thread::Builder::new()
+            .name("kagi-shell-wait".into())
+            .spawn(move || {
+                let exit = match child.wait() {
+                    Ok(status) => ShellExit::Exited {
+                        code: status.exit_code(),
+                    },
+                    Err(e) => ShellExit::Unknown(e.to_string()),
+                };
+                let waker = {
+                    let mut slot = writer.lock().unwrap_or_else(|p| p.into_inner());
+                    slot.exit = Some(exit);
+                    slot.waker.take()
+                };
+                if let Some(waker) = waker {
+                    waker.wake();
+                }
+            })
+            .expect("spawn shell wait thread");
+        Self(slot)
+    }
+}
+
+impl Future for ShellWait {
+    type Output = ShellExit;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let mut slot = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        match slot.exit.take() {
+            Some(exit) => Poll::Ready(exit),
+            None => {
+                slot.waker = Some(cx.waker().clone());
+                Poll::Pending
+            }
+        }
+    }
 }
 
 /// Cloneable wrapper around the single PTY writer.
@@ -179,7 +285,19 @@ impl KagiTerminalSession {
             start_error: None,
             repo_path,
             paste_writer: None,
+            shell: None,
+            spawns: 0,
+            auto_lock: None,
         }
+    }
+
+    /// The shell's cwd, when this session has a shell whose exit has not been
+    /// observed. See [`ShellProcess::observe_cwd`].
+    pub fn observe_cwd(&self) -> Option<Result<PathBuf, kagi_git::proc::CwdProbe>> {
+        self.shell
+            .as_ref()
+            .filter(|shell| shell.exit.is_none())
+            .map(ShellProcess::observe_cwd)
     }
 }
 
@@ -187,14 +305,16 @@ impl KagiTerminalSession {
 // PTY + TerminalView construction
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// The view + PTY master handle (kept alive for resize callbacks) + writer that
-/// [`build_terminal_view`] returns on success. Named for readability
+/// What [`build_terminal_view`] returns on success: the view, the PTY master
+/// handle (kept alive for resize callbacks), the writer, and the shell child
+/// the session now owns (#772). Named for readability
 /// (clippy::type_complexity).
-type TerminalBuild = (
-    Entity<TerminalView>,
-    Arc<Mutex<Box<dyn portable_pty::MasterPty + Send>>>,
-    SharedWriter,
-);
+pub struct TerminalBuild {
+    pub view: Entity<TerminalView>,
+    pub master: Arc<Mutex<Box<dyn portable_pty::MasterPty + Send>>>,
+    pub paste_writer: SharedWriter,
+    pub child: Box<dyn portable_pty::Child + Send + Sync>,
+}
 
 /// Attempt to open a PTY, spawn `shell`, and create an `Entity<TerminalView>`.
 ///
@@ -249,8 +369,10 @@ pub fn build_terminal_view(
     }
 
     // Spawn the shell process before consuming the master (slave must still
-    // be open for the child to inherit its fd).
-    pair.slave
+    // be open for the child to inherit its fd). #772: the returned child is
+    // handed to the session, which owns its PID and waits on it.
+    let child = pair
+        .slave
         .spawn_command(cmd)
         .map_err(|e| format!("spawn '{}': {}", shell, e))?;
 
@@ -314,7 +436,12 @@ pub fn build_terminal_view(
             })
     });
 
-    Ok((view_entity, master_arc, paste_writer))
+    Ok(TerminalBuild {
+        view: view_entity,
+        master: master_arc,
+        paste_writer,
+        child,
+    })
 }
 
 /// Pick the terminal font family: prefer an installed Nerd Font (for terminal
@@ -421,7 +548,12 @@ pub fn ensure_terminal(
     klog!("terminal: starting shell={}", shell);
 
     match build_terminal_view(&shell, &session.repo_path, owner, cx) {
-        Ok((view_entity, _master_arc, paste_writer)) => {
+        Ok(TerminalBuild {
+            view: view_entity,
+            master: _master_arc,
+            paste_writer,
+            child,
+        }) => {
             // Focus the new terminal.
             let fh = view_entity.read(cx).focus_handle().clone();
             window.focus(&fh, cx);
@@ -429,6 +561,29 @@ pub fn ensure_terminal(
             session.view = Some(view_entity);
             session.paste_writer = Some(paste_writer);
             session.start_error = None;
+            // #772 欠落 1 / 2: own the child, and observe its exit off the
+            // render path. The PTY EOF callback above still clears the view;
+            // this is the process-level evidence, delivered even while the
+            // terminal is hidden or another tab is active, and attributed to
+            // the owner + spawn generation it belongs to.
+            session.spawns += 1;
+            let generation = session.spawns;
+            session.shell = Some(ShellProcess {
+                pid: child.process_id(),
+                generation,
+                exit: None,
+            });
+            // `wait` blocks for the shell's whole life, so it gets its own OS
+            // thread rather than a slot on gpui's background pool (which the
+            // test dispatcher runs inline — a pool wait would park it forever).
+            let exited = ShellWait::spawn(child);
+            cx.spawn(async move |this, acx| {
+                let exit = exited.await;
+                let _ = this.update(acx, |app, cx| {
+                    app.on_shell_wait(owner, generation, exit, cx);
+                });
+            })
+            .detach();
             klog!("terminal: started shell={}", shell);
             true
         }

@@ -404,6 +404,21 @@ fn appearance_section(
         .on_click(toggle_rm)
         .into_any_element();
 
+    // ── Terminal auto-lock toggle (#772 / ADR-0206, default off) ──
+    let auto_lock = crate::ui::settings::terminal_auto_lock();
+    let app_al = app.clone();
+    let toggle_al = move |checked: &bool, _w: &mut gpui::Window, cx: &mut gpui::App| {
+        let on = *checked;
+        app_al.update(cx, |_app, cx| {
+            crate::ui::settings::set_terminal_auto_lock(on);
+            cx.notify();
+        });
+    };
+    let auto_lock_ctl = Switch::new("terminal-auto-lock-toggle")
+        .checked(auto_lock)
+        .on_click(toggle_al)
+        .into_any_element();
+
     // ── Graph Cmd+C copy target (ADR-0170) ──
     // Two-way segmented choice → hash (default) or the row's local branch.
     const COPY_TARGETS: [(&str, &str); 2] = [("hash", "Hash"), ("branch", "Branch")];
@@ -465,6 +480,11 @@ fn appearance_section(
             SharedString::from(Msg::SettingsReduceMotion.t()),
             SharedString::from(Msg::SettingsReduceMotionDesc.t()),
             reduce_motion_ctl,
+        ))
+        .child(setting_row(
+            SharedString::from(Msg::SettingsTerminalAutoLock.t()),
+            SharedString::from(Msg::SettingsTerminalAutoLockDesc.t()),
+            auto_lock_ctl,
         ))
 }
 

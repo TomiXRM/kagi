@@ -745,6 +745,10 @@ mod macos {
                 Box::new(crate::recovery_worktree_lock_reason::scenario_worktree_lock_reason),
             ),
             (
+                "terminal_auto_lock",
+                Box::new(crate::recovery_worktree_lock_reason::scenario_terminal_auto_lock),
+            ),
+            (
                 "preflight_presentation",
                 Box::new(crate::recovery_operations::scenario_preflight_presentation),
             ),

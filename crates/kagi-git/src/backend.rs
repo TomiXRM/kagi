@@ -15,6 +15,7 @@ use super::{
 };
 
 mod absorb;
+mod autolock;
 pub mod backups;
 pub mod conflict_ops;
 mod policy;

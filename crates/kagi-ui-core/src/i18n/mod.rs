@@ -769,6 +769,10 @@ pub enum Msg {
     SettingsReduceMotion,
     /// Appearance → Reduce-motion row description.
     SettingsReduceMotionDesc,
+    /// Appearance → Terminal auto-lock row title (#772 / ADR-0206).
+    SettingsTerminalAutoLock,
+    /// Appearance → Terminal auto-lock row description.
+    SettingsTerminalAutoLockDesc,
     /// Language → Interface language row title.
     SettingsInterfaceLang,
     /// Language → Interface language row description.
@@ -2626,6 +2630,14 @@ impl Msg {
             }
             (Ja, SettingsReduceMotionDesc) => {
                 "装飾的なアニメーションを静止させます(タブ読み込み中のドットの揺れなど)。"
+            }
+            (En, SettingsTerminalAutoLock) => "Lock worktree while the terminal is open",
+            (Ja, SettingsTerminalAutoLock) => "terminal を開いている間 worktree をロック",
+            (En, SettingsTerminalAutoLockDesc) => {
+                "When the embedded terminal starts in a linked worktree, offer to place a Kagi-owned `git worktree lock` (confirmed each time), and offer to release it when the shell exits. Locks placed by hand are never touched. macOS / Linux only."
+            }
+            (Ja, SettingsTerminalAutoLockDesc) => {
+                "linked worktree で埋め込み terminal を起動したとき、Kagi 所有の `git worktree lock` を(毎回確認のうえ)提案し、shell 終了時に解除を提案します。手動のロックには触れません。macOS / Linux のみ。"
             }
             (En, SettingsInterfaceLang) => "Interface language",
             (Ja, SettingsInterfaceLang) => "表示言語",

@@ -66,10 +66,14 @@ fn counts(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> (usize, usize
     })
 }
 
-pub fn scenario_pr_threads(cx: &mut VisualTestAppContext) {
-    let _gh = OfflineGh::install();
-    let split_before = theme::diff_split();
-    theme::set_diff_split(false);
+/// A repo whose PR #7 (a real `refs/pull/7/head` behind `insteadOf`) rewrites
+/// line 2 of `c.txt`. Returns (repo dir guard, repo, remote dir guard, head).
+fn c_txt_pr() -> (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    tempfile::TempDir,
+    String,
+) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     std::fs::write(repo.join("c.txt"), "c1\nc2\nc3\n").unwrap();
@@ -95,6 +99,100 @@ pub fn scenario_pr_threads(cx: &mut VisualTestAppContext) {
         &["config", &format!("url.{file_url}.insteadOf"), url],
     );
     let head = push_pr_head(&repo, &remote, "main", &[("c.txt", "c1\nC2\nc3\n")]);
+    (fixture, repo, remote_dir, head)
+}
+
+/// A `gh` that answers the review-thread query with two threads on `c.txt`
+/// — but, like GitHub, rejects a query in which any field the parser reads is
+/// not asked for by its own name (#837 Tier B: two names glued into one).
+const THREADS_GH: &str = r#"#!/bin/sh
+case "$1" in
+  pr) echo '{"reviews":[],"comments":[]}' ;;
+  api)
+    q=""
+    for a in "$@"; do case "$a" in query=*) q="${a#query=}" ;; esac; done
+    case "$q" in *mergeStateStatus*) echo '{}'; exit 0 ;; esac
+    q=" $q "
+    for f in path line startLine originalLine diffSide isOutdated isResolved \
+             viewerCanResolve comments databaseId author login body createdAt diffHunk replyTo; do
+      case "$q" in
+        *[!A-Za-z0-9_]"$f"[!A-Za-z0-9_]*) ;;
+        *) echo "{\"errors\":[{\"message\":\"Field '$f' is not requested\"}]}"; exit 1 ;;
+      esac
+    done
+    cat <<'JSON'
+{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[
+ {"path":"c.txt","line":2,"startLine":null,"originalLine":2,"diffSide":"RIGHT","isOutdated":false,"isResolved":false,"viewerCanResolve":true,
+  "comments":{"nodes":[{"databaseId":1,"author":{"login":"alice"},"body":"right side","createdAt":"t1","diffHunk":"","replyTo":null}]}},
+ {"path":"c.txt","line":2,"startLine":null,"originalLine":2,"diffSide":"LEFT","isOutdated":false,"isResolved":false,"viewerCanResolve":true,
+  "comments":{"nodes":[{"databaseId":2,"author":{"login":"bob"},"body":"left side","createdAt":"t2","diffHunk":"","replyTo":null}]}}
+]}}}}}
+JSON
+    ;;
+  *) echo 'no GitHub repository here' >&2; exit 1 ;;
+esac
+"#;
+
+/// #837 Tier B: the production read path — the real `pr_review_threads` gh
+/// invocation and parse, not a queued result. When `gh` answers two threads,
+/// the tab holds two and both rows are badged; zero would be the old silent
+/// failure.
+pub fn scenario_pr_threads_via_gh(cx: &mut VisualTestAppContext) {
+    let _gh = OfflineGh::with_script(THREADS_GH);
+    let split_before = theme::diff_split();
+    theme::set_diff_split(false);
+    let (_fixture, repo, _remote, head) = c_txt_pr();
+    let (app, window) = mount(cx, &repo);
+    let pr = pr_at(&head);
+    app.update(cx, |app, cx| app.pr_mode_open(&pr, cx));
+    wait_loaded(cx, &app, &head);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        cx.run_until_parked();
+        let loaded = cx.read(|cx| {
+            let mode = app.read(cx).pr_mode().expect("PR mode");
+            mode.active
+                .and_then(|i| mode.tabs.get(i))
+                .is_some_and(|tab| tab.conversation_loaded)
+        });
+        if loaded {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "conversation never loaded"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let feed = cx.read(|cx| {
+        let mode = app.read(cx).pr_mode().expect("PR mode");
+        let tab = mode
+            .active
+            .and_then(|i| mode.tabs.get(i))
+            .expect("a PR tab");
+        tab.line_comments.len()
+    });
+    assert_eq!(
+        feed, 2,
+        "gh answered two threads; they must not read as none"
+    );
+    app.update(cx, |app, cx| app.pr_mode_select_file(0, cx));
+    for badge in ["pr-thread-badge-2", "pr-thread-badge-3"] {
+        assert!(
+            bounds(cx, window, badge).is_some(),
+            "{badge}: gh's thread is placed"
+        );
+    }
+    theme::set_diff_split(split_before);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS pr_threads_via_gh: the real gh read yields both threads");
+}
+
+pub fn scenario_pr_threads(cx: &mut VisualTestAppContext) {
+    let _gh = OfflineGh::install();
+    let split_before = theme::diff_split();
+    theme::set_diff_split(false);
+    let (_fixture, repo, _remote, head) = c_txt_pr();
 
     let (app, window) = mount(cx, &repo);
     e2e::queue_github_pr_conversation(gpui::Task::ready((

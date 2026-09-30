@@ -406,10 +406,14 @@ impl KagiApp {
                 // its "no reviews" wording as before.
                 t.conversation_loaded = true;
                 cx.notify();
+                // #351: say why a thread read came back empty (#837 Tier B).
+                let threads = lines.unwrap_or_else(|error| {
+                    klog!("pr-threads: #{} read failed: {}", number, error);
+                    Vec::new()
+                });
                 let Ok((reviews, comments)) = convo else {
                     return;
                 };
-                let threads = lines.unwrap_or_default();
                 let line_comments = kagi_domain::review_thread::feed_comments(&threads);
                 t.threads.set(threads);
                 klog!(

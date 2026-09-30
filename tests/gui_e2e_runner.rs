@@ -1047,6 +1047,10 @@ mod macos {
             ("pr_viewed", Box::new(crate::pr_viewed::scenario_pr_viewed)),
             ("pr_threads", Box::new(crate::pr_threads::scenario_pr_threads)),
             (
+                "pr_threads_via_gh",
+                Box::new(crate::pr_threads::scenario_pr_threads_via_gh),
+            ),
+            (
                 "operation_strip_abort",
                 Box::new(crate::app_conflict::scenario_operation_strip_abort),
             ),

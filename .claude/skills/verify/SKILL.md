@@ -329,7 +329,12 @@ The current suite covers:
   (`pr-thread-body-…`) laid out and the next row pushed below; the outdated
   thread opens as `pr-thread-outdated-<row>-<k>`; closing both returns the list
   to one item per diff row. Split: `-l` / `-r` badges in the left / right
-  gutter, and a RIGHT thread on a context row only on the right. Tier B: open a
+  gutter, and a RIGHT thread on a context row only on the right.
+  `pr_threads_via_gh` (same substring) goes through the production read path: a
+  fake `gh` on `PATH` answers two threads only if every field the parser reads
+  is requested by its own name (else GraphQL `errors`, exit 1, as GitHub), and
+  the tab must hold both; a failed read logs `[kagi] pr-threads: #N read failed:`.
+  Tier B: open a
   PR with line comments (current and outdated), click badges in unified and
   side-by-side, check the dimmed outdated card, EN/JA chips, no resolve button,
   and that scrolling does not jump when a thread opens or closes.

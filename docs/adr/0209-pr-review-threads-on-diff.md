@@ -20,8 +20,12 @@ PR mode は line comment を conversation の時系列リストとして表示�
    （`gh api graphql --paginate`、`path line startLine originalLine diffSide isOutdated isResolved
    viewerCanResolve` と thread 内の comments）に置き換える（`kagi_git::github::pr_review_threads`）。
    PR を開いたときの gh 呼び出し数は変わらない（`gh pr view` + この 1 本）。repository は従来どおり cwd から
-   gh が解決する（`{owner}` / `{repo}` placeholder）。gh が答えられない場合は従来どおり空、GraphQL の
-   `errors` は失敗として扱う（空の一覧と区別する）。thread あたり comments は先頭 100 件まで。
+   gh が解決する（`{owner}` / `{repo}` placeholder）。gh が答えない（非 0 終了）・GraphQL の `errors`・
+   parse 失敗はいずれも失敗として扱い、理由を `[kagi] pr-threads: #N read failed: <理由>` に 1 行出してから空で
+   表示する（空の一覧と黙って区別がつかなくならないように。#837 Tier B で、query 文字列の `\` 継続が次行の
+   先頭空白を食って `viewerCanResolvecomments` になり GitHub に拒否されていたのに、失敗が空に潰れて
+   何も出なかった）。query は改行でつなぎ、パーサが読む全フィールドが単独の名前として要求されていることを
+   unit test で固定する。thread あたり comments は先頭 100 件まで。
 2. **conversation の feed は変えない**: thread の comments を平らにして従来の `ReviewComment` 一覧を作る
    （`review_thread::feed_comments`）。アンカー行は従来と同じ「現在の行、なければ元の行」なので、feed の
    表示・suggestion チップ・ADR-0172 の適用入力は同じ値を受け取る。

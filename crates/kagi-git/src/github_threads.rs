@@ -13,19 +13,30 @@ use kagi_domain::review_thread::{DiffSide, ReviewThread};
 
 use crate::GitError;
 
-const REVIEW_THREADS_QUERY: &str = "\
-query($owner:String!,$name:String!,$number:Int!,$endCursor:String){\
- repository(owner:$owner,name:$name){\
-  pullRequest(number:$number){\
-   reviewThreads(first:100,after:$endCursor){\
-    pageInfo{hasNextPage endCursor}\
-    nodes{path line startLine originalLine diffSide isOutdated isResolved viewerCanResolve\
-     comments(first:100){nodes{databaseId author{login} body createdAt diffHunk\
-      replyTo{databaseId}}}}}}}}";
+// Plain newlines, not `\` continuations: a continuation also swallows the
+// next line's leading whitespace, which glued `viewerCanResolve comments`
+// into one unknown field and made GitHub reject the query (#837 Tier B).
+const REVIEW_THREADS_QUERY: &str = "
+query($owner:String!, $name:String!, $number:Int!, $endCursor:String) {
+  repository(owner:$owner, name:$name) {
+    pullRequest(number:$number) {
+      reviewThreads(first:100, after:$endCursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          path line startLine originalLine diffSide isOutdated isResolved viewerCanResolve
+          comments(first:100) {
+            nodes { databaseId author { login } body createdAt diffHunk replyTo { databaseId } }
+          }
+        }
+      }
+    }
+  }
+}";
 
 /// Every review thread of PR `number`, comments oldest first. A `gh` that
-/// cannot answer (not installed, no GitHub remote, offline) reads as none,
-/// like the REST list it replaces; a GraphQL error is reported.
+/// does not answer (not installed, no GitHub remote, offline, a rejected
+/// query) is an error carrying gh's own message, so the caller can say why
+/// the list is empty instead of showing an empty list.
 pub fn pr_review_threads(workdir: &Path, number: u64) -> Result<Vec<ReviewThread>, GitError> {
     let out = crate::cli::gh_command()
         .args([
@@ -44,10 +55,19 @@ pub fn pr_review_threads(workdir: &Path, number: u64) -> Result<Vec<ReviewThread
         .current_dir(workdir)
         .output()
         .map_err(|e| GitError::Other(format!("gh: {}", e)))?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
     if !out.status.success() {
-        return Ok(Vec::new());
+        // A rejected query exits non-zero with the GraphQL `errors` on stdout.
+        let graphql = serde_json::from_str::<serde_json::Value>(&stdout)
+            .ok()
+            .and_then(|value| crate::github::graphql_failure(&value));
+        return Err(graphql.unwrap_or_else(|| {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let detail = stderr.lines().next().unwrap_or("").trim();
+            GitError::Other(format!("gh exited {:?}: {detail}", out.status.code()))
+        }));
     }
-    parse_review_threads(&String::from_utf8_lossy(&out.stdout))
+    parse_review_threads(&stdout)
 }
 
 /// Parse the (possibly several, concatenated) pages `--paginate` prints.
@@ -176,5 +196,41 @@ mod tests {
         let err = parse_review_threads(r#"{"errors":[{"message":"no such PR"}]}"#).unwrap_err();
         assert!(err.to_string().contains("no such PR"), "{err}");
         assert!(parse_review_threads("not json").is_err());
+    }
+
+    /// #837 Tier B: two field names glued into one unknown field make GitHub
+    /// reject the whole query. Every field the parser reads must be asked for
+    /// as its own name.
+    #[test]
+    fn the_query_asks_for_every_field_the_parser_reads() {
+        let names: std::collections::BTreeSet<&str> = REVIEW_THREADS_QUERY
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .filter(|name| !name.is_empty())
+            .collect();
+        for field in [
+            "reviewThreads",
+            "pageInfo",
+            "hasNextPage",
+            "endCursor",
+            "nodes",
+            "path",
+            "line",
+            "startLine",
+            "originalLine",
+            "diffSide",
+            "isOutdated",
+            "isResolved",
+            "viewerCanResolve",
+            "comments",
+            "databaseId",
+            "author",
+            "login",
+            "body",
+            "createdAt",
+            "diffHunk",
+            "replyTo",
+        ] {
+            assert!(names.contains(field), "{field} is not requested: {names:?}");
+        }
     }
 }

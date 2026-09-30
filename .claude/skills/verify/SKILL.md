@@ -308,6 +308,18 @@ The current suite covers:
   A blocked plan has no confirm button, and the fixture's HEAD + porcelain
   status remains unchanged. Git operations use only a local bare repo.
   `modal_sections` is the pre-migration disclosure baseline and remains unchanged;
+- PR viewed files (`KAGI_GUI_E2E_ONLY=pr_viewed`, `tests/recovery/pr_viewed.rs`):
+  #351 / ADR-0207. A real PR ref fetch (bare remote with `refs/pull/7/head`,
+  reached through `url.<file>.insteadOf` for `github.com/example/repo`; other gh
+  reads use `pr_fields_focus`'s offline gh) loads two files. Clicking each row's
+  measured `pr-file-viewed-<n>` checkbox marks it without selecting the row, and
+  the marks land in `pr-viewed/example-repo-7.json` as `{path: blob}`. Closing
+  and reopening the tab reads them back from disk; a queued list response with a
+  moved head whose new commit changes one file unviews that file only. The
+  scenario advances the test clock before unmounting so gpui-component's
+  Checkbox animation timers do not outlive the window (leak check). Tier B:
+  open a PR, tick files, see `N / M viewed` and dimmed rows (EN/JA), close and
+  reopen the tab, then push a commit changing one ticked file and refresh.
 - header buttons stay reachable (`KAGI_GUI_E2E_ONLY=header_fit`,
   `tests/recovery/header_fit.rs`): #809. A real `KagiApp` at 1000x720, zoom
   1.25, EN and JA opens a commit's long-path file diff, then File History for

@@ -344,6 +344,16 @@ impl Backend {
         )
     }
 
+    /// Each path's blob id in `commit` (all zeros where it has none), for a
+    /// PR's per-file viewed marks (#351). Read-only.
+    pub fn blob_ids_at(
+        &self,
+        commit: &CommitId,
+        paths: &[std::path::PathBuf],
+    ) -> Result<Vec<String>, GitError> {
+        crate::diff::blob_ids_at(&self.repo, commit, paths)
+    }
+
     /// What this operation is about to make true on a remote, read **before**
     /// it runs.
     ///

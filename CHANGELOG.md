@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- PR mode のファイル一覧に「確認済み」の checkbox と「N / M viewed」(JA「N / M 確認済み」)の進捗を追加しました。確認済みの行は薄く表示されます。印はそのときの head 側のファイル内容(blob)に紐づき、PR の head が進んでそのファイルが変わると自動で未確認に戻ります(変わっていないファイルは確認済みのまま)。状態は `~/.kagi/pr-viewed/` に PR ごとに保存し、壊れたファイルは上書きせず退避します。Operation Log には記録しません。(#351、ADR-0207)
+
 ### Fixed
 
 - コミットのファイルを開いたとき、未キャッシュの diff を UI スレッドで読んでいたため大きな diff で画面が固まる問題を修正しました。読み込みは Compare / WIP と同じくバックグラウンドで行い、読み終わるまで表示中の diff はそのまま残り、2 秒を超えると busy snackbar が理由を示します。読み込み中に別のファイルを開いた・閉じた場合は古い結果を捨て、reload で行番号が変わった場合はコミットの新しい行に付け直して表示します。（#829）

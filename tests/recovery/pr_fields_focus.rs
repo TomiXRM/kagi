@@ -15,13 +15,13 @@ use crate::evidence_support::pull_request;
 use crate::macos::{build_fixture, mount, unmount};
 
 /// An offline transport for the real Apply dispatch, restored on Drop.
-struct OfflineGh {
+pub(crate) struct OfflineGh {
     previous: Option<OsString>,
     _bin: tempfile::TempDir,
 }
 
 impl OfflineGh {
-    fn install() -> Self {
+    pub(crate) fn install() -> Self {
         // Do not poison the process-global OnceLock with this test transport.
         let _ = kagi_git::github::gh_available();
         let bin = tempfile::tempdir().expect("offline gh dir");

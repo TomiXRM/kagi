@@ -24,7 +24,7 @@ src/ui/github.rs 825
 src/ui/inspector.rs 1161
 src/ui/mod.rs 3821
 src/ui/modals.rs 811
-src/ui/operations/branch.rs 1134
+src/ui/operations/branch.rs 1135
 src/ui/operations/commit.rs 1233
 src/ui/operations/modal_state.rs 911
 src/ui/pr_mode.rs 1878

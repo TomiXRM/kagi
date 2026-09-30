@@ -1211,8 +1211,8 @@ pub struct KagiApp {
     /// Transient overlay opened from the menu bar (branch picker / About /
     /// Keyboard Shortcuts).  `None` when no menu overlay is visible.
     pub menu_overlay: Option<commands::MenuOverlay>,
-    /// Focus to restore once a focus-taking menu overlay closes (#812 / #817).
-    overlay_return_focus: Option<gpui::FocusHandle>,
+    /// Focus the next render applies (#812 / #817, `overlay_focus.rs`).
+    pending_focus: Option<gpui::FocusHandle>,
     /// Linux/FreeBSD client-side menu dropdown currently open from the in-app
     /// menu bar. Native macOS menus are provided by `cx.set_menus`, so this is
     /// only read on Linux/FreeBSD (dead on other targets).
@@ -1392,7 +1392,7 @@ impl KagiApp {
             // W5-MENU
             inspector_visible: true,
             menu_overlay: None,
-            overlay_return_focus: None,
+            pending_focus: None,
             platform_menu_open: None,
             // W11-AVATAR
             avatars: avatar::AvatarStore::default(),

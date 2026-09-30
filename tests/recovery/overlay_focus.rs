@@ -59,6 +59,26 @@ pub fn scenario_palette_push_modal_keys(cx: &mut VisualTestAppContext) {
     let repo = fixture.path().canonicalize().unwrap();
     let before = repo_fingerprint(&repo);
     let (app, window) = mount(cx, &repo);
+    // The real launch opens the bottom panel on the Terminal tab and starts
+    // the shell, which takes focus (`open_main_window` → `ensure_terminal`).
+    // Escape is bound `!Terminal`, so this is the focus the palette returns to.
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.bottom_panel_open = true;
+            app.bottom_tab = kagi::ui::BottomTab::Terminal;
+            app.ensure_terminal(window, cx);
+        })
+    })
+    .unwrap();
+    draw(cx, window);
+    assert!(
+        cx.update_window(window, |_, window, cx| {
+            let root = app.read(cx).root_focus.clone().expect("root focus");
+            window.focused(cx).is_some() && !root.is_focused(window)
+        })
+        .unwrap(),
+        "precondition: the started terminal holds focus, as at launch"
+    );
 
     // Enter refuses the blocked plan: the modal closes, the refusal is durable
     // and the footer carries it.

@@ -7,7 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
-- コマンドパレット(Cmd+P)から開いた Push などの確認 modal で Enter も Escape も効かず、Cancel のクリックでしか閉じられなかった問題を修正しました。パレットを閉じるときに、開く前の focus へ戻します。blocked な Push は branch menu から開いた場合と同じく、Enter で拒否されて理由が footer に出て、Escape で閉じます。（#817）
+- コマンドパレット(Cmd+P)から開いた Push などの確認 modal で Enter も Escape も効かず、Cancel のクリックでしか閉じられなかった問題を修正しました。パレットを閉じるときは開く前の focus へ戻し、Push / branch の Push・Pull の確認 modal は開くときに focus を画面本体へ移します（起動時に端末が focus を持っていても Escape で閉じます）。blocked な Push は branch menu から開いた場合と同じく、Enter で拒否されて理由が footer に出て、Escape で閉じます。（#817）
 - Settings を × または Escape で閉じた直後に、↑↓ が File History / graph の一覧に届かなかった問題を修正しました。Settings のテーマ選択などで移った focus を、閉じるときに開く前の場所へ戻します。（#812）
 
 ### Changed

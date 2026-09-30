@@ -1,4 +1,4 @@
-//! #817 / #812: menu overlays that take focus hand it back when they close.
+//! #817 / #812: keyboard focus around the menu overlays and the plan modals.
 //!
 //! The Command Palette focuses its search input on open, and Settings' theme
 //! `Select` / Analyze-ignore editor take focus when used. Both entities are
@@ -12,6 +12,12 @@
 //! Opening such an overlay records where focus was; closing it — by whatever
 //! route: Escape, ×, the backdrop, or running a palette command — puts it
 //! back (or on the root when nothing was focused).
+//!
+//! Where focus was is not always where a modal's keys work, though: the
+//! embedded terminal takes focus when it starts (at launch, with the bottom
+//! panel open), and Escape is bound `!Terminal` so the terminal keeps it. A
+//! plan modal without a text field therefore asks for the root on open, the
+//! same rule the conflict Abort confirmation follows (#755).
 
 use gpui::{Context, Window};
 
@@ -22,31 +28,31 @@ impl KagiApp {
     /// Remember the focus to return to. Kept from the first overlay when one
     /// replaces another, so the return target is never an overlay's own input.
     pub(super) fn capture_overlay_return_focus(&mut self, window: &Window, cx: &Context<Self>) {
-        if self.overlay_return_focus.is_none() {
-            self.overlay_return_focus = window.focused(cx).or_else(|| self.root_focus.clone());
+        if self.pending_focus.is_none() {
+            self.pending_focus = window.focused(cx).or_else(|| self.root_focus.clone());
         }
     }
 
-    /// Put focus back where the overlay found it.
-    pub(super) fn restore_overlay_return_focus(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(focus) = self.overlay_return_focus.take() {
+    /// A modal with no text field owns Enter / Escape through the root, so it
+    /// takes the root whatever held focus (the terminal, an input) when it
+    /// opened. Applied on the next render: the openers have no `Window`.
+    pub(super) fn focus_root_for_modal(&mut self) {
+        self.pending_focus = self.root_focus.clone();
+    }
+
+    /// Apply the pending focus now.
+    pub(super) fn apply_pending_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(focus) = self.pending_focus.take() {
             window.focus(&focus, cx);
         }
     }
 
     /// Render pass: the closes that run without a `Window` (Escape through
-    /// `cancel_active_modal`, the × and backdrop listeners) land here.
-    pub(super) fn sync_overlay_return_focus(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// `cancel_active_modal`, the × and backdrop listeners) and the modal
+    /// openers land here.
+    pub(super) fn sync_pending_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.menu_overlay.is_none() {
-            self.restore_overlay_return_focus(window, cx);
+            self.apply_pending_focus(window, cx);
         }
     }
 
@@ -63,10 +69,10 @@ impl KagiApp {
     }
 
     /// Close the palette before running its command: focus returns first, so
-    /// the command acts where the user was, and a modal it opens receives
-    /// Enter / Escape (or focuses its own input afterwards).
+    /// the command acts where the user was; a modal it opens then asks for
+    /// the root (or focuses its own input).
     pub(super) fn close_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.menu_overlay = None;
-        self.restore_overlay_return_focus(window, cx);
+        self.apply_pending_focus(window, cx);
     }
 }

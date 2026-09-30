@@ -815,13 +815,7 @@ impl KagiApp {
                     .child({
                         let settings_click =
                             cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
-                                this.menu_overlay = Some(commands::MenuOverlay::Settings);
-                                // Probe Ollama so the Smart Commit model picker is
-                                // usable without first opening the commit panel.
-                                this.refresh_smart_commit_detection(cx);
-                                // Seed the Analyze-ignore editor from disk.
-                                this.ensure_analyze_ignore_input(window, cx);
-                                cx.notify();
+                                this.open_settings_overlay(window, cx)
                             });
                         make_btn(
                             "tb-settings",

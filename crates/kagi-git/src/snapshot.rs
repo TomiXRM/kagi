@@ -7,11 +7,13 @@
 //! [`resolve_head`], [`commit_log`], and [`working_tree_status`] functions;
 //! no duplication of their logic.
 
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+
 use git2::{BranchType, Repository};
 
 use super::{
     log::{commit_log_with_roots, Commit, CommitId},
-    refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree, WorktreeWip},
+    refs::{AheadBehind, Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree, WorktreeWip},
     resolve_head,
     status::{working_tree_status, WorkingTreeStatus},
     GitError, Head,
@@ -71,6 +73,54 @@ pub struct RepoSnapshot {
     pub operation: Option<kagi_domain::conflict_family::ObservedOperation>,
 }
 
+/// #355: what a running snapshot is doing, readable from another thread, and
+/// the one part of it a reader may skip. The default skips nothing.
+#[derive(Debug, Default)]
+pub struct SnapshotProbe {
+    phase: AtomicU8,
+    skip_ahead_behind: AtomicBool,
+}
+
+/// The snapshot phases a slow read can be explained by; everything else is
+/// [`SnapshotPhase::Other`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SnapshotPhase {
+    Other,
+    /// `collect_worktrees`: every linked worktree's status.
+    Worktrees,
+    /// `collect_branches`: every local branch's ahead/behind count.
+    AheadBehind,
+}
+
+impl SnapshotProbe {
+    pub fn phase(&self) -> SnapshotPhase {
+        match self.phase.load(Ordering::Relaxed) {
+            1 => SnapshotPhase::Worktrees,
+            2 => SnapshotPhase::AheadBehind,
+            _ => SnapshotPhase::Other,
+        }
+    }
+
+    pub fn set_phase(&self, phase: SnapshotPhase) {
+        let value = match phase {
+            SnapshotPhase::Other => 0,
+            SnapshotPhase::Worktrees => 1,
+            SnapshotPhase::AheadBehind => 2,
+        };
+        self.phase.store(value, Ordering::Relaxed);
+    }
+
+    /// Count no further ahead/behind: branches not yet counted get
+    /// `counts: None` (unknown). A count already running finishes.
+    pub fn skip_ahead_behind(&self) {
+        self.skip_ahead_behind.store(true, Ordering::Relaxed);
+    }
+
+    pub fn ahead_behind_skipped(&self) -> bool {
+        self.skip_ahead_behind.load(Ordering::Relaxed)
+    }
+}
+
 // ────────────────────────────────────────────────────────────
 // Public API
 // ────────────────────────────────────────────────────────────
@@ -95,11 +145,12 @@ pub struct RepoSnapshot {
 ///
 /// Returns [`GitError::Other`] on unexpected `git2` failures.
 pub fn snapshot(repo: &mut Repository, commit_limit: usize) -> Result<RepoSnapshot, GitError> {
-    snapshot_inner(repo, commit_limit, false)
+    snapshot_inner(repo, commit_limit, false, &SnapshotProbe::default())
 }
 
 /// [`snapshot`], additionally writing the refreshed index stat cache back.
-/// **Only the UI may call this** (ADR-0193).
+/// **Only the UI may call this** (ADR-0193). `probe` reports the phase and
+/// carries the reader's Skip (#355).
 ///
 /// The repair has to happen *inside* the snapshot rather than before it: the
 /// snapshot already walks the working tree, so a separate repair pass would
@@ -107,14 +158,16 @@ pub fn snapshot(repo: &mut Repository, commit_limit: usize) -> Result<RepoSnapsh
 pub fn snapshot_repairing_stat_cache(
     repo: &mut Repository,
     commit_limit: usize,
+    probe: &SnapshotProbe,
 ) -> Result<RepoSnapshot, GitError> {
-    snapshot_inner(repo, commit_limit, true)
+    snapshot_inner(repo, commit_limit, true, probe)
 }
 
 fn snapshot_inner(
     repo: &mut Repository,
     commit_limit: usize,
     repair_stat_cache: bool,
+    probe: &SnapshotProbe,
 ) -> Result<RepoSnapshot, GitError> {
     let head = resolve_head(repo)?;
     let status = if repair_stat_cache {
@@ -124,7 +177,9 @@ fn snapshot_inner(
     };
     // Detached linked-worktree HEADs are graph roots even when unreachable
     // from all named refs and the currently open HEAD (#595).
+    probe.set_phase(SnapshotPhase::Worktrees);
     let worktrees = collect_worktrees(repo, &status)?;
+    probe.set_phase(SnapshotPhase::Other);
     let mut required_roots: Vec<CommitId> = worktrees
         .iter()
         .filter(|worktree| !worktree.is_current && worktree.branch.is_none())
@@ -138,7 +193,9 @@ fn snapshot_inner(
         );
     }
     let commits = commit_log_with_roots(repo, commit_limit, &required_roots)?;
-    let branches = collect_branches(repo, &head)?;
+    probe.set_phase(SnapshotPhase::AheadBehind);
+    let branches = collect_branches(repo, &head, probe)?;
+    probe.set_phase(SnapshotPhase::Other);
     let remote_branches = collect_remote_branches(repo)?;
     let tags = collect_tags(repo)?;
     let stashes = collect_stashes(repo)?;
@@ -200,8 +257,13 @@ fn last_fetch_secs(repo: &Repository) -> Option<i64> {
     best
 }
 
-/// Collect all local branches with upstream ahead/behind information.
-fn collect_branches(repo: &Repository, _head: &Head) -> Result<Vec<Branch>, GitError> {
+/// Collect all local branches with upstream ahead/behind information. Once
+/// `probe` is skipped, the remaining upstreams are listed with unknown counts.
+fn collect_branches(
+    repo: &Repository,
+    _head: &Head,
+    probe: &SnapshotProbe,
+) -> Result<Vec<Branch>, GitError> {
     let iter = repo
         .branches(Some(BranchType::Local))
         .map_err(|e| GitError::Other(e.message().to_string()))?;
@@ -238,13 +300,19 @@ fn collect_branches(repo: &Repository, _head: &Head) -> Result<Vec<Branch>, GitE
                 // upstream_ref.get().target() returns None for symbolic refs
                 // (e.g. upstream is origin/HEAD). In that case skip ahead/behind.
                 if let Some(up_oid) = upstream_ref.get().target() {
-                    match repo.graph_ahead_behind(target_oid, up_oid) {
-                        Ok((ahead, behind)) => Some(UpstreamInfo {
+                    if probe.ahead_behind_skipped() {
+                        Some(UpstreamInfo {
                             remote_branch: upstream_name,
-                            ahead,
-                            behind,
-                        }),
-                        Err(_) => None,
+                            counts: None,
+                        })
+                    } else {
+                        match repo.graph_ahead_behind(target_oid, up_oid) {
+                            Ok((ahead, behind)) => Some(UpstreamInfo {
+                                remote_branch: upstream_name,
+                                counts: Some(AheadBehind { ahead, behind }),
+                            }),
+                            Err(_) => None,
+                        }
                     }
                 } else {
                     None

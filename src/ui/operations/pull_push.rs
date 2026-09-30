@@ -541,6 +541,8 @@ impl KagiApp {
                     plan: std::sync::Arc::new(plan),
                     error: None,
                 });
+                // #817: Enter / Escape reach the plan through the root.
+                self.focus_root_for_modal();
             }
             Err(e) => {
                 self.status_footer = FooterStatus::Failed(SharedString::from(

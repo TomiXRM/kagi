@@ -12,67 +12,6 @@
 use super::*;
 
 impl KagiApp {
-    /// Render the toast / busy overlay as an absolute container (bottom-left,
-    /// above the status bar). The toast cards live in the `Entity<ToastStack>`
-    /// child, so a push / expire re-renders only that subtree instead of all of
-    /// `KagiApp` (ADR-0110 Phase 5). The busy snackbar stays here because it is
-    /// driven by the write latch (KagiApp state). Returns `None` before the window
-    /// (and thus the toast entity) exists.
-    fn render_toasts(&self) -> Option<gpui::AnyElement> {
-        let toast_stack = self.toast_stack.clone()?;
-        let mut stack = div()
-            .absolute()
-            .bottom(theme::scaled_px(34.))
-            .left(theme::scaled_px(super::TOAST_INSET_PX))
-            .w(theme::scaled_px(460.))
-            .max_w(gpui::relative(0.9))
-            .flex()
-            .flex_col()
-            .gap_2();
-
-        // While an async op runs, show a busy snackbar with a spinning sync icon
-        // (user request) — a lighter alternative to a blocking popup.
-        if let Some(label) = self.busy_snackbar_label() {
-            stack = stack.child(self.render_busy_snackbar(label));
-        }
-
-        // The toast cards are an independently-rendered child entity.
-        stack = stack.child(toast_stack);
-        Some(stack.into_any())
-    }
-    /// A snackbar shown while an async op runs: a continuously spinning sync
-    /// icon + a friendly label (user request — a non-blocking alternative to a
-    /// modal busy-spinner). Driven automatically by the write latch, so every async
-    /// op gets one for free.
-    fn render_busy_snackbar(&self, label: &'static str) -> gpui::AnyElement {
-        let accent = theme().color_branch;
-        let icon = render_overlay::big_sync_icon(accent, "kagi-busy-snackbar-spin");
-        div()
-            .w_full()
-            .flex()
-            .flex_row()
-            .items_center()
-            // 1.5× the toast gap (8px → 12px) so the larger sync icon breathes
-            // a bit more from the label (user request).
-            .gap_3()
-            .px_4()
-            .py_3()
-            .rounded(theme::scaled_px(8.))
-            .bg(rgb(theme().panel))
-            .border_1()
-            .border_color(rgb(accent))
-            .text_base()
-            .text_color(rgb(theme().text_main))
-            .child(div().flex_shrink_0().child(icon))
-            .child(
-                div()
-                    .flex_1()
-                    .overflow_hidden()
-                    .child(SharedString::from(label)),
-            )
-            .into_any()
-    }
-
     fn render_commit_menu_overlay(
         &self,
         state: CommitMenuState,
@@ -257,6 +196,7 @@ impl Render for KagiApp {
         self.sync_pr_fields_input(window, cx);
         self.sync_issue_inputs(window, cx);
         self.sync_list_filter_input(window, cx);
+        self.sync_pending_focus(window, cx);
 
         if std::env::var("KAGI_DEBUG_RENDER").as_deref() == Ok("1") {
             use std::sync::atomic::{AtomicU64, Ordering as O};
@@ -818,7 +758,7 @@ impl Render for KagiApp {
             // ── Status bar slot (T017) — last operation result ─
             .child(self.render_status_bar(status_footer, bottom_panel_open, cx))
             // ── W3-NOTIFY: toast stack (above everything) ──────
-            .children(self.render_toasts())
+            .children(self.render_toasts(cx))
             // Linux/FreeBSD in-app menu dropdown (native menu bar is macOS-only).
             .children(self.render_platform_menu_dropdown(cx))
             .into_any();

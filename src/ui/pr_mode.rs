@@ -32,12 +32,13 @@ use super::diff_view::{build_main_diff_view, MainDiffView};
 // such display string through `safe_text` (control-byte neutralization).
 use super::i18n::Msg;
 use super::pr_attention::ci_glyph;
-use super::render_helpers::render_diff_list;
 use super::render_helpers::safe_text;
+use super::render_helpers::{render_diff_list, DiffHeader};
 use super::theme::{self, theme};
 use super::types::ToastKind;
 use super::{CompareTarget, DividerDrag, DividerGhost, DividerKind, KagiApp, MainDiffSource};
 
+pub mod viewed;
 /// One open PR tab.
 pub struct PrTab {
     pub pr: PullRequest,
@@ -102,6 +103,8 @@ pub struct PrTab {
     /// The merge-status fetch has come back (ok or not). Its own flag so the
     /// Overview stops loading without waiting on the review calls.
     pub merge_status_loaded: bool,
+    /// #351: per-file viewed marks and the head blobs they are checked against.
+    pub viewed: viewed::PrViewed,
 }
 
 /// Which body the PR tab shows.
@@ -298,6 +301,7 @@ impl KagiApp {
             conflict_at: 0,
             merge_status: None,
             merge_status_loaded: false,
+            viewed: viewed::PrViewed::load(pr),
         };
         let Some(m) = self.pr_mode_mut() else { return };
         m.tabs.push(tab);
@@ -1627,14 +1631,16 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
                         cx,
                     )
                 });
-                render_diff_list::<KagiApp>(dv, nav, None, conflict_scroll, cx).into_any_element()
+                let header = DiffHeader::leading(nav);
+                render_diff_list::<KagiApp>(dv, header, conflict_scroll, cx).into_any_element()
             }
         };
         content = content.child(body);
     } else {
         // Diff
         let diff_el: gpui::AnyElement = match diff {
-            Some(dv) => render_diff_list::<KagiApp>(dv, None, None, scroll, cx).into_any_element(),
+            Some(dv) => render_diff_list::<KagiApp>(dv, DiffHeader::default(), scroll, cx)
+                .into_any_element(),
             None => div()
                 .flex_1()
                 .flex()
@@ -1716,6 +1722,7 @@ fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElemen
             .map(|t| (t.files.clone(), t.selected_file))
             .unwrap_or_default()
     };
+    let marks = viewed::marks_shown(active, conflicts_view);
     let files_focus_click = cx.listener(|this: &mut KagiApp, _: &gpui::MouseDownEvent, _w, cx| {
         this.pr_mode_focus(PrFocus::Files, cx);
     });
@@ -1736,6 +1743,7 @@ fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElemen
             }
         });
         let sel = selected_file == Some(i);
+        let is_viewed = marks.map(|v| v.is_viewed(&f.path));
         let name = f
             .path
             .file_name()
@@ -1760,6 +1768,8 @@ fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElemen
                 .when(sel, |el| el.bg(rgb(theme().selected)))
                 .hover(|s| s.bg(rgb(theme().surface)))
                 .on_click(click)
+                .when(is_viewed == Some(true), |el| el.opacity(0.5))
+                .children(is_viewed.map(|on| viewed::checkbox(i, on, cx)))
                 .child(
                     div()
                         .w(theme::scaled_px(14.))
@@ -1794,9 +1804,10 @@ fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElemen
         focus == Some(PrFocus::Files),
     )
     .child(section_label(format!(
-        "{} ({})",
+        "{} ({}){}",
         Msg::PrModeFiles.t(),
-        files.len()
+        files.len(),
+        marks.map_or_else(String::new, |v| viewed::progress_suffix(v, &files))
     )))
     .child(list)
     .into_any_element()

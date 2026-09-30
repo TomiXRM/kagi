@@ -160,6 +160,78 @@ fn label_for(op: &str, language: Lang) -> &'static str {
     }
 }
 
+use crate::slow_read::SlowRead;
+
+/// #355: `(reason, subject)` of a slow read, EN and JA. The reason is also the
+/// snackbar label when no write is running.
+fn slow_read_parts(read: SlowRead, language: Lang) -> (&'static str, &'static str) {
+    match (read, language) {
+        (SlowRead::AheadBehind, Lang::En) => (
+            "Counting ahead/behind…",
+            "counting commits against each upstream",
+        ),
+        (SlowRead::AheadBehind, Lang::Ja) => (
+            "ahead/behind を計算中…",
+            "各ブランチと upstream の差分の計算",
+        ),
+        (SlowRead::Worktrees, Lang::En) => (
+            "Reading worktree status…",
+            "checking every worktree for changes",
+        ),
+        (SlowRead::Worktrees, Lang::Ja) => {
+            ("worktree の状態を読み込み中…", "各 worktree の変更の確認")
+        }
+        (SlowRead::WorktreeSize, Lang::En) => (
+            "Measuring worktree size…",
+            "walking every file in a worktree",
+        ),
+        (SlowRead::WorktreeSize, Lang::Ja) => (
+            "worktree の容量を計測中…",
+            "各 worktree 内の全ファイルの走査",
+        ),
+        (SlowRead::Analyze, Lang::En) => (
+            "Analyzing hotspots…",
+            "reading the commit history and touched files",
+        ),
+        (SlowRead::Analyze, Lang::Ja) => {
+            ("hotspot を解析中…", "commit 履歴と変更ファイルの読み込み")
+        }
+        (SlowRead::Diff, Lang::En) => ("Loading diff…", "reading a large diff"),
+        (SlowRead::Diff, Lang::Ja) => ("diff を読み込み中…", "大きい diff の読み込み"),
+    }
+}
+
+/// Snackbar label for a slow read (shown when no write owns the snackbar).
+pub fn slow_read_label(read: SlowRead) -> &'static str {
+    slow_read_parts(read, lang()).0
+}
+
+/// The one-line explanation added to the busy snackbar once a read is slow.
+pub fn slow_read_advice(read: SlowRead) -> String {
+    slow_read_advice_for(read, lang())
+}
+
+fn slow_read_advice_for(read: SlowRead, language: Lang) -> String {
+    let (reason, subject) = slow_read_parts(read, language);
+    let reason = reason.trim_end_matches('…');
+    match language {
+        Lang::En => {
+            format!("Taking a while: {reason} ({subject} takes time in large repositories)")
+        }
+        Lang::Ja => format!(
+            "時間がかかっています: {reason}（大きいリポジトリでは{subject}に時間がかかります）"
+        ),
+    }
+}
+
+/// The snackbar's Skip button: stop the read and show its result as unknown.
+pub fn slow_read_skip() -> &'static str {
+    match lang() {
+        Lang::En => "Skip",
+        Lang::Ja => "スキップ",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,6 +262,35 @@ mod tests {
         for op in ["app-writer", "private-job-123", "", "内部-id"] {
             assert_eq!(label_for(op, Lang::En), "Processing…");
             assert_eq!(label_for(op, Lang::Ja), "処理中…");
+        }
+    }
+
+    /// #355: every slow read explains itself in both languages with the
+    /// "taking a while: <reason> (<subject> in large repositories)" shape.
+    #[test]
+    fn slow_read_advice_names_reason_and_subject() {
+        assert_eq!(
+            slow_read_advice_for(SlowRead::AheadBehind, Lang::En),
+            "Taking a while: Counting ahead/behind (counting commits against each upstream takes time in large repositories)"
+        );
+        assert_eq!(
+            slow_read_advice_for(SlowRead::AheadBehind, Lang::Ja),
+            "時間がかかっています: ahead/behind を計算中（大きいリポジトリでは各ブランチと upstream の差分の計算に時間がかかります）"
+        );
+        for read in [
+            SlowRead::AheadBehind,
+            SlowRead::Worktrees,
+            SlowRead::WorktreeSize,
+            SlowRead::Analyze,
+            SlowRead::Diff,
+        ] {
+            let (en, ja) = (
+                slow_read_parts(read, Lang::En),
+                slow_read_parts(read, Lang::Ja),
+            );
+            assert_ne!(en, ja, "{read:?} is not translated");
+            assert!(slow_read_advice_for(read, Lang::En).starts_with("Taking a while: "));
+            assert!(slow_read_advice_for(read, Lang::Ja).starts_with("時間がかかっています: "));
         }
     }
 }

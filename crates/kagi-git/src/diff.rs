@@ -243,6 +243,29 @@ pub fn compare_commits(
     diff_to_file_statuses(&mut diff)
 }
 
+/// The blob id each of `paths` has in `commit`'s tree, in order: the key a
+/// PR's per-file "viewed" mark is held against (#351). A path the tree does
+/// not contain (deleted at that commit) gets the all-zero id, as git reports
+/// the missing side of a delta. Read-only.
+pub fn blob_ids_at(
+    repo: &Repository,
+    commit: &CommitId,
+    paths: &[PathBuf],
+) -> Result<Vec<String>, GitError> {
+    let tree = find_commit(repo, commit)?
+        .tree()
+        .map_err(|e| diff_error(repo, &e))?;
+    Ok(paths
+        .iter()
+        .map(|path| {
+            tree.get_path(path)
+                .map(|entry| entry.id())
+                .unwrap_or(git2::Oid::ZERO_SHA1)
+                .to_string()
+        })
+        .collect())
+}
+
 /// Return the file diff for a single path between two commits (`a` → `b`).
 pub fn compare_file_diff(
     repo: &Repository,

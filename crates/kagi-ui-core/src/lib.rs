@@ -8,6 +8,7 @@
 #[macro_use]
 pub mod klog;
 
+mod atomic_file;
 pub mod avatar;
 pub mod change_badge;
 pub mod commit_header;
@@ -15,9 +16,12 @@ pub mod commit_row;
 pub mod divider;
 pub mod file_tree;
 pub mod fonts;
+pub mod header_fit;
 pub mod i18n;
 pub mod markdown;
+pub mod pr_viewed;
 pub mod settings;
+pub mod slow_read;
 pub mod theme;
 pub mod theme_apple_dark;
 pub mod theme_apple_light;

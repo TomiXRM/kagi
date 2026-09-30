@@ -308,9 +308,9 @@ pub fn app_state(repo_path: &Path) -> Result<KagiApp, String> {
 }
 
 /// The `KagiApp` entity construction shared with `open_main_window`: the root
-/// focus handle, toast stack, and op-log panel — the parts that need a `cx`.
-/// Extracted so the offscreen mount and the real window build the entity the
-/// exact same way (ADR-0166).
+/// focus handle, toast stack, op-log panel and Settings theme picker — the
+/// parts that need a `cx` / `Window`. Extracted so the offscreen mount and the
+/// real window build the entity the exact same way (ADR-0166).
 pub fn build_kagi_entity(
     mut app_state: KagiApp,
     window: &mut Window,
@@ -329,6 +329,7 @@ pub fn build_kagi_entity(
             .update(cx, |app, cx| !app.hold_host_close(cx))
             .unwrap_or(true)
     });
+    super::theme_select::install(&kagi, window, cx);
     if let Some(fh) = kagi.read(cx).root_focus.clone() {
         window.focus(&fh, cx);
     }

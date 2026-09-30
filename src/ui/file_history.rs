@@ -35,6 +35,9 @@ pub struct FhDiffPane {
     pub scroll: gpui::ListState,
     /// Monotonic per-diff request token, bumped on every diff load.
     pub req: u64,
+    /// #809: the embedded diff's toggle falls back to its icon when the
+    /// File History column is too narrow for its label.
+    pub fit: render_helpers::HeaderFit,
 }
 
 impl super::diff_view::highlight::DiffHighlightHost for FhDiffPane {
@@ -52,8 +55,10 @@ impl Render for FhDiffPane {
             // (no standalone Back/History buttons — FH has its own Back).
             Some(view) => render_helpers::render_diff_list::<FhDiffPane>(
                 view,
-                None,
-                None,
+                render_helpers::DiffHeader {
+                    fit: Some(self.fit.clone()),
+                    ..Default::default()
+                },
                 self.scroll.clone(),
                 cx,
             )
@@ -154,6 +159,7 @@ impl KagiApp {
             diff: None,
             scroll: render_helpers::new_diff_list_state(),
             req: 0,
+            fit: render_helpers::HeaderFit::default(),
         });
         let view = cx.new(|_| FileHistoryView::new(state, geom, panel_width, diff_pane.into()));
         let pane_id = view.entity_id();
@@ -311,8 +317,13 @@ impl KagiApp {
         });
 
         // Off-thread: open the repo, compute the per-file diff (the expensive
-        // I/O + diff work) and build its text rows — plain data (#495).
+        // I/O + diff work) and build its text rows — plain data (#495). A large
+        // one explains itself once slow (#355).
+        let slow = self.active_session().map(|owner| {
+            self.begin_slow_read(owner, Some(kagi_ui_core::slow_read::SlowRead::Diff), cx)
+        });
         let task = cx.background_spawn(async move {
+            let _slow = slow;
             load_history_entry_file_diff(&repo_path, &entry).map(|result| {
                 result.map(|file_diff| {
                     // T-WS-EDITOR-005 finding #10: the shared builder. The

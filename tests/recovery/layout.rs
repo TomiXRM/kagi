@@ -157,7 +157,7 @@ impl Render for Rows {
     }
 }
 
-fn finite(bounds: Bounds<Pixels>, label: &str) {
+pub(crate) fn finite(bounds: Bounds<Pixels>, label: &str) {
     for value in [
         bounds.origin.x,
         bounds.origin.y,
@@ -175,7 +175,7 @@ fn finite(bounds: Bounds<Pixels>, label: &str) {
     );
 }
 
-fn contained(parent: Bounds<Pixels>, child: Bounds<Pixels>, label: &str) {
+pub(crate) fn contained(parent: Bounds<Pixels>, child: Bounds<Pixels>, label: &str) {
     finite(parent, label);
     finite(child, label);
     assert!(
@@ -187,7 +187,7 @@ fn contained(parent: Bounds<Pixels>, child: Bounds<Pixels>, label: &str) {
     );
 }
 
-fn draw(cx: &mut VisualTestAppContext, win: AnyWindowHandle, dimensions: (f32, f32)) {
+pub(crate) fn draw(cx: &mut VisualTestAppContext, win: AnyWindowHandle, dimensions: (f32, f32)) {
     cx.update_window(win, |_, window, cx| {
         window.refresh();
         window.draw(cx).clear();
@@ -340,14 +340,14 @@ pub fn scenario_commit_row_layout(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS commit_row_layout 704 matrix cells plus redraw/selection checks over 4 reused windows; native resize unavailable in VisualTestAppContext");
 }
 
-struct GlobalSettings {
+pub(crate) struct GlobalSettings {
     zoom: f32,
     language_env: Option<std::ffi::OsString>,
     language: i18n::Lang,
 }
 
 impl GlobalSettings {
-    fn capture() -> Self {
+    pub(crate) fn capture() -> Self {
         Self {
             zoom: theme::zoom(),
             language_env: std::env::var_os("KAGI_LANG"),
@@ -751,4 +751,84 @@ pub fn scenario_file_history_virtualized(cx: &mut VisualTestAppContext, repo_pat
     eprintln!(
         "[gui-e2e] PASS file_history_virtualized {ENTRIES} entries → built {built_per_height:?} (list px, rows)"
     );
+}
+
+/// #813: File History's WIP row is built from `git status` and carries no
+/// numstat, so its detail pane must not print "Changes +0 −0" beside a diff
+/// pane that shows the real working-tree change. The value the pane renders
+/// is `kagi_ui_file_history::changes_label`; for the real WIP entry it must
+/// be `None`, while a committed entry of the same file keeps its counts.
+///
+/// The caller dirties `README.md` in `repo_path` before calling; this
+/// scenario only reads the repository.
+pub fn scenario_file_history_wip_changes(cx: &mut VisualTestAppContext, repo_path: &Path) {
+    let restore = GlobalSettings::capture();
+    theme::set_zoom(1.);
+    let app = e2e::app_state(repo_path).expect("fixture app state");
+    let captured: Rc<RefCell<Option<gpui::Entity<KagiApp>>>> = Rc::default();
+    let output = captured.clone();
+    let dimensions = (1440., 900.);
+    let win = crate::macos::open_offscreen(
+        cx,
+        size(px(dimensions.0), px(dimensions.1)),
+        move |window, cx| e2e::mount_root(app, window, cx, &output),
+    );
+    let app = captured.borrow().clone().expect("captured KagiApp");
+    app.update(cx, |app, cx| {
+        app.open_file_history(std::path::PathBuf::from("README.md"), None, cx)
+    });
+    cx.run_until_parked();
+    let pane = cx
+        .read(|cx| app.read(cx).ui().file_history.clone())
+        .expect("actual File History pane");
+    // The real git-log + status load lands here (no seeding): the first entry
+    // is the WIP row for the dirty README.
+    cx.run_until_parked();
+    let entries = cx.read(|cx| {
+        pane.read(cx)
+            .data
+            .history
+            .as_ref()
+            .expect("file history loaded from the repository")
+            .entries
+            .clone()
+    });
+    let wip = entries.first().expect("a WIP row leads the history");
+    assert_eq!(
+        wip.kind,
+        FileHistoryEntryKind::Wip,
+        "dirty README yields a WIP row"
+    );
+    assert_eq!(
+        kagi_ui_file_history::changes_label(&wip.change),
+        None,
+        "the WIP row has no numstat, so no Changes line (was +0 −0)"
+    );
+    let committed = entries
+        .iter()
+        .find(|e| e.kind == FileHistoryEntryKind::Commit)
+        .expect("a committed entry follows");
+    assert!(
+        kagi_ui_file_history::changes_label(&committed.change).is_some_and(|s| s.starts_with('+')),
+        "committed entries keep their +/− counts: {:?}",
+        committed.change
+    );
+    // The list row (shared `commit_row_model`) follows the same rule: the WIP
+    // row's stat column is blank, the committed row's shows its counts.
+    assert!(
+        commit_row_model(wip, NOW).stat.is_empty(),
+        "the WIP list row must not show a stat (was +0 −0)"
+    );
+    assert!(
+        commit_row_model(committed, NOW).stat.starts_with('+'),
+        "the committed list row keeps its stat"
+    );
+    // The WIP row is selected by default; its detail pane must render.
+    assert_eq!(cx.read(|cx| pane.read(cx).data.selected), 0);
+    draw(cx, win.into(), dimensions);
+    drop(pane);
+    drop(captured);
+    unmount(cx, app, win.into());
+    drop(restore);
+    eprintln!("[gui-e2e] PASS file_history_wip_changes");
 }

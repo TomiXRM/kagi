@@ -237,7 +237,8 @@ fn the_ui_snapshot_repairs_the_stat_cache() {
     let mut repo = Repository::open(dir.path()).expect("open");
     let before = index_mtime(dir.path());
 
-    kagi_git::snapshot_repairing_stat_cache(&mut repo, 100).expect("snapshot succeeds");
+    let probe = kagi_git::SnapshotProbe::default();
+    kagi_git::snapshot_repairing_stat_cache(&mut repo, 100, &probe).expect("snapshot succeeds");
 
     assert_ne!(
         before,

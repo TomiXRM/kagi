@@ -15,6 +15,7 @@ use std::{
 
 use gpui::{div, prelude::*, px, rgb, Context, SharedString};
 use kagi_git::worktree_inspection::WorktreeInspection;
+use kagi_ui_core::slow_read::SlowRead;
 
 use super::sidebar::{name_tooltip, SIDEBAR_ROW_H};
 use super::theme::{self, theme};
@@ -140,6 +141,8 @@ impl KagiApp {
         }
         let read = self.reads.current_key(owner);
         let cancel = Arc::new(AtomicBool::new(false));
+        // #355: explained once slow; its Skip is this request's `cancel`.
+        let slow = self.begin_slow_read(owner, Some(SlowRead::WorktreeSize), cx);
         let Some(ui) = self.ui.get_mut(&owner) else {
             return;
         };
@@ -154,6 +157,8 @@ impl KagiApp {
         #[cfg(not(feature = "gui-e2e"))]
         let mut injected: Option<gpui::Task<WorktreeInspection>> = None;
         cx.spawn(async move |this, acx| {
+            // The read lasts exactly as long as this sweep.
+            let _slow = slow;
             for target in targets {
                 if cancel.load(Ordering::Relaxed) {
                     break;

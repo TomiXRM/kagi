@@ -76,6 +76,10 @@ mod app_stash;
 mod busy_label;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/slow_read.rs"]
+mod slow_read;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/app_writer_admission.rs"]
 mod app_writer_admission;
 
@@ -108,12 +112,24 @@ mod diff_highlight;
 mod remote_browse_focus;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/overlay_focus.rs"]
+mod overlay_focus;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_fields_focus.rs"]
 mod pr_fields_focus;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_viewed.rs"]
+mod pr_viewed;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/layout.rs"]
 mod recovery_layout;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/header_fit.rs"]
+mod recovery_header_fit;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/modal_compact.rs"]
@@ -921,6 +937,10 @@ mod macos {
                 Box::new(crate::busy_label::scenario_fetch_busy_label),
             ),
             (
+                "slow_read_explained",
+                Box::new(crate::slow_read::scenario_slow_read_explained),
+            ),
+            (
                 "fetch_failure_oplog",
                 Box::new(crate::busy_label::scenario_fetch_failure_reaches_the_oplog),
             ),
@@ -1009,9 +1029,18 @@ mod macos {
                 Box::new(crate::remote_browse_focus::scenario_remote_browse_escape_focus),
             ),
             (
+                "palette_push_modal_keys",
+                Box::new(crate::overlay_focus::scenario_palette_push_modal_keys),
+            ),
+            (
+                "settings_close_returns_focus",
+                Box::new(crate::overlay_focus::scenario_settings_close_returns_focus),
+            ),
+            (
                 "pr_fields_escape_focus",
                 Box::new(crate::pr_fields_focus::scenario_pr_fields_escape_focus),
             ),
+            ("pr_viewed", Box::new(crate::pr_viewed::scenario_pr_viewed)),
             (
                 "operation_strip_abort",
                 Box::new(crate::app_conflict::scenario_operation_strip_abort),
@@ -1147,6 +1176,25 @@ mod macos {
                     let fixture = build_fixture();
                     let before = repo_fingerprint(fixture.path());
                     crate::recovery_layout::scenario_file_history_virtualized(cx, fixture.path());
+                    assert_eq!(before, repo_fingerprint(fixture.path()));
+                }),
+            ),
+            (
+                "header_fit",
+                Box::new(crate::recovery_header_fit::scenario_header_fit),
+            ),
+            (
+                "file_history_wip_changes",
+                Box::new(|cx| {
+                    let fixture = build_fixture();
+                    // #813: an unstaged edit so File History leads with a WIP row.
+                    std::fs::write(
+                        fixture.path().join("README.md"),
+                        "# fixture\nsecond line\nthird line\n",
+                    )
+                    .unwrap();
+                    let before = repo_fingerprint(fixture.path());
+                    crate::recovery_layout::scenario_file_history_wip_changes(cx, fixture.path());
                     assert_eq!(before, repo_fingerprint(fixture.path()));
                 }),
             ),
@@ -1433,6 +1481,12 @@ mod macos {
             (
                 "inspector_derived",
                 Box::new(crate::perf_inspector_derived::scenario_inspector_derived),
+            ),
+            (
+                "inspector_generated_lockfile_plain",
+                Box::new(
+                    crate::perf_inspector_derived::scenario_inspector_generated_lockfile_plain,
+                ),
             ),
         ];
         let mut executed = 0;

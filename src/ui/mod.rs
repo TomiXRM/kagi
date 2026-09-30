@@ -110,9 +110,11 @@ mod render_overlay;
 mod render_status;
 mod render_wip;
 pub use kagi_ui_core::settings; // ADR-0121: was a shim file
+mod overlay_focus;
 pub mod settings_view;
 pub mod sidebar;
 mod sidebar_worktree_row;
+mod slow_reads;
 pub mod smart_commit;
 pub mod stash_menu;
 mod tab_ui_state_ops;
@@ -120,6 +122,7 @@ mod tab_view;
 pub mod tabs;
 pub mod tag_menu;
 pub mod terminal;
+mod theme_select;
 mod timeline_row;
 pub mod trust_prompt;
 pub use kagi_ui_core::theme; // ADR-0121: was a shim file
@@ -468,9 +471,10 @@ pub struct StatusBarSummary {
     /// Number of untracked files. Counted toward the WIP-row change total so the
     /// row's "N changes" matches `is_dirty` (which includes untracked).
     pub untracked: usize,
-    /// Commits ahead of upstream (None = no upstream / detached).
+    /// Commits ahead of upstream (None = no upstream / detached, or a skipped
+    /// count when `no_upstream` is false, #355).
     pub ahead: Option<usize>,
-    /// Commits behind upstream (None = no upstream / detached).
+    /// Commits behind upstream (None as for `ahead`).
     pub behind: Option<usize>,
     /// Whether there is no upstream configured (and not detached).
     pub no_upstream: bool,
@@ -524,8 +528,8 @@ impl StatusBarSummary {
                     match upstream {
                         Some(u) => (
                             branch.clone(),
-                            Some(u.ahead),
-                            Some(u.behind),
+                            u.counts.map(|c| c.ahead),
+                            u.counts.map(|c| c.behind),
                             false,
                             false,
                             false,
@@ -1209,6 +1213,8 @@ pub struct KagiApp {
     /// Transient overlay opened from the menu bar (branch picker / About /
     /// Keyboard Shortcuts).  `None` when no menu overlay is visible.
     pub menu_overlay: Option<commands::MenuOverlay>,
+    /// Focus the next render applies (#812 / #817, `overlay_focus.rs`).
+    pending_focus: Option<gpui::FocusHandle>,
     /// Linux/FreeBSD client-side menu dropdown currently open from the in-app
     /// menu bar. Native macOS menus are provided by `cx.set_menus`, so this is
     /// only read on Linux/FreeBSD (dead on other targets).
@@ -1388,6 +1394,7 @@ impl KagiApp {
             // W5-MENU
             inspector_visible: true,
             menu_overlay: None,
+            pending_focus: None,
             platform_menu_open: None,
             // W11-AVATAR
             avatars: avatar::AvatarStore::default(),
@@ -1881,7 +1888,11 @@ impl KagiApp {
             klog!("changed files: {}", n);
             // W16-DIFFSTAT: aggregate per-file additions/deletions alongside.
             let stats = self.fetch_diffstat(index);
-            self.with_ui(|ui| ui.diff_caches.insert_row(index, files_opt, stats, None));
+            let generated = self.fetch_generated_flags(index, files_opt.as_deref());
+            self.with_ui(|ui| {
+                ui.diff_caches
+                    .insert_row(index, files_opt, stats, generated)
+            });
         } else {
             // Already cached — still emit the log (matches the old select()).
             let n = self
@@ -2177,34 +2188,6 @@ impl KagiApp {
         .detach();
     }
 
-    /// Fetch changed files for the commit at `index`.  Returns `None` on
-    /// failure (so the UI can show "(diff unavailable)").
-    fn fetch_changed_files(&self, index: usize) -> Option<Vec<FileStatus>> {
-        use kagi_git::CommitId;
-
-        // Early-exit if no repo is open (the session is None in that case too).
-        self.ui().repo_session.as_ref()?;
-        let detail = self.view().details.get(index)?;
-        let id = CommitId(detail.full_sha.as_ref().to_string());
-
-        // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let repo = self.ui().repo_session.as_ref()?.backend();
-        repo.commit_changed_files(&id).ok()
-    }
-
-    /// W16-DIFFSTAT: aggregate per-file additions/deletions for the commit at
-    /// `index`.  Returns `None` on failure (the UI simply omits the bar).
-    fn fetch_diffstat(&self, index: usize) -> Option<Vec<FileDiffStat>> {
-        use kagi_git::CommitId;
-
-        let repo_path = self.repo_path.as_ref()?;
-        let detail = self.view().details.get(index)?;
-        let id = CommitId(detail.full_sha.as_ref().to_string());
-
-        let repo = kagi_git::Backend::open(repo_path).ok()?;
-        repo.commit_diffstat(&id).ok()
-    }
-
     fn wip_diffstat_from_backend(repo: &kagi_git::Backend) -> WipDiffStat {
         let mut out = WipDiffStat::default();
         for stat in repo.staged_diffstat().unwrap_or_default() {
@@ -2294,7 +2277,11 @@ impl KagiApp {
             let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
             klog!("changed files: {}", n);
             let stats = self.fetch_diffstat(row_index);
-            self.with_ui(|ui| ui.diff_caches.insert_row(row_index, files_opt, stats, None));
+            let generated = self.fetch_generated_flags(row_index, files_opt.as_deref());
+            self.with_ui(|ui| {
+                ui.diff_caches
+                    .insert_row(row_index, files_opt, stats, generated)
+            });
         }
     }
 
@@ -2750,8 +2737,8 @@ impl KagiApp {
             is_current,
             has_upstream: upstream.is_some(),
             upstream_name: upstream.map(|u| u.remote_branch.clone()),
-            ahead: upstream.map(|u| u.ahead).unwrap_or(0),
-            behind: upstream.map(|u| u.behind).unwrap_or(0),
+            ahead: upstream.and_then(|u| u.counts).map(|c| c.ahead),
+            behind: upstream.and_then(|u| u.counts).map(|c| c.behind),
             dirty: self.view().status_summary.is_dirty,
             conflict_mode: if self.view().status_summary.conflict_count > 0 {
                 BranchConflictMode::Conflicted
@@ -3218,37 +3205,6 @@ fn open_main_window(app_state: KagiApp, cx: &mut App) {
             // `cx`) is shared with the offscreen GUI E2E mount so both build
             // the entity identically — see `e2e::build_kagi_entity` (ADR-0166).
             let kagi: Entity<KagiApp> = e2e::build_kagi_entity(app_state, window, cx);
-
-            // Settings appearance theme picker: the gpui-component `Select` is an
-            // Entity that needs a `Window`, so it's built here rather than in
-            // KagiApp::new. A `Confirm` subscription applies + persists the chosen
-            // theme via set_theme (mirrors the old inline-dropdown click handler).
-            let theme_select = cx.new(|cx| {
-                settings_view::ThemeSelectState::new(
-                    settings_view::theme_options(),
-                    Some(settings_view::current_theme_index()),
-                    window,
-                    cx,
-                )
-            });
-            kagi.update(cx, |app, cx| {
-                cx.subscribe(
-                    &theme_select,
-                    |this,
-                     _state,
-                     event: &gpui_component::select::SelectEvent<
-                        Vec<settings_view::ThemeOption>,
-                    >,
-                     cx| {
-                        if let gpui_component::select::SelectEvent::Confirm(Some(slug)) = event {
-                            this.set_theme(slug, cx);
-                            cx.notify();
-                        }
-                    },
-                )
-                .detach();
-                app.theme_select = Some(theme_select);
-            });
             // Regression coverage for the Root::read crash: with
             // KAGI_COMMIT_PANEL=1, open the panel through the real
             // window-context path so the InputState + Input element

@@ -1,4 +1,4 @@
-//! Where a pull request's "viewed" marks live (#351, ADR-0206):
+//! Where a pull request's "viewed" marks live (#351, ADR-0207):
 //! `~/.kagi/pr-viewed/<owner>-<repo>-<pr>.json` (`$KAGI_LOG_DIR/pr-viewed/`
 //! when set, like `settings.json`), one file per PR holding a flat
 //! `{ "<path>": "<head blob id>" }` object.

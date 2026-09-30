@@ -1,4 +1,4 @@
-//! Per-file "viewed" marks on a pull request (#351, ADR-0206).
+//! Per-file "viewed" marks on a pull request (#351, ADR-0207).
 //!
 //! A mark is the file's head-side blob id at the moment the user marked it.
 //! The file counts as viewed only while the PR head still has that exact

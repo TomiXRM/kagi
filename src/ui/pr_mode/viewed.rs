@@ -1,4 +1,4 @@
-//! Per-file "viewed" marks in a PR tab's file list (#351, ADR-0206).
+//! Per-file "viewed" marks in a PR tab's file list (#351, ADR-0207).
 //!
 //! A mark holds the file's head-side blob id; the file reads as viewed only
 //! while the fetched PR head still has that blob (`kagi_domain::pr_viewed`).

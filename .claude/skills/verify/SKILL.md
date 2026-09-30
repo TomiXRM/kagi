@@ -302,7 +302,7 @@ The current suite covers:
   status remains unchanged. Git operations use only a local bare repo.
   `modal_sections` is the pre-migration disclosure baseline and remains unchanged;
 - PR viewed files (`KAGI_GUI_E2E_ONLY=pr_viewed`, `tests/recovery/pr_viewed.rs`):
-  #351 / ADR-0206. A real PR ref fetch (bare remote with `refs/pull/7/head`,
+  #351 / ADR-0207. A real PR ref fetch (bare remote with `refs/pull/7/head`,
   reached through `url.<file>.insteadOf` for `github.com/example/repo`; other gh
   reads use `pr_fields_focus`'s offline gh) loads two files. Clicking each row's
   measured `pr-file-viewed-<n>` checkbox marks it without selecting the row, and

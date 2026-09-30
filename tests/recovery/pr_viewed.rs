@@ -1,4 +1,4 @@
-//! #351 / ADR-0206: per-file "viewed" marks in a PR tab's file list.
+//! #351 / ADR-0207: per-file "viewed" marks in a PR tab's file list.
 //!
 //! A real PR ref fetch (a bare remote holding `refs/pull/7/head`, reached
 //! through `url.<file>.insteadOf` for the PR's GitHub identity) loads two

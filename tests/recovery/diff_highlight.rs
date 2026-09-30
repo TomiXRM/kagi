@@ -5,6 +5,7 @@
 //! Frames are drawn explicitly (`frame`) and the dispatcher is parked
 //! separately, so a highlight request can be left outstanding while the
 //! surface changes under it.
+use crate::evidence_support::deferred;
 use crate::macos::{build_fixture, git, mount, unmount};
 use gpui::{AnyWindowHandle, App, Entity, VisualTestAppContext};
 use kagi::ui::commit_panel::CommitPanelFileRef;
@@ -242,6 +243,13 @@ pub fn scenario_diff_highlight_stale(cx: &mut VisualTestAppContext) {
         cx.notify();
     });
     settle(cx, window);
+    // #829: a cache miss is read off the UI thread. Read both files once so
+    // the opens below are cache hits that install synchronously, which the
+    // highlight timing below relies on.
+    for index in [0, 1] {
+        kagi.update(cx, |app, cx| app.open_main_diff_commit(index, cx));
+        cx.run_until_parked();
+    }
     let commit_file = |cx: &mut VisualTestAppContext, index: usize| {
         kagi.update(cx, |app, cx| app.open_main_diff_commit(index, cx));
         main_view(cx, &kagi).expect("the commit file opens")
@@ -310,4 +318,136 @@ pub fn scenario_diff_highlight_stale(cx: &mut VisualTestAppContext) {
 
     unmount(cx, kagi, window);
     eprintln!("[gui-e2e] PASS diff_highlight_stale");
+}
+
+/// #829: a commit file's diff on a content-cache miss is read off the UI
+/// thread: the call returns before any rows change, and a read superseded by
+/// another open (here: another commit's file) never lands or fills the cache.
+pub fn scenario_commit_diff_off_thread(cx: &mut VisualTestAppContext) {
+    let fixture = rust_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (kagi, window) = mount(cx, &repo);
+    kagi.update(cx, |app, cx| {
+        app.select(0);
+        cx.notify();
+    });
+    settle(cx, window);
+
+    // A miss installs nothing during the call; the text lands with the read.
+    kagi.update(cx, |app, cx| {
+        app.open_main_diff_commit(0, cx);
+        assert!(
+            app.ui().main_diff.is_none(),
+            "a cache-miss commit diff was read on the UI thread"
+        );
+    });
+    cx.run_until_parked();
+    let first = main_view(cx, &kagi).expect("the commit file lands");
+    assert!(matches!(
+        first.source,
+        MainDiffSource::Commit {
+            row_index: 0,
+            file_index: 0,
+            ..
+        }
+    ));
+
+    // With a diff open, a miss leaves the shown rows alone until it lands.
+    kagi.update(cx, |app, cx| app.open_main_diff_commit(1, cx));
+    let during = main_view(cx, &kagi).unwrap();
+    assert_eq!(
+        rows_id(&during),
+        rows_id(&first),
+        "the shown rows changed before the read landed"
+    );
+    cx.run_until_parked();
+    let second = main_view(cx, &kagi).unwrap();
+    assert_ne!(second.title, first.title, "the second file landed");
+
+    // Another commit's file is still being read when the selection moves
+    // back and a cached file is opened: the older read must not land.
+    kagi.update(cx, |app, cx| {
+        app.select(1);
+        cx.notify();
+    });
+    settle(cx, window);
+    kagi.update(cx, |app, cx| app.open_main_diff_commit(0, cx));
+    kagi.update(cx, |app, cx| {
+        app.select(0);
+        app.open_main_diff_commit(0, cx);
+    });
+    cx.run_until_parked();
+    let shown = main_view(cx, &kagi).unwrap();
+    assert!(
+        matches!(
+            shown.source,
+            MainDiffSource::Commit {
+                row_index: 0,
+                file_index: 0,
+                ..
+            }
+        ),
+        "the superseded read of the other commit landed"
+    );
+    assert_eq!(shown.title, first.title);
+    assert!(
+        cx.read(|app| !kagi
+            .read(app)
+            .ui()
+            .diff_caches
+            .file_content
+            .contains_key(&(1, 0))),
+        "the superseded read filled the cache"
+    );
+
+    // A reload that renumbers the rows lands while a miss is still out: the
+    // read is held (`hold_next_main_diff_read_for_e2e`) across the reload's
+    // publish and its pane sweep. A commit's diff is immutable, so the read
+    // is carried through the sweep and lands on its commit's new row; the
+    // row key it was read under is stale, so it fills no cache.
+    kagi.update(cx, |app, cx| {
+        app.select(1);
+        cx.notify();
+    });
+    settle(cx, window);
+    let commit = cx.read(|app| kagi.read(app).view().details[1].full_sha.to_string());
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_main_diff_read_for_e2e(hold);
+    kagi.update(cx, |app, cx| app.open_main_diff_commit(0, cx));
+    git(&repo, &["commit", "-q", "--allow-empty", "-m", "renumber"]);
+    kagi.update(cx, |app, cx| app.reload_external(cx));
+    settle(cx, window);
+    settle(cx, window);
+    assert_eq!(
+        cx.read(|app| kagi.read(app).view().details[2].full_sha.to_string()),
+        commit,
+        "the reload moved the commit to row 2"
+    );
+    release.send(());
+    settle(cx, window);
+    let shown = main_view(cx, &kagi).expect("the pane sweep dropped the read still out");
+    let MainDiffSource::Commit {
+        row_index,
+        file_index,
+        commit: Some(landed),
+    } = shown.source
+    else {
+        panic!("the carried read did not land as a commit diff");
+    };
+    assert_eq!(landed.0, commit, "another commit's diff is shown");
+    assert_eq!(
+        (row_index, file_index),
+        (2, 0),
+        "the carried read was not re-anchored to its commit's new row"
+    );
+    cx.read(|app| {
+        let cache = &kagi.read(app).ui().diff_caches.file_content;
+        assert!(
+            !cache.contains_key(&(1, 0)) && !cache.contains_key(&(2, 0)),
+            "a read keyed by the old rows filled the renumbered cache"
+        );
+    });
+
+    unmount(cx, kagi, window);
+    eprintln!("[gui-e2e] PASS commit_diff_off_thread");
 }

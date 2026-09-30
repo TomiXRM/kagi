@@ -993,6 +993,10 @@ mod macos {
                 Box::new(crate::diff_highlight::scenario_diff_highlight_stale),
             ),
             (
+                "commit_diff_off_thread",
+                Box::new(crate::diff_highlight::scenario_commit_diff_off_thread),
+            ),
+            (
                 "conflict_save_boundary",
                 Box::new(crate::app_conflict::scenario_conflict_save_boundary),
             ),

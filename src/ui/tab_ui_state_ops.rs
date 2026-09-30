@@ -156,6 +156,7 @@ impl TabUiState {
             commit_panel_open,
             main_diff,
             main_diff_req: _,
+            main_diff_commit_read: _,
             compare_view,
         } = self;
         let default_groups = HashSet::from([super::sidebar::PR_GROUP_OTHERS.to_string()]);

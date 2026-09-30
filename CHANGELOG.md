@@ -7,7 +7,12 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Performance
 
-- コミットグラフの「さらに読み込む」と手動 Refresh(ツールバー / Cmd+R)の snapshot 読み取りを UI thread から background へ移しました。結果は読み取りを要求したタブ(owner)で、かつその要求が最新のときだけ適用し、連打・Refresh との競合・タブ切替で古い結果を反映しません。読み込み失敗は footer と toast で通知し、選択・スクロール・開いているパネルは維持します。（#487）
+- File History のコミット一覧を、Graph・sidebar・Editor History と同じ `uniform_list` による仮想リストに揃えました。500 件の履歴でも構築される行は表示範囲分だけになり、選択行は一覧の外にあってもスクロールして表示します。見た目・ページング・diff 対象の選び方は変更しません。（#496）
+- コミットグラフの「さらに読み込む」と手動 Refresh(ツールバー)の snapshot 読み取りを UI thread から background へ移しました。結果は読み取りを要求したタブ(owner)で、かつその要求が最新のときだけ適用し、連打・Refresh との競合・タブ切替で古い結果を反映しません。読み込み失敗は footer と toast で通知し、選択・スクロール・開いているパネルは維持します。（#487）
+
+### Internal
+
+- 統合テストの Git fixture 構築を `tests/support/git_fixture.rs` に共通化しました。fixture 用の `git` は継承した `GIT_*`・global/system/XDG 設定・hooks・template を遮断して identity を固定するため、開発者の設定や hook から渡された `GIT_DIR` で fixture の内容が変わったり実 repository に書き込んだりしません。ops / blame / push_tag / pr_conflict_preview / app_read の各 suite を移行し、残りは follow-up で移行します。製品の動作は変更していません。（#514）
 
 ## [0.40.1] - 2026-09-29
 

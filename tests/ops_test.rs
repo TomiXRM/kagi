@@ -13,7 +13,6 @@ use backend_ops::{
     execute_create_tag, execute_stash_apply, execute_stash_push,
 };
 use std::path::Path;
-use std::process::Command;
 
 use git2::{BranchType, Repository};
 use tempfile::TempDir;
@@ -27,35 +26,9 @@ use kagi_git::{
     snapshot, CommitId, Head,
 };
 
-// ────────────────────────────────────────────────────────────
-// Helpers (copied from snapshot_test pattern)
-// ────────────────────────────────────────────────────────────
-
-/// Run a git command inside `dir`, asserting it succeeds.
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(
-        status.success(),
-        "git {} exited with {:?}",
-        args.join(" "),
-        status.code()
-    );
-}
-
-/// Write `content` to `dir/name`.
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
-}
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, git_output, init_repo, write_file};
 
 /// Build a minimal repo with two branches: `main` and `feature/one`.
 /// HEAD is on `main`.  The repo is initially clean.
@@ -64,10 +37,7 @@ fn write_file(dir: &Path, name: &str, content: &str) {
 fn build_two_branch_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository) {
     let d = tmp.path();
 
-    git(d, &["init", "-q", "-b", "main", "."]);
-    git(d, &["config", "user.name", "Test"]);
-    git(d, &["config", "user.email", "test@example.com"]);
-    git(d, &["config", "commit.gpgsign", "false"]);
+    init_repo(d, "main");
 
     // Initial commit on main.
     write_file(d, "README.md", "# test\n");
@@ -581,10 +551,7 @@ fn read_file(dir: &Path, name: &str) -> String {
 fn build_readme_conflict_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository, CommitId) {
     let d = tmp.path();
 
-    git(d, &["init", "-q", "-b", "main", "."]);
-    git(d, &["config", "user.name", "Test"]);
-    git(d, &["config", "user.email", "test@example.com"]);
-    git(d, &["config", "commit.gpgsign", "false"]);
+    init_repo(d, "main");
 
     write_file(d, "README.md", "base\n");
     git(d, &["add", "README.md"]);
@@ -1098,10 +1065,7 @@ fn test_execute_create_tag_does_not_overwrite_existing() {
 /// Helper: create a repo with a single commit (clean state).
 fn build_clean_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository) {
     let d = tmp.path();
-    git(d, &["init", "-q", "-b", "main", "."]);
-    git(d, &["config", "user.name", "Test"]);
-    git(d, &["config", "user.email", "test@example.com"]);
-    git(d, &["config", "commit.gpgsign", "false"]);
+    init_repo(d, "main");
 
     write_file(d, "README.md", "# test\n");
     git(d, &["add", "README.md"]);
@@ -1407,10 +1371,7 @@ fn test_preflight_check_stash_detects_count_change() {
 /// HEAD is on `main`.  Returns (repo_dir, repo, feature_commit_id).
 fn build_cherry_pick_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository, CommitId) {
     let d = tmp.path();
-    git(d, &["init", "-q", "-b", "main", "."]);
-    git(d, &["config", "user.name", "Test"]);
-    git(d, &["config", "user.email", "test@example.com"]);
-    git(d, &["config", "commit.gpgsign", "false"]);
+    init_repo(d, "main");
 
     // Initial commit on main.
     write_file(d, "base.txt", "base content\n");
@@ -1603,10 +1564,7 @@ fn test_cherry_pick_plan_conflict_blocker_wt_intact() {
     }
     let tmp = TempDir::new().unwrap();
     let d = tmp.path();
-    git(d, &["init", "-q", "-b", "main", "."]);
-    git(d, &["config", "user.name", "Test"]);
-    git(d, &["config", "user.email", "test@example.com"]);
-    git(d, &["config", "commit.gpgsign", "false"]);
+    init_repo(d, "main");
 
     // Initial commit: file.txt = "line A\n"
     write_file(d, "file.txt", "line A\n");
@@ -1723,10 +1681,7 @@ fn test_cherry_pick_plan_merge_commit_blocker() {
     }
     let tmp = TempDir::new().unwrap();
     let d = tmp.path();
-    git(d, &["init", "-q", "-b", "main", "."]);
-    git(d, &["config", "user.name", "Test"]);
-    git(d, &["config", "user.email", "test@example.com"]);
-    git(d, &["config", "commit.gpgsign", "false"]);
+    init_repo(d, "main");
 
     // Initial commit.
     write_file(d, "base.txt", "base\n");
@@ -1978,10 +1933,7 @@ fn test_cherry_pick_updates_modified_existing_file() {
     use kagi_git::CommitId;
     let tmp = tempfile::TempDir::new().unwrap();
     let dir = tmp.path();
-    git(dir, &["init", "-q", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    init_repo(dir, "main");
 
     std::fs::write(dir.join("shared.txt"), "v1\n").unwrap();
     git(dir, &["add", "-A"]);
@@ -1991,14 +1943,7 @@ fn test_cherry_pick_updates_modified_existing_file() {
     git(dir, &["checkout", "-q", "-b", "feat"]);
     std::fs::write(dir.join("shared.txt"), "v2 from feat\n").unwrap();
     git(dir, &["commit", "-qam", "feat edit"]);
-    let feat_sha = {
-        let out = std::process::Command::new("git")
-            .args(["rev-parse", "HEAD"])
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        String::from_utf8_lossy(&out.stdout).trim().to_string()
-    };
+    let feat_sha = git_output(dir, &["rev-parse", "HEAD"]);
 
     // Back to main with an unrelated extra commit (so cherry-pick isn't a no-op FF shape).
     git(dir, &["checkout", "-q", "main"]);
@@ -2029,10 +1974,7 @@ fn test_cherry_pick_dirty_safe_checkout_refuses_and_preserves_user_content() {
     }
     let tmp = TempDir::new().unwrap();
     let d = tmp.path();
-    git(d, &["init", "-q", "-b", "main", "."]);
-    git(d, &["config", "user.name", "Test"]);
-    git(d, &["config", "user.email", "test@example.com"]);
-    git(d, &["config", "commit.gpgsign", "false"]);
+    init_repo(d, "main");
     write_file(d, "base.txt", "base content\n");
     git(d, &["add", "base.txt"]);
     git(d, &["commit", "-qm", "initial commit"]);

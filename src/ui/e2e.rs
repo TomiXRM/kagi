@@ -38,6 +38,9 @@ thread_local! {
     static CONTROL_BOUNDS: RefCell<std::collections::HashMap<(gpui::WindowId, String), gpui::Bounds<gpui::Pixels>>> = RefCell::new(Default::default());
     static TAB_LOAD_LIMITS: RefCell<std::collections::HashMap<crate::app::SessionId, usize>> = RefCell::new(Default::default());
 }
+/// #354: the toolbar's AccessKit-disabled inputs, for the GUI E2E oracle.
+#[cfg(feature = "gui-e2e")]
+pub use super::render_header::toolbar_a11y::{clear_toolbar_unavailable, toolbar_unavailable};
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn record_confirm_bounds(id: gpui::WindowId, bounds: gpui::Bounds<gpui::Pixels>) {
     CONFIRM_BOUNDS.with(|map| map.borrow_mut().insert(id, bounds));

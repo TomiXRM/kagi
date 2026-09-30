@@ -331,7 +331,7 @@ impl Render for KagiApp {
         // selection path (click / keyboard / jump) uniformly.
         if self.remote_view.is_some() {
             if let Some(i) = selected {
-                if !self.ui().diff_caches.changed_files.contains_key(&i)
+                if !self.ui().diff_caches.changed_files().contains_key(&i)
                     && !self.ui().diff_caches.remote_inflight.contains(&i)
                 {
                     self.load_remote_changed_files(i, cx);
@@ -342,7 +342,7 @@ impl Render for KagiApp {
             // changed files + diffstat off the UI thread (once per row), so no
             // selection path (click / keyboard / jump) blocks the frame. `select`
             // only records the selection; this fires the async load.
-            if !self.ui().diff_caches.changed_files.contains_key(&i)
+            if !self.ui().diff_caches.changed_files().contains_key(&i)
                 && !self.ui().diff_caches.local_inflight.contains(&i)
             {
                 self.load_local_changed_files(i, cx);

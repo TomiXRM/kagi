@@ -187,6 +187,29 @@ pub fn op_plan_failed(op: Op, err: impl std::fmt::Display) -> String {
     }
 }
 
+/// `"checkout refused: <reason> (+1 more in Operation Log)"` /
+/// `"checkout は拒否されました: <reason>（ほか 1 件は Operation Log）"` — the
+/// footer / toast for a plan-time refusal (#353). `op` is the operation's
+/// oplog name, `reason` the first blocker already in the user's language, and
+/// `more` how many further blockers only the Operation Log lists. A reason
+/// written over several lines is joined into one: the footer and toast show
+/// only a first line, which would otherwise drop its detail and the count.
+pub fn op_refused(op: &str, reason: impl std::fmt::Display, more: usize) -> String {
+    let reason = reason.to_string();
+    let reason: Vec<&str> = reason
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let reason = reason.join(" ");
+    match (lang(), more) {
+        (Lang::En, 0) => format!("{op} refused: {reason}"),
+        (Lang::En, n) => format!("{op} refused: {reason} (+{n} more in Operation Log)"),
+        (Lang::Ja, 0) => format!("{op} は拒否されました: {reason}"),
+        (Lang::Ja, n) => format!("{op} は拒否されました: {reason}（ほか {n} 件は Operation Log）"),
+    }
+}
+
 /// A fresh plan lost the shared modal slot to a newer user decision. The plan
 /// is invalidated rather than queued because its repository assumptions may
 /// already be stale when the foreground modal closes.
@@ -312,6 +335,32 @@ mod tests {
         super::super::set_lang_no_persist(Lang::Ja);
         assert!(plan_not_shown_retry(Op::Merge).contains("merge の plan"));
         assert!(recorded_outcome_notice("push に失敗しました").contains("Operation Log"));
+        super::super::set_lang_no_persist(Lang::En);
+    }
+
+    #[test]
+    fn refusal_names_the_reason_and_counts_the_rest() {
+        let _guard = super::super::tests::LOCK.lock();
+        super::super::set_lang_no_persist(Lang::En);
+        assert_eq!(
+            op_refused("checkout", "dirty", 0),
+            "checkout refused: dirty"
+        );
+        assert_eq!(
+            op_refused("delete-branch", "checked out.\nbranch `main`\n", 0),
+            "delete-branch refused: checked out. branch `main`",
+            "one line, so a first-line preview keeps the detail"
+        );
+        assert_eq!(
+            op_refused("checkout", "dirty", 2),
+            "checkout refused: dirty (+2 more in Operation Log)"
+        );
+        super::super::set_lang_no_persist(Lang::Ja);
+        assert_eq!(
+            op_refused("checkout", "未コミット", 0),
+            "checkout は拒否されました: 未コミット"
+        );
+        assert!(op_refused("checkout", "未コミット", 1).ends_with("（ほか 1 件は Operation Log）"));
         super::super::set_lang_no_persist(Lang::En);
     }
 }

@@ -10,11 +10,16 @@ All notable changes to Kagi are documented here. Format loosely follows
 - コマンドパレット(Cmd+P)から開いた Push などの確認 modal で Enter も Escape も効かず、Cancel のクリックでしか閉じられなかった問題を修正しました。パレットを閉じるときに、開く前の focus へ戻します。blocked な Push は branch menu から開いた場合と同じく、Enter で拒否されて理由が footer に出て、Escape で閉じます。（#817）
 - Settings を × または Escape で閉じた直後に、↑↓ が File History / graph の一覧に届かなかった問題を修正しました。Settings のテーマ選択などで移った focus を、閉じるときに開く前の場所へ戻します。（#812）
 
+### Changed
+
+- 実行できない plan（blocker あり）を Enter や確認ボタンで確定したとき、footer と toast が「refused (N blockers)」の件数だけでなく、先頭の blocker の具体的な理由を表示するようにしました（EN/JA、残りの件数も併記）。checkout・branch 操作・merge / cherry-pick / revert・reset / rebase / force-with-lease push・remote branch 削除 / tag push・discard・undo / redo・worktree lock / unlock / prune・pull / push・PR merge / review / 編集・stash・remote stash drop が対象です。Operation Log には従来どおり全 blocker が残り、実行は従来どおり拒否します。（#353）
+
 ### Performance
 
 - WIP・Compare・File History の diff を開いたとき、diff の読み込みと構文ハイライトが UI スレッドを止めないようにしました。まずテキストを表示し、ハイライトは別スレッドで計算してから反映します。別のファイルや別のテーマに切り替えた後に古いハイライトが反映されることはなく、同じ内容の再読み込み（外部変更による reload など）ではハイライトも side-by-side の再計算も行いません。（#495）
 - File History のコミット一覧を、Graph・sidebar・Editor History と同じ `uniform_list` による仮想リストに揃えました。500 件の履歴でも構築される行は表示範囲分だけになり、選択行は一覧の外にあってもスクロールして表示します。見た目・ページング・diff 対象の選び方は変更しません。（#496）
 - コミットグラフの「さらに読み込む」と手動 Refresh(ツールバー)の snapshot 読み取りを UI thread から background へ移しました。結果は読み取りを要求したタブ(owner)で、かつその要求が最新のときだけ適用し、連打・Refresh との競合・タブ切替で古い結果を反映しません。読み込み失敗は footer と toast で通知し、選択・スクロール・開いているパネルは維持します。（#487）
+- Inspector の changed files（先頭 100 件の切り出し・生成ファイルの折り畳み・tree・diffstat の対応付け・件数集計）とコミットメッセージの HTML 変換を、描画のたびではなく入力が変わったとき（選択・読み込み完了・reload・compare）だけ作り直すようにしました。Path⇄Tree の切り替えと Generated の開閉では作り直しません。表示・クリック先・右クリックメニュー・Copy Path・「… and N more」は従来どおりです。（#512）
 
 ### Internal
 

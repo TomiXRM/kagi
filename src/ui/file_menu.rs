@@ -267,10 +267,13 @@ pub(crate) fn render_inspector_file_menu_overlay(
                     SharedString::from(Msg::OpenInExternalEditor.t()),
                     ext_click,
                 ))
-                .child(item(
-                    ("insp-menu-copy", fi),
-                    SharedString::from(Msg::EditorTreeCopyPath.t()),
-                    copy_click,
+                .child(super::e2e::measure_control(
+                    "insp-menu-copy",
+                    item(
+                        ("insp-menu-copy", fi),
+                        SharedString::from(Msg::EditorTreeCopyPath.t()),
+                        copy_click,
+                    ),
                 )),
         )
         .into_any_element()

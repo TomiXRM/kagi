@@ -80,12 +80,10 @@ impl KagiApp {
                 "[kagi] refused: force-with-lease-push plan has {} blocker(s), not executing",
                 modal.plan.blockers.len()
             );
-            self.record_op(
+            self.record_refused(
                 "force-with-lease-push",
                 modal.plan.current.clone(),
-                kagi_git::oplog::OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &modal.plan.blockers,
                 &repo_path,
                 cx,
             );

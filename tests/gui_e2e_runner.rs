@@ -92,6 +92,10 @@ mod conflict_abort_slot;
 mod conflict_continue_cache;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/refusal_reasons.rs"]
+mod refusal_reasons;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/diff_highlight.rs"]
 mod diff_highlight;
 
@@ -202,6 +206,10 @@ mod issues_pagination;
 #[cfg(target_os = "macos")]
 #[path = "perf/oplog_detail.rs"]
 mod perf_oplog_detail;
+
+#[cfg(target_os = "macos")]
+#[path = "perf/inspector_derived.rs"]
+mod perf_inspector_derived;
 
 #[cfg(target_os = "macos")]
 mod macos {
@@ -953,6 +961,10 @@ mod macos {
                 Box::new(crate::conflict_continue_cache::scenario_conflict_continue_cache),
             ),
             (
+                "refusal_reasons",
+                Box::new(crate::refusal_reasons::scenario_refusal_reasons),
+            ),
+            (
                 "diff_highlight_once",
                 Box::new(crate::diff_highlight::scenario_diff_highlight_once),
             ),
@@ -1418,6 +1430,10 @@ mod macos {
                 "oplog_detail_draw",
                 Box::new(crate::perf_oplog_detail::scenario_expanded_detail_draw),
             ),
+            (
+                "inspector_derived",
+                Box::new(crate::perf_inspector_derived::scenario_inspector_derived),
+            ),
         ];
         let mut executed = 0;
         for (name, scenario) in &mut scenarios {
@@ -1645,7 +1661,7 @@ mod macos {
                 .as_ref()
                 .expect("external reload must not close the compare pane");
             assert_eq!(
-                compare.read(app).view.base,
+                compare.read(app).view().base,
                 head,
                 "the compare should still be against the same base commit"
             );

@@ -82,6 +82,8 @@ impl SplitCache {
             return Arc::clone(&entry.projection);
         }
 
+        #[cfg(feature = "gui-e2e")]
+        super::PROJECTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let projection = Arc::new(SplitProjection {
             rows: split_rows(rows),
             moved: moved_rows(rows),
@@ -159,6 +161,8 @@ mod tests {
             rows: moved_diff(),
             source: MainDiffSource::Synthetic,
             images: None,
+            lang: None,
+            highlighted: None,
         };
         let mut second = MainDiffView {
             rows: moved_diff(),

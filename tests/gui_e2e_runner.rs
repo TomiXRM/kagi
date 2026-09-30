@@ -92,6 +92,10 @@ mod conflict_abort_slot;
 mod conflict_continue_cache;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/diff_highlight.rs"]
+mod diff_highlight;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/remote_browse_focus.rs"]
 mod remote_browse_focus;
 
@@ -943,6 +947,14 @@ mod macos {
             (
                 "conflict_continue_cache",
                 Box::new(crate::conflict_continue_cache::scenario_conflict_continue_cache),
+            ),
+            (
+                "diff_highlight_once",
+                Box::new(crate::diff_highlight::scenario_diff_highlight_once),
+            ),
+            (
+                "diff_highlight_stale",
+                Box::new(crate::diff_highlight::scenario_diff_highlight_stale),
             ),
             (
                 "conflict_save_boundary",

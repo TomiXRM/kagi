@@ -37,6 +37,14 @@ pub struct FhDiffPane {
     pub req: u64,
 }
 
+impl super::diff_view::highlight::DiffHighlightHost for FhDiffPane {
+    fn for_each_diff(&mut self, visit: &mut dyn FnMut(&mut MainDiffView)) {
+        if let Some(diff) = self.diff.as_mut() {
+            visit(diff);
+        }
+    }
+}
+
 impl Render for FhDiffPane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         match self.diff.clone() {
@@ -259,12 +267,10 @@ impl KagiApp {
 
     /// Build the [`MainDiffView`] for the pane's currently-selected entry,
     /// reusing the existing diff renderer pipeline. The git diff computation
-    /// (Backend open + per-file diff) runs **off the UI thread** via
-    /// `cx.background_spawn` so selecting a row on a large file/repo can't jank
-    /// the frame. Only the plain `kagi_git::FileDiff` crosses back; the row
-    /// build + syntax highlight then run on the UI thread in the marshalled
-    /// result, because `MainDiffView` / `DiffRow` hold GPUI types and are
-    /// therefore `!Send`.
+    /// (Backend open + per-file diff) and the row build run **off the UI
+    /// thread** via `cx.background_spawn` so selecting a row on a large
+    /// file/repo can't jank the frame; the text lands first and the pane's
+    /// render requests the highlight (#495).
     ///
     /// The result is guarded by the pane's monotonic `req` token (bumped here
     /// on every call) plus the view's `generation`: a newer diff load (rapid
@@ -304,11 +310,19 @@ impl KagiApp {
             p.req
         });
 
-        // Off-thread: open the repo and compute the per-file diff (the expensive
-        // I/O + diff work). `FileDiff` is plain `kagi_git` data (`Send`); the GPUI
-        // view types are built on the UI thread in the marshalled result below.
-        let task =
-            cx.background_spawn(async move { load_history_entry_file_diff(&repo_path, &entry) });
+        // Off-thread: open the repo, compute the per-file diff (the expensive
+        // I/O + diff work) and build its text rows — plain data (#495).
+        let task = cx.background_spawn(async move {
+            load_history_entry_file_diff(&repo_path, &entry).map(|result| {
+                result.map(|file_diff| {
+                    // T-WS-EDITOR-005 finding #10: the shared builder. The
+                    // source is unused by the File History renderer;
+                    // Unstaged carries the path for completeness.
+                    let source = MainDiffSource::Unstaged { path: path.clone() };
+                    build_main_diff_view(&file_diff, &path, 0, source)
+                })
+            })
+        });
 
         let view = view.downgrade();
         let pane = pane.downgrade();
@@ -326,25 +340,14 @@ impl KagiApp {
                     return;
                 }
                 let built = match result {
-                    // T-WS-EDITOR-005 finding #10: shared builder (count →
-                    // from_file_diff → stats → highlight → assemble), same
-                    // pipeline as `EditorWorkspaceView`'s WIP-diff loader and
-                    // `set_commit_main_diff`'s headless path.
-                    Some(Ok(file_diff)) => Some(build_main_diff_view(
-                        &file_diff,
-                        &path,
-                        0,
-                        // The source is unused by the File History renderer;
-                        // Unstaged carries the path for completeness.
-                        MainDiffSource::Unstaged { path: path.clone() },
-                    )),
+                    Some(Ok(view)) => Some(view),
                     Some(Err(e)) => {
                         klog!("file-history diff error: {}", e);
                         None
                     }
                     None => None,
                 };
-                p.diff = built;
+                super::diff_view::highlight::install(&mut p.diff, built);
                 cx.notify();
             });
         })

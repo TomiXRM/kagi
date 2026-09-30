@@ -454,6 +454,9 @@ pub struct TabUiState {
     pub commit_panel: Option<Entity<super::commit_panel::CommitPanelView>>,
     pub commit_panel_open: bool,
     pub main_diff: Option<Entity<super::MainDiffPane>>,
+    /// #495: moves on every main-diff install, close and off-thread read, so
+    /// a read that lands afterwards can tell it was superseded.
+    pub main_diff_req: u64,
     pub compare_view: Option<Entity<super::ComparePane>>,
 }
 
@@ -557,6 +560,7 @@ impl Default for TabUiState {
             commit_panel: None,
             commit_panel_open: false,
             main_diff: None,
+            main_diff_req: 0,
             compare_view: None,
         }
     }

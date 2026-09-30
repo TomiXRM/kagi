@@ -365,12 +365,14 @@ impl Backend {
     /// reloading a repository is a refresh that renders the working tree, and
     /// it is the moment a stale index costs the user the most — a 50,000-file
     /// repo whose files were touched takes seconds to open and stays that way
-    /// until something repairs it (#655).
+    /// until something repairs it (#655). `probe` reports the running phase
+    /// and carries the reader's ahead/behind Skip (#355).
     pub fn snapshot_repairing_stat_cache(
         &mut self,
         commit_limit: usize,
+        probe: &snapshot::SnapshotProbe,
     ) -> Result<RepoSnapshot, GitError> {
-        snapshot::snapshot_repairing_stat_cache(&mut self.repo, commit_limit)
+        snapshot::snapshot_repairing_stat_cache(&mut self.repo, commit_limit, probe)
     }
 
     /// The user's `commit.template`, comment lines stripped; `None` when unset

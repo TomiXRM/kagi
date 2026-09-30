@@ -372,6 +372,8 @@ pub struct TabUiState {
     /// the selected commit's message (issue #512). Rebuilt on input change only.
     pub(super) inspector_model: super::inspector_model::InspectorModel,
     pub(super) worktree_inspections: super::sidebar_worktree_row::WorktreeInspections,
+    /// Reads that explain themselves once slow (#355).
+    pub(super) slow_reads: super::slow_reads::SlowReads,
     /// Aggregated staged + unstaged additions/deletions for the synthetic WIP row.
     pub wip_diffstat: Option<super::WipDiffStat>,
     /// Watcher baseline; absent until this activation observes the worktree.
@@ -513,6 +515,7 @@ impl Default for TabUiState {
             diff_caches: super::diff_cache::DiffCaches::default(),
             inspector_model: Default::default(),
             worktree_inspections: Default::default(),
+            slow_reads: Default::default(),
             wip_diffstat: None,
             last_working_status: None,
             operation_history: kagi_git::OperationHistory::new(),

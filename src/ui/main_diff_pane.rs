@@ -354,7 +354,12 @@ impl KagiApp {
         let req = self.bump_main_diff_req();
         let bg_path = path.clone();
         let bg_read = read.clone();
-        let task = cx.background_spawn(async move { bg_read.run(&repo, &bg_path) });
+        // #355: a large diff explains itself once slow; no Skip.
+        let slow = self.begin_slow_read(owner, Some(kagi_ui_core::slow_read::SlowRead::Diff), cx);
+        let task = cx.background_spawn(async move {
+            let _slow = slow;
+            bg_read.run(&repo, &bg_path)
+        });
         cx.spawn(async move |this, acx| {
             let landed = task.await;
             let _ = this.update(acx, |app, cx| {

@@ -113,6 +113,7 @@ pub use kagi_ui_core::settings; // ADR-0121: was a shim file
 pub mod settings_view;
 pub mod sidebar;
 mod sidebar_worktree_row;
+mod slow_reads;
 pub mod smart_commit;
 pub mod stash_menu;
 mod tab_ui_state_ops;
@@ -468,9 +469,10 @@ pub struct StatusBarSummary {
     /// Number of untracked files. Counted toward the WIP-row change total so the
     /// row's "N changes" matches `is_dirty` (which includes untracked).
     pub untracked: usize,
-    /// Commits ahead of upstream (None = no upstream / detached).
+    /// Commits ahead of upstream (None = no upstream / detached, or a skipped
+    /// count when `no_upstream` is false, #355).
     pub ahead: Option<usize>,
-    /// Commits behind upstream (None = no upstream / detached).
+    /// Commits behind upstream (None as for `ahead`).
     pub behind: Option<usize>,
     /// Whether there is no upstream configured (and not detached).
     pub no_upstream: bool,
@@ -524,8 +526,8 @@ impl StatusBarSummary {
                     match upstream {
                         Some(u) => (
                             branch.clone(),
-                            Some(u.ahead),
-                            Some(u.behind),
+                            u.counts.map(|c| c.ahead),
+                            u.counts.map(|c| c.behind),
                             false,
                             false,
                             false,
@@ -2777,8 +2779,8 @@ impl KagiApp {
             is_current,
             has_upstream: upstream.is_some(),
             upstream_name: upstream.map(|u| u.remote_branch.clone()),
-            ahead: upstream.map(|u| u.ahead).unwrap_or(0),
-            behind: upstream.map(|u| u.behind).unwrap_or(0),
+            ahead: upstream.and_then(|u| u.counts).map(|c| c.ahead),
+            behind: upstream.and_then(|u| u.counts).map(|c| c.behind),
             dirty: self.view().status_summary.is_dirty,
             conflict_mode: if self.view().status_summary.conflict_count > 0 {
                 BranchConflictMode::Conflicted

@@ -1,5 +1,12 @@
 //! Busy presentation is independent of the writer lease's lifecycle marker.
-use super::KagiApp;
+use gpui::{div, prelude::*, rgb, Context, SharedString};
+use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::Sizable as _;
+use kagi_ui_core::i18n;
+use kagi_ui_core::slow_read::SlowRead;
+
+use super::theme::{self, theme};
+use super::{render_overlay, KagiApp};
 
 impl KagiApp {
     pub(crate) fn mark_write_busy(&mut self, name: &'static str) {
@@ -47,6 +54,101 @@ impl KagiApp {
             .or(self.remote_write)
             .or(self.planning)
             .map(kagi_ui_core::i18n::busy_label)
+    }
+
+    /// Render the toast / busy overlay as an absolute container (bottom-left,
+    /// above the status bar). The toast cards live in the `Entity<ToastStack>`
+    /// child, so a push / expire re-renders only that subtree instead of all of
+    /// `KagiApp` (ADR-0110 Phase 5). The busy snackbar stays here because it is
+    /// driven by KagiApp state: the write latch, and a read that has been slow
+    /// for two seconds (#355). Returns `None` before the window (and thus the
+    /// toast entity) exists.
+    pub(super) fn render_toasts(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let toast_stack = self.toast_stack.clone()?;
+        let mut stack = div()
+            .absolute()
+            .bottom(theme::scaled_px(34.))
+            .left(theme::scaled_px(super::TOAST_INSET_PX))
+            .w(theme::scaled_px(460.))
+            .max_w(gpui::relative(0.9))
+            .flex()
+            .flex_col()
+            .gap_2();
+
+        // While an async op runs, show a busy snackbar with a spinning sync icon
+        // (user request) — a lighter alternative to a blocking popup. A slow
+        // read adds its explanation; with no write running it owns the label.
+        let slow = self.slow_read_shown();
+        let label = self
+            .busy_snackbar_label()
+            .or(slow.map(i18n::slow_read_label));
+        if let Some(label) = label {
+            stack = stack.child(self.render_busy_snackbar(label, slow, cx));
+        }
+
+        // The toast cards are an independently-rendered child entity.
+        stack = stack.child(toast_stack);
+        Some(stack.into_any())
+    }
+
+    /// A snackbar shown while an async op runs: a continuously spinning sync
+    /// icon + a friendly label (user request — a non-blocking alternative to a
+    /// modal busy-spinner). Driven automatically by the write latch, so every async
+    /// op gets one for free. `slow` adds the one-line explanation of a slow
+    /// read and, when its result can be shown as unknown, Skip (#355).
+    fn render_busy_snackbar(
+        &self,
+        label: &'static str,
+        slow: Option<SlowRead>,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let accent = theme().color_branch;
+        let icon = render_overlay::big_sync_icon(accent, "kagi-busy-snackbar-spin");
+        let mut text = div()
+            .flex_1()
+            .overflow_hidden()
+            .flex()
+            .flex_col()
+            .child(SharedString::from(label));
+        if let Some(read) = slow {
+            text = text.child(super::e2e::measure_control(
+                "busy-snackbar-advice",
+                div()
+                    .text_sm()
+                    .text_color(rgb(theme().text_sub))
+                    .child(SharedString::from(i18n::slow_read_advice(read))),
+            ));
+        }
+        let skip = slow.filter(|read| read.skippable()).map(|_| {
+            super::e2e::measure_control(
+                "busy-snackbar-skip",
+                Button::new("busy-snackbar-skip")
+                    .label(i18n::slow_read_skip())
+                    .small()
+                    .ghost()
+                    .on_click(cx.listener(|this, _, _, cx| this.skip_slow_read(cx))),
+            )
+        });
+        div()
+            .w_full()
+            .flex()
+            .flex_row()
+            .items_center()
+            // 1.5× the toast gap (8px → 12px) so the larger sync icon breathes
+            // a bit more from the label (user request).
+            .gap_3()
+            .px_4()
+            .py_3()
+            .rounded(theme::scaled_px(8.))
+            .bg(rgb(theme().panel))
+            .border_1()
+            .border_color(rgb(accent))
+            .text_base()
+            .text_color(rgb(theme().text_main))
+            .child(div().flex_shrink_0().child(icon))
+            .child(text)
+            .children(skip)
+            .into_any()
     }
 }
 

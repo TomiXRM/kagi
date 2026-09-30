@@ -813,6 +813,16 @@ pub fn scenario_file_history_wip_changes(cx: &mut VisualTestAppContext, repo_pat
         "committed entries keep their +/− counts: {:?}",
         committed.change
     );
+    // The list row (shared `commit_row_model`) follows the same rule: the WIP
+    // row's stat column is blank, the committed row's shows its counts.
+    assert!(
+        commit_row_model(wip, NOW).stat.is_empty(),
+        "the WIP list row must not show a stat (was +0 −0)"
+    );
+    assert!(
+        commit_row_model(committed, NOW).stat.starts_with('+'),
+        "the committed list row keeps its stat"
+    );
     // The WIP row is selected by default; its detail pane must render.
     assert_eq!(cx.read(|cx| pane.read(cx).data.selected), 0);
     draw(cx, win.into(), dimensions);

@@ -1123,6 +1123,10 @@ mod macos {
                 Box::new(crate::read_owner::scenario_read_owner_ordering),
             ),
             (
+                "load_more_stale_reads",
+                Box::new(crate::read_owner::scenario_load_more_stale_reads),
+            ),
+            (
                 "tab_ui_state_ownership",
                 Box::new(crate::tab_ui_state::scenario_tab_ui_state_ownership),
             ),

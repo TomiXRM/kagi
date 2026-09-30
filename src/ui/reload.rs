@@ -5,18 +5,19 @@
 //! never Git bindings or direct repository opens; otherwise refresh logic leaks
 //! Git I/O across the UI/backend boundary and trips the architecture gate.
 //!
-//! Sync (`reload` / `reload_checked`), pre-launch (`reload_prelaunch`),
-//! background (`reload_async` / `reload_external`, ADR-0104), the cheap
-//! working-tree-only refresh (`refresh_working_tree_external`), the
+//! Every reload is a background read (`reload_async` behind `reload` /
+//! `reload_external` / `reload_manual`, ADR-0104, #288, #487) except the
+//! pre-launch bootstrap (`reload_prelaunch`, no gpui context yet); plus the
+//! cheap working-tree-only refresh (`refresh_working_tree_external`), the
 //! HEAD-versioned overlay refresh (ADR-0119 follow-up), and commit-graph
-//! paging (`load_more_commits`).
+//! paging (`load_more_commits`, in `reload/paging.rs`).
+
+mod paging;
 
 use gpui::{prelude::*, Context, SharedString};
 
 use super::commit_panel::{CommitPanelState, CommitPanelView};
-use super::{
-    build_tab_view, FooterStatus, KagiApp, WipDiffStat, COMMIT_PAGE_STEP, DEFAULT_COMMIT_LIMIT,
-};
+use super::{build_tab_view, FooterStatus, KagiApp, WipDiffStat, DEFAULT_COMMIT_LIMIT};
 
 impl KagiApp {
     /// Reload all display data from the repository at `repo_path`.
@@ -34,7 +35,7 @@ impl KagiApp {
     /// op already set its own footer, so stay quiet (same surface as the old
     /// synchronous `reload()`, minus the frozen frame).
     pub fn reload(&mut self, cx: &mut Context<Self>) {
-        self.reload_async(false, cx);
+        self.reload_async(ReloadFeedback::Quiet, cx);
     }
 
     /// Pre-launch reload (headless `init_tab` / session restore). Runs before the
@@ -89,57 +90,35 @@ impl KagiApp {
         // cx-bearing path (see the doc comment).
     }
 
-    /// Like [`reload`] but reports failure. Returns `Err(msg)` when the repo
-    /// can't be reopened or snapshotted (the current view is left intact), so a
-    /// user-initiated refresh can surface the error instead of falsely reporting
-    /// success. `Ok(())` also covers "no repo open" (nothing to refresh). The
-    /// passive FS-watcher path uses [`reload_external`], which stays silent.
-    pub fn reload_checked(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return Ok(()),
-        };
-        let Some(session) = self.active_session() else {
-            return Ok(());
-        };
-        // #287: starting a read bumps this owner's read revision, so an
-        // FS-watcher reload still in flight is refused on completion — this
-        // synchronous, user-initiated refresh is authoritative. (Manual Cmd+R /
-        // settings toggle path; stays sync so the caller can surface a
-        // repo-open/snapshot error.)
-        let key = self.reads.begin(session);
-        let want_panel = self.ui().conflict_merge_pending;
-        let want_reflog = self.ui().operation_history.is_empty();
-        let data =
-            match read_reload_data(&repo_path, self.ui().commit_limit, want_panel, want_reflog) {
-                Ok(d) => d,
-                Err(msg) => {
-                    self.reads.fail(key);
-                    klog!("reload: {}", msg);
-                    return Err(msg);
-                }
-            };
-        self.apply_reload_data(key, repo_path, data, false, cx);
-        Ok(())
+    /// User-initiated refresh (toolbar button / Cmd+R). Same background read as
+    /// [`reload`] (#487: it used to run `read_reload_data` on the UI thread so
+    /// the caller could get a synchronous `Result` — a 10k-commit repo froze the
+    /// window for the whole snapshot on every Cmd+R), but with the explicit
+    /// feedback a manual refresh owes: a `Refreshed` footer + success toast
+    /// when the read lands, or a `Refresh failed: …` footer + error toast when
+    /// the repo can't be reopened or snapshotted (the current view stays).
+    /// Starting the read bumps the owner's revision, so an FS-watcher reload
+    /// still in flight is refused on completion — the user's refresh is
+    /// authoritative (#287). "No repo open" is a silent no-op.
+    pub fn reload_manual(&mut self, cx: &mut Context<Self>) {
+        self.reload_async(ReloadFeedback::Manual, cx);
     }
 
     /// Apply an already-read [`ReloadData`] to `self` on the UI thread. This is
-    /// the whole "fold a fresh snapshot into the view" step, shared verbatim by
-    /// the synchronous [`reload_checked`] and the background [`reload_async`] so
-    /// the two can never drift (modal resets, overlay refresh, reflog seed,
-    /// conflict re-detect, continued-merge panel). The heavy git I/O already
-    /// happened in [`read_reload_data`]; nothing here opens the repo except the
-    /// rare continued-merge fallback.
+    /// the whole "fold a fresh snapshot into the view" step, shared by every
+    /// [`reload_async`] caller so they can never drift (modal resets, overlay
+    /// refresh, reflog seed, conflict re-detect, continued-merge panel). The
+    /// heavy git I/O already happened in [`read_reload_data`]; nothing here
+    /// opens the repo except the rare continued-merge fallback.
     ///
-    /// `external = true` emits the `refreshed (external change)` contract line
-    /// and resets the footer (FS-watcher path); `false` stays quiet (op tail /
-    /// manual refresh, which set their own footer).
+    /// `feedback` decides the footer/toast/contract-line surface once the read
+    /// has landed for the tab on screen — see [`ReloadFeedback`].
     fn apply_reload_data(
         &mut self,
         key: crate::app::ReadKey,
         repo_path: std::path::PathBuf,
         data: ReloadData,
-        external: bool,
+        feedback: ReloadFeedback,
         cx: &mut Context<Self>,
     ) {
         let session = key.session();
@@ -340,10 +319,24 @@ impl KagiApp {
                 FooterStatus::Idle(SharedString::from(super::i18n::Msg::Ready.t()));
         }
 
-        if external {
-            klog!("refreshed (external change)");
-            self.status_footer =
-                FooterStatus::Idle(SharedString::from("[kagi] refreshed (external change)"));
+        match feedback {
+            ReloadFeedback::External => {
+                klog!("refreshed (external change)");
+                self.status_footer =
+                    FooterStatus::Idle(SharedString::from("[kagi] refreshed (external change)"));
+            }
+            ReloadFeedback::Manual => {
+                // W3-NOTIFY: an explicit refresh gets a completion toast (the
+                // watcher's automatic reloads stay silent to avoid spam).
+                self.status_footer =
+                    FooterStatus::Idle(SharedString::from(super::i18n::Msg::Refreshed.t()));
+                self.push_toast(
+                    super::ToastKind::Success,
+                    super::i18n::Msg::Refreshed.t(),
+                    cx,
+                );
+            }
+            ReloadFeedback::Quiet => {}
         }
 
         // #309: open the "drop the kept stash?" prompt AFTER the modal-clearing
@@ -363,65 +356,6 @@ impl KagiApp {
             self.replan_pull_modal();
         }
 
-        cx.notify();
-    }
-
-    /// Grow the commit graph by [`COMMIT_PAGE_STEP`] and re-snapshot.
-    ///
-    /// Triggered by the "load more" row at the bottom of the commit list, which
-    /// only appears once the graph holds at least `commit_limit` commits (i.e.
-    /// the walk may have been truncated). Unlike [`reload`], this is a
-    /// view-only refresh: it **amends** this owner's read model at the new limit
-    /// but leaves selection, scroll position, open panels and modals untouched.
-    /// Existing rows keep their indices because the additional commits are older
-    /// and append at the bottom of the topological order.
-    ///
-    /// Amends rather than publishes (#482 stage 2 review, item 3): paging is a
-    /// refinement of what is already on screen, not a fresh observation of the
-    /// repository, so it must not supersede a full reload in flight. A watcher
-    /// reload started by an external merge conflict carries the Conflict Mode
-    /// re-detection, the modal sweep and the working-tree baseline that paging
-    /// has no way to reproduce — rejecting it would leave the old semantic state
-    /// standing until something else refreshed.
-    pub fn load_more_commits(&mut self, cx: &mut Context<Self>) {
-        let repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
-        };
-        let Some(session) = self.active_session() else {
-            return;
-        };
-        let commit_limit = self.ui().commit_limit.saturating_add(COMMIT_PAGE_STEP);
-        if let Some(ui) = self.ui_mut() {
-            ui.commit_limit = commit_limit;
-        }
-
-        let mut repo = match kagi_git::Backend::open(&repo_path) {
-            Ok(r) => r,
-            Err(e) => {
-                klog!("load more: repo open error: {}", e);
-                return;
-            }
-        };
-        let snap = match repo.snapshot_repairing_stat_cache(commit_limit) {
-            Ok(s) => s,
-            Err(e) => {
-                klog!("load more: snapshot error: {}", e);
-                return;
-            }
-        };
-        let repo_name = repo_path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| repo_path.display().to_string());
-
-        let view = build_tab_view(&snap, &repo_name);
-        self.amend_tab_view(session, view);
-        klog!(
-            "load more: limit={} rows={}",
-            commit_limit,
-            self.view().rows.len()
-        );
         cx.notify();
     }
 
@@ -510,18 +444,12 @@ impl KagiApp {
     /// - Attempts to re-select the previously selected commit by CommitId;
     ///   if the commit no longer exists the selection is cleared.
     pub fn reload_external(&mut self, cx: &mut Context<Self>) {
-        self.reload_async(true, cx);
+        self.reload_async(ReloadFeedback::External, cx);
     }
 
-    /// Background snapshot + UI-thread apply (mechanics of ADR-0104).
-    ///
-    /// `external`:
-    /// * `true`  — external git event: emits the `refreshed (external change)`
-    ///   contract line and resets the footer (the user didn't ask for anything).
-    /// * `false` — tail of a user-initiated background op (pull/push/fetch):
-    ///   the op already set its own Success footer, so keep it and stay quiet —
-    ///   same surface as the synchronous `reload()`, minus the frozen frame.
-    pub fn reload_async(&mut self, external: bool, cx: &mut Context<Self>) {
+    /// Background snapshot + UI-thread apply (mechanics of ADR-0104); the
+    /// `feedback` variants are documented on [`ReloadFeedback`].
+    pub fn reload_async(&mut self, feedback: ReloadFeedback, cx: &mut Context<Self>) {
         let bg_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -550,26 +478,41 @@ impl KagiApp {
         // of `ReloadData` is pure/`Send`; the view + gpui entities are built on
         // the UI thread in `apply_reload_data`.
         let task = cx.background_spawn(async move {
-            read_reload_data(&bg_path, commit_limit, want_panel, want_reflog).ok()
+            read_reload_data(&bg_path, commit_limit, want_panel, want_reflog)
         });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
-                let Some(data) = result else {
-                    // Open or snapshot failed — settle the read so the same one
-                    // can be asked for again, then log and bail without nuking
-                    // the existing view (better to show stale data than none).
-                    if !app.reads.fail(key) || app.active_session() != Some(session) {
+                let data = match result {
+                    Ok(data) => data,
+                    Err(msg) => {
+                        // Open or snapshot failed — settle the read so the same
+                        // one can be asked for again, then report and bail
+                        // without nuking the existing view (better to show
+                        // stale data than none).
+                        if !app.reads.fail(key) || app.active_session() != Some(session) {
+                            return;
+                        }
+                        match feedback {
+                            ReloadFeedback::Manual => {
+                                klog!("reload: {}", msg);
+                                let msg = format!("Refresh failed: {msg}");
+                                app.status_footer =
+                                    FooterStatus::Idle(SharedString::from(msg.clone()));
+                                app.push_toast(super::ToastKind::Error, msg, cx);
+                            }
+                            ReloadFeedback::Quiet | ReloadFeedback::External => {
+                                klog!("reload_external: snapshot failed (non-fatal)");
+                                app.status_footer = FooterStatus::Idle(SharedString::from(
+                                    "[kagi] refresh skipped (snapshot failed)",
+                                ));
+                            }
+                        }
+                        cx.notify();
                         return;
                     }
-                    klog!("reload_external: snapshot failed (non-fatal)");
-                    app.status_footer = FooterStatus::Idle(SharedString::from(
-                        "[kagi] refresh skipped (snapshot failed)",
-                    ));
-                    cx.notify();
-                    return;
                 };
-                app.apply_reload_data(key, apply_path, data, external, cx);
+                app.apply_reload_data(key, apply_path, data, feedback, cx);
             });
         })
         .detach();
@@ -691,10 +634,26 @@ impl KagiApp {
     }
 }
 
+/// What a reload owes the tab on screen once its background read lands
+/// (#487: every reload — op tail, FS watcher, manual Cmd+R — now takes the
+/// same background path, so the surface is the only thing that differs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReloadFeedback {
+    /// Tail of a user-initiated background op (pull/push/fetch): the op already
+    /// set its own Success footer, so keep it and stay quiet.
+    Quiet,
+    /// External git event: emits the `refreshed (external change)` contract
+    /// line and resets the footer (the user didn't ask for anything).
+    External,
+    /// Toolbar Refresh / Cmd+R: `Refreshed` footer + success toast on landing,
+    /// `Refresh failed: …` footer + error toast when the read fails.
+    Manual,
+}
+
 /// Owned, `Send` result of the heavy git read behind a reload (#288). Built by
-/// [`read_reload_data`] on either the UI thread (sync `reload_checked`) or a
-/// background thread (`reload_async`), then folded into the view by
-/// [`KagiApp::apply_reload_data`]. Deliberately holds no gpui types.
+/// [`read_reload_data`] on a background thread (`reload_async`), then folded
+/// into the view by [`KagiApp::apply_reload_data`]. Deliberately holds no gpui
+/// types.
 struct ReloadData {
     snap: kagi_git::RepoSnapshot,
     wip_diffstat: WipDiffStat,
@@ -707,9 +666,9 @@ struct ReloadData {
     panel: Option<CommitPanelState>,
 }
 
-/// The heavy git read behind every reload, isolated so it can run either
-/// synchronously ([`KagiApp::reload_checked`]) or on a background thread
-/// ([`KagiApp::reload_async`], #288). Returns owned, `Send` data — no gpui, no
+/// The heavy git read behind every reload, isolated from the view build so it
+/// runs on a background thread ([`KagiApp::reload_async`], #288) and the
+/// pre-launch bootstrap alike. Returns owned, `Send` data — no gpui, no
 /// view build. `want_reflog` / `want_panel` gate the two optional extra reads so
 /// we don't pay for them when they can't matter. On error the `String` is an
 /// already-formatted message (`"repo open error: …"` / `"snapshot error: …"`).

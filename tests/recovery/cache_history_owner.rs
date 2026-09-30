@@ -32,7 +32,7 @@ pub fn scenario_read_cache_revalidates_on_activation(cx: &mut VisualTestAppConte
     let (app, window) = mount(cx, &repo_a);
     cx.run_until_parked();
     let (session_a, session_b) = app.update(cx, |app, cx| {
-        app.reload_checked(cx).expect("baseline reload A");
+        app.reload_manual(cx);
         assert!(app.open_repository(repo_b.clone(), cx), "open B");
         (app.tabs[0].session, app.tabs[1].session)
     });

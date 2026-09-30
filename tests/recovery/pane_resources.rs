@@ -982,8 +982,9 @@ pub fn scenario_manual_reload_releases_revalidation(cx: &mut VisualTestAppContex
             state.ui().panes_revalidating(),
             "precondition: A awaits its activation read"
         );
-        // Cmd+R before the activation read lands supersedes it.
-        state.reload_checked(cx).expect("manual reload");
+        // Cmd+R before the activation read lands supersedes it (#487: the
+        // manual read is a background read too; its landing is awaited below).
+        state.reload_manual(cx);
     });
     cx.run_until_parked();
     assert!(

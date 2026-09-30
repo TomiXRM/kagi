@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Performance
+
+- コミットグラフの「さらに読み込む」と手動 Refresh(ツールバー / Cmd+R)の snapshot 読み取りを UI thread から background へ移しました。結果は読み取りを要求したタブ(owner)で、かつその要求が最新のときだけ適用し、連打・Refresh との競合・タブ切替で古い結果を反映しません。読み込み失敗は footer と toast で通知し、選択・スクロール・開いているパネルは維持します。（#487）
+
 ## [0.40.1] - 2026-09-29
 
 ### Fixed

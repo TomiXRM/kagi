@@ -97,7 +97,7 @@ mod operations;
 pub mod oplog_panel;
 mod oplog_render;
 mod platform_menu;
-mod reload;
+pub mod reload;
 pub mod remote_browse;
 mod render;
 mod render_body;

@@ -261,7 +261,7 @@ pub fn scenario_cleanup_evidence_read_revision(cx: &mut VisualTestAppContext) {
     git(&repo_a, &["add", "read-revision.txt"]);
     git(&repo_a, &["commit", "-q", "-m", "advance cleanup read"]);
     let launched_revision = app.update(cx, |app, cx| {
-        app.reload_async(false, cx);
+        app.reload_async(kagi::ui::reload::ReloadFeedback::Quiet, cx);
         let revision = app.reads.revision(owner_a);
         assert!(
             revision > scan_revision,

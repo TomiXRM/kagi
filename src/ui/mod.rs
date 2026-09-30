@@ -75,6 +75,7 @@ pub mod graph_view;
 pub mod graph_wip;
 pub use kagi_ui_core::i18n; // ADR-0121: was a shim file
 pub mod inspector;
+mod inspector_model;
 pub mod main_diff_pane;
 pub mod menu_overlay;
 /// #454: shared modal chrome (card shell + collapsible sections).
@@ -1921,21 +1922,19 @@ impl KagiApp {
         if self.ui().selected != Some(index) {
             return;
         }
-        if !self.ui().diff_caches.changed_files.contains_key(&index) {
+        if !self.ui().diff_caches.changed_files().contains_key(&index) {
             let files_opt = self.fetch_changed_files(index);
             let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
             klog!("changed files: {}", n);
-            self.with_ui(|ui| ui.diff_caches.changed_files.insert(index, files_opt));
             // W16-DIFFSTAT: aggregate per-file additions/deletions alongside.
-            if let Some(stats) = self.fetch_diffstat(index) {
-                self.with_ui(|ui| ui.diff_caches.diffstat.insert(index, stats));
-            }
+            let stats = self.fetch_diffstat(index);
+            self.with_ui(|ui| ui.diff_caches.insert_row(index, files_opt, stats, None));
         } else {
             // Already cached — still emit the log (matches the old select()).
             let n = self
                 .ui()
                 .diff_caches
-                .changed_files
+                .changed_files()
                 .get(&index)
                 .and_then(|v| v.as_ref())
                 .map(|v| v.len())
@@ -1945,8 +1944,8 @@ impl KagiApp {
 
         // T018: emit tree structure log when KAGI_SELECT_FIRST=1.
         if std::env::var("KAGI_SELECT_FIRST").as_deref() == Ok("1") {
-            const MAX_FILES: usize = 100;
-            if let Some(Some(files)) = self.ui().diff_caches.changed_files.get(&index) {
+            use inspector_model::MAX_FILES;
+            if let Some(Some(files)) = self.ui().diff_caches.changed_files().get(&index) {
                 let truncated: Vec<_> = files.iter().take(MAX_FILES).cloned().collect();
                 let rows = file_tree::build_file_tree(&truncated);
                 for row in &rows {
@@ -2012,7 +2011,7 @@ impl KagiApp {
             // ADR-0121 B2: the view lives inside the ComparePane entity now.
             return pane
                 .read(cx)
-                .view
+                .view()
                 .files
                 .get(file_index)
                 .map(|f| (f.path.clone(), None));
@@ -2021,7 +2020,7 @@ impl KagiApp {
         let origin = self.commit_id_for_row(selected);
         self.ui()
             .diff_caches
-            .changed_files
+            .changed_files()
             .get(&selected)
             .and_then(|v| v.as_ref())
             .and_then(|files| files.get(file_index))
@@ -2072,7 +2071,7 @@ impl KagiApp {
                 let path = self
                     .ui()
                     .diff_caches
-                    .changed_files
+                    .changed_files()
                     .get(row_index)
                     .and_then(|v| v.as_ref())
                     .and_then(|files| files.get(*file_index))
@@ -2085,7 +2084,7 @@ impl KagiApp {
                     .ui()
                     .compare_view
                     .as_ref()
-                    .and_then(|p| p.read(cx).view.files.get(*file_index).cloned())
+                    .and_then(|p| p.read(cx).view().files.get(*file_index).cloned())
                     .map(|f| f.path)?;
                 Some((path, None))
             }
@@ -2107,7 +2106,7 @@ impl KagiApp {
     fn load_remote_changed_files(&mut self, index: usize, cx: &mut Context<Self>) {
         // Idempotent: skip if already loaded or a load is in flight, so it is
         // safe to call from both the click handler and the render trigger.
-        if self.ui().diff_caches.changed_files.contains_key(&index)
+        if self.ui().diff_caches.changed_files().contains_key(&index)
             || self.ui().diff_caches.remote_inflight.contains(&index)
         {
             return;
@@ -2140,15 +2139,14 @@ impl KagiApp {
                     return;
                 }
                 ui.diff_caches.remote_inflight.remove(&index);
-                match result {
-                    Ok(files) => {
-                        ui.diff_caches.changed_files.insert(index, Some(files));
-                    }
+                let files = match result {
+                    Ok(files) => Some(files),
                     Err(e) => {
                         klog!("remote changed-files error: {e}");
-                        ui.diff_caches.changed_files.insert(index, None);
+                        None
                     }
-                }
+                };
+                ui.diff_caches.insert_row(index, files, None, None);
                 cx.notify();
             });
         })
@@ -2167,7 +2165,7 @@ impl KagiApp {
     /// (the captured SHA no longer matches the row), so a late load can't show
     /// the wrong commit's files.
     fn load_local_changed_files(&mut self, index: usize, cx: &mut Context<Self>) {
-        if self.ui().diff_caches.changed_files.contains_key(&index)
+        if self.ui().diff_caches.changed_files().contains_key(&index)
             || self.ui().diff_caches.local_inflight.contains(&index)
         {
             return;
@@ -2219,13 +2217,7 @@ impl KagiApp {
                 let (files, stats, generated) = result.unwrap_or((None, None, None));
                 let n = files.as_ref().map(|v| v.len()).unwrap_or(0);
                 klog!("changed files: {}", n);
-                ui.diff_caches.changed_files.insert(index, files);
-                if let Some(stats) = stats {
-                    ui.diff_caches.diffstat.insert(index, stats);
-                }
-                if let Some(generated) = generated {
-                    ui.diff_caches.generated.insert(index, generated);
-                }
+                ui.diff_caches.insert_row(index, files, stats, generated);
                 cx.notify();
             });
         })
@@ -2339,14 +2331,17 @@ impl KagiApp {
         self.close_compare_view();
         if self.ui().selected != Some(row_index) {
             self.select(row_index);
-        } else if !self.ui().diff_caches.changed_files.contains_key(&row_index) {
+        } else if !self
+            .ui()
+            .diff_caches
+            .changed_files()
+            .contains_key(&row_index)
+        {
             let files_opt = self.fetch_changed_files(row_index);
             let n = files_opt.as_ref().map(|v| v.len()).unwrap_or(0);
             klog!("changed files: {}", n);
-            self.with_ui(|ui| ui.diff_caches.changed_files.insert(row_index, files_opt));
-            if let Some(stats) = self.fetch_diffstat(row_index) {
-                self.with_ui(|ui| ui.diff_caches.diffstat.insert(row_index, stats));
-            }
+            let stats = self.fetch_diffstat(row_index);
+            self.with_ui(|ui| ui.diff_caches.insert_row(row_index, files_opt, stats, None));
         }
     }
 

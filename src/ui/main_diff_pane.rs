@@ -289,7 +289,7 @@ impl KagiApp {
                     .ui()
                     .compare_view
                     .as_ref()
-                    .and_then(|p| p.read(cx).view.files.iter().position(|f| f.path == path))
+                    .and_then(|p| p.read(cx).view().files.iter().position(|f| f.path == path))
                 else {
                     return;
                 };
@@ -528,7 +528,7 @@ impl KagiApp {
                 .ui()
                 .compare_view
                 .as_ref()
-                .map(|pane| pane.read(cx).view.clone()),
+                .map(|pane| pane.read(cx).view().clone()),
             main_diff: self.capture_main_diff(cx),
         }
     }

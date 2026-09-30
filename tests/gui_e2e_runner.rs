@@ -208,6 +208,10 @@ mod issues_pagination;
 mod perf_oplog_detail;
 
 #[cfg(target_os = "macos")]
+#[path = "perf/inspector_derived.rs"]
+mod perf_inspector_derived;
+
+#[cfg(target_os = "macos")]
 mod macos {
     use std::path::{Path, PathBuf};
     use std::process::Command;
@@ -1422,6 +1426,10 @@ mod macos {
                 "oplog_detail_draw",
                 Box::new(crate::perf_oplog_detail::scenario_expanded_detail_draw),
             ),
+            (
+                "inspector_derived",
+                Box::new(crate::perf_inspector_derived::scenario_inspector_derived),
+            ),
         ];
         let mut executed = 0;
         for (name, scenario) in &mut scenarios {
@@ -1649,7 +1657,7 @@ mod macos {
                 .as_ref()
                 .expect("external reload must not close the compare pane");
             assert_eq!(
-                compare.read(app).view.base,
+                compare.read(app).view().base,
                 head,
                 "the compare should still be against the same base commit"
             );

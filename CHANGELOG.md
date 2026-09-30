@@ -18,6 +18,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - WIP・Compare・File History の diff を開いたとき、diff の読み込みと構文ハイライトが UI スレッドを止めないようにしました。まずテキストを表示し、ハイライトは別スレッドで計算してから反映します。別のファイルや別のテーマに切り替えた後に古いハイライトが反映されることはなく、同じ内容の再読み込み（外部変更による reload など）ではハイライトも side-by-side の再計算も行いません。（#495）
 - File History のコミット一覧を、Graph・sidebar・Editor History と同じ `uniform_list` による仮想リストに揃えました。500 件の履歴でも構築される行は表示範囲分だけになり、選択行は一覧の外にあってもスクロールして表示します。見た目・ページング・diff 対象の選び方は変更しません。（#496）
 - コミットグラフの「さらに読み込む」と手動 Refresh(ツールバー)の snapshot 読み取りを UI thread から background へ移しました。結果は読み取りを要求したタブ(owner)で、かつその要求が最新のときだけ適用し、連打・Refresh との競合・タブ切替で古い結果を反映しません。読み込み失敗は footer と toast で通知し、選択・スクロール・開いているパネルは維持します。（#487）
+- Inspector の changed files（先頭 100 件の切り出し・生成ファイルの折り畳み・tree・diffstat の対応付け・件数集計）とコミットメッセージの HTML 変換を、描画のたびではなく入力が変わったとき（選択・読み込み完了・reload・compare）だけ作り直すようにしました。Path⇄Tree の切り替えと Generated の開閉では作り直しません。表示・クリック先・右クリックメニュー・Copy Path・「… and N more」は従来どおりです。（#512）
 
 ### Internal
 

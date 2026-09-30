@@ -9,6 +9,10 @@ use std::time::{Duration, Instant};
 #[path = "conflict_refusal.rs"]
 mod refusal;
 
+#[path = "../support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::git_succeeds;
+
 pub(crate) fn content_fixture() -> tempfile::TempDir {
     let fixture = tempfile::tempdir().unwrap();
     let repo = fixture.path();
@@ -24,14 +28,7 @@ pub(crate) fn content_fixture() -> tempfile::TempDir {
     git(repo, &["checkout", "-q", "main"]);
     std::fs::write(repo.join("file.txt"), "main\n").unwrap();
     git(repo, &["commit", "-qam", "main"]);
-    let status = std::process::Command::new("git")
-        .args(["merge", "feature"])
-        .current_dir(repo)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .status()
-        .unwrap();
-    assert!(!status.success());
+    assert!(!git_succeeds(repo, &["merge", "feature"]));
     fixture
 }
 

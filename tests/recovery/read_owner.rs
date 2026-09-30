@@ -13,7 +13,10 @@ use gpui::VisualTestAppContext;
 use kagi::ui::KagiApp;
 use kagi_git::CommitId;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+#[path = "../support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::git_succeeds;
 
 /// `main` with three commits plus a `side` branch two commits ahead, so soloing
 /// `main` really hides rows instead of being a no-op.
@@ -265,18 +268,10 @@ fn build_conflict_fixture(root: &Path, name: &str) -> PathBuf {
 /// `git` that is allowed to fail — a conflicting merge exits non-zero *because*
 /// it worked.
 fn git_expect_conflict(repo: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(repo)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_AUTHOR_NAME", "poc")
-        .env("GIT_AUTHOR_EMAIL", "poc@example.com")
-        .env("GIT_COMMITTER_NAME", "poc")
-        .env("GIT_COMMITTER_EMAIL", "poc@example.com")
-        .status()
-        .expect("spawn git");
-    assert!(!status.success(), "{args:?} was supposed to conflict");
+    assert!(
+        !git_succeeds(repo, args),
+        "{args:?} was supposed to conflict"
+    );
 }
 
 /// The three orderings the stage-2 review found unguarded: a reload arriving

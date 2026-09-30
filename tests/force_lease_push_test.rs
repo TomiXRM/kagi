@@ -8,7 +8,10 @@
 mod backend_ops;
 use backend_ops::execute_force_with_lease_push;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{commit_all, git, git_output, init_repo, write_file};
 
 use git2::Repository;
 use tempfile::TempDir;
@@ -16,41 +19,12 @@ use tempfile::TempDir;
 use kagi_domain::plan_note::{ForceLeaseNote, PlanNote};
 use kagi_git::ops::plan_force_with_lease_push;
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(status.success(), "git {} failed", args.join(" "));
-}
-
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
-}
-
 fn head_sha(dir: &Path) -> String {
-    let out = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(dir)
-        .output()
-        .expect("rev-parse failed");
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
+    git_output(dir, &["rev-parse", "HEAD"])
 }
 
 fn remote_head_sha(remote: &Path, branch: &str) -> String {
-    let out = Command::new("git")
-        .args(["rev-parse", branch])
-        .current_dir(remote)
-        .output()
-        .expect("rev-parse failed");
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
+    git_output(remote, &["rev-parse", branch])
 }
 
 /// Layout: tmp/remote.git (bare) + tmp/local (clone, upstream set on main) +
@@ -81,17 +55,13 @@ fn setup() -> Repos {
     );
 
     std::fs::create_dir(&local).unwrap();
-    git(&local, &["init", "-q", "-b", "main", "."]);
-    git(&local, &["config", "user.name", "Test"]);
-    git(&local, &["config", "user.email", "test@example.com"]);
-    git(&local, &["config", "commit.gpgsign", "false"]);
+    init_repo(&local, "main");
     git(
         &local,
         &["remote", "add", "origin", remote.to_str().unwrap()],
     );
     write_file(&local, "base.txt", "base\n");
-    git(&local, &["add", "-A"]);
-    git(&local, &["commit", "-qm", "base"]);
+    commit_all(&local, "base");
     git(&local, &["push", "-q", "-u", "origin", "main"]);
 
     git(

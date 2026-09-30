@@ -11,15 +11,12 @@ use kagi_git::oplog::{read_oplog_tail, read_oplog_tail_for_repo, OpOutcome};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+#[path = "../support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git_command, git_output};
+
 fn ids(repo: &Path) -> Vec<String> {
-    let output = std::process::Command::new("git")
-        .args(["stash", "list", "--format=%H"])
-        .current_dir(repo)
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    String::from_utf8(output.stdout)
-        .unwrap()
+    git_output(repo, &["stash", "list", "--format=%H"])
         .lines()
         .map(str::to_owned)
         .collect()
@@ -504,9 +501,8 @@ pub fn scenario_external_stash_conflict_has_no_drop_prompt(cx: &mut VisualTestAp
     let before = ids(&repo);
     std::fs::write(repo.join("README.md"), "ours\n").unwrap();
     git(&repo, &["commit", "-qam", "ours"]);
-    let result = std::process::Command::new("git")
+    let result = git_command(&repo)
         .args(["stash", "pop", "stash@{1}"])
-        .current_dir(&repo)
         .output()
         .unwrap();
     assert!(!result.status.success(), "fixture must conflict");

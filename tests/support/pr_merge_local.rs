@@ -12,12 +12,15 @@
 //! into a retryable failure. A queued merge must not delete anything locally.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use kagi_domain::operation::PrMergeLocalOutcome;
 use kagi_domain::plan_note::{GithubNote, PlanNote};
 
 use super::*;
+
+#[path = "git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git_command, git_output as git};
 
 /// The PR's head branch, and the local branch that carries it.
 const LOCAL_BRANCH: &str = "feat/x";
@@ -33,30 +36,18 @@ const PR_TEMPLATE: &str = r#"[{"number":501,"title":"local deletion",
   "url":"https://example.invalid/acme/widgets/pull/501","author":{"login":"a"},
   "reviewRequests":[],"body":"","isCrossRepository":false}]"#;
 
-/// `git` with the user's configuration kept out of it. `None` when the command
-/// failed, so "this ref does not exist" is an answer rather than a panic.
+/// Hermetic `git`, `None` when the command failed, so "this ref does not
+/// exist" is an answer rather than a panic (and the stdout is kept, which
+/// `git_succeeds` drops).
 fn git_try(dir: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
+    let output = git_command(dir)
         .args(args)
-        .current_dir(dir)
-        .env("HOME", dir)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
         .output()
         .expect("git failed to start");
     output
         .status
         .success()
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    git_try(dir, args).unwrap_or_else(|| panic!("git {} failed", args.join(" ")))
 }
 
 /// A repository with one commit on `main`. Shared with the merge tests in the

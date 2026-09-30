@@ -6,8 +6,11 @@ use kagi_git::backend::conflict_ops::ConflictFaultPoint;
 use kagi_git::backend::ExecutionPolicy;
 use kagi_git::{Backend, OpOutcome};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::{Mutex, MutexGuard};
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git_output, git_succeeds as git, init_repo};
 
 #[path = "support/conflict_refusal.rs"]
 mod refusal;
@@ -30,29 +33,13 @@ impl Drop for Fixture {
     }
 }
 
-fn git(repo: &Path, args: &[&str]) -> bool {
-    Command::new("git")
-        .args(args)
-        .current_dir(repo)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .status()
-        .expect("git")
-        .success()
-}
-
 impl Fixture {
     fn content() -> Self {
         let lock = ENV.lock().unwrap_or_else(|error| error.into_inner());
         let root = tempfile::tempdir().unwrap();
         let repo = root.path().canonicalize().unwrap().join("repo");
         std::fs::create_dir(&repo).unwrap();
-        assert!(git(&repo, &["init", "-q", "-b", "main"]));
-        assert!(git(&repo, &["config", "commit.gpgsign", "false"]));
+        init_repo(&repo, "main");
         std::fs::write(repo.join("file.txt"), "base\n").unwrap();
         assert!(git(&repo, &["add", "."]));
         assert!(git(&repo, &["commit", "-qm", "base"]));
@@ -80,8 +67,7 @@ impl Fixture {
         let root = tempfile::tempdir().unwrap();
         let repo = root.path().canonicalize().unwrap().join("repo");
         std::fs::create_dir(&repo).unwrap();
-        assert!(git(&repo, &["init", "-q", "-b", "main"]));
-        assert!(git(&repo, &["config", "commit.gpgsign", "false"]));
+        init_repo(&repo, "main");
         std::fs::write(repo.join("file.txt"), "base\n").unwrap();
         assert!(git(&repo, &["add", "."]));
         assert!(git(&repo, &["commit", "-qm", "base"]));
@@ -108,8 +94,7 @@ impl Fixture {
         let root = tempfile::tempdir().unwrap();
         let repo = root.path().canonicalize().unwrap().join("repo");
         std::fs::create_dir(&repo).unwrap();
-        assert!(git(&repo, &["init", "-q", "-b", "main"]));
-        assert!(git(&repo, &["config", "commit.gpgsign", "false"]));
+        init_repo(&repo, "main");
         std::fs::write(repo.join("base"), "base\n").unwrap();
         assert!(git(&repo, &["add", "."]));
         assert!(git(&repo, &["commit", "-qm", "base"]));
@@ -738,15 +723,7 @@ fn an_abort_is_refused_when_its_restore_target_moved_under_the_confirmation() {
     let frozen = Backend::conflict_abort_request(&fixture.in_progress());
 
     // Someone moves the restore target while the confirmation is open.
-    let elsewhere = String::from_utf8(
-        Command::new("git")
-            .args(["rev-parse", "HEAD~1"])
-            .current_dir(&fixture.repo)
-            .output()
-            .expect("rev-parse")
-            .stdout,
-    )
-    .unwrap();
+    let elsewhere = format!("{}\n", git_output(&fixture.repo, &["rev-parse", "HEAD~1"]));
     std::fs::write(fixture.repo.join(".git/ORIG_HEAD"), &elsewhere).unwrap();
 
     let fresh = Backend::open(&fixture.repo)
@@ -798,17 +775,7 @@ fn a_rebase_abort_is_refused_at_the_boundary_when_its_branch_moved() {
     let destination = "refs/heads/side";
 
     // Only the destination branch moves.
-    let elsewhere = String::from_utf8(
-        Command::new("git")
-            .args(["rev-parse", "main"])
-            .current_dir(&fixture.repo)
-            .output()
-            .expect("rev-parse")
-            .stdout,
-    )
-    .unwrap()
-    .trim()
-    .to_string();
+    let elsewhere = git_output(&fixture.repo, &["rev-parse", "main"]);
     assert!(git(&fixture.repo, &["update-ref", destination, &elsewhere]));
 
     let fresh = Backend::open(&fixture.repo)
@@ -838,16 +805,7 @@ fn a_rebase_abort_is_refused_at_the_boundary_when_its_branch_moved() {
     assert!(!sessions.has_leases(), "a refused plan admits no write");
 
     assert_eq!(
-        String::from_utf8(
-            Command::new("git")
-                .args(["rev-parse", destination])
-                .current_dir(&fixture.repo)
-                .output()
-                .unwrap()
-                .stdout
-        )
-        .unwrap()
-        .trim(),
+        git_output(&fixture.repo, &["rev-parse", destination]),
         elsewhere,
         "the branch keeps the OID the other process gave it"
     );

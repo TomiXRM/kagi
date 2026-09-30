@@ -5,7 +5,10 @@
 //! binary / WIP / unicode paths / limit).  No real repository is ever touched.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, git_output, write_file};
 
 use tempfile::TempDir;
 
@@ -15,49 +18,9 @@ use kagi_git::{file_history, FileChangeType, FileHistoryEntryKind, FileHistoryRe
 // Helpers
 // ────────────────────────────────────────────────────────────
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(
-        status.success(),
-        "git {} exited with {:?}",
-        args.join(" "),
-        status.code()
-    );
-}
-
-/// Run a git command inside `dir` and return its stdout, asserting success.
-fn git_output(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .output()
-        .expect("git command failed to start");
-    assert!(out.status.success(), "git {} failed", args.join(" "));
-    String::from_utf8_lossy(&out.stdout).into_owned()
-}
-
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
-}
-
 fn init_repo(tmp: &TempDir) -> PathBuf {
     let d = tmp.path();
-    git(d, &["init", "-q", "-b", "main", "."]);
-    git(d, &["config", "user.name", "Test"]);
-    git(d, &["config", "user.email", "test@example.com"]);
-    git(d, &["config", "commit.gpgsign", "false"]);
+    git_fixture::init_repo(d, "main");
     d.to_path_buf()
 }
 

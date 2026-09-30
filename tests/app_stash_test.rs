@@ -5,8 +5,12 @@ use kagi_git::backend::stash::{StashEvent, StashStopReason};
 use kagi_git::oplog::read_oplog_tail;
 use kagi_git::{Backend, OpOutcome};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::{Mutex, MutexGuard};
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{commit_all, git_command, init_repo};
+
 static ENV: Mutex<()> = Mutex::new(());
 struct Fixture {
     _lock: MutexGuard<'static, ()>,
@@ -15,18 +19,11 @@ struct Fixture {
     log: PathBuf,
     old: Option<std::ffi::OsString>,
 }
+/// Hermetic `git` returning stdout *untrimmed*: tests compare file bytes read
+/// through `git show` (trailing newline included), so this cannot be the
+/// shared, trimming `git_output`.
 fn git(repo: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(repo)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .output()
-        .unwrap();
+    let out = git_command(repo).args(args).output().unwrap();
     assert!(
         out.status.success(),
         "{args:?}: {}",
@@ -40,11 +37,9 @@ impl Fixture {
         let dir = tempfile::tempdir().unwrap();
         let repo = dir.path().canonicalize().unwrap().join("repo");
         std::fs::create_dir(&repo).unwrap();
-        git(&repo, &["init", "-q", "-b", "main"]);
-        git(&repo, &["config", "commit.gpgsign", "false"]);
+        init_repo(&repo, "main");
         std::fs::write(repo.join("file"), "base\n").unwrap();
-        git(&repo, &["add", "."]);
-        git(&repo, &["commit", "-qm", "base"]);
+        commit_all(&repo, "base");
         for text in ["one\n", "two\n", "three\n"] {
             std::fs::write(repo.join("file"), text).unwrap();
             git(&repo, &["stash", "push", "-qm", text.trim()]);

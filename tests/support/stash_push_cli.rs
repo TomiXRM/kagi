@@ -1,5 +1,6 @@
 //! #622: stored bytes and subprocess safety at the existing application boundary.
 use super::*;
+use std::process::Command;
 
 #[test]
 fn push_preserves_index_worktree_and_untracked_trees() {

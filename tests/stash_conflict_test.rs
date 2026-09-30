@@ -16,7 +16,10 @@
 mod backend_ops;
 use backend_ops::{execute_conflict_continue, execute_stash_conflict_abort};
 use std::path::Path;
-use std::process::Command;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, git_output, git_succeeds, init_repo, write_file};
 
 use git2::Repository;
 use tempfile::TempDir;
@@ -25,67 +28,6 @@ use kagi_git::{
     detect_conflict_session, ConflictKind, ConflictOp, ContinueOutcome, ResolutionBuffer,
     ResolutionChoice,
 };
-
-// ────────────────────────────────────────────────────────────
-// Git CLI helpers
-// ────────────────────────────────────────────────────────────
-
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(
-        status.success(),
-        "git {} exited with {:?}",
-        args.join(" "),
-        status.code()
-    );
-}
-
-/// Run a git command allowed to fail (`stash pop` that conflicts exits 1).
-fn git_allow_fail(dir: &Path, args: &[&str]) {
-    let _ = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-}
-
-fn git_output(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .output()
-        .expect("git command failed to start");
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
-}
-
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
-}
-
-fn init_repo(dir: &Path) {
-    git(dir, &["init", "-q", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
-}
 
 /// Build a repo where `git stash pop` conflicts with a subsequent HEAD change:
 ///
@@ -98,7 +40,7 @@ fn init_repo(dir: &Path) {
 fn stash_conflict_repo() -> TempDir {
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "main");
 
     write_file(dir, "file.txt", "line one\nbase\nline three\n");
     git(dir, &["add", "."]);
@@ -112,8 +54,8 @@ fn stash_conflict_repo() -> TempDir {
     write_file(dir, "file.txt", "line one\nHEAD change\nline three\n");
     git(dir, &["commit", "-qam", "head change"]);
 
-    // Pop the stash → conflict; git keeps the stash entry, state stays Clean.
-    git_allow_fail(dir, &["stash", "pop"]);
+    // Pop the stash → conflict (exit 1); git keeps the stash entry, state stays Clean.
+    git_succeeds(dir, &["stash", "pop"]);
 
     tmp
 }

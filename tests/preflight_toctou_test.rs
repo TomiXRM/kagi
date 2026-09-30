@@ -8,44 +8,21 @@
 mod backend_ops;
 use backend_ops::execute_discard;
 use std::path::Path;
-use std::process::Command;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{commit_all, git, git_command, git_output, write_file as write};
 
 use git2::Repository;
 use tempfile::TempDir;
 
 use kagi_git::plan_discard;
 
-fn git(dir: &Path, args: &[&str]) {
-    let ok = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "T")
-        .env("GIT_AUTHOR_EMAIL", "t@e.com")
-        .env("GIT_COMMITTER_NAME", "T")
-        .env("GIT_COMMITTER_EMAIL", "t@e.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git")
-        .success();
-    assert!(ok, "git {:?}", args);
-}
-
-fn write(dir: &Path, n: &str, c: &str) {
-    std::fs::write(dir.join(n), c).unwrap();
-}
 fn read(dir: &Path, n: &str) -> String {
     std::fs::read_to_string(dir.join(n)).unwrap()
 }
 fn head(dir: &Path) -> String {
-    let o = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(dir)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .output()
-        .unwrap();
-    String::from_utf8_lossy(&o.stdout).trim().to_string()
+    git_output(dir, &["rev-parse", "HEAD"])
 }
 
 fn repo() -> TempDir {
@@ -54,8 +31,7 @@ fn repo() -> TempDir {
     git(d, &["init", "-q", "-b", "main", "."]);
     write(d, "tracked.txt", "committed\n");
     write(d, "other.txt", "committed other\n");
-    git(d, &["add", "-A"]);
-    git(d, &["commit", "-qm", "base"]);
+    commit_all(d, "base");
     t
 }
 
@@ -118,13 +94,7 @@ fn discard_refuses_when_a_target_became_conflicted() {
     }
     git(d, &["stash", "-q"]);
     let h = head(d);
-    let merged = Command::new("git")
-        .args(["merge", "b"])
-        .current_dir(d)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", d)
-        .status()
-        .unwrap();
+    let merged = git_command(d).args(["merge", "b"]).status().unwrap();
     let _ = merged; // conflicts; HEAD does not move on a conflicted merge
     assert_eq!(
         head(d),

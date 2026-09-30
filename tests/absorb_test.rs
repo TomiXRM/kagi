@@ -18,7 +18,6 @@
 mod backend_ops;
 use backend_ops::execute_absorb;
 use std::path::Path;
-use std::process::Command;
 
 use kagi_domain::absorb::{HunkDisposition, KeepReason};
 use kagi_git::{plan_absorb, preflight_absorb, Backend};
@@ -26,38 +25,23 @@ use kagi_git::{plan_absorb, preflight_absorb, Backend};
 #[path = "support/isolated.rs"]
 mod test_support;
 
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, git_command, git_output, init_repo, write_file as write};
+
 const WINDOW: usize = 10;
 
 // ── helpers ──────────────────────────────────────────────────
-
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git failed to start");
-    assert!(status.success(), "git {} failed", args.join(" "));
-}
-
-fn write(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write failed");
-}
 
 fn read(dir: &Path, name: &str) -> String {
     std::fs::read_to_string(dir.join(name)).unwrap_or_default()
 }
 
-/// Content of `name` as of `rev`.
+/// Content of `name` as of `rev`, byte-exact (not trimmed: callers compare
+/// whole file contents including the trailing newline).
 fn show(dir: &Path, rev: &str, name: &str) -> String {
-    let out = Command::new("git")
+    let out = git_command(dir)
         .args(["show", &format!("{rev}:{name}")])
-        .current_dir(dir)
         .output()
         .expect("git show failed");
     assert!(
@@ -69,40 +53,7 @@ fn show(dir: &Path, rev: &str, name: &str) -> String {
 }
 
 fn status_porcelain(dir: &Path) -> String {
-    let out = Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(dir)
-        .output()
-        .expect("git status failed");
-    assert!(
-        out.status.success(),
-        "git status --porcelain failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).into_owned()
-}
-
-fn git_output(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git command failed");
-    assert!(
-        out.status.success(),
-        "git {} failed: {}",
-        args.join(" "),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).into_owned()
-}
-
-/// Init a repo on non-protected branch `work` with an initial commit, so absorb
-/// (which refuses protected branches) is allowed.
-fn init_repo(dir: &Path) {
-    git(dir, &["init", "-b", "work", "-q"]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
+    git_output(dir, &["status", "--porcelain"])
 }
 
 // ── tests ────────────────────────────────────────────────────
@@ -114,7 +65,7 @@ fn test_absorb_single_hunk_to_correct_ancestor() {
     }
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "work");
 
     // Commit A: create a.txt (target for the later edit).
     write(dir, "a.txt", "alpha\nbeta\ngamma\n");
@@ -161,7 +112,7 @@ fn test_absorb_pushed_commit_never_target() {
     }
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "work");
 
     // Commit A, then publish it to a bare remote so A is "pushed".
     write(dir, "a.txt", "alpha\nbeta\ngamma\n");
@@ -244,7 +195,7 @@ fn test_absorb_ambiguous_hunk_stays() {
     }
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "work");
 
     // A file long enough that a top-of-file modification and a bottom-of-file
     // append land in two separate hunks (>2×context apart).
@@ -290,7 +241,7 @@ fn test_absorb_recorded_in_oplog() {
     }
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "work");
     write(dir, "a.txt", "alpha\nbeta\ngamma\n");
     git(dir, &["add", "a.txt"]);
     git(dir, &["commit", "-qm", "add a.txt"]);
@@ -316,7 +267,7 @@ fn test_absorb_preflight_head_moved() {
     }
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "work");
     write(dir, "a.txt", "alpha\nbeta\ngamma\n");
     git(dir, &["add", "a.txt"]);
     git(dir, &["commit", "-qm", "add a.txt"]);
@@ -344,9 +295,7 @@ fn test_absorb_protected_branch_blocked() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
     // Default protected branch: main.
-    git(dir, &["init", "-b", "main", "-q"]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
+    init_repo(dir, "main");
     write(dir, "a.txt", "alpha\nbeta\n");
     git(dir, &["add", "a.txt"]);
     git(dir, &["commit", "-qm", "add a.txt"]);
@@ -372,7 +321,7 @@ fn test_absorb_worktree_changed_after_plan_refused() {
     // rather than move the branch ref while silently failing to fold the hunk.
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "work");
 
     write(dir, "a.txt", "alpha\nbeta\ngamma\n");
     git(dir, &["add", "a.txt"]);
@@ -416,7 +365,7 @@ fn test_absorb_staged_after_plan_refused() {
     // index.read_tree would otherwise silently drop it from the index.
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "work");
 
     write(dir, "a.txt", "alpha\nbeta\ngamma\n");
     git(dir, &["add", "a.txt"]);
@@ -450,7 +399,7 @@ fn test_absorb_outcome_counts_match_reality() {
     // pure-addition hunk → absorbed 1, kept 1, one target rewritten.
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "work");
 
     // A 10-line file so an edit near the top and a pure addition at the bottom
     // land in two SEPARATE hunks (default 3-line context can't merge them).
@@ -494,10 +443,5 @@ fn test_absorb_outcome_counts_match_reality() {
 
 // small helper kept below the tests that use it.
 fn rev(dir: &Path, r: &str) -> String {
-    let out = Command::new("git")
-        .args(["rev-parse", r])
-        .current_dir(dir)
-        .output()
-        .expect("rev-parse failed");
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
+    git_output(dir, &["rev-parse", r])
 }

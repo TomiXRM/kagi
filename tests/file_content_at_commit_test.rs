@@ -5,7 +5,10 @@
 //! `git` CLI, then asserts the result of `Backend::file_content_at_commit`.
 
 use std::path::Path;
-use std::process::Command;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, write_file};
 
 use tempfile::TempDir;
 
@@ -15,39 +18,10 @@ use kagi_git::{commit_log, Backend, CommitId};
 // Test helpers
 // ────────────────────────────────────────────────────────────
 
-/// Run a git command inside `dir`, asserting it succeeds.
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(
-        status.success(),
-        "git {} exited with {:?}",
-        args.join(" "),
-        status.code()
-    );
-}
-
-/// Write `content` to `dir/name`.
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
-}
-
 /// Initialise a repo and make an initial commit, return its Backend.
 fn init_repo(tmp: &TempDir) -> Backend {
     let dir = tmp.path();
-    git(dir, &["init", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    git_fixture::init_repo(dir, "main");
 
     write_file(dir, "base.txt", "line one\nline two\n");
     git(dir, &["add", "base.txt"]);

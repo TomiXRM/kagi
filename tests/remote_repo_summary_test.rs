@@ -8,7 +8,10 @@
 use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::process::Command;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::git;
 
 /// PATH is process-global; `run_isolated` gives this test its own process.
 struct RestorePath(Option<OsString>);
@@ -20,22 +23,6 @@ impl Drop for RestorePath {
             None => std::env::remove_var("PATH"),
         }
     }
-}
-
-fn git(repo: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .current_dir(repo)
-        .args(args)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("GIT_AUTHOR_NAME", "fixture")
-        .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
-        .env("GIT_COMMITTER_NAME", "fixture")
-        .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "git {args:?}: {:?}", output.stderr);
-    String::from_utf8(output.stdout).unwrap().trim().to_string()
 }
 
 /// Install an `ssh` stand-in at `bin/ssh`. `body` is the whole script after the

@@ -1,27 +1,11 @@
 //! `collect_squash_links` — the whole-repo scan behind the graph's ghost
 //! connectors (ADR-0139).
 
-use std::process::Command;
 use tempfile::TempDir;
 
-fn git(dir: &std::path::Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "t")
-        .env("GIT_AUTHOR_EMAIL", "t@e")
-        .env("GIT_COMMITTER_NAME", "t")
-        .env("GIT_COMMITTER_EMAIL", "t@e")
-        .output()
-        .expect("git");
-    assert!(
-        out.status.success(),
-        "git {:?}: {}",
-        args,
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
-}
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::git_output as git;
 
 /// main with a squash-merged `feat` and a genuinely unmerged `orphan`.
 fn setup() -> TempDir {

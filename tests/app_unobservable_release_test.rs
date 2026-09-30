@@ -20,6 +20,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{commit_all, git_output as git, init_repo};
+
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 struct Fixture {
@@ -37,21 +41,6 @@ impl Drop for Fixture {
         }
     }
 }
-fn git(repo: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(repo)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "git {args:?}: {:?}", output.stderr);
-    String::from_utf8(output.stdout).unwrap().trim().to_string()
-}
 impl Fixture {
     /// A repository with a real `origin` it has already pushed `main` to, so a
     /// frozen expectation can be compared against something that answers.
@@ -62,11 +51,9 @@ impl Fixture {
         let repo = root.join("repo");
         let bare = root.join("origin.git");
         std::fs::create_dir(&repo).unwrap();
-        git(&repo, &["init", "-q", "-b", "main"]);
-        git(&repo, &["config", "commit.gpgsign", "false"]);
+        init_repo(&repo, "main");
         std::fs::write(repo.join("a.txt"), "one\n").unwrap();
-        git(&repo, &["add", "."]);
-        git(&repo, &["commit", "-qm", "initial"]);
+        commit_all(&repo, "initial");
         git(&repo, &["init", "--bare", "-q", bare.to_str().unwrap()]);
         git(&repo, &["remote", "add", "origin", bare.to_str().unwrap()]);
         git(&repo, &["push", "-q", "-u", "origin", "main"]);

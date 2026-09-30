@@ -43,7 +43,7 @@ pub fn scenario_read_cache_revalidates_on_activation(cx: &mut VisualTestAppConte
         app.select_headless(0);
         app.open_main_diff_commit(0, cx);
         assert!(
-            !app.ui().diff_caches.changed_files.is_empty(),
+            !app.ui().diff_caches.changed_files().is_empty(),
             "cache-owner-a-populated: A must have a real commit-diff cache"
         );
         assert!(
@@ -57,7 +57,7 @@ pub fn scenario_read_cache_revalidates_on_activation(cx: &mut VisualTestAppConte
         app.switch_repo(1, cx);
         assert_eq!(app.active_session(), Some(session_b));
         assert!(
-            app.ui().diff_caches.changed_files.is_empty(),
+            app.ui().diff_caches.changed_files().is_empty(),
             "cache-does-not-leak-into-b: B exposed A's changed-file cache"
         );
     });
@@ -70,7 +70,7 @@ pub fn scenario_read_cache_revalidates_on_activation(cx: &mut VisualTestAppConte
     app.update(cx, |app, cx| {
         assert!(
             app.ui.get(&session_a).is_some_and(|ui| {
-                !ui.diff_caches.changed_files.is_empty()
+                !ui.diff_caches.changed_files().is_empty()
                     && ui.wip_diffstat.is_some()
                     && ui.last_working_status.is_some()
             }),
@@ -80,7 +80,7 @@ pub fn scenario_read_cache_revalidates_on_activation(cx: &mut VisualTestAppConte
         assert_eq!(app.active_session(), Some(session_a));
         let ui = app.ui();
         assert!(
-            ui.diff_caches.changed_files.is_empty()
+            ui.diff_caches.changed_files().is_empty()
                 && ui.wip_diffstat.is_none()
                 && ui.last_working_status.is_none(),
             "activation-clears-stale-cache-payloads: retained cache was authoritative before revalidation"

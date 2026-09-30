@@ -92,6 +92,7 @@ impl TabUiState {
             view_publish_gen: _,
             cache_epoch: _,
             diff_caches: _,
+            inspector_model: _,
             worktree_inspections: _,
             wip_diffstat: _,
             last_working_status: _,

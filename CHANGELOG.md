@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- Inspector の changed files（先頭 100 件の切り出し・生成ファイルの折り畳み・tree・diffstat の対応付け・件数集計）とコミットメッセージの HTML 変換を、描画のたびではなく入力が変わったとき（選択・読み込み完了・reload・compare）だけ作り直すようにしました。Path⇄Tree の切り替えと Generated の開閉では作り直しません。表示・クリック先・右クリックメニュー・Copy Path・「… and N more」は従来どおりです。（#512）
+
 ## [0.40.1] - 2026-09-29
 
 ### Fixed

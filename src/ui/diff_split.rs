@@ -72,6 +72,11 @@ pub(crate) fn split_rows(rows: &[DiffRow]) -> Vec<SplitDiffRow> {
 static SPLIT_CACHE: std::sync::Mutex<cache::SplitCache> =
     std::sync::Mutex::new(cache::SplitCache::new());
 
+/// Tier A (#495): split projections computed, i.e. cache misses.
+#[cfg(feature = "gui-e2e")]
+pub(crate) static PROJECTIONS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 pub(crate) fn split_projection(
     rows: &std::sync::Arc<Vec<DiffRow>>,
 ) -> std::sync::Arc<cache::SplitProjection> {

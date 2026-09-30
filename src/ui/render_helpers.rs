@@ -520,13 +520,17 @@ pub(crate) fn new_diff_list_state() -> gpui::ListState {
 /// only fires on an actual count change — matching (and slightly improving)
 /// the pre-existing behaviour, where the scroll position was never explicitly
 /// reset on file switch either.
-pub(crate) fn render_diff_list<V: 'static>(
+///
+/// #495: every embedding's highlight is requested here, off the UI thread,
+/// once per (rows, theme) — see `diff_view::highlight`.
+pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost>(
     view: MainDiffView,
     leading: Option<gpui::AnyElement>,
     trailing: Option<gpui::AnyElement>,
     scroll_handle: gpui::ListState,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
+    super::diff_view::highlight::ensure_highlight(&view, cx);
     // ADR-0124: virtualize over shared paired indices. Unchanged row ownership
     // reuses both pairing and move detection across frames and embeddings.
     let split = super::theme::diff_split();

@@ -10,41 +10,20 @@ use kagi::app::{admit, Reads, SessionId, Sessions};
 use kagi::ui::{build_tab_view, TabViewState};
 use kagi_git::{Backend, CommitId};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
-fn git(repo: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(repo)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{args:?}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap()
-}
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{commit_all, git, init_repo};
 
 /// A repository with `commits` linear commits, named so the two fixtures in one
 /// test are told apart by content rather than by tab index.
 fn fixture(dir: &Path, name: &str, commits: usize) -> PathBuf {
     let repo = dir.join(name);
     std::fs::create_dir_all(&repo).unwrap();
-    git(&repo, &["init", "-q", "-b", "main"]);
+    init_repo(&repo, "main");
     for i in 0..commits {
         std::fs::write(repo.join("f.txt"), format!("{name} {i}\n")).unwrap();
-        git(&repo, &["add", "."]);
-        git(
-            &repo,
-            &["commit", "-q", "-m", &format!("{name} commit {i}")],
-        );
+        commit_all(&repo, &format!("{name} commit {i}"));
     }
     repo
 }

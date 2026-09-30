@@ -9,6 +9,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - 実行できない plan（blocker あり）を Enter や確認ボタンで確定したとき、footer と toast が「refused (N blockers)」の件数だけでなく、先頭の blocker の具体的な理由を表示するようにしました（EN/JA、残りの件数も併記）。checkout・branch 操作・merge / cherry-pick / revert・reset / rebase / force-with-lease push・remote branch 削除 / tag push・discard・undo / redo・worktree lock / unlock / prune・pull / push・PR merge / review / 編集・stash・remote stash drop が対象です。Operation Log には従来どおり全 blocker が残り、実行は従来どおり拒否します。（#353）
 
+### Fixed
+
+- 狭い window や高い zoom(例: 1000px・125%)で、Main Diff のヘッダ(Back・外部エディタで開く・History・表示切替・+N −M)と File History のヘッダ(Back・Refresh・Copy Path・Open File・Follow Renames)のボタンが中央 pane からはみ出して押せなくなっていたのを直しました。ファイル名を先に省略し、それでも足りないときはボタンをアイコン表示にして名前は tooltip で示します(File History のブランチ名とコミット数はタイトルの tooltip へ移ります)。(#809)
+
 ### Performance
 
 - WIP・Compare・File History の diff を開いたとき、diff の読み込みと構文ハイライトが UI スレッドを止めないようにしました。まずテキストを表示し、ハイライトは別スレッドで計算してから反映します。別のファイルや別のテーマに切り替えた後に古いハイライトが反映されることはなく、同じ内容の再読み込み（外部変更による reload など）ではハイライトも side-by-side の再計算も行いません。（#495）

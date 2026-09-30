@@ -189,6 +189,10 @@ pub struct FileHistoryView {
     /// uses to prove built rows ∝ viewport (not entry count) and that the
     /// selected row is scrolled into view.
     pub last_built_range: std::ops::Range<usize>,
+    /// #809: the header's buttons fall back to icons when the column is too
+    /// narrow for their labels. Its measured bounds are what the layout
+    /// scenario reads.
+    pub header_fit: kagi_ui_core::header_fit::HeaderFit,
 }
 
 impl EventEmitter<FileHistoryEvent> for FileHistoryView {}
@@ -213,6 +217,7 @@ impl FileHistoryView {
             avatars: Default::default(),
             list_scroll: UniformListScrollHandle::new(),
             last_built_range: 0..0,
+            header_fit: Default::default(),
         }
     }
 

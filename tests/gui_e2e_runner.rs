@@ -112,6 +112,10 @@ mod pr_fields_focus;
 mod recovery_layout;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/header_fit.rs"]
+mod recovery_header_fit;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/modal_compact.rs"]
 mod recovery_modal_compact;
 
@@ -1137,6 +1141,10 @@ mod macos {
                     crate::recovery_layout::scenario_file_history_virtualized(cx, fixture.path());
                     assert_eq!(before, repo_fingerprint(fixture.path()));
                 }),
+            ),
+            (
+                "header_fit",
+                Box::new(crate::recovery_header_fit::scenario_header_fit),
             ),
             (
                 "footer_status_line",

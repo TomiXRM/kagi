@@ -278,6 +278,19 @@ The current suite covers:
   A blocked plan has no confirm button, and the fixture's HEAD + porcelain
   status remains unchanged. Git operations use only a local bare repo.
   `modal_sections` is the pre-migration disclosure baseline and remains unchanged;
+- header buttons stay reachable (`KAGI_GUI_E2E_ONLY=header_fit`,
+  `tests/recovery/header_fit.rs`): #809. A real `KagiApp` at 1000x720, zoom
+  1.25, EN and JA opens a commit's long-path file diff, then File History for
+  it. Each Main Diff header control (`main-diff-back`, `-ext-editor`,
+  `-history`, `diff-mode-toggle`, `main-diff-stats`), each File History header
+  button (`fh-back`, `fh-refresh`, `fh-copy-path`, `fh-open-file`,
+  `fh-follow`) and the embedded diff's toggle/stats must lie inside its header
+  row, and each row inside the window — bounds recorded by the production
+  `HeaderFit`, which is what the pane crate can reach. The narrow case must be
+  icon-only; 1920x1080 at zoom 1 must keep the labels. Tier B: 1000px wide at
+  125% in JA, open a file diff and File History; every button is visible and
+  clickable, icon-only buttons name themselves in a hover tooltip, and a wide
+  window shows the labels again.
 - worktree lock reason (`KAGI_GUI_E2E_ONLY=worktree_lock_reason`,
   `tests/recovery/worktree_lock_reason.rs`): #372 item2. EN/JA use the real
   InputState, clipboard paste and focused Enter to review, then a second Enter

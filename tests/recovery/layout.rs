@@ -157,7 +157,7 @@ impl Render for Rows {
     }
 }
 
-fn finite(bounds: Bounds<Pixels>, label: &str) {
+pub(crate) fn finite(bounds: Bounds<Pixels>, label: &str) {
     for value in [
         bounds.origin.x,
         bounds.origin.y,
@@ -175,7 +175,7 @@ fn finite(bounds: Bounds<Pixels>, label: &str) {
     );
 }
 
-fn contained(parent: Bounds<Pixels>, child: Bounds<Pixels>, label: &str) {
+pub(crate) fn contained(parent: Bounds<Pixels>, child: Bounds<Pixels>, label: &str) {
     finite(parent, label);
     finite(child, label);
     assert!(
@@ -187,7 +187,7 @@ fn contained(parent: Bounds<Pixels>, child: Bounds<Pixels>, label: &str) {
     );
 }
 
-fn draw(cx: &mut VisualTestAppContext, win: AnyWindowHandle, dimensions: (f32, f32)) {
+pub(crate) fn draw(cx: &mut VisualTestAppContext, win: AnyWindowHandle, dimensions: (f32, f32)) {
     cx.update_window(win, |_, window, cx| {
         window.refresh();
         window.draw(cx).clear();
@@ -340,14 +340,14 @@ pub fn scenario_commit_row_layout(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS commit_row_layout 704 matrix cells plus redraw/selection checks over 4 reused windows; native resize unavailable in VisualTestAppContext");
 }
 
-struct GlobalSettings {
+pub(crate) struct GlobalSettings {
     zoom: f32,
     language_env: Option<std::ffi::OsString>,
     language: i18n::Lang,
 }
 
 impl GlobalSettings {
-    fn capture() -> Self {
+    pub(crate) fn capture() -> Self {
         Self {
             zoom: theme::zoom(),
             language_env: std::env::var_os("KAGI_LANG"),

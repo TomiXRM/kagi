@@ -5,7 +5,10 @@
 //! Behaviour-preserving move — no DOM/style/handler/[kagi]/i18n change.
 
 use gpui::prelude::*;
-use gpui::{div, px, rgb, AnyView, ClipboardItem, Context, MouseButton, SharedString, Window};
+use gpui::{
+    div, px, rgb, uniform_list, AnyView, ClipboardItem, Context, MouseButton, SharedString,
+    UniformListScrollHandle, Window,
+};
 use gpui_component::button::Button;
 use gpui_component::tooltip::Tooltip;
 use gpui_component::Sizable as _;
@@ -68,6 +71,7 @@ pub fn render_file_history_view(
     let panel_width = view.panel_width;
     let geom = view.geom.clone();
     let diff_pane = view.diff_pane.clone();
+    let list_scroll = view.list_scroll.clone();
 
     // Extract the scalar/owned view data from the `state` borrow.
     let (rel_path, follow, split, count, is_loading, error, is_empty, is_untracked) = (
@@ -203,11 +207,13 @@ pub fn render_file_history_view(
             Some("This file is untracked. No commit history yet."),
             geom,
             diff_pane,
+            &list_scroll,
             cx,
         )
         .into_any_element()
     } else {
-        render_fh_list_and_diff(state, split, None, geom, diff_pane, cx).into_any_element()
+        render_fh_list_and_diff(state, split, None, geom, diff_pane, &list_scroll, cx)
+            .into_any_element()
     };
 
     let center = div()
@@ -328,9 +334,10 @@ pub(crate) fn render_fh_list_and_diff(
     banner: Option<&'static str>,
     geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     diff_pane: AnyView,
+    list_scroll: &UniformListScrollHandle,
     cx: &mut Context<FileHistoryView>,
 ) -> impl IntoElement {
-    let list = render_fh_commit_list(state, cx);
+    let list = render_fh_commit_list(state, list_scroll, cx);
     // Per-entry banner (Added / Deleted / Renamed) above the diff.
     let sel_banner = state.selected_entry().map(|e| match e.change.change_type {
         FileChangeType::Added => "This file was added in this commit.".to_string(),
@@ -447,31 +454,45 @@ pub(crate) fn render_fh_list_and_diff(
 }
 
 /// The commit list (upper pane) of the File History view.
+///
+/// #496: a `uniform_list` (same recipe as the graph's `commit-list`, the
+/// sidebar and the Editor's `ews-history-list`), so only the visible rows
+/// (+ the ≤1 row `uniform_list` overscans) are built per frame instead of all
+/// `entries`. Every row is `CommitRowLayout::Table { row_height }` — fixed
+/// height — which is what `uniform_list` requires.
 pub(crate) fn render_fh_commit_list(
     state: &FileHistoryState,
+    list_scroll: &UniformListScrollHandle,
     cx: &mut Context<FileHistoryView>,
 ) -> gpui::AnyElement {
     let Some(history) = state.history.as_ref() else {
         return div().into_any_element();
     };
-    let entries = &history.entries;
+    let row_count = history.entries.len();
     let selected = state.selected;
+    // One clock read per list render, not per row.
     let now = now_unix_secs();
+    let scroll_handle = list_scroll.clone();
 
-    let mut list = div()
-        .id("fh-commit-list")
-        .flex_1()
-        .h_full()
-        .flex()
-        .flex_col()
-        .overflow_y_scroll()
-        .min_h(px(0.));
-
-    for (ix, entry) in entries.iter().enumerate() {
-        list = list.child(render_fh_row(ix, entry, ix == selected, now, cx));
-    }
-
-    list.into_any_element()
+    uniform_list(
+        "fh-commit-list",
+        row_count,
+        cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+            this.last_built_range = range.clone();
+            let Some(history) = this.data.history.as_ref() else {
+                return Vec::new();
+            };
+            range
+                .filter_map(|ix| history.entries.get(ix).map(|e| (ix, e)))
+                .map(|(ix, entry)| render_fh_row(ix, entry, ix == selected, now, cx))
+                .collect()
+        }),
+    )
+    .track_scroll(&scroll_handle)
+    .flex_1()
+    .h_full()
+    .min_h(px(0.))
+    .into_any_element()
 }
 
 /// One row in the File History commit list.

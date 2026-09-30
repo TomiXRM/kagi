@@ -1106,6 +1106,15 @@ mod macos {
                 }),
             ),
             (
+                "file_history_virtualized",
+                Box::new(|cx| {
+                    let fixture = build_fixture();
+                    let before = repo_fingerprint(fixture.path());
+                    crate::recovery_layout::scenario_file_history_virtualized(cx, fixture.path());
+                    assert_eq!(before, repo_fingerprint(fixture.path()));
+                }),
+            ),
+            (
                 "footer_status_line",
                 Box::new(|cx| {
                     let fixture = build_fixture();

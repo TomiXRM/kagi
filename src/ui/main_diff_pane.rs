@@ -18,16 +18,17 @@
 //! `render_helpers::render_diff_list` directly, exactly as before.
 
 use super::tab_ui_state_ops::PaneRevalidation;
+use gpui::SharedString;
 use gpui::{prelude::*, Context, Entity, ListState, WeakEntity, Window};
-use gpui_component::button::Button;
-use gpui_component::Sizable as _;
 
 use super::diff_view::highlight::DiffHighlightHost;
 use super::diff_view::{
     build_main_diff_view, diff_line_counts, CompareTarget, CompareView, MainDiffSource,
     MainDiffView,
 };
-use super::render_helpers::{new_diff_list_state, render_diff_list};
+use super::render_helpers::{
+    header_button, new_diff_list_state, render_diff_list, DiffHeader, HeaderFit,
+};
 use super::KagiApp;
 
 /// Fat entity for the standalone (center-slot) main diff.
@@ -46,6 +47,9 @@ pub struct MainDiffPane {
     app: WeakEntity<KagiApp>,
     /// Session that owns this retained pane.
     owner: crate::app::SessionId,
+    /// #809: the header's buttons fall back to icons when it is too narrow.
+    /// Public for the layout scenario, which reads the measured bounds.
+    pub fit: HeaderFit,
 }
 
 impl MainDiffPane {
@@ -55,6 +59,7 @@ impl MainDiffPane {
             scroll: new_diff_list_state(),
             app,
             owner,
+            fit: HeaderFit::default(),
         }
     }
 }
@@ -98,16 +103,20 @@ impl Render for MainDiffPane {
                 })
                 .ok();
         });
-        let leading = Button::new("main-diff-back")
-            .label("\u{2190} Back")
-            // `outline`, not `ghost`: a ghost button paints no background of
-            // its own, so it took the header bar's colour exactly and read as
-            // plain text rather than a control (user report). Outline gives it
-            // the theme's input background plus a border.
-            .outline()
-            .small()
-            .on_click(back_click)
-            .into_any_element();
+        let compact = self.fit.compact();
+        let back_label = SharedString::from("\u{2190} Back");
+        let ext_label = SharedString::from(crate::ui::i18n::Msg::OpenInExternalEditor.t());
+        let history_label = SharedString::from("History");
+        let leading = self.fit.control(
+            "main-diff-back",
+            header_button(
+                "main-diff-back",
+                back_label.clone(),
+                "icons/arrow-left.svg",
+                compact,
+            )
+            .on_click(back_click),
+        );
         let ext_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
             // Same lease rule as history_click: read the source off `this`.
             let source = this.view.source.clone();
@@ -130,27 +139,39 @@ impl Render for MainDiffPane {
             .gap_1()
             .flex_shrink_0()
             .child(
-                Button::new("main-diff-ext-editor")
-                    .label(gpui::SharedString::from(
-                        crate::ui::i18n::Msg::OpenInExternalEditor.t(),
-                    ))
-                    .outline()
-                    .small()
+                self.fit.control(
+                    "main-diff-ext-editor",
+                    header_button(
+                        "main-diff-ext-editor",
+                        ext_label.clone(),
+                        "icons/external-link.svg",
+                        compact,
+                    )
                     .on_click(ext_click),
+                ),
             )
             .child(
-                Button::new("main-diff-history")
-                    .label("History")
-                    .outline()
-                    .small()
+                self.fit.control(
+                    "main-diff-history",
+                    header_button(
+                        "main-diff-history",
+                        history_label.clone(),
+                        "icons/history.svg",
+                        compact,
+                    )
                     .on_click(history_click),
+                ),
             )
             .into_any_element();
 
         render_diff_list::<MainDiffPane>(
             self.view.clone(),
-            Some(leading),
-            Some(trailing),
+            DiffHeader {
+                fit: Some(self.fit.clone()),
+                leading: Some(leading),
+                trailing: Some(trailing),
+                labels: vec![back_label, ext_label, history_label],
+            },
             self.scroll.clone(),
             cx,
         )

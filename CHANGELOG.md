@@ -5,14 +5,27 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- File History で先頭の WIP 行を選んだとき、右の詳細ペインの「Changes」が「+0 −0」と表示される問題を修正しました。WIP 行は `git status` から作られ行数を持たないため、行数が分からない項目では「Changes」行を出さず、実際の +/− は下の diff pane が示します。コミット行の +/− と binary 表示は従来どおりです。（#813）
+
 ### Added
 
 - Analyze に「Health」タブを追加しました。commit-graph が無い / HEAD より古い、`core.fsmonitor` が未設定(macOS / Windows)を検出し、EN/JA の説明と「有効化…」ボタンを表示します。ボタンは plan(等価な git コマンドと戻し方を含む)を開くだけで、確認するまで何も書き込みません。確認すると `git commit-graph write --reachable` または local config への `core.fsmonitor=true` を実行し、Operation Log に記録します。（#358、ADR-0205）
 - 2 秒を超えた読み込み(ahead/behind の計算・worktree の状態・worktree 容量の計測・Analyze・Compare / WIP / File History の大きい diff)について、busy スナックバーに「時間がかかっています: <理由>(大きいリポジトリでは <対象> に時間がかかります)」を EN/JA で追記するようにしました。ahead/behind と worktree 容量は「スキップ」で計算をやめ、既存の「—」/「未計測」表示にできます(次の読み込みで再計算、Operation Log には記録しません)。2 秒未満の読み込みでは何も出ません。(#355、ADR-0206)
 
+### Fixed
+
+- コマンドパレット(Cmd+P)から開いた Push などの確認 modal で Enter も Escape も効かず、Cancel のクリックでしか閉じられなかった問題を修正しました。パレットを閉じるときは開く前の focus へ戻し、Push / branch の Push・Pull の確認 modal は開くときに focus を画面本体へ移します（起動時に端末が focus を持っていても Escape で閉じます）。blocked な Push は branch menu から開いた場合と同じく、Enter で拒否されて理由が footer に出て、Escape で閉じます。（#817）
+- Settings を × または Escape で閉じた直後に、↑↓ が File History / graph の一覧に届かなかった問題を修正しました。Settings のテーマ選択などで移った focus を、閉じるときに開く前の場所へ戻します。（#812）
+
 ### Changed
 
 - 実行できない plan（blocker あり）を Enter や確認ボタンで確定したとき、footer と toast が「refused (N blockers)」の件数だけでなく、先頭の blocker の具体的な理由を表示するようにしました（EN/JA、残りの件数も併記）。checkout・branch 操作・merge / cherry-pick / revert・reset / rebase / force-with-lease push・remote branch 削除 / tag push・discard・undo / redo・worktree lock / unlock / prune・pull / push・PR merge / review / 編集・stash・remote stash drop が対象です。Operation Log には従来どおり全 blocker が残り、実行は従来どおり拒否します。（#353）
+
+### Fixed
+
+- 狭い window や高い zoom(例: 1000px・125%)で、Main Diff のヘッダ(Back・外部エディタで開く・History・表示切替・+N −M)と File History のヘッダ(Back・Refresh・Copy Path・Open File・Follow Renames)のボタンが中央 pane からはみ出して押せなくなっていたのを直しました。ファイル名を先に省略し、それでも足りないときはボタンをアイコン表示にして名前は tooltip で示します(File History のブランチ名とコミット数はタイトルの tooltip へ移ります)。(#809)
 
 ### Performance
 
@@ -27,6 +40,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - 統合テストの fixture 用 `git`（`tests/support/git_fixture.rs`）が `git maintenance run --auto --detach` を起動しないようにしました（`maintenance.auto=false` / `gc.auto=0`）。`git commit` 直後に detached process が残す `.git/objects/maintenance.lock` を CI の snapshot 比較が拾って落ちていた flake（`fixture_is_identical_under_a_hostile_home`）の原因で、index の racy 書き換えではありませんでした。製品の動作は変更していません。（#819）
 - 統合テストの Git fixture 構築を `tests/support/git_fixture.rs` に共通化しました。fixture 用の `git` は継承した `GIT_*`・global/system/XDG 設定・hooks・template を遮断して identity を固定するため、開発者の設定や hook から渡された `GIT_DIR` で fixture の内容が変わったり実 repository に書き込んだりしません。ops / blame / push_tag / pr_conflict_preview / app_read の各 suite を移行し、残りは follow-up で移行します。製品の動作は変更していません。（#514）
 - #514 の follow-up: 残り 72 ファイル（`tests/*.rs`・`tests/recovery/*.rs`・`tests/support/pr_merge_local.rs`）の suite-local な `git` helper を `tests/support/git_fixture.rs` に寄せました。テスト数 713・assertion は移行前後で同一で、明示 opt-in の 5 suite は従来どおりです。製品の動作は変更していません。（Refs #514）
+- Tier A `push_failure_keeps_modal` を、#747 で変わった通知の契約（記録済みの失敗は Operation Log と footer / toast で伝え、閉じるだけの AppNotice は出さない）に合わせました。#747（e5644c6f）以降このシナリオは古い期待（AppNotice の queue）のまま落ちていました。Remote Browse の入力を失わないことは従来どおり確認します。製品の動作は変更していません。（#824）
 - backend 専用の統合テスト 61 suite（ops / discard / absorb / conflicts / pull / push / stash / worktree / oplog など）を `tests/` から `crates/kagi-git/tests/` へ、純粋 logic の 2 suite（message_template / trailers）を `kagi-domain` の unit test へ移しました。`cargo test -p kagi-git` だけで主要な mutation / preflight / recovery の契約が走り、GPUI を含む root を build しません。テスト数は移行前後で同じ（2650）で、製品の動作は変更していません。（#515）
 
 ## [0.40.1] - 2026-09-29

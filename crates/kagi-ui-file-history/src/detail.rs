@@ -66,15 +66,7 @@ pub(crate) fn render_fh_detail_pane(
 
     let ct = entry.change.change_type;
     let ct_label = change_type_label(ct).to_string();
-    let stat = if entry.change.is_binary {
-        "binary".to_string()
-    } else {
-        format!(
-            "+{} \u{2212}{}",
-            entry.change.insertions.unwrap_or(0),
-            entry.change.deletions.unwrap_or(0)
-        )
-    };
+    let stat = crate::changes_label(&entry.change);
     let path_after = entry.change.path_after.to_string_lossy().into_owned();
     let path_before = entry
         .change
@@ -106,7 +98,7 @@ pub(crate) fn render_fh_detail_pane(
             .child(line("Committer", c.committer_name.clone()))
             .child(line("Author Date", c.author_date.clone()))
             .child(line("Change Type", ct_label))
-            .child(line("Changes", stat))
+            .when_some(stat, |pane, stat| pane.child(line("Changes", stat)))
             .child(line("Path After", path_after));
         if let Some(before) = path_before {
             pane = pane.child(line("Path Before", before));
@@ -157,7 +149,9 @@ pub(crate) fn render_fh_detail_pane(
                     .child(SharedString::from("Uncommitted changes")),
             )
             .child(line("Change Type", ct_label))
-            .child(line("Changes", stat))
+            // #813: the WIP entry carries no numstat (see `changes_label`);
+            // the diff pane below shows the real working-tree +/−.
+            .when_some(stat, |pane, stat| pane.child(line("Changes", stat)))
             .child(line("Path", path_after));
     }
 

@@ -15,6 +15,7 @@ pub mod commit_row;
 pub mod divider;
 pub mod file_tree;
 pub mod fonts;
+pub mod header_fit;
 pub mod i18n;
 pub mod markdown;
 pub mod settings;

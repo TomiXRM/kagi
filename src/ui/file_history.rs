@@ -35,6 +35,9 @@ pub struct FhDiffPane {
     pub scroll: gpui::ListState,
     /// Monotonic per-diff request token, bumped on every diff load.
     pub req: u64,
+    /// #809: the embedded diff's toggle falls back to its icon when the
+    /// File History column is too narrow for its label.
+    pub fit: render_helpers::HeaderFit,
 }
 
 impl super::diff_view::highlight::DiffHighlightHost for FhDiffPane {
@@ -52,8 +55,10 @@ impl Render for FhDiffPane {
             // (no standalone Back/History buttons — FH has its own Back).
             Some(view) => render_helpers::render_diff_list::<FhDiffPane>(
                 view,
-                None,
-                None,
+                render_helpers::DiffHeader {
+                    fit: Some(self.fit.clone()),
+                    ..Default::default()
+                },
                 self.scroll.clone(),
                 cx,
             )
@@ -154,6 +159,7 @@ impl KagiApp {
             diff: None,
             scroll: render_helpers::new_diff_list_state(),
             req: 0,
+            fit: render_helpers::HeaderFit::default(),
         });
         let view = cx.new(|_| FileHistoryView::new(state, geom, panel_width, diff_pane.into()));
         let pane_id = view.entity_id();

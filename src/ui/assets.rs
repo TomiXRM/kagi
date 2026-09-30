@@ -11,7 +11,9 @@
 //! gpui-component v0.5.1 (`crates/assets/assets/icons/`, Apache-2.0,
 //! originally lucide.dev ISC), except `comment-send`, `review-approve` and
 //! `review-request-changes`, drawn here in the same 24px / stroke-2 idiom for
-//! the PR page's composer (ADR-0200).
+//! the PR page's composer (ADR-0200), and `history`, `columns-2`,
+//! `square-menu` and `route`, lucide.dev (ISC) shapes gpui-component does not
+//! ship, for the icon-only diff / File History header buttons (#809).
 
 use std::borrow::Cow;
 
@@ -193,6 +195,22 @@ const ASSETS: &[(&str, &[u8])] = &[
     (
         "icons/window-close.svg",
         include_bytes!("../../assets/icons/window-close.svg"),
+    ),
+    (
+        "icons/history.svg",
+        include_bytes!("../../assets/icons/history.svg"),
+    ),
+    (
+        "icons/columns-2.svg",
+        include_bytes!("../../assets/icons/columns-2.svg"),
+    ),
+    (
+        "icons/square-menu.svg",
+        include_bytes!("../../assets/icons/square-menu.svg"),
+    ),
+    (
+        "icons/route.svg",
+        include_bytes!("../../assets/icons/route.svg"),
     ),
 ];
 

@@ -20,6 +20,10 @@ use super::*;
 // re-exported here.
 pub(crate) use super::badges::*;
 pub(crate) use super::file_menu::*;
+pub(crate) use diff_header::DiffHeader;
+pub(crate) use kagi_ui_core::header_fit::{header_button, HeaderFit};
+
+mod diff_header;
 
 /// issue #414: chokepoint that neutralizes terminal control bytes in remote-origin
 /// display text (PR titles/handles/refs/check names, branch & stash labels) before
@@ -499,11 +503,11 @@ pub(crate) fn new_diff_list_state() -> gpui::ListState {
 /// ADR-0117 / T-DIFF-WRAP-001: the diff "list body" (header line + virtualized
 /// rows + scrollbar), parameterized over the entity context `V` so it can be
 /// rendered from `MainDiffPane` (the standalone main diff), `FileHistoryView` (its
-/// embedded diff pane), or `EditorWorkspaceView` (the hunks pane). `leading` /
-/// `trailing` are the optional standalone header buttons (Back / History) —
-/// `None` when embedded, which supplies its own Back. Never read an entity
-/// back via `cx` here — this runs during render (the rendering entity is
-/// already borrowed → panic).
+/// embedded diff pane), or `EditorWorkspaceView` (the hunks pane). `header`
+/// carries the optional standalone header buttons (Back / History) — `None`
+/// when embedded, which supplies its own Back. Never read an entity back via
+/// `cx` here — this runs during render (the rendering entity is already
+/// borrowed → panic).
 ///
 /// T-DIFF-WRAP-001: renders via `gpui::list` (variable row height) instead of
 /// `uniform_list` so a soft-wrapped diff line grows its row instead of being
@@ -525,8 +529,7 @@ pub(crate) fn new_diff_list_state() -> gpui::ListState {
 /// once per (rows, theme) — see `diff_view::highlight`.
 pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost>(
     view: MainDiffView,
-    leading: Option<gpui::AnyElement>,
-    trailing: Option<gpui::AnyElement>,
+    header: DiffHeader,
     scroll_handle: gpui::ListState,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
@@ -552,31 +555,7 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
     let rows = view.rows;
     let rows_for_list = rows.clone();
 
-    // ADR-0124: unified ⇄ side-by-side toggle. The label names the mode the
-    // click switches TO; the flag is global (kagi-ui-core atomic) and
-    // persisted, so every diff embedding (main / File History / Editor)
-    // follows the same mode.
-    let mode_label = if split {
-        super::i18n::Msg::DiffViewUnified.t()
-    } else {
-        super::i18n::Msg::DiffViewSplit.t()
-    };
-    use gpui_component::Sizable as _;
-    let mode_toggle = gpui_component::button::Button::new("diff-mode-toggle")
-        .label(mode_label)
-        // See the Back/History buttons in `main_diff_pane.rs` — ghost buttons
-        // are invisible against the header bar they sit on.
-        .outline()
-        // `small`, matching the Back/History buttons it sits beside (and
-        // `fh_header_button`): this was `xsmall`, so the one header row had
-        // two different button text sizes in it (user report).
-        .small()
-        .on_click(cx.listener(|_this, _ev, _window, cx| {
-            let on = !super::theme::diff_split();
-            super::theme::set_diff_split(on);
-            klog!("diff-mode: {}", if on { "split" } else { "unified" });
-            cx.notify();
-        }));
+    let header = header.render(title, stats, cx);
 
     // W-IMG: one labelled image column ("Before"/"After"); either side of the
     // pair may be missing for added/deleted files.
@@ -633,45 +612,7 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
         .flex_col()
         .bg(rgb(theme().panel))
         // ── Header row (fixed height) ─────────────────────────────────────
-        .child(
-            div()
-                .id("main-diff-header")
-                .flex()
-                .flex_row()
-                .items_center()
-                .flex_shrink_0()
-                .px_3()
-                .py_1()
-                .gap_2()
-                // Darker than the `surface` this used to be, so the outlined
-                // buttons above read as raised controls against the chrome
-                // instead of blending into it (user report).
-                .bg(rgb(theme().bg_base))
-                // ← Back button (only for the standalone main diff; the File
-                // History view embeds this diff and has its own Back).
-                .when_some(leading, |el, btn| el.child(btn))
-                // File name
-                .child(
-                    div()
-                        .flex_1()
-                        .text_sm()
-                        .text_color(rgb(theme().text_main))
-                        .truncate()
-                        .child(title),
-                )
-                // History button (导线 #3)
-                .when_some(trailing, |el, btn| el.child(btn))
-                // ADR-0124: unified ⇄ side-by-side toggle
-                .child(mode_toggle)
-                // Stats: +N −M
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_sub))
-                        .flex_shrink_0()
-                        .child(stats),
-                ),
-        )
+        .child(header)
         // ── Diff body: full remaining space ──────────────────────────────
         .child(if let Some(pair) = images {
             // W-IMG: binary image file — render before/after panels instead of

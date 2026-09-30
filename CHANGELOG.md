@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
+- PR mode の diff に review thread を重ねて表示するようにしました。thread のある行の横(gutter)に件数バッジが付き、クリックでその行の直下に thread を折り畳み表示します(もう一度で閉じ、閉じれば行の並びは元どおり)。side-by-side 表示では thread の面に応じて左右の gutter に出します。古い位置(outdated)の thread は薄く表示し、解決ボタンは出しません。取得は従来の line comment の REST 呼び出しを GraphQL の review thread 1 本に置き換えたもので、gh の呼び出し数は変わりません。(Refs #351、ADR-0209)
 - PR mode のファイル一覧に「確認済み」の checkbox と「N / M viewed」(JA「N / M 確認済み」)の進捗を追加しました。確認済みの行は薄く表示されます。印はそのときの head 側のファイル内容(blob)に紐づき、PR の head が進んでそのファイルが変わると自動で未確認に戻ります(変わっていないファイルは確認済みのまま)。状態は `~/.kagi/pr-viewed/` に PR ごとに保存し、壊れたファイルは上書きせず退避します。Operation Log には記録しません。(#351、ADR-0207)
 
 ### Fixed

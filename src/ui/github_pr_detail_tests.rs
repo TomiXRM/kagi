@@ -47,6 +47,7 @@ fn tab(head: &str) -> PrTab {
         merge_status: None,
         merge_status_loaded: false,
         viewed: Default::default(),
+        threads: Default::default(),
     }
 }
 

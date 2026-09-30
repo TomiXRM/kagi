@@ -1139,6 +1139,7 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
             // suggestion marker on the entry the page always draws.
             e2e::queue_github_pr_conversation(cx.background_executor.spawn(async move {
                 use kagi_domain::github::{Comment, Review, ReviewComment};
+                use kagi_domain::review_thread::ReviewThread;
                 (
                     Ok((
                         vec![
@@ -1161,15 +1162,20 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
                             created_at: "2026-09-03T00:00:00Z".into(),
                         }],
                     )),
-                    Ok(vec![ReviewComment {
-                        author: "copilot".into(),
+                    Ok(vec![ReviewThread {
                         path: "src/lib.rs".into(),
-                        line: 12,
-                        start_line: None,
-                        body: "prefer the helper\n\n```suggestion\nlet x = helper();\n```\n".into(),
-                        diff_hunk: "@@ -10,3 +10,3 @@\n-let x = 1;\n+let x = 2;\n context".into(),
-                        created_at: "2026-08-31T00:00:00Z".into(),
-                        in_reply_to: None,
+                        line: Some(12),
+                        original_line: Some(12),
+                        comments: vec![ReviewComment {
+                            author: "copilot".into(),
+                            body: "prefer the helper\n\n```suggestion\nlet x = helper();\n```\n"
+                                .into(),
+                            diff_hunk: "@@ -10,3 +10,3 @@\n-let x = 1;\n+let x = 2;\n context"
+                                .into(),
+                            created_at: "2026-08-31T00:00:00Z".into(),
+                            ..ReviewComment::default()
+                        }],
+                        ..ReviewThread::default()
                     }]),
                 )
             }));

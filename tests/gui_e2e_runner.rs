@@ -124,6 +124,10 @@ mod pr_fields_focus;
 mod pr_viewed;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_threads.rs"]
+mod pr_threads;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/layout.rs"]
 mod recovery_layout;
 
@@ -1037,6 +1041,7 @@ mod macos {
                 Box::new(crate::pr_fields_focus::scenario_pr_fields_escape_focus),
             ),
             ("pr_viewed", Box::new(crate::pr_viewed::scenario_pr_viewed)),
+            ("pr_threads", Box::new(crate::pr_threads::scenario_pr_threads)),
             (
                 "operation_strip_abort",
                 Box::new(crate::app_conflict::scenario_operation_strip_abort),

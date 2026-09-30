@@ -20,7 +20,7 @@ use crate::pr_fields_focus::OfflineGh;
 
 const BASE_REPO: &str = "github.com/example/repo";
 
-fn rev(repo: &Path, rev: &str) -> String {
+pub(crate) fn rev(repo: &Path, rev: &str) -> String {
     let out = std::process::Command::new("git")
         .args(["rev-parse", rev])
         .current_dir(repo)
@@ -30,7 +30,12 @@ fn rev(repo: &Path, rev: &str) -> String {
 }
 
 /// Commit `files` on top of `parent` and publish it as the PR head.
-fn push_pr_head(repo: &Path, remote: &Path, parent: &str, files: &[(&str, &str)]) -> String {
+pub(crate) fn push_pr_head(
+    repo: &Path,
+    remote: &Path,
+    parent: &str,
+    files: &[(&str, &str)],
+) -> String {
     git(repo, &["checkout", "-q", "-B", "pr-head", parent]);
     for (path, text) in files {
         std::fs::write(repo.join(path), text).unwrap();
@@ -45,14 +50,14 @@ fn push_pr_head(repo: &Path, remote: &Path, parent: &str, files: &[(&str, &str)]
     head
 }
 
-fn pr_at(head: &str) -> PullRequest {
+pub(crate) fn pr_at(head: &str) -> PullRequest {
     PullRequest {
         head_sha: head.to_string(),
         ..pull_request(7, "viewed files", "feature")
     }
 }
 
-fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+pub(crate) fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     cx.run_until_parked();
     cx.update_window(window, |_, window, cx| {
         window.refresh();
@@ -62,7 +67,7 @@ fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
 }
 
 /// The tab's files are loaded from `head` (a real fetch, so wait for it).
-fn wait_loaded(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, head: &str) {
+pub(crate) fn wait_loaded(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, head: &str) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     loop {
         cx.run_until_parked();

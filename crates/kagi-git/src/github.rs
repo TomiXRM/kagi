@@ -15,7 +15,7 @@ use std::sync::OnceLock;
 
 use kagi_domain::github::{
     fold_ci, Check, Comment, IssueLabel, Mergeable, PrBodyDetail, PrStatusDetail, PullRequest,
-    Review, ReviewComment,
+    Review,
 };
 
 use crate::GitError;
@@ -302,66 +302,6 @@ pub fn pr_conversation(
     parse_conversation(&String::from_utf8_lossy(&out.stdout))
 }
 
-/// Line-level review comments (`GET /pulls/{n}/comments`) — the Copilot /
-/// Codex code-suggestion surface. `gh pr view --json` does not expose these,
-/// so this goes through `gh api` (same auth, one call).
-pub fn pr_review_comments(workdir: &Path, number: u64) -> Result<Vec<ReviewComment>, GitError> {
-    let out = crate::cli::gh_command()
-        .args([
-            "api",
-            &format!("repos/{{owner}}/{{repo}}/pulls/{}/comments", number),
-            "--paginate",
-        ])
-        .current_dir(workdir)
-        .output()
-        .map_err(|e| GitError::Other(format!("gh: {}", e)))?;
-    if !out.status.success() {
-        return Ok(Vec::new());
-    }
-    parse_review_comments(&String::from_utf8_lossy(&out.stdout))
-}
-
-/// Parse `GET /pulls/{n}/comments`. Pure; unit-tested below.
-pub fn parse_review_comments(json: &str) -> Result<Vec<ReviewComment>, GitError> {
-    let v: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| GitError::Other(format!("gh json: {}", e)))?;
-    let arr = v.as_array().cloned().unwrap_or_default();
-    Ok(arr
-        .iter()
-        .map(|c| {
-            let g = |k: &str| c.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
-            ReviewComment {
-                author: c
-                    .get("user")
-                    .and_then(|u| u.get("login"))
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                path: g("path"),
-                // `line` is null for an outdated anchor; fall back to the
-                // original line so the comment still names a position.
-                line: c
-                    .get("line")
-                    .and_then(|x| x.as_u64())
-                    .or_else(|| c.get("original_line").and_then(|x| x.as_u64()))
-                    .unwrap_or(0) as u32,
-                // Multi-line anchor start (#351); falls back to the original
-                // start line when the anchor is outdated.
-                start_line: c
-                    .get("start_line")
-                    .and_then(|x| x.as_u64())
-                    .or_else(|| c.get("original_start_line").and_then(|x| x.as_u64()))
-                    .map(|n| n as u32),
-                body: g("body"),
-                diff_hunk: g("diff_hunk"),
-                created_at: g("created_at"),
-                in_reply_to: c.get("in_reply_to_id").and_then(|x| x.as_u64()),
-            }
-        })
-        .filter(|c| !c.body.trim().is_empty())
-        .collect())
-}
-
 /// Parse `gh pr view --json reviews,comments`. Pure; unit-tested below.
 pub fn parse_conversation(json: &str) -> Result<(Vec<Review>, Vec<Comment>), GitError> {
     let v: serde_json::Value =
@@ -590,6 +530,10 @@ pub use crate::github_edit::{
     edit_args, plan_pr_edit, pr_edit, repo_assignable_users, repo_labels,
 };
 
+// Review threads (#351): the PR diff overlay and the conversation feed's
+// line comments, one GraphQL read.
+pub use crate::github_threads::{parse_review_threads, pr_review_threads};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -639,27 +583,6 @@ mod tests {
         assert_eq!(rv[1].body, "nit");
         assert_eq!(cm.len(), 1);
         assert_eq!(cm[0].author, "d");
-    }
-
-    #[test]
-    fn parses_line_comments_with_suggestions_and_outdated_anchors() {
-        let json = r#"[
-          {"user":{"login":"Copilot"},"path":"a/b.py","line":872,"original_line":870,
-           "body":"[MUST] fix this\n```suggestion\nx = 1\n```","diff_hunk":"@@ -1 +1 @@",
-           "created_at":"t1","in_reply_to_id":null},
-          {"user":{"login":"me"},"path":"a/b.py","line":null,"original_line":12,
-           "body":"done","diff_hunk":"","created_at":"t2","in_reply_to_id":9},
-          {"user":{"login":"x"},"path":"c.py","line":1,"body":"   ","created_at":"t3"}
-        ]"#;
-        let cs = parse_review_comments(json).unwrap();
-        assert_eq!(cs.len(), 2, "the whitespace-only comment is dropped");
-        assert_eq!(cs[0].author, "Copilot");
-        assert_eq!(cs[0].line, 872);
-        assert!(cs[0].has_suggestion(), "```suggestion detected");
-        // Outdated anchor falls back to original_line, and the reply is linked.
-        assert_eq!(cs[1].line, 12);
-        assert_eq!(cs[1].in_reply_to, Some(9));
-        assert!(!cs[1].has_suggestion());
     }
 
     #[test]

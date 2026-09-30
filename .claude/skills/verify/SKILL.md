@@ -138,6 +138,20 @@ The current suite covers:
   scanned zero. The counter was removed after acceptance; the behavioral
   scenario remains. Pair with `KAGI_GUI_E2E_ONLY=conflict_` for existing safety
   and ownership coverage; Save/Continue still perform fresh validation.
+- text-first diff highlight (`KAGI_GUI_E2E_ONLY=diff_highlight`,
+  `tests/recovery/diff_highlight.rs`): #495. WIP, Compare and File History
+  diffs are read off the UI thread and first appear as unhighlighted text
+  (an observer records the first shown state); the frame that renders them
+  requests spans off-thread once. With split mode on, twenty unchanged frames
+  and a reload that re-reads the same text add no highlight and no split
+  projection and keep the same row allocation; a theme switch highlights once
+  more. The stale leg leaves a highlight out while another file replaces it,
+  moves the active theme under an outstanding request (the old theme's spans
+  are never shown), and supersedes a WIP read by a newer commit diff or a
+  close. `gui-e2e`-only counters (`diff_view::highlight::e2e`: highlight runs,
+  dropped results, split projections) back the assertions; default builds do
+  not compile them. Pair with `survives_reload,theme_switch,worktree_panel`
+  for the reload / linked-worktree paths the same reads serve.
 - conflict refusal reasons (`KAGI_GUI_E2E_ONLY=conflict_save_boundary`,
   `tests/recovery/conflict_refusal.rs`): Save with remaining markers and Abort
   after an external staged resolution show the specific EN/JA reason in the

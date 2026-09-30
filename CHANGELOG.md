@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Performance
 
+- WIP・Compare・File History の diff を開いたとき、diff の読み込みと構文ハイライトが UI スレッドを止めないようにしました。まずテキストを表示し、ハイライトは別スレッドで計算してから反映します。別のファイルや別のテーマに切り替えた後に古いハイライトが反映されることはなく、同じ内容の再読み込み（外部変更による reload など）ではハイライトも side-by-side の再計算も行いません。（#495）
 - File History のコミット一覧を、Graph・sidebar・Editor History と同じ `uniform_list` による仮想リストに揃えました。500 件の履歴でも構築される行は表示範囲分だけになり、選択行は一覧の外にあってもスクロールして表示します。見た目・ページング・diff 対象の選び方は変更しません。（#496）
 
 ### Internal

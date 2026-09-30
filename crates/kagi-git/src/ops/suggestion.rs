@@ -8,14 +8,17 @@ use kagi_domain::plan_note::{GithubNote, GithubRecovery, GithubTitle};
 use kagi_domain::suggestion::{line_range, Suggestion};
 
 // ────────────────────────────────────────────────────────────
-// apply-suggestion (#351, ADR-0172) — local apply of a GitHub PR
+// apply-suggestion (#351, ADR-0172 / ADR-0210) — local apply of a GitHub PR
 // review "suggested change" to the WORKING TREE (never a commit).
 //
-// Safety: the anchored lines are captured at plan time (`expected`). If the
-// working-tree file at that range no longer matches at execute time, the apply
-// is REFUSED — a suggestion must never be spliced onto the wrong lines (TOCTOU,
-// same class as #393 / #405). The pre-apply file content is backed up to the
-// ODB first, so the edit is recoverable by blob SHA via the oplog.
+// Safety: the suggestion's line numbers are the PR head's, so it is applied
+// only while the working-tree file is exactly the blob the PR head holds at
+// that path (`blob_ids_at`). The anchored lines are also captured at plan time
+// (`expected`); if the working-tree file at that range no longer matches at
+// execute time, the apply is REFUSED — a suggestion must never be spliced onto
+// the wrong lines (TOCTOU, same class as #393 / #405). The pre-apply file
+// content is backed up under a `refs/kagi/backups/` ref first (#523), so the
+// edit is recoverable from the oplog receipt even after a gc.
 // ────────────────────────────────────────────────────────────
 
 /// Read the working-tree file for `path` as a string, or `None` when it is
@@ -50,9 +53,14 @@ pub fn capture_suggestion_context(
 }
 
 /// Build the [`OperationPlan`] for applying `s`. `expected` is the range content
-/// captured at plan time (see [`capture_suggestion_context`]).
+/// captured at plan time (see [`capture_suggestion_context`]); `head_commit`
+/// is the PR head commit the review's line numbers belong to.
 ///
 /// # Blocker conditions
+/// - the PR head commit is not in the local object store
+///   ([`GithubNote::SuggestionHeadUnavailable`]).
+/// - the working-tree file is not the head's blob at `s.path`
+///   ([`GithubNote::SuggestionNotPrHead`]).
 /// - the target file is gone / not a text file, or the anchored range is out of
 ///   bounds ([`GithubNote::SuggestionRangeGone`]).
 /// - the working-tree range no longer matches `expected`
@@ -61,6 +69,7 @@ pub fn plan_apply_suggestion(
     repo: &Repository,
     s: &Suggestion,
     expected: &[String],
+    head_commit: &CommitId,
 ) -> Result<OperationPlan, GitError> {
     let head = resolve_head(repo)?;
     let status = working_tree_status(repo)?;
@@ -71,14 +80,19 @@ pub fn plan_apply_suggestion(
     };
 
     let mut blockers: Vec<PlanNote> = Vec::new();
-    match read_wt_file(repo, &s.path).and_then(|c| line_range(&c, s.start_line, s.end_line)) {
-        Some(cur) if cur == expected => {} // fresh — applyable
-        Some(_) => blockers.push(PlanNote::Github(GithubNote::SuggestionStale {
-            path: s.path.clone(),
-        })),
-        None => blockers.push(PlanNote::Github(GithubNote::SuggestionRangeGone {
-            path: s.path.clone(),
-        })),
+    match pr_head_note(repo, s, head_commit) {
+        Some(note) => blockers.push(PlanNote::Github(note)),
+        None => match read_wt_file(repo, &s.path)
+            .and_then(|c| line_range(&c, s.start_line, s.end_line))
+        {
+            Some(cur) if cur == expected => {} // fresh — applyable
+            Some(_) => blockers.push(PlanNote::Github(GithubNote::SuggestionStale {
+                path: s.path.clone(),
+            })),
+            None => blockers.push(PlanNote::Github(GithubNote::SuggestionRangeGone {
+                path: s.path.clone(),
+            })),
+        },
     }
 
     let warnings = vec![PlanNote::Github(GithubNote::SuggestionWorkingTreeOnly)];
@@ -103,7 +117,7 @@ pub fn plan_apply_suggestion(
         blockers,
         recovery: Some(PlanRecovery {
             kind: RecoveryKind::Github(GithubRecovery::ApplySuggestion),
-            commands: vec!["git cat-file -p <blob-sha>".to_string()],
+            commands: vec!["git cat-file blob <backup-ref>".to_string()],
         }),
         head_at_plan: head,
         stash_count_at_plan: 0,
@@ -116,10 +130,27 @@ pub fn plan_apply_suggestion(
             change: ChangeKind::Modified,
         }],
         preview_commits: Vec::new(),
-        // Edits only the working tree (like typing in the file); not a
-        // history rewrite, so no two-stage confirm / auto-snapshot.
-        destructive: false,
+        // A working-tree rewrite: the pre-apply content survives only in the
+        // backup ref (and the auto-snapshot a destructive plan triggers), not
+        // in any commit (ADR-0210).
+        destructive: true,
         equivalent_command: None,
+    })
+}
+
+/// Why the working-tree file cannot take the head's line numbers, if it
+/// cannot: the head commit is missing locally, or the file is not the head's
+/// blob at that path. A missing or unreadable working-tree file is left to the
+/// range check ([`GithubNote::SuggestionRangeGone`]).
+fn pr_head_note(repo: &Repository, s: &Suggestion, head: &CommitId) -> Option<GithubNote> {
+    let path = std::path::PathBuf::from(&s.path);
+    let Ok(head_blobs) = crate::diff::blob_ids_at(repo, head, std::slice::from_ref(&path)) else {
+        return Some(GithubNote::SuggestionHeadUnavailable);
+    };
+    let abs = repo.workdir()?.join(&path);
+    let local = git2::Oid::hash_file(git2::ObjectType::Blob, &abs).ok()?;
+    (head_blobs.first() != Some(&local.to_string())).then(|| GithubNote::SuggestionNotPrHead {
+        path: s.path.clone(),
     })
 }
 
@@ -171,17 +202,20 @@ pub(crate) fn execute_apply_suggestion(
         )));
     }
 
-    // ── BACKUP the pre-apply content to the ODB before touching the file. ──
-    let backup_blob = repo
-        .blob(content.as_bytes())
-        .map_err(|e| {
-            GitError::Other(format!(
-                "apply-suggestion aborted: blob backup failed for '{}': {}",
-                s.path,
-                e.message()
-            ))
-        })?
-        .to_string();
+    // ── BACKUP the pre-apply content under a ref before touching the file. ──
+    let backup = super::backup::write_blob(
+        repo,
+        &super::backup::operation_id(),
+        0,
+        s.path.clone(),
+        content.as_bytes(),
+    )
+    .map_err(|e| {
+        GitError::Other(format!(
+            "apply-suggestion aborted: backup failed for '{}': {}",
+            s.path, e
+        ))
+    })?;
 
     // ── APPLY (working tree only). ──
     let new_content = s.apply_to(&content).ok_or_else(|| {
@@ -215,6 +249,7 @@ pub(crate) fn execute_apply_suggestion(
         path: s.path.clone(),
         start_line: s.start_line,
         end_line: s.end_line,
-        backup_blob,
+        backup_blob: backup.blob,
+        reference: backup.reference,
     })
 }

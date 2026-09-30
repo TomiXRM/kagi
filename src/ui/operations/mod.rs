@@ -6,6 +6,7 @@
 
 mod app_bridge;
 mod app_conflict;
+pub(crate) mod apply_suggestion;
 pub mod branch;
 pub mod checkout;
 pub mod cherry_revert;

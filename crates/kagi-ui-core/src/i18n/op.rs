@@ -57,6 +57,8 @@ pub enum Op {
     /// Repository-health fixes (#358).
     WriteCommitGraph,
     EnableFsmonitor,
+    /// A PR review suggestion written to the working tree (#351).
+    ApplySuggestion,
     Skip,
     Snapshot,
     StageAll,
@@ -128,6 +130,7 @@ impl Op {
                 "Enable filesystem monitor",
                 "ファイルシステムモニターの有効化",
             ),
+            ApplySuggestion => ("Apply suggestion", "コード提案の適用"),
             Skip => ("Skip", "skip"),
             Snapshot => ("Snapshot", "スナップショットの取得"),
             Stage => ("Stage", "stage"),

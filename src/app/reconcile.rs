@@ -265,6 +265,7 @@ fn writes_only_locally(name: &str) -> bool {
             | "switch-to-latest"
             | "write-commit-graph"
             | "enable-fsmonitor"
+            | "apply-suggestion"
     )
 }
 

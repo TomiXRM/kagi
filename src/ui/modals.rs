@@ -1,5 +1,6 @@
 //! Modal state structs and the ActiveModal enum (ADR-0076 / ADR-0114).
 
+pub mod apply_suggestion;
 pub mod repo_health;
 pub mod worktree;
 use worktree::*;
@@ -738,6 +739,7 @@ pub enum ActiveModal {
     PruneWorktrees(PruneWorktreesModal),
     RepairWorktrees(RepairWorktreesModal),
     RepoHealth(repo_health::RepoHealthModal),
+    ApplySuggestion(apply_suggestion::ApplySuggestionModal),
     StashPush(StashPushModal),
     StashApply(StashApplyModal),
     CherryPick(CherryPickModal),
@@ -791,6 +793,7 @@ impl ActiveModal {
             | M::PruneWorktrees(_)
             | M::RepairWorktrees(_)
             | M::RepoHealth(_)
+            | M::ApplySuggestion(_)
             | M::StashPush(_)
             | M::StashApply(_)
             | M::CherryPick(_)

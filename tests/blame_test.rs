@@ -5,51 +5,18 @@
 //! `.git-blame-ignore-revs` handling (auto-detect → mark + count).
 
 use std::path::Path;
-use std::process::Command;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, git_output as git_out, write_file};
 
 use tempfile::TempDir;
 
 use kagi_git::Backend;
 
-/// Run a git command inside `dir`, asserting it succeeds.
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(status.success(), "git {} failed", args.join(" "));
-}
-
-/// Capture stdout of a git command (trimmed).
-fn git_out(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .output()
-        .expect("git command failed to start");
-    assert!(out.status.success(), "git {} failed", args.join(" "));
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
-}
-
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
-}
-
 fn init_repo(tmp: &TempDir) -> (Backend, std::path::PathBuf) {
     let dir = tmp.path();
-    git(dir, &["init", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    git_fixture::init_repo(dir, "main");
     (
         Backend::open(dir).expect("failed to open repo"),
         dir.to_path_buf(),

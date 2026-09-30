@@ -96,12 +96,10 @@ impl KagiApp {
                 "[kagi] refused: delete-remote-branch plan has {} blocker(s), not executing",
                 modal.plan.blockers.len()
             );
-            self.record_op(
+            self.record_refused(
                 "delete-remote-branch",
                 modal.plan.current.clone(),
-                kagi_git::oplog::OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &modal.plan.blockers,
                 &repo_path,
                 cx,
             );

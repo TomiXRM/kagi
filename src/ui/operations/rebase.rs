@@ -78,12 +78,10 @@ impl KagiApp {
         };
         if !modal.plan.blockers.is_empty() {
             klog!("refused: rebase plan has blockers, not executing");
-            self.record_op(
+            self.record_refused(
                 "rebase",
                 modal.plan.current.clone(),
-                kagi_git::oplog::OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &modal.plan.blockers,
                 &repo_path,
                 cx,
             );

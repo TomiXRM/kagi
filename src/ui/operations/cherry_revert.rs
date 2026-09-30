@@ -80,12 +80,10 @@ impl KagiApp {
         if !modal.plan.blockers.is_empty() {
             klog!("refused: cherry-pick plan has blockers, not executing");
             if let Some(ref rp) = self.repo_path.clone() {
-                self.record_op(
+                self.record_refused(
                     "cherry-pick",
                     modal.plan.current.clone(),
-                    OpOutcome::Refused {
-                        blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                    },
+                    &modal.plan.blockers,
                     rp,
                     cx,
                 );
@@ -190,12 +188,10 @@ impl KagiApp {
         if !modal.plan.blockers.is_empty() {
             klog!("refused: revert plan has blockers, not executing");
             if let Some(ref rp) = self.repo_path.clone() {
-                self.record_op(
+                self.record_refused(
                     "revert",
                     modal.plan.current.clone(),
-                    OpOutcome::Refused {
-                        blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                    },
+                    &modal.plan.blockers,
                     rp,
                     cx,
                 );

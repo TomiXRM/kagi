@@ -60,12 +60,10 @@ impl KagiApp {
         };
         if !modal.plan.blockers.is_empty() {
             klog!("refused: lock-worktree plan has blockers, not executing");
-            self.record_op_persist(
+            self.record_refused(
                 "lock-worktree",
                 modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &modal.plan.blockers,
                 &repo_path,
                 cx,
             );
@@ -165,12 +163,10 @@ impl KagiApp {
         };
         if !modal.plan.blockers.is_empty() {
             klog!("refused: unlock-worktree plan has blockers, not executing");
-            self.record_op_persist(
+            self.record_refused(
                 "unlock-worktree",
                 modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &modal.plan.blockers,
                 &repo_path,
                 cx,
             );

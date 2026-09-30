@@ -22,6 +22,9 @@ pub struct StashReport {
     pub action: StashAction,
     pub recording: Recording,
     pub evidence: StashEvidence,
+    /// The plan's typed blockers, so a plan-blocked refusal is presented in
+    /// the user's language rather than as the receipt's English strings (#353).
+    pub blockers: Vec<kagi_domain::plan_note::PlanNote>,
 }
 
 /// Are all of `needles` still present in `haystack`, in the same relative
@@ -266,6 +269,7 @@ impl Backend {
             action: plan.action.clone(),
             recording: report.recording,
             evidence: report.stash.unwrap_or_default(),
+            blockers: plan.preview.blockers.clone(),
         }
     }
     pub fn read_stash_status(plan: &StashPlan) -> Result<String, GitError> {
@@ -454,6 +458,7 @@ pub fn stash_failure(
             stop: Some(stop),
             ..Default::default()
         },
+        blockers: plan.preview.blockers.clone(),
     }
 }
 

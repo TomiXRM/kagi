@@ -1012,7 +1012,8 @@ impl KagiApp {
         self.open_main_diff_commit_inner(file_index, None);
     }
 
-    /// Open the main diff with async highlight (UI path).
+    /// Open the main diff (UI path): a cached file installs now, a cache miss
+    /// is read off the UI thread (#829); the highlight follows asynchronously.
     pub fn open_main_diff_commit(&mut self, file_index: usize, cx: &mut Context<Self>) {
         self.open_main_diff_commit_inner(file_index, Some(cx));
     }
@@ -1028,9 +1029,8 @@ impl KagiApp {
             Some(s) => s,
             None => return,
         };
-        let _repo_path = match self.repo_path.as_ref() {
-            Some(p) => p.clone(),
-            None => return,
+        let Some(repo_path) = self.repo_path.clone() else {
+            return;
         };
         let detail = match self.view().details.get(selected) {
             Some(d) => d,
@@ -1068,6 +1068,20 @@ impl KagiApp {
             return;
         }
 
+        // #829: the UI path reads a cache miss off the UI thread, like Compare
+        // and WIP (#495): the text lands when the read does, a newer open or a
+        // close supersedes it (`main_diff_req`), and a slow one explains itself
+        // (#355). The headless hook has no executor, so it stays synchronous.
+        if let Some(cx) = cx {
+            let read = super::main_diff_pane::MainDiffRead::Commit {
+                commit: id,
+                row: selected,
+                file_index,
+                epoch: self.ui().cache_epoch,
+            };
+            return self.read_main_diff(repo_path, path, read, cx);
+        }
+
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
         let Some(session) = self.ui().repo_session.as_ref() else {
             return;
@@ -1079,7 +1093,7 @@ impl KagiApp {
                 let arc = std::sync::Arc::new(file_diff);
                 let key = (selected, file_index);
                 self.with_ui(|ui| ui.diff_caches.file_content.insert(key, arc.clone()));
-                self.set_commit_main_diff(&arc, &path, selected, file_index, cx);
+                self.set_commit_main_diff(&arc, &path, selected, file_index, None);
             }
             Err(e) => {
                 klog!("diff error: {}", e);

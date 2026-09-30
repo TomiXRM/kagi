@@ -374,12 +374,21 @@ impl KagiApp {
             return;
         };
         let req = self.bump_main_diff_req();
+        if matches!(read, MainDiffRead::Commit { .. }) {
+            self.with_ui(|ui| ui.main_diff_commit_read = Some(req));
+        }
         let bg_path = path.clone();
         let bg_read = read.clone();
         // #355: a large diff explains itself once slow; no Skip.
         let slow = self.begin_slow_read(owner, Some(kagi_ui_core::slow_read::SlowRead::Diff), cx);
+        #[cfg(feature = "gui-e2e")]
+        let hold = MAIN_DIFF_READ_HOLD.with(|slot| slot.borrow_mut().take());
         let task = cx.background_spawn(async move {
             let _slow = slow;
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
             bg_read.run(&repo, &bg_path)
         });
         cx.spawn(async move |this, acx| {
@@ -419,27 +428,37 @@ impl KagiApp {
                 return match read {
                     MainDiffRead::Compare { .. } => klog!("compare diff error: {}", e),
                     MainDiffRead::Wip { .. } => klog!("commit-panel diff error: {}", e),
+                    MainDiffRead::Commit { .. } => klog!("diff error: {}", e),
                 };
             }
         };
+        if let MainDiffRead::Commit {
+            commit,
+            row,
+            file_index,
+            epoch,
+        } = &read
+        {
+            let key = (*row, *file_index);
+            return self.land_commit_diff(file_diff, view, path, commit, key, *epoch, cx);
+        }
         if !refresh {
             let (added, removed) = diff_line_counts(&file_diff);
-            match read {
-                MainDiffRead::Compare { .. } => klog!(
+            if matches!(read, MainDiffRead::Wip { .. }) {
+                klog!(
+                    "commit-panel diff: {} (+{} -{})",
+                    path.display(),
+                    added,
+                    removed
+                )
+            } else {
+                klog!(
                     "diff: {} hunks={} (+{} -{})",
                     path.display(),
                     file_diff.hunks.len(),
                     added,
                     removed
-                ),
-                MainDiffRead::Wip { .. } => {
-                    klog!(
-                        "commit-panel diff: {} (+{} -{})",
-                        path.display(),
-                        added,
-                        removed
-                    )
-                }
+                )
             }
             klog!(
                 "main-diff: open {} rows={} highlight={}",
@@ -447,6 +466,74 @@ impl KagiApp {
                 view.rows.len(),
                 view.lang.unwrap_or("none")
             );
+        }
+        view.images = self.diff_images_for(&file_diff, &view.source, path);
+        self.show_main_diff(view, cx);
+    }
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static MAIN_DIFF_READ_HOLD: std::cell::RefCell<Option<gpui::Task<()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    /// Hold the next off-thread main-diff read until `hold` completes, so a
+    /// reload can land while it is still out (#829; Tier A only).
+    pub fn hold_next_main_diff_read_for_e2e(hold: gpui::Task<()>) {
+        MAIN_DIFF_READ_HOLD.with(|slot| assert!(slot.borrow_mut().replace(hold).is_none()));
+    }
+}
+
+impl KagiApp {
+    /// #829: a commit file's diff read off the UI thread, landing with the
+    /// contract line the synchronous opener printed. It fills the per-(row,
+    /// file) cache only while those rows are still the rows on screen; after a
+    /// renumber (a reload or activation read published meanwhile) the diff is
+    /// re-anchored to its commit's new row — as a diff opened just before the
+    /// read would have been (#722) — or dropped when the commit is gone.
+    #[allow(clippy::too_many_arguments)]
+    fn land_commit_diff(
+        &mut self,
+        file_diff: kagi_git::FileDiff,
+        mut view: MainDiffView,
+        path: &std::path::Path,
+        commit: &kagi_git::CommitId,
+        (row, file_index): (usize, usize),
+        epoch: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let current = self.ui().cache_epoch == epoch;
+        let row = if current {
+            row
+        } else {
+            let Some(row) = self.row_for_commit_id(commit) else {
+                return;
+            };
+            view.source = MainDiffSource::Commit {
+                row_index: row,
+                file_index,
+                commit: Some(commit.clone()),
+            };
+            row
+        };
+        let (added, removed) = diff_line_counts(&file_diff);
+        klog!(
+            "diff: {} hunks={} (+{} -{})",
+            path.display(),
+            file_diff.hunks.len(),
+            added,
+            removed
+        );
+        let file_diff = std::sync::Arc::new(file_diff);
+        if current {
+            self.with_ui(|ui| {
+                ui.diff_caches
+                    .file_content
+                    .insert((row, file_index), file_diff.clone())
+            });
         }
         view.images = self.diff_images_for(&file_diff, &view.source, path);
         self.show_main_diff(view, cx);
@@ -465,6 +552,14 @@ pub(crate) enum MainDiffRead {
     /// A Commit Panel file. `refresh`: re-reading an open diff after a
     /// reload, which closes the pane when nothing is left to show.
     Wip { staged: bool, refresh: bool },
+    /// A file of the selected commit on a content-cache miss (#829). `row`
+    /// and `epoch` key the cache it fills and go stale on a renumber.
+    Commit {
+        commit: kagi_git::CommitId,
+        row: usize,
+        file_index: usize,
+        epoch: u64,
+    },
 }
 
 /// What a [`MainDiffRead`] produced: the raw diff (image blobs are read from
@@ -525,6 +620,19 @@ impl MainDiffRead {
                 };
                 (result, source, 0)
             }
+            MainDiffRead::Commit {
+                commit,
+                row,
+                file_index,
+                ..
+            } => {
+                let source = MainDiffSource::Commit {
+                    row_index: *row,
+                    file_index: *file_index,
+                    commit: Some(commit.clone()),
+                };
+                (backend.commit_file_diff(commit, path), source, *file_index)
+            }
         };
         match result {
             Ok(file_diff) => {
@@ -564,15 +672,24 @@ impl KagiApp {
     /// installed. Compare first: the diff restore looks its file up in the
     /// refreshed compare list. A source that no longer resolves stays closed.
     pub(crate) fn restore_open_panes(&mut self, panes: OpenPanes, cx: &mut Context<Self>) {
+        // #829: the newest request is a commit diff still being read. It is
+        // immutable and lands re-anchored by commit id, so the sweep keeps it.
+        // Of the diff it is about to replace, only a commit's is put back
+        // meanwhile: re-pointing it issues no read that would supersede it.
+        let carry = self.ui().main_diff_commit_read == Some(self.ui().main_diff_req);
         if let Some(ui) = self.ui_mut() {
             ui.main_diff = None;
-            // A read still out for the pane being swept must not reopen it.
-            ui.main_diff_req = ui.main_diff_req.wrapping_add(1);
+            if !carry {
+                // A read still out for the pane being swept must not reopen it.
+                ui.main_diff_req = ui.main_diff_req.wrapping_add(1);
+            }
         }
         if let Some(view) = panes.compare {
             self.restore_compare(view, cx);
         }
-        if let Some(prev) = panes.main_diff {
+        let restore =
+            |prev: &MainDiffRestore| !carry || matches!(prev.source, MainDiffSource::Commit { .. });
+        if let Some(prev) = panes.main_diff.filter(restore) {
             self.restore_main_diff(prev, cx);
         }
     }

@@ -1168,7 +1168,6 @@ mod macos {
                     crate::recovery_layout::scenario_file_history_wip_changes(cx, fixture.path());
                     assert_eq!(before, repo_fingerprint(fixture.path()));
                 }),
->>>>>>> origin/main
             ),
             (
                 "footer_status_line",

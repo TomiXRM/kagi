@@ -74,11 +74,11 @@ pub enum GithubNote {
     /// longer match what the suggestion was reviewed against. Applying would
     /// edit the wrong lines, so it is refused.
     SuggestionStale { path: String },
-    /// blocker (#351, ADR-0209) — the working-tree file is not the PR head's
+    /// blocker (#351, ADR-0210) — the working-tree file is not the PR head's
     /// version of it (blob mismatch), so the reviewed head line numbers may
     /// point at other lines here.
     SuggestionNotPrHead { path: String },
-    /// blocker (#351, ADR-0209) — the PR head commit is not in the local
+    /// blocker (#351, ADR-0210) — the PR head commit is not in the local
     /// object store, so the file cannot be compared against it.
     SuggestionHeadUnavailable,
     /// warning (#351) — the suggestion is written to the working tree only;
@@ -338,7 +338,7 @@ pub enum GithubRecovery {
     },
     /// A suggestion edits only the working tree; the pre-apply file content is
     /// kept under a `refs/kagi/backups/` ref recorded in the oplog (#351,
-    /// ADR-0209).
+    /// ADR-0210).
     ApplySuggestion,
 }
 

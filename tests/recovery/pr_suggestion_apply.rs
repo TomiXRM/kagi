@@ -1,4 +1,4 @@
-//! #351 / ADR-0209: "Apply suggestion…" on a review conversation entry.
+//! #351 / ADR-0210: "Apply suggestion…" on a review conversation entry.
 //!
 //! A real PR ref fetch (a bare remote holding `refs/pull/7/head`, reached
 //! through `url.<file>.insteadOf` for the PR's GitHub identity) loads the PR,

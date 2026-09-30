@@ -1,5 +1,5 @@
 //! Integration tests for the PR review "suggested change" local apply
-//! (#351, ADR-0172 / ADR-0209).
+//! (#351, ADR-0172 / ADR-0210).
 //!
 //! Verifies the full plan → confirm → preflight → execute → verify → oplog
 //! path through `Backend::run` / `run_recorded`:

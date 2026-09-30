@@ -1,4 +1,4 @@
-# ADR-0209 — Applying a PR review suggestion from the conversation (head-blob gate, ref-backed backup)
+# ADR-0210 — Applying a PR review suggestion from the conversation (head-blob gate, ref-backed backup)
 
 Status: Accepted
 Issue: #351 (parent #359)

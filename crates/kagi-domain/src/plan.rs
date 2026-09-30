@@ -316,7 +316,7 @@ impl DiscardOutcome {
 /// Outcome of applying a PR review suggestion to the working tree (#351).
 ///
 /// Carries the file's pre-apply content as a blob held by a
-/// `refs/kagi/backups/` ref (ADR-0209) — the recovery handle recorded in the
+/// `refs/kagi/backups/` ref (ADR-0210) — the recovery handle recorded in the
 /// oplog — plus the anchored range that was replaced.
 #[derive(Debug, Clone)]
 pub struct SuggestionOutcome {

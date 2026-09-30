@@ -8,7 +8,7 @@ use kagi_domain::plan_note::{GithubNote, GithubRecovery, GithubTitle};
 use kagi_domain::suggestion::{line_range, Suggestion};
 
 // ────────────────────────────────────────────────────────────
-// apply-suggestion (#351, ADR-0172 / ADR-0209) — local apply of a GitHub PR
+// apply-suggestion (#351, ADR-0172 / ADR-0210) — local apply of a GitHub PR
 // review "suggested change" to the WORKING TREE (never a commit).
 //
 // Safety: the suggestion's line numbers are the PR head's, so it is applied
@@ -132,7 +132,7 @@ pub fn plan_apply_suggestion(
         preview_commits: Vec::new(),
         // A working-tree rewrite: the pre-apply content survives only in the
         // backup ref (and the auto-snapshot a destructive plan triggers), not
-        // in any commit (ADR-0209).
+        // in any commit (ADR-0210).
         destructive: true,
         equivalent_command: None,
     })

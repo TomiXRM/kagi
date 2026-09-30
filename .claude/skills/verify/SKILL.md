@@ -321,7 +321,7 @@ The current suite covers:
   open a PR, tick files, see `N / M viewed` and dimmed rows (EN/JA), close and
   reopen the tab, then push a commit changing one ticked file and refresh.
 - PR suggestion apply (`KAGI_GUI_E2E_ONLY=pr_suggestion_apply`,
-  `tests/recovery/pr_suggestion_apply.rs`): #351 / ADR-0209. The same real PR
+  `tests/recovery/pr_suggestion_apply.rs`): #351 / ADR-0210. The same real PR
   ref fetch as `pr_viewed`, with the PR branch checked out so `s.txt` is the
   head's blob, and an injected line comment carrying a ```suggestion block.
   Clicking the measured `pr-convo-apply-suggestion-7000` on the Review page

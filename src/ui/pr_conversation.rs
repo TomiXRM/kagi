@@ -116,7 +116,7 @@ pub struct Entry {
     /// The comment carries a ```suggestion block.
     suggestion: bool,
     /// That block resolved against the comment's anchor: what "Apply
-    /// suggestion…" plans (#351, ADR-0209). `None` for an unterminated fence
+    /// suggestion…" plans (#351, ADR-0210). `None` for an unterminated fence
     /// or a comment with no line.
     applicable: Option<kagi_domain::suggestion::Suggestion>,
     /// Severity tag lifted out of the body (Codex `P1`, Copilot `MUST`).
@@ -674,7 +674,7 @@ fn render_diff_hunk(hunk: &str, id: usize, cx: &mut Context<KagiApp>) -> gpui::A
 }
 
 /// "Apply suggestion…" on a line comment whose ```suggestion block resolves
-/// to a range (#351, ADR-0209). It only plans: the plan card says whether the
+/// to a range (#351, ADR-0210). It only plans: the plan card says whether the
 /// working-tree file is the PR head's version, and only a confirm writes.
 fn render_apply_suggestion(
     id: usize,

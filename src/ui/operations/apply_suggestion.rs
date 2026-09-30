@@ -1,4 +1,4 @@
-//! Apply a PR review suggestion to the working tree (#351, ADR-0209).
+//! Apply a PR review suggestion to the working tree (#351, ADR-0210).
 //!
 //! "Apply suggestion…" on a review conversation entry only *plans*: the plan
 //! card says whether the working-tree file is the PR head's version of it

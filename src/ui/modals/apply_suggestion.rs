@@ -1,5 +1,5 @@
 //! Confirmation payload for applying a PR review suggestion to the working
-//! tree (#351, ADR-0209).
+//! tree (#351, ADR-0210).
 
 use gpui::SharedString;
 use kagi_git::{Operation, OperationPlan};

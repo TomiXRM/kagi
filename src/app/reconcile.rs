@@ -263,6 +263,8 @@ fn writes_only_locally(name: &str) -> bool {
             | "branch-pull-ff"
             | "checkout-tracking"
             | "switch-to-latest"
+            | "write-commit-graph"
+            | "enable-fsmonitor"
     )
 }
 

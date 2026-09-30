@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- Analyze に「Health」タブを追加しました。commit-graph が無い / HEAD より古い、`core.fsmonitor` が未設定(macOS / Windows)を検出し、EN/JA の説明と「有効化…」ボタンを表示します。ボタンは plan(等価な git コマンドと戻し方を含む)を開くだけで、確認するまで何も書き込みません。確認すると `git commit-graph write --reachable` または local config への `core.fsmonitor=true` を実行し、Operation Log に記録します。（#358、ADR-0205）
+
 ### Changed
 
 - 実行できない plan（blocker あり）を Enter や確認ボタンで確定したとき、footer と toast が「refused (N blockers)」の件数だけでなく、先頭の blocker の具体的な理由を表示するようにしました（EN/JA、残りの件数も併記）。checkout・branch 操作・merge / cherry-pick / revert・reset / rebase / force-with-lease push・remote branch 削除 / tag push・discard・undo / redo・worktree lock / unlock / prune・pull / push・PR merge / review / 編集・stash・remote stash drop が対象です。Operation Log には従来どおり全 blocker が残り、実行は従来どおり拒否します。（#353）
@@ -22,8 +26,11 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Internal
 
+- headless 起動 hook `KAGI_SELECT_FIRST=1`（`select_headless`）が inspector の changed files を同期で埋めるとき generated/lockfile flags を計算していなかったため、その経路では `Cargo.lock` が「Generated (N)」に畳まれませんでした。通常のクリック選択（非同期 read）では起きず、ユーザー操作への影響はありません。同期経路も files / diffstat / generated flags の 3 つを揃えて埋めるようにし、Tier A に SELECT_FIRST 経路の fold assert を追加しました。（#818）
+- 統合テストの fixture 用 `git`（`tests/support/git_fixture.rs`）が `git maintenance run --auto --detach` を起動しないようにしました（`maintenance.auto=false` / `gc.auto=0`）。`git commit` 直後に detached process が残す `.git/objects/maintenance.lock` を CI の snapshot 比較が拾って落ちていた flake（`fixture_is_identical_under_a_hostile_home`）の原因で、index の racy 書き換えではありませんでした。製品の動作は変更していません。（#819）
 - 統合テストの Git fixture 構築を `tests/support/git_fixture.rs` に共通化しました。fixture 用の `git` は継承した `GIT_*`・global/system/XDG 設定・hooks・template を遮断して identity を固定するため、開発者の設定や hook から渡された `GIT_DIR` で fixture の内容が変わったり実 repository に書き込んだりしません。ops / blame / push_tag / pr_conflict_preview / app_read の各 suite を移行し、残りは follow-up で移行します。製品の動作は変更していません。（#514）
 - #514 の follow-up: 残り 72 ファイル（`tests/*.rs`・`tests/recovery/*.rs`・`tests/support/pr_merge_local.rs`）の suite-local な `git` helper を `tests/support/git_fixture.rs` に寄せました。テスト数 713・assertion は移行前後で同一で、明示 opt-in の 5 suite は従来どおりです。製品の動作は変更していません。（Refs #514）
+- backend 専用の統合テスト 61 suite（ops / discard / absorb / conflicts / pull / push / stash / worktree / oplog など）を `tests/` から `crates/kagi-git/tests/` へ、純粋 logic の 2 suite（message_template / trailers）を `kagi-domain` の unit test へ移しました。`cargo test -p kagi-git` だけで主要な mutation / preflight / recovery の契約が走り、GPUI を含む root を build しません。テスト数は移行前後で同じ（2650）で、製品の動作は変更していません。（#515）
 
 ## [0.40.1] - 2026-09-29
 

@@ -432,6 +432,12 @@ impl Backend {
             } => self
                 .execute_apply_suggestion(plan, suggestion, expected_original)
                 .map(OperationOutcome::Suggestion),
+            Operation::WriteCommitGraph => {
+                ops::execute_write_commit_graph(&self.repo, plan).map(|()| OperationOutcome::Unit)
+            }
+            Operation::EnableFsmonitor => {
+                ops::execute_enable_fsmonitor(&self.repo, plan).map(|()| OperationOutcome::Unit)
+            }
         };
 
         result

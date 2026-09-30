@@ -29,6 +29,7 @@ pub mod discard;
 pub mod force_lease;
 pub mod github;
 pub mod history;
+pub mod maintenance;
 pub mod merge;
 pub mod pull;
 pub mod push;
@@ -54,6 +55,7 @@ pub use discard::DiscardNote;
 pub use force_lease::{ForceLeaseNote, ForceLeaseRecovery, ForceLeaseTitle};
 pub use github::{GithubNote, GithubRecovery, GithubTitle, PrMergeLocalReason};
 pub use history::{HistoryMoveDir, HistoryNote, HistoryOp, HistoryRecovery, HistoryTitle};
+pub use maintenance::{MaintenanceNote, MaintenanceRecovery, MaintenanceTitle};
 pub use merge::{InProgressOp, MergeNote, MergeRecovery, MergeTitle};
 pub use pull::{
     restore_conflict_paths, PullNote, PullRecovery, PullTitle, RESTORE_CONFLICT_PATH_LIMIT,
@@ -102,6 +104,8 @@ pub enum PlanNote {
     Snapshot(SnapshotNote),
     /// GitHub-ruleset findings (#346 — no title/recovery).
     Ruleset(RulesetNote),
+    /// Repository-health fixes (#358).
+    Maintenance(MaintenanceNote),
 }
 
 impl PlanNote {
@@ -133,6 +137,7 @@ impl PlanNote {
             PlanNote::Github(n) => n.message_en(),
             PlanNote::Rebase(n) => n.message_en(),
             PlanNote::Snapshot(n) => n.message_en(),
+            PlanNote::Maintenance(n) => n.message_en(),
             PlanNote::Ruleset(n) => n.message_en(),
         }
     }
@@ -174,6 +179,7 @@ pub enum PlanTitle {
     Github(GithubTitle),
     Rebase(RebaseTitle),
     Snapshot(SnapshotTitle),
+    Maintenance(MaintenanceTitle),
 }
 
 impl PlanTitle {
@@ -200,6 +206,7 @@ impl PlanTitle {
             PlanTitle::Github(t) => t.message_en(),
             PlanTitle::Rebase(t) => t.message_en(),
             PlanTitle::Snapshot(t) => t.message_en(),
+            PlanTitle::Maintenance(t) => t.message_en(),
             PlanTitle::Discard {
                 single: Some(path), ..
             } => format!("Discard changes to '{}'", path),
@@ -255,6 +262,7 @@ impl PlanRecovery {
             RecoveryKind::Github(r) => r.message_en(),
             RecoveryKind::Rebase(r) => r.message_en(),
             RecoveryKind::Snapshot(r) => r.message_en(),
+            RecoveryKind::Maintenance(r) => r.message_en(),
             RecoveryKind::Discard => {
                 "This discards your unstaged changes to the selected file(s): \
                  tracked files are restored from the index, untracked files are deleted from \
@@ -291,6 +299,7 @@ pub enum RecoveryKind {
     Github(GithubRecovery),
     Rebase(RebaseRecovery),
     Snapshot(SnapshotRecovery),
+    Maintenance(MaintenanceRecovery),
 }
 
 /// Semantic plan state (ADR-0129 §2). Replaces every place the UI used to
@@ -448,6 +457,7 @@ mod tests {
             PlanNote::Rebase(RebaseNote::DetachedHead),
             PlanNote::Snapshot(SnapshotNote::SavepointFirst),
             PlanNote::Ruleset(RulesetNote::ConstraintsUnknown),
+            PlanNote::Maintenance(MaintenanceNote::NoCommits),
         ];
 
         for note in &cases {
@@ -476,6 +486,7 @@ mod tests {
                 PlanNote::Github(n) => n.message_en(),
                 PlanNote::Rebase(n) => n.message_en(),
                 PlanNote::Snapshot(n) => n.message_en(),
+                PlanNote::Maintenance(n) => n.message_en(),
                 PlanNote::Ruleset(n) => n.message_en(),
             };
             assert_eq!(note.message_en(), inner, "dispatch arm for {note:?}");
@@ -486,7 +497,7 @@ mod tests {
 
         // One fixture per `PlanNote` variant — bump this when a category is
         // added (and add its row above).
-        assert_eq!(cases.len(), 24, "one fixture per PlanNote variant");
+        assert_eq!(cases.len(), 25, "one fixture per PlanNote variant");
     }
 
     #[test]

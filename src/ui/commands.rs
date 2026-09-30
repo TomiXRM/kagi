@@ -1526,15 +1526,7 @@ impl KagiApp {
             // ── kagi ────────────────────────────────────────────────
             "app.about" => self.open_about_overlay(),
             // T-SETTINGS-001: open the OpenLogi-style Settings overlay.
-            "app.settings" => {
-                self.menu_overlay = Some(MenuOverlay::Settings);
-                // Ensure an Ollama probe has run so the Smart Commit model picker
-                // is usable even if the commit panel was never opened.
-                self.refresh_smart_commit_detection(cx);
-                // Seed the Analyze-ignore editor with the on-disk file contents.
-                self.ensure_analyze_ignore_input(window, cx);
-                cx.notify();
-            }
+            "app.settings" => self.open_settings_overlay(window, cx),
             "app.quit" => {
                 if !self.hold_host_close(cx) {
                     cx.quit();

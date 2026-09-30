@@ -257,6 +257,7 @@ impl Render for KagiApp {
         self.sync_pr_fields_input(window, cx);
         self.sync_issue_inputs(window, cx);
         self.sync_list_filter_input(window, cx);
+        self.sync_overlay_return_focus(window, cx);
 
         if std::env::var("KAGI_DEBUG_RENDER").as_deref() == Ok("1") {
             use std::sync::atomic::{AtomicU64, Ordering as O};

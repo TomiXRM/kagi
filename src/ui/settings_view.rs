@@ -169,13 +169,14 @@ pub fn render_settings_overlay(
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .child(SharedString::from(Msg::SettingsTitle.t())),
                 )
-                .child(
+                .child(super::e2e::measure_control(
+                    "settings-close",
                     Button::new("settings-close")
                         .label("✕")
                         .ghost()
                         .small()
                         .on_click(close_click),
-                ),
+                )),
         )
         // ── Scrollable content: Appearance + Language + Smart Commit ─────
         // `overflow_y_scroll` (not hidden): when zoomed in the sections grow
@@ -288,11 +289,13 @@ fn appearance_section(
     // component_theme). When the entity is absent (headless, pre-window) fall
     // back to a static label so the row still renders.
     let theme_dropdown = match theme_select {
-        Some(state) => Select::new(&state)
-            .menu_width(px(220.0))
-            .small()
-            .w(px(220.0))
-            .into_any_element(),
+        Some(state) => {
+            let select = Select::new(&state)
+                .menu_width(px(220.0))
+                .small()
+                .w(px(220.0));
+            super::e2e::measure_control("settings-theme-select", select)
+        }
         None => {
             let cur = theme().slug;
             let cur_name = theme::THEMES

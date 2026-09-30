@@ -20,6 +20,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - 統合テストの Git fixture 構築を `tests/support/git_fixture.rs` に共通化しました。fixture 用の `git` は継承した `GIT_*`・global/system/XDG 設定・hooks・template を遮断して identity を固定するため、開発者の設定や hook から渡された `GIT_DIR` で fixture の内容が変わったり実 repository に書き込んだりしません。ops / blame / push_tag / pr_conflict_preview / app_read の各 suite を移行し、残りは follow-up で移行します。製品の動作は変更していません。（#514）
 - #514 の follow-up: 残り 72 ファイル（`tests/*.rs`・`tests/recovery/*.rs`・`tests/support/pr_merge_local.rs`）の suite-local な `git` helper を `tests/support/git_fixture.rs` に寄せました。テスト数 713・assertion は移行前後で同一で、明示 opt-in の 5 suite は従来どおりです。製品の動作は変更していません。（Refs #514）
+- Tier A `push_failure_keeps_modal` を、#747 で変わった通知の契約（記録済みの失敗は Operation Log と footer / toast で伝え、閉じるだけの AppNotice は出さない）に合わせました。#747（e5644c6f）以降このシナリオは古い期待（AppNotice の queue）のまま落ちていました。Remote Browse の入力を失わないことは従来どおり確認します。製品の動作は変更していません。（#824）
 
 ## [0.40.1] - 2026-09-29
 

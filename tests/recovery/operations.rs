@@ -3,7 +3,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use gpui::{AnyWindowHandle, Entity, Focusable, VisualTestAppContext};
-use kagi::ui::{modals::ActiveModal, CheckoutSelected, FooterStatus, KagiApp};
+use kagi::ui::{modals::ActiveModal, CheckoutSelected, FooterStatus, KagiApp, ToastKind};
 use kagi_domain::branch_cleanup::{CleanupDeleteTarget, MergedBranchStatus};
 use kagi_git::oplog::{append_oplog, read_oplog_tail_for_repo, FailureCode, OpLogEntry, OpOutcome};
 use kagi_git::{CommitId, OperationKind, StateSummary};
@@ -1448,8 +1448,13 @@ pub fn scenario_branch_menu_no_checkout_fallthrough(cx: &mut VisualTestAppContex
 }
 
 /// #718 P1: a failed push is a terminal outcome, not permission to replace
-/// whichever foreground modal the user opened while the write ran. The failure
-/// stays durable in the oplog and waits as an AppNotice behind Remote Browse.
+/// whichever foreground modal the user opened while the write ran.
+///
+/// ADR-0196 §3 (as amended by #747): a recorded failure reaches the user as
+/// the Operation Log receipt plus a short toast / footer — never as a
+/// dismiss-only `AppNotice`, neither over Remote Browse nor queued behind it.
+/// (The scenario used to assert the queued notice, and has failed since #747
+/// removed it; #824.)
 ///
 /// The failure is offline and deterministic: push to a bare remote, delete the
 /// remote, then commit — the upstream ref still resolves (so the plan is clean
@@ -1498,12 +1503,24 @@ pub fn scenario_push_failure_keeps_modal(cx: &mut VisualTestAppContext) {
             "push-failure-preserves-remote-input: terminal completion must not replace foreground input"
         );
         assert!(
-            kagi::ui::e2e::queued_notice_contains(app, "Push failed"),
-            "push-failure-queues-notice: failure must wait behind the occupied modal slot"
-        );
-        assert!(
             app.write_busy_op.is_none(),
             "busy must be released on failure"
+        );
+        assert!(
+            matches!(&app.status_footer, FooterStatus::Failed(text) if text.contains("push")),
+            "push-failure-reaches-footer: got {:?}",
+            app.status_footer
+        );
+        let toasts = app.toast_stack.as_ref().unwrap().read(cx).toasts();
+        assert!(
+            toasts
+                .iter()
+                .any(|t| t.kind == ToastKind::Error && t.message.contains("push")),
+            "push-failure-toasts: the failure must be announced by a toast behind the modal, got {toasts:?}"
+        );
+        assert!(
+            !kagi::ui::e2e::queued_notice_contains(app, "push"),
+            "push-failure-no-queued-notice: a recorded failure must not queue a dismiss-only notice"
         );
     });
     app.update(cx, |app, _| {
@@ -1511,9 +1528,8 @@ pub fn scenario_push_failure_keeps_modal(cx: &mut VisualTestAppContext) {
         kagi::ui::e2e::present_app_notice(app);
     });
     assert!(
-        cx.read(|cx| kagi::ui::e2e::app_notice_message(app.read(cx))
-            .is_some_and(|message| message.contains("Push failed"))),
-        "push-failure-presents-waiting-notice: closing the foreground must reveal the failure"
+        cx.read(|cx| app.read(cx).app_notice().is_none()),
+        "push-failure-no-notice-after-close: closing the foreground must not reveal a dismiss-only modal"
     );
     let durable = records(repo, "push");
     assert_eq!(
@@ -1548,7 +1564,9 @@ pub fn scenario_push_failure_keeps_modal(cx: &mut VisualTestAppContext) {
 
     kagi::ui::i18n::set_lang(original_language);
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS push_failure_keeps_modal: Remote Browse wins; failure waits");
+    eprintln!(
+        "[gui-e2e] PASS push_failure_keeps_modal: Remote Browse wins; failure recorded, toasted, no notice"
+    );
 }
 
 /// ADR-0196 Wave 2 (#643 A1): the checkout family presents the backend's own

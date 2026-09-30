@@ -7,6 +7,8 @@
 //! part of the S6 view decomposition (architecture §2.4). Re-exported by
 //! `ui/mod.rs` via `pub use diff_view::*;` so existing `crate::ui::*` paths resolve.
 
+pub mod highlight;
+
 use std::path::PathBuf;
 
 use gpui::{div, prelude::*, px, rgb, SharedString};
@@ -14,7 +16,7 @@ use gpui::{div, prelude::*, px, rgb, SharedString};
 use kagi_git::{CommitId, DiffLineKind, FileDiff, FileStatus};
 
 use super::theme;
-use super::{commit_panel, diff_view, KagiApp, Msg};
+use super::{commit_panel, KagiApp, Msg};
 use gpui::Context;
 use gpui_component::tooltip::Tooltip;
 
@@ -206,6 +208,11 @@ pub struct MainDiffView {
     /// (png/jpeg/webp/gif, sniffed from the blob bytes). When set, the diff
     /// pane renders the image panel instead of the "Binary file" placeholder.
     pub images: Option<DiffImagePair>,
+    /// #495: grammar for the rows (from the file path); `None` = plain text.
+    pub lang: Option<&'static str>,
+    /// #495: slug of the theme the rows' spans were computed with; `None`
+    /// while the text is shown unhighlighted. See [`highlight`].
+    pub highlighted: Option<&'static str>,
 }
 
 /// Before/after images for a binary image diff (either side may be missing —
@@ -294,133 +301,41 @@ pub(crate) fn lang_for_path(path: &std::path::Path) -> Option<&'static str> {
         .and_then(lang_for_ext)
 }
 
-/// T-UI-004: Apply syntax highlighting to a slice of `DiffRow`s in-place.
+/// T-UI-004: syntax-highlight spans for `rows` in `lang` under `hl_theme`.
 ///
-/// The file path's extension is used to select the language. If the language
-/// is unknown or highlighting fails, rows are left with empty highlight spans
-/// (plain-colour fallback).  Never panics.
-///
-/// Returns the language name that was used (or "none").
-pub(crate) fn highlight_diff_rows(
-    rows: &mut [DiffRow],
-    file_path: &std::path::Path,
-) -> &'static str {
+/// One parse of the new-side text: every `Line` row's content (sigil
+/// stripped) is concatenated, highlighted once, and the spans are handed back
+/// per row, offset past the sigil. The output is plain `Send` data, so this
+/// runs off the UI thread ([`highlight::ensure_highlight`], #495).
+pub(crate) fn highlight_rows(
+    rows: &[DiffRow],
+    lang: &str,
+    hl_theme: &gpui_component::highlighter::HighlightTheme,
+) -> RowHighlights {
     use gpui_component::highlighter::SyntaxHighlighter;
     use gpui_component::Rope;
-
-    // Determine language from the path (well-known filenames + extension).
-    let lang = match lang_for_path(file_path) {
-        Some(l) => l,
-        None => return "none",
-    };
-
-    // Build the full source text for the "new" side of the diff by concatenating
-    // all Line rows.  We use a one-pass approach:
-    //   1. Collect (text_without_sigil, byte_start_in_rope) for each Line row.
-    //   2. Feed the combined text to the highlighter.
-    //   3. Distribute the resulting (byte_range, style) spans back to each row,
-    //      offsetting by byte_start_in_rope.
-    //
-    // The sigil (+/-/ ) at position 0 of each `text` is kept in the display string
-    // but excluded from the highlighted region — highlights start at byte 1.
 
     let mut line_offsets: Vec<(usize, usize)> = Vec::new(); // (row_index, rope_byte_start)
     let mut combined = String::new();
-
     for (i, row) in rows.iter().enumerate() {
         if let DiffRow::Line { text, .. } = row {
             let t = text.as_ref();
             let start = combined.len();
-            // Skip the leading sigil ('+', '-', ' ') for parsing purposes.
-            // The highlight byte ranges will be relative to `combined`, which
-            // starts after the sigil.
             let content = if !t.is_empty() { &t[1..] } else { "" };
             combined.push_str(content);
             combined.push('\n');
             line_offsets.push((i, start));
         }
     }
-
     if combined.is_empty() {
-        return lang;
-    }
-
-    // Build highlighter and parse the combined source.
-    let mut highlighter = SyntaxHighlighter::new(lang);
-    let rope = Rope::from_str(&combined);
-    highlighter.update(None, &rope, None);
-
-    // T-SYNTAX-001: the ACTIVE theme's own code colours, the same
-    // `HighlightTheme` the CodeEditor panes get through
-    // `gc.highlight_theme`. This used to call `HighlightTheme::default_dark()`
-    // directly, which meant (a) every dark theme highlighted identically and
-    // (b) the diff didn't even see kagi's editor-surface overrides, so diff
-    // and editor disagreed.
-    let hl_theme = theme::highlight_theme(theme::theme());
-    let mut all_styles = highlighter.styles(&(0..combined.len()), &hl_theme);
-
-    distribute_highlights(
-        &mut all_styles,
-        &line_offsets,
-        combined.len(),
-        1,
-        |row_i, row_highlights| {
-            if let DiffRow::Line { highlights, .. } = &mut rows[row_i] {
-                *highlights = row_highlights;
-            }
-        },
-    );
-
-    lang
-}
-
-/// Off-thread-friendly variant of [`highlight_diff_rows`] (ADR-0109 / perf).
-///
-/// Instead of mutating `rows` in place (which requires `&mut Vec<DiffRow>` and
-/// is therefore `!Send` when the rows hold GPUI types), this returns a
-/// `Send`-safe vector of `(row_index, highlights)` pairs that the caller can
-/// move across a `cx.background_spawn` boundary and apply on the UI thread.
-///
-/// The parsing work (tree-sitter) is identical to `highlight_diff_rows`; only
-/// the output shape differs. Callers that stay on the UI thread should keep
-/// using `highlight_diff_rows` for simplicity; callers that want to render the
-/// diff text immediately and swap highlights in when ready should use this.
-pub(crate) fn highlight_diff_rows_send(
-    rows: &[DiffRow],
-    file_path: &std::path::Path,
-) -> (String, RowHighlights) {
-    use gpui_component::highlighter::SyntaxHighlighter;
-    use gpui_component::Rope;
-
-    let lang = lang_for_path(file_path).unwrap_or("none");
-
-    // Collect (row_index, rope_byte_start) for each Line row and build the
-    // combined source text — same one-pass approach as highlight_diff_rows.
-    let mut line_offsets: Vec<(usize, usize)> = Vec::new();
-    let mut combined = String::new();
-    for (i, row) in rows.iter().enumerate() {
-        if let DiffRow::Line { text, .. } = row {
-            let t = text.as_ref();
-            let start = combined.len();
-            let content = if !t.is_empty() { &t[1..] } else { "" };
-            combined.push_str(content);
-            combined.push('\n');
-            line_offsets.push((i, start));
-        }
-    }
-
-    if combined.is_empty() || lang == "none" {
-        return (lang.to_string(), Vec::new());
+        return Vec::new();
     }
 
     let mut highlighter = SyntaxHighlighter::new(lang);
     let rope = Rope::from_str(&combined);
     highlighter.update(None, &rope, None);
-    // Same active-theme highlight theme as the UI-thread path above.
-    let hl_theme = theme::highlight_theme(theme::theme());
-    let mut all_styles = highlighter.styles(&(0..combined.len()), &hl_theme);
+    let mut all_styles = highlighter.styles(&(0..combined.len()), hl_theme);
 
-    // Send-safe: no DiffRow, just the row index + the highlight span list.
     let mut result: RowHighlights = Vec::with_capacity(line_offsets.len());
     distribute_highlights(
         &mut all_styles,
@@ -429,8 +344,28 @@ pub(crate) fn highlight_diff_rows_send(
         1,
         |row_i, row_highlights| result.push((row_i, row_highlights)),
     );
+    result
+}
 
-    (lang.to_string(), result)
+/// Highlight `rows` in place with the active theme (T-SYNTAX-001: the same
+/// `HighlightTheme` the CodeEditor panes get). Only for a surface that builds
+/// its rows already highlighted — the PR conflict preview; the diff panes go
+/// through [`highlight::ensure_highlight`]. Returns the language used, or
+/// `"none"`.
+pub(crate) fn highlight_diff_rows(
+    rows: &mut [DiffRow],
+    file_path: &std::path::Path,
+) -> &'static str {
+    let Some(lang) = lang_for_path(file_path) else {
+        return "none";
+    };
+    let spans = highlight_rows(rows, lang, &theme::highlight_theme(theme::theme()));
+    for (row_i, row_highlights) in spans {
+        if let Some(DiffRow::Line { highlights, .. }) = rows.get_mut(row_i) {
+            *highlights = row_highlights;
+        }
+    }
+    lang
 }
 
 /// Hand each row the highlight spans that overlap it.
@@ -494,45 +429,37 @@ pub(crate) fn distribute_highlights(
     }
 }
 
-/// Build a [`MainDiffView`] from a raw `FileDiff`: count added/removed lines,
-/// convert via [`FileDiffView::from_file_diff`], format the `"+N −M"` stats
-/// string, syntax-highlight the rows (`highlight_diff_rows`), and assemble the
-/// final view with the given `source`.
-///
-/// This exact four-step pipeline was copy-pasted three times —
-/// `set_commit_main_diff`'s headless (test-only) path, `FileHistoryView`'s
-/// diff loader, and `EditorWorkspaceView`'s WIP-diff loader — T-WS-EDITOR-005
-/// finding #10 extracts it once here. No behavior change: each call site still
-/// builds its own `MainDiffSource` and `file_index`.
+/// Added / removed line counts of `file_diff`.
+pub(crate) fn diff_line_counts(file_diff: &FileDiff) -> (usize, usize) {
+    let lines = file_diff.hunks.iter().flat_map(|h| h.lines.iter());
+    lines.fold((0, 0), |(a, r), l| match l.kind {
+        DiffLineKind::Added => (a + 1, r),
+        DiffLineKind::Removed => (a, r + 1),
+        DiffLineKind::Context => (a, r),
+    })
+}
+
+/// Build the text of a [`MainDiffView`] from a raw `FileDiff`: rows via
+/// [`FileDiffView::from_file_diff`], the `"+N −M"` stats, and the grammar for
+/// `path`. No highlighting: every diff surface shows this text first and gets
+/// its spans from [`highlight::ensure_highlight`] when it renders (#495).
+/// Plain data, so a caller may build it off the UI thread.
 pub(crate) fn build_main_diff_view(
     file_diff: &FileDiff,
     path: &std::path::Path,
     file_index: usize,
     source: MainDiffSource,
 ) -> MainDiffView {
-    let added: usize = file_diff
-        .hunks
-        .iter()
-        .flat_map(|h| h.lines.iter())
-        .filter(|l| l.kind == DiffLineKind::Added)
-        .count();
-    let removed: usize = file_diff
-        .hunks
-        .iter()
-        .flat_map(|h| h.lines.iter())
-        .filter(|l| l.kind == DiffLineKind::Removed)
-        .count();
+    let (added, removed) = diff_line_counts(file_diff);
     let fdv = FileDiffView::from_file_diff(file_diff, file_index);
-    let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
-    let title = fdv.file_name.clone();
-    let mut rows = fdv.rows;
-    let _ = highlight_diff_rows(&mut rows, path);
     MainDiffView {
-        title,
-        stats,
-        rows: std::sync::Arc::new(rows),
+        title: fdv.file_name,
+        stats: SharedString::from(format!("+{} \u{2212}{}", added, removed)),
+        rows: std::sync::Arc::new(fdv.rows),
         source,
         images: None,
+        lang: lang_for_path(path),
+        highlighted: None,
     }
 }
 
@@ -950,9 +877,10 @@ impl KagiApp {
         }
     }
 
-    /// Build the full-width [`MainDiffView`] for a commit's file diff. Shared by
-    /// the local (`git2`) path and the remote (SSH) path so both render
-    /// identically.
+    /// Show a commit's file diff in the full-width pane. Shared by the local
+    /// (`git2`) path and the remote (SSH) path so both render identically.
+    /// The text goes up now; the pane's render requests the highlight
+    /// (#495, [`highlight::ensure_highlight`]).
     pub(crate) fn set_commit_main_diff(
         &mut self,
         file_diff: &FileDiff,
@@ -961,18 +889,7 @@ impl KagiApp {
         file_index: usize,
         cx: Option<&mut Context<Self>>,
     ) {
-        let added: usize = file_diff
-            .hunks
-            .iter()
-            .flat_map(|h| h.lines.iter())
-            .filter(|l| l.kind == DiffLineKind::Added)
-            .count();
-        let removed: usize = file_diff
-            .hunks
-            .iter()
-            .flat_map(|h| h.lines.iter())
-            .filter(|l| l.kind == DiffLineKind::Removed)
-            .count();
+        let (added, removed) = diff_line_counts(file_diff);
         eprintln!(
             "[kagi] diff: {} hunks={} (+{} -{})",
             path.display(),
@@ -980,327 +897,94 @@ impl KagiApp {
             added,
             removed,
         );
-
-        let commit_for_source = self.commit_id_for_row(selected);
-        let fdv = FileDiffView::from_file_diff(file_diff, file_index);
-        let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
-        let title = fdv.file_name.clone();
-
+        let source = MainDiffSource::Commit {
+            row_index: selected,
+            file_index,
+            commit: self.commit_id_for_row(selected),
+        };
+        let mut view = build_main_diff_view(file_diff, path, file_index, source);
         match cx {
-            // UI path (cx present): render text-first, highlight off-thread.
             Some(cx) => {
-                let rows = fdv.rows;
-                let row_count = rows.len();
-                let path_for_hl = path.to_path_buf();
-                let rows_snapshot = rows.clone();
-                let selected_for_hl = selected;
-                let file_index_for_hl = file_index;
-
-                let source = MainDiffSource::Commit {
-                    row_index: selected,
-                    file_index,
-                    commit: commit_for_source.clone(),
-                };
-                let images = self.diff_images_for(file_diff, &source, path);
-                let pane = self.show_main_diff(
-                    MainDiffView {
-                        title,
-                        stats,
-                        rows: std::sync::Arc::new(rows),
-                        source,
-                        images,
-                    },
-                    cx,
-                );
-
-                // Spawn the highlight for swap-in. ADR-0121 B2: the spawn is
-                // scoped to the pane entity, so a result arriving after the
-                // diff was closed hits a dead weak handle and is dropped
-                // (liveness guard); a result for a stale file is discarded by
-                // `apply_highlights`' source check, as before.
-                pane.update(cx, |_, cx| {
-                    // `cx.spawn` dispatches to the FOREGROUND executor, so the
-                    // parse plus the span distribution ran on the UI thread —
-                    // one turn later, but still blocking. The house pattern is
-                    // background_spawn + await, which is what the "Send-safe /
-                    // off-thread" naming here always claimed.
-                    let hl_path = path_for_hl.clone();
-                    let work = cx.background_spawn(async move {
-                        diff_view::highlight_diff_rows_send(&rows_snapshot, &hl_path)
-                    });
-                    cx.spawn(async move |this, acx| {
-                        let (hl_lang, highlights) = work.await;
-                        let _ = this.update(acx, |pane, cx| {
-                            pane.apply_highlights(selected_for_hl, file_index_for_hl, highlights);
-                            eprintln!(
-                                "[kagi] main-diff: highlight ready {} rows={} lang={}",
-                                path_for_hl.display(),
-                                row_count,
-                                hl_lang
-                            );
-                            cx.notify();
-                        });
-                    })
-                    .detach();
-                });
+                view.images = self.diff_images_for(file_diff, &view.source, path);
+                self.show_main_diff(view, cx);
             }
-            // Headless path (no cx): synchronous highlight (test-only, no UI).
+            // Headless (pre-window) hook: no gpui context yet, so stage the
+            // view; `render` promotes it into the pane entity on the first
+            // frame (ADR-0121 B2), and that frame requests the highlight.
             None => {
-                // T-WS-EDITOR-005 finding #10: shared builder (count →
-                // from_file_diff → stats → highlight → assemble) — `fdv` /
-                // `title` / `stats` computed above are for the `Some(cx)`
-                // branch only now; this rebuilds them internally, same as the
-                // other two call sites.
-                let view = diff_view::build_main_diff_view(
-                    file_diff,
-                    path,
-                    file_index,
-                    MainDiffSource::Commit {
-                        row_index: selected,
-                        file_index,
-                        commit: commit_for_source.clone(),
-                    },
-                );
-                // `highlight_diff_rows`'s language is a pure function of the
-                // path's extension — recomputing it here (rather than
-                // plumbing it out of `build_main_diff_view`) keeps this log
-                // line's value identical without widening the shared fn's
-                // return type for one caller.
-                let hl_lang = diff_view::lang_for_path(path).unwrap_or("none");
                 eprintln!(
                     "[kagi] main-diff: open {} rows={} highlight={}",
                     path.display(),
                     view.rows.len(),
-                    hl_lang
+                    view.lang.unwrap_or("none")
                 );
-                // No gpui context yet (pre-window headless hook): stage the
-                // view; `render` promotes it into the pane entity on the
-                // first frame (ADR-0121 B2).
                 self.pending_headless_diff = Some(view);
             }
         }
     }
 
+    /// Open the compare list's file `file_index`. The diff is read off the UI
+    /// thread (#495); a newer open or a close supersedes it.
     pub fn open_main_diff_compare(&mut self, file_index: usize, cx: &mut Context<Self>) {
-        let _repo_path = match self.repo_path.as_ref() {
-            Some(p) => p.clone(),
-            None => return,
-        };
-        // ADR-0121 B2: the view lives inside the ComparePane entity now.
-        let view = match self.ui().compare_view.as_ref() {
-            Some(p) => p.read(cx).view().clone(),
-            None => return,
-        };
-        let file_status = match view.files.get(file_index) {
-            Some(f) => f,
-            None => return,
-        };
-        let path = file_status.path.clone();
-
-        // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let Some(session) = self.ui().repo_session.as_ref() else {
+        let Some(repo) = self.repo_path.clone() else {
             return;
         };
-        let repo = session.backend();
-
-        let file_diff_result = match view.target {
-            CompareTarget::Head => {
-                let head = match repo.head_commit_id() {
-                    Some(id) => id,
-                    None => return,
-                };
-                repo.compare_file_diff(&view.base, &head, &path)
-            }
-            CompareTarget::WorkingTree => {
-                repo.compare_commit_to_workdir_file_diff(&view.base, &path)
-            }
-            CompareTarget::Commit(ref id) => repo.compare_file_diff(&view.base, id, &path),
+        // ADR-0121 B2: the view lives inside the ComparePane entity now.
+        let Some(view) = self
+            .ui()
+            .compare_view
+            .as_ref()
+            .map(|p| p.read(cx).view().clone())
+        else {
+            return;
         };
-
-        match file_diff_result {
-            Ok(file_diff) => {
-                let added: usize = file_diff
-                    .hunks
-                    .iter()
-                    .flat_map(|h| h.lines.iter())
-                    .filter(|l| l.kind == DiffLineKind::Added)
-                    .count();
-                let removed: usize = file_diff
-                    .hunks
-                    .iter()
-                    .flat_map(|h| h.lines.iter())
-                    .filter(|l| l.kind == DiffLineKind::Removed)
-                    .count();
-                let hunks = file_diff.hunks.len();
-
-                eprintln!(
-                    "[kagi] diff: {} hunks={} (+{} -{})",
-                    path.display(),
-                    hunks,
-                    added,
-                    removed,
-                );
-
-                let fdv = FileDiffView::from_file_diff(&file_diff, file_index);
-                let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
-                let title = fdv.file_name.clone();
-                let mut rows = fdv.rows;
-                let row_count = rows.len();
-
-                let hl_lang = highlight_diff_rows(&mut rows, &path);
-                eprintln!(
-                    "[kagi] main-diff: open {} rows={} highlight={}",
-                    path.display(),
-                    row_count,
-                    hl_lang
-                );
-
-                let source = MainDiffSource::Compare {
-                    base: view.base,
-                    target: view.target,
-                    file_index,
-                };
-                let images = self.diff_images_for(&file_diff, &source, &path);
-                self.show_main_diff(
-                    MainDiffView {
-                        title,
-                        stats,
-                        rows: std::sync::Arc::new(rows),
-                        source,
-                        images,
-                    },
-                    cx,
-                );
-            }
-            Err(e) => {
-                klog!("compare diff error: {}", e);
-            }
-        }
+        let Some(file) = view.files.get(file_index) else {
+            return;
+        };
+        let read = super::main_diff_pane::MainDiffRead::Compare {
+            base: view.base.clone(),
+            target: view.target.clone(),
+            file_index,
+        };
+        self.read_main_diff(repo, file.path.clone(), read, cx);
     }
 
-    /// T-UI-003: Open the diff for a Commit Panel file in the full-width main pane.
+    /// T-UI-003: Open the diff for a Commit Panel file in the full-width main
+    /// pane, read off the UI thread (#495).
     pub fn open_main_diff_wip(
         &mut self,
         file_ref: commit_panel::CommitPanelFileRef,
         cx: &mut Context<Self>,
     ) {
-        let _repo_path = match self.repo_path.clone() {
-            Some(p) => p,
-            None => return,
+        let Some(tab_repo) = self.repo_path.clone() else {
+            return;
         };
-        let entity = match self.ui().commit_panel.as_ref() {
-            Some(e) => e.clone(),
-            None => return,
+        let Some(entity) = self.ui().commit_panel.clone() else {
+            return;
         };
         // #473: the file comes from the PANEL's file list, so the diff must be
-        // read from the panel's repository. For the ordinary panel that is the
-        // tab's own repo and the shared session is used as before; for a linked
-        // worktree's panel the session would diff the wrong repository, so a
-        // short-lived read-only Backend is opened on the panel's path instead.
-        let foreign_path = self
-            .commit_panel_is_foreign(cx)
-            .then(|| entity.read(cx).repo_path.clone());
-
-        let (is_staged, path) = {
-            let panel = &entity.read(cx).state;
-            match &file_ref {
-                commit_panel::CommitPanelFileRef::Unstaged { index } => {
-                    if let Some(f) = panel.unstaged.get(*index) {
-                        (false, f.path.clone())
-                    } else {
-                        return;
-                    }
-                }
-                commit_panel::CommitPanelFileRef::Staged { index } => {
-                    if let Some(f) = panel.staged.get(*index) {
-                        (true, f.path.clone())
-                    } else {
-                        return;
-                    }
-                }
-            }
-        };
-
-        // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let foreign_backend = match &foreign_path {
-            Some(p) => match kagi_git::Backend::open(p) {
-                Ok(b) => Some(b),
-                Err(e) => {
-                    klog!("commit-panel diff: repo open error: {}", e);
-                    return;
-                }
-            },
-            None => None,
-        };
-        let repo = match (&foreign_backend, self.ui().repo_session.as_ref()) {
-            (Some(b), _) => b,
-            (None, Some(session)) => session.backend(),
-            (None, None) => return,
-        };
-
-        let file_diff_result = if is_staged {
-            repo.staged_file_diff(&path)
+        // read from the panel's repository — for a linked worktree's panel,
+        // not the tab's.
+        let repo = if self.commit_panel_is_foreign(cx) {
+            entity.read(cx).repo_path.clone()
         } else {
-            repo.unstaged_file_diff(&path)
+            tab_repo
         };
-
-        match file_diff_result {
-            Ok(fd) => {
-                let added: usize = fd
-                    .hunks
-                    .iter()
-                    .flat_map(|h| h.lines.iter())
-                    .filter(|l| l.kind == DiffLineKind::Added)
-                    .count();
-                let removed: usize = fd
-                    .hunks
-                    .iter()
-                    .flat_map(|h| h.lines.iter())
-                    .filter(|l| l.kind == DiffLineKind::Removed)
-                    .count();
-                eprintln!(
-                    "[kagi] commit-panel diff: {} (+{} -{})",
-                    path.display(),
-                    added,
-                    removed
-                );
-
-                let fdv = FileDiffView::from_file_diff(&fd, 0);
-                let stats = SharedString::from(format!("+{} \u{2212}{}", added, removed));
-                let title = fdv.file_name.clone();
-                let mut rows = fdv.rows;
-                let row_count = rows.len();
-
-                // T-UI-004: apply syntax highlighting once at open time.
-                let hl_lang = highlight_diff_rows(&mut rows, &path);
-                eprintln!(
-                    "[kagi] main-diff: open {} rows={} highlight={}",
-                    path.display(),
-                    row_count,
-                    hl_lang
-                );
-
-                let source = if is_staged {
-                    MainDiffSource::Staged { path: path.clone() }
-                } else {
-                    MainDiffSource::Unstaged { path: path.clone() }
-                };
-                let images = self.diff_images_for(&fd, &source, &path);
-                self.show_main_diff(
-                    MainDiffView {
-                        title,
-                        stats,
-                        rows: std::sync::Arc::new(rows),
-                        source,
-                        images,
-                    },
-                    cx,
-                );
+        let panel = &entity.read(cx).state;
+        let (staged, file) = match file_ref {
+            commit_panel::CommitPanelFileRef::Unstaged { index } => {
+                (false, panel.unstaged.get(index))
             }
-            Err(e) => {
-                klog!("commit-panel diff error: {}", e);
-            }
-        }
+            commit_panel::CommitPanelFileRef::Staged { index } => (true, panel.staged.get(index)),
+        };
+        let Some(path) = file.map(|f| f.path.clone()) else {
+            return;
+        };
+        let read = super::main_diff_pane::MainDiffRead::Wip {
+            staged,
+            refresh: false,
+        };
+        self.read_main_diff(repo, path, read, cx);
     }
 }
 

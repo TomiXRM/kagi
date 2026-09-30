@@ -17,7 +17,6 @@ use backend_ops::{
     execute_conflict_skip, execute_merge_commit,
 };
 use std::path::Path;
-use std::process::Command;
 
 use git2::Repository;
 use tempfile::TempDir;
@@ -25,75 +24,18 @@ use tempfile::TempDir;
 #[path = "support/isolated.rs"]
 mod test_support;
 
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, git_output, git_succeeds as git_allow_fail, init_repo, write_file};
+
 use kagi_git::{
     continue_blockers, detect_conflict_session, plan_conflict_abort, plan_conflict_continue,
     plan_conflict_skip, ConflictKind, ConflictOp, LineOrigin, ResolutionBuffer, ResolutionChoice,
     SkipProgress,
 };
 
-// ────────────────────────────────────────────────────────────
-// Git CLI helpers
-// ────────────────────────────────────────────────────────────
-
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(
-        status.success(),
-        "git {} exited with {:?}",
-        args.join(" "),
-        status.code()
-    );
-}
-
-/// Run a git command allowed to fail (e.g. `merge` that conflicts exits 1).
-fn git_allow_fail(dir: &Path, args: &[&str]) {
-    let _ = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-}
-
-fn git_output(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .output()
-        .expect("git command failed to start");
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
-}
-
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
-}
-
 fn write_binary(dir: &Path, name: &str, content: &[u8]) {
     std::fs::write(dir.join(name), content).expect("write_binary failed");
-}
-
-fn init_repo(dir: &Path) {
-    git(dir, &["init", "-q", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
 }
 
 // ────────────────────────────────────────────────────────────
@@ -106,7 +48,7 @@ fn init_repo(dir: &Path) {
 fn merge_conflict_repo() -> TempDir {
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "main");
 
     write_file(dir, "file.txt", "line one\nshared\nline three\n");
     git(dir, &["add", "."]);
@@ -160,7 +102,7 @@ fn no_session_on_clean_repo() {
     }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "main");
     write_file(dir, "a.txt", "hi\n");
     git(dir, &["add", "."]);
     git(dir, &["commit", "-qm", "init"]);
@@ -176,7 +118,7 @@ fn detects_cherry_pick_session() {
     }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "main");
 
     write_file(dir, "file.txt", "base\n");
     git(dir, &["add", "."]);
@@ -217,7 +159,7 @@ fn classifies_modify_delete_conflict() {
     }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "main");
 
     write_file(dir, "doomed.txt", "original\n");
     git(dir, &["add", "."]);
@@ -252,7 +194,7 @@ fn classifies_binary_conflict() {
     }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "main");
 
     // A blob with NUL bytes → binary.
     write_binary(dir, "img.bin", &[0u8, 1, 2, 3, 0, 9, 8]);
@@ -291,7 +233,7 @@ fn add_add_text_conflict_materializes_as_text() {
     }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "main");
 
     // Common ancestor has NO header.h.
     write_file(dir, "README", "base\n");
@@ -773,7 +715,7 @@ fn stage_then_merge_commit_without_per_file_save() {
 fn two_hunk_conflict_repo() -> TempDir {
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "main");
 
     write_file(
         dir,
@@ -958,7 +900,7 @@ fn continue_gate_flags_unresolved_binary_conflict() {
 fn cherry_pick_conflict_repo() -> TempDir {
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "main");
 
     write_file(dir, "file.txt", "base\n");
     git(dir, &["add", "."]);
@@ -981,7 +923,7 @@ fn cherry_pick_conflict_repo() -> TempDir {
 fn rebase_conflict_repo() -> TempDir {
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "main");
 
     write_file(dir, "file.txt", "base\n");
     git(dir, &["add", "."]);
@@ -1004,7 +946,7 @@ fn rebase_conflict_repo() -> TempDir {
 fn binary_merge_conflict_repo() -> TempDir {
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "main");
 
     write_binary(dir, "blob.bin", &[0u8, 1, 2, 3, 0, 4, 5]);
     git(dir, &["add", "."]);
@@ -1367,7 +1309,7 @@ fn per_hunk_accept_is_independent() {
 fn wide_merge_conflict_repo() -> TempDir {
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "main");
 
     std::fs::create_dir_all(dir.join("sub")).unwrap();
     write_file(dir, "a.txt", "base a\n");
@@ -1486,7 +1428,7 @@ fn abort_leaves_status_clean_without_user_dirt() {
 fn rebase_two_step_conflict_repo() -> TempDir {
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "main");
 
     write_file(dir, "file.txt", "base\n");
     git(dir, &["add", "."]);
@@ -1972,7 +1914,7 @@ fn abort_refuses_staged_non_conflicted_edit_during_cherry_pick() {
     // cherry-pick of side onto main conflicts on file.txt while b.txt stays clean.
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "main");
     write_file(dir, "file.txt", "base\n");
     write_file(dir, "b.txt", "base b\n");
     git(dir, &["add", "."]);
@@ -2019,7 +1961,7 @@ fn abort_refuses_staged_non_conflicted_edit_during_cherry_pick() {
 fn rebase_two_conflicting_steps_repo() -> TempDir {
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "main");
 
     write_file(dir, "file.txt", "base\n");
     git(dir, &["add", "."]);

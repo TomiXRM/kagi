@@ -7,7 +7,6 @@ use backend_ops::{
     execute_merge_into_conflict, execute_switch_to_latest,
 };
 use std::path::Path;
-use std::process::Command;
 
 use git2::{BranchType, Repository};
 use tempfile::TempDir;
@@ -18,62 +17,21 @@ use kagi_git::ops::{
 };
 use kagi_git::{detect_conflict_session, plan_conflict_abort, ResolutionBuffer};
 
-fn git(dir: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        output.status.success(),
-        "git {} exited with {:?}\nstdout:\n{}\nstderr:\n{}",
-        args.join(" "),
-        output.status.code(),
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write file");
-}
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, git_output, write_file};
 
 fn git_rev_parse(dir: &Path, rev: &str) -> String {
-    let output = Command::new("git")
-        .args(["rev-parse", rev])
-        .current_dir(dir)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .output()
-        .expect("git rev-parse failed to start");
-    assert!(output.status.success(), "git rev-parse {} failed", rev);
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
+    git_output(dir, &["rev-parse", rev])
 }
 
 fn git_status_porcelain(dir: &Path) -> String {
-    let output = Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(dir)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .output()
-        .expect("git status failed to start");
-    assert!(output.status.success(), "git status --porcelain failed");
-    String::from_utf8_lossy(&output.stdout).to_string()
+    git_output(dir, &["status", "--porcelain"])
 }
 
 fn init_repo(tmp: &TempDir) -> Repository {
     let dir = tmp.path();
-    git(dir, &["init", "-q", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    git_fixture::init_repo(dir, "main");
     write_file(dir, "base.txt", "base\n");
     git(dir, &["add", "base.txt"]);
     git(dir, &["commit", "-qm", "base"]);

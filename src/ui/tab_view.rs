@@ -340,6 +340,10 @@ pub struct TabUiState {
     /// Main commit-list position and the graph walk limit that produced it.
     pub commit_scroll_handle: UniformListScrollHandle,
     pub commit_limit: usize,
+    /// #487: request generation of this tab's commit-graph paging. Each
+    /// `load_more_commits` bumps it; a paging read whose generation is no
+    /// longer current (a later click) is dropped on completion.
+    pub load_more_gen: u64,
     /// Horizontal graph viewport position.
     pub graph_scroll_x: f32,
     /// Sidebar branch/PR groups collapsed by this tab.
@@ -457,6 +461,9 @@ pub struct TabUiState {
     pub commit_panel: Option<Entity<super::commit_panel::CommitPanelView>>,
     pub commit_panel_open: bool,
     pub main_diff: Option<Entity<super::MainDiffPane>>,
+    /// #495: moves on every main-diff install, close and off-thread read, so
+    /// a read that lands afterwards can tell it was superseded.
+    pub main_diff_req: u64,
     pub compare_view: Option<Entity<super::ComparePane>>,
 }
 
@@ -490,6 +497,7 @@ impl Default for TabUiState {
             selected: None,
             commit_scroll_handle: UniformListScrollHandle::new(),
             commit_limit: super::DEFAULT_COMMIT_LIMIT,
+            load_more_gen: 0,
             graph_scroll_x: 0.0,
             branch_groups_collapsed: HashSet::from([super::sidebar::PR_GROUP_OTHERS.to_string()]),
             cleanup_scroll: UniformListScrollHandle::new(),
@@ -561,6 +569,7 @@ impl Default for TabUiState {
             commit_panel: None,
             commit_panel_open: false,
             main_diff: None,
+            main_diff_req: 0,
             compare_view: None,
         }
     }

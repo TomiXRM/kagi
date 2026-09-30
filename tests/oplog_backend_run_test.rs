@@ -11,8 +11,11 @@
 //! (the var is process-global).
 
 use std::path::Path;
-use std::process::Command;
 use std::sync::Mutex;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{commit_all, git, init_repo};
 
 use tempfile::TempDir;
 
@@ -26,30 +29,11 @@ use kagi_git::{
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(status.success(), "git {} failed", args.join(" "));
-}
-
 /// Repo with one commit on `main`, HEAD attached, clean.
 fn build_repo(dir: &Path) {
-    git(dir, &["init", "-q", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    init_repo(dir, "main");
     std::fs::write(dir.join("base.txt"), "base\n").unwrap();
-    git(dir, &["add", "-A"]);
-    git(dir, &["commit", "-qm", "c1"]);
+    commit_all(dir, "c1");
 }
 
 fn head_commit_id(backend: &Backend) -> CommitId {

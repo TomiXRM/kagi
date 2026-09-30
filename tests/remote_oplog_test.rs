@@ -4,8 +4,11 @@
 use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::process::Command;
 use std::sync::Mutex;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::git_output as git;
 
 /// PATH and KAGI_LOG_DIR are process-global; the tests here share them.
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -25,22 +28,6 @@ impl Drop for Environment {
             }
         }
     }
-}
-
-fn git(repo: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .current_dir(repo)
-        .args(args)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("GIT_AUTHOR_NAME", "fixture")
-        .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
-        .env("GIT_COMMITTER_NAME", "fixture")
-        .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "git {args:?}: {:?}", output.stderr);
-    String::from_utf8(output.stdout).unwrap().trim().to_string()
 }
 
 /// The ssh stand-in: ssh hands its last argument to the remote login shell, and

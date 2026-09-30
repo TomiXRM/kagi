@@ -6,7 +6,6 @@ use backend_ops::{
     execute_pull_branch_ff, execute_push_branch, execute_rename_branch, execute_set_upstream,
 };
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use git2::{BranchType, Repository};
 use tempfile::TempDir;
@@ -16,33 +15,12 @@ use kagi_git::{
     validate_branch_rename, BranchRenameValidation, PullOutcome,
 };
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(status.success(), "git {} failed", args.join(" "));
-}
-
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write failed");
-}
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{commit_all, git, git_output, init_repo, write_file};
 
 fn rev_parse(dir: &Path, rev: &str) -> String {
-    let out = Command::new("git")
-        .args(["rev-parse", rev])
-        .current_dir(dir)
-        .output()
-        .expect("rev-parse failed");
-    assert!(out.status.success(), "rev-parse {} failed", rev);
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
+    git_output(dir, &["rev-parse", rev])
 }
 
 struct Repos {
@@ -70,24 +48,19 @@ fn setup() -> Repos {
         ],
     );
     std::fs::create_dir(&local).unwrap();
-    git(&local, &["init", "-q", "-b", "main", "."]);
-    git(&local, &["config", "user.name", "Test"]);
-    git(&local, &["config", "user.email", "test@example.com"]);
-    git(&local, &["config", "commit.gpgsign", "false"]);
+    init_repo(&local, "main");
     git(
         &local,
         &["remote", "add", "origin", remote.to_str().unwrap()],
     );
 
     write_file(&local, "base.txt", "base\n");
-    git(&local, &["add", "-A"]);
-    git(&local, &["commit", "-qm", "base"]);
+    commit_all(&local, "base");
     git(&local, &["push", "-q", "-u", "origin", "main"]);
 
     git(&local, &["checkout", "-q", "-b", "feature/x"]);
     write_file(&local, "feature.txt", "one\n");
-    git(&local, &["add", "-A"]);
-    git(&local, &["commit", "-qm", "feature one"]);
+    commit_all(&local, "feature one");
     git(&local, &["push", "-q", "-u", "origin", "feature/x"]);
     git(&local, &["checkout", "-q", "main"]);
 

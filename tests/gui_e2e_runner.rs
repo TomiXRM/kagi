@@ -92,6 +92,10 @@ mod conflict_abort_slot;
 mod conflict_continue_cache;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/diff_highlight.rs"]
+mod diff_highlight;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/remote_browse_focus.rs"]
 mod remote_browse_focus;
 
@@ -949,6 +953,14 @@ mod macos {
                 Box::new(crate::conflict_continue_cache::scenario_conflict_continue_cache),
             ),
             (
+                "diff_highlight_once",
+                Box::new(crate::diff_highlight::scenario_diff_highlight_once),
+            ),
+            (
+                "diff_highlight_stale",
+                Box::new(crate::diff_highlight::scenario_diff_highlight_stale),
+            ),
+            (
                 "conflict_save_boundary",
                 Box::new(crate::app_conflict::scenario_conflict_save_boundary),
             ),
@@ -1110,6 +1122,15 @@ mod macos {
                 }),
             ),
             (
+                "file_history_virtualized",
+                Box::new(|cx| {
+                    let fixture = build_fixture();
+                    let before = repo_fingerprint(fixture.path());
+                    crate::recovery_layout::scenario_file_history_virtualized(cx, fixture.path());
+                    assert_eq!(before, repo_fingerprint(fixture.path()));
+                }),
+            ),
+            (
                 "footer_status_line",
                 Box::new(|cx| {
                     let fixture = build_fixture();
@@ -1125,6 +1146,10 @@ mod macos {
             (
                 "read_owner_ordering",
                 Box::new(crate::read_owner::scenario_read_owner_ordering),
+            ),
+            (
+                "load_more_stale_reads",
+                Box::new(crate::read_owner::scenario_load_more_stale_reads),
             ),
             (
                 "tab_ui_state_ownership",

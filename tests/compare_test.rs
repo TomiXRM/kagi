@@ -5,7 +5,6 @@
 //! unchanged before and after the call.
 
 use std::path::Path;
-use std::process::Command;
 
 use git2::Repository;
 use tempfile::TempDir;
@@ -15,56 +14,13 @@ use kagi_git::{
     compare_file_diff, ChangeKind, CommitId, DiffLineKind,
 };
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(
-        status.success(),
-        "git {} exited with {:?}",
-        args.join(" "),
-        status.code()
-    );
-}
-
-fn git_output(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        output.status.success(),
-        "git {} exited with {:?}",
-        args.join(" "),
-        output.status.code()
-    );
-    String::from_utf8_lossy(&output.stdout).into_owned()
-}
-
-fn write_file(dir: &Path, name: &str, content: &str) {
-    if let Some(parent) = dir.join(name).parent() {
-        std::fs::create_dir_all(parent).expect("create parent failed");
-    }
-    std::fs::write(dir.join(name), content).expect("write_file failed");
-}
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, git_command, git_output, write_file};
 
 fn init_repo(tmp: &TempDir) -> Repository {
     let dir = tmp.path();
-    git(dir, &["init", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    git_fixture::init_repo(dir, "main");
 
     write_file(dir, "base.txt", "one\n");
     git(dir, &["add", "base.txt"]);
@@ -74,11 +30,22 @@ fn init_repo(tmp: &TempDir) -> Repository {
 }
 
 fn head_id(dir: &Path) -> CommitId {
-    CommitId(git_output(dir, &["rev-parse", "HEAD"]).trim().to_string())
+    CommitId(git_output(dir, &["rev-parse", "HEAD"]))
 }
 
+/// Untrimmed `git status --porcelain`: callers match whole lines such as
+/// `" M base.txt"`, whose leading status column a trim would strip.
 fn status_porcelain(dir: &Path) -> String {
-    git_output(dir, &["status", "--porcelain"])
+    let output = git_command(dir)
+        .args(["status", "--porcelain"])
+        .output()
+        .expect("git command failed to start");
+    assert!(
+        output.status.success(),
+        "git status --porcelain exited with {:?}",
+        output.status.code()
+    );
+    String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
 #[test]

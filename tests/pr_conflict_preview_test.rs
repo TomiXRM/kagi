@@ -5,42 +5,14 @@
 //! by accident.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use git2::Repository;
 use kagi_git::{pr_conflict_files, pr_conflict_text, CommitId, PrConflictKind};
 use tempfile::TempDir;
 
-fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "T")
-        .env("GIT_AUTHOR_EMAIL", "t@e.com")
-        .env("GIT_COMMITTER_NAME", "T")
-        .env("GIT_COMMITTER_EMAIL", "t@e.com")
-        .output()
-        .expect("git");
-    assert!(
-        out.status.success(),
-        "git {:?}: {}",
-        args,
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn out(dir: &Path, args: &[&str]) -> String {
-    let o = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git");
-    String::from_utf8_lossy(&o.stdout).trim().to_string()
-}
-
-fn write(dir: &Path, n: &str, b: &str) {
-    std::fs::write(dir.join(n), b).unwrap();
-}
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{commit_all, git, git_output as out, init_repo, write_file as write};
 
 fn id(dir: &Path, rev: &str) -> CommitId {
     CommitId(out(dir, &["rev-parse", rev]))
@@ -50,14 +22,10 @@ fn id(dir: &Path, rev: &str) -> CommitId {
 fn setup() -> (TempDir, PathBuf) {
     let t = TempDir::new().unwrap();
     let p = t.path().to_path_buf();
-    git(&p, &["init", "-q", "-b", "base", "."]);
-    git(&p, &["config", "user.name", "T"]);
-    git(&p, &["config", "user.email", "t@e.com"]);
-    git(&p, &["config", "commit.gpgsign", "false"]);
+    init_repo(&p, "base");
     write(&p, "shared.txt", "one\ntwo\nthree\n");
     write(&p, "quiet.txt", "untouched\n");
-    git(&p, &["add", "-A"]);
-    git(&p, &["commit", "-qm", "root"]);
+    commit_all(&p, "root");
     git(&p, &["checkout", "-q", "-b", "pr"]);
     (t, p)
 }

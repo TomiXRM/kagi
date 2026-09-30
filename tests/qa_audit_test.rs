@@ -25,7 +25,10 @@
 mod backend_ops;
 use backend_ops::{execute_checkout_commit, execute_stash_push, execute_undo_commit};
 use std::path::Path;
-use std::process::Command;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, git_command, git_succeeds, init_repo, write_file};
 
 use git2::Repository;
 use tempfile::TempDir;
@@ -40,37 +43,10 @@ use kagi_git::{
 // Helpers
 // ────────────────────────────────────────────────────────────
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(
-        status.success(),
-        "git {} exited with {:?}",
-        args.join(" "),
-        status.code()
-    );
-}
-
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
-}
-
 /// Two-commit repo on `main`, clean. Returns (workdir, repo).
 fn build_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository) {
     let d = tmp.path();
-    git(d, &["init", "-q", "-b", "main", "."]);
-    git(d, &["config", "user.name", "Test"]);
-    git(d, &["config", "user.email", "test@example.com"]);
-    git(d, &["config", "commit.gpgsign", "false"]);
+    init_repo(d, "main");
     write_file(d, "README.md", "# test\n");
     git(d, &["add", "README.md"]);
     git(d, &["commit", "-qm", "initial commit"]);
@@ -83,10 +59,8 @@ fn build_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository) {
 
 /// Assert the repository object database has no integrity errors.
 fn assert_fsck_clean(dir: &Path) {
-    let out = Command::new("git")
+    let out = git_command(dir)
         .args(["fsck", "--no-progress"])
-        .current_dir(dir)
-        .env("HOME", dir)
         .output()
         .expect("git fsck failed to start");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -202,11 +176,7 @@ fn stash_push_conflict_state_is_blocked() {
     write_file(&d, "README.md", "main\n");
     git(&d, &["commit", "-qam", "main"]);
     // merge will conflict; ignore non-zero status
-    let _ = Command::new("git")
-        .args(["merge", "feature"])
-        .current_dir(&d)
-        .env("HOME", &d)
-        .output();
+    git_succeeds(&d, &["merge", "feature"]);
 
     let plan = plan_stash_push(&mut repo, None, true).unwrap();
     assert!(

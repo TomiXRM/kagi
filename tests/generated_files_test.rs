@@ -6,32 +6,17 @@
 //! attribute wins). Builds a small repo with the `git` CLI in a temp dir.
 
 use std::path::Path;
-use std::process::Command;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, init_repo};
 
 use tempfile::TempDir;
 
 use kagi_git::{commit_log, Backend, CommitId, FileStatus};
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(
-        status.success(),
-        "git {} exited with {:?}",
-        args.join(" "),
-        status.code()
-    );
-}
-
+/// Unlike the shared `write_file`, creates missing parent directories
+/// (`src/main.rs`, `api/foo.pb.go`).
 fn write_file(dir: &Path, name: &str, content: &str) {
     let path = dir.join(name);
     if let Some(parent) = path.parent() {
@@ -42,10 +27,7 @@ fn write_file(dir: &Path, name: &str, content: &str) {
 
 fn init(tmp: &TempDir) -> &Path {
     let dir = tmp.path();
-    git(dir, &["init", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    init_repo(dir, "main");
     dir
 }
 

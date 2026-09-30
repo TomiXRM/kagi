@@ -4,23 +4,10 @@
 use crate::macos::{build_fixture, git, mount, unmount};
 use gpui::VisualTestAppContext;
 use kagi_git::{CommitId, OperationKind};
-use std::path::Path;
-use std::process::Command;
 
-fn output(repo: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .current_dir(repo)
-        .args(args)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()
-        .expect("spawn git");
-    assert!(output.status.success(), "git {args:?} failed");
-    String::from_utf8(output.stdout)
-        .expect("git output is UTF-8")
-        .trim()
-        .to_string()
-}
+#[path = "../support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::git_output as output;
 
 pub fn scenario_read_cache_revalidates_on_activation(cx: &mut VisualTestAppContext) {
     let fixture_a = build_fixture();
@@ -32,7 +19,7 @@ pub fn scenario_read_cache_revalidates_on_activation(cx: &mut VisualTestAppConte
     let (app, window) = mount(cx, &repo_a);
     cx.run_until_parked();
     let (session_a, session_b) = app.update(cx, |app, cx| {
-        app.reload_checked(cx).expect("baseline reload A");
+        app.reload_manual(cx);
         assert!(app.open_repository(repo_b.clone(), cx), "open B");
         (app.tabs[0].session, app.tabs[1].session)
     });

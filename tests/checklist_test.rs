@@ -30,13 +30,16 @@
 //! | 15 | `plan_commit_surfaces_marker_blocker` | end-to-end via plan_commit |
 
 use std::path::Path;
-use std::process::Command;
 use std::sync::Mutex;
 
 use git2::Repository;
 use tempfile::TempDir;
 
 use kagi_git::{checklist, plan_commit, working_tree_status};
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::git;
 
 // ────────────────────────────────────────────────────────────
 // Env serialization (KAGI_LARGE_BLOB_BYTES is process-global)
@@ -52,34 +55,10 @@ const LARGE_BLOB_ENV: &str = "KAGI_LARGE_BLOB_BYTES";
 // Helpers
 // ────────────────────────────────────────────────────────────
 
-/// Run a git command inside `dir`, asserting it succeeds.
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(
-        status.success(),
-        "git {} exited with {:?}",
-        args.join(" "),
-        status.code()
-    );
-}
-
 /// Build a minimal repo with one commit on `main`; HEAD clean.
 fn init_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository) {
     let d = tmp.path().to_path_buf();
-    git(&d, &["init", "-q", "-b", "main", "."]);
-    git(&d, &["config", "user.name", "Test"]);
-    git(&d, &["config", "user.email", "test@example.com"]);
-    git(&d, &["config", "commit.gpgsign", "false"]);
+    git_fixture::init_repo(&d, "main");
     std::fs::write(d.join("README.md"), "# test\n").unwrap();
     git(&d, &["add", "README.md"]);
     git(&d, &["commit", "-qm", "initial commit"]);

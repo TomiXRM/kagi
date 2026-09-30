@@ -22,30 +22,15 @@ use std::process::Command;
 
 use tempfile::TempDir;
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git failed to start");
-    assert!(status.success(), "git {} failed", args.join(" "));
-}
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{commit_all, git, init_repo};
 
 /// Fixture: one commit on `main`, plus an empty `feature` branch. Clean tree.
 fn build_repo(dir: &Path) {
-    git(dir, &["init", "-q", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    init_repo(dir, "main");
     std::fs::write(dir.join("a.txt"), "hi\n").unwrap();
-    git(dir, &["add", "-A"]);
-    git(dir, &["commit", "-qm", "c1"]);
+    commit_all(dir, "c1");
     git(dir, &["branch", "feature"]);
 }
 

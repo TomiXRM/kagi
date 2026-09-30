@@ -3,24 +3,18 @@
 //! filter because native GUI E2E must keep its window budget bounded.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use gpui::VisualTestAppContext;
 use kagi::ui::e2e;
 
 use crate::macos::{git, mount, unmount};
 
+#[path = "../support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::git_output;
+
 fn rev_parse(dir: &Path, rev: &str) -> String {
-    let output = Command::new("git")
-        .current_dir(dir)
-        .args(["rev-parse", rev])
-        .output()
-        .expect("git rev-parse");
-    assert!(output.status.success(), "git rev-parse {rev} failed");
-    String::from_utf8(output.stdout)
-        .expect("utf8 sha")
-        .trim()
-        .to_string()
+    git_output(dir, &["rev-parse", rev])
 }
 
 struct Fixture {

@@ -3,6 +3,10 @@ use crate::macos::{git, mount, unmount};
 use gpui::VisualTestAppContext;
 use std::path::{Path, PathBuf};
 
+#[path = "../support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::git_succeeds;
+
 fn conflict_fixture(file: &str, main_text: &str, feature_text: &str) -> tempfile::TempDir {
     let fixture = tempfile::tempdir().expect("conflict fixture");
     let repo = fixture.path();
@@ -17,14 +21,10 @@ fn conflict_fixture(file: &str, main_text: &str, feature_text: &str) -> tempfile
     std::fs::write(repo.join(file), main_text).unwrap();
     git(repo, &["commit", "-qam", "main"]);
 
-    let status = std::process::Command::new("git")
-        .args(["merge", "feature"])
-        .current_dir(repo)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .status()
-        .expect("run conflicting merge");
-    assert!(!status.success(), "fixture merge unexpectedly succeeded");
+    assert!(
+        !git_succeeds(repo, &["merge", "feature"]),
+        "fixture merge unexpectedly succeeded"
+    );
     fixture
 }
 

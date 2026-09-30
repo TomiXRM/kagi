@@ -3,67 +3,20 @@
 #[path = "support/backend_ops.rs"]
 mod backend_ops;
 use backend_ops::execute_push_tag;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 
 use git2::Repository;
 use tempfile::TempDir;
 
 use kagi_git::ops::plan_push_tag;
 
-fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "t")
-        .env("GIT_AUTHOR_EMAIL", "t@e")
-        .env("GIT_COMMITTER_NAME", "t")
-        .env("GIT_COMMITTER_EMAIL", "t@e")
-        .output()
-        .expect("git");
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
-}
-
-struct Repos {
-    _tmp: TempDir,
-    local: PathBuf,
-    remote: PathBuf,
-}
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git_output as git, repo_with_bare_origin, RemoteFixture};
 
 /// A local repo with an `origin` bare remote and one commit pushed.
-fn setup() -> Repos {
-    let tmp = TempDir::new().unwrap();
-    let remote = tmp.path().join("remote.git");
-    let local = tmp.path().join("local");
-    git(
-        tmp.path(),
-        &[
-            "init",
-            "-q",
-            "--bare",
-            "-b",
-            "main",
-            remote.to_str().unwrap(),
-        ],
-    );
-    std::fs::create_dir(&local).unwrap();
-    git(&local, &["init", "-q", "-b", "main", "."]);
-    git(&local, &["config", "user.name", "t"]);
-    git(&local, &["config", "user.email", "t@e"]);
-    git(&local, &["config", "commit.gpgsign", "false"]);
-    git(
-        &local,
-        &["remote", "add", "origin", remote.to_str().unwrap()],
-    );
-    std::fs::write(local.join("a.txt"), "a\n").unwrap();
-    git(&local, &["add", "-A"]);
-    git(&local, &["commit", "-qm", "base"]);
-    git(&local, &["push", "-q", "-u", "origin", "main"]);
-    Repos {
-        _tmp: tmp,
-        local,
-        remote,
-    }
+fn setup() -> RemoteFixture {
+    repo_with_bare_origin("main")
 }
 
 fn remote_tag_sha(remote: &Path, name: &str) -> String {

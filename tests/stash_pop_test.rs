@@ -10,8 +10,10 @@
 #[path = "support/backend_ops.rs"]
 mod backend_ops;
 use backend_ops::{execute_stash_apply, execute_stash_drop, execute_stash_pop, execute_stash_push};
-use std::path::Path;
-use std::process::Command;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, git_command, init_repo, write_file};
 
 use git2::Repository;
 use tempfile::TempDir;
@@ -22,37 +24,10 @@ use kagi_git::{plan_stash_drop, plan_stash_pop, preflight_check_stash, snapshot,
 // Helpers
 // ────────────────────────────────────────────────────────────
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(
-        status.success(),
-        "git {} exited with {:?}",
-        args.join(" "),
-        status.code()
-    );
-}
-
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
-}
-
 /// Build a minimal repo with an initial commit.  HEAD is on `main`, clean.
 fn build_clean_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository) {
     let d = tmp.path();
-    git(d, &["init", "-q", "-b", "main", "."]);
-    git(d, &["config", "user.name", "Test"]);
-    git(d, &["config", "user.email", "test@example.com"]);
-    git(d, &["config", "commit.gpgsign", "false"]);
+    init_repo(d, "main");
     write_file(d, "README.md", "# test\n");
     git(d, &["add", "README.md"]);
     git(d, &["commit", "-qm", "initial commit"]);
@@ -188,10 +163,7 @@ fn test_stash_pop_conflict_prediction_warns_and_touches_nothing() {
     }
     let tmp = TempDir::new().unwrap();
     let d = tmp.path();
-    git(d, &["init", "-q", "-b", "main", "."]);
-    git(d, &["config", "user.name", "Test"]);
-    git(d, &["config", "user.email", "test@example.com"]);
-    git(d, &["config", "commit.gpgsign", "false"]);
+    init_repo(d, "main");
 
     // Initial commit: file.txt = "line A\n"
     write_file(d, "file.txt", "line A\n");
@@ -333,10 +305,7 @@ fn test_stash_pop_planning_a_conflicting_pop_changes_nothing() {
     // via the conflict prediction blocker path (ADR-0009 design intent).
     let tmp = TempDir::new().unwrap();
     let d = tmp.path();
-    git(d, &["init", "-q", "-b", "main", "."]);
-    git(d, &["config", "user.name", "Test"]);
-    git(d, &["config", "user.email", "test@example.com"]);
-    git(d, &["config", "commit.gpgsign", "false"]);
+    init_repo(d, "main");
 
     write_file(d, "shared.txt", "original\n");
     git(d, &["add", "shared.txt"]);
@@ -535,10 +504,7 @@ fn test_stash_pop_removes_only_target_index() {
 /// base `shared.txt` = "base", stash = "stashed", HEAD moved to "head".
 fn build_conflicting_stash_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository) {
     let d = tmp.path();
-    git(d, &["init", "-q", "-b", "main", "."]);
-    git(d, &["config", "user.name", "Test"]);
-    git(d, &["config", "user.email", "test@example.com"]);
-    git(d, &["config", "commit.gpgsign", "false"]);
+    init_repo(d, "main");
 
     write_file(d, "shared.txt", "base\n");
     git(d, &["add", "shared.txt"]);
@@ -615,10 +581,7 @@ fn test_stash_pop_prediction_uses_stash_parent_as_base() {
     }
     let tmp = TempDir::new().unwrap();
     let d = tmp.path();
-    git(d, &["init", "-q", "-b", "main", "."]);
-    git(d, &["config", "user.name", "Test"]);
-    git(d, &["config", "user.email", "test@example.com"]);
-    git(d, &["config", "commit.gpgsign", "false"]);
+    init_repo(d, "main");
 
     // X (main): f = "old" — the common ancestor.
     write_file(d, "f.txt", "old\n");
@@ -684,20 +647,14 @@ fn test_stash_pop_prediction_failure_is_fail_closed() {
 
     // A parentless commit reachable from refs/stash: stash_foreach lists it,
     // but `parent(0)` — the apply base — does not exist.
-    let tree = Command::new("git")
+    let tree = git_command(&repo_dir)
         .args(["hash-object", "-t", "tree", "-w", "--stdin"])
-        .current_dir(&repo_dir)
         .stdin(std::process::Stdio::null())
         .output()
         .expect("hash-object failed");
     let tree_oid = String::from_utf8_lossy(&tree.stdout).trim().to_string();
-    let commit = Command::new("git")
+    let commit = git_command(&repo_dir)
         .args(["commit-tree", &tree_oid, "-m", "WIP orphan stash"])
-        .current_dir(&repo_dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
         .output()
         .expect("commit-tree failed");
     let commit_oid = String::from_utf8_lossy(&commit.stdout).trim().to_string();
@@ -792,10 +749,7 @@ fn test_conflicted_pop_file_diff_shows_the_markers() {
     }
     let tmp = TempDir::new().unwrap();
     let d = tmp.path();
-    git(d, &["init", "-q", "-b", "main", "."]);
-    git(d, &["config", "user.name", "Test"]);
-    git(d, &["config", "user.email", "test@example.com"]);
-    git(d, &["config", "commit.gpgsign", "false"]);
+    init_repo(d, "main");
     write_file(d, "f.txt", "line one\nbase\nline three\n");
     git(d, &["add", "f.txt"]);
     git(d, &["commit", "-qm", "base"]);

@@ -828,7 +828,8 @@ impl Backend {
             Operation::ApplySuggestion {
                 suggestion,
                 expected_original,
-            } => self.plan_apply_suggestion(suggestion, expected_original),
+                head,
+            } => self.plan_apply_suggestion(suggestion, expected_original, head),
             Operation::WriteCommitGraph => ops::plan_write_commit_graph(&self.repo),
             Operation::EnableFsmonitor => ops::plan_enable_fsmonitor(&self.repo),
         }
@@ -1724,8 +1725,9 @@ impl Backend {
         &self,
         s: &kagi_domain::suggestion::Suggestion,
         expected: &[String],
+        head: &CommitId,
     ) -> Result<OperationPlan, GitError> {
-        ops::plan_apply_suggestion(&self.repo, s, expected)
+        ops::plan_apply_suggestion(&self.repo, s, expected, head)
     }
 
     pub(crate) fn execute_apply_suggestion(

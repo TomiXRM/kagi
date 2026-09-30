@@ -155,7 +155,11 @@ pub fn recovery_handles(result: &Result<OperationOutcome, GitError>) -> Vec<Reco
             .map(|b| RecoveryHandle::file(&b.path, &b.blob, Some(b.reference.clone())))
             .collect(),
         OperationOutcome::Suggestion(s) => {
-            vec![RecoveryHandle::file(&s.path, &s.backup_blob, None)]
+            vec![RecoveryHandle::file(
+                &s.path,
+                &s.backup_blob,
+                Some(s.reference.clone()),
+            )]
         }
         _ => Vec::new(),
     }

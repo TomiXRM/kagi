@@ -145,13 +145,16 @@ pub enum Operation {
         id: String,
     },
     /// Apply a GitHub PR review "suggested change" to the working-tree file
-    /// (#351, ADR-0172). `expected_original` is the anchored range's content
-    /// captured at plan time; execute refuses if the working tree at that range
-    /// no longer matches it (TOCTOU stale-line guard). Writes only the working
-    /// tree — nothing is staged or committed.
+    /// (#351, ADR-0172 / ADR-0209). The suggestion's line numbers are the PR
+    /// head's, so the plan refuses unless the working-tree file is the blob
+    /// `head` holds at that path. `expected_original` is the anchored range's
+    /// content captured at plan time; execute refuses if the working tree at
+    /// that range no longer matches it (TOCTOU stale-line guard). Writes only
+    /// the working tree — nothing is staged or committed.
     ApplySuggestion {
         suggestion: Suggestion,
         expected_original: Vec<String>,
+        head: CommitId,
     },
     /// Write a commit-graph for every reachable commit (`git commit-graph
     /// write --reachable`, #358 / ADR-0205). Adds a cache under

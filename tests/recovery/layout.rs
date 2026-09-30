@@ -634,3 +634,121 @@ pub fn scenario_modal_sections(cx: &mut VisualTestAppContext) {
     unmount(cx, app, win);
     eprintln!("[gui-e2e] PASS modal_sections");
 }
+
+/// #496: File History's commit list is a `uniform_list`. With 500 entries the
+/// processor must build only the rows that fit the list viewport (+ the ≤1
+/// row `uniform_list` overscans), at two window heights, and selecting a row
+/// far below the fold must scroll it into the built range.
+///
+/// Real `KagiApp` → real `open_file_history` → the pane entity; the history
+/// is seeded directly (generation-bumped so the fixture's real git-log result
+/// is discarded), then the observable is the pane's `last_built_range`, which
+/// the production processor records on every frame.
+pub fn scenario_file_history_virtualized(cx: &mut VisualTestAppContext, repo_path: &Path) {
+    const ENTRIES: usize = 500;
+    const FAR_ROW: usize = 400;
+    let restore = GlobalSettings::capture();
+    theme::set_zoom(1.);
+    let history = FileHistory {
+        current_path: "README.md".into(),
+        entries: (1..=ENTRIES)
+            .map(|ix| entry(&format!("commit {ix}"), ix))
+            .collect(),
+    };
+    let mut built_per_height: Vec<(f32, usize)> = Vec::new();
+    for dimensions in [(1024., 768.), (1440., 900.)] {
+        let app = e2e::app_state(repo_path).expect("fixture app state");
+        let captured: Rc<RefCell<Option<gpui::Entity<KagiApp>>>> = Rc::default();
+        let output = captured.clone();
+        let win = crate::macos::open_offscreen(
+            cx,
+            size(px(dimensions.0), px(dimensions.1)),
+            move |window, cx| e2e::mount_root(app, window, cx, &output),
+        );
+        let app = captured.borrow().clone().expect("captured KagiApp");
+        app.update(cx, |app, cx| {
+            app.open_file_history(std::path::PathBuf::from("README.md"), None, cx)
+        });
+        cx.run_until_parked();
+        let pane = cx
+            .read(|cx| app.read(cx).ui().file_history.clone())
+            .expect("actual File History pane");
+        pane.update(cx, |view, cx| {
+            // Supersede the in-flight real load so it cannot replace the fixture.
+            view.data.generation = view.data.generation.wrapping_add(1);
+            let generation = view.data.generation;
+            view.seed_history(generation, Ok(history.clone()), None, false, cx);
+        });
+        draw(cx, win.into(), dimensions);
+        // `ItemSize::item` is the list's padded viewport; `contents` is
+        // `row_height × item_count` (gpui `uniform_list.rs`).
+        let (built, list_h, row_h) = cx.read(|cx| {
+            let view = pane.read(cx);
+            let state = view.list_scroll.0.borrow();
+            let measured = state.last_item_size.expect("actual list mounted");
+            (
+                view.last_built_range.clone(),
+                f32::from(measured.item.height),
+                f32::from(measured.contents.height) / ENTRIES as f32,
+            )
+        });
+        assert!(
+            row_h > 0. && list_h > 0.,
+            "{dimensions:?}: list not laid out"
+        );
+        let expected_row_h = theme::scaled(29.);
+        assert!(
+            (row_h - expected_row_h).abs() <= EPS,
+            "{dimensions:?}: row height {row_h} ≠ File History ROW_H {expected_row_h}"
+        );
+        let item_h = row_h;
+        let fits = (list_h / item_h).ceil() as usize;
+        assert!(
+            built.len() >= fits.min(ENTRIES).saturating_sub(1) && built.len() <= fits + 2,
+            "{dimensions:?}: built {built:?} ({} rows) for a viewport that fits {fits}",
+            built.len()
+        );
+        assert!(
+            built.len() < ENTRIES / 4,
+            "{dimensions:?}: built {} of {ENTRIES} rows — not virtualized",
+            built.len()
+        );
+        assert!(
+            built.contains(&0),
+            "{dimensions:?}: initial frame not at top"
+        );
+        built_per_height.push((list_h, built.len()));
+
+        // Keyboard/mouse selection of a row below the fold scrolls it into view.
+        pane.update(cx, |view, cx| view.select(FAR_ROW, cx));
+        draw(cx, win.into(), dimensions);
+        let (after, selected) = cx.read(|cx| {
+            let view = pane.read(cx);
+            (view.last_built_range.clone(), view.data.selected)
+        });
+        assert_eq!(selected, FAR_ROW, "{dimensions:?}: selection lost");
+        assert!(
+            after.contains(&FAR_ROW),
+            "{dimensions:?}: selected row {FAR_ROW} not in built range {after:?}"
+        );
+        assert!(
+            after.len() <= fits + 2,
+            "{dimensions:?}: built {after:?} after scroll"
+        );
+        drop(pane);
+        drop(captured);
+        unmount(cx, app, win.into());
+    }
+    // Taller list → more rows built; a fixed count would mean rows are not
+    // driven by the viewport.
+    let (h0, n0) = built_per_height[0];
+    let (h1, n1) = built_per_height[1];
+    assert!(
+        h1 > h0 && n1 > n0,
+        "built rows did not grow with the list height: {built_per_height:?}"
+    );
+    drop(restore);
+    eprintln!(
+        "[gui-e2e] PASS file_history_virtualized {ENTRIES} entries → built {built_per_height:?} (list px, rows)"
+    );
+}

@@ -1428,6 +1428,10 @@ mod macos {
                 Box::new(crate::workspace_mode_toolbar::scenario_workspace_mode_toolbar),
             ),
             (
+                "toolbar_a11y_disabled",
+                Box::new(crate::workspace_mode_toolbar::scenario_toolbar_a11y_disabled),
+            ),
+            (
                 "issues_pagination",
                 Box::new(crate::issues_pagination::scenario_issues_pagination),
             ),

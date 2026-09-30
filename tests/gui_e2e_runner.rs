@@ -92,6 +92,10 @@ mod conflict_abort_slot;
 mod conflict_continue_cache;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/refusal_reasons.rs"]
+mod refusal_reasons;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/diff_highlight.rs"]
 mod diff_highlight;
 
@@ -947,6 +951,10 @@ mod macos {
             (
                 "conflict_continue_cache",
                 Box::new(crate::conflict_continue_cache::scenario_conflict_continue_cache),
+            ),
+            (
+                "refusal_reasons",
+                Box::new(crate::refusal_reasons::scenario_refusal_reasons),
             ),
             (
                 "diff_highlight_once",

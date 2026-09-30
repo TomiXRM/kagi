@@ -124,12 +124,10 @@ impl KagiApp {
         if !plan.blockers.is_empty() {
             klog!("refused: create-branch plan has blockers, not executing");
             if let Some(ref rp) = self.repo_path.clone() {
-                self.record_op(
+                self.record_refused(
                     "create-branch",
                     plan.current.clone(),
-                    OpOutcome::Refused {
-                        blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
-                    },
+                    &plan.blockers,
                     rp,
                     cx,
                 );
@@ -280,12 +278,10 @@ impl KagiApp {
             BranchPlanKind::PushSetUpstream => "branch-push-set-upstream",
         };
         if !modal.plan.blockers.is_empty() {
-            self.record_op(
+            self.record_refused(
                 op_name,
                 modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &modal.plan.blockers,
                 &repo_path,
                 cx,
             );
@@ -395,12 +391,10 @@ impl KagiApp {
             None => return,
         };
         if !plan.blockers.is_empty() {
-            self.record_op(
+            self.record_refused(
                 "set-upstream",
                 plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &plan.blockers,
                 &repo_path,
                 cx,
             );
@@ -503,12 +497,10 @@ impl KagiApp {
             None => return,
         };
         if !plan.blockers.is_empty() {
-            self.record_op(
+            self.record_refused(
                 "rename-branch",
                 plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &plan.blockers,
                 &repo_path,
                 cx,
             );
@@ -595,12 +587,10 @@ impl KagiApp {
         };
         if !modal.plan.blockers.is_empty() {
             klog!("refused: checkout-tracking plan has blockers, not executing");
-            self.record_op(
+            self.record_refused(
                 "checkout-tracking",
                 modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &modal.plan.blockers,
                 &repo_path,
                 cx,
             );
@@ -694,12 +684,10 @@ impl KagiApp {
         };
         if !modal.plan.blockers.is_empty() {
             klog!("refused: switch-to-latest plan has blockers, not executing");
-            self.record_op(
+            self.record_refused(
                 "switch-to-latest",
                 modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &modal.plan.blockers,
                 &repo_path,
                 cx,
             );
@@ -889,12 +877,10 @@ impl KagiApp {
                 "[kagi] refused: delete-branch plan has {} blocker(s), not executing",
                 modal.plan.blockers.len()
             );
-            self.record_op(
+            self.record_refused(
                 "delete-branch",
                 modal.plan.current.clone(),
-                kagi_git::oplog::OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &modal.plan.blockers,
                 &repo_path,
                 cx,
             );

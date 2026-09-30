@@ -480,7 +480,7 @@ impl KagiApp {
             // blocker is a no-execute receipt like the runtime refusal, written
             // by the same core factory and only presented here.
             let refusal = refuse_blocked_pull(&repo_path, &modal.plan);
-            self.present_report("pull", &refusal, &repo_path, cx);
+            self.present_refused_report("pull", &refusal, &modal.plan.blockers, &repo_path, cx);
             self.clear_pull_modal();
             cx.notify();
             return;
@@ -571,12 +571,10 @@ impl KagiApp {
         };
         if !modal.plan.blockers.is_empty() {
             klog!("refused: push plan has blockers, not executing");
-            self.record_op(
+            self.record_refused(
                 "push",
                 modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &modal.plan.blockers,
                 &repo_path,
                 cx,
             );

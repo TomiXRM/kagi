@@ -91,17 +91,23 @@ fn log_stash_event(
 mod notices;
 
 impl KagiApp {
-    /// Keep the established `footer: ... partially applied` klog contract while
-    /// making an Unknown result explicit in the human-facing footer and toast.
+    /// Keep the established `footer: ... partially applied` / `refused (N
+    /// blockers)` klog contract while the human-facing footer and toast make
+    /// an Unknown result explicit and name a refusal's reason (#353):
+    /// `refusal` when the caller had typed blockers, else the first recorded one.
     pub(crate) fn display_footer_message(
         op: &str,
         outcome: &OpOutcome,
         contract: &SharedString,
+        refusal: Option<String>,
     ) -> SharedString {
         match outcome {
             OpOutcome::Unknown { evidence, .. } => {
                 format!("{}: outcome unknown — {}", op, evidence).into()
             }
+            OpOutcome::Refused { .. } => refusal
+                .or_else(|| super::record::refused_display(op, outcome))
+                .map_or_else(|| contract.clone(), Into::into),
             _ => contract.clone(),
         }
     }
@@ -149,6 +155,15 @@ impl KagiApp {
             i18n::op_failed(i18n::Op::Preflight, error)
         } else if !report.evidence.conflicts.is_empty() {
             format!("{}: {}", name, Msg::StashPopConflictedKept.t())
+        } else if let Some(refused) = report
+            .evidence
+            .plan_blocked
+            .then(|| super::record::typed_refusal(name, &report.blockers))
+            .flatten()
+            .or_else(|| super::record::refused_display(name, &entry.outcome))
+        {
+            // #353: a plan-blocked stash names its first typed blocker.
+            refused
         } else {
             format!("{}: {}", name, summary)
         };
@@ -507,13 +522,16 @@ impl KagiApp {
                 cx.notify();
             });
         }
+        // #353: a refused remote drop names its diagnostic, not a count.
+        let shown = super::record::refused_display("stash-drop", &entry.outcome)
+            .unwrap_or_else(|| format!("stash-drop: {summary}"));
         self.push_toast(
             if success {
                 ToastKind::Success
             } else {
                 ToastKind::Error
             },
-            format!("{}: stash-drop: {}", entry.repo, summary),
+            format!("{}: {}", entry.repo, shown),
             cx,
         );
         let active = self.remote_view.as_ref().is_some_and(|view| {
@@ -523,9 +541,9 @@ impl KagiApp {
         });
         if active {
             self.status_footer = if success {
-                FooterStatus::Success(format!("stash-drop: {summary}").into())
+                FooterStatus::Success(shown.into())
             } else {
-                FooterStatus::Failed(format!("stash-drop: {summary}").into())
+                FooterStatus::Failed(shown.into())
             };
             if success {
                 #[cfg(feature = "gui-e2e")]
@@ -628,7 +646,7 @@ mod tests {
             evidence: "termination unconfirmed — do not retry".into(),
         };
 
-        let display = KagiApp::display_footer_message("rebase-skip", &outcome, &contract);
+        let display = KagiApp::display_footer_message("rebase-skip", &outcome, &contract, None);
 
         assert_eq!(
             contract.as_ref(),

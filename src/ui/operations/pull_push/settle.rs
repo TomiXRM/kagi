@@ -238,16 +238,13 @@ impl KagiApp {
     ) {
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(recording);
         if !matches!(entry.outcome, kagi_git::oplog::OpOutcome::Success { .. }) {
-            self.push_toast(
-                ToastKind::Error,
-                format!(
-                    "{} — {}: {}",
-                    entry.repo,
-                    entry.op,
-                    crate::ui::oplog_panel::outcome_summary(&entry.outcome)
-                ),
-                cx,
-            );
+            // #353: a refusal names its first blocker, not a count.
+            let shown = crate::ui::operations::record::refused_display(&entry.op, &entry.outcome)
+                .unwrap_or_else(|| {
+                    let summary = crate::ui::oplog_panel::outcome_summary(&entry.outcome);
+                    format!("{}: {}", entry.op, summary)
+                });
+            self.push_toast(ToastKind::Error, format!("{} — {}", entry.repo, shown), cx);
         }
         self.insert_recorded_row(recording, cx);
     }

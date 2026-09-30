@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- 実行できない plan（blocker あり）を Enter や確認ボタンで確定したとき、footer と toast が「refused (N blockers)」の件数だけでなく、先頭の blocker の具体的な理由を表示するようにしました（EN/JA、残りの件数も併記）。checkout・branch 操作・merge / cherry-pick / revert・reset / rebase / force-with-lease push・remote branch 削除 / tag push・discard・undo / redo・worktree lock / unlock / prune・pull / push・PR merge / review / 編集・stash・remote stash drop が対象です。Operation Log には従来どおり全 blocker が残り、実行は従来どおり拒否します。（#353）
+
 ### Performance
 
 - File History のコミット一覧を、Graph・sidebar・Editor History と同じ `uniform_list` による仮想リストに揃えました。500 件の履歴でも構築される行は表示範囲分だけになり、選択行は一覧の外にあってもスクロールして表示します。見た目・ページング・diff 対象の選び方は変更しません。（#496）

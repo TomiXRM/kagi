@@ -92,6 +92,10 @@ mod conflict_abort_slot;
 mod conflict_continue_cache;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/refusal_reasons.rs"]
+mod refusal_reasons;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/remote_browse_focus.rs"]
 mod remote_browse_focus;
 
@@ -943,6 +947,10 @@ mod macos {
             (
                 "conflict_continue_cache",
                 Box::new(crate::conflict_continue_cache::scenario_conflict_continue_cache),
+            ),
+            (
+                "refusal_reasons",
+                Box::new(crate::refusal_reasons::scenario_refusal_reasons),
             ),
             (
                 "conflict_save_boundary",

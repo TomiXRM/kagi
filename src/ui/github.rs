@@ -13,7 +13,7 @@ use super::modals::{ActiveModal, PrMergeModal};
 use super::operations::modal_state::{AsyncPlanOffer, PlanningPresentation};
 use super::operations::RunPresentation;
 use super::types::ToastKind;
-use super::{CompareTarget, CompareView, FooterStatus, KagiApp, OpOutcome};
+use super::{CompareTarget, CompareView, FooterStatus, KagiApp};
 
 /// Refresh cadence for shared open-PR evidence and visible volatile status.
 /// Strip-only Closed/All collections are refreshed explicitly, not by this ticker.
@@ -476,12 +476,10 @@ impl KagiApp {
             klog!("refused: pr-merge plan has blockers, not executing");
             // A blocked plan never reaches the transport, so the UI stays the
             // recorder for Refused — `record_op` persists that outcome (#501).
-            self.record_op(
+            self.record_refused(
                 "pr-merge",
                 plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &plan.blockers,
                 &repo_path,
                 cx,
             );
@@ -592,12 +590,10 @@ impl KagiApp {
         let plan = std::sync::Arc::new(kagi_git::github::plan_pr_comment(&pr, &body));
         if !plan.blockers.is_empty() {
             klog!("refused: pr-comment plan has blockers, not executing");
-            self.record_op(
+            self.record_refused(
                 "pr-comment",
                 plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &plan.blockers,
                 &repo_path,
                 cx,
             );
@@ -679,12 +675,10 @@ impl KagiApp {
         let plan = std::sync::Arc::new(kagi_git::github::plan_pr_review(&pr, verdict, &body));
         if !plan.blockers.is_empty() {
             klog!("refused: pr-review plan has blockers, not executing");
-            self.record_op(
+            self.record_refused(
                 "pr-review",
                 plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &plan.blockers,
                 &repo_path,
                 cx,
             );
@@ -778,12 +772,10 @@ impl KagiApp {
         let plan = std::sync::Arc::new(kagi_git::github::plan_pr_edit(&pr, &edit));
         if !plan.blockers.is_empty() {
             klog!("refused: pr-edit plan has blockers, not executing");
-            self.record_op(
+            self.record_refused(
                 "pr-edit",
                 plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &plan.blockers,
                 &repo_path,
                 cx,
             );

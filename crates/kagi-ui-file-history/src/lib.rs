@@ -373,10 +373,56 @@ pub use kagi_ui_core::change_badge::{change_type_badge, change_type_label, entry
 // commit-row model can compute relative dates. Re-exported for existing paths.
 pub use kagi_ui_core::time_parse::iso_to_epoch;
 
+/// The detail pane's "Changes" value for a history entry, or `None` when the
+/// entry carries no line counts.
+///
+/// #813: the WIP entry is built from `git status` and has no numstat
+/// (`insertions`/`deletions` are `None`), so it used to render as "+0 −0"
+/// while the diff pane right below showed the real working-tree change. The
+/// pane already computes that diff; rather than counting it a second time
+/// here, the row simply says nothing when it has no counts. A binary change
+/// (known, but uncountable) still reads "binary".
+pub fn changes_label(change: &kagi_domain::file_history::FileChangeSummary) -> Option<String> {
+    if change.is_binary {
+        return Some("binary".to_string());
+    }
+    match (change.insertions, change.deletions) {
+        (Some(ins), Some(del)) => Some(format!("+{ins} \u{2212}{del}")),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use kagi_domain::file_history::{FileChangeSummary, FileChangeType};
+
+    fn change(ins: Option<u32>, del: Option<u32>, binary: bool) -> FileChangeSummary {
+        FileChangeSummary {
+            change_type: FileChangeType::Modified,
+            path_before: None,
+            path_after: PathBuf::from("f.rs"),
+            insertions: ins,
+            deletions: del,
+            is_binary: binary,
+        }
+    }
+
+    #[test]
+    fn changes_label_counts_binary_and_unknown() {
+        assert_eq!(
+            changes_label(&change(Some(12), Some(4), false)).as_deref(),
+            Some("+12 \u{2212}4")
+        );
+        assert_eq!(
+            changes_label(&change(None, None, true)).as_deref(),
+            Some("binary")
+        );
+        // The WIP entry: no numstat → no line, never "+0 −0".
+        assert_eq!(changes_label(&change(None, None, false)), None);
+        assert_eq!(changes_label(&change(Some(3), None, false)), None);
+    }
     #[test]
     fn iso_utc_epoch() {
         // 1970-01-01T00:00:00Z == 0

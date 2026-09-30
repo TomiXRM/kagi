@@ -372,6 +372,7 @@ fn sync_open_pr_from_list(tab: &mut PrTab, listed: &PullRequest) {
     tab.local_refs_generation = tab.local_refs_generation.wrapping_add(1);
     tab.commits.clear();
     tab.files.clear();
+    tab.viewed.clear_head_blobs();
     tab.selected_commit = None;
     tab.selected_file = None;
     tab.diff = None;
@@ -390,12 +391,14 @@ pub(super) fn install_local_pr_head(
     head: CommitId,
     commits: Vec<Commit>,
     files: Vec<FileStatus>,
+    head_blobs: Vec<String>,
 ) {
     tab.local_refs_loading = false;
     tab.base = base;
     tab.base_tip = base_tip;
     tab.head = head;
     tab.commits = commits;
+    tab.viewed.set_head_blobs(&files, head_blobs);
     tab.files = files;
     tab.selected_commit = None;
     tab.selected_file = (!tab.files.is_empty()).then_some(0);

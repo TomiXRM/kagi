@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- PR mode のファイル一覧に「確認済み」の checkbox と「N / M viewed」(JA「N / M 確認済み」)の進捗を追加しました。確認済みの行は薄く表示されます。印はそのときの head 側のファイル内容(blob)に紐づき、PR の head が進んでそのファイルが変わると自動で未確認に戻ります(変わっていないファイルは確認済みのまま)。状態は `~/.kagi/pr-viewed/` に PR ごとに保存し、壊れたファイルは上書きせず退避します。Operation Log には記録しません。(#351、ADR-0206)
+
 ### Fixed
 
 - File History で先頭の WIP 行を選んだとき、右の詳細ペインの「Changes」が「+0 −0」と表示される問題を修正しました。WIP 行は `git status` から作られ行数を持たないため、行数が分からない項目では「Changes」行を出さず、実際の +/− は下の diff pane が示します。コミット行の +/− と binary 表示は従来どおりです。（#813）

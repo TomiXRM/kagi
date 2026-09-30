@@ -152,6 +152,51 @@ fn compare_commit_to_workdir_includes_staged_unstaged_untracked_without_mutation
         "workdir file diff must be read-only"
     );
 }
+/// #351: a PR file's viewed mark is held against its head blob. The id must be
+/// git's own blob id (so an unchanged file keeps it across head moves and a
+/// changed one does not), and a path the head deleted gets the zero id.
+#[test]
+fn blob_ids_at_names_each_path_s_blob_in_the_commit() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let _repo = init_repo(&tmp);
+    let dir = tmp.path();
+    write_file(dir, "kept.txt", "same\n");
+    write_file(dir, "edited.txt", "v1\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-m", "first head"]);
+    let first = head_id(dir);
+    write_file(dir, "edited.txt", "v2\n");
+    git(dir, &["rm", "-q", "base.txt"]);
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-m", "second head"]);
+    let second = head_id(dir);
+    let before = status_porcelain(dir);
+
+    let backend = kagi_git::Backend::open(dir).unwrap();
+    let paths: Vec<std::path::PathBuf> = ["kept.txt", "edited.txt", "base.txt"]
+        .iter()
+        .map(std::path::PathBuf::from)
+        .collect();
+    let at_first = backend.blob_ids_at(&first, &paths).unwrap();
+    let at_second = backend.blob_ids_at(&second, &paths).unwrap();
+    let blob = |rev: &str| git_output(dir, &["rev-parse", rev]);
+    assert_eq!(
+        at_first,
+        vec![
+            blob("HEAD~1:kept.txt"),
+            blob("HEAD~1:edited.txt"),
+            blob("HEAD~1:base.txt")
+        ]
+    );
+    assert_eq!(at_second[0], at_first[0], "unchanged file, same blob");
+    assert_eq!(at_second[1], blob("HEAD:edited.txt"));
+    assert_ne!(at_second[1], at_first[1], "edited file, new blob");
+    assert_eq!(at_second[2], "0".repeat(40), "deleted at the head");
+    assert_eq!(before, status_porcelain(dir), "read-only");
+}
 
 #[path = "../../../tests/support/isolated.rs"]
 mod test_support;

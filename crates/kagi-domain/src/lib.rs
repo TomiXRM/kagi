@@ -51,6 +51,7 @@ pub mod plan;
 pub mod plan_note;
 pub mod pr_list;
 pub mod pr_url;
+pub mod pr_viewed;
 pub mod provenance;
 pub mod refs;
 pub mod remote;

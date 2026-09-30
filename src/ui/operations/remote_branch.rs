@@ -20,6 +20,8 @@ struct LoadedPrLocal {
     head: CommitId,
     commits: Vec<kagi_git::Commit>,
     files: Vec<kagi_git::FileStatus>,
+    /// #351: each file's head-side blob, for its viewed mark.
+    head_blobs: Vec<String>,
     diff: Option<crate::ui::diff_view::MainDiffView>,
 }
 
@@ -297,6 +299,8 @@ impl KagiApp {
                 let commits =
                     backend.commits_between(&base, &head, crate::ui::pr_mode::COMMIT_LIMIT)?;
                 let files = backend.compare_commits(&base, &head)?;
+                let paths: Vec<_> = files.iter().map(|file| file.path.clone()).collect();
+                let head_blobs = backend.blob_ids_at(&head, &paths)?;
                 let diff = files.first().and_then(|file| {
                     backend
                         .compare_file_diff(&base, &head, &file.path)
@@ -322,6 +326,7 @@ impl KagiApp {
                         head,
                         commits,
                         files,
+                        head_blobs,
                         diff,
                     },
                 ))
@@ -429,6 +434,7 @@ impl KagiApp {
                 local.head,
                 local.commits,
                 local.files,
+                local.head_blobs,
             );
             tab.diff = diff;
             tab.conflicts = None;

@@ -46,6 +46,7 @@ fn tab(head: &str) -> PrTab {
         conflict_preview: None,
         merge_status: None,
         merge_status_loaded: false,
+        viewed: Default::default(),
     }
 }
 
@@ -188,9 +189,17 @@ fn response_for_a_different_head_never_marks_the_slot_fresh() {
 #[test]
 fn list_head_change_invalidates_then_local_reload_restores_the_open_tab() {
     let mut tab = tab("old");
+    let changed = std::path::Path::new("changed.rs");
+    tab.viewed.set_head_blobs(&tab.files, vec!["a".repeat(40)]);
+    tab.viewed.set(changed, true);
+    assert!(tab.viewed.is_viewed(changed));
     let mut listed = pr(1, "new");
     listed.title = "new title".into();
     sync_open_pr_from_list(&mut tab, &listed);
+    assert!(
+        !tab.viewed.is_viewed(changed),
+        "#351: the moved head's blobs are unknown until it is fetched"
+    );
     assert_eq!(tab.pr.title, "new title");
     assert_eq!(tab.pr.head_sha, "new");
     assert_eq!(
@@ -213,6 +222,7 @@ fn list_head_change_invalidates_then_local_reload_restores_the_open_tab() {
             path: "new.rs".into(),
             change: ChangeKind::Added,
         }],
+        vec!["b".repeat(40)],
     );
     assert_eq!(tab.head, CommitId("new".into()));
     assert_eq!(tab.files[0].path, std::path::PathBuf::from("new.rs"));

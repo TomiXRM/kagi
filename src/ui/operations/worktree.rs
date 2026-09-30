@@ -279,7 +279,7 @@ impl KagiApp {
 
     /// Open a backend `Backend`, returning `None` and setting the footer on
     /// failure. Shared by the four lifecycle open_* methods below.
-    pub(super) fn worktree_backend(&mut self, op: &str) -> Option<kagi_git::Backend> {
+    pub(crate) fn worktree_backend(&mut self, op: &str) -> Option<kagi_git::Backend> {
         let repo_path = self.repo_path.clone()?;
         match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => Some(r),

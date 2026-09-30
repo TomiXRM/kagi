@@ -157,6 +157,25 @@ pub fn note_ja(note: &WorktreeNote) -> String {
                 reason_display, name
             )
         }
+        WorktreeNote::AutoUnlockRefused { name, refusal } => {
+            use kagi_domain::worktree_autolock::AutoUnlockRefusal as R;
+            let why = match refusal {
+                R::NotLocked => "ロックされていません".to_string(),
+                R::NotAutoLock { reason: Some(r) } => format!(
+                    "手動でロックされています(「{}」)。Kagi がこの terminal のために置いたロックだけを自動解除します",
+                    r
+                ),
+                R::NotAutoLock { reason: None } => {
+                    "Kagi の token が無いロックです。Kagi がこの terminal のために置いたロックだけを自動解除します"
+                        .to_string()
+                }
+                R::TokenMismatch { found } => {
+                    format!("別の Kagi terminal がロックしています({})", found.reason())
+                }
+                R::IdentityMismatch => "この terminal がロックした worktree ではありません".to_string(),
+            };
+            format!("worktree `{}` は自動解除しません: {}。", name, why)
+        }
         WorktreeNote::PrunePreview {
             count,
             sample,
@@ -215,6 +234,9 @@ pub fn title_ja(title: &WorktreeTitle) -> String {
         WorktreeTitle::UnlockWorktree { name } => format!("worktree `{}` のロック解除", name),
         WorktreeTitle::RemoveWorktree { name } => format!("worktree `{}` の削除", name),
         WorktreeTitle::LockWorktree { name } => format!("worktree `{}` のロック", name),
+        WorktreeTitle::AutoUnlockWorktree { name } => {
+            format!("worktree `{}` の Kagi ロックを解除", name)
+        }
         WorktreeTitle::PruneWorktrees => "古い worktree の prune".to_string(),
         WorktreeTitle::RepairWorktrees => "worktree リンクの修復".to_string(),
     }

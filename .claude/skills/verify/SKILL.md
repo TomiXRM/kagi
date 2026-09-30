@@ -448,7 +448,7 @@ the row. On a clean fixture both plans must resolve the undecorated branch and
 show the typed other-worktree occupancy blocker. Enter must not change either
 worktree's HEAD/index/files; no untracked-file warning may mask auto-execution.
 The existing tree-glyph navigation checks still run. Backend regressions in
-`tests/ops_test.rs` cover main/linked occupancy, occupancy arising after approval,
+`crates/kagi-git/tests/ops_test.rs` cover main/linked occupancy, occupancy arising after approval,
 and successful checkout after the sibling detaches.
 
 App keybindings, command-registry keybindings, and native menus share their
@@ -715,7 +715,7 @@ never call raw executors or clear plan blockers. `tests/support/remove.rs` freez
 the opaque remove plan before any fixture drift. Compile-fail doctests guard old
 root/ops/conflicts/staging/step-runner imports. D/F fixtures check owner trust and
 frozen OID/child-list rejection through the dedicated Backend boundary.
-`tests/backend_fixture_storage_test.rs` drives the migrated branch adapter in
+`crates/kagi-git/tests/backend_fixture_storage_test.rs` drives the migrated branch adapter in
 the shared isolated child, asserts a record in its log directory and preserves
 a fake HOME oplog sentinel. Every new migrated fixture must use the same helper.
 

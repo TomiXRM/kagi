@@ -123,7 +123,12 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 1. Read or write the relevant ADR in `docs/adr/`.
    For decisions too small for an ADR, add one row to `docs/decisions.md`.
 2. Git operation? Add the `plan_/preflight_/execute_` triple in the matching
-   `crates/kagi-git/src/ops/<feature>.rs` module and a matching integration test in `tests/`.
+   `crates/kagi-git/src/ops/<feature>.rs` module and a matching integration test in
+   `crates/kagi-git/tests/` (#515: backend-only suites live with the crate they
+   verify, so `cargo test -p kagi-git` runs them without building the GPUI root;
+   root `tests/` keeps only suites that need `kagi::`, the `kagi` binary, shell or
+   remote). The shared fixture helpers stay in `tests/support/` and are included
+   from `crates/kagi-git/tests/` via `#[path = "../../../tests/support/…"]`.
 3. UI? Add `open_/confirm_/start_` methods on `KagiApp`; add the modal in
    `src/ui/modals.rs`.
 4. i18n: add EN **and** JA strings to the `Msg` enum in `src/ui/i18n.rs`.

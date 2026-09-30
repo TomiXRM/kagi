@@ -12,7 +12,10 @@
 //! - `HOME` and `XDG_CONFIG_HOME` point at an empty directory under Cargo's
 //!   target tmp dir, which also removes the global `git/ignore` and
 //!   `git/attributes` files that `GIT_CONFIG_GLOBAL` does not cover;
-//! - identity is fixed to [`NAME`] / [`EMAIL`], and prompts are off.
+//! - identity is fixed to [`NAME`] / [`EMAIL`], and prompts are off;
+//! - no detached background process is left behind (`maintenance.auto` /
+//!   `gc.auto` off, #819), so a fixture is complete the moment the command
+//!   returns and can be snapshotted or deleted without racing `git`.
 //!
 //! Only the spawned `git` process is isolated; the helper never changes the
 //! test process's environment. Code under test that runs *in process*
@@ -59,7 +62,20 @@ pub fn git_command(dir: &Path) -> Command {
         .env("GIT_AUTHOR_NAME", NAME)
         .env("GIT_AUTHOR_EMAIL", EMAIL)
         .env("GIT_COMMITTER_NAME", NAME)
-        .env("GIT_COMMITTER_EMAIL", EMAIL);
+        .env("GIT_COMMITTER_EMAIL", EMAIL)
+        // #819: `git commit` (and fetch/merge…) spawns `git maintenance run
+        // --auto --detach`, a detached process that briefly holds
+        // `.git/objects/maintenance.lock` *after* the fixture command has
+        // returned. A test that snapshots or deletes the repository right
+        // after building it then races that process (CI macOS caught the lock
+        // file in a "before" snapshot). Nothing in a fixture ever needs
+        // maintenance, so turn it off at the source; `gc.auto` covers the
+        // pre-`maintenance` path of older gits.
+        .env("GIT_CONFIG_COUNT", "2")
+        .env("GIT_CONFIG_KEY_0", "maintenance.auto")
+        .env("GIT_CONFIG_VALUE_0", "false")
+        .env("GIT_CONFIG_KEY_1", "gc.auto")
+        .env("GIT_CONFIG_VALUE_1", "0");
     cmd
 }
 

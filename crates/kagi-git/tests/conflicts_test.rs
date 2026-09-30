@@ -1,0 +1,2139 @@
+//! Integration tests for the conflict-resolution backend (W26-CONFLICT-CORE,
+//! T-CONFLICT-001 / 005 / 008 / 010).
+//!
+//! Real merge / cherry-pick conflicts are produced in `TempDir` repositories via
+//! the `git` CLI; no existing user repository is touched.  These tests cover:
+//!
+//! - session detection (op kind + file kinds incl. modify/delete + binary),
+//! - the resolution buffer (choices, undo, provenance),
+//! - autosave round-trip (under a redirected `KAGI_LOG_DIR`),
+//! - the marker-residue gate blocking continue,
+//! - abort restoring the pre-op state with the buffer retained.
+
+#[path = "../../../tests/support/backend_ops.rs"]
+mod backend_ops;
+use backend_ops::{
+    execute_conflict_abort, execute_conflict_continue, execute_conflict_save,
+    execute_conflict_skip, execute_merge_commit,
+};
+use std::path::Path;
+
+use git2::Repository;
+use tempfile::TempDir;
+
+#[path = "../../../tests/support/isolated.rs"]
+mod test_support;
+
+#[path = "../../../tests/support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, git_output, git_succeeds as git_allow_fail, init_repo, write_file};
+
+use kagi_git::{
+    continue_blockers, detect_conflict_session, plan_conflict_abort, plan_conflict_continue,
+    plan_conflict_skip, ConflictKind, ConflictOp, LineOrigin, ResolutionBuffer, ResolutionChoice,
+    SkipProgress,
+};
+
+fn write_binary(dir: &Path, name: &str, content: &[u8]) {
+    std::fs::write(dir.join(name), content).expect("write_binary failed");
+}
+
+// ────────────────────────────────────────────────────────────
+// Fixtures
+// ────────────────────────────────────────────────────────────
+
+/// Build a repo with a content merge conflict on `file.txt` and return the
+/// TempDir.  After this, `git merge feature` has left the repo in the merge
+/// conflict state.
+fn merge_conflict_repo() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir, "main");
+
+    write_file(dir, "file.txt", "line one\nshared\nline three\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    // feature branch changes the middle line one way.
+    git(dir, &["checkout", "-q", "-b", "feature"]);
+    write_file(dir, "file.txt", "line one\nFEATURE change\nline three\n");
+    git(dir, &["commit", "-qam", "feature change"]);
+
+    // main changes the same line a different way.
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(dir, "file.txt", "line one\nMAIN change\nline three\n");
+    git(dir, &["commit", "-qam", "main change"]);
+
+    // Merge feature → conflict.
+    git_allow_fail(dir, &["merge", "feature"]);
+
+    tmp
+}
+
+// ────────────────────────────────────────────────────────────
+// T-CONFLICT-001: detection
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn detects_merge_session_with_content_conflict() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = merge_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+
+    let session = detect_conflict_session(&repo).expect("expected a merge conflict session");
+    match &session.op {
+        ConflictOp::Merge { incoming, .. } => {
+            assert!(incoming.is_some(), "MERGE_HEAD sha should be readable");
+        }
+        other => panic!("expected Merge op, got {:?}", other),
+    }
+    assert_eq!(session.total_count(), 1);
+    assert_eq!(session.unresolved_count(), 1);
+    assert_eq!(session.files[0].path.to_string_lossy(), "file.txt");
+    assert_eq!(session.files[0].kind, ConflictKind::Content);
+}
+
+#[test]
+fn no_session_on_clean_repo() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir, "main");
+    write_file(dir, "a.txt", "hi\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "init"]);
+
+    let repo = Repository::open(dir).unwrap();
+    assert!(detect_conflict_session(&repo).is_none());
+}
+
+#[test]
+fn detects_cherry_pick_session() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir, "main");
+
+    write_file(dir, "file.txt", "base\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    // A side branch with a conflicting change to cherry-pick.
+    git(dir, &["checkout", "-q", "-b", "side"]);
+    write_file(dir, "file.txt", "SIDE\n");
+    git(dir, &["commit", "-qam", "side change"]);
+    let side_sha = git_output(dir, &["rev-parse", "HEAD"]);
+
+    // main diverges on the same line.
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(dir, "file.txt", "MAIN\n");
+    git(dir, &["commit", "-qam", "main change"]);
+
+    git_allow_fail(dir, &["cherry-pick", &side_sha]);
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("expected cherry-pick session");
+    match &session.op {
+        ConflictOp::CherryPick {
+            source,
+            source_summary,
+        } => {
+            assert!(source.is_some(), "CHERRY_PICK_HEAD sha should be readable");
+            assert_eq!(source_summary.as_deref(), Some("side change"));
+        }
+        other => panic!("expected CherryPick op, got {:?}", other),
+    }
+    assert_eq!(session.files[0].kind, ConflictKind::Content);
+}
+
+#[test]
+fn classifies_modify_delete_conflict() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir, "main");
+
+    write_file(dir, "doomed.txt", "original\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    // feature deletes the file.
+    git(dir, &["checkout", "-q", "-b", "feature"]);
+    git(dir, &["rm", "-q", "doomed.txt"]);
+    git(dir, &["commit", "-qm", "delete doomed"]);
+
+    // main modifies it.
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(dir, "doomed.txt", "MODIFIED\n");
+    git(dir, &["commit", "-qam", "modify doomed"]);
+
+    git_allow_fail(dir, &["merge", "feature"]);
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("expected modify/delete session");
+    let file = session
+        .files
+        .iter()
+        .find(|f| f.path.to_string_lossy() == "doomed.txt")
+        .expect("doomed.txt should be a conflict");
+    assert_eq!(file.kind, ConflictKind::ModifyDelete);
+}
+
+#[test]
+fn classifies_binary_conflict() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir, "main");
+
+    // A blob with NUL bytes → binary.
+    write_binary(dir, "img.bin", &[0u8, 1, 2, 3, 0, 9, 8]);
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base binary"]);
+
+    git(dir, &["checkout", "-q", "-b", "feature"]);
+    write_binary(dir, "img.bin", &[0u8, 1, 2, 3, 0, 99, 88]);
+    git(dir, &["commit", "-qam", "feature binary"]);
+
+    git(dir, &["checkout", "-q", "main"]);
+    write_binary(dir, "img.bin", &[0u8, 1, 2, 3, 0, 77, 66]);
+    git(dir, &["commit", "-qam", "main binary"]);
+
+    git_allow_fail(dir, &["merge", "feature"]);
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("expected binary conflict session");
+    let file = session
+        .files
+        .iter()
+        .find(|f| f.path.to_string_lossy() == "img.bin")
+        .expect("img.bin should be a conflict");
+    assert_eq!(file.kind, ConflictKind::Binary);
+}
+
+// ────────────────────────────────────────────────────────────
+// add/add conflict (no common base) is a TEXT merge, not "binary"
+// (regression: add/add .h files showed as "binary / single-sided")
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn add_add_text_conflict_materializes_as_text() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir, "main");
+
+    // Common ancestor has NO header.h.
+    write_file(dir, "README", "base\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    // feature adds header.h one way.
+    git(dir, &["checkout", "-q", "-b", "feature"]);
+    write_file(
+        dir,
+        "header.h",
+        "#ifndef H\n#define H\nint feature_fn(void);\n#endif\n",
+    );
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "feature header"]);
+
+    // main adds header.h a different way → add/add (no common base).
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(
+        dir,
+        "header.h",
+        "#ifndef H\n#define H\nint main_fn(void);\n#endif\n",
+    );
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "main header"]);
+
+    git_allow_fail(dir, &["merge", "feature"]);
+
+    let repo = Repository::open(dir).unwrap();
+
+    // Classified as a text Content conflict (not Binary).
+    let session = detect_conflict_session(&repo).expect("conflict session");
+    let file = session
+        .files
+        .iter()
+        .find(|f| f.path.to_string_lossy() == "header.h")
+        .expect("header.h should be a conflict");
+    assert_eq!(
+        file.kind,
+        ConflictKind::AddAdd,
+        "an add/add text file must be classified AddAdd (not Binary/Content)"
+    );
+
+    // The fix: an add/add text conflict materializes to marker text (it returned
+    // None before — no ancestor stage for merge_file_from_index — so the editor
+    // wrongly showed the "binary / single-sided" message).
+    let mut buffer = ResolutionBuffer::from_repo(&repo).expect("build buffer");
+    let path = Path::new("header.h");
+    let markers = buffer
+        .materialized_markers(&repo, path)
+        .expect("add/add text conflict must materialize markers (regression: was None)");
+    assert!(
+        markers.contains("feature_fn(void)") && markers.contains("main_fn(void)"),
+        "markers must show both sides:\n{markers}"
+    );
+
+    // And a hunk model builds from those markers (so the editor shows hunks).
+    assert!(
+        buffer.ensure_hunks(path, &markers),
+        "ensure_hunks should succeed"
+    );
+    assert!(
+        buffer.hunk_model(path).is_some(),
+        "a hunk model must exist for an add/add text conflict"
+    );
+}
+
+// ────────────────────────────────────────────────────────────
+// T-CONFLICT-005: resolution buffer
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn buffer_choices_undo_and_provenance() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = merge_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).expect("build buffer");
+    let path = Path::new("file.txt");
+
+    // Side texts were materialized from the index stages.
+    let (cur, inc) = buffer.sides(path).expect("sides");
+    assert!(cur.as_deref().unwrap().contains("MAIN change"));
+    assert!(inc.as_deref().unwrap().contains("FEATURE change"));
+
+    // Choose current → resolved text equals the current side, provenance Current.
+    buffer
+        .apply_choice(path, ResolutionChoice::Current)
+        .unwrap();
+    assert!(buffer.has_resolution(path));
+    assert!(buffer.resolved_text(path).unwrap().contains("MAIN change"));
+    assert!(buffer
+        .provenance(path)
+        .unwrap()
+        .iter()
+        .all(|o| *o == LineOrigin::Current));
+
+    // Both, current-first → both changes present in order.
+    buffer
+        .apply_choice(path, ResolutionChoice::BothCurrentFirst)
+        .unwrap();
+    let both = buffer.resolved_text(path).unwrap();
+    let main_idx = both.find("MAIN change").unwrap();
+    let feat_idx = both.find("FEATURE change").unwrap();
+    assert!(main_idx < feat_idx, "current side should come first");
+
+    // Undo returns to the Current-only resolution.
+    assert!(buffer.undo(path));
+    assert!(buffer.resolved_text(path).unwrap().contains("MAIN change"));
+    assert!(!buffer
+        .resolved_text(path)
+        .unwrap()
+        .contains("FEATURE change"));
+}
+
+#[test]
+fn buffer_autosave_round_trip() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = merge_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).expect("build buffer");
+    let path = Path::new("file.txt");
+    buffer
+        .apply_choice(path, ResolutionChoice::BothIncomingFirst)
+        .unwrap();
+
+    let saved_at = buffer.autosave().expect("autosave");
+    assert!(saved_at.exists(), "autosave file should exist");
+
+    let loaded = ResolutionBuffer::load(tmp.path()).expect("load buffer");
+    assert!(loaded.has_resolution(path));
+    assert_eq!(
+        loaded.resolved_text(path).unwrap(),
+        buffer.resolved_text(path).unwrap()
+    );
+    assert_eq!(
+        loaded.provenance(path).unwrap(),
+        buffer.provenance(path).unwrap()
+    );
+
+    ResolutionBuffer::clear(tmp.path()).unwrap();
+}
+
+#[test]
+fn buffer_autosave_preserves_legacy_surrogate_pairs() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().expect("repo key");
+    let saved_at = ResolutionBuffer::new(tmp.path())
+        .autosave()
+        .expect("autosave path");
+    std::fs::write(
+        saved_at,
+        r#"{"repo":"/old/location","updated":42,"files":[{"path":"score.txt","binary":false,"current":"ours \uD834\uDD1E\n","incoming":null,"result":[{"t":"merged \uD834\uDD1E \"quoted\"\\path\t\u0001","o":"m"}],"raw_result":null}]}"#,
+    )
+    .expect("write legacy record");
+    let path = Path::new("score.txt");
+    let expected = "merged \u{1D11E} \"quoted\"\\path\t\u{1}\n";
+    let loaded = ResolutionBuffer::load(tmp.path()).expect("load legacy buffer");
+    assert_eq!(loaded.repo_path(), tmp.path());
+    assert_eq!(loaded.resolved_text(path).as_deref(), Some(expected));
+    assert_eq!(
+        loaded.sides(path),
+        Some((Some("ours \u{1D11E}\n".into()), None))
+    );
+    assert_eq!(loaded.provenance(path), Some(vec![LineOrigin::Manual]));
+    loaded.autosave().expect("resave");
+    let reloaded = ResolutionBuffer::load(tmp.path()).expect("reload");
+    assert_eq!(reloaded.resolved_text(path).as_deref(), Some(expected));
+    assert_eq!(reloaded.sides(path), loaded.sides(path));
+}
+
+// ────────────────────────────────────────────────────────────
+// T-CONFLICT-008: continue gate + abort
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn continue_blocked_until_resolved_and_marker_free() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = merge_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+
+    // 1. Empty buffer → unresolved blocker.
+    let empty = ResolutionBuffer::new(tmp.path());
+    let plan = plan_conflict_continue(&repo, &session, &empty).unwrap();
+    assert!(
+        plan.blockers
+            .iter()
+            .any(|b| b.message_en().contains("unresolved")),
+        "expected unresolved blocker, got {:?}",
+        plan.blockers
+    );
+
+    // 2. Resolution that still contains conflict markers → marker blocker.
+    let mut markered = ResolutionBuffer::from_repo(&repo).unwrap();
+    markered
+        .set_manual_text(
+            Path::new("file.txt"),
+            "<<<<<<< HEAD\nMAIN\n=======\nFEATURE\n>>>>>>> feature\n",
+        )
+        .unwrap();
+    let plan = plan_conflict_continue(&repo, &session, &markered).unwrap();
+    assert!(
+        plan.blockers
+            .iter()
+            .any(|b| b.message_en().contains("marker")),
+        "expected marker residue blocker, got {:?}",
+        plan.blockers
+    );
+
+    // 3. Clean resolution → no blockers.
+    let mut clean = ResolutionBuffer::from_repo(&repo).unwrap();
+    clean
+        .apply_choice(Path::new("file.txt"), ResolutionChoice::Current)
+        .unwrap();
+    let plan = plan_conflict_continue(&repo, &session, &clean).unwrap();
+    assert!(
+        plan.blockers.is_empty(),
+        "clean resolution should have no blockers, got {:?}",
+        plan.blockers
+    );
+}
+
+#[test]
+fn abort_restores_pre_op_state_and_retains_buffer() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = merge_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+
+    // The pre-merge HEAD ("main change") is recorded in ORIG_HEAD.
+    let orig_head = git_output(dir, &["rev-parse", "ORIG_HEAD"]);
+    assert!(!orig_head.is_empty());
+
+    let session = detect_conflict_session(&repo).unwrap();
+
+    // Partially resolve so the buffer has content worth preserving.
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .apply_choice(Path::new("file.txt"), ResolutionChoice::Incoming)
+        .unwrap();
+
+    // Plan is always available (no blockers).
+    let plan = plan_conflict_abort(&repo, &session).unwrap();
+    assert!(plan.blockers.is_empty());
+
+    // Execute abort.
+    let outcome = execute_conflict_abort(&repo, &session, &buffer).expect("abort");
+
+    // HEAD restored to the pre-op commit.
+    assert_eq!(outcome.restored_to.as_deref(), Some(orig_head.as_str()));
+    let head_now = git_output(dir, &["rev-parse", "HEAD"]);
+    assert_eq!(head_now, orig_head, "HEAD should be back at ORIG_HEAD");
+
+    // No longer mid-merge: MERGE_HEAD cleared, no conflict session.
+    assert!(!dir.join(".git").join("MERGE_HEAD").exists());
+    let repo2 = Repository::open(dir).unwrap();
+    assert!(detect_conflict_session(&repo2).is_none());
+
+    // Working tree restored to the pre-op content ("MAIN change").
+    let restored = std::fs::read_to_string(dir.join("file.txt")).unwrap();
+    assert!(restored.contains("MAIN change"));
+    assert!(
+        !restored.contains("<<<<<<<"),
+        "no conflict markers should remain"
+    );
+
+    // The buffer was preserved to the autosave dir.
+    let preserved = outcome.buffer_preserved_at.expect("buffer preserved path");
+    assert!(preserved.exists(), "preserved buffer file should exist");
+    let reloaded = ResolutionBuffer::load(dir).expect("reload preserved buffer");
+    assert!(reloaded.has_resolution(Path::new("file.txt")));
+
+    ResolutionBuffer::clear(dir).unwrap();
+}
+
+#[test]
+fn execute_continue_merge_creates_merge_commit() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = merge_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .apply_choice(Path::new("file.txt"), ResolutionChoice::BothCurrentFirst)
+        .unwrap();
+
+    let outcome = execute_conflict_continue(&repo, dir, &session, &buffer).expect("continue merge");
+    match outcome.outcome {
+        kagi_git::ContinueOutcome::Committed(id) => {
+            // The new commit is a merge (two parents).
+            let parents = git_output(dir, &["rev-list", "--parents", "-n", "1", &id.0]);
+            let count = parents.split_whitespace().count();
+            assert_eq!(count, 3, "merge commit should have 2 parents (3 hashes)");
+        }
+        other => panic!("expected Committed, got {:?}", other),
+    }
+
+    // Repo is no longer mid-merge.
+    assert!(detect_conflict_session(&repo).is_none());
+    let content = std::fs::read_to_string(dir.join("file.txt")).unwrap();
+    assert!(content.contains("MAIN change") && content.contains("FEATURE change"));
+}
+
+/// The bug this test guards against: `execute_conflict_continue` for a
+/// sequencer op (cherry-pick here; rebase shares the same code path) used to
+/// only stage the resolution and stop — never actually advancing the
+/// sequence. A user who resolved a cherry-pick/rebase conflict in kagi had no
+/// way to finish it without dropping to a terminal.
+#[test]
+fn execute_continue_cherry_pick_advances_and_finishes() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = cherry_pick_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    assert!(matches!(session.op, ConflictOp::CherryPick { .. }));
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .apply_choice(Path::new("file.txt"), ResolutionChoice::Incoming)
+        .unwrap();
+
+    let outcome =
+        execute_conflict_continue(&repo, dir, &session, &buffer).expect("continue cherry-pick");
+    match outcome.outcome {
+        kagi_git::ContinueOutcome::Committed(id) => {
+            // A real commit was created (not just staged) with a single parent
+            // (cherry-pick, not a merge).
+            let parents = git_output(dir, &["rev-list", "--parents", "-n", "1", &id.0]);
+            assert_eq!(
+                parents.split_whitespace().count(),
+                2,
+                "cherry-pick commit should have exactly 1 parent"
+            );
+        }
+        other => panic!("expected Committed (sequence finished), got {:?}", other),
+    }
+
+    // The sequence is fully finished: no CHERRY_PICK_HEAD, no conflict session.
+    assert!(!dir.join(".git").join("CHERRY_PICK_HEAD").exists());
+    let repo2 = Repository::open(dir).unwrap();
+    assert!(detect_conflict_session(&repo2).is_none());
+
+    // The resolution (Incoming = "SIDE") made it into the finished commit.
+    let content = std::fs::read_to_string(dir.join("file.txt")).unwrap();
+    assert!(content.contains("SIDE"), "got {:?}", content);
+    assert!(!content.contains("<<<<<<<"), "no markers should remain");
+}
+
+/// Same guard as the cherry-pick test above, for rebase specifically — the
+/// feature this fixes exists to unblock ("Rebase current onto").
+#[test]
+fn execute_continue_rebase_advances_and_finishes() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = rebase_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    assert!(matches!(session.op, ConflictOp::Rebase { .. }));
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .apply_choice(Path::new("file.txt"), ResolutionChoice::Incoming)
+        .unwrap();
+
+    let outcome =
+        execute_conflict_continue(&repo, dir, &session, &buffer).expect("continue rebase");
+    assert!(
+        matches!(outcome.outcome, kagi_git::ContinueOutcome::Committed(_)),
+        "single-commit rebase should finish in one continue, got {:?}",
+        outcome
+    );
+
+    // No longer mid-rebase.
+    assert!(!dir.join(".git").join("rebase-merge").exists());
+    let repo2 = Repository::open(dir).unwrap();
+    assert!(detect_conflict_session(&repo2).is_none());
+
+    // `side` now sits on top of `main`: its tip's parent is main's tip.
+    let side_tip = git_output(dir, &["rev-parse", "side"]);
+    let side_parent = git_output(dir, &["rev-parse", &format!("{}^", side_tip)]);
+    let main_tip = git_output(dir, &["rev-parse", "main"]);
+    assert_eq!(
+        side_parent, main_tip,
+        "side's replayed commit should now be a child of main's tip"
+    );
+
+    let content = std::fs::read_to_string(dir.join("file.txt")).unwrap();
+    assert!(content.contains("SIDE"), "got {:?}", content);
+    assert!(!content.contains("<<<<<<<"), "no markers should remain");
+}
+
+/// Regression: the UI merge route is `stage_conflict_resolution` (on Continue)
+/// → `execute_merge_commit` (commit panel button), with NO per-file Save in
+/// between. The user reported the commit panel could not commit because the
+/// index still held unmerged entries (Commit disabled / merge commit refused).
+/// Staging on Continue must collapse the conflict so the commit succeeds.
+#[test]
+fn stage_then_merge_commit_without_per_file_save() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = merge_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+
+    // Resolve only in the buffer — do NOT call execute_conflict_save.
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .apply_choice(Path::new("file.txt"), ResolutionChoice::BothCurrentFirst)
+        .unwrap();
+
+    // Before staging: the index is still conflicted (this is the bug state).
+    assert!(
+        repo.index().unwrap().has_conflicts(),
+        "precondition: index is unmerged before Continue stages it"
+    );
+
+    // Continue route stages the resolution into the index.
+    backend_ops::stage_conflict_resolution(&repo, &session, &buffer).expect("stage on continue");
+
+    let index = repo.index().unwrap();
+    assert!(
+        !index.has_conflicts(),
+        "staging must collapse stages 1/2/3 → stage 0 (no unmerged entries)"
+    );
+    // The commit panel reads staged files from the index — must be non-empty.
+    assert!(
+        index.get_path(Path::new("file.txt"), 0).is_some(),
+        "file.txt must be staged at stage 0 so the Commit button enables"
+    );
+
+    // Commit panel button → execute_merge_commit now succeeds (it would have
+    // refused the conflicted index before).
+    let id = execute_merge_commit(&repo, "Merge feature into main")
+        .expect("merge commit from staged index");
+    let parents = git_output(dir, &["rev-list", "--parents", "-n", "1", &id.0]);
+    assert_eq!(
+        parents.split_whitespace().count(),
+        3,
+        "merge commit should have 2 parents"
+    );
+    assert!(
+        detect_conflict_session(&repo).is_none(),
+        "merge state cleared"
+    );
+}
+
+// ────────────────────────────────────────────────────────────
+// W32-CONFLICT-EDITOR: hunk-level model over a real multi-hunk conflict
+// ────────────────────────────────────────────────────────────
+
+/// Build a repo whose `file.txt` conflicts in TWO separate places (top and
+/// bottom), with an unchanged middle, so the materialization has two hunks
+/// separated by passthrough context.
+fn two_hunk_conflict_repo() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir, "main");
+
+    write_file(
+        dir,
+        "file.txt",
+        "top base\nmid 1\nmid 2\nmid 3\nbottom base\n",
+    );
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    git(dir, &["checkout", "-q", "-b", "feature"]);
+    write_file(
+        dir,
+        "file.txt",
+        "top FEATURE\nmid 1\nmid 2\nmid 3\nbottom FEATURE\n",
+    );
+    git(dir, &["commit", "-qam", "feature edits top+bottom"]);
+
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(
+        dir,
+        "file.txt",
+        "top MAIN\nmid 1\nmid 2\nmid 3\nbottom MAIN\n",
+    );
+    git(dir, &["commit", "-qam", "main edits top+bottom"]);
+
+    git_allow_fail(dir, &["merge", "feature"]);
+    tmp
+}
+
+#[test]
+fn hunk_model_splits_real_multi_hunk_conflict_and_assembles_marker_free() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    use kagi_git::resolution::HunkChoice;
+
+    let tmp = two_hunk_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    let path = Path::new("file.txt");
+
+    // Materialize zdiff3 markers and decompose into hunks.
+    let markers = buffer
+        .materialized_markers(&repo, path)
+        .expect("zdiff3 materialization");
+    assert!(buffer.ensure_hunks(path, &markers));
+    assert_eq!(buffer.hunk_count(path), 2, "two separate conflict hunks");
+
+    // Resolve hunk 0 → current, hunk 1 → incoming.
+    assert!(buffer.apply_hunk_choice(path, 0, HunkChoice::AcceptCurrent));
+    assert!(buffer.apply_hunk_choice(path, 1, HunkChoice::AcceptIncoming));
+    assert!(buffer.hunks_all_resolved(path));
+
+    let text = buffer.resolved_text(path).expect("resolved text");
+    // Current branch is `main` (we merged feature into main).
+    assert!(
+        text.contains("top MAIN"),
+        "hunk 0 accepted current: {:?}",
+        text
+    );
+    assert!(
+        text.contains("bottom FEATURE"),
+        "hunk 1 accepted incoming: {:?}",
+        text
+    );
+    // Passthrough context preserved.
+    assert!(text.contains("mid 2"));
+    // Fully resolved → no markers.
+    assert!(
+        !kagi_git::text_has_conflict_marker(&text),
+        "assembled Result must be marker-free: {:?}",
+        text
+    );
+
+    // Provenance over the assembled lines.
+    let prov = buffer.provenance(path).expect("provenance");
+    use kagi_git::LineOrigin::*;
+    assert!(prov.contains(&Current));
+    assert!(prov.contains(&Incoming));
+    assert!(prov.contains(&Context));
+}
+
+#[test]
+fn hunk_reset_keeps_marker_residue_and_blocks_continue() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    use kagi_git::resolution::HunkChoice;
+
+    let tmp = two_hunk_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    let path = Path::new("file.txt");
+    let markers = buffer.materialized_markers(&repo, path).unwrap();
+    buffer.ensure_hunks(path, &markers);
+
+    buffer.apply_hunk_choice(path, 0, HunkChoice::AcceptCurrent);
+    buffer.apply_hunk_choice(path, 1, HunkChoice::AcceptIncoming);
+    assert!(buffer.files_with_marker_residue().is_empty());
+    assert!(!buffer.has_cached_marker_residue());
+
+    // Reset hunk 1 → it re-emits markers → residue → continue gate trips.
+    assert!(buffer.reset_hunk(path, 1));
+    assert!(!buffer.hunks_all_resolved(path));
+    assert_eq!(buffer.files_with_marker_residue(), vec![path.to_path_buf()]);
+    assert!(buffer.cached_marker_residue(path));
+    assert!(buffer.undo(path));
+    assert!(!buffer.has_cached_marker_residue());
+    assert!(buffer.files_with_marker_residue().is_empty());
+    assert!(buffer.redo(path));
+    assert!(buffer.has_cached_marker_residue());
+
+    let session = detect_conflict_session(&repo).unwrap();
+    let plan = plan_conflict_continue(&repo, &session, &buffer).unwrap();
+    assert!(
+        !plan.blockers.is_empty(),
+        "marker residue from a reset hunk must block continue"
+    );
+}
+
+// ────────────────────────────────────────────────────────────
+// T-043 / 044: strengthened continue gate (structured blockers)
+// ────────────────────────────────────────────────────────────
+
+#[test]
+fn continue_gate_reports_specific_blocker_codes() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = merge_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+
+    // Empty buffer → unresolved-files blocker code is present.
+    let empty = ResolutionBuffer::new(tmp.path());
+    let blockers = continue_blockers(&repo, &session, &empty);
+    assert!(
+        blockers.iter().any(|b| b.code() == "unresolved-files"),
+        "expected unresolved-files code, got {:?}",
+        blockers.iter().map(|b| b.code()).collect::<Vec<_>>()
+    );
+
+    // Clean resolution → no blockers, Continue allowed.
+    let mut clean = ResolutionBuffer::from_repo(&repo).unwrap();
+    clean
+        .apply_choice(Path::new("file.txt"), ResolutionChoice::Current)
+        .unwrap();
+    assert!(
+        continue_blockers(&repo, &session, &clean).is_empty(),
+        "clean resolution should clear every blocker"
+    );
+}
+
+#[test]
+fn continue_gate_flags_unresolved_binary_conflict() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = binary_merge_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    assert_eq!(session.files[0].kind, ConflictKind::Binary);
+
+    // Binary file unresolved → both unresolved-files AND binary-unresolved.
+    let empty = ResolutionBuffer::new(tmp.path());
+    let codes: Vec<&str> = continue_blockers(&repo, &session, &empty)
+        .iter()
+        .map(|b| b.code())
+        .collect();
+    assert!(codes.contains(&"binary-unresolved"), "got {:?}", codes);
+}
+
+// ────────────────────────────────────────────────────────────
+// T-042: sequencer skip (rebase / cherry-pick / revert only)
+// ────────────────────────────────────────────────────────────
+
+/// Build a repo mid cherry-pick conflict and return (TempDir, side_sha).
+fn cherry_pick_conflict_repo() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir, "main");
+
+    write_file(dir, "file.txt", "base\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    git(dir, &["checkout", "-q", "-b", "side"]);
+    write_file(dir, "file.txt", "SIDE\n");
+    git(dir, &["commit", "-qam", "side change"]);
+    let side_sha = git_output(dir, &["rev-parse", "HEAD"]);
+
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(dir, "file.txt", "MAIN\n");
+    git(dir, &["commit", "-qam", "main change"]);
+
+    git_allow_fail(dir, &["cherry-pick", &side_sha]);
+    tmp
+}
+
+/// Build a repo mid-rebase with a conflict, `side` being replayed onto `main`.
+fn rebase_conflict_repo() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir, "main");
+
+    write_file(dir, "file.txt", "base\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    git(dir, &["checkout", "-q", "-b", "side"]);
+    write_file(dir, "file.txt", "SIDE\n");
+    git(dir, &["commit", "-qam", "side change"]);
+
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(dir, "file.txt", "MAIN\n");
+    git(dir, &["commit", "-qam", "main change"]);
+
+    git(dir, &["checkout", "-q", "side"]);
+    git_allow_fail(dir, &["rebase", "main"]);
+    tmp
+}
+
+/// Build a binary merge conflict repo (both sides change a binary blob).
+fn binary_merge_conflict_repo() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir, "main");
+
+    write_binary(dir, "blob.bin", &[0u8, 1, 2, 3, 0, 4, 5]);
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    git(dir, &["checkout", "-q", "-b", "feature"]);
+    write_binary(dir, "blob.bin", &[0u8, 9, 9, 9, 0, 9, 9]);
+    git(dir, &["commit", "-qam", "feature blob"]);
+
+    git(dir, &["checkout", "-q", "main"]);
+    write_binary(dir, "blob.bin", &[0u8, 7, 7, 7, 0, 7, 7]);
+    git(dir, &["commit", "-qam", "main blob"]);
+
+    git_allow_fail(dir, &["merge", "feature"]);
+    tmp
+}
+
+#[test]
+fn skip_is_rejected_for_merge() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = merge_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    assert!(matches!(session.op, ConflictOp::Merge { .. }));
+    assert!(
+        plan_conflict_skip(&repo, &session).is_err(),
+        "merge has no skip — plan must error"
+    );
+}
+
+#[test]
+fn skip_cherry_pick_drops_current_step() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = cherry_pick_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    assert!(matches!(session.op, ConflictOp::CherryPick { .. }));
+
+    // Plan is always available (no blockers).
+    let plan = plan_conflict_skip(&repo, &session).expect("skip plan");
+    assert!(plan.blockers.is_empty());
+
+    // Partial resolution so the buffer is preserved.
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .apply_choice(Path::new("file.txt"), ResolutionChoice::Incoming)
+        .unwrap();
+
+    let head_before = git_output(dir, &["rev-parse", "HEAD"]);
+    let outcome = execute_conflict_skip(&repo, &session, &buffer).expect("skip exec");
+
+    // HEAD unchanged (the conflicting pick was dropped, not committed).
+    assert_eq!(outcome.head.as_deref(), Some(head_before.as_str()));
+
+    // No longer mid cherry-pick, working tree restored to HEAD ("MAIN").
+    assert!(!dir.join(".git").join("CHERRY_PICK_HEAD").exists());
+    let repo2 = Repository::open(dir).unwrap();
+    assert!(detect_conflict_session(&repo2).is_none());
+    let content = std::fs::read_to_string(dir.join("file.txt")).unwrap();
+    assert!(
+        content.contains("MAIN"),
+        "step changes dropped, got {:?}",
+        content
+    );
+    assert!(!content.contains("<<<<<<<"), "no markers should remain");
+
+    // A finished skip must not offer a draft from the discarded step.
+    assert!(outcome.buffer_preserved_at.is_none());
+    assert!(ResolutionBuffer::load(dir).is_none());
+}
+
+// ────────────────────────────────────────────────────────────
+// ADR-0068: Save / Continue / Commit responsibility split
+// (T-CONFLICT-FLOW-030/031/032, T-CONFLICT-UX-013/014)
+// ────────────────────────────────────────────────────────────
+
+/// Save resolution writes the working tree and STAGES the file: the index
+/// unmerged entries (stage 1/2/3) collapse to stage 0 (T-CONFLICT-UX-014).
+#[test]
+fn save_resolution_stages_file_to_stage_zero() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = merge_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let path = Path::new("file.txt");
+
+    // Index has the conflict (unmerged) before Save.
+    let index = repo.index().unwrap();
+    assert!(
+        index.has_conflicts(),
+        "index should be unmerged before Save"
+    );
+    drop(index);
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .apply_choice(path, ResolutionChoice::Current)
+        .unwrap();
+
+    let outcome = execute_conflict_save(&repo, &buffer, path).expect("save");
+    assert_eq!(outcome.path, path.to_path_buf());
+
+    // After Save the index has no conflicts and the path is at stage 0.
+    let repo2 = Repository::open(dir).unwrap();
+    let index2 = repo2.index().unwrap();
+    assert!(
+        !index2.has_conflicts(),
+        "Save must collapse stages → stage 0"
+    );
+    let entry = index2.get_path(path, 0);
+    assert!(
+        entry.is_some(),
+        "path must be present at stage 0 after Save"
+    );
+
+    // The working tree holds the resolved (current) text, marker-free.
+    let wt = std::fs::read_to_string(dir.join("file.txt")).unwrap();
+    assert!(
+        wt.contains("MAIN change"),
+        "working tree has resolved text: {:?}",
+        wt
+    );
+    assert!(!kagi_git::text_has_conflict_marker(&wt));
+}
+
+/// Save refuses (blocks) when the resolved text still has conflict markers.
+#[test]
+fn save_resolution_blocks_on_marker_residue() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = merge_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let path = Path::new("file.txt");
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .set_manual_text(path, "<<<<<<< x\nMAIN\n=======\nFEATURE\n>>>>>>> y\n")
+        .unwrap();
+
+    assert!(
+        execute_conflict_save(&repo, &buffer, path).is_err(),
+        "Save must block while conflict markers remain"
+    );
+    // The index must still be unmerged (nothing staged on a blocked save).
+    let index = repo.index().unwrap();
+    assert!(
+        index.has_conflicts(),
+        "blocked Save must not stage the file"
+    );
+}
+
+/// merge Continue does NOT create a commit — it routes to the commit message
+/// panel (T-CONFLICT-FLOW-030).  HEAD is unchanged after routing.
+#[test]
+fn merge_continue_routes_to_commit_panel_without_committing() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    use kagi_git::{plan_conflict_continue_route, ContinueRoute};
+
+    let tmp = merge_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    let path = Path::new("file.txt");
+
+    let head_before = git_output(dir, &["rev-parse", "HEAD"]);
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .apply_choice(path, ResolutionChoice::Current)
+        .unwrap();
+
+    let route = plan_conflict_continue_route(&repo, &session, &buffer, "main").expect("route");
+    match route {
+        ContinueRoute::MergeCommitPanel { message } => {
+            assert!(
+                message.to_lowercase().contains("merge"),
+                "merge message prefilled: {:?}",
+                message
+            );
+        }
+        other => panic!("merge must route to the commit panel, got {:?}", other),
+    }
+
+    // No commit was created by routing.
+    let head_after = git_output(dir, &["rev-parse", "HEAD"]);
+    assert_eq!(head_before, head_after, "routing must NOT create a commit");
+    // Still mid-merge (MERGE_HEAD present).
+    assert!(dir.join(".git").join("MERGE_HEAD").exists());
+}
+
+/// The merge commit, created from the commit-panel button, has TWO parents
+/// (HEAD + MERGE_HEAD) and cleans up the merge state (T-CONFLICT-FLOW-031).
+#[test]
+fn merge_commit_has_two_parents_and_cleans_state() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = merge_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let path = Path::new("file.txt");
+
+    let backend = kagi_git::Backend::open(dir).unwrap();
+    assert!(backend
+        .plan_merge_commit("merge")
+        .unwrap()
+        .blockers
+        .iter()
+        .any(|note| matches!(
+            note,
+            kagi_domain::plan_note::PlanNote::Commit(
+                kagi_domain::plan_note::commit::CommitNote::ConflictedFiles { .. }
+            )
+        )));
+
+    // Save the resolution (stages the file).
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .apply_choice(path, ResolutionChoice::Current)
+        .unwrap();
+    execute_conflict_save(&repo, &buffer, path).expect("save");
+
+    // Create the merge commit with the panel's edited message.
+    let repo2 = Repository::open(dir).unwrap();
+    let id = execute_merge_commit(&repo2, "Merge feature into main").expect("merge commit");
+
+    // Two parents, custom message, state cleaned.
+    let repo3 = Repository::open(dir).unwrap();
+    let oid = git2::Oid::from_str(&id.0).unwrap();
+    let commit = repo3.find_commit(oid).unwrap();
+    assert_eq!(
+        commit.parent_count(),
+        2,
+        "merge commit must have two parents"
+    );
+    assert_eq!(commit.message().unwrap().trim(), "Merge feature into main");
+    assert!(
+        !dir.join(".git").join("MERGE_HEAD").exists(),
+        "MERGE_HEAD cleaned"
+    );
+    assert!(
+        detect_conflict_session(&repo3).is_none(),
+        "no longer in conflict"
+    );
+    let clean_plan = backend.plan_merge_commit("not an active merge").unwrap();
+    assert!(clean_plan.blockers.iter().any(|note| matches!(
+        note,
+        kagi_domain::plan_note::PlanNote::Commit(
+            kagi_domain::plan_note::commit::CommitNote::NothingStaged
+        )
+    )));
+}
+
+/// A sequencer (cherry-pick) Continue produces a `--continue` OperationPlan,
+/// not a merge-commit-panel route (T-CONFLICT-FLOW-032).
+#[test]
+fn sequencer_continue_produces_a_plan() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    use kagi_git::{plan_conflict_continue_route, ContinueRoute};
+
+    let tmp = cherry_pick_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    assert!(matches!(session.op, ConflictOp::CherryPick { .. }));
+    let path = Path::new("file.txt");
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .apply_choice(path, ResolutionChoice::Incoming)
+        .unwrap();
+
+    let route = plan_conflict_continue_route(&repo, &session, &buffer, "main").expect("route");
+    match route {
+        ContinueRoute::SequencerPlan(plan) => {
+            assert!(plan.blockers.is_empty(), "resolved → no blockers");
+            assert!(
+                plan.title.message_en().contains("cherry-pick"),
+                "plan titled for the op: {}",
+                plan.title
+            );
+        }
+        other => panic!("sequencer must produce a plan, got {:?}", other),
+    }
+}
+
+/// Per-hunk accept is independent: each hunk's choice can differ, and changing
+/// one hunk does not alter another (T-CONFLICT-UX-010/012).
+#[test]
+fn per_hunk_accept_is_independent() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    use kagi_git::resolution::{HunkChoice, Region};
+
+    let tmp = two_hunk_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let path = Path::new("file.txt");
+
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    let markers = buffer.materialized_markers(&repo, path).unwrap();
+    buffer.ensure_hunks(path, &markers);
+    assert_eq!(buffer.hunk_count(path), 2);
+
+    // Hunk 0 → current, hunk 1 left unresolved.
+    assert!(buffer.apply_hunk_choice(path, 0, HunkChoice::AcceptCurrent));
+    {
+        let model = buffer.hunk_model(path).unwrap();
+        let hunks: Vec<_> = model
+            .regions
+            .iter()
+            .filter_map(|r| match r {
+                Region::Hunk(h) => Some(h),
+                Region::Passthrough(_) => None,
+            })
+            .collect();
+        assert_eq!(hunks[0].choice, HunkChoice::AcceptCurrent);
+        assert_eq!(hunks[1].choice, HunkChoice::Unresolved, "hunk 1 untouched");
+    }
+
+    // Now hunk 1 → incoming; hunk 0 stays current (independent).
+    assert!(buffer.apply_hunk_choice(path, 1, HunkChoice::AcceptIncoming));
+    {
+        let model = buffer.hunk_model(path).unwrap();
+        let hunks: Vec<_> = model
+            .regions
+            .iter()
+            .filter_map(|r| match r {
+                Region::Hunk(h) => Some(h),
+                Region::Passthrough(_) => None,
+            })
+            .collect();
+        assert_eq!(
+            hunks[0].choice,
+            HunkChoice::AcceptCurrent,
+            "hunk 0 unchanged"
+        );
+        assert_eq!(hunks[1].choice, HunkChoice::AcceptIncoming);
+    }
+}
+
+// ────────────────────────────────────────────────────────────
+// Issue #278 — abort must roll back the WHOLE merge result tree
+// ────────────────────────────────────────────────────────────
+
+/// Merge with one conflicting file, two cleanly-merged files, one file the
+/// merge adds, and one file the user dirtied that the merge never touches.
+fn wide_merge_conflict_repo() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir, "main");
+
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    write_file(dir, "a.txt", "base a\n");
+    write_file(dir, "b.txt", "base b\n");
+    write_file(dir, "sub/c.txt", "base c\n");
+    write_file(dir, "untouched.txt", "base untouched\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    // feature: touches all three + adds one file.
+    git(dir, &["checkout", "-q", "-b", "feature"]);
+    write_file(dir, "a.txt", "FEATURE a\n");
+    write_file(dir, "b.txt", "FEATURE b\n");
+    write_file(dir, "sub/c.txt", "FEATURE c\n");
+    write_file(dir, "added.txt", "FEATURE added\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "feature change"]);
+
+    // main: touches only a.txt → a.txt conflicts, b/c merge cleanly.
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(dir, "a.txt", "MAIN a\n");
+    git(dir, &["commit", "-qam", "main change"]);
+
+    // The user has an unrelated dirty file the merge never looks at.
+    write_file(dir, "untouched.txt", "USER EDIT\n");
+
+    git_allow_fail(dir, &["merge", "feature"]);
+    tmp
+}
+
+#[test]
+fn abort_restores_cleanly_merged_files_and_removes_added_files() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+
+    // Pre-condition: the merge really did write the clean side to disk.
+    assert_eq!(
+        std::fs::read_to_string(dir.join("b.txt")).unwrap(),
+        "FEATURE b\n"
+    );
+    assert!(dir.join("added.txt").exists());
+
+    let session = detect_conflict_session(&repo).expect("merge conflict session");
+    assert_eq!(session.files.len(), 1, "only a.txt conflicts");
+
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    execute_conflict_abort(&repo, &session, &buffer).expect("abort");
+
+    // Conflicting file back to the pre-merge content, no markers.
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "MAIN a\n"
+    );
+    // Cleanly-merged incoming files rolled back (the #278 regression).
+    assert_eq!(
+        std::fs::read_to_string(dir.join("b.txt")).unwrap(),
+        "base b\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("sub/c.txt")).unwrap(),
+        "base c\n"
+    );
+    // File the merge added is gone (real `git merge --abort` behaviour).
+    assert!(
+        !dir.join("added.txt").exists(),
+        "merge-added file must be removed by abort"
+    );
+    // The user's own dirty file — untouched by the merge — survives.
+    assert_eq!(
+        std::fs::read_to_string(dir.join("untouched.txt")).unwrap(),
+        "USER EDIT\n"
+    );
+
+    // Nothing else stray: the ONLY working-tree difference is the user's file,
+    // and it is unstaged (`git_output` trims, so the porcelain XY column is
+    // checked via the two diff lists instead).
+    assert_eq!(
+        git_output(dir, &["status", "--porcelain"]),
+        "M untouched.txt",
+        "abort left stray changes"
+    );
+    assert_eq!(git_output(dir, &["diff", "--name-only"]), "untouched.txt");
+    assert_eq!(git_output(dir, &["diff", "--cached", "--name-only"]), "");
+}
+
+#[test]
+fn abort_leaves_status_clean_without_user_dirt() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+    // Undo the deliberate user dirt so the tree should end up perfectly clean.
+    write_file(dir, "untouched.txt", "base untouched\n");
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("merge conflict session");
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    execute_conflict_abort(&repo, &session, &buffer).expect("abort");
+
+    assert_eq!(
+        git_output(dir, &["status", "--porcelain"]),
+        "",
+        "`git status --porcelain` must be empty after abort"
+    );
+}
+
+/// Rebase of two commits onto `main` where the FIRST replayed commit conflicts
+/// and the second is independent — so skipping must keep the second pick.
+fn rebase_two_step_conflict_repo() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir, "main");
+
+    write_file(dir, "file.txt", "base\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    git(dir, &["checkout", "-q", "-b", "side"]);
+    write_file(dir, "file.txt", "SIDE\n");
+    git(dir, &["commit", "-qam", "side change"]);
+    write_file(dir, "later.txt", "LATER\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "later commit"]);
+
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(dir, "file.txt", "MAIN\n");
+    git(dir, &["commit", "-qam", "main change"]);
+
+    git(dir, &["checkout", "-q", "side"]);
+    git_allow_fail(dir, &["rebase", "main"]);
+    tmp
+}
+
+#[test]
+fn skip_keeps_the_remaining_sequencer_picks() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = rebase_two_step_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("rebase conflict session");
+    assert!(matches!(session.op, ConflictOp::Rebase { .. }));
+    assert!(
+        !dir.join("later.txt").exists(),
+        "the second pick has not been replayed yet"
+    );
+
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    execute_conflict_skip(&repo, &session, &buffer).expect("skip exec");
+
+    // The conflicting pick was dropped …
+    assert_eq!(
+        std::fs::read_to_string(dir.join("file.txt")).unwrap(),
+        "MAIN\n"
+    );
+    // … but the REST of the sequence survived and was replayed (#278: the old
+    // `cleanup_state()` deleted rebase-merge/ and lost it silently).
+    assert!(
+        dir.join("later.txt").exists(),
+        "remaining pick must still be applied after skip"
+    );
+    let subjects = git_output(dir, &["log", "--format=%s", "-3"]);
+    assert!(
+        subjects.contains("later commit"),
+        "remaining pick must be committed, log was {:?}",
+        subjects
+    );
+
+    // The rebase finished cleanly: no sequencer state, HEAD attached to `side`.
+    let repo2 = Repository::open(dir).unwrap();
+    assert!(detect_conflict_session(&repo2).is_none());
+    assert_eq!(
+        git_output(dir, &["rev-parse", "--abbrev-ref", "HEAD"]),
+        "side"
+    );
+    assert_eq!(git_output(dir, &["status", "--porcelain"]), "");
+}
+
+/// A cleanly-merged file edited DURING Conflict Mode must block the abort.
+///
+/// The abort's checkout is a pathspec-bounded force, justified by "whatever
+/// stands at a touched path is the operation's output" — true when the
+/// conflict state was entered, but the user can edit a non-conflicted file
+/// through the Editor before aborting. Real git refuses here
+/// ("Entry 'b.txt' not uptodate. Cannot merge.", verified against git 2.x);
+/// kagi must not silently destroy what git protects.
+#[test]
+fn abort_refuses_when_a_cleanly_merged_file_was_edited_mid_conflict() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("merge conflict session");
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+
+    // The user edits a file the merge resolved cleanly.
+    std::fs::write(dir.join("b.txt"), "USER MID-MERGE EDIT\n").unwrap();
+
+    let err = execute_conflict_abort(&repo, &session, &buffer)
+        .expect_err("abort must refuse rather than overwrite the user's edit");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("b.txt"),
+        "the refusal must name the file: {msg}"
+    );
+
+    // Nothing was mutated: the edit survives and the conflict state is intact.
+    assert_eq!(
+        std::fs::read_to_string(dir.join("b.txt")).unwrap(),
+        "USER MID-MERGE EDIT\n"
+    );
+    assert!(
+        dir.join(".git/MERGE_HEAD").exists(),
+        "the refusal must leave the conflicted state fully intact"
+    );
+
+    // Reverting the edit unblocks the abort; editing the CONFLICTED file does
+    // not block it (abort discards resolution progress by design).
+    std::fs::write(dir.join("b.txt"), "FEATURE b\n").unwrap();
+    std::fs::write(dir.join("a.txt"), "half-resolved scribble\n").unwrap();
+    execute_conflict_abort(&repo, &session, &buffer).expect("abort after revert");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "MAIN a\n"
+    );
+}
+
+/// #307: a non-conflicted file edited AND **staged** mid-conflict must block the
+/// abort too. The old `diff_index_to_workdir` guard missed this: `git add` makes
+/// index == workdir, so no delta showed, and `index.read_tree` + the pathspec
+/// force-checkout then wiped the staged content from both index and working tree.
+/// Real `git merge --abort` (= `reset --merge`) refuses to lose staged work, and
+/// kagi (safety-first) must too. The guard now reconstructs the merge's own clean
+/// output and refuses when the staged blob differs from it.
+#[test]
+fn abort_refuses_when_a_non_conflicted_file_was_staged_mid_conflict() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+    // Drop the fixture's unrelated dirt so the staged b.txt is the ONLY blocker
+    // (keeps the mutation-check unambiguous).
+    write_file(dir, "untouched.txt", "base untouched\n");
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("merge conflict session");
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+
+    // The user edits a cleanly-merged (non-conflicted) file AND stages it, so
+    // index == workdir — exactly the case the old guard could not see.
+    write_file(dir, "b.txt", "USER STAGED EDIT\n");
+    git(dir, &["add", "b.txt"]);
+    assert_eq!(
+        git_output(dir, &["show", ":b.txt"]),
+        "USER STAGED EDIT",
+        "precondition: the edit is staged in the index"
+    );
+
+    let err = execute_conflict_abort(&repo, &session, &buffer)
+        .expect_err("abort must refuse rather than discard the staged edit");
+    assert!(
+        format!("{err}").contains("b.txt"),
+        "the refusal must name the staged file: {err}"
+    );
+
+    // The staged content survives in the index (not wiped by read_tree) and the
+    // conflict state is fully intact.
+    assert_eq!(
+        git_output(dir, &["show", ":b.txt"]),
+        "USER STAGED EDIT",
+        "staged content must remain in the index after the refusal"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("b.txt")).unwrap(),
+        "USER STAGED EDIT\n",
+        "working-tree content must remain after the refusal"
+    );
+    assert!(
+        dir.join(".git/MERGE_HEAD").exists(),
+        "the refusal must leave the conflicted state fully intact"
+    );
+}
+
+/// #704: a resolution that has already been **staged** (what Continue does) is
+/// progress to discard, not a mid-conflict edit to protect.
+///
+/// The guard read the conflicted set off `session.files`, which is the LIVE
+/// unmerged list — empty once the resolution is staged. Every resolved path was
+/// then reclassified as a cleanly-merged file the user had edited, so abort
+/// refused and the repository was stuck `MERGING` with no way out of the GUI.
+#[test]
+fn abort_is_not_refused_after_the_resolution_was_staged() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+    // Resolve the conflicted path the way Continue does: take a side, stage it.
+    write_file(dir, "a.txt", "FEATURE a\n");
+    git(dir, &["add", "a.txt"]);
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("the merge is still in progress");
+    assert!(
+        session.files.is_empty(),
+        "precondition: staging the resolution left nothing unmerged"
+    );
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+
+    execute_conflict_abort(&repo, &session, &buffer)
+        .expect("a staged resolution must not be mistaken for a mid-conflict edit");
+
+    assert!(
+        !dir.join(".git/MERGE_HEAD").exists(),
+        "abort must leave the merge behind"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "MAIN a\n",
+        "the resolved path is restored to the pre-merge content"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("b.txt")).unwrap(),
+        "base b\n",
+        "the cleanly-merged path is rolled back too"
+    );
+    assert!(
+        !dir.join("added.txt").exists(),
+        "a file the merge added is removed again"
+    );
+}
+
+/// #704 slice 1: the read model keeps the operation after the last conflict is
+/// resolved. `RepoSnapshot::operation` is what the header strip and the
+/// availability of Abort are derived from, so it has to outlive the unmerged
+/// entries — a resolved merge is still a merge in progress.
+#[test]
+fn the_snapshot_reports_a_resolved_merge_as_still_in_progress() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+    write_file(dir, "a.txt", "FEATURE a\n");
+    git(dir, &["add", "a.txt"]);
+
+    let mut backend = kagi_git::Backend::open(dir).expect("open");
+    let snapshot = backend.snapshot(10_000).expect("snapshot");
+    let operation = snapshot
+        .operation
+        .expect("MERGE_HEAD is an operation in progress, resolved or not");
+    assert_eq!(operation.kind().slug(), "merge");
+    assert_eq!(operation.unmerged(), 0, "nothing is unmerged any more");
+    assert_eq!(operation.step, None, "a merge is a single step");
+
+    // …and it goes away with the operation, not with the conflicts.
+    let buffer = ResolutionBuffer::from_repo(&Repository::open(dir).unwrap()).unwrap();
+    let session = detect_conflict_session(&Repository::open(dir).unwrap()).unwrap();
+    execute_conflict_abort(&Repository::open(dir).unwrap(), &session, &buffer).expect("abort");
+    let mut backend = kagi_git::Backend::open(dir).expect("reopen");
+    assert!(backend
+        .snapshot(10_000)
+        .expect("snapshot")
+        .operation
+        .is_none());
+}
+
+/// #707 re-review: a rebase abort must not clobber the branch it restores.
+///
+/// The destination is the ref named in `rebase-merge/head-name` — and during a
+/// rebase HEAD is detached, so nothing else about that branch was in the
+/// fingerprint. An external `git update-ref refs/heads/side <new>` while the
+/// confirmation was open changed nothing the revision covered, passed
+/// preflight, and was then overwritten by a `force` write of `ORIG_HEAD`.
+#[test]
+fn a_rebase_abort_refuses_when_its_destination_branch_moved() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = rebase_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("rebase conflict session");
+    assert!(matches!(session.op, ConflictOp::Rebase { .. }));
+    let frozen = kagi_git::Backend::open(dir)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .expect("observed")
+        .observation;
+    // Someone moves exactly the branch this abort would restore, and nothing
+    // else. (`rebase-merge/head-name` names it; the CAS half of the guard is a
+    // unit test in `conflict_abort`, where the frozen expectation lives.)
+    let elsewhere = git_output(dir, &["rev-parse", "main"]);
+    git(dir, &["update-ref", "refs/heads/side", &elsewhere]);
+
+    let live = kagi_git::Backend::open(dir)
+        .unwrap()
+        .conflict_snapshot()
+        .unwrap()
+        .expect("still rebasing")
+        .observation;
+    assert_ne!(
+        live.revision, frozen.revision,
+        "the destination branch's target is part of the revision"
+    );
+
+    assert_eq!(
+        git_output(dir, &["rev-parse", "refs/heads/side"]),
+        elsewhere,
+        "the branch keeps the OID the other process gave it"
+    );
+    assert!(
+        dir.join(".git/rebase-merge").exists() || dir.join(".git/rebase-apply").exists(),
+        "the rebase is still in progress"
+    );
+    assert!(
+        detect_conflict_session(&Repository::open(dir).unwrap()).is_some(),
+        "and its conflict is untouched"
+    );
+}
+
+/// #707 review: abort must not autosave an empty buffer over a saved one.
+///
+/// ADR-0057 says abort preserves the partial resolution. Once the resolution
+/// is staged nothing is unmerged, so a buffer built from the live index is
+/// empty (saved drafts are overlaid only onto paths still in conflict) — and
+/// saving *that* wipes the very drafts the promise protects.
+#[test]
+fn abort_does_not_overwrite_a_saved_resolution_buffer_with_an_empty_one() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+
+    // The user resolved a.txt; the editor autosaved that draft.
+    let saved_at = {
+        let repo = Repository::open(dir).unwrap();
+        let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+        buffer
+            .apply_choice(Path::new("a.txt"), ResolutionChoice::Incoming)
+            .unwrap();
+        buffer.autosave().expect("autosave the draft")
+    };
+    let draft = std::fs::read_to_string(&saved_at).expect("the draft is on disk");
+    assert!(
+        draft.contains("a.txt"),
+        "precondition: the saved draft holds the resolution"
+    );
+
+    // Continue stages it, so nothing is unmerged any more (the #704 state).
+    write_file(dir, "a.txt", "FEATURE a\n");
+    git(dir, &["add", "a.txt"]);
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("the merge is still in progress");
+    assert!(session.files.is_empty(), "precondition: nothing unmerged");
+    let live = ResolutionBuffer::from_repo(&repo).unwrap();
+    execute_conflict_abort(&repo, &session, &live).expect("abort");
+
+    assert_eq!(
+        std::fs::read_to_string(&saved_at).expect("the draft survives the abort"),
+        draft,
+        "abort preserved the resolution buffer instead of erasing it (ADR-0057)"
+    );
+}
+
+/// #704 review: each progress stage names what has actually happened.
+///
+/// The evidence is what tells `apply` whether a failed abort is a refusal or a
+/// reconcile requirement, so a stage reported early is a lie about the
+/// repository: `IndexAndWorktreeWritten` before the checkout claims a working
+/// tree that a checkout failure never wrote, and `Verified` from the executor
+/// claims a verification the Backend has not run yet.
+#[test]
+fn abort_reports_each_stage_only_once_it_has_happened() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("merge conflict session");
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+
+    use kagi_domain::conflict_family::ConflictProgress as P;
+    let mut stages = Vec::new();
+    kagi_git::execute_conflict_abort_with_progress(&repo, &session, &buffer, |stage| {
+        // The sequence alone cannot tell this stage from one fired *before*
+        // the checkout — a success run reports the same list either way (#707
+        // re-review). What separates them is the working tree: by the time
+        // this stage is claimed, it already holds the restore target.
+        if stage == P::IndexAndWorktreeWritten {
+            assert_eq!(
+                std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+                "MAIN a\n",
+                "IndexAndWorktreeWritten was reported before the checkout wrote the working tree"
+            );
+        }
+        stages.push(stage)
+    })
+    .expect("abort");
+
+    assert_eq!(
+        stages,
+        vec![
+            P::IndexWritten,
+            P::IndexAndWorktreeWritten,
+            P::StateCleanupStarted
+        ],
+        "index, then the working tree only after the checkout returned, then \
+         clearing the operation state"
+    );
+    assert!(
+        !stages.contains(&P::Verified),
+        "verification is the Backend's `verify_abort`, not the executor's claim"
+    );
+}
+
+/// #704 end to end: resolve → stage → unstage → discard leaves the repository
+/// `MERGING` with a clean index and no unmerged entries. Abort must still take
+/// it back to a normal state — that dead end is the whole issue.
+#[test]
+fn abort_recovers_a_merging_repository_after_unstage_and_discard() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = wide_merge_conflict_repo();
+    let dir = tmp.path();
+    write_file(dir, "a.txt", "FEATURE a\n");
+    git(dir, &["add", "a.txt"]);
+    // The commit panel's Unstage, then Discard all (kagi never runs `git
+    // clean`, so the file the merge added stays behind untracked).
+    git(
+        dir,
+        &[
+            "reset",
+            "-q",
+            "--",
+            "a.txt",
+            "b.txt",
+            "sub/c.txt",
+            "added.txt",
+        ],
+    );
+    git(dir, &["checkout", "--", "a.txt", "b.txt", "sub/c.txt"]);
+    assert!(
+        dir.join(".git/MERGE_HEAD").exists(),
+        "precondition: the repository is still merging"
+    );
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("MERGE_HEAD is still an operation");
+    assert!(session.files.is_empty());
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+
+    execute_conflict_abort(&repo, &session, &buffer).expect("abort must escape the dead end");
+
+    assert!(!dir.join(".git/MERGE_HEAD").exists());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "MAIN a\n"
+    );
+    assert!(
+        detect_conflict_session(&Repository::open(dir).unwrap()).is_none(),
+        "no operation is in progress once the abort lands"
+    );
+}
+
+/// #369: the staged-edit abort guard must protect the SEQUENCER ops too, not
+/// only merge. A cherry-pick with a conflicted `file.txt` and a cleanly-carried
+/// `b.txt`: staging an edit to `b.txt` mid-conflict must make abort refuse
+/// (reconstruct_op_result now covers cherry-pick via CHERRY_PICK_HEAD).
+#[test]
+fn abort_refuses_staged_non_conflicted_edit_during_cherry_pick() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    // Base carries both files; `side` and `main` diverge only on file.txt, so a
+    // cherry-pick of side onto main conflicts on file.txt while b.txt stays clean.
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir, "main");
+    write_file(dir, "file.txt", "base\n");
+    write_file(dir, "b.txt", "base b\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    git(dir, &["checkout", "-q", "-b", "side"]);
+    write_file(dir, "file.txt", "SIDE\n");
+    git(dir, &["commit", "-qam", "side change"]);
+    let side_sha = git_output(dir, &["rev-parse", "HEAD"]);
+
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(dir, "file.txt", "MAIN\n");
+    git(dir, &["commit", "-qam", "main change"]);
+    git_allow_fail(dir, &["cherry-pick", &side_sha]);
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("cherry-pick conflict session");
+    assert!(matches!(session.op, ConflictOp::CherryPick { .. }));
+    let buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+
+    // Stage an edit to the non-conflicted b.txt — index == workdir.
+    write_file(dir, "b.txt", "USER STAGED EDIT\n");
+    git(dir, &["add", "b.txt"]);
+
+    let err = execute_conflict_abort(&repo, &session, &buffer)
+        .expect_err("abort must refuse rather than discard the staged edit");
+    assert!(
+        format!("{err}").contains("b.txt"),
+        "the refusal must name the staged file: {err}"
+    );
+    assert_eq!(
+        git_output(dir, &["show", ":b.txt"]),
+        "USER STAGED EDIT",
+        "staged content must remain after the refusal"
+    );
+    assert!(
+        dir.join(".git/CHERRY_PICK_HEAD").exists(),
+        "the refusal must leave the cherry-pick state intact"
+    );
+}
+
+/// #540 fixture: a rebase whose first TWO replayed commits both conflict on the
+/// same path, so skipping the first lands directly on the second conflict.
+fn rebase_two_conflicting_steps_repo() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    init_repo(dir, "main");
+
+    write_file(dir, "file.txt", "base\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+
+    git(dir, &["checkout", "-q", "-b", "side"]);
+    write_file(dir, "file.txt", "SIDE ONE\n");
+    git(dir, &["commit", "-qam", "side step 1"]);
+    write_file(dir, "file.txt", "SIDE TWO\n");
+    git(dir, &["commit", "-qam", "side step 2"]);
+
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(dir, "file.txt", "MAIN\n");
+    git(dir, &["commit", "-qam", "main change"]);
+
+    git(dir, &["checkout", "-q", "side"]);
+    git_allow_fail(dir, &["rebase", "main"]);
+    tmp
+}
+
+/// #540: `git rebase --skip` that drops the current step and then stops at the
+/// NEXT conflicting commit exits **1**. That is "advanced to the next
+/// conflict", not a failure — before the fix the non-zero exit was returned as
+/// an `Err` and recorded as `rebase-skip failed` while the UI was already
+/// detecting the new conflict session.
+#[test]
+fn skip_advancing_to_the_next_conflict_is_not_a_failure() {
+    if !test_support::run_isolated() {
+        return;
+    }
+
+    let tmp = rebase_two_conflicting_steps_repo();
+    let dir = tmp.path();
+
+    let repo = Repository::open(dir).unwrap();
+    let session = detect_conflict_session(&repo).expect("first rebase conflict");
+    assert!(matches!(session.op, ConflictOp::Rebase { .. }));
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .set_manual_text(Path::new("file.txt"), "WRONG OLD DRAFT\n")
+        .unwrap();
+    buffer.autosave().unwrap();
+    assert!(ResolutionBuffer::load(dir)
+        .unwrap()
+        .has_resolution(Path::new("file.txt")));
+
+    let first = execute_conflict_skip(&repo, &session, &buffer).expect("skip must not error");
+    assert_eq!(first.progress, SkipProgress::Advanced);
+    assert!(
+        first.error.is_some(),
+        "git really did exit non-zero when it stopped at the next conflict"
+    );
+
+    // The next conflict session is there to be detected right away.
+    let repo2 = Repository::open(dir).unwrap();
+    let next = detect_conflict_session(&repo2).expect("second rebase conflict");
+    assert!(matches!(next.op, ConflictOp::Rebase { .. }));
+
+    // Skipping it too leaves nothing to replay: the rebase completes.
+    let buffer2 = ResolutionBuffer::from_repo_with_autosave(&repo2).unwrap();
+    assert!(
+        !buffer2.has_resolution(Path::new("file.txt")),
+        "skipped draft must not resolve the next conflict"
+    );
+    assert!(ResolutionBuffer::load(dir).is_none());
+    let second = execute_conflict_skip(&repo2, &next, &buffer2).expect("skip must not error");
+    assert_eq!(second.progress, SkipProgress::Finished);
+    assert!(second.error.is_none(), "a finished sequence exits zero");
+
+    assert!(detect_conflict_session(&Repository::open(dir).unwrap()).is_none());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("file.txt")).unwrap(),
+        "MAIN\n",
+        "both conflicting picks were dropped"
+    );
+    assert_eq!(
+        git_output(dir, &["rev-parse", "HEAD"]),
+        git_output(dir, &["rev-parse", "main"]),
+        "side is now exactly main"
+    );
+}
+
+#[test]
+fn marker_cache_tracks_undo_restore_and_multiple_saved_files() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = merge_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let path = Path::new("file.txt");
+    let old_path = Path::new("previous-conflict.txt");
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer
+        .set_manual_text(path, "<<<<<<< current\nunfinished\n")
+        .unwrap();
+    assert!(buffer.has_cached_marker_residue());
+    assert!(buffer.undo(path));
+    assert!(!buffer.has_resolution(path));
+    assert!(!buffer.has_cached_marker_residue());
+    assert!(buffer.redo(path));
+    assert!(buffer.cached_marker_residue(path));
+
+    let saved_path = buffer.autosave().unwrap();
+    let mut saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&saved_path).unwrap()).unwrap();
+    let mut old_file = saved["files"][0].clone();
+    old_file["path"] = serde_json::json!("previous-conflict.txt");
+    saved["files"].as_array_mut().unwrap().push(old_file);
+    std::fs::write(&saved_path, serde_json::to_vec(&saved).unwrap()).unwrap();
+
+    let mut loaded = ResolutionBuffer::load(tmp.path()).unwrap();
+    loaded.set_manual_text(path, "resolved\n").unwrap();
+    assert!(!loaded.cached_marker_residue(path));
+    assert!(
+        loaded.has_cached_marker_residue(),
+        "another marked file must keep the aggregate set"
+    );
+    assert_eq!(
+        loaded.files_with_marker_residue(),
+        vec![old_path.to_path_buf()]
+    );
+    loaded.set_manual_text(old_path, "also resolved\n").unwrap();
+    assert!(!loaded.has_cached_marker_residue());
+    assert!(loaded.undo(path));
+    assert!(loaded.has_cached_marker_residue());
+    assert!(loaded.redo(path));
+    assert!(!loaded.has_cached_marker_residue());
+
+    // Re-entry overlays only current index conflicts, not every saved file.
+    let mut restored = ResolutionBuffer::from_repo_with_autosave(&repo).unwrap();
+    assert!(restored.cached_marker_residue(path));
+    assert!(!restored.cached_marker_residue(old_path));
+    restored
+        .apply_choice(path, ResolutionChoice::Current)
+        .unwrap();
+    assert!(!restored.has_cached_marker_residue());
+    assert!(
+        continue_blockers(&repo, &detect_conflict_session(&repo).unwrap(), &restored).is_empty()
+    );
+
+    // Legacy duplicate entries are last-wins, including the aggregate count.
+    let mut replacement = saved["files"][0].clone();
+    replacement["result"] = serde_json::json!([]);
+    saved["files"].as_array_mut().unwrap().push(replacement);
+    std::fs::write(&saved_path, serde_json::to_vec(&saved).unwrap()).unwrap();
+    let mut loaded = ResolutionBuffer::load(tmp.path()).unwrap();
+    assert_eq!(loaded.resolved_text(path).as_deref(), Some(""));
+    loaded.set_manual_text(old_path, "resolved\n").unwrap();
+    assert!(
+        !loaded.has_cached_marker_residue(),
+        "replaced entries cannot retain residue counts"
+    );
+}
+
+#[test]
+fn raw_choice_removes_prior_text_residue_from_the_cached_verdict() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = binary_merge_conflict_repo();
+    let repo = Repository::open(tmp.path()).unwrap();
+    let session = detect_conflict_session(&repo).unwrap();
+    let path = &session.files[0].path;
+    let mut buffer = ResolutionBuffer::from_repo(&repo).unwrap();
+    buffer.set_manual_text(path, "<<<<<<< current\n").unwrap();
+    assert!(buffer.has_cached_marker_residue());
+    buffer
+        .apply_choice(path, ResolutionChoice::Current)
+        .unwrap();
+    assert!(buffer.has_resolution(path));
+    assert!(!buffer.has_cached_marker_residue());
+    assert!(!buffer.cached_marker_residue(path));
+    assert!(buffer.files_with_marker_residue().is_empty());
+    assert!(continue_blockers(&repo, &session, &buffer).is_empty());
+}

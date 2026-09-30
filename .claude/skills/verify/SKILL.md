@@ -209,6 +209,17 @@ The current suite covers:
   Escape prints nothing. That is exactly what the accepted run recorded —
   no key line, modal closed. A printed `escape` with the modal still open is
   the interesting failure: the key arrived and no binding matched.
+- overlay focus return (`KAGI_GUI_E2E_ONLY=palette_push_modal_keys,settings_close_returns_focus`,
+  `tests/recovery/overlay_focus.rs`): #817 / #812. Every key is raw, with no
+  test-side refocusing. The palette scenario first starts the bottom-panel
+  terminal the way launch does — it takes focus, and Escape is bound
+  `!Terminal` — then `cmd-p` → `push` → Enter opens the blocked Push plan:
+  Enter refuses it (Failed footer, one durable Refused receipt) and a
+  reopened plan closes on Escape. Settings is opened through `app.settings`,
+  its theme picker clicked (the picker must hold focus), then closed by
+  Escape and by ×; the next raw ↓/↑ must step File History. Tier B measured
+  on 2026-10-01 that the terminal-focus case is what left Escape unmatched
+  (`key: "escape"` printed, modal open) while Enter still reached the slot.
 - modal input transitions (`KAGI_GUI_E2E_ONLY=remote_browse_escape_focus,pr_fields_escape_focus`,
   `tests/recovery/remote_browse_focus.rs`, `tests/recovery/pr_fields_focus.rs`):
   #755 follow-up. Real InputStates own focus before Remote Browse's
@@ -302,6 +313,19 @@ The current suite covers:
   Checkbox animation timers do not outlive the window (leak check). Tier B:
   open a PR, tick files, see `N / M viewed` and dimmed rows (EN/JA), close and
   reopen the tab, then push a commit changing one ticked file and refresh.
+- header buttons stay reachable (`KAGI_GUI_E2E_ONLY=header_fit`,
+  `tests/recovery/header_fit.rs`): #809. A real `KagiApp` at 1000x720, zoom
+  1.25, EN and JA opens a commit's long-path file diff, then File History for
+  it. Each Main Diff header control (`main-diff-back`, `-ext-editor`,
+  `-history`, `diff-mode-toggle`, `main-diff-stats`), each File History header
+  button (`fh-back`, `fh-refresh`, `fh-copy-path`, `fh-open-file`,
+  `fh-follow`) and the embedded diff's toggle/stats must lie inside its header
+  row, and each row inside the window — bounds recorded by the production
+  `HeaderFit`, which is what the pane crate can reach. The narrow case must be
+  icon-only; 1920x1080 at zoom 1 must keep the labels. Tier B: 1000px wide at
+  125% in JA, open a file diff and File History; every button is visible and
+  clickable, icon-only buttons name themselves in a hover tooltip, and a wide
+  window shows the labels again.
 - worktree lock reason (`KAGI_GUI_E2E_ONLY=worktree_lock_reason`,
   `tests/recovery/worktree_lock_reason.rs`): #372 item2. EN/JA use the real
   InputState, clipboard paste and focused Enter to review, then a second Enter
@@ -312,7 +336,7 @@ The current suite covers:
   linked worktree → Lock, edit the reason → Review → inspect the plan, then
   Cancel or confirm. No tab-strip click or foreground activation is required.
   Automatic terminal locking is not part of this change; it is tracked in #772.
-- modal-slot arbitration (`KAGI_GUI_E2E_ONLY=push_failure_keeps_modal,merge_plan_latch,delete_branch_plan_latch,remote_browse_modal_routing`): Push failures and delayed Merge/Delete Branch plans wait behind Remote Browse without losing its input, stale plan state, latches, footers, or notices; a reopened Remote Browse rejects an older in-place completion by generation;
+- modal-slot arbitration (`KAGI_GUI_E2E_ONLY=push_failure_keeps_modal,merge_plan_latch,delete_branch_plan_latch,remote_browse_modal_routing`): a push failure lands behind Remote Browse without losing its input and reaches the Failed footer, an Error toast and one durable receipt — no dismiss-only AppNotice, queued or shown after Remote Browse closes (the #747 contract; #824 bisected the stale notice expectation to `e5644c6f`). Delayed Merge/Delete Branch plans wait behind Remote Browse without losing its input, stale plan state, latches, footers, or notices; a reopened Remote Browse rejects an older in-place completion by generation;
 - unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.
 - toolbar centre actions (Pull…Terminal) drawn only in Graph, not PRs/Editor/Analyze
   (`KAGI_GUI_E2E_ONLY=workspace_mode_toolbar`, via the `tb-repo-actions` control bound);

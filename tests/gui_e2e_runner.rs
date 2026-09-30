@@ -108,6 +108,10 @@ mod diff_highlight;
 mod remote_browse_focus;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/overlay_focus.rs"]
+mod overlay_focus;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_fields_focus.rs"]
 mod pr_fields_focus;
 
@@ -118,6 +122,10 @@ mod pr_viewed;
 #[cfg(target_os = "macos")]
 #[path = "recovery/layout.rs"]
 mod recovery_layout;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/header_fit.rs"]
+mod recovery_header_fit;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/modal_compact.rs"]
@@ -1009,6 +1017,14 @@ mod macos {
                 Box::new(crate::remote_browse_focus::scenario_remote_browse_escape_focus),
             ),
             (
+                "palette_push_modal_keys",
+                Box::new(crate::overlay_focus::scenario_palette_push_modal_keys),
+            ),
+            (
+                "settings_close_returns_focus",
+                Box::new(crate::overlay_focus::scenario_settings_close_returns_focus),
+            ),
+            (
                 "pr_fields_escape_focus",
                 Box::new(crate::pr_fields_focus::scenario_pr_fields_escape_focus),
             ),
@@ -1150,6 +1166,10 @@ mod macos {
                     crate::recovery_layout::scenario_file_history_virtualized(cx, fixture.path());
                     assert_eq!(before, repo_fingerprint(fixture.path()));
                 }),
+            ),
+            (
+                "header_fit",
+                Box::new(crate::recovery_header_fit::scenario_header_fit),
             ),
             (
                 "file_history_wip_changes",

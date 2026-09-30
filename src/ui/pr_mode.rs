@@ -32,8 +32,8 @@ use super::diff_view::{build_main_diff_view, MainDiffView};
 // such display string through `safe_text` (control-byte neutralization).
 use super::i18n::Msg;
 use super::pr_attention::ci_glyph;
-use super::render_helpers::render_diff_list;
 use super::render_helpers::safe_text;
+use super::render_helpers::{render_diff_list, DiffHeader};
 use super::theme::{self, theme};
 use super::types::ToastKind;
 use super::{CompareTarget, DividerDrag, DividerGhost, DividerKind, KagiApp, MainDiffSource};
@@ -1631,14 +1631,16 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
                         cx,
                     )
                 });
-                render_diff_list::<KagiApp>(dv, nav, None, conflict_scroll, cx).into_any_element()
+                let header = DiffHeader::leading(nav);
+                render_diff_list::<KagiApp>(dv, header, conflict_scroll, cx).into_any_element()
             }
         };
         content = content.child(body);
     } else {
         // Diff
         let diff_el: gpui::AnyElement = match diff {
-            Some(dv) => render_diff_list::<KagiApp>(dv, None, None, scroll, cx).into_any_element(),
+            Some(dv) => render_diff_list::<KagiApp>(dv, DiffHeader::default(), scroll, cx)
+                .into_any_element(),
             None => div()
                 .flex_1()
                 .flex()

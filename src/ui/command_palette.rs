@@ -265,6 +265,7 @@ impl KagiApp {
             });
         }
         self.command_palette_selected = 0;
+        self.capture_overlay_return_focus(window, cx);
         if let Some(input) = &self.command_palette_input {
             input.update(cx, |st, cx| st.focus(window, cx));
         }
@@ -292,7 +293,7 @@ impl KagiApp {
             return;
         }
         let action = row.action.clone();
-        self.menu_overlay = None;
+        self.close_command_palette(window, cx);
         self.run_palette_action(&action, window, cx);
         cx.notify();
     }
@@ -430,7 +431,7 @@ impl KagiApp {
             // the branch picker (see commands.rs).
             this.command_palette_selected = index;
             if enabled {
-                this.menu_overlay = None;
+                this.close_command_palette(window, cx);
                 this.run_palette_action(&action, window, cx);
             }
             cx.stop_propagation();

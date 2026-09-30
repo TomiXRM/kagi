@@ -20,7 +20,10 @@ use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gpui::{AnyView, Context, EventEmitter, Pixels, Point, SharedString};
+use gpui::{
+    AnyView, Context, EventEmitter, Pixels, Point, ScrollStrategy, SharedString,
+    UniformListScrollHandle,
+};
 
 use kagi_domain::commit::CommitId;
 use kagi_domain::file_history::{FileHistory, FileHistoryEntry, FileHistoryEntryKind};
@@ -177,6 +180,15 @@ pub struct FileHistoryView {
     /// and notify this entity; unchanged renders never copy the map or its keys.
     /// Empty snapshots keep the shared header's initial-circle fallback.
     pub avatars: std::sync::Arc<kagi_ui_core::avatar::AvatarImages>,
+    /// Scroll handle for the virtualized commit list (#496): keeps the list
+    /// position across frames and lets `select` bring the row into view.
+    pub list_scroll: UniformListScrollHandle,
+    /// Row range the commit list's `uniform_list` processor built on the last
+    /// frame (#496). The processor sets it; nothing reads it in production.
+    /// It is the observable the GUI E2E `file_history_virtualized` scenario
+    /// uses to prove built rows ∝ viewport (not entry count) and that the
+    /// selected row is scrolled into view.
+    pub last_built_range: std::ops::Range<usize>,
 }
 
 impl EventEmitter<FileHistoryEvent> for FileHistoryView {}
@@ -199,6 +211,8 @@ impl FileHistoryView {
             panel_width,
             diff_pane,
             avatars: Default::default(),
+            list_scroll: UniformListScrollHandle::new(),
+            last_built_range: 0..0,
         }
     }
 
@@ -246,6 +260,11 @@ impl FileHistoryView {
                 self.data.history = Some(history);
                 self.data.error = None;
                 self.data.selected = initial;
+                // The origin commit may sit far down the list; the old
+                // non-virtualized div started at the top too, but `uniform_list`
+                // can honour the selection.
+                self.list_scroll
+                    .scroll_to_item(initial, ScrollStrategy::Center);
                 cx.emit(FileHistoryEvent::DiffLoadRequested);
             }
             Err(e) => {
@@ -286,6 +305,10 @@ impl FileHistoryView {
             return;
         }
         self.data.selected = index;
+        // Arrow keys / clicks: keep the selected row visible without
+        // recentring on every step.
+        self.list_scroll
+            .scroll_to_item(index, ScrollStrategy::Nearest);
         cx.emit(FileHistoryEvent::DiffLoadRequested);
         cx.notify();
     }

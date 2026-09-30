@@ -70,6 +70,11 @@ impl KagiApp {
                 EcosystemEvent::DiagnosticCopied => {
                     app.push_toast(ToastKind::Info, Msg::EcoDiagnosticCopied.t(), cx);
                 }
+                // #358: plan the fix and ask; the confirm runs it.
+                EcosystemEvent::HealthFixRequested(fix) => {
+                    app.open_repo_health_modal(*fix);
+                    cx.notify();
+                }
             }
         })
         .detach();
@@ -77,6 +82,8 @@ impl KagiApp {
             ui.ecosystem = Some(entity);
         }
         klog!("ecosystem: opened");
+        // The Health axis is a separate, cheap read (#358).
+        self.refresh_repo_health(cx);
         // No (fresh) cache → start (or join) the app-owned mine, which survives
         // the view being closed and notifies on completion.
         if !has_cache {
@@ -225,7 +232,42 @@ impl KagiApp {
             .is_some_and(|view| view.read(cx).repo_matches(&repo_path));
         if invalidated && pane_open {
             self.start_ecosystem_mine(repo_path, new_head, cx);
+            // A new HEAD can leave the commit-graph behind it.
+            self.refresh_repo_health(cx);
         }
+    }
+
+    /// Re-read the Health axis of the Analyze pane on screen (#358). Read-only;
+    /// the result lands only on that pane, and only if no newer read started.
+    pub(crate) fn refresh_repo_health(&mut self, cx: &mut Context<Self>) {
+        let (Some(repo_path), Some(view)) = (self.repo_path.clone(), self.ui().ecosystem.clone())
+        else {
+            return;
+        };
+        let request = view.update(cx, |view, cx| {
+            cx.notify();
+            view.begin_health_read()
+        });
+        let bg_path = repo_path.clone();
+        let task = cx.background_spawn(async move {
+            kagi_git::Backend::open(&bg_path)
+                .and_then(|backend| backend.repo_health())
+                .map_err(|e| e.to_string())
+        });
+        let view = view.downgrade();
+        cx.spawn(async move |_app, acx| {
+            let result = task.await;
+            let _ = view.update(acx, |view, cx| {
+                if view.repo_matches(&repo_path) {
+                    if let Ok(findings) = &result {
+                        klog!("repo-health: {} finding(s)", findings.len());
+                    }
+                    view.set_health(request, result);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     /// Push a completion snackbar + a read-only Operation Log row for a finished

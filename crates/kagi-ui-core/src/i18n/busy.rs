@@ -100,6 +100,16 @@ const LABELS: &[(&str, &str, &str)] = &[
         "復元点から復元中…",
     ),
     ("apply-suggestion", "Applying suggestion…", "提案を適用中…"),
+    (
+        "write-commit-graph",
+        "Writing commit-graph…",
+        "commit-graph を書き込み中…",
+    ),
+    (
+        "enable-fsmonitor",
+        "Enabling filesystem monitor…",
+        "ファイルシステムモニターを有効化中…",
+    ),
     ("editor-save", "Saving file…", "ファイルを保存中…"),
     ("stage", "Staging…", "stage 中…"),
     ("unstage", "Unstaging…", "stage を解除中…"),

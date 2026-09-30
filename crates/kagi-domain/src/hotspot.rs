@@ -59,14 +59,18 @@ pub enum EcosystemMode {
     Hotspots,
     Coupling,
     Ownership,
+    /// Repository health (#358): optimizations git ships that are off here,
+    /// each offered as a planned fix (`repo_health`).
+    Health,
 }
 
 impl EcosystemMode {
     /// All variants in toggle order.
-    pub const ALL: [EcosystemMode; 3] = [
+    pub const ALL: [EcosystemMode; 4] = [
         EcosystemMode::Hotspots,
         EcosystemMode::Coupling,
         EcosystemMode::Ownership,
+        EcosystemMode::Health,
     ];
 
     /// Toggle button label.
@@ -75,6 +79,7 @@ impl EcosystemMode {
             EcosystemMode::Hotspots => "Hotspots",
             EcosystemMode::Coupling => "Coupling",
             EcosystemMode::Ownership => "Ownership",
+            EcosystemMode::Health => "Health",
         }
     }
 }

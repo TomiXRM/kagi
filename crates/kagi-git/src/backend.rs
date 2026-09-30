@@ -22,6 +22,7 @@ pub mod recording;
 pub(crate) mod remote_identity;
 pub mod remote_ref;
 pub mod remove;
+mod repo_health;
 mod run;
 pub mod stash;
 pub use policy::ExecutionPolicy;
@@ -826,6 +827,8 @@ impl Backend {
                 suggestion,
                 expected_original,
             } => self.plan_apply_suggestion(suggestion, expected_original),
+            Operation::WriteCommitGraph => ops::plan_write_commit_graph(&self.repo),
+            Operation::EnableFsmonitor => ops::plan_enable_fsmonitor(&self.repo),
         }
     }
 

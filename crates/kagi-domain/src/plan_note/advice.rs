@@ -544,8 +544,14 @@ macro_rules! advice_template_en {
     (GithubSuggestionStale) => {
         "'{}' has changed since this suggestion was reviewed. Applying it now could edit the wrong lines, so it is refused. Re-open the review against the current file."
     };
+    (GithubSuggestionNotPrHead) => {
+        "'{}' in the working tree is not the pull request head's version of the file, so the reviewed line numbers may point at other lines here. Applying it is refused. Apply it where this file is the same as the PR head."
+    };
+    (GithubSuggestionHeadUnavailable) => {
+        "The pull request head commit is not available locally, so the file cannot be compared with the reviewed version. Open the pull request again to fetch its head, then retry."
+    };
     (GithubSuggestionWorkingTreeOnly) => {
-        "This edits the working tree only — nothing is committed. Review it with hunk staging before you commit."
+        "This edits the working tree only — nothing is staged or committed. Review the change in the Commit Panel before you commit."
     };
     (GithubCommentBodyEmpty) => {
         "The comment is empty. Write something before posting it."

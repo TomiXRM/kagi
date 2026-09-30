@@ -1573,3 +1573,87 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     unmount(cx, app, win);
     eprintln!("[gui-e2e] PASS workspace_mode_toolbar");
 }
+
+/// #354 (bridge landed in PR #797): the toolbar tells assistive technology a
+/// button is disabled exactly when the action cannot run — the same bool that
+/// mutes it — and never for a toggle that is merely off. The oracle is the
+/// bool `make_btn` hands to `set_disabled` (`e2e::toolbar_unavailable`); the
+/// AccessKit tree itself is only built once an AT connects, which a test
+/// cannot force in-process (and `debug_a11y_tree_json` omits `disabled`).
+pub fn scenario_toolbar_a11y_disabled(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let before = repo_fingerprint(&repo);
+    let (app, win) = mount(cx, &repo);
+
+    let draw = |cx: &mut VisualTestAppContext| {
+        e2e::clear_toolbar_unavailable();
+        cx.update_window(win, |_, window, cx| {
+            window.refresh();
+            window.draw(cx).clear();
+        })
+        .unwrap();
+    };
+    let unavailable =
+        |id: &str| e2e::toolbar_unavailable(id).unwrap_or_else(|| panic!("{id} was not drawn"));
+
+    // No remote, clean tree, no stash: Pull / Push / Stash / Pop are
+    // unavailable; Branch is available; the closed Terminal is a selection
+    // state, not a disabled control.
+    cx.run_until_parked();
+    draw(cx);
+    assert!(unavailable("tb-push"), "no remote: Push must read disabled");
+    assert!(
+        unavailable("tb-pull"),
+        "no upstream: Pull must read disabled"
+    );
+    assert!(
+        unavailable("tb-stash"),
+        "clean tree: Stash must read disabled"
+    );
+    assert!(unavailable("tb-pop"), "no stash: Pop must read disabled");
+    assert!(!unavailable("tb-branch"), "Branch is always available");
+    assert!(!unavailable("tb-settings"), "Settings is always available");
+    // The Terminal button is a selection toggle: muted when the panel is not
+    // showing the terminal, but it still opens on press, so it must never
+    // read disabled in either state.
+    let terminal_on = cx.read(|cx| {
+        let app = app.read(cx);
+        app.bottom_panel_open && app.bottom_tab == kagi::ui::BottomTab::Terminal
+    });
+    assert!(
+        !unavailable("tb-terminal"),
+        "Terminal (toggle {}) is Selection state: never disabled",
+        if terminal_on { "on" } else { "off" }
+    );
+    app.update(cx, |app, cx| {
+        app.bottom_panel_open = !terminal_on;
+        app.bottom_tab = kagi::ui::BottomTab::Terminal;
+        cx.notify();
+    });
+    draw(cx);
+    assert!(
+        !unavailable("tb-terminal"),
+        "Terminal (toggle {}) is Selection state: never disabled",
+        if terminal_on { "off" } else { "on" }
+    );
+
+    // The flag follows the state it mirrors: dirty the tree → Stash available.
+    std::fs::write(repo.join("README.md"), "# fixture\nchanged\n").unwrap();
+    app.update(cx, |app, cx| app.reload_manual(cx));
+    cx.run_until_parked();
+    draw(cx);
+    assert!(
+        !unavailable("tb-stash"),
+        "dirty tree: Stash must no longer read disabled"
+    );
+    assert!(
+        unavailable("tb-push"),
+        "still no remote: Push stays disabled"
+    );
+
+    std::fs::write(repo.join("README.md"), "# fixture\nsecond line\n").unwrap();
+    assert_eq!(before, repo_fingerprint(&repo), "repo mutated");
+    unmount(cx, app, win);
+    eprintln!("[gui-e2e] PASS toolbar_a11y_disabled");
+}

@@ -338,6 +338,19 @@ The current suite covers:
   PR with line comments (current and outdated), click badges in unified and
   side-by-side, check the dimmed outdated card, EN/JA chips, no resolve button,
   and that scrolling does not jump when a thread opens or closes.
+- PR suggestion apply (`KAGI_GUI_E2E_ONLY=pr_suggestion_apply`,
+  `tests/recovery/pr_suggestion_apply.rs`): #351 / ADR-0210. The same real PR
+  ref fetch as `pr_viewed`, with the PR branch checked out so `s.txt` is the
+  head's blob, and an injected line comment carrying a ```suggestion block.
+  Clicking the measured `pr-convo-apply-suggestion-7000` on the Review page
+  opens the plan card with no blocker and writes nothing; `plan-cancel` closes
+  it with the file and the oplog unchanged. A second click and `plan-confirm`
+  rewrite exactly line 2, stage nothing, and record one successful
+  `apply-suggestion` entry with one `refs/kagi/backups/` ref. Blob mismatch,
+  missing head, TOCTOU and gc recovery are `crates/kagi-git/tests/
+  suggestion_apply_test.rs`. Tier B: open a PR with a suggestion on its
+  checked-out branch, apply it (EN/JA card), then edit the file and see the
+  "not the PR head's version" refusal.
 - header buttons stay reachable (`KAGI_GUI_E2E_ONLY=header_fit`,
   `tests/recovery/header_fit.rs`): #809. A real `KagiApp` at 1000x720, zoom
   1.25, EN and JA opens a commit's long-path file diff, then File History for

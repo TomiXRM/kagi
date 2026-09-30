@@ -74,8 +74,15 @@ pub enum GithubNote {
     /// longer match what the suggestion was reviewed against. Applying would
     /// edit the wrong lines, so it is refused.
     SuggestionStale { path: String },
+    /// blocker (#351, ADR-0210) — the working-tree file is not the PR head's
+    /// version of it (blob mismatch), so the reviewed head line numbers may
+    /// point at other lines here.
+    SuggestionNotPrHead { path: String },
+    /// blocker (#351, ADR-0210) — the PR head commit is not in the local
+    /// object store, so the file cannot be compared against it.
+    SuggestionHeadUnavailable,
     /// warning (#351) — the suggestion is written to the working tree only;
-    /// review it with hunk staging before committing.
+    /// review the change before committing.
     SuggestionWorkingTreeOnly,
     /// blocker — a pull-request comment with no text. `gh pr comment` would
     /// happily post an empty comment; there is nothing to say and nothing to
@@ -163,6 +170,12 @@ impl GithubNote {
             }
             GithubNote::SuggestionStale { path } => {
                 format!(crate::advice_template_en!(GithubSuggestionStale), path)
+            }
+            GithubNote::SuggestionNotPrHead { path } => {
+                format!(crate::advice_template_en!(GithubSuggestionNotPrHead), path)
+            }
+            GithubNote::SuggestionHeadUnavailable => {
+                crate::advice_template_en!(GithubSuggestionHeadUnavailable).to_string()
             }
             GithubNote::SuggestionWorkingTreeOnly => {
                 crate::advice_template_en!(GithubSuggestionWorkingTreeOnly).to_string()
@@ -324,7 +337,8 @@ pub enum GithubRecovery {
         local_branch: Option<Box<crate::plan::PrMergeLocalBranch>>,
     },
     /// A suggestion edits only the working tree; the pre-apply file content is
-    /// backed up to the ODB and recoverable by blob SHA (#351).
+    /// kept under a `refs/kagi/backups/` ref recorded in the oplog (#351,
+    /// ADR-0210).
     ApplySuggestion,
 }
 
@@ -337,7 +351,7 @@ impl GithubRecovery {
                 number
             ),
             GithubRecovery::ApplySuggestion =>
-                "This rewrites only the working-tree file (nothing is staged or committed). The file's pre-apply content is recorded as a blob in the oplog (op=\"apply-suggestion\") first; recover it with `git cat-file -p <blob-sha>`, or discard the change.".to_string(),
+                "This rewrites only the working-tree file (nothing is staged or committed). The file's pre-apply content is kept under a backup ref first, recorded in the oplog (op=\"apply-suggestion\"); read it back with `git cat-file blob <backup-ref>`.".to_string(),
         }
     }
 }

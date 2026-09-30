@@ -262,27 +262,6 @@ pub fn execute_pull_branch_ff(
     refresh_fixture_index(repo, result)
 }
 
-pub fn execute_apply_suggestion(
-    repo: &Repository,
-    plan: &OperationPlan,
-    s: &Suggestion,
-    expected: &[String],
-) -> Result<SuggestionOutcome, GitError> {
-    let result = run(
-        repo,
-        Operation::ApplySuggestion {
-            suggestion: s.clone(),
-            expected_original: expected.to_vec(),
-        },
-        Some(plan),
-    )
-    .map(|outcome| match outcome {
-        OperationOutcome::Suggestion(value) => value,
-        other => panic!("unexpected fixture outcome: {other:?}"),
-    });
-    refresh_fixture_index(repo, result)
-}
-
 pub fn execute_rebase_current_onto(
     repo: &Repository,
     repo_path: &Path,

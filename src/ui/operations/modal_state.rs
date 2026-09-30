@@ -9,6 +9,7 @@
 // #707 review: accessors live here, never in the feature modules that open a
 // modal. Split by feature as this file hits its LOC ceiling, not by relocating
 // them somewhere `active_modal` gets touched directly.
+mod apply_suggestion;
 mod arbitration;
 mod conflict;
 mod editor;

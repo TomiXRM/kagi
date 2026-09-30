@@ -128,6 +128,10 @@ mod pr_viewed;
 mod pr_threads;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_suggestion_apply.rs"]
+mod pr_suggestion_apply;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/layout.rs"]
 mod recovery_layout;
 
@@ -1055,6 +1059,10 @@ mod macos {
                 Box::new(crate::pr_threads::scenario_pr_threads_via_gh),
             ),
             (
+                "pr_suggestion_apply",
+                Box::new(crate::pr_suggestion_apply::scenario_pr_suggestion_apply),
+            ),
+            (
                 "operation_strip_abort",
                 Box::new(crate::app_conflict::scenario_operation_strip_abort),
             ),
@@ -1435,6 +1443,10 @@ mod macos {
             (
                 "workspace_mode_toolbar",
                 Box::new(crate::workspace_mode_toolbar::scenario_workspace_mode_toolbar),
+            ),
+            (
+                "toolbar_a11y_disabled",
+                Box::new(crate::workspace_mode_toolbar::scenario_toolbar_a11y_disabled),
             ),
             (
                 "issues_pagination",

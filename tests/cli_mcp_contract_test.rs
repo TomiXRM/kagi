@@ -11,37 +11,21 @@ use std::process::Command;
 use serde_json::{json, Value};
 use tempfile::TempDir;
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git failed to start");
-    assert!(status.success(), "git {} failed", args.join(" "));
-}
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{commit_all, git, git_output, init_repo};
 
 fn build_repo(dir: &Path) {
-    git(dir, &["init", "-q", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    init_repo(dir, "main");
     std::fs::write(dir.join("a.txt"), "hi\n").unwrap();
-    git(dir, &["add", "-A"]);
-    git(dir, &["commit", "-qm", "c1"]);
+    commit_all(dir, "c1");
     git(dir, &["branch", "feature"]);
     // Leave the tree dirty so `discard` has something to plan against.
     std::fs::write(dir.join("a.txt"), "hi there\n").unwrap();
 }
 
 fn head_sha(dir: &Path) -> String {
-    let out = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(dir)
-        .output()
-        .unwrap();
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
+    git_output(dir, &["rev-parse", "HEAD"])
 }
 
 /// Run the kagi binary headless, returning (exit code, parsed stdout).

@@ -1,6 +1,5 @@
 //! Lock reason entry is not approval: only the reviewed plan may change Git.
 use std::path::Path;
-use std::process::Command;
 
 use gpui::{AnyWindowHandle, ClipboardItem, Entity, VisualTestAppContext};
 use kagi::ui::{e2e, i18n, KagiApp};
@@ -9,15 +8,12 @@ use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
 use crate::macos::{build_fixture, git, mount, repo_fingerprint, unmount};
 use crate::recovery_operations::press_enter;
 
+#[path = "../support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::git_output;
+
 fn lock_reason(repo: &Path) -> Option<String> {
-    let output = Command::new("git")
-        .current_dir(repo)
-        .args(["worktree", "list", "--porcelain", "-z"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    String::from_utf8(output.stdout)
-        .unwrap()
+    git_output(repo, &["worktree", "list", "--porcelain", "-z"])
         .split('\0')
         .find_map(|line| {
             if line == "locked" {

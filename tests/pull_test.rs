@@ -18,7 +18,10 @@
 mod backend_ops;
 use backend_ops::execute_pull;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{commit_all, git, git_output, init_repo};
 
 use git2::Repository;
 use tempfile::TempDir;
@@ -29,21 +32,8 @@ use kagi_git::{plan_pull, working_tree_status, PullOutcome};
 // Helpers
 // ────────────────────────────────────────────────────────────
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(status.success(), "git {} failed", args.join(" "));
-}
-
+/// Unlike the shared `write_file`, creates missing parent directories
+/// (`generated/settings.json`).
 fn write_file(dir: &Path, name: &str, content: &str) {
     let path = dir.join(name);
     if let Some(parent) = path.parent() {
@@ -57,12 +47,7 @@ fn read_file(dir: &Path, name: &str) -> String {
 }
 
 fn head_sha(dir: &Path) -> String {
-    let out = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(dir)
-        .output()
-        .expect("rev-parse failed");
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
+    git_output(dir, &["rev-parse", "HEAD"])
 }
 
 /// Layout: tmp/remote.git (bare) + tmp/local (clone-ish with upstream set)
@@ -95,18 +80,14 @@ fn setup() -> Repos {
     );
 
     std::fs::create_dir(&local).unwrap();
-    git(&local, &["init", "-q", "-b", "main", "."]);
-    git(&local, &["config", "user.name", "Test"]);
-    git(&local, &["config", "user.email", "test@example.com"]);
-    git(&local, &["config", "commit.gpgsign", "false"]);
+    init_repo(&local, "main");
     git(
         &local,
         &["remote", "add", "origin", remote.to_str().unwrap()],
     );
 
     write_file(&local, "base.txt", "base\n");
-    git(&local, &["add", "-A"]);
-    git(&local, &["commit", "-qm", "base"]);
+    commit_all(&local, "base");
     git(&local, &["push", "-q", "-u", "origin", "main"]);
 
     // Second clone used to push commits "from elsewhere".
@@ -134,8 +115,7 @@ fn setup() -> Repos {
 /// Commit `content` into `name` in the `other` clone and push to the remote.
 fn remote_commit(r: &Repos, name: &str, content: &str, msg: &str) {
     write_file(&r.other, name, content);
-    git(&r.other, &["add", "-A"]);
-    git(&r.other, &["commit", "-qm", msg]);
+    commit_all(&r.other, msg);
     git(&r.other, &["push", "-q", "origin", "main"]);
 }
 

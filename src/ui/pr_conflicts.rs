@@ -66,6 +66,7 @@ impl ConflictPreview {
             }
             self.lang = lang;
             self.theme_slug = theme_slug;
+            self.view.highlighted = Some(theme_slug);
         }
         (self.view.clone(), Arc::clone(&self.jumps))
     }
@@ -314,6 +315,8 @@ pub(crate) fn conflict_diff_view(f: &PrConflictFile, marker_text: Option<&str>) 
 
     // Syntax highlighting, the same pass the Diff tab runs — the language is
     // taken from the real path, so a conflict in a .rs file reads like Rust.
+    // Done here, synchronously, and redone by `snapshot` on a theme switch;
+    // `highlighted` tells the shared diff renderer not to request it (#495).
     super::diff_view::highlight_diff_rows(&mut rows, &f.path);
 
     let view = MainDiffView {
@@ -322,6 +325,8 @@ pub(crate) fn conflict_diff_view(f: &PrConflictFile, marker_text: Option<&str>) 
         rows: std::sync::Arc::new(rows),
         source: MainDiffSource::Synthetic,
         images: None,
+        lang: super::diff_view::lang_for_path(&f.path),
+        highlighted: Some(theme().slug),
     };
     ConflictPreview {
         path: f.path.clone(),

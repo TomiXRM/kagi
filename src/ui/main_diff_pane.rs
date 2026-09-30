@@ -6,10 +6,12 @@
 //!   the field is now `Option<Entity<MainDiffPane>>`),
 //! - the diff-list scroll state (was `KagiApp.main_diff_scroll_handle` — the
 //!   `ListState` now lives and dies with the pane),
-//! - the off-thread highlight swap-in (was `KagiApp.pending_diff_highlight` +
-//!   `apply_pending_highlights`): the spawn's `this.update` now targets the
-//!   pane entity, so a result that arrives after the diff was closed is
-//!   dropped by the dead-weak-handle guard instead of a render-time check.
+//! - the off-thread highlight swap-in: the pane is a
+//!   [`DiffHighlightHost`], so a result that arrives after the diff was
+//!   closed hits a dead weak handle, and one for rows the pane no longer
+//!   shows is dropped by `diff_view::highlight` (#495).
+//! - the off-thread Compare / Commit Panel diff read ([`MainDiffRead`]),
+//!   superseded by `TabUiState::main_diff_req` (#495).
 //!
 //! The File History / Editor Workspace *embedded* diff panes are untouched:
 //! they keep their own `MainDiffView` + `ListState` fields and render via
@@ -20,8 +22,10 @@ use gpui::{prelude::*, Context, Entity, ListState, WeakEntity, Window};
 use gpui_component::button::Button;
 use gpui_component::Sizable as _;
 
+use super::diff_view::highlight::DiffHighlightHost;
 use super::diff_view::{
-    build_main_diff_view, CompareView, MainDiffSource, MainDiffView, RowHighlights,
+    build_main_diff_view, diff_line_counts, CompareTarget, CompareView, MainDiffSource,
+    MainDiffView,
 };
 use super::render_helpers::{new_diff_list_state, render_diff_list};
 use super::KagiApp;
@@ -53,29 +57,12 @@ impl MainDiffPane {
             owner,
         }
     }
+}
 
-    /// ADR-0109: apply an off-thread highlight result if the pane still shows
-    /// the same commit file it was requested for (stale results — the user
-    /// stepped to another file first — are discarded, as before).
-    pub(crate) fn apply_highlights(&mut self, row: usize, file: usize, highlights: RowHighlights) {
-        match self.view.source {
-            MainDiffSource::Commit {
-                row_index,
-                file_index,
-                ..
-            } if row_index == row && file_index == file => {}
-            _ => return,
-        }
-        // The only writer of `rows`, and the pane owns the sole strong handle
-        // at this point, so `make_mut` is a no-copy in-place edit.
-        let rows = std::sync::Arc::make_mut(&mut self.view.rows);
-        for (row_i, row_highlights) in highlights {
-            if let Some(super::diff_view::DiffRow::Line { highlights: hl, .. }) =
-                rows.get_mut(row_i)
-            {
-                *hl = row_highlights;
-            }
-        }
+impl DiffHighlightHost for MainDiffPane {
+    const LOG_READY: bool = true;
+    fn for_each_diff(&mut self, visit: &mut dyn FnMut(&mut MainDiffView)) {
+        visit(&mut self.view);
     }
 }
 
@@ -172,17 +159,19 @@ impl Render for MainDiffPane {
 
 impl KagiApp {
     /// Show `view` in the main diff pane: update the live pane in place (j/k
-    /// steps, re-opens) or create the entity on first open. Returns the pane
-    /// so callers can chain a highlight spawn onto it.
+    /// steps, re-opens) or create the entity on first open. Returns the pane.
+    /// An in-place update with unchanged text keeps the highlighted rows
+    /// ([`MainDiffView::adopt`]). Supersedes any main-diff read still out.
     pub(crate) fn show_main_diff(
         &mut self,
         view: MainDiffView,
         cx: &mut Context<Self>,
     ) -> Entity<MainDiffPane> {
+        self.bump_main_diff_req();
         match self.ui().main_diff.clone() {
             Some(pane) => {
                 pane.update(cx, |p, cx| {
-                    p.view = view;
+                    p.view.adopt(view);
                     cx.notify();
                 });
                 pane
@@ -199,6 +188,14 @@ impl KagiApp {
                 pane
             }
         }
+    }
+
+    /// Start a new main-diff request generation and return it.
+    fn bump_main_diff_req(&mut self) -> u64 {
+        self.ui_mut().map_or(0, |ui| {
+            ui.main_diff_req = ui.main_diff_req.wrapping_add(1);
+            ui.main_diff_req
+        })
     }
 }
 
@@ -313,10 +310,11 @@ impl KagiApp {
         }
     }
 
-    /// Re-read a Commit Panel file's diff into `pane`. Leaves the pane closed
-    /// when the file has nothing left to show — committed, discarded or staged
-    /// away while the reload was in flight — so a commit still returns the user
-    /// to the graph instead of freezing the diff it just consumed.
+    /// Re-read a Commit Panel file's diff into `pane`, off the UI thread. The
+    /// pane stays up with its current content meanwhile, so a reload does not
+    /// bounce the reader to the graph; if the file then has nothing left to
+    /// show — committed, discarded or staged away — or the read fails, the
+    /// pane closes rather than freezing a diff the repository no longer has.
     fn restore_wip_diff(
         &mut self,
         pane: Entity<MainDiffPane>,
@@ -327,42 +325,187 @@ impl KagiApp {
     ) {
         // #473: read from the repository the panel was staging into, which for
         // a linked worktree's panel is not the tab's.
-        let foreign = wip_repo
-            .filter(|p| Some(p) != self.repo_path.as_ref())
-            .and_then(|p| kagi_git::Backend::open(&p).ok());
-        let result = {
-            let repo = match (&foreign, self.ui().repo_session.as_ref()) {
-                (Some(backend), _) => backend,
-                (None, Some(session)) => session.backend(),
-                (None, None) => return,
-            };
-            if staged {
-                repo.staged_file_diff(&path)
-            } else {
-                repo.unstaged_file_diff(&path)
-            }
-        };
-        let file_diff = match result {
-            Ok(fd) => fd,
-            Err(e) => {
-                klog!("commit-panel diff refresh error: {}", e);
-                return;
-            }
-        };
-        if file_diff.hunks.is_empty() && !file_diff.is_binary {
+        let Some(repo) = wip_repo.or_else(|| self.repo_path.clone()) else {
             return;
-        }
-        let source = if staged {
-            MainDiffSource::Staged { path: path.clone() }
-        } else {
-            MainDiffSource::Unstaged { path: path.clone() }
         };
-        let mut view = build_main_diff_view(&file_diff, &path, 0, source.clone());
-        view.images = self.diff_images_for(&file_diff, &source, &path);
         if let Some(ui) = self.ui_mut() {
             ui.main_diff = Some(pane);
         }
+        let read = MainDiffRead::Wip {
+            staged,
+            refresh: true,
+        };
+        self.read_main_diff(repo, path, read, cx);
+    }
+
+    /// Read `path`'s diff for the main pane off the UI thread (#495) and show
+    /// its text when it lands — unless the owner is no longer the tab on
+    /// screen, or another install, read or close moved `main_diff_req` since.
+    pub(crate) fn read_main_diff(
+        &mut self,
+        repo: std::path::PathBuf,
+        path: std::path::PathBuf,
+        read: MainDiffRead,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(owner) = self.active_session() else {
+            return;
+        };
+        let req = self.bump_main_diff_req();
+        let bg_path = path.clone();
+        let bg_read = read.clone();
+        let task = cx.background_spawn(async move { bg_read.run(&repo, &bg_path) });
+        cx.spawn(async move |this, acx| {
+            let landed = task.await;
+            let _ = this.update(acx, |app, cx| {
+                if app.active_session() == Some(owner) && app.ui().main_diff_req == req {
+                    app.land_main_diff(read, &path, landed, cx);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Apply a current [`MainDiffRead`] result, with the contract lines the
+    /// synchronous openers used to print.
+    fn land_main_diff(
+        &mut self,
+        read: MainDiffRead,
+        path: &std::path::Path,
+        landed: Landed,
+        cx: &mut Context<Self>,
+    ) {
+        let refresh = matches!(read, MainDiffRead::Wip { refresh: true, .. });
+        let (file_diff, mut view) = match landed {
+            Landed::Show(shown) => *shown,
+            Landed::Nothing if refresh => return self.close_main_diff(),
+            Landed::Nothing => return,
+            Landed::OpenFailed(e) | Landed::Failed(e) if refresh => {
+                klog!("commit-panel diff refresh error: {}", e);
+                return self.close_main_diff();
+            }
+            Landed::OpenFailed(e) if matches!(read, MainDiffRead::Wip { .. }) => {
+                return klog!("commit-panel diff: repo open error: {}", e);
+            }
+            Landed::OpenFailed(e) | Landed::Failed(e) => {
+                return match read {
+                    MainDiffRead::Compare { .. } => klog!("compare diff error: {}", e),
+                    MainDiffRead::Wip { .. } => klog!("commit-panel diff error: {}", e),
+                };
+            }
+        };
+        if !refresh {
+            let (added, removed) = diff_line_counts(&file_diff);
+            match read {
+                MainDiffRead::Compare { .. } => klog!(
+                    "diff: {} hunks={} (+{} -{})",
+                    path.display(),
+                    file_diff.hunks.len(),
+                    added,
+                    removed
+                ),
+                MainDiffRead::Wip { .. } => {
+                    klog!(
+                        "commit-panel diff: {} (+{} -{})",
+                        path.display(),
+                        added,
+                        removed
+                    )
+                }
+            }
+            klog!(
+                "main-diff: open {} rows={} highlight={}",
+                path.display(),
+                view.rows.len(),
+                view.lang.unwrap_or("none")
+            );
+        }
+        view.images = self.diff_images_for(&file_diff, &view.source, path);
         self.show_main_diff(view, cx);
+    }
+}
+
+/// #495: a main-pane diff read off the UI thread.
+#[derive(Clone)]
+pub(crate) enum MainDiffRead {
+    /// A file of the open compare list.
+    Compare {
+        base: kagi_git::CommitId,
+        target: CompareTarget,
+        file_index: usize,
+    },
+    /// A Commit Panel file. `refresh`: re-reading an open diff after a
+    /// reload, which closes the pane when nothing is left to show.
+    Wip { staged: bool, refresh: bool },
+}
+
+/// What a [`MainDiffRead`] produced: the raw diff (image blobs are read from
+/// it on the UI thread) and its text-only view.
+pub(crate) enum Landed {
+    Show(Box<(kagi_git::FileDiff, MainDiffView)>),
+    /// Nothing to show: no HEAD to compare against, or (refresh) no change left.
+    Nothing,
+    OpenFailed(String),
+    Failed(String),
+}
+
+impl MainDiffRead {
+    /// Open `repo` read-only, diff `path`, and build the text rows — all of
+    /// the I/O and projection, none of it on the UI thread.
+    fn run(&self, repo: &std::path::Path, path: &std::path::Path) -> Landed {
+        let backend = match kagi_git::Backend::open(repo) {
+            Ok(backend) => backend,
+            Err(e) => return Landed::OpenFailed(e.to_string()),
+        };
+        let (result, source, file_index) = match self {
+            MainDiffRead::Compare {
+                base,
+                target,
+                file_index,
+            } => {
+                let result = match target {
+                    CompareTarget::Head => match backend.head_commit_id() {
+                        Some(head) => backend.compare_file_diff(base, &head, path),
+                        None => return Landed::Nothing,
+                    },
+                    CompareTarget::WorkingTree => {
+                        backend.compare_commit_to_workdir_file_diff(base, path)
+                    }
+                    CompareTarget::Commit(id) => backend.compare_file_diff(base, id, path),
+                };
+                let source = MainDiffSource::Compare {
+                    base: base.clone(),
+                    target: target.clone(),
+                    file_index: *file_index,
+                };
+                (result, source, *file_index)
+            }
+            MainDiffRead::Wip { staged, refresh } => {
+                let result = if *staged {
+                    backend.staged_file_diff(path)
+                } else {
+                    backend.unstaged_file_diff(path)
+                };
+                if *refresh && matches!(&result, Ok(fd) if fd.hunks.is_empty() && !fd.is_binary) {
+                    return Landed::Nothing;
+                }
+                let path = path.to_path_buf();
+                let source = if *staged {
+                    MainDiffSource::Staged { path }
+                } else {
+                    MainDiffSource::Unstaged { path }
+                };
+                (result, source, 0)
+            }
+        };
+        match result {
+            Ok(file_diff) => {
+                let view = build_main_diff_view(&file_diff, path, file_index, source);
+                Landed::Show(Box::new((file_diff, view)))
+            }
+            Err(e) => Landed::Failed(e.to_string()),
+        }
     }
 }
 
@@ -396,6 +539,8 @@ impl KagiApp {
     pub(crate) fn restore_open_panes(&mut self, panes: OpenPanes, cx: &mut Context<Self>) {
         if let Some(ui) = self.ui_mut() {
             ui.main_diff = None;
+            // A read still out for the pane being swept must not reopen it.
+            ui.main_diff_req = ui.main_diff_req.wrapping_add(1);
         }
         if let Some(view) = panes.compare {
             self.restore_compare(view, cx);
@@ -406,9 +551,13 @@ impl KagiApp {
     }
 
     /// T-UI-003: Close the main diff view and return to the commit graph.
-    /// No-op when main_diff is None.
+    /// No-op when main_diff is None. A diff read still out is superseded, so
+    /// it cannot reopen the pane (#495).
     pub fn close_main_diff(&mut self) {
-        self.with_ui(|ui| ui.main_diff = None);
+        self.with_ui(|ui| {
+            ui.main_diff = None;
+            ui.main_diff_req = ui.main_diff_req.wrapping_add(1);
+        });
         // ADR-0121 B2: also drop a not-yet-promoted headless staging view.
         self.pending_headless_diff = None;
     }

@@ -3,8 +3,11 @@ use kagi::app::*;
 use kagi_domain::remove::RemoveFaultPoint;
 use kagi_git::{Backend, GitError, OpOutcome, StateSummary};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::{Mutex, MutexGuard};
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{commit_all, git, init_repo};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 struct TestLog {
@@ -39,24 +42,6 @@ struct Fixture {
     repo: PathBuf,
     linked: PathBuf,
 }
-fn git(repo: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .current_dir(repo)
-        .args(args)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{args:?}: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
 impl Fixture {
     fn new() -> Self {
         let root = tempfile::tempdir().unwrap();
@@ -64,11 +49,9 @@ impl Fixture {
         let repo = dir.join("main");
         let linked = dir.join("linked");
         std::fs::create_dir(&repo).unwrap();
-        git(&repo, &["init", "-q", "-b", "main"]);
-        git(&repo, &["config", "commit.gpgsign", "false"]);
+        init_repo(&repo, "main");
         std::fs::write(repo.join("file"), b"original\n").unwrap();
-        git(&repo, &["add", "."]);
-        git(&repo, &["commit", "-qm", "initial"]);
+        commit_all(&repo, "initial");
         git(
             &repo,
             &["worktree", "add", "-qb", "linked", linked.to_str().unwrap()],

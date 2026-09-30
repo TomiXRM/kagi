@@ -8,7 +8,6 @@
 mod backend_ops;
 use backend_ops::execute_delete_remote_branch;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use git2::Repository;
 use tempfile::TempDir;
@@ -16,24 +15,9 @@ use tempfile::TempDir;
 use kagi_domain::plan_note::{CommonNote, PlanNote, RemoteBranchNote};
 use kagi_git::ops::plan_delete_remote_branch;
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(status.success(), "git {} failed", args.join(" "));
-}
-
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
-}
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{commit_all, git, git_output, init_repo, write_file};
 
 /// Layout: tmp/remote.git (bare, with `main` + `feature/x`) + tmp/local (clone,
 /// fetched so `refs/remotes/origin/feature/x` exists locally).
@@ -61,24 +45,19 @@ fn setup() -> Repos {
     );
 
     std::fs::create_dir(&local).unwrap();
-    git(&local, &["init", "-q", "-b", "main", "."]);
-    git(&local, &["config", "user.name", "Test"]);
-    git(&local, &["config", "user.email", "test@example.com"]);
-    git(&local, &["config", "commit.gpgsign", "false"]);
+    init_repo(&local, "main");
     git(
         &local,
         &["remote", "add", "origin", remote.to_str().unwrap()],
     );
 
     write_file(&local, "base.txt", "base\n");
-    git(&local, &["add", "-A"]);
-    git(&local, &["commit", "-qm", "base"]);
+    commit_all(&local, "base");
     git(&local, &["push", "-q", "-u", "origin", "main"]);
 
     git(&local, &["checkout", "-qb", "feature/x"]);
     write_file(&local, "feat.txt", "feature\n");
-    git(&local, &["add", "-A"]);
-    git(&local, &["commit", "-qm", "feature work"]);
+    commit_all(&local, "feature work");
     git(&local, &["push", "-q", "-u", "origin", "feature/x"]);
     git(&local, &["checkout", "-q", "main"]);
 
@@ -90,11 +69,11 @@ fn setup() -> Repos {
 }
 
 fn remote_has_branch(remote: &Path, branch: &str) -> bool {
-    let out = Command::new("git")
-        .args(["ls-remote", "--heads", remote.to_str().unwrap(), branch])
-        .output()
-        .expect("ls-remote failed");
-    !String::from_utf8_lossy(&out.stdout).trim().is_empty()
+    !git_output(
+        remote,
+        &["ls-remote", "--heads", remote.to_str().unwrap(), branch],
+    )
+    .is_empty()
 }
 
 #[test]

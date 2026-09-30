@@ -12,44 +12,25 @@
 mod backend_ops;
 use backend_ops::execute_delete_merged_branches;
 use std::path::Path;
-use std::process::Command;
 
 use tempfile::TempDir;
 
 use git2::Repository;
 use kagi_git::ops::{collect_branch_cleanup, plan_delete_merged_branches, MergedBranchStatus};
 
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, git_command, init_repo};
+
 /// 2026-01-10T00:00:00Z — all fixture dates are relative to this "now".
 const NOW: i64 = 1_768_003_200;
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .status()
-        .expect("git failed to start");
-    assert!(status.success(), "git {} failed", args.join(" "));
-}
-
 /// Run a git command whose commit/merge dates must be deterministic.
 fn git_at(dir: &Path, date: &str, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+    let status = git_command(dir)
         .env("GIT_AUTHOR_DATE", date)
         .env("GIT_COMMITTER_DATE", date)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_TERMINAL_PROMPT", "0")
+        .args(args)
         .status()
         .expect("git failed to start");
     assert!(status.success(), "git {} failed", args.join(" "));
@@ -63,10 +44,7 @@ fn commit_file(dir: &Path, date: &str, name: &str, msg: &str) {
 
 fn init(tmp: &TempDir) -> &Path {
     let dir = tmp.path();
-    git(dir, &["init", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    init_repo(dir, "main");
     commit_file(dir, "2026-01-01T00:00:00Z", "base.txt", "base");
     dir
 }

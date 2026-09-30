@@ -80,6 +80,18 @@ fn editor_hooks() -> EditorHooks {
     }
 }
 
+/// #495: the WIP hunks pane and the History diff are both highlighted by the
+/// shared off-thread pass, found by downcasting the crate's opaque slots.
+impl super::diff_view::highlight::DiffHighlightHost for EditorWorkspaceView {
+    fn for_each_diff(&mut self, visit: &mut dyn FnMut(&mut MainDiffView)) {
+        for slot in [&mut self.diff, &mut self.history_diff] {
+            if let Some(diff) = slot.as_mut().and_then(|d| d.downcast_mut::<MainDiffView>()) {
+                visit(diff);
+            }
+        }
+    }
+}
+
 // ── KagiApp entry points (ADR-0117 / ADR-0120) ─────────────────────
 
 impl KagiApp {
@@ -292,26 +304,26 @@ impl KagiApp {
     ) {
         let repo_path = view.read(cx).repo_path.clone();
         let bg_path = path.clone();
+        // I/O and the text rows off the UI thread; the render highlights (#495).
         let task = cx.background_spawn(async move {
-            kagi_git::Backend::open(&repo_path).ok().and_then(|repo| {
+            let file_diff = kagi_git::Backend::open(&repo_path).ok().and_then(|repo| {
                 match repo.unstaged_file_diff(&bg_path) {
                     Ok(d) if !d.hunks.is_empty() || d.is_binary => Some(d),
                     _ => repo.staged_file_diff(&bg_path).ok(),
                 }
+            });
+            file_diff.map(|d| {
+                let source = MainDiffSource::Unstaged {
+                    path: bg_path.clone(),
+                };
+                build_main_diff_view(&d, &bg_path, 0, source)
             })
         });
         let view = view.downgrade();
         cx.spawn(async move |_app, acx| {
-            let file_diff = task.await;
+            let built = task.await;
             let _ = view.update(acx, |v, cx| {
-                let diff = file_diff.map(|d| {
-                    Box::new(build_main_diff_view(
-                        &d,
-                        &path,
-                        0,
-                        MainDiffSource::Unstaged { path: path.clone() },
-                    )) as Box<dyn std::any::Any>
-                });
+                let diff = built.map(|d| Box::new(d) as Box<dyn std::any::Any>);
                 v.seed_diff(req, &path, diff, cx);
             });
         })
@@ -381,20 +393,17 @@ impl KagiApp {
         let repo_path = view.read(cx).repo_path.clone();
         let path = entry.change.path_after.clone();
         let task = cx.background_spawn(async move {
-            super::file_history::load_history_entry_file_diff(&repo_path, &entry)
+            let file_diff = super::file_history::load_history_entry_file_diff(&repo_path, &entry);
+            file_diff.and_then(|r| r.ok()).map(|d| {
+                let source = MainDiffSource::Unstaged { path: path.clone() };
+                build_main_diff_view(&d, &path, 0, source)
+            })
         });
         let view = view.downgrade();
         cx.spawn(async move |_app, acx| {
-            let file_diff = task.await;
+            let built = task.await;
             let _ = view.update(acx, |v, cx| {
-                let diff = file_diff.and_then(|r| r.ok()).map(|d| {
-                    Box::new(build_main_diff_view(
-                        &d,
-                        &path,
-                        0,
-                        MainDiffSource::Unstaged { path: path.clone() },
-                    )) as Box<dyn std::any::Any>
-                });
+                let diff = built.map(|d| Box::new(d) as Box<dyn std::any::Any>);
                 v.seed_history_diff(req, &commit_hash, diff, cx);
             });
         })

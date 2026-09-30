@@ -8,67 +8,33 @@
 #[path = "support/backend_ops.rs"]
 mod backend_ops;
 use backend_ops::execute_merge_into_branch;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{commit_all, git, git_output as out, init_repo, write_file as write};
 
 use git2::Repository;
 use tempfile::TempDir;
 
 use kagi_git::{plan_merge_into_branch, MergeIntoKind};
 
-fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .output()
-        .expect("git failed");
-    assert!(
-        out.status.success(),
-        "git {:?}: {}",
-        args,
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn out(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git failed");
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
-}
-
-fn write(dir: &Path, name: &str, body: &str) {
-    std::fs::write(dir.join(name), body).expect("write");
-}
-
 /// `main` and `feature` diverge: each adds a file the other does not have, so
 /// the merge is a real two-parent merge and cannot fast-forward.
 fn setup() -> (TempDir, PathBuf) {
     let tmp = TempDir::new().expect("tempdir");
     let p = tmp.path().to_path_buf();
-    git(&p, &["init", "-q", "-b", "main", "."]);
-    git(&p, &["config", "user.name", "Test"]);
-    git(&p, &["config", "user.email", "test@example.com"]);
-    git(&p, &["config", "commit.gpgsign", "false"]);
+    init_repo(&p, "main");
     write(&p, "base.txt", "base\n");
-    git(&p, &["add", "-A"]);
-    git(&p, &["commit", "-qm", "base"]);
+    commit_all(&p, "base");
 
     git(&p, &["checkout", "-q", "-b", "feature"]);
     write(&p, "feature.txt", "feature\n");
-    git(&p, &["add", "-A"]);
-    git(&p, &["commit", "-qm", "feature work"]);
+    commit_all(&p, "feature work");
 
     git(&p, &["checkout", "-q", "main"]);
     write(&p, "main.txt", "main\n");
-    git(&p, &["add", "-A"]);
-    git(&p, &["commit", "-qm", "main work"]);
+    commit_all(&p, "main work");
 
     // Stand somewhere that is neither side of the merge.
     git(&p, &["checkout", "-q", "-b", "bystander"]);

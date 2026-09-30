@@ -1,7 +1,6 @@
 //! Dirty Pull GUI E2E scenarios for ADR-0189.
 
 use std::path::Path;
-use std::process::Command;
 use std::time::Duration;
 
 use gpui::VisualTestAppContext;
@@ -11,18 +10,9 @@ use kagi_git::oplog::{read_oplog_tail_for_repo, recovery, OpOutcome};
 use crate::macos::{build_fixture, git, mount, unmount};
 use crate::recovery_operations::{press_enter, wait_idle};
 
-fn output(repo: &Path, args: &[&str]) -> String {
-    let result = Command::new("git")
-        .args(args)
-        .current_dir(repo)
-        .output()
-        .expect("git command");
-    assert!(result.status.success(), "git {args:?}: {:?}", result.stderr);
-    String::from_utf8(result.stdout)
-        .expect("utf8 git output")
-        .trim()
-        .to_string()
-}
+#[path = "../support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::git_output as output;
 
 fn records(repo: &Path, op: &str) -> Vec<kagi_git::oplog::OpLogEntry> {
     read_oplog_tail_for_repo(repo, 100)

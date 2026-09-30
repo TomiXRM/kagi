@@ -5,43 +5,14 @@
 //!
 //! All writes are confined to the temporary directory.
 
-use std::path::Path;
-use std::process::Command;
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, init_repo, write_file};
 
 use git2::Repository;
 use tempfile::TempDir;
 
 use kagi_git::{snapshot, Head};
-
-// ────────────────────────────────────────────────────────────
-// Helpers
-// ────────────────────────────────────────────────────────────
-
-/// Run a git command inside `dir`, asserting it succeeds.
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(
-        status.success(),
-        "git {} exited with {:?}",
-        args.join(" "),
-        status.code()
-    );
-}
-
-/// Write `content` to `dir/name`.
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
-}
 
 // ────────────────────────────────────────────────────────────
 // Fixture builder — mirrors make_fixture.sh but in Rust
@@ -66,14 +37,9 @@ fn build_fixture(tmp: &TempDir) -> (std::path::PathBuf, std::path::PathBuf, Repo
     git(base, &["init", "-q", "--bare", remote.to_str().unwrap()]);
 
     // work repo
-    git(
-        base,
-        &["init", "-q", "-b", "main", repo_dir.to_str().unwrap()],
-    );
+    std::fs::create_dir(&repo_dir).expect("create work repo");
     let d = &repo_dir;
-    git(d, &["config", "user.name", "Test"]);
-    git(d, &["config", "user.email", "test@example.com"]);
-    git(d, &["config", "commit.gpgsign", "false"]);
+    init_repo(d, "main");
     git(d, &["remote", "add", "origin", remote.to_str().unwrap()]);
 
     // commits on main
@@ -183,10 +149,7 @@ fn test_snapshot_unborn_repo() {
     }
     let tmp = TempDir::new().unwrap();
     let d = tmp.path();
-    git(d, &["init", "-b", "main", "."]);
-    git(d, &["config", "user.name", "Test"]);
-    git(d, &["config", "user.email", "test@example.com"]);
-    git(d, &["config", "commit.gpgsign", "false"]);
+    init_repo(d, "main");
 
     let mut repo = Repository::open(d).expect("open unborn repo");
     let snap = snapshot(&mut repo, 10_000).expect("snapshot must not fail on unborn repo");

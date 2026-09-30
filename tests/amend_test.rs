@@ -22,41 +22,33 @@
 mod backend_ops;
 use backend_ops::execute_amend;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use git2::Repository;
 use tempfile::TempDir;
 
 use kagi_git::{plan_amend, preflight_check, AmendMode};
 
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{commit_all, git, git_command, git_output, init_repo, write_file};
+
 // ────────────────────────────────────────────────────────────
 // Helpers
 // ────────────────────────────────────────────────────────────
-
-fn git(dir: &Path, args: &[&str]) {
-    git_as(dir, "Test", "test@example.com", args);
-}
 
 /// Run a git command with an explicit author/committer identity (via env).
 /// Env vars are used (not `-c user.name`) because they take precedence and let
 /// us author a specific commit independently of repo config.
 fn git_as(dir: &Path, name: &str, email: &str, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
+    let status = git_command(dir)
         .env("GIT_AUTHOR_NAME", name)
         .env("GIT_AUTHOR_EMAIL", email)
         .env("GIT_COMMITTER_NAME", name)
         .env("GIT_COMMITTER_EMAIL", email)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
+        .args(args)
         .status()
         .expect("git command failed to start");
     assert!(status.success(), "git {} failed", args.join(" "));
-}
-
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
 }
 
 fn read_file(dir: &Path, name: &str) -> String {
@@ -64,60 +56,29 @@ fn read_file(dir: &Path, name: &str) -> String {
 }
 
 fn head_sha(dir: &Path) -> String {
-    let out = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(dir)
-        .output()
-        .expect("rev-parse failed");
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
+    git_output(dir, &["rev-parse", "HEAD"])
 }
 
 fn rev_parse(dir: &Path, rev: &str) -> String {
-    let out = Command::new("git")
-        .args(["rev-parse", rev])
-        .current_dir(dir)
-        .output()
-        .expect("rev-parse failed");
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
+    git_output(dir, &["rev-parse", rev])
 }
 
 fn rev_count(dir: &Path) -> usize {
-    let out = Command::new("git")
-        .args(["rev-list", "--count", "HEAD"])
-        .current_dir(dir)
-        .output()
-        .expect("rev-list failed");
-    String::from_utf8_lossy(&out.stdout)
-        .trim()
+    git_output(dir, &["rev-list", "--count", "HEAD"])
         .parse()
         .expect("count")
 }
 
 fn head_tree_sha(dir: &Path) -> String {
-    let out = Command::new("git")
-        .args(["rev-parse", "HEAD^{tree}"])
-        .current_dir(dir)
-        .output()
-        .expect("rev-parse tree failed");
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
+    git_output(dir, &["rev-parse", "HEAD^{tree}"])
 }
 
 fn head_message(dir: &Path) -> String {
-    let out = Command::new("git")
-        .args(["log", "-1", "--pretty=%B"])
-        .current_dir(dir)
-        .output()
-        .expect("log message failed");
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
+    git_output(dir, &["log", "-1", "--pretty=%B"])
 }
 
 fn head_author(dir: &Path) -> String {
-    let out = Command::new("git")
-        .args(["log", "-1", "--pretty=%an <%ae>"])
-        .current_dir(dir)
-        .output()
-        .expect("log author failed");
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
+    git_output(dir, &["log", "-1", "--pretty=%an <%ae>"])
 }
 
 /// A minimal local repo: a base commit + a second commit (the amend target).
@@ -138,8 +99,7 @@ fn setup_local_with_author(author_name: &str, author_email: &str) -> LocalRepo {
     git(&path, &["config", "commit.gpgsign", "false"]);
 
     write_file(&path, "base.txt", "base content\n");
-    git(&path, &["add", "-A"]);
-    git(&path, &["commit", "-qm", "initial commit"]);
+    commit_all(&path, "initial commit");
 
     // Second commit — the amend target — authored by a distinct identity.
     write_file(&path, "feature.txt", "feature v1\n");
@@ -189,21 +149,16 @@ fn setup_with_remote_on(branch: &str) -> RepoWithRemote {
     );
 
     std::fs::create_dir(&local).unwrap();
-    git(&local, &["init", "-q", "-b", branch, "."]);
-    git(&local, &["config", "user.name", "Test"]);
-    git(&local, &["config", "user.email", "test@example.com"]);
-    git(&local, &["config", "commit.gpgsign", "false"]);
+    init_repo(&local, branch);
     git(
         &local,
         &["remote", "add", "origin", remote.to_str().unwrap()],
     );
 
     write_file(&local, "base.txt", "base\n");
-    git(&local, &["add", "-A"]);
-    git(&local, &["commit", "-qm", "base"]);
+    commit_all(&local, "base");
     write_file(&local, "second.txt", "second\n");
-    git(&local, &["add", "-A"]);
-    git(&local, &["commit", "-qm", "second"]);
+    commit_all(&local, "second");
     git(&local, &["push", "-q", "-u", "origin", branch]);
 
     RepoWithRemote {
@@ -325,12 +280,7 @@ fn test_amend_staged_folds_changes() {
 
     // Working tree must be clean after amend (staged change is committed,
     // and execute_amend does not leave the index out of sync).
-    let out = Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(&r.path)
-        .output()
-        .unwrap();
-    let st = String::from_utf8_lossy(&out.stdout);
+    let st = git_output(&r.path, &["status", "--porcelain"]);
     assert!(
         st.trim().is_empty(),
         "WT should be clean after folding the only staged change, got: {}",
@@ -397,12 +347,7 @@ fn test_amend_author_preserved() {
     assert_eq!(head_author(&r.path), "Bob Original <bob@orig.example>");
 
     // Committer is updated to the current repo signature (user.name = Committer).
-    let out = Command::new("git")
-        .args(["log", "-1", "--pretty=%cn <%ce>"])
-        .current_dir(&r.path)
-        .output()
-        .unwrap();
-    let committer = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let committer = git_output(&r.path, &["log", "-1", "--pretty=%cn <%ce>"]);
     assert_eq!(
         committer, "Committer <committer@example.com>",
         "committer updated"
@@ -453,10 +398,7 @@ fn test_plan_amend_merge_commit_blocker() {
     let tmp = TempDir::new().expect("tempdir");
     let path = tmp.path().to_path_buf();
 
-    git(&path, &["init", "-q", "-b", "main", "."]);
-    git(&path, &["config", "user.name", "Test"]);
-    git(&path, &["config", "user.email", "test@example.com"]);
-    git(&path, &["config", "commit.gpgsign", "false"]);
+    init_repo(&path, "main");
 
     write_file(&path, "base.txt", "base\n");
     git(&path, &["add", "-A"]);
@@ -540,10 +482,7 @@ fn test_plan_amend_root_commit_blocker() {
     let tmp = TempDir::new().expect("tempdir");
     let path = tmp.path().to_path_buf();
 
-    git(&path, &["init", "-q", "-b", "main", "."]);
-    git(&path, &["config", "user.name", "Test"]);
-    git(&path, &["config", "user.email", "test@example.com"]);
-    git(&path, &["config", "commit.gpgsign", "false"]);
+    init_repo(&path, "main");
 
     write_file(&path, "only.txt", "only commit\n");
     git(&path, &["add", "-A"]);

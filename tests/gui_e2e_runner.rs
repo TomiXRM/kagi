@@ -96,6 +96,10 @@ mod conflict_continue_cache;
 mod refusal_reasons;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/diff_highlight.rs"]
+mod diff_highlight;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/remote_browse_focus.rs"]
 mod remote_browse_focus;
 
@@ -953,6 +957,14 @@ mod macos {
                 Box::new(crate::refusal_reasons::scenario_refusal_reasons),
             ),
             (
+                "diff_highlight_once",
+                Box::new(crate::diff_highlight::scenario_diff_highlight_once),
+            ),
+            (
+                "diff_highlight_stale",
+                Box::new(crate::diff_highlight::scenario_diff_highlight_stale),
+            ),
+            (
                 "conflict_save_boundary",
                 Box::new(crate::app_conflict::scenario_conflict_save_boundary),
             ),
@@ -1138,6 +1150,10 @@ mod macos {
             (
                 "read_owner_ordering",
                 Box::new(crate::read_owner::scenario_read_owner_ordering),
+            ),
+            (
+                "load_more_stale_reads",
+                Box::new(crate::read_owner::scenario_load_more_stale_reads),
             ),
             (
                 "tab_ui_state_ownership",

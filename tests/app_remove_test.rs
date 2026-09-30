@@ -4,9 +4,12 @@ use kagi_domain::remove::RemoveFaultPoint as Fault;
 use kagi_git::backend::remove::Recording;
 use kagi_git::oplog::{read_oplog_tail, OpOutcome};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::{Mutex, MutexGuard};
 use tempfile::TempDir;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{commit_all, git, init_repo};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 struct EnvVarRestore {
@@ -44,24 +47,6 @@ impl Drop for Fixture {
         }
     }
 }
-fn git(repo: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(repo)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{args:?}: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
 impl Fixture {
     fn new(config: Option<&str>) -> Self {
         let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -71,15 +56,13 @@ impl Fixture {
         let linked = root.join("linked");
         let log = root.join("log");
         std::fs::create_dir(&repo).unwrap();
-        git(&repo, &["init", "-q", "-b", "main"]);
-        git(&repo, &["config", "commit.gpgsign", "false"]);
+        init_repo(&repo, "main");
         std::fs::write(repo.join("source"), b"recover these bytes\n").unwrap();
         if let Some(config) = config {
             std::fs::create_dir(repo.join(".kagi")).unwrap();
             std::fs::write(repo.join(".kagi/worktree.toml"), config).unwrap();
         }
-        git(&repo, &["add", "."]);
-        git(&repo, &["commit", "-qm", "initial"]);
+        commit_all(&repo, "initial");
         git(
             &repo,
             &[

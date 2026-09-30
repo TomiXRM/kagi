@@ -5,7 +5,10 @@
 
 use std::collections::HashSet;
 use std::path::Path;
-use std::process::Command;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git_command, init_repo, write_file};
 
 use git2::Repository;
 use tempfile::TempDir;
@@ -710,19 +713,13 @@ fn test_stress_three_level_nested() {
 //   E (main: merge of feature/x into main, parents=[B, D])
 // ────────────────────────────────────────────────────────────
 
-/// Run a git command inside `dir`, asserting it succeeds.
+/// Run a git command inside `dir` with pinned author/committer dates,
+/// asserting it succeeds.
 fn git_cmd(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+    let status = git_command(dir)
         .env("GIT_AUTHOR_DATE", "2020-01-01T00:00:00+00:00")
         .env("GIT_COMMITTER_DATE", "2020-01-01T00:00:00+00:00")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
+        .args(args)
         .status()
         .expect("git command failed to start");
     assert!(
@@ -731,11 +728,6 @@ fn git_cmd(dir: &Path, args: &[&str]) {
         args.join(" "),
         status.code()
     );
-}
-
-/// Write `content` to `dir/name`.
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
 }
 
 #[test]
@@ -747,10 +739,7 @@ fn test_end_to_end_layout() {
     let dir = tmp.path();
 
     // Initialize repo.
-    git_cmd(dir, &["init", "-b", "main", "."]);
-    git_cmd(dir, &["config", "user.name", "Test"]);
-    git_cmd(dir, &["config", "user.email", "test@example.com"]);
-    git_cmd(dir, &["config", "commit.gpgsign", "false"]);
+    init_repo(dir, "main");
 
     // A: initial commit on main.
     write_file(dir, "base.txt", "base\n");

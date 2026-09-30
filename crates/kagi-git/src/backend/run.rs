@@ -97,8 +97,12 @@ impl Backend {
         } else {
             oplog_outcome_from(&result, &plan.predicted, partial_after)
         };
-        if let Ok(OperationOutcome::Discard(d)) = &result {
-            backup_refs.extend(d.backups.iter().map(|b| b.reference.clone()));
+        match &result {
+            Ok(OperationOutcome::Discard(d)) => {
+                backup_refs.extend(d.backups.iter().map(|b| b.reference.clone()));
+            }
+            Ok(OperationOutcome::Suggestion(s)) => backup_refs.push(s.reference.clone()),
+            _ => {}
         }
         let recording = self.record_run_oplog_with_backups(
             op.oplog_name(),
@@ -429,6 +433,7 @@ impl Backend {
             Operation::ApplySuggestion {
                 suggestion,
                 expected_original,
+                ..
             } => self
                 .execute_apply_suggestion(plan, suggestion, expected_original)
                 .map(OperationOutcome::Suggestion),

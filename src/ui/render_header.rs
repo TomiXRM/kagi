@@ -5,6 +5,9 @@
 
 #![allow(clippy::too_many_arguments)]
 
+#[cfg_attr(not(feature = "gui-e2e"), allow(dead_code))]
+pub(super) mod toolbar_a11y;
+
 use super::*;
 use crate::ui::workspace_mode::WorkspaceMode;
 
@@ -301,14 +304,7 @@ impl KagiApp {
             cx.notify();
         });
 
-        // Why a toolbar button renders bright or muted. `Availability(false)`
-        // means the action cannot run right now; `Selection(false)` means an
-        // equally usable toggle is merely off (Terminal still opens the panel
-        // when pressed), so only the former is a disabled control.
-        enum ButtonState {
-            Availability(bool),
-            Selection(bool),
-        }
+        use toolbar_a11y::{button_flags, ButtonState};
 
         // ── Helper: build a single Finder/Keynote-style toolbar button ──────
         // W10-TOOLBAR: icon on top (20px ≈ Size::Medium), text_xs label below,
@@ -332,10 +328,11 @@ impl KagiApp {
                         count: usize| {
             // Both variants carry the same "renders bright" bool as the old
             // `enabled` argument, so the palette is unchanged.
-            let (enabled, unavailable) = match state {
-                ButtonState::Availability(on) => (on, !on),
-                ButtonState::Selection(on) => (on, false),
-            };
+            let (enabled, unavailable) = button_flags(state);
+            // #354: the exact bool that gates `set_disabled` below, recorded
+            // for the GUI E2E oracle (the AccessKit tree itself is only built
+            // once assistive technology connects, which a test cannot force).
+            toolbar_a11y::record_unavailable(id, unavailable);
             let text_color = if enabled {
                 theme().text_main
             } else {

@@ -115,6 +115,10 @@ pub struct Entry {
     anchor: Option<String>,
     /// The comment carries a ```suggestion block.
     suggestion: bool,
+    /// That block resolved against the comment's anchor: what "Apply
+    /// suggestion…" plans (#351, ADR-0210). `None` for an unterminated fence
+    /// or a comment with no line.
+    applicable: Option<kagi_domain::suggestion::Suggestion>,
     /// Severity tag lifted out of the body (Codex `P1`, Copilot `MUST`).
     tag: Option<kagi_domain::github::CommentTag>,
     /// The diff hunk GitHub shows above a line comment - the code the
@@ -149,6 +153,7 @@ pub(super) fn conversation_entries(
             at: r.submitted_at.clone(),
             anchor: None,
             suggestion: false,
+            applicable: None,
             tag,
             hunk: String::new(),
         });
@@ -161,6 +166,7 @@ pub(super) fn conversation_entries(
             at: c.created_at.clone(),
             anchor: None,
             suggestion: false,
+            applicable: None,
             tag: None,
             hunk: String::new(),
         });
@@ -183,6 +189,7 @@ pub(super) fn conversation_entries(
                 c.path.clone()
             }),
             suggestion: c.has_suggestion(),
+            applicable: c.suggestion(),
             tag,
             hunk: c.diff_hunk.clone(),
         });
@@ -247,6 +254,11 @@ fn render_entry(
                     .child(SharedString::from(Msg::PrSuggestion.t())),
             ))
         })
+        .children(
+            e.applicable
+                .clone()
+                .map(|s| render_apply_suggestion(number as usize * 1000 + i, s, cx)),
+        )
         .child(div().flex_1())
         .children(e.anchor.as_ref().map(|a| {
             div()
@@ -659,4 +671,37 @@ fn render_diff_hunk(hunk: &str, id: usize, cx: &mut Context<KagiApp>) -> gpui::A
                 ),
         )
         .into_any_element()
+}
+
+/// "Apply suggestion…" on a line comment whose ```suggestion block resolves
+/// to a range (#351, ADR-0210). It only plans: the plan card says whether the
+/// working-tree file is the PR head's version, and only a confirm writes.
+fn render_apply_suggestion(
+    id: usize,
+    suggestion: kagi_domain::suggestion::Suggestion,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let open = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+        cx.stop_propagation();
+        this.open_apply_suggestion_modal(suggestion.clone(), cx);
+        cx.notify();
+    });
+    super::e2e::measure_control(
+        format!("pr-convo-apply-suggestion-{id}"),
+        div()
+            .id(("pr-convo-apply-suggestion", id))
+            .px_1()
+            .rounded_sm()
+            .border_1()
+            .border_color(rgb(theme().color_branch))
+            .text_xs()
+            .text_color(rgb(theme().color_branch))
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(theme().selected)))
+            // The selectable text under the row would start a selection.
+            .on_mouse_down(gpui::MouseButton::Left, |_e, _w, cx| cx.stop_propagation())
+            .on_click(open)
+            .child(SharedString::from(Msg::PrApplySuggestion.t())),
+    )
+    .into_any_element()
 }

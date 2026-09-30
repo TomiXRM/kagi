@@ -30,29 +30,52 @@ pub struct Suggestion {
 impl Suggestion {
     /// Splice `replacement` into `original` (the whole file), replacing the
     /// 1-based inclusive `[start_line, end_line]` range. Returns the new file
-    /// content, or `None` if the range is out of bounds / inverted. A trailing
-    /// newline on `original` is preserved.
+    /// content, or `None` if the range is out of bounds / inverted.
+    ///
+    /// Every line outside the range is kept byte for byte, line endings
+    /// included: a CRLF file stays CRLF, and a missing final newline stays
+    /// missing. The replacement lines take the replaced range's line ending.
     pub fn apply_to(&self, original: &str) -> Option<String> {
         if self.start_line == 0 || self.start_line > self.end_line {
             return None;
         }
-        let had_nl = original.ends_with('\n');
-        let mut lines: Vec<String> = original.lines().map(str::to_string).collect();
+        let lines: Vec<&str> = original.split_inclusive('\n').collect();
         let s = (self.start_line - 1) as usize;
         let e = self.end_line as usize;
-        if s >= lines.len() || e > lines.len() {
+        if e > lines.len() {
             return None;
         }
-        let repl: Vec<String> = if self.replacement.is_empty() {
-            Vec::new()
-        } else {
-            self.replacement.lines().map(str::to_string).collect()
+        let ending = |line: &str| -> &'static str {
+            if line.ends_with("\r\n") {
+                "\r\n"
+            } else if line.ends_with('\n') {
+                "\n"
+            } else {
+                ""
+            }
         };
-        lines.splice(s..e, repl);
-        let mut out = lines.join("\n");
-        if had_nl && !out.is_empty() {
-            out.push('\n');
+        // Between replacement lines: the range's own line ending, or the
+        // file's when the range is a lone unterminated last line.
+        let sep = match ending(lines[s]) {
+            "" if original.contains("\r\n") => "\r\n",
+            "" => "\n",
+            eol => eol,
+        };
+        let mut out = String::with_capacity(original.len() + self.replacement.len());
+        lines[..s].iter().for_each(|l| out.push_str(l));
+        if self.replacement.is_empty() {
+            // Deleting the unterminated last line leaves the line before it
+            // as the unterminated last line.
+            if e == lines.len() && ending(lines[e - 1]).is_empty() {
+                let kept = out.len() - ending(&out).len();
+                out.truncate(kept);
+            }
+        } else {
+            let repl: Vec<&str> = self.replacement.lines().collect();
+            out.push_str(&repl.join(sep));
+            out.push_str(ending(lines[e - 1]));
         }
+        lines[e..].iter().for_each(|l| out.push_str(l));
         Some(out)
     }
 }
@@ -201,5 +224,52 @@ mod tests {
             replacement: "x".into(),
         };
         assert!(s.apply_to(file).is_none());
+    }
+
+    fn at(start_line: u32, end_line: u32, replacement: &str) -> Suggestion {
+        Suggestion {
+            path: "f".into(),
+            start_line,
+            end_line,
+            replacement: replacement.into(),
+        }
+    }
+
+    #[test]
+    fn parse_suggestion_crlf_body_yields_bare_lines() {
+        // A comment body posted from Windows arrives with CRLF line endings.
+        let body = "nit\r\n```suggestion\r\nlet a = 1;\r\nlet b = 2;\r\n```\r\n";
+        let s = parse_suggestion(body, "f", Some(4), 5).expect("a CRLF fence parses");
+        assert_eq!(s.replacement, "let a = 1;\nlet b = 2;");
+        assert_eq!((s.start_line, s.end_line), (4, 5));
+    }
+
+    #[test]
+    fn apply_to_keeps_a_crlf_file_crlf() {
+        let file = "one\r\ntwo\r\nthree\r\n";
+        assert_eq!(
+            at(2, 2, "TWO\nTOO").apply_to(file).unwrap(),
+            "one\r\nTWO\r\nTOO\r\nthree\r\n",
+            "the replacement takes the file's CRLF; other lines are untouched"
+        );
+        assert_eq!(at(2, 3, "").apply_to(file).unwrap(), "one\r\n");
+    }
+
+    #[test]
+    fn apply_to_leaves_other_lines_byte_for_byte() {
+        // Mixed endings outside the range survive as they are.
+        let file = "a\r\nb\nc\r\n";
+        assert_eq!(at(2, 2, "B").apply_to(file).unwrap(), "a\r\nB\nc\r\n");
+    }
+
+    #[test]
+    fn apply_to_keeps_a_missing_final_newline_missing() {
+        let file = "one\ntwo";
+        assert_eq!(at(2, 2, "TWO").apply_to(file).unwrap(), "one\nTWO");
+        assert_eq!(at(1, 1, "ONE").apply_to(file).unwrap(), "ONE\ntwo");
+        // Deleting the unterminated last line: the line before it becomes one.
+        assert_eq!(at(2, 2, "").apply_to(file).unwrap(), "one");
+        // Only that one line ending goes: a blank line before it is kept.
+        assert_eq!(at(3, 3, "").apply_to("one\n\ntwo").unwrap(), "one\n");
     }
 }

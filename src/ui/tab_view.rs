@@ -466,6 +466,10 @@ pub struct TabUiState {
     /// #495: moves on every main-diff install, close and off-thread read, so
     /// a read that lands afterwards can tell it was superseded.
     pub main_diff_req: u64,
+    /// #829: the `main_diff_req` of a commit-file diff read still out. A
+    /// commit's diff is immutable, so a publish's pane sweep carries this read
+    /// (re-anchored by commit id when it lands) instead of dropping the click.
+    pub main_diff_commit_read: Option<u64>,
     pub compare_view: Option<Entity<super::ComparePane>>,
 }
 
@@ -573,6 +577,7 @@ impl Default for TabUiState {
             commit_panel_open: false,
             main_diff: None,
             main_diff_req: 0,
+            main_diff_commit_read: None,
             compare_view: None,
         }
     }

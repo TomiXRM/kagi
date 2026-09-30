@@ -11,6 +11,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- コミットのファイルを開いたとき、未キャッシュの diff を UI スレッドで読んでいたため大きな diff で画面が固まる問題を修正しました。読み込みは Compare / WIP と同じくバックグラウンドで行い、読み終わるまで表示中の diff はそのまま残り、2 秒を超えると busy snackbar が理由を示します。読み込み中に別のファイルを開いた・閉じた場合は古い結果を捨て、reload で行番号が変わった場合はコミットの新しい行に付け直して表示します。（#829）
+
 - File History で先頭の WIP 行を選んだとき、右の詳細ペインの「Changes」が「+0 −0」と表示される問題を修正しました。WIP 行は `git status` から作られ行数を持たないため、行数が分からない項目では「Changes」行を出さず、実際の +/− は下の diff pane が示します。コミット行の +/− と binary 表示は従来どおりです。（#813）
 
 ### Added

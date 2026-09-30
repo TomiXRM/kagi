@@ -14,34 +14,18 @@
 //! *consequence*: an `Untrusted` backend refuses writes, a trusted one proceeds.
 
 use std::path::Path;
-use std::process::Command;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{commit_all, git, git_command, git_succeeds, init_repo};
 
 use kagi_git::trust::RepoTrust;
 use kagi_git::{Backend, CommitId, Head, Operation};
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git failed to start");
-    assert!(status.success(), "git {} failed", args.join(" "));
-}
-
 fn build_repo(dir: &Path) {
-    git(dir, &["init", "-q", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    init_repo(dir, "main");
     std::fs::write(dir.join("base.txt"), "base\n").unwrap();
-    git(dir, &["add", "-A"]);
-    git(dir, &["commit", "-qm", "c1"]);
+    commit_all(dir, "c1");
 }
 
 fn head_commit(backend: &Backend) -> CommitId {
@@ -213,11 +197,8 @@ fn untrusted_repo_refuses_direct_execute_paths() {
     );
 
     // The stash entry must still be intact (drop never ran).
-    let stash_list = Command::new("git")
+    let stash_list = git_command(d)
         .args(["stash", "list"])
-        .current_dir(d)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", d)
         .output()
         .expect("git");
     assert!(
@@ -229,15 +210,10 @@ fn untrusted_repo_refuses_direct_execute_paths() {
 }
 
 fn branch_exists(dir: &Path, name: &str) -> bool {
-    Command::new("git")
-        .args(["rev-parse", "--verify", &format!("refs/heads/{name}")])
-        .current_dir(dir)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .output()
-        .expect("git")
-        .status
-        .success()
+    git_succeeds(
+        dir,
+        &["rev-parse", "--verify", &format!("refs/heads/{name}")],
+    )
 }
 
 #[path = "support/isolated.rs"]

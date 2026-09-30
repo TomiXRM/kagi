@@ -13,8 +13,11 @@
 //! at its own tempdir and serializes on `ENV_LOCK` (the var is process-global).
 
 use std::path::Path;
-use std::process::Command;
 use std::sync::Mutex;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{commit_all, git, git_command, git_output as git_out, git_succeeds, init_repo};
 
 use tempfile::TempDir;
 
@@ -22,41 +25,11 @@ use kagi_git::{read_oplog_tail, Backend, OpOutcome, Operation, OperationOutcome}
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git failed to start");
-    assert!(status.success(), "git {} failed", args.join(" "));
-}
-
-fn git_out(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .output()
-        .expect("git failed to start");
-    String::from_utf8_lossy(&out.stdout).to_string()
-}
-
 /// Repo with one commit on `main` and `file.txt = "A\n"` (tracked).
 fn build_repo(dir: &Path) {
-    git(dir, &["init", "-q", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    init_repo(dir, "main");
     std::fs::write(dir.join("file.txt"), "A\n").unwrap();
-    git(dir, &["add", "-A"]);
-    git(dir, &["commit", "-qm", "c1"]);
+    commit_all(dir, "c1");
 }
 
 // ── 1. Survives gc + restores; a loose blob does NOT survive. ──────────────
@@ -102,10 +75,8 @@ fn snapshot_survives_gc_and_restores() {
     assert_eq!(t.trim(), "commit", "snapshot commit survived gc");
 
     // MUTATION EVIDENCE: the loose blob (discard-style backup) is pruned.
-    let blob_type = Command::new("git")
+    let blob_type = git_command(d)
         .args(["cat-file", "-t", &dangling])
-        .current_dir(d)
-        .env("HOME", d)
         .output()
         .unwrap();
     assert!(
@@ -205,11 +176,7 @@ fn snapshot_not_a_push_target() {
 
     // A normal `git push` (and even `--all`) must not carry refs/kagi/.
     git(&local, &["push", "-q", "origin", "main"]);
-    let _ = Command::new("git")
-        .args(["push", "-q", "--all", "origin"])
-        .current_dir(&local)
-        .env("HOME", &local)
-        .status();
+    git_succeeds(&local, &["push", "-q", "--all", "origin"]);
 
     // Only the ref *name* is meaningful here — a substring match on `snap.id`
     // (a short numeric id) can coincidentally hit an unrelated commit SHA in

@@ -17,7 +17,10 @@
 mod backend_ops;
 use backend_ops::execute_undo_commit;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{commit_all, git, git_command, git_output, init_repo, write_file};
 
 use git2::Repository;
 use tempfile::TempDir;
@@ -28,43 +31,19 @@ use kagi_git::{plan_undo_commit, working_tree_status};
 // Helpers
 // ────────────────────────────────────────────────────────────
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(status.success(), "git {} failed", args.join(" "));
-}
-
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
-}
-
 fn read_file(dir: &Path, name: &str) -> String {
     std::fs::read_to_string(dir.join(name)).unwrap_or_default()
 }
 
 fn head_sha(dir: &Path) -> String {
-    let out = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(dir)
-        .output()
-        .expect("rev-parse failed");
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
+    git_output(dir, &["rev-parse", "HEAD"])
 }
 
-/// Run `git status --porcelain` and return the raw output lines.
+/// Run `git status --porcelain` and return the raw output lines. Not
+/// `git_output`: its trim would eat the leading status column (" M").
 fn porcelain_status(dir: &Path) -> Vec<String> {
-    let out = Command::new("git")
+    let out = git_command(dir)
         .args(["status", "--porcelain"])
-        .current_dir(dir)
         .output()
         .expect("git status failed");
     let raw = String::from_utf8_lossy(&out.stdout).to_string();
@@ -84,14 +63,10 @@ fn setup_local() -> LocalRepo {
     let tmp = TempDir::new().expect("tempdir");
     let path = tmp.path().to_path_buf();
 
-    git(&path, &["init", "-q", "-b", "main", "."]);
-    git(&path, &["config", "user.name", "Test"]);
-    git(&path, &["config", "user.email", "test@example.com"]);
-    git(&path, &["config", "commit.gpgsign", "false"]);
+    init_repo(&path, "main");
 
     write_file(&path, "base.txt", "base content\n");
-    git(&path, &["add", "-A"]);
-    git(&path, &["commit", "-qm", "initial commit"]);
+    commit_all(&path, "initial commit");
 
     LocalRepo { _tmp: tmp, path }
 }
@@ -122,18 +97,14 @@ fn setup_with_remote() -> RepoWithRemote {
     );
 
     std::fs::create_dir(&local).unwrap();
-    git(&local, &["init", "-q", "-b", "main", "."]);
-    git(&local, &["config", "user.name", "Test"]);
-    git(&local, &["config", "user.email", "test@example.com"]);
-    git(&local, &["config", "commit.gpgsign", "false"]);
+    init_repo(&local, "main");
     git(
         &local,
         &["remote", "add", "origin", remote.to_str().unwrap()],
     );
 
     write_file(&local, "base.txt", "base\n");
-    git(&local, &["add", "-A"]);
-    git(&local, &["commit", "-qm", "base"]);
+    commit_all(&local, "base");
     git(&local, &["push", "-q", "-u", "origin", "main"]);
 
     RepoWithRemote {
@@ -161,9 +132,8 @@ fn test_undo_commit_normal() {
 
     let sha_before_undo = head_sha(&r.path);
     let parent_sha = {
-        let out = Command::new("git")
+        let out = git_command(&r.path)
             .args(["rev-parse", "HEAD~1"])
-            .current_dir(&r.path)
             .output()
             .expect("rev-parse HEAD~1 failed");
         String::from_utf8_lossy(&out.stdout).trim().to_string()
@@ -466,9 +436,8 @@ fn test_undo_commit_no_upstream_allowed() {
     git(&r.path, &["commit", "-qm", "local only commit"]);
 
     let parent_sha = {
-        let out = Command::new("git")
+        let out = git_command(&r.path)
             .args(["rev-parse", "HEAD~1"])
-            .current_dir(&r.path)
             .output()
             .expect("rev-parse failed");
         String::from_utf8_lossy(&out.stdout).trim().to_string()

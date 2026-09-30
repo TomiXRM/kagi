@@ -1,14 +1,17 @@
 //! Integration tests for working tree status (T003).
 //!
 //! Each test builds a small Git repository inside a `tempfile::TempDir` using
-//! `std::process::Command` to call the `git` CLI, then asserts the result of
-//! `kagi_git::working_tree_status`.
+//! the hermetic `git` CLI helpers in `support/git_fixture.rs`, then asserts the
+//! result of `kagi_git::working_tree_status`.
 //!
 //! All writes are confined to the temporary directory; no existing repository
 //! is ever modified.
 
 use std::path::Path;
-use std::process::Command;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, write_file};
 
 use git2::Repository;
 use tempfile::TempDir;
@@ -20,40 +23,11 @@ use kagi_git::{working_tree_status, ChangeKind};
 // Helpers
 // ────────────────────────────────────────────────────────────
 
-/// Run a git command inside `dir`, asserting it succeeds.
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir) // avoids picking up ~/.gitconfig gpg settings
-        .status()
-        .expect("git command failed to start");
-    assert!(
-        status.success(),
-        "git {} exited with {:?}",
-        args.join(" "),
-        status.code()
-    );
-}
-
-/// Write `content` to `dir/name`.
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
-}
-
 /// Initialise a bare-minimum repo with a single "initial commit" so HEAD is
 /// not unborn.
 fn init_repo(tmp: &TempDir) -> Repository {
     let dir = tmp.path();
-    git(dir, &["init", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    git_fixture::init_repo(dir, "main");
 
     // Create a base commit so the index is not unborn.
     write_file(dir, "base.txt", "base\n");

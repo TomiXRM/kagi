@@ -8,13 +8,14 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git_command, git_output as text, init_repo};
+
+/// Raw stdout bytes of a successful `git args`: `status -z` output is hashed
+/// byte-for-byte, so it must not go through `git_output`'s trim.
 fn git(repo: &Path, args: &[&str]) -> Vec<u8> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .output()
-        .expect("run git");
+    let output = git_command(repo).args(args).output().expect("run git");
     assert!(
         output.status.success(),
         "git {args:?}: {}",
@@ -23,17 +24,9 @@ fn git(repo: &Path, args: &[&str]) -> Vec<u8> {
     output.stdout
 }
 
-fn text(repo: &Path, args: &[&str]) -> String {
-    String::from_utf8(git(repo, args))
-        .unwrap()
-        .trim()
-        .to_string()
-}
-
+/// `git hash-object --stdin` over `bytes`, which are not valid as an argument.
 fn hash_stdin(repo: &Path, bytes: &[u8]) -> String {
-    let mut child = Command::new("git")
-        .arg("-C")
-        .arg(repo)
+    let mut child = git_command(repo)
         .args(["hash-object", "--stdin"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -64,9 +57,7 @@ impl Fixture {
         fs::create_dir(&runtime).unwrap();
         fs::create_dir(&fake_bin).unwrap();
         fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
-        git(&repo, &["init"]);
-        git(&repo, &["config", "user.email", "test@example.com"]);
-        git(&repo, &["config", "user.name", "Kagi Test"]);
+        init_repo(&repo, "main");
         fs::write(repo.join("tracked"), "base\n").unwrap();
         git(&repo, &["add", "tracked"]);
         git(&repo, &["commit", "-m", "base"]);

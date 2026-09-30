@@ -8,7 +8,6 @@
 //! staged (HEAD→index), and unstaged (index→workdir).
 
 use std::path::Path;
-use std::process::Command;
 
 use git2::Repository;
 use tempfile::TempDir;
@@ -18,33 +17,13 @@ use kagi_git::{
     CommitId,
 };
 
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, write_file};
+
 // ────────────────────────────────────────────────────────────
 // Helpers
 // ────────────────────────────────────────────────────────────
-
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(
-        status.success(),
-        "git {} exited with {:?}",
-        args.join(" "),
-        status.code()
-    );
-}
-
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
-}
 
 fn write_bytes(dir: &Path, name: &str, content: &[u8]) {
     std::fs::write(dir.join(name), content).expect("write_bytes failed");
@@ -52,10 +31,7 @@ fn write_bytes(dir: &Path, name: &str, content: &[u8]) {
 
 fn init_repo(tmp: &TempDir) -> Repository {
     let dir = tmp.path();
-    git(dir, &["init", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    git_fixture::init_repo(dir, "main");
 
     write_file(dir, "base.txt", "l1\nl2\nl3\n");
     git(dir, &["add", "base.txt"]);

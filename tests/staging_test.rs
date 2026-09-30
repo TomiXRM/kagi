@@ -28,7 +28,10 @@
 mod backend_ops;
 use backend_ops::{execute_commit, stage_file, unstage_file};
 use std::path::Path;
-use std::process::Command;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, init_repo, write_file};
 
 use git2::Repository;
 use tempfile::TempDir;
@@ -42,32 +45,6 @@ use kagi_git::{
 // Helpers
 // ────────────────────────────────────────────────────────────
 
-/// Run a git command inside `dir`, asserting it succeeds.
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(
-        status.success(),
-        "git {} exited with {:?}",
-        args.join(" "),
-        status.code()
-    );
-}
-
-/// Write `content` to `dir/name`.
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
-}
-
 /// Read `dir/name` as a String.
 fn read_file(dir: &Path, name: &str) -> String {
     std::fs::read_to_string(dir.join(name)).expect("read_file failed")
@@ -78,10 +55,7 @@ fn read_file(dir: &Path, name: &str) -> String {
 /// Returns `(repo_dir, Repository)`.
 fn build_clean_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository) {
     let d = tmp.path();
-    git(d, &["init", "-q", "-b", "main", "."]);
-    git(d, &["config", "user.name", "Test"]);
-    git(d, &["config", "user.email", "test@example.com"]);
-    git(d, &["config", "commit.gpgsign", "false"]);
+    init_repo(d, "main");
 
     write_file(d, "README.md", "# test\n");
     git(d, &["add", "README.md"]);
@@ -94,10 +68,7 @@ fn build_clean_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository) {
 /// Build a fresh repo with **no commits** (unborn HEAD on `main`).
 fn build_unborn_repo(tmp: &TempDir) -> (std::path::PathBuf, Repository) {
     let d = tmp.path();
-    git(d, &["init", "-q", "-b", "main", "."]);
-    git(d, &["config", "user.name", "Test"]);
-    git(d, &["config", "user.email", "test@example.com"]);
-    git(d, &["config", "commit.gpgsign", "false"]);
+    init_repo(d, "main");
 
     let repo = Repository::open(d).expect("failed to open repo");
     (d.to_path_buf(), repo)

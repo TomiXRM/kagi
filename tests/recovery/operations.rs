@@ -1,6 +1,5 @@
 //! Real UI → backend → durable-record scenarios; no mocked mutation results.
 use std::path::Path;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use gpui::{AnyWindowHandle, Entity, Focusable, VisualTestAppContext};
@@ -11,15 +10,9 @@ use kagi_git::{CommitId, OperationKind, StateSummary};
 
 use crate::macos::{build_fixture, git, mount, repo_fingerprint, unmount};
 
-fn output(repo: &Path, args: &[&str]) -> String {
-    let result = Command::new("git")
-        .args(args)
-        .current_dir(repo)
-        .output()
-        .unwrap();
-    assert!(result.status.success(), "git {args:?}: {:?}", result.stderr);
-    String::from_utf8(result.stdout).unwrap().trim().to_string()
-}
+#[path = "../support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::git_output as output;
 
 pub(super) fn wait_idle(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
     let deadline = Instant::now() + Duration::from_secs(10);

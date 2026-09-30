@@ -7,7 +7,10 @@
 mod backend_ops;
 use backend_ops::execute_revert;
 use std::path::Path;
-use std::process::Command;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, git_output, init_repo, write_file};
 
 use git2::Repository;
 use tempfile::TempDir;
@@ -17,57 +20,8 @@ use kagi_git::{
     CommitId,
 };
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(
-        status.success(),
-        "git {} exited with {:?}",
-        args.join(" "),
-        status.code()
-    );
-}
-
-fn git_output(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        output.status.success(),
-        "git {} exited with {:?}\nstderr: {}",
-        args.join(" "),
-        output.status.code(),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
-}
-
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
-}
-
 fn read_file(dir: &Path, name: &str) -> String {
     std::fs::read_to_string(dir.join(name)).expect("read_file failed")
-}
-
-fn init_repo(dir: &Path) {
-    git(dir, &["init", "-q", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
 }
 
 fn commit_file(dir: &Path, name: &str, content: &str, message: &str) -> CommitId {
@@ -84,7 +38,7 @@ fn revert_success_creates_commit_and_updates_worktree() {
     }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "main");
 
     commit_file(dir, "file.txt", "base\n", "initial");
     let target = commit_file(dir, "file.txt", "base\nfeature\n", "add feature");
@@ -119,7 +73,7 @@ fn revert_conflict_is_blocker_and_leaves_repo_untouched() {
     }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "main");
 
     commit_file(dir, "file.txt", "base\n", "initial");
     let target = commit_file(dir, "file.txt", "target\n", "target change");
@@ -149,7 +103,7 @@ fn revert_merge_commit_is_blocked_by_plan() {
     }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "main");
 
     commit_file(dir, "base.txt", "base\n", "initial");
     git(dir, &["checkout", "-qb", "feature"]);
@@ -177,7 +131,7 @@ fn revert_dirty_worktree_warns_without_blocking() {
     }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "main");
 
     commit_file(dir, "file.txt", "base\n", "initial");
     let target = commit_file(dir, "file.txt", "base\nfeature\n", "add feature");
@@ -206,7 +160,7 @@ fn revert_preflight_fails_when_head_moves_after_plan() {
     }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "main");
 
     commit_file(dir, "file.txt", "base\n", "initial");
     let target = commit_file(dir, "file.txt", "base\nfeature\n", "add feature");
@@ -239,7 +193,7 @@ fn revert_dirty_file_safe_checkout_refuses_and_preserves_user_content() {
     }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    init_repo(dir);
+    init_repo(dir, "main");
 
     commit_file(dir, "file.txt", "base\n", "initial");
     let target = commit_file(dir, "file.txt", "base\nfeature\n", "add feature");

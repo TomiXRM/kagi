@@ -15,64 +15,31 @@
 //! `TempDir`s — no network, never a user repo.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use tempfile::TempDir;
 
 use kagi_domain::plan_note::{PlanNote, StashNote};
 use kagi_git::{Backend, CommitId, Head, Operation, OperationOutcome};
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(status.success(), "git {} failed", args.join(" "));
-}
-
-fn git_out(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .output()
-        .expect("git command failed to start");
-    assert!(out.status.success(), "git {} failed", args.join(" "));
-    String::from_utf8_lossy(&out.stdout).into_owned()
-}
-
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
-}
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{commit_all, git, git_output as git_out, init_repo, write_file};
 
 fn head_sha(dir: &Path) -> String {
-    git_out(dir, &["rev-parse", "HEAD"]).trim().to_string()
+    git_out(dir, &["rev-parse", "HEAD"])
 }
 
 /// Repo with one commit on `main`, HEAD attached, clean.
 fn build_repo(dir: &Path) {
-    git(dir, &["init", "-q", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    init_repo(dir, "main");
     write_file(dir, "base.txt", "base\n");
-    git(dir, &["add", "-A"]);
-    git(dir, &["commit", "-qm", "c1"]);
+    commit_all(dir, "c1");
 }
 
 /// Add a commit, moving HEAD out from under any plan built before it.
 fn move_head(dir: &Path, name: &str) {
     write_file(dir, name, "moved\n");
-    git(dir, &["add", "-A"]);
-    git(dir, &["commit", "-qm", name]);
+    commit_all(dir, name);
 }
 
 fn head_commit(backend: &Backend) -> CommitId {

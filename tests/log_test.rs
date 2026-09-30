@@ -1,15 +1,17 @@
 //! Integration tests for commit log (T004).
 //!
 //! Each test builds a small Git repository inside a `tempfile::TempDir` using
-//! `std::process::Command` to call the `git` CLI, then asserts the result of
+//! the hermetic `git` CLI fixture helper, then asserts the result of
 //! `kagi_git::commit_log`.
 //!
 //! All writes are confined to the temporary directory; no existing repository
 //! is ever modified.
 
 use std::collections::HashMap;
-use std::path::Path;
-use std::process::Command;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, git_command, git_output, write_file};
 
 use git2::Repository;
 use tempfile::TempDir;
@@ -17,65 +19,13 @@ use tempfile::TempDir;
 use kagi_git::{commit_log, CommitId};
 
 // ────────────────────────────────────────────────────────────
-// Helpers (mirrors status_test.rs by design; shared helper
-// extraction is intentionally deferred per T004 scope)
+// Helpers
 // ────────────────────────────────────────────────────────────
-
-/// Run a git command inside `dir`, asserting it succeeds.
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(
-        status.success(),
-        "git {} exited with {:?}",
-        args.join(" "),
-        status.code()
-    );
-}
-
-/// Capture stdout of a git command; panics on failure.
-fn git_output(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {} failed: {}",
-        args.join(" "),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).expect("non-UTF-8 git output")
-}
-
-/// Write `content` to `dir/name`.
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
-}
 
 /// Initialise a bare-minimum repo with a single "initial commit".
 fn init_repo(tmp: &TempDir) -> Repository {
     let dir = tmp.path();
-    git(dir, &["init", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    git_fixture::init_repo(dir, "main");
 
     write_file(dir, "base.txt", "base\n");
     git(dir, &["add", "base.txt"]);
@@ -101,10 +51,7 @@ fn init_repo(tmp: &TempDir) -> Repository {
 
 fn build_branching_repo(tmp: &TempDir) -> Repository {
     let dir = tmp.path();
-    git(dir, &["init", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    git_fixture::init_repo(dir, "main");
 
     // A
     write_file(dir, "base.txt", "base\n");
@@ -152,10 +99,7 @@ fn test_unborn_repo_is_empty() {
     }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    git(dir, &["init", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    git_fixture::init_repo(dir, "main");
 
     let repo = Repository::open(dir).expect("failed to open repo");
     let commits = commit_log(&repo, 10_000).expect("commit_log must not fail on unborn repo");
@@ -341,7 +285,7 @@ fn test_summary_and_multiline_message() {
     git(dir, &["add", "extra.txt"]);
 
     // Use -m twice to produce a multi-paragraph message.
-    let status = Command::new("git")
+    let status = git_command(dir)
         .args([
             "commit",
             "-m",
@@ -349,13 +293,6 @@ fn test_summary_and_multiline_message() {
             "-m",
             "Second paragraph of\nthe commit message.",
         ])
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
         .status()
         .expect("git commit failed to start");
     assert!(status.success(), "git commit returned non-zero");
@@ -394,10 +331,7 @@ fn test_all_refs_included() {
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
 
-    git(dir, &["init", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    git_fixture::init_repo(dir, "main");
 
     // Commit on main.
     write_file(dir, "base.txt", "base\n");

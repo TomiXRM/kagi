@@ -4,6 +4,10 @@ use crate::macos::{git, mount, unmount};
 use gpui::{Focusable, SharedString, VisualTestAppContext};
 use std::path::{Path, PathBuf};
 
+#[path = "../support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::git_output;
+
 fn build_fixture(root: &Path, name: &str) -> PathBuf {
     let repo = root.join(name);
     std::fs::create_dir_all(&repo).expect("repo dir");
@@ -274,14 +278,7 @@ pub fn scenario_retained_pane_resources(cx: &mut VisualTestAppContext) {
 /// `git diff --cached` file count for `repo` — the authoritative index state,
 /// independent of any panel's in-memory view.
 fn staged_count(repo: &Path) -> usize {
-    let out = std::process::Command::new("git")
-        .current_dir(repo)
-        .args(["diff", "--cached", "--name-only"])
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .output()
-        .expect("git diff --cached");
-    String::from_utf8_lossy(&out.stdout)
+    git_output(repo, &["diff", "--cached", "--name-only"])
         .lines()
         .filter(|l| !l.is_empty())
         .count()

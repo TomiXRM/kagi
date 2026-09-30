@@ -8,7 +8,10 @@ use backend_ops::{
 };
 use backend_ops::{execute_remove_worktree, plan_remove_worktree};
 use std::path::Path;
-use std::process::Command;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, git_command, init_repo, write_file};
 
 use git2::Repository;
 use tempfile::TempDir;
@@ -22,36 +25,9 @@ use kagi_git::{
     CommitId,
 };
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(
-        status.success(),
-        "git {} exited with {:?}",
-        args.join(" "),
-        status.code()
-    );
-}
-
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
-}
-
 fn build_repo(tmp: &TempDir) -> Repository {
     let d = tmp.path();
-    git(d, &["init", "-q", "-b", "main", "."]);
-    git(d, &["config", "user.name", "Test"]);
-    git(d, &["config", "user.email", "test@example.com"]);
-    git(d, &["config", "commit.gpgsign", "false"]);
+    init_repo(d, "main");
 
     write_file(d, "README.md", "# test\n");
     git(d, &["add", "README.md"]);
@@ -778,9 +754,8 @@ fn lock_worktree_reason_appears_in_porcelain() {
     assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
     execute_lock_worktree(&repo, &plan, "wt-lock", Some("agent running")).expect("execute");
 
-    let out = Command::new("git")
+    let out = git_command(tmp.path())
         .args(["worktree", "list", "--porcelain"])
-        .current_dir(tmp.path())
         .output()
         .expect("git worktree list");
     let text = String::from_utf8_lossy(&out.stdout);
@@ -926,10 +901,7 @@ fn repair_restores_links_after_moving_main() {
     let base = TempDir::new().unwrap();
     let main1 = base.path().join("main");
     std::fs::create_dir(&main1).unwrap();
-    git(&main1, &["init", "-q", "-b", "main", "."]);
-    git(&main1, &["config", "user.name", "Test"]);
-    git(&main1, &["config", "user.email", "test@example.com"]);
-    git(&main1, &["config", "commit.gpgsign", "false"]);
+    init_repo(&main1, "main");
     write_file(&main1, "README.md", "# test\n");
     git(&main1, &["add", "README.md"]);
     git(&main1, &["commit", "-qm", "initial"]);
@@ -1049,10 +1021,7 @@ fn repair_reports_failure_instead_of_false_success() {
     let base = TempDir::new().unwrap();
     let main1 = base.path().join("main");
     std::fs::create_dir(&main1).unwrap();
-    git(&main1, &["init", "-q", "-b", "main", "."]);
-    git(&main1, &["config", "user.name", "Test"]);
-    git(&main1, &["config", "user.email", "test@example.com"]);
-    git(&main1, &["config", "commit.gpgsign", "false"]);
+    init_repo(&main1, "main");
     write_file(&main1, "README.md", "# t\n");
     git(&main1, &["add", "README.md"]);
     git(&main1, &["commit", "-qm", "init"]);
@@ -1071,7 +1040,7 @@ fn repair_reports_failure_instead_of_false_success() {
     // exits non-zero.
     let dotgit = wt.join(".git");
     let chflags = |flag: &str| {
-        Command::new("chflags")
+        std::process::Command::new("chflags")
             .args([flag, dotgit.to_str().unwrap()])
             .status()
             .expect("chflags")

@@ -12,7 +12,6 @@
 //! - merge commit (first-parent diff only; second-parent changes excluded)
 
 use std::path::Path;
-use std::process::Command;
 
 use git2::Repository;
 use tempfile::TempDir;
@@ -21,43 +20,18 @@ use kagi_git::{
     commit_changed_files, commit_file_diff, commit_log, ChangeKind, CommitId, DiffLineKind,
 };
 
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git, write_file};
+
 // ────────────────────────────────────────────────────────────
 // Test helpers
 // ────────────────────────────────────────────────────────────
 
-/// Run a git command inside `dir`, asserting it succeeds.
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .status()
-        .expect("git command failed to start");
-    assert!(
-        status.success(),
-        "git {} exited with {:?}",
-        args.join(" "),
-        status.code()
-    );
-}
-
-/// Write `content` to `dir/name`.
-fn write_file(dir: &Path, name: &str, content: &str) {
-    std::fs::write(dir.join(name), content).expect("write_file failed");
-}
-
 /// Initialise a repo and make an initial commit, return Repository.
 fn init_repo(tmp: &TempDir) -> Repository {
     let dir = tmp.path();
-    git(dir, &["init", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    git_fixture::init_repo(dir, "main");
 
     write_file(dir, "base.txt", "base\n");
     git(dir, &["add", "base.txt"]);
@@ -83,10 +57,7 @@ fn test_root_commit_all_added() {
     }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    git(dir, &["init", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    git_fixture::init_repo(dir, "main");
 
     write_file(dir, "a.txt", "a\n");
     write_file(dir, "b.txt", "b\n");
@@ -248,10 +219,7 @@ fn test_merge_commit_first_parent_only() {
     }
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
-    git(dir, &["init", "-b", "main", "."]);
-    git(dir, &["config", "user.name", "Test"]);
-    git(dir, &["config", "user.email", "test@example.com"]);
-    git(dir, &["config", "commit.gpgsign", "false"]);
+    git_fixture::init_repo(dir, "main");
 
     // A: initial commit
     write_file(dir, "base.txt", "base\n");

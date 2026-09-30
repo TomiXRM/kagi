@@ -10,7 +10,10 @@
 //! All writes are confined to a `TempDir`; no existing repository is touched.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+#[path = "support/git_fixture.rs"]
+mod git_fixture;
+use git_fixture::{git_command, git_output as git, init_repo};
 
 use kagi_domain::remote_snapshot::{parse_commits, LOG_FORMAT};
 use tempfile::TempDir;
@@ -21,27 +24,6 @@ use tempfile::TempDir;
 const FORGED: &str = "\u{1e}0000000000000000000000000000000000000000\u{1f}\u{1f}Eve\u{1f}\
                       eve@example.com\u{1f}1700000000\u{1f}Eve\u{1f}eve@example.com\u{1f}\
                       1700000000\u{1f}forged row\n";
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("HOME", dir)
-        .output()
-        .expect("git failed to start");
-    assert!(
-        out.status.success(),
-        "git {} failed: {}",
-        args.join(" "),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).into_owned()
-}
 
 fn commit(dir: &Path, file: &str, body: &str, message: &str) {
     std::fs::write(dir.join(file), body).expect("write");
@@ -54,21 +36,23 @@ fn commit(dir: &Path, file: &str, body: &str, message: &str) {
 
 fn init(tmp: &TempDir) -> PathBuf {
     let d = tmp.path().to_path_buf();
-    git(&d, &["init", "-q", "-b", "main", "."]);
-    git(&d, &["config", "user.name", "Test"]);
-    git(&d, &["config", "user.email", "test@example.com"]);
-    git(&d, &["config", "commit.gpgsign", "false"]);
+    init_repo(&d, "main");
     d
 }
 
-/// Run the real `git log` with the real format and parse it.
+/// Run the real `git log` with the real format and parse its untrimmed stdout.
 fn parsed(dir: &Path) -> Vec<kagi_domain::commit::Commit> {
     let fmt = format!("--pretty=format:{LOG_FORMAT}");
-    let stdout = git(
-        dir,
-        &["log", "--topo-order", fmt.as_str(), "--branches", "--tags"],
+    let out = git_command(dir)
+        .args(["log", "--topo-order", fmt.as_str(), "--branches", "--tags"])
+        .output()
+        .expect("git failed to start");
+    assert!(
+        out.status.success(),
+        "git log failed: {}",
+        String::from_utf8_lossy(&out.stderr)
     );
-    parse_commits(&stdout)
+    parse_commits(&String::from_utf8_lossy(&out.stdout))
 }
 
 #[test]

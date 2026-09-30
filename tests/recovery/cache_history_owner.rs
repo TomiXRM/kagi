@@ -33,12 +33,13 @@ pub fn scenario_read_cache_revalidates_on_activation(cx: &mut VisualTestAppConte
             !app.ui().diff_caches.changed_files().is_empty(),
             "cache-owner-a-populated: A must have a real commit-diff cache"
         );
-        assert!(
-            app.ui().main_diff.is_some(),
-            "cache-owner-a-diff-open: A diff did not open"
-        );
     });
+    // The commit diff is read off the UI thread (#829).
     cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).ui().main_diff.is_some()),
+        "cache-owner-a-diff-open: A diff did not open"
+    );
 
     app.update(cx, |app, cx| {
         app.switch_repo(1, cx);
@@ -271,9 +272,13 @@ pub fn scenario_welcome_drops_root_main_diff(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let (app, window) = mount(cx, fixture.path());
     cx.run_until_parked();
-    let weak = app.update(cx, |app, cx| {
+    app.update(cx, |app, cx| {
         app.select_headless(0);
         app.open_main_diff_commit(0, cx);
+    });
+    // The commit diff is read off the UI thread (#829).
+    cx.run_until_parked();
+    let weak = app.update(cx, |app, cx| {
         let weak = app
             .ui()
             .main_diff

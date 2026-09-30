@@ -174,6 +174,13 @@ The current suite covers:
   dropped results, split projections) back the assertions; default builds do
   not compile them. Pair with `survives_reload,theme_switch,worktree_panel`
   for the reload / linked-worktree paths the same reads serve.
+  `commit_diff_off_thread` (#829): a commit file's diff on a content-cache
+  miss is read off the UI thread — nothing installs during the call, the
+  shown rows keep their allocation until the read lands, a read superseded
+  by another commit's cached file never lands or fills the cache, and a read
+  held (`KagiApp::hold_next_main_diff_read_for_e2e`, `gui-e2e` only) across a
+  reload that renumbers the rows survives the pane sweep, lands on its
+  commit's new row and fills no cache under the stale row key.
 - conflict refusal reasons (`KAGI_GUI_E2E_ONLY=conflict_save_boundary`,
   `tests/recovery/conflict_refusal.rs`): Save with remaining markers and Abort
   after an external staged resolution show the specific EN/JA reason in the

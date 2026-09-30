@@ -92,6 +92,10 @@ mod conflict_abort_slot;
 mod conflict_continue_cache;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/repo_health.rs"]
+mod repo_health;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/diff_highlight.rs"]
 mod diff_highlight;
 
@@ -947,6 +951,10 @@ mod macos {
             (
                 "conflict_continue_cache",
                 Box::new(crate::conflict_continue_cache::scenario_conflict_continue_cache),
+            ),
+            (
+                "repo_health_proposal",
+                Box::new(crate::repo_health::scenario_repo_health_proposal),
             ),
             (
                 "diff_highlight_once",

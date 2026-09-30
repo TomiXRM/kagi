@@ -54,6 +54,9 @@ pub enum Op {
     Revert,
     Save,
     SetUpstream,
+    /// Repository-health fixes (#358).
+    WriteCommitGraph,
+    EnableFsmonitor,
     Skip,
     Snapshot,
     StageAll,
@@ -120,6 +123,11 @@ impl Op {
             Revert => ("Revert", "revert"),
             Save => ("Save", "保存"),
             SetUpstream => ("Set upstream", "upstream の設定"),
+            WriteCommitGraph => ("Write commit-graph", "commit-graph の書き込み"),
+            EnableFsmonitor => (
+                "Enable filesystem monitor",
+                "ファイルシステムモニターの有効化",
+            ),
             Skip => ("Skip", "skip"),
             Snapshot => ("Snapshot", "スナップショットの取得"),
             Stage => ("Stage", "stage"),

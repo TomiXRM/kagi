@@ -12,6 +12,7 @@
 mod arbitration;
 mod conflict;
 mod editor;
+mod repo_health;
 mod smart;
 mod window;
 mod worktree;

@@ -138,6 +138,18 @@ The current suite covers:
   scanned zero. The counter was removed after acceptance; the behavioral
   scenario remains. Pair with `KAGI_GUI_E2E_ONLY=conflict_` for existing safety
   and ownership coverage; Save/Continue still perform fresh validation.
+- repository-health proposal (`KAGI_GUI_E2E_ONLY=repo_health_proposal`,
+  `tests/recovery/repo_health.rs`): #358 / ADR-0205. Analyze's Health axis
+  reads a fixture without a commit-graph and suggests writing one; asking
+  opens the shared plan card (equivalent command, no blockers) and nothing
+  else — no commit-graph file, no receipt, unchanged repository fingerprint,
+  also after Cancel. A real root Enter on the card writes it once (one
+  durable `write-commit-graph` success) and the Health axis re-reads without
+  the finding. Backend coverage (fsmonitor local-config-only, existing value
+  left alone, unborn HEAD blocked, platform gate) is `tests/repo_health_test.rs`.
+  Tier B: open Analyze → Health on a repository without a commit-graph and
+  with `core.fsmonitor` unset, check the EN/JA texts, open each fix, read
+  the plan card (equivalent command, recovery) and Cancel, then confirm one.
 - text-first diff highlight (`KAGI_GUI_E2E_ONLY=diff_highlight`,
   `tests/recovery/diff_highlight.rs`): #495. WIP, Compare and File History
   diffs are read off the UI thread and first appear as unhighlighted text

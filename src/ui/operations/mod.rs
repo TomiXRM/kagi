@@ -25,6 +25,7 @@ pub mod modal_state;
 pub mod pull_push;
 pub mod rebase;
 pub mod remote_branch;
+pub(crate) mod repo_health;
 pub mod reset;
 mod smart_generate;
 mod staging_failure;
@@ -98,6 +99,8 @@ pub(crate) struct RunPresentation {
     pr_edit: Option<(u64, crate::ui::modals::PrField, Vec<String>)>,
     commit_panel_failure: Option<CommitPanelFailure>,
     outcome_notice: Option<String>,
+    /// A repository-health fix landed: re-read Analyze's Health axis (#358).
+    refresh_repo_health: bool,
 }
 
 impl RunPresentation {
@@ -134,6 +137,11 @@ impl RunPresentation {
 
     pub(crate) fn open_operation_log(mut self) -> Self {
         self.open_operation_log = true;
+        self
+    }
+
+    pub(crate) fn refresh_repo_health(mut self) -> Self {
+        self.refresh_repo_health = true;
         self
     }
 
@@ -598,6 +606,9 @@ impl KagiApp {
         }
         if presentation.reload {
             self.reload(cx);
+        }
+        if presentation.refresh_repo_health {
+            self.refresh_repo_health(cx);
         }
         if presentation.open_operation_log {
             self.bottom_panel_open = true;

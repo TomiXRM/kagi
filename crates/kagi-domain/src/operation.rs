@@ -153,6 +153,13 @@ pub enum Operation {
         suggestion: Suggestion,
         expected_original: Vec<String>,
     },
+    /// Write a commit-graph for every reachable commit (`git commit-graph
+    /// write --reachable`, #358 / ADR-0205). Adds a cache under
+    /// `objects/info`; refs, index and working tree are untouched.
+    WriteCommitGraph,
+    /// Set `core.fsmonitor=true` in the repository-local config (#358 /
+    /// ADR-0205). Only the one key is written.
+    EnableFsmonitor,
 }
 
 impl Operation {
@@ -198,6 +205,8 @@ impl Operation {
             Operation::Discard { .. } => "discard",
             Operation::RestoreSnapshot { .. } => "restore-snapshot",
             Operation::ApplySuggestion { .. } => "apply-suggestion",
+            Operation::WriteCommitGraph => "write-commit-graph",
+            Operation::EnableFsmonitor => "enable-fsmonitor",
         }
     }
 }

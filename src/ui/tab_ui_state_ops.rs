@@ -79,6 +79,7 @@ impl TabUiState {
             // the leak matrix observes both (ADR-0197 決定 4, last paragraph).
             commit_scroll_handle: _,
             commit_limit,
+            load_more_gen,
             graph_scroll_x,
             branch_groups_collapsed,
             cleanup_scroll: _,
@@ -159,6 +160,7 @@ impl TabUiState {
         let dirty = [
             (selected.is_some(), "selected"),
             (*commit_limit != super::DEFAULT_COMMIT_LIMIT, "commit_limit"),
+            (*load_more_gen != 0, "load_more_gen"),
             (*graph_scroll_x != 0.0, "graph_scroll_x"),
             (
                 *branch_groups_collapsed != default_groups,

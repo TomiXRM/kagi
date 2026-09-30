@@ -439,11 +439,12 @@ impl KagiApp {
         let commit_limit = self.ui[&session].commit_limit;
         #[cfg(feature = "gui-e2e")]
         super::e2e::record_tab_load_commit_limit(session, commit_limit);
+        let read = self.begin_slow_read(session, None, cx);
         let task = cx.background_spawn(async move {
             let mut backend = kagi_git::Backend::open(&bg_path)
                 .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
             let snap = backend
-                .snapshot_repairing_stat_cache(commit_limit)
+                .snapshot_repairing_stat_cache(commit_limit, read.probe())
                 .map_err(|e| i18n::op_failed(i18n::Op::Snapshot, e))?;
             let wip_diffstat = KagiApp::wip_diffstat_from_backend(&backend);
             let status = snap.status.clone();

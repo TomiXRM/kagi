@@ -28,7 +28,7 @@ use crate::settings::{read_setting, write_setting};
 // Lang + active-language atomic
 /// UI language.  `En` is index 0 (the default), `Ja` is index 1.
 pub mod busy;
-pub use busy::busy_label;
+pub use busy::{busy_label, slow_read_advice, slow_read_label, slow_read_skip};
 pub mod op;
 pub mod plan;
 pub mod pr_viewed;

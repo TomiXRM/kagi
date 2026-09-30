@@ -1080,15 +1080,14 @@ fn build_local_branch_leaf(
         .view()
         .branch_upstream_info
         .get(branch_name)
-        .and_then(|u| {
-            if u.ahead > 0 || u.behind > 0 {
-                Some(SharedString::from(format!(
-                    "\u{2191}{} \u{2193}{}",
-                    u.ahead, u.behind
-                )))
-            } else {
-                None
-            }
+        .and_then(|u| match u.counts {
+            // #355: a skipped count is unknown — "—", never a hidden 0/0.
+            None => Some(SharedString::from("\u{2014}")),
+            Some(c) if c.ahead > 0 || c.behind > 0 => Some(SharedString::from(format!(
+                "\u{2191}{} \u{2193}{}",
+                c.ahead, c.behind
+            ))),
+            Some(_) => None,
         });
 
     // Show this session's open PR alongside its branch.

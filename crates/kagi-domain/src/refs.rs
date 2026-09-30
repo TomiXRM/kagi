@@ -11,14 +11,20 @@ use crate::commit::CommitId;
 // ────────────────────────────────────────────────────────────
 
 /// Tracking relationship between a local branch and its upstream.
-///
-/// Both `ahead` and `behind` are computed with `graph_ahead_behind` so they
-/// reflect the true number of commits reachable from one side but not the
-/// other (not just linear counting).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpstreamInfo {
     /// Full remote-tracking ref name, e.g. `"origin/main"`.
     pub remote_branch: String,
+    /// `None` when the count was skipped (#355): unknown, never zero. The next
+    /// read counts again.
+    pub counts: Option<AheadBehind>,
+}
+
+/// Commits on each side of a branch and its upstream, computed with
+/// `graph_ahead_behind` so they reflect the true number reachable from one
+/// side but not the other (not just linear counting).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AheadBehind {
     /// Commits in the local branch not yet in the upstream.
     pub ahead: usize,
     /// Commits in the upstream not yet in the local branch.

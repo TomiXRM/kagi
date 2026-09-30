@@ -59,7 +59,9 @@ impl KagiApp {
                 return;
             }
         };
-        let snap = match repo.snapshot_repairing_stat_cache(self.ui().commit_limit) {
+        // Synchronous pre-launch read: nothing can show or skip it.
+        let probe = kagi_git::SnapshotProbe::default();
+        let snap = match repo.snapshot_repairing_stat_cache(self.ui().commit_limit, &probe) {
             Ok(s) => s,
             Err(e) => {
                 klog!("reload: snapshot error: {}", e);
@@ -477,8 +479,24 @@ impl KagiApp {
         // + reflog seed + continued-merge panel) off the UI thread. Every field
         // of `ReloadData` is pure/`Send`; the view + gpui entities are built on
         // the UI thread in `apply_reload_data`.
+        // #355: the snapshot explains a slow ahead/behind or worktree phase in
+        // the busy snackbar, and carries its Skip.
+        let read = self.begin_slow_read(session, None, cx);
+        #[cfg(feature = "gui-e2e")]
+        let hold = super::slow_reads::take_snapshot_hold();
         let task = cx.background_spawn(async move {
-            read_reload_data(&bg_path, commit_limit, want_panel, want_reflog)
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                read.probe().set_phase(kagi_git::SnapshotPhase::AheadBehind);
+                hold.await;
+            }
+            read_reload_data(
+                &bg_path,
+                commit_limit,
+                want_panel,
+                want_reflog,
+                read.probe(),
+            )
         });
         cx.spawn(async move |this, acx| {
             let result = task.await;
@@ -677,11 +695,12 @@ fn read_reload_data(
     commit_limit: usize,
     want_panel: bool,
     want_reflog: bool,
+    probe: &kagi_git::SnapshotProbe,
 ) -> Result<ReloadData, String> {
     let mut backend =
         kagi_git::Backend::open(repo_path).map_err(|e| format!("repo open error: {e}"))?;
     let snap = backend
-        .snapshot_repairing_stat_cache(commit_limit)
+        .snapshot_repairing_stat_cache(commit_limit, probe)
         .map_err(|e| format!("snapshot error: {e}"))?;
     let wip_diffstat = KagiApp::wip_diffstat_from_backend(&backend);
     let repo_name = repo_path

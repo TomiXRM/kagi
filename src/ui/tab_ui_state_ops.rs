@@ -95,6 +95,7 @@ impl TabUiState {
             diff_caches: _,
             inspector_model: _,
             worktree_inspections: _,
+            slow_reads: _,
             wip_diffstat: _,
             last_working_status: _,
             operation_history: _,

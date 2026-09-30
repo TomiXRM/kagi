@@ -30,7 +30,7 @@ use std::path::PathBuf;
 
 use crate::commit::{Commit, CommitId, Signature};
 use crate::head::Head;
-use crate::refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo};
+use crate::refs::{AheadBehind, Branch, RemoteBranch, Stash, Tag, UpstreamInfo};
 use crate::status::{ChangeKind, FileStatus, WorkingTreeStatus};
 
 /// ASCII unit separator — between fields of the `for-each-ref` / `stash list`
@@ -177,8 +177,7 @@ fn parse_branch_line(line: &str) -> Option<Branch> {
         let (ahead, behind) = parse_track(track);
         Some(UpstreamInfo {
             remote_branch: upstream_short.to_string(),
-            ahead,
-            behind,
+            counts: Some(AheadBehind { ahead, behind }),
         })
     };
     Some(Branch {
@@ -523,9 +522,10 @@ mod tests {
         assert_eq!(b[2].name, "main");
         let up = b[2].upstream.as_ref().unwrap();
         assert_eq!(up.remote_branch, "origin/main");
-        assert_eq!((up.ahead, up.behind), (2, 1));
+        let counts = up.counts.unwrap();
+        assert_eq!((counts.ahead, counts.behind), (2, 1));
         // gone: has upstream name but no ahead/behind
-        assert_eq!(b[1].upstream.as_ref().unwrap().ahead, 0);
+        assert_eq!(b[1].upstream.as_ref().unwrap().counts.unwrap().ahead, 0);
     }
 
     #[test]

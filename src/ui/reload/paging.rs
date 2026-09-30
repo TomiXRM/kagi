@@ -52,11 +52,12 @@ impl KagiApp {
             None => return,
         };
         let bg_path = repo_path.clone();
+        let read = self.begin_slow_read(session, None, cx);
         let task = cx.background_spawn(async move {
             let mut repo =
                 kagi_git::Backend::open(&bg_path).map_err(|e| format!("repo open error: {e}"))?;
             let snap = repo
-                .snapshot_repairing_stat_cache(commit_limit)
+                .snapshot_repairing_stat_cache(commit_limit, read.probe())
                 .map_err(|e| format!("snapshot error: {e}"))?;
             let repo_name = bg_path
                 .file_name()

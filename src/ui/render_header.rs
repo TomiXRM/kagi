@@ -447,14 +447,17 @@ impl KagiApp {
         } else if summary.no_upstream {
             format!("{} (no upstream)", summary.branch)
         } else {
-            let ahead = summary.ahead.unwrap_or(0);
-            let behind = summary.behind.unwrap_or(0);
+            let counts = match (summary.ahead, summary.behind) {
+                (Some(ahead), Some(behind)) => format!("\u{2191}{ahead} \u{2193}{behind}"),
+                // #355: a skipped count is unknown, not zero.
+                _ => "\u{2014}".to_string(),
+            };
             if summary.upstream_name.is_empty() {
-                format!("{} \u{2191}{} \u{2193}{}", summary.branch, ahead, behind)
+                format!("{} {counts}", summary.branch)
             } else {
                 format!(
-                    "{} \u{2192} {} \u{2191}{} \u{2193}{}",
-                    summary.branch, summary.upstream_name, ahead, behind
+                    "{} \u{2192} {} {counts}",
+                    summary.branch, summary.upstream_name
                 )
             }
         };

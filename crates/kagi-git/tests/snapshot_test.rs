@@ -211,7 +211,8 @@ fn test_snapshot_branch_ahead_behind() {
     let up = main_branch
         .upstream
         .as_ref()
-        .expect("main should have upstream");
+        .and_then(|up| up.counts)
+        .expect("main should have a counted upstream");
     assert_eq!(up.ahead, 1, "main should be ahead 1, got {}", up.ahead);
     assert_eq!(up.behind, 0, "main should be behind 0, got {}", up.behind);
 
@@ -224,7 +225,8 @@ fn test_snapshot_branch_ahead_behind() {
     let f2_up = f2
         .upstream
         .as_ref()
-        .expect("feature/two should have upstream");
+        .and_then(|up| up.counts)
+        .expect("feature/two should have a counted upstream");
     assert_eq!(
         f2_up.ahead, 0,
         "feature/two should be ahead 0, got {}",
@@ -388,7 +390,7 @@ fn test_snapshot_feature_one_in_sync() {
         .find(|b| b.name == "feature/one")
         .expect("feature/one branch not found");
 
-    if let Some(up) = &f1.upstream {
+    if let Some(up) = f1.upstream.as_ref().and_then(|up| up.counts) {
         assert_eq!(
             up.ahead, 0,
             "feature/one should be ahead 0, got {}",

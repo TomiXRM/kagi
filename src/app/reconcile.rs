@@ -482,11 +482,10 @@ fn observe_pull(
             .iter()
             .find(|candidate| &candidate.name == branch)
             .and_then(|candidate| candidate.upstream.as_ref())
-            .map(|up| {
-                format!(
-                    "{} ahead={} behind={}",
-                    up.remote_branch, up.ahead, up.behind
-                )
+            // A plain snapshot, which never skips counting (#355).
+            .map(|up| match up.counts {
+                Some(c) => format!("{} ahead={} behind={}", up.remote_branch, c.ahead, c.behind),
+                None => format!("{} ahead=? behind=?", up.remote_branch),
             })
             .unwrap_or_else(|| "none".to_string()),
         kagi_git::Head::Detached { .. } => "detached".to_string(),

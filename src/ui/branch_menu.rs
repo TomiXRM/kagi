@@ -73,8 +73,10 @@ pub struct BranchMenuContext {
     pub is_current: bool,
     pub has_upstream: bool,
     pub upstream_name: Option<String>,
-    pub ahead: usize,
-    pub behind: usize,
+    /// `None` when the count is unknown (skipped, #355): Pull / Push stay
+    /// enabled and the plan counts again.
+    pub ahead: Option<usize>,
+    pub behind: Option<usize>,
     pub dirty: bool,
     pub conflict_mode: BranchConflictMode,
     pub protected: bool,
@@ -477,8 +479,9 @@ fn switch_to_latest_label(ctx: &BranchMenuContext) -> String {
             .map(|(_, name)| name.to_string())
             .unwrap_or_else(|| ctx.name.clone()),
     };
-    if matches!(ctx.kind, BranchKind::Local) && ctx.has_upstream && ctx.behind > 0 {
-        format!("Switch to latest {} ↓{}", local_name, ctx.behind)
+    let behind = ctx.behind.filter(|&n| n > 0);
+    if let (BranchKind::Local, true, Some(n)) = (&ctx.kind, ctx.has_upstream, behind) {
+        format!("Switch to latest {} ↓{}", local_name, n)
     } else {
         format!("Switch to latest {}", local_name)
     }
@@ -597,7 +600,7 @@ fn pull_state(ctx: &BranchMenuContext) -> ItemState {
         disabled(Msg::BcmNotImplementedYet.t())
     } else if !ctx.has_upstream {
         disabled(Msg::BcmNoUpstream.t())
-    } else if ctx.behind == 0 {
+    } else if ctx.behind == Some(0) {
         disabled(Msg::BcmNothingToPull.t())
     } else {
         ItemState::Enabled
@@ -611,7 +614,7 @@ fn push_state(ctx: &BranchMenuContext) -> ItemState {
         disabled(Msg::BcmDetachedHead.t())
     } else if matches!(ctx.kind, BranchKind::Remote) || !ctx.has_upstream {
         ItemState::Hidden
-    } else if ctx.ahead == 0 {
+    } else if ctx.ahead == Some(0) {
         disabled(Msg::BcmNothingToPush.t())
     } else {
         ItemState::Enabled
@@ -651,24 +654,21 @@ fn no_upstream_info_state(ctx: &BranchMenuContext) -> ItemState {
 }
 
 fn pull_label(ctx: &BranchMenuContext) -> String {
-    if ctx.has_upstream && ctx.behind > 0 {
-        format!("Pull ↓{}", ctx.behind)
-    } else if ctx.has_upstream {
-        "Pull (up to date)".to_string()
-    } else {
-        "Pull (no upstream)".to_string()
+    match (ctx.has_upstream, ctx.behind) {
+        (true, Some(0)) => "Pull (up to date)".to_string(),
+        (true, Some(n)) => format!("Pull ↓{}", n),
+        (true, None) => "Pull".to_string(),
+        (false, _) => "Pull (no upstream)".to_string(),
     }
 }
 
 fn push_label(ctx: &BranchMenuContext) -> String {
-    if ctx.has_upstream && ctx.ahead > 0 {
-        format!("Push ↑{}", ctx.ahead)
-    } else if ctx.has_upstream {
-        "Push (up to date)".to_string()
-    } else if !ctx.is_pushed {
-        "Push and create upstream".to_string()
-    } else {
-        "Push".to_string()
+    match (ctx.has_upstream, ctx.ahead) {
+        (true, Some(0)) => "Push (up to date)".to_string(),
+        (true, Some(n)) => format!("Push ↑{}", n),
+        (true, None) => "Push".to_string(),
+        (false, _) if !ctx.is_pushed => "Push and create upstream".to_string(),
+        (false, _) => "Push".to_string(),
     }
 }
 
@@ -708,8 +708,8 @@ mod tests {
             is_current: false,
             has_upstream: true,
             upstream_name: Some("origin/feature/x".to_string()),
-            ahead: 2,
-            behind: 3,
+            ahead: Some(2),
+            behind: Some(3),
             dirty: false,
             conflict_mode: BranchConflictMode::None,
             protected: false,
@@ -823,8 +823,8 @@ mod tests {
         let mut c = ctx();
         c.has_upstream = false;
         c.upstream_name = None;
-        c.ahead = 0;
-        c.behind = 0;
+        c.ahead = Some(0);
+        c.behind = Some(0);
         let groups = branch_context_menu_items(&c);
 
         assert_disabled_contains(&groups, BranchAction::Pull, "upstream");
@@ -900,8 +900,8 @@ mod tests {
     #[test]
     fn upstream_zero_counts_are_noop_disabled() {
         let mut c = ctx();
-        c.ahead = 0;
-        c.behind = 0;
+        c.ahead = Some(0);
+        c.behind = Some(0);
         let groups = branch_context_menu_items(&c);
 
         assert_eq!(
@@ -916,6 +916,22 @@ mod tests {
         assert_disabled_contains(&groups, BranchAction::Push, "nothing");
     }
 
+    /// #355: a skipped count is unknown, not zero — Pull and Push stay
+    /// enabled, unlabelled, for the plan to count again.
+    #[test]
+    fn unknown_counts_keep_pull_and_push_enabled() {
+        let mut c = ctx();
+        c.ahead = None;
+        c.behind = None;
+        let groups = branch_context_menu_items(&c);
+
+        for (action, label) in [(BranchAction::Pull, "Pull"), (BranchAction::Push, "Push")] {
+            let item = item_for(&groups, action);
+            assert_eq!(item.label.as_ref(), label);
+            assert!(matches!(item.state, ItemState::Enabled), "{label} disabled");
+        }
+    }
+
     #[test]
     fn remote_branch_sync_and_manage_availability() {
         let mut c = ctx();
@@ -923,8 +939,8 @@ mod tests {
         c.kind = BranchKind::Remote;
         c.has_upstream = false;
         c.upstream_name = None;
-        c.ahead = 0;
-        c.behind = 0;
+        c.ahead = Some(0);
+        c.behind = Some(0);
         let groups = branch_context_menu_items(&c);
 
         assert_hidden(&groups, BranchAction::Push);

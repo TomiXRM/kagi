@@ -21,6 +21,7 @@ pub mod i18n;
 pub mod markdown;
 pub mod pr_viewed;
 pub mod settings;
+pub mod slow_read;
 pub mod theme;
 pub mod theme_apple_dark;
 pub mod theme_apple_light;

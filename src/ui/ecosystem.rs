@@ -127,7 +127,11 @@ impl KagiApp {
         let ignore_patterns = super::settings::analyze_ignore_patterns();
         #[cfg(feature = "gui-e2e")]
         let deferred = super::e2e::take_ecosystem_mine();
+        // #355: explained in the busy snackbar once slow; no Skip.
+        let read =
+            self.begin_slow_read(owner, Some(kagi_ui_core::slow_read::SlowRead::Analyze), cx);
         let task = cx.background_spawn(async move {
+            let _read = read;
             #[cfg(feature = "gui-e2e")]
             if let Some(deferred) = deferred {
                 return deferred.await;

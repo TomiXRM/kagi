@@ -231,7 +231,8 @@ fn main() {
 
     // Opening a repository renders the working tree, so this is one of the
     // refreshes allowed to repair the index stat cache (ADR-0193, #655).
-    let snap = match snapshot_repairing_stat_cache(&mut repo2, 10_000) {
+    let probe = kagi_git::SnapshotProbe::default();
+    let snap = match snapshot_repairing_stat_cache(&mut repo2, 10_000, &probe) {
         Ok(s) => s,
         Err(e) => {
             let msg = format!("snapshot error: {e}");

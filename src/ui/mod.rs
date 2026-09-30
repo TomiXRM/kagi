@@ -110,6 +110,7 @@ mod render_overlay;
 mod render_status;
 mod render_wip;
 pub use kagi_ui_core::settings; // ADR-0121: was a shim file
+mod overlay_focus;
 pub mod settings_view;
 pub mod sidebar;
 mod sidebar_worktree_row;
@@ -120,6 +121,7 @@ mod tab_view;
 pub mod tabs;
 pub mod tag_menu;
 pub mod terminal;
+mod theme_select;
 mod timeline_row;
 pub mod trust_prompt;
 pub use kagi_ui_core::theme; // ADR-0121: was a shim file
@@ -1209,6 +1211,8 @@ pub struct KagiApp {
     /// Transient overlay opened from the menu bar (branch picker / About /
     /// Keyboard Shortcuts).  `None` when no menu overlay is visible.
     pub menu_overlay: Option<commands::MenuOverlay>,
+    /// Focus the next render applies (#812 / #817, `overlay_focus.rs`).
+    pending_focus: Option<gpui::FocusHandle>,
     /// Linux/FreeBSD client-side menu dropdown currently open from the in-app
     /// menu bar. Native macOS menus are provided by `cx.set_menus`, so this is
     /// only read on Linux/FreeBSD (dead on other targets).
@@ -1388,6 +1392,7 @@ impl KagiApp {
             // W5-MENU
             inspector_visible: true,
             menu_overlay: None,
+            pending_focus: None,
             platform_menu_open: None,
             // W11-AVATAR
             avatars: avatar::AvatarStore::default(),
@@ -3245,37 +3250,6 @@ fn open_main_window(app_state: KagiApp, cx: &mut App) {
             // `cx`) is shared with the offscreen GUI E2E mount so both build
             // the entity identically — see `e2e::build_kagi_entity` (ADR-0166).
             let kagi: Entity<KagiApp> = e2e::build_kagi_entity(app_state, window, cx);
-
-            // Settings appearance theme picker: the gpui-component `Select` is an
-            // Entity that needs a `Window`, so it's built here rather than in
-            // KagiApp::new. A `Confirm` subscription applies + persists the chosen
-            // theme via set_theme (mirrors the old inline-dropdown click handler).
-            let theme_select = cx.new(|cx| {
-                settings_view::ThemeSelectState::new(
-                    settings_view::theme_options(),
-                    Some(settings_view::current_theme_index()),
-                    window,
-                    cx,
-                )
-            });
-            kagi.update(cx, |app, cx| {
-                cx.subscribe(
-                    &theme_select,
-                    |this,
-                     _state,
-                     event: &gpui_component::select::SelectEvent<
-                        Vec<settings_view::ThemeOption>,
-                    >,
-                     cx| {
-                        if let gpui_component::select::SelectEvent::Confirm(Some(slug)) = event {
-                            this.set_theme(slug, cx);
-                            cx.notify();
-                        }
-                    },
-                )
-                .detach();
-                app.theme_select = Some(theme_select);
-            });
             // Regression coverage for the Root::read crash: with
             // KAGI_COMMIT_PANEL=1, open the panel through the real
             // window-context path so the InputState + Input element

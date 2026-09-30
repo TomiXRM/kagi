@@ -209,6 +209,17 @@ The current suite covers:
   Escape prints nothing. That is exactly what the accepted run recorded —
   no key line, modal closed. A printed `escape` with the modal still open is
   the interesting failure: the key arrived and no binding matched.
+- overlay focus return (`KAGI_GUI_E2E_ONLY=palette_push_modal_keys,settings_close_returns_focus`,
+  `tests/recovery/overlay_focus.rs`): #817 / #812. Every key is raw, with no
+  test-side refocusing. The palette scenario first starts the bottom-panel
+  terminal the way launch does — it takes focus, and Escape is bound
+  `!Terminal` — then `cmd-p` → `push` → Enter opens the blocked Push plan:
+  Enter refuses it (Failed footer, one durable Refused receipt) and a
+  reopened plan closes on Escape. Settings is opened through `app.settings`,
+  its theme picker clicked (the picker must hold focus), then closed by
+  Escape and by ×; the next raw ↓/↑ must step File History. Tier B measured
+  on 2026-10-01 that the terminal-focus case is what left Escape unmatched
+  (`key: "escape"` printed, modal open) while Enter still reached the slot.
 - modal input transitions (`KAGI_GUI_E2E_ONLY=remote_browse_escape_focus,pr_fields_escape_focus`,
   `tests/recovery/remote_browse_focus.rs`, `tests/recovery/pr_fields_focus.rs`):
   #755 follow-up. Real InputStates own focus before Remote Browse's

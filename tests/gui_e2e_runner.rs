@@ -108,6 +108,10 @@ mod diff_highlight;
 mod remote_browse_focus;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/overlay_focus.rs"]
+mod overlay_focus;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_fields_focus.rs"]
 mod pr_fields_focus;
 
@@ -1003,6 +1007,14 @@ mod macos {
             (
                 "remote_browse_escape_focus",
                 Box::new(crate::remote_browse_focus::scenario_remote_browse_escape_focus),
+            ),
+            (
+                "palette_push_modal_keys",
+                Box::new(crate::overlay_focus::scenario_palette_push_modal_keys),
+            ),
+            (
+                "settings_close_returns_focus",
+                Box::new(crate::overlay_focus::scenario_settings_close_returns_focus),
             ),
             (
                 "pr_fields_escape_focus",

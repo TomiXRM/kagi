@@ -1,4 +1,4 @@
-# ADR-0206: embedded-terminal cwd auto-lock — Phase 1（所有権と観測の土台）
+# ADR-0208: embedded-terminal cwd auto-lock — Phase 1（所有権と観測の土台）
 
 - Status: **Accepted**（Phase 1 のみ。Phase 2 = 自動 acquire の confirm 省略・複数 terminal の集約・release の自動化は本 ADR の範囲外）
 - Date: 2026-10-01

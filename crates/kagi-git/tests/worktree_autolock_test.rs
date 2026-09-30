@@ -1,4 +1,4 @@
-//! #772 Phase 1 (ADR-0206): the automatic release only ever removes the lock
+//! #772 Phase 1 (ADR-0208): the automatic release only ever removes the lock
 //! this terminal session placed, on the worktree it placed it on. Everything
 //! else — a manual lock, another session's Kagi lock, a lock read from a
 //! different worktree, no lock at all — is refused at plan *and* at preflight,

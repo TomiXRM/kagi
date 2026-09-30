@@ -139,7 +139,7 @@ pub fn scenario_worktree_lock_reason(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS worktree_lock_reason EN/JA input/plan cancellation, focused Enter, Unicode and blank reasons, Git porcelain and durable success");
 }
 
-/// #772 Phase 1 (ADR-0206): the terminal auto-lock is opt-in, and even when
+/// #772 Phase 1 (ADR-0208): the terminal auto-lock is opt-in, and even when
 /// on it only ever *offers* a plan. Mounted on a linked worktree:
 /// - opt-in off: starting the terminal opens no card and locks nothing;
 /// - opt-in on: starting the terminal opens the lock card with a Kagi token

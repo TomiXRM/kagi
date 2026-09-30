@@ -770,7 +770,7 @@ pub enum Msg {
     SettingsReduceMotion,
     /// Appearance → Reduce-motion row description.
     SettingsReduceMotionDesc,
-    /// Appearance → Terminal auto-lock row title (#772 / ADR-0206).
+    /// Appearance → Terminal auto-lock row title (#772 / ADR-0208).
     SettingsTerminalAutoLock,
     /// Appearance → Terminal auto-lock row description.
     SettingsTerminalAutoLockDesc,

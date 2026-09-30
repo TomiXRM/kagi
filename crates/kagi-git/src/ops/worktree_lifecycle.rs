@@ -250,7 +250,7 @@ pub(crate) fn execute_lock_worktree(
 }
 
 // ────────────────────────────────────────────────────────────
-// auto-unlock (#772 Phase 1, ADR-0206 決定 2)
+// auto-unlock (#772 Phase 1, ADR-0208 決定 2)
 // ────────────────────────────────────────────────────────────
 
 /// The identity of the linked worktree registered as `name`, in the same
@@ -343,7 +343,7 @@ pub fn plan_auto_unlock_worktree(
 
 /// Re-run the ownership check immediately before releasing: HEAD unchanged
 /// (`preflight_check`), and the lock is still this session's token on this
-/// worktree. Read-then-unlock is not atomic (ADR-0206 決定 2 names the window);
+/// worktree. Read-then-unlock is not atomic (ADR-0208 決定 2 names the window);
 /// this narrows it to the single `unlock` call that follows.
 pub fn preflight_auto_unlock_worktree(
     repo: &Repository,

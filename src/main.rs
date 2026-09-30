@@ -139,7 +139,7 @@ fn main() {
     // Resolve the persisted reduce-motion flag (settings.json "reduce_motion";
     // issue #354 / ADR-0173) so decorative animations start static when on.
     ui::theme::init_reduce_motion();
-    // #772 / ADR-0206: terminal auto-lock opt-in (default off).
+    // #772 / ADR-0208: terminal auto-lock opt-in (default off).
     ui::settings::init_terminal_auto_lock();
 
     // W22-I18N / ADR-0048: resolve the UI language before anything renders.

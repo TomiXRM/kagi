@@ -1,4 +1,4 @@
-//! Terminal auto-lock surface of the [`Backend`] (#772 Phase 1, ADR-0206):
+//! Terminal auto-lock surface of the [`Backend`] (#772 Phase 1, ADR-0208):
 //! which linked worktree this repository is, its identity, and the
 //! token/identity-checked release. Acquisition is the ordinary
 //! `plan_lock_worktree` with a token reason.

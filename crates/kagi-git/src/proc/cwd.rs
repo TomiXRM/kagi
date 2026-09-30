@@ -1,5 +1,5 @@
 //! Read-only probe of a live process's current directory (#772 Phase 1,
-//! ADR-0206 決定 3).
+//! ADR-0208 決定 3).
 //!
 //! The terminal auto-lock needs the shell's *real* cwd, not its launch cwd
 //! or its title (contract A). This is the one OS-specific read; everything

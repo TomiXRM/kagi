@@ -182,7 +182,7 @@ impl Settings {
     }
 
     /// Terminal auto-lock opt-in (`"terminal_auto_lock"`, `"true"`/`"false"`;
-    /// #772 / ADR-0206). When on, starting the embedded terminal in a linked
+    /// #772 / ADR-0208). When on, starting the embedded terminal in a linked
     /// worktree offers a `git worktree lock` plan with a Kagi-owned token, and
     /// the shell's exit offers its release. Default **off** — only an explicit
     /// `"true"` enables it.

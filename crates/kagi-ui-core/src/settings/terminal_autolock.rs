@@ -1,11 +1,11 @@
-//! Runtime flag for the terminal auto-lock opt-in (#772 / ADR-0206). Same
+//! Runtime flag for the terminal auto-lock opt-in (#772 / ADR-0208). Same
 //! shape as `theme::auto_fetch` / `reduce_motion`, kept under `settings` per
 //! the "theme.rs is for theme tokens" rule.
 
 use super::{write_setting, Settings};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// #772 / ADR-0206: terminal auto-lock opt-in. Default **off**; read when a
+/// #772 / ADR-0208: terminal auto-lock opt-in. Default **off**; read when a
 /// terminal starts or its shell exits.
 static TERMINAL_AUTO_LOCK: AtomicBool = AtomicBool::new(false);
 

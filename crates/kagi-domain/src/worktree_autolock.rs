@@ -1,4 +1,4 @@
-//! Kagi-owned worktree lock tokens (#772 Phase 1, ADR-0206).
+//! Kagi-owned worktree lock tokens (#772 Phase 1, ADR-0208).
 //!
 //! `git worktree lock` records a free-text reason. Kagi's terminal auto-lock
 //! writes a reason of the exact form `kagi:auto:<owner>` and treats **only**

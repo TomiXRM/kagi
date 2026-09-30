@@ -168,7 +168,7 @@ pub enum ShellExit {
     /// The child exited with this code.
     Exited { code: u32 },
     /// `wait` itself failed: the child's fate is unknown. Held, not treated
-    /// as an exit (ADR-0206 決定 3).
+    /// as an exit (ADR-0208 決定 3).
     Unknown(String),
 }
 

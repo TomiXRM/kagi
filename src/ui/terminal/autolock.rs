@@ -1,4 +1,4 @@
-//! Terminal auto-lock hooks (#772 Phase 1, ADR-0206 決定 3 / 4).
+//! Terminal auto-lock hooks (#772 Phase 1, ADR-0208 決定 3 / 4).
 //!
 //! Two moments drive everything: the shell **started** (offer to lock the
 //! linked worktree with this session's token) and the shell **exited** as
@@ -47,7 +47,7 @@ impl KagiApp {
             ui.terminal_session = Some(session);
         }
         if started {
-            // #772 / ADR-0206 決定 4: opt-in only; plan → confirm, never a write.
+            // #772 / ADR-0208 決定 4: opt-in only; plan → confirm, never a write.
             self.offer_auto_lock(owner, cx);
         }
 

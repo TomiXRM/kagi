@@ -407,7 +407,7 @@ fn appearance_section(
         .on_click(toggle_rm)
         .into_any_element();
 
-    // ── Terminal auto-lock toggle (#772 / ADR-0206, default off) ──
+    // ── Terminal auto-lock toggle (#772 / ADR-0208, default off) ──
     let auto_lock = crate::ui::settings::terminal_auto_lock();
     let app_al = app.clone();
     let toggle_al = move |checked: &bool, _w: &mut gpui::Window, cx: &mut gpui::App| {

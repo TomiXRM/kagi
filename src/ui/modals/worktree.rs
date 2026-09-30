@@ -12,7 +12,7 @@ pub struct UnlockWorktreeModal {
     pub error: Option<SharedString>,
     /// Worktree registry name the plan was built for.
     pub name: String,
-    /// #772 / ADR-0206: `Some` when this is the terminal auto-lock's release
+    /// #772 / ADR-0208: `Some` when this is the terminal auto-lock's release
     /// offer. Confirming then runs `execute_auto_unlock_worktree`, which
     /// re-checks the token and identity, instead of the manual unlock.
     pub auto: Option<kagi_domain::worktree_autolock::AutoUnlockTarget>,

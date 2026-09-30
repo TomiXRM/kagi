@@ -54,7 +54,8 @@ pub struct CommitRowModel {
     pub date_relative: SharedString,
     /// `YYYY-MM-DD`, for [`CommitRowLayout::Card`].
     pub date_ymd: SharedString,
-    /// `+N −M`, or `"bin"` for a binary change.
+    /// `+N −M`, `"bin"` for a binary change, or empty when the entry carries
+    /// no line counts (the WIP row, built from `git status`; #813).
     pub stat: SharedString,
     pub short_hash: SharedString,
 }
@@ -101,11 +102,12 @@ pub fn commit_row_model(entry: &FileHistoryEntry, now: i64) -> CommitRowModel {
     let stat = if entry.change.is_binary {
         SharedString::from("bin")
     } else {
-        SharedString::from(format!(
-            "+{} \u{2212}{}",
-            entry.change.insertions.unwrap_or(0),
-            entry.change.deletions.unwrap_or(0)
-        ))
+        match (entry.change.insertions, entry.change.deletions) {
+            (Some(ins), Some(del)) => SharedString::from(format!("+{ins} \u{2212}{del}")),
+            // #813: no numstat → say nothing rather than "+0 −0"; the diff
+            // pane shows the real working-tree change.
+            _ => SharedString::default(),
+        }
     };
 
     CommitRowModel {

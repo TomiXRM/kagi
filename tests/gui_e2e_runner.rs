@@ -1155,6 +1155,22 @@ mod macos {
                 Box::new(crate::recovery_header_fit::scenario_header_fit),
             ),
             (
+                "file_history_wip_changes",
+                Box::new(|cx| {
+                    let fixture = build_fixture();
+                    // #813: an unstaged edit so File History leads with a WIP row.
+                    std::fs::write(
+                        fixture.path().join("README.md"),
+                        "# fixture\nsecond line\nthird line\n",
+                    )
+                    .unwrap();
+                    let before = repo_fingerprint(fixture.path());
+                    crate::recovery_layout::scenario_file_history_wip_changes(cx, fixture.path());
+                    assert_eq!(before, repo_fingerprint(fixture.path()));
+                }),
+>>>>>>> origin/main
+            ),
+            (
                 "footer_status_line",
                 Box::new(|cx| {
                     let fixture = build_fixture();

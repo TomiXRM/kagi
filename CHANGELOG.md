@@ -27,6 +27,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Internal
 
+- headless 起動 hook `KAGI_SELECT_FIRST=1`（`select_headless`）が inspector の changed files を同期で埋めるとき generated/lockfile flags を計算していなかったため、その経路では `Cargo.lock` が「Generated (N)」に畳まれませんでした。通常のクリック選択（非同期 read）では起きず、ユーザー操作への影響はありません。同期経路も files / diffstat / generated flags の 3 つを揃えて埋めるようにし、Tier A に SELECT_FIRST 経路の fold assert を追加しました。（#818）
 - 統合テストの fixture 用 `git`（`tests/support/git_fixture.rs`）が `git maintenance run --auto --detach` を起動しないようにしました（`maintenance.auto=false` / `gc.auto=0`）。`git commit` 直後に detached process が残す `.git/objects/maintenance.lock` を CI の snapshot 比較が拾って落ちていた flake（`fixture_is_identical_under_a_hostile_home`）の原因で、index の racy 書き換えではありませんでした。製品の動作は変更していません。（#819）
 - 統合テストの Git fixture 構築を `tests/support/git_fixture.rs` に共通化しました。fixture 用の `git` は継承した `GIT_*`・global/system/XDG 設定・hooks・template を遮断して identity を固定するため、開発者の設定や hook から渡された `GIT_DIR` で fixture の内容が変わったり実 repository に書き込んだりしません。ops / blame / push_tag / pr_conflict_preview / app_read の各 suite を移行し、残りは follow-up で移行します。製品の動作は変更していません。（#514）
 - #514 の follow-up: 残り 72 ファイル（`tests/*.rs`・`tests/recovery/*.rs`・`tests/support/pr_merge_local.rs`）の suite-local な `git` helper を `tests/support/git_fixture.rs` に寄せました。テスト数 713・assertion は移行前後で同一で、明示 opt-in の 5 suite は従来どおりです。製品の動作は変更していません。（Refs #514）

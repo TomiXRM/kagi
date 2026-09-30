@@ -1442,6 +1442,12 @@ mod macos {
                 "inspector_derived",
                 Box::new(crate::perf_inspector_derived::scenario_inspector_derived),
             ),
+            (
+                "inspector_generated_lockfile_plain",
+                Box::new(
+                    crate::perf_inspector_derived::scenario_inspector_generated_lockfile_plain,
+                ),
+            ),
         ];
         let mut executed = 0;
         for (name, scenario) in &mut scenarios {

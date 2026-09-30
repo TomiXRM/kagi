@@ -96,6 +96,14 @@ pub enum WorktreeNote {
         name: String,
         reason: Option<String>,
     },
+    /// blocker (`plan_auto_unlock_worktree`, #772) — the lock on the worktree
+    /// is not the one this terminal session placed, so the automatic release
+    /// will not touch it (manual / foreign / another session's / wrong
+    /// worktree / not locked).
+    AutoUnlockRefused {
+        name: String,
+        refusal: crate::worktree_autolock::AutoUnlockRefusal,
+    },
     /// warning (`plan_prune_worktrees`) — dry-run preview of the prunable
     /// worktrees kagi will prune. `sample` holds the first few paths; `more` is
     /// how many are not shown.
@@ -279,6 +287,26 @@ impl WorktreeNote {
                     name, reason_display
                 )
             }
+            WorktreeNote::AutoUnlockRefused { name, refusal } => {
+                use crate::worktree_autolock::AutoUnlockRefusal as R;
+                let why = match refusal {
+                    R::NotLocked => "it is not locked".to_string(),
+                    R::NotAutoLock { reason: Some(r) } => format!(
+                        "it is locked manually (\"{}\") — only a lock Kagi placed for this terminal is released automatically",
+                        r
+                    ),
+                    R::NotAutoLock { reason: None } => "it is locked without a Kagi token — only a lock Kagi placed for this terminal is released automatically".to_string(),
+                    R::TokenMismatch { found } => format!(
+                        "it is locked by another Kagi terminal ({})",
+                        found.reason()
+                    ),
+                    R::IdentityMismatch => "it is not the worktree this terminal locked".to_string(),
+                };
+                format!(
+                    "Worktree '{}' will not be unlocked automatically: {}.",
+                    name, why
+                )
+            }
             WorktreeNote::PrunePreview {
                 count,
                 sample,
@@ -356,6 +384,8 @@ pub enum WorktreeTitle {
     RemoveWorktree { name: String },
     /// `plan_lock_worktree` — `Lock worktree '<name>'`.
     LockWorktree { name: String },
+    /// `plan_auto_unlock_worktree` (#772) — `Release Kagi lock on worktree '<name>'`.
+    AutoUnlockWorktree { name: String },
     /// `plan_prune_worktrees` — `Prune stale worktrees`.
     PruneWorktrees,
     /// `plan_repair_worktrees` — `Repair worktree links`.
@@ -375,6 +405,9 @@ impl WorktreeTitle {
             WorktreeTitle::UnlockWorktree { name } => format!("Unlock worktree '{}'", name),
             WorktreeTitle::RemoveWorktree { name } => format!("Remove worktree '{}'", name),
             WorktreeTitle::LockWorktree { name } => format!("Lock worktree '{}'", name),
+            WorktreeTitle::AutoUnlockWorktree { name } => {
+                format!("Release Kagi lock on worktree '{}'", name)
+            }
             WorktreeTitle::PruneWorktrees => "Prune stale worktrees".to_string(),
             WorktreeTitle::RepairWorktrees => "Repair worktree links".to_string(),
         }

@@ -135,6 +135,7 @@ impl KagiApp {
                     plan: std::sync::Arc::new(plan),
                     error: None,
                     name,
+                    auto: None,
                 });
             }
             Err(e) => {
@@ -183,7 +184,13 @@ impl KagiApp {
                 return;
             }
         };
-        match repo.execute_unlock_worktree(&modal.plan, &modal.name) {
+        // #772: the auto-lock's release offer runs the token/identity-checked
+        // op; the manual unlock stays the manual op. Same card, same writer.
+        let executed = match modal.auto.as_ref() {
+            Some(target) => repo.execute_auto_unlock_worktree(&modal.plan, &modal.name, target),
+            None => repo.execute_unlock_worktree(&modal.plan, &modal.name),
+        };
+        match executed {
             Ok(()) => {
                 klog!("executed: unlock-worktree {}", modal.name);
                 self.record_op_persist(

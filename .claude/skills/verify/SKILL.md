@@ -107,6 +107,16 @@ The current suite covers:
   remain unchanged, and admission releases. Existing successful Enter/button
   removal legs still run. Tier B: right-click a locked linked worktree, open
   Remove, press Enter on the blocked plan, and inspect the notice in EN/JA.
+- refusal reasons (`KAGI_GUI_E2E_ONLY=refusal_reasons`,
+  `tests/recovery/refusal_reasons.rs`): #353. For delete-branch (current
+  branch, two blockers), push (no remote), pull (no upstream, the core's
+  no-execute receipt) and stash push (clean tree, the stash app flow) in EN
+  and JA, a real root Enter on the blocked plan closes the modal and leaves
+  the first blocker's localized text — plus "+N more" — in the Failed footer
+  and the Error toast, while the single durable entry keeps every blocker in
+  English and the repository is unchanged. The `[kagi] footer:` contract line
+  still reads `refused (N blockers)`. Tier B: open the same blocked plans in
+  the real app, press Enter, and read the footer and toast in EN/JA.
 - preflight refusal presentation (`KAGI_GUI_E2E_ONLY=preflight_presentation`,
   `tests/recovery/operations.rs`): stale stash-drop plans deliver the specific
   localized reason through a Failed footer and Error toast in EN/JA, with no

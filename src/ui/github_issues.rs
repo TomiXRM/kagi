@@ -413,15 +413,7 @@ impl KagiApp {
         });
         if !plan.blockers.is_empty() {
             klog!("refused: {} plan has blockers, not executing", op_name);
-            self.record_op(
-                op_name,
-                plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
-                &repo,
-                cx,
-            );
+            self.record_refused(op_name, plan.current.clone(), &plan.blockers, &repo, cx);
             self.report_plan_failure(
                 op,
                 plan.blockers

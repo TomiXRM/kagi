@@ -254,12 +254,10 @@ impl KagiApp {
         };
         if !modal.plan.blockers.is_empty() || modal.paths.is_empty() {
             klog!("refused: discard plan has blockers / no targets");
-            self.record_op(
+            self.record_refused(
                 "discard",
                 modal.plan.current.clone(),
-                OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &modal.plan.blockers,
                 &repo_path,
                 cx,
             );

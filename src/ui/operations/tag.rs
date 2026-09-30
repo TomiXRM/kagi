@@ -84,15 +84,7 @@ impl KagiApp {
         if !plan.blockers.is_empty() {
             klog!("refused: create-tag plan has blockers, not executing");
             if let Some(ref rp) = self.repo_path.clone() {
-                self.record_op(
-                    "create-tag",
-                    plan.current.clone(),
-                    OpOutcome::Refused {
-                        blockers: plan.blockers.iter().map(|b| b.message_en()).collect(),
-                    },
-                    rp,
-                    cx,
-                );
+                self.record_refused("create-tag", plan.current.clone(), &plan.blockers, rp, cx);
             }
             return;
         }
@@ -240,12 +232,10 @@ impl KagiApp {
                 "refused: push-tag plan has {} blocker(s), not executing",
                 modal.plan.blockers.len()
             );
-            self.record_op(
+            self.record_refused(
                 "push-tag",
                 modal.plan.current.clone(),
-                kagi_git::oplog::OpOutcome::Refused {
-                    blockers: modal.plan.blockers.iter().map(|b| b.message_en()).collect(),
-                },
+                &modal.plan.blockers,
                 &repo_path,
                 cx,
             );

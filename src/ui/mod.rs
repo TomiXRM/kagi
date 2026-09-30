@@ -1589,43 +1589,15 @@ impl KagiApp {
         Some((branch, sha))
     }
 
-    /// UI-side operation recording (toast / footer / history panel).
-    ///
-    /// ADR-0149: for ops routed through `Backend::run`, `run` is now the sole
-    /// oplog writer, so this path does NOT append the oplog for
-    /// Success/Partial/Failed (that would double-record). It DOES still append
-    /// `Refused` outcomes — those are rejected at plan time and never reach
-    /// `run`, so the UI remains their recorder.
-    fn record_op(
+    /// Present (and, when `persist`, append) one outcome: footer, toast and
+    /// panel. `refusal` is the user-facing text for a typed refusal (#353).
+    pub(in crate::ui) fn record_op_impl(
         &mut self,
-        op: &str,
-        before: StateSummary,
-        outcome: OpOutcome,
-        repo_path: &std::path::Path,
+        entry: OpLogEntry,
         cx: &mut Context<Self>,
+        persist: bool,
+        refusal: Option<String>,
     ) {
-        let persist = matches!(outcome, OpOutcome::Refused { .. });
-        let entry = OpLogEntry::new(op, repo_path.display().to_string(), before, outcome);
-        self.record_op_impl(entry, cx, persist);
-    }
-
-    /// Like [`record_op`] but ALSO persists entries for operations whose
-    /// execution boundary does not yet record them (conflict resolution,
-    /// terminal start, PR merge). Backend-owned non-run operations such as
-    /// branch cleanup use presentation-only `record_op`. ADR-0149 §"non-run ops".
-    fn record_op_persist(
-        &mut self,
-        op: &str,
-        before: StateSummary,
-        outcome: OpOutcome,
-        repo_path: &std::path::Path,
-        cx: &mut Context<Self>,
-    ) {
-        let entry = OpLogEntry::new(op, repo_path.display().to_string(), before, outcome);
-        self.record_op_impl(entry, cx, true);
-    }
-
-    fn record_op_impl(&mut self, entry: OpLogEntry, cx: &mut Context<Self>, persist: bool) {
         let op = entry.op.as_str();
         let before = &entry.before;
         let outcome = &entry.outcome;
@@ -1646,17 +1618,12 @@ impl KagiApp {
                 false,
             ),
             OpOutcome::Refused { blockers } => (
-                SharedString::from(format!(
-                    "{}: refused ({} blocker{})",
-                    op,
-                    blockers.len(),
-                    if blockers.len() == 1 { "" } else { "s" }
-                )),
+                operations::record::refused_contract(op, blockers.len()).into(),
                 false,
             ),
         };
 
-        let display_footer_msg = Self::display_footer_message(op, outcome, &footer_msg);
+        let display_footer_msg = Self::display_footer_message(op, outcome, &footer_msg, refusal);
 
         // W3-NOTIFY: snackbar mirror of the footer message — every plan-pipeline
         // outcome (Success / Failed / Refused) becomes a toast.

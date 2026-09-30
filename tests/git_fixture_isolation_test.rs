@@ -248,3 +248,36 @@ fn fixture_is_identical_under_a_hostile_home() {
     assert_eq!(tree(&home), home_before, "the fixture wrote into HOME");
     assert_eq!(tree(&decoy), decoy_before, "the fixture wrote into GIT_DIR");
 }
+
+/// #819: the `GIT_DIR` untouched-check above flaked on CI because `git commit`
+/// in the decoy spawned `git maintenance run --auto --detach`, whose
+/// `.git/objects/maintenance.lock` was caught by the "before" snapshot and
+/// gone by the "after" one. The window is too short to hit on demand, but
+/// whether the fixture command *spawns* that process at all is deterministic
+/// and is what `GIT_TRACE` reports.
+#[test]
+fn fixture_commands_spawn_no_detached_maintenance() {
+    let tmp = TempDir::new().unwrap();
+    init_repo(tmp.path(), "main");
+    write_file(tmp.path(), "a.txt", "a\n");
+    git(tmp.path(), &["add", "-A"]);
+    let out = git_fixture::git_command(tmp.path())
+        .env("GIT_TRACE", "1")
+        .args(["commit", "-qm", "one"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let trace = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        trace.contains("built-in: git commit"),
+        "GIT_TRACE must be live for this check to mean anything:\n{trace}"
+    );
+    assert!(
+        !trace.contains("maintenance run") && !trace.contains("gc --auto"),
+        "a fixture commit spawned background maintenance:\n{trace}"
+    );
+    assert!(
+        !tmp.path().join(".git/objects/maintenance.lock").exists(),
+        "a maintenance lock was left in the fixture"
+    );
+}

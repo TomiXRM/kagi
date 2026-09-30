@@ -381,6 +381,13 @@ impl KagiApp {
                 cx,
             ))
         })
+        .when_some(self.repo_health_modal().cloned(), |el, modal| {
+            el.child(super::operations::repo_health::render_repo_health_modal(
+                modal,
+                &self.modal_section_overrides,
+                cx,
+            ))
+        })
         // ── Push plan modal overlay (T-HT-004) ──────────
         .when_some(push_modal, |el, modal| {
             el.child(render_push_modal(modal, &self.modal_section_overrides, cx))

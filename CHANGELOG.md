@@ -20,6 +20,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - 統合テストの Git fixture 構築を `tests/support/git_fixture.rs` に共通化しました。fixture 用の `git` は継承した `GIT_*`・global/system/XDG 設定・hooks・template を遮断して identity を固定するため、開発者の設定や hook から渡された `GIT_DIR` で fixture の内容が変わったり実 repository に書き込んだりしません。ops / blame / push_tag / pr_conflict_preview / app_read の各 suite を移行し、残りは follow-up で移行します。製品の動作は変更していません。（#514）
 - #514 の follow-up: 残り 72 ファイル（`tests/*.rs`・`tests/recovery/*.rs`・`tests/support/pr_merge_local.rs`）の suite-local な `git` helper を `tests/support/git_fixture.rs` に寄せました。テスト数 713・assertion は移行前後で同一で、明示 opt-in の 5 suite は従来どおりです。製品の動作は変更していません。（Refs #514）
+- backend 専用の統合テスト 61 suite（ops / discard / absorb / conflicts / pull / push / stash / worktree / oplog など）を `tests/` から `crates/kagi-git/tests/` へ、純粋 logic の 2 suite（message_template / trailers）を `kagi-domain` の unit test へ移しました。`cargo test -p kagi-git` だけで主要な mutation / preflight / recovery の契約が走り、GPUI を含む root を build しません。テスト数は移行前後で同じ（2650）で、製品の動作は変更していません。（#515）
 
 ## [0.40.1] - 2026-09-29
 

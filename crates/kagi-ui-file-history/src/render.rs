@@ -13,9 +13,11 @@ use gpui_component::button::Button;
 use gpui_component::tooltip::Tooltip;
 use gpui_component::Sizable as _;
 
+use gpui_component::Selectable as _;
 use kagi_domain::commit::CommitId;
 use kagi_ui_core::commit_row::{commit_row_model, render_commit_row, CommitRowLayout};
 use kagi_ui_core::divider::{DividerDrag, DividerGhost, DividerKind};
+use kagi_ui_core::header_fit::header_button;
 use kagi_ui_core::theme::{self, theme};
 use kagi_ui_core::time::now_unix_secs;
 
@@ -87,66 +89,77 @@ pub fn render_file_history_view(
     let rel_path_str = SharedString::from(rel_path.to_string_lossy().into_owned());
 
     // ── Header ──────────────────────────────────────────────────────
-    let back = fh_header_button(
-        "fh-back",
-        "\u{2190} Back",
-        |_this, _e, _w, cx| {
+    // #809: the title truncates first; when the labelled buttons still do not
+    // fit, they show only their icons (label as tooltip) and the branch /
+    // commit-count text moves into the title's tooltip.
+    let fit = view.header_fit.clone();
+    let compact = fit.compact();
+    let back_label = SharedString::from("\u{2190} Back");
+    let copy_label = SharedString::from("Copy Path");
+    let refresh_label = SharedString::from("Refresh");
+    let open_label = SharedString::from("Open File");
+    let follow_label = SharedString::from(if follow {
+        "Follow Renames: On"
+    } else {
+        "Follow Renames: Off"
+    });
+    let count_text = SharedString::from(format!("{} commits", count));
+    let probes = fit.probes(
+        &[
+            back_label.clone(),
+            refresh_label.clone(),
+            copy_label.clone(),
+            open_label.clone(),
+            follow_label.clone(),
+        ],
+        &[fh_branch.clone(), count_text.clone()],
+    );
+
+    let back = header_button("fh-back", back_label, "icons/arrow-left.svg", compact).on_click(
+        cx.listener(|_this, _e, _w, cx| {
             cx.emit(FileHistoryEvent::CloseRequested);
-        },
-        cx,
+        }),
     );
 
     let path_for_copy = rel_path.clone();
-    let copy_path = fh_header_button(
-        "fh-copy-path",
-        "Copy Path",
-        move |_this, _e, _w, cx| {
+    let copy_path = header_button("fh-copy-path", copy_label, "icons/copy.svg", compact).on_click(
+        cx.listener(move |_this, _e, _w, cx| {
             cx.write_to_clipboard(ClipboardItem::new_string(
                 path_for_copy.to_string_lossy().into_owned(),
             ));
-        },
-        cx,
+        }),
     );
 
-    let refresh = fh_header_button(
-        "fh-refresh",
-        "Refresh",
-        |this, _e, _w, cx| {
+    let refresh = header_button("fh-refresh", refresh_label, "icons/refresh-cw.svg", compact)
+        .on_click(cx.listener(|this, _e, _w, cx| {
             this.reload(true, cx);
-        },
-        cx,
-    );
+        }));
 
     let path_for_open = rel_path.clone();
-    let open_file = fh_header_button(
-        "fh-open-file",
-        "Open File",
-        move |_this, _e, _w, cx| {
+    let open_file = header_button("fh-open-file", open_label, "icons/file-text.svg", compact)
+        .on_click(cx.listener(move |_this, _e, _w, cx| {
             // v1: return to the normal body; the file's diff is reachable via
             // the commit panel / inspector.  Keep it simple per the spec.
             let _ = &path_for_open;
             cx.emit(FileHistoryEvent::CloseRequested);
-        },
-        cx,
-    );
+        }));
 
-    let follow_label = if follow {
-        "Follow Renames: On"
-    } else {
-        "Follow Renames: Off"
-    };
-    let follow_btn = fh_header_button(
-        "fh-follow",
-        follow_label,
-        |this, _e, _w, cx| {
+    // Icon-only, the On state is the button's selected look.
+    let follow_btn = header_button("fh-follow", follow_label, "icons/route.svg", compact)
+        .selected(compact && follow)
+        .on_click(cx.listener(|this, _e, _w, cx| {
             this.data.follow_renames = !this.data.follow_renames;
             this.reload(false, cx);
-        },
-        cx,
-    );
+        }));
 
+    let title_tip = if compact {
+        SharedString::from(format!("{rel_path_str}\n{fh_branch} · {count_text}"))
+    } else {
+        rel_path_str.clone()
+    };
     let header = div()
         .id("fh-header")
+        .relative()
         .flex()
         .flex_row()
         .items_center()
@@ -155,10 +168,12 @@ pub fn render_file_history_view(
         .px_3()
         .py_1()
         .gap_2()
+        // Icon-only buttons sit closer together.
+        .when(compact, |el| el.gap_1())
         // Darker than the `surface` this used to be, matching the main diff
         // header, so the outlined buttons read as raised controls.
         .bg(rgb(theme().bg_base))
-        .child(back)
+        .child(fit.control("fh-back", back))
         .child(
             div()
                 .id("fh-title")
@@ -171,26 +186,29 @@ pub fn render_file_history_view(
                     "File History: {}",
                     rel_path_str
                 )))
-                .tooltip(move |window, cx| Tooltip::new(rel_path_str.clone()).build(window, cx)),
+                .tooltip(move |window, cx| Tooltip::new(title_tip.clone()).build(window, cx)),
         )
-        .child(
-            div()
-                .flex_shrink_0()
-                .text_sm()
-                .text_color(rgb(theme().text_sub))
-                .child(fh_branch.clone()),
-        )
-        .child(
-            div()
-                .flex_shrink_0()
-                .text_sm()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(format!("{} commits", count))),
-        )
-        .child(refresh)
-        .child(copy_path)
-        .child(open_file)
-        .child(follow_btn);
+        .when(!compact, |el| {
+            el.child(
+                div()
+                    .flex_shrink_0()
+                    .text_sm()
+                    .text_color(rgb(theme().text_sub))
+                    .child(fh_branch.clone()),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_sm()
+                    .text_color(rgb(theme().text_muted))
+                    .child(count_text),
+            )
+        })
+        .child(fit.control("fh-refresh", refresh))
+        .child(fit.control("fh-copy-path", copy_path))
+        .child(fit.control("fh-open-file", open_file))
+        .child(fit.control("fh-follow", follow_btn))
+        .children(probes);
 
     // ── Center column (list + diff) selection of the body content ──
     let center_body: gpui::AnyElement = if is_loading {

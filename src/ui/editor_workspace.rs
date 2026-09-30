@@ -24,7 +24,7 @@ use gpui::{Context, Entity, SharedString, Window};
 pub use kagi_ui_editor::*;
 
 use super::i18n::{self, Msg};
-use super::render_helpers::render_diff_list;
+use super::render_helpers::{render_diff_list, DiffHeader};
 use super::{
     build_main_diff_view, EditorDirtyGuardModal, EditorPendingIntent, FooterStatus, KagiApp,
     MainDiffSource, MainDiffView, ToastKind,
@@ -50,8 +50,7 @@ fn editor_hooks() -> EditorHooks {
             };
             render_diff_list::<EditorWorkspaceView>(
                 diff.clone(),
-                None,
-                None,
+                DiffHeader::default(),
                 view.diff_scroll.clone(),
                 cx,
             )
@@ -70,8 +69,7 @@ fn editor_hooks() -> EditorHooks {
             };
             render_diff_list::<EditorWorkspaceView>(
                 diff.clone(),
-                None,
-                None,
+                DiffHeader::default(),
                 view.history_diff_scroll.clone(),
                 cx,
             )

@@ -368,6 +368,9 @@ pub struct TabUiState {
     pub cache_epoch: u64,
     /// Recomputable diff data. Contains only owned collections and `Arc<FileDiff>`.
     pub diff_caches: super::diff_cache::DiffCaches,
+    /// Inspector display model derived from `diff_caches` / the compare pane /
+    /// the selected commit's message (issue #512). Rebuilt on input change only.
+    pub(super) inspector_model: super::inspector_model::InspectorModel,
     pub(super) worktree_inspections: super::sidebar_worktree_row::WorktreeInspections,
     /// Aggregated staged + unstaged additions/deletions for the synthetic WIP row.
     pub wip_diffstat: Option<super::WipDiffStat>,
@@ -508,6 +511,7 @@ impl Default for TabUiState {
             view_publish_gen: 0,
             cache_epoch: 0,
             diff_caches: super::diff_cache::DiffCaches::default(),
+            inspector_model: Default::default(),
             worktree_inspections: Default::default(),
             wip_diffstat: None,
             last_working_status: None,

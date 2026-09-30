@@ -37,10 +37,11 @@
 //! entity-backed panes onto slot resolution. ADR-0197 S5 moves their lifetime
 //! into `TabUiState`; this registry renders but never disposes them on a switch.
 
-use gpui::{div, px, AnyElement, Context, IntoElement, ParentElement, Styled};
+use gpui::{div, px, AnyElement, Context, IntoElement, ParentElement, SharedString, Styled};
 use std::sync::Arc;
 
-use super::{commit_list, inspector, CommitId, CompareView, KagiApp, MainDiffSource};
+use super::inspector_model::{FilesSource, InspectorFiles};
+use super::{commit_list, inspector, CommitId, KagiApp, MainDiffSource};
 
 /// Which layout slot a [`WorkspaceItem`] occupies when active (ADR-0121 B1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -386,18 +387,14 @@ impl WorkspaceItem for CommitPanelItem {
 }
 
 /// Shared body of the Inspector / Compare right-slot items: derive the
-/// selected commit's detail + badges + active-file highlight and render
-/// `inspector::render_inspector` with the given files / diffstat / compare
-/// inputs. Exactly the old single Inspector arm, parameterized on the three
-/// inputs that differed between its normal and compare modes.
+/// selected commit's detail + badges + active-file highlight, sync the
+/// message slot of the derived model, and render `inspector::render_inspector`
+/// from it. The caller has already synced the files slot to its own source
+/// (issue #512); `compare_title` is the one other input that differs between
+/// the normal and compare modes.
 fn render_inspector_body(
     app: &mut KagiApp,
-    files: Option<Vec<super::FileStatus>>,
-    diffstat: Option<Vec<kagi_git::FileDiffStat>>,
-    // issue #348: per-file "is generated" flags aligned with `files`, so the
-    // list can fold lockfiles / generated files. `None` in compare mode.
-    generated: Option<Vec<bool>>,
-    compare: Option<CompareView>,
+    compare_title: Option<SharedString>,
     cx: &mut Context<KagiApp>,
 ) -> Option<AnyElement> {
     // ── Commit metadata ─
@@ -438,17 +435,18 @@ fn render_inspector_body(
         _ => None,
     };
     let generated_expanded = app.inspector_generated_expanded;
+    app.ui_mut()?
+        .inspector_model
+        .sync_message(&d.full_sha, d.full_message.as_ref());
     Some(
         inspector::render_inspector(
             d,
             at,
             selected_badges,
             prs_here,
-            files,
-            diffstat,
-            generated,
+            &app.ui().inspector_model,
             generated_expanded,
-            compare,
+            compare_title,
             active_commit_file,
             app.inspector_tree_view,
             app.inspector_split,
@@ -486,15 +484,10 @@ impl WorkspaceItem for InspectorItem {
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         // Changed files + diffstat for the selected commit (vs parent). A cache
-        // miss or an unavailable diff both collapse to `None` ("(diff
-        // unavailable)"), as the old `Option<Option<..>>` plumbing did.
-        let selected = app.ui().selected;
-        let files: Option<Vec<super::FileStatus>> = selected
-            .and_then(|i| app.ui().diff_caches.changed_files.get(&i).cloned())
-            .flatten();
-        let diffstat = selected.and_then(|i| app.ui().diff_caches.diffstat.get(&i).cloned());
-        let generated = selected.and_then(|i| app.ui().diff_caches.generated.get(&i).cloned());
-        render_inspector_body(app, files, diffstat, generated, None, cx)
+        // miss or an unavailable diff both derive to "(diff unavailable)".
+        let selected = app.ui().selected?;
+        app.ui_mut()?.sync_inspector_commit_files(selected);
+        render_inspector_body(app, None, cx)
     }
 }
 
@@ -521,8 +514,18 @@ impl WorkspaceItem for CompareItem {
         _layout: &WorkspaceLayout,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
-        let view = app.ui().compare_view.as_ref()?.read(cx).view.clone();
-        render_inspector_body(app, Some(view.files.clone()), None, None, Some(view), cx)
+        // No per-file diffstat — W16-DIFFSTAT keeps compare out of scope.
+        let pane = app.ui().compare_view.clone()?;
+        let compare = pane.read(cx);
+        let source = FilesSource::Compare {
+            pane: pane.entity_id(),
+            revision: compare.revision(),
+        };
+        let title = compare.view().title.clone();
+        app.ui_mut()?.inspector_model.sync_files(source, || {
+            Some(InspectorFiles::derive(&compare.view().files, None, None))
+        });
+        render_inspector_body(app, Some(title), cx)
     }
     // Per-repo: the compared base/files belong to the previous repo; drop the
     // entity on repo/tab switch like the other registered panes.

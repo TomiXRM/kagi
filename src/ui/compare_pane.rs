@@ -23,7 +23,25 @@ use super::KagiApp;
 /// Entity for the active compare (base commit ↔ HEAD / working tree).
 pub struct ComparePane {
     /// The compare currently shown (base, target, changed files, title).
-    pub view: CompareView,
+    view: CompareView,
+    /// Advanced by every [`ComparePane::replace_view`]; with the entity id it
+    /// is the content key of the Inspector's derived file model (issue #512).
+    revision: u64,
+}
+
+impl ComparePane {
+    pub fn view(&self) -> &CompareView {
+        &self.view
+    }
+
+    pub(super) fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    fn replace_view(&mut self, view: CompareView) {
+        self.view = view;
+        self.revision = self.revision.wrapping_add(1);
+    }
 }
 
 impl KagiApp {
@@ -32,12 +50,12 @@ impl KagiApp {
     pub(crate) fn show_compare(&mut self, view: CompareView, cx: &mut Context<Self>) {
         match self.ui().compare_view.clone() {
             Some(pane) => pane.update(cx, |p, cx| {
-                p.view = view;
+                p.replace_view(view);
                 cx.notify();
             }),
             None => {
                 if let Some(ui) = self.ui_mut() {
-                    ui.compare_view = Some(cx.new(|_| ComparePane { view }));
+                    ui.compare_view = Some(cx.new(|_| ComparePane { view, revision: 0 }));
                 }
             }
         }

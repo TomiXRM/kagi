@@ -794,7 +794,7 @@ impl KagiApp {
                 let len = self
                     .ui()
                     .diff_caches
-                    .changed_files
+                    .changed_files()
                     .get(&row_index)
                     .and_then(|o| o.as_ref())
                     .map(|v| v.len())
@@ -813,7 +813,7 @@ impl KagiApp {
                 file_index,
             } => {
                 // ADR-0121 B2: the view lives inside the ComparePane entity now.
-                let len = match self.ui().compare_view.as_ref().map(|p| &p.read(cx).view) {
+                let len = match self.ui().compare_view.as_ref().map(|p| p.read(cx).view()) {
                     Some(view) if view.base == base && view.target == target => view.files.len(),
                     _ => 0,
                 };
@@ -934,7 +934,7 @@ impl KagiApp {
             .ui()
             .compare_view
             .as_ref()
-            .map(|p| p.read(cx).view.clone())
+            .map(|p| p.read(cx).view().clone())
         else {
             return;
         };
@@ -1039,7 +1039,7 @@ impl KagiApp {
         let files = match self
             .ui()
             .diff_caches
-            .changed_files
+            .changed_files()
             .get(&selected)
             .and_then(|v| v.as_ref())
         {
@@ -1105,7 +1105,7 @@ impl KagiApp {
         let path = match self
             .ui()
             .diff_caches
-            .changed_files
+            .changed_files()
             .get(&selected)
             .and_then(|v| v.as_ref())
             .and_then(|files| files.get(file_index))

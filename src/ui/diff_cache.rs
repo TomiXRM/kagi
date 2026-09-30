@@ -15,10 +15,15 @@ use std::sync::Arc;
 /// Cohesive per-row diff / changed-files cache cluster (ADR-0118 Phase 5.2).
 /// Read inside `KagiApp::render`; deliberately NOT an `Entity` (no notify-scope
 /// to isolate — see ADR-0118 Mechanism A). Invalidated as a unit via `clear()`.
+///
+/// The three Inspector inputs (`changed_files` / `diffstat` / `generated`) are
+/// private: every write goes through [`DiffCaches::insert_row`] or `clear`,
+/// both of which advance [`DiffCaches::revision`] — the content revision the
+/// Inspector's derived model is keyed on (issue #512).
 #[derive(Clone, Default)]
 pub struct DiffCaches {
     /// Changed-files list per commit row (`None` = load attempted but failed). (was `diff_cache`)
-    pub changed_files: HashMap<usize, Option<Vec<FileStatus>>>,
+    changed_files: HashMap<usize, Option<Vec<FileStatus>>>,
     /// Per-(row, file-index) `FileDiff` content cache (T-REARCH-031).
     /// `changed_files` only holds the file *list*; without this content cache,
     /// toggling between two commits recomputes the full git2 tree-diff + hunk
@@ -33,11 +38,13 @@ pub struct DiffCaches {
     pub local_inflight: HashSet<usize>,
     /// Per-row diffstat (additions/deletions) for the Inspector changed-files
     /// list (W16-DIFFSTAT). Computed lazily alongside `changed_files`. (was `diffstat_cache`)
-    pub diffstat: HashMap<usize, Vec<FileDiffStat>>,
+    diffstat: HashMap<usize, Vec<FileDiffStat>>,
     /// Per-row "is generated" flags aligned with `changed_files` (issue #348 —
     /// auto-fold lockfiles / generated files). Computed lazily alongside
     /// `changed_files`; index i is `true` when that file is classified generated.
-    pub generated: HashMap<usize, Vec<bool>>,
+    generated: HashMap<usize, Vec<bool>>,
+    /// Advanced by every write to the three row maps above.
+    revision: u64,
 }
 
 impl DiffCaches {
@@ -51,6 +58,44 @@ impl DiffCaches {
         self.local_inflight.clear();
         self.diffstat.clear();
         self.generated.clear();
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    /// Record one row's changed files together with whatever diffstat and
+    /// generated flags its load produced. An absent `stats` / `generated`
+    /// leaves that row's previous entry in place.
+    pub fn insert_row(
+        &mut self,
+        row: usize,
+        files: Option<Vec<FileStatus>>,
+        stats: Option<Vec<FileDiffStat>>,
+        generated: Option<Vec<bool>>,
+    ) {
+        self.changed_files.insert(row, files);
+        if let Some(stats) = stats {
+            self.diffstat.insert(row, stats);
+        }
+        if let Some(generated) = generated {
+            self.generated.insert(row, generated);
+        }
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    pub fn changed_files(&self) -> &HashMap<usize, Option<Vec<FileStatus>>> {
+        &self.changed_files
+    }
+
+    pub fn diffstat(&self) -> &HashMap<usize, Vec<FileDiffStat>> {
+        &self.diffstat
+    }
+
+    pub fn generated(&self) -> &HashMap<usize, Vec<bool>> {
+        &self.generated
+    }
+
+    /// Content revision of the row maps: equal revisions mean equal contents.
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 }
 

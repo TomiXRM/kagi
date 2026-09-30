@@ -317,8 +317,13 @@ impl KagiApp {
         });
 
         // Off-thread: open the repo, compute the per-file diff (the expensive
-        // I/O + diff work) and build its text rows — plain data (#495).
+        // I/O + diff work) and build its text rows — plain data (#495). A large
+        // one explains itself once slow (#355).
+        let slow = self.active_session().map(|owner| {
+            self.begin_slow_read(owner, Some(kagi_ui_core::slow_read::SlowRead::Diff), cx)
+        });
         let task = cx.background_spawn(async move {
+            let _slow = slow;
             load_history_entry_file_diff(&repo_path, &entry).map(|result| {
                 result.map(|file_diff| {
                     // T-WS-EDITOR-005 finding #10: the shared builder. The

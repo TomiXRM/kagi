@@ -19,6 +19,7 @@ pub mod header_fit;
 pub mod i18n;
 pub mod markdown;
 pub mod settings;
+pub mod slow_read;
 pub mod theme;
 pub mod theme_apple_dark;
 pub mod theme_apple_light;

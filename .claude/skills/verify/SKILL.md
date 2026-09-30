@@ -916,3 +916,21 @@ starts a local fetch through `fetch_async`, checks the renderer's snackbar text
 before completion in both languages, and checks release after completion.
 Build only when PM owns execution. For M, verify Fetch, Commit, Stash, Discard,
 branch deletion and editor Save show an operation label, never `app-writer`.
+
+### Slow-read advice (#355, ADR-0206)
+
+G: `cargo test -p kagi-ui-core -- slow_read busy` (the 2 s boundary and EN/JA
+text), `cargo test -p kagi --lib -- slow_reads branch_menu` (per-phase timing,
+Skip reaching the probe, unknown counts keeping Pull/Push enabled) and
+`cargo test -p kagi-git --test snapshot_probe_test` (a skipped snapshot lists
+the upstream with `counts: None`; the next one counts).
+Tier A: `KAGI_GUI_E2E_ONLY=slow_read_explained` in `tests/recovery/slow_read.rs`
+holds the real reload's snapshot in its ahead/behind phase
+(`KagiApp::hold_next_snapshot_for_e2e`) and advances the dispatcher clock in the
+tracker's 250 ms ticks: nothing at 1.75 s into the phase, the drawn
+`busy-snackbar-advice` and `busy-snackbar-skip` after 2 s, a real click on Skip
+hides them, the released read lands `counts: None` (status summary unknown, not
+"no upstream"), and the next reload counts again — in EN and JA. Tier B:
+`bash scripts/make_fixture.sh <dir> 10500`, add branches with upstreams, reload
+and read the snackbar and `[kagi] busy: slow <op> after 2s` /
+`[kagi] busy: skip <op>`; after Skip the sidebar shows `—`.

@@ -97,6 +97,10 @@ impl StatusBarVM {
             _ if s.no_upstream => {
                 chips.push(StatusChip::new(NoUpstream, "no upstream"));
             }
+            // #355: an upstream whose count was skipped is unknown, not 0/0.
+            _ if !s.is_detached && !s.is_unborn => {
+                chips.push(StatusChip::new(AheadBehind, "\u{2014}"));
+            }
             _ => {} // detached HEAD or unborn: nothing shown
         }
         if !s.upstream_name.is_empty() {

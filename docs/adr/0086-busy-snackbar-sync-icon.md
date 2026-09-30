@@ -3,6 +3,7 @@
 - Status: Accepted(2026-06-16、ユーザー依頼「時間のかかる関数は async にしつつ、スナックバーで sync icon がぐるぐるしてて欲しい」「すでに origin と差分がない時の Push/Pull は popup ではなくスナックバーで」「async のスナックバーは全部同じ UI に統一」「no-op の時も sync icon を大きく」)
 - Date: 2026-06-16
 - Builds on: ADR-0079(merge を含む長時間 op の plan→confirm→execute)、トーストシステム(`Toast` / `ToastKind` / `push_toast`)
+- Amended by: [ADR-0206](0206-slow-read-advice.md)(2 秒を超えた read の説明と Skip を busy スナックバーに追記、#355)
 
 ## Context
 

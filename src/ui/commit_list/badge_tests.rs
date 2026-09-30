@@ -5,7 +5,7 @@
 
 mod remote_fold_tests {
     use super::super::*;
-    use kagi_git::{Branch, Head, RemoteBranch, RepoSnapshot, UpstreamInfo};
+    use kagi_git::{AheadBehind, Branch, Head, RemoteBranch, RepoSnapshot, UpstreamInfo};
 
     fn tip(c: char) -> CommitId {
         CommitId(c.to_string().repeat(40))
@@ -78,8 +78,10 @@ mod remote_fold_tests {
             target: tip('b'),
             upstream: Some(UpstreamInfo {
                 remote_branch: "origin/bar".into(),
-                ahead: 0,
-                behind: 0,
+                counts: Some(AheadBehind {
+                    ahead: 0,
+                    behind: 0,
+                }),
             }),
         });
         s.remote_branches.push(RemoteBranch {

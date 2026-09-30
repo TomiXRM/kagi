@@ -111,8 +111,9 @@ fn repo_status(repo: &Path) -> ToolResult {
         "head_sha": head_sha,
         "detached": matches!(snap.head, kagi_git::Head::Detached { .. }),
         "upstream": upstream.map(|u| u.remote_branch.clone()),
-        "ahead": upstream.map(|u| u.ahead).unwrap_or(0),
-        "behind": upstream.map(|u| u.behind).unwrap_or(0),
+        // MCP reads a plain snapshot, which never skips counting (#355).
+        "ahead": upstream.and_then(|u| u.counts).map_or(0, |c| c.ahead),
+        "behind": upstream.and_then(|u| u.counts).map_or(0, |c| c.behind),
         "dirty": !st.staged.is_empty() || !st.unstaged.is_empty()
             || !st.untracked.is_empty() || !st.conflicted.is_empty(),
         "staged": st.staged.iter().map(file_status_json).collect::<Vec<_>>(),
@@ -217,8 +218,8 @@ fn branches(repo: &Path) -> ToolResult {
                 "target": b.target.0,
                 "upstream": b.upstream.as_ref().map(|u| json!({
                     "remote_branch": u.remote_branch,
-                    "ahead": u.ahead,
-                    "behind": u.behind,
+                    "ahead": u.counts.map(|c| c.ahead),
+                    "behind": u.counts.map(|c| c.behind),
                 })),
             })
         })

@@ -179,14 +179,16 @@ pub use ops::{
 #[allow(unused_imports)]
 pub use ops::{plan_absorb, preflight_absorb, verify_absorb, DEFAULT_ABSORB_WINDOW};
 #[allow(unused_imports)]
-pub use refs::{Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};
+pub use refs::{AheadBehind, Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};
 #[allow(unused_imports)]
 pub use resolution::{
     ConflictHunk, HunkChoice, HunkModel, LineOrigin, RawResolution, Region, ResolutionBuffer,
     ResolutionChoice, ResolvedLine, SelectionSide, SideBlobInfo,
 };
 #[allow(unused_imports)]
-pub use snapshot::{snapshot, snapshot_repairing_stat_cache, RepoSnapshot};
+pub use snapshot::{
+    snapshot, snapshot_repairing_stat_cache, RepoSnapshot, SnapshotPhase, SnapshotProbe,
+};
 #[allow(unused_imports)]
 pub use staging::{
     commit_preview, plan_commit, staged_file_diff, unstaged_file_diff, CommitPreview,

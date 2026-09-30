@@ -76,6 +76,10 @@ mod app_stash;
 mod busy_label;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/slow_read.rs"]
+mod slow_read;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/app_writer_admission.rs"]
 mod app_writer_admission;
 
@@ -923,6 +927,10 @@ mod macos {
             (
                 "fetch_busy_label",
                 Box::new(crate::busy_label::scenario_fetch_busy_label),
+            ),
+            (
+                "slow_read_explained",
+                Box::new(crate::slow_read::scenario_slow_read_explained),
             ),
             (
                 "fetch_failure_oplog",

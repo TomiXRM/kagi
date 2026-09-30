@@ -139,3 +139,59 @@ mod tests {
         assert!(c.changed_files.get(&5).is_none());
     }
 }
+
+/// The synchronous row-cache fills (`select_headless`, `show_changed_files_for_commit`):
+/// files + diffstat + generated flags for one commit, read on the calling
+/// thread. The interactive path is `KagiApp::load_local_changed_files`, which
+/// reads the same three things off the UI thread; both must fill all three, or a
+/// row cached by one path is never completed by the other (#818).
+impl super::KagiApp {
+    /// Fetch changed files for the commit at `index`.  Returns `None` on
+    /// failure (so the UI can show "(diff unavailable)").
+    pub(super) fn fetch_changed_files(&self, index: usize) -> Option<Vec<FileStatus>> {
+        use kagi_git::CommitId;
+
+        // Early-exit if no repo is open (the session is None in that case too).
+        self.ui().repo_session.as_ref()?;
+        let detail = self.view().details.get(index)?;
+        let id = CommitId(detail.full_sha.as_ref().to_string());
+
+        // ADR-0107: use the per-tab RepoSession instead of re-opening.
+        let repo = self.ui().repo_session.as_ref()?.backend();
+        repo.commit_changed_files(&id).ok()
+    }
+
+    /// W16-DIFFSTAT: aggregate per-file additions/deletions for the commit at
+    /// `index`.  Returns `None` on failure (the UI simply omits the bar).
+    pub(super) fn fetch_diffstat(&self, index: usize) -> Option<Vec<FileDiffStat>> {
+        use kagi_git::CommitId;
+
+        let repo_path = self.repo_path.as_ref()?;
+        let detail = self.view().details.get(index)?;
+        let id = CommitId(detail.full_sha.as_ref().to_string());
+
+        let repo = kagi_git::Backend::open(repo_path).ok()?;
+        repo.commit_diffstat(&id).ok()
+    }
+
+    /// #818: generated/lockfile flags for `files` of the commit at `index`,
+    /// for the two paths that fill a row's changed files synchronously
+    /// (`select_headless`, `show_changed_files_for_commit`). They used to store
+    /// `None`, and because the async render-trigger load skips a row that is
+    /// already cached, such a row never got its flags — `Cargo.lock` sat in the
+    /// list as an ordinary row instead of folding under "Generated (N)".
+    pub(super) fn fetch_generated_flags(
+        &self,
+        index: usize,
+        files: Option<&[FileStatus]>,
+    ) -> Option<Vec<bool>> {
+        use kagi_git::CommitId;
+
+        let files = files?;
+        let repo_path = self.repo_path.as_ref()?;
+        let detail = self.view().details.get(index)?;
+        let id = CommitId(detail.full_sha.as_ref().to_string());
+        let repo = kagi_git::Backend::open(repo_path).ok()?;
+        Some(repo.commit_generated_flags(&id, files))
+    }
+}

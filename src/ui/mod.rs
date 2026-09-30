@@ -1687,53 +1687,6 @@ impl KagiApp {
 
     // ── T-BP-007: Terminal session ────────────────────────────
 
-    /// Ensure the active session's terminal exists and its shell is running.
-    /// The session owner is frozen into the exit callback so completion cannot
-    /// clear another tab's terminal.
-    pub fn ensure_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(owner) = self.active_session() else {
-            klog!("terminal: no repo_path — cannot start terminal");
-            return;
-        };
-        let repo_path = match self.repo_path.clone() {
-            Some(path) => path,
-            None => {
-                klog!("terminal: no repo_path — cannot start terminal");
-                return;
-            }
-        };
-        let mut session = self
-            .ui
-            .get_mut(&owner)
-            .expect("active session must own TabUiState")
-            .terminal_session
-            .take()
-            .unwrap_or_else(|| terminal::KagiTerminalSession::new(repo_path.clone()));
-        let mut failure_msg: Option<String> = None;
-        terminal::ensure_terminal(&mut session, owner, window, cx, |msg| {
-            failure_msg = Some(msg);
-        });
-        if let Some(ui) = self.ui.get_mut(&owner) {
-            ui.terminal_session = Some(session);
-        }
-
-        if let Some(err) = failure_msg {
-            use kagi_git::oplog::OpOutcome;
-            use kagi_git::ops::StateSummary;
-            // terminal start does not go through Backend::run — persist here.
-            self.record_op_persist(
-                "terminal-start",
-                StateSummary {
-                    head: "n/a".to_string(),
-                    dirty: "n/a".to_string(),
-                },
-                OpOutcome::Failed { error: err },
-                &repo_path,
-                cx,
-            );
-        }
-    }
-
     // ── T-HT-003: Pull ────────────────────────────────────────
 
     // ── T-HT-004: Push ────────────────────────────────────────

@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
+- 埋め込み terminal の worktree 自動ロック(Phase 1、既定 OFF の opt-in、macOS / Linux)。Settings の「terminal を開いている間 worktree をロック」を ON にすると、linked worktree で terminal を起動したときに Kagi 所有 token(`kagi:auto:<session>`)付きの `git worktree lock` の確認カードを出し、shell 終了(render に依存しない wait で観測)時にそのロックの解除カードを出します。confirm するまで何も書かず、手動のロック・他の terminal のロック・別の worktree のロックは plan と preflight の両方で拒否して触れません。crash 後に残ったロックは従来どおり手動解除で回復します。（#772、ADR-0208）
 - PR mode のファイル一覧に「確認済み」の checkbox と「N / M viewed」(JA「N / M 確認済み」)の進捗を追加しました。確認済みの行は薄く表示されます。印はそのときの head 側のファイル内容(blob)に紐づき、PR の head が進んでそのファイルが変わると自動で未確認に戻ります(変わっていないファイルは確認済みのまま)。状態は `~/.kagi/pr-viewed/` に PR ごとに保存し、壊れたファイルは上書きせず退避します。Operation Log には記録しません。(#351、ADR-0207)
 - PR のレビュー会話で ```suggestion 付きの行コメントに「提案を適用…」(EN「Apply suggestion…」)ボタンを追加しました。押すと plan card を開くだけで、確認すると作業ツリーのファイルだけを書き換えます(stage も commit もしません)。レビューの行番号は PR の head 側のものなので、作業ツリーのファイルが PR head の版と一致するときだけ適用でき、ローカルで変更されている・head がローカルにない場合は理由を示して拒否します。適用前の内容は `refs/kagi/backups/` の backup ref に保持して Operation Log に記録し(`git cat-file blob <backup-ref>` で読み戻せます)、CRLF や末尾改行なしのファイルも範囲外の行はそのまま残します。(#351、ADR-0209)
 
@@ -17,9 +18,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 - File History で先頭の WIP 行を選んだとき、右の詳細ペインの「Changes」が「+0 −0」と表示される問題を修正しました。WIP 行は `git status` から作られ行数を持たないため、行数が分からない項目では「Changes」行を出さず、実際の +/− は下の diff pane が示します。コミット行の +/− と binary 表示は従来どおりです。（#813）
 
 ### Added
-
 - Analyze に「Health」タブを追加しました。commit-graph が無い / HEAD より古い、`core.fsmonitor` が未設定(macOS / Windows)を検出し、EN/JA の説明と「有効化…」ボタンを表示します。ボタンは plan(等価な git コマンドと戻し方を含む)を開くだけで、確認するまで何も書き込みません。確認すると `git commit-graph write --reachable` または local config への `core.fsmonitor=true` を実行し、Operation Log に記録します。（#358、ADR-0205）
-- 2 秒を超えた読み込み(ahead/behind の計算・worktree の状態・worktree 容量の計測・Analyze・Compare / WIP / File History の大きい diff)について、busy スナックバーに「時間がかかっています: <理由>(大きいリポジトリでは <対象> に時間がかかります)」を EN/JA で追記するようにしました。ahead/behind と worktree 容量は「スキップ」で計算をやめ、既存の「—」/「未計測」表示にできます(次の読み込みで再計算、Operation Log には記録しません)。2 秒未満の読み込みでは何も出ません。(#355、ADR-0206)
+- 2 秒を超えた読み込み(ahead/behind の計算・worktree の状態・worktree 容量の計測・Analyze・Compare / WIP / File History の大きい diff)について、busy スナックバーに「時間がかかっています: <理由>(大きいリポジトリでは <対象> に時間がかかります)」を EN/JA で追記するようにしました。ahead/behind と worktree 容量は「スキップ」で計算をやめ、既存の「—」/「未計測」表示にできます(次の読み込みで再計算、Operation Log には記録しません)。2 秒未満の読み込みでは何も出ません。(#355、ADR-0208)
 
 ### Fixed
 

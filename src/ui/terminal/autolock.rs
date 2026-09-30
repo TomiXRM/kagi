@@ -144,6 +144,9 @@ impl KagiApp {
                     name,
                     reason,
                 });
+                // #817: the terminal just took focus; the card owns Enter /
+                // Escape through the root, so ask for the root on open.
+                self.focus_root_for_modal();
                 cx.notify();
             }
             Err(e) => {
@@ -186,6 +189,9 @@ impl KagiApp {
                     name,
                     auto: Some(target),
                 });
+                // #817: delivered while the terminal (or anything) holds focus;
+                // the release card has no text field, so Enter must reach the root.
+                self.focus_root_for_modal();
                 cx.notify();
             }
             Ok(plan) => {

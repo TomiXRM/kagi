@@ -10,6 +10,8 @@
 use super::*;
 use git2::WorktreeLockStatus;
 use kagi_domain::plan_note::{WorktreeNote, WorktreeRecovery, WorktreeTitle};
+use kagi_domain::remove::{RepoId, WorktreeId};
+use kagi_domain::worktree_autolock::{classify_auto_unlock, AutoUnlockTarget};
 
 // ────────────────────────────────────────────────────────────
 // Containment-checked worktree directory removal (the safety hole fix)
@@ -242,6 +244,142 @@ pub(crate) fn execute_lock_worktree(
         Ok(WorktreeLockStatus::Locked(_)) => Ok(()),
         _ => Err(GitError::Other(format!(
             "worktree '{}' not locked after lock — unexpected state",
+            name
+        ))),
+    }
+}
+
+// ────────────────────────────────────────────────────────────
+// auto-unlock (#772 Phase 1, ADR-0208 決定 2)
+// ────────────────────────────────────────────────────────────
+
+/// The identity of the linked worktree registered as `name`, in the same
+/// canonical form `Backend::write_worktree_id` produces when opened *at* that
+/// worktree — so a session's recorded target and this read compare equal.
+pub fn linked_worktree_identity(repo: &Repository, name: &str) -> Result<WorktreeId, GitError> {
+    let common = repo.commondir();
+    let canon = |p: &Path| {
+        std::fs::canonicalize(p)
+            .map_err(|e| GitError::Other(format!("cannot resolve '{}': {e}", p.display())))
+    };
+    Ok(WorktreeId {
+        repo: RepoId(canon(common)?),
+        git_dir: canon(&common.join("worktrees").join(name))?,
+    })
+}
+
+/// Classify the lock currently on `name` against what the session expects.
+/// Shared by plan and preflight so the two can never disagree.
+fn auto_unlock_check(
+    repo: &Repository,
+    name: &str,
+    target: &AutoUnlockTarget,
+) -> Result<git2::Worktree, PlanNote> {
+    let wt = repo.find_worktree(name).map_err(|_| {
+        PlanNote::Worktree(WorktreeNote::WorktreeMissing {
+            name: name.to_string(),
+        })
+    })?;
+    let (locked, reason) = match wt.is_locked() {
+        Ok(WorktreeLockStatus::Locked(reason)) => (true, reason),
+        Ok(WorktreeLockStatus::Unlocked) => (false, None),
+        Err(e) => {
+            return Err(PlanNote::Worktree(WorktreeNote::LockStateUnreadable {
+                name: name.to_string(),
+                err: e.message().to_string(),
+            }))
+        }
+    };
+    let identity = linked_worktree_identity(repo, name).map_err(|e| {
+        PlanNote::Worktree(WorktreeNote::LockStateUnreadable {
+            name: name.to_string(),
+            err: e.to_string(),
+        })
+    })?;
+    classify_auto_unlock(locked, reason.as_deref(), &identity, target)
+        .map_err(|refusal| {
+            PlanNote::Worktree(WorktreeNote::AutoUnlockRefused {
+                name: name.to_string(),
+                refusal,
+            })
+        })
+        .map(|()| wt)
+}
+
+/// Analyse whether the lock on `name` may be released by the terminal session
+/// holding `target`. Unlike [`plan_unlock_worktree`](super::plan_unlock_worktree)
+/// this refuses anything that is not *this session's* Kagi lock on *this*
+/// worktree (contract B): manual and foreign locks, another session's token,
+/// or a worktree other than the one recorded, are blockers, never warnings.
+pub fn plan_auto_unlock_worktree(
+    repo: &Repository,
+    name: &str,
+    target: &AutoUnlockTarget,
+) -> Result<OperationPlan, GitError> {
+    let title = WorktreeTitle::AutoUnlockWorktree {
+        name: name.to_string(),
+    };
+    let (warnings, blockers) = match auto_unlock_check(repo, name, target) {
+        Ok(_) => (
+            vec![PlanNote::Worktree(WorktreeNote::LockedWithReason {
+                reason: Some(target.token.reason()),
+            })],
+            Vec::new(),
+        ),
+        Err(blocker) => (Vec::new(), vec![blocker]),
+    };
+    let recovery = Some(PlanRecovery {
+        kind: RecoveryKind::Worktree(WorktreeRecovery::Unlock {
+            name: name.to_string(),
+        }),
+        commands: vec![format!(
+            "git worktree lock --reason \"{}\" <path-of-{}>",
+            target.token.reason(),
+            name
+        )],
+    });
+    admin_plan(repo, title, warnings, blockers, recovery, false)
+}
+
+/// Re-run the ownership check immediately before releasing: HEAD unchanged
+/// (`preflight_check`), and the lock is still this session's token on this
+/// worktree. Read-then-unlock is not atomic (ADR-0208 決定 2 names the window);
+/// this narrows it to the single `unlock` call that follows.
+pub fn preflight_auto_unlock_worktree(
+    repo: &Repository,
+    plan: &OperationPlan,
+    name: &str,
+    target: &AutoUnlockTarget,
+) -> Result<git2::Worktree, GitError> {
+    if !plan.blockers.is_empty() {
+        return Err(GitError::Other(
+            "auto-unlock-worktree refused: plan has blockers".to_string(),
+        ));
+    }
+    preflight_check(repo, plan)?;
+    auto_unlock_check(repo, name, target).map_err(|note| {
+        GitError::Other(format!(
+            "auto-unlock-worktree refused at preflight: {}",
+            note.message_en()
+        ))
+    })
+}
+
+/// Release this session's Kagi lock on `name`: preflight → unlock → verify.
+/// Never reaches `unlock` for a lock the preflight did not recognise as ours.
+pub(crate) fn execute_auto_unlock_worktree(
+    repo: &Repository,
+    plan: &OperationPlan,
+    name: &str,
+    target: &AutoUnlockTarget,
+) -> Result<(), GitError> {
+    let wt = preflight_auto_unlock_worktree(repo, plan, name, target)?;
+    wt.unlock()
+        .map_err(|e| GitError::Other(format!("worktree unlock failed: {}", e.message())))?;
+    match wt.is_locked() {
+        Ok(WorktreeLockStatus::Unlocked) => Ok(()),
+        _ => Err(GitError::Other(format!(
+            "worktree '{}' still reports locked after auto-unlock — unexpected state",
             name
         ))),
     }

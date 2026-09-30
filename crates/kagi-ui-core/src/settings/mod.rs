@@ -35,8 +35,10 @@
 mod store;
 #[cfg(test)]
 mod store_env_tests;
+mod terminal_autolock;
 
 pub use store::flush;
+pub use terminal_autolock::{init_terminal_auto_lock, set_terminal_auto_lock, terminal_auto_lock};
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -175,6 +177,17 @@ impl Settings {
     /// explicit `"true"` enables it.
     pub fn reduce_motion(&self) -> bool {
         self.get_str("reduce_motion")
+            .map(|s| s.trim() == "true")
+            .unwrap_or(false)
+    }
+
+    /// Terminal auto-lock opt-in (`"terminal_auto_lock"`, `"true"`/`"false"`;
+    /// #772 / ADR-0208). When on, starting the embedded terminal in a linked
+    /// worktree offers a `git worktree lock` plan with a Kagi-owned token, and
+    /// the shell's exit offers its release. Default **off** — only an explicit
+    /// `"true"` enables it.
+    pub fn terminal_auto_lock(&self) -> bool {
+        self.get_str("terminal_auto_lock")
             .map(|s| s.trim() == "true")
             .unwrap_or(false)
     }

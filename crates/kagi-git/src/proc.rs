@@ -15,9 +15,11 @@
 //! The shapes here answer those: [`ProcStop`] carries no exit code, [`ProcIo`]
 //! says whether the capture is complete, and neither can pass for success.
 
+mod cwd;
 mod group;
 mod job;
 pub mod supervisor;
+pub use cwd::{cwd_of_pid, CwdProbe};
 pub use group::group_alive;
 
 use group::{group_settled, kill_group};

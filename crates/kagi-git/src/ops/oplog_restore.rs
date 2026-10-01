@@ -53,29 +53,50 @@ fn canonical(path: &Path) -> PathBuf {
 }
 
 /// The whole Operation Log tail, oldest first, each entry classified as this
-/// repository's (its worktree opens onto the same common dir — branches are
-/// shared by every worktree), another's, or unknown (its worktree can no
-/// longer be opened: deleted or pruned). The planner fails closed on unknown
-/// entries and on a broken chain in the range (#878 review).
+/// repository's (same common dir — branches are shared by every worktree),
+/// another's, or unknown. The planner fails closed on unknown entries and on
+/// a broken chain in the range (#878 review).
+///
+/// An entry that recorded its repository (#894) is classified by that alone
+/// (`RepoIdentity::same_repository`): `Same` is ours, `Different` another's,
+/// `Ambiguous` unknown (fail closed) — a file id match with no creation time
+/// to confirm it could be a re-created `.git` on a reused inode (#900). Only
+/// an older entry without an identity is classified by opening its worktree,
+/// and is unknown when that fails. An identity that is there but unreadable
+/// is unknown outright — never treated as an older entry (#900 review).
 fn log_entries(repo: &Repository) -> Vec<RecordedEntry> {
     let mine = canonical(repo.commondir());
+    let my_identity = crate::oplog::RepoIdentity::of(repo.workdir().unwrap_or(repo.path()));
     let mut common_of: HashMap<String, Option<PathBuf>> = HashMap::new();
     let mut entries: Vec<RecordedEntry> = crate::oplog::read_oplog_tail(ENTRY_SCAN)
         .into_iter()
         .map(|e| {
             let path = e.worktree.clone().unwrap_or_else(|| e.repo.clone());
-            let common = common_of
-                .entry(path.clone())
-                .or_insert_with_key(|path| {
-                    Repository::open(path)
-                        .ok()
-                        .map(|r| canonical(r.commondir()))
-                })
-                .clone();
-            let repo = match common {
-                Some(common) if common == mine => EntryRepo::Mine,
-                Some(_) => EntryRepo::Other,
-                None => EntryRepo::Unknown(path.clone()),
+            use crate::oplog::RecordedIdentity;
+            let repo = match (&e.repo_identity, &my_identity) {
+                (RecordedIdentity::Invalid, _) => EntryRepo::Unknown(path.clone()),
+                (RecordedIdentity::Known(recorded), Some(mine)) => {
+                    match recorded.same_repository(mine) {
+                        crate::oplog::SameRepository::Same => EntryRepo::Mine,
+                        crate::oplog::SameRepository::Different => EntryRepo::Other,
+                        crate::oplog::SameRepository::Ambiguous => EntryRepo::Unknown(path.clone()),
+                    }
+                }
+                _ => {
+                    let common = common_of
+                        .entry(path.clone())
+                        .or_insert_with_key(|path| {
+                            Repository::open(path)
+                                .ok()
+                                .map(|r| canonical(r.commondir()))
+                        })
+                        .clone();
+                    match common {
+                        Some(common) if common == mine => EntryRepo::Mine,
+                        Some(_) => EntryRepo::Other,
+                        None => EntryRepo::Unknown(path.clone()),
+                    }
+                }
             };
             RecordedEntry {
                 id: e.id,

@@ -3,7 +3,10 @@
 //! Keep legacy scalar/default handling at this boundary; append, identity
 //! reconstruction, and retention continue to own their existing policies.
 
-use super::{recovery, Actor, FailureCode, OpLogEntry, OpOutcome, StateSummary};
+use super::{
+    recovery, Actor, FailureCode, OpLogEntry, OpOutcome, RecordedIdentity, RepoIdentity,
+    StateSummary,
+};
 use kagi_domain::github::IssueCreateFields;
 use kagi_domain::ref_moves::RefMove;
 use serde::{de::Error, Deserialize, Deserializer, Serialize};
@@ -100,7 +103,48 @@ struct EntryRef<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     ref_moves: Option<Vec<RefMoveRef<'a>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    repo_identity: Option<RepoIdentityRef<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     issue_fields: Option<IssueFieldsRef<'a>>,
+}
+
+/// #894: `{"common_dir": "...", "dev": n, "ino": n, "born_s": n, "born_ns": n}`;
+/// dev/ino only on unix, born_* only where the filesystem reports a creation
+/// time (#900 review).
+#[derive(Serialize)]
+struct RepoIdentityRef<'a> {
+    common_dir: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dev: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ino: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    born_s: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    born_ns: Option<u32>,
+}
+
+/// Strict: a key this version does not know may change what the identity
+/// means, so it makes the field `Invalid`, not silently ignored.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RepoIdentityRecord {
+    common_dir: String,
+    #[serde(default, deserialize_with = "present")]
+    dev: Option<u64>,
+    #[serde(default, deserialize_with = "present")]
+    ino: Option<u64>,
+    #[serde(default, deserialize_with = "present")]
+    born_s: Option<u64>,
+    #[serde(default, deserialize_with = "present")]
+    born_ns: Option<u32>,
+}
+
+/// A key that is absent reads as `None` (`#[serde(default)]`); a key that is
+/// present must hold a value — an explicit `null` is a broken record, not a
+/// missing one (#900 review).
+fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
+    T::deserialize(d).map(Some)
 }
 
 #[derive(Serialize)]
@@ -169,6 +213,12 @@ struct EntryRecord {
     failure_code: Option<FailureCode>,
     #[serde(default, deserialize_with = "ref_moves")]
     ref_moves: Option<Vec<RefMove>>,
+    // Additive: a line without the field is `Absent` (attributed as before by
+    // opening its worktree). A field that is there but unreadable is
+    // `Invalid` — never `Absent`, whose path fallback could take another
+    // repository's entry for this one (#900 review).
+    #[serde(default, deserialize_with = "repo_identity")]
+    repo_identity: RecordedIdentity,
     #[serde(default, deserialize_with = "issue_fields")]
     issue_fields: Option<IssueCreateFields>,
 }
@@ -199,6 +249,16 @@ pub(super) fn to_json(entry: &OpLogEntry) -> String {
                 })
                 .collect()
         }),
+        repo_identity: match &entry.repo_identity {
+            RecordedIdentity::Known(id) => Some(RepoIdentityRef {
+                common_dir: &id.common_dir,
+                dev: id.file_id.map(|(dev, _)| dev),
+                ino: id.file_id.map(|(_, ino)| ino),
+                born_s: id.created.map(|(s, _)| s),
+                born_ns: id.created.map(|(_, ns)| ns),
+            }),
+            RecordedIdentity::Absent | RecordedIdentity::Invalid => None,
+        },
         issue_fields: entry.issue_fields.as_ref().map(|fields| IssueFieldsRef {
             labels: &fields.labels,
             assignees: &fields.assignees,
@@ -230,6 +290,7 @@ pub(super) fn from_value(value: Value) -> Option<OpLogEntry> {
         recovery: record.recovery,
         failure_code: record.failure_code,
         ref_moves: record.ref_moves,
+        repo_identity: record.repo_identity,
         issue_fields: record.issue_fields,
     })
 }
@@ -321,6 +382,48 @@ fn ref_moves<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<RefMove>>, D:
             })
             .collect()
     }))
+}
+
+/// Only called when the key is present (a missing one is `Default`, i.e.
+/// `Absent`). Anything that is not a whole, valid identity is `Invalid` —
+/// never a `Known` value that compares as another repository, which would
+/// drop a corrupt entry of this one from a restore's range silently
+/// (#900 review). The rules are all in [`valid_identity`].
+fn repo_identity<'de, D: Deserializer<'de>>(d: D) -> Result<RecordedIdentity, D::Error> {
+    let identity = serde_json::from_value::<RepoIdentityRecord>(Value::deserialize(d)?)
+        .ok()
+        .and_then(valid_identity);
+    Ok(identity.map_or(RecordedIdentity::Invalid, RecordedIdentity::Known))
+}
+
+/// The decode-time rules for a recorded identity, in one place. Unknown keys
+/// and wrong types are already refused by `RepoIdentityRecord`
+/// (`deny_unknown_fields`, typed fields); on top of that:
+/// - `common_dir` is a non-empty absolute path on this platform;
+/// - `dev` and `ino` come together, or not at all;
+/// - `born_s` and `born_ns` come together, or not at all, and `born_ns` is
+///   below one second.
+fn valid_identity(r: RepoIdentityRecord) -> Option<RepoIdentity> {
+    fn pair<A, B>(a: Option<A>, b: Option<B>) -> Option<Option<(A, B)>> {
+        match (a, b) {
+            (Some(a), Some(b)) => Some(Some((a, b))),
+            (None, None) => Some(None),
+            _ => None,
+        }
+    }
+    if r.common_dir.is_empty() || !std::path::Path::new(&r.common_dir).is_absolute() {
+        return None;
+    }
+    let file_id = pair(r.dev, r.ino)?;
+    let created = pair(r.born_s, r.born_ns)?;
+    if created.is_some_and(|(_, ns)| ns >= 1_000_000_000) {
+        return None;
+    }
+    Some(RepoIdentity {
+        common_dir: r.common_dir,
+        file_id,
+        created,
+    })
 }
 
 // Additive like `ref_moves`: missing, null or malformed reads as "not

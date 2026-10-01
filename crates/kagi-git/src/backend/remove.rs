@@ -181,6 +181,11 @@ impl Backend {
         mut event: impl FnMut(RemoveEvent),
     ) -> RemoveReport {
         let mut progress = RemoveProgress::default();
+        // #900 review: the repository identity is read before anything runs,
+        // like the "before" snapshot of `run_recorded_with_events` — the
+        // removed worktree no longer opens afterwards, and by then another
+        // repository may sit at `plan.repo`.
+        let identity_before = crate::oplog::RepoIdentity::of(&plan.repo);
         let mut opened = false;
         let mut plan_blocked = false;
         let result = catch_unwind(AssertUnwindSafe(|| -> Result<DiscardOutcome, GitError> {
@@ -294,6 +299,9 @@ impl Backend {
             plan.preview.current.clone(),
             outcome,
         );
+        if let Some(identity) = identity_before {
+            entry.repo_identity = crate::oplog::RecordedIdentity::Known(identity);
+        }
         entry.backup_refs = progress
             .backups
             .iter()

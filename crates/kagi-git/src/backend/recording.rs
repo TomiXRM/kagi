@@ -257,6 +257,11 @@ impl Backend {
             .with_actor(self.policy.actor)
             .with_worktree(Some(repo))
             .with_ref_moves(receipt.ref_moves);
+        // #900 review: the identity read with the "before" snapshot, when this
+        // write took one; otherwise the append reads it (`append_oplog_receipt`).
+        if let Some(identity) = self.take_identity_before() {
+            entry.repo_identity = crate::oplog::RecordedIdentity::Known(identity);
+        }
         entry.backup_refs = receipt.backup_refs;
         entry.recovery = receipt.recovery;
         entry.failure_code = receipt.failure_code;
@@ -275,6 +280,7 @@ impl Backend {
         &self,
         execute: impl FnOnce(&Self) -> T,
     ) -> (T, Option<Vec<kagi_domain::ref_moves::RefMove>>) {
+        self.capture_identity_before();
         let before = crate::ops::ref_snapshot(&self.repo);
         let result = execute(self);
         let after = crate::ops::ref_snapshot(&self.repo);
@@ -282,6 +288,23 @@ impl Backend {
             .zip(after)
             .map(|(before, after)| kagi_domain::ref_moves::diff(&before, &after));
         (result, moves)
+    }
+
+    /// Read the repository's identity next to a "before" ref snapshot
+    /// (#900 review). `None` (not readable) leaves the append to read it.
+    pub(super) fn capture_identity_before(&self) {
+        let identity = crate::oplog::RepoIdentity::of(&self.path);
+        *self
+            .identity_before
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = identity;
+    }
+
+    fn take_identity_before(&self) -> Option<crate::oplog::RepoIdentity> {
+        self.identity_before
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
     }
 
     /// Preflight, move the recorded branch ref, then persist one entry per attempt.
@@ -390,5 +413,65 @@ mod outcome_tests {
             oplog_outcome_from(&ordinary, &predicted, Some(summary("branch: half"))),
             crate::oplog::OpOutcome::Partial { .. }
         ));
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    /// #900 review: the entry names the repository whose refs the "before"
+    /// snapshot read. If the repository is deleted and re-created at the same
+    /// path between that and the append, the entry must not take on the new
+    /// one's identity.
+    #[test]
+    fn the_entry_keeps_the_identity_read_with_the_before_snapshot() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("repo");
+        let init = |path: &std::path::Path| {
+            let repo = git2::Repository::init(path).unwrap();
+            let sig = git2::Signature::now("t", "t@example.com").unwrap();
+            let tree = repo
+                .find_tree(repo.index().unwrap().write_tree().unwrap())
+                .unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "base", &tree, &[])
+                .unwrap();
+        };
+        init(&path);
+        let original = crate::oplog::RepoIdentity::of(&path).unwrap();
+        let backend = Backend::open(&path).unwrap();
+        let (_, moves) = backend.observe_ref_moves(|_| {
+            // Keep the old `.git` alive under another name so its inode is not
+            // reused: the re-created repository is provably another one.
+            std::fs::rename(&path, tmp.path().join("gone")).unwrap();
+            init(&path);
+        });
+        let recreated = crate::oplog::RepoIdentity::of(&path).unwrap();
+        assert_ne!(
+            recreated.same_repository(&original),
+            crate::oplog::SameRepository::Same
+        );
+
+        let state = ops::StateSummary {
+            head: "branch: main".into(),
+            dirty: "clean".into(),
+        };
+        let recording = backend.record_receipt(
+            "test-op",
+            &state,
+            crate::oplog::OpOutcome::Success {
+                after: state.clone(),
+            },
+            Receipt {
+                backup_refs: Vec::new(),
+                recovery: Vec::new(),
+                failure_code: None,
+                ref_moves: moves,
+            },
+        );
+        assert_eq!(
+            recording.entry().repo_identity,
+            crate::oplog::RecordedIdentity::Known(original)
+        );
     }
 }

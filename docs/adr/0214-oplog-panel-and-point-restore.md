@@ -93,6 +93,38 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - **範囲は証明できなければ fail closed**(#878 review、restore to point)。planner は全 repository の entry を受け取り、次の場合を blocker にする。
     - 対象以降で `parent → id` の鎖が途切れる(HistoryGap): retention での削除、壊れた行、読めない行。
     - worktree を開けない entry(UnknownRepository): 削除・prune された worktree の entry は、この repository のものだった可能性がある。黙って除外しない。別の repository だと証明できた entry(Other)だけを除く。
+  - **entry は記録時の repository を持つ**(#894)。`repo_identity` = 正規化した common dir の path、unix ではその `(dev, ino)`、取れる環境では common dir の作成時刻(`Metadata::created()`、macOS は birthtime、Linux は statx の btime。JSON は `born_s` / `born_ns`)。
+    - append の 1 か所(`append_oplog_receipt`)で、entry の worktree を開いて埋める。worktree が無い、または開けない場合は repo を開く(#900 review 3)。remove-worktree の成功は、削除・prune 済みの worktree を `entry.worktree` に記録するので、repo へのフォールバックが無いと UnknownRepository になり、全 repository の restore を止める。Backend の経路も UI の persist 経路もここを通る。どちらも開けない scope(remote の `host:repo`)は `None`。
+    - **backend の書き込みは "前" の snapshot と同時に読む**(#900 review 8)。`run_recorded_with_events` と `observe_ref_moves` が ref の前 snapshot と一緒に identity を読み、`record_receipt` が entry に載せる(append はすでにある identity を読み直さない)。append 時に読むと、操作の完了から追記までの間に repository が削除・再 clone されたとき、A の `ref_moves` に B の identity が付く。UI が直接記録する経路(`record_op_persist*`)は前 snapshot を Backend の外で取るので、append 時に読むまま。残る窓は、操作の完了から追記まで(ms 単位)に同じ path へ repository を作り直した場合だけ。
+      - remove-worktree(`run_recorded_remove_with_events`)は `record_receipt` を通らないので、実行の前に `plan.repo` の identity を読み、entry に載せる(#900 review 10)。削除した worktree は後で開けず、append 時に読むと `plan.repo` に後から置かれた別の repository の identity になりうる。
+    - 分類(worktree は開かない)。削除済みの worktree の entry は Mine になり、記録した移動は restore に入る。削除した無関係の repository の entry は Other になり、blocker にならない。
+
+      | file id `(dev, ino)` | 作成時刻 | path | 判定 |
+      |---|---|---|---|
+      | 両側にあって違う | | | Other |
+      | | 両側にあって違う | | Other |
+      | 両側にあって一致 | 両側にあって一致(ns 部が 0 でない) | (見ない) | Mine |
+      | 両側にあって一致 | どちらかが無い、または一致しても ns 部が 0 | | 曖昧 → UnknownRepository(fail closed) |
+      | どちらかが無い | 両側にあって一致(ns 部が 0 でない) | 一致 | Mine |
+      | どちらかが無い | | 違う | Other |
+      | どちらかが無い | どちらかが無い | 一致 | 曖昧 → UnknownRepository |
+
+      file id があれば path より優先する(#900 review)。path を優先すると、repository を消して同じ path に別の repository を作り直したとき、古い repository の entry が新しい repository の restore 地点になってしまう。file id の一致だけでも足りない(#900 review 2): 消した `.git` の inode が、同じ場所に同じ remote から clone し直した `.git` に再利用されると、path も `(dev, ino)` も一致し、`main` が同じ OID なら RefMovedSince も通って、古い repository の revert が新しい repository の branch を動かす。作成時刻はこの再利用を区別する。作成時刻を確認できない一致は Mine にせず、曖昧として fail closed にする。repository の config に UUID を書く案は、config への write になるので採らない。
+
+      作成時刻の解像度が粗い filesystem(秒精度。HFS+ や一部の network filesystem)では、同じ秒の中で削除と再作成が起きると inode も作成時刻も再利用されうる(#900 review 4)。ns 部が 0 の作成時刻は「秒精度」とみなし、一致しても確認にならないので曖昧にする。違えば Other のまま。`.git` に再利用されない世代 ID を書く案は採らない。ユーザーが頼んでいない repository への書き込みになるため。
+    - identity の無い旧形式の entry だけ、従来どおり worktree を開いて判定する(開けなければ UnknownRepository)。
+    - **field はあるが読めない identity は旧形式と区別する**(#900 review 5・7・9)。codec は `RecordedIdentity::{Absent, Known, Invalid}` を返す。field が無ければ Absent。それ以外は decode 時に一括で検証し(`valid_identity`)、1 つでも違反すれば Invalid にする。
+      - 型: object で、知らないキー(将来の形式)が無く、各 field の型が合う(文字列・数値・`null` は不可)。
+      - `common_dir`: 空でない、この platform での絶対 path。
+      - `dev` と `ino`: 両方あるか、両方無いか。
+      - `born_s` と `born_ns`: 両方あるか、両方無いか。`born_ns` は 10 億未満。
+
+      Invalid を旧形式として扱うと path を開いて判定してしまい、同じ path に作り直した repository の entry を Mine にしうる。壊れた値を Known として受けると、自分の entry が Other / Different になり、restore の範囲から黙って外れる。そのため Invalid は UnknownRepository とする(fail closed)。
+    - **限界 3**: identity の無い本物の旧形式の行(#894 より前に書かれたもの)は path で判定するので、同じ path に作り直した repository では Mine になる。移行前のデータの限界で、#894 以降に書いた行には当てはまらない。
+    - `(dev, ino)` も持つのは、同じ filesystem 内での移動や rename では inode も作成時刻も変わらないため。path だけだと、移動した repository の自分の entry を Other と誤判定して黙って除外してしまう。
+    - **限界 1**: filesystem をまたいで移動すると、path も `(dev, ino)` も変わるので、それ以前の自分の entry は Other になる。その entry が動かした branch は、記録が説明しない reflog の変化として RefChangedOutsideRecord の blocker になる(fail closed)。対象 entry 自体が移動前のものなら EntryNotLoaded。
+    - **限界 2**: 削除した無関係の repository の `.git` と、`(dev, ino)` も作成時刻(ns 単位)も一致する場合は Mine と誤判定する。APFS / ext4 / btrfs のような ns 精度の filesystem では、同じ ns の中で削除・再作成が起き、しかも同じ inode を得る場合に限られる。その記録は、この repository に無い ref や OID を期待値に持つことが多いので、RefMovedSince の blocker になる(fail closed)。作成時刻を返さない、または秒精度の filesystem では、同じ inode の entry は曖昧になり、restore はその範囲で止まる。偶然 ns 部が 0 になった作成時刻も同じ扱いになる(10 億分の 1 の確率で restore が不要に止まる)。
+      - 時刻の精度は値から推定しない(#900 review 6)。ns 部が 0 なら Ambiguous にするのは、明らかに粗い場合だけに足した fail closed で、精度の証明ではない。FAT(作成時刻は 10 ms 単位)や Windows(file id を持たない)では、同じ tick の中に同じ path で作り直した repository を区別できない。
   - append に失敗した操作は鎖に現れない(次の entry の parent は最後に書けた entry)。その操作が動かした branch は、RefMovedSince か RefChangedOutsideRecord で捕まる。
 - **revert**: 対象 entry の各 branch の移動を old に戻す(作成は削除、削除は作り直し)。同じ ref を後続の記録済み entry が動かしていれば blocker(LaterEntryMoved)。
 - **restore to point**: 対象 entry の**直後**の状態に戻す(jj の `op restore` と同じく、対象自身の効果は残す)。それより新しい entry を古い順に合成し、ref ごとに「最古の old を戻し先、最新の new を期待値」とする。動いて元に戻った ref は除く。
@@ -200,6 +232,18 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - Tier A: 新しい `oplog_restore_across_merge`(merge → 実 `run_recorded_conflict` の save → merge commit の後、panel の実ボタンで開いた restore card に blocker が無く、confirm で main が merge 前に戻る)。`stash_conflict_close_reopen` に、UI の continue の記録が `Some(空)` であることを追加した。
 - #884 の変異確認: `run_recorded_conflict` が `None` を記録 → integration 2 件と Tier A(blocker `NotRecorded { op: "conflict-save:merge" }`、つまり #884 以前の状態)、`nothing_moved` を外す → 拒否の integration、UI が moves を捨てる → Tier A(stash continue)が落ちる。
 - #891 review 対応: unit `an_unconfirmed_termination_records_no_ref_moves`(Unknown は `None`、Refused は観測どおり)。`stash_conflict_close_reopen` で、未解決のまま Continue を押した計画時の拒否が `Some(空)` で記録されることを確認する。変異確認: Unknown の規則を外す → unit、計画時の拒否を `None` に戻す → Tier A が落ちる。
+- #894 のテスト(kagi-git integration `oplog_restore_test`)
+  - 削除・prune した worktree の entry は Mine で、その branch の削除が restore に入る(blocker なし)。identity を外した旧形式の行は UnknownRepository のまま。
+  - 削除した無関係の repository の entry は blocker にならない。
+  - 限界 1 の固定: 自分の entry の identity を別 volume のもの(path も inode も違う)に書き換えると、RefChangedOutsideRecord で止まる。
+  - 限界 2 の固定: 別 repository の entry に、この repository の identity(`(dev, ino)` と作成時刻)を書くと、その記録の `refs/heads/x` が RefMovedSince(current = 無し)で止まる。
+  - 同じ path に作り直した repository(#900 review): path はこの repository、file id は別 repository の entry は Other で、それを対象にした restore は EntryNotLoaded。inode 前提のテストは `#[cfg(unix)]`。
+  - inode の再利用(#900 review 2): path も `(dev, ino)` もこの repository、作成時刻だけ違う entry は Other(EntryNotLoaded)。作成時刻を消した entry は UnknownRepository。domain 側は `same_repository` の unit で、再利用・移動・作成時刻なし・file id なしの各行を固定する。
+  - 削除した worktree の remove-worktree(#900 review 3): identity は repo から取れる。別の repository の restore はその entry をまたいでも blocker なしで実行でき、自分の repository では UnknownRepository にならない。作成時刻を返さない、または秒精度の filesystem では、作成時刻を前提にするテストは理由を出してスキップする。
+  - 秒精度の作成時刻(#900 review 4): unit で、ns 部が 0 の一致は Ambiguous、違えば Different であることを固定する。
+  - codec unit: 往復、旧行は Absent。表形式で、正常 1 件(Known)と全違反パターン(object でない、数値、`null`、`common_dir` 無し・空・相対・型違い、`dev` / `ino` の片側、`dev` の型違い、`born_s` / `born_ns` の片側、`born_ns` = 10 億、負の `born_ns`、知らないキー)が Invalid で、行は残る。変異確認: 絶対 path の検査を外す・組の検査を外す・ns の範囲を外す → それぞれ表の該当行で落ちる。
+  - 読めない identity(#900 review 5): 自分の entry の `repo_identity` を不正値に書き換えると UnknownRepository で止まる。field を消した旧形式の行は path で判定され、blocker にならない。
+- #894 の変異確認: append で埋めない → integration 2 件、`(dev, ino)` を比べない → 限界 2 のテスト、分類で identity を使わない → integration 2 件、codec が書かない → codec と integration が落ちる。#900 review 2: 作成時刻を比べない → unit と inode 再利用の integration、曖昧を Mine にする → inode 再利用の integration が落ちる。#900 review 3: repo へのフォールバックを外す → 別 repository の restore が UnknownRepository で止まり、remove-worktree の integration が落ちる。#900 review 4: ns 部が 0 の一致も Same にする → unit が落ちる。#900 review 5: codec が不正値を Absent にする → codec unit と integration、分類で Invalid を旧形式として扱う → integration が落ちる。
 - #886 のテスト
   - domain unit: branch 間の checkout は `from = Branch("a")`・`to = Branch("b")`、detached は `to = Detached(oid)`。
   - kagi-git integration(実 `Backend::run`): `checkout a` を含む restore は `HeadMoved { from: main, to: a }`、`checkout-commit` の revert は `{ from: a, to: Detached(<oid>) }`。

@@ -37,6 +37,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- 「この時点まで戻す」が、削除した worktree や、削除した無関係の repository で行った操作を範囲に含むだけで拒否されていた問題を修正しました(#894)。Operation Log の各操作に、記録した repository(common dir と、unix ではそのファイル ID、取れる環境では `.git` の作成時刻)を残すようにしたので、worktree が消えていても、この repository の操作か別の repository の操作かを判定できます。削除した worktree での操作は戻す対象に含まれ、無関係の repository の操作は除かれます。削除して同じ場所に clone し直した repository は、古い `.git` と同じファイル ID を得ても作成時刻で区別し、作成時刻を確かめられなければ拒否します。この記録の無い以前の操作は、これまでどおり判定できなければ拒否します。repository を別の volume に移動した場合のように判定できないときも、黙って戻さずに理由を示して拒否します。(Refs #334)
 - 「この時点まで戻す / 取り消す」が HEAD の切り替えを含む範囲で拒否されるとき、どの操作で HEAD が何から何に切り替わったか(branch、または detached の commit)と、戻す手順(先に元の branch / commit を自分で checkout してから、その操作以降の時点へ戻す)を示すようにしました。HEAD を含む復元は、作業ツリーに触れるため引き続き行いません(ADR-0214 §7)。(#886、Refs #334)
 - 既定 OFF の opt-in「terminal を開いている間 worktree をロック」を ON にした場合の自動ロックを修正しました。これまでは acquire の確認カードを Cancel しても、その提案の token を所有済みとして記録し、shell 終了時に同じ reason の別人のロックを解除提案できました。acquire 成功後だけ所有権を保存し、shell が承認前に終了したらカードを閉じます。解除は元の tab / shell 世代 / repository identity が一致するときだけ提示し、別 tab のカードは上書きせず元の tab まで保留します。token は再起動後に再利用されない random nonce を含み、観測不能や crash 後は従来どおり手動で確認して解除します。既定 OFF の利用者の動作は変わらず、ON でも lock / unlock はそれぞれ確認が必要です。（#772、ADR-0218）
 - 自動ロック取得後、shell 終了時に別の確認カードが開いていた場合、そのカードをボタンで閉じてもロック解除の確認カードが出ない問題を修正しました。modal slot が空いた後に元の tab へ再提示し、解除カード自体を Cancel した場合は再提示しません。（#914 review、#772）

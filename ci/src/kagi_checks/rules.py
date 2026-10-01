@@ -684,6 +684,32 @@ def loc_count(text: str) -> int:
     return lines if lines > LOC_CEILING else 0
 
 
+# Files the LOC gate looks at. There is no baseline file any more (2026-10-01,
+# docs/decisions.md): a committed per-file ceiling conflicted on every merge
+# and was accepted on every bump, so it recorded growth instead of stopping
+# it. The gate now fails only for a file that is **new in the branch** and over
+# the ceiling; existing files are reported as notices and split by issue.
+LOC_GLOBS = ("src/**/*.rs", "crates/*/src/**/*.rs")
+
+LOC_SAMPLES: tuple[tuple[str, int], ...] = (
+    ("fn f() {}\n" * (LOC_CEILING + 1), LOC_CEILING + 1),
+    ("fn f() {}\n" * LOC_CEILING, 0),
+)
+
+
+def loc_selftest() -> list[str]:
+    """The counter must still count: an unguarded one zeroes every file."""
+    issues: list[str] = []
+    for sample, expected in LOC_SAMPLES:
+        found = loc_count(sample)
+        if found != expected:
+            issues.append(
+                f"loc_count returned {found} for a {len(sample.splitlines())}-line "
+                f"sample, expected {expected}"
+            )
+    return issues
+
+
 @dataclass(frozen=True)
 class Ratchet:
     """A per-file count that may shrink but never grow.
@@ -729,22 +755,6 @@ RATCHETS: tuple[Ratchet, ...] = (
             ('klog!("watcher: {}", e);\n', 0),
         ),
         excludes=("crates/kagi-ui-core/src/klog.rs",),
-    ),
-    Ratchet(
-        name="loc",
-        summary=f"no file grows past its LOC ceiling ({LOC_CEILING}, T-LOC-GATE-001)",
-        baseline="ci/loc-baseline.txt",
-        unit=f"LOC (>{LOC_CEILING})",
-        guidance=(
-            "LOC ratchet failed. Split the file(s) above, or accept the growth "
-            "deliberately by raising just those ceilings in ci/loc-baseline.txt."
-        ),
-        globs=("src/**/*.rs", "crates/*/src/**/*.rs"),
-        count=loc_count,
-        samples=(
-            ("fn f() {}\n" * (LOC_CEILING + 1), LOC_CEILING + 1),
-            ("fn f() {}\n" * LOC_CEILING, 0),
-        ),
     ),
 )
 

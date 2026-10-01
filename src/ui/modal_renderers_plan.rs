@@ -324,12 +324,14 @@ pub(crate) fn render_branch_plan_modal(
     overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let (label, accent) = match modal.kind {
-        BranchPlanKind::PullFfOnly => ("Pull", (IconName::ArrowDown, theme().color_branch)),
+    let accent = match modal.kind {
+        BranchPlanKind::PullFfOnly => (IconName::ArrowDown, theme().color_branch),
         BranchPlanKind::Push | BranchPlanKind::PushSetUpstream => {
-            ("Push", (IconName::ArrowUp, theme().color_success))
+            (IconName::ArrowUp, theme().color_success)
         }
+        BranchPlanKind::SyncToRemote => (IconName::ArrowDown, theme().color_blocker),
     };
+    let label = modal.confirm_label();
     render_plan_modal_wrapper_styled(
         modal.plan,
         modal.error,

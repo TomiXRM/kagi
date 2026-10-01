@@ -59,6 +59,8 @@ fn disk_layout() -> String {
 }
 
 pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
+    // #899 guard: the scenario saves and corrupts `sidebar_panes` and zooms.
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["sidebar_panes", "ui_zoom"]);
     let fixture = build_fixture();
     let repo = fixture.path();
     let previous_setting = settings::read_setting("sidebar_panes");

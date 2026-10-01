@@ -388,7 +388,6 @@ impl KagiApp {
                     };
                     app.record_pr_fetch_failure(
                         owner,
-                        "fetch-pr",
                         kagi_git::StateSummary {
                             head: format!("PR #{}", pr.number),
                             dirty: "unchanged".into(),
@@ -505,16 +504,19 @@ impl KagiApp {
     fn record_pr_fetch_failure(
         &mut self,
         owner: crate::app::SessionId,
-        op: &str,
         before: kagi_git::StateSummary,
         outcome: kagi_git::oplog::OpOutcome,
         ref_moves: Option<Vec<kagi_domain::ref_moves::RefMove>>,
         repo_path: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
-        let entry =
-            kagi_git::oplog::OpLogEntry::new(op, repo_path.display().to_string(), before, outcome)
-                .with_ref_moves(ref_moves);
+        let entry = kagi_git::oplog::OpLogEntry::new(
+            "fetch-pr",
+            repo_path.display().to_string(),
+            before,
+            outcome,
+        )
+        .with_ref_moves(ref_moves);
         if let Err(error) = kagi_git::oplog::append_oplog(&entry) {
             klog!("oplog: write failed (non-fatal): {}", error);
             self.present_oplog_write_failure(&error, cx);

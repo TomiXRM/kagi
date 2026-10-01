@@ -8,6 +8,7 @@
 //! has no selection of its own; "current branch / worktree" is part of the
 //! row's name.
 
+use kagi_domain::text_safety::append_sanitized_control_bytes;
 use kagi_ui_core::i18n::Msg;
 
 use super::sidebar::SidebarRow;
@@ -22,14 +23,51 @@ pub struct TreeItemSpec {
     pub expanded: Option<bool>,
 }
 
+/// Substitute each `{}` of `msg` with the next argument, neutralizing control
+/// bytes exactly as the visible rows do (#356: branch / remote / tag / worktree
+/// / stash / PR text is remote-origin). Placeholders are taken from the
+/// template only, so a `{}` inside a branch name or path is not filled by the
+/// following argument.
 fn fill(msg: Msg, args: &[&str]) -> String {
-    args.iter()
-        .fold(msg.t().to_string(), |s, a| s.replacen("{}", a, 1))
+    let mut rest = msg.t();
+    let args_len: usize = args.iter().map(|a| a.len()).sum();
+    let mut out = String::with_capacity(rest.len() + args_len);
+    for arg in args {
+        let Some(at) = rest.find("{}") else { break };
+        out.push_str(&rest[..at]);
+        append_sanitized_control_bytes(&mut out, arg);
+        rest = &rest[at + 2..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Tree level of one navigator row (1 = section header). Allocation-free, so
+/// sibling positions can be derived from every row without building names.
+pub fn level(row: &SidebarRow) -> usize {
+    match row {
+        SidebarRow::SectionHeader { .. } => 1,
+        SidebarRow::LocalGroupHeader { .. }
+        | SidebarRow::RemoteHeader { .. }
+        | SidebarRow::PrGroupHeader { .. }
+        | SidebarRow::Tag { .. }
+        | SidebarRow::Worktree { .. }
+        | SidebarRow::Stash { .. } => 2,
+        SidebarRow::RemoteSubGroup { .. } | SidebarRow::PullRequest { .. } => 3,
+        SidebarRow::LocalBranchLeaf { indented, .. } => {
+            if *indented {
+                3
+            } else {
+                2
+            }
+        }
+        SidebarRow::RemoteLeaf { depth, .. } => 2 + *depth as usize,
+    }
 }
 
 /// Level, expanded state and name for one navigator row.
 pub fn tree_item(row: &SidebarRow) -> TreeItemSpec {
-    let (label, level, expanded) = match row {
+    let (label, expanded) = match row {
         SidebarRow::SectionHeader {
             title,
             count,
@@ -37,7 +75,6 @@ pub fn tree_item(row: &SidebarRow) -> TreeItemSpec {
             ..
         } => (
             fill(Msg::A11ySidebarGroup, &[title, &count.to_string()]),
-            1,
             Some(!collapsed),
         ),
         SidebarRow::LocalGroupHeader {
@@ -53,7 +90,6 @@ pub fn tree_item(row: &SidebarRow) -> TreeItemSpec {
             ..
         } => (
             fill(Msg::A11ySidebarGroup, &[prefix, &count.to_string()]),
-            2,
             Some(!collapsed),
         ),
         SidebarRow::RemoteSubGroup {
@@ -63,7 +99,6 @@ pub fn tree_item(row: &SidebarRow) -> TreeItemSpec {
             ..
         } => (
             fill(Msg::A11ySidebarGroup, &[prefix, &count.to_string()]),
-            3,
             Some(!collapsed),
         ),
         SidebarRow::PrGroupHeader {
@@ -73,29 +108,20 @@ pub fn tree_item(row: &SidebarRow) -> TreeItemSpec {
             ..
         } => (
             fill(Msg::A11ySidebarGroup, &[title, &count.to_string()]),
-            2,
             Some(!collapsed),
         ),
-        SidebarRow::LocalBranchLeaf {
-            name,
-            is_head,
-            indented,
-            ..
-        } => (
+        SidebarRow::LocalBranchLeaf { name, is_head, .. } => (
             if *is_head {
                 fill(Msg::A11ySidebarCurrentBranch, &[name])
             } else {
                 fill(Msg::A11ySidebarBranch, &[name])
             },
-            if *indented { 3 } else { 2 },
             None,
         ),
-        SidebarRow::RemoteLeaf { display, depth, .. } => (
-            fill(Msg::A11ySidebarRemoteBranch, &[display]),
-            2 + *depth as usize,
-            None,
-        ),
-        SidebarRow::Tag { name, .. } => (fill(Msg::A11ySidebarTag, &[name]), 2, None),
+        SidebarRow::RemoteLeaf { display, .. } => {
+            (fill(Msg::A11ySidebarRemoteBranch, &[display]), None)
+        }
+        SidebarRow::Tag { name, .. } => (fill(Msg::A11ySidebarTag, &[name]), None),
         SidebarRow::Worktree {
             name,
             path_label,
@@ -110,18 +136,17 @@ pub fn tree_item(row: &SidebarRow) -> TreeItemSpec {
             if *locked {
                 s.push_str(Msg::A11ySidebarLockedSuffix.t());
             }
-            (s, 2, None)
+            (s, None)
         }
-        SidebarRow::Stash { message, .. } => (fill(Msg::A11yStashRow, &[message]), 2, None),
+        SidebarRow::Stash { message, .. } => (fill(Msg::A11yStashRow, &[message]), None),
         SidebarRow::PullRequest { pr, .. } => (
             fill(Msg::A11ySidebarPr, &[&pr.number.to_string(), &pr.title]),
-            3,
             None,
         ),
     };
     TreeItemSpec {
         label,
-        level,
+        level: level(row),
         expanded,
     }
 }
@@ -132,8 +157,8 @@ pub fn tree_item(row: &SidebarRow) -> TreeItemSpec {
 pub fn sibling_positions(levels: &[usize]) -> Vec<(usize, usize)> {
     // Linear: one open sibling run per level on a stack; a run closes (and
     // its members learn the size) when a shallower row or the end arrives.
-    // Runs every render batch over all navigator rows, which can number in
-    // the thousands, so this must not be quadratic.
+    // Runs over all navigator rows (thousands with many remote branches) each
+    // time they are rebuilt, so this must not be quadratic.
     let mut out = vec![(0, 0); levels.len()];
     let mut stack: Vec<(usize, Vec<usize>)> = Vec::new();
     let close = |run: (usize, Vec<usize>), out: &mut Vec<(usize, usize)>| {
@@ -162,6 +187,7 @@ pub fn sibling_positions(levels: &[usize]) -> Vec<(usize, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kagi_domain::text_safety::sanitize_control_bytes;
 
     #[test]
     fn siblings_restart_under_each_parent() {
@@ -209,5 +235,85 @@ mod tests {
             other.label.replace("feat/x", ""),
             "the current branch is named as current"
         );
+    }
+
+    #[test]
+    fn names_neutralize_control_bytes_like_the_visible_rows() {
+        let evil = "origin/\u{1b}[31mx\u{9b}y\r";
+        let safe = sanitize_control_bytes(evil);
+        let rows = [
+            SidebarRow::RemoteLeaf {
+                display: evil.into(),
+                display_label: "x".into(),
+                target: kagi_git::CommitId("a".repeat(40)),
+                depth: 1,
+            },
+            SidebarRow::LocalBranchLeaf {
+                name: evil.into(),
+                display_label: evil.into(),
+                is_head: true,
+                indented: false,
+            },
+            SidebarRow::RemoteHeader {
+                key: "remote:x".into(),
+                remote: evil.into(),
+                count: 1,
+                collapsed: false,
+            },
+            SidebarRow::LocalGroupHeader {
+                key: "local:x".into(),
+                prefix: evil.into(),
+                count: 1,
+                collapsed: false,
+            },
+            SidebarRow::RemoteSubGroup {
+                key: "remote:x:y".into(),
+                prefix: evil.into(),
+                count: 1,
+                collapsed: false,
+            },
+            SidebarRow::Stash {
+                index: 0,
+                message: evil.into(),
+            },
+        ];
+        for row in &rows {
+            let label = tree_item(row).label;
+            assert!(label.contains(&safe), "{row:?} -> {label:?}");
+            assert!(
+                !label.chars().any(|c| c.is_control()),
+                "{row:?} leaked a control byte: {label:?}"
+            );
+        }
+
+        let worktree = tree_item(&SidebarRow::Worktree {
+            name: "wt\u{1b}]0;".into(),
+            path: "/tmp/wt".into(),
+            path_label: "/tmp/\u{7f}wt".into(),
+            is_current: false,
+            is_main: false,
+            locked: false,
+            port: None,
+        })
+        .label;
+        assert!(worktree.contains(&sanitize_control_bytes("wt\u{1b}]0;")));
+        assert!(worktree.contains(&sanitize_control_bytes("/tmp/\u{7f}wt")));
+        assert!(!worktree.chars().any(|c| c.is_control()));
+    }
+
+    #[test]
+    fn placeholders_inside_names_are_not_filled() {
+        let label = tree_item(&SidebarRow::Worktree {
+            name: "a{}b".into(),
+            path: "/p/{}".into(),
+            path_label: "/p/{}".into(),
+            is_current: false,
+            is_main: false,
+            locked: false,
+            port: None,
+        })
+        .label;
+        assert!(label.contains("a{}b"), "{label:?}");
+        assert!(label.contains("/p/{}"), "{label:?}");
     }
 }

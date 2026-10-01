@@ -242,7 +242,9 @@ impl KagiApp {
                 } else {
                     self.push_toast(ToastKind::Error, SharedString::from(format!("{}", e)), cx);
                 }
-                self.record_op_persist(
+                // Refused at planning: nothing ran, so "recorded, nothing
+                // moved" — not a missing record that blocks a restore (#891).
+                self.record_conflict_persist(
                     &op_name,
                     StateSummary {
                         head: format!("op={}", mode.session.op.slug()),
@@ -251,6 +253,7 @@ impl KagiApp {
                     OpOutcome::Refused {
                         blockers: vec![format!("{}", e)],
                     },
+                    Some(Vec::new()),
                     &repo_path,
                     cx,
                 );
@@ -353,13 +356,15 @@ impl KagiApp {
                 let Some(guard) = self.reserve_write("conflict-continue", &repo_path, cx) else {
                     return;
                 };
-                let result = self
+                let (result, ref_moves) = self
                     .ui()
                     .repo_session
                     .as_ref()
                     .expect("repo session existed while planning conflict continue")
                     .backend()
-                    .execute_conflict_continue(&mode.session, &mode.buffer);
+                    .observe_ref_moves(|b| {
+                        b.execute_conflict_continue(&mode.session, &mode.buffer)
+                    });
                 let unknown = app::settle_conflict_write(
                     guard,
                     &result,
@@ -373,7 +378,7 @@ impl KagiApp {
                     Ok(result) => {
                         klog!("executed: {}", op_name);
                         let _ = kagi_git::ResolutionBuffer::clear(&repo_path);
-                        self.record_op_persist(
+                        self.record_conflict_persist(
                             &op_name,
                             StateSummary {
                                 head: format!("op={}", mode.session.op.slug()),
@@ -382,6 +387,7 @@ impl KagiApp {
                             OpOutcome::Success {
                                 after: result.after.clone(),
                             },
+                            ref_moves,
                             &repo_path,
                             cx,
                         );
@@ -400,13 +406,14 @@ impl KagiApp {
                         let outcome = unknown.unwrap_or_else(|| OpOutcome::Failed {
                             error: err_msg.clone(),
                         });
-                        self.record_op_persist(
+                        self.record_conflict_persist(
                             &op_name,
                             StateSummary {
                                 head: format!("op={}", mode.session.op.slug()),
                                 dirty: "resolving".to_string(),
                             },
                             outcome,
+                            ref_moves,
                             &repo_path,
                             cx,
                         );
@@ -449,13 +456,13 @@ impl KagiApp {
         let Some(guard) = self.reserve_write("conflict-continue", &repo_path, cx) else {
             return;
         };
-        let result = self
+        let (result, ref_moves) = self
             .ui()
             .repo_session
             .as_ref()
             .expect("repo session existed while planning conflict continue")
             .backend()
-            .execute_conflict_continue(&mode.session, &mode.buffer);
+            .observe_ref_moves(|b| b.execute_conflict_continue(&mode.session, &mode.buffer));
         let unknown = app::settle_conflict_write(guard, &result, plan.current.clone());
         self.refresh_write_busy();
         match result {
@@ -466,10 +473,11 @@ impl KagiApp {
                 // plan's predicted head — a partial / new-conflict continuation
                 // must not be logged as a clean success.
                 let after = result.after.clone();
-                self.record_op_persist(
+                self.record_conflict_persist(
                     &op_name,
                     plan.current.clone(),
                     OpOutcome::Success { after },
+                    ref_moves,
                     &repo_path,
                     cx,
                 );
@@ -490,7 +498,14 @@ impl KagiApp {
                 let outcome = unknown.unwrap_or_else(|| OpOutcome::Failed {
                     error: err_msg.clone(),
                 });
-                self.record_op_persist(&op_name, plan.current.clone(), outcome, &repo_path, cx);
+                self.record_conflict_persist(
+                    &op_name,
+                    plan.current.clone(),
+                    outcome,
+                    ref_moves,
+                    &repo_path,
+                    cx,
+                );
                 if let Some(modal) = self.conflict_continue_modal_mut() {
                     modal.error = Some(SharedString::from(
                         unknown_evidence.clone().unwrap_or(err_msg),

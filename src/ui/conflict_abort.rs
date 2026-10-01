@@ -20,8 +20,9 @@ use gpui_component::IconName;
 use kagi_domain::conflict_family::{ConflictOperationKind, ObservedOperation};
 use kagi_git::OperationPlan;
 
+use super::dialog_a11y::ConfirmStage;
 use super::i18n::Msg;
-use super::modal_renderers::render_plan_modal_wrapper_styled;
+use super::modal_renderers::render_plan_modal_wrapper_staged;
 use super::theme::theme;
 use super::{KagiApp, ToastKind};
 use crate::app;
@@ -162,6 +163,8 @@ impl KagiApp {
 /// Abort confirmation overlay (#704) — the same plan card every other
 /// destructive confirmation uses, so the preview, warnings and recovery
 /// notes come from `plan_conflict_abort` rather than being re-worded here.
+/// The strip/dashboard click was the first confirm, so the card opens armed:
+/// its Confirm runs the abort, and assistive technology is told so (#354).
 pub(crate) fn render_conflict_abort_modal(
     modal: ConflictAbortModal,
     // #462: the user's modal-section disclosure choices, borrowed for this
@@ -169,12 +172,13 @@ pub(crate) fn render_conflict_abort_modal(
     overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    render_plan_modal_wrapper_styled(
+    render_plan_modal_wrapper_staged(
         modal.plan,
         modal.error,
         Msg::ConflictConfirmAbort.t(),
         None,
         Some((IconName::Undo2.into(), theme().color_blocker)),
+        ConfirmStage::Armed,
         |this, _cx| this.cancel_conflict_abort(),
         |this, cx| this.confirm_conflict_abort(cx),
         overrides,

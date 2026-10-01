@@ -60,6 +60,13 @@ pub struct SidebarState {
     /// and only calls `build_sidebar_rows` when it differs, so unchanged frames
     /// reuse the cache instead of re-allocating O(all-refs) per frame.
     pub rows_fingerprint: u64,
+    /// #354: each row's 1-based `(position, size)` among its tree siblings,
+    /// for the accessibility tree. Derived from every row, so it is cached
+    /// for the `rows_fingerprint` it was computed at (`tree_positions_for`)
+    /// and a scroll batch only reads it; `refresh_tree_positions` recomputes
+    /// when `rows` has been rebuilt since.
+    tree_positions: Vec<(usize, usize)>,
+    tree_positions_for: Option<u64>,
     /// Collapsed sections (HashSet of section keys). Preserved across reloads.
     pub collapsed: HashSet<&'static str>,
     /// Lazy `InputState` for the filter input (gpui-component IME 対応); created
@@ -82,12 +89,30 @@ impl SidebarState {
             scroll_handle: UniformListScrollHandle::new(),
             rows: Vec::new(),
             rows_fingerprint: u64::MAX,
+            tree_positions: Vec::new(),
+            tree_positions_for: None,
             collapsed: HashSet::new(),
             filter: None,
             visible: true,
             swipe: Default::default(),
             settle_gen: 0,
         }
+    }
+
+    /// Bring `tree_positions` in line with `rows`. `rows` and
+    /// `rows_fingerprint` are only replaced together (the rebuild in
+    /// `render`), so a fingerprint or length mismatch means the rows were
+    /// rebuilt — after a refresh, collapse / expand, filter edit or session
+    /// switch — and the positions are recomputed once, O(rows) without names.
+    fn refresh_tree_positions(&mut self) {
+        if self.tree_positions_for == Some(self.rows_fingerprint)
+            && self.tree_positions.len() == self.rows.len()
+        {
+            return;
+        }
+        let levels: Vec<usize> = self.rows.iter().map(super::sidebar_a11y::level).collect();
+        self.tree_positions = super::sidebar_a11y::sibling_positions(&levels);
+        self.tree_positions_for = Some(self.rows_fingerprint);
     }
 }
 
@@ -1594,17 +1619,13 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
             cx.processor(|this, range: std::ops::Range<usize>, _window, cx| {
                 // #358: one wall-clock read per rendered batch, not per row.
                 let now_secs = super::commit_list::now_unix_secs();
-                // #354: levels of every row, for sibling positions.
-                let levels: Vec<usize> = this
-                    .sidebar
-                    .rows
-                    .iter()
-                    .map(|r| super::sidebar_a11y::tree_item(r).level)
-                    .collect();
-                let positions = super::sidebar_a11y::sibling_positions(&levels);
+                // #354: sibling positions are cached per rows rebuild; only the
+                // drawn rows build their accessible name below.
+                this.sidebar.refresh_tree_positions();
                 range
                     .filter_map(|i| {
                         let row = this.sidebar.rows.get(i).cloned()?;
+                        let position = this.sidebar.tree_positions[i];
                         let spec = super::sidebar_a11y::tree_item(&row);
                         let el = build_sidebar_row(this, &row, now_secs, cx);
                         Some(
@@ -1613,7 +1634,7 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
                                 div().id(("sidebar-a11y", i)).w_full().child(el),
                                 i,
                                 &spec,
-                                positions[i],
+                                position,
                             )
                             .into_any_element(),
                         )
@@ -1872,6 +1893,69 @@ mod tests {
             ]
         );
     }
+
+    /// Rebuild `rows` the way `render` does (rows and fingerprint together),
+    /// then let the list processor's cache catch up.
+    fn rebuild(state: &mut SidebarState, fingerprint: u64, groups: &HashSet<String>, filter: &str) {
+        let branches = [
+            ("main".to_string(), true),
+            ("feat/a".to_string(), false),
+            ("feat/b".to_string(), false),
+        ];
+        let rows = build_sidebar_rows(
+            &branches,
+            &[],
+            None,
+            &[],
+            &[],
+            &[],
+            &[],
+            Default::default(),
+            &state.collapsed,
+            groups,
+            filter,
+        );
+        state.rows = rows;
+        state.rows_fingerprint = fingerprint;
+        state.refresh_tree_positions();
+    }
+
+    fn branch_position(state: &SidebarState, branch: &str) -> Option<(usize, usize)> {
+        let i = state.rows.iter().position(
+            |r| matches!(r, SidebarRow::LocalBranchLeaf { name, .. } if name == branch),
+        )?;
+        Some(state.tree_positions[i])
+    }
+
+    #[test]
+    fn tree_positions_follow_each_rows_rebuild() {
+        let mut state = SidebarState::new();
+        let no_groups = HashSet::new();
+        rebuild(&mut state, 1, &no_groups, "");
+        assert_eq!(branch_position(&state, "feat/b"), Some((2, 2)));
+
+        // Filter edit: only `feat/b` is left under its parent.
+        rebuild(&mut state, 2, &no_groups, "b");
+        assert_eq!(state.tree_positions.len(), state.rows.len());
+        assert_eq!(branch_position(&state, "feat/b"), Some((1, 1)));
+
+        // Group collapse: its leaves leave the list, the cache follows.
+        let collapsed: HashSet<String> = [group_key(SECTION_LOCAL, "feat")].into();
+        rebuild(&mut state, 3, &collapsed, "");
+        assert_eq!(state.tree_positions.len(), state.rows.len());
+        assert_eq!(branch_position(&state, "feat/b"), None);
+
+        // Section collapse leaves only the header.
+        state.collapsed.insert(SECTION_LOCAL);
+        rebuild(&mut state, 4, &no_groups, "");
+        assert_eq!(state.tree_positions.len(), state.rows.len());
+        assert_eq!(branch_position(&state, "main"), None);
+
+        // Expanding again restores the positions.
+        state.collapsed.remove(SECTION_LOCAL);
+        rebuild(&mut state, 5, &no_groups, "");
+        assert_eq!(branch_position(&state, "feat/b"), Some((2, 2)));
+    }
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1897,7 +1981,13 @@ fn build_pr_row(
         ReviewState::ChangesRequested => Some(("\u{21BA}", theme().color_warning)),
         ReviewState::ReviewRequired | ReviewState::None => None,
     };
-    let label = format!("#{} {}", pr.number, pr.title);
+    // #356: the title is GitHub-origin; neutralize control bytes like every
+    // other PR title surface (and the row's accessible name).
+    let label = format!(
+        "#{} {}",
+        pr.number,
+        kagi_domain::text_safety::sanitize_control_bytes(&pr.title)
+    );
     let mut tip = format!(
         "#{} {} \u{2190} {}\n@{}",
         pr.number, pr.head, pr.base, pr.author

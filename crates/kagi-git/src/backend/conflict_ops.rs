@@ -93,6 +93,14 @@ pub struct ConflictReport {
     pub blocker: Option<PlanNote>,
 }
 
+/// #884: a receipt for a conflict write refused or dropped before anything
+/// ran: recorded as "nothing moved" (`Some(空)`, ADR-0214 §4), so it never
+/// blocks a restore across it the way a missing record does.
+fn nothing_moved(mut entry: crate::oplog::OpLogEntry) -> crate::oplog::OpLogEntry {
+    entry.ref_moves = Some(Vec::new());
+    entry
+}
+
 impl Backend {
     pub fn record_conflict_save_refusal(
         repo: &Path,
@@ -101,7 +109,7 @@ impl Backend {
         path: &Path,
         error: &str,
     ) -> recording::Recording {
-        recording::finalize(
+        recording::finalize(nothing_moved(
             crate::oplog::OpLogEntry::new(
                 format!("conflict-save:{operation}"),
                 repo.display().to_string(),
@@ -115,7 +123,7 @@ impl Backend {
             )
             .with_actor(policy.actor)
             .with_worktree(Some(repo.display().to_string())),
-        )
+        ))
     }
 
     pub fn record_conflict_refusal(
@@ -131,7 +139,7 @@ impl Backend {
             }
             ConflictRequest::Abort { kind, .. } => format!("{}-abort", kind.slug()),
         };
-        recording::finalize(
+        recording::finalize(nothing_moved(
             crate::oplog::OpLogEntry::new(
                 op_name,
                 path.display().to_string(),
@@ -148,12 +156,12 @@ impl Backend {
             )
             .with_actor(policy.actor)
             .with_worktree(Some(path.display().to_string())),
-        )
+        ))
     }
 
     pub fn conflict_abandoned(plan: &ConflictPlan, policy: ExecutionPolicy) -> ConflictReport {
         let detail = "conflict job dropped before execution".to_string();
-        let recording = recording::finalize(
+        let recording = recording::finalize(nothing_moved(
             crate::oplog::OpLogEntry::new(
                 plan.op_name.clone(),
                 plan.repo.display().to_string(),
@@ -164,7 +172,7 @@ impl Backend {
             )
             .with_actor(policy.actor)
             .with_worktree(Some(plan.repo.display().to_string())),
-        );
+        ));
         ConflictReport {
             recording,
             blocker: None,
@@ -363,7 +371,7 @@ impl Backend {
                 let outcome = crate::oplog::OpOutcome::Failed {
                     error: error.to_string(),
                 };
-                let recording = recording::finalize(
+                let recording = recording::finalize(nothing_moved(
                     crate::oplog::OpLogEntry::new(
                         plan.op_name.clone(),
                         plan.repo.display().to_string(),
@@ -372,7 +380,7 @@ impl Backend {
                     )
                     .with_actor(policy.actor)
                     .with_worktree(Some(plan.repo.display().to_string())),
-                );
+                ));
                 return ConflictReport {
                     recording,
                     blocker: None,
@@ -386,104 +394,109 @@ impl Backend {
                 };
             }
         };
-        let result = (|| -> Result<(), GitError> {
-            backend.require_trust()?;
-            if backend.write_worktree_id()? != plan.worktree
-                || backend.write_repo_id()? != plan.common_dir
-            {
-                return Err(GitError::Blocked(Box::new(PlanNote::Conflicts(
-                    ConflictsNote::RepositoryIdentityChanged,
-                ))));
-            }
-            let live = observation(&backend.repo)?.ok_or_else(|| {
-                GitError::Blocked(Box::new(PlanNote::Conflicts(ConflictsNote::ConflictGone)))
-            })?;
-            if live.observation.revision != *plan.request.revision() {
-                return Err(GitError::Blocked(Box::new(PlanNote::Conflicts(
-                    ConflictsNote::PlanChanged,
-                ))));
-            }
-            if fault == Some(ConflictFaultPoint::BeforeMutation) {
-                return Err(GitError::Other("injected before conflict mutation".into()));
-            }
-            match &plan.action {
-                ConflictPreparedAction::Save {
-                    path,
-                    draft,
-                    expected_mode,
-                } => {
-                    if fault == Some(ConflictFaultPoint::AfterWorktreeWrite) {
-                        let ConflictDraft::Text(bytes) = draft else {
-                            return Err(GitError::Other(
-                                "after-worktree fault requires a text draft".into(),
-                            ));
-                        };
-                        let root = backend.repo.workdir().ok_or_else(|| {
-                            GitError::Other("repository has no working tree".into())
-                        })?;
-                        std::fs::write(root.join(path), bytes)
-                            .map_err(|e| GitError::Other(e.to_string()))?;
-                        progress = ConflictProgress::WorktreeWritten;
-                        return Err(GitError::Other(
-                            "injected index failure after worktree write".into(),
-                        ));
-                    }
-                    let buffer = ResolutionBuffer::from_conflict_draft(&plan.repo, path, draft)?;
-                    conflicts::execute_conflict_save_with_progress(
-                        &backend.repo,
-                        &buffer,
+        // #884: save / dir-file / abort record the refs they moved through the
+        // same observation `Backend::run` uses (an abort puts the branch and
+        // HEAD back; a save moves nothing and records `Some(空)`).
+        let (result, ref_moves) = backend.observe_ref_moves(|_| {
+            (|| -> Result<(), GitError> {
+                backend.require_trust()?;
+                if backend.write_worktree_id()? != plan.worktree
+                    || backend.write_repo_id()? != plan.common_dir
+                {
+                    return Err(GitError::Blocked(Box::new(PlanNote::Conflicts(
+                        ConflictsNote::RepositoryIdentityChanged,
+                    ))));
+                }
+                let live = observation(&backend.repo)?.ok_or_else(|| {
+                    GitError::Blocked(Box::new(PlanNote::Conflicts(ConflictsNote::ConflictGone)))
+                })?;
+                if live.observation.revision != *plan.request.revision() {
+                    return Err(GitError::Blocked(Box::new(PlanNote::Conflicts(
+                        ConflictsNote::PlanChanged,
+                    ))));
+                }
+                if fault == Some(ConflictFaultPoint::BeforeMutation) {
+                    return Err(GitError::Other("injected before conflict mutation".into()));
+                }
+                match &plan.action {
+                    ConflictPreparedAction::Save {
                         path,
-                        |value| progress = value,
-                    )?;
-                    verify_save(&backend.repo, path, draft, *expected_mode)?;
-                }
-                ConflictPreparedAction::DirFile(dir_file) => {
-                    recovery = Some(ops::apply_dir_file_resolution_with_progress(
-                        &backend.repo,
-                        dir_file,
-                        |value| progress = value,
-                    )?);
-                    verify_dir_file(&backend.repo, dir_file)?;
-                }
-                // #704: the partial resolution is preserved by the executor
-                // (ADR-0057) from the buffer on disk — the editor autosaves
-                // every edit, so this is the same bytes the UI held, and the
-                // abort is admissible with no editor open at all.
-                ConflictPreparedAction::Abort { session, restore } => {
-                    // Not `unwrap_or_else(empty)`: a buffer we failed to read
-                    // is not an empty buffer, and treating it as one would
-                    // hand the executor something to save over the user's
-                    // drafts. Refusing before any mutation is the safe half of
-                    // that choice (#707 review).
-                    let buffer = backend.resolution_buffer_from_repo_with_autosave()?;
-                    let stash = matches!(session.op, conflicts::ConflictOp::StashConflict);
-                    let restored = if stash {
-                        crate::conflict_abort::execute_stash_conflict_abort_with_progress(
+                        draft,
+                        expected_mode,
+                    } => {
+                        if fault == Some(ConflictFaultPoint::AfterWorktreeWrite) {
+                            let ConflictDraft::Text(bytes) = draft else {
+                                return Err(GitError::Other(
+                                    "after-worktree fault requires a text draft".into(),
+                                ));
+                            };
+                            let root = backend.repo.workdir().ok_or_else(|| {
+                                GitError::Other("repository has no working tree".into())
+                            })?;
+                            std::fs::write(root.join(path), bytes)
+                                .map_err(|e| GitError::Other(e.to_string()))?;
+                            progress = ConflictProgress::WorktreeWritten;
+                            return Err(GitError::Other(
+                                "injected index failure after worktree write".into(),
+                            ));
+                        }
+                        let buffer =
+                            ResolutionBuffer::from_conflict_draft(&plan.repo, path, draft)?;
+                        conflicts::execute_conflict_save_with_progress(
                             &backend.repo,
-                            session,
                             &buffer,
+                            path,
                             |value| progress = value,
-                        )?
-                    } else {
-                        crate::conflict_abort::execute_conflict_abort_expecting(
+                        )?;
+                        verify_save(&backend.repo, path, draft, *expected_mode)?;
+                    }
+                    ConflictPreparedAction::DirFile(dir_file) => {
+                        recovery = Some(ops::apply_dir_file_resolution_with_progress(
                             &backend.repo,
-                            session,
-                            &buffer,
-                            restore.as_ref(),
+                            dir_file,
                             |value| progress = value,
-                        )?
-                    };
-                    verify_abort(&backend.repo, &restored)?;
-                    recovery = restored
-                        .buffer_preserved_at
-                        .as_ref()
-                        .map(|path| format!("resolution buffer preserved at {}", path.display()));
+                        )?);
+                        verify_dir_file(&backend.repo, dir_file)?;
+                    }
+                    // #704: the partial resolution is preserved by the executor
+                    // (ADR-0057) from the buffer on disk — the editor autosaves
+                    // every edit, so this is the same bytes the UI held, and the
+                    // abort is admissible with no editor open at all.
+                    ConflictPreparedAction::Abort { session, restore } => {
+                        // Not `unwrap_or_else(empty)`: a buffer we failed to read
+                        // is not an empty buffer, and treating it as one would
+                        // hand the executor something to save over the user's
+                        // drafts. Refusing before any mutation is the safe half of
+                        // that choice (#707 review).
+                        let buffer = backend.resolution_buffer_from_repo_with_autosave()?;
+                        let stash = matches!(session.op, conflicts::ConflictOp::StashConflict);
+                        let restored = if stash {
+                            crate::conflict_abort::execute_stash_conflict_abort_with_progress(
+                                &backend.repo,
+                                session,
+                                &buffer,
+                                |value| progress = value,
+                            )?
+                        } else {
+                            crate::conflict_abort::execute_conflict_abort_expecting(
+                                &backend.repo,
+                                session,
+                                &buffer,
+                                restore.as_ref(),
+                                |value| progress = value,
+                            )?
+                        };
+                        verify_abort(&backend.repo, &restored)?;
+                        recovery = restored.buffer_preserved_at.as_ref().map(|path| {
+                            format!("resolution buffer preserved at {}", path.display())
+                        });
+                    }
                 }
-            }
-            progress = ConflictProgress::Verified;
-            after = observation(&backend.repo)?.map(|snapshot| snapshot.observation);
-            Ok(())
-        })();
+                progress = ConflictProgress::Verified;
+                after = observation(&backend.repo)?.map(|snapshot| snapshot.observation);
+                Ok(())
+            })()
+        });
         if after.is_none() {
             after = observation(&backend.repo)
                 .ok()
@@ -556,7 +569,17 @@ impl Backend {
                 blockers: vec![error.to_string()],
             },
         };
-        let recording = backend.record_run_oplog(&plan.op_name, &plan.before, outcome);
+        let recording = backend.record_receipt(
+            &plan.op_name,
+            &plan.before,
+            outcome,
+            recording::Receipt {
+                backup_refs: Vec::new(),
+                recovery: Vec::new(),
+                failure_code: None,
+                ref_moves,
+            },
+        );
         ConflictReport {
             recording,
             blocker: result.as_ref().err().and_then(GitError::blocker).cloned(),

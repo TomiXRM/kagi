@@ -38,8 +38,8 @@ pub use op::{
     auto_stash_identity_unverified, auto_stash_missing, auto_stash_plan_stale,
     auto_stash_restore_conflicted, auto_stash_restore_failed, op_failed, op_plan_failed,
     op_refused, oplog_write_failed, plan_not_shown_retry, pull_failed_stash_restored,
-    rebase_repository_settings_may_block_start, recorded_outcome_notice, terminal_ports_exhausted,
-    Op,
+    rebase_repository_settings_may_block_start, recorded_outcome_notice,
+    terminal_nonconcurrent_blocked, terminal_ports_exhausted, Op,
 };
 pub use plan::{plan_note_text, plan_recovery_text, plan_title_text};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -353,6 +353,7 @@ pub enum Msg {
     BcmNotImplementedYet,
     BcmCurrentBranch,
     BcmLocalOnly,
+    BcmCurrentBranchOnly,
     BcmOnlyFromCurrentBranch,
     BcmNoUpstream,
     BcmDetachedHead,
@@ -1069,6 +1070,8 @@ pub enum Msg {
     PlanRebaseOnto,
     PlanReplayOnto,
     PlanReplayOntoArmed,
+    PlanSyncToRemote,
+    PlanSyncToRemoteArmed,
     /// Delete-remote-branch confirm, and its armed second stage.
     PlanDeleteBranch,
     PlanDeleteBranchArmed,
@@ -1992,6 +1995,8 @@ impl Msg {
             (Ja, BcmCurrentBranch) => "現在 branch",
             (En, BcmLocalOnly) => "local branches only",
             (Ja, BcmLocalOnly) => "local branch のみ",
+            (En, BcmCurrentBranchOnly) => "current branch only",
+            (Ja, BcmCurrentBranchOnly) => "現在の branch のみ",
             (En, BcmOnlyFromCurrentBranch) => "only available from the current branch",
             (Ja, BcmOnlyFromCurrentBranch) => "現在の branch からのみ実行できます",
             (En, BcmNoUpstream) => "no upstream configured",
@@ -2793,6 +2798,10 @@ impl Msg {
             (Ja, PlanReplayOnto) => "{} を replay",
             (En, PlanReplayOntoArmed) => "\u{26a0} Really replay — rewrites the branch",
             (Ja, PlanReplayOntoArmed) => "\u{26a0} 本当に replay しますか。branch の履歴を書き換えます",
+            (En, PlanSyncToRemote) => "Sync to remote (keep local)",
+            (Ja, PlanSyncToRemote) => "remote に揃える（ローカルは保全）",
+            (En, PlanSyncToRemoteArmed) => "\u{26a0} Really sync — replaces branch, index and files (backups kept)",
+            (Ja, PlanSyncToRemoteArmed) => "\u{26a0} 本当に揃えますか。branch・index・ファイルを置き換えます（backup は残ります）",
             (En, PlanDeleteBranch) => "Delete",
             (Ja, PlanDeleteBranch) => "削除",
             (En, PlanDeleteBranchArmed) => "Really delete — keep recovery ref",

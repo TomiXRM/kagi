@@ -17,6 +17,7 @@
 //! ```
 
 mod autolock;
+mod run_mode;
 
 use std::future::Future;
 use std::path::PathBuf;
@@ -546,6 +547,10 @@ fn pick_font_family_uncached() -> String {
 /// Unix: `$SHELL`, falling back to `/bin/zsh`.
 /// Windows: `%ComSpec%` (the command processor), falling back to `cmd.exe`.
 pub fn resolve_shell() -> String {
+    #[cfg(feature = "gui-e2e")]
+    if let Some(shell) = E2E_SHELL.with(|slot| slot.borrow().clone()) {
+        return shell;
+    }
     #[cfg(windows)]
     {
         std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string())
@@ -553,6 +558,22 @@ pub fn resolve_shell() -> String {
     #[cfg(not(windows))]
     {
         std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
+    }
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static E2E_SHELL: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(feature = "gui-e2e")]
+impl crate::ui::KagiApp {
+    /// Spawn `shell` instead of `$SHELL` for terminals started from now on
+    /// (`None` restores `$SHELL`). Tier A only (#855): lets a scenario observe
+    /// the environment the real PTY spawn hands its shell, which a payload
+    /// unit test cannot.
+    pub fn set_terminal_shell_for_e2e(shell: Option<String>) {
+        E2E_SHELL.with(|slot| *slot.borrow_mut() = shell);
     }
 }
 

@@ -91,10 +91,8 @@ pub fn pr_row_label(
 /// Mark `el` as the tree `id`, named `label`.
 pub(crate) fn tree(id: &'static str, el: Stateful<Div>, label: &str) -> Stateful<Div> {
     record_list(id, Role::Tree, label);
-    el.role(Role::Tree)
-        .aria_label(SharedString::from(label.to_string()))
+    kagi_ui_core::tree_a11y::tree(id, el, label)
 }
-
 /// Mark `el` as flattened row `index` of tree `list`: a `TreeItem` with its
 /// level, expanded state (headers) and 1-based position among `size` siblings.
 pub(crate) fn tree_item(
@@ -105,16 +103,16 @@ pub(crate) fn tree_item(
     (position, size): (usize, usize),
 ) -> Stateful<Div> {
     record_tree_item(list, index, spec, position, size);
-    let el = el
-        .role(Role::TreeItem)
-        .aria_label(SharedString::from(spec.label.clone()))
-        .aria_level(spec.level)
-        .aria_position_in_set(position)
-        .aria_size_of_set(size);
-    match spec.expanded {
-        Some(expanded) => el.aria_expanded(expanded),
-        None => el,
-    }
+    kagi_ui_core::tree_a11y::tree_item(
+        list,
+        el,
+        index,
+        &spec.label,
+        spec.level,
+        spec.expanded,
+        None,
+        (position, size),
+    )
 }
 
 /// Substitute only placeholders in the original translation. Values can
@@ -132,7 +130,6 @@ fn fill_template(msg: Msg, args: &[&str]) -> String {
     }
     label
 }
-
 /// One sentence naming a commit row: subject, author, date, short SHA, and
 /// the refs that point at it.
 pub fn commit_row_label(

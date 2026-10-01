@@ -255,7 +255,7 @@ pub fn issue_create(
         preflight_issue_fields(workdir, repo, fields)?;
         issue_transport(workdir, issue_create_args(repo, title, fields), body)
     });
-    record_issue_write(workdir, "issue-create", plan, result, |detail| {
+    record_issue_write(workdir, "issue-create", plan, fields, result, |detail| {
         crate::OperationOutcome::IssueCreate { detail }
     })
 }
@@ -269,15 +269,20 @@ pub fn issue_comment(
 ) -> RunReport {
     let result = frozen_issue_repo(base_repo)
         .and_then(|repo| issue_transport(workdir, issue_comment_args(repo, number), body));
-    record_issue_write(workdir, "issue-comment", plan, result, |detail| {
+    let none = IssueCreateFields::default();
+    record_issue_write(workdir, "issue-comment", plan, &none, result, |detail| {
         crate::OperationOutcome::IssueComment { number, detail }
     })
 }
 
+/// `fields` are the labels and assignees the write asked for; they go on the
+/// durable entry for every outcome (#904 review), since the plan's warning
+/// note that carries them is not part of the receipt.
 fn record_issue_write(
     workdir: &Path,
     op: &str,
     plan: &OperationPlan,
+    fields: &IssueCreateFields,
     result: Result<String, GitError>,
     success: impl FnOnce(String) -> crate::OperationOutcome,
 ) -> RunReport {
@@ -313,7 +318,8 @@ fn record_issue_write(
     };
     let repo = workdir.display().to_string();
     let entry = crate::oplog::OpLogEntry::new(op, repo.clone(), plan.current.clone(), outcome)
-        .with_worktree(Some(repo));
+        .with_worktree(Some(repo))
+        .with_issue_fields(fields);
     RunReport {
         result: result.map(success),
         recording: crate::backend::recording::finalize(entry),

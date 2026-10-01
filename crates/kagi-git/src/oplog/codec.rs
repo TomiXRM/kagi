@@ -4,6 +4,7 @@
 //! reconstruction, and retention continue to own their existing policies.
 
 use super::{recovery, Actor, FailureCode, OpLogEntry, OpOutcome, StateSummary};
+use kagi_domain::github::IssueCreateFields;
 use kagi_domain::ref_moves::RefMove;
 use serde::{de::Error, Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
@@ -98,6 +99,22 @@ struct EntryRef<'a> {
     // a record, not the absence of one.
     #[serde(skip_serializing_if = "Option::is_none")]
     ref_moves: Option<Vec<RefMoveRef<'a>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    issue_fields: Option<IssueFieldsRef<'a>>,
+}
+
+#[derive(Serialize)]
+struct IssueFieldsRef<'a> {
+    labels: &'a [String],
+    assignees: &'a [String],
+}
+
+#[derive(Deserialize)]
+struct IssueFieldsRecord {
+    #[serde(default)]
+    labels: Vec<String>,
+    #[serde(default)]
+    assignees: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -152,6 +169,8 @@ struct EntryRecord {
     failure_code: Option<FailureCode>,
     #[serde(default, deserialize_with = "ref_moves")]
     ref_moves: Option<Vec<RefMove>>,
+    #[serde(default, deserialize_with = "issue_fields")]
+    issue_fields: Option<IssueCreateFields>,
 }
 
 pub(super) fn to_json(entry: &OpLogEntry) -> String {
@@ -180,6 +199,10 @@ pub(super) fn to_json(entry: &OpLogEntry) -> String {
                 })
                 .collect()
         }),
+        issue_fields: entry.issue_fields.as_ref().map(|fields| IssueFieldsRef {
+            labels: &fields.labels,
+            assignees: &fields.assignees,
+        }),
     };
     // This fixed schema contains only strings, integers, sequences and objects;
     // no fallible map keys, floating-point values, or custom fallible payloads.
@@ -207,6 +230,7 @@ pub(super) fn from_value(value: Value) -> Option<OpLogEntry> {
         recovery: record.recovery,
         failure_code: record.failure_code,
         ref_moves: record.ref_moves,
+        issue_fields: record.issue_fields,
     })
 }
 
@@ -297,4 +321,16 @@ fn ref_moves<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<RefMove>>, D:
             })
             .collect()
     }))
+}
+
+// Additive like `ref_moves`: missing, null or malformed reads as "not
+// recorded" and never drops the row (#904 review).
+fn issue_fields<'de, D: Deserializer<'de>>(d: D) -> Result<Option<IssueCreateFields>, D::Error> {
+    let record: Option<IssueFieldsRecord> = serde_json::from_value(Value::deserialize(d)?).ok();
+    Ok(record
+        .map(|r| IssueCreateFields {
+            labels: r.labels,
+            assignees: r.assignees,
+        })
+        .filter(|fields| !fields.is_empty()))
 }

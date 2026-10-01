@@ -7,6 +7,8 @@
 //! cannot take a value).
 
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, SharedString};
+use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::Sizable as _;
 use kagi_domain::github::IssueCreateFields;
 
 use super::i18n::Msg;
@@ -143,27 +145,20 @@ pub(super) fn render_issue_fields(
             }
             pills.into_any_element()
         };
-        let control = div()
-            .id(open_id)
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_2()
+        // A Button, not a clickable div (#904 review): `Role::Button` named
+        // by the field, a tab stop, and Enter / Space open the picker like a
+        // click (#354). The chips are its content.
+        let control = Button::new(open_id)
+            .ghost()
+            .compact()
+            .small()
+            .h_auto()
+            .min_h(theme::scaled_px(24.))
             .min_w(px(0.))
-            .px_1()
-            .rounded_sm()
-            .cursor_pointer()
-            .hover(|s| s.bg(rgb(theme().surface)))
+            .label(field.title())
             .on_click(cx.listener(move |app, _: &gpui::ClickEvent, _, cx| {
                 app.open_issue_fields_modal(field, cx)
             }))
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(field.title())),
-            )
             .child(super::e2e::measure_control(value_id, value));
         super::e2e::measure_control(open_id, control)
     };

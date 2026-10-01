@@ -121,6 +121,17 @@ The current suite covers:
 - durable stash-drop recovery; history persistence; cleanup stale-tab,
   preflight, open-failure, and partial presentation; remove's public boundary;
   editor writer admission; commit-row and editor-history layout;
+- file tree accessibility (`KAGI_GUI_E2E_ONLY=file_tree_roles`,
+  `tests/recovery/file_tree_a11y.rs`): #354 Editor Workspace and Commit Panel
+  render named EN/JA Trees with TreeItems carrying file status, selection,
+  level and sibling position. Editor collapse hides descendants and updates
+  `expanded`; Commit Panel generated-file disclosure exposes its children and
+  updates positions. Reopening the same panel after changing both staged and
+  unstaged file sets reuses its entity but recomputes TreeItem roles and sibling
+  counts (the replacement state restarts its revision). A filename containing
+  `{}` retains its literal braces in both languages. The recorder proves
+  renderer attributes, not native VoiceOver delivery; verify the latter on a
+  machine with VoiceOver enabled.
 - remove refusal reasons (`KAGI_GUI_E2E_ONLY=remove_public_boundary`,
   `tests/recovery/app_remove.rs`): Enter on a locked removal plan delivers the
   specific EN/JA blocker and unlock guidance in AppNotice and bounded toast.
@@ -567,12 +578,17 @@ The current suite covers:
   current tab's modal queue, without invoking a GitHub transport;
 - New Issue labels / assignees (`KAGI_GUI_E2E_ONLY=issue_create_fields`,
   `tests/recovery/issue_create_fields.rs`, #866): the composer's measured
-  `issue-field-open-labels` / `issue-field-open-assignees` open the shared field
-  picker (`FieldTarget::NewIssue`); Apply only stores the picks. An offline `gh`
+  `issue-field-open-labels` / `issue-field-open-assignees` (gpui-component
+  `Button`s) open the shared field picker (`FieldTarget::NewIssue`), by click
+  and by keyboard: `keyboard_open` steps the window tab order from the title
+  and sends Enter / Space as key down + key up (GPUI clicks on the up; a bare
+  `simulate_keystrokes` never activates a focused element). Apply only stores
+  the picks. An offline `gh`
   serves labels from a file the scenario edits, so a label deleted between the
   pick and the measured `issue-composer-submit` is refused before
   `gh issue create` runs (Refused oplog entry, toast naming the label, body and
-  picks kept); the retry sends `--label`/`--assignee` and empties the picks.
+  picks kept); the retry sends `--label`/`--assignee` and empties the picks;
+  the receipt carries `issue_fields` (Operation Log `labels:` / `assignee:`).
   Apply saves the picks with the draft, and a composer dropped with
   `forget_issue_composer_for_e2e` reloads text and picks through the
   production load (#903; file format and the `.corrupt` set-aside are pinned

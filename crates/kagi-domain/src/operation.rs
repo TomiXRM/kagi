@@ -134,6 +134,13 @@ pub enum Operation {
     RebaseCurrentOnto {
         onto: String,
     },
+    /// #344 / ADR-0211: rebase `branch` onto `onto` by ref update only, via
+    /// `git replay` — no working tree or index is touched, so the branch may
+    /// be checked out in another worktree (which must be clean).
+    ReplayOnto {
+        branch: String,
+        onto: String,
+    },
     Discard {
         paths: Vec<String>,
     },
@@ -205,6 +212,7 @@ impl Operation {
             Operation::ResetCurrentToHead { .. } => "reset",
             Operation::ForceWithLeasePush => "force-with-lease-push",
             Operation::RebaseCurrentOnto { .. } => "rebase",
+            Operation::ReplayOnto { .. } => "replay-onto",
             Operation::Discard { .. } => "discard",
             Operation::RestoreSnapshot { .. } => "restore-snapshot",
             Operation::ApplySuggestion { .. } => "apply-suggestion",
@@ -355,7 +363,28 @@ pub enum OperationOutcome {
         tip: String,
         reference: String,
     },
+    /// #344: `branch` moved `from`→`to`; `reference` retains its old tip and
+    /// `backups` lists every ref the replay moved (the branch included) with
+    /// its own recovery ref.
+    ReplayOnto {
+        branch: String,
+        from: String,
+        to: String,
+        reference: String,
+        backups: Vec<ReplayBackup>,
+    },
     Unit,
+}
+
+/// One ref a replay moved and where its pre-replay tip is retained (#344).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplayBackup {
+    /// Full ref name, e.g. `refs/heads/feat-child`.
+    pub reference: String,
+    /// Pre-replay object id.
+    pub old: String,
+    /// `refs/kagi/backups/<op>/<i>` holding `old`.
+    pub backup: String,
 }
 
 /// Observed metadata side effects of branch deletion, even if ref commit fails.

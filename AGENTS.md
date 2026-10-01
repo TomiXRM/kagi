@@ -28,6 +28,9 @@ before editing. It encodes invariants that are otherwise scattered across 90+ AD
    unchanged, and the repair is opt-in on the UI refresh path. `working_tree_status`
    stays a pure read — it is reached from 100+ `plan_*`/`preflight_*`/snapshot call
    sites, `plan_create_branch` among them, which run before the user confirms.
+   Writing **unreferenced objects** at plan time (`git replay` in print mode,
+   `git history --dry-run`, ADR-0211 §4.1) is likewise not a write: no ref, index
+   or worktree observes them and `gc` reclaims them if the user cancels.
    Keep the `plan_X` / `preflight_X` / `execute_X` triple together in the matching
    per-feature module under `crates/kagi-git/src/ops/<feature>.rs`. Never let the UI
    mutate the repo outside this path.

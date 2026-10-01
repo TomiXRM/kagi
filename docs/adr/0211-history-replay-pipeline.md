@@ -111,6 +111,25 @@
 - **oplog**: op 名 `replay-onto` / `replay-revert` / `history-drop` / `history-reword` / `history-split` / `history-fixup`。`Operation` enum に variant を足し `Backend::run` を通す（ADR-0177 の同期 UI 例外には**載せない**）。
 - hooks は git 側が走らせない（§1 vi、history は文書）。Kagi は既存の `-c core.hooksPath=/dev/null` も併用する。
 
+#### 4.1 plan 時に「参照されないオブジェクト」が書かれることの例外（#847 レビュー）
+
+git-replay / git-history の文書どおり、print / `--dry-run` でも **新しい commit オブジェクトはその場で object database に書かれる**（"Necessary new objects will be written into the repository, so applying these printed ref updates is generally safe."、実測 §1 i: `git cat-file -t <new>` = commit）。plan は confirm の前に走るので、ユーザーがキャンセルしても、conflict で blocker になっても、オブジェクトは残る。
+
+これを AGENTS.md 不変条件 4 の **例外**として明記する: 「参照されない（どの ref / index / worktree からも到達できない）オブジェクトの書込は write ではない」。根拠:
+- 観測可能な repository 状態（ref、index の staged 内容、worktree、config）は何一つ変わらない。`git status` / `git log` / `git fsck --connectivity-only` の結果は同じで、変わるのは `git count-objects` だけ。
+- 残ったオブジェクトは通常の `gc` の `--prune` 対象（dangling commit）で、ユーザーの操作なしに回収される。
+- 代替案 **一時 object database で plan する**（`GIT_OBJECT_DIRECTORY` を一時 dir + `GIT_ALTERNATE_OBJECT_DIRECTORIES` に本体）は、`run_git` が `REPO_LOCAL_ENV` を剥がす設計（repo を指す環境変数を一切通さない、#291 以降の hardening）と衝突し、execute 時にはそのオブジェクトを本体へコピーし直す（= 結局 write）必要がある。confirm 後に生成する案は「plan = git が印字したもの」という本 ADR の中心（ユーザーが確認する内容と適用される内容が同一）を失う。
+- 条件: plan が書くオブジェクトは **plan 自身が ref を更新しないことを検証**する（実装: replay 前後で全 local branch tip を比較し、動いていれば plan を `Err` にする。`ops/replay.rs`）。
+
+#### 4.2 実装で確定したこと（slice 1、PR #847）
+
+- `preview_refs` という新 field は作らず、`OperationPlan.preview_commits` に **`update-ref --stdin` のスクリプト行をそのまま**載せる（`kagi_domain::ref_update::RefScript::lines()`）。execute は同じ行を再パースして流す。
+- **`onto` の固定**: `onto` が ref なら plan 時の OID を `verify <ref> <oid>` 行としてスクリプト先頭に入れる。preflight が照合し、さらに `git update-ref --stdin` のトランザクション自体が `verify` で拒否する（HEAD が別の場所にあって `head_at_plan` が通り、動かす ref も変わっていない、という場合に `onto` だけが動いたケースを閉じる）。
+- **backup は動かす全 ref**: `refs/kagi/backups/<op>/<i>` を `updates[i]` ごとに取り、`OperationOutcome::ReplayOnto.backups` と oplog の recovery handle に 1 ref 1 件で載せる。実測: 2.50.1 の素の `--onto` は指定した tip だけを動かし、範囲内の子孫 branch は `--contained` でのみ動く。
+- 署名: `git log --format=%G? <range>` で `N` 以外を数え、warning `ReplayDropsSignatures { count }`（#356）。
+- 空範囲: 2.50.1 では空範囲の `replay` が **conflict と同じ exit 1** を返すため、`rev-list --count` で先に判定する。
+- version gate 未満の環境では統合テストは skip する（`GitFeatures::detected().replay_onto`）。
+
 ### 決定 5 — `split` は Phase を分ける
 
 `split` は hunk 単位の対話（`add -p` 型）で、Kagi 側に hunk 選択 UI が要る（#344 §5 のとおり 1 機能分）。第 1 段は **pathspec によるファイル単位の split**（非対話で成立するかは 2.54 実機で確認が必要 — `--dry-run` と pathspec の組み合わせで editor / プロンプトが出ないことを検証してから）。hunk 単位は別 issue。

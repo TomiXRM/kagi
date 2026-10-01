@@ -320,6 +320,24 @@ The current suite covers:
   Checkbox animation timers do not outlive the window (leak check). Tier B:
   open a PR, tick files, see `N / M viewed` and dimmed rows (EN/JA), close and
   reopen the tab, then push a commit changing one ticked file and refresh.
+- PR review threads on the diff (`KAGI_GUI_E2E_ONLY=pr_threads`,
+  `tests/recovery/pr_threads.rs`): #351 / ADR-0209. The `pr_viewed` fixture's
+  real PR ref fetch loads `c.txt` (line 2 rewritten); the queued conversation
+  carries RIGHT line 2, LEFT line 2 and an outdated RIGHT thread on line 3.
+  Unified: badges `pr-thread-badge-<row>` on exactly those rows; a real click
+  opens `pr-thread-<row>-<k>` directly under its row with its body
+  (`pr-thread-body-…`) laid out and the next row pushed below; the outdated
+  thread opens as `pr-thread-outdated-<row>-<k>`; closing both returns the list
+  to one item per diff row. Split: `-l` / `-r` badges in the left / right
+  gutter, and a RIGHT thread on a context row only on the right.
+  `pr_threads_via_gh` (same substring) goes through the production read path: a
+  fake `gh` on `PATH` answers two threads only if every field the parser reads
+  is requested by its own name (else GraphQL `errors`, exit 1, as GitHub), and
+  the tab must hold both; a failed read logs `[kagi] pr-threads: #N read failed:`.
+  Tier B: open a
+  PR with line comments (current and outdated), click badges in unified and
+  side-by-side, check the dimmed outdated card, EN/JA chips, no resolve button,
+  and that scrolling does not jump when a thread opens or closes.
 - PR suggestion apply (`KAGI_GUI_E2E_ONLY=pr_suggestion_apply`,
   `tests/recovery/pr_suggestion_apply.rs`): #351 / ADR-0210. The same real PR
   ref fetch as `pr_viewed`, with the PR branch checked out so `s.txt` is the

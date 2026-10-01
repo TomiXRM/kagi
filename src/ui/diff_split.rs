@@ -413,17 +413,26 @@ fn i_id(side: SplitSide, ix: usize) -> usize {
 
 /// Render one side-by-side row (ADR-0124). Full-width rows delegate to the
 /// unified renderer; pair rows render two half-width [`split_cell`]s around a
-/// hairline divider.
+/// hairline divider. `gutters` (#351) puts a marker column before each side's
+/// cell (a full-width row keeps the left one, for alignment).
 pub(crate) fn render_main_diff_split_row(
     rows: &std::sync::Arc<Vec<DiffRow>>,
     srows: &[SplitDiffRow],
     i: usize,
     sel_key: u64,
     moved: &HashSet<usize>,
+    gutters: Option<(gpui::AnyElement, gpui::AnyElement)>,
 ) -> gpui::AnyElement {
+    let (left_gutter, right_gutter) = gutters.unzip();
     match srows.get(i) {
         None => div().into_any(),
-        Some(SplitDiffRow::Full(idx)) => render_main_diff_row(rows, *idx, sel_key),
+        Some(SplitDiffRow::Full(idx)) => {
+            let row = render_main_diff_row(rows, *idx, sel_key);
+            match left_gutter {
+                Some(gutter) => crate::ui::render_helpers::row_overlay::with_gutter(gutter, row),
+                None => row,
+            }
+        }
         // No padding and no `items_start` on the row itself: cells stretch to
         // the full row height (flex default), so a wrapped line on one side
         // never leaves an unpainted strip under the shorter cell, and rows sit
@@ -441,6 +450,7 @@ pub(crate) fn render_main_diff_split_row(
                 .flex()
                 .flex_row()
                 .text_sm()
+                .children(left_gutter)
                 .child(split_cell(
                     rows,
                     *left,
@@ -455,6 +465,7 @@ pub(crate) fn render_main_diff_split_row(
                         .w(px(1.))
                         .bg(rgb(theme::theme().surface)),
                 )
+                .children(right_gutter)
                 .child(split_cell(
                     rows,
                     *right,

@@ -38,6 +38,35 @@ pub(crate) fn list_option(
         .aria_size_of_set(size)
 }
 
+/// Mark `el` as the tree `id`, named `label`.
+pub(crate) fn tree(id: &'static str, el: Stateful<Div>, label: &str) -> Stateful<Div> {
+    record_list(id, Role::Tree, label);
+    el.role(Role::Tree)
+        .aria_label(SharedString::from(label.to_string()))
+}
+
+/// Mark `el` as flattened row `index` of tree `list`: a `TreeItem` with its
+/// level, expanded state (headers) and 1-based position among `size` siblings.
+pub(crate) fn tree_item(
+    list: &'static str,
+    el: Stateful<Div>,
+    index: usize,
+    spec: &super::sidebar_a11y::TreeItemSpec,
+    (position, size): (usize, usize),
+) -> Stateful<Div> {
+    record_tree_item(list, index, spec, position, size);
+    let el = el
+        .role(Role::TreeItem)
+        .aria_label(SharedString::from(spec.label.clone()))
+        .aria_level(spec.level)
+        .aria_position_in_set(position)
+        .aria_size_of_set(size);
+    match spec.expanded {
+        Some(expanded) => el.aria_expanded(expanded),
+        None => el,
+    }
+}
+
 /// One sentence naming a commit row: subject, author, date, short SHA, and
 /// the refs that point at it.
 pub fn commit_row_label(
@@ -88,6 +117,8 @@ pub struct RecordedList {
     pub size: usize,
     /// position (0-based) → (label, selected), for drawn rows only.
     pub rows: std::collections::BTreeMap<usize, (String, bool)>,
+    /// Tree lists: flattened index → (level, expanded, position, size).
+    pub tree: std::collections::BTreeMap<usize, (usize, Option<bool>, usize, usize)>,
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -126,6 +157,34 @@ fn record_option(
     _size: usize,
     _label: &str,
     _selected: bool,
+) {
+}
+
+#[cfg(feature = "gui-e2e")]
+fn record_tree_item(
+    list: &'static str,
+    index: usize,
+    spec: &super::sidebar_a11y::TreeItemSpec,
+    position: usize,
+    size: usize,
+) {
+    LISTS.with(|m| {
+        let mut m = m.borrow_mut();
+        let entry = m.entry(list).or_default();
+        entry.rows.insert(index, (spec.label.clone(), false));
+        entry
+            .tree
+            .insert(index, (spec.level, spec.expanded, position, size));
+    });
+}
+#[cfg(not(feature = "gui-e2e"))]
+#[inline]
+fn record_tree_item(
+    _list: &'static str,
+    _index: usize,
+    _spec: &super::sidebar_a11y::TreeItemSpec,
+    _position: usize,
+    _size: usize,
 ) {
 }
 

@@ -816,6 +816,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_commit_list_roles),
             ),
             (
+                "sidebar_tree_roles",
+                Box::new(crate::recovery_operations::scenario_sidebar_tree_roles),
+            ),
+            (
                 "color_vision_theme",
                 Box::new(crate::recovery_operations::scenario_color_vision_theme),
             ),

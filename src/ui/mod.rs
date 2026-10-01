@@ -110,6 +110,7 @@ mod render_helpers;
 mod render_overlay;
 mod render_status;
 mod render_wip;
+mod sidebar_a11y;
 pub use kagi_ui_core::settings; // ADR-0121: was a shim file
 mod overlay_focus;
 pub mod settings_view;

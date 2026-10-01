@@ -240,7 +240,9 @@ copy — the skill changes when seams change.
     are byte-identical while `[kagi]` lines show the input arrived, the frame is
     stale. Ask the user to uncover it; do not take the foreground.
   - Clicking the tab strip needs a key window (no `KAGI_NO_ACTIVATE`); ask first.
-  - Coordinates are logical points (physical px ÷ 2); re-read them from a fresh
+  - Coordinates are logical points; a screenshot is physical pixels. Convert with
+    the window's own scale factor (logical = physical ÷ `backingScaleFactor`, 2 on
+    a Retina panel but not on every display), and re-read them from a fresh
     screenshot every time.
 - "Computer use" tools are not the GUI driver here: Codex Computer Use cannot reach
   the window server from this environment. Agents that cannot run Tier B say so
@@ -254,7 +256,8 @@ copy — the skill changes when seams change.
 ## Working on a PR: push, review, merge
 
 - **Never rewrite a pushed branch.** No force push, no rebase of a pushed branch:
-  take `origin/main` in with a merge. After every push, confirm the remote head
+  take the PR's current base (`origin/main`, or the parent branch of a stacked PR)
+  in with a merge. After every push, confirm the remote head
   with `git ls-remote origin <branch>` — a non-fast-forward push is rejected, and
   "pushed" without that check has been wrong.
 - **Conflicts**: `CHANGELOG.md`, ADRs and `docs/decisions.md` keep both sides.
@@ -268,8 +271,8 @@ copy — the skill changes when seams change.
   scenarios and `uv run --project ci check-all` pass first. Chain them so a failure
   stops the push (`set -e`, or capture the output and test it) — never with `;`.
 - **Codex review**: read every Codex line comment before a PR is merged, and reply
-  to each one (in Japanese, per the rules below). Fix P1s and any P2 that can lead
-  to a wrong write, data loss or a misleading action. A theoretical case (a race
+  to each one (in Japanese, per the rules below). Fix every P0 and P1, and any P2
+  that can lead to a wrong write, data loss or a misleading action. A theoretical case (a race
   with another process replacing the repository, a millisecond window) is closed
   with a reply that gives the reason, and the limit is written into the ADR. Aim
   for one review round per PR; Codex keeps finding the next corner otherwise.

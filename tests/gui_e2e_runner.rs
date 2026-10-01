@@ -789,6 +789,10 @@ mod macos {
                 Box::new(crate::recovery_worktree_ports::scenario_worktree_port_env),
             ),
             (
+                "worktree_nonconcurrent",
+                Box::new(crate::recovery_worktree_ports::scenario_worktree_nonconcurrent),
+            ),
+            (
                 "preflight_presentation",
                 Box::new(crate::recovery_operations::scenario_preflight_presentation),
             ),

@@ -37,8 +37,8 @@ pub use op::{
     auto_stash_identity_unverified, auto_stash_missing, auto_stash_plan_stale,
     auto_stash_restore_conflicted, auto_stash_restore_failed, op_failed, op_plan_failed,
     op_refused, oplog_write_failed, plan_not_shown_retry, pull_failed_stash_restored,
-    rebase_repository_settings_may_block_start, recorded_outcome_notice, terminal_ports_exhausted,
-    Op,
+    rebase_repository_settings_may_block_start, recorded_outcome_notice,
+    terminal_nonconcurrent_blocked, terminal_ports_exhausted, Op,
 };
 pub use plan::{plan_note_text, plan_recovery_text, plan_title_text};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

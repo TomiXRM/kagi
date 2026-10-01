@@ -35,6 +35,28 @@ impl KagiApp {
             .terminal_session
             .take()
             .unwrap_or_else(|| KagiTerminalSession::new(repo_path.clone()));
+        // #859: in `nonconcurrent` mode another worktree of this repository
+        // with a running shell stops a new one here. Not a write: no oplog.
+        if session.view.is_none() {
+            if let Some(running) = self.nonconcurrent_blocker(owner, &repo_path) {
+                klog!(
+                    "terminal: nonconcurrent blocked {} (running in {})",
+                    repo_path.display(),
+                    running.display()
+                );
+                let message = crate::ui::i18n::terminal_nonconcurrent_blocked(
+                    &repo_path.display().to_string(),
+                    &running.display().to_string(),
+                );
+                session.start_error = Some(message.clone());
+                if let Some(ui) = self.ui.get_mut(&owner) {
+                    ui.terminal_session = Some(session);
+                }
+                self.status_footer = FooterStatus::Failed(SharedString::from(message.clone()));
+                self.push_toast(ToastKind::Error, message, cx);
+                return;
+            }
+        }
         let mut failure_msg: Option<String> = None;
         let mut exhausted: Option<super::PortsExhausted> = None;
         let started = super::ensure_terminal(

@@ -207,6 +207,22 @@ pub fn terminal_ports_exhausted(worktree: &str, range: (u16, u16), per: u16) -> 
     }
 }
 
+/// #859: `worktree_run_mode` is `nonconcurrent` and `running` (another worktree
+/// of the same repository) has a live terminal shell, so none starts in
+/// `worktree` until that one exits.
+pub fn terminal_nonconcurrent_blocked(worktree: &str, running: &str) -> String {
+    match lang() {
+        Lang::En => format!(
+            "nonconcurrent: the terminal in {running} is still running, so none starts in \
+             {worktree}. Exit that shell first (worktree_run_mode in settings.json)."
+        ),
+        Lang::Ja => format!(
+            "nonconcurrent: {running} の terminal が動作中のため、{worktree} では起動しません。\
+             先にその shell を終了してください(settings.json の worktree_run_mode)。"
+        ),
+    }
+}
+
 /// `"Pull plan failed: <err>"` / `"pull の plan に失敗しました: <err>"` — the
 /// planning step of [`op_failed`]'s operation (plan → confirm → preflight → …).
 pub fn op_plan_failed(op: Op, err: impl std::fmt::Display) -> String {

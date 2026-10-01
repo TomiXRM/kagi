@@ -229,8 +229,12 @@ fn record_issue_write(
         },
     };
     let repo = workdir.display().to_string();
+    // #885: `gh issue create|comment -R <repo> … --body-file -`
+    // (`issue_create_args` / `issue_comment_args`) only calls the GitHub API;
+    // no local ref can move, so: recorded, nothing moved.
     let entry = crate::oplog::OpLogEntry::new(op, repo.clone(), plan.current.clone(), outcome)
-        .with_worktree(Some(repo));
+        .with_worktree(Some(repo))
+        .with_nothing_moved();
     RunReport {
         result: result.map(success),
         recording: crate::backend::recording::finalize(entry),

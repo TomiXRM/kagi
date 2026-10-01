@@ -535,6 +535,9 @@ pub fn merge_pr(
         )),
         _ => Err(result.err().unwrap_or(GitError::Other(detail))),
     };
+    // #885: an executed merge stays "not recorded" (`ref_moves = None`): with
+    // `--delete-branch` it also deletes the local branch (`local_branch`,
+    // `backup_refs` above), so it is not a write that leaves local refs alone.
     let mut entry =
         crate::oplog::OpLogEntry::new("pr-merge", repo.clone(), plan.current.clone(), outcome)
             .with_worktree(Some(repo));
@@ -577,7 +580,9 @@ fn refused_report(workdir: &Path, plan: &OperationPlan) -> crate::backend::recor
             blockers: vec![reason.into()],
         },
     )
-    .with_worktree(Some(workdir.display().to_string()));
+    .with_worktree(Some(workdir.display().to_string()))
+    // Refused before `gh` ran: nothing moved (#885).
+    .with_nothing_moved();
     crate::backend::recording::RunReport {
         result: Err(GitError::Other(reason.into())),
         recording: crate::backend::recording::finalize(entry),

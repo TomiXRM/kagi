@@ -1474,6 +1474,11 @@ pub struct FetchFlight {
 struct FetchFailure {
     message: String,
     termination_unknown: bool,
+    /// The local refs the attempt moved (#885). Observed, not assumed: a
+    /// fetch writes wherever `remote.<name>.fetch` points, and a mirror-style
+    /// refspec (`+refs/heads/*:refs/heads/*`) updates local branches with the
+    /// same argv. `Some(empty)` when the repository did not even open.
+    ref_moves: Option<Vec<kagi_domain::ref_moves::RefMove>>,
 }
 
 impl std::fmt::Display for FetchFailure {
@@ -1871,9 +1876,14 @@ impl KagiApp {
             klog!("fetch: start");
         }
         let task = cx.background_spawn(async move {
-            let result = kagi_git::Backend::open(&repo_path);
-            let open_failed = result.is_err();
-            let result = result.and_then(|backend| backend.fetch_remote());
+            let (result, ref_moves, open_failed) = match kagi_git::Backend::open(&repo_path) {
+                // Nothing ran: nothing moved.
+                Err(error) => (Err(error), Some(Vec::new()), true),
+                Ok(backend) => {
+                    let (result, moves) = backend.observe_ref_moves(|b| b.fetch_remote());
+                    (result, moves, false)
+                }
+            };
             lease.complete_git(&result);
             // Keep *why* it failed, not just the text. A deadline that expired
             // is not proof the fetch did not happen, so it must reach the oplog
@@ -1882,6 +1892,7 @@ impl KagiApp {
             // why the distinction could not be made at the call site (#646).
             result.map_err(|error| FetchFailure {
                 termination_unknown: matches!(error, kagi_git::GitError::TerminationUnknown(_)),
+                ref_moves,
                 message: if open_failed {
                     format!("repo open error: {error}")
                 } else {
@@ -1966,7 +1977,14 @@ impl KagiApp {
                                 error: i18n::op_failed(i18n::Op::Fetch, &e.message),
                             }
                         };
-                        app.record_op_persist("fetch", before, outcome, &repo_path_guard, cx);
+                        app.record_op_persist_moves(
+                            "fetch",
+                            before,
+                            outcome,
+                            e.ref_moves.clone(),
+                            &repo_path_guard,
+                            cx,
+                        );
                         if silent {
                             klog!("auto-fetch: failed (silent): {e}");
                         } else {

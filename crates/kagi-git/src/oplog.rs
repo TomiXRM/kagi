@@ -300,6 +300,16 @@ impl OpLogEntry {
         };
         self
     }
+
+    /// Builder: "recorded, nothing moved" (`Some(empty)`) for an entry whose
+    /// operation provably did not touch a local ref — refused before it ran,
+    /// or a write that by its argv only talks to a remote API (#885). Goes
+    /// through [`Self::with_ref_moves`], so an `Unknown` outcome still
+    /// records `None`. Paths that run local git observe their moves instead
+    /// (`Backend::observe_ref_moves`).
+    pub fn with_nothing_moved(self) -> Self {
+        self.with_ref_moves(Some(Vec::new()))
+    }
 }
 
 /// Serialise an [`OpLogEntry`] as a single-line JSON object (no trailing newline).

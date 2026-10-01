@@ -53,13 +53,13 @@ impl KagiApp {
         self.record_op_impl(entry, cx, true, None);
     }
 
-    /// [`Self::record_op_persist`] for a conflict continue / skip, with the
-    /// refs it moved as observed by `Backend::observe_ref_moves` (#884) —
-    /// the receipt `restore` reads, so a merge or cherry-pick resolved in
-    /// Kagi can be restored across. A refusal before anything ran passes
-    /// `Some(empty)`; an `Unknown` outcome is stored as not recorded
-    /// (`OpLogEntry::with_ref_moves`, #891 review).
-    pub(in crate::ui) fn record_conflict_persist(
+    /// [`Self::record_op_persist`] with the refs the operation moved, as
+    /// observed by `Backend::observe_ref_moves` (#884, #885) — the receipt
+    /// `restore` reads. Used by the UI-recorded writes that run local git:
+    /// conflict continue / skip, fetch, worktree lock / unlock. A refusal
+    /// before anything ran passes `Some(empty)`; an `Unknown` outcome is
+    /// stored as not recorded (`OpLogEntry::with_ref_moves`, #891 review).
+    pub(in crate::ui) fn record_op_persist_moves(
         &mut self,
         op: &str,
         before: StateSummary,

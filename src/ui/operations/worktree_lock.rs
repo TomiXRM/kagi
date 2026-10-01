@@ -74,15 +74,21 @@ impl KagiApp {
         let Some(repo) = self.worktree_backend("lock-worktree") else {
             return;
         };
-        match repo.execute_lock_worktree(&modal.plan, &modal.name, Some(&modal.reason)) {
+        // #885: the moves are observed (a lock only writes the worktree's
+        // admin file, so normally: recorded, nothing moved).
+        let (executed, ref_moves) = repo.observe_ref_moves(|repo| {
+            repo.execute_lock_worktree(&modal.plan, &modal.name, Some(&modal.reason))
+        });
+        match executed {
             Ok(()) => {
                 klog!("executed: lock-worktree {}", modal.name);
-                self.record_op_persist(
+                self.record_op_persist_moves(
                     "lock-worktree",
                     modal.plan.current.clone(),
                     OpOutcome::Success {
                         after: modal.plan.predicted.clone(),
                     },
+                    ref_moves,
                     &repo_path,
                     cx,
                 );
@@ -95,12 +101,13 @@ impl KagiApp {
             }
             Err(e) => {
                 let err_msg = i18n::op_failed(i18n::Op::LockWorktree, e);
-                self.record_op_persist(
+                self.record_op_persist_moves(
                     "lock-worktree",
                     modal.plan.current.clone(),
                     OpOutcome::Failed {
                         error: err_msg.clone(),
                     },
+                    ref_moves,
                     &repo_path,
                     cx,
                 );
@@ -186,19 +193,20 @@ impl KagiApp {
         };
         // #772: the auto-lock's release offer runs the token/identity-checked
         // op; the manual unlock stays the manual op. Same card, same writer.
-        let executed = match modal.auto.as_ref() {
+        let (executed, ref_moves) = repo.observe_ref_moves(|repo| match modal.auto.as_ref() {
             Some(target) => repo.execute_auto_unlock_worktree(&modal.plan, &modal.name, target),
             None => repo.execute_unlock_worktree(&modal.plan, &modal.name),
-        };
+        });
         match executed {
             Ok(()) => {
                 klog!("executed: unlock-worktree {}", modal.name);
-                self.record_op_persist(
+                self.record_op_persist_moves(
                     "unlock-worktree",
                     modal.plan.current.clone(),
                     OpOutcome::Success {
                         after: modal.plan.predicted.clone(),
                     },
+                    ref_moves,
                     &repo_path,
                     cx,
                 );
@@ -211,12 +219,13 @@ impl KagiApp {
             }
             Err(e) => {
                 let err_msg = i18n::op_failed(i18n::Op::UnlockWorktree, e);
-                self.record_op_persist(
+                self.record_op_persist_moves(
                     "unlock-worktree",
                     modal.plan.current.clone(),
                     OpOutcome::Failed {
                         error: err_msg.clone(),
                     },
+                    ref_moves,
                     &repo_path,
                     cx,
                 );

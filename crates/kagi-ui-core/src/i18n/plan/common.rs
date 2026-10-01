@@ -36,6 +36,10 @@ pub(crate) const ADVICE_COMMON_PARTIAL_CLONE_OBJECT_MISSING: &str =
 pub(crate) const ADVICE_COMMON_SPARSE_EXCLUDED_PATH: &str =
     "'{}' は sparse-checkout で除外されているため、削除されたのではなく意図的に作業ツリーに存在しません。stage すると、していない削除を記録することになります。git も同じ操作を拒否します。変更するつもりなら、先に sparse-checkout の定義を広げてください。";
 
+/// JA template for `Msg::AdviceCommonHunkChanged`.
+pub(crate) const ADVICE_COMMON_HUNK_CHANGED: &str =
+    "diff を表示した後に '{}' の hunk が変わっているため、stage / unstage していません。更新された diff を確認して、hunk を選び直してください。";
+
 /// JA text for `Msg::AdviceCommonMergeConflictWarning`.
 pub(crate) const ADVICE_COMMON_MERGE_CONFLICT_WARNING: &str =
     "この merge は conflict を発生させます。conflict marker を残して Conflict Mode に入り、各ファイルを解決します(中止すれば merge 前の状態に戻せます)。";
@@ -127,6 +131,9 @@ pub fn note_ja(note: &CommonNote) -> String {
         }
         CommonNote::SparseExcludedPath { path } => {
             super::advice_text(Msg::AdviceCommonSparseExcludedPath, &[path])
+        }
+        CommonNote::HunkChanged { path } => {
+            super::advice_text(Msg::AdviceCommonHunkChanged, &[path])
         }
         CommonNote::HeadDetached { op } => format!(
             "HEAD が detached 状態です。{} は branch 上でのみ実行できます。",

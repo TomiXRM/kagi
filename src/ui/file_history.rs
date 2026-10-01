@@ -60,6 +60,7 @@ impl Render for FhDiffPane {
                     ..Default::default()
                 },
                 self.scroll.clone(),
+                None,
                 cx,
             )
             .into_any_element(),

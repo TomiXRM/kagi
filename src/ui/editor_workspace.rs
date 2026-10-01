@@ -52,6 +52,7 @@ fn editor_hooks() -> EditorHooks {
                 diff.clone(),
                 DiffHeader::default(),
                 view.diff_scroll.clone(),
+                None,
                 cx,
             )
             .into_any_element()
@@ -71,6 +72,7 @@ fn editor_hooks() -> EditorHooks {
                 diff.clone(),
                 DiffHeader::default(),
                 view.history_diff_scroll.clone(),
+                None,
                 cx,
             )
             .into_any_element()

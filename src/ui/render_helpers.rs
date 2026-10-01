@@ -529,10 +529,14 @@ pub(crate) fn new_diff_list_state() -> gpui::ListState {
 ///
 /// #495: every embedding's highlight is requested here, off the UI thread,
 /// once per (rows, theme) — see `diff_view::highlight`.
+///
+/// #842: `hunk` puts Stage / Unstage hunk on the hunk headers (the Commit
+/// Panel's diff); every other embedding passes `None`.
 pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost>(
     view: MainDiffView,
     mut header: DiffHeader,
     scroll_handle: gpui::ListState,
+    hunk: Option<super::diff_view::hunk_action::HunkAction>,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
     super::diff_view::highlight::ensure_highlight(&view, cx);
@@ -700,9 +704,15 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
                                 overlay
                                     .as_ref()
                                     .map(|o| split_gutters(o, &projection.rows, base, cx)),
+                                hunk.as_ref(),
                             ),
                             None => {
-                                let row = render_main_diff_row(&rows_for_list, base, sel_key);
+                                let row = render_main_diff_row(
+                                    &rows_for_list,
+                                    base,
+                                    sel_key,
+                                    hunk.as_ref(),
+                                );
                                 match &overlay {
                                     Some(o) => row_overlay::with_gutter(
                                         row_overlay::gutter(o.marker(base, None, cx)),

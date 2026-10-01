@@ -174,6 +174,12 @@ impl Render for MainDiffPane {
                 ..DiffHeader::default()
             },
             self.scroll.clone(),
+            // #842: a Commit Panel side carries Stage / Unstage hunk.
+            crate::ui::diff_view::hunk_action::HunkAction::for_source(
+                &self.view.source,
+                self.app.clone(),
+                self.owner,
+            ),
             cx,
         )
     }

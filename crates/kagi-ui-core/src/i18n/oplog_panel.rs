@@ -113,13 +113,16 @@ pub fn preview_more(n: usize) -> String {
 }
 
 /// A branch goes back to a commit the tab has not loaded: no guessed graph.
+/// Says how it can come into view (#888): the commit list's "Load more
+/// commits" while the history is cut short; never, for a commit no ref
+/// reaches (a deleted branch's tip).
 pub fn preview_not_loaded(branch: &str, oid: &str) -> String {
     match lang() {
         Lang::En => format!(
-            "Preview unavailable: '{branch}' goes back to {oid}, which is not in the loaded history. The restore itself is unaffected."
+            "Preview unavailable: '{branch}' goes back to {oid}, which is not in the loaded history. If the commit list is cut short, \"Load more commits\" may bring it in; a commit no branch, tag or remote branch reaches (a deleted branch's tip, for one) is never shown. The restore itself is unaffected."
         ),
         Lang::Ja => format!(
-            "プレビューできません: `{branch}` の戻し先 {oid} は読み込み済みの履歴にありません。復元そのものには影響しません。"
+            "プレビューできません: `{branch}` の戻し先 {oid} は読み込み済みの履歴にありません。commit 一覧が途中までなら「commit をさらに読み込む」で表示できることがあります。どの branch・tag・remote branch からも届かない commit(削除した branch の先端など)は表示されません。復元そのものには影響しません。"
         ),
     }
 }

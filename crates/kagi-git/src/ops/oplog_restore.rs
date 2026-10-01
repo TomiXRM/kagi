@@ -149,7 +149,26 @@ fn plan_oplog_restore(
     let planned = ref_restore::plan(&entries, entry_id, mode, &current, &observed);
 
     let note = PlanNote::OplogRestore;
-    let mut blockers: Vec<PlanNote> = planned.blockers.into_iter().map(note).collect();
+    let in_window = entries.iter().any(|e| e.id == entry_id);
+    let mut blockers: Vec<PlanNote> = planned
+        .blockers
+        .into_iter()
+        // #888: an id not even in the loaded tail is either older than it or
+        // gone. Only then is the whole log searched, once; the range is not
+        // widened either way.
+        .map(|n| match n {
+            OplogRestoreNote::EntryNotLoaded { id }
+                if !in_window && crate::oplog::oplog_has_entry(id) =>
+            {
+                OplogRestoreNote::EntryOutsideWindow {
+                    id,
+                    window: ENTRY_SCAN,
+                }
+            }
+            other => other,
+        })
+        .map(note)
+        .collect();
     let mut warnings = Vec::new();
     let repositories = super::branch_delete_safety::repositories(repo)?;
     // Any worktree mid-operation: a branch it builds on must not move (#878).

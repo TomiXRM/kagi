@@ -453,3 +453,44 @@ fn a_branch_created_after_the_point_outside_the_record_blocks() {
         "b is explained by its entry; outside by nothing"
     );
 }
+
+/// #888: a restore reads the newest 1000 entries. A target older than that
+/// says so — not "another repository's" — and is still refused (the range
+/// is not widened). An id that is nowhere in the log keeps the old note.
+#[test]
+fn an_entry_older_than_the_read_window_says_so() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let old = create(&repo, "a");
+    let state = StateSummary {
+        head: "branch: main".into(),
+        dirty: "clean".into(),
+    };
+    let elsewhere = OpLogEntry::new(
+        "checkout",
+        "/elsewhere",
+        state.clone(),
+        OpOutcome::Success { after: state },
+    );
+    for _ in 0..1000 {
+        append_oplog(&elsewhere).unwrap();
+    }
+
+    let p = plan(&repo, &Operation::RestoreToPoint { entry_id: old });
+    assert_eq!(
+        restore_blockers(&p),
+        vec![OplogRestoreNote::EntryOutsideWindow {
+            id: old,
+            window: 1000
+        }]
+    );
+    let missing = 1_000_000;
+    let p = plan(&repo, &Operation::OpRevert { entry_id: missing });
+    assert_eq!(
+        restore_blockers(&p),
+        vec![OplogRestoreNote::EntryNotLoaded { id: missing }]
+    );
+}

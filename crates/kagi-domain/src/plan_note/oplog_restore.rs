@@ -12,8 +12,13 @@ fn short(oid: &Option<String>) -> String {
 /// Plan notes for op-revert / restore-to-point.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OplogRestoreNote {
-    /// blocker — the entry is not in the loaded Operation Log.
+    /// blocker — the entry is in the loaded Operation Log, but not this
+    /// repository's (or not in the log at all).
     EntryNotLoaded { id: u64 },
+    /// blocker — the entry is in the Operation Log but older than the newest
+    /// `window` entries a restore reads (#888). Not widened: the range from
+    /// it would not be loaded either.
+    EntryOutsideWindow { id: u64, window: usize },
     /// blocker — the entry has no recorded ref moves (written before they
     /// were recorded, or by a path that does not record them).
     NotRecorded { id: u64, op: String },
@@ -81,6 +86,9 @@ impl OplogRestoreNote {
             OplogRestoreNote::EntryNotLoaded { id } => {
                 format!("Operation #{id} is not one of this repository's loaded operations (it may belong to another repository).")
             }
+            OplogRestoreNote::EntryOutsideWindow { id, window } => format!(
+                "Operation #{id} is older than the last {window} operations, which is as far back as a restore reads. It cannot be restored to or undone here."
+            ),
             OplogRestoreNote::NotRecorded { id, op } => format!(
                 "Operation #{id} ({op}) has no recorded ref moves, so it cannot be undone exactly. Nothing is guessed from the reflog."
             ),

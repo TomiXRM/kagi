@@ -12,6 +12,7 @@ annotations so a red gate points at the offending line in the PR diff.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -317,20 +318,32 @@ def _git(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 def _files_added_since_main() -> set[str]:
-    """Repo-relative paths that exist at HEAD and not on `origin/main`.
+    """Repo-relative paths that exist at HEAD and not on the base branch.
 
-    A two-dot diff against `origin/main` (not a merge-base) so a shallow CI
+    A two-dot diff against `origin/<base>` (not a merge-base) so a shallow CI
     checkout works: a file added on main after the branch point shows as
     deleted here, never as added, and `-M` keeps a renamed file out.
     """
-    if _git("rev-parse", "--verify", "-q", "origin/main").returncode != 0:
-        fetched = _git("fetch", "--no-tags", "--depth=1", "origin", "main:refs/remotes/origin/main")
+    base = _loc_base_branch()
+    ref = f"origin/{base}"
+    if _git("rev-parse", "--verify", "-q", ref).returncode != 0:
+        fetched = _git("fetch", "--no-tags", "--depth=1", "origin", f"{base}:refs/remotes/{ref}")
         if fetched.returncode != 0:
-            raise RuntimeError(f"origin/main is unavailable: {fetched.stderr.strip()}")
-    diff = _git("diff", "--name-only", "--diff-filter=A", "-M", "-z", "origin/main", "HEAD")
+            raise RuntimeError(f"{ref} is unavailable: {fetched.stderr.strip()}")
+    diff = _git("diff", "--name-only", "--diff-filter=A", "-M", "-z", ref, "HEAD")
     if diff.returncode != 0:
-        raise RuntimeError(f"git diff against origin/main failed: {diff.stderr.strip()}")
+        raise RuntimeError(f"git diff against {ref} failed: {diff.stderr.strip()}")
     return {name for name in diff.stdout.split("\0") if name}
+
+
+def _loc_base_branch() -> str:
+    """The branch "new in this branch" is measured against.
+
+    On a pull request GitHub sets `GITHUB_BASE_REF` to the PR's base (`main`,
+    `develop`, `dev`); a file that already exists on that base is not new
+    there even if `main` lacks it (Codex review on #863). Elsewhere `main`.
+    """
+    return os.environ.get("GITHUB_BASE_REF") or "main"
 
 
 def check_loc() -> int:

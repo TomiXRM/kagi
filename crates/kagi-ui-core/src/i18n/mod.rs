@@ -853,6 +853,8 @@ pub enum Msg {
     AdviceUntrackedRemain(kagi_domain::plan_note::UntrackedCtx),
     AdviceSuggestStashPush,
     AdviceNoForceUsed(kagi_domain::plan_note::push::PushPunct),
+    /// The Operation Log panel's fixed strings (#334, keys in `oplog_panel`).
+    OplogPanel(oplog_panel::OplogPanelMsg),
     AdviceWillDetachHead,
     AdviceRecommendCreateBranchHereFirst,
     AdviceDirtyStashFirst,
@@ -1088,6 +1090,8 @@ pub enum Msg {
     A11ySidebarCurrentSuffix,
     A11ySidebarLockedSuffix,
     A11ySidebarPr,
+    A11yPrList,
+    A11yPrRow,
     A11yDialogTwoStage,
     A11yDialogArmed,
     A11yDialogBlocked,
@@ -1376,6 +1380,7 @@ impl Msg {
         use Lang::{En, Ja};
         use Msg::*;
         match (language, self) {
+            (language, OplogPanel(key)) => key.t_for(language),
             (En, AdviceUntrackedRemain(ctx)) => match ctx {
                 UntrackedCtx::AfterCheckout => advice_en!(UntrackedAfterCheckout),
                 UntrackedCtx::AfterSwitching => advice_en!(UntrackedAfterSwitching),
@@ -2849,6 +2854,10 @@ impl Msg {
             (Ja, A11ySidebarCurrentSuffix) => "、現在の worktree",
             (En, A11ySidebarLockedSuffix) => ", locked",
             (Ja, A11ySidebarLockedSuffix) => "、lock 中",
+            (En, A11yPrList) => "Pull requests",
+            (Ja, A11yPrList) => "pull request 一覧",
+            (En, A11yPrRow) => "Pull request #{}, {}, {}, by @{}, {} into {}, checks {}, updated {}",
+            (Ja, A11yPrRow) => "pull request #{}、{}、{}、@{}、{} を {} へ、check {}、更新 {}",
             (En, A11ySidebarPr) => "Pull request #{}, {}",
             (Ja, A11ySidebarPr) => "pull request #{}、{}",
             (En, A11yStashRow) => "Stash: {}",

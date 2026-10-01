@@ -48,6 +48,10 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "support/gui_evidence.rs"]
+mod gui_evidence;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/operations.rs"]
 mod recovery_operations;
 
@@ -651,6 +655,9 @@ mod macos {
         cx: &mut VisualTestAppContext,
         app_state: KagiApp,
     ) -> (Entity<KagiApp>, AnyWindowHandle) {
+        if let Some(repo) = &app_state.repo_path {
+            crate::gui_evidence::fixture(repo);
+        }
         let cell: Rc<RefCell<Option<Entity<KagiApp>>>> = Rc::new(RefCell::new(None));
         let build_cell = cell.clone();
         let window = open_offscreen(cx, size(px(1440.0), px(900.0)), move |window, cx| {
@@ -744,6 +751,8 @@ mod macos {
         // the developer's real `~/.kagi/settings.json` (ADR-0091 flat-string file).
         let log_dir = tempfile::tempdir().expect("settings tempdir");
         std::env::set_var("KAGI_LOG_DIR", log_dir.path());
+        // #516: a failing scenario leaves evidence in target/gui-e2e/<name>/.
+        crate::gui_evidence::install();
 
         // Shared context: real Mac platform + bundled assets, one-time app init
         // (fonts, gpui_component, theme sync, the cmd-j / cmd-c bindings).
@@ -821,8 +830,16 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_sidebar_tree_roles),
             ),
             (
+                "pr_list_roles",
+                Box::new(crate::recovery_operations::scenario_pr_list_roles),
+            ),
+            (
                 "color_vision_theme",
                 Box::new(crate::recovery_operations::scenario_color_vision_theme),
+            ),
+            (
+                "wip_selected_roles",
+                Box::new(crate::recovery_operations::scenario_wip_selected_roles),
             ),
             (
                 "dialog_a11y_roles",
@@ -1582,7 +1599,16 @@ mod macos {
                 .is_none_or(|filters| filters.iter().any(|filter| name.contains(filter)))
             {
                 set_current_scenario(name);
-                scenario(&mut cx);
+                crate::gui_evidence::begin(name);
+                let run =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| scenario(&mut cx)));
+                match run {
+                    Ok(()) => crate::gui_evidence::passed(),
+                    Err(panic) => {
+                        crate::gui_evidence::finish();
+                        std::panic::resume_unwind(panic);
+                    }
+                }
                 executed += 1;
             } else {
                 eprintln!("[gui-e2e] SKIP {} (filtered)", name);

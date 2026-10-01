@@ -35,9 +35,19 @@ pub fn note_ja(note: &OplogRestoreNote) -> String {
             short(current),
             short(expected)
         ),
-        OplogRestoreNote::OperationInProgress { op } => {
-            format!("{} が進行中です。完了か abort してからにしてください。", op.label_ja())
-        }
+        OplogRestoreNote::OperationInProgress { op, path } => format!(
+            "{path} で {} が進行中です。完了か abort してからにしてください。",
+            op.label_ja()
+        ),
+        OplogRestoreNote::HistoryGap { after, next } => format!(
+            "Operation Log が操作 #{after} の後で途切れています(次の記録は #{next})。間の操作が消えているか読めないため、この範囲は正確に戻せません。"
+        ),
+        OplogRestoreNote::UnknownRepository { id, op, path } => format!(
+            "操作 #{id}({op})を実行した {path} はもう開けないため、この repository の branch を動かした可能性があります。この範囲は正確に戻せません。"
+        ),
+        OplogRestoreNote::RefChangedOutsideRecord { refname } => format!(
+            "{refname} はその時点の後に、記録された操作の外で作られたか動いています。復元してもそのまま残ります。"
+        ),
         OplogRestoreNote::CheckedOutDirty { branch, path } => format!(
             "`{branch}` は {path} で checkout 中で、未コミットの変更があります。変更はそのまま残り、移動後は戻した先端との差分と一緒に表示されます。"
         ),

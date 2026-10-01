@@ -177,6 +177,14 @@ impl KagiApp {
         };
         klog!("terminal: shell wait: gen={} status={}", generation, status);
         shell.exit = Some(exit.clone());
+        if matches!(exit, ShellExit::Exited { .. })
+            && session
+                .auto_lock
+                .as_ref()
+                .is_some_and(|claim| claim.generation == generation)
+        {
+            session.release_offer_pending = true;
+        }
         cx.notify();
         if matches!(exit, ShellExit::Exited { .. }) {
             // A shell that exited before the user approved its acquire may
@@ -278,6 +286,43 @@ impl KagiApp {
         }
     }
 
+    /// A button may clear any modal without traversing root Enter/Escape.
+    /// Schedule the pending owner's proposal after render, never reading Git
+    /// during render. A competing modal/owner restores the one-shot request.
+    pub(crate) fn defer_pending_auto_release(&mut self, cx: &mut Context<Self>) {
+        if self.has_active_modal() {
+            return;
+        }
+        let Some(owner) = self.active_session() else {
+            return;
+        };
+        let Some(session) = self
+            .ui
+            .get_mut(&owner)
+            .and_then(|ui| ui.terminal_session.as_mut())
+        else {
+            return;
+        };
+        if !session.release_offer_pending {
+            return;
+        }
+        session.release_offer_pending = false;
+        let app = cx.entity().downgrade();
+        cx.defer(move |cx| {
+            let _ = app.update(cx, |app, cx| {
+                if app.active_session() == Some(owner) && !app.has_active_modal() {
+                    app.offer_auto_release(owner, cx);
+                } else if let Some(session) = app
+                    .ui
+                    .get_mut(&owner)
+                    .and_then(|ui| ui.terminal_session.as_mut())
+                {
+                    session.release_offer_pending = session.auto_lock.is_some();
+                }
+            });
+        });
+    }
+
     /// A confirmed, owner-scoped lock may be offered for release only after
     /// its exact shell generation has exited. A background tab or an occupied
     /// modal slot keeps the claim pending until the owner is active again.
@@ -299,6 +344,13 @@ impl KagiApp {
         else {
             return;
         };
+        if let Some(session) = self
+            .ui
+            .get_mut(&owner)
+            .and_then(|ui| ui.terminal_session.as_mut())
+        {
+            session.release_offer_pending = false;
+        }
         if !self.auto_lock_owner_is_current(&offer) {
             klog!("terminal: auto-unlock skipped: repository identity changed");
             return;
@@ -378,5 +430,6 @@ impl KagiTerminalSession {
     /// or its execution succeeds; a new shell cannot discard an active claim.
     pub(crate) fn clear_auto_lock(&mut self) {
         self.auto_lock = None;
+        self.release_offer_pending = false;
     }
 }

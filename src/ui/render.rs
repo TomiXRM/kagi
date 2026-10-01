@@ -87,6 +87,10 @@ impl Render for KagiApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.poll_app_jobs(cx);
         self.present_app_notice();
+        // #914: modal button closures bypass root Enter/Escape. A real exit
+        // left a pending release; when the last card leaves the slot, schedule
+        // its owner-scoped Git plan after this render (never during painting).
+        self.defer_pending_auto_release(cx);
         // ADR-0121 B2: promote a headless-staged diff (KAGI_OPEN_FIRST_FILE
         // runs before any gpui context exists) into the pane entity on the
         // first frame. Always `None` in the GUI paths.

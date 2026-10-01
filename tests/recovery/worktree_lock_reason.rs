@@ -510,8 +510,19 @@ pub fn scenario_terminal_auto_lock(cx: &mut VisualTestAppContext) {
             .to_string();
         assert!(err.contains("refused at preflight"), "{err}");
     });
-    crate::recovery_operations::press_key(cx, &app, window, "escape");
-    cx.run_until_parked();
+    // Declining this *auto* release by button is terminal: it must not be
+    // re-offered by the slot-empty delivery path.
+    click(cx, window, "plan-cancel");
+    assert!(cx.read(|cx| app.read(cx).unlock_worktree_modal().is_none()));
+    assert!(cx.read(|cx| {
+        app.read(cx)
+            .ui()
+            .terminal_session
+            .as_ref()
+            .unwrap()
+            .auto_lock
+            .is_none()
+    }));
     git(
         fixture.path(),
         &["worktree", "unlock", linked.to_str().unwrap()],
@@ -537,6 +548,16 @@ pub fn scenario_terminal_auto_lock(cx: &mut VisualTestAppContext) {
         Some(owned_reason.as_str())
     );
     theme::set_terminal_auto_lock(false);
+    app.update(cx, |state, cx| {
+        state.open_unlock_worktree_modal("linked".into());
+        assert!(
+            state
+                .unlock_worktree_modal()
+                .is_some_and(|modal| modal.auto.is_none()),
+            "the manual card owns the slot before this shell exits"
+        );
+        cx.notify();
+    });
     app.update(cx, |state, _| {
         state
             .ui()
@@ -551,7 +572,16 @@ pub fn scenario_terminal_auto_lock(cx: &mut VisualTestAppContext) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         cx.run_until_parked();
-        if cx.read(|cx| app.read(cx).unlock_worktree_modal().is_some()) {
+        let exited = cx.read(|cx| {
+            app.read(cx)
+                .ui()
+                .terminal_session
+                .as_ref()
+                .and_then(|session| session.shell.as_ref())
+                .and_then(|shell| shell.exit.as_ref())
+                .is_some_and(|exit| matches!(exit, ShellExit::Exited { .. }))
+        });
+        if exited {
             break;
         }
         assert!(
@@ -560,6 +590,23 @@ pub fn scenario_terminal_auto_lock(cx: &mut VisualTestAppContext) {
         );
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
+    assert!(
+        cx.read(|cx| {
+            app.read(cx)
+                .unlock_worktree_modal()
+                .is_some_and(|modal| modal.auto.is_none())
+        }),
+        "shell exit must not replace the user's manual confirmation"
+    );
+    click(cx, window, "plan-cancel");
+    assert!(
+        cx.read(|cx| {
+            app.read(cx)
+                .unlock_worktree_modal()
+                .is_some_and(|modal| modal.auto.is_some())
+        }),
+        "clicking Cancel frees the slot and delivers the pending release"
+    );
     assert_eq!(
         lock_reason(fixture.path()).as_deref(),
         Some(owned_reason.as_str()),

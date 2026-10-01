@@ -149,6 +149,9 @@ pub struct KagiTerminalSession {
     /// The lock this session actually acquired (not an unconfirmed offer).
     /// The release plan still reads Git; this records only provenance.
     pub auto_lock: Option<AutoLockOffer>,
+    /// A proven exit waiting for this owner's modal slot. Rendering schedules
+    /// one deferred retry when the slot becomes empty (including button exits).
+    pub release_offer_pending: bool,
 }
 
 /// Frozen owner of one confirmed terminal lock. A tab/path reused after the
@@ -299,6 +302,7 @@ impl KagiTerminalSession {
             shell: None,
             spawns: 0,
             auto_lock: None,
+            release_offer_pending: false,
         }
     }
 

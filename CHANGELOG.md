@@ -37,6 +37,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - 既定 OFF の opt-in「terminal を開いている間 worktree をロック」を ON にした場合の自動ロックを修正しました。これまでは acquire の確認カードを Cancel しても、その提案の token を所有済みとして記録し、shell 終了時に同じ reason の別人のロックを解除提案できました。acquire 成功後だけ所有権を保存し、shell が承認前に終了したらカードを閉じます。解除は元の tab / shell 世代 / repository identity が一致するときだけ提示し、別 tab のカードは上書きせず元の tab まで保留します。token は再起動後に再利用されない random nonce を含み、観測不能や crash 後は従来どおり手動で確認して解除します。既定 OFF の利用者の動作は変わらず、ON でも lock / unlock はそれぞれ確認が必要です。（#772、ADR-0218）
+- 自動ロック取得後、shell 終了時に別の確認カードが開いていた場合、そのカードをボタンで閉じてもロック解除の確認カードが出ない問題を修正しました。modal slot が空いた後に元の tab へ再提示し、解除カード自体を Cancel した場合は再提示しません。（#914 review、#772）
 
 - Commit Panel を同じ worktree で開き直すか、merge 後に再読込した際に、file tree の兄弟位置が以前のファイル構成のまま残り、新しい行から支援技術向けの TreeItem が欠落する問題を修正しました。新しい状態に差し替えるたびに位置表を無効化します。（#901 review、Refs #354）
 - Operation Log の「取り消す / この時点まで戻す」の確認 card と Operation Log の review 指摘を修正しました(#883 / #871 / #878)。

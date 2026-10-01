@@ -2552,3 +2552,117 @@ pub fn scenario_replay_onto_armed(cx: &mut VisualTestAppContext) {
     }
     eprintln!("[gui-e2e] PASS replay_onto_armed: Enter/button arm then replay; both worktrees untouched, ref moved, backup + oplog");
 }
+
+/// #536 slice 2: "Sync to remote (keep local)…" from the branch menu goes
+/// through the shared branch-plan card with a two-stage confirm (the plan is
+/// destructive), then matches branch, index and working tree to the fetched
+/// upstream while the old tip and all local work sit in two backup refs.
+pub fn scenario_sync_to_remote_armed(cx: &mut VisualTestAppContext) {
+    for input in ["enter", "button"] {
+        let fixture = build_fixture();
+        let repo = fixture.path();
+        // A bare origin whose main is one commit *behind* the fixture's
+        // second commit, plus one commit of its own: local is ahead 1.
+        let origin = fixture.path().parent().unwrap().join(format!(
+            "{}-origin-{input}.git",
+            fixture.path().file_name().unwrap().to_string_lossy()
+        ));
+        git(
+            repo,
+            &[
+                "clone",
+                "-q",
+                "--bare",
+                repo.to_str().unwrap(),
+                origin.to_str().unwrap(),
+            ],
+        );
+        git(repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
+        git(repo, &["update-ref", "refs/remotes/origin/main", "HEAD~1"]);
+        git(repo, &["branch", "--set-upstream-to=origin/main", "main"]);
+        let upstream = output(repo, &["rev-parse", "refs/remotes/origin/main"]);
+        // Dirty: staged edit, unstaged edit, untracked, ignored.
+        std::fs::write(repo.join(".gitignore"), "ignored.log\n").unwrap();
+        git(repo, &["add", ".gitignore"]);
+        git(repo, &["commit", "-q", "-m", "ignore rules"]);
+        let before_tip = output(repo, &["rev-parse", "HEAD"]);
+        std::fs::write(repo.join("README.md"), "# fixture\nstaged\n").unwrap();
+        git(repo, &["add", "README.md"]);
+        std::fs::write(repo.join("README.md"), "# fixture\nstaged then edited\n").unwrap();
+        std::fs::write(repo.join("untracked.txt"), "keep me in backup\n").unwrap();
+        std::fs::write(repo.join("ignored.log"), "never touched\n").unwrap();
+        let before_status = output(repo, &["status", "--porcelain"]);
+
+        let (app, window) = mount(cx, repo);
+        app.update(cx, |app, _| {
+            app.open_branch_plan_modal("main".to_string(), kagi::ui::BranchPlanKind::SyncToRemote)
+        });
+        wait_idle(cx, &app);
+        cx.read(|cx| {
+            let modal = app.read(cx).branch_plan_modal().expect("sync modal");
+            assert!(modal.plan.blockers.is_empty(), "{:?}", modal.plan.blockers);
+            assert!(modal.plan.destructive);
+            assert!(!modal.confirm_armed);
+            let recovery = modal.plan.recovery.as_ref().expect("recovery");
+            assert_eq!(recovery.commands.len(), 2, "{:?}", recovery.commands);
+        });
+        assert_eq!(
+            output(repo, &["status", "--porcelain"]),
+            before_status,
+            "planning wrote nothing"
+        );
+
+        confirm_branch_delete(cx, &app, window, input);
+        cx.run_until_parked();
+        assert!(
+            cx.read(|cx| app.read(cx).branch_plan_modal().unwrap().confirm_armed),
+            "{input}: first confirm arms"
+        );
+        assert_eq!(output(repo, &["rev-parse", "HEAD"]), before_tip);
+        assert!(
+            records(repo, "sync-to-remote").is_empty(),
+            "arming must not record or execute"
+        );
+
+        confirm_branch_delete(cx, &app, window, input);
+        wait_idle(cx, &app);
+        assert!(cx.read(|cx| app.read(cx).branch_plan_modal().is_none()));
+        assert_eq!(
+            output(repo, &["rev-parse", "refs/heads/main"]),
+            upstream,
+            "{input}: branch == upstream"
+        );
+        assert_eq!(output(repo, &["symbolic-ref", "HEAD"]), "refs/heads/main");
+        // Clean except the file that *was* ignored by the now-gone local
+        // .gitignore commit — untouched on disk.
+        assert_eq!(output(repo, &["status", "--porcelain"]), "?? ignored.log");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("ignored.log")).unwrap(),
+            "never touched\n"
+        );
+        assert!(
+            !repo.join("untracked.txt").exists(),
+            "retained untracked removed"
+        );
+        let entries = records(repo, "sync-to-remote");
+        assert_eq!(entries.len(), 1);
+        assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
+        assert_eq!(
+            entries[0].backup_refs.len(),
+            2,
+            "{:?}",
+            entries[0].backup_refs
+        );
+        assert_eq!(
+            output(repo, &["rev-parse", &entries[0].backup_refs[0]]),
+            before_tip
+        );
+        assert_eq!(
+            output(repo, &["cat-file", "-t", &entries[0].backup_refs[1]]),
+            "commit",
+            "work backup is a stash-shaped commit"
+        );
+        unmount(cx, app, window);
+    }
+    eprintln!("[gui-e2e] PASS sync_to_remote_armed: Enter/button arm then sync; branch==upstream, clean, 2 backups, oplog, ignored untouched");
+}

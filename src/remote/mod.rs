@@ -389,6 +389,7 @@ pub fn remote_snapshot(
         head: None,
         locked: false,
         lock_reason: None,
+        port: None,
     }];
 
     Ok(RepoSnapshot {

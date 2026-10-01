@@ -77,4 +77,5 @@ pub mod word_diff;
 pub mod worktree_autolock;
 pub mod worktree_include;
 pub mod worktree_ports;
+pub mod worktree_run_mode;
 pub mod worktree_steps;

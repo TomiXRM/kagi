@@ -49,6 +49,7 @@ pub enum Op {
     PushTag,
     Rebase,
     Replay,
+    SyncToRemote,
     Rename,
     Reset,
     Reveal,
@@ -120,6 +121,7 @@ impl Op {
             PushTag => ("Push tag", "tag の push"),
             Rebase => ("Rebase", "rebase"),
             Replay => ("Replay", "replay"),
+            SyncToRemote => ("Sync to remote", "remote に揃える"),
             Rename => ("Rename", "名前の変更"),
             RepoOpen => ("Repo open", "リポジトリのオープン"),
             Reset => ("Reset", "reset"),
@@ -205,6 +207,22 @@ pub fn terminal_ports_exhausted(worktree: &str, range: (u16, u16), per: u16) -> 
             "{start}-{end} に {worktree} 用の空き port block がありません(1 worktree あたり \
              {per}): KAGI_PORT なしで terminal を起動しました。settings.json の \
              worktree.port_range を広げると割り当てられます。"
+        ),
+    }
+}
+
+/// #859: `worktree_run_mode` is `nonconcurrent` and `running` (another worktree
+/// of the same repository) has a live terminal shell, so none starts in
+/// `worktree` until that one exits.
+pub fn terminal_nonconcurrent_blocked(worktree: &str, running: &str) -> String {
+    match lang() {
+        Lang::En => format!(
+            "nonconcurrent: the terminal in {running} is still running, so none starts in \
+             {worktree}. Exit that shell first (worktree_run_mode in settings.json)."
+        ),
+        Lang::Ja => format!(
+            "nonconcurrent: {running} の terminal が動作中のため、{worktree} では起動しません。\
+             先にその shell を終了してください(settings.json の worktree_run_mode)。"
         ),
     }
 }

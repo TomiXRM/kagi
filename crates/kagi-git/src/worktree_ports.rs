@@ -59,6 +59,30 @@ fn read_store() -> BTreeMap<String, u16> {
     serde_json::from_str(&text).unwrap_or_default()
 }
 
+/// The stored assignments, read once, for looking up many worktrees (#855).
+/// Read only: nothing is assigned or written.
+pub struct Assignments(BTreeMap<String, u16>);
+
+impl Assignments {
+    /// Read the store as it is now.
+    pub fn read() -> Self {
+        Self(read_store())
+    }
+
+    /// The first port already assigned to the worktree at `path`, if any.
+    pub fn port(&self, path: &Path) -> Option<u16> {
+        self.0.get(&canon_key(path)).copied()
+    }
+}
+
+/// The repository the worktree at `path` belongs to: its canonical common git
+/// directory, shared by the main worktree and every linked one (#859). `None`
+/// when `path` is not a repository. Read only.
+pub fn repository_of(path: &Path) -> Option<PathBuf> {
+    let repo = git2::Repository::open(path).ok()?;
+    std::fs::canonicalize(repo.commondir()).ok()
+}
+
 /// Persist the whole map (pretty JSON), creating the parent dir. Best-effort;
 /// a write failure is logged to stderr and otherwise ignored.
 fn write_store(store: &BTreeMap<String, u16>) {

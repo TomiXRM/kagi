@@ -155,6 +155,10 @@ mod recovery_oplog_panel;
 mod recovery_worktree_lock_reason;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/worktree_ports.rs"]
+mod recovery_worktree_ports;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/worktree_inspection.rs"]
 mod worktree_inspection;
 
@@ -784,6 +788,14 @@ mod macos {
                 Box::new(crate::recovery_worktree_lock_reason::scenario_terminal_auto_lock_race),
             ),
             (
+                "worktree_port_env",
+                Box::new(crate::recovery_worktree_ports::scenario_worktree_port_env),
+            ),
+            (
+                "worktree_nonconcurrent",
+                Box::new(crate::recovery_worktree_ports::scenario_worktree_nonconcurrent),
+            ),
+            (
                 "external_lock_reload",
                 Box::new(crate::recovery_worktree_lock_reason::scenario_external_lock_reload),
             ),
@@ -798,6 +810,10 @@ mod macos {
             (
                 "modal_no_fallthrough",
                 Box::new(crate::recovery_operations::scenario_modal_no_fallthrough),
+            ),
+            (
+                "sync_to_remote_armed",
+                Box::new(crate::recovery_operations::scenario_sync_to_remote_armed),
             ),
             (
                 "replay_onto_armed",

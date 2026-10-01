@@ -293,6 +293,10 @@ pub enum Msg {
     WorktreeLockDefaultReason,
     WorktreeLockReason,
     WorktreeLockReview,
+    /// Confirm or manually resolve a terminal-owned lock before restarting.
+    TerminalAutoLockPendingRelease,
+    /// An auto lock/unlock offer can no longer be attributed to its owner.
+    TerminalAutoLockStaleOwner,
     BusyMerge,
     MergeDestinationChanged,
 
@@ -1949,6 +1953,10 @@ impl Msg {
             (Ja, WorktreeLockReason) => "ロック理由（任意）",
             (En, WorktreeLockReview) => "Review lock…",
             (Ja, WorktreeLockReview) => "ロック内容を確認…",
+            (En, TerminalAutoLockPendingRelease) => "Confirm the terminal worktree unlock or unlock it manually before restarting the shell",
+            (Ja, TerminalAutoLockPendingRelease) => "terminal の worktree ロック解除を確認するか、手動で解除してから shell を再起動してください",
+            (En, TerminalAutoLockStaleOwner) => "Terminal lock owner, shell, or repository changed; recover the lock manually",
+            (Ja, TerminalAutoLockStaleOwner) => "terminal のロック所有者・shell・repository が変わりました。ロックは手動で確認して解除してください",
             (En, BusyMerge) => "merge in progress…",
             (Ja, BusyMerge) => "merge 実行中…",
             (En, MergeDestinationChanged) => "The destination worktree or branch changed. Refresh and try the merge again.",

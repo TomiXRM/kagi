@@ -23,24 +23,37 @@ pub struct PlanJob {
     revision: RequestId,
     request: RemoveRequest,
     policy: RemovePolicy,
+    shells: Vec<kagi_domain::worktree_remove_shells::KagiShell>,
 }
 impl PlanJob {
+    /// #867: the terminal shells Kagi started, so the plan can refuse while
+    /// one runs in the target and warn about what an exited one left behind.
+    pub fn with_kagi_shells(
+        mut self,
+        shells: Vec<kagi_domain::worktree_remove_shells::KagiShell>,
+    ) -> Self {
+        self.shells = shells;
+        self
+    }
     pub fn run(self) -> PlanCompletion {
         let state = match Backend::plan_recorded_remove(
             &self.request.owner.path,
             &self.request.name,
             self.request.delete_branch,
         ) {
-            Ok(plan) => PlanState::Ready {
-                token: PlanToken {
-                    revision: self.revision,
-                },
-                prepared: Planned::Remove {
-                    plan,
-                    request: self.request,
-                    policy: self.policy,
-                },
-            },
+            Ok(mut plan) => {
+                plan.note_kagi_shells(&self.shells);
+                PlanState::Ready {
+                    token: PlanToken {
+                        revision: self.revision,
+                    },
+                    prepared: Planned::Remove {
+                        plan,
+                        request: self.request,
+                        policy: self.policy,
+                    },
+                }
+            }
             Err(e) => PlanState::Error {
                 open_failed: false,
                 error: e.to_string(),
@@ -73,6 +86,7 @@ pub fn plan_remove(
         revision: sessions.revision,
         request,
         policy,
+        shells: Vec::new(),
     }
 }
 pub struct RemoveJob {

@@ -323,7 +323,7 @@ pub fn build_kagi_entity(
         app_state.root_focus = Some(cx.focus_handle());
         app_state.toast_stack = Some(cx.new(|_| toast_stack::ToastStack::new()));
         let seed = std::mem::take(&mut app_state.op_log_seed);
-        app_state.op_log = Some(cx.new(|_| oplog_panel::OpLogPanel::from_entries(seed)));
+        app_state.op_log = Some(super::operations::oplog_restore::op_log_panel(seed, cx));
         app_state
     });
     let close_owner = kagi.downgrade();

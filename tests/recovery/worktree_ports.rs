@@ -82,7 +82,11 @@ fn wait_for(path: &Path) -> String {
     }
 }
 
-fn start_terminal(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+pub(crate) fn start_terminal(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |state, cx| state.ensure_terminal(window, cx));
     })
@@ -218,7 +222,7 @@ fn waiting_shell(dir: &Path) -> PathBuf {
 }
 
 /// Whether the active tab's terminal has a shell Kagi has not seen exit.
-fn shell_live(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> bool {
+pub(crate) fn shell_live(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> bool {
     cx.read(|cx| {
         app.read(cx)
             .ui()
@@ -273,6 +277,30 @@ pub fn scenario_worktree_nonconcurrent(cx: &mut VisualTestAppContext) {
     cx.run_until_parked();
     start_terminal(cx, &app, window);
     assert!(shell_live(cx, &app), "the first worktree's shell starts");
+    // #869: the linked worktree's link is the main worktree's block, which
+    // its shell was handed; the linked worktree got no block of its own.
+    draw(cx, window);
+    let row_ports = cx.read(|cx| {
+        app.read(cx)
+            .sidebar
+            .rows
+            .iter()
+            .filter_map(|row| match row {
+                kagi::ui::sidebar::SidebarRow::Worktree { name, port, .. } => {
+                    Some((name.clone(), *port))
+                }
+                _ => None,
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+    });
+    let stored = kagi_git::worktree_ports::Assignments::read();
+    assert!(
+        row_ports["side"].is_some()
+            && row_ports["side"] == stored.port(&repo)
+            && row_ports["main"] == row_ports["side"]
+            && stored.port(&side).is_none(),
+        "nonconcurrent: every row links to the main block: {row_ports:?}"
+    );
 
     // The main worktree of the same repository is refused while it does.
     app.update(cx, |app, cx| app.switch_repo(0, cx));

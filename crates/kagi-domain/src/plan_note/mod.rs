@@ -31,6 +31,7 @@ pub mod github;
 pub mod history;
 pub mod maintenance;
 pub mod merge;
+pub mod oplog_restore;
 pub mod pull;
 pub mod push;
 pub mod rebase;
@@ -58,6 +59,7 @@ pub use github::{GithubNote, GithubRecovery, GithubTitle, PrMergeLocalReason};
 pub use history::{HistoryMoveDir, HistoryNote, HistoryOp, HistoryRecovery, HistoryTitle};
 pub use maintenance::{MaintenanceNote, MaintenanceRecovery, MaintenanceTitle};
 pub use merge::{InProgressOp, MergeNote, MergeRecovery, MergeTitle};
+pub use oplog_restore::{OplogRestoreNote, OplogRestoreRecovery, OplogRestoreTitle};
 pub use pull::{
     restore_conflict_paths, PullNote, PullRecovery, PullTitle, RESTORE_CONFLICT_PATH_LIMIT,
 };
@@ -109,6 +111,8 @@ pub enum PlanNote {
     Ruleset(RulesetNote),
     /// Repository-health fixes (#358).
     Maintenance(MaintenanceNote),
+    /// Operation Log revert / restore (#334).
+    OplogRestore(OplogRestoreNote),
 }
 
 impl PlanNote {
@@ -143,6 +147,7 @@ impl PlanNote {
             PlanNote::Sync(n) => n.message_en(),
             PlanNote::Maintenance(n) => n.message_en(),
             PlanNote::Ruleset(n) => n.message_en(),
+            PlanNote::OplogRestore(n) => n.message_en(),
         }
     }
 }
@@ -185,6 +190,7 @@ pub enum PlanTitle {
     Snapshot(SnapshotTitle),
     Sync(SyncTitle),
     Maintenance(MaintenanceTitle),
+    OplogRestore(OplogRestoreTitle),
 }
 
 impl PlanTitle {
@@ -213,6 +219,7 @@ impl PlanTitle {
             PlanTitle::Snapshot(t) => t.message_en(),
             PlanTitle::Sync(t) => t.message_en(),
             PlanTitle::Maintenance(t) => t.message_en(),
+            PlanTitle::OplogRestore(t) => t.message_en(),
             PlanTitle::Discard {
                 single: Some(path), ..
             } => format!("Discard changes to '{}'", path),
@@ -270,6 +277,7 @@ impl PlanRecovery {
             RecoveryKind::Snapshot(r) => r.message_en(),
             RecoveryKind::Sync(r) => r.message_en(),
             RecoveryKind::Maintenance(r) => r.message_en(),
+            RecoveryKind::OplogRestore(r) => r.message_en(),
             RecoveryKind::Discard => {
                 "This discards your unstaged changes to the selected file(s): \
                  tracked files are restored from the index, untracked files are deleted from \
@@ -308,6 +316,7 @@ pub enum RecoveryKind {
     Snapshot(SnapshotRecovery),
     Sync(SyncRecovery),
     Maintenance(MaintenanceRecovery),
+    OplogRestore(OplogRestoreRecovery),
 }
 
 /// Semantic plan state (ADR-0129 §2). Replaces every place the UI used to
@@ -467,6 +476,7 @@ mod tests {
             PlanNote::Sync(SyncNote::DetachedHead),
             PlanNote::Ruleset(RulesetNote::ConstraintsUnknown),
             PlanNote::Maintenance(MaintenanceNote::NoCommits),
+            PlanNote::OplogRestore(OplogRestoreNote::NothingToRestore),
         ];
 
         for note in &cases {
@@ -498,6 +508,7 @@ mod tests {
                 PlanNote::Sync(n) => n.message_en(),
                 PlanNote::Maintenance(n) => n.message_en(),
                 PlanNote::Ruleset(n) => n.message_en(),
+                PlanNote::OplogRestore(n) => n.message_en(),
             };
             assert_eq!(note.message_en(), inner, "dispatch arm for {note:?}");
             // … which is never empty, and reaches Display unchanged.
@@ -507,7 +518,7 @@ mod tests {
 
         // One fixture per `PlanNote` variant — bump this when a category is
         // added (and add its row above).
-        assert_eq!(cases.len(), 26, "one fixture per PlanNote variant");
+        assert_eq!(cases.len(), 27, "one fixture per PlanNote variant");
     }
 
     #[test]

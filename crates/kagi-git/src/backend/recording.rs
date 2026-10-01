@@ -209,6 +209,15 @@ pub fn recovery_handles(result: &Result<OperationOutcome, GitError>) -> Vec<Reco
             .iter()
             .map(|b| RecoveryHandle::oid(recovery::BRANCH_TIP, &b.old).with_reference(&b.backup))
             .collect(),
+        // #334 slice 2b: every branch an op-revert / restore moved keeps its
+        // pre-restore tip (a recreated branch had none to keep).
+        OperationOutcome::OplogRestore { restored } => restored
+            .iter()
+            .filter_map(|r| {
+                let (from, backup) = (r.from.as_ref()?, r.backup.as_ref()?);
+                Some(RecoveryHandle::oid(recovery::BRANCH_TIP, from).with_reference(backup))
+            })
+            .collect(),
         // Partial discards land here too: `is_partial` keeps the outcome `Ok`
         // precisely so the backups are never dropped with an `Err` (#281).
         OperationOutcome::Discard(discard) => discard
@@ -292,9 +301,9 @@ impl Backend {
         &self,
         execute: impl FnOnce(&Self) -> T,
     ) -> (T, Option<Vec<kagi_domain::ref_moves::RefMove>>) {
-        let before = super::reflog::ref_snapshot(&self.repo);
+        let before = crate::ops::ref_snapshot(&self.repo);
         let result = execute(self);
-        let after = super::reflog::ref_snapshot(&self.repo);
+        let after = crate::ops::ref_snapshot(&self.repo);
         let moves = before
             .zip(after)
             .map(|(before, after)| kagi_domain::ref_moves::diff(&before, &after));

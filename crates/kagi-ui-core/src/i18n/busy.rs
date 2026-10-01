@@ -79,6 +79,12 @@ const LABELS: &[(&str, &str, &str)] = &[
     ),
     ("rebase", "Rebasing…", "rebase 中…"),
     ("replay-onto", "Replaying commits…", "commit を replay 中…"),
+    ("op-revert", "Reverting operation…", "操作を取り消し中…"),
+    (
+        "restore-to-point",
+        "Restoring branches…",
+        "branch を復元中…",
+    ),
     (
         "sync-to-remote",
         "Syncing to remote…",

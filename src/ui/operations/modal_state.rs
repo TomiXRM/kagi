@@ -13,6 +13,7 @@ mod apply_suggestion;
 mod arbitration;
 mod conflict;
 mod editor;
+mod oplog_restore;
 mod repo_health;
 mod smart;
 mod window;

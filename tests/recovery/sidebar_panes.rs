@@ -212,6 +212,42 @@ pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
     let remote_header = e2e::control_bounds(window.window_id(), "remote").unwrap();
     cx.simulate_click(window, remote_header.center(), Modifiers::none());
     redraw(cx, &app, window);
+    let collapsed_bounds = bounds(cx, &app);
+    assert!((collapsed_bounds[2].1 - collapsed_bounds[2].0 - 24.).abs() < 1.);
+    // The separator skips REMOTE's fixed header and resizes LOCAL against the
+    // nearest expanded pane (WORKTREES), never mutating REMOTE's saved weight.
+    let divider = e2e::control_bounds(window.window_id(), "sidebar-local-divider").unwrap();
+    let center = divider.center();
+    cx.simulate_mouse_move(window, center, None, Modifiers::none());
+    cx.simulate_mouse_down(window, center, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(
+        window,
+        point(center.x, center.y + px(8.)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    paint(cx, window);
+    let moved = point(center.x, center.y + px(24.));
+    cx.simulate_mouse_move(window, moved, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    paint(cx, window);
+    cx.simulate_mouse_up(window, moved, MouseButton::Left, Modifiers::none());
+    redraw(cx, &app, window);
+    let skipped_weights = cx.read(|cx| app.read(cx).sidebar.pane_weights);
+    assert_eq!(
+        skipped_weights[2], weights[2],
+        "collapsed pane weight retained"
+    );
+    assert_ne!(
+        skipped_weights[3], weights[3],
+        "nearest expanded pane changes"
+    );
+    assert_eq!(
+        u32::from(skipped_weights[1]) + u32::from(skipped_weights[3]),
+        u32::from(weights[1]) + u32::from(weights[3])
+    );
+    let weights = skipped_weights;
     settings::flush();
     unmount(cx, app, window);
     let (reopened, compact_window) = mount_at(cx, repo, 600.);

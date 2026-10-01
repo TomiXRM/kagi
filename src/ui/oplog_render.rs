@@ -38,6 +38,7 @@ use super::i18n::{self, Msg};
 use super::render_helpers::with_vertical_scrollbar;
 use super::theme::theme;
 use super::{format_hms, oplog_panel, theme as theme_mod};
+use kagi_ui_core::i18n::oplog_panel::OplogPanelMsg as P;
 
 /// Height of the collapsed summary line (issue #468's E2E asserts that an
 /// expanded row grows past it).
@@ -296,7 +297,7 @@ fn render_detail(i: usize, entry: &OpLogEntry) -> gpui::AnyElement {
 /// CLI (ADR-0149). An agent's write stands out from a person's at a glance.
 fn actor_badge(i: usize, actor: Actor) -> gpui::AnyElement {
     let (label, color) = match actor {
-        Actor::Human => (i18n::oplog_panel::actor_human(), theme().text_muted),
+        Actor::Human => (Msg::OplogPanel(P::ActorHuman).t(), theme().text_muted),
         Actor::Mcp => ("MCP", theme().color_warning),
         Actor::Cli => ("CLI", theme().color_branch),
     };
@@ -367,7 +368,7 @@ fn render_reflog(i: usize, reflog: Option<&oplog_panel::ReflogDetail>) -> gpui::
     };
     match reflog {
         None | Some(ReflogDetail::Loading) => {
-            section.child(muted(i18n::oplog_panel::reflog_loading().into()))
+            section.child(muted(Msg::OplogPanel(P::ReflogLoading).t().into()))
         }
         Some(ReflogDetail::Unavailable(error)) => {
             section.child(muted(i18n::oplog_panel::reflog_unavailable(error)))
@@ -380,7 +381,7 @@ fn render_reflog(i: usize, reflog: Option<&oplog_panel::ReflogDetail>) -> gpui::
             let section = section.child(muted(heading));
             if lines.is_empty() {
                 return section
-                    .child(muted(i18n::oplog_panel::reflog_none().into()))
+                    .child(muted(Msg::OplogPanel(P::ReflogNone).t().into()))
                     .into_any_element();
             }
             section.children(lines.iter().enumerate().map(|(n, (line, attribution))| {
@@ -403,7 +404,7 @@ fn render_reflog(i: usize, reflog: Option<&oplog_panel::ReflogDetail>) -> gpui::
                             div()
                                 .flex_shrink_0()
                                 .text_color(rgb(theme().color_warning))
-                                .child(i18n::oplog_panel::reflog_ambiguous()),
+                                .child(Msg::OplogPanel(P::ReflogAmbiguous).t()),
                         )
                     })
                     .child(super::e2e::measure_inside(format!(
@@ -421,7 +422,7 @@ fn render_reflog(i: usize, reflog: Option<&oplog_panel::ReflogDetail>) -> gpui::
 fn render_ref_moves(i: usize, moves: &[kagi_domain::ref_moves::RefMove]) -> gpui::AnyElement {
     let short = |oid: &Option<String>| match oid {
         Some(oid) => oid.get(..8).unwrap_or(oid).to_string(),
-        None => i18n::oplog_panel::ref_absent().to_string(),
+        None => Msg::OplogPanel(P::RefAbsent).t().to_string(),
     };
     let section = div()
         .id(("oplog-row-refmoves", i))
@@ -437,7 +438,7 @@ fn render_ref_moves(i: usize, moves: &[kagi_domain::ref_moves::RefMove]) -> gpui
         .child(
             div()
                 .text_color(rgb(theme().color_success))
-                .child(i18n::oplog_panel::recorded_heading()),
+                .child(Msg::OplogPanel(P::RecordedHeading).t()),
         )
         .child(super::e2e::measure_inside(format!("oplog-recorded-{i}")));
     if moves.is_empty() {
@@ -445,7 +446,7 @@ fn render_ref_moves(i: usize, moves: &[kagi_domain::ref_moves::RefMove]) -> gpui
             .child(
                 div()
                     .text_color(rgb(theme().text_muted))
-                    .child(i18n::oplog_panel::recorded_none()),
+                    .child(Msg::OplogPanel(P::RecordedNone).t()),
             )
             .into_any_element();
     }
@@ -538,12 +539,12 @@ fn render_restore_actions(
                 .gap_2()
                 .child(button(
                     "revert",
-                    i18n::oplog_panel::revert_button(),
+                    Msg::OplogPanel(P::RevertButton).t(),
                     kagi_git::Operation::OpRevert { entry_id },
                 ))
                 .child(button(
                     "restore",
-                    i18n::oplog_panel::restore_button(),
+                    Msg::OplogPanel(P::RestoreButton).t(),
                     kagi_git::Operation::RestoreToPoint { entry_id },
                 )),
         )
@@ -552,7 +553,7 @@ fn render_restore_actions(
                 div()
                     .text_xs()
                     .text_color(rgb(theme().text_muted))
-                    .child(i18n::oplog_panel::restore_unavailable()),
+                    .child(Msg::OplogPanel(P::RestoreUnavailable).t()),
             )
         })
         .into_any_element()

@@ -1552,6 +1552,10 @@ mod macos {
                 "oplog_restore_card",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_card),
             ),
+            (
+                "oplog_restore_across_merge",
+                Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_across_merge),
+            ),
             ("create_snapshot", Box::new(scenario_create_snapshot)),
             ("theme_switch", Box::new(scenario_theme_switch)),
             ("agent_provenance", Box::new(scenario_agent_provenance)),

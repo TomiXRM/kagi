@@ -543,3 +543,96 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS oplog_restore_card: unrecorded row disabled; card lists reverse actions, what stays and the graph after (main's target row, 1 commit off every branch = git's count); two confirms restore; the revert card says its preview is unavailable; the restore is reverted from its own row");
 }
+
+/// #884: a merge resolved in Kagi no longer stops a restore. The merge, the
+/// conflict save (production `run_recorded_conflict`) and the merge commit
+/// are all recorded, so restoring to the point before the merge plans
+/// without blockers and puts main back.
+pub fn scenario_oplog_restore_across_merge(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    git(&repo, &["checkout", "-qb", "side"]);
+    std::fs::write(repo.join("README.md"), "# fixture\nside\n").unwrap();
+    git(&repo, &["commit", "-qam", "side"]);
+    git(&repo, &["checkout", "-q", "main"]);
+    std::fs::write(repo.join("README.md"), "# fixture\nmain\n").unwrap();
+    git(&repo, &["commit", "-qam", "main"]);
+    let before_merge = git_output(&repo, &["rev-parse", "main"]);
+
+    let mut backend = Backend::open(&repo).unwrap();
+    run(
+        &mut backend,
+        Actor::Human,
+        Operation::CreateBranch {
+            name: "mark".into(),
+            at: CommitId(before_merge.clone()),
+        },
+    );
+    run(
+        &mut backend,
+        Actor::Human,
+        Operation::MergeIntoConflict {
+            target: "side".into(),
+        },
+    );
+    let snapshot = backend
+        .conflict_snapshot()
+        .unwrap()
+        .expect("merge in conflict");
+    let mut buffer = backend.resolution_buffer_from_repo().unwrap();
+    buffer
+        .apply_choice(Path::new("README.md"), kagi_git::ResolutionChoice::Current)
+        .unwrap();
+    let request = Backend::conflict_save_request(
+        snapshot.observation.revision,
+        &buffer,
+        Path::new("README.md"),
+        snapshot.observation.kind,
+        "",
+    )
+    .unwrap();
+    let plan = Backend::plan_recorded_conflict(&repo, request).unwrap();
+    Backend::run_recorded_conflict(
+        &plan,
+        kagi_git::backend::ExecutionPolicy::human(false),
+        None,
+    );
+    run(
+        &mut backend,
+        Actor::Human,
+        Operation::MergeCommit {
+            message: "merge side".into(),
+        },
+    );
+    assert_ne!(git_output(&repo, &["rev-parse", "main"]), before_merge);
+
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| {
+        app.bottom_panel_open = true;
+        app.bottom_tab = kagi::ui::BottomTab::OperationLog;
+        app.bottom_panel_height = 600.;
+        cx.notify();
+    });
+    paint(cx, window);
+    // Newest first: merge-commit, conflict save, merge, create-branch.
+    let rows = rows_of(cx, &app, &repo);
+    assert_eq!(rows.len(), 4, "{rows:?}");
+    let mark = rows[3];
+    click_row(cx, &app, window, mark);
+    click_probe(cx, window, &format!("oplog-restore-{mark}-enabled"));
+    let card = restore_card(cx, &app);
+    assert!(
+        card.plan.blockers.is_empty(),
+        "every entry across the merge is recorded: {:?}",
+        card.plan.blockers
+    );
+    confirm_twice(cx, &app, window);
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "main"]),
+        before_merge,
+        "main is back before the merge"
+    );
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS oplog_restore_across_merge: merge → conflict save → merge commit are recorded; restoring to before the merge has no blockers and puts main back");
+}

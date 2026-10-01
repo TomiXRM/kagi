@@ -297,7 +297,12 @@ impl Backend {
     /// The refs `execute` moved (#334 slice 2a): HEAD of this worktree and
     /// every branch, read before and after, whatever the outcome. `None` when
     /// either read failed — no record beats a wrong one.
-    pub(super) fn observe_ref_moves<T>(
+    ///
+    /// #884: the one recording point for every write whose receipt is not
+    /// built by `Backend::run` — the conflict executor here and the UI's
+    /// continue / skip — so every oplog entry's `ref_moves` comes from the
+    /// same two snapshots.
+    pub fn observe_ref_moves<T>(
         &self,
         execute: impl FnOnce(&Self) -> T,
     ) -> (T, Option<Vec<kagi_domain::ref_moves::RefMove>>) {

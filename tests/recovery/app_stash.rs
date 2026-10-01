@@ -425,6 +425,11 @@ pub fn scenario_stash_conflict_close_reopen(cx: &mut VisualTestAppContext) {
         });
     })
     .unwrap();
+    // #884: the UI continue records the refs it moved (a stash continue only
+    // stages, so: recorded, nothing moved) — not "no record".
+    let continued = kagi_git::oplog::read_oplog_tail(1).pop().unwrap();
+    assert!(continued.op.ends_with("-continue"), "{}", continued.op);
+    assert_eq!(continued.ref_moves, Some(Vec::new()));
     cx.run_until_parked();
     app.update(cx, |app, cx| {
         assert!(app.open_repository(repo.clone(), cx));

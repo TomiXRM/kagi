@@ -72,7 +72,12 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - `None` の entry は §3 の時刻窓を「推定」として表示する。見出しの色と文言で区別する。
 - **既知の限界**
   - 前後の snapshot の間に、外部の process が動かした ref も差分に入る(op の実行中だけの窓。時刻窓よりはるかに狭い)。
-  - 記録しない経路: conflict の continue / skip / abort(`backend/conflict_ops.rs`)、GitHub 側の書き込み(local の ref を動かさない)、UI が直接記録する経路(fetch、worktree の lock など)。これらは `None` のまま推定で表示する。conflict 経路の記録は restore に必要になった時点で追加する。
+  - 記録しない経路: GitHub 側の書き込み(local の ref を動かさない)、UI が直接記録する経路(fetch、worktree の lock など)。これらは `None` のまま推定で表示する(整理は #885)。
+  - **conflict 経路は #884 で記録に加えた**。記録点は `Backend::observe_ref_moves` の 1 か所で、`Backend::run` と同じ前後 snapshot を使う。
+    - save / dir-file / abort: `run_recorded_conflict` が executor をこれで包み、`record_receipt` に渡す。
+    - continue / skip: UI が実行するので、UI がこれで包み、`record_conflict_persist` で記録する。
+    - 実行前の拒否(`record_conflict_refusal` / `record_conflict_save_refusal`)・実行前に捨てた job(`conflict_abandoned`)・repository を開けなかった場合は、何も動いていないことが構造上確かなので `Some(空)` にする。
+    - これで、Kagi の中で解いた merge(merge → save → merge-commit)や cherry-pick の時点を越えて restore できる。rebase は HEAD が detached を経由するので、引き続き HeadMoved(#886)。
 
 ### 5. slice 2b: op revert / restore to point(2b-1 = backend、2b-2 = UI)
 
@@ -160,3 +165,12 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - domain unit(`restore_preview`): branch の削除はその branch 固有の commit だけを消す、tag / remote が保持する commit は残る、移動した branch は戻し先の行に付く、戻し先が範囲外なら NotLoaded、窓 = 変化 ± 4 行で上限 40。
   - Tier A `oplog_restore_card` の拡張: 記録済みの commit を main に 1 つ足す。keep 時点への restore の card で、プレビュー行数 ≤ 40、main の移動先の行が戻し先 commit、消える行 = 1(その commit は描かれない)。restore 後に `git rev-list --count --branches` の減少数と一致する。描画 probe(`restore-preview` / `-removed-1` / `-moved-main-<sha>`)。revert card は、main の戻し先が reload 後の rows に無いので NotLoaded になり、「プレビューできません」が描画される。
 - slice 2c の変異確認: restores を after に適用しない → domain 4 件と Tier A、card の extra を描かない → Tier A、NotLoaded の判定を外す → domain と Tier A が落ちる。
+- #884 のテスト
+  - kagi-git integration(`oplog_conflict_ref_moves_test`)
+    - conflict save は `Some(空)`、merge commit は HEAD と main の移動を記録し、merge 前の時点への restore が blocker なしで通る。
+    - cherry-pick の continue は HEAD と branch を記録する。
+    - rebase の abort は HEAD が side へ戻る移動(detached → symbolic)を記録する。
+    - rebase 最後の skip は side が main の先端へ進む移動を記録する。
+    - 実行前の拒否は `Some(空)`。
+  - Tier A: 新しい `oplog_restore_across_merge`(merge → 実 `run_recorded_conflict` の save → merge commit の後、panel の実ボタンで開いた restore card に blocker が無く、confirm で main が merge 前に戻る)。`stash_conflict_close_reopen` に、UI の continue の記録が `Some(空)` であることを追加した。
+- #884 の変異確認: `run_recorded_conflict` が `None` を記録 → integration 2 件と Tier A(blocker `NotRecorded { op: "conflict-save:merge" }`、つまり #884 以前の状態)、`nothing_moved` を外す → 拒否の integration、UI が moves を捨てる → Tier A(stash continue)が落ちる。

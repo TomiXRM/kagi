@@ -144,6 +144,7 @@ fn shown(
 }
 
 pub fn scenario(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let (fixture, repo) = fixture();
     let root = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);

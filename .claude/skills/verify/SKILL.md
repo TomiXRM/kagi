@@ -104,6 +104,28 @@ When a scenario panics, the runner writes failure evidence (#516) and prints
 Read these before re-running a decayed scenario. The next run of that scenario
 deletes the directory first, so whatever is there belongs to the latest run.
 
+After every scenario that passes, the runner compares shared state with what it
+was before (#516 slice 3, `tests/support/gui_isolation.rs`). A difference fails
+the scenario like an assertion, with the evidence above and a message naming each
+resource and what it changed from and to.
+
+What is compared:
+
+- `settings.json`: every key and value, except `session_repos`,
+  `session_active` and `recent_repos`.
+- `worktree_ports.json`: byte for byte.
+- `operations.jsonl`: the bytes already there must stay the same, and every
+  appended entry's repo must be under the run's temporary directory or remote.
+- Direct entries of the run's own `TMPDIR`: none may be added.
+
+Restoring state:
+
+- `set_lang`, `set_theme`, `set_zoom`, `set_diff_split` and
+  `set_terminal_auto_lock` save their key as well. A scenario that uses them
+  holds `gui_isolation::SavedKeys::keep(&[...])`, which puts the saved keys back
+  when it is dropped.
+- A scenario that starts a terminal holds `gui_isolation::PortStore::keep()`.
+
 For history bisection, strip repository-location variables exported by
 `git bisect run` before launching a Git fixture. Otherwise a fixture's `git init`
 can address the bisected repository instead of its temporary directory (#764).

@@ -242,6 +242,33 @@ fn assert_unknown(fixture: &Fixture, create: bool, body: &str) {
     );
 }
 
+/// #904 review: `gh` splits each `--label` value as CSV, so a label holding a
+/// comma or a quote travels as one quoted field; a plain one is unchanged.
+#[test]
+fn label_values_survive_ghs_csv_splitting() {
+    let fields = IssueCreateFields {
+        labels: vec![
+            "bug".into(),
+            "needs: triage, docs".into(),
+            "say \"hi\"".into(),
+        ],
+        assignees: vec!["octocat".into()],
+    };
+    assert_eq!(
+        &issue_create_args(REPO, TITLE, &fields)[8..],
+        [
+            "--label",
+            "bug",
+            "--label",
+            "\"needs: triage, docs\"",
+            "--label",
+            "\"say \"\"hi\"\"\"",
+            "--assignee",
+            "octocat",
+        ]
+    );
+}
+
 #[test]
 fn issue_arguments_pin_the_repository_and_use_stdin() {
     assert_eq!(

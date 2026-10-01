@@ -6,7 +6,7 @@ use kagi::ui::{e2e, i18n, KagiApp};
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
 
 use crate::macos::{build_fixture, git, mount, repo_fingerprint, unmount};
-use crate::recovery_operations::press_enter;
+use crate::recovery_operations::{press_enter, press_key};
 
 #[path = "../support/git_fixture.rs"]
 mod git_fixture;
@@ -471,4 +471,115 @@ pub fn scenario_terminal_auto_lock_race(cx: &mut VisualTestAppContext) {
     git(&main, &["worktree", "unlock", linked.to_str().unwrap()]);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS terminal_auto_lock_race: a replaced lock is put back and refused; a leftover blocks the release and shows on the manual card");
+}
+
+/// #851: a lock placed outside Kagi after launch reaches the sidebar on the
+/// next refresh — the row's 🔐 and the right-click menu's lock state, from the
+/// tab of the linked worktree itself (the reported case) and of main.
+pub fn scenario_external_lock_reload(cx: &mut VisualTestAppContext) {
+    use kagi::ui::sidebar::SidebarRow;
+
+    let fixture = build_fixture();
+    let main = fixture.path().canonicalize().unwrap();
+    let linked_root = tempfile::tempdir().unwrap();
+    let linked = linked_root.path().join("wt-feat");
+    git(
+        &main,
+        &["worktree", "add", "-b", "wt-feat", linked.to_str().unwrap()],
+    );
+    let linked = linked.canonicalize().unwrap();
+
+    let row_locked = |cx: &mut VisualTestAppContext, app: &Entity<KagiApp>| {
+        cx.read(|cx| {
+            app.read(cx).sidebar.rows.iter().find_map(|row| match row {
+                SidebarRow::Worktree { name, locked, .. } if name == "wt-feat" => Some(*locked),
+                _ => None,
+            })
+        })
+    };
+    let view_locked = |cx: &mut VisualTestAppContext, app: &Entity<KagiApp>| {
+        cx.read(|cx| {
+            app.read(cx)
+                .view()
+                .worktrees
+                .iter()
+                .find(|w| w.name == "wt-feat")
+                .map(|w| w.locked)
+        })
+    };
+    let menu_locked =
+        |cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle| {
+            let id = "sidebar-worktree-wt-feat";
+            e2e::clear_control_bounds(window.window_id(), id);
+            paint(cx, window);
+            let bounds = e2e::control_bounds(window.window_id(), id).expect("sidebar worktree row");
+            cx.simulate_mouse_down(
+                window,
+                bounds.center(),
+                gpui::MouseButton::Right,
+                gpui::Modifiers::none(),
+            );
+            cx.run_until_parked();
+            app.update(cx, |app, cx| {
+                let menu = app.worktree_menu.take().expect("worktree menu");
+                cx.notify();
+                assert_eq!(menu.name, "wt-feat");
+                menu.locked
+            })
+        };
+
+    for open_at in [&linked, &main] {
+        let (app, window) = mount(cx, open_at);
+        paint(cx, window);
+        assert_eq!(
+            view_locked(cx, &app),
+            Some(false),
+            "fixture starts unlocked"
+        );
+        assert_eq!(row_locked(cx, &app), Some(false));
+        assert!(!menu_locked(cx, &app, window));
+
+        // Outside Kagi, after launch — the watcher does not see admin files.
+        git(
+            &main,
+            &[
+                "worktree",
+                "lock",
+                "--reason",
+                "manual: keep",
+                linked.to_str().unwrap(),
+            ],
+        );
+        assert_eq!(lock_reason(&main).as_deref(), Some("manual: keep"));
+
+        // The real Cmd+R: `file.refresh` = manual reload + quiet fetch.
+        press_key(cx, &app, window, "cmd-r");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while view_locked(cx, &app) != Some(true) && std::time::Instant::now() < deadline {
+            cx.run_until_parked();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(
+            view_locked(cx, &app),
+            Some(true),
+            "the refreshed read model carries the external lock (opened at {})",
+            open_at.display()
+        );
+        paint(cx, window);
+        assert_eq!(
+            row_locked(cx, &app),
+            Some(true),
+            "the sidebar row shows 🔐 after the refresh (opened at {})",
+            open_at.display()
+        );
+        assert!(
+            menu_locked(cx, &app, window),
+            "the row's menu offers Unlock after the refresh (opened at {})",
+            open_at.display()
+        );
+
+        git(&main, &["worktree", "unlock", linked.to_str().unwrap()]);
+        unmount(cx, app, window);
+    }
+    eprintln!("[gui-e2e] PASS external_lock_reload: an external lock reaches the sidebar row and menu on refresh, from the linked and the main tab");
 }

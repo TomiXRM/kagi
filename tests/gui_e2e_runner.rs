@@ -784,6 +784,10 @@ mod macos {
                 Box::new(crate::recovery_worktree_lock_reason::scenario_terminal_auto_lock_race),
             ),
             (
+                "external_lock_reload",
+                Box::new(crate::recovery_worktree_lock_reason::scenario_external_lock_reload),
+            ),
+            (
                 "preflight_presentation",
                 Box::new(crate::recovery_operations::scenario_preflight_presentation),
             ),
@@ -794,6 +798,10 @@ mod macos {
             (
                 "modal_no_fallthrough",
                 Box::new(crate::recovery_operations::scenario_modal_no_fallthrough),
+            ),
+            (
+                "replay_onto_armed",
+                Box::new(crate::recovery_operations::scenario_replay_onto_armed),
             ),
             (
                 "remote_browse_modal_routing",

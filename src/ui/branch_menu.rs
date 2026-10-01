@@ -52,6 +52,9 @@ pub enum BranchAction {
     CreatePr,
     MergeIntoCurrent,
     RebaseCurrentOnto,
+    /// #344: move the clicked branch onto the current one by ref update
+    /// only (`git replay`), without checking it out.
+    ReplayOnto,
     CreateBranchFromHere,
     CreateWorktreeFromHere,
     CreateTagHere,
@@ -112,6 +115,10 @@ pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<Branc
     let rebase_label = match &ctx.current_branch {
         Some(current) => format!("Rebase {} onto {}", current, ctx.name),
         None => format!("Rebase current branch onto {}", ctx.name),
+    };
+    let replay_label = match &ctx.current_branch {
+        Some(current) => format!("Replay {} onto {}…", ctx.name, current),
+        None => format!("Replay {} onto current branch…", ctx.name),
     };
 
     let mut groups = vec![
@@ -207,6 +214,12 @@ pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<Branc
                     rebase_label,
                     rebase_state(ctx),
                     false,
+                ),
+                item(
+                    BranchAction::ReplayOnto,
+                    replay_label,
+                    replay_state(ctx),
+                    true,
                 ),
             ],
         },
@@ -544,6 +557,26 @@ fn rebase_state(ctx: &BranchMenuContext) -> ItemState {
         disabled(Msg::BcmConflictMode.t())
     } else if ctx.is_current {
         disabled(Msg::BcmCurrentBranch.t())
+    } else {
+        ItemState::Enabled
+    }
+}
+
+/// Replay rewrites the clicked branch (not HEAD) without a checkout, so the
+/// current worktree's state is irrelevant except for busy/conflict latches;
+/// the plan itself reports a dirty other-worktree, merges and conflicts as
+/// blockers (`plan_replay_onto`).
+fn replay_state(ctx: &BranchMenuContext) -> ItemState {
+    if ctx.busy {
+        disabled(Msg::BcmBusy.t())
+    } else if ctx.detached_head {
+        disabled(Msg::BcmDetachedHead.t())
+    } else if matches!(ctx.conflict_mode, BranchConflictMode::Conflicted) {
+        disabled(Msg::BcmConflictMode.t())
+    } else if ctx.is_current {
+        disabled(Msg::BcmCurrentBranch.t())
+    } else if !matches!(ctx.kind, BranchKind::Local) {
+        disabled(Msg::BcmLocalOnly.t())
     } else {
         ItemState::Enabled
     }
@@ -977,5 +1010,40 @@ mod tests {
 
         assert_disabled_contains(&groups, BranchAction::MergeIntoCurrent, "conflicts");
         assert_disabled_contains(&groups, BranchAction::RebaseCurrentOnto, "conflicts");
+        assert_disabled_contains(&groups, BranchAction::ReplayOnto, "conflicts");
+    }
+
+    /// #344: replay moves the *clicked* branch onto the current one — the
+    /// label reads in that direction, the item is dangerous (history
+    /// rewrite), and only a non-current local branch can be replayed.
+    #[test]
+    fn replay_item_direction_and_gating() {
+        let groups = branch_context_menu_items(&ctx());
+        let item = item_for(&groups, BranchAction::ReplayOnto);
+        assert_eq!(item.label.as_ref(), "Replay feature/x onto main…");
+        assert!(item.dangerous);
+        assert_enabled(&groups, BranchAction::ReplayOnto);
+
+        let mut c = ctx();
+        c.is_current = true;
+        assert_disabled_contains(
+            &branch_context_menu_items(&c),
+            BranchAction::ReplayOnto,
+            "current branch",
+        );
+        let mut c = ctx();
+        c.kind = BranchKind::Remote;
+        assert_disabled_contains(
+            &branch_context_menu_items(&c),
+            BranchAction::ReplayOnto,
+            "local branches only",
+        );
+        let mut c = ctx();
+        c.detached_head = true;
+        assert_disabled_contains(
+            &branch_context_menu_items(&c),
+            BranchAction::ReplayOnto,
+            "detached",
+        );
     }
 }

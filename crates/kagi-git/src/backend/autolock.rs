@@ -6,7 +6,7 @@
 use super::Backend;
 use crate::{ops, GitError, OperationPlan};
 use kagi_domain::remove::WorktreeId;
-use kagi_domain::worktree_autolock::AutoUnlockTarget;
+use kagi_domain::worktree_autolock::{AutoUnlockRace, AutoUnlockTarget};
 
 impl Backend {
     /// The registry name of this repository when it is a **linked** worktree
@@ -43,6 +43,21 @@ impl Backend {
         target: &AutoUnlockTarget,
     ) -> Result<(), GitError> {
         self.require_trust()?;
-        ops::execute_auto_unlock_worktree(&self.repo, plan, name, target)
+        ops::execute_auto_unlock_worktree(&self.repo, plan, name, target, None)
+    }
+
+    /// [`Self::execute_auto_unlock_worktree`] with another process's lock
+    /// change injected at a fixed point of the compare-and-unlock (#836) —
+    /// the deterministic reproduction of the race. Tests only.
+    #[doc(hidden)]
+    pub fn execute_auto_unlock_worktree_racing(
+        &self,
+        plan: &OperationPlan,
+        name: &str,
+        target: &AutoUnlockTarget,
+        race: AutoUnlockRace,
+    ) -> Result<(), GitError> {
+        self.require_trust()?;
+        ops::execute_auto_unlock_worktree(&self.repo, plan, name, target, Some(&race))
     }
 }

@@ -72,6 +72,12 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Internal
 
+- GUI E2E runner が、各 scenario の前後で共有状態を比較するようにしました。
+  - 比較するのは `settings.json`(実行時の session 系 key を除く)、port store、oplog(既存行の不変と追記先)、runner 専用 `TMPDIR` 直下の entry です。
+  - 差分があれば、どの資源が何から何に変わったかを列挙して、その scenario を失敗として扱い、証跡を残します。
+  - 全 scenario を分割実行して見つかった違反は直しました。言語・diff_split・ui_zoom・theme・terminal_auto_lock の保存 key の後始末(19 scenario)、port store の後始末(6 scenario)、共有 oplog の件数を repo で絞っていなかった `push_failure_keeps_modal` です。
+
+  製品の動作は変更していません。(#516 slice 3)
 - GUI E2E runner で scenario が失敗したとき、`target/gui-e2e/<scenario>/` に失敗証跡を残すようにしました。中身は panic の内容、直近 200 行の `[kagi]` ログ、mount した fixture repository の `git status --short` と `git log --oneline -5`、window の PNG(撮れない場合は理由を書いた `window.txt`)です。stderr には `[gui-e2e] FAIL <scenario>: evidence <dir>` を 1 行出します。window は前面にも画面内にも出しません。終了コードと「最初の失敗で止まる」挙動は変わりません。製品の動作は変更していません。(#516 slice 1)
 - GUI E2E の scenario 間の隔離を監査し(#516 slice 2)、違反を直しました。
   - fixture の外に作っていた worktree / bare repo(3 scenario)を TempDir の中に移しました。

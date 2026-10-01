@@ -52,6 +52,10 @@ fn main() {
 mod gui_evidence;
 
 #[cfg(target_os = "macos")]
+#[path = "support/gui_isolation.rs"]
+mod gui_isolation;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/operations.rs"]
 mod recovery_operations;
 
@@ -746,11 +750,23 @@ mod macos {
         }
         let filters = scenario_filters();
 
+        // #516: one directory owns everything the run writes. `TMPDIR` points
+        // into it for the whole run (`tempfile`, git and shells use it), so
+        // whatever a scenario leaves behind there is the scenario's own — not
+        // another process's on a shared machine.
+        let run_root = tempfile::Builder::new()
+            .prefix("kagi-gui-e2e-")
+            .tempdir()
+            .expect("runner root");
+        let run_tmp = run_root.path().join("tmp");
+        std::fs::create_dir(&run_tmp).expect("runner TMPDIR");
+        std::env::set_var("TMPDIR", &run_tmp);
         // Redirect settings.json to a throwaway dir so scenarios that touch
         // settings (graph_copy_target, theme via set_active) never read or clobber
         // the developer's real `~/.kagi/settings.json` (ADR-0091 flat-string file).
-        let log_dir = tempfile::tempdir().expect("settings tempdir");
-        std::env::set_var("KAGI_LOG_DIR", log_dir.path());
+        let log_dir = run_root.path().join("log");
+        std::fs::create_dir(&log_dir).expect("settings dir");
+        std::env::set_var("KAGI_LOG_DIR", &log_dir);
         // #516: a failing scenario leaves evidence in target/gui-e2e/<name>/.
         crate::gui_evidence::install();
 
@@ -1600,8 +1616,13 @@ mod macos {
             {
                 set_current_scenario(name);
                 crate::gui_evidence::begin(name);
-                let run =
-                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| scenario(&mut cx)));
+                // #516 slice 3: shared state is compared inside the same
+                // boundary, so a leak fails like an assertion, with evidence.
+                let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let before = crate::gui_isolation::snapshot();
+                    scenario(&mut cx);
+                    crate::gui_isolation::check(name, &before);
+                }));
                 match run {
                     Ok(()) => crate::gui_evidence::passed(),
                     Err(panic) => {

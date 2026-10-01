@@ -109,6 +109,7 @@ fn switch(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, tab: usize) {
 }
 
 pub fn scenario_worktree_remove_live_shell(cx: &mut VisualTestAppContext) {
+    let _ports = crate::gui_isolation::PortStore::keep();
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let side_dir = tempfile::tempdir().unwrap();

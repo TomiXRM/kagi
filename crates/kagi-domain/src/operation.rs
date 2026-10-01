@@ -363,16 +363,28 @@ pub enum OperationOutcome {
         tip: String,
         reference: String,
     },
-    /// #344: the refs `git replay` moved (as `<ref> <old7>→<new7>`), with the
-    /// branch's pre-replay tip retained by a recovery ref.
+    /// #344: `branch` moved `from`→`to`; `reference` retains its old tip and
+    /// `backups` lists every ref the replay moved (the branch included) with
+    /// its own recovery ref.
     ReplayOnto {
         branch: String,
         from: String,
         to: String,
         reference: String,
-        updated: usize,
+        backups: Vec<ReplayBackup>,
     },
     Unit,
+}
+
+/// One ref a replay moved and where its pre-replay tip is retained (#344).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplayBackup {
+    /// Full ref name, e.g. `refs/heads/feat-child`.
+    pub reference: String,
+    /// Pre-replay object id.
+    pub old: String,
+    /// `refs/kagi/backups/<op>/<i>` holding `old`.
+    pub backup: String,
 }
 
 /// Observed metadata side effects of branch deletion, even if ref commit fails.

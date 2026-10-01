@@ -18,7 +18,7 @@
 use super::*;
 use crate::cli::GitFeatures;
 use kagi_domain::plan_note::{RebaseNote, RebaseRecovery, RebaseTitle};
-use kagi_domain::ref_update::{parse_update_ref_lines, update_ref_transaction, RefUpdate};
+use kagi_domain::ref_update::{parse_update_ref_lines, RefScript, RefVerify};
 
 /// How many moved refs the plan lists before folding the rest.
 const UPDATE_SAMPLE: usize = 5;
@@ -125,6 +125,19 @@ pub fn plan_replay_onto(
         );
     }
     let range = format!("{onto}..{branch}");
+    // Pin `onto` where the user saw it: if it is a ref, the transaction
+    // verifies it (git refuses the whole script if it moved); a bare object
+    // id cannot move.
+    let onto_pin = match repo.resolve_reference_from_short_name(onto) {
+        Ok(r) => match (r.name(), r.resolve().ok().and_then(|d| d.target())) {
+            (Ok(name), Some(oid)) => Some(RefVerify {
+                reference: name.to_string(),
+                expected: oid.to_string(),
+            }),
+            _ => None,
+        },
+        Err(_) => None,
+    };
 
     let mut blockers = Vec::new();
     let mut warnings = Vec::new();
@@ -177,6 +190,19 @@ pub fn plan_replay_onto(
         return finish(warnings, blockers, from, Vec::new());
     }
 
+    // Replay rewrites commits: signatures on the originals do not survive.
+    let signed = run_git(repo_dir, &["log", "--format=%G?", &range])?;
+    let signed_count = signed
+        .stdout
+        .lines()
+        .filter(|l| !matches!(l.trim(), "" | "N"))
+        .count();
+    if signed.status == 0 && signed_count > 0 {
+        warnings.push(PlanNote::Rebase(RebaseNote::ReplayDropsSignatures {
+            count: signed_count,
+        }));
+    }
+
     let before: Vec<(String, String)> = local_branch_tips(repo)?;
     let out = run_git(repo_dir, &replay_args(features, onto, &range))?;
     // Replay must not have moved anything (ADR-0211 §2 double-check).
@@ -203,8 +229,10 @@ pub fn plan_replay_onto(
             )));
         }
     }
-    let updates = parse_update_ref_lines(&out.stdout)
+    let mut script = parse_update_ref_lines(&out.stdout)
         .map_err(|e| GitError::Other(format!("unexpected git replay output: {e}")))?;
+    script.verifies.extend(onto_pin);
+    let updates = &script.updates;
     if updates.is_empty() {
         blockers.push(PlanNote::Rebase(RebaseNote::ReplayNothingToDo {
             branch: branch.to_string(),
@@ -237,13 +265,9 @@ pub fn plan_replay_onto(
         sample,
         more: updates.len().saturating_sub(UPDATE_SAMPLE),
     }));
-    // The printed lines travel in the plan verbatim: `preview_commits` is the
-    // only free-form list `OperationPlan` has, and execute re-parses it.
-    let preview_commits = updates
-        .iter()
-        .map(|u| format!("update {} {} {}", u.reference, u.new, u.old))
-        .collect();
-    finish(warnings, Vec::new(), from, preview_commits)
+    // The script travels in the plan verbatim: `preview_commits` is the only
+    // free-form list `OperationPlan` has, and execute re-parses it.
+    finish(warnings, Vec::new(), from, script.lines())
 }
 
 /// `(ref name, oid)` of every local branch, for the print-only check.
@@ -262,34 +286,49 @@ fn local_branch_tips(repo: &Repository) -> Result<Vec<(String, String)>, GitErro
     Ok(tips)
 }
 
-/// The ref updates a plan carries (what `plan_replay_onto` printed).
-pub fn replay_plan_updates(plan: &OperationPlan) -> Result<Vec<RefUpdate>, GitError> {
+/// The ref script a plan carries (what `plan_replay_onto` printed, plus the
+/// `onto` pin).
+pub fn replay_plan_script(plan: &OperationPlan) -> Result<RefScript, GitError> {
     parse_update_ref_lines(&plan.preview_commits.join("\n"))
         .map_err(|e| GitError::Other(format!("replay plan is not a ref update list: {e}")))
 }
 
-/// Preflight: HEAD unchanged, every ref still at the old value the plan
-/// printed, the range still merge-free, and the branch's worktree still clean.
+/// Preflight: HEAD unchanged, `onto` and every moved ref still where the
+/// plan saw them, the range still merge-free, and the branch's worktree
+/// still clean.
 pub fn preflight_replay_onto(
     repo: &Repository,
     repo_dir: &Path,
     plan: &OperationPlan,
     branch: &str,
     onto: &str,
-) -> Result<Vec<RefUpdate>, GitError> {
+) -> Result<RefScript, GitError> {
     if !plan.blockers.is_empty() {
         return Err(GitError::Other(
             "replay-onto refused: plan has blockers".to_string(),
         ));
     }
     preflight_check(repo, plan)?;
-    let updates = replay_plan_updates(plan)?;
-    if updates.is_empty() {
+    let script = replay_plan_script(plan)?;
+    if script.updates.is_empty() {
         return Err(GitError::Other(
             "replay-onto refused: the plan carries no ref updates".to_string(),
         ));
     }
-    for u in &updates {
+    for v in &script.verifies {
+        let now = repo
+            .refname_to_id(&v.reference)
+            .map(|o| o.to_string())
+            .map_err(|e| GitError::Other(format!("{}: {}", v.reference, e.message())))?;
+        if now != v.expected {
+            return Err(GitError::Other(format!(
+                "'{onto}' moved after planning ({} → {}); please re-plan",
+                short(&v.expected),
+                short(&now)
+            )));
+        }
+    }
+    for u in &script.updates {
         let now = repo
             .refname_to_id(&u.reference)
             .map(|o| o.to_string())
@@ -319,12 +358,13 @@ pub fn preflight_replay_onto(
             )));
         }
     }
-    Ok(updates)
+    Ok(script)
 }
 
-/// Execute: preflight → retain the branch's old tip under
-/// `refs/kagi/backups/` → `git update-ref --stdin` (one transaction, old
-/// values checked by git) → verify every ref is at its new value.
+/// Execute: preflight → retain **every** moved ref's old tip under
+/// `refs/kagi/backups/` → `git update-ref --stdin` (one transaction; git
+/// re-checks `onto` and every old value) → verify every ref is at its new
+/// value.
 pub(crate) fn execute_replay_onto(
     repo: &Repository,
     repo_dir: &Path,
@@ -333,18 +373,35 @@ pub(crate) fn execute_replay_onto(
     onto: &str,
     backup_refs: &mut Vec<String>,
 ) -> Result<crate::OperationOutcome, GitError> {
-    let updates = preflight_replay_onto(repo, repo_dir, plan, branch, onto)?;
+    let script = preflight_replay_onto(repo, repo_dir, plan, branch, onto)?;
+    let updates = &script.updates;
     let branch_ref = format!("refs/heads/{branch}");
     let branch_update = updates
         .iter()
         .find(|u| u.reference == branch_ref)
         .ok_or_else(|| GitError::Other(format!("plan carries no update for {branch_ref}")))?;
-    let from = git2::Oid::from_str(&branch_update.old)
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
-    let reference = super::backup::retain_object(repo, &super::backup::operation_id(), 0, from)?;
-    backup_refs.push(reference.clone());
+    // One backup per moved ref, in script order; `backups[i]` belongs to
+    // `updates[i]` so a multi-branch replay is fully recoverable.
+    let operation_id = super::backup::operation_id();
+    let mut backups = Vec::with_capacity(updates.len());
+    for (index, u) in updates.iter().enumerate() {
+        let old =
+            git2::Oid::from_str(&u.old).map_err(|e| GitError::Other(e.message().to_string()))?;
+        let reference = super::backup::retain_object(repo, &operation_id, index, old)?;
+        backup_refs.push(reference.clone());
+        backups.push(kagi_domain::operation::ReplayBackup {
+            reference: u.reference.clone(),
+            old: u.old.clone(),
+            backup: reference,
+        });
+    }
+    let reference = backups
+        .iter()
+        .find(|b| b.reference == branch_ref)
+        .map(|b| b.backup.clone())
+        .unwrap_or_default();
 
-    let script = update_ref_transaction(&updates);
+    let script = script.transaction();
     let out = crate::cli::run_git_with_options(
         repo_dir,
         &["update-ref", "--stdin"],
@@ -360,7 +417,7 @@ pub(crate) fn execute_replay_onto(
         )));
     }
     // Verify.
-    for u in &updates {
+    for u in updates {
         let now = repo
             .refname_to_id(&u.reference)
             .map(|o| o.to_string())
@@ -379,7 +436,7 @@ pub(crate) fn execute_replay_onto(
         from: branch_update.old.clone(),
         to: branch_update.new.clone(),
         reference,
-        updated: updates.len(),
+        backups,
     })
 }
 

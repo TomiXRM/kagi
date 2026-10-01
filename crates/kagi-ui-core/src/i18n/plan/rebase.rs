@@ -50,6 +50,10 @@ pub fn note_ja(note: &RebaseNote) -> String {
                 count, list
             )
         }
+        RebaseNote::ReplayDropsSignatures { count } => format!(
+            "署名付き commit {} 個が、署名なしで作り直されます。",
+            count
+        ),
         RebaseNote::ReplayWorktreeStale { branch, path } => format!(
             "`{}` は {} で checkout 中です。HEAD は branch に追従しますが、その worktree の index と作業ファイルはこの操作では更新されません。後でそこで `git reset --keep` を実行するか、その worktree から rebase してください。",
             branch, path

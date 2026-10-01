@@ -50,6 +50,9 @@ pub enum RebaseNote {
     /// worktree; its HEAD follows the ref, but its index and working tree are
     /// not updated by this operation (ADR-0211 §1 iii).
     ReplayWorktreeStale { branch: String, path: String },
+    /// warning (`plan_replay_onto`, #356) — `count` commits in the range are
+    /// signed; replay recreates them unsigned.
+    ReplayDropsSignatures { count: usize },
 }
 
 impl RebaseNote {
@@ -96,6 +99,10 @@ impl RebaseNote {
                     count, list
                 )
             }
+            RebaseNote::ReplayDropsSignatures { count } => format!(
+                "{} signed commit(s) will be recreated without their signatures.",
+                count
+            ),
             RebaseNote::ReplayWorktreeStale { branch, path } => format!(
                 "'{}' is checked out in {}. Its HEAD will follow the branch, but that worktree's index and files are not updated by this operation; run `git reset --keep` there afterwards or rebase from that worktree.",
                 branch, path

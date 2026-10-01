@@ -66,6 +66,19 @@ impl Drop for LogDir {
     }
 }
 
+/// `git replay` exists from 2.44; the feature gate hides it below that, so
+/// the suite is a no-op there rather than a failure.
+fn replay_available() -> bool {
+    let ok = kagi_git::cli::GitFeatures::detected().replay_onto;
+    if !ok {
+        eprintln!(
+            "skipping: git replay needs git 2.44+ (found {:?})",
+            kagi_git::cli::git_version()
+        );
+    }
+    ok
+}
+
 fn backend(path: &Path) -> Backend {
     let mut b = Backend::open_with_policy(path, ExecutionPolicy::human(false)).unwrap();
     b.set_auto_snapshot(false);
@@ -89,7 +102,7 @@ fn index_hash(dir: &Path) -> String {
 
 #[test]
 fn replays_a_branch_checked_out_elsewhere_without_touching_any_worktree() {
-    if !test_support::run_isolated() {
+    if !test_support::run_isolated() || !replay_available() {
         return;
     }
     let _guard = ENV_LOCK.lock().unwrap();
@@ -121,12 +134,14 @@ fn replays_a_branch_checked_out_elsewhere_without_touching_any_worktree() {
             .any(|w| matches!(w, PlanNote::Rebase(RebaseNote::ReplayWorktreeStale { .. }))),
         "the checked-out worktree is named"
     );
-    assert_eq!(plan.preview_commits.len(), 1);
-    assert!(plan.preview_commits[0].starts_with("update refs/heads/feat "));
-    assert!(
-        plan.preview_commits[0].ends_with(&feat_before),
-        "old = plan-time tip"
-    );
+    let updates: Vec<&String> = plan
+        .preview_commits
+        .iter()
+        .filter(|l| l.starts_with("update "))
+        .collect();
+    assert_eq!(updates.len(), 1, "{:?}", plan.preview_commits);
+    assert!(updates[0].starts_with("update refs/heads/feat "));
+    assert!(updates[0].ends_with(&feat_before), "old = plan-time tip");
     // Planning wrote nothing.
     assert_eq!(tip(&main, "feat"), feat_before);
     assert_eq!(git_output(&main, &["status", "--porcelain"]), main_status);
@@ -138,14 +153,24 @@ fn replays_a_branch_checked_out_elsewhere_without_touching_any_worktree() {
         from,
         to,
         reference,
-        updated,
+        backups,
     } = outcome
     else {
         panic!("unexpected outcome");
     };
     assert_eq!(
-        (branch.as_str(), from.as_str(), updated),
-        ("feat", feat_before.as_str(), 1)
+        (branch.as_str(), from.as_str()),
+        ("feat", feat_before.as_str())
+    );
+    assert_eq!(backups.len(), 1);
+    assert_eq!(backups[0].reference, "refs/heads/feat");
+    assert_eq!(backups[0].backup, reference);
+    assert!(
+        plan.preview_commits
+            .iter()
+            .any(|l| l.starts_with(&format!("verify refs/heads/main {main_tip}"))),
+        "onto is pinned in the script: {:?}",
+        plan.preview_commits
     );
     assert_eq!(tip(&main, "feat"), to, "feat moved to the replayed tip");
     assert_eq!(tip(&main, "feat~2"), main_tip, "…which sits on main");
@@ -174,7 +199,7 @@ fn replays_a_branch_checked_out_elsewhere_without_touching_any_worktree() {
 
 #[test]
 fn refuses_when_the_branch_moved_after_planning() {
-    if !test_support::run_isolated() {
+    if !test_support::run_isolated() || !replay_available() {
         return;
     }
     let _guard = ENV_LOCK.lock().unwrap();
@@ -207,7 +232,7 @@ fn refuses_when_the_branch_moved_after_planning() {
 
 #[test]
 fn refuses_a_dirty_checked_out_worktree_at_plan_and_at_preflight() {
-    if !test_support::run_isolated() {
+    if !test_support::run_isolated() || !replay_available() {
         return;
     }
     let _guard = ENV_LOCK.lock().unwrap();
@@ -244,7 +269,7 @@ fn refuses_a_dirty_checked_out_worktree_at_plan_and_at_preflight() {
 
 #[test]
 fn refuses_a_range_with_merges_and_an_up_to_date_branch() {
-    if !test_support::run_isolated() {
+    if !test_support::run_isolated() || !replay_available() {
         return;
     }
     let _guard = ENV_LOCK.lock().unwrap();
@@ -279,7 +304,7 @@ fn refuses_a_range_with_merges_and_an_up_to_date_branch() {
 
 #[test]
 fn conflicts_are_a_blocker_and_leave_no_state() {
-    if !test_support::run_isolated() {
+    if !test_support::run_isolated() || !replay_available() {
         return;
     }
     let _guard = ENV_LOCK.lock().unwrap();
@@ -303,5 +328,89 @@ fn conflicts_are_a_blocker_and_leave_no_state() {
             !main.join(".git").join(state).exists(),
             "{state} was created"
         );
+    }
+}
+
+#[test]
+fn refuses_when_onto_moved_after_planning() {
+    if !test_support::run_isolated() || !replay_available() {
+        return;
+    }
+    let _guard = ENV_LOCK.lock().unwrap();
+    let _log = LogDir::new();
+    let (_tmp, main, _wt) = fixture();
+    let feat_before = tip(&main, "feat");
+    // The reviewer's scenario: HEAD is detached elsewhere (so head_at_plan is
+    // satisfied), `main` moves after planning, and the moved refs themselves
+    // are unchanged — only the onto pin can refuse this.
+    git(&main, &["checkout", "-q", "--detach", "main~1"]);
+    let mut b = backend(&main);
+    let plan = b.plan(&op()).expect("plan");
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    let main_before = tip(&main, "main");
+    git(&main, &["branch", "-f", "main", "main~1"]);
+    assert_ne!(tip(&main, "main"), main_before);
+    let err = b.run(&op(), &plan).unwrap_err().to_string();
+    assert!(err.contains("moved after planning"), "{err}");
+    assert_eq!(tip(&main, "feat"), feat_before, "nothing written");
+}
+
+#[test]
+fn backs_up_every_ref_a_multi_ref_script_moves() {
+    if !test_support::run_isolated() || !replay_available() {
+        return;
+    }
+    let _guard = ENV_LOCK.lock().unwrap();
+    let _log = LogDir::new();
+    let (_tmp, main, _wt) = fixture();
+    // Plain `--onto` moves only the named tip (git 2.50.1: a descendant
+    // branch inside the range is left alone unless `--contained`). The
+    // execute contract still has to back up every line a plan carries, so
+    // feed it the two-line script `--contained` prints.
+    git(&main, &["branch", "feat-child", "feat~1"]);
+    let child_before = tip(&main, "feat-child");
+    let feat_before = tip(&main, "feat");
+    let mut b = backend(&main);
+    let mut plan = b.plan(&op()).expect("plan");
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    let contained = git_output(
+        &main,
+        &[
+            "-c",
+            "replay.refAction=print",
+            "replay",
+            "--contained",
+            "--onto",
+            "main",
+            "main..feat",
+        ],
+    );
+    let child_line = contained
+        .lines()
+        .find(|l| l.contains("refs/heads/feat-child"))
+        .expect("--contained prints the child");
+    plan.preview_commits.push(child_line.to_string());
+    let report = b.run_recorded(&op(), &plan);
+    let OperationOutcome::ReplayOnto { backups, .. } = report.result.expect("run") else {
+        panic!("outcome");
+    };
+    assert_eq!(backups.len(), 2, "{backups:?}");
+    let entry = report.recording.entry().clone();
+    assert_eq!(entry.backup_refs.len(), 2);
+    assert_eq!(entry.recovery.len(), 2, "one recovery handle per moved ref");
+    for b in &backups {
+        let expected = if b.reference == "refs/heads/feat" {
+            &feat_before
+        } else {
+            &child_before
+        };
+        assert_eq!(&b.old, expected);
+        assert_eq!(
+            &tip(&main, &b.backup),
+            expected,
+            "{} backup holds its old tip",
+            b.reference
+        );
+        assert_ne!(tip(&main, &b.reference), *expected, "{} moved", b.reference);
     }
 }

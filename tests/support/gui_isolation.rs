@@ -322,7 +322,11 @@ fn oplog_changes(before: &Option<Vec<u8>>, report: &mut String) {
             }
             continue;
         }
-        let under_root = local.starts_with(&root) || local.starts_with(&raw);
+        // `starts_with` is lexical: a `..` could climb out of the root.
+        let climbs = local
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir));
+        let under_root = !climbs && (local.starts_with(&root) || local.starts_with(&raw));
         if !under_root {
             let op = entry.get("op").and_then(|op| op.as_str()).unwrap_or("?");
             let _ = writeln!(

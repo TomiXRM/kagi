@@ -62,6 +62,8 @@ pub(crate) fn render_rows(
     graph_scroll_x: f32,
     stash_lanes: &[usize],
     solo_visible: Option<&HashSet<CommitId>>,
+    // #354: (rows above the commits in the same list, total list size).
+    a11y_offset_size: (usize, usize),
     cx: &mut Context<KagiApp>,
 ) -> Vec<impl IntoElement> {
     let rh = row_height(graph_compact);
@@ -187,270 +189,274 @@ pub(crate) fn render_rows(
             let avatar_image_g = avatar_image.clone();
             let avatar_init_g = avatar_init.clone();
 
-            div()
-                .id(ix)
-                .relative()
-                .flex()
-                .flex_row()
-                .items_center()
-                .w_full()
-                // W2-GRAPH item 3: 2px accent bar on the left edge of selected
-                // rows. Drawn as an ABSOLUTE overlay (the child below) so
-                // selection does NOT change the row's horizontal layout — both
-                // states use the same `px_3()`, keeping the graph column origin
-                // (and thus the graph lanes) aligned across selected and
-                // unselected rows at every zoom level.
-                //
-                // Previously the selected row used `pl(scaled_px(12) - 2) +
-                // border_l_2`, whose left inset scales with zoom while `px_3`
-                // does NOT (gpui 0.2.2 resolves rem-size for text, not for this
-                // padding — see theme.rs scaled_px notes). After the rem-size
-                // gating in T-PERF-RENDER-002 that mismatch became visible: at
-                // zoom > 100% the selected row's graph lane drifted right, at
-                // zoom < 100% it drifted left, off the unselected rows' lanes.
-                .px_3()
-                .when(is_selected, |el| {
-                    el.child(
-                        div()
-                            .absolute()
-                            .left_0()
-                            .top_0()
-                            .bottom_0()
-                            .w(px(2.))
-                            .bg(rgb(theme().color_branch)),
-                    )
-                })
-                .h(px(rh))
-                .bg(rgb(row_bg))
-                .on_click(click_handler)
-                .on_mouse_down(MouseButton::Right, context_click_handler)
-                .when(is_dimmed, |el| el.opacity(0.32))
-                // ── Badges column: user-resizable width (T030) ──
-                // T-DNDMERGE-001: thread `cx` so each `BadgeKind::Branch` chip
-                // can be made draggable and the HeadBranch chip a drop target.
-                // Reborrow `cx` (the `.map()` closure already mutably borrows it
-                // for `cx.listener(...)` above) per row.
-                .child(render_badges_column(
-                    &row.id,
-                    &row.badges,
-                    badge_col_w,
-                    connector_color,
-                    pill_lane,
-                    &mut *cx,
-                ))
-                // ── Inner divider spacer (badge|graph handle width) ──
-                // When the row has a badge connector, bridge the 4px gap with a
-                // horizontal line so the badge→node connector stays continuous.
-                .child(
+            super::list_a11y::list_option(
+                "commit-list",
+                div().id(ix),
+                a11y_offset_size.0 + ix,
+                a11y_offset_size.1,
+                super::list_a11y::commit_label(row),
+                is_selected,
+            )
+            .relative()
+            .flex()
+            .flex_row()
+            .items_center()
+            .w_full()
+            // W2-GRAPH item 3: 2px accent bar on the left edge of selected
+            // rows. Drawn as an ABSOLUTE overlay (the child below) so
+            // selection does NOT change the row's horizontal layout — both
+            // states use the same `px_3()`, keeping the graph column origin
+            // (and thus the graph lanes) aligned across selected and
+            // unselected rows at every zoom level.
+            //
+            // Previously the selected row used `pl(scaled_px(12) - 2) +
+            // border_l_2`, whose left inset scales with zoom while `px_3`
+            // does NOT (gpui 0.2.2 resolves rem-size for text, not for this
+            // padding — see theme.rs scaled_px notes). After the rem-size
+            // gating in T-PERF-RENDER-002 that mismatch became visible: at
+            // zoom > 100% the selected row's graph lane drifted right, at
+            // zoom < 100% it drifted left, off the unselected rows' lanes.
+            .px_3()
+            .when(is_selected, |el| {
+                el.child(
                     div()
-                        .relative()
-                        .w(theme::scaled_px(INNER_DIV_W))
-                        .h_full()
-                        .flex_shrink_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(div().w(px(1.)).h_full().bg(rgb(theme().surface)))
-                        .when_some(connector_color, |el, color| {
-                            // Fill height + items_center so the 1px line is
-                            // centred exactly like the badge-column and canvas
-                            // connectors (no 1px step at the boundary).
-                            el.child(
-                                div()
-                                    .absolute()
-                                    .inset_0()
-                                    .flex()
-                                    .items_center()
-                                    .child(connector_line(color)),
-                            )
-                        }),
+                        .absolute()
+                        .left_0()
+                        .top_0()
+                        .bottom_0()
+                        .w(px(2.))
+                        .bg(rgb(theme().color_branch)),
                 )
-                // ── Graph lane area (T030) ────────────────────────
-                // Always render the graph column at graph_col_w width.
-                // Clip by visible_lanes to prevent bleed into message column.
-                .child(
-                    div()
-                        .relative()
-                        .w(theme::scaled_px(graph_col_w))
-                        .h_full()
-                        .flex_shrink_0()
-                        // ── Lane band (swimlane) ──
-                        // A child of the GRAPH column (not the row) so it is
-                        // contained to the column and cannot reach into the
-                        // BRANCH/TAG label area. Absolute, inset 0 horizontally
-                        // (= the column width) with a 3px top/bottom inset so
-                        // adjacent bands don't touch; painted before the canvas
-                        // so it sits behind the lanes/nodes.
-                        .when_some(lane_band, |el, (band, band_hover)| {
-                            el.child(
-                                div()
-                                    .absolute()
-                                    .left_0()
-                                    .right_0()
-                                    .top(theme::scaled_px(3.))
-                                    .bottom(theme::scaled_px(3.))
-                                    .rounded(theme::scaled_px(3.))
-                                    .bg(band)
-                                    .hover(|s| s.bg(band_hover)),
-                            )
-                        })
-                        // Clip to the column so nothing reaches the BRANCH/TAG or
-                        // message columns; the avatar fits thanks to graph_pad_l.
-                        .overflow_hidden()
-                        // Horizontal wheel/trackpad scroll reveals clipped
-                        // lanes. Vertical deltas are left untouched so the
-                        // commit list keeps scrolling normally.
-                        .on_scroll_wheel(cx.listener(
-                            move |this, e: &gpui::ScrollWheelEvent, _w, cx| {
-                                this.scroll_graph_by(&e.delta, cx);
-                            },
-                        ))
-                        .when(visible_lanes > 0, |el| {
-                            // The left pad is applied inside the canvas (lane
-                            // geometry) via `graph_pad_l`, NOT as a `pl` here, so
-                            // the label→node connector still starts at the column
-                            // edge and doesn't gap.
-                            el.child(
-                                div().size_full().child(
-                                    graph_canvas(
-                                        row.lane,
-                                        row.node_color,
-                                        row.edges.clone(),
-                                        graph_view::GraphNode::Commit {
-                                            is_head: row.is_head,
-                                            is_merge: row.is_merge,
-                                        },
-                                        has_badges,
-                                        graph_scroll_x,
-                                        graph_pad_l,
-                                        stash_lanes.to_vec(),
-                                    )
-                                    .size_full(),
-                                ),
-                            )
-                        })
-                        // Swimlane: avatar node, drawn over the canvas at the
-                        // node centre with a lane-colour ring (the coloured disc
-                        // shows as a ~1.5px ring around the inner avatar).
-                        .when(avatar_in_graph, |el| {
-                            let ring_d = graph_view::avatar_node_diameter();
-                            let av_d = theme::scaled(15.);
-                            let inner = div()
-                                .w(px(av_d))
-                                .h(px(av_d))
-                                .rounded_full()
-                                .overflow_hidden();
-                            let inner = match avatar_image_g {
-                                Some(image) => inner.child(
-                                    gpui::img(gpui::ImageSource::Image(image))
-                                        .size_full()
-                                        .rounded_full(),
-                                ),
-                                None => inner
-                                    .bg(av_bg)
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(
-                                        div()
-                                            .text_color(gpui::white())
-                                            .text_xs()
-                                            .child(avatar_init_g),
-                                    ),
-                            };
-                            el.child(
-                                div()
-                                    .absolute()
-                                    .left(px(node_cx - ring_d / 2.))
-                                    .top(px(rh / 2. - ring_d / 2.))
-                                    .w(px(ring_d))
-                                    .h(px(ring_d))
-                                    .rounded_full()
-                                    .bg(theme().lane_color(row.node_color))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(inner),
-                            )
-                        }),
-                )
-                // ── Inner divider spacer (graph|message handle width) ──
-                .child(
-                    div()
-                        .w(theme::scaled_px(INNER_DIV_W))
-                        .flex_shrink_0()
-                        .flex()
-                        .justify_center()
-                        .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))),
-                )
-                // ── Author avatar: 18px circle after graph ────────
-                // W11-AVATAR: when a GitHub avatar is resolved, show the image
-                // clipped to the circle; otherwise the initial-on-colour circle.
-                // Skipped in swimlane mode — the avatar is drawn as the graph
-                // node instead (Gitru-style), so the message column starts with
-                // the summary text.
-                .when(!avatar_in_graph, |row_el| {
-                    row_el.child({
-                        // W28: avatar circle scales with zoom so it stays sized to
-                        // the (rem-scaled) row text and aligned with the graph node.
-                        let circle = div()
-                            .w(theme::scaled_px(18.))
-                            .h(theme::scaled_px(18.))
-                            .flex_shrink_0()
-                            .mr(theme::scaled_px(4.))
+            })
+            .h(px(rh))
+            .bg(rgb(row_bg))
+            .on_click(click_handler)
+            .on_mouse_down(MouseButton::Right, context_click_handler)
+            .when(is_dimmed, |el| el.opacity(0.32))
+            // ── Badges column: user-resizable width (T030) ──
+            // T-DNDMERGE-001: thread `cx` so each `BadgeKind::Branch` chip
+            // can be made draggable and the HeadBranch chip a drop target.
+            // Reborrow `cx` (the `.map()` closure already mutably borrows it
+            // for `cx.listener(...)` above) per row.
+            .child(render_badges_column(
+                &row.id,
+                &row.badges,
+                badge_col_w,
+                connector_color,
+                pill_lane,
+                &mut *cx,
+            ))
+            // ── Inner divider spacer (badge|graph handle width) ──
+            // When the row has a badge connector, bridge the 4px gap with a
+            // horizontal line so the badge→node connector stays continuous.
+            .child(
+                div()
+                    .relative()
+                    .w(theme::scaled_px(INNER_DIV_W))
+                    .h_full()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(div().w(px(1.)).h_full().bg(rgb(theme().surface)))
+                    .when_some(connector_color, |el, color| {
+                        // Fill height + items_center so the 1px line is
+                        // centred exactly like the badge-column and canvas
+                        // connectors (no 1px step at the boundary).
+                        el.child(
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .flex()
+                                .items_center()
+                                .child(connector_line(color)),
+                        )
+                    }),
+            )
+            // ── Graph lane area (T030) ────────────────────────
+            // Always render the graph column at graph_col_w width.
+            // Clip by visible_lanes to prevent bleed into message column.
+            .child(
+                div()
+                    .relative()
+                    .w(theme::scaled_px(graph_col_w))
+                    .h_full()
+                    .flex_shrink_0()
+                    // ── Lane band (swimlane) ──
+                    // A child of the GRAPH column (not the row) so it is
+                    // contained to the column and cannot reach into the
+                    // BRANCH/TAG label area. Absolute, inset 0 horizontally
+                    // (= the column width) with a 3px top/bottom inset so
+                    // adjacent bands don't touch; painted before the canvas
+                    // so it sits behind the lanes/nodes.
+                    .when_some(lane_band, |el, (band, band_hover)| {
+                        el.child(
+                            div()
+                                .absolute()
+                                .left_0()
+                                .right_0()
+                                .top(theme::scaled_px(3.))
+                                .bottom(theme::scaled_px(3.))
+                                .rounded(theme::scaled_px(3.))
+                                .bg(band)
+                                .hover(|s| s.bg(band_hover)),
+                        )
+                    })
+                    // Clip to the column so nothing reaches the BRANCH/TAG or
+                    // message columns; the avatar fits thanks to graph_pad_l.
+                    .overflow_hidden()
+                    // Horizontal wheel/trackpad scroll reveals clipped
+                    // lanes. Vertical deltas are left untouched so the
+                    // commit list keeps scrolling normally.
+                    .on_scroll_wheel(cx.listener(
+                        move |this, e: &gpui::ScrollWheelEvent, _w, cx| {
+                            this.scroll_graph_by(&e.delta, cx);
+                        },
+                    ))
+                    .when(visible_lanes > 0, |el| {
+                        // The left pad is applied inside the canvas (lane
+                        // geometry) via `graph_pad_l`, NOT as a `pl` here, so
+                        // the label→node connector still starts at the column
+                        // edge and doesn't gap.
+                        el.child(
+                            div().size_full().child(
+                                graph_canvas(
+                                    row.lane,
+                                    row.node_color,
+                                    row.edges.clone(),
+                                    graph_view::GraphNode::Commit {
+                                        is_head: row.is_head,
+                                        is_merge: row.is_merge,
+                                    },
+                                    has_badges,
+                                    graph_scroll_x,
+                                    graph_pad_l,
+                                    stash_lanes.to_vec(),
+                                )
+                                .size_full(),
+                            ),
+                        )
+                    })
+                    // Swimlane: avatar node, drawn over the canvas at the
+                    // node centre with a lane-colour ring (the coloured disc
+                    // shows as a ~1.5px ring around the inner avatar).
+                    .when(avatar_in_graph, |el| {
+                        let ring_d = graph_view::avatar_node_diameter();
+                        let av_d = theme::scaled(15.);
+                        let inner = div()
+                            .w(px(av_d))
+                            .h(px(av_d))
                             .rounded_full()
                             .overflow_hidden();
-                        match avatar_image {
-                            Some(image) => circle.child(
+                        let inner = match avatar_image_g {
+                            Some(image) => inner.child(
                                 gpui::img(gpui::ImageSource::Image(image))
                                     .size_full()
                                     .rounded_full(),
                             ),
-                            None => circle
+                            None => inner
                                 .bg(av_bg)
                                 .flex()
                                 .items_center()
                                 .justify_center()
                                 .child(
-                                    div().text_color(gpui::white()).text_xs().child(avatar_init),
+                                    div()
+                                        .text_color(gpui::white())
+                                        .text_xs()
+                                        .child(avatar_init_g),
                                 ),
-                        }
-                    })
-                })
-                .child(
-                    div()
-                        .flex_1()
-                        .text_color(rgb(theme().text_main))
-                        // Single line, no wrapping: long summaries ellipsize
-                        // (truncate = overflow_hidden + nowrap + ellipsis).
-                        .truncate()
-                        .child(row.summary.clone()),
-                )
-                // Issue #337: AI-agent provenance badge (nothing when the
-                // commit is unclassifiable — prefer no badge to a false one).
-                .when_some(row.provenance.as_ref(), |el, prov| {
-                    el.child(badges::render_provenance_badge(prov, ix))
-                })
-                .child(
-                    // W28: author/date columns scale so the (rem-scaled) text
-                    // fits its box at any zoom.
-                    div()
-                        .w(theme::scaled_px(130.))
+                        };
+                        el.child(
+                            div()
+                                .absolute()
+                                .left(px(node_cx - ring_d / 2.))
+                                .top(px(rh / 2. - ring_d / 2.))
+                                .w(px(ring_d))
+                                .h(px(ring_d))
+                                .rounded_full()
+                                .bg(theme().lane_color(row.node_color))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(inner),
+                        )
+                    }),
+            )
+            // ── Inner divider spacer (graph|message handle width) ──
+            .child(
+                div()
+                    .w(theme::scaled_px(INNER_DIV_W))
+                    .flex_shrink_0()
+                    .flex()
+                    .justify_center()
+                    .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))),
+            )
+            // ── Author avatar: 18px circle after graph ────────
+            // W11-AVATAR: when a GitHub avatar is resolved, show the image
+            // clipped to the circle; otherwise the initial-on-colour circle.
+            // Skipped in swimlane mode — the avatar is drawn as the graph
+            // node instead (Gitru-style), so the message column starts with
+            // the summary text.
+            .when(!avatar_in_graph, |row_el| {
+                row_el.child({
+                    // W28: avatar circle scales with zoom so it stays sized to
+                    // the (rem-scaled) row text and aligned with the graph node.
+                    let circle = div()
+                        .w(theme::scaled_px(18.))
+                        .h(theme::scaled_px(18.))
                         .flex_shrink_0()
-                        // Gap before the committer name so a long, truncated
-                        // commit summary doesn't visually run straight into it.
-                        .pl(theme::scaled_px(8.))
-                        .text_color(rgb(theme().text_sub))
-                        .truncate()
-                        .child(row.author.clone()),
-                )
-                .child(
-                    div()
-                        .w(theme::scaled_px(72.))
-                        .flex_shrink_0()
-                        .text_color(rgb(theme().text_muted))
-                        .child(row.date.clone()),
-                )
+                        .mr(theme::scaled_px(4.))
+                        .rounded_full()
+                        .overflow_hidden();
+                    match avatar_image {
+                        Some(image) => circle.child(
+                            gpui::img(gpui::ImageSource::Image(image))
+                                .size_full()
+                                .rounded_full(),
+                        ),
+                        None => circle
+                            .bg(av_bg)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(div().text_color(gpui::white()).text_xs().child(avatar_init)),
+                    }
+                })
+            })
+            .child(
+                div()
+                    .flex_1()
+                    .text_color(rgb(theme().text_main))
+                    // Single line, no wrapping: long summaries ellipsize
+                    // (truncate = overflow_hidden + nowrap + ellipsis).
+                    .truncate()
+                    .child(row.summary.clone()),
+            )
+            // Issue #337: AI-agent provenance badge (nothing when the
+            // commit is unclassifiable — prefer no badge to a false one).
+            .when_some(row.provenance.as_ref(), |el, prov| {
+                el.child(badges::render_provenance_badge(prov, ix))
+            })
+            .child(
+                // W28: author/date columns scale so the (rem-scaled) text
+                // fits its box at any zoom.
+                div()
+                    .w(theme::scaled_px(130.))
+                    .flex_shrink_0()
+                    // Gap before the committer name so a long, truncated
+                    // commit summary doesn't visually run straight into it.
+                    .pl(theme::scaled_px(8.))
+                    .text_color(rgb(theme().text_sub))
+                    .truncate()
+                    .child(row.author.clone()),
+            )
+            .child(
+                div()
+                    .w(theme::scaled_px(72.))
+                    .flex_shrink_0()
+                    .text_color(rgb(theme().text_muted))
+                    .child(row.date.clone()),
+            )
         })
         .collect()
 }

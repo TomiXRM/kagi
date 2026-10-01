@@ -49,8 +49,9 @@ indices differ by 135°; their sorted positions remain exactly 45° apart. Every
 
 The comparison is over: Flower Road keeps one palette. The original soft lanes
 and the Bloom / Vivid candidates are replaced by Vivid's evenly spaced wheel
-(same hues, same three-steps-around order), raised to saturation 0.85 and
-darkened so every lane is 4.0:1 on the ivory base. `flower-road-bloom` and
+(same hues, same three-steps-around order, saturation 0.70, every lane 3.5:1 on
+the ivory base). The owner tried stronger and softer palettes on the real app
+and kept Vivid. `flower-road-bloom` and
 `flower-road-vivid` resolve to `flower-road` (`legacy_slug_alias`), so a saved
 setting keeps working. The graph's stronger lane-band wash for Flower Road is
 removed: the lanes are no longer pastel.

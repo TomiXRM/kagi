@@ -90,18 +90,19 @@ pub const FLOWER_ROAD: Theme = Theme {
 
     // Eight flower hues spaced evenly around the wheel (45° apart), stored in
     // a three-steps-around order so adjacent lane indices sit 135° apart.
-    // Each lightness is tuned to 4.0:1 on the ivory base at saturation 0.85 —
+    // These are ADR-0175's Vivid lanes: saturation 0.70, each lightness tuned
+    // to 3.5:1 on the ivory base —
     // one strong, even palette in place of the soft original and the Bloom /
     // Vivid candidates it replaces (ADR-0175, superseded 2026-10-02).
     lane_hsl: [
-        (0.000, 0.850, 0.547), // Poppy          #ee2929  4.01:1
-        (0.375, 0.850, 0.304), // Leaf green     #0c8f2d  4.01:1
-        (0.750, 0.850, 0.633), // Iris           #a152f1  4.00:1
-        (0.125, 0.850, 0.326), // Marigold       #9a760c  4.02:1
-        (0.500, 0.850, 0.291), // Hydrangea      #0b8989  4.03:1
-        (0.875, 0.850, 0.482), // Dahlia         #e312af  4.02:1
-        (0.250, 0.850, 0.293), // Chrysanthemum  #4b8a0b  4.04:1
-        (0.625, 0.850, 0.613), // Cornflower     #4872f0  4.04:1
+        (0.000, 0.700, 0.613), // Poppy          #e15757  3.50:1
+        (0.375, 0.700, 0.354), // Leaf green     #1b993b  3.52:1
+        (0.750, 0.700, 0.650), // Iris           #a667e4  3.52:1
+        (0.125, 0.700, 0.374), // Marigold       #a2811d  3.51:1
+        (0.500, 0.700, 0.340), // Hydrangea      #1a9393  3.54:1
+        (0.875, 0.700, 0.574), // Dahlia         #de46b8  3.52:1
+        (0.250, 0.700, 0.342), // Chrysanthemum  #57941a  3.53:1
+        (0.625, 0.700, 0.632), // Cornflower     #5f80e3  3.51:1
     ],
 
     avatar_sat: 0.42,
@@ -191,7 +192,7 @@ mod tests {
                 let contrast = (luminance(lane).max(luminance(theme.bg_base)) + 0.05)
                     / (luminance(lane).min(luminance(theme.bg_base)) + 0.05);
                 assert!(
-                    contrast >= 4.0,
+                    contrast >= 3.5,
                     "{}: lane {lane:#08x} is only {contrast:.2}:1 on the background",
                     theme.slug
                 );

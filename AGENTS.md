@@ -49,7 +49,11 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 
 ## File / function size targets
 
-- Aim for ≤ 800 LOC per file. Past that, split on a feature boundary.
+- Aim for ≤ 800 LOC per file. Past that, split on a feature boundary. CI (`check-loc`)
+  fails only for a file that is **new in the branch** and over 800; existing files over
+  the ceiling are listed as notices and split by issue. There is no committed LOC
+  baseline any more (2026-10-01, `docs/decisions.md`): it conflicted on every merge
+  and was accepted on every bump.
 - Aim for ≤ 80 LOC per function.
 - `src/ui/mod.rs` is a known oversized god-file mid-split; prefer adding new code to a
   focused sibling module over growing it. (`kagi-git`'s ops are already split into
@@ -180,7 +184,7 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
   ```
   uv run --project ci check-all              # every gate + the rule selftest
   uv run --project ci check-modal-sections   # one gate
-  uv run --project ci check-loc --write-baseline   # accept a ratchet change
+  uv run --project ci check-loc              # new files must stay under 800 LOC (no baseline)
   uv run --project ci ruff check ci && uv run --project ci mypy --config-file ci/pyproject.toml
   ```
 

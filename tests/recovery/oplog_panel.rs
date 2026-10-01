@@ -349,7 +349,10 @@ fn confirm_twice(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: A
 /// #334 slice 2b-2: a selected row's real buttons open the card; it lists
 /// every branch's reverse action and what is not restored; two confirms
 /// restore the branches; the restore's own row can be reverted the same way.
-/// A row without recorded moves has both buttons disabled.
+/// A row without recorded moves has both buttons disabled. #334 slice 2c: the
+/// card draws the graph after (where main goes back to, how many commits
+/// leave every branch — checked against git after confirming), or says the
+/// preview is unavailable when the target is not loaded.
 pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
     use kagi_domain::plan_note::{OplogRestoreNote, PlanNote};
 
@@ -367,7 +370,25 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
             },
         );
     }
+    // #334 slice 2c: a recorded commit on main, so restoring to the first
+    // creation moves main back one commit and leaves that commit on no branch.
+    let main_before = head.0.clone();
+    std::fs::write(repo.join("README.md"), "# fixture\nmoved by restore\n").unwrap();
+    git(&repo, &["add", "README.md"]);
+    run(
+        &mut backend,
+        Actor::Human,
+        Operation::Commit {
+            message: "on main after the branches".into(),
+        },
+    );
+    let main_after = git_output(&repo, &["rev-parse", "main"]);
     let all_branches = branch_names(&repo);
+    let on_branches = |repo: &Path| -> usize {
+        git_output(repo, &["rev-list", "--count", "--branches"])
+            .parse()
+            .unwrap()
+    };
 
     // An entry of another repository without recorded moves.
     let elsewhere_root = tempfile::tempdir().unwrap();
@@ -403,8 +424,8 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
 
     // ── restore to the first creation: the card, then two confirms ──────
     let rows = rows_of(cx, &app, &repo);
-    assert_eq!(rows.len(), 3, "{rows:?}");
-    let keep = rows[2];
+    assert_eq!(rows.len(), 4, "{rows:?}");
+    let keep = rows[3];
     let keep_id = cx.read(|cx| {
         let panel = app.read(cx).op_log.clone().unwrap();
         panel.read(cx).entries()[keep].id
@@ -438,6 +459,38 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
     );
     assert_eq!(branch_names(&repo), all_branches, "planning moved nothing");
 
+    // ── the graph after (#334 slice 2c) ──────────────────────────────────
+    let preview = card
+        .preview
+        .clone()
+        .expect("a restore that moves refs has a preview");
+    let kagi_domain::restore_preview::RestorePreview::Graph {
+        rows: prow,
+        removed,
+        ..
+    } = &preview.graph
+    else {
+        panic!("every target is loaded: {:?}", preview.graph)
+    };
+    assert!(prow.len() <= kagi_domain::restore_preview::PREVIEW_MAX_ROWS);
+    assert_eq!(*removed, 1, "the commit made on main after the branches");
+    let main_row = prow
+        .iter()
+        .find(|r| r.moved_here == vec!["main".to_string()])
+        .expect("main is drawn where it goes back to");
+    assert_eq!(main_row.id.0, main_before);
+    assert!(
+        !prow.iter().any(|r| r.id.0 == main_after),
+        "the commit leaving every branch is not in the graph after"
+    );
+    assert!(painted(window, "restore-preview"));
+    assert!(painted(window, "restore-preview-removed-1"));
+    assert!(painted(
+        window,
+        &format!("restore-preview-moved-main-{}", main_row.id.short())
+    ));
+    let count_before = on_branches(&repo);
+
     confirm_twice(cx, &app, window);
     assert_eq!(
         branch_names(&repo),
@@ -446,6 +499,12 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
     );
     let restore = read_oplog_tail(1).pop().unwrap();
     assert_eq!(restore.op, "restore-to-point");
+    assert_eq!(git_output(&repo, &["rev-parse", "main"]), main_before);
+    assert_eq!(
+        count_before - on_branches(&repo),
+        *removed,
+        "the preview's removed rows are exactly the commits that left every branch"
+    );
 
     // ── the restore's own row: revert it from the panel ──────────────────
     let newest = cx.read(|cx| {
@@ -465,10 +524,22 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
             entry_id: restore.id
         }
     );
+    // main goes back to the commit the restore took off every branch: the
+    // reloaded tab no longer holds it, so the card says so instead of guessing.
+    assert_eq!(
+        restore_card(cx, &app).preview.map(|p| p.graph.clone()),
+        Some(kagi_domain::restore_preview::RestorePreview::NotLoaded {
+            refname: "refs/heads/main".into(),
+            oid: main_after.clone(),
+        })
+    );
+    paint(cx, window);
+    assert!(painted(window, "restore-preview-unavailable"));
     confirm_twice(cx, &app, window);
     assert_eq!(branch_names(&repo), all_branches, "the restore is undone");
+    assert_eq!(git_output(&repo, &["rev-parse", "main"]), main_after);
     assert_eq!(read_oplog_tail(1).pop().unwrap().op, "op-revert");
 
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS oplog_restore_card: unrecorded row disabled; restore card lists reverse actions and what stays; two confirms restore; the restore is reverted from its own row");
+    eprintln!("[gui-e2e] PASS oplog_restore_card: unrecorded row disabled; card lists reverse actions, what stays and the graph after (main's target row, 1 commit off every branch = git's count); two confirms restore; the revert card says its preview is unavailable; the restore is reverted from its own row");
 }

@@ -176,7 +176,7 @@ pub(crate) fn measure_confirm(button: impl gpui::IntoElement) -> gpui::AnyElemen
 use gpui::{App, AppContext as _, AssetSource, Entity, Platform, Styled as _, Window};
 
 use super::assets::KagiAssets;
-use super::{fonts, oplog_panel, theme, toast_stack, KagiApp};
+use super::{fonts, theme, toast_stack, KagiApp};
 
 #[cfg(feature = "gui-e2e")]
 pub fn app_notice_message(app: &KagiApp) -> Option<&str> {

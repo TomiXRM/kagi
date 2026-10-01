@@ -401,7 +401,13 @@ fn drag_remote_to_worktree(cx: &mut VisualTestAppContext, window: gpui::AnyWindo
     cx.simulate_mouse_up(window, target, MouseButton::Left, Modifiers::none());
 }
 
-fn guard_dirty_editor_merge(
+/// A dirty Editor Workspace does not block merging in another worktree, and
+/// the merge does not cost it its buffer (#722 P1 r3, 03b16092 / ADR-0197):
+/// opening the other worktree's tab keeps the origin session — and its editor
+/// — attached, so the drop goes straight to a plan there with no prompt, and
+/// the origin's unsaved edit is still dirty when the user comes back. The
+/// dirty guard still fires where the editor *is* destroyed (← Graph).
+fn dirty_editor_survives_merge_in_worktree(
     cx: &mut VisualTestAppContext,
     app: &gpui::Entity<kagi::ui::KagiApp>,
     window: gpui::AnyWindowHandle,
@@ -434,35 +440,54 @@ fn guard_dirty_editor_merge(
     cx.simulate_keystrokes(window, "x");
     cx.run_until_parked();
     assert!(cx.read(|cx| editor.read(cx).dirty));
+
+    // No prompt: the drop navigates and plans in the destination.
     app.update(cx, |app, cx| {
         app.start_merge_into_from_drag("origin/source".into(), "feature".into(), cx);
     });
-    cx.read(|cx| {
-        let app = app.read(cx);
-        assert!(app.editor_dirty_guard_modal().is_some());
-        assert_eq!(app.tabs[app.active_tab].path, fixture.main);
-        assert!(app.merge_modal().is_none());
-    });
-    press_key(cx, app, window, "escape");
-    assert!(cx.read(|cx| editor.read(cx).dirty));
-    app.update(cx, |app, cx| {
-        app.start_merge_into_from_drag("origin/source".into(), "feature".into(), cx);
-    });
-    press_key(cx, app, window, "enter");
     wait_idle(cx, app);
     cx.read(|cx| {
         let app = app.read(cx);
+        assert!(
+            app.editor_dirty_guard_modal().is_none(),
+            "keeping the owner alive is navigation, not destruction"
+        );
         assert_eq!(app.tabs[app.active_tab].path, fixture.linked);
-        assert!(app.ui().editor_workspace.is_none());
         assert!(
             app.merge_modal().is_some(),
-            "discard must continue to a plan, not execute"
+            "the drop continues to a plan, not an execute"
         );
     });
     assert!(!fixture.linked.join("remote.txt").exists());
     press_key(cx, app, window, "escape");
+
+    // Back in the origin: the same editor, still dirty.
     app.update(cx, |app, cx| app.switch_repo(0, cx));
     cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert_eq!(app.tabs[app.active_tab].path, fixture.main);
+        let retained = app
+            .ui()
+            .editor_workspace
+            .clone()
+            .expect("origin editor retained");
+        assert_eq!(retained.entity_id(), editor.entity_id());
+        assert!(editor.read(cx).dirty, "the unsaved edit survives");
+    });
+
+    // Leaving for the graph destroys the editor, so that path still prompts;
+    // discarding returns to the graph the rest of the scenario drags on.
+    app.update(cx, |app, cx| app.show_graph_mode(cx));
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).editor_dirty_guard_modal().is_some()));
+    press_key(cx, app, window, "enter");
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.editor_dirty_guard_modal().is_none());
+        assert!(app.ui().editor_workspace.is_none());
+    });
 }
 
 pub fn scenario_cross_worktree_merge(cx: &mut VisualTestAppContext) {
@@ -519,7 +544,7 @@ pub fn scenario_cross_worktree_merge(cx: &mut VisualTestAppContext) {
     wait_idle(cx, &app);
     cx.read(|cx| assert!(app.read(cx).merge_modal().is_none()));
     assert_eq!(rev_parse(&fixture.linked, "HEAD"), old_target);
-    guard_dirty_editor_merge(cx, &app, window, &fixture);
+    dirty_editor_survives_merge_in_worktree(cx, &app, window, &fixture);
     // The graph can still show feature while an external checkout changes
     // the linked worktree. Never reinterpret the drop as a merge into drifted.
     git(&fixture.linked, &["switch", "-qc", "drifted"]);

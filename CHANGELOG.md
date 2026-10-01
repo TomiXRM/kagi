@@ -33,6 +33,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- worktree の削除と `nonconcurrent` モードの判定で、shell が動いたままの terminal タブを閉じると、その shell を終了済みとして扱っていた問題を修正しました。タブを閉じても shell が hangup を無視して動き続けることがあるため、shell の終了を実際に観測するまでは動作中として扱います。shell の終了待ち自体が失敗した場合も、終了扱いにはしません。(#867 / #869 の review 指摘)
+
 - 埋め込み terminal の `KAGI_WORKTREE_PATH` と `KAGI_MAIN_WORKTREE` が、git の workdir をそのまま使っていたため末尾に `/` が付いていた問題を修正しました(main worktree・linked worktree とも)。`"$KAGI_WORKTREE_PATH/foo"` が `//foo` になりません。(#870)
 
 - Cmd+R(Refresh)の読み直しが捨てられ、Kagi の外で変えた状態(起動後に置いた worktree lock の 🔐・右クリックの Unlock など)が画面に反映されない問題を修正しました。Refresh は読み直しの直後に fetch を始めますが、fetch の受付が実行中の読み直しを無効にする一方、何も取得しなかった fetch は読み直しをしないため、Refresh の読み直しが失われていました。fetch は、自分の受付で無効にした読み直しを、取得の有無や失敗に関わらず完了時にやり直します。自動 fetch が watcher の読み直しと重なった場合も同じです。(#851)

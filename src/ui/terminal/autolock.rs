@@ -38,7 +38,7 @@ impl KagiApp {
         // #859: in `nonconcurrent` mode another worktree of this repository
         // with a running shell stops a new one here. Not a write: no oplog.
         if session.view.is_none() {
-            if let Some(running) = self.nonconcurrent_blocker(owner, &repo_path) {
+            if let Some(running) = self.nonconcurrent_blocker(&repo_path) {
                 klog!(
                     "terminal: nonconcurrent blocked {} (running in {})",
                     repo_path.display(),
@@ -67,8 +67,13 @@ impl KagiApp {
             |msg| failure_msg = Some(msg),
             |ports| exhausted = Some(ports),
         );
-        let started_pid = started
-            .then(|| session.shell.as_ref().and_then(|shell| shell.pid))
+        let started_shell = started
+            .then(|| {
+                session
+                    .shell
+                    .as_ref()
+                    .map(|shell| (shell.generation, shell.pid))
+            })
             .flatten();
         if started {
             // A fresh shell: any lock target from a previous spawn is stale.
@@ -78,7 +83,9 @@ impl KagiApp {
             ui.terminal_session = Some(session);
         }
         if started {
-            self.record_started_shell(&repo_path, started_pid);
+            if let Some((generation, pid)) = started_shell {
+                self.record_started_shell(owner, generation, &repo_path, pid);
+            }
             // #772 / ADR-0208 決定 4: opt-in only; plan → confirm, never a write.
             self.offer_auto_lock(owner, cx);
             // #855: a terminal is what assigns a block; show it in the sidebar
@@ -138,6 +145,8 @@ impl KagiApp {
         exit: ShellExit,
         cx: &mut Context<Self>,
     ) {
+        // Whether or not the tab is still open (#867 review).
+        self.note_shell_wait(owner, generation, &exit);
         let Some(shell) = self
             .ui
             .get_mut(&owner)

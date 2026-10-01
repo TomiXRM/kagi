@@ -15,6 +15,7 @@ use std::path::Path;
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::{e2e, KagiApp};
 use kagi_domain::github::{PullRequest, ReviewComment};
+use kagi_domain::review_thread::ReviewThread;
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
 
 use crate::evidence_support::pull_request;
@@ -151,15 +152,19 @@ pub fn scenario_pr_suggestion_apply(cx: &mut VisualTestAppContext) {
     let (app, window) = mount(cx, &repo);
     e2e::queue_github_pr_conversation(gpui::Task::ready((
         Ok((Vec::new(), Vec::new())),
-        Ok(vec![ReviewComment {
-            author: "reviewer".into(),
+        // The conversation's line comments arrive as review threads (#351).
+        Ok(vec![ReviewThread {
             path: "s.txt".into(),
-            line: 2,
-            start_line: None,
-            body: "shout it\n\n```suggestion\nTWO\n```\n".into(),
-            diff_hunk: "@@ -0,0 +1,3 @@\n+one\n+two\n+three".into(),
-            created_at: "2026-10-01T00:00:00Z".into(),
-            in_reply_to: None,
+            line: Some(2),
+            original_line: Some(2),
+            comments: vec![ReviewComment {
+                author: "reviewer".into(),
+                body: "shout it\n\n```suggestion\nTWO\n```\n".into(),
+                diff_hunk: "@@ -0,0 +1,3 @@\n+one\n+two\n+three".into(),
+                created_at: "2026-10-01T00:00:00Z".into(),
+                ..ReviewComment::default()
+            }],
+            ..ReviewThread::default()
         }]),
     )));
     let pr = PullRequest {

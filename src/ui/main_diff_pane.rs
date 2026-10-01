@@ -171,6 +171,7 @@ impl Render for MainDiffPane {
                 leading: Some(leading),
                 trailing: Some(trailing),
                 labels: vec![back_label, ext_label, history_label],
+                ..DiffHeader::default()
             },
             self.scroll.clone(),
             // #842: a Commit Panel side carries Stage / Unstage hunk.

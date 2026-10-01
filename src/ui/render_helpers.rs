@@ -10,6 +10,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::*;
+use std::rc::Rc;
 
 // T-SPLIT-HELPERS-001 / ADR-0116 Wave 3: the commit-panel, badge, and file-menu
 // renderers moved to focused sibling modules. Re-export them here so the existing
@@ -24,6 +25,7 @@ pub(crate) use diff_header::DiffHeader;
 pub(crate) use kagi_ui_core::header_fit::{header_button, HeaderFit};
 
 mod diff_header;
+pub(crate) mod row_overlay;
 
 /// issue #414: chokepoint that neutralizes terminal control bytes in remote-origin
 /// display text (PR titles/handles/refs/check names, branch & stash labels) before
@@ -532,7 +534,7 @@ pub(crate) fn new_diff_list_state() -> gpui::ListState {
 /// Panel's diff); every other embedding passes `None`.
 pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost>(
     view: MainDiffView,
-    header: DiffHeader,
+    mut header: DiffHeader,
     scroll_handle: gpui::ListState,
     hunk: Option<super::diff_view::hunk_action::HunkAction>,
     cx: &mut Context<V>,
@@ -545,10 +547,22 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
     // R1: selection-surface semantics stay title+count based, independently of
     // the derived-layout cache's immutable row identity.
     let sel_key = super::diff_selection::surface_key(view.title.as_ref(), view.rows.len());
-    let row_count = projection
+    // #351: an embedding's overlay adds one list item under each expanded row.
+    let overlay = header.overlay.take();
+    let layout = overlay
         .as_ref()
-        .map(|projection| projection.rows.len())
-        .unwrap_or_else(|| view.rows.len());
+        .map(|_| Rc::new(row_overlay::layout(&view.rows, split)));
+    let items = overlay
+        .as_ref()
+        .zip(layout.as_ref())
+        .map(|(overlay, layout)| Rc::new(row_overlay::items(layout, &|row| overlay.expanded(row))));
+    let row_count = match &items {
+        Some(items) => items.len(),
+        None => projection
+            .as_ref()
+            .map(|projection| projection.rows.len())
+            .unwrap_or_else(|| view.rows.len()),
+    };
     if scroll_handle.item_count() != row_count {
         scroll_handle.reset(row_count);
     }
@@ -666,20 +680,46 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
                 .child(with_vertical_scrollbar(
                     "main-diff-list-scroll",
                     &scrollbar_handle,
-                    gpui::list(scroll_handle, move |ix, _window, _cx| {
+                    gpui::list(scroll_handle, move |ix, _window, cx| {
+                        let base = match (&items, &overlay, &layout) {
+                            (Some(items), Some(overlay), Some(layout)) => match items.get(ix) {
+                                Some(row_overlay::Item::Row(b)) => *b,
+                                Some(row_overlay::Item::Expansion(b)) => {
+                                    let rows = row_overlay::expansion_rows(layout, *b, overlay);
+                                    return overlay.expansion(&rows, cx);
+                                }
+                                None => return div().into_any_element(),
+                            },
+                            _ => ix,
+                        };
                         // ADR-0124: split mode renders paired cells; unified keeps
                         // the original single-column rows.
                         match &projection {
                             Some(projection) => super::diff_split::render_main_diff_split_row(
                                 &rows_for_list,
                                 &projection.rows,
-                                ix,
+                                base,
                                 sel_key,
                                 &projection.moved,
+                                overlay
+                                    .as_ref()
+                                    .map(|o| split_gutters(o, &projection.rows, base, cx)),
                                 hunk.as_ref(),
                             ),
                             None => {
-                                render_main_diff_row(&rows_for_list, ix, sel_key, hunk.as_ref())
+                                let row = render_main_diff_row(
+                                    &rows_for_list,
+                                    base,
+                                    sel_key,
+                                    hunk.as_ref(),
+                                );
+                                match &overlay {
+                                    Some(o) => row_overlay::with_gutter(
+                                        row_overlay::gutter(o.marker(base, None, cx)),
+                                        row,
+                                    ),
+                                    None => row,
+                                }
                             }
                         }
                     })
@@ -691,6 +731,23 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
         })
 }
 
+/// The split view's two gutter cells for list row `base` (#351): a pair's
+/// left/right markers on their own side; empty cells elsewhere.
+fn split_gutters(
+    overlay: &Rc<dyn row_overlay::RowOverlay>,
+    srows: &[super::diff_split::SplitDiffRow],
+    base: usize,
+    cx: &mut gpui::App,
+) -> (gpui::AnyElement, gpui::AnyElement) {
+    use row_overlay::{gutter, GutterSide};
+    match srows.get(base) {
+        Some(super::diff_split::SplitDiffRow::Pair { left, right }) => (
+            gutter(left.and_then(|row| overlay.marker(row, Some(GutterSide::Left), cx))),
+            gutter(right.and_then(|row| overlay.marker(row, Some(GutterSide::Right), cx))),
+        ),
+        _ => (gutter(None), gutter(None)),
+    }
+}
 // ADR-0121 B2: `render_main_diff_view` (the standalone KagiApp diff wrapper)
 // moved into `main_diff_pane.rs` as `MainDiffPane`'s `Render` impl. The
 // embedded users (File History / Editor Workspace) keep calling

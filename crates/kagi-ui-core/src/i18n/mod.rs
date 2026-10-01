@@ -31,6 +31,7 @@ pub mod busy;
 pub use busy::{busy_label, slow_read_advice, slow_read_label, slow_read_skip};
 pub mod op;
 pub mod plan;
+pub mod pr_threads;
 pub mod pr_viewed;
 pub use op::{
     auto_stash_identity_unverified, auto_stash_missing, auto_stash_plan_stale,

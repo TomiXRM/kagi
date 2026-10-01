@@ -435,7 +435,7 @@ pub struct Review {
 /// A line-level review comment — where Copilot / Codex put their code
 /// suggestions. Distinct from [`Comment`] (issue-level) and [`Review`]
 /// (the submitted verdict).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ReviewComment {
     pub author: String,
     /// Repo-relative file the comment is anchored to.

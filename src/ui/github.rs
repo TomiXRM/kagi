@@ -759,7 +759,9 @@ impl KagiApp {
                 edit.remove_labels = remove;
             }
         }
-        let number = modal.number;
+        let crate::ui::modals::FieldTarget::Pr { number } = modal.target else {
+            return;
+        };
         if self.reject_transport_hold(&repo_path, &format!("pr-edit #{number}")) {
             self.clear_pr_fields_modal();
             self.present_app_notice();

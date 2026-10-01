@@ -4,6 +4,7 @@
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use kagi_domain::github::IssueCreateFields;
 use kagi_domain::plan_note::{GithubNote, PlanDisposition, PlanNote};
 use kagi_git::backend::recording::{Recording, RunReport};
 use kagi_git::github::{
@@ -41,6 +42,8 @@ impl Fixture {
             format!(
                 "#!/bin/sh\ncase \"$1 $2\" in\n\
                  'repo view') echo unexpected > ./repo-view.txt; exit 9 ;;\n\
+                 'label list') echo '[{{\"name\":\"bug\",\"color\":\"d73a4a\"}},{{\"name\":\"docs\",\"color\":\"0075ca\"}}]' ;;\n\
+                 'api '*) printf 'octocat\\nhubot\\n' ;;\n\
                  'issue create'|'issue comment')\n\
                  printf '%s\\n' \"$@\" > ./argv.txt\n\
                  echo attempt >> ./attempts.txt\n\
@@ -64,12 +67,14 @@ impl Fixture {
 
     fn run(&self, create: bool, body: &str) -> RunReport {
         if create {
+            let none = IssueCreateFields::default();
             issue_create(
                 &self.workdir,
                 REPO,
                 TITLE,
                 body,
-                &plan_issue_create(REPO, TITLE, body),
+                &none,
+                &plan_issue_create(REPO, TITLE, body, &none),
             )
         } else {
             issue_comment(
@@ -93,7 +98,7 @@ impl Fixture {
             .map(str::to_owned)
             .collect();
         let expected = if create {
-            issue_create_args(REPO, TITLE)
+            issue_create_args(REPO, TITLE, &IssueCreateFields::default())
         } else {
             issue_comment_args(REPO, 42)
         };
@@ -240,7 +245,7 @@ fn assert_unknown(fixture: &Fixture, create: bool, body: &str) {
 #[test]
 fn issue_arguments_pin_the_repository_and_use_stdin() {
     assert_eq!(
-        issue_create_args(REPO, TITLE),
+        issue_create_args(REPO, TITLE, &IssueCreateFields::default()),
         vec![
             "issue",
             "create",
@@ -262,7 +267,7 @@ fn issue_arguments_pin_the_repository_and_use_stdin() {
 fn empty_issue_and_reply_bodies_are_plan_blockers() {
     for body in ["", " \n\t"] {
         for plan in [
-            plan_issue_create(REPO, TITLE, body),
+            plan_issue_create(REPO, TITLE, body, &IssueCreateFields::default()),
             plan_issue_comment(42, TITLE, body),
         ] {
             assert_eq!(plan.disposition, PlanDisposition::Blocked);
@@ -270,7 +275,7 @@ fn empty_issue_and_reply_bodies_are_plan_blockers() {
         }
     }
     for plan in [
-        plan_issue_create(REPO, TITLE, BODY),
+        plan_issue_create(REPO, TITLE, BODY, &IssueCreateFields::default()),
         plan_issue_comment(42, TITLE, BODY),
     ] {
         assert_eq!(plan.disposition, PlanDisposition::Ready);
@@ -282,7 +287,7 @@ fn empty_issue_and_reply_bodies_are_plan_blockers() {
 #[test]
 fn empty_issue_title_is_a_create_only_plan_blocker() {
     for title in ["", " \n\t"] {
-        let plan = plan_issue_create(REPO, title, BODY);
+        let plan = plan_issue_create(REPO, title, BODY, &IssueCreateFields::default());
         assert_eq!(plan.disposition, PlanDisposition::Blocked);
         assert!(plan
             .blockers
@@ -304,12 +309,19 @@ fn issue_write_never_resolves_a_missing_repository_during_dispatch() {
     for create in [true, false] {
         let fixture = Fixture::new(&format!("echo '{URL}'"), true);
         let plan = if create {
-            plan_issue_create("", TITLE, BODY)
+            plan_issue_create("", TITLE, BODY, &IssueCreateFields::default())
         } else {
             plan_issue_comment(42, TITLE, BODY)
         };
         let report = if create {
-            issue_create(&fixture.workdir, "", TITLE, BODY, &plan)
+            issue_create(
+                &fixture.workdir,
+                "",
+                TITLE,
+                BODY,
+                &IssueCreateFields::default(),
+                &plan,
+            )
         } else {
             issue_comment(&fixture.workdir, "", 42, BODY, &plan)
         };
@@ -327,6 +339,86 @@ fn issue_write_never_resolves_a_missing_repository_during_dispatch() {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].op, op(create));
         assert!(matches!(entries[0].outcome, OpOutcome::Failed { .. }));
+    }
+}
+
+fn fields(labels: &[&str], assignees: &[&str]) -> IssueCreateFields {
+    IssueCreateFields {
+        labels: labels.iter().map(|s| s.to_string()).collect(),
+        assignees: assignees.iter().map(|s| s.to_string()).collect(),
+    }
+}
+
+/// #866: chosen labels and assignees reach `gh issue create` as one flag per
+/// value, after the preflight read confirms the repository has them, and
+/// the plan carries them as a note.
+#[test]
+fn issue_create_carries_chosen_labels_and_assignees() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let fixture = Fixture::new(&format!("echo '{URL}'"), true);
+    let chosen = fields(&["bug", "docs"], &["Octocat"]);
+    let plan = plan_issue_create(REPO, TITLE, BODY, &chosen);
+    assert!(plan
+        .warnings
+        .contains(&PlanNote::Github(GithubNote::IssueCreateFields {
+            labels: chosen.labels.clone(),
+            assignees: chosen.assignees.clone(),
+        })));
+    let report = issue_create(&fixture.workdir, REPO, TITLE, BODY, &chosen, &plan);
+    assert!(report.result.is_ok(), "{:?}", report.result);
+    let argv: Vec<String> = std::fs::read_to_string(fixture.workdir.join("argv.txt"))
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(argv, issue_create_args(REPO, TITLE, &chosen));
+    assert_eq!(
+        &argv[8..],
+        ["--label", "bug", "--label", "docs", "--assignee", "Octocat"],
+        "one flag per chosen value"
+    );
+}
+
+/// #866: a label the repository does not have, or a user it cannot assign,
+/// is refused before `gh issue create` runs, and the refusal is the receipt.
+#[test]
+fn labels_or_assignees_the_repository_cannot_take_are_refused_before_gh() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for (chosen, expected) in [
+        (
+            fields(&["bug", "gone"], &[]),
+            GithubNote::IssueUnknownLabels {
+                names: vec!["gone".into()],
+            },
+        ),
+        (
+            fields(&[], &["octocat", "stranger"]),
+            GithubNote::IssueUnassignableUsers {
+                names: vec!["stranger".into()],
+            },
+        ),
+    ] {
+        let fixture = Fixture::new(&format!("echo '{URL}'"), true);
+        let plan = plan_issue_create(REPO, TITLE, BODY, &chosen);
+        let report = issue_create(&fixture.workdir, REPO, TITLE, BODY, &chosen, &plan);
+        let Err(kagi_git::GitError::Blocked(note)) = &report.result else {
+            panic!("expected a preflight refusal: {:?}", report.result);
+        };
+        assert_eq!(**note, PlanNote::Github(expected.clone()));
+        assert!(
+            !fixture.workdir.join("attempts.txt").exists(),
+            "gh issue create must not run"
+        );
+        let entries = read_oplog_tail(10);
+        assert_eq!(entries.len(), 1);
+        let OpOutcome::Refused { blockers } = &entries[0].outcome else {
+            panic!("expected a Refused receipt: {:?}", entries[0].outcome);
+        };
+        assert_eq!(blockers, &vec![expected.message_en()]);
     }
 }
 

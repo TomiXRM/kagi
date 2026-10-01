@@ -559,6 +559,16 @@ The current suite covers:
   `tests/recovery/issue_write_owner.rs`): a recorded Create failure that lands after
   leaving its owner remains in Operation Log without replacing or extending the
   current tab's modal queue, without invoking a GitHub transport;
+- New Issue labels / assignees (`KAGI_GUI_E2E_ONLY=issue_create_fields`,
+  `tests/recovery/issue_create_fields.rs`, #866): the composer's measured
+  `issue-field-open-labels` / `issue-field-open-assignees` open the shared field
+  picker (`FieldTarget::NewIssue`); Apply only stores the picks. An offline `gh`
+  serves labels from a file the scenario edits, so a label deleted between the
+  pick and the measured `issue-composer-submit` is refused before
+  `gh issue create` runs (Refused oplog entry, toast naming the label, body and
+  picks kept); the retry sends `--label`/`--assignee` and empties the picks.
+  `issue-composer-posted-as` is drawn only once `github_login` is known. Pair
+  with `pr_fields_escape_focus` and `workspace_mode_toolbar` for the PR picker;
 - dirty Pull auto-stash success and Pull-failure restoration, including a durable
   Operation Log result without a dismiss-only error modal.
 - reload keeping the open views (`KAGI_GUI_E2E_ONLY=survives_reload`): a commit's diff

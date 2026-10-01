@@ -3,6 +3,7 @@
 
 use std::path::Path;
 
+use kagi_domain::github::IssueCreateFields;
 use kagi_domain::head::Head;
 use kagi_domain::plan::{OperationPlan, StateSummary};
 use kagi_domain::plan_note::{GithubNote, GithubTitle, PlanDisposition, PlanNote, PlanTitle};
@@ -11,8 +12,10 @@ use crate::backend::recording::RunReport;
 use crate::github_fetch::GH_TIMEOUT;
 use crate::GitError;
 
-pub fn issue_create_args(base_repo: &str, title: &str) -> Vec<String> {
-    vec![
+/// `gh issue create` with one `--label` / `--assignee` flag per chosen value
+/// (#866). The author is the authenticated `gh` user; there is no flag for it.
+pub fn issue_create_args(base_repo: &str, title: &str, fields: &IssueCreateFields) -> Vec<String> {
+    let mut args: Vec<String> = vec![
         "issue".into(),
         "create".into(),
         "-R".into(),
@@ -21,7 +24,16 @@ pub fn issue_create_args(base_repo: &str, title: &str) -> Vec<String> {
         title.into(),
         "--body-file".into(),
         "-".into(),
-    ]
+    ];
+    for label in &fields.labels {
+        args.push("--label".into());
+        args.push(label.clone());
+    }
+    for login in &fields.assignees {
+        args.push("--assignee".into());
+        args.push(login.clone());
+    }
+    args
 }
 
 pub fn issue_comment_args(base_repo: &str, number: u64) -> Vec<String> {
@@ -37,14 +49,21 @@ pub fn issue_comment_args(base_repo: &str, number: u64) -> Vec<String> {
 }
 
 /// Pure over the frozen repository identity and composed text.
-/// The caller derives the default title before freezing this plan.
-pub fn plan_issue_create(base_repo: &str, title: &str, body: &str) -> OperationPlan {
+/// The caller derives the default title before freezing this plan. Chosen
+/// labels and assignees (#866) ride along as a warning note, so the receipt
+/// records what was asked for.
+pub fn plan_issue_create(
+    base_repo: &str,
+    title: &str,
+    body: &str,
+    fields: &IssueCreateFields,
+) -> OperationPlan {
     let blockers = if title.trim().is_empty() {
         vec![PlanNote::Github(GithubNote::IssueTitleEmpty)]
     } else {
         Vec::new()
     };
-    issue_plan(
+    let mut plan = issue_plan(
         GithubTitle::CreateIssue,
         StateSummary {
             head: base_repo.into(),
@@ -56,7 +75,15 @@ pub fn plan_issue_create(base_repo: &str, title: &str, body: &str) -> OperationP
         },
         body,
         blockers,
-    )
+    );
+    if !fields.is_empty() {
+        plan.warnings
+            .push(PlanNote::Github(GithubNote::IssueCreateFields {
+                labels: fields.labels.clone(),
+                assignees: fields.assignees.clone(),
+            }));
+    }
+    plan
 }
 
 pub fn plan_issue_comment(number: u64, title: &str, body: &str) -> OperationPlan {
@@ -165,6 +192,51 @@ fn frozen_issue_repo(base_repo: &str) -> Result<&str, GitError> {
     }
 }
 
+/// Preflight for chosen labels and assignees (#866): read the repository's
+/// labels and assignable users just before the write, and refuse — without
+/// calling `gh issue create` — anything it cannot take. A read that fails is a
+/// failure, not a pass: an unchecked label is exactly what this guards.
+fn preflight_issue_fields(
+    workdir: &Path,
+    base_repo: &str,
+    fields: &IssueCreateFields,
+) -> Result<(), GitError> {
+    let unreadable = |what: &str, error: GitError| {
+        GitError::Other(format!(
+            "could not read the repository's {what} to check the issue against them: {error}"
+        ))
+    };
+    let labels = if fields.labels.is_empty() {
+        Vec::new()
+    } else {
+        crate::github_edit::repo_labels(workdir, base_repo)
+            .map_err(|error| unreadable("labels", error))?
+            .into_iter()
+            .map(|label| label.name)
+            .collect()
+    };
+    let assignable = if fields.assignees.is_empty() {
+        Vec::new()
+    } else {
+        crate::github_edit::repo_assignable_users(workdir, base_repo)
+            .map_err(|error| unreadable("assignable users", error))?
+    };
+    let (unknown, unassignable) = fields.missing(&labels, &assignable);
+    if !unknown.is_empty() {
+        return Err(GitError::Blocked(Box::new(PlanNote::Github(
+            GithubNote::IssueUnknownLabels { names: unknown },
+        ))));
+    }
+    if !unassignable.is_empty() {
+        return Err(GitError::Blocked(Box::new(PlanNote::Github(
+            GithubNote::IssueUnassignableUsers {
+                names: unassignable,
+            },
+        ))));
+    }
+    Ok(())
+}
+
 /// The receipt is finalized before the UI owner guard runs; the URL identifies
 /// the new issue even when the user switched tabs while the request ran.
 pub fn issue_create(
@@ -172,10 +244,13 @@ pub fn issue_create(
     base_repo: &str,
     title: &str,
     body: &str,
+    fields: &IssueCreateFields,
     plan: &OperationPlan,
 ) -> RunReport {
-    let result = frozen_issue_repo(base_repo)
-        .and_then(|repo| issue_transport(workdir, issue_create_args(repo, title), body));
+    let result = frozen_issue_repo(base_repo).and_then(|repo| {
+        preflight_issue_fields(workdir, repo, fields)?;
+        issue_transport(workdir, issue_create_args(repo, title, fields), body)
+    });
     record_issue_write(workdir, "issue-create", plan, result, |detail| {
         crate::OperationOutcome::IssueCreate { detail }
     })
@@ -223,6 +298,10 @@ fn record_issue_write(
                  so do not retry blindly",
                 termination.reason()
             ),
+        },
+        // #866: a preflight refusal; nothing was sent.
+        Err(GitError::Blocked(note)) => crate::oplog::OpOutcome::Refused {
+            blockers: vec![note.message_en()],
         },
         Err(error) => crate::oplog::OpOutcome::Failed {
             error: error.to_string(),

@@ -40,6 +40,9 @@ pub(super) struct IssueEditor {
     pub focused: bool,
     pub saving: bool,
     pub save_error: Option<String>,
+    /// Labels and assignees for a New Issue (#866). Tab state only: drafts
+    /// on disk do not carry them, so a restart forgets them.
+    pub fields: kagi_domain::github::IssueCreateFields,
 }
 
 impl KagiApp {
@@ -421,6 +424,13 @@ pub(super) fn render_composer(
     };
     if !empty_create {
         content = content.child(body);
+        if number.is_none() {
+            content = content.child(super::issue_fields::render_issue_fields(
+                app,
+                &editor.fields,
+                cx,
+            ));
+        }
     }
     let submit = super::timeline_row::submit(
         format!("{id}-submit"),
@@ -489,7 +499,7 @@ pub(super) fn render_composer(
                                 app.toggle_issue_focus(number, window, cx)
                             })),
                     )
-                    .child(submit),
+                    .child(super::e2e::measure_control(format!("{id}-submit"), submit)),
             ),
     );
     if let Some(error) = editor.save_error.as_ref() {

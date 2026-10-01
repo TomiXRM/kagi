@@ -140,7 +140,17 @@ pub enum PrField {
     Labels,
 }
 
-/// State for the PR field picker: the gear on a properties row (ADR-0200 §11).
+/// What the field picker is editing (#866): a PR's fields, written through
+/// `gh pr edit` on confirm, or the New Issue composer's selection, which
+/// confirm only stores — the write is the composer's Create.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldTarget {
+    Pr { number: u64 },
+    NewIssue,
+}
+
+/// State for the field picker: the gear on a PR properties row (ADR-0200 §11),
+/// or the label / assignee buttons of the New Issue composer (#866).
 ///
 /// `candidates: None` means the list of people or labels the repository offers
 /// is still being read. The picker is usable before it arrives - what the PR
@@ -153,13 +163,14 @@ pub struct PrFieldsModal {
     /// closed and reopened on the same PR and field meanwhile - is dropped
     /// rather than overwriting the new one (review finding, `w5:p19`).
     pub generation: u64,
-    pub number: u64,
+    pub target: FieldTarget,
     /// `<host>/<owner>/<repo>`, frozen when the picker opened: the write must
     /// address the repository the PR belongs to, not whatever is active when
     /// it is confirmed.
     pub base_repo: String,
     pub field: PrField,
-    /// What the PR has now - the baseline the write is diffed against.
+    /// What the PR (or the composer) has now - the baseline the write is
+    /// diffed against.
     pub current: Vec<String>,
     /// What the user has toggled to.
     pub selected: Vec<String>,

@@ -52,6 +52,7 @@ mod github_issue_state;
 mod github_issues;
 mod github_pr_detail;
 mod github_pr_strip;
+mod issue_fields;
 mod issues_composer;
 #[cfg(feature = "gui-e2e")]
 mod issues_composer_e2e;
@@ -2870,7 +2871,7 @@ impl KagiApp {
             M::StashDrop(_) => self.start_stash_drop(cx),
             M::PushTag(_) => self.start_push_tag(cx),
             M::PrMerge(_) => self.start_pr_merge(cx),
-            M::PrFields(_) => self.start_pr_edit(cx),
+            M::PrFields(_) => self.confirm_pr_fields(cx),
             M::Push(_) => self.start_push(cx),
             M::BranchPlan(_) => self.start_branch_plan(cx),
             M::SetUpstream(_) => self.start_set_upstream(cx),

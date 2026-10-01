@@ -145,6 +145,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
 1. **HEAD の切替を含む範囲は戻さない**。restore / revert は branch だけを動かし、HEAD は動かさない。branch に追従しただけの HEAD の移動(symbolic が同じ)は、これまでどおりその branch の移動として扱う。
    - blocker HeadMoved は、どの entry で HEAD が何から何に切り替わったかを示す(`HeadMoved { id, op, from, to }`、`HeadAt::{Branch, Detached, Unknown}`、entry の `ref_moves` の HEAD の行から作る)。
    - 手順も示す: 「先に <from> を自分で checkout してから、#id 以降の時点へ restore する」。手で checkout すれば作業ツリーの扱いはユーザーが checkout で決め、restore は branch の移動だけで済む。
+   - **同じ entry で branch も動かした場合**(作成して checkout、tracking branch の checkout など。#912 review): その entry 以降へ restore しても作られた branch が残り、「この操作より前」に戻らない。そこで restore の手順は示さず、手で戻す手順だけを示す: 「<from> を checkout してから、<branch> を削除するか元に戻す」。`HeadMoved.also_moved` に、その entry が動かした branch の短い名前を載せる。
 2. **detached HEAD は戻し先にしない**。restore は commit への checkout を行わない。1 と同じく、HEAD を detached にする・detached から戻す entry は HeadMoved。
 3. **他の worktree の detached HEAD は記録しない**。記録は op を実行した worktree の HEAD と `refs/heads/*` だけ(§4)。attached な HEAD は `refs/heads/<branch>` の差分から導ける。detached HEAD は restore が動かさないので、記録しても使い道がない。snapshot のコストも増やさない。
 
@@ -202,7 +203,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - domain unit: branch 間の checkout は `from = Branch("a")`・`to = Branch("b")`、detached は `to = Detached(oid)`。
   - kagi-git integration(実 `Backend::run`): `checkout a` を含む restore は `HeadMoved { from: main, to: a }`、`checkout-commit` の revert は `{ from: a, to: Detached(<oid>) }`。
   - i18n unit: EN / JA の文言が entry・操作名・両側(短い OID)と、手で checkout する側・「#id 以降の時点へ restore」を含む。
-  - 変異確認: from と to を入れ替える → domain と integration が落ちる。
+  - 変異確認: from と to を入れ替える → domain と integration が落ちる。`also_moved` を空にする → domain(作成して checkout の entry)が落ちる。
 - #878 review 対応(P1)のテスト
   - domain unit: 鎖が途切れると HistoryGap、別 repository の entry は除いて Unknown は blocker、記録外で変わった branch は RefChangedOutsideRecord(記録が説明する branch は除く)、動いて戻った ref が別の値にあれば RefMovedSince。
   - kagi-git integration: oplog から 1 行を消すと HistoryGap、削除・prune した worktree の entry は UnknownRepository、別 worktree で merge の conflict 中は OperationInProgress(その path)、対象の後に `git branch` で作った branch は RefChangedOutsideRecord。

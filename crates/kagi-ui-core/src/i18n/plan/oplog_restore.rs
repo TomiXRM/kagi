@@ -28,12 +28,37 @@ pub fn note_ja(note: &OplogRestoreNote) -> String {
         OplogRestoreNote::NotRecorded { id, op } => format!(
             "操作 #{id}({op})には ref の移動の記録が無いため、正確に戻せません。reflog からの推定は使いません。"
         ),
-        OplogRestoreNote::HeadMoved { id, op, from, to } => format!(
+        OplogRestoreNote::HeadMoved {
+            id,
+            op,
+            from,
+            to,
+            also_moved,
+        } if also_moved.is_empty() => format!(
             "操作 #{id}({op})で HEAD が {} から {} に切り替わりました。restore は branch だけを動かし、HEAD は動かしません(作業ツリーが変わるため)。この操作より前に戻すには、先に {} を自分で checkout してから、#{id} 以降の時点へ restore してください。",
             head_ja(from),
             head_ja(to),
             head_ja(from)
         ),
+        OplogRestoreNote::HeadMoved {
+            id,
+            op,
+            from,
+            to,
+            also_moved,
+        } => {
+            let names = also_moved
+                .iter()
+                .map(|n| format!("`{n}`"))
+                .collect::<Vec<_>>()
+                .join("、");
+            format!(
+                "操作 #{id}({op})で HEAD が {} から {} に切り替わり、{names} も変わりました。restore は branch だけを動かし HEAD は動かさないので、この操作より前には戻せません。手で戻してください: {} を checkout してから、{names} を削除するか元に戻します。",
+                head_ja(from),
+                head_ja(to),
+                head_ja(from)
+            )
+        }
         OplogRestoreNote::LaterEntryMoved { refname, id, op } => format!(
             "{refname} は後の操作 #{id}({op})でも動いています。先にそちらを取り消すか、時点への復元を使ってください。"
         ),
@@ -114,6 +139,7 @@ mod tests {
             op: "checkout-commit".into(),
             from: HeadAt::Branch("feature".into()),
             to: HeadAt::Detached("0123456789abcdef".into()),
+            also_moved: Vec::new(),
         };
         let en = note.message_en();
         let ja = note_ja(&note);
@@ -130,5 +156,34 @@ mod tests {
         assert!(en.contains("restore to #42 or a later point"), "{en}");
         assert!(ja.contains("`feature` を自分で checkout"), "{ja}");
         assert!(ja.contains("#42 以降の時点へ restore"), "{ja}");
+    }
+
+    /// #912 review: an entry that also created a branch cannot be got back
+    /// past by restoring to it — the branch would stay — so no restore step
+    /// is offered; the branch to delete is named instead.
+    #[test]
+    fn a_composite_head_switch_points_to_undoing_it_by_hand() {
+        let note = OplogRestoreNote::HeadMoved {
+            id: 7,
+            op: "create-branch".into(),
+            from: HeadAt::Branch("main".into()),
+            to: HeadAt::Branch("topic".into()),
+            also_moved: vec!["topic".into()],
+        };
+        let en = note.message_en();
+        let ja = note_ja(&note);
+        for text in [&en, &ja] {
+            assert!(text.contains("#7"), "{text}");
+            assert!(!text.contains("restore to #7"), "{text}");
+            assert!(!text.contains("#7 以降"), "{text}");
+        }
+        assert!(
+            en.contains("check out 'main', then delete or move back 'topic'"),
+            "{en}"
+        );
+        assert!(
+            ja.contains("`main` を checkout してから、`topic` を削除"),
+            "{ja}"
+        );
     }
 }

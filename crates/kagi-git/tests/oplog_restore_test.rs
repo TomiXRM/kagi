@@ -257,6 +257,7 @@ fn a_checkout_in_the_range_or_a_branch_moved_outside_blocks() {
             op: "checkout".into(),
             from: HeadAt::Branch("main".into()),
             to: HeadAt::Branch("a".into()),
+            also_moved: Vec::new(),
         }),
         "{:?}",
         p.blockers
@@ -276,6 +277,7 @@ fn a_checkout_in_the_range_or_a_branch_moved_outside_blocks() {
             op: "checkout-commit".into(),
             from: HeadAt::Branch("a".into()),
             to: HeadAt::Detached(tip),
+            also_moved: Vec::new(),
         }),
         "{:?}",
         p.blockers

@@ -152,6 +152,12 @@ pub fn plan(
                         op: e.op.clone(),
                         from: HeadAt::of(m.old_symbolic.as_deref(), m.old.as_deref()),
                         to: HeadAt::of(m.new_symbolic.as_deref(), m.new.as_deref()),
+                        also_moved: branch_moves(moves)
+                            .map(|b| {
+                                let name = b.refname.as_str();
+                                name.strip_prefix("refs/heads/").unwrap_or(name).to_string()
+                            })
+                            .collect(),
                     })
                 }
             }
@@ -544,6 +550,7 @@ mod tests {
             op: "op3".into(),
             from: HeadAt::Branch("a".into()),
             to: HeadAt::Branch("b".into()),
+            also_moved: Vec::new(),
         }));
 
         // #886: detaching names the commit HEAD was left at.
@@ -566,6 +573,35 @@ mod tests {
                 op: "op3".into(),
                 from: HeadAt::Branch("a".into()),
                 to: HeadAt::Detached("c0".into()),
+                also_moved: Vec::new(),
+            }]
+        );
+
+        // #912 review: "create and check out" switches HEAD *and* creates a
+        // branch in one entry. Restoring to it or later would keep the
+        // branch, so the blocker names it for the by-hand way back.
+        let create_and_checkout = entry(
+            3,
+            Some(vec![
+                head("c1", "c1", "refs/heads/a", "refs/heads/b"),
+                mv("refs/heads/b", None, Some("c1")),
+            ]),
+        );
+        let entries = [
+            entry(1, Some(vec![])),
+            entry(2, Some(vec![])),
+            create_and_checkout,
+        ];
+        let current = refs(&[(A, "c1"), ("refs/heads/b", "c1")]);
+        let p = plan(&entries, 1, RestoreMode::RestoreTo, &current);
+        assert_eq!(
+            p.blockers,
+            vec![OplogRestoreNote::HeadMoved {
+                id: 3,
+                op: "op3".into(),
+                from: HeadAt::Branch("a".into()),
+                to: HeadAt::Branch("b".into()),
+                also_moved: vec!["b".into()],
             }]
         );
     }

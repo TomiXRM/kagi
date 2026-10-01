@@ -179,6 +179,10 @@ fn pr_merge_records_before_returning_when_the_ui_completion_is_dropped() {
     let OpOutcome::Success { after } = &entry.outcome else {
         panic!("expected a recorded success, got {:?}", entry.outcome);
     };
+    assert_eq!(
+        entry.ref_moves, None,
+        "#885: a merge may delete the local branch, so it is not recorded as moving nothing"
+    );
     assert!(
         after.dirty.contains("queued"),
         "a submission is not a merged PR"
@@ -200,6 +204,26 @@ fn pr_merge_records_before_returning_when_the_ui_completion_is_dropped() {
         panic!("expected a recorded failure, got {:?}", entries[0].outcome);
     };
     assert!(error.contains("Head branch was modified"), "{error}");
+}
+
+/// #885: a merge refused before `gh` ran moved nothing, and says so, so a
+/// restore across it is not blocked as "not recorded".
+#[test]
+fn a_merge_refused_before_gh_ran_records_that_nothing_moved() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let root = tempfile::tempdir().unwrap();
+    let (_bin, workdir, _restore) = fixture(root.path());
+    let plan = merge_plan(&workdir);
+    // Another PR than the one approved: refused without running gh.
+    let report = merge_pr(&workdir, 999, MergeMethod::Squash, false, HEAD_SHA, &plan);
+    assert!(report.result.is_err());
+    let entries = read_oplog_tail(10);
+    assert_eq!(entries.len(), 1);
+    assert!(matches!(entries[0].outcome, OpOutcome::Refused { .. }));
+    assert_eq!(entries[0].ref_moves, Some(Vec::new()));
 }
 
 #[test]
@@ -447,6 +471,7 @@ fn pr_comment_records_before_returning_when_the_ui_completion_is_dropped() {
     let OpOutcome::Success { after } = &entry.outcome else {
         panic!("expected a recorded success, got {:?}", entry.outcome);
     };
+    assert_eq!(entry.ref_moves, Some(Vec::new()), "#885: nothing moved");
     assert!(
         after.dirty.contains("issuecomment-99"),
         "the receipt keeps the comment's URL: {}",
@@ -474,6 +499,11 @@ fn a_refused_pr_comment_is_still_recorded_with_ghs_own_reason() {
     assert!(
         error.contains("Resource not accessible by integration"),
         "gh's own reason must survive into the receipt: {error}"
+    );
+    assert_eq!(
+        read_oplog_tail(1)[0].ref_moves,
+        Some(Vec::new()),
+        "#885: a GitHub-only write moves no local ref, refused or not"
     );
 }
 
@@ -546,6 +576,7 @@ fn a_wordless_approval_records_its_verdict_without_sending_a_body() {
         "the receipt keeps the verdict and the review's URL: {}",
         after.dirty
     );
+    assert_eq!(read_oplog_tail(1)[0].ref_moves, Some(Vec::new()), "#885");
 }
 
 #[test]
@@ -696,6 +727,7 @@ fn pr_edit_sends_one_flag_per_value_and_records_its_receipt() {
     let OpOutcome::Success { after } = &entry.outcome else {
         panic!("expected a recorded success, got {:?}", entry.outcome);
     };
+    assert_eq!(entry.ref_moves, Some(Vec::new()), "#885: nothing moved");
     assert!(
         after.dirty.contains("+2 reviewers, -1 label") && after.dirty.contains("/pull/501"),
         "the receipt summarises the change and keeps gh's handle: {}",

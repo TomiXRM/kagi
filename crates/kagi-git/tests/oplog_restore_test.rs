@@ -453,3 +453,146 @@ fn a_branch_created_after_the_point_outside_the_record_blocks() {
         "b is explained by its entry; outside by nothing"
     );
 }
+
+/// The fetch receipt as the UI writes it (#885, `fetch_async_for`): the
+/// fetch observed by `observe_ref_moves`, recorded through `with_ref_moves`.
+fn failed_fetch(dir: &Path, outcome: impl FnOnce(String) -> OpOutcome) -> u64 {
+    let (result, moves) = backend(dir).observe_ref_moves(|b| b.fetch_remote());
+    let error = result.err().expect("the remote does not exist").to_string();
+    let state = StateSummary {
+        head: "branch: main".into(),
+        dirty: "clean".into(),
+    };
+    let entry = OpLogEntry::new("fetch", dir.display().to_string(), state, outcome(error))
+        .with_worktree(Some(dir.display().to_string()))
+        .with_ref_moves(moves);
+    append_oplog(&entry).unwrap();
+    newest(dir).id
+}
+
+/// #885: a fetch moves no local branch, and its receipt says so
+/// (`Some(empty)`), so a restore to a point before it is not blocked as
+/// "not recorded"; the branch made after it is still taken back.
+#[test]
+fn a_fetch_in_the_range_does_not_block_the_restore() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let missing = tmp.path().join("no-such-remote");
+    git(
+        &repo,
+        &["remote", "add", "origin", missing.to_str().unwrap()],
+    );
+    let point = create(&repo, "a");
+    let at_point = branches(&repo);
+    let fetch = failed_fetch(&repo, |error| OpOutcome::Failed { error });
+    assert_eq!(newest(&repo).ref_moves, Some(Vec::new()), "fetch {fetch}");
+    create(&repo, "b");
+
+    let op = Operation::RestoreToPoint { entry_id: point };
+    let p = plan(&repo, &op);
+    assert_eq!(restore_blockers(&p), Vec::new(), "{:?}", p.blockers);
+    backend(&repo).run(&op, &p).unwrap();
+    assert_eq!(branches(&repo), at_point, "b taken back across the fetch");
+}
+
+/// #885 / #891 review: a fetch whose termination is unconfirmed may still be
+/// writing refs, so it is not recorded however little was observed, and a
+/// restore across it stays blocked.
+#[test]
+fn a_fetch_of_unknown_termination_still_blocks_the_restore() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let missing = tmp.path().join("no-such-remote");
+    git(
+        &repo,
+        &["remote", "add", "origin", missing.to_str().unwrap()],
+    );
+    let point = create(&repo, "a");
+    let fetch = failed_fetch(&repo, |evidence| OpOutcome::Unknown {
+        after: StateSummary {
+            head: "unknown".into(),
+            dirty: "unknown".into(),
+        },
+        evidence,
+    });
+    create(&repo, "b");
+
+    let p = plan(&repo, &Operation::RestoreToPoint { entry_id: point });
+    assert!(
+        restore_blockers(&p).contains(&OplogRestoreNote::NotRecorded {
+            id: fetch,
+            op: "fetch".into()
+        }),
+        "{:?}",
+        p.blockers
+    );
+}
+
+/// Remove the linked worktree `wt` (on `wtb`) through the recorded path and
+/// return its receipt.
+fn remove_wt(dir: &Path, delete_branch: bool) -> OpLogEntry {
+    let plan = Backend::plan_recorded_remove(dir, "wt", delete_branch).unwrap();
+    let report = Backend::run_recorded_remove(&plan, kagi_git::oplog::Actor::Human, None);
+    let entry = newest(dir);
+    assert_eq!(entry.op, "remove-worktree");
+    assert!(
+        matches!(entry.outcome, OpOutcome::Success { .. }),
+        "{:?} / {:?}",
+        entry.outcome,
+        report.progress
+    );
+    entry
+}
+
+/// #885 (#900 review): a remove-worktree records the refs it moved,
+/// observed, not assumed — nothing when the branch is kept, the branch's
+/// deletion when it is not — so a restore across it is never blocked as
+/// "not recorded".
+#[test]
+fn a_remove_worktree_records_what_it_moved() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    git(&repo, &["branch", "wtb"]);
+    let tip = git_output(&repo, &["rev-parse", "wtb"]);
+    let point = create(&repo, "a");
+    let wt = tmp.path().join("wt");
+    git(
+        &repo,
+        &["worktree", "add", "-q", wt.to_str().unwrap(), "wtb"],
+    );
+    let kept = remove_wt(&repo, false);
+    assert_eq!(
+        kept.ref_moves,
+        Some(Vec::new()),
+        "branch kept: nothing moved"
+    );
+
+    git(
+        &repo,
+        &["worktree", "add", "-q", wt.to_str().unwrap(), "wtb"],
+    );
+    let deleted = remove_wt(&repo, true);
+    let moves = deleted.ref_moves.expect("observed");
+    assert_eq!(moves.len(), 1, "{moves:?}");
+    assert_eq!(moves[0].refname, "refs/heads/wtb");
+    assert_eq!(moves[0].old.as_deref(), Some(tip.as_str()));
+    assert_eq!(moves[0].new, None, "deleted");
+
+    let p = plan(&repo, &Operation::RestoreToPoint { entry_id: point });
+    assert!(
+        !restore_blockers(&p)
+            .iter()
+            .any(|n| matches!(n, OplogRestoreNote::NotRecorded { .. })),
+        "{:?}",
+        p.blockers
+    );
+}

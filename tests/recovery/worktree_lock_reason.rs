@@ -87,6 +87,8 @@ fn confirm_reason(
         .find(|entry| entry.op == "lock-worktree")
         .unwrap();
     assert!(matches!(entry.outcome, OpOutcome::Success { .. }));
+    // #885: observed, and a lock moves no ref: "recorded, nothing moved".
+    assert_eq!(entry.ref_moves, Some(Vec::new()), "lock-worktree receipt");
 }
 
 pub fn scenario_worktree_lock_reason(cx: &mut VisualTestAppContext) {
@@ -131,6 +133,13 @@ pub fn scenario_worktree_lock_reason(cx: &mut VisualTestAppContext) {
         press_enter(cx, &app, window);
         cx.run_until_parked();
         assert_eq!(lock_reason(fixture.path()), None);
+        let unlocked = read_oplog_tail_for_repo(fixture.path(), 100)
+            .into_iter()
+            .rev()
+            .find(|entry| entry.op == "unlock-worktree")
+            .expect("the unlock is recorded");
+        assert!(matches!(unlocked.outcome, OpOutcome::Success { .. }));
+        assert_eq!(unlocked.ref_moves, Some(Vec::new()), "#885: unlock receipt");
         confirm_reason(cx, &app, window, fixture.path(), "");
         assert_eq!(repo_fingerprint(fixture.path()), before);
         unmount(cx, app, window);
@@ -582,4 +591,59 @@ pub fn scenario_external_lock_reload(cx: &mut VisualTestAppContext) {
         unmount(cx, app, window);
     }
     eprintln!("[gui-e2e] PASS external_lock_reload: an external lock reaches the sidebar row and menu on refresh, from the linked and the main tab");
+}
+
+/// #885: prune and repair rewrite only worktree admin files; their receipts
+/// carry the observed moves — nothing — so a restore across them is not
+/// blocked as "not recorded".
+pub fn scenario_worktree_prune_repair_receipt(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let main = fixture.path().canonicalize().unwrap();
+    let linked_root = tempfile::tempdir().unwrap();
+    let stale = linked_root.path().join("wt-stale");
+    git(
+        &main,
+        &["worktree", "add", "-b", "wt-stale", stale.to_str().unwrap()],
+    );
+    // Bulk prune only touches worktrees Kagi created (`.kagi-created`).
+    std::fs::write(main.join(".git/worktrees/wt-stale/.kagi-created"), "").unwrap();
+    std::fs::remove_dir_all(&stale).unwrap();
+
+    let (app, window) = mount(cx, &main);
+    let receipt = |op: &str| {
+        read_oplog_tail_for_repo(&main, 100)
+            .into_iter()
+            .rev()
+            .find(|entry| entry.op == op)
+            .unwrap_or_else(|| panic!("{op} is recorded"))
+    };
+    app.update(cx, |app, cx| {
+        app.open_prune_worktrees_modal();
+        app.confirm_prune_worktrees(cx);
+    });
+    cx.run_until_parked();
+    let pruned = receipt("prune-worktrees");
+    assert!(
+        matches!(pruned.outcome, OpOutcome::Success { .. }),
+        "{:?}",
+        pruned.outcome
+    );
+    assert_eq!(pruned.ref_moves, Some(Vec::new()), "prune receipt");
+
+    app.update(cx, |app, cx| {
+        app.open_repair_worktrees_modal();
+        app.confirm_repair_worktrees(cx);
+    });
+    cx.run_until_parked();
+    let repaired = receipt("repair-worktrees");
+    assert!(
+        matches!(repaired.outcome, OpOutcome::Success { .. }),
+        "{:?}",
+        repaired.outcome
+    );
+    assert_eq!(repaired.ref_moves, Some(Vec::new()), "repair receipt");
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS worktree_prune_repair_receipt: prune and repair record that nothing moved"
+    );
 }

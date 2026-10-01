@@ -619,24 +619,26 @@ pub(crate) fn render_push_tag_modal(
     )
 }
 
-/// Rebase-current-onto confirmation overlay (branch-menu "Integrate" group).
-/// Single confirm, no armed second stage — see `operations/rebase.rs`'s
-/// module doc for why (Guarded, not Destructive; a conflict routes into the
-/// existing conflict editor rather than losing anything).
+/// Rebase / replay confirmation overlay (branch-menu "Integrate" group).
+/// Rebase: single confirm, no armed second stage — see `operations/rebase.rs`'s
+/// module doc for why. Replay (#344): destructive, so the label swaps to the
+/// armed form after the first confirm and the accent is the blocker colour.
 pub(crate) fn render_rebase_modal(
     modal: RebaseCurrentOntoModal,
     overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    let accent = if modal.is_replay() {
+        theme().color_blocker
+    } else {
+        theme().color_branch
+    };
     render_plan_modal_wrapper_styled(
-        modal.plan,
-        modal.error,
-        Msg::PlanRebaseOnto.t().replace("{}", &modal.branch),
+        modal.display_plan(),
+        modal.error.clone(),
+        modal.confirm_label(),
         None,
-        Some((
-            ModalIcon::Path("icons/refresh-cw.svg"),
-            theme().color_branch,
-        )),
+        Some((ModalIcon::Path("icons/refresh-cw.svg"), accent)),
         |this, _cx| this.cancel_rebase_modal(),
         |this, cx| this.start_rebase(cx),
         overrides,

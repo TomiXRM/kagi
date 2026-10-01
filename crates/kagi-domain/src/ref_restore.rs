@@ -147,10 +147,17 @@ pub fn plan(
             }),
             Some(moves) => {
                 if let Some(m) = moves.iter().find(|m| switches_head(m)) {
+                    let from = HeadAt::of(m.old_symbolic.as_deref(), m.old.as_deref());
+                    // #912 review: a `from` branch deleted since cannot be
+                    // checked out until a restore to this entry recreates it.
+                    let from_gone = matches!(
+                        &from,
+                        HeadAt::Branch(b) if !current.branches.contains_key(&format!("refs/heads/{b}"))
+                    );
                     blockers.push(OplogRestoreNote::HeadMoved {
                         id: e.id,
                         op: e.op.clone(),
-                        from: HeadAt::of(m.old_symbolic.as_deref(), m.old.as_deref()),
+                        from,
                         to: HeadAt::of(m.new_symbolic.as_deref(), m.new.as_deref()),
                         also_moved: branch_moves(moves)
                             .map(|b| {
@@ -158,6 +165,7 @@ pub fn plan(
                                 name.strip_prefix("refs/heads/").unwrap_or(name).to_string()
                             })
                             .collect(),
+                        from_gone,
                     })
                 }
             }
@@ -551,6 +559,7 @@ mod tests {
             from: HeadAt::Branch("a".into()),
             to: HeadAt::Branch("b".into()),
             also_moved: Vec::new(),
+            from_gone: false,
         }));
 
         // #886: detaching names the commit HEAD was left at.
@@ -574,6 +583,7 @@ mod tests {
                 from: HeadAt::Branch("a".into()),
                 to: HeadAt::Detached("c0".into()),
                 also_moved: Vec::new(),
+                from_gone: false,
             }]
         );
 
@@ -602,7 +612,32 @@ mod tests {
                 from: HeadAt::Branch("a".into()),
                 to: HeadAt::Branch("b".into()),
                 also_moved: vec!["b".into()],
+                from_gone: false,
             }]
+        );
+
+        // #912 review: the branch HEAD switched away from was deleted by a
+        // later entry, so it cannot be checked out first: the blocker says
+        // so and the way back starts with a restore to the switch.
+        let switch = entry(
+            2,
+            Some(vec![head("c1", "c1", "refs/heads/a", "refs/heads/b")]),
+        );
+        let delete_a = entry(3, Some(vec![mv(A, Some("c1"), None)]));
+        let entries = [entry(1, Some(vec![])), switch, delete_a];
+        let current = refs(&[("refs/heads/b", "c1")]);
+        let p = plan(&entries, 1, RestoreMode::RestoreTo, &current);
+        assert!(
+            p.blockers.contains(&OplogRestoreNote::HeadMoved {
+                id: 2,
+                op: "op2".into(),
+                from: HeadAt::Branch("a".into()),
+                to: HeadAt::Branch("b".into()),
+                also_moved: Vec::new(),
+                from_gone: true,
+            }),
+            "{:?}",
+            p.blockers
         );
     }
 

@@ -34,6 +34,7 @@ pub fn note_ja(note: &OplogRestoreNote) -> String {
             from,
             to,
             also_moved,
+            from_gone: false,
         } if also_moved.is_empty() => format!(
             "操作 #{id}({op})で HEAD が {} から {} に切り替わりました。restore は branch だけを動かし、HEAD は動かしません(作業ツリーが変わるため)。この操作より前に戻すには、先に {} を自分で checkout してから、#{id} 以降の時点へ restore してください。",
             head_ja(from),
@@ -46,6 +47,22 @@ pub fn note_ja(note: &OplogRestoreNote) -> String {
             from,
             to,
             also_moved,
+            from_gone: true,
+        } if also_moved.is_empty() => format!(
+            "操作 #{id}({op})で HEAD が {} から {} に切り替わりましたが、{} はもうありません。restore は branch だけを動かし、HEAD は動かしません(作業ツリーが変わるため)。この操作より前に戻すには、まず #{id} の時点へ restore して {} を戻し、{} を自分で checkout してから、さらに前の時点へ restore してください。",
+            head_ja(from),
+            head_ja(to),
+            head_ja(from),
+            head_ja(from),
+            head_ja(from)
+        ),
+        OplogRestoreNote::HeadMoved {
+            id,
+            op,
+            from,
+            to,
+            also_moved,
+            ..
         } => {
             let names = also_moved
                 .iter()
@@ -140,6 +157,7 @@ mod tests {
             from: HeadAt::Branch("feature".into()),
             to: HeadAt::Detached("0123456789abcdef".into()),
             also_moved: Vec::new(),
+            from_gone: false,
         };
         let en = note.message_en();
         let ja = note_ja(&note);
@@ -169,6 +187,7 @@ mod tests {
             from: HeadAt::Branch("main".into()),
             to: HeadAt::Branch("topic".into()),
             also_moved: vec!["topic".into()],
+            from_gone: false,
         };
         let en = note.message_en();
         let ja = note_ja(&note);
@@ -185,5 +204,28 @@ mod tests {
             ja.contains("`main` を checkout してから、`topic` を削除"),
             "{ja}"
         );
+    }
+
+    /// #912 review: when the branch to go back to was deleted since, the
+    /// restore to the switch comes first (it brings the branch back), then
+    /// the checkout.
+    #[test]
+    fn a_deleted_from_branch_is_brought_back_before_the_checkout() {
+        let note = OplogRestoreNote::HeadMoved {
+            id: 9,
+            op: "checkout".into(),
+            from: HeadAt::Branch("old".into()),
+            to: HeadAt::Branch("new".into()),
+            also_moved: Vec::new(),
+            from_gone: true,
+        };
+        let en = note.message_en();
+        let ja = note_ja(&note);
+        let restore = en.find("first restore to #9").expect(&en);
+        let checkout = en.find("then check out 'old'").expect(&en);
+        assert!(restore < checkout, "{en}");
+        let restore = ja.find("まず #9 の時点へ restore").expect(&ja);
+        let checkout = ja.find("`old` を自分で checkout").expect(&ja);
+        assert!(restore < checkout, "{ja}");
     }
 }

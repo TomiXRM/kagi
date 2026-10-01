@@ -18,13 +18,14 @@ fn quoted(names: &[String]) -> String {
         .join(", ")
 }
 
-/// Where HEAD pointed on one side of a recorded switch (#886).
+/// Where HEAD pointed on one side of a recorded switch (#886). `Box<str>`
+/// keeps `PlanNote` (carried in `Result::Err`) small.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HeadAt {
     /// On a branch (short name, `main`).
-    Branch(String),
+    Branch(Box<str>),
     /// Detached at a commit.
-    Detached(String),
+    Detached(Box<str>),
     /// Not recorded on this side (an unborn repository).
     Unknown,
 }
@@ -65,13 +66,16 @@ pub enum OplogRestoreNote {
     /// restore moves branches only (#886, ADR-0214 §7). `also_moved` = the
     /// branches the same entry created, moved or deleted (short names; e.g.
     /// "create and check out"): restoring to it or later would keep those,
-    /// so the way back is all by hand (#912 review).
+    /// so the way back is all by hand (#912 review). `from_gone` = `from` is
+    /// a branch that no longer exists (a later entry deleted it): it can only
+    /// be checked out after a restore to this entry brings it back.
     HeadMoved {
         id: u64,
         op: String,
         from: HeadAt,
         to: HeadAt,
         also_moved: Vec<String>,
+        from_gone: bool,
     },
     /// blocker (op-revert) — a later recorded entry moved the same ref.
     LaterEntryMoved {
@@ -143,6 +147,7 @@ impl OplogRestoreNote {
                 from,
                 to,
                 also_moved,
+                from_gone: false,
             } if also_moved.is_empty() => format!(
                 "Operation #{id} ({op}) switched HEAD from {} to {}. A restore moves branches only, never HEAD, because that would change the working tree. To go back past it: check out {} yourself, then restore to #{id} or a later point.",
                 from.label_en(),
@@ -155,6 +160,22 @@ impl OplogRestoreNote {
                 from,
                 to,
                 also_moved,
+                from_gone: true,
+            } if also_moved.is_empty() => format!(
+                "Operation #{id} ({op}) switched HEAD from {} to {}, and {} no longer exists. A restore moves branches only, never HEAD, because that would change the working tree. To go back past it: first restore to #{id} (that brings {} back), then check out {} yourself, then restore to an earlier point.",
+                from.label_en(),
+                to.label_en(),
+                from.label_en(),
+                from.label_en(),
+                from.label_en()
+            ),
+            OplogRestoreNote::HeadMoved {
+                id,
+                op,
+                from,
+                to,
+                also_moved,
+                ..
             } => format!(
                 "Operation #{id} ({op}) switched HEAD from {} to {} and also changed {}. A restore moves branches only, never HEAD, so it cannot go back past it. Undo it by hand: check out {}, then delete or move back {}.",
                 from.label_en(),

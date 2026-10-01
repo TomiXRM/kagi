@@ -35,6 +35,16 @@ pub struct RebaseCurrentOntoModal {
 }
 
 impl RebaseCurrentOntoModal {
+    /// Replay is two-stage; rebase is a single confirm (#354).
+    pub fn confirm_stage(&self) -> crate::ui::dialog_a11y::ConfirmStage {
+        use crate::ui::dialog_a11y::ConfirmStage;
+        if self.is_replay() {
+            ConfirmStage::two_stage(self.confirm_armed)
+        } else {
+            ConfirmStage::Single
+        }
+    }
+
     pub fn is_replay(&self) -> bool {
         matches!(self.op, kagi_git::Operation::ReplayOnto { .. })
     }

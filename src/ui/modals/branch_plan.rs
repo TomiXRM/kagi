@@ -27,6 +27,15 @@ pub struct BranchPlanModal {
 }
 
 impl BranchPlanModal {
+    /// Sync-to-remote is two-stage; pull / push are a single confirm (#354).
+    pub fn confirm_stage(&self) -> crate::ui::dialog_a11y::ConfirmStage {
+        use crate::ui::dialog_a11y::ConfirmStage;
+        match self.kind {
+            BranchPlanKind::SyncToRemote => ConfirmStage::two_stage(self.confirm_armed),
+            _ => ConfirmStage::Single,
+        }
+    }
+
     /// Confirm-button label. Sync-to-remote is destructive, so the label
     /// swaps to the armed wording after the first confirm (ADR-0023).
     pub fn confirm_label(&self) -> SharedString {

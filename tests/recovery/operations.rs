@@ -2553,6 +2553,160 @@ pub fn scenario_replay_onto_armed(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS replay_onto_armed: Enter/button arm then replay; both worktrees untouched, ref moved, backup + oplog");
 }
 
+fn redraw(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+    kagi::ui::dialog_a11y::clear_recorded_a11y();
+    app.update(cx, |_, cx| cx.notify());
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+}
+
+/// #354 slice 2: confirmation cards are dialogs for assistive technology.
+/// The AccessKit tree only exists with an AT connected (#840), so the oracle
+/// is what the renderer set: role, name, description, the Confirm/Cancel
+/// custom actions, and each note row's role and name — across the armed
+/// transition, a single-stage card and a blocked one, on the shared plan
+/// card (delete-branch) and a bespoke card (discard).
+pub fn scenario_dialog_a11y_roles(cx: &mut VisualTestAppContext) {
+    use gpui::Role;
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    git(repo, &["branch", "merged-delete", "HEAD~1"]);
+    git(repo, &["checkout", "-q", "-b", "unmerged-delete"]);
+    std::fs::write(repo.join("only-on-branch.txt"), "x\n").unwrap();
+    git(repo, &["add", "."]);
+    git(repo, &["commit", "-q", "-m", "unmerged work"]);
+    git(repo, &["checkout", "-q", "main"]);
+    let (app, window) = mount(cx, repo);
+
+    // Two-stage (unmerged): AlertDialog, "needs two confirmations", Confirm
+    // named by the visible label, warning row is a Note.
+    app.update(cx, |app, cx| {
+        app.open_delete_branch_modal("unmerged-delete", cx)
+    });
+    wait_idle(cx, &app);
+    redraw(cx, &app, window);
+    let d = kagi::ui::dialog_a11y::recorded_dialog("plan-card").expect("plan card drawn");
+    let title = cx.read(|cx| {
+        kagi_ui_core::i18n::plan_title_text(&app.read(cx).delete_branch_modal().unwrap().plan.title)
+    });
+    assert_eq!(d.role, Role::AlertDialog);
+    assert_eq!(d.label, title);
+    let unarmed_desc = d.description.clone().expect("two-stage description");
+    assert_eq!(d.actions.len(), 2);
+    assert_eq!(
+        d.actions[0].1,
+        kagi_ui_core::i18n::Msg::PlanDeleteBranch.t()
+    );
+    let (role, text) =
+        kagi::ui::dialog_a11y::recorded_note("plan-warning-0").expect("warning row drawn");
+    assert_eq!(role, Role::Note);
+    assert!(!text.is_empty());
+
+    // Armed: description and Confirm name change.
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).delete_branch_modal().unwrap().confirm_armed));
+    redraw(cx, &app, window);
+    let d = kagi::ui::dialog_a11y::recorded_dialog("plan-card").expect("armed card drawn");
+    assert_eq!(d.role, Role::AlertDialog);
+    assert_ne!(
+        d.description.as_deref(),
+        Some(unarmed_desc.as_str()),
+        "arming changes the description"
+    );
+    assert_eq!(
+        d.actions[0].1,
+        kagi_ui_core::i18n::Msg::PlanDeleteBranchArmed.t()
+    );
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+
+    // Single stage (merged): no two-stage description.
+    app.update(cx, |app, cx| {
+        app.open_delete_branch_modal("merged-delete", cx)
+    });
+    wait_idle(cx, &app);
+    redraw(cx, &app, window);
+    let d = kagi::ui::dialog_a11y::recorded_dialog("plan-card").expect("merged card drawn");
+    let destructive = cx.read(|cx| app.read(cx).delete_branch_modal().unwrap().plan.destructive);
+    assert_eq!(
+        d.role,
+        if destructive {
+            Role::AlertDialog
+        } else {
+            Role::Dialog
+        }
+    );
+    assert_eq!(d.description, None, "single confirm: nothing to announce");
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+
+    // Blocked (current branch): blocker row is an Alert, no Confirm action.
+    app.update(cx, |app, cx| app.open_delete_branch_modal("main", cx));
+    wait_idle(cx, &app);
+    redraw(cx, &app, window);
+    let d = kagi::ui::dialog_a11y::recorded_dialog("plan-card").expect("blocked card drawn");
+    assert_eq!(d.actions.len(), 1, "{:?}", d.actions);
+    assert_eq!(d.actions[0].1, kagi_ui_core::i18n::Msg::PlanCancel.t());
+    let (role, _) =
+        kagi::ui::dialog_a11y::recorded_note("plan-blocker-0").expect("blocker row drawn");
+    assert_eq!(role, Role::Alert);
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+
+    // Bespoke card: discard all — AlertDialog, localized Confirm names that
+    // follow the armed label.
+    std::fs::write(repo.join("README.md"), "# changed\n").unwrap();
+    app.update(cx, |app, cx| app.reload_manual(cx));
+    wait_idle(cx, &app);
+    let repo_buf = repo.to_path_buf();
+    app.update(cx, |app, cx| {
+        kagi::ui::e2e::open_local_panel_no_inputs(app, repo_buf, cx)
+    });
+    cx.run_until_parked();
+    let owner = cx.read(|cx| {
+        app.read(cx)
+            .ui()
+            .commit_panel
+            .as_ref()
+            .expect("commit panel")
+            .read(cx)
+            .owner
+    });
+    app.update(cx, |app, cx| app.open_discard_all_modal(owner, cx));
+    wait_idle(cx, &app);
+    redraw(cx, &app, window);
+    let d = kagi::ui::dialog_a11y::recorded_dialog("discard-card").expect("discard card drawn");
+    assert_eq!(d.role, Role::AlertDialog);
+    assert_eq!(
+        d.actions[0].1,
+        kagi_ui_core::i18n::Msg::PlanDiscardConfirm
+            .t()
+            .replace("{}", "1")
+    );
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    redraw(cx, &app, window);
+    let d = kagi::ui::dialog_a11y::recorded_dialog("discard-card").expect("armed discard drawn");
+    assert_eq!(
+        d.actions[0].1,
+        kagi_ui_core::i18n::Msg::PlanDiscardConfirmArmed
+            .t()
+            .replace("{}", "1")
+    );
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert_eq!(
+        std::fs::read_to_string(repo.join("README.md")).unwrap(),
+        "# changed\n"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS dialog_a11y_roles: dialog role/name/description/actions + note roles across arm, single, blocked, bespoke");
+}
+
 /// #536 slice 2: "Sync to remote (keep local)…" from the branch menu goes
 /// through the shared branch-plan card with a two-stage confirm (the plan is
 /// destructive), then matches branch, index and working tree to the fetched
@@ -2606,6 +2760,14 @@ pub fn scenario_sync_to_remote_armed(cx: &mut VisualTestAppContext) {
             let recovery = modal.plan.recovery.as_ref().expect("recovery");
             assert_eq!(recovery.commands.len(), 2, "{:?}", recovery.commands);
         });
+        // #354: the sync card is announced as a two-stage alert dialog.
+        redraw(cx, &app, window);
+        let dialog = kagi::ui::dialog_a11y::recorded_dialog("plan-card").expect("sync card drawn");
+        assert_eq!(dialog.role, gpui::Role::AlertDialog);
+        assert_eq!(
+            dialog.description.as_deref(),
+            Some(kagi_ui_core::i18n::Msg::A11yDialogTwoStage.t())
+        );
         assert_eq!(
             output(repo, &["status", "--porcelain"]),
             before_status,

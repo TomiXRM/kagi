@@ -1594,13 +1594,29 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
             cx.processor(|this, range: std::ops::Range<usize>, _window, cx| {
                 // #358: one wall-clock read per rendered batch, not per row.
                 let now_secs = super::commit_list::now_unix_secs();
+                // #354: levels of every row, for sibling positions.
+                let levels: Vec<usize> = this
+                    .sidebar
+                    .rows
+                    .iter()
+                    .map(|r| super::sidebar_a11y::tree_item(r).level)
+                    .collect();
+                let positions = super::sidebar_a11y::sibling_positions(&levels);
                 range
                     .filter_map(|i| {
-                        this.sidebar
-                            .rows
-                            .get(i)
-                            .cloned()
-                            .map(|row| build_sidebar_row(this, &row, now_secs, cx))
+                        let row = this.sidebar.rows.get(i).cloned()?;
+                        let spec = super::sidebar_a11y::tree_item(&row);
+                        let el = build_sidebar_row(this, &row, now_secs, cx);
+                        Some(
+                            super::list_a11y::tree_item(
+                                "sidebar",
+                                div().id(("sidebar-a11y", i)).w_full().child(el),
+                                i,
+                                &spec,
+                                positions[i],
+                            )
+                            .into_any_element(),
+                        )
                     })
                     .collect::<Vec<_>>()
             }),
@@ -1613,6 +1629,7 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
         // wheel/trackpad, just without the overlay bar.
         false,
     );
+    let list = super::list_a11y::tree("sidebar", list, Msg::A11ySidebar.t());
 
     // ── Graph page content (the shell around it is the pages renderer) ──
     div()

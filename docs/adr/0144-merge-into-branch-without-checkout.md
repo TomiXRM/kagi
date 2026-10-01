@@ -113,15 +113,19 @@ Plan completion and confirmation are bound to the destination `Attachment`;
 the blocking worker reopens and verifies its `WorktreeId` before planning or
 executing. Leaving the tab invalidates pending plan publication.
 
-Unsaved editor buffers first require the existing discard/cancel guard.
-Discard resumes navigation and planning, not execution. The continuation is
-bound to the originating attachment so a stale intent cannot discard another
-session's editor. Only the destination's confirmed normal merge may change
-its HEAD/index/files or enter Conflict Mode. Parent worktree edits are unrelated
-and preserved.
+Unsaved editor buffers do not block the drop and are not discarded by it
+(#722 P1 r3, 03b16092, ADR-0197): opening the destination worktree's tab keeps
+the originating session and its Editor Workspace attached, so this is
+navigation, not destruction, and the dirty-editor guard does not prompt. The
+origin's buffer is still dirty when the user returns; the guard still fires on
+the paths that destroy the editor (← Graph, closing the tab). The drop
+continues to a plan, not to execution. Only the destination's confirmed normal
+merge may change its HEAD/index/files or enter Conflict Mode. Parent worktree
+edits are unrelated and preserved.
 
 `cross_worktree_merge` exercises real graph drag events, destination tab reuse,
-cancellation, stale plan completion, editor guard and external branch drift,
+cancellation, stale plan completion, a dirty origin editor that survives the
+merge navigation (and still prompts on ← Graph), external branch drift,
 then confirms a two-parent merge and checks both worktrees and the destination
 receipt. Backend fixtures in `tests/drag_merge_test.rs` cover a dirty parent and
 both fresh and stale approvals against a dirty linked destination.

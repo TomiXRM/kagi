@@ -9,6 +9,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - conflict の continue / skip / abort と解決内容の保存(save)も、Operation Log に動かした ref を記録するようにしました(#884、ADR-0214 §4)。これまでは記録なしの扱いだったため、Kagi で conflict を解いた merge や cherry-pick をまたぐ時点には「記録なし」で戻せませんでした。今は merge 前の時点にも復元できます。実行前に拒否された場合は「動いた ref はありません」と記録します。rebase は途中で HEAD が detached になるので、これまでどおり復元の対象外です。(Refs #334)
 - Operation Log の「取り消す / この時点まで戻す」の確認 card に、戻した後のグラフを表示するようにしました(#334 slice 2c、ADR-0214 §6)。branch が戻る位置と、どの branch からも外れる commit の数を、変化する部分の前後(最大 40 行)だけ、通常の commit graph と同じ描き方で示します。計算は読み込み済みの履歴だけで行い、戻し先がその中に無い場合は推定せず「プレビューできません」と表示します(復元自体はできます)。表示専用で、確認するまで何も書き込みません。(Refs #334)
+- サイドバーの accessibility（#354 slice 3、2 本目）。支援技術からサイドバーを tree として、section・group の見出しを開閉状態付き、branch・remote branch・tag・worktree・stash・PR の各行を階層と兄弟の中での位置付きで読めるようにしました。現在の branch と worktree は名前に「現在」と含めます。（Refs #354）
+- commit 一覧の accessibility（#354 slice 3、最初の一覧）。支援技術から commit 一覧を list box として、各行（WIP・stash・commit）を「件名・作者・日付・短い SHA・ref」で名前付きの選択肢として、選択状態と全体の何番目か付きで読めるようにしました（画面外の行は描画しないため、位置と総数で全長を伝えます）。（Refs #354）
+- 色覚対応テーマ「Color Vision (Blue/Orange)」/「色覚対応（青 / 橙）」を追加（#354 slice 4、ADR-0216）。Catppuccin Mocha を元に、追加 / 削除・成功 / blocker・ours / theirs・diff 行の背景を Okabe–Ito の青 / 橙に、warning を黄（輝度差）に、graph lane を 8 色の色覚安全パレットに置き換えました。CIEDE2000 で通常視 20 以上、1 型・2 型・3 型色覚のシミュレーション後も 15 以上の色差をテストで保証しています（既定テーマの diff 背景は 2 型で 4.3）。Settings の theme 選択から選べます。（Refs #354）
 - Operation Log の選択した行に「この操作を取り消す…」「この時点まで戻す…」を追加しました(#334 slice 2b-2、ADR-0214 §5)。押すと確認 card を開くだけで、card には branch ごとの戻し方(移動・削除・作り直し)と、戻らないもの(作業ツリー・index・untracked・stash・tag・remote branch)を表示します。branch を書き換える操作なので二段 confirm で、確認すると branch だけを戻し、動かす前の先端は `refs/kagi/backups/` に残ります。取り消し・復元自体も Operation Log に記録され、その行から同じように取り消せます。ref の移動が記録されていない操作(この記録より前の操作や、記録に失敗した操作)では両方のボタンが押せず、理由を表示します。(Refs #334)
 - Operation Log からの「1 操作の取り消し」(`op-revert`)と「時点への復元」(`restore-to-point`)の backend(#334 slice 2b-1、ADR-0214 §5)。どちらも各操作が記録した ref の移動だけを根拠に branch を戻し、記録の無い操作を含む範囲・HEAD の切り替えを含む範囲・後の操作が同じ branch を動かした取り消し・記録外で動いた branch・進行中の merge / rebase・checkout 中の branch の削除は理由を示して拒否します。実行前に動かす branch の現在の先端をすべて `refs/kagi/backups/` に保持し、`git update-ref --stdin` の 1 トランザクション(古い値は git が照合)で戻します。作業ツリー・index・untracked・stash・tag・remote branch は戻しません。取り消しや復元自体も ref の移動つきで記録されるので、さらに取り消せます。二段 confirm が必要な操作です。UI はまだありません。(Refs #334)
 - `worktree_run_mode` が `"nonconcurrent"` のときは、同じ repository のすべての worktree の terminal に、main worktree の port block を `KAGI_PORT` として渡すようにしました(固定 callback URL がどの worktree でもそのまま使えます)。`KAGI_WORKTREE_PATH` などはこれまでどおり各 worktree のものです。サイドバー WORKTREES の link もすべて main worktree の port を指します。保存済みの割当は変更しないので、`"concurrent"` に戻せば各 worktree の block に戻ります。警告だけのモードは追加しません。(#869、ADR-0213)
@@ -30,6 +33,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Commit Panel から開いた diff の hunk header に「Stage hunk」/「Unstage hunk」(JA「hunk を stage」/「hunk を unstage」)ボタンを追加しました。unstaged 側では押した hunk だけを index に入れ、staged 側では押した hunk だけを index から戻します(working tree は変更しません)。split view でも header 行に同じボタンが出ます。押した後は diff を読み直し、その側に何も残らなければ pane を閉じます。diff を表示した後にファイルや index が変わって hunk が一致しなくなった場合は、別の hunk を代わりに stage せず理由を示して拒否します。失敗は従来の Stage / Unstage と同じく Operation Log・footer・通知に出ます。行単位の選択や hunk の分割は含みません。(#842、Refs #357)
 
 ### Fixed
+
+- 埋め込み terminal の `KAGI_WORKTREE_PATH` と `KAGI_MAIN_WORKTREE` が、git の workdir をそのまま使っていたため末尾に `/` が付いていた問題を修正しました(main worktree・linked worktree とも)。`"$KAGI_WORKTREE_PATH/foo"` が `//foo` になりません。(#870)
 
 - Cmd+R(Refresh)の読み直しが捨てられ、Kagi の外で変えた状態(起動後に置いた worktree lock の 🔐・右クリックの Unlock など)が画面に反映されない問題を修正しました。Refresh は読み直しの直後に fetch を始めますが、fetch の受付が実行中の読み直しを無効にする一方、何も取得しなかった fetch は読み直しをしないため、Refresh の読み直しが失われていました。fetch は、自分の受付で無効にした読み直しを、取得の有無や失敗に関わらず完了時にやり直します。自動 fetch が watcher の読み直しと重なった場合も同じです。(#851)
 
@@ -67,6 +72,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Internal
 
+- GUI E2E `cross_worktree_merge` を #722 P1 r3（03b16092）以降の仕様に合わせて修正しました。別 worktree への drag merge は editor の未保存変更を確認せず、元の tab の editor は変更を保ったまま残ります（← Graph では従来どおり確認）。ADR-0144 の記述も更新。（Fixes #880）
 - Toolbar の利用可能状態 → AccessKit `disabled`(#797 で実装済み)の検証を追加しました。`ButtonState` → (表示, disabled) の pure な変換を切り出して unit で固定し、GUI E2E `toolbar_a11y_disabled` で remote なし fixture の Push / Pull / Stash / Pop が disabled、Branch / Settings が enabled、Terminal は on/off どちらでも disabled にならないこと、dirty にすると Stash が enabled に転じることを確認します。製品の動作は変更していません。（Refs #354）
 - ADR-0211: `git replay` / `git history` を plan パイプラインに載せるための調査と設計（実装なし）。git 2.50.1 で `git replay` を実測し（worktree / index に触らない、出力は `update-ref --stdin` 形式で `<old>` が CAS、他 worktree の branch を rebase できるがその index が古くなる、merge を含むと exit 128、conflict は exit 1 で状態なし、hooks は走らない）、2.53 で replay が既定で ref を更新するようになった事実を含む版ゲート（(a) 隠す、検出は kagi-git に 1 回、`Backend` が保持、experimental は設定で隠す）を提案しました。（Refs #344）
 - headless 起動 hook `KAGI_SELECT_FIRST=1`（`select_headless`）が inspector の changed files を同期で埋めるとき generated/lockfile flags を計算していなかったため、その経路では `Cargo.lock` が「Generated (N)」に畳まれませんでした。通常のクリック選択（非同期 read）では起きず、ユーザー操作への影響はありません。同期経路も files / diffstat / generated flags の 3 つを揃えて埋めるようにし、Tier A に SELECT_FIRST 経路の fold assert を追加しました。（#818）

@@ -5,6 +5,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-10-02
+
 ### Changed
 
 - テーマ「Flower Road」を 1 つにまとめました。graph の線は「Flower Road Vivid」の 8 色(色相環に均等配置)にしました。「Flower Road Bloom」「Flower Road Vivid」は削除し、それらを選んでいた設定は「Flower Road」として読み込みます。

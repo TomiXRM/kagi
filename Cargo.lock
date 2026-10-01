@@ -3376,7 +3376,7 @@ dependencies = [
 
 [[package]]
 name = "kagi"
-version = "0.40.1"
+version = "0.41.0"
 dependencies = [
  "chrono",
  "getrandom 0.3.4",

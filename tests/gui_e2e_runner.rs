@@ -812,6 +812,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_modal_no_fallthrough),
             ),
             (
+                "color_vision_theme",
+                Box::new(crate::recovery_operations::scenario_color_vision_theme),
+            ),
+            (
                 "replay_onto_armed",
                 Box::new(crate::recovery_operations::scenario_replay_onto_armed),
             ),

@@ -1069,6 +1069,7 @@ pub enum Msg {
     PlanRebaseOnto,
     PlanReplayOnto,
     PlanReplayOntoArmed,
+    ThemeColorVision,
     /// Delete-remote-branch confirm, and its armed second stage.
     PlanDeleteBranch,
     PlanDeleteBranchArmed,
@@ -2789,6 +2790,8 @@ impl Msg {
             (Ja, PlanMerge) => "merge",
             (En, PlanRebaseOnto) => "Rebase {}",
             (Ja, PlanRebaseOnto) => "{} へ rebase",
+            (En, ThemeColorVision) => "Color Vision (Blue/Orange)",
+            (Ja, ThemeColorVision) => "色覚対応（青 / 橙）",
             (En, PlanReplayOnto) => "Replay {}",
             (Ja, PlanReplayOnto) => "{} を replay",
             (En, PlanReplayOntoArmed) => "\u{26a0} Really replay — rewrites the branch",

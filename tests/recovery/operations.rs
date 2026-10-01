@@ -2552,3 +2552,88 @@ pub fn scenario_replay_onto_armed(cx: &mut VisualTestAppContext) {
     }
     eprintln!("[gui-e2e] PASS replay_onto_armed: Enter/button arm then replay; both worktrees untouched, ref moved, backup + oplog");
 }
+
+/// #354 slice 4 (ADR-0216): switching to the Color Vision theme through the
+/// app's own path changes the added/removed, success/blocker, ours/theirs and
+/// diff-row tokens to the blue/orange pair, persists the slug, shows a
+/// localized name in Settings, and the live tokens keep CIEDE2000 ≥ 20 for
+/// typical vision and ≥ 15 after Machado-2009 protan / deutan / tritan
+/// simulation — where the default theme falls below 15 for deutans.
+pub fn scenario_color_vision_theme(cx: &mut VisualTestAppContext) {
+    use kagi::ui::i18n::{self, Lang};
+    use kagi_ui_core::color_vision::{delta_e, Cvd};
+    use kagi_ui_core::theme::theme;
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    let before = theme().slug;
+    app.update(cx, |app, cx| app.set_theme("catppuccin", cx));
+    cx.run_until_parked();
+    let mocha = *theme();
+    let pairs = |t: &kagi_ui_core::theme::Theme| {
+        [
+            ("change added/deleted", t.change_added, t.change_deleted),
+            ("success/blocker", t.color_success, t.color_blocker),
+            ("ours/theirs", t.color_branch, t.color_remote),
+            ("diff bg added/removed", t.diff_added_bg, t.diff_removed_bg),
+        ]
+    };
+    let mocha_deutan = pairs(&mocha)
+        .iter()
+        .map(|(_, a, b)| delta_e(*a, *b, Some(Cvd::Deuteranopia)))
+        .fold(f64::INFINITY, f64::min);
+    assert!(
+        mocha_deutan < 15.0,
+        "control: Mocha worst deutan ΔE {mocha_deutan:.1}"
+    );
+
+    app.update(cx, |app, cx| app.set_theme("color-vision", cx));
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    let t = *theme();
+    assert_eq!(t.slug, "color-vision");
+    assert_eq!(
+        kagi_ui_core::settings::Settings::load().theme().as_deref(),
+        Some("color-vision"),
+        "the choice is persisted to settings.json"
+    );
+    assert_ne!(t.change_added, mocha.change_added);
+    assert_ne!(t.change_deleted, mocha.change_deleted);
+    assert_ne!(t.diff_added_bg, mocha.diff_added_bg);
+    assert_ne!(t.diff_removed_bg, mocha.diff_removed_bg);
+    assert_eq!(t.bg_base, mocha.bg_base, "other tokens are inherited");
+    assert_eq!(t.text_main, mocha.text_main);
+    for (name, a, b) in pairs(&t) {
+        let normal = delta_e(a, b, None);
+        assert!(normal >= 20.0, "{name}: ΔE {normal:.1}");
+        let mut line = format!("{name}: normal {normal:.1}");
+        for cvd in Cvd::ALL {
+            let d = delta_e(a, b, Some(cvd));
+            assert!(d >= 15.0, "{name} {cvd:?}: ΔE {d:.1}");
+            line.push_str(&format!(" {cvd:?} {d:.1}"));
+        }
+        eprintln!("[gui-e2e] color_vision {line}");
+    }
+
+    // Settings lists it under a localized name.
+    let previous = i18n::lang();
+    for (lang, want) in [
+        (Lang::En, "Color Vision (Blue/Orange)"),
+        (Lang::Ja, "色覚対応（青 / 橙）"),
+    ] {
+        i18n::set_lang(lang);
+        let names: Vec<String> = kagi::ui::settings_view::theme_options()
+            .iter()
+            .map(|o| o.name.to_string())
+            .collect();
+        assert!(names.iter().any(|n| n == want), "{lang:?}: {names:?}");
+    }
+    i18n::set_lang(previous);
+
+    app.update(cx, |app, cx| app.set_theme(before, cx));
+    cx.run_until_parked();
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS color_vision_theme: tokens switched + persisted, ΔE ≥ 20 / ≥ 15 (protan, deutan, tritan), Mocha control < 15, EN/JA name");
+}

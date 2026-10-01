@@ -14,6 +14,9 @@
 //! - `operations.jsonl` (the oplog): operations append to it, so it may grow.
 //!   What was there must stay byte for byte, and every appended entry must
 //!   name a repository under the runner's temporary directory or a remote one.
+//!   The check is lexical (a `..` fails it); it catches a scenario that leaks
+//!   by mistake, not one that routes a receipt through a symlink on purpose —
+//!   the fixtures are gone by then, so a link cannot be resolved (#899 review).
 //! - The runner's temporary directory (`TMPDIR` points there for the whole
 //!   run, so `tempfile` and child processes use it): no new direct entry may
 //!   remain.

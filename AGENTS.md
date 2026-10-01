@@ -13,8 +13,9 @@ before editing. It encodes invariants that are otherwise scattered across 90+ AD
 ## Invariants (violating any of these = the change is wrong)
 
 1. **No `git2::` in `src/ui/`.** `Repository::open` is also forbidden there. This is
-   enforced by a CI grep gate (`.github/workflows/ci.yml`, ADR-0078). All Git access
-   from the UI goes through `kagi::git::Backend` or the free functions in `crates/kagi-git/src/`.
+   enforced by the `ui-git2` rule of `uv run --project ci check-all` (ADR-0078). All
+   Git access from the UI goes through `kagi_git::Backend` or the free functions in
+   `crates/kagi-git/src/` (reach the crate as `kagi_git::`, not `kagi::git::`).
 2. **`kagi-domain` stays pure.** No `git2`, no `gpui`, no I/O. Keep
    `crates/kagi-domain/Cargo.toml` dependency-free. All pure-logic unit tests live here.
 3. **No destructive commands — ever.** `push --force`, `reset --hard`, and `git clean`
@@ -40,8 +41,11 @@ before editing. It encodes invariants that are otherwise scattered across 90+ AD
 | Layer | Location | Rule |
 |---|---|---|
 | Pure domain | `crates/kagi-domain/` | Models, Graph, Diff, Conflict FSM, Plan types, parsers. No git2/gpui/I/O. |
-| Git backend | `crates/kagi-git/` | The **only** place `git2::Repository` is opened. `ops/<feature>.rs` triples, `cli.rs` (fetch/push shell), `backend.rs` (`Backend` facade). |
-| UI (View + state) | `src/ui/` | GPUI `Render`, modals, toolbar/sidebar/diff/terminal. No git2. |
+| Git backend | `crates/kagi-git/` | The **only** place `git2::Repository` is opened. `ops/<feature>.rs` triples, `cli.rs` (fetch/push shell), `backend.rs` (`Backend` facade), `oplog/`. |
+| Application layer | `src/app/` | Operation lifecycle, sessions, reads, reconcile (#484). No UI and no direct I/O — the `app-layering` gate checks it. |
+| UI core | `crates/kagi-ui-core/` | Settings store, i18n (`Msg`), `klog!`, theme tokens, shared UI types. |
+| UI (View + state) | `src/ui/`, `crates/kagi-ui-*` | GPUI `Render`, modals, toolbar/sidebar/diff/terminal. No git2. |
+| MCP | `crates/kagi-mcp/` | MCP server. No gpui (`mcp-gpui` gate). |
 | Shell | `src/main.rs`, `src/headless.rs` | Window/menu, bootstrap, test harness. |
 
 Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(pure).
@@ -105,7 +109,7 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 
 ## Error handling
 
-- Git layer returns `Result<T, GitError>` (`crates/kagi-git/src/lib.rs:143`). Avoid `.unwrap()`
+- Git layer returns `Result<T, GitError>` (`crates/kagi-git/src/lib.rs`). Avoid `.unwrap()`
   outside tests.
 - User-facing operation errors must surface via the oplog and a bounded toast.
   The oplog owns the complete durable detail; the toast is only a short preview.
@@ -117,7 +121,7 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 - The `[kagi] …` lines are a **test contract**. The `KAGI_*` headless harness
   (`src/headless.rs`) greps stderr to verify behavior. Do not change the format,
   wording, or ordering of existing `[kagi]` lines.
-- Emit every contract line through the **`klog!`** macro (`src/klog.rs`, ADR-0096):
+- Emit every contract line through the **`klog!`** macro (`crates/kagi-ui-core/src/klog.rs`, ADR-0096):
   `klog!("refreshed")`, `klog!("plan: {} → {}", a, b)` — the `[kagi] ` prefix is
   added by the macro. This is the single, greppable contract channel.
 - Use plain `eprintln!`/`tracing` only for ad-hoc human/diagnostic output — never the
@@ -138,7 +142,7 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
    from `crates/kagi-git/tests/` via `#[path = "../../../tests/support/…"]`.
 3. UI? Add `open_/confirm_/start_` methods on `KagiApp`; add the modal in
    `src/ui/modals.rs`.
-4. i18n: add EN **and** JA strings to the `Msg` enum in `src/ui/i18n.rs`.
+4. i18n: add EN **and** JA strings to the `Msg` enum in `crates/kagi-ui-core/src/i18n/`.
 
 ## Naming conventions
 
@@ -175,9 +179,9 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
   `cargo clippy --workspace` and don't add *new* warnings (pre-existing v0.2.0 debt
   is tolerated; clippy has no `-D warnings`, so warnings alone won't fail CI, but
   keep your own diff clean — annotate justified cases with `#[allow(...)]`).
-- The GUI cannot be exercised by subagents — UI-affecting changes need a human (or the
-  primary session) to launch the app and eyeball it. Build + tests passing is necessary
-  but not sufficient for UI behavior.
+- Build + tests passing is necessary but not sufficient for UI behavior. A UI change
+  also runs its Tier A scenarios and, for anything that changes what the user sees,
+  a Tier B look at the real window (see "Verifying the GUI" below).
 - **Repository invariants run through uv, never shell text tools.** The gates live
   in `ci/` as a uv project (`kagi-checks`); run them from the repo root:
 
@@ -209,15 +213,99 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 - Do not create or use `.claude/worktrees/.cargo/config.toml` to redirect a
   worktree to `../../target`; its artifacts must remain isolated from the primary
   checkout and other worktrees.
-- This isolation is required by the 2026-09-07 slice 1a result: Codex Design and
-  PM independently reproduced workspace crate artifacts (`kagi-domain`,
-  `kagi-git`, and `kagi`) colliding in a shared target. Cargo then reused a stale
-  rlib as Fresh and reported E0432 for a newly added module. Since #520, each
-  clean worktree build uses roughly 3–4 GB, so the disk cost is intentional.
+- Why: a shared target made Cargo reuse a stale workspace rlib as Fresh (E0432 on a
+  new module, 2026-09-07). Each clean worktree build costs 3–4 GB; that is intended.
+  When the disk runs low, remove the worktrees of merged PRs first.
 - Once a week, when no build is running in that tree, prune artifacts older than
   seven days in every worktree: `cargo sweep --time 7` (requires cargo-sweep).
   Do not routinely clean a worktree target; clean-build benchmarks need an idle
   build window and destroy reusable build artifacts.
+
+## Verifying the GUI
+
+The full recipes live in `.claude/skills/verify/SKILL.md` (Codex reads the same
+file through `.agents/skills/kagi-verify`). Read the real file, not a remembered
+copy — the skill changes when seams change.
+
+- **Tier A** (`gui_e2e_runner`, ADR-0166) is the gate for UI behavior. Always pass
+  `KAGI_GUI_E2E_ONLY`. A scenario that changes settings or the port store restores
+  them (`gui_isolation::SavedKeys` / `PortStore`); the runner fails a scenario that
+  leaves shared state changed (#899). A change to how outcomes are presented runs
+  the scenarios that assert that presentation before merging.
+- **Tier B** is the real app driven by `scripts/pidclick.swift` (`CGEventPostToPid`),
+  with screenshots from `screencapture -x -o -l<window id>`. It never moves the
+  user's pointer or takes the foreground — keep `KAGI_NO_ACTIVATE=1`, a unique
+  `USER`, `KAGI_NO_RESTORE=1` and an isolated `KAGI_LOG_DIR`. `cliclick` is banned.
+  - A window hidden behind the user's windows stops repainting: if two screenshots
+    are byte-identical while `[kagi]` lines show the input arrived, the frame is
+    stale. Ask the user to uncover it; do not take the foreground.
+  - Clicking the tab strip needs a key window (no `KAGI_NO_ACTIVATE`); ask first.
+  - Coordinates are logical points (physical px ÷ 2); re-read them from a fresh
+    screenshot every time.
+- "Computer use" tools are not the GUI driver here: Codex Computer Use cannot reach
+  the window server from this environment. Agents that cannot run Tier B say so
+  in the PR and leave it to the primary session.
+- **Screenshots in a PR**: commit only the images to an orphan
+  `pr-assets/<topic>` branch (`git hash-object -w` → `git mktree` →
+  `git commit-tree`), push it, and link
+  `https://raw.githubusercontent.com/TomiXRM/kagi/<sha>/<file>.png`. Never delete
+  those branches — the PR's images point at them.
+
+## Working on a PR: push, review, merge
+
+- **Never rewrite a pushed branch.** No force push, no rebase of a pushed branch:
+  take `origin/main` in with a merge. After every push, confirm the remote head
+  with `git ls-remote origin <branch>` — a non-fast-forward push is rejected, and
+  "pushed" without that check has been wrong.
+- **Conflicts**: `CHANGELOG.md`, ADRs and `docs/decisions.md` keep both sides.
+  **Code conflicts are resolved by reading each hunk**, never by a mechanical
+  "keep both": two PRs adding fields to one struct concatenate into a broken brace
+  structure (#900). If `rerere` learned a bad resolution, redo the merge with
+  `git -c rerere.enabled=false merge`. Git can also merge cleanly and still drop an
+  attribute line (`#[cfg(target_os = "macos")]` before a `mod` in
+  `tests/gui_e2e_runner.rs`, #901) — check the runner after a merge.
+- **Gate before push**: build, `cargo test --workspace`, the touched Tier A
+  scenarios and `uv run --project ci check-all` pass first. Chain them so a failure
+  stops the push (`set -e`, or capture the output and test it) — never with `;`.
+- **Codex review**: read every Codex line comment before a PR is merged, and reply
+  to each one (in Japanese, per the rules below). Fix P1s and any P2 that can lead
+  to a wrong write, data loss or a misleading action. A theoretical case (a race
+  with another process replacing the repository, a millisecond window) is closed
+  with a reply that gives the reason, and the limit is written into the ADR. Aim
+  for one review round per PR; Codex keeps finding the next corner otherwise.
+- **Merge** only the head commit Codex reviewed, with CI green and no unanswered
+  Codex comment: `gh pr merge N --merge --match-head-commit <sha>`, then confirm the
+  PR reads `MERGED`.
+- **Stacked PRs** set their base to the parent branch and say "change the base to
+  main after #N merges" at the top of the body.
+- `Closes #N` only when the PR meets every acceptance criterion of #N; otherwise
+  `Refs #N` and list what remains. Split a leftover into its own issue.
+
+## Multi-agent work over herdr
+
+When a PM session drives implementation agents in herdr panes:
+
+- **Send = prompt + Enter.** `herdr agent prompt <pane> '<text>'` places the text;
+  `herdr agent send-keys <pane> enter` submits it. Without the second command
+  nothing is sent. `pane send-text` never submits. An `agent_prompted` result is
+  not proof the agent started — read the pane (`herdr agent read`) or wait for its
+  status (`herdr agent wait`).
+- **Replies go the same way**: an implementation agent reports to the PM pane with
+  `herdr agent prompt <pm pane>` + `send-keys enter`, starting with one tag:
+  `[done]` (PR number, remote head SHA checked with `ls-remote`, gates run, and for
+  each Codex comment: fixed or answered), `[status]`, `[ask]` (a decision the PM
+  owns — stop and wait), `[info]`.
+- **One agent, one worktree, one branch.** Never edit another agent's worktree or
+  push to a branch another agent owns without saying so first. A PM that merges
+  `main` into an agent's PR branch tells that agent before it pushes again.
+- **Verify the premise before assigning.** Before writing "reuse the existing X",
+  search for X — issue bodies go stale. An agent that finds the premise wrong says
+  so instead of building around it.
+- **Messages are scoped to the workspace.** A prompt about another repository or an
+  issue number that does not match this repository is a misroute: report it, do
+  not act on it.
+- Watch usage limits in `herdr agent list` (`limit`); an agent near its limit gets
+  small, finishable tasks.
 
 ## Code Review Rules
 

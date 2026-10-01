@@ -33,6 +33,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- 色覚対応テーマを View → Theme メニューから選べない問題、UI 言語切替後に Settings のテーマ名だけ古い言語のままになる問題、開いた Commit Panel の WIP 行が支援技術では未選択になる問題を修正しました。（#354、#889 review）
 - Cmd+R(Refresh)の読み直しが捨てられ、Kagi の外で変えた状態(起動後に置いた worktree lock の 🔐・右クリックの Unlock など)が画面に反映されない問題を修正しました。Refresh は読み直しの直後に fetch を始めますが、fetch の受付が実行中の読み直しを無効にする一方、何も取得しなかった fetch は読み直しをしないため、Refresh の読み直しが失われていました。fetch は、自分の受付で無効にした読み直しを、取得の有無や失敗に関わらず完了時にやり直します。自動 fetch が watcher の読み直しと重なった場合も同じです。(#851)
 
 - worktree の port block(マシン全体で既定 `3000-3099` / 10 ずつ = 10 block)が尽きると、埋め込み terminal 自体が起動しなかった問題を修正しました。枯渇時は `KAGI_*` を渡さずに terminal を起動し、footer と toast に理由と、`settings.json` の `worktree.port_range` を広げれば割り当てられることを示します(`[kagi] terminal: port block exhausted <path> (range <start>-<end>, per <n>)`)。既定の range は変えていません。あわせて ADR-0171 の「2 つの repo が同じ番号を出しうる」という記述を、全 repo で 1 つの store を共有して番号が重ならない現行の実装に合わせて訂正しました。(#852、Refs #342)

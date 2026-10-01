@@ -836,6 +836,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_color_vision_theme),
             ),
             (
+                "wip_selected_roles",
+                Box::new(crate::recovery_operations::scenario_wip_selected_roles),
+            ),
+            (
                 "dialog_a11y_roles",
                 Box::new(crate::recovery_operations::scenario_dialog_a11y_roles),
             ),

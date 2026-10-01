@@ -102,7 +102,9 @@ struct EntryRef<'a> {
     repo_identity: Option<RepoIdentityRef<'a>>,
 }
 
-/// #894: `{"common_dir": "...", "dev": n, "ino": n}`; dev/ino only on unix.
+/// #894: `{"common_dir": "...", "dev": n, "ino": n, "born_s": n, "born_ns": n}`;
+/// dev/ino only on unix, born_* only where the filesystem reports a creation
+/// time (#900 review).
 #[derive(Serialize)]
 struct RepoIdentityRef<'a> {
     common_dir: &'a str,
@@ -110,6 +112,10 @@ struct RepoIdentityRef<'a> {
     dev: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ino: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    born_s: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    born_ns: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -119,6 +125,10 @@ struct RepoIdentityRecord {
     dev: Option<u64>,
     #[serde(default)]
     ino: Option<u64>,
+    #[serde(default)]
+    born_s: Option<u64>,
+    #[serde(default)]
+    born_ns: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -210,6 +220,8 @@ pub(super) fn to_json(entry: &OpLogEntry) -> String {
             common_dir: &id.common_dir,
             dev: id.file_id.map(|(dev, _)| dev),
             ino: id.file_id.map(|(_, ino)| ino),
+            born_s: id.created.map(|(s, _)| s),
+            born_ns: id.created.map(|(_, ns)| ns),
         }),
     };
     // This fixed schema contains only strings, integers, sequences and objects;
@@ -336,5 +348,6 @@ fn repo_identity<'de, D: Deserializer<'de>>(d: D) -> Result<Option<RepoIdentity>
     Ok(record.map(|r| RepoIdentity {
         common_dir: r.common_dir,
         file_id: r.dev.zip(r.ino),
+        created: r.born_s.zip(r.born_ns),
     }))
 }

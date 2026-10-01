@@ -92,20 +92,25 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - **範囲は証明できなければ fail closed**(#878 review、restore to point)。planner は全 repository の entry を受け取り、次の場合を blocker にする。
     - 対象以降で `parent → id` の鎖が途切れる(HistoryGap): retention での削除、壊れた行、読めない行。
     - worktree を開けない entry(UnknownRepository): 削除・prune された worktree の entry は、この repository のものだった可能性がある。黙って除外しない。別の repository だと証明できた entry(Other)だけを除く。
-  - **entry は記録時の repository を持つ**(#894)。`repo_identity` = 正規化した common dir の path と、unix ではその `(dev, ino)`。
+  - **entry は記録時の repository を持つ**(#894)。`repo_identity` = 正規化した common dir の path、unix ではその `(dev, ino)`、取れる環境では common dir の作成時刻(`Metadata::created()`、macOS は birthtime、Linux は statx の btime。JSON は `born_s` / `born_ns`)。
     - append の 1 か所(`append_oplog_receipt`)で、entry の worktree(無ければ repo)を開いて埋める。Backend の経路も UI の persist 経路もここを通る。開けない scope(remote の `host:repo`)は `None`。
     - 分類(worktree は開かない)。削除済みの worktree の entry は Mine になり、記録した移動は restore に入る。削除した無関係の repository の entry は Other になり、blocker にならない。
 
-      | entry の `(dev, ino)` | 自分の `(dev, ino)` | 判定 |
-      |---|---|---|
-      | あり | あり | 一致すれば Mine、違えば Other(path は見ない) |
-      | どちらかが無い | | path が一致すれば Mine、違えば Other |
+      | file id `(dev, ino)` | 作成時刻 | path | 判定 |
+      |---|---|---|---|
+      | 両側にあって違う | | | Other |
+      | | 両側にあって違う | | Other |
+      | 両側にあって一致 | 両側にあって一致 | (見ない) | Mine |
+      | 両側にあって一致 | どちらかが無い | | 曖昧 → UnknownRepository(fail closed) |
+      | どちらかが無い | 両側にあって一致 | 一致 | Mine |
+      | どちらかが無い | | 違う | Other |
+      | どちらかが無い | どちらかが無い | 一致 | 曖昧 → UnknownRepository |
 
-      両側に file id があれば、それだけで決める(#900 review)。path を優先すると、repository を消して同じ path に別の repository を作り直したとき、古い repository の entry が新しい repository の restore 地点になってしまう。
+      file id があれば path より優先する(#900 review)。path を優先すると、repository を消して同じ path に別の repository を作り直したとき、古い repository の entry が新しい repository の restore 地点になってしまう。file id の一致だけでも足りない(#900 review 2): 消した `.git` の inode が、同じ場所に同じ remote から clone し直した `.git` に再利用されると、path も `(dev, ino)` も一致し、`main` が同じ OID なら RefMovedSince も通って、古い repository の revert が新しい repository の branch を動かす。作成時刻はこの再利用を区別する。作成時刻を確認できない一致は Mine にせず、曖昧として fail closed にする。repository の config に UUID を書く案は、config への write になるので採らない。
     - identity の無い旧形式の entry だけ、従来どおり worktree を開いて判定する(開けなければ UnknownRepository)。
-    - `(dev, ino)` も持つのは、同じ filesystem 内での移動や rename では inode が変わらないため。path だけだと、移動した repository の自分の entry を Other と誤判定して黙って除外してしまう。
+    - `(dev, ino)` も持つのは、同じ filesystem 内での移動や rename では inode も作成時刻も変わらないため。path だけだと、移動した repository の自分の entry を Other と誤判定して黙って除外してしまう。
     - **限界 1**: filesystem をまたいで移動すると、path も `(dev, ino)` も変わるので、それ以前の自分の entry は Other になる。その entry が動かした branch は、記録が説明しない reflog の変化として RefChangedOutsideRecord の blocker になる(fail closed)。対象 entry 自体が移動前のものなら EntryNotLoaded。
-    - **限界 2**: 削除した無関係の repository の `.git` の inode 番号が、この repository に再利用された場合は Mine と誤判定する。その記録は、この repository に無い ref や OID を期待値に持つので、RefMovedSince の blocker になる(fail closed)。
+    - **限界 2**: 削除した無関係の repository の `.git` と、`(dev, ino)` も作成時刻(ns 単位)も一致する場合は Mine と誤判定する。その記録は、この repository に無い ref や OID を期待値に持つので、RefMovedSince の blocker になる(fail closed)。作成時刻を返さない filesystem では、同じ inode の entry は曖昧になり、restore はその範囲で止まる。
   - append に失敗した操作は鎖に現れない(次の entry の parent は最後に書けた entry)。その操作が動かした branch は、RefMovedSince か RefChangedOutsideRecord で捕まる。
 - **revert**: 対象 entry の各 branch の移動を old に戻す(作成は削除、削除は作り直し)。同じ ref を後続の記録済み entry が動かしていれば blocker(LaterEntryMoved)。
 - **restore to point**: 対象 entry の**直後**の状態に戻す(jj の `op restore` と同じく、対象自身の効果は残す)。それより新しい entry を古い順に合成し、ref ごとに「最古の old を戻し先、最新の new を期待値」とする。動いて元に戻った ref は除く。
@@ -200,10 +205,11 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - 削除・prune した worktree の entry は Mine で、その branch の削除が restore に入る(blocker なし)。identity を外した旧形式の行は UnknownRepository のまま。
   - 削除した無関係の repository の entry は blocker にならない。
   - 限界 1 の固定: 自分の entry の identity を別 volume のもの(path も inode も違う)に書き換えると、RefChangedOutsideRecord で止まる。
-  - 限界 2 の固定: 別 repository の entry に、この repository の `(dev, ino)` を書くと、その記録の `refs/heads/x` が RefMovedSince(current = 無し)で止まる。
+  - 限界 2 の固定: 別 repository の entry に、この repository の identity(`(dev, ino)` と作成時刻)を書くと、その記録の `refs/heads/x` が RefMovedSince(current = 無し)で止まる。
   - 同じ path に作り直した repository(#900 review): path はこの repository、file id は別 repository の entry は Other で、それを対象にした restore は EntryNotLoaded。inode 前提のテストは `#[cfg(unix)]`。
+  - inode の再利用(#900 review 2): path も `(dev, ino)` もこの repository、作成時刻だけ違う entry は Other(EntryNotLoaded)。作成時刻を消した entry は UnknownRepository。domain 側は `same_repository` の unit で、再利用・移動・作成時刻なし・file id なしの各行を固定する。
   - codec unit: 往復、旧行は `None`、不正値でも行は残って `None`。
-- #894 の変異確認: append で埋めない → integration 2 件、`(dev, ino)` を比べない → 限界 2 のテスト、分類で identity を使わない → integration 2 件、codec が書かない → codec と integration が落ちる。
+- #894 の変異確認: append で埋めない → integration 2 件、`(dev, ino)` を比べない → 限界 2 のテスト、分類で identity を使わない → integration 2 件、codec が書かない → codec と integration が落ちる。#900 review 2: 作成時刻を比べない → unit と inode 再利用の integration、曖昧を Mine にする → inode 再利用の integration が落ちる。
 - #878 review 対応(P1)のテスト
   - domain unit: 鎖が途切れると HistoryGap、別 repository の entry は除いて Unknown は blocker、記録外で変わった branch は RefChangedOutsideRecord(記録が説明する branch は除く)、動いて戻った ref が別の値にあれば RefMovedSince。
   - kagi-git integration: oplog から 1 行を消すと HistoryGap、削除・prune した worktree の entry は UnknownRepository、別 worktree で merge の conflict 中は OperationInProgress(その path)、対象の後に `git branch` で作った branch は RefChangedOutsideRecord。

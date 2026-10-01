@@ -503,6 +503,7 @@ fn repo_identity_is_additive_and_lenient() {
     entry.repo_identity = Some(RepoIdentity {
         common_dir: "/tmp/repo/.git".into(),
         file_id: Some((16_777_232, 4_242)),
+        created: Some((1_700_000_000, 123_456_789)),
     });
     let back = parse_oplog_line(&entry_to_json(&entry)).unwrap();
     assert_eq!(back.repo_identity, entry.repo_identity);
@@ -512,6 +513,56 @@ fn repo_identity_is_additive_and_lenient() {
         let read = parse_oplog_line(&line).unwrap_or_else(|| panic!("row dropped: {bad}"));
         assert_eq!(read.repo_identity, None, "{bad}");
     }
+}
+
+/// #900 review: deciding "same repository". The case that matters most: a
+/// repository deleted and re-cloned at the same place from the same remote,
+/// whose new `.git` got the old inode — same path, same `(dev, ino)`, and its
+/// `main` may even sit at the same OID. Only the creation time tells them
+/// apart, so it must be required, and its absence must not read as "same".
+#[test]
+fn same_repository_needs_the_file_and_its_birth_to_match() {
+    use SameRepository::{Ambiguous, Different, Same};
+    let id = |dir: &str, file: Option<(u64, u64)>, born: Option<(u64, u32)>| RepoIdentity {
+        common_dir: dir.into(),
+        file_id: file,
+        created: born,
+    };
+    let original = id("/r/.git", Some((1, 42)), Some((100, 5)));
+
+    let recloned = id("/r/.git", Some((1, 42)), Some((200, 7)));
+    assert_eq!(
+        original.same_repository(&recloned),
+        Different,
+        "reused inode"
+    );
+    assert_eq!(original.same_repository(&original.clone()), Same);
+    let moved = id("/elsewhere/.git", Some((1, 42)), Some((100, 5)));
+    assert_eq!(original.same_repository(&moved), Same, "renamed, same file");
+    assert_eq!(
+        original.same_repository(&id("/r/.git", Some((1, 43)), Some((100, 5)))),
+        Different
+    );
+    assert_eq!(
+        original.same_repository(&id("/r/.git", Some((1, 42)), None)),
+        Ambiguous,
+        "a file id match alone could be a reused inode"
+    );
+    // No file id (non-unix): path + birth.
+    let windows = id("C:/r/.git", None, Some((100, 5)));
+    assert_eq!(windows.same_repository(&windows.clone()), Same);
+    assert_eq!(
+        windows.same_repository(&id("C:/r/.git", None, Some((9, 9)))),
+        Different
+    );
+    assert_eq!(
+        windows.same_repository(&id("C:/r/.git", None, None)),
+        Ambiguous
+    );
+    assert_eq!(
+        windows.same_repository(&id("C:/x/.git", None, None)),
+        Different
+    );
 }
 
 /// #891 review: an operation whose termination is unconfirmed may still be

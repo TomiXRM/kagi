@@ -392,12 +392,17 @@ fn set_identity(id: u64, identity: Option<serde_json::Value>) {
     std::fs::write(&log, lines.concat()).unwrap();
 }
 
-/// This repository's recorded identity, as JSON (unix: carries dev / ino).
+/// This repository's recorded identity, as JSON (unix: carries dev / ino;
+/// the creation time where the filesystem reports one).
 #[cfg(unix)]
 fn identity_of(dir: &Path) -> serde_json::Value {
     let id = kagi_git::oplog::RepoIdentity::of(dir).expect("opens");
     let (dev, ino) = id.file_id.expect("unix file id");
-    serde_json::json!({ "common_dir": id.common_dir, "dev": dev, "ino": ino })
+    let (born_s, born_ns) = id.created.expect("creation time on this filesystem");
+    serde_json::json!({
+        "common_dir": id.common_dir, "dev": dev, "ino": ino,
+        "born_s": born_s, "born_ns": born_ns,
+    })
 }
 
 /// A worktree `wt` on a branch made before `point`, an operation in it after
@@ -571,6 +576,50 @@ fn an_entry_at_our_path_with_another_file_id_is_not_ours() {
         restore_blockers(&p),
         vec![OplogRestoreNote::EntryNotLoaded { id: earlier }],
         "same path, different file id: another repository's entry"
+    );
+}
+
+/// #900 review: a repository deleted and re-cloned at the same place can get
+/// the old `.git` inode back — same path, same `(dev, ino)`. Its different
+/// creation time keeps the old entries from being taken for its own; with no
+/// creation time to compare, the entry is ambiguous and the restore fails
+/// closed.
+#[cfg(unix)]
+#[test]
+fn a_reused_inode_with_another_birth_time_is_not_ours() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let point = create(&repo, "a");
+    let other_tmp = tempfile::tempdir().unwrap();
+    let other = self::repo(other_tmp.path());
+    let old = create(&other, "from-the-deleted-clone");
+    create(&repo, "b");
+
+    let mut reused = identity_of(&repo);
+    reused["born_s"] = serde_json::json!(1);
+    set_identity(old, Some(reused.clone()));
+    let p = plan(&repo, &Operation::RestoreToPoint { entry_id: old });
+    assert_eq!(
+        restore_blockers(&p),
+        vec![OplogRestoreNote::EntryNotLoaded { id: old }],
+        "same path and inode, another birth: not ours"
+    );
+
+    let object = reused.as_object_mut().unwrap();
+    object.remove("born_s");
+    object.remove("born_ns");
+    set_identity(old, Some(reused));
+    let p = plan(&repo, &Operation::RestoreToPoint { entry_id: point });
+    assert!(
+        restore_blockers(&p).iter().any(|n| matches!(
+            n,
+            OplogRestoreNote::UnknownRepository { id, .. } if *id == old
+        )),
+        "same inode, no birth time to confirm: ambiguous, fails closed: {:?}",
+        p.blockers
     );
 }
 

@@ -188,12 +188,28 @@ impl From<&crate::GitError> for FailureCode {
 }
 
 /// Which repository an entry was recorded in (#894): the canonical common
-/// dir, and on unix its `(dev, ino)` — which survives renaming or moving the
-/// repository within one filesystem. Filled at append time.
+/// dir, on unix its `(dev, ino)` — which survives renaming or moving the
+/// repository within one filesystem — and the common dir's creation time,
+/// which tells a re-created `.git` that got the old inode back from the
+/// original (#900 review). Filled at append time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepoIdentity {
     pub common_dir: String,
     pub file_id: Option<(u64, u64)>,
+    /// Creation (birth) time as (seconds, nanoseconds) since the epoch;
+    /// `None` where the filesystem does not report one.
+    pub created: Option<(u64, u32)>,
+}
+
+/// How two [`RepoIdentity`]s relate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SameRepository {
+    Same,
+    Different,
+    /// Neither proven the same nor proven different (a file id match with no
+    /// creation time to confirm it, or only a path to go on). The restore
+    /// planner treats this like an entry it cannot attribute: fail closed.
+    Ambiguous,
 }
 
 impl RepoIdentity {
@@ -202,28 +218,50 @@ impl RepoIdentity {
     pub fn of(path: &Path) -> Option<Self> {
         let repo = git2::Repository::open(path).ok()?;
         let common = std::fs::canonicalize(repo.commondir()).ok()?;
+        let meta = std::fs::metadata(&common).ok();
         #[cfg(unix)]
         let file_id = {
             use std::os::unix::fs::MetadataExt;
-            std::fs::metadata(&common).ok().map(|m| (m.dev(), m.ino()))
+            meta.as_ref().map(|m| (m.dev(), m.ino()))
         };
         #[cfg(not(unix))]
         let file_id = None;
+        let created = meta
+            .and_then(|m| m.created().ok())
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| (d.as_secs(), d.subsec_nanos()));
         Some(Self {
             common_dir: common.to_string_lossy().into_owned(),
             file_id,
+            created,
         })
     }
 
-    /// Same repository. When both sides know their file id, only that
-    /// decides — a renamed or moved (same filesystem) repository is still the
-    /// same, and a repository deleted and re-created at the same path is not
-    /// (#900 review). The path is compared only when either side has no file
-    /// id (an old entry, a non-unix platform).
-    pub fn same_repository(&self, other: &Self) -> bool {
-        match (self.file_id, other.file_id) {
-            (Some(a), Some(b)) => a == b,
-            _ => self.common_dir == other.common_dir,
+    /// Whether `self` and `other` are the same repository (#894, #900).
+    /// - Any proven difference — another file id, another creation time —
+    ///   is `Different`.
+    /// - The same file id *and* the same creation time is `Same`; the file id
+    ///   alone is not enough, a deleted repository's inode can be handed to a
+    ///   new `.git` at the same place (a re-clone of the same remote).
+    /// - Without a file id (non-unix): the same path and creation time is
+    ///   `Same`, another path `Different`.
+    /// - Anything else is `Ambiguous`.
+    pub fn same_repository(&self, other: &Self) -> SameRepository {
+        let file = match (self.file_id, other.file_id) {
+            (Some(a), Some(b)) => Some(a == b),
+            _ => None,
+        };
+        let born = match (self.created, other.created) {
+            (Some(a), Some(b)) => Some(a == b),
+            _ => None,
+        };
+        let path = self.common_dir == other.common_dir;
+        match (file, born) {
+            (Some(false), _) | (_, Some(false)) => SameRepository::Different,
+            (Some(true), Some(true)) => SameRepository::Same,
+            (None, Some(true)) if path => SameRepository::Same,
+            (None, _) if !path => SameRepository::Different,
+            _ => SameRepository::Ambiguous,
         }
     }
 }

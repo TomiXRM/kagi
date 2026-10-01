@@ -57,11 +57,12 @@ fn canonical(path: &Path) -> PathBuf {
 /// another's, or unknown. The planner fails closed on unknown entries and on
 /// a broken chain in the range (#878 review).
 ///
-/// An entry that recorded its repository (#894) is classified by that alone:
-/// same common dir path or same `(dev, ino)` is ours, anything else proven
-/// another's — so a removed worktree or a deleted unrelated repository no
-/// longer blocks. Only an older entry without it is classified by opening
-/// its worktree, and is unknown when that fails.
+/// An entry that recorded its repository (#894) is classified by that alone
+/// (`RepoIdentity::same_repository`): `Same` is ours, `Different` another's,
+/// `Ambiguous` unknown (fail closed) — a file id match with no creation time
+/// to confirm it could be a re-created `.git` on a reused inode (#900). Only
+/// an older entry without an identity is classified by opening its worktree,
+/// and is unknown when that fails.
 fn log_entries(repo: &Repository) -> Vec<RecordedEntry> {
     let mine = canonical(repo.commondir());
     let my_identity = crate::oplog::RepoIdentity::of(repo.workdir().unwrap_or(repo.path()));
@@ -71,8 +72,11 @@ fn log_entries(repo: &Repository) -> Vec<RecordedEntry> {
         .map(|e| {
             let path = e.worktree.clone().unwrap_or_else(|| e.repo.clone());
             let repo = match (&e.repo_identity, &my_identity) {
-                (Some(recorded), Some(mine)) if recorded.same_repository(mine) => EntryRepo::Mine,
-                (Some(_), Some(_)) => EntryRepo::Other,
+                (Some(recorded), Some(mine)) => match recorded.same_repository(mine) {
+                    crate::oplog::SameRepository::Same => EntryRepo::Mine,
+                    crate::oplog::SameRepository::Different => EntryRepo::Other,
+                    crate::oplog::SameRepository::Ambiguous => EntryRepo::Unknown(path.clone()),
+                },
                 _ => {
                     let common = common_of
                         .entry(path.clone())

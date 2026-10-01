@@ -349,10 +349,10 @@ impl KagiApp {
         cx.spawn(async move |this, acx| {
             // #347: mergeStateStatus + merge-queue position. A failure
             // (non-GitHub host, old gh, no MQ) is not fatal — the card just
-            // does not appear.
+            // does not appear — but it says why (#843).
             let merge_status = acx
                 .background_executor()
-                .spawn(async move { kagi_git::github::pr_merge_status(&repo2, number).ok() })
+                .spawn(async move { kagi_git::github::pr_merge_status(&repo2, number) })
                 .await;
             let _ = this.update(acx, |app, cx| {
                 let Some(t) = app
@@ -361,14 +361,21 @@ impl KagiApp {
                 else {
                     return;
                 };
-                if let Some(s) = &merge_status {
-                    klog!(
-                        "pr-mode: merge-status #{} state={:?} queued={}",
-                        number,
-                        s.state,
-                        s.queue.is_some()
-                    );
-                }
+                let merge_status = match merge_status {
+                    Ok(s) => {
+                        klog!(
+                            "pr-mode: merge-status #{} state={:?} queued={}",
+                            number,
+                            s.state,
+                            s.queue.is_some()
+                        );
+                        Some(s)
+                    }
+                    Err(error) => {
+                        klog!("pr-merge-status: #{} read failed: {}", number, error);
+                        None
+                    }
+                };
                 t.merge_status = merge_status;
                 t.merge_status_loaded = true;
                 cx.notify();

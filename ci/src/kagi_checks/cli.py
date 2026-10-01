@@ -202,6 +202,10 @@ def check_static_spinner() -> int:
     return _run_rule(_rule("static-spinner"))
 
 
+def check_string_continuation() -> int:
+    return _run_rule(_rule("string-continuation"))
+
+
 def check_busy_labels() -> int:
     issues = busy_label_issues(ROOT)
     if not issues:

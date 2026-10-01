@@ -251,6 +251,34 @@ RULES: tuple[Rule, ...] = (
         samples_ok=('sync_spinner(10., footer_color, "footer-busy")',),
     ),
     Rule(
+        name="string-continuation",
+        summary="a `\\` line continuation never glues two words in a string (#843)",
+        # Rust's `\`+newline also strips the next line's leading blanks, so a
+        # word before the backslash and a word starting the next line become
+        # one token: GraphQL's `mergeStateStatus\` + `   reviewThreads` reached
+        # GitHub as `mergeStateStatusreviewThreads` and every merge-status read
+        # failed (#843; #837 found the same in the thread query). Only a word
+        # character right before the backslash counts, and not one that is
+        # itself an escape (`\n\`, `\t\`): those end the line on purpose.
+        pattern=r"(?<!\\)[A-Za-z0-9_]\\\n[ \t]*[A-Za-z0-9_]",
+        globs=("crates/**/*.rs", "src/**/*.rs"),
+        message=(
+            "a `\\` continuation drops the next line's indentation and glues the "
+            "two words - end the line with whitespace or punctuation, or use a "
+            "plain newline in the string"
+        ),
+        samples=(
+            '"\\\n   id mergeStateStatus\\\n   reviewThreads(first:100){nodes{isResolved}}\\\n"',
+            '"  mergeQueueEntry{position estimatedTimeToMerge state\\\n'
+            '    mergeQueue{nextEntryEstimatedTimeToMerge}}}}}";',
+        ),
+        samples_ok=(
+            '"first line\\n\\\n   second line"',
+            '"text\\\n\n   after a blank line"',
+            '"query{\\\n   field}"',
+        ),
+    ),
+    Rule(
         name="klog-raw",
         summary="no same-line raw [kagi] emission (ADR-0096)",
         # Same-line only: `[ \t]*`, never `\s*`, because `\s` spans newlines and

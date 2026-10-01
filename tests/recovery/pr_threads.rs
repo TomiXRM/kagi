@@ -103,15 +103,28 @@ fn c_txt_pr() -> (
 }
 
 /// A `gh` that answers the review-thread query with two threads on `c.txt`
-/// — but, like GitHub, rejects a query in which any field the parser reads is
-/// not asked for by its own name (#837 Tier B: two names glued into one).
+/// and the merge-status query with a CLEAN status and one open thread — but,
+/// like GitHub, rejects a query in which any field the parser reads is not
+/// asked for by its own name (#837 / #843 Tier B: two names glued into one).
 const THREADS_GH: &str = r#"#!/bin/sh
 case "$1" in
   pr) echo '{"reviews":[],"comments":[]}' ;;
+  repo) echo 'example/repo' ;;
   api)
     q=""
     for a in "$@"; do case "$a" in query=*) q="${a#query=}" ;; esac; done
-    case "$q" in *mergeStateStatus*) echo '{}'; exit 0 ;; esac
+    case "$q" in *mergeStateStatus*)
+      q=" $q "
+      for f in id mergeStateStatus reviewThreads nodes isResolved mergeQueueEntry position \
+               estimatedTimeToMerge state mergeQueue nextEntryEstimatedTimeToMerge; do
+        case "$q" in
+          *[!A-Za-z0-9_]"$f"[!A-Za-z0-9_]*) ;;
+          *) echo "{\"errors\":[{\"message\":\"Field '$f' is not requested\"}]}"; exit 1 ;;
+        esac
+      done
+      echo '{"data":{"repository":{"pullRequest":{"id":"PR_1","mergeStateStatus":"CLEAN","reviewThreads":{"nodes":[{"isResolved":false}]},"mergeQueueEntry":null}}}}'
+      exit 0 ;;
+    esac
     q=" $q "
     for f in path line startLine originalLine diffSide isOutdated isResolved \
              viewerCanResolve comments databaseId author login body createdAt diffHunk replyTo; do
@@ -153,7 +166,7 @@ pub fn scenario_pr_threads_via_gh(cx: &mut VisualTestAppContext) {
             let mode = app.read(cx).pr_mode().expect("PR mode");
             mode.active
                 .and_then(|i| mode.tabs.get(i))
-                .is_some_and(|tab| tab.conversation_loaded)
+                .is_some_and(|tab| tab.conversation_loaded && tab.merge_status_loaded)
         });
         if loaded {
             break;
@@ -175,6 +188,19 @@ pub fn scenario_pr_threads_via_gh(cx: &mut VisualTestAppContext) {
     assert_eq!(
         feed, 2,
         "gh answered two threads; they must not read as none"
+    );
+    // #843: the merge-status read through the same gh answers, not nothing.
+    let merge = cx.read(|cx| {
+        let mode = app.read(cx).pr_mode().expect("PR mode");
+        let tab = mode.active.and_then(|i| mode.tabs.get(i)).expect("tab");
+        tab.merge_status
+            .as_ref()
+            .map(|s| (format!("{:?}", s.state), s.unresolved_threads))
+    });
+    assert_eq!(
+        merge,
+        Some(("Clean".to_string(), 1)),
+        "gh answered a merge status; it must not read as none"
     );
     app.update(cx, |app, cx| app.pr_mode_select_file(0, cx));
     for badge in ["pr-thread-badge-2", "pr-thread-badge-3"] {

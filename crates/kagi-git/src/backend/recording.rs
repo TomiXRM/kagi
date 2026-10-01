@@ -112,6 +112,23 @@ pub fn oplog_outcome_from(
                 ),
             },
         },
+        (
+            Ok(OperationOutcome::ReplayOnto {
+                branch,
+                from,
+                to,
+                reference,
+                updated,
+            }),
+            _,
+        ) => crate::oplog::OpOutcome::Success {
+            after: ops::StateSummary {
+                head: predicted.head.clone(),
+                dirty: format!(
+                    "replayed '{branch}' {from}→{to} ({updated} ref(s) updated); restore: git update-ref refs/heads/{branch} {reference}"
+                ),
+            },
+        },
         (Ok(OperationOutcome::StashDrop { oid }), _) => crate::oplog::OpOutcome::Success {
             after: ops::StateSummary {
                 head: predicted.head.clone(),
@@ -147,6 +164,9 @@ pub fn recovery_handles(result: &Result<OperationOutcome, GitError>) -> Vec<Reco
         OperationOutcome::DeleteBranch { tip, reference, .. } => {
             vec![RecoveryHandle::oid(recovery::BRANCH_TIP, tip).with_reference(reference)]
         }
+        OperationOutcome::ReplayOnto {
+            from, reference, ..
+        } => vec![RecoveryHandle::oid(recovery::BRANCH_TIP, from).with_reference(reference)],
         // Partial discards land here too: `is_partial` keeps the outcome `Ok`
         // precisely so the backups are never dropped with an `Err` (#281).
         OperationOutcome::Discard(discard) => discard

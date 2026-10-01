@@ -141,6 +141,22 @@ fn main() {
     ui::theme::init_reduce_motion();
     // #772 / ADR-0208: terminal auto-lock opt-in (default off).
     ui::settings::init_terminal_auto_lock();
+    // #344 / ADR-0211: which git features are available (probed once).
+    {
+        let f = kagi_git::cli::GitFeatures::detected();
+        let version = kagi_git::cli::git_version()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let onoff = |b: bool| if b { "on" } else { "off" };
+        klog!(
+            "git: version={} replay={} revert={} history={} fixup={}",
+            version,
+            onoff(f.replay_onto),
+            onoff(f.replay_revert),
+            onoff(f.history),
+            onoff(f.history_fixup)
+        );
+    }
 
     // W22-I18N / ADR-0048: resolve the UI language before anything renders.
     // Priority: KAGI_LANG env → settings.json "lang" → LANG/LC_ALL → English.

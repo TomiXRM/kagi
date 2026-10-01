@@ -824,6 +824,9 @@ impl Backend {
             Operation::ResetCurrentToHead { target } => self.plan_reset_current_to_head(target),
             Operation::ForceWithLeasePush => self.plan_force_with_lease_push(),
             Operation::RebaseCurrentOnto { onto } => self.plan_rebase_current_onto(onto),
+            Operation::ReplayOnto { branch, onto } => {
+                ops::plan_replay_onto(&self.repo, &self.path, branch, onto)
+            }
             Operation::Discard { paths } => self.plan_discard(paths),
             Operation::RestoreSnapshot { id } => self.plan_restore_snapshot(id),
             Operation::ApplySuggestion {

@@ -23,6 +23,33 @@ pub enum RebaseNote {
     /// through; the user resolves each in kagi's conflict editor, one commit
     /// at a time, same as merge/cherry-pick/revert conflicts.
     MayConflict,
+    /// blocker (`plan_replay_onto`, #344) — the range contains a merge
+    /// commit; `git replay` cannot replay merges (`fatal: replaying merge
+    /// commits is not supported yet!`). Use the ordinary rebase.
+    ReplayRangeHasMerges { branch: String, count: usize },
+    /// blocker (`plan_replay_onto`) — the branch is checked out in a
+    /// worktree whose working tree is dirty; moving its ref would leave that
+    /// index and tree behind (ADR-0211 §5).
+    ReplayWorktreeDirty { branch: String, path: String },
+    /// blocker (`plan_replay_onto`) — `git replay` reported a conflict
+    /// (exit 1): the commits cannot be replayed onto `onto` without manual
+    /// resolution, which replay does not offer.
+    ReplayConflicts { branch: String, onto: String },
+    /// blocker (`plan_replay_onto`) — `git replay` printed nothing: there is
+    /// nothing to move (already on `onto`, or an empty range).
+    ReplayNothingToDo { branch: String, onto: String },
+    /// warning (`plan_replay_onto`) — the refs `git replay` will move, as it
+    /// printed them. `sample` holds the first few `<ref> <old7>→<new7>`,
+    /// `more` is how many are not shown.
+    ReplayUpdates {
+        count: usize,
+        sample: Vec<String>,
+        more: usize,
+    },
+    /// warning (`plan_replay_onto`) — the branch is checked out in another
+    /// worktree; its HEAD follows the ref, but its index and working tree are
+    /// not updated by this operation (ADR-0211 §1 iii).
+    ReplayWorktreeStale { branch: String, path: String },
 }
 
 impl RebaseNote {
@@ -43,6 +70,36 @@ impl RebaseNote {
                 branch, onto
             ),
             RebaseNote::MayConflict => crate::advice_template_en!(RebaseMayConflict).to_string(),
+            RebaseNote::ReplayRangeHasMerges { branch, count } => format!(
+                "'{}' contains {} merge commit(s); git replay cannot replay merges. Use Rebase onto from that worktree instead.",
+                branch, count
+            ),
+            RebaseNote::ReplayWorktreeDirty { branch, path } => format!(
+                "'{}' is checked out in {} with uncommitted changes. Commit or stash them there first; moving the branch would leave that working tree behind.",
+                branch, path
+            ),
+            RebaseNote::ReplayConflicts { branch, onto } => format!(
+                "Replaying '{}' onto '{}' would conflict. git replay cannot resolve conflicts; rebase from the branch's worktree instead.",
+                branch, onto
+            ),
+            RebaseNote::ReplayNothingToDo { branch, onto } => format!(
+                "Nothing to replay: '{}' is already on '{}'.",
+                branch, onto
+            ),
+            RebaseNote::ReplayUpdates { count, sample, more } => {
+                let mut list = sample.join("\n  ");
+                if *more > 0 {
+                    list = format!("{} (+{} more)", list, more);
+                }
+                format!(
+                    "Updates {} ref(s) exactly as git replay printed them:\n  {}",
+                    count, list
+                )
+            }
+            RebaseNote::ReplayWorktreeStale { branch, path } => format!(
+                "'{}' is checked out in {}. Its HEAD will follow the branch, but that worktree's index and files are not updated by this operation; run `git reset --keep` there afterwards or rebase from that worktree.",
+                branch, path
+            ),
         }
     }
 }
@@ -52,6 +109,9 @@ impl RebaseNote {
 pub enum RebaseTitle {
     /// `plan_rebase_current_onto` — `Rebase '<branch>' onto '<onto>'`.
     RebaseCurrentOnto { branch: String, onto: String },
+    /// `plan_replay_onto` (#344) — `Replay '<branch>' onto '<onto>'` — the
+    /// branch is moved by ref update without touching any working tree.
+    ReplayOnto { branch: String, onto: String },
 }
 
 impl RebaseTitle {
@@ -60,6 +120,9 @@ impl RebaseTitle {
         match self {
             RebaseTitle::RebaseCurrentOnto { branch, onto } => {
                 format!("Rebase '{}' onto '{}'", branch, onto)
+            }
+            RebaseTitle::ReplayOnto { branch, onto } => {
+                format!("Replay '{}' onto '{}'", branch, onto)
             }
         }
     }
@@ -71,6 +134,9 @@ pub enum RebaseRecovery {
     /// `plan_rebase_current_onto` — the branch's pre-rebase tip, recoverable
     /// via `git rebase --abort` while in progress, or a ref reset afterward.
     RebaseCurrentOnto { branch: String, from: String },
+    /// `plan_replay_onto` (#344) — the pre-replay tip of every ref moved;
+    /// `from` is the branch's own tip (also retained under `refs/kagi/backups/`).
+    ReplayOnto { branch: String, from: String },
 }
 
 impl RebaseRecovery {
@@ -79,6 +145,9 @@ impl RebaseRecovery {
         match self {
             RebaseRecovery::RebaseCurrentOnto { branch, from } => format!(
                 "While the rebase is in progress, abort it from the conflict banner (equivalent to `git rebase --abort`) to restore '{branch}' to {from} exactly. If it already finished, restore the pre-rebase tip with:\n  git update-ref refs/heads/{branch} {from}"
+            ),
+            RebaseRecovery::ReplayOnto { branch, from } => format!(
+                "Replay moves refs only; nothing is checked out. Restore the pre-replay tip with:\n  git update-ref refs/heads/{branch} {from}\n(the same tip is retained under refs/kagi/backups/ until this entry is forgotten)"
             ),
         }
     }

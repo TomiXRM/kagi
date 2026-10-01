@@ -24,6 +24,36 @@ pub fn note_ja(note: &RebaseNote) -> String {
             branch, onto
         ),
         RebaseNote::MayConflict => super::advice_text(Msg::AdviceRebaseMayConflict, &[]),
+        RebaseNote::ReplayRangeHasMerges { branch, count } => format!(
+            "`{}` に merge commit が {} 個含まれています。git replay は merge を replay できません。その worktree から Rebase onto を使ってください。",
+            branch, count
+        ),
+        RebaseNote::ReplayWorktreeDirty { branch, path } => format!(
+            "`{}` は {} で checkout 中で、未 commit の変更があります。先にそこで commit か stash してください。branch を動かすとその作業ツリーが取り残されます。",
+            branch, path
+        ),
+        RebaseNote::ReplayConflicts { branch, onto } => format!(
+            "`{}` を `{}` の上に replay すると conflict します。git replay は conflict を解決できません。branch の worktree から rebase してください。",
+            branch, onto
+        ),
+        RebaseNote::ReplayNothingToDo { branch, onto } => format!(
+            "replay するものがありません。`{}` は既に `{}` の上にあります。",
+            branch, onto
+        ),
+        RebaseNote::ReplayUpdates { count, sample, more } => {
+            let mut list = sample.join("\n  ");
+            if *more > 0 {
+                list = format!("{}(+{} 件)", list, more);
+            }
+            format!(
+                "git replay が印字したとおりに {} 個の ref を更新します:\n  {}",
+                count, list
+            )
+        }
+        RebaseNote::ReplayWorktreeStale { branch, path } => format!(
+            "`{}` は {} で checkout 中です。HEAD は branch に追従しますが、その worktree の index と作業ファイルはこの操作では更新されません。後でそこで `git reset --keep` を実行するか、その worktree から rebase してください。",
+            branch, path
+        ),
     }
 }
 
@@ -33,6 +63,9 @@ pub fn title_ja(title: &RebaseTitle) -> String {
         RebaseTitle::RebaseCurrentOnto { branch, onto } => {
             format!("`{}` を `{}` の上に rebase", branch, onto)
         }
+        RebaseTitle::ReplayOnto { branch, onto } => {
+            format!("`{}` を `{}` の上に replay", branch, onto)
+        }
     }
 }
 
@@ -41,6 +74,9 @@ pub fn recovery_ja(recovery: &RebaseRecovery) -> String {
     match recovery {
         RebaseRecovery::RebaseCurrentOnto { branch, from } => format!(
             "rebase 中はconflict バナーから abort すれば `{branch}` を {from} へ戻せます。完了済みなら rebase 前の先端を復元:\n  git update-ref refs/heads/{branch} {from}"
+        ),
+        RebaseRecovery::ReplayOnto { branch, from } => format!(
+            "replay は ref を動かすだけで checkout はしません。replay 前の先端を復元:\n  git update-ref refs/heads/{branch} {from}\n(同じ先端は この entry を forget するまで refs/kagi/backups/ に保持されます)"
         ),
     }
 }

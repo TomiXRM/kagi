@@ -134,6 +134,13 @@ pub enum Operation {
     RebaseCurrentOnto {
         onto: String,
     },
+    /// #344 / ADR-0211: rebase `branch` onto `onto` by ref update only, via
+    /// `git replay` — no working tree or index is touched, so the branch may
+    /// be checked out in another worktree (which must be clean).
+    ReplayOnto {
+        branch: String,
+        onto: String,
+    },
     Discard {
         paths: Vec<String>,
     },
@@ -205,6 +212,7 @@ impl Operation {
             Operation::ResetCurrentToHead { .. } => "reset",
             Operation::ForceWithLeasePush => "force-with-lease-push",
             Operation::RebaseCurrentOnto { .. } => "rebase",
+            Operation::ReplayOnto { .. } => "replay-onto",
             Operation::Discard { .. } => "discard",
             Operation::RestoreSnapshot { .. } => "restore-snapshot",
             Operation::ApplySuggestion { .. } => "apply-suggestion",
@@ -354,6 +362,15 @@ pub enum OperationOutcome {
         name: String,
         tip: String,
         reference: String,
+    },
+    /// #344: the refs `git replay` moved (as `<ref> <old7>→<new7>`), with the
+    /// branch's pre-replay tip retained by a recovery ref.
+    ReplayOnto {
+        branch: String,
+        from: String,
+        to: String,
+        reference: String,
+        updated: usize,
     },
     Unit,
 }

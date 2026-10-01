@@ -253,6 +253,7 @@ fn writes_only_locally(name: &str) -> bool {
             | "revert"
             | "merge"
             | "rebase"
+            | "replay-onto"
             | "reset-current"
             | "create-branch"
             | "delete-branch"

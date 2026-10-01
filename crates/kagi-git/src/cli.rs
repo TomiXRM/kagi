@@ -34,6 +34,7 @@
 //! ```
 
 use std::path::Path;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use crate::proc::run_child;
@@ -118,6 +119,9 @@ pub enum FsmonitorMode {
 pub struct GitCliOptions<'a> {
     pub executable: Option<&'a Path>,
     pub fsmonitor: FsmonitorMode,
+    /// Bytes fed to the child's stdin, then EOF (`git update-ref --stdin`,
+    /// #344). `None` = `/dev/null`, so no child ever waits on a terminal.
+    pub stdin: Option<&'a [u8]>,
 }
 
 fn hardening_args(fsmonitor: FsmonitorMode) -> Vec<&'static str> {
@@ -436,8 +440,12 @@ pub fn run_git_with_options(
     let mut cmd = git_command_with_executable(repo_dir, executable);
     cmd.args(&full);
 
-    let run = run_child(&mut cmd, Duration::from_secs(GIT_CLI_TIMEOUT_SECS), None)
-        .map_err(|e| GitError::Other(format!("failed to start git {}: {}", args.join(" "), e)))?;
+    let run = run_child(
+        &mut cmd,
+        Duration::from_secs(GIT_CLI_TIMEOUT_SECS),
+        options.stdin,
+    )
+    .map_err(|e| GitError::Other(format!("failed to start git {}: {}", args.join(" "), e)))?;
 
     // A deadline that expires is not an exit: `git push` may already have moved
     // the remote. Keep it a `TerminationUnknown` so the app records `Unknown`
@@ -557,5 +565,177 @@ mod tests {
         let command = git_command_with_executable(std::path::Path::new("/tmp"), executable);
         assert_eq!(command.get_program(), executable);
         assert!(has_env(&command, "GIT_TERMINAL_PROMPT", "0"));
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// git version + feature gate (#344, ADR-0211 決定 2)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `git --version`, as `major.minor.patch`. Ordered so `>= GitVersion::new(2, 53, 0)`
+/// reads naturally.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct GitVersion {
+    pub major: u32,
+    pub minor: u32,
+    pub patch: u32,
+}
+
+impl GitVersion {
+    pub const fn new(major: u32, minor: u32, patch: u32) -> Self {
+        Self {
+            major,
+            minor,
+            patch,
+        }
+    }
+}
+
+impl std::fmt::Display for GitVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+    }
+}
+
+/// Parse `git version 2.50.1 (Apple Git-155)` / `git version 2.38.0-rc1` /
+/// `git version 2.54.0.windows.1`. Anything that is not `git version X.Y[.Z]`
+/// is `None` — an unknown git is treated as having **no** optional feature.
+pub fn parse_git_version(output: &str) -> Option<GitVersion> {
+    let mut words = output.split_whitespace();
+    if words.next()? != "git" || words.next()? != "version" {
+        return None;
+    }
+    let version = words.next()?;
+    let mut parts = version.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts
+        .next()
+        .map(|p| {
+            p.chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>()
+        })
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(0);
+    Some(GitVersion::new(major, minor, patch))
+}
+
+/// The `git` on `PATH`, probed once per process (git does not change under a
+/// running Kagi; the next launch sees a new one). `None` when git is missing
+/// or its version line is unreadable.
+pub fn git_version() -> Option<GitVersion> {
+    static VERSION: OnceLock<Option<GitVersion>> = OnceLock::new();
+    *VERSION.get_or_init(|| {
+        // No repository is needed for `--version`; `git_command` only sets the
+        // hardened environment (no repo-local overrides are read here).
+        let mut cmd = git_command(Path::new("."));
+        cmd.arg("--version");
+        let run = run_child(&mut cmd, Duration::from_secs(10), None).ok()?;
+        run.status.as_ref().ok()?;
+        parse_git_version(&run.stdout_lossy())
+    })
+}
+
+/// What the detected git can do, as Kagi gates features (ADR-0211 決定 1).
+/// Every flag is `false` when the version is unknown.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GitFeatures {
+    /// `git replay --onto/--advance/--contained` (2.44+).
+    pub replay_onto: bool,
+    /// `git replay --revert` (2.54+).
+    pub replay_revert: bool,
+    /// `git history drop/reword/split` + `--dry-run` (2.54+).
+    pub history: bool,
+    /// `git history fixup` (2.55+).
+    pub history_fixup: bool,
+    /// 2.53+: `git replay` **updates refs itself** unless told
+    /// `--ref-action=print`. Below 2.53 it only prints and does not accept
+    /// that flag. The replay op must branch on this (ADR-0211 §2).
+    pub replay_ref_action_default_update: bool,
+}
+
+impl GitFeatures {
+    pub fn for_version(version: Option<GitVersion>) -> Self {
+        let Some(v) = version else {
+            return Self::default();
+        };
+        Self {
+            replay_onto: v >= GitVersion::new(2, 44, 0),
+            replay_revert: v >= GitVersion::new(2, 54, 0),
+            history: v >= GitVersion::new(2, 54, 0),
+            history_fixup: v >= GitVersion::new(2, 55, 0),
+            replay_ref_action_default_update: v >= GitVersion::new(2, 53, 0),
+        }
+    }
+
+    /// Process-wide features of the git on `PATH` (see [`git_version`]).
+    pub fn detected() -> Self {
+        Self::for_version(git_version())
+    }
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+
+    #[test]
+    fn parses_release_prerelease_and_vendor_suffixes() {
+        assert_eq!(
+            parse_git_version("git version 2.50.1 (Apple Git-155)\n"),
+            Some(GitVersion::new(2, 50, 1))
+        );
+        assert_eq!(
+            parse_git_version("git version 2.38.0-rc1"),
+            Some(GitVersion::new(2, 38, 0))
+        );
+        assert_eq!(
+            parse_git_version("git version 2.54.0.windows.1"),
+            Some(GitVersion::new(2, 54, 0))
+        );
+        assert_eq!(
+            parse_git_version("git version 2.55"),
+            Some(GitVersion::new(2, 55, 0))
+        );
+    }
+
+    #[test]
+    fn rejects_anything_that_is_not_git_version() {
+        for s in [
+            "",
+            "fixture git 9.9",
+            "git version two.point.three",
+            "version 2.50.1",
+        ] {
+            assert_eq!(parse_git_version(s), None, "{s:?}");
+        }
+    }
+
+    #[test]
+    fn features_follow_the_documented_thresholds() {
+        let f = |v: Option<GitVersion>| GitFeatures::for_version(v);
+        assert_eq!(f(None), GitFeatures::default());
+        let v2_43 = f(Some(GitVersion::new(2, 43, 9)));
+        assert!(!v2_43.replay_onto && !v2_43.replay_ref_action_default_update);
+        let v2_50 = f(Some(GitVersion::new(2, 50, 1)));
+        assert!(v2_50.replay_onto);
+        assert!(!v2_50.replay_revert && !v2_50.history && !v2_50.history_fixup);
+        assert!(!v2_50.replay_ref_action_default_update);
+        let v2_53 = f(Some(GitVersion::new(2, 53, 0)));
+        assert!(v2_53.replay_ref_action_default_update && !v2_53.history);
+        let v2_54 = f(Some(GitVersion::new(2, 54, 0)));
+        assert!(v2_54.replay_revert && v2_54.history && !v2_54.history_fixup);
+        let v2_55 = f(Some(GitVersion::new(2, 55, 0)));
+        assert!(v2_55.history_fixup);
+        assert!(f(Some(GitVersion::new(3, 0, 0))).history_fixup);
+    }
+
+    #[test]
+    fn this_machine_reports_a_version() {
+        // Not a fixed value: CI runners and developers differ. The probe must
+        // at least succeed and agree with itself.
+        let v = git_version().expect("git on PATH");
+        assert!(v.major >= 2);
+        assert_eq!(git_version(), Some(v));
     }
 }

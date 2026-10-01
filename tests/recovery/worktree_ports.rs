@@ -95,6 +95,7 @@ pub(crate) fn start_terminal(
 }
 
 pub fn scenario_worktree_port_env(cx: &mut VisualTestAppContext) {
+    let _ports = crate::gui_isolation::PortStore::keep();
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let side_dir = tempfile::tempdir().unwrap();
@@ -118,6 +119,8 @@ pub fn scenario_worktree_port_env(cx: &mut VisualTestAppContext) {
     )
     .expect("a free block for the pre-assigned worktree");
     let shell_dir = tempfile::tempdir().unwrap();
+    let _probes =
+        crate::recovery_worktree_remove_shell::KillRecordedOnDrop(shell_dir.path().to_path_buf());
     let out = shell_dir.path().join("env.txt");
     let shell = recording_shell(shell_dir.path(), &out);
     KagiApp::set_terminal_shell_for_e2e(Some(shell.display().to_string()));
@@ -245,6 +248,7 @@ fn footer(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> String {
 /// it starts none — the footer says which one is running — and it starts once
 /// that shell exits. The default (`concurrent`) starts both.
 pub fn scenario_worktree_nonconcurrent(cx: &mut VisualTestAppContext) {
+    let _ports = crate::gui_isolation::PortStore::keep();
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let side_dir = tempfile::tempdir().unwrap();
@@ -261,6 +265,8 @@ pub fn scenario_worktree_nonconcurrent(cx: &mut VisualTestAppContext) {
         ],
     );
     let shell_dir = tempfile::tempdir().unwrap();
+    let _probes =
+        crate::recovery_worktree_remove_shell::KillRecordedOnDrop(shell_dir.path().to_path_buf());
     KagiApp::set_terminal_shell_for_e2e(Some(
         waiting_shell(shell_dir.path()).display().to_string(),
     ));

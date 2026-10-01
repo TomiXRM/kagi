@@ -167,6 +167,10 @@ pub fn scenario_diff_highlight_once(cx: &mut VisualTestAppContext) {
 
     // A theme switch highlights once more, under the new theme.
     let target = other_theme();
+    let (theme_before, saved_theme) = (
+        theme::theme().slug,
+        kagi::ui::settings::read_setting("theme"),
+    );
     kagi.update(cx, |app, cx| app.set_theme(target, cx));
     settle(cx, window);
     settle(cx, window);
@@ -222,6 +226,9 @@ pub fn scenario_diff_highlight_once(cx: &mut VisualTestAppContext) {
     assert!(has_spans(&fh));
 
     theme::set_diff_split(split_before);
+    // The scenarios that follow render under the theme they found (#516).
+    kagi.update(cx, |app, cx| app.set_theme(theme_before, cx));
+    kagi::ui::settings::write_setting("theme", saved_theme.as_deref());
     unmount(cx, kagi, window);
     eprintln!("[gui-e2e] PASS diff_highlight_once");
 }

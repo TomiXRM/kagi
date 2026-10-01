@@ -484,6 +484,42 @@ fn malformed_recovery_degrades_to_empty_without_losing_the_entry() {
     }
 }
 
+/// #891 review: an operation whose termination is unconfirmed may still be
+/// moving refs after the observation, so its moves are not a record.
+#[test]
+fn an_unconfirmed_termination_records_no_ref_moves() {
+    let state = || crate::ops::StateSummary {
+        head: "branch: main".into(),
+        dirty: "clean".into(),
+    };
+    let observed = Some(Vec::new());
+    let unknown = OpLogEntry::new(
+        "cherry-pick-continue",
+        "/r",
+        state(),
+        OpOutcome::Unknown {
+            after: state(),
+            evidence: "process termination is unconfirmed".into(),
+        },
+    )
+    .with_ref_moves(observed.clone());
+    assert_eq!(unknown.ref_moves, None, "fail closed: not recorded");
+
+    let refused = OpLogEntry::new(
+        "cherry-pick-continue",
+        "/r",
+        state(),
+        OpOutcome::Refused {
+            blockers: vec!["unresolved".into()],
+        },
+    )
+    .with_ref_moves(observed.clone());
+    assert_eq!(
+        refused.ref_moves, observed,
+        "a settled outcome keeps its record"
+    );
+}
+
 /// #334 slice 2a: `ref_moves` is additive. A line written before the field is
 /// "not recorded" (`None`), never "nothing moved"; "nothing moved" survives a
 /// round trip as itself; a malformed list is "not recorded" and the entry

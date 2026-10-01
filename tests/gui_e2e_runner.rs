@@ -561,13 +561,6 @@ mod macos {
         String::from_utf8_lossy(&out.stdout).trim().parse().unwrap()
     }
 
-    /// Overwrite `$KAGI_LOG_DIR/settings.json` (the isolated dir `run` sets) with
-    /// a single flat string key — the on-disk shape `Settings::load` parses.
-    fn write_setting(log_dir: &Path, key: &str, value: &str) {
-        let json = format!("{{\n  \"{key}\": \"{value}\"\n}}\n");
-        std::fs::write(log_dir.join("settings.json"), json).expect("write settings.json");
-    }
-
     /// `git for-each-ref <pattern>` — the ref-existence probe for the snapshot
     /// scenario. Returns the raw stdout (one line per matching ref).
     fn for_each_ref(dir: &Path, pattern: &str) -> String {
@@ -1538,10 +1531,7 @@ mod macos {
                 Box::new(crate::issues_pagination::scenario_issues_pagination),
             ),
             ("bottom_panel", Box::new(scenario_bottom_panel)),
-            (
-                "graph_copy",
-                Box::new(|cx| scenario_graph_copy(cx, log_dir.path())),
-            ),
+            ("graph_copy", Box::new(scenario_graph_copy)),
             (
                 "diff_survives_reload",
                 Box::new(scenario_diff_survives_reload),
@@ -1566,6 +1556,10 @@ mod macos {
             (
                 "oplog_restore_card",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_card),
+            ),
+            (
+                "oplog_restore_across_merge",
+                Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_across_merge),
             ),
             ("create_snapshot", Box::new(scenario_create_snapshot)),
             ("theme_switch", Box::new(scenario_theme_switch)),
@@ -1689,7 +1683,7 @@ mod macos {
     /// `CopyDiffSelection` action (no diff selection → Graph gets first refusal)
     /// writes the row's full SHA (`graph_copy_target=hash`) or its local branch
     /// name (`…=branch`) to the clipboard. Asserts the clipboard text each way.
-    fn scenario_graph_copy(cx: &mut VisualTestAppContext, log_dir: &Path) {
+    fn scenario_graph_copy(cx: &mut VisualTestAppContext) {
         let fixture = build_fixture();
         let repo_path = fixture.path().canonicalize().unwrap();
         let (kagi, win) = mount(cx, &repo_path);
@@ -1712,7 +1706,10 @@ mod macos {
         cx.run_until_parked();
 
         // hash mode → clipboard == full SHA
-        write_setting(log_dir, "graph_copy_target", "hash");
+        // Through the settings store, which keeps every other key; the
+        // scenario puts the key back as it found it (#516).
+        let before = kagi::ui::settings::read_setting("graph_copy_target");
+        kagi::ui::settings::write_setting("graph_copy_target", Some("hash"));
         cx.dispatch_action(win, CopyDiffSelection);
         let copied = cx.read_from_clipboard().and_then(|i| i.text());
         assert_eq!(
@@ -1722,7 +1719,7 @@ mod macos {
         );
 
         // branch mode → clipboard == local branch name
-        write_setting(log_dir, "graph_copy_target", "branch");
+        kagi::ui::settings::write_setting("graph_copy_target", Some("branch"));
         cx.dispatch_action(win, CopyDiffSelection);
         let copied = cx.read_from_clipboard().and_then(|i| i.text());
         assert_eq!(
@@ -1730,6 +1727,7 @@ mod macos {
             Some(branch.as_str()),
             "graph Cmd+C (branch) should copy the local branch name"
         );
+        kagi::ui::settings::write_setting("graph_copy_target", before.as_deref());
         unmount(cx, kagi, win);
         eprintln!(
             "[gui-e2e] PASS graph_copy hash={} branch={branch}",
@@ -2146,6 +2144,7 @@ mod macos {
         let (kagi, win) = mount(cx, &repo_path);
 
         let before = theme::theme().slug;
+        let saved = kagi::ui::settings::read_setting("theme");
         let target = if before == "dracula" {
             "tokyo-night"
         } else {
@@ -2160,6 +2159,10 @@ mod macos {
             "SetTheme should make {target} the active theme"
         );
         assert_ne!(after, before, "active theme should have changed");
+        // Put the theme back for the scenarios that follow (#516): the
+        // active theme, gpui_component's copy, and the saved key.
+        kagi.update(cx, |app, cx| app.set_theme(before, cx));
+        kagi::ui::settings::write_setting("theme", saved.as_deref());
         unmount(cx, kagi, win);
         eprintln!("[gui-e2e] PASS theme_switch {before} -> {after}");
     }

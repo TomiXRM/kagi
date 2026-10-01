@@ -287,6 +287,19 @@ impl OpLogEntry {
         self.worktree = worktree;
         self
     }
+
+    /// Builder: the refs the operation moved (#334). An `Unknown` outcome —
+    /// termination unconfirmed, so the process may still be moving refs —
+    /// records `None` whatever was observed: a snapshot taken before the
+    /// child stopped is not a record, and a restore across it must fail
+    /// closed (#891 review).
+    pub fn with_ref_moves(mut self, moves: Option<Vec<kagi_domain::ref_moves::RefMove>>) -> Self {
+        self.ref_moves = match self.outcome {
+            OpOutcome::Unknown { .. } => None,
+            _ => moves,
+        };
+        self
+    }
 }
 
 /// Serialise an [`OpLogEntry`] as a single-line JSON object (no trailing newline).

@@ -463,6 +463,16 @@ The current suite covers:
   no longer loaded, so it paints `restore-preview-unavailable`. Domain rules:
   `kagi-domain` `restore_preview`. Tier B: read the graph after on the card
   (EN/JA) before confirming.
+- Operation Log restore across a resolved merge
+  (`KAGI_GUI_E2E_ONLY=oplog_restore_across_merge`, `tests/recovery/oplog_panel.rs`):
+  #884 / ADR-0214 §4. `create-branch mark` → `merge-into-conflict side` → the
+  production `run_recorded_conflict` save → `merge-commit`; the real "Restore
+  to this point…" on mark's row opens a card with no blockers, and two
+  confirms put main back before the merge. `stash_conflict_close_reopen` also
+  asserts the UI continue's persisted entry records `ref_moves = Some([])`.
+  Backend: `crates/kagi-git/tests/oplog_conflict_ref_moves_test.rs`. Tier B:
+  merge a conflicting branch, resolve and commit in Kagi, then restore to the
+  row before the merge.
 - terminal auto-lock compare-and-unlock (`KAGI_GUI_E2E_ONLY=terminal_auto_lock_race`,
   `tests/recovery/worktree_lock_reason.rs`): #836 / ADR-0212. (b) Through the
   Backend race seam (`execute_auto_unlock_worktree_racing`,

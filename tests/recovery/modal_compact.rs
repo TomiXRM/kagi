@@ -173,11 +173,13 @@ fn fixture() -> (tempfile::TempDir, PathBuf) {
 }
 
 /// Process-wide UI settings this scenario changes, restored on drop so the
-/// rest of the suite is unaffected however an assertion exits.
+/// rest of the suite is unaffected however an assertion exits. `set_lang` and
+/// `set_zoom` also save their keys, so the saved keys are put back too (#516).
 struct Restore {
     zoom: f32,
     language_env: Option<std::ffi::OsString>,
     language: i18n::Lang,
+    saved: [(&'static str, Option<String>); 2],
 }
 
 impl Restore {
@@ -186,6 +188,7 @@ impl Restore {
             zoom: theme::zoom(),
             language_env: std::env::var_os("KAGI_LANG"),
             language: i18n::lang(),
+            saved: ["lang", "ui_zoom"].map(|key| (key, kagi::ui::settings::read_setting(key))),
         }
     }
 }
@@ -198,6 +201,9 @@ impl Drop for Restore {
         match self.language_env.take() {
             Some(value) => std::env::set_var("KAGI_LANG", value),
             None => std::env::remove_var("KAGI_LANG"),
+        }
+        for (key, value) in &self.saved {
+            kagi::ui::settings::write_setting(key, value.as_deref());
         }
     }
 }

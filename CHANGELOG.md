@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Added
 
 - Editor Workspace と Commit Panel の file tree を支援技術から名前付き tree として読めるようにしました。各ファイルは名前・変更状態・選択状態・階層と兄弟位置を持ち、Editor のフォルダーと Panel の Generated / Agent fold は開閉状態を伝えます。名前は EN/JA に対応し、未保存の編集も読み上げます。通常の flat 表示は tree にしません。（#354 slice 3）
+- conflict の continue / skip / abort と解決内容の保存(save)も、Operation Log に動かした ref を記録するようにしました(#884、ADR-0214 §4)。これまでは記録なしの扱いだったため、Kagi で conflict を解いた merge や cherry-pick をまたぐ時点には「記録なし」で戻せませんでした。今は merge 前の時点にも復元できます。実行前に拒否された場合は「動いた ref はありません」と記録します。rebase は途中で HEAD が detached になるので、これまでどおり復元の対象外です。(Refs #334)
 - PR 一覧（PR モードの表）の accessibility（#354 slice 3、3 本目）。支援技術から表を list として、各行を「番号・タイトル・状態・作者・branch・check・更新」で名前付きの項目として、並び順の何番目か付きで読めるようにしました（表は選択状態を持たないので selected は付けません）。（Refs #354）
 - Operation Log の「取り消す / この時点まで戻す」の確認 card に、戻した後のグラフを表示するようにしました(#334 slice 2c、ADR-0214 §6)。branch が戻る位置と、どの branch からも外れる commit の数を、変化する部分の前後(最大 40 行)だけ、通常の commit graph と同じ描き方で示します。計算は読み込み済みの履歴だけで行い、戻し先がその中に無い場合は推定せず「プレビューできません」と表示します(復元自体はできます)。表示専用で、確認するまで何も書き込みません。(Refs #334)
 - サイドバーの accessibility（#354 slice 3、2 本目）。支援技術からサイドバーを tree として、section・group の見出しを開閉状態付き、branch・remote branch・tag・worktree・stash・PR の各行を階層と兄弟の中での位置付きで読めるようにしました。現在の branch と worktree は名前に「現在」と含めます。（Refs #354）
@@ -85,6 +86,14 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Internal
 
 - GUI E2E runner で scenario が失敗したとき、`target/gui-e2e/<scenario>/` に失敗証跡を残すようにしました。中身は panic の内容、直近 200 行の `[kagi]` ログ、mount した fixture repository の `git status --short` と `git log --oneline -5`、window の PNG(撮れない場合は理由を書いた `window.txt`)です。stderr には `[gui-e2e] FAIL <scenario>: evidence <dir>` を 1 行出します。window は前面にも画面内にも出しません。終了コードと「最初の失敗で止まる」挙動は変わりません。製品の動作は変更していません。(#516 slice 1)
+- GUI E2E の scenario 間の隔離を監査し(#516 slice 2)、違反を直しました。
+  - fixture の外に作っていた worktree / bare repo(3 scenario)を TempDir の中に移しました。
+  - 背景で残る `sleep` を待たずに終わっていた pull scenario は、それが終わるまで待つようにしました。
+  - theme(2 scenario)、`graph_copy_target`(settings.json 全体を上書きしていた)、言語と保存済みキー(3 箇所)、PR の viewed 記録、`PATH` の復元を、元の状態に戻すようにしました。
+  - `gh_available` の process 内 cache が偽の `gh` を置いた `PATH` で決まらないよう、置く前に確定させるようにしました。
+  - 共有 oplog の件数を 100 件の窓で数えていた箇所は、log 全体で数えるようにしました。
+
+  製品の動作は変更していません。(Refs #516)
 - GUI E2E `cross_worktree_merge` を #722 P1 r3（03b16092）以降の仕様に合わせて修正しました。別 worktree への drag merge は editor の未保存変更を確認せず、元の tab の editor は変更を保ったまま残ります（← Graph では従来どおり確認）。ADR-0144 の記述も更新。（Fixes #880）
 - Toolbar の利用可能状態 → AccessKit `disabled`(#797 で実装済み)の検証を追加しました。`ButtonState` → (表示, disabled) の pure な変換を切り出して unit で固定し、GUI E2E `toolbar_a11y_disabled` で remote なし fixture の Push / Pull / Stash / Pop が disabled、Branch / Settings が enabled、Terminal は on/off どちらでも disabled にならないこと、dirty にすると Stash が enabled に転じることを確認します。製品の動作は変更していません。（Refs #354）
 - ADR-0211: `git replay` / `git history` を plan パイプラインに載せるための調査と設計（実装なし）。git 2.50.1 で `git replay` を実測し（worktree / index に触らない、出力は `update-ref --stdin` 形式で `<old>` が CAS、他 worktree の branch を rebase できるがその index が古くなる、merge を含むと exit 128、conflict は exit 1 で状態なし、hooks は走らない）、2.53 で replay が既定で ref を更新するようになった事実を含む版ゲート（(a) 隠す、検出は kagi-git に 1 回、`Backend` が保持、experimental は設定で隠す）を提案しました。（Refs #344）

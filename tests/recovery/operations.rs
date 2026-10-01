@@ -2459,10 +2459,9 @@ pub fn scenario_replay_onto_armed(cx: &mut VisualTestAppContext) {
         let repo = fixture.path();
         // feat forks before "second commit"; it lives in its own worktree.
         git(repo, &["branch", "feat", "HEAD~1"]);
-        let wt = fixture.path().parent().unwrap().join(format!(
-            "{}-wt-feat-{input}",
-            fixture.path().file_name().unwrap().to_string_lossy()
-        ));
+        // In its own TempDir: a sibling of the fixture outlived the run (#516).
+        let wt_dir = tempfile::tempdir().unwrap();
+        let wt = wt_dir.path().join(format!("wt-feat-{input}"));
         git(
             repo,
             &["worktree", "add", "-q", wt.to_str().unwrap(), "feat"],
@@ -2860,10 +2859,8 @@ pub fn scenario_sync_to_remote_armed(cx: &mut VisualTestAppContext) {
         let repo = fixture.path();
         // A bare origin whose main is one commit *behind* the fixture's
         // second commit, plus one commit of its own: local is ahead 1.
-        let origin = fixture.path().parent().unwrap().join(format!(
-            "{}-origin-{input}.git",
-            fixture.path().file_name().unwrap().to_string_lossy()
-        ));
+        let origin_dir = tempfile::tempdir().unwrap();
+        let origin = origin_dir.path().join(format!("origin-{input}.git"));
         git(
             repo,
             &[
@@ -3093,10 +3090,8 @@ pub fn scenario_sidebar_tree_roles(cx: &mut VisualTestAppContext) {
     git(repo, &["branch", "feat/a"]);
     git(repo, &["branch", "feat/b"]);
     git(repo, &["tag", "v1"]);
-    let wt = fixture.path().parent().unwrap().join(format!(
-        "{}-wt-tree",
-        fixture.path().file_name().unwrap().to_string_lossy()
-    ));
+    let wt_dir = tempfile::tempdir().unwrap();
+    let wt = wt_dir.path().join("wt-tree");
     git(
         repo,
         &["worktree", "add", "-q", "-b", "side", wt.to_str().unwrap()],

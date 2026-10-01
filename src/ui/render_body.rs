@@ -363,7 +363,7 @@ impl KagiApp {
                 // W12-GCADOPT (§2.10): keep a handle clone for the Scrollbar
                 // overlay; the other is moved into `track_scroll`.
                 let scrollbar_handle = commit_scroll_handle.clone();
-                with_vertical_scrollbar(
+                let list = with_vertical_scrollbar(
                     "commit-list-scroll",
                     &scrollbar_handle,
                     uniform_list(
@@ -394,6 +394,7 @@ impl KagiApp {
                                             this.badge_col_w,
                                             this.graph_col_w,
                                             this.ui().graph_scroll_x,
+                                            (i, prefix_count + rows_len),
                                             cx,
                                         ));
                                     }
@@ -413,6 +414,7 @@ impl KagiApp {
                                     &wip_passing_lanes,
                                     range.start.saturating_sub(wip_count)
                                         ..range.end.min(prefix_count) - wip_count,
+                                    (wip_count, prefix_count + rows_len),
                                     cx,
                                 ));
                             }
@@ -434,6 +436,7 @@ impl KagiApp {
                                         .branch_solo
                                         .as_ref()
                                         .map(|solo| &solo.visible_commits),
+                                    (prefix_count, prefix_count + rows_len),
                                     cx,
                                 )
                                 .into_iter()
@@ -450,8 +453,10 @@ impl KagiApp {
                     .flex_1()
                     .min_h(px(0.)),
                     true,
-                )
-                .child(e2e::measure_inside("commit-list-viewport"))
+                );
+                // #354: one ListBox around the virtualized rows.
+                super::list_a11y::list_box("commit-list", list, Msg::A11yCommitList.t())
+                    .child(e2e::measure_inside("commit-list-viewport"))
             });
 
         // ADR-0120: resolve what each slot shows. The precedence lives in

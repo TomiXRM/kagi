@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
+- commit 一覧の accessibility（#354 slice 3、最初の一覧）。支援技術から commit 一覧を list box として、各行（WIP・stash・commit）を「件名・作者・日付・短い SHA・ref」で名前付きの選択肢として、選択状態と全体の何番目か付きで読めるようにしました（画面外の行は描画しないため、位置と総数で全長を伝えます）。（Refs #354）
 - 色覚対応テーマ「Color Vision (Blue/Orange)」/「色覚対応（青 / 橙）」を追加（#354 slice 4、ADR-0216）。Catppuccin Mocha を元に、追加 / 削除・成功 / blocker・ours / theirs・diff 行の背景を Okabe–Ito の青 / 橙に、warning を黄（輝度差）に、graph lane を 8 色の色覚安全パレットに置き換えました。CIEDE2000 で通常視 20 以上、1 型・2 型・3 型色覚のシミュレーション後も 15 以上の色差をテストで保証しています（既定テーマの diff 背景は 2 型で 4.3）。Settings の theme 選択から選べます。（Refs #354）
 - branch 右クリック menu の「Sync」に「Sync to remote (keep local)…」を追加（#536 slice 2）。現在の branch で upstream がある場合のみ有効。既存の branch plan card に先行 commit 数・保全する変更数（staged / unstaged / untracked）・ignored は不変の警告と、`git update-ref` / `git stash apply --index` の復元 2 コマンドを表示し、二段 confirm（ADR-0023）で実行します。（Refs #536）
 - settings.json の `worktree_run_mode` に `"nonconcurrent"` を追加しました。DB が 1 つしかない・callback URL が固定、のように並列に動かせないプロジェクト向けです。この設定では、同じ repository の worktree のうち、埋め込み terminal の shell を動かせるのは 1 つだけになります。別の worktree で terminal を開こうとすると起動せず、terminal 欄・footer・toast に、動作中の worktree 名を添えて理由を出します(`[kagi] terminal: nonconcurrent blocked <path> (running in <path>)`)。その shell が終了すれば起動できます。既定は従来どおり `"concurrent"` です。Kagi の terminal 以外で起動したプロセスは数えません。(#859、Refs #342、ADR-0213)

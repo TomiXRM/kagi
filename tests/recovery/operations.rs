@@ -2751,3 +2751,112 @@ pub fn scenario_sync_to_remote_armed(cx: &mut VisualTestAppContext) {
     }
     eprintln!("[gui-e2e] PASS sync_to_remote_armed: Enter/button arm then sync; branch==upstream, clean, 2 backups, oplog, ignored untouched");
 }
+
+/// #354 slice 3: the commit list is a ListBox whose drawn rows are
+/// ListBoxOptions with absolute positions over WIP + stash + commit rows,
+/// exactly one selected, named by subject / author / date / short SHA / refs —
+/// and positions stay absolute after the virtualized list scrolls.
+pub fn scenario_commit_list_roles(cx: &mut VisualTestAppContext) {
+    use gpui::Role;
+    use kagi::ui::list_a11y::{clear_recorded_lists, recorded_list};
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    for i in 0..200 {
+        git(
+            repo,
+            &[
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                &format!("filler {i:03}"),
+            ],
+        );
+    }
+    git(repo, &["tag", "v-mark", "HEAD~150"]);
+    std::fs::write(repo.join("README.md"), "# stashed\n").unwrap();
+    git(repo, &["stash", "push", "-q", "-m", "parked work"]);
+    std::fs::write(repo.join("README.md"), "# dirty\n").unwrap();
+    let (app, window) = mount(cx, repo);
+    wait_idle(cx, &app);
+
+    let redraw = |cx: &mut VisualTestAppContext| {
+        clear_recorded_lists();
+        app.update(cx, |_, cx| cx.notify());
+        cx.update_window(window, |_, window, cx| {
+            window.refresh();
+            window.draw(cx).clear();
+        })
+        .unwrap();
+    };
+    redraw(cx);
+    let rows_len = cx.read(|cx| app.read(cx).view().rows.len());
+    let list = recorded_list("commit-list").expect("commit list drawn");
+    assert_eq!(list.role, Some(Role::ListBox));
+    assert_eq!(list.label, kagi_ui_core::i18n::Msg::A11yCommitList.t());
+    // WIP (1) + stash (1) + commits.
+    assert_eq!(
+        list.size,
+        2 + rows_len,
+        "{:?}",
+        list.rows.keys().take(5).collect::<Vec<_>>()
+    );
+    let (wip, _) = &list.rows[&0];
+    assert!(wip.contains("main"), "WIP row named by its worktree: {wip}");
+    let (stash, _) = &list.rows[&1];
+    assert!(stash.contains("parked work"), "{stash}");
+    assert!(
+        list.rows.keys().max().copied().unwrap() < 60,
+        "virtualized: only visible rows drawn"
+    );
+
+    // Jump far down: the selected row is drawn, alone selected, at its
+    // absolute position, named by its own subject and SHA.
+    app.update(cx, |app, _| {
+        if app.ui().selected.is_none() {
+            app.step_commit_selection(1);
+        }
+        app.step_commit_selection(150);
+    });
+    cx.run_until_parked();
+    redraw(cx);
+    let (sel_ix, summary, short, tagged) = cx.read(|cx| {
+        let app = app.read(cx);
+        let ix = app.ui().selected.expect("selected");
+        let row = &app.view().rows[ix];
+        (
+            ix,
+            row.summary.to_string(),
+            row.short_id.to_string(),
+            row.badges.iter().any(|b| b.label.as_ref() == "v-mark"),
+        )
+    });
+    let list = recorded_list("commit-list").expect("commit list drawn after scroll");
+    let selected: Vec<_> = list.rows.iter().filter(|(_, (_, s))| *s).collect();
+    assert_eq!(selected.len(), 1, "exactly one selected row: {selected:?}");
+    let (pos, (label, _)) = selected[0];
+    assert_eq!(*pos, 2 + sel_ix, "absolute position after scrolling");
+    assert!(*pos > 60, "the list really scrolled");
+    assert!(
+        label.contains(&summary) && label.contains(&short),
+        "{label}"
+    );
+    if tagged {
+        assert!(label.contains("v-mark"), "refs named: {label}");
+    }
+    // uniform_list also lays out item 0 to measure the row height; apart from
+    // that, nothing near the top is drawn any more.
+    assert!(
+        list.rows
+            .keys()
+            .filter(|p| **p != 0)
+            .min()
+            .copied()
+            .unwrap()
+            > 2,
+        "rows above are no longer drawn: {:?}",
+        list.rows.keys().take(4).collect::<Vec<_>>()
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS commit_list_roles: ListBox + ListBoxOption, absolute positions over WIP/stash/commits, one selected, labels, virtualized scroll");
+}

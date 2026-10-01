@@ -234,6 +234,16 @@ impl Settings {
             .filter(|&n| n > 0)
             .unwrap_or(10)
     }
+
+    /// `"worktree_run_mode"` (#859 / ADR-0213): `"nonconcurrent"` lets one
+    /// worktree of a repository at a time run a terminal shell. Anything else,
+    /// unset included, is `Concurrent`.
+    pub fn worktree_run_mode(&self) -> kagi_domain::worktree_run_mode::RunMode {
+        self.get_str("worktree_run_mode")
+            .as_deref()
+            .map(kagi_domain::worktree_run_mode::RunMode::parse)
+            .unwrap_or_default()
+    }
 }
 
 /// Default contents of the `analyze_ignore` file (gitignore syntax), seeded on

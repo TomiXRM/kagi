@@ -17,6 +17,7 @@
 //! ```
 
 mod autolock;
+mod run_mode;
 
 use std::future::Future;
 use std::path::PathBuf;

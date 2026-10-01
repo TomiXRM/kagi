@@ -382,6 +382,10 @@ The current suite covers:
   the first shell (its `cat` exits, observed by the #772 wait) lets the main tab
   start. With the setting removed (default `concurrent`) the linked tab starts
   alongside. The decision is unit-tested in `kagi_domain::worktree_run_mode`.
+  #869: while the linked shell runs in `nonconcurrent` mode, the `side` and
+  `main` sidebar rows carry the same port (the main worktree's stored block),
+  and `side` has no store entry. The env side is covered by `kagi-git`
+  `nonconcurrent_hands_every_worktree_the_main_block`.
   Tier B: set the key, open terminals in two worktrees of one repository, read
   the refusal (EN/JA), `exit` the first, then open the second.
 - remove a worktree with a live terminal shell

@@ -183,7 +183,8 @@ range is unchanged.
      on its own.
 2. ~~**`run_mode: "nonconcurrent"`**~~ — done (#859, ADR-0213) as the
    `worktree_run_mode` setting: one worktree of a repository at a time runs a
-   terminal shell; a second is blocked with the reason.
+   terminal shell; a second is blocked with the reason. In that mode every
+   worktree's `KAGI_PORT` is the main worktree's block (#869, ADR-0213 決定 6).
 3. ~~**Sidebar `http://localhost:<port>` link**~~ — done (#855): each WORKTREES
    row shows its stored block as `localhost:<port>` (click opens the browser).
    The snapshot reads the store; nothing is assigned by showing a row. A

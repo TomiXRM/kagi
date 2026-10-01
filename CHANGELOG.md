@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
+- `worktree_run_mode` が `"nonconcurrent"` のときは、同じ repository のすべての worktree の terminal に、main worktree の port block を `KAGI_PORT` として渡すようにしました(固定 callback URL がどの worktree でもそのまま使えます)。`KAGI_WORKTREE_PATH` などはこれまでどおり各 worktree のものです。サイドバー WORKTREES の link もすべて main worktree の port を指します。保存済みの割当は変更しないので、`"concurrent"` に戻せば各 worktree の block に戻ります。警告だけのモードは追加しません。(#869、ADR-0213)
 - worktree の削除で、Kagi の埋め込み terminal がその worktree で起動した shell がまだ動いていれば、plan を blocker で止めるようにしました。理由は「先にその terminal で exit してください」です。Kagi はユーザーのプロセスを終了させません。shell の終了後も `nohup`・`disown`・bash の `&` などで起動したプロセスがその shell の session に残っていれば、件数を添えて「このディレクトリを使っている可能性」を warning で出します(削除は止めません)。Kagi の外で起動したプロセスは検出しません。(#867、ADR-0171 Follow-up 1)
 - branch 右クリック menu の「Sync」に「Sync to remote (keep local)…」を追加（#536 slice 2）。現在の branch で upstream がある場合のみ有効。既存の branch plan card に先行 commit 数・保全する変更数（staged / unstaged / untracked）・ignored は不変の警告と、`git update-ref` / `git stash apply --index` の復元 2 コマンドを表示し、二段 confirm（ADR-0023）で実行します。（Refs #536）
 - settings.json の `worktree_run_mode` に `"nonconcurrent"` を追加しました。DB が 1 つしかない・callback URL が固定、のように並列に動かせないプロジェクト向けです。この設定では、同じ repository の worktree のうち、埋め込み terminal の shell を動かせるのは 1 つだけになります。別の worktree で terminal を開こうとすると起動せず、terminal 欄・footer・toast に、動作中の worktree 名を添えて理由を出します(`[kagi] terminal: nonconcurrent blocked <path> (running in <path>)`)。その shell が終了すれば起動できます。既定は従来どおり `"concurrent"` です。Kagi の terminal 以外で起動したプロセスは数えません。(#859、Refs #342、ADR-0213)

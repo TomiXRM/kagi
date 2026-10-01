@@ -277,6 +277,30 @@ pub fn scenario_worktree_nonconcurrent(cx: &mut VisualTestAppContext) {
     cx.run_until_parked();
     start_terminal(cx, &app, window);
     assert!(shell_live(cx, &app), "the first worktree's shell starts");
+    // #869: the linked worktree's link is the main worktree's block, which
+    // its shell was handed; the linked worktree got no block of its own.
+    draw(cx, window);
+    let row_ports = cx.read(|cx| {
+        app.read(cx)
+            .sidebar
+            .rows
+            .iter()
+            .filter_map(|row| match row {
+                kagi::ui::sidebar::SidebarRow::Worktree { name, port, .. } => {
+                    Some((name.clone(), *port))
+                }
+                _ => None,
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+    });
+    let stored = kagi_git::worktree_ports::Assignments::read();
+    assert!(
+        row_ports["side"].is_some()
+            && row_ports["side"] == stored.port(&repo)
+            && row_ports["main"] == row_ports["side"]
+            && stored.port(&side).is_none(),
+        "nonconcurrent: every row links to the main block: {row_ports:?}"
+    );
 
     // The main worktree of the same repository is refused while it does.
     app.update(cx, |app, cx| app.switch_repo(0, cx));

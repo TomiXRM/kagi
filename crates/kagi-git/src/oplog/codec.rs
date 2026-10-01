@@ -7,7 +7,6 @@ use super::{
     recovery, Actor, FailureCode, OpLogEntry, OpOutcome, RecordedIdentity, RepoIdentity,
     StateSummary,
 };
-use super::{recovery, Actor, FailureCode, OpLogEntry, OpOutcome, StateSummary};
 use kagi_domain::github::IssueCreateFields;
 use kagi_domain::ref_moves::RefMove;
 use serde::{de::Error, Deserialize, Deserializer, Serialize};
@@ -105,6 +104,8 @@ struct EntryRef<'a> {
     ref_moves: Option<Vec<RefMoveRef<'a>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     repo_identity: Option<RepoIdentityRef<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    issue_fields: Option<IssueFieldsRef<'a>>,
 }
 
 /// #894: `{"common_dir": "...", "dev": n, "ino": n, "born_s": n, "born_ns": n}`;
@@ -144,7 +145,6 @@ struct RepoIdentityRecord {
 /// missing one (#900 review).
 fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
     T::deserialize(d).map(Some)
-    issue_fields: Option<IssueFieldsRef<'a>>,
 }
 
 #[derive(Serialize)]
@@ -424,6 +424,8 @@ fn valid_identity(r: RepoIdentityRecord) -> Option<RepoIdentity> {
         file_id,
         created,
     })
+}
+
 // Additive like `ref_moves`: missing, null or malformed reads as "not
 // recorded" and never drops the row (#904 review).
 fn issue_fields<'de, D: Deserializer<'de>>(d: D) -> Result<Option<IssueCreateFields>, D::Error> {

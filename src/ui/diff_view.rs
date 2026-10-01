@@ -8,6 +8,7 @@
 //! `ui/mod.rs` via `pub use diff_view::*;` so existing `crate::ui::*` paths resolve.
 
 pub mod highlight;
+pub(crate) mod hunk_action;
 
 use std::path::PathBuf;
 
@@ -517,6 +518,7 @@ pub(crate) fn render_main_diff_row(
     rows: &std::sync::Arc<Vec<DiffRow>>,
     i: usize,
     sel_key: u64,
+    hunk: Option<&hunk_action::HunkAction>,
 ) -> gpui::AnyElement {
     let Some(row) = rows.get(i) else {
         return div().into_any();
@@ -526,6 +528,9 @@ pub(crate) fn render_main_diff_row(
             .id(("main-diff-hunk", i))
             .map(|el| attach_selection_handlers(el, rows, i, sel_key))
             .w_full()
+            .flex()
+            .items_center()
+            .gap_2()
             .px_2()
             .py_px()
             .bg(rgb(theme::theme().surface))
@@ -533,8 +538,15 @@ pub(crate) fn render_main_diff_row(
             .text_color(rgb(theme::theme().diff_hunk))
             // Hunk headers stay single-line (never wrap): overflow_hidden +
             // nowrap + ellipsis, unlike the content rows below.
-            .truncate()
-            .child(header.clone())
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .truncate()
+                    .child(header.clone()),
+            )
+            // #842: a Commit Panel side moves this hunk to the other side.
+            .children(hunk.and_then(|h| h.button(i, header)))
             .into_any(),
         DiffRow::Line {
             kind,

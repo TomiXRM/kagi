@@ -223,12 +223,11 @@ impl Render for KagiApp {
                 self.with_ui(|ui| ui.graph_scroll_x = max);
             }
         }
-        // When the walk filled the current limit there may be more history to
-        // pull in, so we append one extra "load more" row at the bottom of the
-        // virtual list (rendered specially in the uniform_list processor).
+        // Keep the paging action outside the ListBox: it is a Button, not an
+        // Option in the virtual commit list.
         let commit_limit = self.ui().commit_limit;
         let has_more_commits = commit_limit > 0 && self.view().rows.len() >= commit_limit;
-        let row_count = self.view().rows.len() + usize::from(has_more_commits);
+        let row_count = self.view().rows.len();
         let selected = self.ui().selected;
 
         // W4-TABS / ADR-0028: a non-empty error string still shows the error
@@ -672,6 +671,7 @@ impl Render for KagiApp {
             .when(conflict_entity.is_none() || conflict_merge_pending, |el| {
                 el.child(self.render_body(
                     row_count,
+                    has_more_commits,
                     selected,
                     detail,
                     is_dirty,

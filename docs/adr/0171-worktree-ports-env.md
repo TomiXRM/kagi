@@ -173,8 +173,10 @@ range is unchanged.
      - Every survivor kept the shell's session id. Only a process that calls
        `setsid` itself (a daemon) leaves the session.
    - **Remove plan**: a shell Kagi started that is still running in the
-     target worktree is a blocker ("`exit` it in that terminal first"). The
-     live shells are the same set #859 uses (`ShellProcess.exit == None`).
+     target worktree is a blocker ("`exit` it in that terminal first"). A
+     shell counts as running until its background wait reports an exit, also
+     after its tab closed (the tab's PTY hangup may be ignored); a failed wait
+     is not an exit. #859 reads the same record (`KagiApp::started_shells`).
    - **Leftovers**: Kagi remembers the PID (= session id) of every shell it
      started this run. If processes remain in an exited shell's session, the
      plan warns with their count (`kagi_git::proc::session_members`, read

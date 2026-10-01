@@ -18,9 +18,11 @@ worktree is its embedded terminal's shell.
 
 ## Decision
 
-1. **What "running" means.** A worktree runs while Kagi holds a terminal shell
-   for it whose exit it has not observed (`ShellProcess.exit` is `None`,
-   ADR-0208). Processes started some other way are not seen.
+1. **What "running" means.** A worktree runs while a terminal shell Kagi
+   started for it has not been observed to exit: its background wait has not
+   reported an exit (a failed wait is not one, ADR-0208). This holds after the
+   tab closes, since a shell may ignore the hangup (#877 review). Processes
+   started some other way are not seen.
 2. **Setting.** `worktree_run_mode` in settings.json, a flat string:
    `"concurrent"` (default) or `"nonconcurrent"`; anything else reads as
    `concurrent`, so a typo never blocks a terminal. Typed accessor

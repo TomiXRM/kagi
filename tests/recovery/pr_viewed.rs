@@ -231,5 +231,8 @@ pub fn scenario_pr_viewed(cx: &mut VisualTestAppContext) {
         .advance_clock(std::time::Duration::from_millis(400));
     cx.run_until_parked();
     unmount(cx, app, window);
+    // The marks are keyed by PR identity, not by fixture: later PR scenarios
+    // open the same #7 (#516).
+    let _ = std::fs::remove_file(&marks_file);
     eprintln!("[gui-e2e] PASS pr_viewed: marked by checkbox, kept across reopen, unviewed when the head changes the file");
 }

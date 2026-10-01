@@ -64,7 +64,7 @@ impl OplogRestoreNote {
     pub fn message_en(&self) -> String {
         match self {
             OplogRestoreNote::EntryNotLoaded { id } => {
-                format!("Operation #{id} is not in the loaded Operation Log.")
+                format!("Operation #{id} is not one of this repository's loaded operations (it may belong to another repository).")
             }
             OplogRestoreNote::NotRecorded { id, op } => format!(
                 "Operation #{id} ({op}) has no recorded ref moves, so it cannot be undone exactly. Nothing is guessed from the reflog."

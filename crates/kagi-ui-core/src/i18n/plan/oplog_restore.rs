@@ -14,7 +14,7 @@ fn short(oid: &Option<String>) -> String {
 pub fn note_ja(note: &OplogRestoreNote) -> String {
     match note {
         OplogRestoreNote::EntryNotLoaded { id } => {
-            format!("操作 #{id} は読み込まれた Operation Log にありません。")
+            format!("操作 #{id} はこの repository の読み込まれた操作にありません(別の repository の操作かもしれません)。")
         }
         OplogRestoreNote::NotRecorded { id, op } => format!(
             "操作 #{id}({op})には ref の移動の記録が無いため、正確に戻せません。reflog からの推定は使いません。"

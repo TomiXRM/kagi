@@ -1,6 +1,6 @@
 # ADR-0214: Operation Log パネルを一級ビューにする — 全体設計、slice 1(読むだけ)、slice 2a(ref 移動の記録)、slice 2b(op revert / restore to point)
 
-- Status: **Accepted**(slice 1、2a、2b-1 = backend)。2b-2(UI 入口と card)と 2c(グラフプレビュー)は本 ADR の設計を前提に個別に Accepted にする
+- Status: **Accepted**(slice 1、2a、2b-1 = backend、2b-2 = UI)。2c(グラフプレビュー)は本 ADR の設計を前提に個別に Accepted にする
 - Date: 2026-10-01
 - Related: [#334](https://github.com/TomiXRM/kagi/issues/334)、#333 / ADR-0149(actor・worktree・id/parent)、ADR-0081 / ADR-0084(undo)、ADR-0111(`OpLogPanel`)、#468 / #548(行の展開・コピー)
 
@@ -101,7 +101,13 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - preflight: 再計画して、行が確認したものと一致すること。
   - execute: 動かす全 ref の現在の先端を `refs/kagi/backups/<op>/<i>` に保持 → `git update-ref --stdin` の 1 トランザクション(`update` / `create` / `delete` に old 値を付け、git が再照合)→ 各 ref を verify。
   - 結果は `OperationOutcome::OplogRestore`。backup は recovery handle(BRANCH_TIP)になる。
-- **2b-2(UI)**: panel の選択行に「この操作を取り消す…」「この時点まで戻す…」を出す。記録なしの行では disabled にして理由を出す。card は上記の warning を「逆操作の一覧」と「戻らないもの」として描画する。CLI / MCP には出さない。
+- **2b-2(UI)**
+  - panel の選択行に「この操作を取り消す…」「この時点まで戻す…」を出す。押すと panel が `OpLogPanelEvent::Restore(Operation)` を出し、app が active な repository で plan して card(`ActiveModal::OplogRestore`)を開く。
+  - 記録なしの行(`ref_moves = None`)では両方 disabled にし、理由を出す。
+  - card は shared plan card で、warning の Moves(ref ごとの逆操作)と RefsOnly(戻らないもの)を描画する。script 行(`preview_commits`)は commit 一覧として描かない。
+  - destructive なので、最初の confirm(button / Enter)で arm し、二度目で `run_recorded`。CLI / MCP には出さない。
+  - **記録できなかった receipt は戻す対象にしない**: append に失敗した entry は panel 上で id が placeholder(0)になる。oplog の id は 0 始まりなので、0 は最初の実 entry も指しうる。そこで `entry_for_recording` は `Recording::Failed` の `ref_moves` を落として「記録なし」(推定表示・ボタン disabled)にする。
+  - 別 repository の行を選んだ場合、plan は EntryNotLoaded(「この repository の操作にない」)になる。
 
 ## 結果
 
@@ -133,3 +139,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
     - 計画後に branch が動くと refuse し、何も動かない。
     - checkout 中の branch の削除は blocker。
 - slice 2b-1 の変異確認: LaterEntryMoved を外す、合成を最新の old にする、dirty を blocker に戻す → それぞれ domain と integration(往復を含む)が落ちる。
+- slice 2b-2 のテスト
+  - panel unit: append 済みは id 0 でも戻せる、append 失敗は戻せない。
+  - Tier A `oplog_restore_card`: 記録なしの別 repository の行は両ボタン disabled。最初の create-branch の行の実ボタンで card が開き、Moves(drop1 / drop2 の削除)と RefsOnly が並び、`plan-confirm` が描画され、計画では何も動かない。Enter 1 回目で arm、2 回目で restore され、keep は残る。restore 自身の行の「取り消す」で元に戻る(UI 経由の往復)。
+- slice 2b-2 の変異確認: arm を飛ばす → Tier A、`restorable` が記録を見ない → Tier A(disabled の行)、失敗 receipt の記録を残す → panel unit が落ちる。

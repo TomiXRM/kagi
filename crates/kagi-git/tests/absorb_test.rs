@@ -95,7 +95,21 @@ fn test_absorb_single_hunk_to_correct_ancestor() {
         "hunk must map to the ancestor that owns the line"
     );
 
+    let before_head = rev(dir, "HEAD");
     execute_absorb(&repo, &plan).unwrap();
+    // #871 review: the rewrite of `work` is recorded as a ref move (so the
+    // entry can be restored), not left "estimated".
+    let entry = kagi_git::oplog::read_oplog_tail_for_repo(dir, 1)
+        .pop()
+        .expect("absorb is recorded");
+    assert_eq!(entry.op, "absorb");
+    let moved = entry.ref_moves.expect("ref moves recorded");
+    assert!(
+        moved.iter().any(|m| m.refname == "refs/heads/work"
+            && m.old.as_deref() == Some(before_head.as_str())
+            && m.new.as_deref() == Some(rev(dir, "HEAD").as_str())),
+        "{moved:?}"
+    );
 
     // Post-execute: working tree clean (the hunk left the tree)...
     assert_eq!(status_porcelain(dir), "", "working tree should be clean");

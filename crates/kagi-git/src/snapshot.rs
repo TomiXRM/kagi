@@ -44,6 +44,10 @@ pub struct RepoSnapshot {
     pub remote_branches: Vec<RemoteBranch>,
     /// Tags (both lightweight and annotated, peeled to commit).
     pub tags: Vec<Tag>,
+    /// Commits Kagi's fetched PR heads (`refs/kagi/pr/**`) point at — graph
+    /// roots that no branch names (#883 review: the restore preview keeps
+    /// what they reach).
+    pub pr_heads: Vec<CommitId>,
     /// Working tree status.
     pub status: WorkingTreeStatus,
     /// Stash entries, ordered by index (newest first, i.e. `stash@{0}` first).
@@ -185,13 +189,16 @@ fn snapshot_inner(
         .filter(|worktree| !worktree.is_current && worktree.branch.is_none())
         .filter_map(|worktree| worktree.head.clone())
         .collect();
-    if let Ok(refs) = repo.references_glob("refs/kagi/pr/**") {
-        required_roots.extend(
+    let pr_heads: Vec<CommitId> = repo
+        .references_glob("refs/kagi/pr/**")
+        .map(|refs| {
             refs.flatten()
                 .filter_map(|reference| reference.target())
-                .map(|oid| CommitId(oid.to_string())),
-        );
-    }
+                .map(|oid| CommitId(oid.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    required_roots.extend(pr_heads.iter().cloned());
     let commits = commit_log_with_roots(repo, commit_limit, &required_roots)?;
     probe.set_phase(SnapshotPhase::AheadBehind);
     let branches = collect_branches(repo, &head, probe)?;
@@ -219,6 +226,7 @@ fn snapshot_inner(
         branches,
         remote_branches,
         tags,
+        pr_heads,
         stashes,
         worktrees,
         cleanup_rows: Vec::new(),

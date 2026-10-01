@@ -21,6 +21,7 @@ mod remote_fold_tests {
             branches: Vec::new(),
             remote_branches: Vec::new(),
             tags: Vec::new(),
+            pr_heads: Vec::new(),
             status: Default::default(),
             stashes: Vec::new(),
             worktrees: Vec::new(),

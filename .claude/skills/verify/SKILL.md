@@ -601,6 +601,12 @@ The current suite covers:
   (`github_host_logins`, read with `gh api user [--hostname]` after an Issues
   read; `?` until then) — never the window-global `github_login`. Pair
   with `pr_fields_escape_focus` and `workspace_mode_toolbar` for the PR picker;
+- Field picker ownership (`KAGI_GUI_E2E_ONLY=field_picker_owner`,
+  `tests/recovery/field_picker_owner.rs`, #904 review): a New Issue or PR
+  picker opened in tab A and applied after `switch_repo` to B (which shows
+  the same PR number) is dropped by the switch — `PrFields` is repo-scoped —
+  so neither composer changes and no `pr-edit` is sent. The picker also
+  carries its `owner`; Apply only touches that session;
 - dirty Pull auto-stash success and Pull-failure restoration, including a durable
   Operation Log result without a dismiss-only error modal.
 - reload keeping the open views (`KAGI_GUI_E2E_ONLY=survives_reload`): a commit's diff

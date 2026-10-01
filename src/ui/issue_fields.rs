@@ -65,11 +65,10 @@ impl KagiApp {
         if field == PrField::Reviewers || self.has_active_modal() {
             return;
         }
-        let Some(state) = self
-            .active_session()
-            .and_then(|owner| self.ui.get(&owner))
-            .map(|ui| &ui.issue_composer)
-        else {
+        let Some(owner) = self.active_session() else {
+            return;
+        };
+        let Some(state) = self.ui.get(&owner).map(|ui| &ui.issue_composer) else {
             return;
         };
         // The candidates come from the frozen Issues repository; without it
@@ -86,22 +85,30 @@ impl KagiApp {
             PrField::Labels => editor.fields.labels.clone(),
             _ => editor.fields.assignees.clone(),
         };
-        self.open_fields_picker(FieldTarget::NewIssue, base_repo.clone(), field, current);
+        self.open_fields_picker(
+            FieldTarget::NewIssue { owner },
+            base_repo.clone(),
+            field,
+            current,
+        );
         klog!("issue-fields: open field={:?}", field);
         cx.notify();
         self.read_field_candidates(field, base_repo, cx);
     }
 
-    /// The picker's Apply for a New Issue: store the selection with the
-    /// draft (#903). Nothing is sent until the composer's Create.
+    /// The picker's Apply for a New Issue: store the selection, with the
+    /// draft (#903), in the composer of the session that opened the picker —
+    /// not the active one, which a tab switch may have changed (#904 review).
+    /// A closed owner takes nothing. Nothing is sent until the composer's
+    /// Create.
     pub(super) fn apply_issue_fields(&mut self, cx: &mut Context<Self>) {
         let Some(modal) = self.pr_fields_modal().cloned() else {
             return;
         };
-        self.clear_pr_fields_modal();
-        let Some(owner) = self.active_session() else {
+        let FieldTarget::NewIssue { owner } = modal.target else {
             return;
         };
+        self.clear_pr_fields_modal();
         let Some(editor) = self
             .ui
             .get_mut(&owner)

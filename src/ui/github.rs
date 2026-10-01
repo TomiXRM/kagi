@@ -733,14 +733,24 @@ impl KagiApp {
         let Some(modal) = self.pr_fields_modal().cloned() else {
             return;
         };
-        let Some(repo_path) = self.repo_path.clone() else {
+        let crate::ui::modals::FieldTarget::Pr { number, owner } = modal.target else {
             return;
         };
-        let Some(pr) = self
-            .pr_mode()
-            .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
-            .map(|t| t.pr.clone())
-        else {
+        // The write is admitted for the active tab and reads its repository
+        // and PR, so it may only run while that is still the tab the picker
+        // was opened from, showing the same PR (#904 review). Otherwise the
+        // edit would land on, and be recorded for, another tab's PR.
+        let pr = (self.active_session() == Some(owner))
+            .then(|| {
+                self.pr_mode()
+                    .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
+                    .map(|t| t.pr.clone())
+            })
+            .flatten()
+            .filter(|pr| pr.number == number);
+        let (Some(pr), Some(repo_path)) = (pr, self.repo_path.clone()) else {
+            self.clear_pr_fields_modal();
+            cx.notify();
             return;
         };
         let (add, remove) = kagi_domain::github::PrFieldEdit::diff(&modal.current, &modal.selected);
@@ -759,9 +769,6 @@ impl KagiApp {
                 edit.remove_labels = remove;
             }
         }
-        let crate::ui::modals::FieldTarget::Pr { number } = modal.target else {
-            return;
-        };
         if self.reject_transport_hold(&repo_path, &format!("pr-edit #{number}")) {
             self.clear_pr_fields_modal();
             self.present_app_notice();

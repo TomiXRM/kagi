@@ -1314,10 +1314,10 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
                     .pr_fields_modal()
                     .cloned()
                     .expect("the picker is the active modal");
-                assert_eq!(
+                assert!(matches!(
                     modal.target,
-                    kagi::ui::modals::FieldTarget::Pr { number: 7 }
-                );
+                    kagi::ui::modals::FieldTarget::Pr { number: 7, .. }
+                ));
                 assert_eq!(
                     modal.selected, modal.current,
                     "opens on the PR's own values"

@@ -42,7 +42,7 @@ impl Fixture {
             format!(
                 "#!/bin/sh\ncase \"$1 $2\" in\n\
                  'repo view') echo unexpected > ./repo-view.txt; exit 9 ;;\n\
-                 'label list') echo '[{{\"name\":\"bug\",\"color\":\"d73a4a\"}},{{\"name\":\"docs\",\"color\":\"0075ca\"}}]' ;;\n\
+                 'label list') if [ -f ./labels.json ]; then cat ./labels.json; else echo '[{{\"name\":\"bug\",\"color\":\"d73a4a\"}},{{\"name\":\"docs\",\"color\":\"0075ca\"}}]'; fi ;;\n\
                  'api '*) printf 'octocat\\nhubot\\n' ;;\n\
                  'issue create'|'issue comment')\n\
                  printf '%s\\n' \"$@\" > ./argv.txt\n\
@@ -420,6 +420,32 @@ fn labels_or_assignees_the_repository_cannot_take_are_refused_before_gh() {
         };
         assert_eq!(blockers, &vec![expected.message_en()]);
     }
+}
+
+/// #904 review: a label list as long as the read's limit may be cut off, so a
+/// label missing from it is not refused — `gh issue create` judges it.
+#[test]
+fn a_cut_off_label_list_is_not_evidence_a_label_is_missing() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let fixture = Fixture::new(&format!("echo '{URL}'"), true);
+    let names: Vec<String> = (0..200)
+        .map(|i| format!(r#"{{"name":"label-{i:03}","color":"ededed"}}"#))
+        .collect();
+    std::fs::write(
+        fixture.workdir.join("labels.json"),
+        format!("[{}]", names.join(",")),
+    )
+    .unwrap();
+    let chosen = fields(&["label-999"], &[]);
+    let plan = plan_issue_create(REPO, TITLE, BODY, &chosen);
+    let report = issue_create(&fixture.workdir, REPO, TITLE, BODY, &chosen, &plan);
+    assert!(report.result.is_ok(), "{:?}", report.result);
+    assert!(
+        fixture.workdir.join("attempts.txt").exists(),
+        "gh issue create decides"
+    );
 }
 
 #[path = "../../../tests/support/isolated.rs"]

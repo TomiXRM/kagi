@@ -16,6 +16,37 @@ use super::theme::{self, theme};
 use super::KagiApp;
 
 impl KagiApp {
+    /// Read the `gh` login on the host of the Issues repository, once per
+    /// host (#904 review). `gh issue create -R <host>/<owner>/<repo>` posts as
+    /// that host's identity, which on an Enterprise server is not the
+    /// window-global github.com login. A failed read claims nobody and is
+    /// asked again on the next Issues read.
+    pub(super) fn ensure_issue_host_login(&mut self, base_repo: &str, cx: &mut Context<Self>) {
+        let host = kagi_git::github::repo_host(base_repo);
+        if !self.github_host_login_requests.insert(host.clone()) {
+            return;
+        }
+        cx.spawn(async move |this, acx| {
+            let ask = host.clone();
+            let login = acx
+                .background_executor()
+                .spawn(async move { kagi_git::github::current_login(ask.as_deref()) })
+                .await;
+            let _ = this.update(acx, |app, cx| {
+                match login {
+                    Some(login) => {
+                        app.github_host_logins.insert(host, login);
+                    }
+                    None => {
+                        app.github_host_login_requests.remove(&host);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Open the picker for the New Issue composer's labels or assignees,
     /// starting from what the composer already holds.
     pub fn open_issue_fields_modal(&mut self, field: PrField, cx: &mut Context<Self>) {
@@ -153,19 +184,27 @@ pub(super) fn render_issue_fields(
             "issue-field-value-assignees",
         ))
         .child(div().flex_1())
-        // `gh issue create` posts as the authenticated user; there is no
-        // choice to offer, so the author is shown, not edited. Until the
-        // viewer login has been read, nobody is claimed.
-        .children(app.github_login.as_deref().map(|login| {
-            super::e2e::measure_control(
-                "issue-composer-posted-as",
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(
-                        Msg::IssuePostedAs.t().replace("{}", login),
-                    )),
-            )
-        }))
+        // `gh issue create` posts as the authenticated user on the
+        // repository's host; there is no choice to offer, so the author is
+        // shown, not edited. Until that host's login has been read, nobody is
+        // claimed.
+        .children(
+            app.ui()
+                .issue_composer
+                .base_repo
+                .as_deref()
+                .and_then(|repo| {
+                    app.github_host_logins
+                        .get(&kagi_git::github::repo_host(repo))
+                })
+                .map(|login| {
+                    super::e2e::measure_control(
+                        "issue-composer-posted-as",
+                        div().text_xs().text_color(rgb(theme().text_muted)).child(
+                            SharedString::from(Msg::IssuePostedAs.t().replace("{}", login)),
+                        ),
+                    )
+                }),
+        )
         .into_any_element()
 }

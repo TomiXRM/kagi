@@ -1175,6 +1175,13 @@ pub struct KagiApp {
     /// The authenticated `gh` login (fetched once by the ticker); drives the
     /// sidebar's Mine / Review requested / Others grouping.
     pub github_login: Option<String>,
+    /// The `gh` login on each repository host (`None`: `gh`'s default host),
+    /// for the New Issue composer's "posted as" (#904 review): an Enterprise
+    /// repository posts as that server's identity, not github.com's.
+    pub github_host_logins: std::collections::HashMap<Option<String>, String>,
+    /// Hosts whose login read is in flight or has settled, so each is asked
+    /// once; a failed read is forgotten so the next Issues read retries it.
+    github_host_login_requests: std::collections::HashSet<Option<String>>,
     /// When `Some`, the refresh icon spins (set on click; cleared after one
     /// full rotation in render).
     pub refresh_spin_started: Option<Instant>,
@@ -1386,6 +1393,8 @@ impl KagiApp {
             transport_holds: Default::default(),
             github_ticker_alive: false,
             github_login: None,
+            github_host_logins: Default::default(),
+            github_host_login_requests: Default::default(),
             write_busy_op: None,
             remote_write: None,
             planning: None,

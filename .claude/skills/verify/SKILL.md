@@ -573,7 +573,9 @@ The current suite covers:
   pick and the measured `issue-composer-submit` is refused before
   `gh issue create` runs (Refused oplog entry, toast naming the label, body and
   picks kept); the retry sends `--label`/`--assignee` and empties the picks.
-  `issue-composer-posted-as` is drawn only once `github_login` is known. Pair
+  `issue-composer-posted-as` is drawn only once the login on the repository's
+  host (`github_host_logins`, read with `gh api user [--hostname]` after an
+  Issues read) is known — never from the window-global `github_login`. Pair
   with `pr_fields_escape_focus` and `workspace_mode_toolbar` for the PR picker;
 - dirty Pull auto-stash success and Pull-failure restoration, including a durable
   Operation Log result without a dismiss-only error modal.

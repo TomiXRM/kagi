@@ -54,11 +54,13 @@ pub(crate) const PR_STATUS_FIELDS: &str = "number,headRefOid,statusCheckRollup,m
 pub(crate) const PR_BODY_FIELDS: &str =
     "number,headRefOid,updatedAt,body,changedFiles,additions,deletions";
 
-/// The authenticated `gh` user's login, or `None` when logged out. One call;
-/// callers cache it (the sidebar's "Mine" grouping keys on it).
-pub fn current_login() -> Option<String> {
+/// The authenticated `gh` user's login on `host` (`None`: `gh`'s default
+/// host), or `None` when logged out there. One call; callers cache it (the
+/// sidebar's "Mine" grouping keys on the default host's; the New Issue
+/// composer's "posted as" on the repository's own host, #904 review).
+pub fn current_login(host: Option<&str>) -> Option<String> {
     let out = crate::cli::gh_command()
-        .args(["api", "user", "--jq", ".login"])
+        .args(viewer_login_args(host))
         .output()
         .ok()?;
     if !out.status.success() {
@@ -66,6 +68,16 @@ pub fn current_login() -> Option<String> {
     }
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (!s.is_empty()).then_some(s)
+}
+
+/// `gh api user` on `host`: without `--hostname` it asks github.com, which is
+/// a different identity from an Enterprise repository's. Pure; unit-tested.
+fn viewer_login_args(host: Option<&str>) -> Vec<&str> {
+    let mut args = vec!["api", "user", "--jq", ".login"];
+    if let Some(host) = host {
+        args.extend(["--hostname", host]);
+    }
+    args
 }
 
 /// Parse one `gh pr view --json PR_STATUS_FIELDS` response.
@@ -527,7 +539,7 @@ pub use crate::github_review::{plan_pr_review, pr_review, review_args};
 // it is composed from live in `github_edit`, re-exported here for the same
 // reason.
 pub use crate::github_edit::{
-    edit_args, plan_pr_edit, pr_edit, repo_assignable_users, repo_labels,
+    edit_args, plan_pr_edit, pr_edit, repo_assignable_users, repo_host, repo_labels,
 };
 
 // Review threads (#351): the PR diff overlay and the conversation feed's
@@ -538,6 +550,24 @@ pub use crate::github_threads::{parse_review_threads, pr_review_threads};
 mod tests {
     use super::*;
     use kagi_domain::github::CiState;
+
+    /// #904 review: the login is asked of the repository's own host.
+    #[test]
+    fn viewer_login_is_asked_of_the_given_host() {
+        assert_eq!(
+            viewer_login_args(Some("ghe.example.invalid")),
+            [
+                "api",
+                "user",
+                "--jq",
+                ".login",
+                "--hostname",
+                "ghe.example.invalid"
+            ]
+        );
+        assert_eq!(viewer_login_args(None), ["api", "user", "--jq", ".login"]);
+    }
+
     #[test]
     fn parses_status_and_body_details_without_conflating_empty_with_missing() {
         let status = parse_pr_status_detail(

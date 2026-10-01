@@ -218,7 +218,7 @@ impl KagiApp {
             // Who am I? Once per ticker; the grouping is best-effort without it.
             let login = acx
                 .background_executor()
-                .spawn(async { kagi_git::github::current_login() })
+                .spawn(async { kagi_git::github::current_login(None) })
                 .await;
             let _ = this.update(acx, |app, cx| {
                 app.github_login = login;

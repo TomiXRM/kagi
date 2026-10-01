@@ -60,6 +60,9 @@ impl KagiApp {
             let generation = ui.begin_github_issues_request();
             (generation, frozen_base_repo, ui.github_issues_request_state)
         };
+        if let Some(base_repo) = frozen_base_repo.as_deref() {
+            self.ensure_issue_host_login(base_repo, cx);
+        }
         let task = issue_list_task(repo, frozen_base_repo, None, state, cx);
         cx.notify();
         cx.spawn(async move |this, acx| {
@@ -71,6 +74,10 @@ impl KagiApp {
                 };
                 if ui.finish_github_issues_request(generation, result) && owner_is_active {
                     cx.notify();
+                }
+                // The first read is what learns the repository identity.
+                if let Some(base_repo) = ui.issue_composer.base_repo.clone() {
+                    app.ensure_issue_host_login(&base_repo, cx);
                 }
             });
         })

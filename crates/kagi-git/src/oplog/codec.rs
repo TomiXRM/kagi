@@ -354,31 +354,43 @@ fn ref_moves<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<RefMove>>, D:
 }
 
 /// Only called when the key is present (a missing one is `Default`, i.e.
-/// `Absent`), so anything that does not read as a whole identity — `null`,
-/// another type, an unknown key, half of a `(dev, ino)` or birth-time pair —
-/// is `Invalid`.
+/// `Absent`). Anything that is not a whole, valid identity is `Invalid` —
+/// never a `Known` value that compares as another repository, which would
+/// drop a corrupt entry of this one from a restore's range silently
+/// (#900 review). The rules are all in [`valid_identity`].
 fn repo_identity<'de, D: Deserializer<'de>>(d: D) -> Result<RecordedIdentity, D::Error> {
-    let Ok(r) = serde_json::from_value::<RepoIdentityRecord>(Value::deserialize(d)?) else {
-        return Ok(RecordedIdentity::Invalid);
-    };
-    let pair = |a: Option<u64>, b: Option<u64>| match (a, b) {
-        (Some(a), Some(b)) => Ok(Some((a, b))),
-        (None, None) => Ok(None),
-        _ => Err(()),
-    };
-    let file_id = pair(r.dev, r.ino);
-    // Nanoseconds past the second: anything from 1e9 up is not a time, so
-    // the identity is corrupt, not a different repository (#900 review).
-    let created = pair(r.born_s, r.born_ns.map(u64::from)).and_then(|c| match c {
-        Some((_, ns)) if ns >= 1_000_000_000 => Err(()),
-        c => Ok(c),
-    });
-    match (file_id, created) {
-        (Ok(file_id), Ok(created)) => Ok(RecordedIdentity::Known(RepoIdentity {
-            common_dir: r.common_dir,
-            file_id,
-            created: created.map(|(s, ns)| (s, ns as u32)),
-        })),
-        _ => Ok(RecordedIdentity::Invalid),
+    let identity = serde_json::from_value::<RepoIdentityRecord>(Value::deserialize(d)?)
+        .ok()
+        .and_then(valid_identity);
+    Ok(identity.map_or(RecordedIdentity::Invalid, RecordedIdentity::Known))
+}
+
+/// The decode-time rules for a recorded identity, in one place. Unknown keys
+/// and wrong types are already refused by `RepoIdentityRecord`
+/// (`deny_unknown_fields`, typed fields); on top of that:
+/// - `common_dir` is a non-empty absolute path on this platform;
+/// - `dev` and `ino` come together, or not at all;
+/// - `born_s` and `born_ns` come together, or not at all, and `born_ns` is
+///   below one second.
+fn valid_identity(r: RepoIdentityRecord) -> Option<RepoIdentity> {
+    fn pair<A, B>(a: Option<A>, b: Option<B>) -> Option<Option<(A, B)>> {
+        match (a, b) {
+            (Some(a), Some(b)) => Some(Some((a, b))),
+            (None, None) => Some(None),
+            _ => None,
+        }
     }
+    if r.common_dir.is_empty() || !std::path::Path::new(&r.common_dir).is_absolute() {
+        return None;
+    }
+    let file_id = pair(r.dev, r.ino)?;
+    let created = pair(r.born_s, r.born_ns)?;
+    if created.is_some_and(|(_, ns)| ns >= 1_000_000_000) {
+        return None;
+    }
+    Some(RepoIdentity {
+        common_dir: r.common_dir,
+        file_id,
+        created,
+    })
 }

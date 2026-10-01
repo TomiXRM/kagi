@@ -112,7 +112,13 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
 
       作成時刻の解像度が粗い filesystem(秒精度。HFS+ や一部の network filesystem)では、同じ秒の中で削除と再作成が起きると inode も作成時刻も再利用されうる(#900 review 4)。ns 部が 0 の作成時刻は「秒精度」とみなし、一致しても確認にならないので曖昧にする。違えば Other のまま。`.git` に再利用されない世代 ID を書く案は採らない。ユーザーが頼んでいない repository への書き込みになるため。
     - identity の無い旧形式の entry だけ、従来どおり worktree を開いて判定する(開けなければ UnknownRepository)。
-    - **field はあるが読めない identity は旧形式と区別する**(#900 review 5)。codec は `RecordedIdentity::{Absent, Known, Invalid}` を返す。field が無ければ Absent。文字列・`null`・型違い・組の片側(`dev` だけ、`born_s` だけ)・知らないキー(将来の形式)・範囲外の `born_ns`(10 億以上。#900 review 7)は Invalid。Invalid を旧形式として扱うと path を開いて判定してしまい、同じ path に作り直した repository の entry を Mine にしうる。範囲外の `born_ns` を値として受けると、壊れた自分の entry が Different になり、restore の範囲から黙って外れる。そのため Invalid は UnknownRepository とする(fail closed)。
+    - **field はあるが読めない identity は旧形式と区別する**(#900 review 5・7・9)。codec は `RecordedIdentity::{Absent, Known, Invalid}` を返す。field が無ければ Absent。それ以外は decode 時に一括で検証し(`valid_identity`)、1 つでも違反すれば Invalid にする。
+      - 型: object で、知らないキー(将来の形式)が無く、各 field の型が合う(文字列・数値・`null` は不可)。
+      - `common_dir`: 空でない、この platform での絶対 path。
+      - `dev` と `ino`: 両方あるか、両方無いか。
+      - `born_s` と `born_ns`: 両方あるか、両方無いか。`born_ns` は 10 億未満。
+
+      Invalid を旧形式として扱うと path を開いて判定してしまい、同じ path に作り直した repository の entry を Mine にしうる。壊れた値を Known として受けると、自分の entry が Other / Different になり、restore の範囲から黙って外れる。そのため Invalid は UnknownRepository とする(fail closed)。
     - **限界 3**: identity の無い本物の旧形式の行(#894 より前に書かれたもの)は path で判定するので、同じ path に作り直した repository では Mine になる。移行前のデータの限界で、#894 以降に書いた行には当てはまらない。
     - `(dev, ino)` も持つのは、同じ filesystem 内での移動や rename では inode も作成時刻も変わらないため。path だけだと、移動した repository の自分の entry を Other と誤判定して黙って除外してしまう。
     - **限界 1**: filesystem をまたいで移動すると、path も `(dev, ino)` も変わるので、それ以前の自分の entry は Other になる。その entry が動かした branch は、記録が説明しない reflog の変化として RefChangedOutsideRecord の blocker になる(fail closed)。対象 entry 自体が移動前のものなら EntryNotLoaded。
@@ -220,7 +226,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - inode の再利用(#900 review 2): path も `(dev, ino)` もこの repository、作成時刻だけ違う entry は Other(EntryNotLoaded)。作成時刻を消した entry は UnknownRepository。domain 側は `same_repository` の unit で、再利用・移動・作成時刻なし・file id なしの各行を固定する。
   - 削除した worktree の remove-worktree(#900 review 3): identity は repo から取れる。別の repository の restore はその entry をまたいでも blocker なしで実行でき、自分の repository では UnknownRepository にならない。作成時刻を返さない、または秒精度の filesystem では、作成時刻を前提にするテストは理由を出してスキップする。
   - 秒精度の作成時刻(#900 review 4): unit で、ns 部が 0 の一致は Ambiguous、違えば Different であることを固定する。
-  - codec unit: 往復、旧行は Absent、不正値(文字列・数値・`null`・組の片側・型違い・知らないキー)は Invalid で、行は残る。`born_ns` は 999_999_999 まで Known、1_000_000_000 は Invalid(変異: 範囲の検査を外す → 落ちる)。
+  - codec unit: 往復、旧行は Absent。表形式で、正常 1 件(Known)と全違反パターン(object でない、数値、`null`、`common_dir` 無し・空・相対・型違い、`dev` / `ino` の片側、`dev` の型違い、`born_s` / `born_ns` の片側、`born_ns` = 10 億、負の `born_ns`、知らないキー)が Invalid で、行は残る。変異確認: 絶対 path の検査を外す・組の検査を外す・ns の範囲を外す → それぞれ表の該当行で落ちる。
   - 読めない identity(#900 review 5): 自分の entry の `repo_identity` を不正値に書き換えると UnknownRepository で止まる。field を消した旧形式の行は path で判定され、blocker にならない。
 - #894 の変異確認: append で埋めない → integration 2 件、`(dev, ino)` を比べない → 限界 2 のテスト、分類で identity を使わない → integration 2 件、codec が書かない → codec と integration が落ちる。#900 review 2: 作成時刻を比べない → unit と inode 再利用の integration、曖昧を Mine にする → inode 再利用の integration が落ちる。#900 review 3: repo へのフォールバックを外す → 別 repository の restore が UnknownRepository で止まり、remove-worktree の integration が落ちる。#900 review 4: ns 部が 0 の一致も Same にする → unit が落ちる。#900 review 5: codec が不正値を Absent にする → codec unit と integration、分類で Invalid を旧形式として扱う → integration が落ちる。
 - #878 review 対応(P1)のテスト

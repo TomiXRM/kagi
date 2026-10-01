@@ -148,16 +148,15 @@ pub fn scenario_worktree_port_env(cx: &mut VisualTestAppContext) {
         "the spawned shell received this worktree's path"
     );
 
-    // The sidebar shows the main worktree's block (assigned by the terminal
-    // just now) and `pre`'s (read from the store by the snapshot); `side`
-    // never had one, so it shows none.
+    // Main still owns its stored block but has no WORKTREES leaf. `pre` has
+    // its own pre-assigned block; `side` never had one.
     assert!(
-        laid_out(cx, window, "sidebar-worktree-port-main"),
-        "the main worktree's localhost:{stored} is shown"
+        !laid_out(cx, window, "sidebar-worktree-port-main"),
+        "main worktree should not have a sidebar row"
     );
     assert!(
         laid_out(cx, window, "sidebar-worktree-port-pre"),
-        "the pre-assigned worktree's localhost:{pre_port} is shown"
+        "the pre-assigned linked worktree's localhost:{pre_port} is shown"
     );
     assert_eq!(
         kagi_git::worktree_ports::Assignments::read().port(&side),
@@ -178,8 +177,8 @@ pub fn scenario_worktree_port_env(cx: &mut VisualTestAppContext) {
             app.sidebar.width = sidebar;
             cx.notify();
         });
-        let name = bounds(cx, window, "sidebar-worktree-name-main");
-        let port = bounds(cx, window, "sidebar-worktree-port-main");
+        let name = bounds(cx, window, "sidebar-worktree-name-pre");
+        let port = bounds(cx, window, "sidebar-worktree-port-pre");
         let gap = f32::from(port.center().y) - f32::from(name.center().y);
         let same_line = gap.abs() < f32::from(name.size.height);
         (
@@ -284,7 +283,7 @@ pub fn scenario_worktree_nonconcurrent(cx: &mut VisualTestAppContext) {
     start_terminal(cx, &app, window);
     assert!(shell_live(cx, &app), "the first worktree's shell starts");
     // #869: the linked worktree's link is the main worktree's block, which
-    // its shell was handed; the linked worktree got no block of its own.
+    // its shell was handed; main is not rendered as a sidebar leaf.
     draw(cx, window);
     let row_ports = cx.read(|cx| {
         app.read(cx)
@@ -303,9 +302,9 @@ pub fn scenario_worktree_nonconcurrent(cx: &mut VisualTestAppContext) {
     assert!(
         row_ports["side"].is_some()
             && row_ports["side"] == stored.port(&repo)
-            && row_ports["main"] == row_ports["side"]
+            && !row_ports.contains_key("main")
             && stored.port(&side).is_none(),
-        "nonconcurrent: every row links to the main block: {row_ports:?}"
+        "nonconcurrent: the linked row uses the hidden main block: {row_ports:?}"
     );
 
     // The main worktree of the same repository is refused while it does.

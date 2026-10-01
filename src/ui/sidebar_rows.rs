@@ -525,23 +525,23 @@ pub fn build_sidebar_rows(
         rows.push(SidebarRow::SectionHeader {
             section: SECTION_WORKTREES,
             title: "WORKTREES",
-            count: worktrees.len(),
+            count: worktrees.iter().filter(|w| !w.is_main).count(),
             collapsed: section_collapsed,
         });
         if !section_collapsed {
             // #869: a shared-port mode hands every worktree the main
             // worktree's block, so every row links to it.
             let main_port = worktrees.iter().find(|w| w.is_main).and_then(|w| w.port);
-            for wt in worktrees
-                .iter()
-                .filter(|w| matches(&w.name) || matches(w.path.to_string_lossy().as_ref()))
-            {
+            // The main worktree remains in the read model (and supplies the
+            // shared port), but has no removable leaf in this navigator.
+            for wt in worktrees.iter().filter(|w| {
+                !w.is_main && (matches(&w.name) || matches(w.path.to_string_lossy().as_ref()))
+            }) {
                 rows.push(SidebarRow::Worktree {
                     name: wt.name.clone(),
                     path: wt.path.clone(),
                     path_label: wt.path.display().to_string(),
                     is_current: wt.is_current,
-                    is_main: wt.is_main,
                     locked: wt.locked,
                     port: if run_mode.shares_ports() {
                         main_port

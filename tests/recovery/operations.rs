@@ -3197,6 +3197,22 @@ pub fn scenario_sidebar_tree_roles(cx: &mut VisualTestAppContext) {
     let worktrees = recorded_list("sidebar-worktrees").expect("worktree pane drawn");
     let (_, wt_label, (level, ..)) = find(&worktrees, "wt-tree");
     assert_eq!(level, 2, "{wt_label}");
+    assert_eq!(
+        worktrees.rows.len(),
+        2,
+        "WORKTREES contains its header and linked row, not the main worktree"
+    );
+    let linked_count = cx.read(|cx| {
+        app.read(cx).sidebar.rows.iter().find_map(|row| match row {
+            kagi::ui::sidebar::SidebarRow::SectionHeader { section, count, .. }
+                if *section == kagi::ui::sidebar::SECTION_WORKTREES =>
+            {
+                Some(*count)
+            }
+            _ => None,
+        })
+    });
+    assert_eq!(linked_count, Some(1), "header counts linked worktrees only");
 
     // Collapse LOCAL BRANCHES: header reports collapsed, leaves disappear.
     app.update(cx, |app, cx| {

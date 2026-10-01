@@ -55,9 +55,9 @@ worktree is its embedded terminal's shell.
      neither read nor written, and one already on file is kept.
    - **Switching back:** returning to `concurrent` gives each worktree its own
      block again.
-   - **Sidebar:** every WORKTREES row links to the main worktree's block.
-     The mode is read when the rows are rebuilt, so a change shows at the next
-     refresh.
+   - **Sidebar:** every linked WORKTREES row links to the main worktree's
+     block; the main worktree itself has no row. The mode is read when the rows
+     are rebuilt, so a change shows at the next refresh.
 7. **No warn-only mode (#869).** The setting keeps two values.
    - **Why:** a mode that only warns is `concurrent` plus a toast. It would
      duplicate what this ADR exists for (deliberately stopping a second

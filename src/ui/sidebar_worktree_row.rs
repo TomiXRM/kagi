@@ -67,12 +67,13 @@ impl Drop for WorktreeInspections {
 }
 
 impl KagiApp {
-    /// Measure every worktree this tab has no observation for. A cached entry
-    /// covers its own path only, so this both resumes a sweep that a tab
-    /// switch retired after its first result and picks up worktrees added
-    /// since. Entries already held are kept: re-measuring what is cached is
-    /// the explicit refresh's job, and staleness is a display rule
-    /// (`observed_verdict`), not a reason to re-walk the disk.
+    /// Measure every displayed linked worktree this tab has no observation for.
+    /// A cached entry covers its own path only, so this resumes a sweep that a
+    /// tab switch retired and picks up newly added linked worktrees. The main
+    /// worktree has no navigator row and is not a removal candidate, so walking
+    /// its disk would not inform this view. Entries already held are kept:
+    /// remeasurement is the explicit refresh's job, while staleness is a
+    /// display rule (`observed_verdict`), not a reason to re-walk the disk.
     pub(super) fn ensure_worktree_inspections(&mut self, cx: &mut Context<Self>) {
         let state = &self.ui().worktree_inspections;
         // A live request already owns its targets; retiring it here would throw
@@ -85,7 +86,7 @@ impl KagiApp {
             .view()
             .worktrees
             .iter()
-            .filter(|worktree| !state.entries.contains_key(&worktree.path))
+            .filter(|worktree| !worktree.is_main && !state.entries.contains_key(&worktree.path))
             .map(|worktree| worktree.path.clone())
             .collect();
         if unmeasured.is_empty() {
@@ -136,7 +137,9 @@ impl KagiApp {
             .view()
             .worktrees
             .iter()
-            .filter(|worktree| only.is_none_or(|only| only.contains(&worktree.path)))
+            .filter(|worktree| {
+                !worktree.is_main && only.is_none_or(|only| only.contains(&worktree.path))
+            })
             .cloned()
             .collect();
         if targets.is_empty() {
@@ -382,7 +385,13 @@ fn inspection_card(
     let path = card.path.as_path();
     // A tab switch or reload can leave the card alive for a frame while its
     // row is gone; it never shows another tab's (or an SSH tab's) worktree.
-    if app.remote_view.is_some() || !app.view().worktrees.iter().any(|w| w.path == path) {
+    // KagiApp's context menus are drawn in its root, but GPUI paints native
+    // tooltips afterward. Keep the hover card out of the way while a worktree
+    // menu is open so its items remain visible and clickable.
+    if app.remote_view.is_some()
+        || app.worktree_menu.is_some()
+        || !app.view().worktrees.iter().any(|w| w.path == path)
+    {
         return div().into_any_element();
     }
     let state = &app.ui().worktree_inspections;
@@ -540,7 +549,6 @@ pub(super) struct WorktreeRowFacts<'a> {
     pub(super) path: &'a std::path::Path,
     pub(super) path_label: &'a str,
     pub(super) is_current: bool,
-    pub(super) is_main: bool,
     pub(super) locked: bool,
     /// First port of the worktree's stored block (#855).
     pub(super) port: Option<u16>,
@@ -558,7 +566,6 @@ pub(super) fn build_worktree_row(
         path,
         path_label,
         is_current,
-        is_main,
         locked,
         port,
     } = facts;
@@ -690,11 +697,8 @@ pub(super) fn build_worktree_row(
                 cx,
             )
         });
-    // The lifecycle items (remove / lock / unlock) are linked worktrees only —
-    // the main worktree is never lockable or removable from kagi — but the path
-    // items are not, so the main row gets the menu too: from a linked
-    // worktree's tab, "Open in new tab" on the main row is the way back (#733).
-    // `build_worktree_menu` drops the lifecycle groups when `is_main`.
+    // Sidebar leaves are linked worktrees; the shared menu's main-worktree
+    // path remains available from graph badges and WIP rows (#733).
     let name_for_menu = name.to_string();
     let path_for_menu = path.to_path_buf();
     let menu_handler = cx.listener(
@@ -702,7 +706,7 @@ pub(super) fn build_worktree_row(
             this.open_worktree_menu(
                 name_for_menu.clone(),
                 locked,
-                is_main,
+                false,
                 Some(path_for_menu.clone()),
                 event.position,
             );

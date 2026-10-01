@@ -184,7 +184,21 @@ fn assert_row_density(
     });
     assert!(
         worktrees.len() >= 2,
-        "main and linked worktree rows: {worktrees:?}"
+        "two linked worktree rows, with the main worktree hidden: {worktrees:?}"
+    );
+    let main_name = cx.read(|cx| {
+        app.read(cx)
+            .view()
+            .worktrees
+            .iter()
+            .find(|worktree| worktree.is_main)
+            .expect("main worktree remains in the read model")
+            .name
+            .clone()
+    });
+    assert!(
+        !worktrees.contains(&main_name),
+        "main worktree got a sidebar row"
     );
     let id = window.window_id();
     let names = [
@@ -301,20 +315,23 @@ pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
     }
     drop(head);
     drop(git2_repo);
-    // Two worktree rows give WORKTREES a measurable uniform pitch.
+    // Two linked worktree rows give WORKTREES a measurable uniform pitch
+    // without displaying the main worktree.
     let linked_root = tempfile::tempdir().unwrap();
-    let linked = linked_root.path().join("wt-density");
-    git(
-        repo,
-        &[
-            "worktree",
-            "add",
-            "-q",
-            "-b",
-            "wt-density",
-            linked.to_str().unwrap(),
-        ],
-    );
+    for name in ["wt-density", "wt-density-second"] {
+        let linked = linked_root.path().join(name);
+        git(
+            repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                name,
+                linked.to_str().unwrap(),
+            ],
+        );
+    }
 
     let (app, window) = mount_at(cx, repo, 900.);
     redraw(cx, &app, window);

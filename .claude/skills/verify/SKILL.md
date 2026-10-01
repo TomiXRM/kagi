@@ -326,11 +326,13 @@ The current suite covers:
   fixtures cover EN/JA reasons, ignored `target/` allocation, explicit refresh,
   the measuring spinner and late-delivery rejection after supersession,
   hovering another row and tab close. Bring virtual sidebar rows into view before
-  hovering. The detail card appears for the hovered local worktree only, leaves
-  all five navigator panes their full layout height, and remains actionable when
-  the pointer moves into it. Moving away hides the card; hovering another row
-  changes its identity. Check the name/path heading, independently scrolling
-  body and Refresh action from inside the card in both languages.
+  hovering. The detail card appears for the hovered linked worktree only,
+  leaves all five navigator panes their full layout height, and remains
+  actionable when the pointer moves into it. Moving away hides the card;
+  hovering another row changes its identity. Right-click a hovered row:
+  the card yields to the existing worktree menu and its actions remain
+  clickable. Check the name/path heading, independently scrolling body
+  and Refresh action from inside the card in both languages.
   A partial-cache regression accepts one worktree report, switches to another
   repository and returns through the real tab lifecycle. Missing and newly added
   worktrees must then be measured while the completed report remains unchanged,
@@ -424,10 +426,11 @@ The current suite covers:
   script through `KagiApp::set_terminal_shell_for_e2e` (`gui-e2e` only) that
   writes the `KAGI_PORT` / `KAGI_WORKTREE_PATH` it was spawned with, so the
   oracle is the real PTY child's environment: it must equal the block the store
-  holds for the worktree. The main row then shows `sidebar-worktree-port-main`
-  (refreshed by the terminal start), a linked worktree assigned before mount
-  shows its block (read by the snapshot), and one never assigned shows none and
-  stays unassigned. Tier B: open a terminal, see `localhost:<port>` on the row,
+  holds for the worktree. The main worktree still owns its port block but has
+  no sidebar row; a linked worktree assigned before mount shows its block
+  (read by the snapshot), and one never assigned shows none and stays
+  unassigned. In nonconcurrent mode the linked row displays the main block.
+  Tier B: open a linked worktree terminal, see `localhost:<port>` on its row,
   click it and check the browser opens that URL.
 - nonconcurrent run mode (`KAGI_GUI_E2E_ONLY=worktree_nonconcurrent`,
   `tests/recovery/worktree_ports.rs`): #859 / ADR-0213. With
@@ -437,9 +440,9 @@ The current suite covers:
   the first shell (its `cat` exits, observed by the #772 wait) lets the main tab
   start. With the setting removed (default `concurrent`) the linked tab starts
   alongside. The decision is unit-tested in `kagi_domain::worktree_run_mode`.
-  #869: while the linked shell runs in `nonconcurrent` mode, the `side` and
-  `main` sidebar rows carry the same port (the main worktree's stored block),
-  and `side` has no store entry. The env side is covered by `kagi-git`
+  #869: while the linked shell runs in `nonconcurrent` mode, the `side`
+  sidebar row carries the main worktree's stored port block; main has no
+  sidebar row, and `side` has no store entry. The env side is covered by `kagi-git`
   `nonconcurrent_hands_every_worktree_the_main_block`.
   Tier B: set the key, open terminals in two worktrees of one repository, read
   the refusal (EN/JA), `exit` the first, then open the second.

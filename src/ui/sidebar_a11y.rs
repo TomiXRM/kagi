@@ -233,7 +233,6 @@ mod tests {
             path: "/tmp/wt".into(),
             path_label: "/tmp/\u{7f}wt".into(),
             is_current: false,
-            is_main: false,
             locked: false,
             port: None,
         })
@@ -250,7 +249,6 @@ mod tests {
             path: "/p/{}".into(),
             path_label: "/p/{}".into(),
             is_current: false,
-            is_main: false,
             locked: false,
             port: None,
         })

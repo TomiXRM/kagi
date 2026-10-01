@@ -145,6 +145,11 @@ by name and path, keeps its heading visible while the detail body scrolls, and
 stays interactive when the pointer moves from the row into the card to refresh.
 Its height stays stable as a measurement starts or finishes, preventing GPUI
 from flipping the tooltip to the opposite side of the pointer during Refresh.
+The native tooltip paints after KagiApp's root overlays; while the worktree
+context menu is open, the card yields completely so the menu remains visible
+and clickable. The navigator lists only linked worktrees: the main worktree is
+not removable, keeps its graph navigation and shared-port role, and does not
+need a capacity scan just to populate a hidden row.
 
 - `kagi-domain::remove` owns typed `WorktreeEvidence`, unknown reasons and the
   pure advisory predicate: clean **and** unlocked **and** (merged **or** pushed).
@@ -173,10 +178,11 @@ from flipping the tooltip to the opposite side of the pointer during Refresh.
   another row, tab departure and close retire the request; both read
   freshness and request revision guard delivery. A stale read or active writer
   suppresses a cached positive verdict, while the last capacity remains visible.
-  Initial observation and explicit remeasurement share this path. Coverage is
-  per worktree: tab return schedules missing and newly added targets while
-  preserving completed cached observations. The renderer performs no I/O and
-  does not repeatedly rescan cached worktrees.
+  Initial observation and explicit remeasurement share this path and target
+  only linked worktrees. Coverage is per displayed worktree: tab return
+  schedules missing and newly added linked targets while preserving completed
+  cached observations. The renderer performs no I/O and does not repeatedly
+  rescan cached worktrees.
 - The hover card displays the local-ref basis and the approved warning:
   `.gitignore 配下(target/ 等)は Git が守らない — 削除前に確認`.
   Git cleanliness is not a claim that ignored `.env` or other local files are

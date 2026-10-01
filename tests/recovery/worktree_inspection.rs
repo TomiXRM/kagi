@@ -5,7 +5,8 @@ use crate::{
     macos::{git, mount, unmount},
 };
 use gpui::{
-    point, px, AnyWindowHandle, Bounds, Entity, Modifiers, Pixels, Point, VisualTestAppContext,
+    point, px, AnyWindowHandle, Bounds, Entity, Modifiers, MouseButton, Pixels, Point,
+    VisualTestAppContext,
 };
 use kagi::ui::{
     e2e,
@@ -379,6 +380,37 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
         }
         leave(cx, window);
     }
+
+    // Right-click on the hovered linked worktree: GPUI paints native tooltips
+    // after KagiApp's root overlays, so the card must yield to the menu.
+    let pointer = hover_worktree(cx, &app, window, "pushed");
+    open_card(cx, &app, window, pointer, layout);
+    cx.simulate_mouse_down(window, pointer, MouseButton::Right, Modifiers::none());
+    cx.run_until_parked();
+    e2e::clear_control_bounds(window.window_id(), "worktree-menu-item-0-0");
+    redraw_card(cx, window);
+    assert!(
+        !card_shown(window),
+        "hover card obscures the right-click menu"
+    );
+    cx.read(|cx| {
+        let menu = app.read(cx).worktree_menu.as_ref().expect("worktree menu");
+        assert_eq!(menu.path.as_deref(), Some(root.join("pushed").as_path()));
+    });
+    let first_action =
+        bounds(window, "worktree-menu-item-0-0").expect("visible menu action above card");
+    assert!(first_action.size.width > px(0.) && first_action.size.height > px(0.));
+    let viewport = cx
+        .update_window(window, |_, window, _| window.viewport_size())
+        .unwrap();
+    cx.simulate_click(
+        window,
+        point(viewport.width - px(8.), viewport.height - px(8.)),
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).worktree_menu.is_none()));
+    leave(cx, window);
 
     // Only the transport future is held. Real hover selection/refresh, request
     // revision, owner routing and rendering still execute while the old read is

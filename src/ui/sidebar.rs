@@ -239,7 +239,6 @@ pub enum SidebarRow {
         path: std::path::PathBuf,
         path_label: String,
         is_current: bool,
-        is_main: bool,
         locked: bool,
         /// First port of the worktree's stored block, shown as
         /// `localhost:<port>` (#855). `None` when it has none.
@@ -305,7 +304,6 @@ pub(super) fn build_sidebar_row(
             path,
             path_label,
             is_current,
-            is_main,
             locked,
             port,
         } => super::sidebar_worktree_row::build_worktree_row(
@@ -314,7 +312,6 @@ pub(super) fn build_sidebar_row(
                 path,
                 path_label,
                 is_current: *is_current,
-                is_main: *is_main,
                 locked: *locked,
                 port: *port,
             },

@@ -2860,6 +2860,25 @@ mod macos {
             app.commit_panel_amend(app.active_session().unwrap(), cx)
         });
         cx.run_until_parked();
+        kagi::ui::dialog_a11y::clear_recorded_a11y();
+        kagi.update(cx, |_, cx| cx.notify());
+        cx.update_window(win, |_, window, cx| {
+            window.refresh();
+            window.draw(cx).clear();
+        })
+        .unwrap();
+        let title = cx.read(|cx| {
+            kagi_ui_core::i18n::plan_title_text(
+                &kagi.read(cx).amend_modal().expect("amend card").plan.title,
+            )
+        });
+        let expected = kagi::ui::worktree_wip::worktree_modal_title(&title, Some("wt-a"));
+        let dialog = kagi::ui::dialog_a11y::recorded_dialog("amend-card")
+            .expect("linked worktree amend card drawn");
+        assert_eq!(
+            dialog.label, expected,
+            "AX title must name the target worktree"
+        );
         assert_eq!(
             head_before,
             repo_fingerprint(&wt_a).0,

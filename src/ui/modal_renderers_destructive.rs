@@ -7,7 +7,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::button_style::KagiButton;
-use super::dialog_a11y::{apply_dialog, dialog_a11y, ConfirmStage, DialogHandler};
+use super::dialog_a11y::{apply_dialog, apply_note, dialog_a11y, ConfirmStage, DialogHandler};
 use super::i18n::Msg;
 use super::modal_copy::{modal_copy_button, plan_clipboard_text};
 use super::modal_renderers::{
@@ -101,6 +101,10 @@ pub(crate) fn render_amend_modal(
     //
     // The header carries the stakes as a chip (mock: `Cannot be undone` next to
     // the title) — driven by `plan.destructive`, not by the renderer guessing.
+    // One string for the visible title and the dialog's AX name: a linked
+    // worktree's suffix must be heard as well as seen (#354).
+    let title =
+        worktree_wip::worktree_modal_title(&plan_title_text(&plan.title), worktree.as_deref());
     let mut title_row = div()
         .flex_shrink_0()
         .flex()
@@ -117,10 +121,7 @@ pub(crate) fn render_amend_modal(
                 .flex_1()
                 .min_w(gpui::px(0.))
                 .child(render_modal_title_row(
-                    SharedString::from(worktree_wip::worktree_modal_title(
-                        &plan_title_text(&plan.title),
-                        worktree.as_deref(),
-                    )),
+                    SharedString::from(title.clone()),
                     Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
                 )),
         );
@@ -145,7 +146,7 @@ pub(crate) fn render_amend_modal(
         cx,
     ));
     let spec = dialog_a11y(
-        &plan_title_text(&plan.title),
+        &title,
         (!has_blockers).then_some(confirm_label),
         plan.destructive,
         ConfirmStage::two_stage(armed),
@@ -233,16 +234,15 @@ pub(crate) fn render_amend_modal(
     // dialog is the one place that trade goes the other way.
     if !plan.warnings.is_empty() {
         let mut warn_col = div().flex().flex_col().gap_1();
-        for w in &plan.warnings {
+        for (wi, w) in plan.warnings.iter().enumerate() {
+            let text = plan_note_text(w);
+            let id: SharedString = format!("amend-warning-{wi}").into();
             warn_col = warn_col.child(
-                div()
+                apply_note(id.clone(), div().id(id), false, &text)
                     .flex_shrink_0()
                     .text_sm()
                     .text_color(rgb(current_theme().color_warning))
-                    .child(SharedString::from(format!(
-                        "\u{26a0} {}",
-                        plan_note_text(w)
-                    ))),
+                    .child(SharedString::from(format!("\u{26a0} {text}"))),
             );
         }
         #[cfg(feature = "gui-e2e")]
@@ -266,16 +266,15 @@ pub(crate) fn render_amend_modal(
     // Blockers.
     if has_blockers {
         let mut block_col = div().flex().flex_col().gap_1();
-        for b in &plan.blockers {
+        for (bi, b) in plan.blockers.iter().enumerate() {
+            let text = plan_note_text(b);
+            let id: SharedString = format!("amend-blocker-{bi}").into();
             block_col = block_col.child(
-                div()
+                apply_note(id.clone(), div().id(id), true, &text)
                     .text_sm()
                     .text_color(rgb(current_theme().color_blocker))
                     .overflow_hidden()
-                    .child(SharedString::from(format!(
-                        "\u{2717} {}",
-                        plan_note_text(b)
-                    ))),
+                    .child(SharedString::from(format!("\u{2717} {text}"))),
             );
         }
         #[cfg(feature = "gui-e2e")]
@@ -639,17 +638,16 @@ pub(crate) fn render_discard_modal(
     // that behind a caret on a destructive confirm is the wrong trade.
     if !plan.warnings.is_empty() {
         let mut warn_col = div().flex().flex_col().gap_px();
-        for w in &plan.warnings {
+        for (wi, w) in plan.warnings.iter().enumerate() {
+            let text = plan_note_text(w);
+            let id: SharedString = format!("discard-warning-{wi}").into();
             warn_col = warn_col.child(
-                div()
+                apply_note(id.clone(), div().id(id), false, &text)
                     .flex_shrink_0()
                     .text_xs()
                     .text_color(rgb(current_theme().color_warning))
                     .overflow_hidden()
-                    .child(SharedString::from(format!(
-                        "\u{26a0} {}",
-                        plan_note_text(w)
-                    ))),
+                    .child(SharedString::from(format!("\u{26a0} {text}"))),
             );
         }
         #[cfg(feature = "gui-e2e")]
@@ -671,16 +669,15 @@ pub(crate) fn render_discard_modal(
     }
     if has_blockers {
         let mut block_col = div().flex().flex_col().gap_px();
-        for b in &plan.blockers {
+        for (bi, b) in plan.blockers.iter().enumerate() {
+            let text = plan_note_text(b);
+            let id: SharedString = format!("discard-blocker-{bi}").into();
             block_col = block_col.child(
-                div()
+                apply_note(id.clone(), div().id(id), true, &text)
                     .text_sm()
                     .text_color(rgb(current_theme().color_blocker))
                     .overflow_hidden()
-                    .child(SharedString::from(format!(
-                        "\u{2717} {}",
-                        plan_note_text(b)
-                    ))),
+                    .child(SharedString::from(format!("\u{2717} {text}"))),
             );
         }
         #[cfg(feature = "gui-e2e")]

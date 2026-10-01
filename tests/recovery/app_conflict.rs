@@ -704,6 +704,21 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
         "the first click confirms nothing — it opens the plan"
     );
     assert!(repo.join(".git/MERGE_HEAD").exists(), "and mutates nothing");
+    kagi::ui::dialog_a11y::clear_recorded_a11y();
+    app.update(cx, |_, cx| cx.notify());
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    let dialog =
+        kagi::ui::dialog_a11y::recorded_dialog("plan-card").expect("abort confirmation drawn");
+    assert_eq!(dialog.role, gpui::Role::AlertDialog);
+    assert_eq!(
+        dialog.description.as_deref(),
+        Some(kagi_ui_core::i18n::Msg::A11yDialogArmed.t()),
+        "the next Confirm aborts immediately"
+    );
     app.update(cx, |app, cx| app.confirm_conflict_abort(cx));
     wait_idle(cx, &app);
     assert!(

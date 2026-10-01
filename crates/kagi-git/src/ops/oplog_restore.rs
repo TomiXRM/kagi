@@ -12,8 +12,10 @@ use super::*;
 use kagi_domain::operation::Operation;
 use kagi_domain::plan_note::{OplogRestoreNote, OplogRestoreRecovery, OplogRestoreTitle};
 use kagi_domain::ref_moves::RefSnapshot;
-use kagi_domain::ref_restore::{self, RecordedEntry, RefRestore, RestoreMode, RestoredRef};
-use std::collections::HashMap;
+use kagi_domain::ref_restore::{
+    self, EntryRepo, Observed, RecordedEntry, RefRestore, RestoreMode, RestoredRef,
+};
+use std::collections::{BTreeSet, HashMap};
 
 /// How many Operation Log entries are searched for the target and its range.
 const ENTRY_SCAN: usize = 1000;
@@ -50,31 +52,68 @@ fn canonical(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// This repository's entries, oldest first. Branches are shared by every
-/// worktree of a repository, so entries from any of them count: an entry
-/// belongs here when its worktree opens onto the same common dir.
-fn repository_entries(repo: &Repository) -> Vec<RecordedEntry> {
+/// The whole Operation Log tail, oldest first, each entry classified as this
+/// repository's (its worktree opens onto the same common dir — branches are
+/// shared by every worktree), another's, or unknown (its worktree can no
+/// longer be opened: deleted or pruned). The planner fails closed on unknown
+/// entries and on a broken chain in the range (#878 review).
+fn log_entries(repo: &Repository) -> Vec<RecordedEntry> {
     let mine = canonical(repo.commondir());
     let mut common_of: HashMap<String, Option<PathBuf>> = HashMap::new();
     let mut entries: Vec<RecordedEntry> = crate::oplog::read_oplog_tail(ENTRY_SCAN)
         .into_iter()
-        .filter(|e| {
+        .map(|e| {
             let path = e.worktree.clone().unwrap_or_else(|| e.repo.clone());
-            let common = common_of.entry(path).or_insert_with_key(|path| {
-                Repository::open(path)
-                    .ok()
-                    .map(|r| canonical(r.commondir()))
-            });
-            common.as_deref() == Some(mine.as_path())
-        })
-        .map(|e| RecordedEntry {
-            id: e.id,
-            op: e.op,
-            ref_moves: e.ref_moves,
+            let common = common_of
+                .entry(path.clone())
+                .or_insert_with_key(|path| {
+                    Repository::open(path)
+                        .ok()
+                        .map(|r| canonical(r.commondir()))
+                })
+                .clone();
+            let repo = match common {
+                Some(common) if common == mine => EntryRepo::Mine,
+                Some(_) => EntryRepo::Other,
+                None => EntryRepo::Unknown(path),
+            };
+            RecordedEntry {
+                id: e.id,
+                parent: e.parent,
+                timestamp: e.timestamp,
+                op: e.op,
+                repo,
+                ref_moves: e.ref_moves,
+            }
         })
         .collect();
     entries.sort_by_key(|e| e.id);
     entries
+}
+
+/// Local branches whose reflog records an update after `after` (unix
+/// seconds): created or moved since the target entry was recorded. Which of
+/// them the record explains is the planner's decision.
+fn branches_changed_after(repo: &Repository, after: i64) -> Result<BTreeSet<String>, GitError> {
+    let mut changed = BTreeSet::new();
+    let refs = repo
+        .references_glob("refs/heads/*")
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    for reference in refs.flatten() {
+        let Ok(name) = reference.name() else {
+            continue;
+        };
+        let Ok(log) = repo.reflog(name) else {
+            continue;
+        };
+        if log
+            .iter()
+            .any(|line| line.committer().when().seconds() > after)
+        {
+            changed.insert(name.to_string());
+        }
+    }
+    Ok(changed)
 }
 
 /// Plan undoing exactly the oplog entry `entry_id`.
@@ -94,23 +133,34 @@ fn plan_oplog_restore(
 ) -> Result<OperationPlan, GitError> {
     let head = resolve_head(repo)?;
     let dirty = status_summary_display(&working_tree_status(repo)?);
-    let entries = repository_entries(repo);
-    let op = entries
+    let entries = log_entries(repo);
+    let target = entries
         .iter()
-        .find(|e| e.id == entry_id)
-        .map(|e| e.op.clone())
-        .unwrap_or_default();
+        .find(|e| e.id == entry_id && e.repo == EntryRepo::Mine);
+    let op = target.map(|e| e.op.clone()).unwrap_or_default();
+    let observed = match target {
+        Some(t) if mode == RestoreMode::RestoreTo => Observed {
+            changed_after_target: branches_changed_after(repo, t.timestamp)?,
+        },
+        _ => Observed::default(),
+    };
     let current = ref_snapshot(repo)
         .ok_or_else(|| GitError::Other("cannot read the repository's branches".to_string()))?;
-    let planned = ref_restore::plan(&entries, entry_id, mode, &current);
+    let planned = ref_restore::plan(&entries, entry_id, mode, &current, &observed);
 
     let note = PlanNote::OplogRestore;
     let mut blockers: Vec<PlanNote> = planned.blockers.into_iter().map(note).collect();
     let mut warnings = Vec::new();
-    if let Some(op) = in_progress_op(repo) {
-        blockers.push(note(OplogRestoreNote::OperationInProgress { op }));
-    }
     let repositories = super::branch_delete_safety::repositories(repo)?;
+    // Any worktree mid-operation: a branch it builds on must not move (#878).
+    for wt in &repositories {
+        if let Some(op) = in_progress_op(wt) {
+            blockers.push(note(OplogRestoreNote::OperationInProgress {
+                op,
+                path: wt.workdir().unwrap_or(wt.path()).display().to_string(),
+            }));
+        }
+    }
     for r in &planned.restores {
         warnings.push(note(OplogRestoreNote::Moves {
             refname: r.refname.clone(),

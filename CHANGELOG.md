@@ -33,6 +33,14 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Operation Log の「この時点まで戻す」が、正確に戻せない範囲でも成功していた問題を修正しました(#878 の review 指摘)。次の場合は理由を示して拒否します。
+  - Operation Log の途中の記録が消えている・読めない場合。
+  - 範囲に、削除された worktree で行った操作がある場合(この repository の操作だった可能性があるため)。
+  - その時点の後に Kagi の外で作られた・動かされた branch がある場合(戻しても残るため)。
+  - いずれかの worktree で merge / rebase などが進行中の場合(これまでは呼び出した worktree だけを見ていました)。
+
+  あわせて Operation Log パネルの固定文言を `Msg` のキーに移しました(表示は同じ)。(Refs #334)
+
 - 埋め込み terminal の `KAGI_WORKTREE_PATH` と `KAGI_MAIN_WORKTREE` が、git の workdir をそのまま使っていたため末尾に `/` が付いていた問題を修正しました(main worktree・linked worktree とも)。`"$KAGI_WORKTREE_PATH/foo"` が `//foo` になりません。(#870)
 
 - Cmd+R(Refresh)の読み直しが捨てられ、Kagi の外で変えた状態(起動後に置いた worktree lock の 🔐・右クリックの Unlock など)が画面に反映されない問題を修正しました。Refresh は読み直しの直後に fetch を始めますが、fetch の受付が実行中の読み直しを無効にする一方、何も取得しなかった fetch は読み直しをしないため、Refresh の読み直しが失われていました。fetch は、自分の受付で無効にした読み直しを、取得の有無や失敗に関わらず完了時にやり直します。自動 fetch が watcher の読み直しと重なった場合も同じです。(#851)

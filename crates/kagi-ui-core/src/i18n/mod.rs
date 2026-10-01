@@ -853,6 +853,8 @@ pub enum Msg {
     AdviceUntrackedRemain(kagi_domain::plan_note::UntrackedCtx),
     AdviceSuggestStashPush,
     AdviceNoForceUsed(kagi_domain::plan_note::push::PushPunct),
+    /// The Operation Log panel's fixed strings (#334, keys in `oplog_panel`).
+    OplogPanel(oplog_panel::OplogPanelMsg),
     AdviceWillDetachHead,
     AdviceRecommendCreateBranchHereFirst,
     AdviceDirtyStashFirst,
@@ -1376,6 +1378,7 @@ impl Msg {
         use Lang::{En, Ja};
         use Msg::*;
         match (language, self) {
+            (language, OplogPanel(key)) => key.t_for(language),
             (En, AdviceUntrackedRemain(ctx)) => match ctx {
                 UntrackedCtx::AfterCheckout => advice_en!(UntrackedAfterCheckout),
                 UntrackedCtx::AfterSwitching => advice_en!(UntrackedAfterSwitching),

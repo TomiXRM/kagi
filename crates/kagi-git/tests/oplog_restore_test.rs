@@ -392,7 +392,8 @@ fn set_identity(id: u64, identity: Option<serde_json::Value>) {
     std::fs::write(&log, lines.concat()).unwrap();
 }
 
-/// This repository's recorded identity, as JSON.
+/// This repository's recorded identity, as JSON (unix: carries dev / ino).
+#[cfg(unix)]
 fn identity_of(dir: &Path) -> serde_json::Value {
     let id = kagi_git::oplog::RepoIdentity::of(dir).expect("opens");
     let (dev, ino) = id.file_id.expect("unix file id");
@@ -515,6 +516,7 @@ fn own_entries_unrecognised_after_a_cross_filesystem_move_fail_closed() {
 /// #894 limit: an unrelated repository whose `.git` inode number was reused
 /// by ours reads as ours. Its record then names refs and OIDs this
 /// repository does not have, so the restore stops on them instead of acting.
+#[cfg(unix)]
 #[test]
 fn another_repositorys_entry_misread_as_ours_fails_closed() {
     if !test_support::run_isolated() {
@@ -541,6 +543,34 @@ fn another_repositorys_entry_misread_as_ours_fails_closed() {
         )),
         "{:?}",
         p.blockers
+    );
+}
+
+/// #900 review: a repository deleted and re-created at the same path is a
+/// different repository. An entry that names this path but another file id
+/// (here: another repository's, rewritten onto our path) is not ours, so it
+/// cannot be a restore point here.
+#[cfg(unix)]
+#[test]
+fn an_entry_at_our_path_with_another_file_id_is_not_ours() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    create(&repo, "a");
+    let other_tmp = tempfile::tempdir().unwrap();
+    let other = self::repo(other_tmp.path());
+    let earlier = create(&other, "from-the-old-repository");
+    let mut recreated = identity_of(&other);
+    recreated["common_dir"] = identity_of(&repo)["common_dir"].clone();
+    set_identity(earlier, Some(recreated));
+
+    let p = plan(&repo, &Operation::RestoreToPoint { entry_id: earlier });
+    assert_eq!(
+        restore_blockers(&p),
+        vec![OplogRestoreNote::EntryNotLoaded { id: earlier }],
+        "same path, different file id: another repository's entry"
     );
 }
 

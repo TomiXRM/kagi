@@ -94,7 +94,14 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
     - worktree を開けない entry(UnknownRepository): 削除・prune された worktree の entry は、この repository のものだった可能性がある。黙って除外しない。別の repository だと証明できた entry(Other)だけを除く。
   - **entry は記録時の repository を持つ**(#894)。`repo_identity` = 正規化した common dir の path と、unix ではその `(dev, ino)`。
     - append の 1 か所(`append_oplog_receipt`)で、entry の worktree(無ければ repo)を開いて埋める。Backend の経路も UI の persist 経路もここを通る。開けない scope(remote の `host:repo`)は `None`。
-    - 分類: identity を持つ entry は、path か `(dev, ino)` が自分と一致すれば Mine、どちらも違えば Other とする(worktree を開かない)。削除済みの worktree の entry も Mine になり、記録した移動は restore に入る。削除した無関係の repository の entry は Other になり、blocker にならない。
+    - 分類(worktree は開かない)。削除済みの worktree の entry は Mine になり、記録した移動は restore に入る。削除した無関係の repository の entry は Other になり、blocker にならない。
+
+      | entry の `(dev, ino)` | 自分の `(dev, ino)` | 判定 |
+      |---|---|---|
+      | あり | あり | 一致すれば Mine、違えば Other(path は見ない) |
+      | どちらかが無い | | path が一致すれば Mine、違えば Other |
+
+      両側に file id があれば、それだけで決める(#900 review)。path を優先すると、repository を消して同じ path に別の repository を作り直したとき、古い repository の entry が新しい repository の restore 地点になってしまう。
     - identity の無い旧形式の entry だけ、従来どおり worktree を開いて判定する(開けなければ UnknownRepository)。
     - `(dev, ino)` も持つのは、同じ filesystem 内での移動や rename では inode が変わらないため。path だけだと、移動した repository の自分の entry を Other と誤判定して黙って除外してしまう。
     - **限界 1**: filesystem をまたいで移動すると、path も `(dev, ino)` も変わるので、それ以前の自分の entry は Other になる。その entry が動かした branch は、記録が説明しない reflog の変化として RefChangedOutsideRecord の blocker になる(fail closed)。対象 entry 自体が移動前のものなら EntryNotLoaded。
@@ -194,6 +201,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - 削除した無関係の repository の entry は blocker にならない。
   - 限界 1 の固定: 自分の entry の identity を別 volume のもの(path も inode も違う)に書き換えると、RefChangedOutsideRecord で止まる。
   - 限界 2 の固定: 別 repository の entry に、この repository の `(dev, ino)` を書くと、その記録の `refs/heads/x` が RefMovedSince(current = 無し)で止まる。
+  - 同じ path に作り直した repository(#900 review): path はこの repository、file id は別 repository の entry は Other で、それを対象にした restore は EntryNotLoaded。inode 前提のテストは `#[cfg(unix)]`。
   - codec unit: 往復、旧行は `None`、不正値でも行は残って `None`。
 - #894 の変異確認: append で埋めない → integration 2 件、`(dev, ino)` を比べない → 限界 2 のテスト、分類で identity を使わない → integration 2 件、codec が書かない → codec と integration が落ちる。
 - #878 review 対応(P1)のテスト

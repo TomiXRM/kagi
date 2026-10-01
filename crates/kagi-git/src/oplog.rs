@@ -215,11 +215,16 @@ impl RepoIdentity {
         })
     }
 
-    /// Same repository: the same common dir path, or (where known) the same
-    /// file — a renamed or moved (same filesystem) repository included.
+    /// Same repository. When both sides know their file id, only that
+    /// decides — a renamed or moved (same filesystem) repository is still the
+    /// same, and a repository deleted and re-created at the same path is not
+    /// (#900 review). The path is compared only when either side has no file
+    /// id (an old entry, a non-unix platform).
     pub fn same_repository(&self, other: &Self) -> bool {
-        self.common_dir == other.common_dir
-            || matches!((self.file_id, other.file_id), (Some(a), Some(b)) if a == b)
+        match (self.file_id, other.file_id) {
+            (Some(a), Some(b)) => a == b,
+            _ => self.common_dir == other.common_dir,
+        }
     }
 }
 

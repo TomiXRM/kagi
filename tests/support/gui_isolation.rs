@@ -207,6 +207,19 @@ fn oplog_changes(before: &[u8], report: &mut String) {
     // The fixture directories are gone by now, so a recorded path cannot be
     // canonicalized: accept the root as `TMPDIR` spells it and as resolved
     // (`/var/…` and `/private/var/…` on macOS).
+    // Valid JSON is not yet an entry (`{}`, `null`): the product's reader
+    // skips what it cannot decode, so every line must survive it (#899 review).
+    let lines = String::from_utf8_lossy(&after)
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count();
+    let decoded = kagi_git::oplog::read_oplog_tail(lines + 1).len();
+    if decoded != lines {
+        let _ = writeln!(
+            report,
+            "- operations.jsonl: {lines} line(s) but the oplog reader decodes {decoded}"
+        );
+    }
     let raw = std::env::temp_dir();
     let root = std::fs::canonicalize(&raw).unwrap_or_else(|_| raw.clone());
     for line in String::from_utf8_lossy(&after[before.len()..]).lines() {
@@ -222,10 +235,18 @@ fn oplog_changes(before: &[u8], report: &mut String) {
             );
             continue;
         };
-        let repo = entry
+        let Some(repo) = entry
             .get("repo")
             .and_then(|repo| repo.as_str())
-            .unwrap_or("");
+            .filter(|repo| !repo.is_empty())
+        else {
+            let shown: String = line.chars().take(120).collect();
+            let _ = writeln!(
+                report,
+                "- operations.jsonl: an appended entry names no repository: `{shown}`"
+            );
+            continue;
+        };
         let local = Path::new(repo);
         // A remote repository is named by host, not by a local path.
         if !local.is_absolute() {

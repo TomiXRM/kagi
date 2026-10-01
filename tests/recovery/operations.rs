@@ -2305,6 +2305,12 @@ pub fn scenario_remote_source_merge_into(cx: &mut VisualTestAppContext) {
 
 /// #490: same real index.lock failure from panel indices, batch buttons and
 /// editor paths, including a linked panel while the main tab stays active.
+///
+/// ADR-0196 §3 (as amended by #747): a recorded staging failure reaches the
+/// user as the Operation Log receipt plus the Failed footer and an Error toast
+/// — never as a dismiss-only `AppNotice`, which is reserved for a receipt that
+/// could not be persisted. (The scenario used to assert that notice and has
+/// failed since #747 removed it; #846, the same decay as #824.)
 pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
     use kagi::ui::e2e;
     let temp = tempfile::tempdir().unwrap();
@@ -2343,9 +2349,7 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
             } else {
                 git(repo, &["add", "f.txt"]);
             }
-            if cx.read(|cx| e2e::app_notice_message(app.read(cx)).is_some()) {
-                press_enter(cx, &app, window);
-            }
+            cx.read(|cx| assert!(e2e::app_notice_message(app.read(cx)).is_none()));
             app.update(cx, |app, cx| {
                 e2e::open_worktree_panel_no_inputs(app, repo.clone(), "fixture", 0, cx);
             });
@@ -2400,7 +2404,17 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
                     std::fs::canonicalize(repo).unwrap()
                 );
                 assert!(footer.contains(owner.to_str().unwrap()), "{footer}");
-                assert!(e2e::app_notice_message(state).unwrap().contains("lock"));
+                let toast = state.toast_stack.as_ref().unwrap().read(cx).toasts().last();
+                assert!(
+                    toast.is_some_and(|t| t.kind == ToastKind::Error
+                        && t.message.starts_with(&format!("{op}: failed"))),
+                    "stage-failure-toasts: {op} via {entry} must toast its failure, got {toast:?}"
+                );
+                assert!(
+                    e2e::app_notice_message(state).is_none(),
+                    "stage-failure-no-notice: a recorded failure must not open a dismiss-only notice, got {:?}",
+                    e2e::app_notice_message(state)
+                );
                 let panel = state.op_log.as_ref().unwrap().read(cx);
                 let attempted = panel.entries().front().unwrap();
                 assert!(matches!(attempted.outcome, OpOutcome::Failed { .. }));
@@ -2416,7 +2430,6 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
         }
     }
     // Admission denial never reaches a mutation or opens a modal.
-    press_enter(cx, &app, window);
     let guard = app.update(cx, |app, _| app.app_sessions.write_lease(&main).unwrap());
     let count = records(&main, "stage").len();
     app.update(cx, |app, cx| {

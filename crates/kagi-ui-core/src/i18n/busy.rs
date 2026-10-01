@@ -78,6 +78,7 @@ const LABELS: &[(&str, &str, &str)] = &[
         "branch を push 中…",
     ),
     ("rebase", "Rebasing…", "rebase 中…"),
+    ("replay-onto", "Replaying commits…", "commit を replay 中…"),
     ("reset-current", "Resetting changes…", "変更を reset 中…"),
     ("reset", "Resetting changes…", "変更を reset 中…"),
     ("undo", "Undoing commit…", "commit を取り消し中…"),

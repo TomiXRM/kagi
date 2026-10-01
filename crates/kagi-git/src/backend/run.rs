@@ -424,6 +424,9 @@ impl Backend {
             Operation::RebaseCurrentOnto { onto } => self
                 .execute_rebase_current_onto(onto)
                 .map(OperationOutcome::Rebase),
+            Operation::ReplayOnto { branch, onto } => {
+                ops::execute_replay_onto(&self.repo, &self.path, plan, branch, onto, backup_refs)
+            }
             Operation::Discard { paths } => self
                 .execute_discard(plan, paths)
                 .map(OperationOutcome::Discard),

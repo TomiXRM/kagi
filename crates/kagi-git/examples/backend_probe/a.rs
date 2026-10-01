@@ -102,6 +102,7 @@ fn prepare_index_primed_series(context: &ProbeContext<'_>) -> Result<Value, Harn
         GitCliOptions {
             executable: context.git_executable(),
             fsmonitor: FsmonitorMode::Disabled,
+            stdin: None,
         },
     )
     .map_err(git_error)?;
@@ -377,6 +378,7 @@ fn snapshot_cli_stage(
         GitCliOptions {
             executable: context.git_executable(),
             fsmonitor: FsmonitorMode::Disabled,
+            stdin: None,
         },
     )
     .map_err(git_error)?;
@@ -445,6 +447,7 @@ fn execute_cli(context: &ProbeContext<'_>) -> Result<Value, HarnessError> {
         GitCliOptions {
             executable: context.git_executable(),
             fsmonitor,
+            stdin: None,
         },
     )
     .map_err(git_error)?;

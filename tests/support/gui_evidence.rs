@@ -14,7 +14,9 @@
 //! The text files are written from the panic hook, **before** unwinding,
 //! because unwinding drops the scenario's fixture `TempDir`s. The windows
 //! belong to the app context, not the scenario's stack, so they are captured
-//! after `catch_unwind` returns.
+//! after `catch_unwind` returns. A panic caught inside the scenario (a
+//! recovery boundary) also reaches the hook; the next panic overwrites it,
+//! and a scenario that passes deletes it.
 //!
 //! Windows are captured where they are. They stay off-screen and are never
 //! brought to the front: a failing run must not take over the developer's
@@ -46,6 +48,11 @@ fn evidence_dir(scenario: &str) -> PathBuf {
 
 /// Keep the `[kagi]` tail and write the text evidence on any panic of this
 /// thread. Chains to the hook that was installed before.
+///
+/// The hook runs for panics a recovery boundary catches as well (e.g. an
+/// executor panic turned into a `GitError`), so every panic rewrites the
+/// evidence: the last one before the scenario unwinds is the failure. A
+/// scenario that passes removes what its caught panics wrote ([`passed`]).
 pub(crate) fn install() {
     kagi_ui_core::klog::keep_tail();
     let previous = std::panic::take_hook();
@@ -54,13 +61,22 @@ pub(crate) fn install() {
             // A panic while the state is borrowed (inside this module) writes
             // nothing rather than panicking again.
             if let Ok(mut current) = current.try_borrow_mut() {
-                if current.dir.is_none() && !current.scenario.is_empty() {
+                if !current.scenario.is_empty() {
                     current.dir = write_text(&current, &info.to_string());
                 }
             }
         });
         previous(info);
     }));
+}
+
+/// The scenario returned normally: panics it caught are not a failure, so
+/// drop the evidence they wrote.
+pub(crate) fn passed() {
+    let written = CURRENT.with(|current| current.borrow_mut().dir.take());
+    if let Some(dir) = written {
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
 
 /// A scenario starts: forget the last one's fixtures, and drop evidence an
@@ -168,6 +184,28 @@ unsafe fn send_index(receiver: Id, selector: &std::ffi::CStr, index: usize) -> u
     call(receiver, sel_registerName(selector.as_ptr()), index)
 }
 
+/// `[receiver selector]` for a selector returning `BOOL` (one byte: `bool` on
+/// arm64, `signed char` on x86_64).
+///
+/// # Safety
+/// `receiver` must be a live Objective-C object answering `selector` with no
+/// arguments and a `BOOL` result.
+unsafe fn send_bool(receiver: Id, selector: &std::ffi::CStr) -> bool {
+    let call: unsafe extern "C" fn(Id, Id) -> std::ffi::c_schar =
+        std::mem::transmute(objc_msgSend as *const ());
+    call(receiver, sel_registerName(selector.as_ptr())) != 0
+}
+
+/// `[receiver selector]` for a selector returning `NSInteger`.
+///
+/// # Safety
+/// As [`send`], for an `NSInteger` result.
+unsafe fn send_integer(receiver: Id, selector: &std::ffi::CStr) -> isize {
+    let call: unsafe extern "C" fn(Id, Id) -> isize =
+        std::mem::transmute(objc_msgSend as *const ());
+    call(receiver, sel_registerName(selector.as_ptr()))
+}
+
 /// The window numbers of this process's windows, and whether each is on screen.
 fn app_windows() -> Vec<(isize, bool)> {
     // SAFETY: AppKit classes and selectors with the documented signatures,
@@ -185,8 +223,8 @@ fn app_windows() -> Vec<(isize, bool)> {
         (0..count)
             .map(|index| {
                 let window = send_index(windows, c"objectAtIndex:", index) as Id;
-                let number = send(window, c"windowNumber") as isize;
-                let visible = send(window, c"isVisible") as u8 != 0;
+                let number = send_integer(window, c"windowNumber");
+                let visible = send_bool(window, c"isVisible");
                 (number, visible)
             })
             .collect()

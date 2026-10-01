@@ -1604,9 +1604,12 @@ mod macos {
                 crate::gui_evidence::begin(name);
                 let run =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| scenario(&mut cx)));
-                if let Err(panic) = run {
-                    crate::gui_evidence::finish();
-                    std::panic::resume_unwind(panic);
+                match run {
+                    Ok(()) => crate::gui_evidence::passed(),
+                    Err(panic) => {
+                        crate::gui_evidence::finish();
+                        std::panic::resume_unwind(panic);
+                    }
                 }
                 executed += 1;
             } else {

@@ -243,6 +243,8 @@ fn oplog_changes(before: &[u8], report: &mut String) {
     let root = std::fs::canonicalize(&raw).unwrap_or_else(|_| raw.clone());
     for line in String::from_utf8_lossy(&after[before.len()..]).lines() {
         if line.trim().is_empty() {
+            // The writer only appends JSON entries (#899 review).
+            let _ = writeln!(report, "- operations.jsonl: a blank line was appended");
             continue;
         }
         let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) else {

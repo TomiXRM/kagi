@@ -20,6 +20,7 @@ pub mod backups;
 pub mod conflict_ops;
 mod policy;
 pub mod recording;
+mod reflog;
 pub(crate) mod remote_identity;
 pub mod remote_ref;
 pub mod remove;

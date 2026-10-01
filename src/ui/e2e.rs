@@ -721,8 +721,8 @@ thread_local! {
 }
 
 /// What one conversation read returns: the verdicts + issue comments, and the
-/// line comments, each with its own failure. Unconditional so the production
-/// load site can name it in its `None` arm.
+/// review threads (#351), each with its own failure. Unconditional so the
+/// production load site can name it in its `None` arm.
 pub type PrConversationResult = (
     Result<
         (
@@ -731,7 +731,7 @@ pub type PrConversationResult = (
         ),
         kagi_git::GitError,
     >,
-    Result<Vec<kagi_domain::github::ReviewComment>, kagi_git::GitError>,
+    Result<Vec<kagi_domain::review_thread::ReviewThread>, kagi_git::GitError>,
 );
 
 #[cfg(feature = "gui-e2e")]

@@ -19,6 +19,9 @@ pub(crate) struct DiffHeader {
     /// Labels of the `leading` / `trailing` buttons, for the fit's labelled
     /// copy (the header adds its own toggle).
     pub(crate) labels: Vec<SharedString>,
+    /// #351: per-row gutter markers and expansions the embedding adds to the
+    /// list below the header (the PR diff's review threads).
+    pub(crate) overlay: Option<std::rc::Rc<dyn super::row_overlay::RowOverlay>>,
 }
 
 impl DiffHeader {
@@ -42,6 +45,7 @@ impl DiffHeader {
             leading,
             trailing,
             mut labels,
+            ..
         } = self;
         // ADR-0124: unified ⇄ side-by-side toggle. The label names the mode
         // the click switches TO; the flag is global (kagi-ui-core atomic) and

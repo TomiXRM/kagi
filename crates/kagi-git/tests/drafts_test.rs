@@ -511,7 +511,11 @@ fn issue_draft_keeps_picks_and_reads_the_title_body_format() {
         queue_issue_draft(repo, None, "old title", "old body", &chosen);
         flush_issue_drafts().expect("save picks");
         let files = drafts_dir_files(log_dir);
-        assert_eq!(files.len(), 1, "readable draft replaced in place: {files:?}");
+        assert_eq!(
+            files.len(),
+            1,
+            "readable draft replaced in place: {files:?}"
+        );
         assert_eq!(
             load_issue_record(repo, None),
             Some(IssueDraftRecord {

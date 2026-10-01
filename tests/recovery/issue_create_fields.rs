@@ -202,6 +202,39 @@ pub fn scenario_issue_create_fields(cx: &mut VisualTestAppContext) {
         (vec!["bug".into(), "gone".into()], vec!["hubot".into()]),
         "Apply stores the picks in the composer"
     );
+    // #903: the picks are saved with the draft, so a restart restores them.
+    assert_eq!(
+        kagi_git::drafts::load_issue_draft(&repo, None).map(|draft| draft.fields),
+        Some(kagi_domain::github::IssueCreateFields {
+            labels: vec!["bug".into(), "gone".into()],
+            assignees: vec!["hubot".into()],
+        }),
+        "Apply saves the picks with the draft"
+    );
+    // …and a composer that starts again loads them back with the text.
+    app.update(cx, |app, cx| {
+        app.forget_issue_composer_for_e2e(cx);
+        app.refresh_github_issues(cx);
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !cx.read(|cx| app.read(cx).issue_composer_loaded_for_e2e()) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the draft never loaded"
+        );
+        cx.run_until_parked();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    paint(cx, window);
+    assert_eq!(
+        fields(&app, cx),
+        (vec!["bug".into(), "gone".into()], vec!["hubot".into()]),
+        "the reloaded composer has the saved picks"
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e().0.body),
+        BODY
+    );
     assert!(
         issue_creates(&repo).is_empty(),
         "picking is not a write; nothing reaches the oplog before Create"
@@ -277,6 +310,10 @@ pub fn scenario_issue_create_fields(cx: &mut VisualTestAppContext) {
         fields(&app, cx),
         (Vec::new(), Vec::new()),
         "a created issue leaves an empty composer"
+    );
+    assert!(
+        kagi_git::drafts::load_issue_draft(&repo, None).is_none(),
+        "a created issue clears its draft, picks included"
     );
 
     drop(gh);

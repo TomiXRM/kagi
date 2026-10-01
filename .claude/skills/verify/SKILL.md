@@ -573,6 +573,10 @@ The current suite covers:
   pick and the measured `issue-composer-submit` is refused before
   `gh issue create` runs (Refused oplog entry, toast naming the label, body and
   picks kept); the retry sends `--label`/`--assignee` and empties the picks.
+  Apply saves the picks with the draft, and a composer dropped with
+  `forget_issue_composer_for_e2e` reloads text and picks through the
+  production load (#903; file format and the `.corrupt` set-aside are pinned
+  by `crates/kagi-git/tests/drafts_test.rs`).
   `issue-composer-posted-as` is drawn only once the login on the repository's
   host (`github_host_logins`, read with `gh api user [--hostname]` after an
   Issues read) is known — never from the window-global `github_login`. Pair

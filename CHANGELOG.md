@@ -7,7 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
-- Issues の「新しい Issue」で、作成前にラベルと担当者を選べるようにしました(#866)。PR の項目編集と同じ picker で repository の一覧から選び、作成時に `gh issue create --label … --assignee …` で送ります。作成直前に repository を読み直し、無くなったラベルや割り当てられない担当者があれば `gh` を呼ばずに Operation Log へ「拒否」と記録して toast で知らせ、入力した本文と選択はそのまま残します。作成者は「<login> として投稿」と表示するだけで変更できません(`gh` は認証中のユーザーで投稿するため)。選択は下書きに保存しないので、アプリを再起動すると消えます。(Closes #866)
+- Issues の「新しい Issue」で、作成前にラベルと担当者を選べるようにしました(#866)。PR の項目編集と同じ picker で repository の一覧から選び、作成時に `gh issue create --label … --assignee …` で送ります。作成直前に repository を読み直し、無くなったラベルや割り当てられない担当者があれば `gh` を呼ばずに Operation Log へ「拒否」と記録して toast で知らせ、入力した本文と選択はそのまま残します。作成者は「<login> として投稿」と表示するだけで変更できません(`gh` は認証中のユーザーで投稿するため)。選択は本文と一緒に下書きへ保存され、アプリを再起動しても残ります(#903)。読めなくなった下書きファイルは上書き・削除せず `<file>.corrupt` として残します。(Closes #866, Closes #903)
 - conflict の continue / skip / abort と解決内容の保存(save)も、Operation Log に動かした ref を記録するようにしました(#884、ADR-0214 §4)。これまでは記録なしの扱いだったため、Kagi で conflict を解いた merge や cherry-pick をまたぐ時点には「記録なし」で戻せませんでした。今は merge 前の時点にも復元できます。実行前に拒否された場合は「動いた ref はありません」と記録します。rebase は途中で HEAD が detached になるので、これまでどおり復元の対象外です。(Refs #334)
 - PR 一覧（PR モードの表）の accessibility（#354 slice 3、3 本目）。支援技術から表を list として、各行を「番号・タイトル・状態・作者・branch・check・更新」で名前付きの項目として、並び順の何番目か付きで読めるようにしました（表は選択状態を持たないので selected は付けません）。（Refs #354）
 - Operation Log の「取り消す / この時点まで戻す」の確認 card に、戻した後のグラフを表示するようにしました(#334 slice 2c、ADR-0214 §6)。branch が戻る位置と、どの branch からも外れる commit の数を、変化する部分の前後(最大 40 行)だけ、通常の commit graph と同じ描き方で示します。計算は読み込み済みの履歴だけで行い、戻し先がその中に無い場合は推定せず「プレビューできません」と表示します(復元自体はできます)。表示専用で、確認するまで何も書き込みません。(Refs #334)

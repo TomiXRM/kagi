@@ -40,8 +40,8 @@ pub(super) struct IssueEditor {
     pub focused: bool,
     pub saving: bool,
     pub save_error: Option<String>,
-    /// Labels and assignees for a New Issue (#866). Tab state only: drafts
-    /// on disk do not carry them, so a restart forgets them.
+    /// Labels and assignees for a New Issue (#866), saved and restored with
+    /// the draft (#903).
     pub fields: kagi_domain::github::IssueCreateFields,
 }
 

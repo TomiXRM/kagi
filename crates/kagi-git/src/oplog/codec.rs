@@ -367,7 +367,12 @@ fn repo_identity<'de, D: Deserializer<'de>>(d: D) -> Result<RecordedIdentity, D:
         _ => Err(()),
     };
     let file_id = pair(r.dev, r.ino);
-    let created = pair(r.born_s, r.born_ns.map(u64::from));
+    // Nanoseconds past the second: anything from 1e9 up is not a time, so
+    // the identity is corrupt, not a different repository (#900 review).
+    let created = pair(r.born_s, r.born_ns.map(u64::from)).and_then(|c| match c {
+        Some((_, ns)) if ns >= 1_000_000_000 => Err(()),
+        c => Ok(c),
+    });
     match (file_id, created) {
         (Ok(file_id), Ok(created)) => Ok(RecordedIdentity::Known(RepoIdentity {
             common_dir: r.common_dir,

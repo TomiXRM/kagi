@@ -531,6 +531,28 @@ fn repo_identity_is_additive_and_strict() {
     }
 }
 
+/// #900 review: a nanosecond part of 1e9 or more is not a time. Read as one,
+/// it would never equal the repository's real creation time, so a corrupt
+/// entry of this repository would be judged another's (`Different`) and
+/// dropped from a restore's range silently; it is `Invalid` instead.
+#[test]
+fn an_out_of_range_birth_nanosecond_is_invalid() {
+    let line = |ns: u64| {
+        format!(
+            concat!(
+                r#"{{"timestamp":1000,"op":"checkout","repo":"/tmp/repo","#,
+                r#""before":{{"head":"branch: main","dirty":"clean"}},"#,
+                r#""outcome":{{"kind":"Success","after":{{"head":"b","dirty":"clean"}}}},"#,
+                r#""repo_identity":{{"common_dir":"/r/.git","dev":1,"ino":2,"born_s":5,"born_ns":{}}}}}"#,
+            ),
+            ns
+        )
+    };
+    let read = |ns| parse_oplog_line(&line(ns)).expect("row kept").repo_identity;
+    assert!(matches!(read(999_999_999), RecordedIdentity::Known(_)));
+    assert_eq!(read(1_000_000_000), RecordedIdentity::Invalid);
+}
+
 /// #900 review: deciding "same repository". The case that matters most: a
 /// repository deleted and re-cloned at the same place from the same remote,
 /// whose new `.git` got the old inode — same path, same `(dev, ino)`, and its

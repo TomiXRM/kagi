@@ -79,6 +79,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
     - 実行前の拒否(`record_conflict_refusal` / `record_conflict_save_refusal`、UI の continue の計画時の拒否)・実行前に捨てた job(`conflict_abandoned`)・repository を開けなかった場合は、何も動いていないことが構造上確かなので `Some(空)` にする。
     - **終了が確認できない(`Unknown`)outcome の移動は記録しない**(#891 review)。process がまだ ref を動かしうるので、観測した snapshot は記録にならない。`OpLogEntry::with_ref_moves` が `Unknown` なら `None` にする。`record_receipt`(`Backend::run` を含む)と UI の `record_conflict_persist` の両方がこれを通るので、restore はその entry をまたげない(fail closed)。
     - これで、Kagi の中で解いた merge(merge → save → merge-commit)や cherry-pick の時点を越えて restore できる。rebase は HEAD が detached を経由するので、引き続き HeadMoved(#886)。
+  - backend の専用経路(absorb、merged branch の一括削除、oplog entry の forget)は `Backend::observe_ref_moves` で前後を観測して記録する(#871 review)。
 
 ### 5. slice 2b: op revert / restore to point(2b-1 = backend、2b-2 = UI)
 
@@ -124,14 +125,17 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
 ### 6. slice 2c: 実行前のグラフプレビュー(表示専用)
 
 - **入力**: tab が読み込み済みの rows(id + parents、topo 順)、`branch_targets`、plan の `restore` 行だけを使う。repository は読まず、plan の一部でもない(書き込みなし、preflight にも関わらない)。
+  - branch Solo 中は、表示用に絞った `rows` ではなく、退避してある全行(`branch_solo.saved_rows`)を使う。Solo は表示の絞り込みにすぎない(#883 review)。
 - **計算**(pure、`kagi_domain::restore_preview`)
-  - 戻した後の local branch の先端と、動かない根(remote branch / tag / detached な worktree の HEAD / stash の base)から到達できる commit を求める。attached な HEAD は branch に追従するので根にしない。
+  - 戻した後の local branch の先端と、動かない根(remote branch / tag / Kagi が fetch した PR head `refs/kagi/pr/**` / detached な worktree の HEAD / stash の base)から到達できる commit を求める。attached な HEAD は branch に追従するので根にしない。PR head は snapshot が graph の根として読み込んでいるので、`RepoSnapshot.pr_heads` として read model に渡す(#883 review)。
   - 戻す前にどの根からも到達しなかった行(読み込み範囲の外を指す ref など)は消さない。
   - 残った行は読み込み順の部分列、すなわち topo 順なので、既存の `graph::layout()` をそのまま使う(新しいレイアウトは書かない)。
   - 消える行数 = 戻す前は到達し、戻した後は到達しない行。
 - **範囲**: 戻し先の行と、消える行が下がっていた行(その下の最初の残る行)を含む最小区間に、前後 4 行を足す。上限 40 行で、窓の外の行数は「… ほか N 行」と出す。lane は最大 8 本分の幅で切る(既存の graph 列と同じく clip)。
-- **推定しない**: 戻し先 commit が読み込み済み rows に無い場合(削除した branch の作り直し、restore で branch から外れた commit への revert など)は `NotLoaded` とし、「プレビューできません」と明示する。復元そのものは可能。
-- **描画**: commit graph と同じ `graph_view::graph_canvas` を行ごとに使う。card への差し込みは `render_plan_modal_wrapper_extra`(`Option<AnyElement>` を warning の後に描く)。既存の `wrapper_styled` / `wrapper_staged` はそれに `None` で委譲するので、呼び出し元の署名は変えない。この card は #872 の `ConfirmStage`(Unarmed / Armed)にも乗る。
+  - card の body はスクロールしない(modal の規則)ので、行は自分の高さ上限(`modal_list_max_h`)付きのスクロール領域に入れる。40 行 × 29px は通常の窓に収まらない(#883 review)。
+- **推定しない**: 戻し先 commit が読み込み済み rows に無い場合(削除した branch の作り直し、restore で branch から外れた commit への revert など)は `NotLoaded` とし、「プレビューできません」と明示する。復元そのものは可能。見出しも消える数を言わない中立な「戻した後のグラフ」にする(#883 review。以前は「消える commit はありません」と出て矛盾していた)。
+- **描画**: commit graph と同じ `graph_view::graph_canvas` を行ごとに使う。card への差し込みは `render_plan_modal_wrapper_extra`(`PlanCardExtra { element, clipboard }` を warning の後に描く)。`Copy all` は card のテキストにこの clipboard(見出し・各行・窓外の行数、または NotLoaded の理由)を足す(#883 review)。既存の `wrapper_styled` / `wrapper_staged` は `None` で委譲するので、呼び出し元の署名は変えない。この card は #872 の `ConfirmStage`(Unarmed / Armed)にも乗る。
+- **focus**: card を開くとき root に focus を移す(`focus_root_for_modal`、plan modal の規約)。実ボタンのクリックは root(`track_focus`)が focus を受けるので、現状の入口では Enter / Escape は届いている。キーボードの入口が増えても届くようにするためのもの(#878 review)。
 - **コスト**: card を開くときに 1 回だけ計算して modal に保持する。到達計算は O(rows)、layout は O(rows × lanes)。描画は最大 40 行。
 
 ## 結果
@@ -186,3 +190,12 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - domain unit: 鎖が途切れると HistoryGap、別 repository の entry は除いて Unknown は blocker、記録外で変わった branch は RefChangedOutsideRecord(記録が説明する branch は除く)、動いて戻った ref が別の値にあれば RefMovedSince。
   - kagi-git integration: oplog から 1 行を消すと HistoryGap、削除・prune した worktree の entry は UnknownRepository、別 worktree で merge の conflict 中は OperationInProgress(その path)、対象の後に `git branch` で作った branch は RefChangedOutsideRecord。
 - 変異確認: 鎖の検査を外す、Unknown を除外扱いにする、変化の検査を外す → それぞれ domain と integration が落ちる。in-progress を呼び出し元の worktree だけにする → integration、動いて戻った ref の検査を restores だけにする → domain が落ちる。
+- #883 / #871 / #878 review 対応(P2)のテスト
+  - Tier A `oplog_restore_preview_review`
+    - 30 commit の履歴の深い位置に side commit をぶら下げ、PR head だけが保持する commit も用意する。branch Solo を on にして restore card を開く。
+    - 消える数 = 2(deep の commit と main の最新。PR head の commit は残る)。
+    - 行の箱が上限で止まり(33 行でも箱は行の合計より低い)、wheel で最後の行が箱の中に入る。
+    - 実際の `Copy all`(`plan-card-copy` の probe)で、見出しと `main ←` が clipboard に入る。
+  - unit: NotLoaded の見出しは「消える数」を言わない、Copy all の文字列(見出し・移動・窓外の行数・NotLoaded の理由)、Operation Log の entry コピーに記録された ref 移動(OID 全桁、`none moved`、記録なしは行なし)。
+  - kagi-git integration: absorb は作業 branch の移動を、merged branch の一括削除は削除(new = 無し)を `ref_moves` に記録する。
+- 変異確認: Solo の全行を使わない → 消える数 0、PR head を根にしない → 3、上限を外す → 箱が 957px、Copy all の clipboard を空にする → Tier A が落ちる。NotLoaded の見出しを `preview_heading(0)` に戻す・entry コピーから移動を外す → unit、absorb / 一括削除の記録を `None` にする → integration が落ちる。focus の変更は現状の入口では観測できないためテストなし(実ボタンのクリックで root が focus を得ることを確認した)。

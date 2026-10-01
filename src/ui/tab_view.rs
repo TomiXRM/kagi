@@ -59,6 +59,8 @@ pub struct TabViewState {
     pub toolbar_state: ToolbarState,
     pub remote_branches: Vec<RemoteBranch>,
     pub tags: Vec<Tag>,
+    /// Commits `refs/kagi/pr/**` point at (graph roots no branch names).
+    pub pr_heads: Vec<CommitId>,
     pub branch_upstream_info: HashMap<String, UpstreamInfo>,
     pub worktrees: Vec<Worktree>,
     /// #472/#767: the anchor each WIP row's dashed HEAD connector landed on —
@@ -244,6 +246,7 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
         toolbar_state,
         remote_branches,
         tags,
+        pr_heads: snap.pr_heads.clone(),
         branch_upstream_info,
         worktrees: snap.worktrees.clone(),
         wip_lanes,

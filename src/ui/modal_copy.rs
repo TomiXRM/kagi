@@ -56,6 +56,9 @@ pub(crate) fn modal_copy_button(
                 .h(theme::scaled_px(12.))
                 .text_color(rgb(current_theme().text_sub)),
         )
+        // Measured, so a scenario can press the real button (#883 review).
+        .relative()
+        .child(super::e2e::measure_inside(id))
         .into_any_element()
 }
 

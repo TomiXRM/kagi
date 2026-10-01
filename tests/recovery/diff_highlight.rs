@@ -118,6 +118,7 @@ fn assert_first_text(seen: &Seen, surface: &str) {
 /// Text first, one highlight and one projection per (rows, theme): repeated
 /// frames, a reload that re-reads the same text, and a theme switch.
 pub fn scenario_diff_highlight_once(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["diff_split"]);
     let split_before = theme::diff_split();
     theme::set_diff_split(true);
     let fixture = rust_fixture();
@@ -236,6 +237,7 @@ pub fn scenario_diff_highlight_once(cx: &mut VisualTestAppContext) {
 /// A late highlight or read never lands on the surface that replaced it: a
 /// newer file, a newer theme, a newer open, or a close.
 pub fn scenario_diff_highlight_stale(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["theme"]);
     let fixture = rust_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (kagi, window) = mount(cx, &repo);

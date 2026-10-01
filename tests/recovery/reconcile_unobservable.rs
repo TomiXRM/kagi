@@ -126,6 +126,7 @@ fn hold_oplog_append_lock() -> std::fs::File {
 }
 
 pub fn scenario_reconcile_unobservable_release(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let old_lang = i18n::lang();
     for lang in [Lang::En, Lang::Ja] {
         i18n::set_lang(lang);

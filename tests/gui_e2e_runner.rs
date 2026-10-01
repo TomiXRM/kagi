@@ -2947,30 +2947,52 @@ mod macos {
         // them off `operation_history` (and said so on stderr:
         // `[kagi] undo: skipped — amend ran in another worktree …`).
         //
-        // The oracle is the SHA, not stack equality: `reload` legitimately
-        // seeds the stack from the TAB's own branch reflog whenever it is empty
-        // (ADR-0084), and `head_branch_and_sha` reads the tab's HEAD — so a
-        // leaked entry would appear as the tab's branch pointed at worktree A's
-        // rewritten commit, and Cmd+Z would move `main` onto it.
+        // `reload` seeds an empty stack from the TAB's own branch reflog
+        // (ADR-0084 §2), and a seeded entry is undoable by contract: the top
+        // of the stack must be `main`'s own last commit, and running it is a
+        // soft move of `main` alone (§3) — never `main` onto worktree A's
+        // amended commit, never a write in either worktree. (Until #773 the
+        // fixture's `main` had only its initial commit, whose zero `before`
+        // made the Undo a refused no-op, and this section asserted that
+        // nothing moved at all; #849.)
+        let main_head = repo_fp.0.clone();
+        let main_parent = rev_parse(&repo_path, "HEAD^");
         let undo_head = cx.read(|app| e2e::undo_head(kagi.read(app)));
         assert!(
             undo_head
                 .as_ref()
-                .is_none_or(|(_, after, _)| after != &head_after_amend),
-            "the tab's Undo must not point at the WORKTREE's amended commit: {undo_head:?}"
+                .is_some_and(|(branch, after, _)| branch == "main" && after == &main_head),
+            "the tab's Undo must hold main's own reflog entry (main at {main_head}), \
+             not the WORKTREE's amend ({head_after_amend}): {undo_head:?}"
         );
-        // …and running it changes neither repository: the entry it holds (if
-        // any) is the tab's own, and its plan is evaluated against the tab.
-        let before_undo = (repo_fingerprint(&repo_path), repo_fingerprint(&wt_a));
         kagi.update(cx, |app, cx| {
             app.open_history_undo_modal();
             app.confirm_history(cx);
         });
         cx.run_until_parked();
         assert_eq!(
+            (
+                repo_fingerprint(&repo_path),
+                repo_fingerprint(&wt_a),
+                repo_fingerprint(&wt_b)
+            ),
+            (
+                (main_parent, repo_fp.1.clone()),
+                (head_after_amend.clone(), String::new()),
+                wt_b_fp.clone()
+            ),
+            "the tab's Undo is a soft move of main alone; neither worktree is touched"
+        );
+        // Redo puts main back, so (d) starts from the fixture state again.
+        kagi.update(cx, |app, cx| {
+            app.open_history_redo_modal();
+            app.confirm_history(cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
             (repo_fingerprint(&repo_path), repo_fingerprint(&wt_a)),
-            before_undo,
-            "the tab's Undo must not act on either repository after worktree ops"
+            (repo_fp.clone(), (head_after_amend.clone(), String::new())),
+            "the tab's Redo returns main to its own tip and leaves the worktree alone"
         );
 
         // ── (d) the Editor Workspace tree discards in the TAB ───────────────

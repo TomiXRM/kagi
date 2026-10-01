@@ -84,6 +84,7 @@ mod tests {
             head: None,
             locked: false,
             lock_reason: None,
+            port: None,
         }
     }
 

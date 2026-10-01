@@ -482,10 +482,14 @@ fn collect_worktrees(
     // flagged `is_current` and break the interactive WIP row.
     let current_canon = canon(&current_path);
 
+    // #855: the sidebar shows each worktree's stored port block; read once,
+    // never assigned here.
+    let ports = crate::worktree_ports::Assignments::read();
     let mut worktrees = Vec::new();
     worktrees.push(Worktree {
         name: "main".to_string(),
         is_current: canon(&main_path) == current_canon,
+        port: ports.port(&main_path),
         path: main_path.clone(),
         branch: None,
         is_main: true,
@@ -516,6 +520,7 @@ fn collect_worktrees(
         worktrees.push(Worktree {
             name: name.to_string(),
             is_current: canon(&path) == current_canon,
+            port: ports.port(&path),
             path,
             branch: None,
             is_main: false,

@@ -478,6 +478,9 @@ pub enum SidebarRow {
         is_current: bool,
         is_main: bool,
         locked: bool,
+        /// First port of the worktree's stored block, shown as
+        /// `localhost:<port>` (#855). `None` when it has none.
+        port: Option<u16>,
     },
     /// A stash leaf.
     Stash { index: usize, message: String },
@@ -840,6 +843,7 @@ pub fn build_sidebar_rows(
                     is_current: wt.is_current,
                     is_main: wt.is_main,
                     locked: wt.locked,
+                    port: wt.port,
                 });
             }
         }
@@ -925,13 +929,17 @@ fn build_sidebar_row(
             is_current,
             is_main,
             locked,
+            port,
         } => super::sidebar_worktree_row::build_worktree_row(
-            name,
-            path,
-            path_label,
-            *is_current,
-            *is_main,
-            *locked,
+            super::sidebar_worktree_row::WorktreeRowFacts {
+                name,
+                path,
+                path_label,
+                is_current: *is_current,
+                is_main: *is_main,
+                locked: *locked,
+                port: *port,
+            },
             this,
             cx,
         ),

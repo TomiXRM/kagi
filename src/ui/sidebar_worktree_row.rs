@@ -475,22 +475,38 @@ pub(super) fn inspection_panel(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
         .into_any_element()
 }
 
+/// What one WORKTREES row shows (the `SidebarRow::Worktree` fields).
+pub(super) struct WorktreeRowFacts<'a> {
+    pub(super) name: &'a str,
+    /// The working-tree path itself, never `path_label`: the label is display
+    /// text — lossy for non-UTF-8 paths and control-byte sanitized — so the
+    /// menu's path actions would target the wrong directory if parsed back
+    /// from it.
+    pub(super) path: &'a std::path::Path,
+    pub(super) path_label: &'a str,
+    pub(super) is_current: bool,
+    pub(super) is_main: bool,
+    pub(super) locked: bool,
+    /// First port of the worktree's stored block (#855).
+    pub(super) port: Option<u16>,
+}
+
 /// A worktree leaf (✓ marks the current worktree). Right-click opens the shared
 /// worktree menu.
-///
-/// `path` is the working-tree path itself, never `path_label`: the label is
-/// display text — lossy for non-UTF-8 paths and control-byte sanitized — so the
-/// menu's path actions would target the wrong directory if parsed back from it.
 pub(super) fn build_worktree_row(
-    name: &str,
-    path: &std::path::Path,
-    path_label: &str,
-    is_current: bool,
-    is_main: bool,
-    locked: bool,
+    facts: WorktreeRowFacts<'_>,
     app: &KagiApp,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    let WorktreeRowFacts {
+        name,
+        path,
+        path_label,
+        is_current,
+        is_main,
+        locked,
+        port,
+    } = facts;
     let is_remote = app.remote_view.is_some();
     // issue #356: worktree name/path are remote/filesystem-origin text —
     // neutralize control bytes in the visible label.
@@ -539,6 +555,9 @@ pub(super) fn build_worktree_row(
     if is_remote {
         return row.into_any();
     }
+    if let Some(port) = port {
+        row = row.child(port_link(name, port, cx));
+    }
     let path_for_select = path.to_path_buf();
     row = row
         .gap_1()
@@ -573,6 +592,34 @@ pub(super) fn build_worktree_row(
         )))
         .hover(|style| style.bg(rgb(theme().surface)))
         .into_any()
+}
+
+/// `localhost:<port>` for a worktree's stored port block (#855): the first port
+/// of the block its terminal receives as `KAGI_PORT`. A click opens it in the
+/// browser; it does not select the row.
+fn port_link(name: &str, port: u16, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let url = format!("http://localhost:{port}");
+    let open = cx.listener(move |_app: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+        cx.stop_propagation();
+        cx.open_url(&url);
+    });
+    super::e2e::measure_control(
+        format!("sidebar-worktree-port-{name}"),
+        div()
+            .id(SharedString::from(format!("sidebar-worktree-port-{name}")))
+            .flex_shrink_0()
+            .px_1()
+            .rounded_sm()
+            .text_xs()
+            .text_color(rgb(theme().color_branch))
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(theme().selected)))
+            // The row selects its inspection on click.
+            .on_mouse_down(gpui::MouseButton::Left, |_e, _w, cx| cx.stop_propagation())
+            .on_click(open)
+            .child(SharedString::from(format!("localhost:{port}"))),
+    )
+    .into_any_element()
 }
 
 #[cfg(feature = "gui-e2e")]

@@ -364,6 +364,16 @@ The current suite covers:
   125% in JA, open a file diff and File History; every button is visible and
   clickable, icon-only buttons name themselves in a hover tooltip, and a wide
   window shows the labels again.
+- worktree port in the shell and the sidebar (`KAGI_GUI_E2E_ONLY=worktree_port_env`,
+  `tests/recovery/worktree_ports.rs`): #855 / ADR-0171. The shell is swapped for a
+  script through `KagiApp::set_terminal_shell_for_e2e` (`gui-e2e` only) that
+  writes the `KAGI_PORT` / `KAGI_WORKTREE_PATH` it was spawned with, so the
+  oracle is the real PTY child's environment: it must equal the block the store
+  holds for the worktree. The main row then shows `sidebar-worktree-port-main`
+  (refreshed by the terminal start), a linked worktree assigned before mount
+  shows its block (read by the snapshot), and one never assigned shows none and
+  stays unassigned. Tier B: open a terminal, see `localhost:<port>` on the row,
+  click it and check the browser opens that URL.
 - terminal auto-lock compare-and-unlock (`KAGI_GUI_E2E_ONLY=terminal_auto_lock_race`,
   `tests/recovery/worktree_lock_reason.rs`): #836 / ADR-0212. (b) Through the
   Backend race seam (`execute_auto_unlock_worktree_racing`,

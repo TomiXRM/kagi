@@ -152,6 +152,10 @@ mod recovery_modal_compact;
 mod recovery_worktree_lock_reason;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/worktree_ports.rs"]
+mod recovery_worktree_ports;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/worktree_inspection.rs"]
 mod worktree_inspection;
 
@@ -779,6 +783,10 @@ mod macos {
             (
                 "terminal_auto_lock_race",
                 Box::new(crate::recovery_worktree_lock_reason::scenario_terminal_auto_lock_race),
+            ),
+            (
+                "worktree_port_env",
+                Box::new(crate::recovery_worktree_ports::scenario_worktree_port_env),
             ),
             (
                 "preflight_presentation",

@@ -130,6 +130,30 @@ pub fn oplog_outcome_from(
                 ),
             },
         },
+        (
+            Ok(OperationOutcome::SyncToRemote {
+                branch,
+                from,
+                to,
+                tip_backup,
+                work_backup,
+                removed_untracked,
+            }),
+            _,
+        ) => crate::oplog::OpOutcome::Success {
+            after: ops::StateSummary {
+                head: predicted.head.clone(),
+                dirty: match work_backup {
+                    Some(work) => format!(
+                        "synced '{branch}' {from}→{to}; {removed_untracked} untracked removed; restore tip: git update-ref refs/heads/{branch} {tip_backup}; restore work: git stash apply --index {}",
+                        work.reference
+                    ),
+                    None => format!(
+                        "synced '{branch}' {from}→{to}; restore tip: git update-ref refs/heads/{branch} {tip_backup}"
+                    ),
+                },
+            },
+        },
         (Ok(OperationOutcome::StashDrop { oid }), _) => crate::oplog::OpOutcome::Success {
             after: ops::StateSummary {
                 head: predicted.head.clone(),
@@ -164,6 +188,22 @@ pub fn recovery_handles(result: &Result<OperationOutcome, GitError>) -> Vec<Reco
         OperationOutcome::StashDrop { oid } => vec![RecoveryHandle::oid(recovery::STASH, oid)],
         OperationOutcome::DeleteBranch { tip, reference, .. } => {
             vec![RecoveryHandle::oid(recovery::BRANCH_TIP, tip).with_reference(reference)]
+        }
+        OperationOutcome::SyncToRemote {
+            from,
+            tip_backup,
+            work_backup,
+            ..
+        } => {
+            let mut handles =
+                vec![RecoveryHandle::oid(recovery::BRANCH_TIP, from).with_reference(tip_backup)];
+            if let Some(work) = work_backup {
+                handles.push(
+                    RecoveryHandle::oid(recovery::WORK_STASH, &work.commit)
+                        .with_reference(&work.reference),
+                );
+            }
+            handles
         }
         OperationOutcome::ReplayOnto { backups, .. } => backups
             .iter()

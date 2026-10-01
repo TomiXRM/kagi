@@ -40,6 +40,7 @@ pub mod ruleset;
 pub mod snapshot;
 pub mod stash;
 pub mod switch;
+pub mod sync;
 pub mod tag;
 pub mod worktree;
 
@@ -68,6 +69,7 @@ pub use ruleset::{RuleField, RulesetNote};
 pub use snapshot::{SnapshotNote, SnapshotRecovery, SnapshotTitle};
 pub use stash::{StashNote, StashRecovery, StashTitle};
 pub use switch::{SwitchNote, SwitchRecovery, SwitchTitle};
+pub use sync::{SyncNote, SyncRecovery, SyncTitle};
 pub use tag::{TagNote, TagRecovery, TagTitle};
 pub use worktree::{WorktreeNote, WorktreeRecovery, WorktreeTitle};
 
@@ -102,6 +104,7 @@ pub enum PlanNote {
     Github(GithubNote),
     Rebase(RebaseNote),
     Snapshot(SnapshotNote),
+    Sync(SyncNote),
     /// GitHub-ruleset findings (#346 — no title/recovery).
     Ruleset(RulesetNote),
     /// Repository-health fixes (#358).
@@ -137,6 +140,7 @@ impl PlanNote {
             PlanNote::Github(n) => n.message_en(),
             PlanNote::Rebase(n) => n.message_en(),
             PlanNote::Snapshot(n) => n.message_en(),
+            PlanNote::Sync(n) => n.message_en(),
             PlanNote::Maintenance(n) => n.message_en(),
             PlanNote::Ruleset(n) => n.message_en(),
         }
@@ -179,6 +183,7 @@ pub enum PlanTitle {
     Github(GithubTitle),
     Rebase(RebaseTitle),
     Snapshot(SnapshotTitle),
+    Sync(SyncTitle),
     Maintenance(MaintenanceTitle),
 }
 
@@ -206,6 +211,7 @@ impl PlanTitle {
             PlanTitle::Github(t) => t.message_en(),
             PlanTitle::Rebase(t) => t.message_en(),
             PlanTitle::Snapshot(t) => t.message_en(),
+            PlanTitle::Sync(t) => t.message_en(),
             PlanTitle::Maintenance(t) => t.message_en(),
             PlanTitle::Discard {
                 single: Some(path), ..
@@ -262,6 +268,7 @@ impl PlanRecovery {
             RecoveryKind::Github(r) => r.message_en(),
             RecoveryKind::Rebase(r) => r.message_en(),
             RecoveryKind::Snapshot(r) => r.message_en(),
+            RecoveryKind::Sync(r) => r.message_en(),
             RecoveryKind::Maintenance(r) => r.message_en(),
             RecoveryKind::Discard => {
                 "This discards your unstaged changes to the selected file(s): \
@@ -299,6 +306,7 @@ pub enum RecoveryKind {
     Github(GithubRecovery),
     Rebase(RebaseRecovery),
     Snapshot(SnapshotRecovery),
+    Sync(SyncRecovery),
     Maintenance(MaintenanceRecovery),
 }
 
@@ -456,6 +464,7 @@ mod tests {
             PlanNote::Github(GithubNote::RemoteSideEffect),
             PlanNote::Rebase(RebaseNote::DetachedHead),
             PlanNote::Snapshot(SnapshotNote::SavepointFirst),
+            PlanNote::Sync(SyncNote::DetachedHead),
             PlanNote::Ruleset(RulesetNote::ConstraintsUnknown),
             PlanNote::Maintenance(MaintenanceNote::NoCommits),
         ];
@@ -486,6 +495,7 @@ mod tests {
                 PlanNote::Github(n) => n.message_en(),
                 PlanNote::Rebase(n) => n.message_en(),
                 PlanNote::Snapshot(n) => n.message_en(),
+                PlanNote::Sync(n) => n.message_en(),
                 PlanNote::Maintenance(n) => n.message_en(),
                 PlanNote::Ruleset(n) => n.message_en(),
             };
@@ -497,7 +507,7 @@ mod tests {
 
         // One fixture per `PlanNote` variant — bump this when a category is
         // added (and add its row above).
-        assert_eq!(cases.len(), 25, "one fixture per PlanNote variant");
+        assert_eq!(cases.len(), 26, "one fixture per PlanNote variant");
     }
 
     #[test]

@@ -29,6 +29,7 @@ pub mod ruleset;
 pub mod snapshot;
 pub mod stash;
 pub mod switch;
+pub mod sync;
 pub mod tag;
 pub mod worktree;
 
@@ -95,6 +96,7 @@ pub(crate) fn note_ja_any(note: &PlanNote) -> String {
         PlanNote::Github(n) => github::note_ja(n),
         PlanNote::Rebase(n) => rebase::note_ja(n),
         PlanNote::Snapshot(n) => snapshot::note_ja(n),
+        PlanNote::Sync(n) => sync::note_ja(n),
         PlanNote::Maintenance(n) => maintenance::note_ja(n),
         PlanNote::Ruleset(n) => ruleset::note_ja(n),
     }
@@ -125,6 +127,7 @@ pub fn plan_title_text(title: &PlanTitle) -> String {
             PlanTitle::Github(t) => github::title_ja(t),
             PlanTitle::Rebase(t) => rebase::title_ja(t),
             PlanTitle::Snapshot(t) => snapshot::title_ja(t),
+            PlanTitle::Sync(t) => sync::title_ja(t),
             PlanTitle::Maintenance(t) => maintenance::title_ja(t),
             PlanTitle::Discard { .. } => discard::title_ja(title),
         },
@@ -160,6 +163,7 @@ pub fn plan_recovery_text(recovery: Option<&PlanRecovery>) -> String {
             RecoveryKind::Github(r) => github::recovery_ja(r),
             RecoveryKind::Rebase(r) => rebase::recovery_ja(r),
             RecoveryKind::Snapshot(r) => snapshot::recovery_ja(r),
+            RecoveryKind::Sync(r) => sync::recovery_ja(r),
             RecoveryKind::Maintenance(r) => maintenance::recovery_ja(r),
             RecoveryKind::Discard => discard::recovery_ja(),
         },

@@ -281,7 +281,9 @@ pub(super) fn render_composer(
         && !editor.body_revealed
         && editor.draft.title.trim().is_empty()
         && editor.draft.body.trim().is_empty();
-    let viewer = app.github_login.as_deref().unwrap_or("?");
+    // The same identity "Posted as" names: the login on the repository's
+    // host, never the window-global github.com one (#904 review).
+    let viewer = app.issue_host_login().unwrap_or("?");
     let repo = state
         .base_repo
         .clone()
@@ -539,6 +541,12 @@ pub(super) fn render_composer(
         } else {
             Msg::ComposerDraftSaved.t()
         }));
+    }
+    // Lets Tier A read whose avatar the composer draws. Absolute, so it adds
+    // no gap; compiled out of normal builds, where it would be a flow child.
+    #[cfg(feature = "gui-e2e")]
+    {
+        content = content.child(super::e2e::measure_inside(format!("{id}-viewer-{viewer}")));
     }
     let composer = super::timeline_row::composer_frame(id, viewer, &app.avatars.images, content)
         .border_b_1()

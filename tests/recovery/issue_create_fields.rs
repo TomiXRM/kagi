@@ -74,11 +74,42 @@ fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
     cx.run_until_parked();
 }
 
-/// #904 review: open a field picker with the keyboard only. Focus starts on
-/// the title; `hops` steps of the window's tab order (what Tab does — the
-/// body is a code editor that keeps Tab for indentation) land on the field's
-/// Button, and a real `key` press — down, then up, which is when GPUI turns
-/// it into a click — activates it. Escape closes the picker.
+/// A real key press: down, then up — GPUI turns the up into a click on the
+/// focused element, and only for an element that was focused when it last
+/// painted. (`simulate_keystrokes` alone sends no key up and activates
+/// nothing.)
+fn press(cx: &mut VisualTestAppContext, window: AnyWindowHandle, key: &str) {
+    paint(cx, window);
+    let keystroke = gpui::Keystroke::parse(key).unwrap();
+    cx.dispatch_keystroke(window, keystroke.clone());
+    cx.simulate_event(window, gpui::KeyUpEvent { keystroke });
+    cx.run_until_parked();
+}
+
+/// `hops` steps of the window's tab order (what Tab does) from whatever has
+/// focus, or from the composer title when `from_title`.
+fn tab(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    app: &Entity<KagiApp>,
+    from_title: bool,
+    hops: usize,
+) {
+    paint(cx, window);
+    cx.update_window(window, |_, window, cx| {
+        if from_title {
+            app.update(cx, |app, cx| app.focus_issue_title_for_e2e(window, cx));
+        }
+        for _ in 0..hops {
+            window.focus_next(cx);
+        }
+    })
+    .unwrap();
+}
+
+/// #904 review: open a field picker with the keyboard only. From the title,
+/// `hops` tab stops (the body is a code editor that keeps Tab for
+/// indentation) land on the field's Button and `key` activates it.
 fn keyboard_open(
     cx: &mut VisualTestAppContext,
     window: AnyWindowHandle,
@@ -87,20 +118,8 @@ fn keyboard_open(
     key: &str,
     field: PrField,
 ) {
-    paint(cx, window);
-    cx.update_window(window, |_, window, cx| {
-        app.update(cx, |app, cx| app.focus_issue_title_for_e2e(window, cx));
-        for _ in 0..hops {
-            window.focus_next(cx);
-        }
-    })
-    .unwrap();
-    // Keyboard activation is wired for the element focused when it painted.
-    paint(cx, window);
-    let keystroke = gpui::Keystroke::parse(key).unwrap();
-    cx.dispatch_keystroke(window, keystroke.clone());
-    cx.simulate_event(window, gpui::KeyUpEvent { keystroke });
-    cx.run_until_parked();
+    tab(cx, window, app, true, hops);
+    press(cx, window, key);
     cx.read(|cx| {
         let modal = app
             .read(cx)
@@ -109,9 +128,22 @@ fn keyboard_open(
         assert_eq!(modal.target, FieldTarget::NewIssue);
         assert_eq!(modal.field, field);
     });
-    cx.simulate_keystrokes(window, "escape");
-    cx.run_until_parked();
-    assert!(cx.read(|cx| app.read(cx).pr_fields_modal().is_none()));
+}
+
+fn wait_candidates(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !cx.read(|cx| {
+        app.read(cx)
+            .pr_fields_modal()
+            .is_some_and(|modal| modal.candidates.is_some())
+    }) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the candidate read never landed"
+        );
+        cx.run_until_parked();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
 }
 
 /// Open one field's picker from the composer, wait for the repository's
@@ -199,6 +231,11 @@ pub fn scenario_issue_create_fields(cx: &mut VisualTestAppContext) {
     assert!(drawn(cx, window, "issue-field-value-labels"));
     assert!(drawn(cx, window, "issue-field-value-assignees"));
     assert!(!drawn(cx, window, "issue-composer-posted-as"));
+    assert!(
+        drawn(cx, window, "issue-composer-viewer-?"),
+        "the avatar claims nobody yet"
+    );
+    assert!(!drawn(cx, window, "issue-composer-viewer-someone-else"));
 
     // The host's own login arrives with a later Issues read.
     std::fs::write(gh_dir.path().join("login.txt"), "octocat\n").unwrap();
@@ -220,11 +257,16 @@ pub fn scenario_issue_create_fields(cx: &mut VisualTestAppContext) {
         drawn(cx, window, "issue-composer-posted-as"),
         "the composer says who the issue is posted as"
     );
+    assert!(
+        drawn(cx, window, "issue-composer-viewer-octocat"),
+        "the avatar is the identity the issue is posted as"
+    );
 
     // Keyboard only: the entries are tab stops right after the body, and
     // Enter / Space open their pickers.
     keyboard_open(cx, window, &app, 2, "enter", PrField::Labels);
-    keyboard_open(cx, window, &app, 3, "space", PrField::Assignees);
+    cx.simulate_keystrokes(window, "escape");
+    assert!(cx.read(|cx| app.read(cx).pr_fields_modal().is_none()));
 
     pick(
         cx,
@@ -234,13 +276,23 @@ pub fn scenario_issue_create_fields(cx: &mut VisualTestAppContext) {
         PrField::Labels,
         &["bug", "gone"],
     );
-    pick(
-        cx,
-        window,
-        &app,
-        "issue-field-open-assignees",
-        PrField::Assignees,
-        &["hubot"],
+    // Assignees, keyboard only: open with Space, tab from the filter box to
+    // the first row (`hubot`), Space toggles it, tab past `octocat` and
+    // Cancel to Apply, Space applies (#904 review).
+    keyboard_open(cx, window, &app, 3, "space", PrField::Assignees);
+    wait_candidates(cx, &app);
+    tab(cx, window, &app, false, 1);
+    press(cx, window, "space");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).pr_fields_modal().map(|m| m.selected.clone())),
+        Some(vec!["hubot".to_string()]),
+        "Space toggles the focused row"
+    );
+    tab(cx, window, &app, false, 3);
+    press(cx, window, "space");
+    assert!(
+        cx.read(|cx| app.read(cx).pr_fields_modal().is_none()),
+        "Space on Apply applies"
     );
     assert_eq!(
         fields(&app, cx),
@@ -287,6 +339,55 @@ pub fn scenario_issue_create_fields(cx: &mut VisualTestAppContext) {
         (vec!["bug".into(), "gone".into()], vec!["hubot".into()]),
         "a refusal keeps the picks"
     );
+
+    // #904 review: a plan-time refusal (no title can be derived from a body
+    // that is only a fence) records the picks too.
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.replace_issue_body_for_e2e("```\n```\n", window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    click(cx, window, "issue-composer-submit");
+    cx.run_until_parked();
+    let newest = read_oplog_tail_for_repo(&repo, 100)
+        .into_iter()
+        .find(|entry| entry.op == "issue-create")
+        .expect("a receipt");
+    assert!(
+        matches!(&newest.outcome, OpOutcome::Refused { blockers }
+            if blockers.iter().any(|b| b.contains("title"))),
+        "{:?}",
+        newest.outcome
+    );
+    assert_eq!(
+        newest.issue_fields,
+        Some(kagi_domain::github::IssueCreateFields {
+            labels: vec!["bug".into(), "gone".into()],
+            assignees: vec!["hubot".into()],
+        }),
+        "the plan-time receipt says what was asked for"
+    );
+    // The plan failure is presented as notices (the composer body keeps
+    // focus, so Escape stays with the editor); acknowledge each.
+    for _ in 0..4 {
+        if cx.read(|cx| app.read(cx).app_notice().is_none()) {
+            break;
+        }
+        app.update(cx, |app, _| {
+            app.clear_app_notice();
+            kagi::ui::e2e::present_app_notice(app);
+        });
+    }
+    assert!(cx.read(|cx| app.read(cx).app_notice().is_none()));
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.replace_issue_body_for_e2e(BODY, window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
 
     // Drop the deleted label and create: the picks travel as flags.
     pick(

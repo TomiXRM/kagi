@@ -200,7 +200,8 @@ pub(crate) fn render_pr_fields_modal(
     modal: PrFieldsModal,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    use gpui_component::Disableable as _;
+    use gpui_component::button::ButtonVariants as _;
+    use gpui_component::{Disableable as _, Selectable as _};
     // What the PR carries always appears, even when it is not in (or ahead of)
     // the repository's list: a value that cannot be seen cannot be removed.
     let mut rows: Vec<String> = modal.current.clone();
@@ -258,47 +259,56 @@ pub(crate) fn render_pr_fields_modal(
         let toggle = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
             this.pr_fields_toggle(v.clone(), cx);
         });
+        // A Button per row (#904 review): `Role::Button` with the pick as
+        // `aria_selected`, a tab stop, and Space toggles it like a click
+        // (#354). Enter stays the modal's Apply, as everywhere else.
         list = list.child(
-            div()
-                .id(("pr-fields-row", i))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
+            gpui_component::button::Button::new(("pr-fields-row", i))
+                .ghost()
+                .compact()
+                .w_full()
+                .h_auto()
                 .px_2()
                 .py_1()
-                .rounded_sm()
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(theme().surface)))
+                .rounded(px(4.))
+                .selected(picked)
                 .on_click(toggle)
                 .child(
                     div()
-                        .w(theme::scaled_px(14.))
-                        .flex_shrink_0()
-                        .text_sm()
-                        .text_color(rgb(if picked {
-                            theme().color_success
-                        } else {
-                            theme().text_muted
-                        }))
-                        .child(SharedString::from(if picked {
-                            "\u{2713}"
-                        } else {
-                            "\u{00b7}"
-                        })),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .truncate()
-                        .text_sm()
-                        .text_color(rgb(if picked {
-                            theme().text_main
-                        } else {
-                            theme().text_sub
-                        }))
-                        .child(safe_text(value)),
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .w(theme::scaled_px(14.))
+                                .flex_shrink_0()
+                                .text_sm()
+                                .text_color(rgb(if picked {
+                                    theme().color_success
+                                } else {
+                                    theme().text_muted
+                                }))
+                                .child(SharedString::from(if picked {
+                                    "\u{2713}"
+                                } else {
+                                    "\u{00b7}"
+                                })),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .truncate()
+                                .text_sm()
+                                .text_color(rgb(if picked {
+                                    theme().text_main
+                                } else {
+                                    theme().text_sub
+                                }))
+                                .child(safe_text(value)),
+                        ),
                 ),
         );
     }

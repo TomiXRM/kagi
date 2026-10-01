@@ -11,7 +11,9 @@ use super::*;
 use git2::WorktreeLockStatus;
 use kagi_domain::plan_note::{WorktreeNote, WorktreeRecovery, WorktreeTitle};
 use kagi_domain::remove::{RepoId, WorktreeId};
-use kagi_domain::worktree_autolock::{classify_auto_unlock, AutoUnlockTarget};
+use kagi_domain::worktree_autolock::{
+    classify_auto_unlock, AutoLockToken, AutoUnlockRace, AutoUnlockTarget, LOCK_ASIDE_PREFIX,
+};
 
 // ────────────────────────────────────────────────────────────
 // Containment-checked worktree directory removal (the safety hole fix)
@@ -268,6 +270,31 @@ pub fn linked_worktree_identity(repo: &Repository, name: &str) -> Result<Worktre
     })
 }
 
+fn admin_dir(repo: &Repository, name: &str) -> PathBuf {
+    repo.commondir().join("worktrees").join(name)
+}
+
+/// #836: the `locked.kagi-*` files an interrupted release left for `name`, as
+/// a note — `None` when there are none. Never cleaned up here (contract D).
+pub fn lock_leftover_note(repo: &Repository, name: &str) -> Option<PlanNote> {
+    let dir = admin_dir(repo, name);
+    let mut files: Vec<String> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+        .filter(|file| file.starts_with(LOCK_ASIDE_PREFIX))
+        .collect();
+    files.sort();
+    (!files.is_empty()).then(|| {
+        PlanNote::Worktree(WorktreeNote::LockLeftover {
+            name: name.to_string(),
+            dir: dir.display().to_string(),
+            files,
+        })
+    })
+}
+
 /// Classify the lock currently on `name` against what the session expects.
 /// Shared by plan and preflight so the two can never disagree.
 fn auto_unlock_check(
@@ -280,6 +307,11 @@ fn auto_unlock_check(
             name: name.to_string(),
         })
     })?;
+    // A leftover means an earlier release was interrupted after moving the
+    // lock aside: nothing is released until a person has looked at it.
+    if let Some(leftover) = lock_leftover_note(repo, name) {
+        return Err(leftover);
+    }
     let (locked, reason) = match wt.is_locked() {
         Ok(WorktreeLockStatus::Locked(reason)) => (true, reason),
         Ok(WorktreeLockStatus::Unlocked) => (false, None),
@@ -342,9 +374,9 @@ pub fn plan_auto_unlock_worktree(
 }
 
 /// Re-run the ownership check immediately before releasing: HEAD unchanged
-/// (`preflight_check`), and the lock is still this session's token on this
-/// worktree. Read-then-unlock is not atomic (ADR-0208 決定 2 names the window);
-/// this narrows it to the single `unlock` call that follows.
+/// (`preflight_check`), no interrupted-release leftover, and the lock is
+/// still this session's token on this worktree. The release itself then
+/// compares again, atomically ([`release_lock_file`]).
 pub fn preflight_auto_unlock_worktree(
     repo: &Repository,
     plan: &OperationPlan,
@@ -365,22 +397,99 @@ pub fn preflight_auto_unlock_worktree(
     })
 }
 
-/// Release this session's Kagi lock on `name`: preflight → unlock → verify.
-/// Never reaches `unlock` for a lock the preflight did not recognise as ours.
+/// Release this session's Kagi lock on `name`: preflight → compare-and-unlock
+/// → verify (ADR-0212). `race` is the test seam; production passes `None`.
 pub(crate) fn execute_auto_unlock_worktree(
     repo: &Repository,
     plan: &OperationPlan,
     name: &str,
     target: &AutoUnlockTarget,
+    race: Option<&AutoUnlockRace>,
 ) -> Result<(), GitError> {
     let wt = preflight_auto_unlock_worktree(repo, plan, name, target)?;
-    wt.unlock()
-        .map_err(|e| GitError::Other(format!("worktree unlock failed: {}", e.message())))?;
+    release_lock_file(&admin_dir(repo, name), &target.token.reason(), race)?;
+    // Verify: no lock carrying this session's token remains. A lock someone
+    // else placed after ours went away is theirs to keep.
     match wt.is_locked() {
         Ok(WorktreeLockStatus::Unlocked) => Ok(()),
+        Ok(WorktreeLockStatus::Locked(reason))
+            if AutoLockToken::parse(reason.as_deref()).as_ref() != Some(&target.token) =>
+        {
+            Ok(())
+        }
         _ => Err(GitError::Other(format!(
-            "worktree '{}' still reports locked after auto-unlock — unexpected state",
+            "worktree '{}' still carries this terminal's lock after auto-unlock — unexpected state",
             name
+        ))),
+    }
+}
+
+/// Compare-and-unlock on `<admin>/locked` (#836). Git has no such operation,
+/// and libgit2's `unlock` deletes whatever lock is there. Instead:
+///
+/// 1. `rename` the lock aside (atomic): from then on only this call holds
+///    that file, whoever wrote it. No lock at all → already released, `Ok`.
+/// 2. Read the moved file. This session's token → delete it: released.
+/// 3. Anyone else's → put it back with `hard_link`, which fails instead of
+///    replacing a lock that appeared meanwhile; then the moved file stays as a
+///    `locked.kagi-*` leftover for a person to resolve (contract D).
+fn release_lock_file(
+    admin: &Path,
+    token: &str,
+    race: Option<&AutoUnlockRace>,
+) -> Result<(), GitError> {
+    let locked = admin.join("locked");
+    let relock = |reason: &str| {
+        let _ = std::fs::write(&locked, reason);
+    };
+    match race {
+        Some(AutoUnlockRace::UnlockBeforeMove) => {
+            let _ = std::fs::remove_file(&locked);
+        }
+        Some(AutoUnlockRace::RelockBeforeMove(reason))
+        | Some(AutoUnlockRace::RelockAroundMove { before: reason, .. }) => relock(reason),
+        _ => {}
+    }
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let aside = admin.join(format!("{LOCK_ASIDE_PREFIX}{}-{nonce}", std::process::id()));
+    match std::fs::rename(&locked, &aside) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            return Err(GitError::Other(format!(
+                "cannot move the worktree lock aside: {e}"
+            )))
+        }
+    }
+    match race {
+        Some(AutoUnlockRace::RelockAfterMove(reason))
+        | Some(AutoUnlockRace::RelockAroundMove { after: reason, .. }) => relock(reason),
+        _ => {}
+    }
+    // git writes `reason\n`, libgit2 the bare reason.
+    let found = std::fs::read_to_string(&aside).unwrap_or_default();
+    if found.trim_end_matches(['\n', '\r']) == token {
+        return std::fs::remove_file(&aside).map_err(|e| {
+            GitError::Other(format!(
+                "the lock was moved to {} but could not be removed: {e}",
+                aside.display()
+            ))
+        });
+    }
+    match std::fs::hard_link(&aside, &locked) {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&aside);
+            Err(GitError::Other(
+                "auto-unlock-worktree refused: the lock was no longer this terminal's when it was released; it was put back untouched"
+                    .to_string(),
+            ))
+        }
+        Err(e) => Err(GitError::Other(format!(
+            "auto-unlock-worktree refused: the lock was no longer this terminal's, and a newer lock appeared before it could be put back ({e}); the moved lock is kept at {}",
+            aside.display()
         ))),
     }
 }

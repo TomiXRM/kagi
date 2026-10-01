@@ -104,6 +104,14 @@ pub enum WorktreeNote {
         name: String,
         refusal: crate::worktree_autolock::AutoUnlockRefusal,
     },
+    /// #836: an interrupted Kagi release left `files` (`locked.kagi-*`) in the
+    /// admin dir `dir`. Blocker for the automatic release, warning on the
+    /// manual unlock card; never cleaned up automatically (contract D).
+    LockLeftover {
+        name: String,
+        dir: String,
+        files: Vec<String>,
+    },
     /// warning (`plan_prune_worktrees`) — dry-run preview of the prunable
     /// worktrees kagi will prune. `sample` holds the first few paths; `more` is
     /// how many are not shown.
@@ -307,6 +315,12 @@ impl WorktreeNote {
                     name, why
                 )
             }
+            WorktreeNote::LockLeftover { name, dir, files } => format!(
+                "An interrupted Kagi release of worktree '{}' left {} in {}; Git now sees the worktree as unlocked. Check the content, then move it back to `locked` or delete it.",
+                name,
+                files.join(", "),
+                dir
+            ),
             WorktreeNote::PrunePreview {
                 count,
                 sample,

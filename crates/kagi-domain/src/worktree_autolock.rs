@@ -70,6 +70,30 @@ pub struct AutoUnlockTarget {
     pub worktree: WorktreeId,
 }
 
+/// Name prefix of the file a release moves `locked` to while it checks the
+/// content (#836, ADR-0212): `locked.kagi-<pid>-<nonce>`. One left behind
+/// means a release was interrupted; Git then sees the worktree as unlocked,
+/// and it is never removed automatically (contract D).
+pub const LOCK_ASIDE_PREFIX: &str = "locked.kagi-";
+
+/// Test seam for the compare-and-unlock (#836): another process's
+/// `git worktree lock` / `unlock` landing at a fixed point of the release,
+/// so the race is reproduced deterministically instead of by timing. A
+/// finite set, like the remove / stash fault points; production passes none.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AutoUnlockRace {
+    /// After preflight, before the move-aside: the lock is removed.
+    UnlockBeforeMove,
+    /// After preflight, before the move-aside: the lock is replaced by one
+    /// with this reason (the window read-then-unlock could not close).
+    RelockBeforeMove(String),
+    /// After the move-aside, before it is read: a new lock with this reason.
+    RelockAfterMove(String),
+    /// Both: the moved lock is someone else's, and a newer one appears before
+    /// it can go back.
+    RelockAroundMove { before: String, after: String },
+}
+
 /// Decide whether the lock currently on a worktree may be released by the
 /// session that holds `target`.
 ///

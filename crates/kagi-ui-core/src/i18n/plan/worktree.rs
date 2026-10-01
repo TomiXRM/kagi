@@ -176,6 +176,12 @@ pub fn note_ja(note: &WorktreeNote) -> String {
             };
             format!("worktree `{}` は自動解除しません: {}。", name, why)
         }
+        WorktreeNote::LockLeftover { name, dir, files } => format!(
+            "worktree `{}` の Kagi による解除が中断され、{} に {} が残っています。Git からはロック解除済みに見えます。中身を確認し、`locked` に戻すか削除してください。",
+            name,
+            dir,
+            files.join(", ")
+        ),
         WorktreeNote::PrunePreview {
             count,
             sample,

@@ -645,6 +645,9 @@ pub fn plan_unlock_worktree(repo: &Repository, name: &str) -> Result<OperationPl
             }));
         }
     }
+    // #836: an interrupted Kagi release's leftover is shown for the user to
+    // resolve by hand; this card never removes it.
+    warnings.extend(lock_leftover_note(repo, name));
 
     Ok(OperationPlan {
         disposition: PlanDisposition::for_blockers(&blockers),

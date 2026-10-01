@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
+- worktree 自動ロックの解除を、ロックファイルを一旦退避(rename)してから中身が自分の token のときだけ消す compare-and-unlock にしました。解除の直前に別の git が別の理由でロックし直していても、そのロックは元に戻して解除を拒否し、他人のロックを消しません。戻す先に新しいロックができていた場合は上書きせず `locked.kagi-*` として残し、次の自動解除はそれを理由に止まり、手動の unlock カードに「中身を確認して `locked` に戻すか削除」と表示します(自動では消しません)。(Refs #772、#836、ADR-0212)
 - PR mode の diff に review thread を重ねて表示するようにしました。thread のある行の横(gutter)に件数バッジが付き、クリックでその行の直下に thread を折り畳み表示します(もう一度で閉じ、閉じれば行の並びは元どおり)。side-by-side 表示では thread の面に応じて左右の gutter に出します。古い位置(outdated)の thread は薄く表示し、解決ボタンは出しません。取得は従来の line comment の REST 呼び出しを GraphQL の review thread 1 本に置き換えたもので、gh の呼び出し数は変わりません。取得に失敗したときは空として黙らず、理由を `[kagi] pr-threads:` の log に 1 行出します。(Refs #351、ADR-0209)
 - 埋め込み terminal の worktree 自動ロック(Phase 1、既定 OFF の opt-in、macOS / Linux)。Settings の「terminal を開いている間 worktree をロック」を ON にすると、linked worktree で terminal を起動したときに Kagi 所有 token(`kagi:auto:<session>`)付きの `git worktree lock` の確認カードを出し、shell 終了(render に依存しない wait で観測)時にそのロックの解除カードを出します。confirm するまで何も書かず、手動のロック・他の terminal のロック・別の worktree のロックは plan と preflight の両方で拒否して触れません。crash 後に残ったロックは従来どおり手動解除で回復します。（#772、ADR-0208）
 - PR mode のファイル一覧に「確認済み」の checkbox と「N / M viewed」(JA「N / M 確認済み」)の進捗を追加しました。確認済みの行は薄く表示されます。印はそのときの head 側のファイル内容(blob)に紐づき、PR の head が進んでそのファイルが変わると自動で未確認に戻ります(変わっていないファイルは確認済みのまま)。状態は `~/.kagi/pr-viewed/` に PR ごとに保存し、壊れたファイルは上書きせず退避します。Operation Log には記録しません。(#351、ADR-0207)

@@ -13,7 +13,9 @@ mod test_support;
 use std::path::{Path, PathBuf};
 
 use kagi_domain::plan_note::{PlanNote, WorktreeNote};
-use kagi_domain::worktree_autolock::{AutoLockToken, AutoUnlockRefusal, AutoUnlockTarget};
+use kagi_domain::worktree_autolock::{
+    AutoLockToken, AutoUnlockRace, AutoUnlockRefusal, AutoUnlockTarget,
+};
 use kagi_git::backend::ExecutionPolicy;
 use kagi_git::Backend;
 use tempfile::TempDir;
@@ -256,4 +258,145 @@ fn identity_matches_a_backend_opened_at_the_worktree() {
         from_main,
         backend(&main).linked_worktree_identity("beta").unwrap()
     );
+}
+
+// ── #836 / ADR-0212: compare-and-unlock ────────────────────────────────
+
+/// Lock `alpha` with `ours`' token and plan its release.
+fn locked_and_planned(main: &Path) -> (Backend, AutoUnlockTarget, kagi_git::OperationPlan) {
+    let b = backend(main);
+    let ours = target(main, "alpha", "session-1");
+    let lock = b
+        .plan_lock_worktree("alpha", Some(&ours.token.reason()))
+        .unwrap();
+    b.execute_lock_worktree(&lock, "alpha", Some(&ours.token.reason()))
+        .unwrap();
+    let plan = b.plan_auto_unlock_worktree("alpha", &ours).unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    (b, ours, plan)
+}
+
+/// `locked.kagi-*` files left in `alpha`'s admin dir.
+fn leftovers(main: &Path) -> Vec<(String, String)> {
+    let dir = main.join(".git/worktrees/alpha");
+    let mut found: Vec<(String, String)> = std::fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            name.starts_with("locked.kagi-")
+                .then(|| (name, std::fs::read_to_string(e.path()).unwrap()))
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+#[test]
+fn a_release_removes_this_terminal_s_lock_and_leaves_nothing_behind() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let (_tmp, main, _alpha) = fixture();
+    let (b, ours, plan) = locked_and_planned(&main);
+    b.execute_auto_unlock_worktree(&plan, "alpha", &ours)
+        .unwrap();
+    assert_eq!(lock_state(&main, "alpha"), None);
+    assert!(leftovers(&main).is_empty());
+}
+
+/// The race read-then-unlock could not close (ADR-0208 決定 2): after the
+/// preflight read, another process unlocks and relocks with its own reason.
+/// The move-aside catches *their* lock; it goes back and the release refuses.
+#[test]
+fn a_lock_replaced_after_preflight_is_put_back_and_the_release_refuses() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let (_tmp, main, _alpha) = fixture();
+    let (b, ours, plan) = locked_and_planned(&main);
+    let err = b
+        .execute_auto_unlock_worktree_racing(
+            &plan,
+            "alpha",
+            &ours,
+            AutoUnlockRace::RelockBeforeMove("taken over".into()),
+        )
+        .unwrap_err();
+    assert!(err.to_string().contains("put back untouched"), "{err}");
+    assert_eq!(lock_state(&main, "alpha").as_deref(), Some("taken over"));
+    assert!(leftovers(&main).is_empty(), "restored, not left aside");
+}
+
+/// Another process locks right after this terminal's lock is moved aside:
+/// ours is released, theirs stays, and that is a success, not a failure.
+#[test]
+fn a_lock_placed_after_ours_moved_aside_is_theirs_to_keep() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let (_tmp, main, _alpha) = fixture();
+    let (b, ours, plan) = locked_and_planned(&main);
+    b.execute_auto_unlock_worktree_racing(
+        &plan,
+        "alpha",
+        &ours,
+        AutoUnlockRace::RelockAfterMove("newer".into()),
+    )
+    .unwrap();
+    assert_eq!(lock_state(&main, "alpha").as_deref(), Some("newer"));
+    assert!(leftovers(&main).is_empty());
+}
+
+/// Putting a foreign lock back never replaces a newer one: the moved lock is
+/// kept as a leftover instead — and then blocks the next automatic release
+/// and shows on the manual unlock card (contract D: never removed here).
+#[test]
+fn a_foreign_lock_that_cannot_go_back_is_kept_and_blocks_the_next_release() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let (_tmp, main, _alpha) = fixture();
+    let (b, ours, plan) = locked_and_planned(&main);
+    let err = b
+        .execute_auto_unlock_worktree_racing(
+            &plan,
+            "alpha",
+            &ours,
+            AutoUnlockRace::RelockAroundMove {
+                before: "taken over".into(),
+                after: "newer".into(),
+            },
+        )
+        .unwrap_err();
+    assert!(err.to_string().contains("kept at"), "{err}");
+    assert_eq!(lock_state(&main, "alpha").as_deref(), Some("newer"));
+    let left = leftovers(&main);
+    assert_eq!(left.len(), 1, "{left:?}");
+    assert_eq!(left[0].1, "taken over", "the foreign lock is preserved");
+
+    let is_leftover = |note: &PlanNote| matches!(note, PlanNote::Worktree(WorktreeNote::LockLeftover { files, .. }) if files == &vec![left[0].0.clone()]);
+    let auto = b.plan_auto_unlock_worktree("alpha", &ours).unwrap();
+    assert!(auto.blockers.iter().any(is_leftover), "{:?}", auto.blockers);
+    let manual = b.plan_unlock_worktree("alpha").unwrap();
+    assert!(
+        manual.warnings.iter().any(is_leftover),
+        "{:?}",
+        manual.warnings
+    );
+    assert_eq!(leftovers(&main), left, "planning never cleans it up");
+}
+
+/// Already unlocked by the time the release runs: nothing to do, `Ok`.
+#[test]
+fn a_release_of_a_lock_that_is_already_gone_is_idempotent() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let (_tmp, main, _alpha) = fixture();
+    let (b, ours, plan) = locked_and_planned(&main);
+    b.execute_auto_unlock_worktree_racing(&plan, "alpha", &ours, AutoUnlockRace::UnlockBeforeMove)
+        .unwrap();
+    assert_eq!(lock_state(&main, "alpha"), None);
+    assert!(leftovers(&main).is_empty());
 }

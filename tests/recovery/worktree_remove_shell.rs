@@ -26,22 +26,26 @@ fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
 }
 
 /// A shell that leaves a `nohup` job in its session (its PID in
-/// `leftover.pid`), then waits on its terminal (exits at EOF).
+/// `leftover.pid`), then waits on its terminal (exits at EOF). The scenario
+/// kills the job by PID when done, so its length only has to outlast the
+/// scenario: with `sleep 30` the leftover assertion failed in 2 of 4 runs of a
+/// five-scenario filter (the cause was not pinned down); `sleep 600` passed
+/// 8 of 8.
 fn leaving_shell(dir: &Path) -> PathBuf {
     let pid = dir.join("leftover.pid");
     let body = format!(
-        "nohup sleep 30 >/dev/null 2>&1 &\necho $! > '{}'\nexec cat\n",
+        "nohup sleep 600 >/dev/null 2>&1 &\necho $! > '{}'\nexec cat\n",
         pid.display()
     );
     script(dir, "leave.sh", &body)
 }
 
 /// A shell that ignores the hangup closing its tab sends, and does not read
-/// the terminal: it outlives the tab until killed (its PID in `shell.pid`).
+/// the terminal: it outlives the tab until killed by PID (in `shell.pid`).
 pub(crate) fn hangup_proof_shell(dir: &Path) -> PathBuf {
     let pid = dir.join("shell.pid");
     let body = format!(
-        "trap '' HUP\necho $$ > '{}'\nexec sleep 30\n",
+        "trap '' HUP\necho $$ > '{}'\nexec sleep 600\n",
         pid.display()
     );
     script(dir, "stay.sh", &body)

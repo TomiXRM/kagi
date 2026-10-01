@@ -176,6 +176,18 @@ pub enum Operation {
     /// Set `core.fsmonitor=true` in the repository-local config (#358 /
     /// ADR-0205). Only the one key is written.
     EnableFsmonitor,
+    /// #334 slice 2b / ADR-0214 §5: undo exactly the branch moves the oplog
+    /// entry `entry_id` recorded — refused when a later recorded entry moved
+    /// the same ref, or the entry has no record. Refs only.
+    OpRevert {
+        entry_id: u64,
+    },
+    /// #334 slice 2b / ADR-0214 §5: put every branch back where it was right
+    /// after the oplog entry `entry_id` (undo every recorded entry newer than
+    /// it). Refused when an entry in that range has no record. Refs only.
+    RestoreToPoint {
+        entry_id: u64,
+    },
 }
 
 impl Operation {
@@ -225,6 +237,8 @@ impl Operation {
             Operation::ApplySuggestion { .. } => "apply-suggestion",
             Operation::WriteCommitGraph => "write-commit-graph",
             Operation::EnableFsmonitor => "enable-fsmonitor",
+            Operation::OpRevert { .. } => "op-revert",
+            Operation::RestoreToPoint { .. } => "restore-to-point",
         }
     }
 }
@@ -391,6 +405,10 @@ pub enum OperationOutcome {
         tip_backup: String,
         work_backup: Option<SyncWorkBackup>,
         removed_untracked: usize,
+    },
+    /// #334 slice 2b: an op-revert / restore-to-point put these refs back.
+    OplogRestore {
+        restored: Vec<crate::ref_restore::RestoredRef>,
     },
     Unit,
 }

@@ -152,7 +152,7 @@ impl KagiApp {
             let mut panel = CommitPanelState::from_repo(&repo_path);
             panel.tree_view = prev_tree_view;
             existing.update(cx, |v, _| {
-                v.state = panel;
+                v.replace_state(panel);
                 v.foreign = foreign.clone();
             });
             (existing, false)

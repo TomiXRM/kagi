@@ -20,7 +20,7 @@ rust-version = "1.92"
 
 [features]
 # Compile the native visual runner only when explicitly requested (ADR-0166).
-gui-e2e = ["gpui/test-support"]
+gui-e2e = ["gpui/test-support", "kagi-ui-core/gui-e2e"]
 
 [dependencies]
 # Pure domain layer (ADR-0072). The git2-using code in kagi-git depends on it

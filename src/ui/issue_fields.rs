@@ -34,7 +34,9 @@ impl KagiApp {
         let Some(base_repo) = state.base_repo.clone() else {
             return;
         };
-        let Some(editor) = state.editors.get(&None) else {
+        // Not before the saved draft has loaded: its picks would replace these,
+        // or a save from here would clear the draft on disk (#903).
+        let Some(editor) = state.editors.get(&None).filter(|editor| editor.loaded) else {
             return;
         };
         let current = match field {
@@ -47,22 +49,30 @@ impl KagiApp {
         self.read_field_candidates(field, base_repo, cx);
     }
 
-    /// The picker's Apply for a New Issue: store the selection. Nothing is
-    /// sent until the composer's Create.
+    /// The picker's Apply for a New Issue: store the selection with the
+    /// draft (#903). Nothing is sent until the composer's Create.
     pub(super) fn apply_issue_fields(&mut self, cx: &mut Context<Self>) {
         let Some(modal) = self.pr_fields_modal().cloned() else {
             return;
         };
         self.clear_pr_fields_modal();
-        if let Some(editor) = self
-            .ui_mut()
+        let Some(owner) = self.active_session() else {
+            return;
+        };
+        let Some(editor) = self
+            .ui
+            .get_mut(&owner)
             .and_then(|ui| ui.issue_composer.editors.get_mut(&None))
-        {
-            match modal.field {
-                PrField::Labels => editor.fields.labels = modal.selected,
-                PrField::Assignees => editor.fields.assignees = modal.selected,
-                PrField::Reviewers => {}
-            }
+        else {
+            return;
+        };
+        match modal.field {
+            PrField::Labels => editor.fields.labels = modal.selected,
+            PrField::Assignees => editor.fields.assignees = modal.selected,
+            PrField::Reviewers => {}
+        }
+        if let Some(repo) = editor.repo.clone() {
+            self.save_issue_draft_for(owner, repo, None, cx);
         }
         cx.notify();
     }

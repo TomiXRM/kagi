@@ -288,8 +288,9 @@ impl KagiApp {
                     if editor.draft.revision == revision
                         && editor.storage_version == storage_version
                     {
-                        if let Some((title, body)) = draft {
-                            editor.draft.update(title, body);
+                        if let Some(draft) = draft {
+                            editor.draft.update(draft.title, draft.body);
+                            editor.fields = draft.fields;
                             editor.sync_inputs = true;
                         }
                     }
@@ -321,6 +322,7 @@ impl KagiApp {
             number,
             &editor.draft.title,
             &editor.draft.body,
+            &editor.fields,
         );
         editor.storage_version = storage_version;
         self.schedule_issue_draft_flush(owner, repo, number, revision, storage_version, cx);

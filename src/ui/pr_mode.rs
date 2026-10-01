@@ -38,6 +38,7 @@ use super::theme::{self, theme};
 use super::types::ToastKind;
 use super::{CompareTarget, DividerDrag, DividerGhost, DividerKind, KagiApp, MainDiffSource};
 
+pub mod threads;
 pub mod viewed;
 /// One open PR tab.
 pub struct PrTab {
@@ -105,6 +106,8 @@ pub struct PrTab {
     pub merge_status_loaded: bool,
     /// #351: per-file viewed marks and the head blobs they are checked against.
     pub viewed: viewed::PrViewed,
+    /// #351: review threads for the diff overlay (their comments are `line_comments`).
+    pub threads: threads::PrThreads,
 }
 
 /// Which body the PR tab shows.
@@ -302,6 +305,7 @@ impl KagiApp {
             merge_status: None,
             merge_status_loaded: false,
             viewed: viewed::PrViewed::load(pr),
+            threads: Default::default(),
         };
         let Some(m) = self.pr_mode_mut() else { return };
         m.tabs.push(tab);
@@ -382,11 +386,10 @@ impl KagiApp {
                     acx.background_executor()
                         .spawn(async move {
                             // Two calls: `gh pr view` for the verdicts + issue
-                            // comments, `gh api` for the line comments (where
-                            // Copilot / Codex put code suggestions — not
-                            // exposed by --json).
+                            // comments, `gh api graphql` for the review threads
+                            // (line comments with their anchor side and state).
                             let convo = kagi_git::github::pr_conversation(&repo, number);
-                            let lines = kagi_git::github::pr_review_comments(&repo, number);
+                            let lines = kagi_git::github::pr_review_threads(&repo, number);
                             (convo, lines)
                         })
                         .await
@@ -403,10 +406,16 @@ impl KagiApp {
                 // its "no reviews" wording as before.
                 t.conversation_loaded = true;
                 cx.notify();
+                // #351: say why a thread read came back empty (#837 Tier B).
+                let threads = lines.unwrap_or_else(|error| {
+                    klog!("pr-threads: #{} read failed: {}", number, error);
+                    Vec::new()
+                });
                 let Ok((reviews, comments)) = convo else {
                     return;
                 };
-                let line_comments = lines.unwrap_or_default();
+                let line_comments = kagi_domain::review_thread::feed_comments(&threads);
+                t.threads.set(threads);
                 klog!(
                     "pr-mode: conversation #{} reviews={} comments={} line={}",
                     number,
@@ -1639,8 +1648,10 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
     } else {
         // Diff
         let diff_el: gpui::AnyElement = match diff {
-            Some(dv) => render_diff_list::<KagiApp>(dv, DiffHeader::default(), scroll, cx)
-                .into_any_element(),
+            Some(dv) => {
+                let header = threads::diff_header(app, ix, &dv, cx);
+                render_diff_list::<KagiApp>(dv, header, scroll, cx).into_any_element()
+            }
             None => div()
                 .flex_1()
                 .flex()

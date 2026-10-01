@@ -124,6 +124,10 @@ mod pr_fields_focus;
 mod pr_viewed;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_threads.rs"]
+mod pr_threads;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_suggestion_apply.rs"]
 mod pr_suggestion_apply;
 
@@ -1049,6 +1053,11 @@ mod macos {
                 Box::new(crate::pr_fields_focus::scenario_pr_fields_escape_focus),
             ),
             ("pr_viewed", Box::new(crate::pr_viewed::scenario_pr_viewed)),
+            ("pr_threads", Box::new(crate::pr_threads::scenario_pr_threads)),
+            (
+                "pr_threads_via_gh",
+                Box::new(crate::pr_threads::scenario_pr_threads_via_gh),
+            ),
             (
                 "pr_suggestion_apply",
                 Box::new(crate::pr_suggestion_apply::scenario_pr_suggestion_apply),

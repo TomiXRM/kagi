@@ -58,6 +58,7 @@ pub mod github_merge;
 pub mod github_pr_list;
 pub mod github_review;
 mod github_status_batch;
+pub mod github_threads;
 pub mod hotspot;
 mod log;
 pub mod message_gen;

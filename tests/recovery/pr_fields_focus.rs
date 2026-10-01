@@ -22,13 +22,8 @@ pub(crate) struct OfflineGh {
 
 impl OfflineGh {
     pub(crate) fn install() -> Self {
-        // Do not poison the process-global OnceLock with this test transport.
-        let _ = kagi_git::github::gh_available();
-        let bin = tempfile::tempdir().expect("offline gh dir");
-        let gh = bin.path().join("gh");
         // Candidate reads succeed; edits fail without reaching GitHub.
-        std::fs::write(
-            &gh,
+        Self::with_script(
             r#"#!/bin/sh
 case "$1" in
   api) echo octocat; echo hubot ;;
@@ -41,7 +36,15 @@ case "$1" in
 esac
 "#,
         )
-        .expect("write offline gh");
+    }
+
+    /// A `gh` on `PATH` that runs `script` instead of reaching GitHub.
+    pub(crate) fn with_script(script: &str) -> Self {
+        // Do not poison the process-global OnceLock with this test transport.
+        let _ = kagi_git::github::gh_available();
+        let bin = tempfile::tempdir().expect("offline gh dir");
+        let gh = bin.path().join("gh");
+        std::fs::write(&gh, script).expect("write offline gh");
         std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o700))
             .expect("offline gh permissions");
         let previous = std::env::var_os("PATH");

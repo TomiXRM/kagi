@@ -38,6 +38,57 @@ pub(crate) fn list_option(
         .aria_size_of_set(size)
 }
 
+/// Mark `el` as the non-selectable list `id`, named `label` (rows act on
+/// click but the list keeps no selection).
+pub(crate) fn plain_list(id: &'static str, el: Stateful<Div>, label: &str) -> Stateful<Div> {
+    record_list(id, Role::List, label);
+    el.role(Role::List)
+        .aria_label(SharedString::from(label.to_string()))
+}
+
+/// Mark `el` as row `position` (0-based) of `size` in plain list `list`.
+pub(crate) fn list_item(
+    list: &'static str,
+    el: Stateful<Div>,
+    position: usize,
+    size: usize,
+    label: String,
+) -> Stateful<Div> {
+    record_option(list, position, size, &label, false);
+    el.role(Role::ListItem)
+        .aria_label(SharedString::from(label))
+        .aria_position_in_set(position + 1)
+        .aria_size_of_set(size)
+}
+
+/// One sentence naming a pull-request row of the PR table.
+#[allow(clippy::too_many_arguments)]
+pub fn pr_row_label(
+    number: u64,
+    title: &str,
+    state: &str,
+    author: &str,
+    head: &str,
+    base: &str,
+    checks: &str,
+    age: &str,
+) -> String {
+    [
+        number.to_string().as_str(),
+        title,
+        state,
+        author,
+        head,
+        base,
+        checks,
+        age,
+    ]
+    .iter()
+    .fold(Msg::A11yPrRow.t().to_string(), |s, a| {
+        s.replacen("{}", a, 1)
+    })
+}
+
 /// Mark `el` as the tree `id`, named `label`.
 pub(crate) fn tree(id: &'static str, el: Stateful<Div>, label: &str) -> Stateful<Div> {
     record_list(id, Role::Tree, label);
@@ -219,6 +270,32 @@ mod tests {
         let bare = commit_row_label("Fix bug", "Alice", "2 days ago", "abc1234", &[]);
         assert!(!bare.contains("main"));
         assert!(with_refs.starts_with(&bare), "refs are a suffix");
+    }
+
+    #[test]
+    fn pr_label_names_number_title_state_author_branches_checks_age() {
+        let s = pr_row_label(
+            42,
+            "Fix it",
+            "Needs review",
+            "alice",
+            "feat",
+            "main",
+            "\u{2713}3",
+            "2d",
+        );
+        for part in [
+            "42",
+            "Fix it",
+            "Needs review",
+            "alice",
+            "feat",
+            "main",
+            "\u{2713}3",
+            "2d",
+        ] {
+            assert!(s.contains(part), "{s:?} lacks {part}");
+        }
     }
 
     #[test]

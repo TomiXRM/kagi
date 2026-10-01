@@ -109,9 +109,9 @@ fn select_worktree(
         let index = app.sidebar.rows.iter().position(|row| matches!(
             row, kagi::ui::sidebar::SidebarRow::Worktree { name: row_name, .. } if row_name == name
         )).expect("registered sidebar worktree");
-        app.sidebar
-            .scroll_handle
-            .scroll_to_item(index, gpui::ScrollStrategy::Center);
+        let first_leaf = app.sidebar.pane_ranges[3].start + 1;
+        app.sidebar.scroll_handles[3]
+            .scroll_to_item(index - first_leaf, gpui::ScrollStrategy::Center);
         cx.notify();
     });
     click(cx, window, &format!("sidebar-worktree-{name}"));

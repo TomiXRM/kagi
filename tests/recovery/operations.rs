@@ -3102,10 +3102,9 @@ pub fn scenario_commit_list_roles(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS commit_list_roles: ListBox + ListBoxOption, absolute positions over WIP/stash/commits, one selected, labels, virtualized scroll");
 }
 
-/// #354 slice 3 (sidebar): the navigator is a Tree; section and group
-/// headers are expandable TreeItems at levels 1/2, leaves carry their level
-/// and position among siblings, the current branch / worktree is named as
-/// current, and collapsing a section flips `expanded` and hides its rows.
+/// #354/#864: each Graph section is its own Tree with a pinned section
+/// TreeItem. Group and leaf positions remain stable inside their pane, and
+/// collapsing a section hides only its leaves.
 pub fn scenario_sidebar_tree_roles(cx: &mut VisualTestAppContext) {
     use gpui::Role;
     use kagi::ui::list_a11y::{clear_recorded_lists, recorded_list};
@@ -3132,9 +3131,25 @@ pub fn scenario_sidebar_tree_roles(cx: &mut VisualTestAppContext) {
         .unwrap();
     };
     redraw(cx);
-    let list = recorded_list("sidebar").expect("sidebar drawn");
-    assert_eq!(list.role, Some(Role::Tree));
-    assert_eq!(list.label, kagi_ui_core::i18n::Msg::A11ySidebar.t());
+    for (id, label) in [
+        ("sidebar-prs", kagi_ui_core::i18n::Msg::A11ySidebarPrs),
+        ("sidebar-local", kagi_ui_core::i18n::Msg::A11ySidebarLocal),
+        ("sidebar-remote", kagi_ui_core::i18n::Msg::A11ySidebarRemote),
+        (
+            "sidebar-worktrees",
+            kagi_ui_core::i18n::Msg::A11ySidebarWorktrees,
+        ),
+        ("sidebar-tags", kagi_ui_core::i18n::Msg::A11ySidebarTags),
+        (
+            "sidebar-stashes",
+            kagi_ui_core::i18n::Msg::A11ySidebarStashes,
+        ),
+    ] {
+        let tree = recorded_list(id).unwrap_or_else(|| panic!("{id} drawn"));
+        assert_eq!(tree.role, Some(Role::Tree));
+        assert_eq!(tree.label, label.t());
+    }
+    let list = recorded_list("sidebar-local").expect("local branches drawn");
     let find = |list: &kagi::ui::list_a11y::RecordedList, needle: &str| {
         list.rows
             .iter()
@@ -3157,8 +3172,9 @@ pub fn scenario_sidebar_tree_roles(cx: &mut VisualTestAppContext) {
     let (_, _, b) = find(&list, "feat/b");
     assert_eq!((a.0, a.2, a.3), (3, 1, 2));
     assert_eq!((b.0, b.2, b.3), (3, 2, 2));
-    // The other worktree is a level-2 leaf named with its path.
-    let (_, wt_label, (level, ..)) = find(&list, "side");
+    // Worktree leaves belong to their own independently named Tree.
+    let worktrees = recorded_list("sidebar-worktrees").expect("worktree pane drawn");
+    let (_, wt_label, (level, ..)) = find(&worktrees, "wt-tree");
     assert_eq!(level, 2, "{wt_label}");
 
     // Collapse LOCAL BRANCHES: header reports collapsed, leaves disappear.
@@ -3170,7 +3186,7 @@ pub fn scenario_sidebar_tree_roles(cx: &mut VisualTestAppContext) {
     });
     cx.run_until_parked();
     redraw(cx);
-    let list = recorded_list("sidebar").expect("sidebar drawn after collapse");
+    let list = recorded_list("sidebar-local").expect("local branches drawn after collapse");
     let (_, _, (_, expanded, ..)) = find(&list, "LOCAL BRANCHES");
     assert_eq!(expanded, Some(false));
     assert!(

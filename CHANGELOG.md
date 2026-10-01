@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Added
 
 - Editor Workspace と Commit Panel の file tree を支援技術から名前付き tree として読めるようにしました。各ファイルは名前・変更状態・選択状態・階層と兄弟位置を持ち、Editor のフォルダーと Panel の Generated / Agent fold は開閉状態を伝えます。名前は EN/JA に対応し、未保存の編集も読み上げます。通常の flat 表示は tree にしません。（#354 slice 3）
+- Graph のサイドバーを PR / local branch / remote branch / worktree / tag / stash の 6 つの縦ペインに分けました。PR が 0 件でも見出しを表示します。各ペインの見出しは固定、一覧は別々にスクロールでき、境界をドラッグして高さの比率を変更できます。閉じたペインは見出しだけになり、再展開で元の高さ比に戻ります。比率と開閉は `settings.json` に保存され次回起動時も復元されます。狭い画面では 6 枠の外側をスクロールできます。不正な保存値は既定配置で表示し、起動・描画だけでは上書きしません。(#864、ADR-0217)
 - conflict の continue / skip / abort と解決内容の保存(save)も、Operation Log に動かした ref を記録するようにしました(#884、ADR-0214 §4)。これまでは記録なしの扱いだったため、Kagi で conflict を解いた merge や cherry-pick をまたぐ時点には「記録なし」で戻せませんでした。今は merge 前の時点にも復元できます。実行前に拒否された場合は「動いた ref はありません」と記録します。rebase は途中で HEAD が detached になるので、これまでどおり復元の対象外です。(Refs #334)
 - PR 一覧（PR モードの表）の accessibility（#354 slice 3、3 本目）。支援技術から表を list として、各行を「番号・タイトル・状態・作者・branch・check・更新」で名前付きの項目として、並び順の何番目か付きで読めるようにしました（表は選択状態を持たないので selected は付けません）。（Refs #354）
 - Operation Log の「取り消す / この時点まで戻す」の確認 card に、戻した後のグラフを表示するようにしました(#334 slice 2c、ADR-0214 §6)。branch が戻る位置と、どの branch からも外れる commit の数を、変化する部分の前後(最大 40 行)だけ、通常の commit graph と同じ描き方で示します。計算は読み込み済みの履歴だけで行い、戻し先がその中に無い場合は推定せず「プレビューできません」と表示します(復元自体はできます)。表示専用で、確認するまで何も書き込みません。(Refs #334)

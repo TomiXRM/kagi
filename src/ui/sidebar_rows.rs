@@ -364,11 +364,8 @@ pub fn build_sidebar_rows(
 
     let mut rows: Vec<SidebarRow> = Vec::new();
 
-    // ── PULL REQUESTS (GitHub Phase 1) — top: "what needs attention" ──
-    // Only rendered when there is something to show: an always-empty section
-    // would be noise for non-GitHub repos. Grouped Mine / Review requested /
-    // Others; Others starts collapsed (busy repos have dozens).
-    if !prs.is_empty() {
+    // ── PULL REQUESTS — always shown, including an empty "(0)" pane ──
+    {
         use kagi_domain::github::PrGroup;
         let section_collapsed = collapsed.contains(SECTION_PRS);
         rows.push(SidebarRow::SectionHeader {
@@ -582,25 +579,6 @@ pub fn build_sidebar_rows(
         }
     }
 
-    // ── TAGS ─────────────────────────────────────────────────────
-    {
-        let section_collapsed = collapsed.contains(SECTION_TAGS);
-        rows.push(SidebarRow::SectionHeader {
-            section: SECTION_TAGS,
-            title: "TAGS",
-            count: tags.len(),
-            collapsed: section_collapsed,
-        });
-        if !section_collapsed {
-            for tag in tags.iter().filter(|t| matches(&t.name)) {
-                rows.push(SidebarRow::Tag {
-                    name: tag.name.clone(),
-                    target: tag.target.clone(),
-                });
-            }
-        }
-    }
-
     // ── WORKTREES ────────────────────────────────────────────────
     {
         let section_collapsed = collapsed.contains(SECTION_WORKTREES);
@@ -630,6 +608,25 @@ pub fn build_sidebar_rows(
                     } else {
                         wt.port
                     },
+                });
+            }
+        }
+    }
+
+    // ── TAGS ─────────────────────────────────────────────────────
+    {
+        let section_collapsed = collapsed.contains(SECTION_TAGS);
+        rows.push(SidebarRow::SectionHeader {
+            section: SECTION_TAGS,
+            title: "TAGS",
+            count: tags.len(),
+            collapsed: section_collapsed,
+        });
+        if !section_collapsed {
+            for tag in tags.iter().filter(|t| matches(&t.name)) {
+                rows.push(SidebarRow::Tag {
+                    name: tag.name.clone(),
+                    target: tag.target.clone(),
                 });
             }
         }

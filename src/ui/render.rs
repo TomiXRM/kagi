@@ -304,9 +304,8 @@ impl Render for KagiApp {
         // `self.sidebar.rows` below and read by the virtualized list processor.
         // The renderer derives its own inputs from `self` (ADR-0199), so only
         // the filter *text* is needed here, for the rebuild fingerprint.
-        // PERF-SIDEBAR-VIRT: flatten the navigator into `self.sidebar.rows`
-        // (honouring collapse + filter) so the "sidebar-list" uniform_list can
-        // virtualize it. The processor reads the field.
+        // The six Graph pane lists share these rows and rebuild their ranges
+        // only when the fingerprint below changes (#864).
         //
         // ADR-0116: owner + evidence/read epochs and navigator inputs gate the
         // O(all-refs) clone+collect. Filter InputState does not notify KagiApp,
@@ -346,6 +345,7 @@ impl Render for KagiApp {
                 &self.ui().branch_groups_collapsed,
                 &sidebar_filter_text,
             );
+            self.sidebar.pane_ranges = sidebar_panes::pane_ranges(&rows);
             self.sidebar.rows = rows;
             self.sidebar.rows_fingerprint = sidebar_fingerprint;
         }

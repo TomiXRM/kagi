@@ -1,6 +1,7 @@
 # ADR-0014: Repository Navigator Sidebar
 
 - Status: Accepted / Date: 2026-06-12
+- Graph の section 配置と scroll ownership は ADR-0217 で更新。
 
 ## Decision
 - セクション: LOCAL BRANCHES / REMOTE BRANCHES / TAGS / STASHES(順固定)。各セクションは折りたたみ可 + 件数表示。WORKTREES は v0.2、PR/ISSUES は later

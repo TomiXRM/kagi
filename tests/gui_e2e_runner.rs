@@ -58,6 +58,10 @@ mod gui_evidence;
 mod recovery_operations;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/sidebar_panes.rs"]
+mod recovery_sidebar_panes;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/hunk_staging.rs"]
 mod hunk_staging;
 
@@ -834,6 +838,10 @@ mod macos {
             (
                 "file_tree_roles",
                 Box::new(crate::file_tree_a11y::scenario_file_tree_roles),
+            ),
+            (
+                "sidebar_panes",
+                Box::new(crate::recovery_sidebar_panes::scenario_sidebar_panes),
             ),
             (
                 "pr_list_roles",

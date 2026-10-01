@@ -94,7 +94,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
     - 対象以降で `parent → id` の鎖が途切れる(HistoryGap): retention での削除、壊れた行、読めない行。
     - worktree を開けない entry(UnknownRepository): 削除・prune された worktree の entry は、この repository のものだった可能性がある。黙って除外しない。別の repository だと証明できた entry(Other)だけを除く。
   - **entry は記録時の repository を持つ**(#894)。`repo_identity` = 正規化した common dir の path、unix ではその `(dev, ino)`、取れる環境では common dir の作成時刻(`Metadata::created()`、macOS は birthtime、Linux は statx の btime。JSON は `born_s` / `born_ns`)。
-    - append の 1 か所(`append_oplog_receipt`)で、entry の worktree(無ければ repo)を開いて埋める。Backend の経路も UI の persist 経路もここを通る。開けない scope(remote の `host:repo`)は `None`。
+    - append の 1 か所(`append_oplog_receipt`)で、entry の worktree を開いて埋める。worktree が無い、または開けない場合は repo を開く(#900 review 3)。remove-worktree の成功は、削除・prune 済みの worktree を `entry.worktree` に記録するので、repo へのフォールバックが無いと UnknownRepository になり、全 repository の restore を止める。Backend の経路も UI の persist 経路もここを通る。どちらも開けない scope(remote の `host:repo`)は `None`。
     - 分類(worktree は開かない)。削除済みの worktree の entry は Mine になり、記録した移動は restore に入る。削除した無関係の repository の entry は Other になり、blocker にならない。
 
       | file id `(dev, ino)` | 作成時刻 | path | 判定 |
@@ -212,8 +212,9 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - 限界 2 の固定: 別 repository の entry に、この repository の identity(`(dev, ino)` と作成時刻)を書くと、その記録の `refs/heads/x` が RefMovedSince(current = 無し)で止まる。
   - 同じ path に作り直した repository(#900 review): path はこの repository、file id は別 repository の entry は Other で、それを対象にした restore は EntryNotLoaded。inode 前提のテストは `#[cfg(unix)]`。
   - inode の再利用(#900 review 2): path も `(dev, ino)` もこの repository、作成時刻だけ違う entry は Other(EntryNotLoaded)。作成時刻を消した entry は UnknownRepository。domain 側は `same_repository` の unit で、再利用・移動・作成時刻なし・file id なしの各行を固定する。
+  - 削除した worktree の remove-worktree(#900 review 3): identity は repo から取れる。別の repository の restore はその entry をまたいでも blocker なしで実行でき、自分の repository では UnknownRepository にならない。birth time を返さない filesystem では、作成時刻を前提にするテストは理由を出してスキップする。
   - codec unit: 往復、旧行は `None`、不正値でも行は残って `None`。
-- #894 の変異確認: append で埋めない → integration 2 件、`(dev, ino)` を比べない → 限界 2 のテスト、分類で identity を使わない → integration 2 件、codec が書かない → codec と integration が落ちる。#900 review 2: 作成時刻を比べない → unit と inode 再利用の integration、曖昧を Mine にする → inode 再利用の integration が落ちる。
+- #894 の変異確認: append で埋めない → integration 2 件、`(dev, ino)` を比べない → 限界 2 のテスト、分類で identity を使わない → integration 2 件、codec が書かない → codec と integration が落ちる。#900 review 2: 作成時刻を比べない → unit と inode 再利用の integration、曖昧を Mine にする → inode 再利用の integration が落ちる。#900 review 3: repo へのフォールバックを外す → 別 repository の restore が UnknownRepository で止まり、remove-worktree の integration が落ちる。
 - #878 review 対応(P1)のテスト
   - domain unit: 鎖が途切れると HistoryGap、別 repository の entry は除いて Unknown は blocker、記録外で変わった branch は RefChangedOutsideRecord(記録が説明する branch は除く)、動いて戻った ref が別の値にあれば RefMovedSince。
   - kagi-git integration: oplog から 1 行を消すと HistoryGap、削除・prune した worktree の entry は UnknownRepository、別 worktree で merge の conflict 中は OperationInProgress(その path)、対象の後に `git branch` で作った branch は RefChangedOutsideRecord。

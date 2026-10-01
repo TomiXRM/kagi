@@ -81,21 +81,49 @@ impl Drop for SavedKeys {
 
 /// The shared state before a scenario.
 pub(crate) struct Before {
-    settings: BTreeMap<String, serde_json::Value>,
+    settings: Settings,
     ports: Option<Vec<u8>>,
     oplog: Vec<u8>,
     tmp: BTreeSet<String>,
 }
 
-fn settings() -> BTreeMap<String, serde_json::Value> {
+/// `settings.json` as it reads: its keys (absent counts as no keys: the store
+/// creates the file on the first write, often of a session key), or why it
+/// does not parse — a broken file must not compare equal to an empty one
+/// (#899 review).
+#[derive(PartialEq)]
+enum Settings {
+    Keys(BTreeMap<String, serde_json::Value>),
+    Unreadable { text: String, why: String },
+}
+
+fn settings() -> Settings {
     // A coalesced write may still be in memory.
     kagi::ui::settings::flush();
-    let text = std::fs::read_to_string(log_dir().join("settings.json")).unwrap_or_default();
-    let map: serde_json::Map<String, serde_json::Value> =
-        serde_json::from_str(&text).unwrap_or_default();
-    map.into_iter()
-        .filter(|(key, _)| !SESSION_KEYS.contains(&key.as_str()))
-        .collect()
+    let text = match std::fs::read_to_string(log_dir().join("settings.json")) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Settings::Unreadable {
+                text: String::new(),
+                why: error.to_string(),
+            }
+        }
+    };
+    if text.trim().is_empty() {
+        return Settings::Keys(BTreeMap::new());
+    }
+    match serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&text) {
+        Ok(map) => Settings::Keys(
+            map.into_iter()
+                .filter(|(key, _)| !SESSION_KEYS.contains(&key.as_str()))
+                .collect(),
+        ),
+        Err(error) => Settings::Unreadable {
+            text,
+            why: error.to_string(),
+        },
+    }
 }
 
 fn tmp_entries() -> BTreeSet<String> {
@@ -122,19 +150,36 @@ fn shown(value: Option<&serde_json::Value>) -> String {
     value.map_or_else(|| "absent".to_string(), |value| value.to_string())
 }
 
-fn settings_changes(before: &BTreeMap<String, serde_json::Value>, report: &mut String) {
+fn settings_changes(before: &Settings, report: &mut String) {
     let after = settings();
-    let keys: BTreeSet<&String> = before.keys().chain(after.keys()).collect();
-    for key in keys {
-        let (old, new) = (before.get(key), after.get(key));
-        if old != new {
+    match (before, &after) {
+        (Settings::Keys(before), Settings::Keys(after)) => {
+            let keys: BTreeSet<&String> = before.keys().chain(after.keys()).collect();
+            for key in keys {
+                let (old, new) = (before.get(key), after.get(key));
+                if old != new {
+                    let _ = writeln!(
+                        report,
+                        "- settings.json key `{key}`: {} → {}",
+                        shown(old),
+                        shown(new)
+                    );
+                }
+            }
+        }
+        (before, after) if before != after => {
+            let describe = |state: &Settings| match state {
+                Settings::Keys(keys) => format!("{} key(s)", keys.len()),
+                Settings::Unreadable { why, .. } => format!("unparsable ({why})"),
+            };
             let _ = writeln!(
                 report,
-                "- settings.json key `{key}`: {} → {}",
-                shown(old),
-                shown(new)
+                "- settings.json: {} → {}",
+                describe(before),
+                describe(after)
             );
         }
+        _ => {}
     }
 }
 
@@ -165,7 +210,16 @@ fn oplog_changes(before: &[u8], report: &mut String) {
     let raw = std::env::temp_dir();
     let root = std::fs::canonicalize(&raw).unwrap_or_else(|_| raw.clone());
     for line in String::from_utf8_lossy(&after[before.len()..]).lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
         let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) else {
+            // An entry nobody can read hides whatever it was (#899 review).
+            let shown: String = line.chars().take(120).collect();
+            let _ = writeln!(
+                report,
+                "- operations.jsonl: an appended line is not a JSON entry: `{shown}`"
+            );
             continue;
         };
         let repo = entry

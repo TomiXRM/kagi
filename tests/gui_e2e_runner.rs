@@ -1662,6 +1662,21 @@ mod macos {
         let repo_path = fixture.path().canonicalize().unwrap();
         let before_fp = repo_fingerprint(&repo_path);
         let (kagi, win) = mount(cx, &repo_path);
+        // THROWAWAY #899 review probes; removed before commit.
+        let log = PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap());
+        match std::env::var("THROWAWAY").as_deref() {
+            Ok("settings") => std::fs::write(log.join("settings.json"), "{ not json").unwrap(),
+            Ok("oplog") => {
+                use std::io::Write as _;
+                let mut f = std::fs::OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .open(log.join("operations.jsonl"))
+                    .unwrap();
+                writeln!(f, "{{ truncated entry").unwrap();
+            }
+            _ => {}
+        }
 
         let initial = cx.read(|app| kagi.read(app).bottom_panel_open);
         capture_screenshot_best_effort(cx, win, "before");

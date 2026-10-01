@@ -207,12 +207,12 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
     - `fetch_failure_oplog`: 実 `fetch_async` の失敗が `Some(空)`(`Unknown` なら `None`)。
     - `worktree_lock_reason`: lock / unlock の記録が `Some(空)`。
     - 新しい `worktree_prune_repair_receipt`: prune / repair の記録が `Some(空)`。
-  - 未テスト: `fetch-pr` の失敗記録。fetch と同じ観測と builder を使うが、専用のテストは無い。
+    - `pr_open_enters_before_ref_fetch`: 実 `fetch_pr_for_open` の失敗(`fetch-pr`)が `Some(空)`(`Unknown` なら `None`)。
 - #885 の変異確認
   - `with_nothing_moved` が `None` を書く → transport の integration 8 件が落ちる。
   - remove-worktree が `None` を記録する → integration が落ちる。
   - fetch の記録を `None` にする → 統合テストの restore が `NotRecorded { op: "fetch" }` で止まる。UI の fetch で `None` → Tier A `fetch_failure_oplog` が落ちる。
-  - lock / unlock、prune / repair で `None` → それぞれの Tier A が落ちる。
+  - lock / unlock、prune / repair、fetch-pr で `None` → それぞれの Tier A が落ちる。
 - #878 review 対応(P1)のテスト
   - domain unit: 鎖が途切れると HistoryGap、別 repository の entry は除いて Unknown は blocker、記録外で変わった branch は RefChangedOutsideRecord(記録が説明する branch は除く)、動いて戻った ref が別の値にあれば RefMovedSince。
   - kagi-git integration: oplog から 1 行を消すと HistoryGap、削除・prune した worktree の entry は UnknownRepository、別 worktree で merge の conflict 中は OperationInProgress(その path)、対象の後に `git branch` で作った branch は RefChangedOutsideRecord。

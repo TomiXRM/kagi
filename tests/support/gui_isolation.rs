@@ -83,7 +83,7 @@ impl Drop for SavedKeys {
 pub(crate) struct Before {
     settings: Settings,
     ports: Option<Vec<u8>>,
-    oplog: Vec<u8>,
+    oplog: Option<Vec<u8>>,
     tmp: BTreeSet<String>,
 }
 
@@ -160,7 +160,7 @@ pub(crate) fn snapshot() -> Before {
     Before {
         settings: settings(),
         ports: read_shared(&port_store_path()),
-        oplog: read_shared(&log_dir().join("operations.jsonl")).unwrap_or_default(),
+        oplog: read_shared(&log_dir().join("operations.jsonl")),
         tmp: tmp_entries(),
     }
 }
@@ -212,8 +212,24 @@ fn store_text(bytes: &Option<Vec<u8>>) -> String {
     }
 }
 
-fn oplog_changes(before: &[u8], report: &mut String) {
-    let after = read_shared(&log_dir().join("operations.jsonl")).unwrap_or_default();
+fn oplog_changes(before: &Option<Vec<u8>>, report: &mut String) {
+    let after = read_shared(&log_dir().join("operations.jsonl"));
+    // The writer creates the file with its first entry: absent and empty are
+    // different states, and neither transition between them is an append
+    // (#899 review).
+    match (before, &after) {
+        (Some(_), None) => {
+            let _ = writeln!(report, "- operations.jsonl: removed");
+            return;
+        }
+        (None, Some(bytes)) if bytes.is_empty() => {
+            let _ = writeln!(report, "- operations.jsonl: created empty");
+            return;
+        }
+        _ => {}
+    }
+    let before = before.as_deref().unwrap_or_default();
+    let after = after.unwrap_or_default();
     if after.len() < before.len() || after[..before.len()] != *before {
         let _ = writeln!(
             report,

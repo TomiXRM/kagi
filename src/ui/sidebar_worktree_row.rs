@@ -512,12 +512,17 @@ pub(super) fn build_worktree_row(
     // neutralize control bytes in the visible label.
     let name_s = kagi_domain::text_safety::sanitize_control_bytes(name);
     let path_s = kagi_domain::text_safety::sanitize_control_bytes(path_label);
-    let label = if is_current {
-        SharedString::from(format!("\u{2713} {}  {}", name_s, path_s))
+    let name_label = if is_current {
+        SharedString::from(format!("\u{2713} {}", name_s))
     } else {
-        SharedString::from(format!("{}  {}", name_s, path_s))
+        SharedString::from(name_s.to_string())
     };
-    let full_name = label.clone();
+    // The tooltip carries everything a narrow row gives up: the path and the
+    // port link (#855).
+    let full_name = SharedString::from(match port {
+        Some(port) => format!("{}  {}  localhost:{}", name_label, path_s, port),
+        None => format!("{}  {}", name_label, path_s),
+    });
     let text_color = if is_current {
         theme().color_success
     } else {
@@ -538,10 +543,57 @@ pub(super) fn build_worktree_row(
         .text_color(rgb(text_color))
         .overflow_hidden()
         .tooltip(name_tooltip(full_name))
-        // min_w(0): without it the flex item sizes to the (long) path label's
-        // min-content width and pushes the lock chip past the clipped row edge
-        // — the indicator never showed at all (user report).
-        .child(div().flex_1().min_w(px(0.)).truncate().child(label));
+        // #855: the name is what identifies the row, so it never shrinks.
+        // `measure_inside`, not `measure_control`: a wrapper div would put its
+        // own flex sizing between this element and the row.
+        .child(
+            div()
+                .relative()
+                .flex_shrink_0()
+                .whitespace_nowrap()
+                .child(name_label)
+                .child(super::e2e::measure_inside(format!(
+                    "sidebar-worktree-name-{name}"
+                ))),
+        )
+        // Path, then the port link (#855), in one row-high wrapping box. The
+        // path takes only the room the link leaves (basis 0), so it truncates
+        // first, down to nothing. When even the link alone does not fit, it
+        // wraps onto a second line that the box clips: it disappears whole
+        // instead of being cut to "localhost:30", and the path takes the room
+        // back. The row's tooltip still names it. min_w(0): without it the box
+        // sizes to the (long) path's min-content width and pushes the lock chip
+        // past the clipped row edge (user report).
+        .child(
+            div()
+                .ml_2()
+                .flex_1()
+                .min_w(px(0.))
+                .h(theme::scaled_px(SIDEBAR_ROW_H))
+                .overflow_hidden()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .child(
+                    div()
+                        .h(theme::scaled_px(SIDEBAR_ROW_H))
+                        .flex_grow(1.)
+                        .flex_basis(px(0.))
+                        .min_w(px(0.))
+                        .flex()
+                        .items_center()
+                        .child(
+                            div()
+                                .min_w(px(0.))
+                                .truncate()
+                                .child(SharedString::from(path_s.to_string())),
+                        ),
+                )
+                .children(
+                    port.filter(|_| !is_remote)
+                        .map(|port| port_link(name, port, cx)),
+                ),
+        );
     if locked {
         // 🔐 reads at a glance where the muted "locked" text was easy to miss
         // next to the path label (user feedback).
@@ -554,9 +606,6 @@ pub(super) fn build_worktree_row(
     // so a remote view gets no worktree menu at all.
     if is_remote {
         return row.into_any();
-    }
-    if let Some(port) = port {
-        row = row.child(port_link(name, port, cx));
     }
     let path_for_select = path.to_path_buf();
     row = row
@@ -603,23 +652,30 @@ fn port_link(name: &str, port: u16, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         cx.stop_propagation();
         cx.open_url(&url);
     });
-    super::e2e::measure_control(
-        format!("sidebar-worktree-port-{name}"),
-        div()
-            .id(SharedString::from(format!("sidebar-worktree-port-{name}")))
-            .flex_shrink_0()
-            .px_1()
-            .rounded_sm()
-            .text_xs()
-            .text_color(rgb(theme().color_branch))
-            .cursor_pointer()
-            .hover(|s| s.bg(rgb(theme().selected)))
-            // The row selects its inspection on click.
-            .on_mouse_down(gpui::MouseButton::Left, |_e, _w, cx| cx.stop_propagation())
-            .on_click(open)
-            .child(SharedString::from(format!("localhost:{port}"))),
-    )
-    .into_any_element()
+    // Always whole: when it does not fit, the wrapping box around it moves it
+    // to a clipped second line rather than cutting the text.
+    div()
+        .id(SharedString::from(format!("sidebar-worktree-port-{name}")))
+        .relative()
+        .flex_shrink_0()
+        .h(theme::scaled_px(SIDEBAR_ROW_H))
+        .flex()
+        .items_center()
+        .whitespace_nowrap()
+        .px_1()
+        .rounded_sm()
+        .text_xs()
+        .text_color(rgb(theme().color_branch))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(theme().selected)))
+        // The row selects its inspection on click.
+        .on_mouse_down(gpui::MouseButton::Left, |_e, _w, cx| cx.stop_propagation())
+        .on_click(open)
+        .child(SharedString::from(format!("localhost:{port}")))
+        .child(super::e2e::measure_inside(format!(
+            "sidebar-worktree-port-{name}"
+        )))
+        .into_any_element()
 }
 
 #[cfg(feature = "gui-e2e")]

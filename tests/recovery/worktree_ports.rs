@@ -33,6 +33,19 @@ fn laid_out(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) ->
     e2e::control_bounds(window.window_id(), id).is_some()
 }
 
+/// The drawn bounds of a measured control, after two fresh frames.
+fn bounds(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    id: &str,
+) -> gpui::Bounds<gpui::Pixels> {
+    e2e::clear_control_bounds(window.window_id(), id);
+    for _ in 0..2 {
+        draw(cx, window);
+    }
+    e2e::control_bounds(window.window_id(), id).unwrap_or_else(|| panic!("{id} was not laid out"))
+}
+
 /// A shell that records the environment it was started with, then waits on
 /// its terminal (exits when the PTY closes at unmount).
 fn recording_shell(dir: &Path, out: &Path) -> PathBuf {
@@ -147,6 +160,45 @@ pub fn scenario_worktree_port_env(cx: &mut VisualTestAppContext) {
     assert!(
         !laid_out(cx, window, "sidebar-worktree-port-side"),
         "a worktree with no stored block shows no link"
+    );
+
+    // A narrow sidebar never squeezes the name (#858 Tier B: at the default
+    // ~220px the row read `✓… localhost:3000`). The path gives way first; a
+    // link that still does not fit leaves the row whole (wrapped onto the
+    // clipped second line), never cut down to part of its text.
+    let layout = |cx: &mut VisualTestAppContext, sidebar: f32| {
+        app.update(cx, |app, cx| {
+            app.sidebar.width = sidebar;
+            cx.notify();
+        });
+        let name = bounds(cx, window, "sidebar-worktree-name-main");
+        let port = bounds(cx, window, "sidebar-worktree-port-main");
+        let gap = f32::from(port.center().y) - f32::from(name.center().y);
+        let same_line = gap.abs() < f32::from(name.size.height);
+        (
+            f32::from(name.size.width),
+            f32::from(port.size.width),
+            same_line,
+        )
+    };
+    let (name_wide, port_wide, shown_wide) = layout(cx, 600.);
+    assert!(
+        name_wide > 0. && port_wide > 0.,
+        "wide: name and link drawn"
+    );
+    assert!(shown_wide, "wide: the link sits on the row");
+    for sidebar in [220., 140.] {
+        let (name, port, _) = layout(cx, sidebar);
+        assert_eq!(name, name_wide, "{sidebar}px: the name is not squeezed");
+        assert_eq!(
+            port, port_wide,
+            "{sidebar}px: the link is whole or gone, never cut"
+        );
+    }
+    let (_, _, shown_narrow) = layout(cx, 140.);
+    assert!(
+        !shown_narrow,
+        "140px: with no room left, the link leaves the row"
     );
 
     KagiApp::set_terminal_shell_for_e2e(None);

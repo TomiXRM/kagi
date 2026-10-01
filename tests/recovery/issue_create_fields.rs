@@ -74,6 +74,46 @@ fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
     cx.run_until_parked();
 }
 
+/// #904 review: open a field picker with the keyboard only. Focus starts on
+/// the title; `hops` steps of the window's tab order (what Tab does — the
+/// body is a code editor that keeps Tab for indentation) land on the field's
+/// Button, and a real `key` press — down, then up, which is when GPUI turns
+/// it into a click — activates it. Escape closes the picker.
+fn keyboard_open(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    app: &Entity<KagiApp>,
+    hops: usize,
+    key: &str,
+    field: PrField,
+) {
+    paint(cx, window);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_issue_title_for_e2e(window, cx));
+        for _ in 0..hops {
+            window.focus_next(cx);
+        }
+    })
+    .unwrap();
+    // Keyboard activation is wired for the element focused when it painted.
+    paint(cx, window);
+    let keystroke = gpui::Keystroke::parse(key).unwrap();
+    cx.dispatch_keystroke(window, keystroke.clone());
+    cx.simulate_event(window, gpui::KeyUpEvent { keystroke });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let modal = app
+            .read(cx)
+            .pr_fields_modal()
+            .unwrap_or_else(|| panic!("{key} on the {field:?} entry opened no picker"));
+        assert_eq!(modal.target, FieldTarget::NewIssue);
+        assert_eq!(modal.field, field);
+    });
+    cx.simulate_keystrokes(window, "escape");
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).pr_fields_modal().is_none()));
+}
+
 /// Open one field's picker from the composer, wait for the repository's
 /// list, toggle `values`, and Apply.
 fn pick(
@@ -180,6 +220,11 @@ pub fn scenario_issue_create_fields(cx: &mut VisualTestAppContext) {
         drawn(cx, window, "issue-composer-posted-as"),
         "the composer says who the issue is posted as"
     );
+
+    // Keyboard only: the entries are tab stops right after the body, and
+    // Enter / Space open their pickers.
+    keyboard_open(cx, window, &app, 2, "enter", PrField::Labels);
+    keyboard_open(cx, window, &app, 3, "space", PrField::Assignees);
 
     pick(
         cx,

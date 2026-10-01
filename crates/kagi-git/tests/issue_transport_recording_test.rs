@@ -379,6 +379,11 @@ fn issue_create_carries_chosen_labels_and_assignees() {
         ["--label", "bug", "--label", "docs", "--assignee", "Octocat"],
         "one flag per chosen value"
     );
+    // #904 review: the durable receipt says what was asked for.
+    let entries = read_oplog_tail(10);
+    assert_eq!(entries.len(), 1);
+    assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
+    assert_eq!(entries[0].issue_fields, Some(chosen.clone()));
 }
 
 /// #866: a label the repository does not have, or a user it cannot assign,
@@ -419,6 +424,11 @@ fn labels_or_assignees_the_repository_cannot_take_are_refused_before_gh() {
             panic!("expected a Refused receipt: {:?}", entries[0].outcome);
         };
         assert_eq!(blockers, &vec![expected.message_en()]);
+        assert_eq!(
+            entries[0].issue_fields,
+            Some(chosen.clone()),
+            "a refused create records what it asked for"
+        );
     }
 }
 

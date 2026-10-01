@@ -578,12 +578,17 @@ The current suite covers:
   current tab's modal queue, without invoking a GitHub transport;
 - New Issue labels / assignees (`KAGI_GUI_E2E_ONLY=issue_create_fields`,
   `tests/recovery/issue_create_fields.rs`, #866): the composer's measured
-  `issue-field-open-labels` / `issue-field-open-assignees` open the shared field
-  picker (`FieldTarget::NewIssue`); Apply only stores the picks. An offline `gh`
+  `issue-field-open-labels` / `issue-field-open-assignees` (gpui-component
+  `Button`s) open the shared field picker (`FieldTarget::NewIssue`), by click
+  and by keyboard: `keyboard_open` steps the window tab order from the title
+  and sends Enter / Space as key down + key up (GPUI clicks on the up; a bare
+  `simulate_keystrokes` never activates a focused element). Apply only stores
+  the picks. An offline `gh`
   serves labels from a file the scenario edits, so a label deleted between the
   pick and the measured `issue-composer-submit` is refused before
   `gh issue create` runs (Refused oplog entry, toast naming the label, body and
-  picks kept); the retry sends `--label`/`--assignee` and empties the picks.
+  picks kept); the retry sends `--label`/`--assignee` and empties the picks;
+  the receipt carries `issue_fields` (Operation Log `labels:` / `assignee:`).
   `issue-composer-posted-as` is drawn only once the login on the repository's
   host (`github_host_logins`, read with `gh api user [--hostname]` after an
   Issues read) is known — never from the window-global `github_login`. Pair

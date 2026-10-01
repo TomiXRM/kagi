@@ -287,7 +287,7 @@ impl KagiApp {
                 {
                     entity.update(cx, |v, _| {
                         panel.tree_view = v.state.tree_view;
-                        v.state = panel;
+                        v.replace_state(panel);
                     });
                 } else if self.ui().commit_panel.is_none() {
                     let weak_app = cx.weak_entity();

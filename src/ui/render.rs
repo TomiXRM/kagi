@@ -317,7 +317,7 @@ impl Render for KagiApp {
             .as_ref()
             .map(|ent| ent.read(cx).value().to_lowercase())
             .unwrap_or_default();
-        let sidebar_fingerprint = sidebar::sidebar_rows_fingerprint(
+        let sidebar_fingerprint = sidebar_rows::sidebar_rows_fingerprint(
             self.active_session(),
             self.view_epoch,
             self.ui().github_prs_epoch,
@@ -331,7 +331,7 @@ impl Render for KagiApp {
             &sidebar_filter_text,
         );
         if sidebar_fingerprint != self.sidebar.rows_fingerprint {
-            let rows = sidebar::build_sidebar_rows(
+            let rows = sidebar_rows::build_sidebar_rows(
                 &self.view().branches,
                 &self.ui().github_prs,
                 self.github_login.as_deref(),

@@ -146,10 +146,22 @@ pub struct KagiTerminalSession {
     /// #772: how many shells this session has spawned; the next spawn is
     /// `spawns + 1`. Stale wait deliveries compare against it.
     pub spawns: u64,
-    /// #772: the lock this session offered for its worktree (token +
-    /// identity), set when the lock card opens. Whether the lock exists is
-    /// never cached here — the release plan reads git every time.
-    pub auto_lock: Option<kagi_domain::worktree_autolock::AutoUnlockTarget>,
+    /// The lock this session actually acquired (not an unconfirmed offer).
+    /// The release plan still reads Git; this records only provenance.
+    pub auto_lock: Option<AutoLockOffer>,
+    /// A proven exit waiting for this owner's modal slot. Rendering schedules
+    /// one deferred retry when the slot becomes empty (including button exits).
+    pub release_offer_pending: bool,
+}
+
+/// Frozen owner of one confirmed terminal lock. A tab/path reused after the
+/// offer cannot turn a different repository's lock into this one's release.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AutoLockOffer {
+    pub owner: crate::app::SessionId,
+    pub generation: u64,
+    pub path: PathBuf,
+    pub target: kagi_domain::worktree_autolock::AutoUnlockTarget,
 }
 
 /// The shell child a [`KagiTerminalSession`] spawned (#772 欠落 1).
@@ -290,6 +302,7 @@ impl KagiTerminalSession {
             shell: None,
             spawns: 0,
             auto_lock: None,
+            release_offer_pending: false,
         }
     }
 

@@ -8,9 +8,11 @@ the rule names it.
 
 - **Never rewrite a pushed branch.** No force push, no rebase of a pushed branch:
   take the PR's current base (`origin/main`, or the parent branch of a stacked PR)
-  in with a merge. After every push, confirm the remote head
-  with `git ls-remote origin <branch>` — a non-fast-forward push is rejected, and
-  "pushed" without that check has been wrong.
+  in with a merge. After every push, confirm the remote head equals the local one:
+  `test "$(git ls-remote --exit-code --heads origin refs/heads/<branch> | cut -f1)" = "$(git rev-parse HEAD)"`.
+  A non-fast-forward push is rejected, and "pushed" without that check has been
+  wrong; a plain `ls-remote origin <branch>` exits 0 with no output for a typo and
+  can match a tag of the same name.
 - **Conflicts**: `CHANGELOG.md`, ADRs and `docs/decisions.md` keep both sides.
   **Code conflicts are resolved by reading each hunk**, never by a mechanical
   "keep both": two PRs adding fields to one struct concatenate into a broken brace

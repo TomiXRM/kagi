@@ -263,8 +263,8 @@ and for driving several agents through herdr, live in
 [`docs/agents/workflow.md`](docs/agents/workflow.md). The ones that are broken most
 often:
 
-- Never rewrite a pushed branch; after a push, check the remote head with
-  `git ls-remote`.
+- Never rewrite a pushed branch; after a push, check that the remote head
+  (`git ls-remote --exit-code --heads origin refs/heads/<branch>`) equals `HEAD`.
 - Resolve **code** conflicts by reading each hunk — never by keeping both sides.
 - Gate before push (build, tests, touched Tier A, `check-all`), chained so a
   failure stops the push.

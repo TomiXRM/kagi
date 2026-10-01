@@ -858,6 +858,10 @@ impl Backend {
             } => self.plan_apply_suggestion(suggestion, expected_original, head),
             Operation::WriteCommitGraph => ops::plan_write_commit_graph(&self.repo),
             Operation::EnableFsmonitor => ops::plan_enable_fsmonitor(&self.repo),
+            Operation::OpRevert { entry_id } => ops::plan_op_revert(&self.repo, *entry_id),
+            Operation::RestoreToPoint { entry_id } => {
+                ops::plan_restore_to_point(&self.repo, *entry_id)
+            }
         }
     }
 

@@ -397,6 +397,15 @@ impl KagiApp {
                 ),
             )
         })
+        .when_some(self.oplog_restore_modal().cloned(), |el, modal| {
+            el.child(
+                super::operations::oplog_restore::render_oplog_restore_modal(
+                    modal,
+                    &self.modal_section_overrides,
+                    cx,
+                ),
+            )
+        })
         // ── Push plan modal overlay (T-HT-004) ──────────
         .when_some(push_modal, |el, modal| {
             el.child(render_push_modal(modal, &self.modal_section_overrides, cx))

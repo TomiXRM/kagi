@@ -80,3 +80,35 @@ pub fn reflog_ambiguous() -> &'static str {
         Lang::Ja => "別の操作と同じ秒 — どちらの操作のものか判別できません",
     }
 }
+
+/// #334 slice 2b: the selected row's "undo this one operation" button.
+pub fn revert_button() -> &'static str {
+    match lang() {
+        Lang::En => "Revert this operation…",
+        Lang::Ja => "この操作を取り消す…",
+    }
+}
+
+/// #334 slice 2b: the selected row's "put branches back to here" button.
+pub fn restore_button() -> &'static str {
+    match lang() {
+        Lang::En => "Restore to this point…",
+        Lang::Ja => "この時点まで戻す…",
+    }
+}
+
+/// Why both buttons are disabled for an entry without recorded ref moves.
+pub fn restore_unavailable() -> &'static str {
+    match lang() {
+        Lang::En => "This operation has no recorded ref moves, so it cannot be undone exactly.",
+        Lang::Ja => "この操作には ref の移動の記録が無いため、正確に戻せません。",
+    }
+}
+
+/// The second (armed) confirm of an op-revert / restore-to-point.
+pub fn restore_armed() -> &'static str {
+    match lang() {
+        Lang::En => "Really move the branches back",
+        Lang::Ja => "本当に branch を戻しますか",
+    }
+}

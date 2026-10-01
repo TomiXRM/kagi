@@ -29,6 +29,14 @@ impl RunMode {
             Self::Concurrent
         }
     }
+
+    /// Whether every worktree of a repository uses the main worktree's port
+    /// block (#869, ADR-0213). In `nonconcurrent` mode only one of them runs
+    /// at a time, and a fixed callback URL needs the same `KAGI_PORT` in
+    /// each. In `concurrent` mode every worktree keeps its own block.
+    pub fn shares_ports(self) -> bool {
+        self == Self::Nonconcurrent
+    }
 }
 
 /// A terminal shell that is still running: its repository (the common git

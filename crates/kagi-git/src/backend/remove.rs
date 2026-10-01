@@ -36,6 +36,29 @@ pub struct RemovePlan {
     fingerprint: Option<Fingerprint>,
 }
 
+impl RemovePlan {
+    /// #867: add what the terminal shells Kagi started mean for this removal —
+    /// a running one blocks (the user exits it; Kagi never ends a process),
+    /// processes an exited one left behind warn. Only the GUI knows its
+    /// shells; a plan from the CLI or MCP has none to add.
+    pub fn note_kagi_shells(&mut self, shells: &[kagi_domain::worktree_remove_shells::KagiShell]) {
+        let (blocker, warning) =
+            kagi_domain::worktree_remove_shells::remove_notes(&self.target, shells, |sid| {
+                crate::proc::session_members(sid).ok()
+            });
+        if blocker.is_none() && warning.is_none() {
+            return;
+        }
+        let preview = Arc::make_mut(&mut self.preview);
+        if let Some(note) = blocker {
+            preview.blockers.push(PlanNote::Worktree(note));
+        }
+        if let Some(note) = warning {
+            preview.warnings.push(PlanNote::Worktree(note));
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RemoveReport {
     pub name: String,

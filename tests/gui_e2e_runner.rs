@@ -159,6 +159,10 @@ mod recovery_worktree_lock_reason;
 mod recovery_worktree_ports;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/worktree_remove_shell.rs"]
+mod recovery_worktree_remove_shell;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/worktree_inspection.rs"]
 mod worktree_inspection;
 
@@ -794,6 +798,10 @@ mod macos {
             (
                 "worktree_nonconcurrent",
                 Box::new(crate::recovery_worktree_ports::scenario_worktree_nonconcurrent),
+            ),
+            (
+                "worktree_remove_live_shell",
+                Box::new(crate::recovery_worktree_remove_shell::scenario_worktree_remove_live_shell),
             ),
             (
                 "external_lock_reload",
@@ -1536,6 +1544,10 @@ mod macos {
             (
                 "oplog_actor_reflog",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_actor_reflog),
+            ),
+            (
+                "oplog_restore_card",
+                Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_card),
             ),
             ("create_snapshot", Box::new(scenario_create_snapshot)),
             ("theme_switch", Box::new(scenario_theme_switch)),

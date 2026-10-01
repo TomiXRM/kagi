@@ -67,6 +67,9 @@ impl KagiApp {
             |msg| failure_msg = Some(msg),
             |ports| exhausted = Some(ports),
         );
+        let started_pid = started
+            .then(|| session.shell.as_ref().and_then(|shell| shell.pid))
+            .flatten();
         if started {
             // A fresh shell: any lock target from a previous spawn is stale.
             session.clear_auto_lock();
@@ -75,18 +78,21 @@ impl KagiApp {
             ui.terminal_session = Some(session);
         }
         if started {
+            self.record_started_shell(&repo_path, started_pid);
             // #772 / ADR-0208 決定 4: opt-in only; plan → confirm, never a write.
             self.offer_auto_lock(owner, cx);
-            // #855: a terminal is what assigns the main worktree its block;
-            // show it in the sidebar now rather than at the next reload.
-            let port = kagi_git::worktree_ports::Assignments::read().port(&repo_path);
-            let changed = match self.view_mut().worktrees.iter_mut().find(|w| w.is_current) {
-                Some(current) if current.port != port => {
-                    current.port = port;
-                    true
+            // #855: a terminal is what assigns a block; show it in the sidebar
+            // now rather than at the next reload. #869: in a shared-port mode
+            // the block assigned is the main worktree's, so refresh every row.
+            let ports = kagi_git::worktree_ports::Assignments::read();
+            let mut changed = false;
+            for worktree in self.view_mut().worktrees.iter_mut() {
+                let port = ports.port(&worktree.path);
+                if worktree.port != port {
+                    worktree.port = port;
+                    changed = true;
                 }
-                _ => false,
-            };
+            }
             if changed {
                 // The sidebar rows are cached on this epoch.
                 self.view_epoch = self.view_epoch.wrapping_add(1);

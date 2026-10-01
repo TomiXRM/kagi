@@ -1194,6 +1194,10 @@ pub struct KagiApp {
     pub planning: Option<&'static str>,
     pub app_sessions: crate::app::Sessions,
     pub(crate) app_notices: std::collections::VecDeque<modals::AppNotice>,
+    /// #867: every shell a Kagi terminal started this run — its worktree
+    /// (canonical) and PID, which is also its session id. Outlives the tab so
+    /// a remove plan can count what an exited shell left behind.
+    pub(crate) started_shells: Vec<(PathBuf, u32)>,
     // ── W2-DELETE: Delete-branch modal ───────────────────────
     /// Commit row context menu state (right-click anchor + target row).
     pub commit_menu: Option<CommitMenuState>,
@@ -1385,6 +1389,7 @@ impl KagiApp {
             planning: None,
             app_sessions: crate::app::Sessions::new(),
             app_notices: std::collections::VecDeque::new(),
+            started_shells: Vec::new(),
             modal_replan_gen: 0,
             refresh_spin_started: None,
             // W2-DELETE
@@ -2883,6 +2888,7 @@ impl KagiApp {
             M::RepairWorktrees(_) => self.confirm_repair_worktrees(cx),
             M::RepoHealth(_) => self.start_repo_health(cx),
             M::ApplySuggestion(_) => self.start_apply_suggestion(cx),
+            M::OplogRestore(_) => self.start_oplog_restore(cx),
             M::StashPush(_) => self.confirm_stash_push(cx),
             M::StashApply(_) => self.confirm_stash_apply(cx),
             M::CherryPick(_) => self.start_cherry_pick(cx),
@@ -2967,6 +2973,7 @@ impl KagiApp {
             M::RepairWorktrees(_) => self.cancel_repair_worktrees_modal(),
             M::RepoHealth(_) => self.cancel_repo_health_modal(),
             M::ApplySuggestion(_) => self.cancel_apply_suggestion_modal(),
+            M::OplogRestore(_) => self.cancel_oplog_restore_modal(),
             M::StashPush(_) => self.cancel_stash_push_modal(),
             M::StashApply(_) => self.cancel_stash_apply_modal(),
             M::CherryPick(_) => self.cancel_cherry_pick_modal(),

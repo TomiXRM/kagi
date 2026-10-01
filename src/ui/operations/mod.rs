@@ -24,6 +24,7 @@ mod hunk_stage;
 mod issue_write_e2e;
 pub mod merge;
 pub mod modal_state;
+pub(crate) mod oplog_restore;
 pub mod pull_push;
 pub mod rebase;
 pub(in crate::ui) mod record;

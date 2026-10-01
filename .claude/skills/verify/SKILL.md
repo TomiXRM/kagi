@@ -382,8 +382,27 @@ The current suite covers:
   the first shell (its `cat` exits, observed by the #772 wait) lets the main tab
   start. With the setting removed (default `concurrent`) the linked tab starts
   alongside. The decision is unit-tested in `kagi_domain::worktree_run_mode`.
+  #869: while the linked shell runs in `nonconcurrent` mode, the `side` and
+  `main` sidebar rows carry the same port (the main worktree's stored block),
+  and `side` has no store entry. The env side is covered by `kagi-git`
+  `nonconcurrent_hands_every_worktree_the_main_block`.
   Tier B: set the key, open terminals in two worktrees of one repository, read
   the refusal (EN/JA), `exit` the first, then open the second.
+- remove a worktree with a live terminal shell
+  (`KAGI_GUI_E2E_ONLY=worktree_remove_live_shell`,
+  `tests/recovery/worktree_remove_shell.rs`): #867 / ADR-0171 Follow-up 1.
+  - Setup: the shell seam runs a script that starts `nohup sleep 3094 &` and
+    then `exec cat`. The linked worktree's tab starts it.
+  - With the shell running, the remove plan from the main tab carries the
+    `RemoveLiveShell` blocker. Its text names the worktree and says `exit`.
+    Confirming refuses (the notice repeats the reason) and the directory stays.
+  - After EOF to the shell (exit observed): no blocker, and a
+    `RemoveLeftoverProcesses` warning with count 1 for the `nohup` job.
+  - After `pkill` of the job: no warning, and confirming removes the worktree.
+  - Unit tests cover the decision (`kagi_domain::worktree_remove_shells`) and
+    the session probe (`kagi_git::proc::session`).
+  - Tier B: open a worktree's terminal, run `nohup sleep 999 &`, try to remove
+    it (blocked, EN/JA), `exit`, then plan again (warning) and remove.
 - Operation Log badges, recorded ref moves and estimated reflog
   (`KAGI_GUI_E2E_ONLY=oplog_actor_reflog`, `tests/recovery/oplog_panel.rs`):
   #334 slice 1 + 2a / ADR-0214. Three real `Backend::run` writes as Human / MCP /
@@ -401,6 +420,19 @@ The current suite covers:
   tab after a few operations (and one through `kagi` CLI / MCP), check the
   badges, select a new row ("Recorded") and one recorded before this change
   ("Estimated").
+- Operation Log revert / restore card (`KAGI_GUI_E2E_ONLY=oplog_restore_card`,
+  `tests/recovery/oplog_panel.rs`): #334 slice 2b-2 / ADR-0214 §5. Three real
+  `create-branch` runs (keep, drop1, drop2) and one unrecorded entry of another
+  repository. The unrecorded row's "Revert this operation…" / "Restore to this
+  point…" are both painted disabled. A real click on the first creation's
+  "Restore to this point…" opens the card: `Moves` deletions of drop1 / drop2,
+  `RefsOnly`, `plan-confirm` drawn, branches unchanged. Enter arms (nothing
+  moves), Enter again restores (keep + main left, newest entry
+  `restore-to-point`); the restore's own row's "Revert this operation…" puts
+  drop1 / drop2 back (`op-revert`). Backend: `crates/kagi-git/tests/
+  oplog_restore_test.rs`. Tier B: in a scratch repository, create a few
+  branches, select an earlier row, read the card (EN/JA), restore, then revert
+  the restore from its row.
 - terminal auto-lock compare-and-unlock (`KAGI_GUI_E2E_ONLY=terminal_auto_lock_race`,
   `tests/recovery/worktree_lock_reason.rs`): #836 / ADR-0212. (b) Through the
   Backend race seam (`execute_auto_unlock_worktree_racing`,

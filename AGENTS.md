@@ -13,8 +13,9 @@ before editing. It encodes invariants that are otherwise scattered across 90+ AD
 ## Invariants (violating any of these = the change is wrong)
 
 1. **No `git2::` in `src/ui/`.** `Repository::open` is also forbidden there. This is
-   enforced by a CI grep gate (`.github/workflows/ci.yml`, ADR-0078). All Git access
-   from the UI goes through `kagi::git::Backend` or the free functions in `crates/kagi-git/src/`.
+   enforced by the `ui-git2` rule of `uv run --project ci check-all` (ADR-0078). All
+   Git access from the UI goes through `kagi_git::Backend` or the free functions in
+   `crates/kagi-git/src/` (reach the crate as `kagi_git::`, not `kagi::git::`).
 2. **`kagi-domain` stays pure.** No `git2`, no `gpui`, no I/O. Keep
    `crates/kagi-domain/Cargo.toml` dependency-free. All pure-logic unit tests live here.
 3. **No destructive commands — ever.** `push --force`, `reset --hard`, and `git clean`
@@ -40,8 +41,11 @@ before editing. It encodes invariants that are otherwise scattered across 90+ AD
 | Layer | Location | Rule |
 |---|---|---|
 | Pure domain | `crates/kagi-domain/` | Models, Graph, Diff, Conflict FSM, Plan types, parsers. No git2/gpui/I/O. |
-| Git backend | `crates/kagi-git/` | The **only** place `git2::Repository` is opened. `ops/<feature>.rs` triples, `cli.rs` (fetch/push shell), `backend.rs` (`Backend` facade). |
-| UI (View + state) | `src/ui/` | GPUI `Render`, modals, toolbar/sidebar/diff/terminal. No git2. |
+| Git backend | `crates/kagi-git/` | The **only** place `git2::Repository` is opened. `ops/<feature>.rs` triples, `cli.rs` (fetch/push shell), `backend.rs` (`Backend` facade), `oplog/`. |
+| Application layer | `src/app/` | Operation lifecycle, sessions, reads, reconcile (#484). No UI and no direct I/O — the `app-layering` gate checks it. |
+| UI core | `crates/kagi-ui-core/` | Settings store, i18n (`Msg`), `klog!`, theme tokens, shared UI types. |
+| UI (View + state) | `src/ui/`, `crates/kagi-ui-*` | GPUI `Render`, modals, toolbar/sidebar/diff/terminal. No git2. |
+| MCP | `crates/kagi-mcp/` | MCP server. No gpui (`mcp-gpui` gate). |
 | Shell | `src/main.rs`, `src/headless.rs` | Window/menu, bootstrap, test harness. |
 
 Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(pure).
@@ -105,7 +109,7 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 
 ## Error handling
 
-- Git layer returns `Result<T, GitError>` (`crates/kagi-git/src/lib.rs:143`). Avoid `.unwrap()`
+- Git layer returns `Result<T, GitError>` (`crates/kagi-git/src/lib.rs`). Avoid `.unwrap()`
   outside tests.
 - User-facing operation errors must surface via the oplog and a bounded toast.
   The oplog owns the complete durable detail; the toast is only a short preview.
@@ -117,7 +121,7 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 - The `[kagi] …` lines are a **test contract**. The `KAGI_*` headless harness
   (`src/headless.rs`) greps stderr to verify behavior. Do not change the format,
   wording, or ordering of existing `[kagi]` lines.
-- Emit every contract line through the **`klog!`** macro (`src/klog.rs`, ADR-0096):
+- Emit every contract line through the **`klog!`** macro (`crates/kagi-ui-core/src/klog.rs`, ADR-0096):
   `klog!("refreshed")`, `klog!("plan: {} → {}", a, b)` — the `[kagi] ` prefix is
   added by the macro. This is the single, greppable contract channel.
 - Use plain `eprintln!`/`tracing` only for ad-hoc human/diagnostic output — never the
@@ -138,7 +142,7 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
    from `crates/kagi-git/tests/` via `#[path = "../../../tests/support/…"]`.
 3. UI? Add `open_/confirm_/start_` methods on `KagiApp`; add the modal in
    `src/ui/modals.rs`.
-4. i18n: add EN **and** JA strings to the `Msg` enum in `src/ui/i18n.rs`.
+4. i18n: add EN **and** JA strings to the `Msg` enum in `crates/kagi-ui-core/src/i18n/`.
 
 ## Naming conventions
 
@@ -175,9 +179,9 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
   `cargo clippy --workspace` and don't add *new* warnings (pre-existing v0.2.0 debt
   is tolerated; clippy has no `-D warnings`, so warnings alone won't fail CI, but
   keep your own diff clean — annotate justified cases with `#[allow(...)]`).
-- The GUI cannot be exercised by subagents — UI-affecting changes need a human (or the
-  primary session) to launch the app and eyeball it. Build + tests passing is necessary
-  but not sufficient for UI behavior.
+- Build + tests passing is necessary but not sufficient for UI behavior. A UI change
+  also runs its Tier A scenarios and, for anything that changes what the user sees,
+  a Tier B look at the real window (see "Verifying the GUI" below).
 - **Repository invariants run through uv, never shell text tools.** The gates live
   in `ci/` as a uv project (`kagi-checks`); run them from the repo root:
 
@@ -209,15 +213,64 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 - Do not create or use `.claude/worktrees/.cargo/config.toml` to redirect a
   worktree to `../../target`; its artifacts must remain isolated from the primary
   checkout and other worktrees.
-- This isolation is required by the 2026-09-07 slice 1a result: Codex Design and
-  PM independently reproduced workspace crate artifacts (`kagi-domain`,
-  `kagi-git`, and `kagi`) colliding in a shared target. Cargo then reused a stale
-  rlib as Fresh and reported E0432 for a newly added module. Since #520, each
-  clean worktree build uses roughly 3–4 GB, so the disk cost is intentional.
+- Why: a shared target made Cargo reuse a stale workspace rlib as Fresh (E0432 on a
+  new module, 2026-09-07). Each clean worktree build costs 3–4 GB; that is intended.
+  When the disk runs low, remove the worktrees of merged PRs first.
 - Once a week, when no build is running in that tree, prune artifacts older than
   seven days in every worktree: `cargo sweep --time 7` (requires cargo-sweep).
   Do not routinely clean a worktree target; clean-build benchmarks need an idle
   build window and destroy reusable build artifacts.
+
+## Verifying the GUI
+
+**An agent verifies UI changes itself — "not verified in the GUI" is not a finished
+state.** `scripts/pidclick.swift` launches and drives the real app without taking
+the user's pointer or foreground, and `screencapture -l<window id>` photographs it.
+So every change to what the user sees ends with: run Tier B, attach screenshots to
+the PR, and ask the user to look at them. Do not stop and wait to be told to.
+
+The full recipes live in `.claude/skills/verify/SKILL.md` (Codex reads the same
+file through `.agents/skills/kagi-verify`). Read the real file, not a remembered
+copy — the skill changes when seams change.
+
+- **Tier A** (`gui_e2e_runner`, ADR-0166) is the gate for UI behavior. Always pass
+  `KAGI_GUI_E2E_ONLY`. A scenario that changes settings or the port store restores
+  them (`gui_isolation::SavedKeys` / `PortStore`); the runner fails a scenario that
+  leaves shared state changed (#899). A change to how outcomes are presented runs
+  the scenarios that assert that presentation before merging.
+- **Tier B** is the real app: launch it isolated (`KAGI_NO_ACTIVATE=1`, a unique
+  `USER`, `KAGI_NO_RESTORE=1`, its own `KAGI_LOG_DIR`), click and type with
+  `pidclick`, and capture the window by its ID. `cliclick` is banned.
+  - A window hidden behind the user's windows stops repainting: two byte-identical
+    screenshots while `[kagi]` lines show the input arrived mean a stale frame.
+    Ask the user to bring the window forward for a moment; do not take the
+    foreground yourself.
+  - Clicking the tab strip needs a key window (no `KAGI_NO_ACTIVATE`); ask first.
+  - Coordinates are logical points; a screenshot is physical pixels. Convert with
+    the window's own scale factor (logical = physical ÷ `backingScaleFactor`, 2 on
+    a Retina panel but not on every display), and re-read them from a fresh
+    screenshot every time.
+- **Screenshots in a PR**: commit only the images to an orphan
+  `pr-assets/<topic>` branch (`git hash-object -w` → `git mktree` →
+  `git commit-tree`), push it, and link
+  `https://raw.githubusercontent.com/TomiXRM/kagi/<sha>/<file>.png`. Never delete
+  those branches — the PR's images point at them.
+
+## Workflow: PRs and multi-agent work
+
+The rules for pushing, resolving conflicts, answering Codex review and merging,
+and for driving several agents through herdr, live in
+[`docs/agents/workflow.md`](docs/agents/workflow.md). The ones that are broken most
+often:
+
+- Never rewrite a pushed branch; after a push, check that the remote head
+  (`git ls-remote --exit-code --heads origin refs/heads/<branch>`) equals `HEAD`.
+- Resolve **code** conflicts by reading each hunk — never by keeping both sides.
+- Gate before push (build, tests, touched Tier A, `check-all`), chained so a
+  failure stops the push.
+- Read and answer every Codex comment before merge; fix P0/P1 and P2s that can
+  cause a wrong write.
+- herdr: `agent prompt` places text, `agent send-keys <pane> enter` sends it.
 
 ## Code Review Rules
 

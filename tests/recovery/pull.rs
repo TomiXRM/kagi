@@ -630,6 +630,9 @@ pub fn scenario_pull_unknown_notice_survives_a_tab_switch(cx: &mut VisualTestApp
         );
     });
 
+    // The helper's `sleep 4 &` outlives the fetch; let it exit before the
+    // next scenario runs, as the sibling scenarios do (#516).
+    std::thread::sleep(Duration::from_secs(4));
     unmount(cx, app, window);
     eprintln!(
         "[gui-e2e] PASS pull_unknown_notice_survives_a_tab_switch: settlement queued it, not presentation"

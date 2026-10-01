@@ -374,6 +374,16 @@ The current suite covers:
   shows its block (read by the snapshot), and one never assigned shows none and
   stays unassigned. Tier B: open a terminal, see `localhost:<port>` on the row,
   click it and check the browser opens that URL.
+- nonconcurrent run mode (`KAGI_GUI_E2E_ONLY=worktree_nonconcurrent`,
+  `tests/recovery/worktree_ports.rs`): #859 / ADR-0213. With
+  `worktree_run_mode` = `nonconcurrent` and the shell seam swapped for `exec cat`,
+  the linked worktree's tab starts a shell; the main worktree's tab of the same
+  repository then spawns none and the footer names the running worktree. EOF to
+  the first shell (its `cat` exits, observed by the #772 wait) lets the main tab
+  start. With the setting removed (default `concurrent`) the linked tab starts
+  alongside. The decision is unit-tested in `kagi_domain::worktree_run_mode`.
+  Tier B: set the key, open terminals in two worktrees of one repository, read
+  the refusal (EN/JA), `exit` the first, then open the second.
 - Operation Log badges and reflog detail (`KAGI_GUI_E2E_ONLY=oplog_actor_reflog`,
   `tests/recovery/oplog_panel.rs`): #334 slice 1 / ADR-0214. Three real
   `Backend::run` writes as Human / MCP / CLI, one second apart, become three

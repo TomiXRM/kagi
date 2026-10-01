@@ -75,6 +75,14 @@ impl Assignments {
     }
 }
 
+/// The repository the worktree at `path` belongs to: its canonical common git
+/// directory, shared by the main worktree and every linked one (#859). `None`
+/// when `path` is not a repository. Read only.
+pub fn repository_of(path: &Path) -> Option<PathBuf> {
+    let repo = git2::Repository::open(path).ok()?;
+    std::fs::canonicalize(repo.commondir()).ok()
+}
+
 /// Persist the whole map (pretty JSON), creating the parent dir. Best-effort;
 /// a write failure is logged to stderr and otherwise ignored.
 fn write_store(store: &BTreeMap<String, u16>) {

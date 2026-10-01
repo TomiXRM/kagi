@@ -233,17 +233,29 @@ impl KagiApp {
             }
         };
         let plan_result = match kind {
+            BranchPlanKind::SyncToRemote => repo.plan(&kagi_git::Operation::SyncToRemote {
+                branch: branch_name.clone(),
+            }),
             BranchPlanKind::PullFfOnly => repo.plan_pull_branch_ff(&branch_name),
             BranchPlanKind::Push => repo.plan_push_branch(&branch_name, false),
             BranchPlanKind::PushSetUpstream => repo.plan_push_branch(&branch_name, true),
         };
         match plan_result {
             Ok(plan) => {
+                if kind == BranchPlanKind::SyncToRemote {
+                    klog!(
+                        "plan: sync-to-remote '{}' blockers={} warnings={}",
+                        branch_name,
+                        plan.blockers.len(),
+                        plan.warnings.len()
+                    );
+                }
                 self.set_branch_plan_modal(BranchPlanModal {
                     kind,
                     branch_name,
                     plan: std::sync::Arc::new(plan),
                     error: None,
+                    confirm_armed: false,
                 });
                 self.focus_root_for_modal(); // #817: Enter / Escape via the root
             }
@@ -274,6 +286,7 @@ impl KagiApp {
             None => return,
         };
         let op_name = match modal.kind {
+            BranchPlanKind::SyncToRemote => "sync-to-remote",
             BranchPlanKind::PullFfOnly => "branch-pull-ff",
             BranchPlanKind::Push => "branch-push",
             BranchPlanKind::PushSetUpstream => "branch-push-set-upstream",
@@ -290,13 +303,27 @@ impl KagiApp {
             cx.notify();
             return;
         }
+        // ADR-0023: a destructive plan needs a second, explicit confirm.
+        if modal.plan.destructive && !modal.confirm_armed {
+            self.set_branch_plan_modal(BranchPlanModal {
+                confirm_armed: true,
+                ..modal
+            });
+            klog!("{}: armed (second confirm required — destructive)", op_name);
+            cx.notify();
+            return;
+        }
 
         self.clear_branch_plan_modal();
         self.status_footer =
             FooterStatus::Busy(SharedString::from(format!("{} in progress...", op_name)));
+        if modal.kind == BranchPlanKind::SyncToRemote {
+            klog!("async: sync-to-remote started");
+        }
         let bg_path = repo_path.clone();
         let bg_modal = modal.clone();
         let op = match modal.kind {
+            BranchPlanKind::SyncToRemote => i18n::Op::SyncToRemote,
             BranchPlanKind::PullFfOnly => i18n::Op::Pull,
             BranchPlanKind::Push | BranchPlanKind::PushSetUpstream => i18n::Op::Push,
         };
@@ -1095,6 +1122,11 @@ impl KagiApp {
             BranchAction::PullFfOnly => {
                 if matches!(state.kind, BranchKind::Local) {
                     self.open_branch_plan_modal(state.name, BranchPlanKind::PullFfOnly);
+                }
+            }
+            BranchAction::SyncToRemote => {
+                if matches!(state.kind, BranchKind::Local) {
+                    self.open_branch_plan_modal(state.name, BranchPlanKind::SyncToRemote);
                 }
             }
             BranchAction::DeleteRemoteBranch => {

@@ -1,6 +1,7 @@
 //! Modal state structs and the ActiveModal enum (ADR-0076 / ADR-0114).
 
 pub mod apply_suggestion;
+pub mod branch_plan;
 pub mod rebase;
 pub mod repo_health;
 pub mod worktree;
@@ -491,20 +492,7 @@ pub struct ForceLeasePushModal {
 
 pub use rebase::RebaseCurrentOntoModal;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum BranchPlanKind {
-    PullFfOnly,
-    Push,
-    PushSetUpstream,
-}
-
-#[derive(Clone)]
-pub struct BranchPlanModal {
-    pub kind: BranchPlanKind,
-    pub branch_name: String,
-    pub plan: std::sync::Arc<OperationPlan>,
-    pub error: Option<SharedString>,
-}
+pub use branch_plan::{BranchPlanKind, BranchPlanModal};
 
 #[derive(Clone)]
 pub struct SetUpstreamModal {

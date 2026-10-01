@@ -475,6 +475,9 @@ pub(crate) fn branch_plan_blocking(
 ) -> Result<RunReport, String> {
     let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     let op = match modal.kind {
+        BranchPlanKind::SyncToRemote => kagi_git::Operation::SyncToRemote {
+            branch: modal.branch_name.clone(),
+        },
         BranchPlanKind::PullFfOnly => kagi_git::Operation::PullBranchFf {
             branch_name: modal.branch_name.clone(),
         },
@@ -483,7 +486,24 @@ pub(crate) fn branch_plan_blocking(
             set_upstream: modal.kind == BranchPlanKind::PushSetUpstream,
         },
     };
-    Ok(repo.run_recorded(&op, &modal.plan))
+    let report = repo.run_recorded(&op, &modal.plan);
+    if let Ok(kagi_git::OperationOutcome::SyncToRemote {
+        branch,
+        from,
+        to,
+        work_backup,
+        ..
+    }) = &report.result
+    {
+        klog!(
+            "executed: sync-to-remote {} — {} -> {} work_backup={}",
+            branch,
+            &from[..7.min(from.len())],
+            &to[..7.min(to.len())],
+            if work_backup.is_some() { "yes" } else { "no" }
+        );
+    }
+    Ok(report)
 }
 
 /// The footer line for a branch-plan outcome (pull-ff / push / push-set-upstream).
@@ -509,6 +529,24 @@ pub(crate) fn branch_plan_summary(
                 " and upstream set"
             } else {
                 ""
+            }
+        ),
+        kagi_git::OperationOutcome::SyncToRemote {
+            to,
+            work_backup,
+            removed_untracked,
+            ..
+        } => format!(
+            "branch '{}' synced to {}{}",
+            branch_name,
+            &to[..7.min(to.len())],
+            if work_backup.is_some() {
+                format!(
+                    "; local changes kept in backups ({} untracked removed)",
+                    removed_untracked
+                )
+            } else {
+                String::new()
             }
         ),
         _ => "unexpected outcome".to_string(),

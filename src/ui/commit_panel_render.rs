@@ -30,6 +30,115 @@ use gpui_component::Disableable as _;
 // from the `uniform_list` processors below for only the visible `range`, so the
 // commit panel costs O(visible rows) per frame instead of O(all files).
 
+/// Where a tree-view row sits in its section's `Tree` (#354): the tree id, the
+/// flattened row index, its 1-based level and 1-based sibling position/size.
+/// Flat view passes `None` and stays a plain run of rows.
+#[derive(Clone, Copy)]
+pub(crate) struct CpTreeSlot {
+    tree: &'static str,
+    index: usize,
+    level: usize,
+    position: (usize, usize),
+}
+
+/// Mark `el` as the `TreeItem` at `slot` (tree view only). The name is built
+/// lazily so flat view never allocates it.
+fn cp_tree_item(
+    el: gpui::Stateful<gpui::Div>,
+    slot: Option<CpTreeSlot>,
+    label: impl FnOnce() -> String,
+    expanded: Option<bool>,
+    selected: Option<bool>,
+) -> gpui::Stateful<gpui::Div> {
+    match slot {
+        Some(s) => kagi_ui_core::tree_a11y::tree_item(
+            s.tree,
+            el,
+            s.index,
+            &label(),
+            s.level,
+            expanded,
+            selected,
+            s.position,
+        ),
+        None => el,
+    }
+}
+
+/// Accessible name of a file tree row: its base name (plus the convention
+/// badge when shown) and its localized status. Filled by splitting the
+/// template so a `{}` inside a file name is never taken for a placeholder.
+fn cp_file_label(
+    name: &str,
+    change: Option<&kagi_git::ChangeKind>,
+    is_conflicted: bool,
+    convention: bool,
+) -> String {
+    let status = kagi_ui_core::tree_a11y::file_status(change, is_conflicted);
+    let mut parts = Msg::A11yFileTreeFile.t().splitn(3, "{}");
+    let mut s = String::from(parts.next().unwrap_or_default());
+    s.push_str(name);
+    if convention {
+        s.push_str(" (");
+        s.push_str(Msg::AgentConventionBadge.t());
+        s.push(')');
+    }
+    s.push_str(parts.next().unwrap_or_default());
+    s.push_str(status);
+    s.push_str(parts.next().unwrap_or_default());
+    s
+}
+
+/// Level and sibling position/size of every tree-view row of a section, in
+/// display order (#354): the pruned file tree at depth + 1, then each
+/// non-empty fold ("Generated", "Agent artifacts") as a top-level item with
+/// its expanded files one level below. Linear; built once per section per
+/// frame by the list's processor.
+fn cp_tree_layout(
+    panel: &super::commit_panel::CommitPanelState,
+    staged: bool,
+) -> Vec<(usize, (usize, usize))> {
+    let tree = if staged {
+        &panel.staged_tree
+    } else {
+        &panel.unstaged_tree
+    };
+    let mut levels: Vec<usize> = tree
+        .iter()
+        .map(|row| match row {
+            file_tree::TreeRow::Dir { depth, .. } | file_tree::TreeRow::File { depth, .. } => {
+                depth + 1
+            }
+        })
+        .collect();
+    for extra in [
+        panel.generated_extra_rows(staged),
+        panel.agent_extra_rows(staged),
+    ] {
+        if extra > 0 {
+            levels.push(1);
+            levels.extend(std::iter::repeat_n(2, extra - 1));
+        }
+    }
+    let positions = kagi_ui_core::tree_a11y::sibling_positions(&levels);
+    levels.into_iter().zip(positions).collect()
+}
+
+/// The slot of display row `index` in a section laid out by [`cp_tree_layout`].
+fn cp_tree_slot(
+    layout: &[(usize, (usize, usize))],
+    tree: &'static str,
+    index: usize,
+) -> Option<CpTreeSlot> {
+    let &(level, position) = layout.get(index)?;
+    Some(CpTreeSlot {
+        tree,
+        index,
+        level,
+        position,
+    })
+}
+
 /// The four Commit Panel file rows (unstaged/staged × flat/tree) differ only in
 /// data lookup, padding, action button and the discard menu — ADR-0132's lesson
 /// applied to this panel: one renderer, four thin callers.
@@ -56,6 +165,7 @@ fn render_cp_file_row(
     indent: f32,
     stat: Option<&kagi_git::FileDiffStat>,
     convention: bool,
+    slot: Option<CpTreeSlot>,
     cx: &mut Context<CommitPanelView>,
 ) -> gpui::Stateful<gpui::Div> {
     let (row_id, btn_id, conflict_id) = match (staged, tree) {
@@ -87,6 +197,15 @@ fn render_cp_file_row(
     };
     let mut file_row = div()
         .id((row_id, fi))
+        .map(|el| {
+            cp_tree_item(
+                el,
+                slot,
+                || cp_file_label(&name, change, is_conflicted, convention),
+                None,
+                Some(is_sel),
+            )
+        })
         .when(wip_hit, |el| el.bg(rgb(theme().selected)))
         .w_full()
         .flex()
@@ -193,10 +312,25 @@ fn render_cp_file_row(
     )
 }
 
-/// A directory row in either tree list (`prefix` is the id namespace).
-fn render_cp_dir_row(prefix: &str, depth: usize, name: &SharedString) -> gpui::AnyElement {
+/// A directory row in either tree list (`prefix` is the id namespace). Commit
+/// panel directories do not collapse, so the item carries no expanded state.
+fn render_cp_dir_row(
+    prefix: &str,
+    depth: usize,
+    name: &SharedString,
+    slot: Option<CpTreeSlot>,
+) -> gpui::AnyElement {
     div()
         .id(SharedString::from(format!("{}-{}", prefix, name.as_ref())))
+        .map(|el| {
+            cp_tree_item(
+                el,
+                slot,
+                || Msg::A11yFileTreeDir.t().replacen("{}", name, 1),
+                None,
+                None,
+            )
+        })
         .pl(theme::scaled_px(8.0 + (depth as f32) * 12.0))
         .py_px()
         .text_xs()
@@ -211,6 +345,7 @@ fn render_cp_generated_header(
     staged: bool,
     count: usize,
     expanded: bool,
+    slot: Option<CpTreeSlot>,
     cx: &mut Context<CommitPanelView>,
 ) -> gpui::AnyElement {
     let id = if staged {
@@ -224,6 +359,7 @@ fn render_cp_generated_header(
         count,
         expanded,
         false,
+        slot,
         cx,
     )
 }
@@ -234,6 +370,7 @@ fn render_cp_agent_header(
     staged: bool,
     count: usize,
     expanded: bool,
+    slot: Option<CpTreeSlot>,
     cx: &mut Context<CommitPanelView>,
 ) -> gpui::AnyElement {
     let id = if staged {
@@ -247,18 +384,21 @@ fn render_cp_agent_header(
         count,
         expanded,
         true,
+        slot,
         cx,
     )
 }
 
 /// Shared collapsible fold header (issue #348 generated + #338 agent). `agent`
-/// selects which expansion flag the click toggles.
+/// selects which expansion flag the click toggles. In tree view it is a
+/// top-level, expandable `TreeItem` named without the disclosure arrow.
 fn render_cp_fold_header(
     id: &'static str,
     section_label: &str,
     count: usize,
     expanded: bool,
     agent: bool,
+    slot: Option<CpTreeSlot>,
     cx: &mut Context<CommitPanelView>,
 ) -> gpui::AnyElement {
     let arrow = if expanded { "▾" } else { "▸" };
@@ -275,6 +415,15 @@ fn render_cp_fold_header(
     );
     div()
         .id(id)
+        .map(|el| {
+            cp_tree_item(
+                el,
+                slot,
+                || format!("{section_label} ({count})"),
+                Some(expanded),
+                None,
+            )
+        })
         .w_full()
         .flex()
         .flex_row()
@@ -307,6 +456,7 @@ fn is_convention(path: &std::path::Path) -> bool {
 fn cp_unstaged_file_element(
     view: &CommitPanelView,
     fi: usize,
+    slot: Option<CpTreeSlot>,
     cx: &mut Context<CommitPanelView>,
 ) -> Option<gpui::AnyElement> {
     let panel = &view.state;
@@ -333,6 +483,7 @@ fn cp_unstaged_file_element(
             0.0,
             panel.unstaged_stat(&f.path),
             is_convention(&f.path),
+            slot,
             cx,
         )
         .into_any_element(),
@@ -343,6 +494,7 @@ fn cp_unstaged_file_element(
 fn cp_staged_file_element(
     view: &CommitPanelView,
     fi: usize,
+    slot: Option<CpTreeSlot>,
     cx: &mut Context<CommitPanelView>,
 ) -> Option<gpui::AnyElement> {
     let panel = &view.state;
@@ -369,6 +521,7 @@ fn cp_staged_file_element(
             0.0,
             panel.staged_stat(&f.path),
             is_convention(&f.path),
+            slot,
             cx,
         )
         .into_any_element(),
@@ -380,22 +533,25 @@ fn cp_file_element(
     view: &CommitPanelView,
     staged: bool,
     fi: usize,
+    slot: Option<CpTreeSlot>,
     cx: &mut Context<CommitPanelView>,
 ) -> Option<gpui::AnyElement> {
     if staged {
-        cp_staged_file_element(view, fi, cx)
+        cp_staged_file_element(view, fi, slot, cx)
     } else {
-        cp_unstaged_file_element(view, fi, cx)
+        cp_unstaged_file_element(view, fi, slot, cx)
     }
 }
 
 /// The two trailing fold regions of a section, after the base (normal/tree)
 /// rows: first "Generated (N)" (issue #348), then "Agent artifacts (N)"
-/// (issue #338). `j` is the display-row offset past the base region.
+/// (issue #338). `j` is the display-row offset past the base region; `slot`
+/// is the row's tree position in tree view.
 fn render_cp_fold_regions(
     view: &CommitPanelView,
     j: usize,
     staged: bool,
+    slot: Option<CpTreeSlot>,
     cx: &mut Context<CommitPanelView>,
 ) -> Option<gpui::AnyElement> {
     let panel = &view.state;
@@ -411,11 +567,12 @@ fn render_cp_fold_regions(
                 staged,
                 gen_files.len(),
                 panel.generated_expanded,
+                slot,
                 cx,
             ));
         }
         let fi = *gen_files.get(j - 1)?;
-        return cp_file_element(view, staged, fi, cx);
+        return cp_file_element(view, staged, fi, slot, cx);
     }
     // Agent-artifacts fold, immediately after the generated region.
     let k = j - gen_extra;
@@ -424,11 +581,12 @@ fn render_cp_fold_regions(
             staged,
             art_files.len(),
             panel.agent_expanded,
+            slot,
             cx,
         ));
     }
     let fi = *art_files.get(k - 1)?;
-    cp_file_element(view, staged, fi, cx)
+    cp_file_element(view, staged, fi, slot, cx)
 }
 
 /// PERF: build one unstaged row in flat view. `i` is a display-row index:
@@ -441,26 +599,28 @@ pub(crate) fn render_unstaged_flat_row(
     let panel = &view.state;
     let normal = &panel.unstaged_normal_files;
     if i < normal.len() {
-        return cp_unstaged_file_element(view, normal[i], cx);
+        return cp_unstaged_file_element(view, normal[i], None, cx);
     }
-    render_cp_fold_regions(view, i - normal.len(), false, cx)
+    render_cp_fold_regions(view, i - normal.len(), false, None, cx)
 }
 
 /// PERF: build one unstaged tree row. `i` indexes the pruned tree first, then
-/// the "Generated (N)" fold (issue #348).
+/// the "Generated (N)" fold (issue #348). `slot` is its place in the
+/// `cp-unstaged-tree` (#354).
 pub(crate) fn render_unstaged_tree_row(
     view: &CommitPanelView,
     i: usize,
+    slot: Option<CpTreeSlot>,
     cx: &mut Context<CommitPanelView>,
 ) -> Option<gpui::AnyElement> {
     let panel = &view.state;
     let tree_len = panel.unstaged_tree.len();
     if i >= tree_len {
-        return render_cp_fold_regions(view, i - tree_len, false, cx);
+        return render_cp_fold_regions(view, i - tree_len, false, slot, cx);
     }
     match panel.unstaged_tree.get(i)? {
         file_tree::TreeRow::Dir { depth, name } => {
-            Some(render_cp_dir_row("cp-us-dir", *depth, name))
+            Some(render_cp_dir_row("cp-us-dir", *depth, name, slot))
         }
         file_tree::TreeRow::File {
             depth,
@@ -489,6 +649,7 @@ pub(crate) fn render_unstaged_tree_row(
                     (*depth as f32) * 12.0,
                     path.and_then(|p| panel.unstaged_stat(p)),
                     path.map(|p| is_convention(p)).unwrap_or(false),
+                    slot,
                     cx,
                 )
                 .into_any_element(),
@@ -507,26 +668,28 @@ pub(crate) fn render_staged_flat_row(
     let panel = &view.state;
     let normal = &panel.staged_normal_files;
     if i < normal.len() {
-        return cp_staged_file_element(view, normal[i], cx);
+        return cp_staged_file_element(view, normal[i], None, cx);
     }
-    render_cp_fold_regions(view, i - normal.len(), true, cx)
+    render_cp_fold_regions(view, i - normal.len(), true, None, cx)
 }
 
 /// PERF: build one staged tree row. `i` indexes the pruned tree first, then the
-/// "Generated (N)" fold (issue #348).
+/// "Generated (N)" fold (issue #348). `slot` is its place in the
+/// `cp-staged-tree` (#354).
 pub(crate) fn render_staged_tree_row(
     view: &CommitPanelView,
     i: usize,
+    slot: Option<CpTreeSlot>,
     cx: &mut Context<CommitPanelView>,
 ) -> Option<gpui::AnyElement> {
     let panel = &view.state;
     let tree_len = panel.staged_tree.len();
     if i >= tree_len {
-        return render_cp_fold_regions(view, i - tree_len, true, cx);
+        return render_cp_fold_regions(view, i - tree_len, true, slot, cx);
     }
     match panel.staged_tree.get(i)? {
         file_tree::TreeRow::Dir { depth, name } => {
-            Some(render_cp_dir_row("cp-st-dir", *depth, name))
+            Some(render_cp_dir_row("cp-st-dir", *depth, name, slot))
         }
         file_tree::TreeRow::File {
             depth,
@@ -554,6 +717,7 @@ pub(crate) fn render_staged_tree_row(
                     (*depth as f32) * 12.0,
                     path.and_then(|p| panel.staged_stat(p)),
                     path.map(|p| is_convention(p)).unwrap_or(false),
+                    slot,
                     cx,
                 )
                 .into_any_element(),
@@ -1324,7 +1488,7 @@ impl CommitPanelView {
                             .flex_col()
                             .child({
                                 let handle = unstaged_scroll_handle.clone();
-                                with_vertical_scrollbar(
+                                let list = with_vertical_scrollbar(
                                     "cp-unstaged-list-scroll",
                                     &handle,
                                     uniform_list(
@@ -1335,12 +1499,26 @@ impl CommitPanelView {
                                                   range: std::ops::Range<usize>,
                                                   _window,
                                                   cx| {
-                                                let tree = view.state.tree_view;
+                                                // #354: tree view rows are TreeItems; their
+                                                // levels/positions come from one linear pass
+                                                // over the whole section per frame.
+                                                let layout = view
+                                                    .state
+                                                    .tree_view
+                                                    .then(|| cp_tree_layout(&view.state, false));
                                                 range
-                                                    .filter_map(|i| {
-                                                        if tree {
-                                                            render_unstaged_tree_row(view, i, cx)
-                                                        } else {
+                                                    .filter_map(|i| match &layout {
+                                                        Some(layout) => render_unstaged_tree_row(
+                                                            view,
+                                                            i,
+                                                            cp_tree_slot(
+                                                                layout,
+                                                                "cp-unstaged-tree",
+                                                                i,
+                                                            ),
+                                                            cx,
+                                                        ),
+                                                        None => {
                                                             render_unstaged_flat_row(view, i, cx)
                                                         }
                                                     })
@@ -1352,7 +1530,16 @@ impl CommitPanelView {
                                     .flex_1()
                                     .min_h(px(0.)),
                                     false,
-                                )
+                                );
+                                if tree_view {
+                                    kagi_ui_core::tree_a11y::tree(
+                                        "cp-unstaged-tree",
+                                        list,
+                                        Msg::A11yUnstagedTree.t(),
+                                    )
+                                } else {
+                                    list
+                                }
                             }),
                     )
                     // Staged ヘッダ (固定)
@@ -1372,7 +1559,7 @@ impl CommitPanelView {
                             .flex_col()
                             .child({
                                 let handle = staged_scroll_handle.clone();
-                                with_vertical_scrollbar(
+                                let list = with_vertical_scrollbar(
                                     "cp-staged-list-scroll",
                                     &handle,
                                     uniform_list(
@@ -1383,14 +1570,24 @@ impl CommitPanelView {
                                                   range: std::ops::Range<usize>,
                                                   _window,
                                                   cx| {
-                                                let tree = view.state.tree_view;
+                                                // #354: see the unstaged list above.
+                                                let layout = view
+                                                    .state
+                                                    .tree_view
+                                                    .then(|| cp_tree_layout(&view.state, true));
                                                 range
-                                                    .filter_map(|i| {
-                                                        if tree {
-                                                            render_staged_tree_row(view, i, cx)
-                                                        } else {
-                                                            render_staged_flat_row(view, i, cx)
-                                                        }
+                                                    .filter_map(|i| match &layout {
+                                                        Some(layout) => render_staged_tree_row(
+                                                            view,
+                                                            i,
+                                                            cp_tree_slot(
+                                                                layout,
+                                                                "cp-staged-tree",
+                                                                i,
+                                                            ),
+                                                            cx,
+                                                        ),
+                                                        None => render_staged_flat_row(view, i, cx),
                                                     })
                                                     .collect::<Vec<_>>()
                                             },
@@ -1400,7 +1597,16 @@ impl CommitPanelView {
                                     .flex_1()
                                     .min_h(px(0.)),
                                     false,
-                                )
+                                );
+                                if tree_view {
+                                    kagi_ui_core::tree_a11y::tree(
+                                        "cp-staged-tree",
+                                        list,
+                                        Msg::A11yStagedTree.t(),
+                                    )
+                                } else {
+                                    list
+                                }
                             }),
                     ),
             )

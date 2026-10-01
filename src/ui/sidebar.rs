@@ -111,7 +111,7 @@ impl SidebarState {
             return;
         }
         let levels: Vec<usize> = self.rows.iter().map(super::sidebar_a11y::level).collect();
-        self.tree_positions = super::sidebar_a11y::sibling_positions(&levels);
+        self.tree_positions = kagi_ui_core::tree_a11y::sibling_positions(&levels);
         self.tree_positions_for = Some(self.rows_fingerprint);
     }
 }

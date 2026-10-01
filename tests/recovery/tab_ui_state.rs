@@ -527,6 +527,18 @@ pub fn scenario_pr_open_enters_before_ref_fetch(cx: &mut VisualTestAppContext) {
             "failure must not invent a local head"
         );
     });
+    // #885: the failed PR-ref fetch is observed and moved no local ref, so
+    // its receipt says "nothing moved" (Unknown is never that).
+    let receipt = kagi_git::oplog::read_oplog_tail_for_repo(fixture.path(), 100)
+        .into_iter()
+        .rev()
+        .find(|entry| entry.op == "fetch-pr")
+        .expect("the failed PR fetch is recorded");
+    let expected = match receipt.outcome {
+        kagi_git::oplog::OpOutcome::Unknown { .. } => None,
+        _ => Some(Vec::new()),
+    };
+    assert_eq!(receipt.ref_moves, expected, "fetch-pr receipt");
 
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS pr_open_enters_before_ref_fetch");

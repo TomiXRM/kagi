@@ -22,6 +22,9 @@ pub const STASH: &str = "stash";
 pub const FILE_BACKUP: &str = "file-backup";
 /// Tip of a branch that was deleted or is about to disappear with a worktree.
 pub const BRANCH_TIP: &str = "branch-tip";
+/// A stash-shaped commit of index + working tree (`git stash apply --index`
+/// restores it), #536.
+pub const WORK_STASH: &str = "work-stash";
 /// Where a history move started / ended (`undo-*` / `redo-*`).
 pub const HISTORY_FROM: &str = "history-from";
 pub const HISTORY_TO: &str = "history-to";

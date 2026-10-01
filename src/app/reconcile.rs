@@ -254,6 +254,7 @@ fn writes_only_locally(name: &str) -> bool {
             | "merge"
             | "rebase"
             | "replay-onto"
+            | "sync-to-remote"
             | "reset-current"
             | "create-branch"
             | "delete-branch"

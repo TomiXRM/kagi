@@ -141,6 +141,12 @@ pub enum Operation {
         branch: String,
         onto: String,
     },
+    /// #536 / ADR-0215: make `branch` (and, when it is HEAD, the index and
+    /// working tree) match its fetched upstream tip; the old tip and every
+    /// local change are retained under `refs/kagi/backups/` first.
+    SyncToRemote {
+        branch: String,
+    },
     Discard {
         paths: Vec<String>,
     },
@@ -213,6 +219,7 @@ impl Operation {
             Operation::ForceWithLeasePush => "force-with-lease-push",
             Operation::RebaseCurrentOnto { .. } => "rebase",
             Operation::ReplayOnto { .. } => "replay-onto",
+            Operation::SyncToRemote { .. } => "sync-to-remote",
             Operation::Discard { .. } => "discard",
             Operation::RestoreSnapshot { .. } => "restore-snapshot",
             Operation::ApplySuggestion { .. } => "apply-suggestion",
@@ -373,7 +380,27 @@ pub enum OperationOutcome {
         reference: String,
         backups: Vec<ReplayBackup>,
     },
+    /// #536: `branch` moved `from`→`to`; `tip_backup` retains `from`,
+    /// `work_backup` (when local changes existed) is a stash-shaped commit
+    /// of the index and working tree, `removed_untracked` counts the
+    /// untracked files taken out of the working tree after being retained.
+    SyncToRemote {
+        branch: String,
+        from: String,
+        to: String,
+        tip_backup: String,
+        work_backup: Option<SyncWorkBackup>,
+        removed_untracked: usize,
+    },
     Unit,
+}
+
+/// The stash-shaped commit a sync kept (#536): `reference` is the
+/// `refs/kagi/backups/<op>/1` ref, `commit` its OID.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SyncWorkBackup {
+    pub reference: String,
+    pub commit: String,
 }
 
 /// One ref a replay moved and where its pre-replay tip is retained (#344).

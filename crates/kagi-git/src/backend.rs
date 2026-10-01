@@ -845,6 +845,7 @@ impl Backend {
             Operation::ResetCurrentToHead { target } => self.plan_reset_current_to_head(target),
             Operation::ForceWithLeasePush => self.plan_force_with_lease_push(),
             Operation::RebaseCurrentOnto { onto } => self.plan_rebase_current_onto(onto),
+            Operation::SyncToRemote { branch } => ops::plan_sync_to_remote(&self.repo, branch),
             Operation::ReplayOnto { branch, onto } => {
                 ops::plan_replay_onto(&self.repo, &self.path, branch, onto)
             }

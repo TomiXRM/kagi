@@ -781,6 +781,10 @@ mod macos {
                 Box::new(crate::recovery_worktree_lock_reason::scenario_terminal_auto_lock_race),
             ),
             (
+                "external_lock_reload",
+                Box::new(crate::recovery_worktree_lock_reason::scenario_external_lock_reload),
+            ),
+            (
                 "preflight_presentation",
                 Box::new(crate::recovery_operations::scenario_preflight_presentation),
             ),

@@ -1449,6 +1449,9 @@ const ISSUES_URL: &str = "https://github.com/TomiXRM/kagi/issues";
 pub struct FetchFlight {
     pub owner: crate::app::SessionId,
     pub waiters: Vec<crate::app::SessionId>,
+    /// Admission superseded the owner's read in flight (`app::admit`), which a
+    /// no-op fetch would never replace (ADR-0127): the completion owes it (#851).
+    pub superseded_read: bool,
 }
 
 /// Why a background fetch failed, kept apart from its display text.
@@ -1838,12 +1841,15 @@ impl KagiApp {
         let Some(owner) = self.active_session() else {
             return false;
         };
+        // Before admission: e.g. Cmd+R's read, about to be superseded (#851).
+        let superseded_read = self.reads.is_loading(owner);
         let Some(lease) = self.reserve_write("fetch", &repo_path, cx) else {
             return false;
         };
         self.fetch_in_flight = Some(FetchFlight {
             owner,
             waiters: pull_confirm.into_iter().collect(),
+            superseded_read,
         });
         let repo_path_guard = repo_path.clone();
         if !silent {
@@ -1887,6 +1893,9 @@ impl KagiApp {
                     return;
                 }
                 let fetch_error = result.as_ref().err().map(|f| f.message.clone());
+                if flight.superseded_read && !result.as_ref().is_ok_and(|o| o.changed) {
+                    app.reload(cx);
+                }
                 match result {
                     Ok(outcome) => {
                         // ADR-0127: a no-op fetch skips the reload below, so the

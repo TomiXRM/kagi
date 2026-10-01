@@ -11,17 +11,44 @@ pub fn actor_human() -> &'static str {
     }
 }
 
-/// Heading of the reflog section in a selected row's detail.
+/// Heading of the estimated (time-window) reflog section, shown for an entry
+/// that carries no recorded ref moves (#334 slice 1).
 pub fn reflog_heading(open_start: bool, lookback_secs: i64) -> String {
     match (lang(), open_start) {
-        (Lang::En, false) => "Reflog since this worktree's previous operation".into(),
-        (Lang::En, true) => format!(
-            "Reflog of the last {lookback_secs} s before this operation (its previous operation is not loaded)"
-        ),
-        (Lang::Ja, false) => "この worktree の前の操作以降の reflog".into(),
-        (Lang::Ja, true) => {
-            format!("この操作までの {lookback_secs} 秒間の reflog(前の操作は読み込まれていません)")
+        (Lang::En, false) => {
+            "Estimated — reflog since this worktree's previous operation".into()
         }
+        (Lang::En, true) => format!(
+            "Estimated — reflog of the last {lookback_secs} s before this operation (its previous operation is not loaded)"
+        ),
+        (Lang::Ja, false) => "推定 — この worktree の前の操作以降の reflog".into(),
+        (Lang::Ja, true) => format!(
+            "推定 — この操作までの {lookback_secs} 秒間の reflog(前の操作は読み込まれていません)"
+        ),
+    }
+}
+
+/// Heading of the refs the operation recorded moving (#334 slice 2a).
+pub fn recorded_heading() -> &'static str {
+    match lang() {
+        Lang::En => "Recorded — refs this operation moved",
+        Lang::Ja => "記録 — この操作が動かした ref",
+    }
+}
+
+/// A recorded operation that moved no ref (refused, failed, or a no-op).
+pub fn recorded_none() -> &'static str {
+    match lang() {
+        Lang::En => "No ref moved",
+        Lang::Ja => "動いた ref はありません",
+    }
+}
+
+/// A side of a recorded move where the ref did not exist.
+pub fn ref_absent() -> &'static str {
+    match lang() {
+        Lang::En => "(none)",
+        Lang::Ja => "(なし)",
     }
 }
 

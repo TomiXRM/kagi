@@ -54,6 +54,7 @@ fn oplog_filter_scopes_to_bound_repo() {
         backup_refs: Vec::new(),
         recovery: Vec::new(),
         failure_code: None,
+        ref_moves: None,
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -205,6 +206,7 @@ fn synthetic_entry(id: u64, repo: &str) -> OpLogEntry {
         backup_refs: Vec::new(),
         recovery: Vec::new(),
         failure_code: None,
+        ref_moves: None,
     }
 }
 
@@ -479,5 +481,49 @@ fn malformed_recovery_degrades_to_empty_without_losing_the_entry() {
         );
         let entry = parse_oplog_line(&line).unwrap_or_else(|| panic!("must parse: {line}"));
         assert!(entry.recovery.is_empty(), "{value}");
+    }
+}
+
+/// #334 slice 2a: `ref_moves` is additive. A line written before the field is
+/// "not recorded" (`None`), never "nothing moved"; "nothing moved" survives a
+/// round trip as itself; a malformed list is "not recorded" and the entry
+/// still reads.
+#[test]
+fn ref_moves_distinguish_not_recorded_from_nothing_moved() {
+    let base = concat!(
+        r#"{"timestamp":1000,"op":"checkout","repo":"/tmp/repo","#,
+        r#""before":{"head":"branch: main","dirty":"clean"},"#,
+        r#""outcome":{"kind":"Success","after":{"head":"branch: f","dirty":"clean"}}"#,
+    );
+    let legacy = parse_oplog_line(&format!("{base}}}")).expect("legacy line");
+    assert_eq!(legacy.ref_moves, None, "absent = not recorded");
+
+    let mut entry = legacy.clone();
+    entry.ref_moves = Some(Vec::new());
+    let empty = parse_oplog_line(&entry_to_json(&entry)).unwrap();
+    assert_eq!(empty.ref_moves, Some(Vec::new()), "recorded, nothing moved");
+
+    let head = kagi_domain::ref_moves::RefMove {
+        refname: "HEAD".into(),
+        old: Some("a".repeat(40)),
+        new: Some("a".repeat(40)),
+        old_symbolic: Some("refs/heads/main".into()),
+        new_symbolic: Some("refs/heads/f".into()),
+    };
+    let created = kagi_domain::ref_moves::RefMove {
+        refname: "refs/heads/f".into(),
+        old: None,
+        new: Some("b".repeat(40)),
+        old_symbolic: None,
+        new_symbolic: None,
+    };
+    entry.ref_moves = Some(vec![head, created]);
+    let full = parse_oplog_line(&entry_to_json(&entry)).unwrap();
+    assert_eq!(full.ref_moves, entry.ref_moves);
+
+    for value in ["null", r#""HEAD""#, r#"[{"old":"a"}]"#] {
+        let line = format!(r#"{base},"ref_moves":{value}}}"#);
+        let entry = parse_oplog_line(&line).unwrap_or_else(|| panic!("must parse: {line}"));
+        assert_eq!(entry.ref_moves, None, "{value}");
     }
 }

@@ -59,6 +59,22 @@ fn read_store() -> BTreeMap<String, u16> {
     serde_json::from_str(&text).unwrap_or_default()
 }
 
+/// The stored assignments, read once, for looking up many worktrees (#855).
+/// Read only: nothing is assigned or written.
+pub struct Assignments(BTreeMap<String, u16>);
+
+impl Assignments {
+    /// Read the store as it is now.
+    pub fn read() -> Self {
+        Self(read_store())
+    }
+
+    /// The first port already assigned to the worktree at `path`, if any.
+    pub fn port(&self, path: &Path) -> Option<u16> {
+        self.0.get(&canon_key(path)).copied()
+    }
+}
+
 /// Persist the whole map (pretty JSON), creating the parent dir. Best-effort;
 /// a write failure is logged to stderr and otherwise ignored.
 fn write_store(store: &BTreeMap<String, u16>) {

@@ -37,6 +37,7 @@ fn misleading_row(path: &Path) -> Worktree {
         head: Some(CommitId("0".repeat(40))),
         locked: false,
         lock_reason: None,
+        port: None,
     }
 }
 

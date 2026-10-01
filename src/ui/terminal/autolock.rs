@@ -55,6 +55,20 @@ impl KagiApp {
         if started {
             // #772 / ADR-0208 決定 4: opt-in only; plan → confirm, never a write.
             self.offer_auto_lock(owner, cx);
+            // #855: a terminal is what assigns the main worktree its block;
+            // show it in the sidebar now rather than at the next reload.
+            let port = kagi_git::worktree_ports::Assignments::read().port(&repo_path);
+            let changed = match self.view_mut().worktrees.iter_mut().find(|w| w.is_current) {
+                Some(current) if current.port != port => {
+                    current.port = port;
+                    true
+                }
+                _ => false,
+            };
+            if changed {
+                // The sidebar rows are cached on this epoch.
+                self.view_epoch = self.view_epoch.wrapping_add(1);
+            }
         }
         if let Some(ports) = exhausted {
             // #852: the shell runs; say why it has no KAGI_PORT and how to

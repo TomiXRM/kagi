@@ -30,5 +30,5 @@ src/ui/operations/modal_state.rs 913
 src/ui/pr_mode.rs 1908
 src/ui/render_header.rs 831
 src/ui/settings_view.rs 846
-src/ui/sidebar.rs 1932
+src/ui/sidebar.rs 1940
 src/ui/tabs.rs 1168

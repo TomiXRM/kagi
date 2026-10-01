@@ -35,6 +35,28 @@ impl KagiApp {
             .terminal_session
             .take()
             .unwrap_or_else(|| KagiTerminalSession::new(repo_path.clone()));
+        // #859: in `nonconcurrent` mode another worktree of this repository
+        // with a running shell stops a new one here. Not a write: no oplog.
+        if session.view.is_none() {
+            if let Some(running) = self.nonconcurrent_blocker(owner, &repo_path) {
+                klog!(
+                    "terminal: nonconcurrent blocked {} (running in {})",
+                    repo_path.display(),
+                    running.display()
+                );
+                let message = crate::ui::i18n::terminal_nonconcurrent_blocked(
+                    &repo_path.display().to_string(),
+                    &running.display().to_string(),
+                );
+                session.start_error = Some(message.clone());
+                if let Some(ui) = self.ui.get_mut(&owner) {
+                    ui.terminal_session = Some(session);
+                }
+                self.status_footer = FooterStatus::Failed(SharedString::from(message.clone()));
+                self.push_toast(ToastKind::Error, message, cx);
+                return;
+            }
+        }
         let mut failure_msg: Option<String> = None;
         let mut exhausted: Option<super::PortsExhausted> = None;
         let started = super::ensure_terminal(
@@ -45,6 +67,9 @@ impl KagiApp {
             |msg| failure_msg = Some(msg),
             |ports| exhausted = Some(ports),
         );
+        let started_pid = started
+            .then(|| session.shell.as_ref().and_then(|shell| shell.pid))
+            .flatten();
         if started {
             // A fresh shell: any lock target from a previous spawn is stale.
             session.clear_auto_lock();
@@ -53,8 +78,25 @@ impl KagiApp {
             ui.terminal_session = Some(session);
         }
         if started {
+            self.record_started_shell(&repo_path, started_pid);
             // #772 / ADR-0208 決定 4: opt-in only; plan → confirm, never a write.
             self.offer_auto_lock(owner, cx);
+            // #855: a terminal is what assigns a block; show it in the sidebar
+            // now rather than at the next reload. #869: in a shared-port mode
+            // the block assigned is the main worktree's, so refresh every row.
+            let ports = kagi_git::worktree_ports::Assignments::read();
+            let mut changed = false;
+            for worktree in self.view_mut().worktrees.iter_mut() {
+                let port = ports.port(&worktree.path);
+                if worktree.port != port {
+                    worktree.port = port;
+                    changed = true;
+                }
+            }
+            if changed {
+                // The sidebar rows are cached on this epoch.
+                self.view_epoch = self.view_epoch.wrapping_add(1);
+            }
         }
         if let Some(ports) = exhausted {
             // #852: the shell runs; say why it has no KAGI_PORT and how to

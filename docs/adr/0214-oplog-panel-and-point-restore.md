@@ -1,6 +1,6 @@
-# ADR-0214: Operation Log パネルを一級ビューにする — 全体設計と slice 1(読むだけ)
+# ADR-0214: Operation Log パネルを一級ビューにする — 全体設計、slice 1(読むだけ)、slice 2a(ref 移動の記録)、slice 2b(op revert / restore to point)、slice 2c(実行前のグラフプレビュー)
 
-- Status: **Accepted**(slice 1)。slice 2 以降は本 ADR の設計を前提に個別に Accepted にする
+- Status: **Accepted**(slice 1、2a、2b-1 = backend、2b-2 = UI、2c = プレビュー)
 - Date: 2026-10-01
 - Related: [#334](https://github.com/TomiXRM/kagi/issues/334)、#333 / ADR-0149(actor・worktree・id/parent)、ADR-0081 / ADR-0084(undo)、ADR-0111(`OpLogPanel`)、#468 / #548(行の展開・コピー)
 
@@ -51,7 +51,76 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
 - **下限が無い場合**: 読み込まれた範囲に直前の entry が無ければ、下限を 60 秒前とし、見出しでそう明示する。
 - **既知の限界**: 窓は時刻だけで決まるので、Kagi の外(terminal の git など)で同じ時間帯に動いた ref も窓に入る。見出しは「この worktree の前の操作以降の reflog」であり、因果関係を主張しない。
 - **slice 2 以降への拘束**: restore / revert / preview は、この時刻窓の帰属を前提にしてはならない。特に `Ambiguous` の行を、復元先や逆適用対象の根拠にしてはならない。
-- **将来の正攻法**: slice 2 で oplog entry に「動かした ref と old / new OID」(`RefMove { refname, old, new }` の列)を持たせる。時刻窓は表示の補助に下げ、時点復元と取り消しは OID で厳密に行う。この変更は oplog スキーマの追加になる(#333 の互換規則に従い additive)。
+- **将来の正攻法**: oplog entry に「動かした ref と old / new OID」を持たせる。→ slice 2a で実装した(§4)。時刻窓は記録の無い entry の表示補助に下がる。
+
+### 4. slice 2a: recorded op は動かした ref を OID で記録する
+
+- **記録点**: `Backend::run_recorded_with_events`(`Backend::run` / `run_recorded` が通る 1 箇所)と、undo / redo の `run_history_move`。
+  - 実行の前後に ref を読み(`backend/reflog.rs::ref_snapshot`)、差分(`kagi_domain::ref_moves::diff`、pure)を entry の `ref_moves` に載せる。
+  - 読むもの: **op を実行した worktree の HEAD**(symbolic 先 + 解決 OID)と `refs/heads/*`。
+  - 他の worktree の HEAD は走査しない。replay-onto などで checkout 先の HEAD が追従しても、それは `refs/heads/<branch>` の差分から導ける(snapshot のコストを増やさない)。
+- **型**: `RefMove { refname, old, new: Option<OID>, old_symbolic, new_symbolic }`。`None` は ref が無かったこと(作成 / 削除)、symbolic は HEAD のみ。entry 側は `Option<Vec<RefMove>>`。
+  - `None`: 記録なし。この field より前に書かれた entry、記録しない経路(下記)、前後どちらかの ref を読めなかった場合。読めない時は誤った差分より記録なしを選ぶ。
+  - `Some(空)`: 記録した結果、何も動いていない。refused / 失敗 / no-op がこれにあたる。
+- **outcome に関わらず実際の差分を記録する**。失敗しても動かなければ空、Partial なら実際に動いた分になる。
+- **wire**: additive。
+  - 欠落・`null`・不正な値は `None` として読む。行ごと捨てず、「何も動いていない」とも読まない。
+  - `Some(空)` は空配列として書く。
+- **repository への書き込みはない**。増えるのは oplog の 1 field だけ。
+- **パネルの表示**
+  - `Some` の entry は記録を「記録」として即表示する(background read なし)。
+  - `None` の entry は §3 の時刻窓を「推定」として表示する。見出しの色と文言で区別する。
+- **既知の限界**
+  - 前後の snapshot の間に、外部の process が動かした ref も差分に入る(op の実行中だけの窓。時刻窓よりはるかに狭い)。
+  - 記録しない経路: conflict の continue / skip / abort(`backend/conflict_ops.rs`)、GitHub 側の書き込み(local の ref を動かさない)、UI が直接記録する経路(fetch、worktree の lock など)。これらは `None` のまま推定で表示する。conflict 経路の記録は restore に必要になった時点で追加する。
+
+### 5. slice 2b: op revert / restore to point(2b-1 = backend、2b-2 = UI)
+
+- **根拠は記録だけ**: 復元先や逆適用対象は `ref_moves`(`Some`)だけを根拠にする。範囲内に `None` の entry(推定しか無い時点)があれば blocker にし、推定(§3)は使わない。
+- **Operation**: `Operation::OpRevert { entry_id }`(oplog 名 `op-revert`)と `Operation::RestoreToPoint { entry_id }`(`restore-to-point`)。
+  - `Backend::run` を通すので、自分の ref の移動も記録される(§4)。戻した操作もさらに戻せる。
+  - triple は `ops/oplog_restore.rs`。計画は pure な `kagi_domain::ref_restore::plan`。
+- **対象の範囲**
+  - 同じ repository の entry(worktree の common dir が一致するもの)。branch は worktree 間で共有されるので、他の worktree の entry も含める。
+  - 読むのは oplog の末尾 1000 件。target が無ければ blocker(EntryNotLoaded)。
+- **revert**: 対象 entry の各 branch の移動を old に戻す(作成は削除、削除は作り直し)。同じ ref を後続の記録済み entry が動かしていれば blocker(LaterEntryMoved)。
+- **restore to point**: 対象 entry の**直後**の状態に戻す(jj の `op restore` と同じく、対象自身の効果は残す)。それより新しい entry を古い順に合成し、ref ごとに「最古の old を戻し先、最新の new を期待値」とする。動いて元に戻った ref は除く。
+- **HEAD**
+  - branch に追従しただけの HEAD の移動(commit など、symbolic が同じ)は、その branch の移動として扱う。
+  - HEAD の切替・detached を含む entry は blocker(HeadMoved)。戻すには checkout(作業ツリーに触れる)が要るため、2b の対象外。
+- **その他の blocker**
+  - いずれかの ref が期待値に無い(RefMovedSince。記録外での移動)。
+  - 戻し先の commit が既に無い(TargetGone)。
+  - merge / rebase などが進行中。
+  - checkout 中の branch を削除することになる(DeletesCheckedOutBranch)。
+- **checkout 中の branch を動かす場合**: soft な移動(ADR-0084 の undo と同じ)で、その worktree の index とファイルはそのまま。
+  - 変更が無ければ warning MovesCheckedOutBranch、未コミットの変更があれば warning CheckedOutDirty(変更は残り、戻した先端との差分と一緒に見える)。
+  - 設計時は dirty を blocker にしていたが、2b-1 の実装中に変更した。checkout 中の branch を restore すると、その worktree は必ず「dirty」になる(restore 由来の差分)。dirty を blocker にすると、その restore を revert できなくなり「戻したことも戻せる」が成り立たない。
+- **plan / preflight / execute**
+  - plan: 戻す内容を `restore <ref> <to|-> <expect|->` の行として載せる(`preview_commits`)。destructive で二段 confirm。warning に、ref ごとの逆操作(Moves)と「戻らないもの」(RefsOnly: 作業ツリー / index / untracked / stash / tag / remote branch)を出す。
+  - preflight: 再計画して、行が確認したものと一致すること。
+  - execute: 動かす全 ref の現在の先端を `refs/kagi/backups/<op>/<i>` に保持 → `git update-ref --stdin` の 1 トランザクション(`update` / `create` / `delete` に old 値を付け、git が再照合)→ 各 ref を verify。
+  - 結果は `OperationOutcome::OplogRestore`。backup は recovery handle(BRANCH_TIP)になる。
+- **2b-2(UI)**
+  - panel の選択行に「この操作を取り消す…」「この時点まで戻す…」を出す。押すと panel が `OpLogPanelEvent::Restore(Operation)` を出し、app が active な repository で plan して card(`ActiveModal::OplogRestore`)を開く。
+  - 記録なしの行(`ref_moves = None`)では両方 disabled にし、理由を出す。
+  - card は shared plan card で、warning の Moves(ref ごとの逆操作)と RefsOnly(戻らないもの)を描画する。script 行(`preview_commits`)は commit 一覧として描かない。
+  - destructive なので、最初の confirm(button / Enter)で arm し、二度目で `run_recorded`。CLI / MCP には出さない。
+  - **記録できなかった receipt は戻す対象にしない**: append に失敗した entry は panel 上で id が placeholder(0)になる。oplog の id は 0 始まりなので、0 は最初の実 entry も指しうる。そこで `entry_for_recording` は `Recording::Failed` の `ref_moves` を落として「記録なし」(推定表示・ボタン disabled)にする。
+  - 別 repository の行を選んだ場合、plan は EntryNotLoaded(「この repository の操作にない」)になる。
+
+### 6. slice 2c: 実行前のグラフプレビュー(表示専用)
+
+- **入力**: tab が読み込み済みの rows(id + parents、topo 順)、`branch_targets`、plan の `restore` 行だけを使う。repository は読まず、plan の一部でもない(書き込みなし、preflight にも関わらない)。
+- **計算**(pure、`kagi_domain::restore_preview`)
+  - 戻した後の local branch の先端と、動かない根(remote branch / tag / detached な worktree の HEAD / stash の base)から到達できる commit を求める。attached な HEAD は branch に追従するので根にしない。
+  - 戻す前にどの根からも到達しなかった行(読み込み範囲の外を指す ref など)は消さない。
+  - 残った行は読み込み順の部分列、すなわち topo 順なので、既存の `graph::layout()` をそのまま使う(新しいレイアウトは書かない)。
+  - 消える行数 = 戻す前は到達し、戻した後は到達しない行。
+- **範囲**: 戻し先の行と、消える行が下がっていた行(その下の最初の残る行)を含む最小区間に、前後 4 行を足す。上限 40 行で、窓の外の行数は「… ほか N 行」と出す。lane は最大 8 本分の幅で切る(既存の graph 列と同じく clip)。
+- **推定しない**: 戻し先 commit が読み込み済み rows に無い場合(削除した branch の作り直し、restore で branch から外れた commit への revert など)は `NotLoaded` とし、「プレビューできません」と明示する。復元そのものは可能。
+- **描画**: commit graph と同じ `graph_view::graph_canvas` を行ごとに使う。card への差し込みは `render_plan_modal_wrapper_extra`(`Option<AnyElement>` を warning の後に描く)。既存の `wrapper_styled` / `wrapper_staged` はそれに `None` で委譲するので、呼び出し元の署名は変えない。この card は #872 の `ConfirmStage`(Unarmed / Armed)にも乗る。
+- **コスト**: card を開くときに 1 回だけ計算して modal に保持する。到達計算は O(rows)、layout は O(rows × lanes)。描画は最大 40 行。
 
 ## 結果
 
@@ -66,3 +135,28 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
     - 共有された秒の行は `Ambiguous` として描画される。
     - repo の指紋と oplog の件数が不変。
 - 変異確認: 曖昧判定を外す、または隣接を worktree で絞らないと、それぞれ上記のテストが落ちる。
+- slice 2a のテスト
+  - domain unit: checkout は HEAD の symbolic だけが動く、作成 / 削除、commit。
+  - codec unit: 旧行は `None`、`Some(空)` が往復する、不正値は行を捨てずに `None`。
+  - kagi-git integration(実 `Backend::run`): checkout / commit / replay-onto(別 worktree で checkout 中の branch は `refs/heads/feat` だけ)/ 失敗 op は `Some(空)` / pipeline 外の `git branch` は次の entry に入らない。
+  - Tier A: 実 run の行は「記録」を描画して推定の読み取りを始めない。記録の無い合成行は推定 + 曖昧。
+- slice 2a の変異確認: 記録を止める → integration と Tier A、HEAD の symbolic を見ない → domain と integration、`Some(空)` を書かない → codec が落ちる。
+- slice 2b-1 のテスト
+  - domain unit(`ref_restore`): 合成(最古の old → 最新の new、削除)、移動して戻った ref は除く、revert は同じ ref の後続移動だけで blocker、範囲内の記録なし、checkout は blocker で commit の HEAD 追従は可、記録外の移動、行の往復と transaction。
+  - kagi-git integration(実 `Backend::run`)
+    - 3 手前へ restore すると全 branch が一致し、自分の `ref_moves` と backup 2 件が残る。
+    - restore を revert すると restore 前に戻る(往復)。
+    - 中間の revert で後続が保たれる。
+    - 後続が同じ ref を動かしていれば blocker で、何も動かない。
+    - 範囲内の記録なし entry、checkout、記録外の移動は blocker。
+    - 計画後に branch が動くと refuse し、何も動かない。
+    - checkout 中の branch の削除は blocker。
+- slice 2b-1 の変異確認: LaterEntryMoved を外す、合成を最新の old にする、dirty を blocker に戻す → それぞれ domain と integration(往復を含む)が落ちる。
+- slice 2b-2 のテスト
+  - panel unit: append 済みは id 0 でも戻せる、append 失敗は戻せない。
+  - Tier A `oplog_restore_card`: 記録なしの別 repository の行は両ボタン disabled。最初の create-branch の行の実ボタンで card が開き、Moves(drop1 / drop2 の削除)と RefsOnly が並び、`plan-confirm` が描画され、計画では何も動かない。Enter 1 回目で arm、2 回目で restore され、keep は残る。restore 自身の行の「取り消す」で元に戻る(UI 経由の往復)。
+- slice 2b-2 の変異確認: arm を飛ばす → Tier A、`restorable` が記録を見ない → Tier A(disabled の行)、失敗 receipt の記録を残す → panel unit が落ちる。
+- slice 2c のテスト
+  - domain unit(`restore_preview`): branch の削除はその branch 固有の commit だけを消す、tag / remote が保持する commit は残る、移動した branch は戻し先の行に付く、戻し先が範囲外なら NotLoaded、窓 = 変化 ± 4 行で上限 40。
+  - Tier A `oplog_restore_card` の拡張: 記録済みの commit を main に 1 つ足す。keep 時点への restore の card で、プレビュー行数 ≤ 40、main の移動先の行が戻し先 commit、消える行 = 1(その commit は描かれない)。restore 後に `git rev-list --count --branches` の減少数と一致する。描画 probe(`restore-preview` / `-removed-1` / `-moved-main-<sha>`)。revert card は、main の戻し先が reload 後の rows に無いので NotLoaded になり、「プレビューできません」が描画される。
+- slice 2c の変異確認: restores を after に適用しない → domain 4 件と Tier A、card の extra を描かない → Tier A、NotLoaded の判定を外す → domain と Tier A が落ちる。

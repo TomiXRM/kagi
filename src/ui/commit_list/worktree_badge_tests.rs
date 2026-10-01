@@ -18,6 +18,7 @@ fn snap(head_branch: &str) -> RepoSnapshot {
         head: None,
         locked: false,
         lock_reason: None,
+        port: None,
     };
     RepoSnapshot {
         head: Head::Attached {
@@ -110,6 +111,7 @@ fn clean_detached_worktree_gets_an_actionable_head_badge() {
         head: Some(detached_head.clone()),
         locked: true,
         lock_reason: Some("reason".into()),
+        port: None,
     });
 
     let badge = build_badge_map(&snap)
@@ -143,6 +145,7 @@ fn detached_worktrees_at_one_commit_share_one_badge_with_every_target() {
             head: Some(detached_head.clone()),
             locked: false,
             lock_reason: None,
+            port: None,
         });
     }
 

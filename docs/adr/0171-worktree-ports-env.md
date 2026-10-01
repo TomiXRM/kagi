@@ -116,6 +116,9 @@ the owning terminal session's repository path. All five values override inherite
 `KAGI_*` values. A retained shell keeps its environment; a restarted shell recalls
 the persisted block. Metadata failures use the existing terminal-start
 failure/oplog path rather than spawning with a stale inherited port.
+`KAGI_WORKTREE_PATH` / `KAGI_MAIN_WORKTREE` carry no trailing `/`: `env_map`
+rebuilds each path from its components, dropping the separator git appends to a
+working directory (#870).
 
 **Range exhaustion still starts the shell (#852).** `terminal_env` answers
 `TerminalEnv::Exhausted { worktree, range, per }` instead of an error; the
@@ -157,13 +160,37 @@ range is unchanged.
 
 ## Follow-ups (out of scope — tracked under #342 / parent #359)
 
-1. **Terminal process-group handling** — environment injection and cwd are
-   implemented. How running processes are treated on worktree removal and
-   coordination with the #340 lock remain separate follow-ups.
-2. **`run_mode: "nonconcurrent"`** — the "correctly give up on parallelism" escape
-   hatch for projects with a single shared DB / fixed callback URL; blocking or
-   warning on a second launch is a UX decision left open.
-3. **Sidebar `http://localhost:<port>` link** (click-to-open) — GUI change,
-   needs human eyeballing.
+1. ~~**Terminal process-group handling**~~ — done (#867). Kagi never ends a
+   user's process. What the remove plan does about processes:
+   - **Process facts** (portable-pty 0.9 `unix.rs`): the spawn resets signal
+     dispositions, calls `setsid()` and makes the PTY the controlling
+     terminal (`TIOCSCTTY`). So the shell leads a new session whose id is
+     its PID, and Kagi never signals it or its children.
+   - **Observed on macOS** (a throwaway portable-pty harness, `-l -i` like
+     Kagi), after `exit`:
+     - zsh hangs up its plain `&` jobs; bash leaves them running.
+     - `nohup`, `disown` and `( … &)` survive under both shells.
+     - Every survivor kept the shell's session id. Only a process that calls
+       `setsid` itself (a daemon) leaves the session.
+   - **Remove plan**: a shell Kagi started that is still running in the
+     target worktree is a blocker ("`exit` it in that terminal first"). The
+     live shells are the same set #859 uses (`ShellProcess.exit == None`).
+   - **Leftovers**: Kagi remembers the PID (= session id) of every shell it
+     started this run. If processes remain in an exited shell's session, the
+     plan warns with their count (`kagi_git::proc::session_members`, read
+     only).
+   - **Not covered**: processes started outside Kagi, ones that left the
+     session, and shells from an earlier Kagi run are not detected.
+   - **Plans from the CLI/MCP** have no GUI shells to report.
+   - **Coordination with #340**: the opt-in lock (#772) already blocks removal
+     on its own.
+2. ~~**`run_mode: "nonconcurrent"`**~~ — done (#859, ADR-0213) as the
+   `worktree_run_mode` setting: one worktree of a repository at a time runs a
+   terminal shell; a second is blocked with the reason. In that mode every
+   worktree's `KAGI_PORT` is the main worktree's block (#869, ADR-0213 決定 6).
+3. ~~**Sidebar `http://localhost:<port>` link**~~ — done (#855): each WORKTREES
+   row shows its stored block as `localhost:<port>` (click opens the browser).
+   The snapshot reads the store; nothing is assigned by showing a row. A
+   terminal start refreshes the current worktree's row at once.
 4. **Configurable env-var name / bind-to-reserve** — if the `KAGI_PORT` convention
    or the numbers-only race proves insufficient.

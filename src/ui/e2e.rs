@@ -176,7 +176,7 @@ pub(crate) fn measure_confirm(button: impl gpui::IntoElement) -> gpui::AnyElemen
 use gpui::{App, AppContext as _, AssetSource, Entity, Platform, Styled as _, Window};
 
 use super::assets::KagiAssets;
-use super::{fonts, oplog_panel, theme, toast_stack, KagiApp};
+use super::{fonts, theme, toast_stack, KagiApp};
 
 #[cfg(feature = "gui-e2e")]
 pub fn app_notice_message(app: &KagiApp) -> Option<&str> {
@@ -323,7 +323,7 @@ pub fn build_kagi_entity(
         app_state.root_focus = Some(cx.focus_handle());
         app_state.toast_stack = Some(cx.new(|_| toast_stack::ToastStack::new()));
         let seed = std::mem::take(&mut app_state.op_log_seed);
-        app_state.op_log = Some(cx.new(|_| oplog_panel::OpLogPanel::from_entries(seed)));
+        app_state.op_log = Some(super::operations::oplog_restore::op_log_panel(seed, cx));
         app_state
     });
     let close_owner = kagi.downgrade();

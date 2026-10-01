@@ -155,6 +155,14 @@ mod recovery_oplog_panel;
 mod recovery_worktree_lock_reason;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/worktree_ports.rs"]
+mod recovery_worktree_ports;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/worktree_remove_shell.rs"]
+mod recovery_worktree_remove_shell;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/worktree_inspection.rs"]
 mod worktree_inspection;
 
@@ -784,6 +792,18 @@ mod macos {
                 Box::new(crate::recovery_worktree_lock_reason::scenario_terminal_auto_lock_race),
             ),
             (
+                "worktree_port_env",
+                Box::new(crate::recovery_worktree_ports::scenario_worktree_port_env),
+            ),
+            (
+                "worktree_nonconcurrent",
+                Box::new(crate::recovery_worktree_ports::scenario_worktree_nonconcurrent),
+            ),
+            (
+                "worktree_remove_live_shell",
+                Box::new(crate::recovery_worktree_remove_shell::scenario_worktree_remove_live_shell),
+            ),
+            (
                 "external_lock_reload",
                 Box::new(crate::recovery_worktree_lock_reason::scenario_external_lock_reload),
             ),
@@ -798,6 +818,26 @@ mod macos {
             (
                 "modal_no_fallthrough",
                 Box::new(crate::recovery_operations::scenario_modal_no_fallthrough),
+            ),
+            (
+                "commit_list_roles",
+                Box::new(crate::recovery_operations::scenario_commit_list_roles),
+            ),
+            (
+                "sidebar_tree_roles",
+                Box::new(crate::recovery_operations::scenario_sidebar_tree_roles),
+            ),
+            (
+                "color_vision_theme",
+                Box::new(crate::recovery_operations::scenario_color_vision_theme),
+            ),
+            (
+                "dialog_a11y_roles",
+                Box::new(crate::recovery_operations::scenario_dialog_a11y_roles),
+            ),
+            (
+                "sync_to_remote_armed",
+                Box::new(crate::recovery_operations::scenario_sync_to_remote_armed),
             ),
             (
                 "replay_onto_armed",
@@ -1500,6 +1540,10 @@ mod macos {
             (
                 "oplog_actor_reflog",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_actor_reflog),
+            ),
+            (
+                "oplog_restore_card",
+                Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_card),
             ),
             ("create_snapshot", Box::new(scenario_create_snapshot)),
             ("theme_switch", Box::new(scenario_theme_switch)),

@@ -72,6 +72,24 @@ pub enum ReflogDetail {
     Unavailable(String),
 }
 
+/// #334 slice 2b: a selected row asks the app to plan an op-revert or a
+/// restore-to-point. The panel only names the entry; the app plans it for the
+/// active repository and shows the card.
+#[derive(Debug, Clone)]
+pub enum OpLogPanelEvent {
+    Restore(kagi_git::Operation),
+}
+
+impl gpui::EventEmitter<OpLogPanelEvent> for OpLogPanel {}
+
+/// Whether an entry can be reverted / restored to: it carries recorded ref
+/// moves (ADR-0214 §5 — never the estimate). A receipt whose append failed
+/// has its record dropped in [`OpLogPanel::entry_for_recording`], so this
+/// also means "persisted" (ids are 0-based, so `id` cannot tell).
+pub fn restorable(entry: &OpLogEntry) -> bool {
+    entry.ref_moves.is_some()
+}
+
 /// The working tree an entry ran in — the worktree badge and the reflog's
 /// owner. Old lines without `worktree` fall back to `repo`. `Backend::run`
 /// records the workdir with a trailing separator and other paths without, so
@@ -112,6 +130,12 @@ impl OpLogPanel {
             },
         };
         let mut displayed = entry.clone();
+        // A receipt that never reached the log cannot be restored from (its
+        // id is a placeholder that may name another entry): show its moves as
+        // the estimate, like any entry without a record.
+        if matches!(recording, Recording::Failed { .. }) {
+            displayed.ref_moves = None;
+        }
         displayed.outcome = outcome;
         displayed
     }
@@ -181,6 +205,11 @@ impl OpLogPanel {
         let (Some(entry), Some(window)) = (self.entries.get(i), self.reflog_window(i)) else {
             return;
         };
+        // #334 slice 2a: a recorded entry carries its moves; the time-window
+        // estimate is only for entries without a record.
+        if entry.ref_moves.is_some() {
+            return;
+        }
         let key = EntryKey::of(entry);
         let path = PathBuf::from(entry_worktree(entry));
         let generation = self.reflog_generation;
@@ -449,5 +478,27 @@ mod tests {
         assert_eq!(oldest_wt1.until, 20);
         let b = panel.reflog_window(1).unwrap();
         assert_eq!((b.after, b.until), (10, 25));
+    }
+
+    /// #334 slice 2b: a receipt that never reached the log cannot be restored
+    /// from — its id is a placeholder (ids are 0-based, so 0 may name the
+    /// first real entry). A persisted one with id 0 is restorable.
+    #[test]
+    fn only_a_persisted_record_is_restorable() {
+        use kagi_git::backend::recording::Recording;
+        let mut entry = dummy_entry("create-branch");
+        entry.ref_moves = Some(Vec::new());
+        let appended = Recording::Appended {
+            path: "ops.jsonl".into(),
+            entry: entry.clone(),
+        };
+        let failed = Recording::Failed {
+            attempted: entry,
+            error: "disk full".into(),
+        };
+        let shown = OpLogPanel::entry_for_recording(&appended);
+        assert_eq!(shown.id, 0);
+        assert!(restorable(&shown), "the first real entry has id 0");
+        assert!(!restorable(&OpLogPanel::entry_for_recording(&failed)));
     }
 }

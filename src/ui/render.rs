@@ -340,6 +340,9 @@ impl Render for KagiApp {
                 &self.view().tags,
                 &self.view().stashes,
                 &self.view().worktrees,
+                // Read when the rows are rebuilt: a mode change shows at the
+                // next rebuild (refresh), not on its own.
+                crate::ui::settings::Settings::load().worktree_run_mode(),
                 &self.sidebar.collapsed,
                 &self.ui().branch_groups_collapsed,
                 &sidebar_filter_text,

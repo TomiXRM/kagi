@@ -100,7 +100,7 @@ pub(crate) fn create_snapshot(repo: &Repository, message: &str) -> Result<Snapsh
 
 /// Build a tree object representing the full working tree (`git add -A`) without
 /// persisting the user's index. Returns the tree OID (written to the ODB).
-fn write_worktree_tree(repo: &Repository) -> Result<git2::Oid, GitError> {
+pub(crate) fn write_worktree_tree(repo: &Repository) -> Result<git2::Oid, GitError> {
     let mut index = repo
         .index()
         .map_err(|e| GitError::Other(format!("snapshot: index open failed: {}", e.message())))?;

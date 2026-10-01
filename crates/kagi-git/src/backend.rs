@@ -845,6 +845,7 @@ impl Backend {
             Operation::ResetCurrentToHead { target } => self.plan_reset_current_to_head(target),
             Operation::ForceWithLeasePush => self.plan_force_with_lease_push(),
             Operation::RebaseCurrentOnto { onto } => self.plan_rebase_current_onto(onto),
+            Operation::SyncToRemote { branch } => ops::plan_sync_to_remote(&self.repo, branch),
             Operation::ReplayOnto { branch, onto } => {
                 ops::plan_replay_onto(&self.repo, &self.path, branch, onto)
             }
@@ -857,6 +858,10 @@ impl Backend {
             } => self.plan_apply_suggestion(suggestion, expected_original, head),
             Operation::WriteCommitGraph => ops::plan_write_commit_graph(&self.repo),
             Operation::EnableFsmonitor => ops::plan_enable_fsmonitor(&self.repo),
+            Operation::OpRevert { entry_id } => ops::plan_op_revert(&self.repo, *entry_id),
+            Operation::RestoreToPoint { entry_id } => {
+                ops::plan_restore_to_point(&self.repo, *entry_id)
+            }
         }
     }
 

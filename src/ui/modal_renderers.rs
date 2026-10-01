@@ -13,6 +13,7 @@
 
 #![allow(clippy::too_many_arguments)]
 
+use super::dialog_a11y::{apply_dialog, dialog_a11y, ConfirmStage, DialogHandler};
 use super::i18n::Msg;
 use super::modal_copy::{modal_copy_button, plan_clipboard_text};
 use super::modal_shell::{
@@ -20,9 +21,10 @@ use super::modal_shell::{
     modal_recovery_section, note_path_list, note_path_list_element, section_open, MODAL_LIST_ROW_H,
     MODAL_W_MD,
 };
+use super::plan_card_rows::{render_commit_row, render_note_row};
 use super::theme::{self, theme as current_theme};
-use super::{KagiApp, MONO_FONT};
-use gpui::{div, prelude::*, rgb, Context, SharedString, Window};
+use super::KagiApp;
+use gpui::{div, prelude::*, rgb, Context, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{Icon, IconName, Sizable as _};
 use kagi_git::{CommitId, OperationPlan};
@@ -239,106 +241,6 @@ pub(crate) fn render_current_predicted(
     }
 }
 
-/// One warning/blocker line. `chip: false` (every modal except Pull/Push)
-/// collapses to the original single-line "glyph␠text" row, unchanged.
-/// `chip: true` wraps the same glyph + text in a tinted, bordered row (same
-/// `theme::badge_style` recipe as the ref-badge chips in the commit graph).
-fn render_note_row(glyph: &'static str, color: u32, text: &str, chip: bool) -> gpui::AnyElement {
-    if !chip {
-        return div()
-            .text_sm()
-            .text_color(rgb(color))
-            .overflow_hidden()
-            .child(SharedString::from(format!("{} {}", glyph, text)))
-            .into_any_element();
-    }
-    let (bg, border, _) = theme::badge_style(color);
-    div()
-        .flex()
-        .flex_row()
-        .items_start()
-        .gap_2()
-        .rounded_md()
-        .bg(gpui::rgba(bg))
-        .border_1()
-        .border_color(gpui::rgba(border))
-        .px_2()
-        .py(theme::scaled_px(4.))
-        .child(
-            div()
-                .flex_shrink_0()
-                .text_color(rgb(color))
-                .child(SharedString::from(glyph)),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w(gpui::px(0.))
-                .text_sm()
-                .text_color(rgb(current_theme().text_main))
-                .overflow_hidden()
-                .child(SharedString::from(text.to_string())),
-        )
-        .into_any_element()
-}
-
-/// One "commits to push" preview row (T-HT-004). Plain (`accent: None`):
-/// unchanged single truncated line. Chip style: the sha gets its own small
-/// badge, the summary follows in regular text — same visual family as
-/// [`render_note_row`]'s chips.
-fn render_commit_row(line: &str, accent: Option<PlanCardAccent>) -> gpui::AnyElement {
-    let Some((_, color)) = accent else {
-        return div()
-            .font_family(MONO_FONT)
-            .text_xs()
-            .text_color(rgb(current_theme().text_sub))
-            .overflow_hidden()
-            .child(SharedString::from(line.to_string()))
-            .into_any_element();
-    };
-    // Producer format is "<8-char-sha>  <summary>" (ops/push.rs). Fall back to
-    // the whole line as the "sha" slot if that shape ever changes — this is
-    // purely cosmetic splitting, never a behavioural decision (ADR-0129).
-    let (sha, summary) = match line.split_once("  ") {
-        Some((s, rest)) if s.len() == 8 && s.bytes().all(|c| c.is_ascii_hexdigit()) => {
-            (s, rest.trim_start())
-        }
-        _ => (line, ""),
-    };
-    let (bg, border, _) = theme::badge_style(color);
-    div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_2()
-        .child(
-            // The sha is monospace: a column of hashes only reads as a column
-            // when the glyphs are fixed width (user request 2026-09-06). The
-            // summary next to it stays proportional — it is prose.
-            div()
-                .flex_shrink_0()
-                .px_1()
-                .rounded_sm()
-                .bg(gpui::rgba(bg))
-                .border_1()
-                .border_color(gpui::rgba(border))
-                .text_color(rgb(color))
-                .font_family(MONO_FONT)
-                .text_xs()
-                .child(SharedString::from(sha.to_string())),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w(gpui::px(0.))
-                .text_xs()
-                .text_color(rgb(current_theme().text_sub))
-                .overflow_hidden()
-                .child(SharedString::from(summary.to_string())),
-        )
-        .into_any_element()
-}
-
 /// Shared scaffold for the plan-confirmation modals. Builds the cancel/confirm
 /// `cx.listener` pair — each runs its action, then restores root focus and
 /// notifies (the identical boilerplate that was hand-repeated in ~14 per-modal
@@ -361,28 +263,93 @@ pub(crate) fn render_plan_modal_wrapper_styled(
     overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let cancel_handler = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
+    let stage = ConfirmStage::Single;
+    render_plan_modal_wrapper_staged(
+        plan,
+        error,
+        confirm_label,
+        create_branch_target,
+        accent,
+        stage,
+        cancel_action,
+        confirm_action,
+        overrides,
+        cx,
+    )
+}
+
+/// [`render_plan_modal_wrapper_styled`] for a two-stage card: `stage` tells
+/// assistive technology whether the next Confirm runs the operation (#354).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_plan_modal_wrapper_staged(
+    plan: std::sync::Arc<OperationPlan>,
+    error: Option<SharedString>,
+    confirm_label: impl Into<SharedString>,
+    create_branch_target: Option<CommitId>,
+    accent: Option<PlanCardAccent>,
+    stage: ConfirmStage,
+    cancel_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
+    confirm_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
+    overrides: &std::collections::HashMap<&'static str, bool>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    render_plan_modal_wrapper_extra(
+        plan,
+        error,
+        confirm_label,
+        create_branch_target,
+        accent,
+        stage,
+        None,
+        cancel_action,
+        confirm_action,
+        overrides,
+        cx,
+    )
+}
+
+/// [`render_plan_modal_wrapper_staged`] with one card-specific element drawn
+/// after the warnings (#334: the restore preview graph). Display only.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_plan_modal_wrapper_extra(
+    plan: std::sync::Arc<OperationPlan>,
+    error: Option<SharedString>,
+    confirm_label: impl Into<SharedString>,
+    create_branch_target: Option<CommitId>,
+    accent: Option<PlanCardAccent>,
+    stage: ConfirmStage,
+    extra: Option<gpui::AnyElement>,
+    cancel_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
+    confirm_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
+    overrides: &std::collections::HashMap<&'static str, bool>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let cancel = cx.listener(move |this, _: &(), window, cx| {
         cancel_action(this, cx);
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh, cx);
         }
         cx.notify();
     });
-    let confirm_handler = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
+    let confirm = cx.listener(move |this, _: &(), window, cx| {
         confirm_action(this, cx);
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh, cx);
         }
         cx.notify();
     });
+    let cancel: DialogHandler = std::rc::Rc::new(move |w, a| cancel(&(), w, a));
+    let confirm: DialogHandler = std::rc::Rc::new(move |w, a| confirm(&(), w, a));
     render_plan_modal_card_styled(
         plan,
         error,
         confirm_label,
-        cancel_handler,
-        confirm_handler,
+        cancel,
+        confirm,
         create_branch_target,
         accent,
+        stage,
+        extra,
         overrides,
         cx,
     )
@@ -458,10 +425,13 @@ fn render_plan_modal_card_styled(
     plan: std::sync::Arc<OperationPlan>,
     error: Option<SharedString>,
     confirm_label: impl Into<SharedString>,
-    cancel_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-    confirm_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    cancel_handler: DialogHandler,
+    confirm_handler: DialogHandler,
     create_branch_target: Option<CommitId>,
     accent: Option<PlanCardAccent>,
+    stage: ConfirmStage,
+    // #334: a card-specific element after the warnings (display only).
+    extra: Option<gpui::AnyElement>,
     // #462: see [`render_plan_modal_wrapper_styled`].
     overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
@@ -492,7 +462,22 @@ fn render_plan_modal_card_styled(
     // (2026-09-06), which is the same shape the destructive cards use.
     // The whole dialog as text (title, current→predicted, notes, commits,
     // recovery): popup content had no way to be copied at all.
-    let card = modal_card(MODAL_W_MD).child(
+    let title_text = plan_title_text(&plan.title);
+    let spec = dialog_a11y(
+        &title_text,
+        (!has_blockers).then_some(confirm_label.as_ref()),
+        plan.destructive,
+        stage,
+    );
+    let on_confirm = (!has_blockers).then(|| confirm_handler.clone());
+    let card = apply_dialog(
+        "plan-card",
+        modal_card(MODAL_W_MD).id("plan-card"),
+        spec,
+        on_confirm,
+        cancel_handler.clone(),
+    )
+    .child(
         div()
             .flex_shrink_0()
             .flex()
@@ -524,10 +509,12 @@ fn render_plan_modal_card_styled(
     // paths — a comma wall inside the sentence is what it replaced.
     if !plan.warnings.is_empty() {
         let mut warn_col = div().flex().flex_col().gap_1();
-        for w in &plan.warnings {
+        for (wi, w) in plan.warnings.iter().enumerate() {
             match note_path_list(w) {
                 Some((summary, files)) => {
                     warn_col = warn_col.child(render_note_row(
+                        format!("plan-warning-{wi}").into(),
+                        false,
                         "\u{26a0}",
                         current_theme().color_warning,
                         &summary,
@@ -537,6 +524,8 @@ fn render_plan_modal_card_styled(
                 }
                 None => {
                     warn_col = warn_col.child(render_note_row(
+                        format!("plan-warning-{wi}").into(),
+                        false,
                         "\u{26a0}",
                         current_theme().color_warning,
                         &plan_note_text(w),
@@ -546,6 +535,9 @@ fn render_plan_modal_card_styled(
             }
         }
         body = body.child(warn_col.flex_shrink_0());
+    }
+    if let Some(extra) = extra {
+        body = body.child(div().flex_shrink_0().child(extra));
     }
 
     // ── Commits to push (T-HT-004) ────────────────────────
@@ -615,10 +607,12 @@ fn render_plan_modal_card_styled(
     // whole card, which is the wall the audit set out to remove.
     if !plan.blockers.is_empty() {
         let mut block_col = div().flex().flex_col().gap_1();
-        for b in &plan.blockers {
+        for (bi, b) in plan.blockers.iter().enumerate() {
             match note_path_list(b) {
                 Some((summary, files)) => {
                     block_col = block_col.child(render_note_row(
+                        format!("plan-blocker-{bi}").into(),
+                        true,
                         "\u{2717}",
                         current_theme().color_blocker,
                         &summary,
@@ -628,6 +622,8 @@ fn render_plan_modal_card_styled(
                 }
                 None => {
                     block_col = block_col.child(render_note_row(
+                        format!("plan-blocker-{bi}").into(),
+                        true,
                         "\u{2717}",
                         current_theme().color_blocker,
                         &plan_note_text(b),
@@ -723,7 +719,7 @@ fn render_plan_modal_card_styled(
                 .label(Msg::PlanCancel.t())
                 .ghost()
                 .small()
-                .on_click(cancel_handler),
+                .on_click(move |_, w, a| cancel_handler(w, a)),
         ));
 
     if let Some(commit_id) = create_branch_target {
@@ -749,7 +745,7 @@ fn render_plan_modal_card_styled(
             .label(confirm_label)
             .primary()
             .small()
-            .on_click(confirm_handler);
+            .on_click(move |_, w, a| confirm_handler(w, a));
         #[cfg(feature = "gui-e2e")]
         let button = {
             // Keep the measurement layer behind the real button and anchor it

@@ -478,6 +478,9 @@ pub enum SidebarRow {
         is_current: bool,
         is_main: bool,
         locked: bool,
+        /// First port of the worktree's stored block, shown as
+        /// `localhost:<port>` (#855). `None` when it has none.
+        port: Option<u16>,
     },
     /// A stash leaf.
     Stash { index: usize, message: String },
@@ -567,6 +570,7 @@ pub fn build_sidebar_rows(
     tags: &[Tag],
     stashes: &[Stash],
     worktrees: &[Worktree],
+    run_mode: kagi_domain::worktree_run_mode::RunMode,
     collapsed: &HashSet<&'static str>,
     groups_collapsed: &HashSet<String>,
     filter_text: &str,
@@ -829,6 +833,9 @@ pub fn build_sidebar_rows(
             collapsed: section_collapsed,
         });
         if !section_collapsed {
+            // #869: a shared-port mode hands every worktree the main
+            // worktree's block, so every row links to it.
+            let main_port = worktrees.iter().find(|w| w.is_main).and_then(|w| w.port);
             for wt in worktrees
                 .iter()
                 .filter(|w| matches(&w.name) || matches(w.path.to_string_lossy().as_ref()))
@@ -840,6 +847,11 @@ pub fn build_sidebar_rows(
                     is_current: wt.is_current,
                     is_main: wt.is_main,
                     locked: wt.locked,
+                    port: if run_mode.shares_ports() {
+                        main_port
+                    } else {
+                        wt.port
+                    },
                 });
             }
         }
@@ -925,13 +937,17 @@ fn build_sidebar_row(
             is_current,
             is_main,
             locked,
+            port,
         } => super::sidebar_worktree_row::build_worktree_row(
-            name,
-            path,
-            path_label,
-            *is_current,
-            *is_main,
-            *locked,
+            super::sidebar_worktree_row::WorktreeRowFacts {
+                name,
+                path,
+                path_label,
+                is_current: *is_current,
+                is_main: *is_main,
+                locked: *locked,
+                port: *port,
+            },
             this,
             cx,
         ),
@@ -1578,13 +1594,29 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
             cx.processor(|this, range: std::ops::Range<usize>, _window, cx| {
                 // #358: one wall-clock read per rendered batch, not per row.
                 let now_secs = super::commit_list::now_unix_secs();
+                // #354: levels of every row, for sibling positions.
+                let levels: Vec<usize> = this
+                    .sidebar
+                    .rows
+                    .iter()
+                    .map(|r| super::sidebar_a11y::tree_item(r).level)
+                    .collect();
+                let positions = super::sidebar_a11y::sibling_positions(&levels);
                 range
                     .filter_map(|i| {
-                        this.sidebar
-                            .rows
-                            .get(i)
-                            .cloned()
-                            .map(|row| build_sidebar_row(this, &row, now_secs, cx))
+                        let row = this.sidebar.rows.get(i).cloned()?;
+                        let spec = super::sidebar_a11y::tree_item(&row);
+                        let el = build_sidebar_row(this, &row, now_secs, cx);
+                        Some(
+                            super::list_a11y::tree_item(
+                                "sidebar",
+                                div().id(("sidebar-a11y", i)).w_full().child(el),
+                                i,
+                                &spec,
+                                positions[i],
+                            )
+                            .into_any_element(),
+                        )
                     })
                     .collect::<Vec<_>>()
             }),
@@ -1597,6 +1629,7 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
         // wheel/trackpad, just without the overlay bar.
         false,
     );
+    let list = super::list_a11y::tree("sidebar", list, Msg::A11ySidebar.t());
 
     // ── Graph page content (the shell around it is the pages renderer) ──
     div()

@@ -238,8 +238,12 @@ fn render_row(
                 ),
         )
         .when_some(detail, |row, reflog| {
-            row.child(render_detail(i, entry))
-                .child(render_reflog(i, reflog))
+            let row = row.child(render_detail(i, entry));
+            let row = match &entry.ref_moves {
+                Some(moves) => row.child(render_ref_moves(i, moves)),
+                None => row.child(render_reflog(i, reflog)),
+            };
+            row.child(render_restore_actions(i, entry, entity))
         })
         .into_any_element()
 }
@@ -410,4 +414,146 @@ fn render_reflog(i: usize, reflog: Option<&oplog_panel::ReflogDetail>) -> gpui::
         }
     }
     .into_any_element()
+}
+
+/// #334 slice 2a: the refs the operation recorded moving, by OID — the exact
+/// record (ADR-0214 §4), labelled apart from the time-window estimate.
+fn render_ref_moves(i: usize, moves: &[kagi_domain::ref_moves::RefMove]) -> gpui::AnyElement {
+    let short = |oid: &Option<String>| match oid {
+        Some(oid) => oid.get(..8).unwrap_or(oid).to_string(),
+        None => i18n::oplog_panel::ref_absent().to_string(),
+    };
+    let section = div()
+        .id(("oplog-row-refmoves", i))
+        .relative()
+        .flex()
+        .flex_col()
+        .w_full()
+        .px_3()
+        .pb_1()
+        .bg(rgb(theme().selected))
+        .text_xs()
+        .text_color(rgb(theme().text_sub))
+        .child(
+            div()
+                .text_color(rgb(theme().color_success))
+                .child(i18n::oplog_panel::recorded_heading()),
+        )
+        .child(super::e2e::measure_inside(format!("oplog-recorded-{i}")));
+    if moves.is_empty() {
+        return section
+            .child(
+                div()
+                    .text_color(rgb(theme().text_muted))
+                    .child(i18n::oplog_panel::recorded_none()),
+            )
+            .into_any_element();
+    }
+    section
+        .children(moves.iter().enumerate().map(|(n, m)| {
+            let target = |symbolic: &Option<String>| {
+                symbolic
+                    .as_deref()
+                    .map(|s| format!("{} ", s.trim_start_matches("refs/heads/")))
+                    .unwrap_or_default()
+            };
+            let text = format!(
+                "{}  {}{}→ {}{}",
+                m.refname,
+                target(&m.old_symbolic),
+                short(&m.old),
+                target(&m.new_symbolic),
+                short(&m.new)
+            );
+            div()
+                .relative()
+                .truncate()
+                .child(SharedString::from(text))
+                .child(super::e2e::measure_inside(format!(
+                    "oplog-refmove-{i}-{n}-{}",
+                    m.refname
+                )))
+        }))
+        .into_any_element()
+}
+
+/// #334 slice 2b: the selected row's "revert this operation…" and "restore to
+/// this point…" buttons. They only ask the app to plan (the card confirms);
+/// an entry without recorded ref moves gets them disabled, with the reason.
+fn render_restore_actions(
+    i: usize,
+    entry: &OpLogEntry,
+    entity: &Entity<oplog_panel::OpLogPanel>,
+) -> gpui::AnyElement {
+    let enabled = oplog_panel::restorable(entry);
+    let state = if enabled { "enabled" } else { "disabled" };
+    let button = |kind: &'static str, label: &'static str, op: kagi_git::Operation| {
+        let entity = entity.clone();
+        div()
+            .id(SharedString::from(format!("oplog-{kind}-{i}")))
+            .relative()
+            .px_2()
+            .py_0p5()
+            .rounded_sm()
+            .border_1()
+            .border_color(rgb(theme().selected))
+            .text_xs()
+            .text_color(rgb(if enabled {
+                theme().text_main
+            } else {
+                theme().text_muted
+            }))
+            .when(enabled, |b| {
+                b.cursor_pointer()
+                    .hover(|s| s.bg(rgb(theme().surface)))
+                    // Swallow the press so the row does not toggle closed.
+                    .on_mouse_down(MouseButton::Left, |_e, _w, cx| cx.stop_propagation())
+                    .on_click(move |_: &ClickEvent, _w: &mut Window, cx: &mut App| {
+                        cx.stop_propagation();
+                        let op = op.clone();
+                        entity.update(cx, |_, cx| {
+                            cx.emit(oplog_panel::OpLogPanelEvent::Restore(op))
+                        });
+                    })
+            })
+            .child(label)
+            .child(super::e2e::measure_inside(format!(
+                "oplog-{kind}-{i}-{state}"
+            )))
+    };
+    let entry_id = entry.id;
+    div()
+        .id(("oplog-row-restore", i))
+        .flex()
+        .flex_col()
+        .gap_1()
+        .w_full()
+        .px_3()
+        .pb_2()
+        .bg(rgb(theme().selected))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .child(button(
+                    "revert",
+                    i18n::oplog_panel::revert_button(),
+                    kagi_git::Operation::OpRevert { entry_id },
+                ))
+                .child(button(
+                    "restore",
+                    i18n::oplog_panel::restore_button(),
+                    kagi_git::Operation::RestoreToPoint { entry_id },
+                )),
+        )
+        .when(!enabled, |d| {
+            d.child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(theme().text_muted))
+                    .child(i18n::oplog_panel::restore_unavailable()),
+            )
+        })
+        .into_any_element()
 }

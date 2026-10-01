@@ -44,6 +44,8 @@ pub enum BranchAction {
     ToggleSolo,
     Pull,
     PullFfOnly,
+    /// #536: sync to remote keeping local work in backups.
+    SyncToRemote,
     Push,
     PushAndCreateUpstream,
     SetUpstream,
@@ -191,6 +193,12 @@ pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<Branc
                     "Fetch remote branch",
                     fetch_remote_branch_state(ctx),
                     false,
+                ),
+                item(
+                    BranchAction::SyncToRemote,
+                    "Sync to remote (keep local)…",
+                    sync_to_remote_state(ctx),
+                    true,
                 ),
                 item(
                     BranchAction::CreatePr,
@@ -624,6 +632,25 @@ fn copy_upstream_state(ctx: &BranchMenuContext) -> ItemState {
     }
 }
 
+/// #536: only the current branch (its index and working tree are what gets
+/// replaced), and only with an upstream to sync to; the plan reports
+/// not-fetched / conflicts / already-in-sync as blockers.
+fn sync_to_remote_state(ctx: &BranchMenuContext) -> ItemState {
+    if ctx.busy {
+        disabled(Msg::BcmBusy.t())
+    } else if ctx.detached_head {
+        disabled(Msg::BcmDetachedHead.t())
+    } else if matches!(ctx.conflict_mode, BranchConflictMode::Conflicted) {
+        disabled(Msg::BcmConflictMode.t())
+    } else if !ctx.is_current {
+        disabled(Msg::BcmCurrentBranchOnly.t())
+    } else if !ctx.has_upstream {
+        disabled(Msg::BcmNoUpstream.t())
+    } else {
+        ItemState::Enabled
+    }
+}
+
 fn pull_state(ctx: &BranchMenuContext) -> ItemState {
     if ctx.busy {
         disabled(Msg::BcmBusy.t())
@@ -1011,6 +1038,36 @@ mod tests {
         assert_disabled_contains(&groups, BranchAction::MergeIntoCurrent, "conflicts");
         assert_disabled_contains(&groups, BranchAction::RebaseCurrentOnto, "conflicts");
         assert_disabled_contains(&groups, BranchAction::ReplayOnto, "conflicts");
+    }
+
+    /// #536: sync is current-branch-only, needs an upstream, is dangerous.
+    #[test]
+    fn sync_to_remote_item_gating() {
+        let mut c = ctx();
+        c.is_current = true;
+        c.has_upstream = true;
+        let groups = branch_context_menu_items(&c);
+        let item = item_for(&groups, BranchAction::SyncToRemote);
+        assert_eq!(item.label.as_ref(), "Sync to remote (keep local)…");
+        assert!(item.dangerous);
+        assert_enabled(&groups, BranchAction::SyncToRemote);
+
+        let mut c = ctx();
+        c.is_current = false;
+        c.has_upstream = true;
+        assert_disabled_contains(
+            &branch_context_menu_items(&c),
+            BranchAction::SyncToRemote,
+            "current branch only",
+        );
+        let mut c = ctx();
+        c.is_current = true;
+        c.has_upstream = false;
+        assert_disabled_contains(
+            &branch_context_menu_items(&c),
+            BranchAction::SyncToRemote,
+            "upstream",
+        );
     }
 
     /// #344: replay moves the *clicked* branch onto the current one — the

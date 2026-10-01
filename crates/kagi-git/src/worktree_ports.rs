@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use kagi_domain::worktree_ports::{allocate_block, env_map, PortRange};
+use kagi_domain::worktree_run_mode::RunMode;
 
 const STORE_FILE: &str = "worktree_ports.json";
 
@@ -57,6 +58,30 @@ fn read_store() -> BTreeMap<String, u16> {
         return BTreeMap::new();
     };
     serde_json::from_str(&text).unwrap_or_default()
+}
+
+/// The stored assignments, read once, for looking up many worktrees (#855).
+/// Read only: nothing is assigned or written.
+pub struct Assignments(BTreeMap<String, u16>);
+
+impl Assignments {
+    /// Read the store as it is now.
+    pub fn read() -> Self {
+        Self(read_store())
+    }
+
+    /// The first port already assigned to the worktree at `path`, if any.
+    pub fn port(&self, path: &Path) -> Option<u16> {
+        self.0.get(&canon_key(path)).copied()
+    }
+}
+
+/// The repository the worktree at `path` belongs to: its canonical common git
+/// directory, shared by the main worktree and every linked one (#859). `None`
+/// when `path` is not a repository. Read only.
+pub fn repository_of(path: &Path) -> Option<PathBuf> {
+    let repo = git2::Repository::open(path).ok()?;
+    std::fs::canonicalize(repo.commondir()).ok()
 }
 
 /// Persist the whole map (pretty JSON), creating the parent dir. Best-effort;
@@ -132,18 +157,21 @@ pub struct WorktreePortEnv {
     pub vars: Vec<(&'static str, String)>,
 }
 
-/// Assign this worktree's block (persisting it) and build its full `KAGI_*`
-/// environment. [`terminal_env`] resolves repository metadata before calling
-/// this shared payload builder. `None` on exhaustion.
+/// Assign the block of `ports_of` (persisting it) and build the full `KAGI_*`
+/// environment of `worktree_path`. `ports_of` is the worktree itself, or the
+/// main worktree when the run mode shares one block (#869). [`terminal_env`]
+/// resolves repository metadata before calling this shared payload builder.
+/// `None` on exhaustion.
 pub fn worktree_env(
     worktree_path: &Path,
     worktree_name: &str,
     main_worktree_path: &Path,
     default_branch: &str,
+    ports_of: &Path,
     range: PortRange,
     per: u16,
 ) -> Option<WorktreePortEnv> {
-    let port = assign_block(worktree_path, range, per)?;
+    let port = assign_block(ports_of, range, per)?;
     let vars = env_map(
         worktree_path,
         worktree_name,
@@ -174,10 +202,14 @@ pub enum TerminalEnv {
 /// Git metadata stays in the backend; allocation and persistence remain owned
 /// by the existing [`worktree_env`] payload builder. Range exhaustion is not an
 /// error ([`TerminalEnv::Exhausted`]); a repository that cannot be read is.
+/// When `mode` shares ports, every worktree gets the main worktree's block;
+/// the store is unchanged (a linked worktree's own entry is neither read nor
+/// written).
 pub fn terminal_env(
     repo_path: &Path,
     range: PortRange,
     per: u16,
+    mode: RunMode,
 ) -> Result<TerminalEnv, crate::GitError> {
     let metadata_error = |error: git2::Error| crate::GitError::Other(error.to_string());
     let repo = git2::Repository::open(repo_path).map_err(metadata_error)?;
@@ -198,11 +230,17 @@ pub fn terminal_env(
     } else {
         "main".to_owned()
     };
+    let ports_of = if mode.shares_ports() {
+        main_path
+    } else {
+        worktree_path
+    };
     let environment = worktree_env(
         worktree_path,
         &name,
         main_path,
         &crate::ops::default_branch_name(&repo),
+        ports_of,
         range,
         per,
     );

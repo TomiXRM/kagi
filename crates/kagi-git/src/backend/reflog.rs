@@ -1,6 +1,6 @@
-//! Reflog lines in a time span — the Operation Log panel's "what moved during
-//! this operation" (#334 slice 1, ADR-0214). Read-only: opening a reflog never
-//! writes, and nothing here touches the oplog.
+//! Reflog lines in a time span — the Operation Log panel's estimate for an
+//! entry without recorded ref moves (#334 slice 1, ADR-0214 §3). The recorded
+//! moves' snapshot is `ops::ref_snapshot`. Read-only: nothing here writes.
 
 use super::Backend;
 use crate::GitError;

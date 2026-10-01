@@ -183,6 +183,15 @@ pub struct SyntaxPalette {
 }
 
 impl Theme {
+    /// Name for menus and Settings. Brand names stay as they are; the
+    /// descriptive accessibility theme is localized (#354).
+    pub fn display_name(&self) -> &'static str {
+        match self.slug {
+            "color-vision" => crate::i18n::Msg::ThemeColorVision.t(),
+            _ => self.name,
+        }
+    }
+
     /// HSLA colour for graph lane `i` (cycles through the 8-colour palette).
     pub fn lane_color(&self, i: usize) -> Hsla {
         let (h, s, l) = self.lane_hsl[i % self.lane_hsl.len()];
@@ -1038,6 +1047,7 @@ pub static THEMES: &[Theme] = &[
     crate::theme_apple_dark::APPLE_DARK,
     crate::theme_apple_light::APPLE_LIGHT,
     crate::theme_catppuccin_latte::CATPPUCCIN_LATTE,
+    crate::theme_color_vision::COLOR_VISION,
     crate::theme_dracula::DRACULA,
     crate::theme_flower_road::FLOWER_ROAD,
     crate::theme_flower_road_bloom::FLOWER_ROAD_BLOOM,
@@ -1440,8 +1450,9 @@ mod tests {
     fn dark_and_light_counts() {
         let dark = THEMES.iter().filter(|t| t.dark).count();
         let light = THEMES.iter().filter(|t| !t.dark).count();
-        // catppuccin, one-dark, monokai, tokyo-night, ibm-pc, dracula, apple-dark
-        assert_eq!(dark, 7);
+        // catppuccin, one-dark, monokai, tokyo-night, ibm-pc, dracula, apple-dark,
+        // color-vision
+        assert_eq!(dark, 8);
         // one-light, pinky-boo, catppuccin-latte, apple-light, flower-road ×3
         assert_eq!(light, 7);
     }

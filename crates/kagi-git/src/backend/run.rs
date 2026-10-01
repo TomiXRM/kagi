@@ -424,6 +424,9 @@ impl Backend {
             Operation::RebaseCurrentOnto { onto } => self
                 .execute_rebase_current_onto(onto)
                 .map(OperationOutcome::Rebase),
+            Operation::SyncToRemote { branch } => {
+                ops::execute_sync_to_remote(&self.repo, plan, branch, backup_refs, partial_after)
+            }
             Operation::ReplayOnto { branch, onto } => {
                 ops::execute_replay_onto(&self.repo, &self.path, plan, branch, onto, backup_refs)
             }

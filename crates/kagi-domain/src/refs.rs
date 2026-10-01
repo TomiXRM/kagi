@@ -159,6 +159,10 @@ pub struct Worktree {
     pub locked: bool,
     /// Reason recorded with the lock, if any.
     pub lock_reason: Option<String>,
+    /// First port of the block assigned to this worktree (`KAGI_PORT`), when
+    /// one is already stored (#342 / #855). Read only — reading a worktree never
+    /// assigns it a block.
+    pub port: Option<u16>,
 }
 
 #[cfg(test)]

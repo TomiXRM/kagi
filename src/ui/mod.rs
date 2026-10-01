@@ -74,6 +74,7 @@ pub mod graph_squash;
 pub mod graph_view;
 pub mod graph_wip;
 pub use kagi_ui_core::i18n; // ADR-0121: was a shim file
+pub mod dialog_a11y;
 pub mod inspector;
 mod inspector_model;
 pub mod list_a11y;
@@ -98,6 +99,7 @@ mod operation_strip;
 mod operations;
 pub mod oplog_panel;
 mod oplog_render;
+mod plan_card_rows;
 mod platform_menu;
 pub mod reload;
 pub mod remote_browse;

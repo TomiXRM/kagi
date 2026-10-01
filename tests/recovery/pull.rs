@@ -1603,6 +1603,11 @@ pub fn scenario_pull_refuses_when_the_dirty_set_moved(cx: &mut VisualTestAppCont
             app.pull_modal().is_none(),
             "the stale confirmation is not offered again"
         );
+        // #747: nor shown again as a notice (#902 review).
+        assert!(
+            app.app_notice().is_none(),
+            "the refusal is not put back as a notice either"
+        );
         let kagi::ui::FooterStatus::Failed(footer) = &app.status_footer else {
             panic!("the footer must carry the refusal: {:?}", app.status_footer)
         };

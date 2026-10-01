@@ -37,6 +37,9 @@ impl KagiApp {
     /// offline and one that shows an empty list (see the comment write, whose
     /// `gh repo view` lookup failed exactly that way).
     pub fn open_pr_fields_modal(&mut self, field: PrField, cx: &mut Context<Self>) {
+        let Some(owner) = self.active_session() else {
+            return;
+        };
         let Some(pr) = self
             .pr_mode()
             .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
@@ -50,7 +53,10 @@ impl KagiApp {
             PrField::Labels => pr.labels.iter().map(|l| l.name.clone()).collect(),
         };
         self.open_fields_picker(
-            FieldTarget::Pr { number: pr.number },
+            FieldTarget::Pr {
+                number: pr.number,
+                owner,
+            },
             pr.base_repo.clone(),
             field,
             current,
@@ -132,7 +138,7 @@ impl KagiApp {
     pub fn confirm_pr_fields(&mut self, cx: &mut Context<Self>) {
         match self.pr_fields_modal().map(|modal| modal.target) {
             Some(FieldTarget::Pr { .. }) => self.start_pr_edit(cx),
-            Some(FieldTarget::NewIssue) => self.apply_issue_fields(cx),
+            Some(FieldTarget::NewIssue { .. }) => self.apply_issue_fields(cx),
             None => {}
         }
     }
@@ -324,10 +330,10 @@ pub(crate) fn render_pr_fields_modal(
     let card = modal_card(MODAL_W_SM)
         .child(super::modal_renderers::render_modal_title_row(
             SharedString::from(match modal.target {
-                FieldTarget::Pr { number } => {
+                FieldTarget::Pr { number, .. } => {
                     format!("#{} \u{00b7} {}", number, modal.field.title())
                 }
-                FieldTarget::NewIssue => format!(
+                FieldTarget::NewIssue { .. } => format!(
                     "{} \u{00b7} {}",
                     Msg::IssueNewFieldsTitle.t(),
                     modal.field.title()

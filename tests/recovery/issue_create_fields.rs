@@ -125,7 +125,7 @@ fn keyboard_open(
             .read(cx)
             .pr_fields_modal()
             .unwrap_or_else(|| panic!("{key} on the {field:?} entry opened no picker"));
-        assert_eq!(modal.target, FieldTarget::NewIssue);
+        assert!(matches!(modal.target, FieldTarget::NewIssue { .. }));
         assert_eq!(modal.field, field);
     });
 }
@@ -165,7 +165,7 @@ fn pick(
                 .read(cx)
                 .pr_fields_modal()
                 .unwrap_or_else(|| panic!("{open} opened no picker"));
-            assert_eq!(modal.target, FieldTarget::NewIssue);
+            assert!(matches!(modal.target, FieldTarget::NewIssue { .. }));
             assert_eq!(modal.field, field);
             assert!(modal.error.is_none(), "{:?}", modal.error);
             modal.candidates.is_some()

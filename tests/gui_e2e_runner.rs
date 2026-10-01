@@ -205,6 +205,10 @@ mod file_menu_owner;
 mod issue_write_owner;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/field_picker_owner.rs"]
+mod field_picker_owner;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/issue_create_fields.rs"]
 mod issue_create_fields;
 
@@ -1522,6 +1526,10 @@ mod macos {
                 Box::new(
                     crate::issue_write_owner::scenario_issue_failure_notice_survives_tab_switch,
                 ),
+            ),
+            (
+                "field_picker_owner",
+                Box::new(crate::field_picker_owner::scenario_field_picker_owner),
             ),
             (
                 "issue_create_fields",

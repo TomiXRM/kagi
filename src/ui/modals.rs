@@ -143,10 +143,19 @@ pub enum PrField {
 /// What the field picker is editing (#866): a PR's fields, written through
 /// `gh pr edit` on confirm, or the New Issue composer's selection, which
 /// confirm only stores — the write is the composer's Create.
+///
+/// `owner` is the session the picker was opened from (#904 review). The
+/// picker is repo-scoped, so leaving the tab drops it; the owner still keeps
+/// Apply on that session's composer or PR, never whichever tab is active.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FieldTarget {
-    Pr { number: u64 },
-    NewIssue,
+    Pr {
+        number: u64,
+        owner: crate::app::SessionId,
+    },
+    NewIssue {
+        owner: crate::app::SessionId,
+    },
 }
 
 /// State for the field picker: the gear on a PR properties row (ADR-0200 §11),

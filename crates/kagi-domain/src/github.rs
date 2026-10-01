@@ -6,7 +6,7 @@ pub use crate::github_detail::{
     apply_pr_body, apply_pr_list, apply_pr_status, inherit_pr_details, PrBodyDetail,
     PrDetailAvailability, PrStatusDetail,
 };
-pub use crate::github_edit::PrFieldEdit;
+pub use crate::github_edit::{IssueCreateFields, PrFieldEdit};
 
 /// Aggregate CI state of a PR's head commit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

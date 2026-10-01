@@ -55,6 +55,8 @@ fn oplog_filter_scopes_to_bound_repo() {
         recovery: Vec::new(),
         failure_code: None,
         ref_moves: None,
+        repo_identity: RecordedIdentity::Absent,
+        issue_fields: None,
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -207,6 +209,8 @@ fn synthetic_entry(id: u64, repo: &str) -> OpLogEntry {
         recovery: Vec::new(),
         failure_code: None,
         ref_moves: None,
+        repo_identity: RecordedIdentity::Absent,
+        issue_fields: None,
     }
 }
 
@@ -484,6 +488,187 @@ fn malformed_recovery_degrades_to_empty_without_losing_the_entry() {
     }
 }
 
+/// An absolute `common_dir` on this platform, as a JSON string.
+fn abs_common_dir() -> String {
+    serde_json::to_string(&std::env::temp_dir().join("r").join(".git")).unwrap()
+}
+
+/// One oplog line whose `repo_identity` is `identity` (raw JSON).
+fn line_with_identity(identity: &str) -> String {
+    format!(
+        concat!(
+            r#"{{"timestamp":1000,"op":"checkout","repo":"/tmp/repo","#,
+            r#""before":{{"head":"branch: main","dirty":"clean"}},"#,
+            r#""outcome":{{"kind":"Success","after":{{"head":"b","dirty":"clean"}}}},"#,
+            r#""repo_identity":{}}}"#,
+        ),
+        identity
+    )
+}
+
+/// #894: the recorded repository round-trips, and a line written before the
+/// field reads as `Absent` with the entry kept.
+#[test]
+fn repo_identity_is_additive() {
+    let legacy = parse_oplog_line(concat!(
+        r#"{"timestamp":1000,"op":"checkout","repo":"/tmp/repo","#,
+        r#""before":{"head":"branch: main","dirty":"clean"},"#,
+        r#""outcome":{"kind":"Success","after":{"head":"branch: f","dirty":"clean"}}}"#,
+    ))
+    .expect("legacy line");
+    assert_eq!(legacy.repo_identity, RecordedIdentity::Absent);
+
+    let mut entry = legacy.clone();
+    entry.repo_identity = RecordedIdentity::Known(RepoIdentity {
+        common_dir: std::env::temp_dir().join("repo/.git").display().to_string(),
+        file_id: Some((16_777_232, 4_242)),
+        created: Some((1_700_000_000, 123_456_789)),
+    });
+    let back = parse_oplog_line(&entry_to_json(&entry)).unwrap();
+    assert_eq!(back.repo_identity, entry.repo_identity);
+}
+
+/// #900 review: every decode-time rule of a recorded identity, as a table.
+/// A field that is there but not a whole, valid identity is `Invalid` —
+/// never `Absent` (which falls back to the path) and never a `Known` that
+/// compares as another repository (which drops a corrupt entry of this one
+/// from a restore's range silently). The row is kept either way.
+#[test]
+fn a_recorded_identity_is_valid_or_invalid_as_a_whole() {
+    let dir = abs_common_dir();
+    let valid = format!(r#"{{"common_dir":{dir},"dev":1,"ino":2,"born_s":5,"born_ns":999999999}}"#);
+    assert!(
+        matches!(
+            parse_oplog_line(&line_with_identity(&valid))
+                .unwrap()
+                .repo_identity,
+            RecordedIdentity::Known(_)
+        ),
+        "{valid}"
+    );
+    let invalid: &[(&str, String)] = &[
+        ("not an object", r#""a string""#.into()),
+        ("a number", "42".into()),
+        ("null", "null".into()),
+        ("no common_dir", r#"{"dev":1,"ino":2}"#.into()),
+        ("empty common_dir", r#"{"common_dir":""}"#.into()),
+        ("relative common_dir", r#"{"common_dir":"r/.git"}"#.into()),
+        ("common_dir not a string", r#"{"common_dir":7}"#.into()),
+        (
+            "dev without ino",
+            format!(r#"{{"common_dir":{dir},"dev":1}}"#),
+        ),
+        (
+            "ino without dev",
+            format!(r#"{{"common_dir":{dir},"ino":2}}"#),
+        ),
+        (
+            "dev a string",
+            format!(r#"{{"common_dir":{dir},"dev":"1","ino":2}}"#),
+        ),
+        (
+            "born_s without born_ns",
+            format!(r#"{{"common_dir":{dir},"born_s":5}}"#),
+        ),
+        (
+            "born_ns without born_s",
+            format!(r#"{{"common_dir":{dir},"born_ns":5}}"#),
+        ),
+        (
+            "born_ns a full second",
+            format!(r#"{{"common_dir":{dir},"born_s":5,"born_ns":1000000000}}"#),
+        ),
+        (
+            "born_ns negative",
+            format!(r#"{{"common_dir":{dir},"born_s":5,"born_ns":-1}}"#),
+        ),
+        (
+            "unknown key",
+            format!(r#"{{"common_dir":{dir},"generation":"v2"}}"#),
+        ),
+        (
+            "explicit null file id",
+            format!(r#"{{"common_dir":{dir},"dev":null,"ino":null}}"#),
+        ),
+        (
+            "explicit null birth",
+            format!(r#"{{"common_dir":{dir},"born_s":null,"born_ns":null}}"#),
+        ),
+    ];
+    for (why, identity) in invalid {
+        let read = parse_oplog_line(&line_with_identity(identity))
+            .unwrap_or_else(|| panic!("row dropped: {why}"));
+        assert_eq!(
+            read.repo_identity,
+            RecordedIdentity::Invalid,
+            "{why}: {identity}"
+        );
+    }
+}
+
+/// #900 review: deciding "same repository". The case that matters most: a
+/// repository deleted and re-cloned at the same place from the same remote,
+/// whose new `.git` got the old inode — same path, same `(dev, ino)`, and its
+/// `main` may even sit at the same OID. Only the creation time tells them
+/// apart, so it must be required, and its absence must not read as "same".
+#[test]
+fn same_repository_needs_the_file_and_its_birth_to_match() {
+    use SameRepository::{Ambiguous, Different, Same};
+    let id = |dir: &str, file: Option<(u64, u64)>, born: Option<(u64, u32)>| RepoIdentity {
+        common_dir: dir.into(),
+        file_id: file,
+        created: born,
+    };
+    let original = id("/r/.git", Some((1, 42)), Some((100, 5)));
+
+    let recloned = id("/r/.git", Some((1, 42)), Some((200, 7)));
+    assert_eq!(
+        original.same_repository(&recloned),
+        Different,
+        "reused inode"
+    );
+    assert_eq!(original.same_repository(&original.clone()), Same);
+    let moved = id("/elsewhere/.git", Some((1, 42)), Some((100, 5)));
+    assert_eq!(original.same_repository(&moved), Same, "renamed, same file");
+    assert_eq!(
+        original.same_repository(&id("/r/.git", Some((1, 43)), Some((100, 5)))),
+        Different
+    );
+    assert_eq!(
+        original.same_repository(&id("/r/.git", Some((1, 42)), None)),
+        Ambiguous,
+        "a file id match alone could be a reused inode"
+    );
+    // A whole-second creation time (HFS+, many network filesystems) cannot
+    // tell a delete and re-create within that second from the original.
+    let coarse = id("/r/.git", Some((1, 42)), Some((100, 0)));
+    assert_eq!(
+        coarse.same_repository(&coarse.clone()),
+        Ambiguous,
+        "coarse birth"
+    );
+    assert_eq!(
+        coarse.same_repository(&id("/r/.git", Some((1, 42)), Some((101, 0)))),
+        Different,
+        "a coarse time still proves a difference"
+    );
+    // No file id (non-unix): path + birth.
+    let windows = id("C:/r/.git", None, Some((100, 5)));
+    assert_eq!(windows.same_repository(&windows.clone()), Same);
+    assert_eq!(
+        windows.same_repository(&id("C:/r/.git", None, Some((9, 9)))),
+        Different
+    );
+    assert_eq!(
+        windows.same_repository(&id("C:/r/.git", None, None)),
+        Ambiguous
+    );
+    assert_eq!(
+        windows.same_repository(&id("C:/x/.git", None, None)),
+        Different
+    );
+}
+
 /// #891 review: an operation whose termination is unconfirmed may still be
 /// moving refs after the observation, so its moves are not a record.
 #[test]
@@ -561,5 +746,34 @@ fn ref_moves_distinguish_not_recorded_from_nothing_moved() {
         let line = format!(r#"{base},"ref_moves":{value}}}"#);
         let entry = parse_oplog_line(&line).unwrap_or_else(|| panic!("must parse: {line}"));
         assert_eq!(entry.ref_moves, None, "{value}");
+    }
+}
+
+/// #904 review: an issue-create's requested labels and assignees survive the
+/// codec; an entry without them writes no field and a malformed value reads
+/// as "not recorded" without dropping the row.
+#[test]
+fn issue_fields_round_trip_and_stay_additive() {
+    let base = concat!(
+        r#"{"timestamp":1000,"op":"issue-create","repo":"/tmp/repo","#,
+        r#""before":{"head":"o/r","dirty":"new issue"},"#,
+        r#""outcome":{"kind":"Success","after":{"head":"t","dirty":"issue created"}}"#,
+    );
+    let legacy = parse_oplog_line(&format!("{base}}}")).expect("legacy line");
+    assert_eq!(legacy.issue_fields, None);
+    assert!(!entry_to_json(&legacy).contains("issue_fields"));
+
+    let fields = kagi_domain::github::IssueCreateFields {
+        labels: vec!["bug".into(), "Bug".into()],
+        assignees: vec!["octocat".into()],
+    };
+    let entry = legacy.clone().with_issue_fields(&fields);
+    let read = parse_oplog_line(&entry_to_json(&entry)).unwrap();
+    assert_eq!(read.issue_fields, Some(fields));
+
+    for value in ["null", r#""bug""#, r#"{"labels":[1]}"#, r#"{"labels":[]}"#] {
+        let line = format!(r#"{base},"issue_fields":{value}}}"#);
+        let entry = parse_oplog_line(&line).unwrap_or_else(|| panic!("must parse: {line}"));
+        assert_eq!(entry.issue_fields, None, "{value}");
     }
 }

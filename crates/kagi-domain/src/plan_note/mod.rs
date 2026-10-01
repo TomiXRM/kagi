@@ -59,7 +59,7 @@ pub use github::{GithubNote, GithubRecovery, GithubTitle, PrMergeLocalReason};
 pub use history::{HistoryMoveDir, HistoryNote, HistoryOp, HistoryRecovery, HistoryTitle};
 pub use maintenance::{MaintenanceNote, MaintenanceRecovery, MaintenanceTitle};
 pub use merge::{InProgressOp, MergeNote, MergeRecovery, MergeTitle};
-pub use oplog_restore::{OplogRestoreNote, OplogRestoreRecovery, OplogRestoreTitle};
+pub use oplog_restore::{HeadAt, OplogRestoreNote, OplogRestoreRecovery, OplogRestoreTitle};
 pub use pull::{
     restore_conflict_paths, PullNote, PullRecovery, PullTitle, RESTORE_CONFLICT_PATH_LIMIT,
 };

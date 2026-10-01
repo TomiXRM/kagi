@@ -185,6 +185,11 @@ impl Backend {
         // with `delete_branch` deletes the branch, one without moves nothing,
         // and neither is assumed. Unreadable on either side: not recorded.
         let refs_before = refs_of(&plan.repo);
+        // #900 review: the repository identity is read before anything runs,
+        // like the "before" snapshot of `run_recorded_with_events` — the
+        // removed worktree no longer opens afterwards, and by then another
+        // repository may sit at `plan.repo`.
+        let identity_before = crate::oplog::RepoIdentity::of(&plan.repo);
         let mut opened = false;
         let mut plan_blocked = false;
         let result = catch_unwind(AssertUnwindSafe(|| -> Result<DiscardOutcome, GitError> {
@@ -302,6 +307,9 @@ impl Backend {
             outcome,
         )
         .with_ref_moves(ref_moves);
+        if let Some(identity) = identity_before {
+            entry.repo_identity = crate::oplog::RecordedIdentity::Known(identity);
+        }
         entry.backup_refs = progress
             .backups
             .iter()

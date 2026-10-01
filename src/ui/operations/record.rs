@@ -83,12 +83,33 @@ impl KagiApp {
         repo_path: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
-        let shown = typed_refusal(op, blockers);
+        let entry = Self::refused_entry(op, before, blockers, repo_path);
+        self.record_refused_entry(op, entry, blockers, cx);
+    }
+
+    /// The entry [`Self::record_refused`] records, for a caller that adds to
+    /// it — an issue-create carries the fields it asked for (#904 review).
+    pub(crate) fn refused_entry(
+        op: &str,
+        before: StateSummary,
+        blockers: &[PlanNote],
+        repo_path: &std::path::Path,
+    ) -> OpLogEntry {
         let outcome = OpOutcome::Refused {
             blockers: blockers.iter().map(PlanNote::message_en).collect(),
         };
-        let entry = OpLogEntry::new(op, repo_path.display().to_string(), before, outcome);
-        self.record_op_impl(entry, cx, true, shown);
+        OpLogEntry::new(op, repo_path.display().to_string(), before, outcome)
+    }
+
+    /// Record a refusal entry built by [`Self::refused_entry`].
+    pub(crate) fn record_refused_entry(
+        &mut self,
+        op: &str,
+        entry: OpLogEntry,
+        blockers: &[PlanNote],
+        cx: &mut Context<Self>,
+    ) {
+        self.record_op_impl(entry, cx, true, typed_refusal(op, blockers));
     }
 
     /// Present a no-execute receipt the core already wrote for a blocked plan

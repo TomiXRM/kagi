@@ -8,10 +8,22 @@
 use std::path::Path;
 use std::sync::Mutex;
 
+use kagi_domain::github::IssueCreateFields;
 use kagi_git::drafts::{
     clear_draft, clear_issue_draft_if_version, flush_issue_draft_if_version, flush_issue_drafts,
-    issue_draft_version, load_draft, load_issue_draft, queue_issue_draft, save_draft,
+    issue_draft_version, load_draft, load_issue_draft as load_issue_record, queue_issue_draft,
+    save_draft, IssueDraftRecord,
 };
+
+/// The loaded draft's text; tests that pick labels or assignees read the
+/// whole record.
+fn load_issue_draft(repo: &Path, number: Option<u64>) -> Option<(String, String)> {
+    load_issue_record(repo, number).map(|draft| (draft.title, draft.body))
+}
+
+fn no_picks() -> IssueCreateFields {
+    IssueCreateFields::default()
+}
 
 /// Serialize all env-var-using tests to prevent KAGI_LOG_DIR races.
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -190,8 +202,8 @@ fn issue_draft_round_trip_and_pending_latest_value() {
         let repo = Path::new("/tmp/kagi-it/issue");
         let title = "日本語 \"タイトル\"";
         let body = "本文\n\n```rust\nlet path = \"C:\\\\tmp\";\n```\n🙂";
-        queue_issue_draft(repo, None, "old", "old body");
-        queue_issue_draft(repo, None, title, body);
+        queue_issue_draft(repo, None, "old", "old body", &no_picks());
+        queue_issue_draft(repo, None, title, body, &no_picks());
         assert!(!log_dir.join("drafts").exists(), "queue must not write");
         assert_eq!(
             load_issue_draft(repo, None),
@@ -218,10 +230,10 @@ fn whitespace_only_issue_draft_clears_and_legacy_whitespace_loads_empty() {
     }
     with_log_dir(|_| {
         let repo = Path::new("/tmp/kagi-it/issue-whitespace");
-        queue_issue_draft(repo, None, "title", "saved body");
+        queue_issue_draft(repo, None, "title", "saved body", &no_picks());
         flush_issue_drafts().expect("save initial draft");
 
-        queue_issue_draft(repo, None, " \t ", "\n  \r\n");
+        queue_issue_draft(repo, None, " \t ", "\n  \r\n", &no_picks());
         assert!(
             load_issue_draft(repo, None).is_none(),
             "pending whitespace-only tuple is an empty draft"
@@ -247,7 +259,7 @@ fn meaningful_issue_body_preserves_surrounding_whitespace() {
         let repo = Path::new("/tmp/kagi-it/issue-whitespace-preserved");
         let title = " \t ";
         let body = "  meaningful body  \n\n  ";
-        queue_issue_draft(repo, Some(7), title, body);
+        queue_issue_draft(repo, Some(7), title, body, &no_picks());
         assert_eq!(
             load_issue_draft(repo, Some(7)),
             Some((title.into(), body.into()))
@@ -269,10 +281,10 @@ fn issue_drafts_isolate_repo_number_and_commit_branch() {
         let a = Path::new("/tmp/kagi-it/issue-a");
         let b = Path::new("/tmp/kagi-it/issue-b");
         save_draft(a, "issue/new", "commit", "plain").expect("commit draft");
-        queue_issue_draft(a, None, "new", "new body");
-        queue_issue_draft(a, Some(7), "", "reply seven");
-        queue_issue_draft(a, Some(8), "", "reply eight");
-        queue_issue_draft(b, Some(7), "", "other repo reply");
+        queue_issue_draft(a, None, "new", "new body", &no_picks());
+        queue_issue_draft(a, Some(7), "", "reply seven", &no_picks());
+        queue_issue_draft(a, Some(8), "", "reply eight", &no_picks());
+        queue_issue_draft(b, Some(7), "", "other repo reply", &no_picks());
         flush_issue_drafts().expect("flush all");
         assert_eq!(
             load_issue_draft(a, None),
@@ -305,10 +317,10 @@ fn issue_clear_replaces_pending_body_and_delayed_flush_cannot_restore_it() {
     }
     with_log_dir(|_| {
         let repo = Path::new("/tmp/kagi-it/issue-clear");
-        queue_issue_draft(repo, None, "title", "saved body");
+        queue_issue_draft(repo, None, "title", "saved body", &no_picks());
         flush_issue_drafts().expect("initial save");
-        queue_issue_draft(repo, None, "title", "unsaved later body");
-        queue_issue_draft(repo, None, "", "");
+        queue_issue_draft(repo, None, "title", "unsaved later body", &no_picks());
+        queue_issue_draft(repo, None, "", "", &no_picks());
         assert!(
             load_issue_draft(repo, None).is_none(),
             "pending clear hides file"
@@ -333,10 +345,10 @@ fn issue_queue_keeps_its_original_storage_when_environment_changes() {
     with_log_dir(|original| {
         let second = tempfile::tempdir().expect("second storage");
         let repo = Path::new("/tmp/kagi-it/same-repo");
-        queue_issue_draft(repo, None, "original", "original body");
+        queue_issue_draft(repo, None, "original", "original body", &no_picks());
         std::env::set_var("KAGI_LOG_DIR", second.path());
         assert!(load_issue_draft(repo, None).is_none());
-        queue_issue_draft(repo, None, "second", "second body");
+        queue_issue_draft(repo, None, "second", "second body", &no_picks());
         flush_issue_drafts().expect("flush both fixed destinations");
         assert_eq!(
             load_issue_draft(repo, None),
@@ -359,7 +371,7 @@ fn failed_issue_flush_preserves_pending_value_for_retry() {
         let repo = Path::new("/tmp/kagi-it/issue-retry");
         let drafts = log_dir.join("drafts");
         std::fs::write(&drafts, "not a directory").expect("block directory creation");
-        queue_issue_draft(repo, None, "title", "retry body");
+        queue_issue_draft(repo, None, "title", "retry body", &no_picks());
         assert!(flush_issue_drafts().is_err());
         assert_eq!(
             load_issue_draft(repo, None),
@@ -386,11 +398,11 @@ fn keyed_issue_flush_does_not_borrow_another_storage_error() {
         std::fs::write(&blocked, "block directory creation").expect("create blocker");
         let failed_repo = Path::new("/tmp/kagi-it/issue-keyed-failed");
         std::env::set_var("KAGI_LOG_DIR", &blocked);
-        let failed = queue_issue_draft(failed_repo, None, "failed", "retained body");
+        let failed = queue_issue_draft(failed_repo, None, "failed", "retained body", &no_picks());
 
         let saved_repo = Path::new("/tmp/kagi-it/issue-keyed-saved");
         std::env::set_var("KAGI_LOG_DIR", working);
-        let stale = queue_issue_draft(saved_repo, Some(7), "", "stale reply");
+        let stale = queue_issue_draft(saved_repo, Some(7), "", "stale reply", &no_picks());
         assert!(!flush_issue_draft_if_version(saved_repo, Some(8), stale)
             .expect("wrong Issue is not an error"));
         assert_eq!(
@@ -398,7 +410,7 @@ fn keyed_issue_flush_does_not_borrow_another_storage_error() {
             Some((String::new(), "stale reply".into())),
             "wrong Issue must not consume the pending value"
         );
-        let saved = queue_issue_draft(saved_repo, Some(7), "", "saved reply");
+        let saved = queue_issue_draft(saved_repo, Some(7), "", "saved reply", &no_picks());
         assert!(!flush_issue_draft_if_version(saved_repo, Some(7), stale)
             .expect("superseded timer is not an error"));
         assert_eq!(
@@ -446,6 +458,134 @@ fn issue_load_rejects_wrong_mode_and_malformed_payload() {
     });
 }
 
+fn picks(labels: &[&str], assignees: &[&str]) -> IssueCreateFields {
+    IssueCreateFields {
+        labels: labels.iter().map(|s| s.to_string()).collect(),
+        assignees: assignees.iter().map(|s| s.to_string()).collect(),
+    }
+}
+
+/// Every file in the drafts directory, by name, with its bytes.
+fn drafts_dir_files(log_dir: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut files: Vec<(String, Vec<u8>)> = std::fs::read_dir(log_dir.join("drafts"))
+        .expect("draft directory")
+        .map(|entry| {
+            let path = entry.expect("read entry").path();
+            (
+                path.file_name().unwrap().to_string_lossy().into_owned(),
+                std::fs::read(&path).expect("read draft file"),
+            )
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+/// #903: a New Issue draft keeps its picked labels and assignees, and a file
+/// written before #903 (`[title, body]`) still loads — with no picks — and is
+/// replaced in place, not set aside as unreadable.
+#[test]
+fn issue_draft_keeps_picks_and_reads_the_title_body_format() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|log_dir| {
+        let repo = Path::new("/tmp/kagi-it/issue-picks");
+        save_draft(
+            repo,
+            ":issue:new",
+            r#"["old title","old body"]"#,
+            "issue-composer",
+        )
+        .expect("pre-#903 draft");
+        assert_eq!(
+            load_issue_record(repo, None),
+            Some(IssueDraftRecord {
+                title: "old title".into(),
+                body: "old body".into(),
+                fields: no_picks(),
+            })
+        );
+
+        let chosen = picks(&["bug", "Bug"], &["octocat"]);
+        queue_issue_draft(repo, None, "old title", "old body", &chosen);
+        flush_issue_drafts().expect("save picks");
+        let files = drafts_dir_files(log_dir);
+        assert_eq!(
+            files.len(),
+            1,
+            "readable draft replaced in place: {files:?}"
+        );
+        assert_eq!(
+            load_issue_record(repo, None),
+            Some(IssueDraftRecord {
+                title: "old title".into(),
+                body: "old body".into(),
+                fields: chosen.clone(),
+            })
+        );
+
+        // Picks without text are not a draft: they go with the text.
+        queue_issue_draft(repo, None, "", " ", &chosen);
+        flush_issue_drafts().expect("clear");
+        assert!(load_issue_record(repo, None).is_none());
+        assert!(load_draft(repo, ":issue:new").is_none());
+    });
+}
+
+/// #903: a file at an Issue draft key that does not parse — garbage, or a
+/// picks payload with a non-string label — is never replaced or deleted.
+/// Saving moves it aside to `<file>.corrupt`, a second one to
+/// `<file>.corrupt.1`, and neither copy is overwritten.
+#[test]
+fn unreadable_issue_draft_is_moved_aside_not_overwritten() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|log_dir| {
+        let repo = Path::new("/tmp/kagi-it/issue-unreadable");
+        save_draft(repo, ":issue:new", "seed", "plain").expect("locate draft storage");
+        let (name, _) = drafts_dir_files(log_dir).remove(0);
+        let file = log_dir.join("drafts").join(&name);
+        let torn = b"{\"repo\":\"/tmp/kagi-it/issue-unread".to_vec();
+        std::fs::write(&file, &torn).unwrap();
+        assert!(load_issue_record(repo, None).is_none(), "lenient load");
+
+        queue_issue_draft(repo, None, "new title", "new body", &no_picks());
+        flush_issue_drafts().expect("save beside the unreadable file");
+        assert_eq!(
+            load_issue_draft(repo, None),
+            Some(("new title".into(), "new body".into()))
+        );
+
+        let bad_picks = serde_json::json!({
+            "repo": "/tmp/kagi-it/issue-unreadable",
+            "branch": ":issue:new",
+            "message": r#"["t","b",[1],[]]"#,
+            "mode": "issue-composer",
+        })
+        .to_string()
+        .into_bytes();
+        std::fs::write(&file, &bad_picks).unwrap();
+        assert!(
+            load_issue_record(repo, None).is_none(),
+            "a malformed picks payload is not a draft"
+        );
+        // A clear must not delete it either.
+        queue_issue_draft(repo, None, "", "", &no_picks());
+        flush_issue_drafts().expect("clear beside the unreadable file");
+
+        assert_eq!(
+            drafts_dir_files(log_dir),
+            vec![
+                (format!("{name}.corrupt"), torn),
+                (format!("{name}.corrupt.1"), bad_picks),
+            ],
+            "both unreadable files kept byte for byte; the cleared draft is gone"
+        );
+    });
+}
+
 #[test]
 fn posted_issue_draft_version_is_consumed_once_and_survives_flush() {
     if !crate::test_support::run_isolated() {
@@ -457,7 +597,7 @@ fn posted_issue_draft_version_is_consumed_once_and_survives_flush() {
         assert_ne!(initial, 0);
         assert_eq!(initial, issue_draft_version(repo, None));
         assert!(!log_dir.join("drafts").exists());
-        let posted = queue_issue_draft(repo, None, "title", "submitted body");
+        let posted = queue_issue_draft(repo, None, "title", "submitted body", &no_picks());
         assert!(posted > initial);
         flush_issue_drafts().expect("save posted body");
         assert_eq!(posted, issue_draft_version(repo, None));
@@ -481,12 +621,12 @@ fn reopened_editor_new_version_protects_draft_from_old_post_completion() {
     }
     with_log_dir(|_| {
         let repo = Path::new("/tmp/kagi-it/issue-reopened");
-        let posted = queue_issue_draft(repo, Some(7), "", "submitted reply");
+        let posted = queue_issue_draft(repo, Some(7), "", "submitted reply", &no_picks());
         flush_issue_drafts().expect("save before close");
         // Closing a tab does not erase the storage token. A reopened editor
         // reads it, then input obtains a fresh token even for identical text.
         assert_eq!(issue_draft_version(repo, Some(7)), posted);
-        let edited = queue_issue_draft(repo, Some(7), "", "submitted reply");
+        let edited = queue_issue_draft(repo, Some(7), "", "submitted reply", &no_picks());
         assert!(edited > posted);
         assert!(!clear_issue_draft_if_version(repo, Some(7), posted));
         assert_eq!(issue_draft_version(repo, Some(7)), edited);
@@ -507,11 +647,11 @@ fn issue_version_clear_targets_original_storage_and_checks_issue_identity() {
     }
     with_log_dir(|original| {
         let repo = Path::new("/tmp/kagi-it/issue-storage-token");
-        let posted = queue_issue_draft(repo, Some(7), "", "original reply");
+        let posted = queue_issue_draft(repo, Some(7), "", "original reply", &no_picks());
         flush_issue_drafts().expect("save original");
         let second = tempfile::tempdir().expect("second storage");
         std::env::set_var("KAGI_LOG_DIR", second.path());
-        let other = queue_issue_draft(repo, Some(7), "", "other storage reply");
+        let other = queue_issue_draft(repo, Some(7), "", "other storage reply", &no_picks());
         assert!(!clear_issue_draft_if_version(repo, Some(8), posted));
         assert!(!clear_issue_draft_if_version(
             Path::new("/different"),

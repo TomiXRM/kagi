@@ -91,6 +91,18 @@ pub enum GithubNote {
     /// blocker — a new Issue has no explicit title and its body has no
     /// meaningful title candidate after Markdown structure is removed.
     IssueTitleEmpty,
+    /// warning (#866) — the labels and assignees the new Issue is created
+    /// with, so the receipt records what was asked for.
+    IssueCreateFields {
+        labels: Vec<String>,
+        assignees: Vec<String>,
+    },
+    /// blocker (#866, preflight) — labels the repository does not have.
+    /// `gh issue create` is not called.
+    IssueUnknownLabels { names: Vec<String> },
+    /// blocker (#866, preflight) — users the repository cannot assign.
+    /// `gh issue create` is not called.
+    IssueUnassignableUsers { names: Vec<String> },
     /// blocker — a review that GitHub requires words for (`--request-changes`
     /// or `--comment`) was submitted with none. An approval may be wordless;
     /// these two are refused by the API, so the plan refuses them first
@@ -186,6 +198,28 @@ impl GithubNote {
             GithubNote::IssueTitleEmpty => {
                 crate::advice_template_en!(GithubIssueTitleEmpty).to_string()
             }
+            GithubNote::IssueCreateFields { labels, assignees } => {
+                let list = |items: &[String]| {
+                    if items.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        items.join(", ")
+                    }
+                };
+                format!(
+                    crate::advice_template_en!(GithubIssueCreateFields),
+                    list(labels),
+                    list(assignees)
+                )
+            }
+            GithubNote::IssueUnknownLabels { names } => format!(
+                crate::advice_template_en!(GithubIssueUnknownLabels),
+                names.join(", ")
+            ),
+            GithubNote::IssueUnassignableUsers { names } => format!(
+                crate::advice_template_en!(GithubIssueUnassignableUsers),
+                names.join(", ")
+            ),
             GithubNote::ReviewBodyEmpty { verdict } => {
                 format!(crate::advice_template_en!(GithubReviewBodyEmpty), verdict)
             }

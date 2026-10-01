@@ -225,6 +225,25 @@ impl KagiApp {
         cx.notify();
     }
 
+    /// Drop the New Issue editor the way a fresh session starts without one:
+    /// the next Issues read prepares it again and loads the saved draft
+    /// through the production path (#903).
+    pub fn forget_issue_composer_for_e2e(&mut self, cx: &mut Context<Self>) {
+        if let Some(ui) = self.ui_mut() {
+            ui.issue_composer.editors.remove(&None);
+        }
+        cx.notify();
+    }
+
+    /// Whether the New Issue editor has finished loading its saved draft.
+    pub fn issue_composer_loaded_for_e2e(&self) -> bool {
+        self.ui()
+            .issue_composer
+            .editors
+            .get(&None)
+            .is_some_and(|editor| editor.loaded)
+    }
+
     pub fn issue_composer_snapshot_for_e2e(&self) -> (IssueDraft, bool) {
         let editor = self
             .ui()
@@ -301,14 +320,24 @@ impl KagiApp {
     pub fn settle_issue_write_for_e2e(&mut self, cx: &mut Context<Self>) {
         let owner = self.active_session().expect("fixture session");
         let repo = self.repo_path.clone().expect("fixture repository");
-        let version = self
+        let editor = self
             .ui()
             .issue_composer
             .editors
             .get(&None)
-            .expect("seeded Composer")
-            .storage_version;
-        self.settle_issue_write(owner, repo, None, version, cx);
+            .expect("seeded Composer");
+        let (version, sent) = (editor.storage_version, editor.fields.clone());
+        self.settle_issue_write(owner, repo, None, version, &sent, cx);
+    }
+
+    /// The New Issue composer's chosen labels and assignees (#866).
+    pub fn issue_create_fields_for_e2e(&self) -> kagi_domain::github::IssueCreateFields {
+        self.ui()
+            .issue_composer
+            .editors
+            .get(&None)
+            .map(|editor| editor.fields.clone())
+            .unwrap_or_default()
     }
 
     pub fn issue_preview_for_e2e(&self) -> bool {

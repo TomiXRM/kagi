@@ -77,6 +77,7 @@ pub use kagi_ui_core::i18n; // ADR-0121: was a shim file
 pub mod dialog_a11y;
 pub mod inspector;
 mod inspector_model;
+pub mod list_a11y;
 pub mod main_diff_pane;
 pub mod menu_overlay;
 /// #454: shared modal chrome (card shell + collapsible sections).
@@ -111,6 +112,7 @@ mod render_helpers;
 mod render_overlay;
 mod render_status;
 mod render_wip;
+mod sidebar_a11y;
 pub use kagi_ui_core::settings; // ADR-0121: was a shim file
 mod overlay_focus;
 pub mod settings_view;

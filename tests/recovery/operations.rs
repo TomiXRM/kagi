@@ -2553,6 +2553,91 @@ pub fn scenario_replay_onto_armed(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS replay_onto_armed: Enter/button arm then replay; both worktrees untouched, ref moved, backup + oplog");
 }
 
+/// #354 slice 4 (ADR-0216): switching to the Color Vision theme through the
+/// app's own path changes the added/removed, success/blocker, ours/theirs and
+/// diff-row tokens to the blue/orange pair, persists the slug, shows a
+/// localized name in Settings, and the live tokens keep CIEDE2000 ≥ 20 for
+/// typical vision and ≥ 15 after Machado-2009 protan / deutan / tritan
+/// simulation — where the default theme falls below 15 for deutans.
+pub fn scenario_color_vision_theme(cx: &mut VisualTestAppContext) {
+    use kagi::ui::i18n::{self, Lang};
+    use kagi_ui_core::color_vision::{delta_e, Cvd};
+    use kagi_ui_core::theme::theme;
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    let before = theme().slug;
+    app.update(cx, |app, cx| app.set_theme("catppuccin", cx));
+    cx.run_until_parked();
+    let mocha = *theme();
+    let pairs = |t: &kagi_ui_core::theme::Theme| {
+        [
+            ("change added/deleted", t.change_added, t.change_deleted),
+            ("success/blocker", t.color_success, t.color_blocker),
+            ("ours/theirs", t.color_branch, t.color_remote),
+            ("diff bg added/removed", t.diff_added_bg, t.diff_removed_bg),
+        ]
+    };
+    let mocha_deutan = pairs(&mocha)
+        .iter()
+        .map(|(_, a, b)| delta_e(*a, *b, Some(Cvd::Deuteranopia)))
+        .fold(f64::INFINITY, f64::min);
+    assert!(
+        mocha_deutan < 15.0,
+        "control: Mocha worst deutan ΔE {mocha_deutan:.1}"
+    );
+
+    app.update(cx, |app, cx| app.set_theme("color-vision", cx));
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    let t = *theme();
+    assert_eq!(t.slug, "color-vision");
+    assert_eq!(
+        kagi_ui_core::settings::Settings::load().theme().as_deref(),
+        Some("color-vision"),
+        "the choice is persisted to settings.json"
+    );
+    assert_ne!(t.change_added, mocha.change_added);
+    assert_ne!(t.change_deleted, mocha.change_deleted);
+    assert_ne!(t.diff_added_bg, mocha.diff_added_bg);
+    assert_ne!(t.diff_removed_bg, mocha.diff_removed_bg);
+    assert_eq!(t.bg_base, mocha.bg_base, "other tokens are inherited");
+    assert_eq!(t.text_main, mocha.text_main);
+    for (name, a, b) in pairs(&t) {
+        let normal = delta_e(a, b, None);
+        assert!(normal >= 20.0, "{name}: ΔE {normal:.1}");
+        let mut line = format!("{name}: normal {normal:.1}");
+        for cvd in Cvd::ALL {
+            let d = delta_e(a, b, Some(cvd));
+            assert!(d >= 15.0, "{name} {cvd:?}: ΔE {d:.1}");
+            line.push_str(&format!(" {cvd:?} {d:.1}"));
+        }
+        eprintln!("[gui-e2e] color_vision {line}");
+    }
+
+    // Settings lists it under a localized name.
+    let previous = i18n::lang();
+    for (lang, want) in [
+        (Lang::En, "Color Vision (Blue/Orange)"),
+        (Lang::Ja, "色覚対応（青 / 橙）"),
+    ] {
+        i18n::set_lang(lang);
+        let names: Vec<String> = kagi::ui::settings_view::theme_options()
+            .iter()
+            .map(|o| o.name.to_string())
+            .collect();
+        assert!(names.iter().any(|n| n == want), "{lang:?}: {names:?}");
+    }
+    i18n::set_lang(previous);
+
+    app.update(cx, |app, cx| app.set_theme(before, cx));
+    cx.run_until_parked();
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS color_vision_theme: tokens switched + persisted, ΔE ≥ 20 / ≥ 15 (protan, deutan, tritan), Mocha control < 15, EN/JA name");
+}
+
 fn redraw(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
     kagi::ui::dialog_a11y::clear_recorded_a11y();
     app.update(cx, |_, cx| cx.notify());
@@ -2827,4 +2912,194 @@ pub fn scenario_sync_to_remote_armed(cx: &mut VisualTestAppContext) {
         unmount(cx, app, window);
     }
     eprintln!("[gui-e2e] PASS sync_to_remote_armed: Enter/button arm then sync; branch==upstream, clean, 2 backups, oplog, ignored untouched");
+}
+
+/// #354 slice 3: the commit list is a ListBox whose drawn rows are
+/// ListBoxOptions with absolute positions over WIP + stash + commit rows,
+/// exactly one selected, named by subject / author / date / short SHA / refs —
+/// and positions stay absolute after the virtualized list scrolls.
+pub fn scenario_commit_list_roles(cx: &mut VisualTestAppContext) {
+    use gpui::Role;
+    use kagi::ui::list_a11y::{clear_recorded_lists, recorded_list};
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    for i in 0..200 {
+        git(
+            repo,
+            &[
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                &format!("filler {i:03}"),
+            ],
+        );
+    }
+    git(repo, &["tag", "v-mark", "HEAD~150"]);
+    std::fs::write(repo.join("README.md"), "# stashed\n").unwrap();
+    git(repo, &["stash", "push", "-q", "-m", "parked work"]);
+    std::fs::write(repo.join("README.md"), "# dirty\n").unwrap();
+    let (app, window) = mount(cx, repo);
+    wait_idle(cx, &app);
+
+    let redraw = |cx: &mut VisualTestAppContext| {
+        clear_recorded_lists();
+        app.update(cx, |_, cx| cx.notify());
+        cx.update_window(window, |_, window, cx| {
+            window.refresh();
+            window.draw(cx).clear();
+        })
+        .unwrap();
+    };
+    redraw(cx);
+    let rows_len = cx.read(|cx| app.read(cx).view().rows.len());
+    let list = recorded_list("commit-list").expect("commit list drawn");
+    assert_eq!(list.role, Some(Role::ListBox));
+    assert_eq!(list.label, kagi_ui_core::i18n::Msg::A11yCommitList.t());
+    // WIP (1) + stash (1) + commits.
+    assert_eq!(
+        list.size,
+        2 + rows_len,
+        "{:?}",
+        list.rows.keys().take(5).collect::<Vec<_>>()
+    );
+    let (wip, _) = &list.rows[&0];
+    assert!(wip.contains("main"), "WIP row named by its worktree: {wip}");
+    let (stash, _) = &list.rows[&1];
+    assert!(stash.contains("parked work"), "{stash}");
+    assert!(
+        list.rows.keys().max().copied().unwrap() < 60,
+        "virtualized: only visible rows drawn"
+    );
+
+    // Jump far down: the selected row is drawn, alone selected, at its
+    // absolute position, named by its own subject and SHA.
+    app.update(cx, |app, _| {
+        if app.ui().selected.is_none() {
+            app.step_commit_selection(1);
+        }
+        app.step_commit_selection(150);
+    });
+    cx.run_until_parked();
+    redraw(cx);
+    let (sel_ix, summary, short, tagged) = cx.read(|cx| {
+        let app = app.read(cx);
+        let ix = app.ui().selected.expect("selected");
+        let row = &app.view().rows[ix];
+        (
+            ix,
+            row.summary.to_string(),
+            row.short_id.to_string(),
+            row.badges.iter().any(|b| b.label.as_ref() == "v-mark"),
+        )
+    });
+    let list = recorded_list("commit-list").expect("commit list drawn after scroll");
+    let selected: Vec<_> = list.rows.iter().filter(|(_, (_, s))| *s).collect();
+    assert_eq!(selected.len(), 1, "exactly one selected row: {selected:?}");
+    let (pos, (label, _)) = selected[0];
+    assert_eq!(*pos, 2 + sel_ix, "absolute position after scrolling");
+    assert!(*pos > 60, "the list really scrolled");
+    assert!(
+        label.contains(&summary) && label.contains(&short),
+        "{label}"
+    );
+    if tagged {
+        assert!(label.contains("v-mark"), "refs named: {label}");
+    }
+    // uniform_list also lays out item 0 to measure the row height; apart from
+    // that, nothing near the top is drawn any more.
+    assert!(
+        list.rows
+            .keys()
+            .filter(|p| **p != 0)
+            .min()
+            .copied()
+            .unwrap()
+            > 2,
+        "rows above are no longer drawn: {:?}",
+        list.rows.keys().take(4).collect::<Vec<_>>()
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS commit_list_roles: ListBox + ListBoxOption, absolute positions over WIP/stash/commits, one selected, labels, virtualized scroll");
+}
+
+/// #354 slice 3 (sidebar): the navigator is a Tree; section and group
+/// headers are expandable TreeItems at levels 1/2, leaves carry their level
+/// and position among siblings, the current branch / worktree is named as
+/// current, and collapsing a section flips `expanded` and hides its rows.
+pub fn scenario_sidebar_tree_roles(cx: &mut VisualTestAppContext) {
+    use gpui::Role;
+    use kagi::ui::list_a11y::{clear_recorded_lists, recorded_list};
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    git(repo, &["branch", "feat/a"]);
+    git(repo, &["branch", "feat/b"]);
+    git(repo, &["tag", "v1"]);
+    let wt = fixture.path().parent().unwrap().join(format!(
+        "{}-wt-tree",
+        fixture.path().file_name().unwrap().to_string_lossy()
+    ));
+    git(
+        repo,
+        &["worktree", "add", "-q", "-b", "side", wt.to_str().unwrap()],
+    );
+    let (app, window) = mount(cx, repo);
+    wait_idle(cx, &app);
+    let redraw = |cx: &mut VisualTestAppContext| {
+        clear_recorded_lists();
+        app.update(cx, |_, cx| cx.notify());
+        cx.update_window(window, |_, window, cx| {
+            window.refresh();
+            window.draw(cx).clear();
+        })
+        .unwrap();
+    };
+    redraw(cx);
+    let list = recorded_list("sidebar").expect("sidebar drawn");
+    assert_eq!(list.role, Some(Role::Tree));
+    assert_eq!(list.label, kagi_ui_core::i18n::Msg::A11ySidebar.t());
+    let find = |list: &kagi::ui::list_a11y::RecordedList, needle: &str| {
+        list.rows
+            .iter()
+            .find(|(_, (label, _))| label.contains(needle))
+            .map(|(ix, (label, _))| (*ix, label.clone(), list.tree[ix]))
+            .unwrap_or_else(|| panic!("no row naming {needle}: {:?}", list.rows))
+    };
+    // Section header: level 1, expanded.
+    let (_, _, (level, expanded, ..)) = find(&list, "LOCAL BRANCHES");
+    assert_eq!((level, expanded), (1, Some(true)));
+    // The current branch is level 2 and named as current.
+    let (_, main_label, (level, expanded, ..)) = find(&list, "main");
+    assert_eq!((level, expanded), (2, None));
+    let current = kagi_ui_core::i18n::Msg::A11ySidebarCurrentBranch
+        .t()
+        .replace("{}", "main");
+    assert_eq!(main_label, current);
+    // Grouped leaves under feat/: level 3, positions 1 and 2 of 2.
+    let (_, _, a) = find(&list, "feat/a");
+    let (_, _, b) = find(&list, "feat/b");
+    assert_eq!((a.0, a.2, a.3), (3, 1, 2));
+    assert_eq!((b.0, b.2, b.3), (3, 2, 2));
+    // The other worktree is a level-2 leaf named with its path.
+    let (_, wt_label, (level, ..)) = find(&list, "side");
+    assert_eq!(level, 2, "{wt_label}");
+
+    // Collapse LOCAL BRANCHES: header reports collapsed, leaves disappear.
+    app.update(cx, |app, cx| {
+        app.sidebar
+            .collapsed
+            .insert(kagi::ui::sidebar::SECTION_LOCAL);
+        cx.notify();
+    });
+    cx.run_until_parked();
+    redraw(cx);
+    let list = recorded_list("sidebar").expect("sidebar drawn after collapse");
+    let (_, _, (_, expanded, ..)) = find(&list, "LOCAL BRANCHES");
+    assert_eq!(expanded, Some(false));
+    assert!(
+        !list.rows.values().any(|(l, _)| l.contains("feat/a")),
+        "collapsed leaves are gone"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS sidebar_tree_roles: Tree / TreeItem levels, sibling positions, expanded, current named, collapse");
 }

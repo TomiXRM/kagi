@@ -1658,8 +1658,13 @@ impl Backend {
         targets: &[ops::CleanupDeleteTarget],
         run_git: ops::GitRunner,
     ) -> recording::RunReport {
-        let result = self.require_trust().and_then(|()| {
-            ops::execute_delete_merged_branches_with(&self.repo, &self.path, plan, targets, run_git)
+        // #871 review: the branches it deletes are recorded moves.
+        let (result, ref_moves) = self.observe_ref_moves(|this| {
+            this.require_trust().and_then(|()| {
+                ops::execute_delete_merged_branches_with(
+                    &this.repo, &this.path, plan, targets, run_git,
+                )
+            })
         });
         let after = |dirty: String| ops::StateSummary {
             head: plan.current.head.clone(),
@@ -1703,16 +1708,20 @@ impl Backend {
                 Err(error),
             ),
         };
-        let recording = self.record_run_oplog_with_backups(
+        let failure_code = result.as_ref().err().and_then(|error| {
+            matches!(error, GitError::TerminationUnknown(_))
+                .then_some(crate::oplog::FailureCode::TerminationUnknown)
+        });
+        let recording = self.record_receipt(
             "branch-cleanup",
             &plan.current,
             outcome,
-            Vec::new(),
-            Vec::new(),
-            result.as_ref().err().and_then(|error| {
-                matches!(error, GitError::TerminationUnknown(_))
-                    .then_some(crate::oplog::FailureCode::TerminationUnknown)
-            }),
+            recording::Receipt {
+                backup_refs: Vec::new(),
+                recovery: Vec::new(),
+                failure_code,
+                ref_moves,
+            },
         );
         recording::RunReport {
             result,

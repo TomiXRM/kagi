@@ -66,7 +66,7 @@ transport も記録しないため、**成功しても常に未記録**だった
 | `Backend::run` に入る全 operation | `run_recorded` の単一 finalize | mixed | ADR-0149。UI は表示のみ |
 | worktree remove | `backend/remove.rs` boundary | async | ADR-0175 |
 | local stash push/apply/pop/drop | `run_recorded` + stash evidence | async | ADR-0176 |
-| history undo/redo | `run_history_move` | sync | `record_run_oplog` |
+| history undo/redo | `run_history_move` | sync | `record_receipt`(ref 移動つき、ADR-0214 §4) |
 | branch cleanup | `execute_delete_merged_branches`。open 失敗は job 内で append | async | #519 |
 | dir/file conflict の index 解決 | `ops/dir_file_conflict.rs` | sync | ops 層で append |
 | **PR merge** | **`github::merge_pr`（本 ADR）** | async | 受領した試行は必ず記録 |

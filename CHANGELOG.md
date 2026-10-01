@@ -35,6 +35,14 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Operation Log の「取り消す / この時点まで戻す」の確認 card と Operation Log の review 指摘を修正しました(#883 / #871 / #878)。
+  - 「戻した後のグラフ」が長いと card の下側が切れて見えなかった問題を修正しました。行は card 内でスクロールします。
+  - branch Solo 中や、PR head(`refs/kagi/pr/**`)だけが保持する commit があるときに、どの branch からも外れる commit の数を誤って表示していた問題を修正しました。
+  - プレビューできない場合に「消える commit はありません」と表示していた見出しを中立にしました。
+  - card の「Copy all」に戻した後のグラフも含めるようにしました。
+  - Operation Log の行の「コピー」に、記録された ref の移動(OID 全桁)を含めるようにしました。
+  - absorb と merged branch の一括削除も、動かした ref を記録するようにしました(これまでは「推定」表示で、時点への復元の根拠にできませんでした)。(Refs #334)
+
 - 確認 card・commit / PR / WIP 一覧・サイドバーで、支援技術に伝える名前や状態が画面と食い違う問題を修正しました。linked worktree の amend は対象名を読み上げ、warning / blocker は note / alert、conflict Abort は次の確認で実行されると説明します。名前に含まれる `{}` や制御文字は崩さず安全に表示し、サイドバーの兄弟位置は行更新時に計算します。commit 一覧の「さらに読み込む」はボタンとして操作できます。（#354、#872、#876、#879 review）
 - commit 履歴が打ち切られた際の「さらに読み込む」ボタンを、支援技術の list box 内の選択肢ではなく、その下の独立したボタンとして表示するようにしました。ボタンは打ち切り中だけ表示し、クリックで従来どおり履歴を追加します。（#896 review、Refs #354）
 - worktree の削除と `nonconcurrent` モードの判定で、shell が動いたままの terminal タブを閉じると、その shell を終了済みとして扱っていた問題を修正しました。タブを閉じても shell が hangup を無視して動き続けることがあるため、shell の終了を実際に観測するまでは動作中として扱います。shell の終了待ち自体が失敗した場合も、終了扱いにはしません。(#867 / #869 の review 指摘)
@@ -90,6 +98,7 @@ All notable changes to Kagi are documented here. Format loosely follows
   - 全 scenario を分割実行して見つかった違反は直しました。言語・diff_split・ui_zoom・theme・terminal_auto_lock の保存 key の後始末(19 scenario)、port store の後始末(6 scenario)、共有 oplog の件数を repo で絞っていなかった `push_failure_keeps_modal` です。
 
   製品の動作は変更していません。(#516 slice 3)
+- GUI E2E の 3 scenario(`cleanup_partial_presentation`、`pull_refuses_when_the_dirty_set_moved`、`pull_completion_drops_when_its_tab_is_left`)の期待値を現行の提示仕様に合わせました。#718 で失敗した pull の確認画面を開き直さなくなり、#747 で記録済みの結果は toast と Operation Log で示すようになり、背景タブの結果は repository 名付きで出るようになっていました。これらの PR で期待値の更新が漏れていたものです。安全性の検査(何も stash / pull しない・local branch を変えない・記録は 1 件・確認画面を再表示しない)は弱めていません。製品の動作は変更していません。(#898)
 - GUI E2E runner で scenario が失敗したとき、`target/gui-e2e/<scenario>/` に失敗証跡を残すようにしました。中身は panic の内容、直近 200 行の `[kagi]` ログ、mount した fixture repository の `git status --short` と `git log --oneline -5`、window の PNG(撮れない場合は理由を書いた `window.txt`)です。stderr には `[gui-e2e] FAIL <scenario>: evidence <dir>` を 1 行出します。window は前面にも画面内にも出しません。終了コードと「最初の失敗で止まる」挙動は変わりません。製品の動作は変更していません。(#516 slice 1)
 - GUI E2E の scenario 間の隔離を監査し(#516 slice 2)、違反を直しました。
   - fixture の外に作っていた worktree / bare repo(3 scenario)を TempDir の中に移しました。

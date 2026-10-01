@@ -19,17 +19,19 @@ impl Backend {
         recording::Recording,
     ) {
         let mut progress = ops::AbsorbProgress::default();
-        let result: Result<_, GitError> = (|| {
-            self.require_trust()?;
-            ops::preflight_absorb(&self.repo, plan)?;
-            self.auto_savepoint("absorb");
-            let outcome = ops::execute_absorb_with_progress(&self.repo, plan, &mut progress)?;
+        // #871 review: absorb rewrites HEAD's branch; record that like
+        // `Backend::run` does, so the entry is restorable (not "estimated").
+        let (result, ref_moves) = self.observe_ref_moves(|this| -> Result<_, GitError> {
+            this.require_trust()?;
+            ops::preflight_absorb(&this.repo, plan)?;
+            this.auto_savepoint("absorb");
+            let outcome = ops::execute_absorb_with_progress(&this.repo, plan, &mut progress)?;
             #[cfg(test)]
             let outcome = verification_fixture(outcome, plan);
-            ops::verify_absorb(&self.repo, &outcome)?;
-            self.current_state()?;
+            ops::verify_absorb(&this.repo, &outcome)?;
+            this.current_state()?;
             Ok(outcome)
-        })();
+        });
         let mut after = self.current_state().unwrap_or_else(|_| ops::StateSummary {
             head: "unknown after absorb".into(),
             dirty: "could not read state after mutation".into(),
@@ -53,7 +55,17 @@ impl Backend {
                 error: error.to_string(),
             },
         };
-        let recording = self.record_run_oplog("absorb", &plan.current, outcome);
+        let recording = self.record_receipt(
+            "absorb",
+            &plan.current,
+            outcome,
+            recording::Receipt {
+                backup_refs: Vec::new(),
+                recovery: Vec::new(),
+                failure_code: None,
+                ref_moves,
+            },
+        );
         (result, recording)
     }
 }

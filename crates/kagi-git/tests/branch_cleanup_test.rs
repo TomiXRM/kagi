@@ -244,6 +244,18 @@ fn execute_deletes_local_and_remote() {
     assert!(repo.find_reference("refs/remotes/origin/merged").is_err());
     let bare = Repository::open(remote_tmp.path()).unwrap();
     assert!(bare.find_reference("refs/heads/merged").is_err());
+    // #871 review: the deletion is a recorded ref move.
+    let entry = kagi_git::oplog::read_oplog_tail_for_repo(dir, 1)
+        .pop()
+        .expect("branch-cleanup is recorded");
+    assert_eq!(entry.op, "branch-cleanup");
+    let moved = entry.ref_moves.expect("ref moves recorded");
+    assert!(
+        moved.iter().any(|m| m.refname == "refs/heads/merged"
+            && m.old.as_deref() == Some(expected_tip.to_string().as_str())
+            && m.new.is_none()),
+        "{moved:?}"
+    );
 }
 
 #[test]

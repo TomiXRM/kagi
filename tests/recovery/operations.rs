@@ -524,6 +524,11 @@ pub fn scenario_cleanup_open_failure(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS cleanup_open_failure active/stale refusal without mutation");
 }
 
+/// A partial branch cleanup (the remote deletion lands, the local one is
+/// refused) is recorded once, never retried, and explained with per-target
+/// details in the Operation Log. Presentation follows #747 (e3a6d239): a
+/// recorded outcome is shown as an error toast plus the expanded log entry,
+/// not as a dismiss-only notice.
 pub fn scenario_cleanup_partial_presentation(cx: &mut VisualTestAppContext) {
     use std::os::unix::fs::PermissionsExt;
 
@@ -601,13 +606,32 @@ pub fn scenario_cleanup_partial_presentation(cx: &mut VisualTestAppContext) {
             app.branch_cleanup_modal().is_none(),
             "do not retry the deleted batch"
         );
-        assert!(matches!(&app.status_footer, FooterStatus::Failed(_)));
-        let notice = app
-            .app_notice()
-            .expect("partial outcome must remain visible as a queued notice");
+        let FooterStatus::Failed(footer) = &app.status_footer else {
+            panic!(
+                "the footer must report the partial cleanup: {:?}",
+                app.status_footer
+            )
+        };
+        // #747: a recorded outcome is no longer a dismiss-only notice; the
+        // toast and the Operation Log carry it.
         assert!(
-            notice.inspect.is_none() && notice.acknowledge.is_none(),
-            "partial-notice-has-no-reconcile-action: Partial does not register reconciliation"
+            app.app_notice().is_none(),
+            "a recorded partial outcome opens no notice (#747)"
+        );
+        let toast = app
+            .toast_stack
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .toasts()
+            .last()
+            .expect("the partial outcome reaches a toast");
+        assert!(
+            matches!(toast.kind, kagi::ui::ToastKind::Error)
+                && toast.message.contains(footer.as_ref())
+                && toast.message.contains("merged"),
+            "the toast names the batch and what failed: {}",
+            toast.message
         );
         assert!(app.bottom_panel_open);
         assert_eq!(app.bottom_tab, kagi::ui::BottomTab::OperationLog);

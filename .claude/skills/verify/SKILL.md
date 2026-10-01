@@ -83,6 +83,12 @@ the runner's `macos::open_offscreen` helper, which panics past a budget of 8
 live windows and opens them hidden — set `KAGI_GUI_E2E_VISIBLE=1` to see them
 for triage.
 
+A change to how outcomes are presented (footer, toast, notice, modal, Operation
+Log) must run the scenarios that assert that presentation with
+`KAGI_GUI_E2E_ONLY` before merging. Compiling the GUI tests is not enough: #718
+and #747 changed presentation, and three scenarios kept the old expectations
+unnoticed until #898.
+
 When a scenario panics, the runner writes failure evidence (#516) and prints
 `[gui-e2e] FAIL <scenario>: evidence <dir>`. The directory is
 `target/gui-e2e/<scenario>/` (worktree-local `target/`) and contains:

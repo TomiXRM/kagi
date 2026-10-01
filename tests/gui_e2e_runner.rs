@@ -1569,6 +1569,10 @@ mod macos {
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_card),
             ),
             (
+                "oplog_restore_preview_review",
+                Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_preview_review),
+            ),
+            (
                 "oplog_restore_across_merge",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_across_merge),
             ),

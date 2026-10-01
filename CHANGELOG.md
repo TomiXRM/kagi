@@ -36,6 +36,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- 「この時点まで戻す / 取り消す」が HEAD の切り替えを含む範囲で拒否されるとき、どの操作で HEAD が何から何に切り替わったか(branch、または detached の commit)と、戻す手順(先に元の branch / commit を自分で checkout してから、その操作以降の時点へ戻す)を示すようにしました。HEAD を含む復元は、作業ツリーに触れるため引き続き行いません(ADR-0214 §7)。(#886、Refs #334)
 - Commit Panel を同じ worktree で開き直すか、merge 後に再読込した際に、file tree の兄弟位置が以前のファイル構成のまま残り、新しい行から支援技術向けの TreeItem が欠落する問題を修正しました。新しい状態に差し替えるたびに位置表を無効化します。（#901 review、Refs #354）
 - Operation Log の「取り消す / この時点まで戻す」の確認 card と Operation Log の review 指摘を修正しました(#883 / #871 / #878)。
   - 「戻した後のグラフ」が長いと card の下側が切れて見えなかった問題を修正しました。行は card 内でスクロールします。

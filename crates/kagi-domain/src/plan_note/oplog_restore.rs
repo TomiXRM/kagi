@@ -9,6 +9,40 @@ fn short(oid: &Option<String>) -> String {
     }
 }
 
+/// Where HEAD pointed on one side of a recorded switch (#886).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeadAt {
+    /// On a branch (short name, `main`).
+    Branch(String),
+    /// Detached at a commit.
+    Detached(String),
+    /// Not recorded on this side (an unborn repository).
+    Unknown,
+}
+
+impl HeadAt {
+    /// HEAD as recorded on one side of a move: its symbolic target, or the
+    /// commit it was detached at.
+    pub fn of(symbolic: Option<&str>, oid: Option<&str>) -> Self {
+        match (symbolic, oid) {
+            (Some(s), _) => HeadAt::Branch(s.strip_prefix("refs/heads/").unwrap_or(s).into()),
+            (None, Some(oid)) => HeadAt::Detached(oid.into()),
+            (None, None) => HeadAt::Unknown,
+        }
+    }
+
+    /// English rendering: `'main'`, `detached HEAD at abc1234`, `(unknown)`.
+    pub fn label_en(&self) -> String {
+        match self {
+            HeadAt::Branch(b) => format!("'{b}'"),
+            HeadAt::Detached(oid) => {
+                format!("detached HEAD at {}", oid.get(..7).unwrap_or(oid))
+            }
+            HeadAt::Unknown => "(unknown)".into(),
+        }
+    }
+}
+
 /// Plan notes for op-revert / restore-to-point.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OplogRestoreNote {
@@ -17,9 +51,15 @@ pub enum OplogRestoreNote {
     /// blocker — the entry has no recorded ref moves (written before they
     /// were recorded, or by a path that does not record them).
     NotRecorded { id: u64, op: String },
-    /// blocker — the entry switched or detached HEAD: undoing that is a
-    /// checkout, which touches the working tree.
-    HeadMoved { id: u64, op: String },
+    /// blocker — the entry switched or detached HEAD (`from` → `to`):
+    /// undoing that is a checkout, which touches the working tree, and a
+    /// restore moves branches only (#886, ADR-0214 §7).
+    HeadMoved {
+        id: u64,
+        op: String,
+        from: HeadAt,
+        to: HeadAt,
+    },
     /// blocker (op-revert) — a later recorded entry moved the same ref.
     LaterEntryMoved {
         refname: String,
@@ -84,8 +124,11 @@ impl OplogRestoreNote {
             OplogRestoreNote::NotRecorded { id, op } => format!(
                 "Operation #{id} ({op}) has no recorded ref moves, so it cannot be undone exactly. Nothing is guessed from the reflog."
             ),
-            OplogRestoreNote::HeadMoved { id, op } => format!(
-                "Operation #{id} ({op}) switched or detached HEAD. Undoing it is a checkout, which this does not do."
+            OplogRestoreNote::HeadMoved { id, op, from, to } => format!(
+                "Operation #{id} ({op}) switched HEAD from {} to {}. A restore moves branches only, never HEAD, because that would change the working tree. To go back past it: check out {} yourself, then restore to #{id} or a later point.",
+                from.label_en(),
+                to.label_en(),
+                from.label_en()
             ),
             OplogRestoreNote::LaterEntryMoved { refname, id, op } => format!(
                 "{refname} was moved again by the later operation #{id} ({op}). Revert that one first, or restore to a point."

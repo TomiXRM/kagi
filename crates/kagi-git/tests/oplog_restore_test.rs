@@ -8,7 +8,7 @@ use git_fixture::{commit_all, git, git_output, init_repo, write_file};
 #[path = "../../../tests/support/isolated.rs"]
 mod test_support;
 
-use kagi_domain::plan_note::{OplogRestoreNote, PlanNote};
+use kagi_domain::plan_note::{HeadAt, OplogRestoreNote, PlanNote};
 use kagi_git::oplog::{append_oplog, read_oplog_tail_for_repo, OpLogEntry, OpOutcome};
 use kagi_git::{Backend, CommitId, GitError, Operation, OperationPlan, StateSummary};
 use std::path::{Path, PathBuf};
@@ -250,10 +250,32 @@ fn a_checkout_in_the_range_or_a_branch_moved_outside_blocks() {
     let point = create(&repo, "a");
     let checkout = run(&repo, Operation::Checkout { branch: "a".into() });
     let p = plan(&repo, &Operation::RestoreToPoint { entry_id: point });
+    // #886: the blocker names the entry and both sides of the switch.
     assert!(
         restore_blockers(&p).contains(&OplogRestoreNote::HeadMoved {
             id: checkout,
-            op: "checkout".into()
+            op: "checkout".into(),
+            from: HeadAt::Branch("main".into()),
+            to: HeadAt::Branch("a".into()),
+        }),
+        "{:?}",
+        p.blockers
+    );
+    commit(&repo, "two\n");
+    let tip = git_output(&repo, &["rev-parse", "HEAD~1"]);
+    let detach = run(
+        &repo,
+        Operation::CheckoutCommit {
+            id: CommitId(tip.clone()),
+        },
+    );
+    let p = plan(&repo, &Operation::OpRevert { entry_id: detach });
+    assert!(
+        restore_blockers(&p).contains(&OplogRestoreNote::HeadMoved {
+            id: detach,
+            op: "checkout-commit".into(),
+            from: HeadAt::Branch("a".into()),
+            to: HeadAt::Detached(tip),
         }),
         "{:?}",
         p.blockers

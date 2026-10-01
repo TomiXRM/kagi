@@ -3,7 +3,7 @@
 //! entries alone. Pure — the backend supplies the entries and current refs,
 //! applies the result as one `git update-ref --stdin` transaction.
 
-use crate::plan_note::OplogRestoreNote;
+use crate::plan_note::{HeadAt, OplogRestoreNote};
 use crate::ref_moves::{RefMove, RefSnapshot};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -145,13 +145,16 @@ pub fn plan(
                 id: e.id,
                 op: e.op.clone(),
             }),
-            Some(moves) if moves.iter().any(switches_head) => {
-                blockers.push(OplogRestoreNote::HeadMoved {
-                    id: e.id,
-                    op: e.op.clone(),
-                })
+            Some(moves) => {
+                if let Some(m) = moves.iter().find(|m| switches_head(m)) {
+                    blockers.push(OplogRestoreNote::HeadMoved {
+                        id: e.id,
+                        op: e.op.clone(),
+                        from: HeadAt::of(m.old_symbolic.as_deref(), m.old.as_deref()),
+                        to: HeadAt::of(m.new_symbolic.as_deref(), m.new.as_deref()),
+                    })
+                }
             }
-            Some(_) => {}
         }
     }
     if mode == RestoreMode::Revert {
@@ -538,8 +541,33 @@ mod tests {
         let p = plan(&entries, 1, RestoreMode::RestoreTo, &refs(&[(A, "c1")]));
         assert!(p.blockers.contains(&OplogRestoreNote::HeadMoved {
             id: 3,
-            op: "op3".into()
+            op: "op3".into(),
+            from: HeadAt::Branch("a".into()),
+            to: HeadAt::Branch("b".into()),
         }));
+
+        // #886: detaching names the commit HEAD was left at.
+        let detach = entry(
+            3,
+            Some(vec![RefMove {
+                refname: "HEAD".into(),
+                old: Some("c1".into()),
+                new: Some("c0".into()),
+                old_symbolic: Some("refs/heads/a".into()),
+                new_symbolic: None,
+            }]),
+        );
+        let entries = [entry(1, Some(vec![])), entry(2, Some(vec![])), detach];
+        let p = plan(&entries, 1, RestoreMode::RestoreTo, &refs(&[(A, "c1")]));
+        assert_eq!(
+            p.blockers,
+            vec![OplogRestoreNote::HeadMoved {
+                id: 3,
+                op: "op3".into(),
+                from: HeadAt::Branch("a".into()),
+                to: HeadAt::Detached("c0".into()),
+            }]
+        );
     }
 
     #[test]

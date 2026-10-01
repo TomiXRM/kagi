@@ -116,6 +116,9 @@ the owning terminal session's repository path. All five values override inherite
 `KAGI_*` values. A retained shell keeps its environment; a restarted shell recalls
 the persisted block. Metadata failures use the existing terminal-start
 failure/oplog path rather than spawning with a stale inherited port.
+`KAGI_WORKTREE_PATH` / `KAGI_MAIN_WORKTREE` carry no trailing `/`: `env_map`
+rebuilds each path from its components, dropping the separator git appends to a
+working directory (#870).
 
 **Range exhaustion still starts the shell (#852).** `terminal_env` answers
 `TerminalEnv::Exhausted { worktree, range, per }` instead of an error; the

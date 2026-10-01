@@ -211,9 +211,10 @@ fn terminal_environment_uses_registry_identity_and_remote_default_branch() {
     ] {
         let environment = ports(terminal_env(path, RANGE, 10, RunMode::Concurrent).unwrap());
         let vars: std::collections::BTreeMap<_, _> = environment.vars.into_iter().collect();
-        assert_eq!(std::path::Path::new(&vars["KAGI_WORKTREE_PATH"]), path);
+        // #870: exactly the path, no trailing `/` from git's workdir.
+        assert_eq!(vars["KAGI_WORKTREE_PATH"], path.display().to_string());
         assert_eq!(vars["KAGI_WORKTREE_NAME"], name);
-        assert_eq!(std::path::Path::new(&vars["KAGI_MAIN_WORKTREE"]), main_path);
+        assert_eq!(vars["KAGI_MAIN_WORKTREE"], main_path.display().to_string());
         assert_eq!(vars["KAGI_DEFAULT_BRANCH"], "trunk");
         assert_eq!(vars["KAGI_PORT"], port);
     }
@@ -281,8 +282,8 @@ fn nonconcurrent_hands_every_worktree_the_main_block() {
     assert_eq!(vars["KAGI_PORT"], "3000", "the main worktree's block");
     assert_eq!(vars["KAGI_WORKTREE_NAME"], "registered-name");
     assert_eq!(
-        std::path::Path::new(&vars["KAGI_WORKTREE_PATH"]),
-        linked_path
+        vars["KAGI_WORKTREE_PATH"],
+        linked_path.display().to_string()
     );
     assert_eq!(
         Assignments::read().port(&linked_path),

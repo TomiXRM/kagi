@@ -138,10 +138,10 @@ pub fn scenario_worktree_port_env(cx: &mut VisualTestAppContext) {
         stored.to_string(),
         "the spawned shell received the worktree's stored block"
     );
-    // Compared as a path: the value is git's workdir, which ends in `/`.
+    // #870: exactly the worktree's path — no trailing `/` from git's workdir.
     assert_eq!(
-        Path::new(path.trim_end()),
-        repo.as_path(),
+        path.trim_end_matches('\n'),
+        repo.display().to_string(),
         "the spawned shell received this worktree's path"
     );
 

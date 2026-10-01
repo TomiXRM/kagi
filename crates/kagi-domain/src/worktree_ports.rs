@@ -125,7 +125,10 @@ pub fn allocate_block(
 /// assembly — the caller supplies every input (path, name, main worktree path,
 /// default branch, and the block's first port from [`allocate_block`]).
 ///
-/// Order matches [`ENV_KEYS`]. Paths are emitted with `Path::display()`.
+/// Order matches [`ENV_KEYS`]. Paths are emitted without a trailing separator
+/// (#870): git reports a working directory as `/repo/`, and
+/// `"$KAGI_WORKTREE_PATH/x"` should read `/repo/x`, as Zed's
+/// `ZED_WORKTREE_ROOT` does. The root itself stays `/`.
 pub fn env_map(
     worktree_path: &std::path::Path,
     worktree_name: &str,
@@ -134,15 +137,20 @@ pub fn env_map(
     first_port: u16,
 ) -> Vec<(&'static str, String)> {
     vec![
-        ("KAGI_WORKTREE_PATH", worktree_path.display().to_string()),
+        ("KAGI_WORKTREE_PATH", env_path(worktree_path)),
         ("KAGI_WORKTREE_NAME", worktree_name.to_string()),
-        (
-            "KAGI_MAIN_WORKTREE",
-            main_worktree_path.display().to_string(),
-        ),
+        ("KAGI_MAIN_WORKTREE", env_path(main_worktree_path)),
         ("KAGI_DEFAULT_BRANCH", default_branch.to_string()),
         ("KAGI_PORT", first_port.to_string()),
     ]
+}
+
+/// `path` rebuilt from its components: no trailing separator. Lexical only.
+fn env_path(path: &std::path::Path) -> String {
+    path.components()
+        .collect::<std::path::PathBuf>()
+        .display()
+        .to_string()
 }
 
 #[cfg(test)]
@@ -265,5 +273,23 @@ mod tests {
         assert_eq!(get("KAGI_MAIN_WORKTREE"), Some("/repo"));
         assert_eq!(get("KAGI_DEFAULT_BRANCH"), Some("main"));
         assert_eq!(get("KAGI_PORT"), Some("3010"));
+    }
+
+    /// #870: git hands workdirs over as `/repo/`; the variables carry none of
+    /// that trailing separator, and the root stays `/`.
+    #[test]
+    fn env_paths_have_no_trailing_separator() {
+        let m = env_map(
+            Path::new("/repo/wt/"),
+            "wt",
+            Path::new("/repo/"),
+            "main",
+            3000,
+        );
+        let get = |k: &str| m.iter().find(|(kk, _)| *kk == k).map(|(_, v)| v.as_str());
+        assert_eq!(get("KAGI_WORKTREE_PATH"), Some("/repo/wt"));
+        assert_eq!(get("KAGI_MAIN_WORKTREE"), Some("/repo"));
+        let root = env_map(Path::new("/"), "main", Path::new("/"), "main", 3000);
+        assert_eq!(root[0].1, "/");
     }
 }

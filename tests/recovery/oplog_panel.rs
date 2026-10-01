@@ -14,6 +14,7 @@ use kagi_git::oplog::{append_oplog, read_oplog_tail, Actor, OpLogEntry, OpOutcom
 use kagi_git::{Backend, CommitId, Operation, StateSummary};
 
 use crate::macos::{build_fixture, git, mount, repo_fingerprint, unmount};
+use crate::recovery_operations::{press_key, wait_idle};
 
 #[path = "../support/git_fixture.rs"]
 mod git_fixture;
@@ -304,4 +305,170 @@ pub fn scenario_oplog_actor_reflog(cx: &mut VisualTestAppContext) {
     );
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS oplog_actor_reflog: 3 rows with actor/worktree badges; recorded rows show their ref moves, not an estimate; an unrecorded row's shared second is marked ambiguous");
+}
+
+/// Click a painted control (a probe registered by `measure_inside`).
+fn click_probe(cx: &mut VisualTestAppContext, window: AnyWindowHandle, name: &str) {
+    e2e::clear_control_bounds(window.window_id(), name);
+    paint(cx, window);
+    let bounds = e2e::control_bounds(window.window_id(), name)
+        .unwrap_or_else(|| panic!("{name} was not painted"));
+    cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+}
+
+fn branch_names(repo: &Path) -> String {
+    git_output(
+        repo,
+        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    )
+}
+
+/// The card the open entry point leads to, read back from the app.
+fn restore_card(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+) -> kagi::ui::modals::oplog_restore::OplogRestoreModal {
+    cx.read(|cx| app.read(cx).oplog_restore_modal().cloned())
+        .expect("the op-revert / restore card is open")
+}
+
+/// Confirm the open card twice (destructive: arm, then run) and wait for it.
+fn confirm_twice(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+    press_key(cx, app, window, "enter");
+    cx.run_until_parked();
+    assert!(
+        restore_card(cx, app).confirm_armed,
+        "the first Enter only arms"
+    );
+    press_key(cx, app, window, "enter");
+    wait_idle(cx, app);
+    assert!(cx.read(|cx| app.read(cx).oplog_restore_modal().is_none()));
+}
+
+/// #334 slice 2b-2: a selected row's real buttons open the card; it lists
+/// every branch's reverse action and what is not restored; two confirms
+/// restore the branches; the restore's own row can be reverted the same way.
+/// A row without recorded moves has both buttons disabled.
+pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
+    use kagi_domain::plan_note::{OplogRestoreNote, PlanNote};
+
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let head = CommitId(git_output(&repo, &["rev-parse", "HEAD"]));
+    let mut backend = Backend::open(&repo).unwrap();
+    for name in ["keep", "drop1", "drop2"] {
+        run(
+            &mut backend,
+            Actor::Human,
+            Operation::CreateBranch {
+                name: name.into(),
+                at: head.clone(),
+            },
+        );
+    }
+    let all_branches = branch_names(&repo);
+
+    // An entry of another repository without recorded moves.
+    let elsewhere_root = tempfile::tempdir().unwrap();
+    let elsewhere = elsewhere_root.path().canonicalize().unwrap();
+    let state = StateSummary {
+        head: "branch: main".into(),
+        dirty: "clean".into(),
+    };
+    let unrecorded = OpLogEntry::new(
+        "unrecorded",
+        elsewhere.display().to_string(),
+        state.clone(),
+        OpOutcome::Success { after: state },
+    )
+    .with_worktree(Some(elsewhere.display().to_string()));
+    append_oplog(&unrecorded).unwrap();
+
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| {
+        app.bottom_panel_open = true;
+        app.bottom_tab = kagi::ui::BottomTab::OperationLog;
+        app.bottom_panel_height = 600.;
+        cx.notify();
+    });
+    paint(cx, window);
+
+    // ── no record: both buttons disabled ─────────────────────────────────
+    let other = rows_of(cx, &app, &elsewhere)[0];
+    click_row(cx, &app, window, other);
+    paint(cx, window);
+    assert!(painted(window, &format!("oplog-revert-{other}-disabled")));
+    assert!(painted(window, &format!("oplog-restore-{other}-disabled")));
+
+    // ── restore to the first creation: the card, then two confirms ──────
+    let rows = rows_of(cx, &app, &repo);
+    assert_eq!(rows.len(), 3, "{rows:?}");
+    let keep = rows[2];
+    let keep_id = cx.read(|cx| {
+        let panel = app.read(cx).op_log.clone().unwrap();
+        panel.read(cx).entries()[keep].id
+    });
+    click_row(cx, &app, window, keep);
+    click_probe(cx, window, &format!("oplog-restore-{keep}-enabled"));
+    let card = restore_card(cx, &app);
+    assert_eq!(card.op, Operation::RestoreToPoint { entry_id: keep_id });
+    assert!(card.plan.blockers.is_empty(), "{:?}", card.plan.blockers);
+    for branch in ["refs/heads/drop1", "refs/heads/drop2"] {
+        assert!(
+            card.plan.warnings.iter().any(|w| matches!(
+                w,
+                PlanNote::OplogRestore(OplogRestoreNote::Moves { refname, to: None, .. })
+                    if refname == branch
+            )),
+            "the card lists deleting {branch}: {:?}",
+            card.plan.warnings
+        );
+    }
+    assert!(
+        card.plan
+            .warnings
+            .contains(&PlanNote::OplogRestore(OplogRestoreNote::RefsOnly)),
+        "the card says what is not restored"
+    );
+    paint(cx, window);
+    assert!(
+        painted(window, "plan-confirm"),
+        "the card is drawn with its confirm"
+    );
+    assert_eq!(branch_names(&repo), all_branches, "planning moved nothing");
+
+    confirm_twice(cx, &app, window);
+    assert_eq!(
+        branch_names(&repo),
+        "keep\nmain",
+        "drop1 / drop2 removed, keep kept"
+    );
+    let restore = read_oplog_tail(1).pop().unwrap();
+    assert_eq!(restore.op, "restore-to-point");
+
+    // ── the restore's own row: revert it from the panel ──────────────────
+    let newest = cx.read(|cx| {
+        let panel = app.read(cx).op_log.clone().unwrap();
+        let panel = panel.read(cx);
+        panel
+            .entries()
+            .iter()
+            .position(|e| e.id == restore.id)
+            .expect("the restore is a row")
+    });
+    click_row(cx, &app, window, newest);
+    click_probe(cx, window, &format!("oplog-revert-{newest}-enabled"));
+    assert_eq!(
+        restore_card(cx, &app).op,
+        Operation::OpRevert {
+            entry_id: restore.id
+        }
+    );
+    confirm_twice(cx, &app, window);
+    assert_eq!(branch_names(&repo), all_branches, "the restore is undone");
+    assert_eq!(read_oplog_tail(1).pop().unwrap().op, "op-revert");
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS oplog_restore_card: unrecorded row disabled; restore card lists reverse actions and what stays; two confirms restore; the restore is reverted from its own row");
 }

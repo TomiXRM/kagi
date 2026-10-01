@@ -61,6 +61,9 @@ pub enum Op {
     EnableFsmonitor,
     /// A PR review suggestion written to the working tree (#351).
     ApplySuggestion,
+    /// Operation Log revert / restore (#334).
+    OpRevert,
+    RestoreToPoint,
     Skip,
     Snapshot,
     StageAll,
@@ -135,6 +138,8 @@ impl Op {
                 "ファイルシステムモニターの有効化",
             ),
             ApplySuggestion => ("Apply suggestion", "コード提案の適用"),
+            OpRevert => ("Revert operation", "操作の取り消し"),
+            RestoreToPoint => ("Restore to point", "時点への復元"),
             Skip => ("Skip", "skip"),
             Snapshot => ("Snapshot", "スナップショットの取得"),
             Stage => ("Stage", "stage"),

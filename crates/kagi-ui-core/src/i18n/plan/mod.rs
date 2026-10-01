@@ -20,6 +20,7 @@ pub mod github;
 pub mod history;
 pub mod maintenance;
 pub mod merge;
+pub mod oplog_restore;
 pub mod pull;
 pub mod push;
 pub mod rebase;
@@ -99,6 +100,7 @@ pub(crate) fn note_ja_any(note: &PlanNote) -> String {
         PlanNote::Sync(n) => sync::note_ja(n),
         PlanNote::Maintenance(n) => maintenance::note_ja(n),
         PlanNote::Ruleset(n) => ruleset::note_ja(n),
+        PlanNote::OplogRestore(n) => oplog_restore::note_ja(n),
     }
 }
 
@@ -129,6 +131,7 @@ pub fn plan_title_text(title: &PlanTitle) -> String {
             PlanTitle::Snapshot(t) => snapshot::title_ja(t),
             PlanTitle::Sync(t) => sync::title_ja(t),
             PlanTitle::Maintenance(t) => maintenance::title_ja(t),
+            PlanTitle::OplogRestore(t) => oplog_restore::title_ja(t),
             PlanTitle::Discard { .. } => discard::title_ja(title),
         },
     }
@@ -165,6 +168,7 @@ pub fn plan_recovery_text(recovery: Option<&PlanRecovery>) -> String {
             RecoveryKind::Snapshot(r) => snapshot::recovery_ja(r),
             RecoveryKind::Sync(r) => sync::recovery_ja(r),
             RecoveryKind::Maintenance(r) => maintenance::recovery_ja(r),
+            RecoveryKind::OplogRestore(r) => oplog_restore::recovery_ja(r),
             RecoveryKind::Discard => discard::recovery_ja(),
         },
     }

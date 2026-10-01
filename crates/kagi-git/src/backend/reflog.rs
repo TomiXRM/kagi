@@ -1,41 +1,11 @@
-//! Ref reads for the Operation Log (#334, ADR-0214): reflog lines in a time
-//! span (slice 1's estimate) and the ref snapshot `Backend::run` diffs around
-//! an execution (slice 2a's record). Read-only: nothing here writes a ref or
-//! touches the oplog.
+//! Reflog lines in a time span — the Operation Log panel's estimate for an
+//! entry without recorded ref moves (#334 slice 1, ADR-0214 §3). The recorded
+//! moves' snapshot is `ops::ref_snapshot`. Read-only: nothing here writes.
 
 use super::Backend;
 use crate::GitError;
 use git2::Repository;
 use kagi_domain::oplog_reflog::ReflogLine;
-use kagi_domain::ref_moves::RefSnapshot;
-
-/// HEAD of the worktree `repo` is (its symbolic target and commit) and every
-/// `refs/heads/*`. Other worktrees' HEADs are not read: a branch they hold
-/// moving shows in `refs/heads/*`. `None` when the refs cannot be read — the
-/// caller then records nothing rather than a wrong difference.
-pub(super) fn ref_snapshot(repo: &Repository) -> Option<RefSnapshot> {
-    let head = repo.find_reference("HEAD").ok()?;
-    let head_symbolic = head.symbolic_target().ok().flatten().map(str::to_string);
-    // An unborn branch has a symbolic target but nothing to resolve.
-    let head_oid = head
-        .resolve()
-        .ok()
-        .and_then(|r| r.target())
-        .map(|o| o.to_string());
-    let mut branches = std::collections::BTreeMap::new();
-    for reference in repo.references_glob("refs/heads/*").ok()? {
-        let reference = reference.ok()?;
-        let (Ok(name), Some(oid)) = (reference.name(), reference.target()) else {
-            continue;
-        };
-        branches.insert(name.to_string(), oid.to_string());
-    }
-    Some(RefSnapshot {
-        head_oid,
-        head_symbolic,
-        branches,
-    })
-}
 
 impl Backend {
     /// HEAD's and every local branch's reflog lines with a signature time in

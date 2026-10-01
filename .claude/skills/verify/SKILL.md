@@ -420,6 +420,19 @@ The current suite covers:
   tab after a few operations (and one through `kagi` CLI / MCP), check the
   badges, select a new row ("Recorded") and one recorded before this change
   ("Estimated").
+- Operation Log revert / restore card (`KAGI_GUI_E2E_ONLY=oplog_restore_card`,
+  `tests/recovery/oplog_panel.rs`): #334 slice 2b-2 / ADR-0214 §5. Three real
+  `create-branch` runs (keep, drop1, drop2) and one unrecorded entry of another
+  repository. The unrecorded row's "Revert this operation…" / "Restore to this
+  point…" are both painted disabled. A real click on the first creation's
+  "Restore to this point…" opens the card: `Moves` deletions of drop1 / drop2,
+  `RefsOnly`, `plan-confirm` drawn, branches unchanged. Enter arms (nothing
+  moves), Enter again restores (keep + main left, newest entry
+  `restore-to-point`); the restore's own row's "Revert this operation…" puts
+  drop1 / drop2 back (`op-revert`). Backend: `crates/kagi-git/tests/
+  oplog_restore_test.rs`. Tier B: in a scratch repository, create a few
+  branches, select an earlier row, read the card (EN/JA), restore, then revert
+  the restore from its row.
 - terminal auto-lock compare-and-unlock (`KAGI_GUI_E2E_ONLY=terminal_auto_lock_race`,
   `tests/recovery/worktree_lock_reason.rs`): #836 / ADR-0212. (b) Through the
   Backend race seam (`execute_auto_unlock_worktree_racing`,

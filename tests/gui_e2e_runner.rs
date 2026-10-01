@@ -1529,6 +1529,10 @@ mod macos {
                 "oplog_actor_reflog",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_actor_reflog),
             ),
+            (
+                "oplog_restore_card",
+                Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_card),
+            ),
             ("create_snapshot", Box::new(scenario_create_snapshot)),
             ("theme_switch", Box::new(scenario_theme_switch)),
             ("agent_provenance", Box::new(scenario_agent_provenance)),

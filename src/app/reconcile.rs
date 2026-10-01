@@ -255,6 +255,8 @@ fn writes_only_locally(name: &str) -> bool {
             | "rebase"
             | "replay-onto"
             | "sync-to-remote"
+            | "op-revert"
+            | "restore-to-point"
             | "reset-current"
             | "create-branch"
             | "delete-branch"

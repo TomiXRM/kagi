@@ -3,6 +3,7 @@
 pub mod apply_suggestion;
 pub mod branch_plan;
 pub mod delete_branch;
+pub mod oplog_restore;
 pub mod rebase;
 pub mod repo_health;
 pub mod worktree;
@@ -663,6 +664,7 @@ pub enum ActiveModal {
     RepairWorktrees(RepairWorktreesModal),
     RepoHealth(repo_health::RepoHealthModal),
     ApplySuggestion(apply_suggestion::ApplySuggestionModal),
+    OplogRestore(oplog_restore::OplogRestoreModal),
     StashPush(StashPushModal),
     StashApply(StashApplyModal),
     CherryPick(CherryPickModal),
@@ -717,6 +719,7 @@ impl ActiveModal {
             | M::RepairWorktrees(_)
             | M::RepoHealth(_)
             | M::ApplySuggestion(_)
+            | M::OplogRestore(_)
             | M::StashPush(_)
             | M::StashApply(_)
             | M::CherryPick(_)

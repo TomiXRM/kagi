@@ -16,7 +16,7 @@ impl Backend {
     ) -> recording::RunReport {
         // #334 slice 2a: the refs as execution finds them; diffed below
         // whatever the outcome (a partial run records what it did move).
-        let refs_before = super::reflog::ref_snapshot(&self.repo);
+        let refs_before = ops::ref_snapshot(&self.repo);
         let mut partial_after = None;
         let mut backup_refs = Vec::new();
         let mut evidence = stash::StashEvidence::default();
@@ -108,7 +108,7 @@ impl Backend {
             _ => {}
         }
         let ref_moves = refs_before
-            .zip(super::reflog::ref_snapshot(&self.repo))
+            .zip(ops::ref_snapshot(&self.repo))
             .map(|(before, after)| kagi_domain::ref_moves::diff(&before, &after));
         let recording = self.record_receipt(
             op.oplog_name(),
@@ -457,6 +457,9 @@ impl Backend {
             }
             Operation::EnableFsmonitor => {
                 ops::execute_enable_fsmonitor(&self.repo, plan).map(|()| OperationOutcome::Unit)
+            }
+            Operation::OpRevert { .. } | Operation::RestoreToPoint { .. } => {
+                ops::execute_oplog_restore(&self.repo, &self.path, plan, op, backup_refs)
             }
         };
 

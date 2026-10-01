@@ -243,6 +243,7 @@ pub fn scenario_cleanup_stale_tab(cx: &mut VisualTestAppContext) {
 }
 
 pub fn scenario_preflight_presentation(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     use kagi_ui_core::i18n::{self, Lang, Op};
     let language = i18n::lang();
     for lang in [Lang::En, Lang::Ja] {
@@ -1484,6 +1485,7 @@ pub fn scenario_branch_menu_no_checkout_fallthrough(cx: &mut VisualTestAppContex
 /// remote, then commit — the upstream ref still resolves (so the plan is clean
 /// and never touches the network) but `git push` cannot find the repository.
 pub fn scenario_push_failure_keeps_modal(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let fixture = build_fixture();
     let repo = fixture.path();
     let remote_dir = tempfile::tempdir().expect("remote tempdir");
@@ -1569,7 +1571,13 @@ pub fn scenario_push_failure_keeps_modal(cx: &mut VisualTestAppContext) {
     // copy the UI re-synthesized from the error text.
     cx.read(|cx| {
         let panel = app.read(cx).op_log.as_ref().unwrap().read(cx);
-        let shown: Vec<_> = panel.entries().iter().filter(|e| e.op == "push").collect();
+        // This repository's entries: the panel lists the shared log, which
+        // earlier scenarios' pushes are in too (#516).
+        let shown: Vec<_> = panel
+            .entries()
+            .iter()
+            .filter(|e| e.op == "push" && e.repo == failed.repo)
+            .collect();
         assert_eq!(shown.len(), 1, "the panel shows the receipt once");
         assert!(
             failed.failure_code.is_some(),
@@ -2583,6 +2591,7 @@ pub fn scenario_replay_onto_armed(cx: &mut VisualTestAppContext) {
 /// typical vision and ≥ 15 after Machado-2009 protan / deutan / tritan
 /// simulation — where the default theme falls below 15 for deutans.
 pub fn scenario_color_vision_theme(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["theme", "lang"]);
     use gpui_component::select::SelectItem;
     use kagi::ui::commands::{self, ThemeColorVision};
     use kagi::ui::i18n::{self, Lang};

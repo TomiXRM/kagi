@@ -30,6 +30,7 @@ use crate::settings::{read_setting, write_setting};
 pub mod busy;
 pub use busy::{busy_label, slow_read_advice, slow_read_label, slow_read_skip};
 pub mod op;
+pub mod oplog_panel;
 pub mod plan;
 pub mod pr_threads;
 pub mod pr_viewed;

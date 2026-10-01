@@ -513,10 +513,31 @@ pub fn scenario_load_more_stale_reads(cx: &mut VisualTestAppContext) {
         load_more.label,
         kagi_ui_core::i18n::Msg::LoadMoreCommits.t()
     );
-    let (session_a, selected, builds_before) = kagi.update(cx, |app, cx| {
+    let list = kagi::ui::list_a11y::recorded_list("commit-list").expect("commit ListBox");
+    assert_eq!(list.size, 1, "pagination is not a selectable commit");
+    // Exercise the actual Button, rather than only calling the page method:
+    // a truncated list must keep its action reachable outside the options.
+    let bounds = kagi::ui::e2e::control_bounds(window.window_id(), "commit-load-more")
+        .expect("Load More button was not laid out");
+    cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(cx.read(|cx| kagi.read(cx).view().rows.len()), 5);
+    kagi::ui::list_a11y::clear_recorded_lists();
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    assert!(
+        kagi::ui::list_a11y::recorded_list("commit-load-more").is_none(),
+        "the button disappears when the page reaches the end"
+    );
+    truncate(cx, &kagi);
+    let (session_a, selected, builds_before, gen_before) = kagi.update(cx, |app, cx| {
         app.select(0);
         let selected = app.view().rows[0].id.clone();
         let builds = app.reads.counters().builds;
+        let gen_before = app.ui().load_more_gen;
         app.load_more_commits(cx);
         app.load_more_commits(cx);
         assert_eq!(
@@ -524,7 +545,12 @@ pub fn scenario_load_more_stale_reads(cx: &mut VisualTestAppContext) {
             1,
             "paging blocked the UI thread: the page grew before the call returned",
         );
-        (app.active_session().expect("A"), selected, builds)
+        (
+            app.active_session().expect("A"),
+            selected,
+            builds,
+            gen_before,
+        )
     });
     cx.run_until_parked();
     kagi.update(cx, |app, _| {
@@ -534,7 +560,7 @@ pub fn scenario_load_more_stale_reads(cx: &mut VisualTestAppContext) {
             builds_before + 1,
             "load-more-spam: the superseded first page was applied too",
         );
-        assert_eq!(app.ui().load_more_gen, 2);
+        assert_eq!(app.ui().load_more_gen, gen_before + 2);
         let row = app.ui().selected.expect("selection survived paging");
         assert_eq!(
             app.view().rows[row].id,

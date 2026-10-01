@@ -461,38 +461,37 @@ pub(crate) fn render_rows(
         .collect()
 }
 
-/// The synthetic trailing row of the commit list: a centred, clickable
-/// "load more commits" affordance shown only when the graph may have been
-/// truncated by `commit_limit`. Clicking it grows the walk by
-/// [`COMMIT_PAGE_STEP`](crate::ui::COMMIT_PAGE_STEP) via
-/// [`KagiApp::load_more_commits`]. Height matches a commit row so the
-/// `uniform_list` stays uniform.
+/// Pagination Button beside the commit ListBox, never a virtual Option.
+/// Shown at the current limit; click grows the walk by [`COMMIT_PAGE_STEP`].
 pub(crate) fn render_load_more_row(
     graph_compact: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let rh = row_height(graph_compact);
     let label = crate::ui::i18n::Msg::LoadMoreCommits.t();
-    super::list_a11y::list_action(
+    super::e2e::measure_control(
         "commit-load-more",
-        div()
-            .id("commit-load-more")
-            .h(px(rh))
-            .w_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_pointer()
-            .text_xs()
-            .text_color(rgb(theme().color_branch))
-            .hover(|s| s.bg(rgb(theme().selected)))
-            .on_click(cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-                this.load_more_commits(cx);
-            }))
-            .child(SharedString::from(label)),
-        label,
+        super::list_a11y::list_action(
+            "commit-load-more",
+            div()
+                .id("commit-load-more")
+                .h(px(rh))
+                .flex_shrink_0()
+                .w_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor_pointer()
+                .text_xs()
+                .text_color(rgb(theme().color_branch))
+                .hover(|s| s.bg(rgb(theme().selected)))
+                .on_click(cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+                    this.load_more_commits(cx);
+                }))
+                .child(SharedString::from(label)),
+            label,
+        ),
     )
-    .into_any_element()
 }
 
 // Note: render_detail_panel was extracted to src/ui/inspector.rs (W2-INSPECTOR).

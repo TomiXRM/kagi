@@ -35,6 +35,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - 確認 card・commit / PR / WIP 一覧・サイドバーで、支援技術に伝える名前や状態が画面と食い違う問題を修正しました。linked worktree の amend は対象名を読み上げ、warning / blocker は note / alert、conflict Abort は次の確認で実行されると説明します。名前に含まれる `{}` や制御文字は崩さず安全に表示し、サイドバーの兄弟位置は行更新時に計算します。commit 一覧の「さらに読み込む」はボタンとして操作できます。（#354、#872、#876、#879 review）
+- commit 履歴が打ち切られた際の「さらに読み込む」ボタンを、支援技術の list box 内の選択肢ではなく、その下の独立したボタンとして表示するようにしました。ボタンは打ち切り中だけ表示し、クリックで従来どおり履歴を追加します。（#896 review、Refs #354）
 - worktree の削除と `nonconcurrent` モードの判定で、shell が動いたままの terminal タブを閉じると、その shell を終了済みとして扱っていた問題を修正しました。タブを閉じても shell が hangup を無視して動き続けることがあるため、shell の終了を実際に観測するまでは動作中として扱います。shell の終了待ち自体が失敗した場合も、終了扱いにはしません。(#867 / #869 の review 指摘)
 - Operation Log の「この時点まで戻す」が、正確に戻せない範囲でも成功していた問題を修正しました(#878 の review 指摘)。次の場合は理由を示して拒否します。
   - Operation Log の途中の記録が消えている・読めない場合。

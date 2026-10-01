@@ -51,6 +51,7 @@ impl KagiApp {
     pub(super) fn render_body(
         &mut self,
         row_count: usize,
+        has_more_commits: bool,
         selected: Option<usize>,
         // ADR-0121 B2: only the `has_detail` gate remains here — the Inspector
         // adapter (`workspace::InspectorItem`) re-derives the full detail +
@@ -363,100 +364,131 @@ impl KagiApp {
                 // W12-GCADOPT (§2.10): keep a handle clone for the Scrollbar
                 // overlay; the other is moved into `track_scroll`.
                 let scrollbar_handle = commit_scroll_handle.clone();
-                let list = with_vertical_scrollbar(
-                    "commit-list-scroll",
-                    &scrollbar_handle,
-                    uniform_list(
-                        "commit-list",
-                        prefix_count + row_count,
-                        cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
-                            let rows_len = this.view().rows.len();
-                            let compact = this.graph_compact;
-                            let mut els = Vec::with_capacity(range.len());
-                            if range.start < wip_count {
-                                let mut passing = Vec::new();
-                                for (i, (_, ordinal, label, count, diffstat, click, is_worktree)) in
-                                    wip_params.iter().take(range.end.min(wip_count)).enumerate()
-                                {
-                                    let anchor = wip_anchors[i];
-                                    let color = anchor.map_or(*ordinal, |anchor| anchor.color);
-                                    if range.contains(&i) {
-                                        els.push(this.render_wip_row(
-                                            color,
-                                            label.clone(),
-                                            *count,
-                                            *diffstat,
-                                            click.clone(),
-                                            *is_worktree,
-                                            commit_panel_open,
-                                            anchor.map(|anchor| anchor.lane),
-                                            &passing,
+                let rows = div()
+                    .id("commit-list-roles")
+                    .flex_1()
+                    .min_h(px(0.))
+                    .flex()
+                    .flex_col()
+                    .child(
+                        uniform_list(
+                            "commit-list",
+                            prefix_count + row_count,
+                            cx.processor(
+                                move |this, range: std::ops::Range<usize>, _window, cx| {
+                                    let rows_len = this.view().rows.len();
+                                    let compact = this.graph_compact;
+                                    let mut els = Vec::with_capacity(range.len());
+                                    if range.start < wip_count {
+                                        let mut passing = Vec::new();
+                                        for (
+                                            i,
+                                            (
+                                                _,
+                                                ordinal,
+                                                label,
+                                                count,
+                                                diffstat,
+                                                click,
+                                                is_worktree,
+                                            ),
+                                        ) in wip_params
+                                            .iter()
+                                            .take(range.end.min(wip_count))
+                                            .enumerate()
+                                        {
+                                            let anchor = wip_anchors[i];
+                                            let color =
+                                                anchor.map_or(*ordinal, |anchor| anchor.color);
+                                            if range.contains(&i) {
+                                                els.push(this.render_wip_row(
+                                                    color,
+                                                    label.clone(),
+                                                    *count,
+                                                    *diffstat,
+                                                    click.clone(),
+                                                    *is_worktree,
+                                                    commit_panel_open,
+                                                    anchor.map(|anchor| anchor.lane),
+                                                    &passing,
+                                                    this.badge_col_w,
+                                                    this.graph_col_w,
+                                                    this.ui().graph_scroll_x,
+                                                    (i, prefix_count + rows_len),
+                                                    cx,
+                                                ));
+                                            }
+                                            if let Some(anchor) = anchor {
+                                                let trace = (anchor.lane, anchor.color);
+                                                if !passing.contains(&trace) {
+                                                    passing.push(trace);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if range.start < prefix_count && range.end > wip_count {
+                                        els.extend(this.render_stash_graph_rows(
                                             this.badge_col_w,
                                             this.graph_col_w,
                                             this.ui().graph_scroll_x,
-                                            (i, prefix_count + rows_len),
+                                            &wip_passing_lanes,
+                                            range.start.saturating_sub(wip_count)
+                                                ..range.end.min(prefix_count) - wip_count,
+                                            (wip_count, prefix_count + rows_len),
                                             cx,
                                         ));
                                     }
-                                    if let Some(anchor) = anchor {
-                                        let trace = (anchor.lane, anchor.color);
-                                        if !passing.contains(&trace) {
-                                            passing.push(trace);
-                                        }
-                                    }
-                                }
-                            }
-                            if range.start < prefix_count && range.end > wip_count {
-                                els.extend(this.render_stash_graph_rows(
-                                    this.badge_col_w,
-                                    this.graph_col_w,
-                                    this.ui().graph_scroll_x,
-                                    &wip_passing_lanes,
-                                    range.start.saturating_sub(wip_count)
-                                        ..range.end.min(prefix_count) - wip_count,
-                                    (wip_count, prefix_count + rows_len),
-                                    cx,
-                                ));
-                            }
-                            let commit_range =
-                                range.start.saturating_sub(prefix_count).min(rows_len)
-                                    ..range.end.saturating_sub(prefix_count).min(rows_len);
-                            els.extend(
-                                render_rows(
-                                    &this.view().rows,
-                                    &this.avatars.images,
-                                    commit_range,
-                                    selected,
-                                    this.badge_col_w,
-                                    this.graph_col_w,
-                                    compact,
-                                    this.ui().graph_scroll_x,
-                                    &this.view().stash_graph_lanes,
-                                    this.view()
-                                        .branch_solo
-                                        .as_ref()
-                                        .map(|solo| &solo.visible_commits),
-                                    (prefix_count, prefix_count + rows_len),
-                                    cx,
-                                )
-                                .into_iter()
-                                .map(gpui::IntoElement::into_any_element),
-                            );
-                            if range.contains(&(prefix_count + rows_len)) {
-                                els.push(render_load_more_row(compact, cx));
-                            }
-                            els
-                        }),
-                    )
-                    // T028: wire scroll handle so jump_to_branch can scroll the list.
-                    .track_scroll(&commit_scroll_handle)
-                    .flex_1()
-                    .min_h(px(0.)),
+                                    let commit_range =
+                                        range.start.saturating_sub(prefix_count).min(rows_len)
+                                            ..range.end.saturating_sub(prefix_count).min(rows_len);
+                                    els.extend(
+                                        render_rows(
+                                            &this.view().rows,
+                                            &this.avatars.images,
+                                            commit_range,
+                                            selected,
+                                            this.badge_col_w,
+                                            this.graph_col_w,
+                                            compact,
+                                            this.ui().graph_scroll_x,
+                                            &this.view().stash_graph_lanes,
+                                            this.view()
+                                                .branch_solo
+                                                .as_ref()
+                                                .map(|solo| &solo.visible_commits),
+                                            (prefix_count, prefix_count + rows_len),
+                                            cx,
+                                        )
+                                        .into_iter()
+                                        .map(gpui::IntoElement::into_any_element),
+                                    );
+                                    els
+                                },
+                            ),
+                        )
+                        // T028: wire scroll handle so jump_to_branch can scroll the list.
+                        .track_scroll(&commit_scroll_handle)
+                        .flex_1()
+                        .min_h(px(0.)),
+                    );
+                let list = with_vertical_scrollbar(
+                    "commit-list-scroll",
+                    &scrollbar_handle,
+                    super::list_a11y::list_box("commit-list", rows, Msg::A11yCommitList.t()),
                     true,
-                );
-                // #354: one ListBox around the virtualized rows.
-                super::list_a11y::list_box("commit-list", list, Msg::A11yCommitList.t())
-                    .child(e2e::measure_inside("commit-list-viewport"))
+                )
+                .child(e2e::measure_inside("commit-list-viewport"));
+                // The pagination Button is a sibling, never a descendant of
+                // the ListBox, whose virtual children are all Options.
+                div()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .flex()
+                    .flex_col()
+                    .child(list)
+                    .when(has_more_commits, |column| {
+                        column.child(render_load_more_row(self.graph_compact, cx))
+                    })
             });
 
         // ADR-0120: resolve what each slot shows. The precedence lives in

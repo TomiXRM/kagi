@@ -447,7 +447,14 @@ The current suite covers:
   drop1 / drop2 back (`op-revert`). Backend: `crates/kagi-git/tests/
   oplog_restore_test.rs`. Tier B: in a scratch repository, create a few
   branches, select an earlier row, read the card (EN/JA), restore, then revert
-  the restore from its row.
+  the restore from its row. #334 slice 2c / ADR-0214 §6: a recorded commit on
+  main is added first, so the card also draws the graph after
+  (`restore-preview`): main's moved label on its target commit, 1 commit off
+  every branch (`restore-preview-removed-1`, equal to the drop in `git
+  rev-list --count --branches` after confirming); the revert card's target is
+  no longer loaded, so it paints `restore-preview-unavailable`. Domain rules:
+  `kagi-domain` `restore_preview`. Tier B: read the graph after on the card
+  (EN/JA) before confirming.
 - terminal auto-lock compare-and-unlock (`KAGI_GUI_E2E_ONLY=terminal_auto_lock_race`,
   `tests/recovery/worktree_lock_reason.rs`): #836 / ADR-0212. (b) Through the
   Backend race seam (`execute_auto_unlock_worktree_racing`,

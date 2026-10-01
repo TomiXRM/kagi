@@ -79,6 +79,15 @@ pub enum WorktreeNote {
         path: String,
         reason: Option<String>,
     },
+    /// blocker (#867, recorded remove planned from the GUI) — a terminal
+    /// shell Kagi started in this worktree is still running. Kagi never ends
+    /// the user's processes; `exit` in that terminal first.
+    RemoveLiveShell { path: String },
+    /// warning (#867) — `count` processes are still in the session of a shell
+    /// Kagi started in this worktree that has exited (`nohup`, `disown`, a
+    /// bash `&` job). They may be using the directory. Kagi does not stop
+    /// them, and processes started outside Kagi are not counted.
+    RemoveLeftoverProcesses { path: String, count: usize },
     /// warning (`plan_remove_worktree`) — describes the removal and whether the
     /// branch is kept or also deleted.
     RemovesWorktree {
@@ -257,6 +266,13 @@ impl WorktreeNote {
                     path, reason_display
                 )
             }
+            WorktreeNote::RemoveLiveShell { path } => {
+                format!(crate::advice_template_en!(WorktreeRemoveLiveShell), path)
+            }
+            WorktreeNote::RemoveLeftoverProcesses { path, count } => format!(
+                crate::advice_template_en!(WorktreeRemoveLeftoverProcesses),
+                count, path
+            ),
             WorktreeNote::RemovesWorktree {
                 path,
                 branch,

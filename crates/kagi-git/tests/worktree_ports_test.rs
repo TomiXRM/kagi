@@ -7,7 +7,10 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use kagi_domain::worktree_ports::PortRange;
-use kagi_git::worktree_ports::{assign_block, terminal_env, TerminalEnv, WorktreePortEnv};
+use kagi_domain::worktree_run_mode::RunMode;
+use kagi_git::worktree_ports::{
+    assign_block, terminal_env, Assignments, TerminalEnv, WorktreePortEnv,
+};
 
 // `KAGI_LOG_DIR` is process-global; serialize the env-touching tests.
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -206,7 +209,7 @@ fn terminal_environment_uses_registry_identity_and_remote_default_branch() {
         (&main_path, "main", "3000"),
         (&linked_path, "registered-name", "3010"),
     ] {
-        let environment = ports(terminal_env(path, RANGE, 10).unwrap());
+        let environment = ports(terminal_env(path, RANGE, 10, RunMode::Concurrent).unwrap());
         let vars: std::collections::BTreeMap<_, _> = environment.vars.into_iter().collect();
         assert_eq!(std::path::Path::new(&vars["KAGI_WORKTREE_PATH"]), path);
         assert_eq!(vars["KAGI_WORKTREE_NAME"], name);
@@ -215,7 +218,7 @@ fn terminal_environment_uses_registry_identity_and_remote_default_branch() {
         assert_eq!(vars["KAGI_PORT"], port);
     }
     assert_eq!(
-        ports(terminal_env(&linked_path, RANGE, 10).unwrap()).port,
+        ports(terminal_env(&linked_path, RANGE, 10, RunMode::Concurrent).unwrap()).port,
         3010
     );
 }
@@ -237,10 +240,10 @@ fn an_exhausted_range_still_starts_the_terminal_without_ports() {
     };
 
     assert_eq!(
-        ports(terminal_env(&main_path, one_block, 10).unwrap()).port,
+        ports(terminal_env(&main_path, one_block, 10, RunMode::Concurrent).unwrap()).port,
         3000
     );
-    let exhausted = terminal_env(&linked_path, one_block, 10)
+    let exhausted = terminal_env(&linked_path, one_block, 10, RunMode::Concurrent)
         .expect("an exhausted range is not a failure to start a terminal");
     assert_eq!(
         exhausted,
@@ -252,8 +255,50 @@ fn an_exhausted_range_still_starts_the_terminal_without_ports() {
     );
     // The live main worktree keeps its block; nothing was reclaimed from it.
     assert_eq!(
-        ports(terminal_env(&main_path, one_block, 10).unwrap()).port,
+        ports(terminal_env(&main_path, one_block, 10, RunMode::Concurrent).unwrap()).port,
         3000
+    );
+}
+
+/// #869 / ADR-0213: in `nonconcurrent` mode a linked worktree's terminal gets
+/// the main worktree's block (a fixed callback URL keeps working), with its
+/// own identity vars. The store is only read for it: back in `concurrent`
+/// mode the linked worktree gets its own block again.
+#[test]
+fn nonconcurrent_hands_every_worktree_the_main_block() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = tempfile::tempdir().unwrap();
+    let (main_path, linked_path) = main_and_linked(fixture.path());
+    assert_eq!(
+        ports(terminal_env(&main_path, RANGE, 10, RunMode::Concurrent).unwrap()).port,
+        3000
+    );
+
+    let shared = ports(terminal_env(&linked_path, RANGE, 10, RunMode::Nonconcurrent).unwrap());
+    let vars: std::collections::BTreeMap<_, _> = shared.vars.into_iter().collect();
+    assert_eq!(vars["KAGI_PORT"], "3000", "the main worktree's block");
+    assert_eq!(vars["KAGI_WORKTREE_NAME"], "registered-name");
+    assert_eq!(
+        std::path::Path::new(&vars["KAGI_WORKTREE_PATH"]),
+        linked_path
+    );
+    assert_eq!(
+        Assignments::read().port(&linked_path),
+        None,
+        "the linked worktree's own entry is not written"
+    );
+
+    assert_eq!(
+        ports(terminal_env(&linked_path, RANGE, 10, RunMode::Concurrent).unwrap()).port,
+        3010,
+        "concurrent again: its own block"
+    );
+    assert_eq!(
+        ports(terminal_env(&linked_path, RANGE, 10, RunMode::Nonconcurrent).unwrap()).port,
+        3000,
+        "an own block on file does not override the shared one"
     );
 }
 

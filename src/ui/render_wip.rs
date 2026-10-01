@@ -20,6 +20,8 @@ impl KagiApp {
         graph_scroll_x: f32,
         wip_pass_lanes: &[(usize, usize)],
         range: std::ops::Range<usize>,
+        // #354: rows above the stashes in the commit list, and its size.
+        (a11y_offset, a11y_size): (usize, usize),
         cx: &mut Context<Self>,
     ) -> Vec<gpui::AnyElement> {
         let visible_lanes = graph_view::lanes_for_width(graph_col_w);
@@ -42,9 +44,10 @@ impl KagiApp {
         self.view()
             .stash_graph_rows
             .iter()
+            .enumerate()
             .skip(range.start)
             .take(range.len())
-            .map(|sr| {
+            .map(|(position, sr)| {
                 let index = sr.index;
                 let label = sr.label.clone();
                 let msg_for_menu = sr.label.to_string();
@@ -96,122 +99,132 @@ impl KagiApp {
                     cx.notify();
                 });
                 let (cb, cbd, ct) = theme::badge_style(stash_color);
-                div()
-                    .id(("stash-graph-row", index))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .w_full()
-                    .px_3()
-                    .h(px(rh))
-                    .on_click(peek)
-                    .on_mouse_down(gpui::MouseButton::Right, menu)
-                    .hover(|s| s.bg(rgb(theme().selected)))
-                    // Badge column: a yellow stash chip with an inbox icon.
-                    .child(
-                        div()
-                            .w(theme::scaled_px(badge_col_w))
-                            .flex_shrink_0()
-                            .overflow_hidden()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .justify_start()
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap_1()
-                                    .px_1()
-                                    .rounded_sm()
-                                    .bg(gpui::rgba(cb))
-                                    .border_1()
-                                    .border_color(gpui::rgba(cbd))
-                                    .text_color(rgb(ct))
-                                    .text_sm()
-                                    .child(
-                                        gpui::svg()
-                                            .path("icons/inbox.svg")
-                                            .w(theme::scaled_px(12.))
-                                            .h(theme::scaled_px(12.))
-                                            .text_color(rgb(ct)),
-                                    )
-                                    .child(SharedString::from("stash")),
-                            )
-                            // Connector line into the BRANCH/TAG pane toward the
-                            // stash node (only when it connects to a base).
-                            .when(sr.connected, |el| {
-                                el.child(div().flex_1().h_full().flex().items_center().child(
-                                    div().w_full().h(theme::scaled_px(1.)).bg(rgb(stash_color)),
-                                ))
-                            }),
-                    )
-                    // Inner divider spacer (badge|graph), bridged for the connector.
-                    .child(
-                        div()
-                            .relative()
-                            .w(theme::scaled_px(INNER_DIV_W))
-                            .h_full()
-                            .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(div().w(px(1.)).h_full().bg(rgb(theme().surface)))
-                            .when(sr.connected, |el| {
-                                el.child(div().absolute().inset_0().flex().items_center().child(
-                                    div().w_full().h(theme::scaled_px(1.)).bg(rgb(stash_color)),
-                                ))
-                            }),
-                    )
-                    // Graph column: the stash node + line down to its base.
-                    .child(
-                        div()
-                            .w(theme::scaled_px(graph_col_w))
-                            .h_full()
-                            .flex_shrink_0()
-                            .overflow_hidden()
-                            .when(visible_lanes > 0, |el| {
-                                el.child(
-                                    graph_view::graph_canvas(
-                                        sr.lane,
-                                        // Stash nodes paint in the stash colour;
-                                        // node_color is unused for them.
-                                        sr.lane,
-                                        edges,
-                                        graph_view::GraphNode::Commit {
-                                            is_head: false,
-                                            is_merge: false,
-                                        },
-                                        true,
-                                        graph_scroll_x,
-                                        graph_lane_pad_l(),
-                                        stash_lanes.clone(),
-                                    )
-                                    .size_full(),
+                super::list_a11y::list_option(
+                    "commit-list",
+                    div().id(("stash-graph-row", index)),
+                    a11y_offset + position,
+                    a11y_size,
+                    super::list_a11y::stash_row_label(&label),
+                    false,
+                )
+                .flex()
+                .flex_row()
+                .items_center()
+                .w_full()
+                .px_3()
+                .h(px(rh))
+                .on_click(peek)
+                .on_mouse_down(gpui::MouseButton::Right, menu)
+                .hover(|s| s.bg(rgb(theme().selected)))
+                // Badge column: a yellow stash chip with an inbox icon.
+                .child(
+                    div()
+                        .w(theme::scaled_px(badge_col_w))
+                        .flex_shrink_0()
+                        .overflow_hidden()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_start()
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_1()
+                                .px_1()
+                                .rounded_sm()
+                                .bg(gpui::rgba(cb))
+                                .border_1()
+                                .border_color(gpui::rgba(cbd))
+                                .text_color(rgb(ct))
+                                .text_sm()
+                                .child(
+                                    gpui::svg()
+                                        .path("icons/inbox.svg")
+                                        .w(theme::scaled_px(12.))
+                                        .h(theme::scaled_px(12.))
+                                        .text_color(rgb(ct)),
                                 )
-                            }),
-                    )
-                    // Inner divider spacer (graph|message).
-                    .child(
-                        div()
-                            .w(theme::scaled_px(INNER_DIV_W))
-                            .flex_shrink_0()
-                            .flex()
-                            .justify_center()
-                            .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))),
-                    )
-                    // Message column: the stash label, in the stash colour.
-                    .child(
-                        div()
-                            .flex_1()
-                            .overflow_hidden()
-                            .truncate()
-                            .text_color(rgb(stash_color))
-                            .child(label),
-                    )
-                    .into_any()
+                                .child(SharedString::from("stash")),
+                        )
+                        // Connector line into the BRANCH/TAG pane toward the
+                        // stash node (only when it connects to a base).
+                        .when(sr.connected, |el| {
+                            el.child(
+                                div().flex_1().h_full().flex().items_center().child(
+                                    div().w_full().h(theme::scaled_px(1.)).bg(rgb(stash_color)),
+                                ),
+                            )
+                        }),
+                )
+                // Inner divider spacer (badge|graph), bridged for the connector.
+                .child(
+                    div()
+                        .relative()
+                        .w(theme::scaled_px(INNER_DIV_W))
+                        .h_full()
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(div().w(px(1.)).h_full().bg(rgb(theme().surface)))
+                        .when(sr.connected, |el| {
+                            el.child(
+                                div().absolute().inset_0().flex().items_center().child(
+                                    div().w_full().h(theme::scaled_px(1.)).bg(rgb(stash_color)),
+                                ),
+                            )
+                        }),
+                )
+                // Graph column: the stash node + line down to its base.
+                .child(
+                    div()
+                        .w(theme::scaled_px(graph_col_w))
+                        .h_full()
+                        .flex_shrink_0()
+                        .overflow_hidden()
+                        .when(visible_lanes > 0, |el| {
+                            el.child(
+                                graph_view::graph_canvas(
+                                    sr.lane,
+                                    // Stash nodes paint in the stash colour;
+                                    // node_color is unused for them.
+                                    sr.lane,
+                                    edges,
+                                    graph_view::GraphNode::Commit {
+                                        is_head: false,
+                                        is_merge: false,
+                                    },
+                                    true,
+                                    graph_scroll_x,
+                                    graph_lane_pad_l(),
+                                    stash_lanes.clone(),
+                                )
+                                .size_full(),
+                            )
+                        }),
+                )
+                // Inner divider spacer (graph|message).
+                .child(
+                    div()
+                        .w(theme::scaled_px(INNER_DIV_W))
+                        .flex_shrink_0()
+                        .flex()
+                        .justify_center()
+                        .child(div().w(px(1.)).h_full().bg(rgb(theme().surface))),
+                )
+                // Message column: the stash label, in the stash colour.
+                .child(
+                    div()
+                        .flex_1()
+                        .overflow_hidden()
+                        .truncate()
+                        .text_color(rgb(stash_color))
+                        .child(label),
+                )
+                .into_any()
             })
             .collect()
     }
@@ -243,6 +256,8 @@ impl KagiApp {
         badge_col_w: f32,
         graph_col_w: f32,
         graph_scroll_x: f32,
+        // #354: absolute position in the commit list and its size.
+        (a11y_position, a11y_size): (usize, usize),
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let color = theme().lane_color(color_idx);
@@ -275,24 +290,30 @@ impl KagiApp {
         let glyph = if is_worktree { "🌲" } else { "✏️" };
         let chip_label = SharedString::from(format!("{glyph} {label}"));
 
-        let mut row = div()
-            .id(SharedString::from(format!("wip-row-{label}")))
-            .flex()
-            .flex_row()
-            .items_center()
-            .w_full()
-            .relative()
-            .px_3()
-            .child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .top_0()
-                    .bottom_0()
-                    .w(theme::scaled_px(3.))
-                    .bg(color),
-            )
-            .h(px(row_height(self.graph_compact)));
+        let mut row = super::list_a11y::list_option(
+            "commit-list",
+            div().id(SharedString::from(format!("wip-row-{label}"))),
+            a11y_position,
+            a11y_size,
+            super::list_a11y::wip_row_label(&label, &note),
+            false,
+        )
+        .flex()
+        .flex_row()
+        .items_center()
+        .w_full()
+        .relative()
+        .px_3()
+        .child(
+            div()
+                .absolute()
+                .left_0()
+                .top_0()
+                .bottom_0()
+                .w(theme::scaled_px(3.))
+                .bg(color),
+        )
+        .h(px(row_height(self.graph_compact)));
         row = if is_commit_panel && commit_panel_open {
             row.bg(rgb(theme().selected))
         } else {

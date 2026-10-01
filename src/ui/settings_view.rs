@@ -89,7 +89,7 @@ pub fn theme_options() -> Vec<ThemeOption> {
         .iter()
         .map(|t| ThemeOption {
             slug: t.slug,
-            name: t.name,
+            name: t.display_name(),
         })
         .collect()
 }
@@ -301,7 +301,7 @@ fn appearance_section(
             let cur_name = theme::THEMES
                 .iter()
                 .find(|t| t.slug == cur)
-                .map(|t| t.name)
+                .map(|t| t.display_name())
                 .unwrap_or(cur);
             div()
                 .text_sm()

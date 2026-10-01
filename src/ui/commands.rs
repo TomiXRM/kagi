@@ -1041,7 +1041,7 @@ fn theme_submenu() -> Menu {
         } else {
             "   "
         };
-        let label = SharedString::from(format!("{marker}{}", t.name));
+        let label = SharedString::from(format!("{marker}{}", t.display_name()));
         // Each theme has a distinct action so dispatch is 1:1.
         let item = match *id {
             "theme.catppuccin" => MenuItem::action(label, ThemeCatppuccin),

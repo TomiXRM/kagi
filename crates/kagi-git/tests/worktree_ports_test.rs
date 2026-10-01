@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use kagi_domain::worktree_ports::PortRange;
-use kagi_git::worktree_ports::assign_block;
+use kagi_git::worktree_ports::{assign_block, terminal_env, TerminalEnv, WorktreePortEnv};
 
 // `KAGI_LOG_DIR` is process-global; serialize the env-touching tests.
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -153,13 +153,11 @@ fn removed_worktree_block_is_reclaimed_on_exhaustion() {
     std::env::remove_var("KAGI_LOG_DIR");
 }
 
-#[test]
-fn terminal_environment_uses_registry_identity_and_remote_default_branch() {
-    if !crate::test_support::run_isolated() {
-        return;
-    }
-    let fixture = tempfile::tempdir().unwrap();
-    let main_path = fixture.path().join("repository");
+/// A repository on `trunk` (also `origin/HEAD`) plus one linked worktree
+/// registered as `registered-name` in another directory. Returns the
+/// canonical (main, linked) working-tree paths.
+fn main_and_linked(fixture: &std::path::Path) -> (PathBuf, PathBuf) {
+    let main_path = fixture.join("repository");
     let repo = git2::Repository::init_opts(
         &main_path,
         git2::RepositoryInitOptions::new().initial_head("trunk"),
@@ -180,17 +178,35 @@ fn terminal_environment_uses_registry_identity_and_remote_default_branch() {
         "fixture",
     )
     .unwrap();
-    let linked_path = fixture.path().join("different-directory");
+    let linked_path = fixture.join("different-directory");
     repo.worktree("registered-name", &linked_path, None)
         .unwrap();
-    let main_path = main_path.canonicalize().unwrap();
-    let linked_path = linked_path.canonicalize().unwrap();
+    (
+        main_path.canonicalize().unwrap(),
+        linked_path.canonicalize().unwrap(),
+    )
+}
+
+fn ports(environment: TerminalEnv) -> WorktreePortEnv {
+    match environment {
+        TerminalEnv::Ports(ports) => ports,
+        other => panic!("expected a port block, got {other:?}"),
+    }
+}
+
+#[test]
+fn terminal_environment_uses_registry_identity_and_remote_default_branch() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = tempfile::tempdir().unwrap();
+    let (main_path, linked_path) = main_and_linked(fixture.path());
 
     for (path, name, port) in [
         (&main_path, "main", "3000"),
         (&linked_path, "registered-name", "3010"),
     ] {
-        let environment = kagi_git::worktree_ports::terminal_env(path, RANGE, 10).unwrap();
+        let environment = ports(terminal_env(path, RANGE, 10).unwrap());
         let vars: std::collections::BTreeMap<_, _> = environment.vars.into_iter().collect();
         assert_eq!(std::path::Path::new(&vars["KAGI_WORKTREE_PATH"]), path);
         assert_eq!(vars["KAGI_WORKTREE_NAME"], name);
@@ -199,10 +215,45 @@ fn terminal_environment_uses_registry_identity_and_remote_default_branch() {
         assert_eq!(vars["KAGI_PORT"], port);
     }
     assert_eq!(
-        kagi_git::worktree_ports::terminal_env(&linked_path, RANGE, 10)
-            .unwrap()
-            .port,
+        ports(terminal_env(&linked_path, RANGE, 10).unwrap()).port,
         3010
+    );
+}
+
+/// #852: a range with no free block left does not stop the terminal. The
+/// first worktree takes the only block; the second, still live, gets no port
+/// — and the answer says which worktree, which range and which block size, so
+/// the UI can tell the user what to widen.
+#[test]
+fn an_exhausted_range_still_starts_the_terminal_without_ports() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let fixture = tempfile::tempdir().unwrap();
+    let (main_path, linked_path) = main_and_linked(fixture.path());
+    let one_block = PortRange {
+        start: 3000,
+        end: 3009,
+    };
+
+    assert_eq!(
+        ports(terminal_env(&main_path, one_block, 10).unwrap()).port,
+        3000
+    );
+    let exhausted = terminal_env(&linked_path, one_block, 10)
+        .expect("an exhausted range is not a failure to start a terminal");
+    assert_eq!(
+        exhausted,
+        TerminalEnv::Exhausted {
+            worktree: linked_path.clone(),
+            range: one_block,
+            per: 10,
+        }
+    );
+    // The live main worktree keeps its block; nothing was reclaimed from it.
+    assert_eq!(
+        ports(terminal_env(&main_path, one_block, 10).unwrap()).port,
+        3000
     );
 }
 

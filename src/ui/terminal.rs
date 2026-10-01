@@ -314,6 +314,18 @@ pub struct TerminalBuild {
     pub master: Arc<Mutex<Box<dyn portable_pty::MasterPty + Send>>>,
     pub paste_writer: SharedWriter,
     pub child: Box<dyn portable_pty::Child + Send + Sync>,
+    /// #852: the shell started without `KAGI_*` because the port range had no
+    /// free block — the caller tells the user why.
+    pub ports_exhausted: Option<PortsExhausted>,
+}
+
+/// The worktree, range and block size a terminal found no free port block
+/// for (#852).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortsExhausted {
+    pub worktree: std::path::PathBuf,
+    pub range: (u16, u16),
+    pub per: u16,
 }
 
 /// Attempt to open a PTY, spawn `shell`, and create an `Entity<TerminalView>`.
@@ -337,6 +349,29 @@ pub fn build_terminal_view(
         settings.worktree_ports_per_worktree(),
     )
     .map_err(|error| format!("terminal environment: {error}"))?;
+    // #852: no free block is no reason to withhold the shell itself.
+    let (vars, ports_exhausted) = match environment {
+        kagi_git::worktree_ports::TerminalEnv::Ports(ports) => (ports.vars, None),
+        kagi_git::worktree_ports::TerminalEnv::Exhausted {
+            worktree,
+            range,
+            per,
+        } => {
+            klog!(
+                "terminal: port block exhausted {} (range {}-{}, per {})",
+                worktree.display(),
+                range.start,
+                range.end,
+                per
+            );
+            let exhausted = PortsExhausted {
+                worktree,
+                range: (range.start, range.end),
+                per,
+            };
+            (Vec::new(), Some(exhausted))
+        }
+    };
 
     // Open the PTY pair.
     let pty_system = NativePtySystem::default();
@@ -364,7 +399,7 @@ pub fn build_terminal_view(
     cmd.cwd(repo_path);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
-    for (key, value) in environment.vars {
+    for (key, value) in vars {
         cmd.env(key, value);
     }
 
@@ -441,6 +476,7 @@ pub fn build_terminal_view(
         master: master_arc,
         paste_writer,
         child,
+        ports_exhausted,
     })
 }
 
@@ -528,12 +564,15 @@ pub fn resolve_shell() -> String {
 ///
 /// The `record_failure` callback is invoked with the error message when the
 /// shell fails to start; the caller should call `record_op` on `KagiApp`.
+/// `ports_exhausted` is invoked when the shell did start, but without `KAGI_*`
+/// because the port range had no free block (#852).
 pub fn ensure_terminal(
     session: &mut KagiTerminalSession,
     owner: crate::app::SessionId,
     window: &mut Window,
     cx: &mut Context<crate::ui::KagiApp>,
     record_failure: impl FnOnce(String),
+    ports_exhausted: impl FnOnce(PortsExhausted),
 ) -> bool {
     if session.view.is_some() {
         // Already running — just re-focus.
@@ -553,6 +592,7 @@ pub fn ensure_terminal(
             master: _master_arc,
             paste_writer,
             child,
+            ports_exhausted: exhausted,
         }) => {
             // Focus the new terminal.
             let fh = view_entity.read(cx).focus_handle().clone();
@@ -585,6 +625,9 @@ pub fn ensure_terminal(
             })
             .detach();
             klog!("terminal: started shell={}", shell);
+            if let Some(exhausted) = exhausted {
+                ports_exhausted(exhausted);
+            }
             true
         }
         Err(e) => {

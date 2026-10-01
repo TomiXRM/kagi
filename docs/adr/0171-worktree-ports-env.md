@@ -114,8 +114,18 @@ the Git layer. `src/ui/terminal.rs` supplies the typed port settings and applies
 the returned variables to `CommandBuilder` before spawning; the cwd remains
 the owning terminal session's repository path. All five values override inherited
 `KAGI_*` values. A retained shell keeps its environment; a restarted shell recalls
-the persisted block. Metadata failures or range exhaustion use the existing
-terminal-start failure/oplog path rather than spawning with a stale inherited port.
+the persisted block. Metadata failures use the existing terminal-start
+failure/oplog path rather than spawning with a stale inherited port.
+
+**Range exhaustion still starts the shell (#852).** `terminal_env` answers
+`TerminalEnv::Exhausted { worktree, range, per }` instead of an error; the
+terminal then starts with no `KAGI_*` var at all (never an out-of-range or
+inherited port), logs `terminal: port block exhausted <path> (range
+<start>-<end>, per <n>)`, and puts the reason in the footer and a toast (EN/JA),
+naming `worktree.port_range` as the setting that widens the range. It is not an
+operation, so nothing is recorded in the oplog. Refusing the whole shell over a
+missing convenience variable left the user with no terminal at all. The default
+range is unchanged.
 
 ## Alternatives considered
 
@@ -126,12 +136,24 @@ terminal-start failure/oplog path rather than spawning with a stale inherited po
 
 ## Consequences
 
-- Cross-repository collision (two repos both drawing from `3000-3099`) is **not**
-  solved here — the store is global and first-come; two repos can hand out the
-  same numbers. Documented as a known limitation (issue §5).
-- Changing `ports_per_worktree` between runs can make a new block overlap a
-  pre-existing stored block (stored data records only the first port). Acceptable
-  and rare; the fix is to clear `worktree_ports.json`.
+- **Repositories do not collide with each other.** There is one store
+  (`$KAGI_LOG_DIR` or `~/.kagi/worktree_ports.json`) keyed by the canonical path of
+  every worktree of every repository, and one range from the global settings;
+  `allocate_block` treats every other stored entry as occupied. Two repositories
+  therefore never receive the same block. (An earlier revision of this section
+  claimed they could; it did not match the code — corrected by #852.)
+- **The range is shared machine-wide, so it can run out.** The default
+  `3000-3099` with 10 per worktree is 10 blocks in total. Main worktrees take a
+  block too (`terminal_env` assigns for name `main`), and the bottom panel opens
+  on the Terminal tab, so every repository or worktree that has shown a
+  terminal holds one. Blocks are reclaimed only from worktrees whose directory
+  is gone. Exhaustion no longer stops the terminal (see Wiring); widening
+  `worktree.port_range` is the remedy.
+- **Known limitations.** Changing `ports_per_worktree` between runs can make a
+  new block overlap a pre-existing stored block (stored data records only the
+  first port); the fix is to clear `worktree_ports.json`. Ports are numbers
+  only — nothing is bound, so a process outside Kagi can still hold a handed-out
+  port and Kagi does not detect it.
 
 ## Follow-ups (out of scope — tracked under #342 / parent #359)
 

@@ -18,9 +18,11 @@
 mod cwd;
 mod group;
 mod job;
+mod session;
 pub mod supervisor;
 pub use cwd::{cwd_of_pid, CwdProbe};
 pub use group::group_alive;
+pub use session::session_members;
 
 use group::{group_settled, kill_group};
 use std::process::Stdio;

@@ -472,24 +472,27 @@ pub(crate) fn render_load_more_row(
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let rh = row_height(graph_compact);
-    div()
-        .id("commit-load-more")
-        .h(px(rh))
-        .w_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor_pointer()
-        .text_xs()
-        .text_color(rgb(theme().color_branch))
-        .hover(|s| s.bg(rgb(theme().selected)))
-        .on_click(cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-            this.load_more_commits(cx);
-        }))
-        .child(SharedString::from(
-            crate::ui::i18n::Msg::LoadMoreCommits.t(),
-        ))
-        .into_any_element()
+    let label = crate::ui::i18n::Msg::LoadMoreCommits.t();
+    super::list_a11y::list_action(
+        "commit-load-more",
+        div()
+            .id("commit-load-more")
+            .h(px(rh))
+            .w_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .text_xs()
+            .text_color(rgb(theme().color_branch))
+            .hover(|s| s.bg(rgb(theme().selected)))
+            .on_click(cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
+                this.load_more_commits(cx);
+            }))
+            .child(SharedString::from(label)),
+        label,
+    )
+    .into_any_element()
 }
 
 // Note: render_detail_panel was extracted to src/ui/inspector.rs (W2-INSPECTOR).

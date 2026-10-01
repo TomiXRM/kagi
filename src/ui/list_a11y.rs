@@ -21,6 +21,14 @@ pub(crate) fn list_box(id: &'static str, el: Stateful<Div>, label: &str) -> Stat
         .aria_label(SharedString::from(label.to_string()))
 }
 
+/// A clickable trailing list row is a named button, not a list option.
+/// GPUI's `on_click` supplies the accessibility Click action as well.
+pub(crate) fn list_action(id: &'static str, el: Stateful<Div>, label: &str) -> Stateful<Div> {
+    record_list(id, Role::Button, label);
+    el.role(Role::Button)
+        .aria_label(SharedString::from(label.to_string()))
+}
+
 /// Mark `el` as row `position` (0-based) of `size` in list `list`.
 pub(crate) fn list_option(
     list: &'static str,
@@ -67,6 +75,22 @@ pub(crate) fn tree_item(
     }
 }
 
+/// Substitute only placeholders in the original translation. Values can
+/// themselves contain `{}` (commit subjects and PR titles are user-provided).
+fn fill_template(msg: Msg, args: &[&str]) -> String {
+    let template = msg.t();
+    debug_assert_eq!(template.matches("{}").count(), args.len());
+    let mut parts = template.split("{}");
+    let mut label =
+        String::with_capacity(template.len() + args.iter().map(|arg| arg.len()).sum::<usize>());
+    label.push_str(parts.next().unwrap_or_default());
+    for (arg, part) in args.iter().zip(parts) {
+        label.push_str(arg);
+        label.push_str(part);
+    }
+    label
+}
+
 /// One sentence naming a commit row: subject, author, date, short SHA, and
 /// the refs that point at it.
 pub fn commit_row_label(
@@ -76,14 +100,9 @@ pub fn commit_row_label(
     short_sha: &str,
     refs: &[&str],
 ) -> String {
-    let mut s = Msg::A11yCommitRow
-        .t()
-        .replacen("{}", summary, 1)
-        .replacen("{}", author, 1)
-        .replacen("{}", date, 1)
-        .replacen("{}", short_sha, 1);
+    let mut s = fill_template(Msg::A11yCommitRow, &[summary, author, date, short_sha]);
     if !refs.is_empty() {
-        s.push_str(&Msg::A11yCommitRefs.t().replacen("{}", &refs.join(", "), 1));
+        s.push_str(&fill_template(Msg::A11yCommitRefs, &[&refs.join(", ")]));
     }
     s
 }
@@ -96,10 +115,7 @@ pub(crate) fn commit_label(row: &super::commit_list::CommitRow) -> String {
 
 /// The WIP row of a working tree.
 pub fn wip_row_label(name: &str, note: &str) -> String {
-    Msg::A11yWipRow
-        .t()
-        .replacen("{}", name, 1)
-        .replacen("{}", note, 1)
+    fill_template(Msg::A11yWipRow, &[name, note])
 }
 
 /// A stash row.
@@ -219,6 +235,16 @@ mod tests {
         let bare = commit_row_label("Fix bug", "Alice", "2 days ago", "abc1234", &[]);
         assert!(!bare.contains("main"));
         assert!(with_refs.starts_with(&bare), "refs are a suffix");
+    }
+
+    #[test]
+    fn commit_and_wip_labels_preserve_literal_braces_in_user_text() {
+        let label = commit_row_label("Fix {} in subject", "Alice", "today", "abc1234", &[]);
+        assert!(label.contains("Fix {} in subject"), "{label}");
+        assert!(label.contains("Alice"), "{label}");
+        let wip = wip_row_label("tree {}", "3 changes");
+        assert!(wip.contains("tree {}"), "{wip}");
+        assert!(wip.contains("3 changes"), "{wip}");
     }
 
     #[test]

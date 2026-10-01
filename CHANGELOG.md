@@ -33,6 +33,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- 確認 card・commit / PR / WIP 一覧・サイドバーで、支援技術に伝える名前や状態が画面と食い違う問題を修正しました。linked worktree の amend は対象名を読み上げ、warning / blocker は note / alert、conflict Abort は次の確認で実行されると説明します。名前に含まれる `{}` や制御文字は崩さず安全に表示し、サイドバーの兄弟位置は行更新時に計算します。commit 一覧の「さらに読み込む」はボタンとして操作できます。（#354、#872、#876、#879 review）
 - 埋め込み terminal の `KAGI_WORKTREE_PATH` と `KAGI_MAIN_WORKTREE` が、git の workdir をそのまま使っていたため末尾に `/` が付いていた問題を修正しました(main worktree・linked worktree とも)。`"$KAGI_WORKTREE_PATH/foo"` が `//foo` になりません。(#870)
 
 - Cmd+R(Refresh)の読み直しが捨てられ、Kagi の外で変えた状態(起動後に置いた worktree lock の 🔐・右クリックの Unlock など)が画面に反映されない問題を修正しました。Refresh は読み直しの直後に fetch を始めますが、fetch の受付が実行中の読み直しを無効にする一方、何も取得しなかった fetch は読み直しをしないため、Refresh の読み直しが失われていました。fetch は、自分の受付で無効にした読み直しを、取得の有無や失敗に関わらず完了時にやり直します。自動 fetch が watcher の読み直しと重なった場合も同じです。(#851)

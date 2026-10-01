@@ -499,6 +499,20 @@ pub fn scenario_load_more_stale_reads(cx: &mut VisualTestAppContext) {
 
     // ── spam: two clicks in flight, only the latest page lands ──────────────
     truncate(cx, &kagi);
+    kagi::ui::list_a11y::clear_recorded_lists();
+    kagi.update(cx, |_, cx| cx.notify());
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    let load_more = kagi::ui::list_a11y::recorded_list("commit-load-more")
+        .expect("truncated graph renders its load-more control");
+    assert_eq!(load_more.role, Some(gpui::Role::Button));
+    assert_eq!(
+        load_more.label,
+        kagi_ui_core::i18n::Msg::LoadMoreCommits.t()
+    );
     let (session_a, selected, builds_before) = kagi.update(cx, |app, cx| {
         app.select(0);
         let selected = app.view().rows[0].id.clone();

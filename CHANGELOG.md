@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
+- Editor Workspace と Commit Panel の file tree を支援技術から名前付き tree として読めるようにしました。各ファイルは名前・変更状態・選択状態・階層と兄弟位置を持ち、Editor のフォルダーと Panel の Generated / Agent fold は開閉状態を伝えます。名前は EN/JA に対応し、未保存の編集も読み上げます。通常の flat 表示は tree にしません。（#354 slice 3）
 - conflict の continue / skip / abort と解決内容の保存(save)も、Operation Log に動かした ref を記録するようにしました(#884、ADR-0214 §4)。これまでは記録なしの扱いだったため、Kagi で conflict を解いた merge や cherry-pick をまたぐ時点には「記録なし」で戻せませんでした。今は merge 前の時点にも復元できます。実行前に拒否された場合は「動いた ref はありません」と記録します。rebase は途中で HEAD が detached になるので、これまでどおり復元の対象外です。(Refs #334)
 - PR 一覧（PR モードの表）の accessibility（#354 slice 3、3 本目）。支援技術から表を list として、各行を「番号・タイトル・状態・作者・branch・check・更新」で名前付きの項目として、並び順の何番目か付きで読めるようにしました（表は選択状態を持たないので selected は付けません）。（Refs #354）
 - Operation Log の「取り消す / この時点まで戻す」の確認 card に、戻した後のグラフを表示するようにしました(#334 slice 2c、ADR-0214 §6)。branch が戻る位置と、どの branch からも外れる commit の数を、変化する部分の前後(最大 40 行)だけ、通常の commit graph と同じ描き方で示します。計算は読み込み済みの履歴だけで行い、戻し先がその中に無い場合は推定せず「プレビューできません」と表示します(復元自体はできます)。表示専用で、確認するまで何も書き込みません。(Refs #334)
@@ -36,6 +37,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - 「この時点まで戻す」が、削除した worktree や、削除した無関係の repository で行った操作を範囲に含むだけで拒否されていた問題を修正しました(#894)。Operation Log の各操作に、記録した repository(common dir と、unix ではそのファイル ID、取れる環境では `.git` の作成時刻)を残すようにしたので、worktree が消えていても、この repository の操作か別の repository の操作かを判定できます。削除した worktree での操作は戻す対象に含まれ、無関係の repository の操作は除かれます。削除して同じ場所に clone し直した repository は、古い `.git` と同じファイル ID を得ても作成時刻で区別し、作成時刻を確かめられなければ拒否します。この記録の無い以前の操作は、これまでどおり判定できなければ拒否します。repository を別の volume に移動した場合のように判定できないときも、黙って戻さずに理由を示して拒否します。(Refs #334)
+- Commit Panel を同じ worktree で開き直すか、merge 後に再読込した際に、file tree の兄弟位置が以前のファイル構成のまま残り、新しい行から支援技術向けの TreeItem が欠落する問題を修正しました。新しい状態に差し替えるたびに位置表を無効化します。（#901 review、Refs #354）
 - Operation Log の「取り消す / この時点まで戻す」の確認 card と Operation Log の review 指摘を修正しました(#883 / #871 / #878)。
   - 「戻した後のグラフ」が長いと card の下側が切れて見えなかった問題を修正しました。行は card 内でスクロールします。
   - branch Solo 中や、PR head(`refs/kagi/pr/**`)だけが保持する commit があるときに、どの branch からも外れる commit の数を誤って表示していた問題を修正しました。

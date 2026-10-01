@@ -1,12 +1,21 @@
 //! JA strings for `OplogRestoreNote`/`Title`/`Recovery` (op-revert /
 //! restore-to-point, #334 slice 2b).
 
-use kagi_domain::plan_note::{OplogRestoreNote, OplogRestoreRecovery, OplogRestoreTitle};
+use kagi_domain::plan_note::{HeadAt, OplogRestoreNote, OplogRestoreRecovery, OplogRestoreTitle};
 
 fn short(oid: &Option<String>) -> String {
     match oid {
         Some(oid) => oid.get(..7).unwrap_or(oid).to_string(),
         None => "(なし)".to_string(),
+    }
+}
+
+/// `main` / `abc1234 の detached HEAD` / `(不明)`.
+fn head_ja(head: &HeadAt) -> String {
+    match head {
+        HeadAt::Branch(b) => format!("`{b}`"),
+        HeadAt::Detached(oid) => format!("{} の detached HEAD", oid.get(..7).unwrap_or(oid)),
+        HeadAt::Unknown => "(不明)".to_string(),
     }
 }
 
@@ -22,9 +31,24 @@ pub fn note_ja(note: &OplogRestoreNote) -> String {
         OplogRestoreNote::NotRecorded { id, op } => format!(
             "操作 #{id}({op})には ref の移動の記録が無いため、正確に戻せません。reflog からの推定は使いません。"
         ),
-        OplogRestoreNote::HeadMoved { id, op } => format!(
-            "操作 #{id}({op})は HEAD を切り替えた(または detached にした)ため、戻すには checkout が必要です。この操作では行いません。"
-        ),
+        OplogRestoreNote::HeadMoved {
+            id,
+            op,
+            from,
+            to,
+            worktree,
+        } => {
+            let place = worktree
+                .as_ref()
+                .map(|p| format!("{p} の worktree で"))
+                .unwrap_or_default();
+            format!(
+                "操作 #{id}({op})で{place} HEAD が {} から {} に切り替わっているので、この範囲は restore できません。restore は branch だけを動かし、HEAD は動かしません(作業ツリーが変わるため)。{place} {} を自分で checkout してから、#{id} 以降の時点へ restore してください。それより複雑な場合(複数回の切り替え、その操作が作成・削除した branch など)は手で戻してください。",
+                head_ja(from),
+                head_ja(to),
+                head_ja(from)
+            )
+        }
         OplogRestoreNote::LaterEntryMoved { refname, id, op } => format!(
             "{refname} は後の操作 #{id}({op})でも動いています。先にそちらを取り消すか、時点への復元を使ってください。"
         ),
@@ -88,5 +112,42 @@ pub fn title_ja(title: &OplogRestoreTitle) -> String {
 pub fn recovery_ja(recovery: &OplogRestoreRecovery) -> String {
     match recovery {
         OplogRestoreRecovery::Restore => "この操作も ref の移動つきで記録されます。Operation Log から取り消すか、git update-ref <ref> <backup-ref> で branch を戻せます(backup は entry に記載)。".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #886: the HEAD blocker names the entry, both sides of the switch, and
+    /// what to check out by hand before restoring to that entry or later —
+    /// in both languages.
+    #[test]
+    fn head_moved_names_the_switch_and_the_manual_step() {
+        let note = OplogRestoreNote::HeadMoved {
+            id: 42,
+            op: "checkout-commit".into(),
+            from: HeadAt::Branch("feature".into()),
+            to: HeadAt::Detached("0123456789abcdef".into()),
+            worktree: None,
+        };
+        let en = note.message_en();
+        let ja = note_ja(&note);
+        for text in [&en, &ja] {
+            assert!(text.contains("#42"), "{text}");
+            assert!(text.contains("checkout-commit"), "{text}");
+            assert!(text.contains("feature"), "{text}");
+            assert!(text.contains("0123456"), "{text}");
+            assert!(!text.contains("0123456789abcdef"), "short oid: {text}");
+        }
+        // The manual step names the side to go back to, and the restore
+        // target is the entry itself.
+        assert!(en.contains("Check out 'feature' yourself"), "{en}");
+        assert!(en.contains("restore to #42 or a later point"), "{en}");
+        assert!(ja.contains("`feature` を自分で checkout"), "{ja}");
+        assert!(ja.contains("#42 以降の時点へ restore"), "{ja}");
+        // #912 review: one guidance only; anything more involved is by hand.
+        assert!(en.contains("has to be done by hand"), "{en}");
+        assert!(ja.contains("手で戻してください"), "{ja}");
     }
 }

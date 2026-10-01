@@ -187,6 +187,105 @@ impl From<&crate::GitError> for FailureCode {
     }
 }
 
+/// Which repository an entry was recorded in (#894): the canonical common
+/// dir, on unix its `(dev, ino)` — which survives renaming or moving the
+/// repository within one filesystem — and the common dir's creation time,
+/// which tells a re-created `.git` that got the old inode back from the
+/// original (#900 review). Filled at append time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoIdentity {
+    pub common_dir: String,
+    pub file_id: Option<(u64, u64)>,
+    /// Creation (birth) time as (seconds, nanoseconds) since the epoch;
+    /// `None` where the filesystem does not report one.
+    pub created: Option<(u64, u32)>,
+}
+
+/// What an entry says about its repository (#894, #900 review).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum RecordedIdentity {
+    /// No `repo_identity` field: a line written before #894, or a scope that
+    /// does not open (remote). Attributed by opening its worktree.
+    #[default]
+    Absent,
+    Known(RepoIdentity),
+    /// The field is there but unreadable — a wrong type, half of a pair, a
+    /// key this version does not know. Never taken for `Absent`: that would
+    /// fall back to the path and could attribute the entry to a repository
+    /// re-created there. The restore planner fails closed on it.
+    Invalid,
+}
+
+/// How two [`RepoIdentity`]s relate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SameRepository {
+    Same,
+    Different,
+    /// Neither proven the same nor proven different (a file id match with no
+    /// creation time to confirm it, or only a path to go on). The restore
+    /// planner treats this like an entry it cannot attribute: fail closed.
+    Ambiguous,
+}
+
+impl RepoIdentity {
+    /// The identity of the repository `path` opens onto. `None` when it does
+    /// not open (a remote scope like `host:repo`, a deleted directory).
+    pub fn of(path: &Path) -> Option<Self> {
+        let repo = git2::Repository::open(path).ok()?;
+        let common = std::fs::canonicalize(repo.commondir()).ok()?;
+        let meta = std::fs::metadata(&common).ok();
+        #[cfg(unix)]
+        let file_id = {
+            use std::os::unix::fs::MetadataExt;
+            meta.as_ref().map(|m| (m.dev(), m.ino()))
+        };
+        #[cfg(not(unix))]
+        let file_id = None;
+        let created = meta
+            .and_then(|m| m.created().ok())
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| (d.as_secs(), d.subsec_nanos()));
+        Some(Self {
+            common_dir: common.to_string_lossy().into_owned(),
+            file_id,
+            created,
+        })
+    }
+
+    /// Whether `self` and `other` are the same repository (#894, #900).
+    /// - Any proven difference — another file id, another creation time —
+    ///   is `Different`.
+    /// - The same file id *and* the same creation time is `Same`; the file id
+    ///   alone is not enough, a deleted repository's inode can be handed to a
+    ///   new `.git` at the same place (a re-clone of the same remote).
+    /// - A creation time with no sub-second part (`born_ns == 0`: a
+    ///   filesystem that keeps whole seconds) cannot confirm a match — a
+    ///   delete and re-create within that second can reuse both the inode and
+    ///   the time — so an equal one counts as missing (#900 review).
+    /// - Without a file id (non-unix): the same path and creation time is
+    ///   `Same`, another path `Different`.
+    /// - Anything else is `Ambiguous`.
+    pub fn same_repository(&self, other: &Self) -> SameRepository {
+        let file = match (self.file_id, other.file_id) {
+            (Some(a), Some(b)) => Some(a == b),
+            _ => None,
+        };
+        let born = match (self.created, other.created) {
+            (Some(a), Some(b)) if a != b => Some(false),
+            (Some((_, ns)), Some(_)) if ns != 0 => Some(true),
+            _ => None,
+        };
+        let path = self.common_dir == other.common_dir;
+        match (file, born) {
+            (Some(false), _) | (_, Some(false)) => SameRepository::Different,
+            (Some(true), Some(true)) => SameRepository::Same,
+            (None, Some(true)) if path => SameRepository::Same,
+            (None, _) if !path => SameRepository::Different,
+            _ => SameRepository::Ambiguous,
+        }
+    }
+}
+
 /// One entry in the operation log.
 #[derive(Debug, Clone)]
 pub struct OpLogEntry {
@@ -231,6 +330,13 @@ pub struct OpLogEntry {
     /// recorded (written before the field, or by a path that does not record
     /// moves); `Some(empty)` = recorded, nothing moved.
     pub ref_moves: Option<Vec<kagi_domain::ref_moves::RefMove>>,
+    /// The repository the entry was recorded in (#894).
+    pub repo_identity: RecordedIdentity,
+    /// The labels and assignees an `issue-create` asked for (#904 review),
+    /// whatever its outcome: the receipt of a created, unconfirmed or refused
+    /// issue says what was requested. `None` for every other operation, for
+    /// a create with no picks, and for lines written before the field.
+    pub issue_fields: Option<kagi_domain::github::IssueCreateFields>,
 }
 
 impl OpLogEntry {
@@ -264,6 +370,8 @@ impl OpLogEntry {
             recovery: Vec::new(),
             failure_code: None,
             ref_moves: None,
+            repo_identity: RecordedIdentity::Absent,
+            issue_fields: None,
         }
     }
 
@@ -298,6 +406,13 @@ impl OpLogEntry {
             OpOutcome::Unknown { .. } => None,
             _ => moves,
         };
+        self
+    }
+
+    /// Builder: the labels and assignees an `issue-create` asked for. A
+    /// create with no picks records nothing, so its receipt reads as before.
+    pub fn with_issue_fields(mut self, fields: &kagi_domain::github::IssueCreateFields) -> Self {
+        self.issue_fields = (!fields.is_empty()).then(|| fields.clone());
         self
     }
 }
@@ -382,11 +497,11 @@ pub fn read_oplog_tail(n: usize) -> Vec<OpLogEntry> {
     tail::read(n, &|_| true).entries
 }
 
-/// Whether the log holds an entry with this id anywhere (#888). One backward
+/// The entry with this id, wherever it is in the log (#888). One backward
 /// pass that stops at the match — the whole file only when the id is not
 /// there. For telling "older than a read window" from "not in the log".
-pub fn oplog_has_entry(id: u64) -> bool {
-    !tail::read(1, &|entry| entry.id == id).entries.is_empty()
+pub fn find_oplog_entry(id: u64) -> Option<OpLogEntry> {
+    tail::read(1, &|entry| entry.id == id).entries.pop()
 }
 
 /// Read the last `n` oplog entries whose repository matches `repo`, newest
@@ -467,6 +582,19 @@ pub fn append_oplog_receipt(entry: &OpLogEntry) -> Result<(PathBuf, OpLogEntry),
     // on `entry` (from `OpLogEntry::new`) are overwritten here.
     // Append and explicit retirement share the stable sidecar lock.
     let mut entry = entry.clone();
+    // #894: the one place every recorder passes — Backend and UI alike — so
+    // every new entry says which repository it belongs to, durably (the
+    // worktree it ran in may later be removed). The worktree first; when it
+    // no longer opens — a remove-worktree records the path it just deleted —
+    // the repository it was run from (#900 review).
+    if entry.repo_identity == RecordedIdentity::Absent {
+        entry.repo_identity = entry
+            .worktree
+            .as_deref()
+            .and_then(|worktree| RepoIdentity::of(Path::new(worktree)))
+            .or_else(|| RepoIdentity::of(Path::new(&entry.repo)))
+            .map_or(RecordedIdentity::Absent, RecordedIdentity::Known);
+    }
     let last = read_oplog_tail(1);
     match last.first() {
         Some(prev) => {

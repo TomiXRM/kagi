@@ -16,6 +16,7 @@ impl Backend {
     ) -> recording::RunReport {
         // #334 slice 2a: the refs as execution finds them; diffed below
         // whatever the outcome (a partial run records what it did move).
+        self.capture_identity_before();
         let refs_before = ops::ref_snapshot(&self.repo);
         let mut partial_after = None;
         let mut backup_refs = Vec::new();

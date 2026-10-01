@@ -53,17 +53,60 @@ fn canonical(path: &Path) -> PathBuf {
 }
 
 /// The whole Operation Log tail, oldest first, each entry classified as this
-/// repository's (its worktree opens onto the same common dir — branches are
-/// shared by every worktree), another's, or unknown (its worktree can no
-/// longer be opened: deleted or pruned). The planner fails closed on unknown
-/// entries and on a broken chain in the range (#878 review).
+/// repository's (same common dir — branches are shared by every worktree),
+/// another's, or unknown. The planner fails closed on unknown entries and on
+/// a broken chain in the range (#878 review).
+///
+/// An entry that recorded its repository (#894) is classified by that alone
+/// (`RepoIdentity::same_repository`): `Same` is ours, `Different` another's,
+/// `Ambiguous` unknown (fail closed) — a file id match with no creation time
+/// to confirm it could be a re-created `.git` on a reused inode (#900). Only
+/// an older entry without an identity is classified by opening its worktree,
+/// and is unknown when that fails. An identity that is there but unreadable
+/// is unknown outright — never treated as an older entry (#900 review).
 fn log_entries(repo: &Repository) -> Vec<RecordedEntry> {
     let mine = canonical(repo.commondir());
+    let my_identity = crate::oplog::RepoIdentity::of(repo.workdir().unwrap_or(repo.path()));
     let mut common_of: HashMap<String, Option<PathBuf>> = HashMap::new();
     let mut entries: Vec<RecordedEntry> = crate::oplog::read_oplog_tail(ENTRY_SCAN)
         .into_iter()
         .map(|e| {
             let path = e.worktree.clone().unwrap_or_else(|| e.repo.clone());
+            let repo = classify_entry(&e, &mine, my_identity.as_ref(), &mut common_of);
+            RecordedEntry {
+                id: e.id,
+                parent: e.parent,
+                timestamp: e.timestamp,
+                op: e.op,
+                repo,
+                ref_moves: e.ref_moves,
+                worktree: Some(path),
+            }
+        })
+        .collect();
+    entries.sort_by_key(|e| e.id);
+    entries
+}
+
+/// Whose entry `e` is (the rules of [`log_entries`]): by its recorded
+/// identity when it has one, by opening its worktree only when it has none.
+/// `common_of` caches the opened worktrees' common dirs.
+fn classify_entry(
+    e: &crate::oplog::OpLogEntry,
+    mine: &Path,
+    my_identity: Option<&crate::oplog::RepoIdentity>,
+    common_of: &mut HashMap<String, Option<PathBuf>>,
+) -> EntryRepo {
+    use crate::oplog::RecordedIdentity;
+    let path = e.worktree.clone().unwrap_or_else(|| e.repo.clone());
+    match (&e.repo_identity, my_identity) {
+        (RecordedIdentity::Invalid, _) => EntryRepo::Unknown(path),
+        (RecordedIdentity::Known(recorded), Some(mine)) => match recorded.same_repository(mine) {
+            crate::oplog::SameRepository::Same => EntryRepo::Mine,
+            crate::oplog::SameRepository::Different => EntryRepo::Other,
+            crate::oplog::SameRepository::Ambiguous => EntryRepo::Unknown(path),
+        },
+        _ => {
             let common = common_of
                 .entry(path.clone())
                 .or_insert_with_key(|path| {
@@ -72,23 +115,25 @@ fn log_entries(repo: &Repository) -> Vec<RecordedEntry> {
                         .map(|r| canonical(r.commondir()))
                 })
                 .clone();
-            let repo = match common {
+            match common {
                 Some(common) if common == mine => EntryRepo::Mine,
                 Some(_) => EntryRepo::Other,
                 None => EntryRepo::Unknown(path),
-            };
-            RecordedEntry {
-                id: e.id,
-                parent: e.parent,
-                timestamp: e.timestamp,
-                op: e.op,
-                repo,
-                ref_moves: e.ref_moves,
             }
-        })
-        .collect();
-    entries.sort_by_key(|e| e.id);
-    entries
+        }
+    }
+}
+
+/// #888 / #910 review: the entry `id`, looked up in the whole log, exists
+/// and is this repository's — by the same attribution as the loaded tail.
+/// Only then is a target outside the tail "too old" rather than "not ours".
+fn older_and_mine(repo: &Repository, id: u64) -> bool {
+    let Some(entry) = crate::oplog::find_oplog_entry(id) else {
+        return false;
+    };
+    let mine = canonical(repo.commondir());
+    let my_identity = crate::oplog::RepoIdentity::of(repo.workdir().unwrap_or(repo.path()));
+    classify_entry(&entry, &mine, my_identity.as_ref(), &mut HashMap::new()) == EntryRepo::Mine
 }
 
 /// Local branches whose reflog records an update after `after` (unix
@@ -149,22 +194,38 @@ fn plan_oplog_restore(
     let planned = ref_restore::plan(&entries, entry_id, mode, &current, &observed);
 
     let note = PlanNote::OplogRestore;
+    // #912 review: a HEAD switch in *this* worktree needs no "where"; one in
+    // another worktree names it, so the checkout is not run here by mistake.
+    let here = canonical(repo.workdir().unwrap_or(repo.path()));
     let in_window = entries.iter().any(|e| e.id == entry_id);
     let mut blockers: Vec<PlanNote> = planned
         .blockers
         .into_iter()
-        // #888: an id not even in the loaded tail is either older than it or
-        // gone. Only then is the whole log searched, once; the range is not
-        // widened either way.
         .map(|n| match n {
-            OplogRestoreNote::EntryNotLoaded { id }
-                if !in_window && crate::oplog::oplog_has_entry(id) =>
-            {
+            // #888: an id not even in the loaded tail is either older than it
+            // or gone. Only then is the whole log searched, once; the range is
+            // not widened either way. #910 review: the entry found must be
+            // this repository's (the same attribution as the tail) before it
+            // is called too old — another repository's stays "not loaded".
+            OplogRestoreNote::EntryNotLoaded { id } if !in_window && older_and_mine(repo, id) => {
                 OplogRestoreNote::EntryOutsideWindow {
                     id,
                     window: ENTRY_SCAN,
                 }
             }
+            OplogRestoreNote::HeadMoved {
+                id,
+                op,
+                from,
+                to,
+                worktree: Some(w),
+            } if canonical(Path::new(&w)) == here => OplogRestoreNote::HeadMoved {
+                id,
+                op,
+                from,
+                to,
+                worktree: None,
+            },
             other => other,
         })
         .map(note)

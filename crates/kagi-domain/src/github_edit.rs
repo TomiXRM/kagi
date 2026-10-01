@@ -1,6 +1,7 @@
 //! Editing a pull request's fields - reviewers, assignees, labels - as the
-//! diff `gh pr edit` is sent (ADR-0200 §11). Split out of `github.rs` when it
-//! passed its LOC ceiling; re-exported from there so callers do not move.
+//! diff `gh pr edit` is sent (ADR-0200 §11), and the labels and assignees a
+//! new Issue is created with (#866). Split out of `github.rs` when it passed
+//! its LOC ceiling; re-exported from there so callers do not move.
 
 /// The reviewer / assignee / label changes one `gh pr edit` call carries.
 ///
@@ -57,6 +58,46 @@ impl PrFieldEdit {
             out
         };
         (pick(next, current), pick(current, next))
+    }
+}
+
+/// The labels and assignees a new Issue is created with (#866).
+///
+/// The author is not here: `gh issue create` always posts as the
+/// authenticated user, so the composer shows that login read-only.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IssueCreateFields {
+    pub labels: Vec<String>,
+    pub assignees: Vec<String>,
+}
+
+impl IssueCreateFields {
+    pub fn is_empty(&self) -> bool {
+        self.labels.is_empty() && self.assignees.is_empty()
+    }
+
+    /// What the repository cannot take, from its label list and its
+    /// assignable users: `(unknown labels, unassignable users)`, in the order
+    /// they were chosen. Labels match exactly (`bug` and `Bug` are two
+    /// labels); logins match ignoring case, as GitHub's do.
+    pub fn missing(&self, labels: &[String], assignable: &[String]) -> (Vec<String>, Vec<String>) {
+        let unknown = self
+            .labels
+            .iter()
+            .filter(|label| !labels.contains(label))
+            .cloned()
+            .collect();
+        let unassignable = self
+            .assignees
+            .iter()
+            .filter(|login| {
+                !assignable
+                    .iter()
+                    .any(|user| user.eq_ignore_ascii_case(login))
+            })
+            .cloned()
+            .collect();
+        (unknown, unassignable)
     }
 }
 
@@ -132,6 +173,23 @@ mod pr_field_edit_tests {
         assert_eq!(
             PrFieldEdit::diff(&v(&["bug"]), &v(&["Bug"])),
             (v(&["Bug"]), v(&["bug"]))
+        );
+    }
+
+    #[test]
+    fn issue_fields_report_what_the_repository_cannot_take() {
+        let fields = IssueCreateFields {
+            labels: v(&["bug", "Bug", "gone"]),
+            assignees: v(&["Octocat", "stranger"]),
+        };
+        let (labels, users) = fields.missing(&v(&["bug", "docs"]), &v(&["octocat", "hubot"]));
+        assert_eq!(labels, v(&["Bug", "gone"]), "labels match exactly");
+        assert_eq!(users, v(&["stranger"]), "logins match ignoring case");
+        assert!(IssueCreateFields::default().is_empty());
+        assert_eq!(
+            IssueCreateFields::default().missing(&[], &[]),
+            (Vec::new(), Vec::new()),
+            "nothing chosen, nothing missing"
         );
     }
 }

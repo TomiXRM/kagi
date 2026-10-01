@@ -40,6 +40,9 @@ pub(super) struct IssueEditor {
     pub focused: bool,
     pub saving: bool,
     pub save_error: Option<String>,
+    /// Labels and assignees for a New Issue (#866), saved and restored with
+    /// the draft (#903).
+    pub fields: kagi_domain::github::IssueCreateFields,
 }
 
 impl KagiApp {
@@ -145,7 +148,18 @@ impl KagiApp {
                             .draft
                             .update(title, body.read(cx).value().to_string());
                         if changed {
-                            app.save_issue_draft_for(owner, repo.clone(), number, cx);
+                            // An emptied composer is a fresh start: its picks
+                            // go with the text, in memory as on disk, so the
+                            // next issue does not inherit them (#913 review).
+                            if editor.draft.is_empty() {
+                                editor.fields = Default::default();
+                            }
+                            // Not before the saved draft has loaded: a save now
+                            // would replace the stored picks with none. The
+                            // load saves the typed text once it lands.
+                            if editor.loaded {
+                                app.save_issue_draft_for(owner, repo.clone(), number, cx);
+                            }
                         }
                         cx.notify();
                     })
@@ -278,7 +292,9 @@ pub(super) fn render_composer(
         && !editor.body_revealed
         && editor.draft.title.trim().is_empty()
         && editor.draft.body.trim().is_empty();
-    let viewer = app.github_login.as_deref().unwrap_or("?");
+    // The same identity "Posted as" names: the login on the repository's
+    // host, never the window-global github.com one (#904 review).
+    let viewer = app.issue_host_login().unwrap_or("?");
     let repo = state
         .base_repo
         .clone()
@@ -421,6 +437,13 @@ pub(super) fn render_composer(
     };
     if !empty_create {
         content = content.child(body);
+        if number.is_none() {
+            content = content.child(super::issue_fields::render_issue_fields(
+                app,
+                &editor.fields,
+                cx,
+            ));
+        }
     }
     let submit = super::timeline_row::submit(
         format!("{id}-submit"),
@@ -489,7 +512,7 @@ pub(super) fn render_composer(
                                 app.toggle_issue_focus(number, window, cx)
                             })),
                     )
-                    .child(submit),
+                    .child(super::e2e::measure_control(format!("{id}-submit"), submit)),
             ),
     );
     if let Some(error) = editor.save_error.as_ref() {
@@ -529,6 +552,12 @@ pub(super) fn render_composer(
         } else {
             Msg::ComposerDraftSaved.t()
         }));
+    }
+    // Lets Tier A read whose avatar the composer draws. Absolute, so it adds
+    // no gap; compiled out of normal builds, where it would be a flow child.
+    #[cfg(feature = "gui-e2e")]
+    {
+        content = content.child(super::e2e::measure_inside(format!("{id}-viewer-{viewer}")));
     }
     let composer = super::timeline_row::composer_frame(id, viewer, &app.avatars.images, content)
         .border_b_1()

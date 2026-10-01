@@ -39,6 +39,11 @@ pub struct Backend {
     /// mutating op while `Untrusted`.
     trust: crate::trust::RepoTrust,
     policy: ExecutionPolicy,
+    /// The repository identity read with the "before" ref snapshot of the
+    /// write being recorded (#900 review), so the entry names the repository
+    /// the refs were read from — not whatever sits at the path by the time
+    /// the entry is appended. Taken by `record_receipt`.
+    identity_before: std::sync::Mutex<Option<crate::oplog::RepoIdentity>>,
 }
 
 impl Backend {
@@ -93,6 +98,7 @@ impl Backend {
             path,
             trust,
             policy: ExecutionPolicy::default(),
+            identity_before: Default::default(),
         })
     }
 
@@ -122,6 +128,7 @@ impl Backend {
             path,
             trust,
             policy: ExecutionPolicy::default(),
+            identity_before: Default::default(),
         })
     }
 

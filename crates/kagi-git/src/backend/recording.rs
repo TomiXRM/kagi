@@ -244,37 +244,6 @@ pub(super) struct Receipt {
     pub ref_moves: Option<Vec<kagi_domain::ref_moves::RefMove>>,
 }
 impl Backend {
-    /// Build and append the oplog entry for a completed backend attempt
-    /// (ADR-0149). `before` comes from the plan; `actor`/`worktree` from
-    /// this backend. Write failures are non-fatal (logged to stderr by
-    /// `append_oplog`), mirroring the previous UI behaviour.
-    pub(super) fn record_run_oplog(
-        &self,
-        op: &str,
-        before: &ops::StateSummary,
-        outcome: crate::oplog::OpOutcome,
-    ) -> Recording {
-        self.record_run_oplog_with_backups(op, before, outcome, Vec::new(), Vec::new(), None)
-    }
-
-    pub(super) fn record_run_oplog_with_backups(
-        &self,
-        op: &str,
-        before: &ops::StateSummary,
-        outcome: crate::oplog::OpOutcome,
-        backup_refs: Vec<String>,
-        recovery: Vec<RecoveryHandle>,
-        failure_code: Option<crate::oplog::FailureCode>,
-    ) -> Recording {
-        let receipt = Receipt {
-            backup_refs,
-            recovery,
-            failure_code,
-            ref_moves: None,
-        };
-        self.record_receipt(op, before, outcome, receipt)
-    }
-
     /// The one place a backend entry is built and appended.
     pub(super) fn record_receipt(
         &self,

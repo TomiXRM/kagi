@@ -83,6 +83,9 @@ impl KagiApp {
                     confirm_armed: false,
                     preview,
                 });
+                // The card has no text field: Enter / Escape reach it through
+                // the root, so take focus from the terminal or an input (#878).
+                self.focus_root_for_modal();
                 cx.notify();
             }
             Err(e) => {
@@ -165,7 +168,7 @@ pub(crate) fn render_oplog_restore_modal(
     let extra = modal
         .preview
         .as_deref()
-        .map(super::oplog_restore_preview::render);
+        .map(super::oplog_restore_preview::card_extra);
     render_plan_modal_wrapper_extra(
         modal.display_plan(),
         modal.error.clone(),

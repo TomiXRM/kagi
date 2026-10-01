@@ -29,6 +29,9 @@ pub enum OplogPanelMsg {
     RestoreUnavailable,
     /// The second (armed) confirm of an op-revert / restore-to-point.
     RestoreArmed,
+    /// Heading of the card's after-restore graph when it cannot be drawn: no
+    /// count of disappearing commits is claimed (#883 review).
+    PreviewUnavailableHeading,
 }
 
 impl OplogPanelMsg {
@@ -61,6 +64,8 @@ impl OplogPanelMsg {
             }
             (Lang::En, RestoreArmed) => "Really move the branches back",
             (Lang::Ja, RestoreArmed) => "本当に branch を戻しますか",
+            (Lang::En, PreviewUnavailableHeading) => "Graph after",
+            (Lang::Ja, PreviewUnavailableHeading) => "戻した後のグラフ",
         }
     }
 }

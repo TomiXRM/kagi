@@ -29,6 +29,7 @@ fn snap(head_branch: &str) -> RepoSnapshot {
         branches: vec![branch("master"), branch("feat"), branch("other")],
         remote_branches: Vec::new(),
         tags: Vec::new(),
+        pr_heads: Vec::new(),
         status: Default::default(),
         stashes: Vec::new(),
         worktrees: vec![

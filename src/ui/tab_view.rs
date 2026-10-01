@@ -508,7 +508,7 @@ impl Default for TabUiState {
             commit_limit: super::DEFAULT_COMMIT_LIMIT,
             load_more_gen: 0,
             graph_scroll_x: 0.0,
-            branch_groups_collapsed: HashSet::from([super::sidebar::PR_GROUP_OTHERS.to_string()]),
+            branch_groups_collapsed: HashSet::new(),
             cleanup_scroll: UniformListScrollHandle::new(),
             smart_commit_generating: false,
             smart_commit_status: None,

@@ -63,6 +63,57 @@ pub enum CopyTarget {
     Branch,
 }
 
+/// Five sidebar pane weights in local / remote / worktree / tag / stash order
+/// and a persisted snapshot of the collapsed-section set (#864).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SidebarPaneLayout {
+    pub weights: [u16; 5],
+    pub collapsed_mask: u8,
+}
+
+impl Default for SidebarPaneLayout {
+    fn default() -> Self {
+        Self {
+            weights: [3500, 2500, 2000, 1000, 1000],
+            collapsed_mask: 0,
+        }
+    }
+}
+
+impl SidebarPaneLayout {
+    pub fn parse(raw: &str) -> Option<Self> {
+        let (version, rest) = raw.split_once(':')?;
+        if version != "v1" {
+            return None;
+        }
+        let (weights, mask) = rest.split_once(':')?;
+        let mut parts = weights.split(',');
+        let mut weights = [0_u16; 5];
+        for weight in &mut weights {
+            *weight = parts.next()?.parse().ok()?;
+            if *weight == 0 {
+                return None;
+            }
+        }
+        if parts.next().is_some() {
+            return None;
+        }
+        let collapsed_mask = mask.parse::<u8>().ok().filter(|&m| m < 32)?;
+        Some(Self {
+            weights,
+            collapsed_mask,
+        })
+    }
+
+    pub fn encode(self) -> String {
+        let w = self.weights;
+        format!(
+            "v1:{},{},{},{},{}:{}",
+            w[0], w[1], w[2], w[3], w[4], self.collapsed_mask
+        )
+    }
+}
+
 /// Typed view of `settings.json`: a flat map of string-valued settings plus
 /// typed accessors that apply the same coercions the call sites used to do
 /// inline. Unknown keys are retained in `raw` so a save never drops them.
@@ -242,6 +293,17 @@ impl Settings {
         self.get_str("worktree_run_mode")
             .as_deref()
             .map(kagi_domain::worktree_run_mode::RunMode::parse)
+            .unwrap_or_default()
+    }
+
+    /// Five Graph sidebar pane weights and collapse bits (#864). A missing,
+    /// malformed (including the unreleased six-weight form), zero-weight or
+    /// unsupported version uses defaults in memory; reading never repairs the
+    /// raw value on disk.
+    pub fn sidebar_pane_layout(&self) -> SidebarPaneLayout {
+        self.get_str("sidebar_panes")
+            .as_deref()
+            .and_then(SidebarPaneLayout::parse)
             .unwrap_or_default()
     }
 }
@@ -446,6 +508,45 @@ mod tests {
         .unwrap();
         assert_eq!(bad.worktree_port_range(), (3000, 3099));
         assert_eq!(bad.worktree_ports_per_worktree(), 10);
+    }
+
+    #[test]
+    fn sidebar_pane_layout_rejects_invalid_weights_and_mask_without_repairing_raw() {
+        let valid = SidebarPaneLayout {
+            weights: [8, 13, 21, 34, 55],
+            collapsed_mask: 0b10101,
+        };
+        let encoded = valid.encode();
+        let parsed = parse(&format!(r#"{{"sidebar_panes":"{encoded}"}}"#));
+        assert_eq!(parsed.sidebar_pane_layout(), valid);
+        assert_eq!(
+            parsed.get_str("sidebar_panes").as_deref(),
+            Some(encoded.as_str())
+        );
+
+        for invalid in [
+            "garbage",
+            "v2:1,2,3,4,5:0",
+            "v1:1,2,3,4:0",
+            // The unreleased six-pane value (with a PR pane) is not migrated.
+            "v1:1,2,3,4,5,6:0",
+            "v1:1,2,0,4,5:0",
+            "v1:1,2,3,4,65536:0",
+            "v1:1,2,3,4,5:32",
+            "v1:1,2,3,4,5:0:extra",
+        ] {
+            let settings = parse(&format!(r#"{{"sidebar_panes":"{invalid}"}}"#));
+            assert_eq!(
+                settings.sidebar_pane_layout(),
+                SidebarPaneLayout::default(),
+                "{invalid}"
+            );
+            assert_eq!(
+                settings.get_str("sidebar_panes").as_deref(),
+                Some(invalid),
+                "a read must not rewrite malformed user settings"
+            );
+        }
     }
 
     #[test]

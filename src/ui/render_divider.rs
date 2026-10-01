@@ -36,6 +36,15 @@ impl KagiApp {
                     cx.notify();
                 }
             }
+            DividerKind::SidebarPane(index) => {
+                if self.sidebar.resize_pane_pair(
+                    usize::from(index),
+                    f32::from(event.event.position.y),
+                    z,
+                ) {
+                    cx.notify();
+                }
+            }
             DividerKind::Panel => {
                 // Divider sits at x = viewport_width - panel_width * zoom.
                 let viewport_w = f32::from(window.viewport_size().width);

@@ -3,7 +3,8 @@ use crate::evidence_support::{deferred, pull_request};
 use crate::macos::{build_fixture, mount, unmount};
 use gpui::VisualTestAppContext;
 use kagi::app::SessionId;
-use kagi::ui::{e2e, KagiApp};
+use kagi::ui::workspace_mode::WorkspaceMode;
+use kagi::ui::{e2e, list_a11y, KagiApp};
 use kagi_domain::github::PullRequest;
 use kagi_git::github::PrFetchError;
 use std::collections::HashSet;
@@ -16,24 +17,57 @@ fn ui_domain(app: &KagiApp) -> HashSet<SessionId> {
     app.ui.keys().copied().collect()
 }
 
+/// Put the active session on the top PRs tab and draw one fresh frame. Of
+/// `candidates`, return the PR numbers whose row the `pr-list` table laid out
+/// in that frame. The tab's own center pane must be drawn, so an empty result
+/// is the PRs tab showing no row, not a frame that never reached it. Nothing
+/// is parked first: a queued refetch must not repopulate the evidence that
+/// the switch itself has to restore.
 fn rendered_pr_numbers(
     cx: &mut VisualTestAppContext,
     app: &gpui::Entity<KagiApp>,
     window: gpui::AnyWindowHandle,
+    candidates: &[u64],
 ) -> Vec<u64> {
-    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
-        .expect("draw GitHub sidebar consumer");
-    cx.read(|cx| {
-        app.read(cx)
-            .sidebar
-            .rows
-            .iter()
-            .filter_map(|row| match row {
-                kagi::ui::sidebar::SidebarRow::PullRequest { pr, .. } => Some(pr.number),
-                _ => None,
-            })
-            .collect()
+    app.update(cx, |app, cx| app.show_pr_mode(cx));
+    assert_eq!(
+        cx.read(|cx| app.read(cx).workspace_mode()),
+        WorkspaceMode::Prs,
+        "the PRs tab is the active workspace"
+    );
+    let id = window.window_id();
+    e2e::clear_control_bounds(id, "pr-mode-center-pane");
+    for number in candidates {
+        e2e::clear_control_bounds(id, &format!("pr-home-row-{number}"));
+    }
+    list_a11y::clear_recorded_lists();
+    app.update(cx, |_, cx| cx.notify());
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
     })
+    .expect("draw the PRs tab");
+    assert!(
+        e2e::control_bounds(id, "pr-mode-center-pane").is_some(),
+        "the PRs tab center pane is drawn"
+    );
+    let drawn: Vec<u64> = candidates
+        .iter()
+        .copied()
+        .filter(|number| e2e::control_bounds(id, &format!("pr-home-row-{number}")).is_some())
+        .collect();
+    match list_a11y::recorded_list("pr-list") {
+        Some(list) => {
+            assert_eq!(list.role, Some(gpui::Role::List));
+            assert_eq!(
+                (list.size, list.rows.len()),
+                (drawn.len(), drawn.len()),
+                "pr-list rows are exactly the laid-out candidate rows: {list:?}"
+            );
+        }
+        None => assert!(drawn.is_empty(), "PR rows drawn outside pr-list"),
+    }
+    drawn
 }
 
 fn attached_domain(app: &KagiApp) -> HashSet<SessionId> {
@@ -50,10 +84,6 @@ pub fn scenario_github_evidence_restores(cx: &mut VisualTestAppContext) {
 
     queue_ready(cx, Ok(Vec::new()));
     let (owner_a, owner_b) = app.update(cx, |app, cx| {
-        app.ui_mut()
-            .expect("active session")
-            .branch_groups_collapsed
-            .clear();
         assert!(app.open_repository(repo_b, cx), "open B");
         (app.tabs[0].session, app.tabs[1].session)
     });
@@ -62,9 +92,9 @@ pub fn scenario_github_evidence_restores(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, cx| app.switch_repo(0, cx));
     cx.run_until_parked();
     assert_eq!(
-        rendered_pr_numbers(cx, &app, window),
+        rendered_pr_numbers(cx, &app, window, &[101]),
         vec![101],
-        "sidebar must visibly show A's fetched PR before switching",
+        "the PRs tab must visibly list A's fetched PR before switching",
     );
 
     queue_ready(cx, Ok(Vec::new()));
@@ -83,8 +113,8 @@ pub fn scenario_github_evidence_restores(cx: &mut VisualTestAppContext) {
     });
     cx.run_until_parked();
     assert!(
-        rendered_pr_numbers(cx, &app, window).is_empty(),
-        "sidebar consumer reused A PR rows for clean B",
+        rendered_pr_numbers(cx, &app, window, &[101]).is_empty(),
+        "the PRs tab reused A's PR row for clean B",
     );
 
     queue_ready(cx, Ok(a_prs));
@@ -101,9 +131,9 @@ pub fn scenario_github_evidence_restores(cx: &mut VisualTestAppContext) {
         );
     });
     assert_eq!(
-        rendered_pr_numbers(cx, &app, window),
+        rendered_pr_numbers(cx, &app, window, &[101]),
         vec![101],
-        "sidebar consumer did not restore A PR row after equal-epoch B",
+        "the PRs tab did not restore A's PR row after equal-epoch B",
     );
 
     // ADR-0200: the navigator row holds two lines (18px title + 15px meta)

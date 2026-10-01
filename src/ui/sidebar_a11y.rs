@@ -1,9 +1,9 @@
 //! Accessibility for the sidebar navigator (#354 slice 3, sidebar).
 //!
-//! The navigator is one virtualized list whose rows are section headers
+//! Each navigator pane is a virtualized list whose rows are its section header
 //! (collapsible), group headers (collapsible) and leaves (branches, remote
-//! branches, tags, worktrees, stashes, pull requests). That is a tree, so it
-//! is exposed as `Role::Tree` with `TreeItem` rows carrying their level,
+//! branches, tags, worktrees, stashes). That is a tree, so each pane is
+//! exposed as `Role::Tree` with `TreeItem` rows carrying their level,
 //! expanded state (headers) and position among their siblings. The sidebar
 //! has no selection of its own; "current branch / worktree" is part of the
 //! row's name.
@@ -25,7 +25,7 @@ pub struct TreeItemSpec {
 
 /// Substitute each `{}` of `msg` with the next argument, neutralizing control
 /// bytes exactly as the visible rows do (#356: branch / remote / tag / worktree
-/// / stash / PR text is remote-origin). Placeholders are taken from the
+/// / stash text is remote-origin). Placeholders are taken from the
 /// template only, so a `{}` inside a branch name or path is not filled by the
 /// following argument.
 fn fill(msg: Msg, args: &[&str]) -> String {
@@ -49,11 +49,10 @@ pub fn level(row: &SidebarRow) -> usize {
         SidebarRow::SectionHeader { .. } => 1,
         SidebarRow::LocalGroupHeader { .. }
         | SidebarRow::RemoteHeader { .. }
-        | SidebarRow::PrGroupHeader { .. }
         | SidebarRow::Tag { .. }
         | SidebarRow::Worktree { .. }
         | SidebarRow::Stash { .. } => 2,
-        SidebarRow::RemoteSubGroup { .. } | SidebarRow::PullRequest { .. } => 3,
+        SidebarRow::RemoteSubGroup { .. } => 3,
         SidebarRow::LocalBranchLeaf { indented, .. } => {
             if *indented {
                 3
@@ -101,15 +100,6 @@ pub fn tree_item(row: &SidebarRow) -> TreeItemSpec {
             fill(Msg::A11ySidebarGroup, &[prefix, &count.to_string()]),
             Some(!collapsed),
         ),
-        SidebarRow::PrGroupHeader {
-            title,
-            count,
-            collapsed,
-            ..
-        } => (
-            fill(Msg::A11ySidebarGroup, &[title, &count.to_string()]),
-            Some(!collapsed),
-        ),
         SidebarRow::LocalBranchLeaf { name, is_head, .. } => (
             if *is_head {
                 fill(Msg::A11ySidebarCurrentBranch, &[name])
@@ -139,10 +129,6 @@ pub fn tree_item(row: &SidebarRow) -> TreeItemSpec {
             (s, None)
         }
         SidebarRow::Stash { message, .. } => (fill(Msg::A11yStashRow, &[message]), None),
-        SidebarRow::PullRequest { pr, .. } => (
-            fill(Msg::A11ySidebarPr, &[&pr.number.to_string(), &pr.title]),
-            None,
-        ),
     };
     TreeItemSpec {
         label,
@@ -247,7 +233,6 @@ mod tests {
             path: "/tmp/wt".into(),
             path_label: "/tmp/\u{7f}wt".into(),
             is_current: false,
-            is_main: false,
             locked: false,
             port: None,
         })
@@ -264,7 +249,6 @@ mod tests {
             path: "/p/{}".into(),
             path_label: "/p/{}".into(),
             is_current: false,
-            is_main: false,
             locked: false,
             port: None,
         })

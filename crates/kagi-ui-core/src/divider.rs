@@ -10,6 +10,8 @@ use gpui::{div, Context, Window};
 pub enum DividerKind {
     /// The divider between the sidebar and the commit list.
     Sidebar,
+    /// Horizontal separator below Graph sidebar pane `index` (0..5).
+    SidebarPane(u8),
     /// The divider between the commit list and the detail/diff panel.
     Panel,
     /// T030: The divider between the badge column and the graph column.

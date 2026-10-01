@@ -5,8 +5,7 @@ use std::collections::HashSet;
 use kagi_git::{CommitId, RemoteBranch, Stash, Tag, Worktree};
 
 use super::sidebar::{
-    SidebarRow, PR_GROUP_MINE, PR_GROUP_OTHERS, PR_GROUP_REVIEW, SECTION_LOCAL, SECTION_PRS,
-    SECTION_REMOTE, SECTION_STASHES, SECTION_TAGS, SECTION_WORKTREES,
+    SidebarRow, SECTION_LOCAL, SECTION_REMOTE, SECTION_STASHES, SECTION_TAGS, SECTION_WORKTREES,
 };
 
 // ──────────────────────────────────────────────────────────────
@@ -283,14 +282,13 @@ pub(super) fn group_remotes<T: Clone>(
 /// `render` recomputes this each frame and only rebuilds `rows` when it changes,
 /// so unchanged frames skip the O(all-refs) clone+collect. The session owner is
 /// part of the key so two tabs with equal per-session epochs cannot reuse each
-/// other's rows. Heavy collection contents are covered by `view_epoch` and
-/// `prs_epoch`; collection lengths are an O(1) backstop. The collapsed sets and
-/// filter text are hashed directly because they can change without either epoch.
+/// other's rows. Heavy collection contents are covered by `view_epoch`;
+/// collection lengths are an O(1) backstop. The collapsed sets and filter text
+/// are hashed directly because they can change without the epoch.
 #[allow(clippy::too_many_arguments)]
 pub fn sidebar_rows_fingerprint(
     owner: Option<crate::app::SessionId>,
     view_epoch: u64,
-    prs_epoch: u64,
     branches_len: usize,
     remote_branches_len: usize,
     tags_len: usize,
@@ -304,7 +302,6 @@ pub fn sidebar_rows_fingerprint(
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     owner.hash(&mut hasher);
     view_epoch.hash(&mut hasher);
-    prs_epoch.hash(&mut hasher);
     branches_len.hash(&mut hasher);
     remote_branches_len.hash(&mut hasher);
     tags_len.hash(&mut hasher);
@@ -342,8 +339,6 @@ pub fn sidebar_rows_fingerprint(
 #[allow(clippy::too_many_arguments)]
 pub fn build_sidebar_rows(
     branches: &[(String, bool)],
-    prs: &[kagi_domain::github::PullRequest],
-    github_login: Option<&str>,
     remote_branches: &[RemoteBranch],
     tags: &[Tag],
     stashes: &[Stash],
@@ -363,64 +358,6 @@ pub fn build_sidebar_rows(
     };
 
     let mut rows: Vec<SidebarRow> = Vec::new();
-
-    // ── PULL REQUESTS (GitHub Phase 1) — top: "what needs attention" ──
-    // Only rendered when there is something to show: an always-empty section
-    // would be noise for non-GitHub repos. Grouped Mine / Review requested /
-    // Others; Others starts collapsed (busy repos have dozens).
-    if !prs.is_empty() {
-        use kagi_domain::github::PrGroup;
-        let section_collapsed = collapsed.contains(SECTION_PRS);
-        rows.push(SidebarRow::SectionHeader {
-            section: SECTION_PRS,
-            title: "PULL REQUESTS",
-            count: prs.len(),
-            collapsed: section_collapsed,
-        });
-        if !section_collapsed {
-            let local_names: Vec<String> = branches.iter().map(|(n, _)| n.clone()).collect();
-            let visible: Vec<&kagi_domain::github::PullRequest> = prs
-                .iter()
-                .filter(|p| {
-                    matches(&p.title) || matches(&p.head) || matches(&format!("#{}", p.number))
-                })
-                .collect();
-            for (group, key, title) in [
-                (PrGroup::Mine, PR_GROUP_MINE, "Mine"),
-                (
-                    PrGroup::ReviewRequested,
-                    PR_GROUP_REVIEW,
-                    "Review requested",
-                ),
-                (PrGroup::Others, PR_GROUP_OTHERS, "Others"),
-            ] {
-                let members: Vec<&kagi_domain::github::PullRequest> = visible
-                    .iter()
-                    .copied()
-                    .filter(|p| p.group_for(github_login, &local_names) == group)
-                    .collect();
-                if members.is_empty() {
-                    continue;
-                }
-                let collapsed_now = !has_filter && groups_collapsed.contains(key);
-                rows.push(SidebarRow::PrGroupHeader {
-                    key,
-                    title,
-                    count: members.len(),
-                    collapsed: collapsed_now,
-                });
-                if collapsed_now {
-                    continue;
-                }
-                for pr in members {
-                    rows.push(SidebarRow::PullRequest {
-                        pr: pr.clone(),
-                        stacked: pr.is_stacked_on(prs),
-                    });
-                }
-            }
-        }
-    }
 
     // ── LOCAL BRANCHES ───────────────────────────────────────────
     {
@@ -582,6 +519,40 @@ pub fn build_sidebar_rows(
         }
     }
 
+    // ── WORKTREES ────────────────────────────────────────────────
+    {
+        let section_collapsed = collapsed.contains(SECTION_WORKTREES);
+        rows.push(SidebarRow::SectionHeader {
+            section: SECTION_WORKTREES,
+            title: "WORKTREES",
+            count: worktrees.iter().filter(|w| !w.is_main).count(),
+            collapsed: section_collapsed,
+        });
+        if !section_collapsed {
+            // #869: a shared-port mode hands every worktree the main
+            // worktree's block, so every row links to it.
+            let main_port = worktrees.iter().find(|w| w.is_main).and_then(|w| w.port);
+            // The main worktree remains in the read model (and supplies the
+            // shared port), but has no removable leaf in this navigator.
+            for wt in worktrees.iter().filter(|w| {
+                !w.is_main && (matches(&w.name) || matches(w.path.to_string_lossy().as_ref()))
+            }) {
+                rows.push(SidebarRow::Worktree {
+                    name: wt.name.clone(),
+                    path: wt.path.clone(),
+                    path_label: wt.path.display().to_string(),
+                    is_current: wt.is_current,
+                    locked: wt.locked,
+                    port: if run_mode.shares_ports() {
+                        main_port
+                    } else {
+                        wt.port
+                    },
+                });
+            }
+        }
+    }
+
     // ── TAGS ─────────────────────────────────────────────────────
     {
         let section_collapsed = collapsed.contains(SECTION_TAGS);
@@ -596,40 +567,6 @@ pub fn build_sidebar_rows(
                 rows.push(SidebarRow::Tag {
                     name: tag.name.clone(),
                     target: tag.target.clone(),
-                });
-            }
-        }
-    }
-
-    // ── WORKTREES ────────────────────────────────────────────────
-    {
-        let section_collapsed = collapsed.contains(SECTION_WORKTREES);
-        rows.push(SidebarRow::SectionHeader {
-            section: SECTION_WORKTREES,
-            title: "WORKTREES",
-            count: worktrees.len(),
-            collapsed: section_collapsed,
-        });
-        if !section_collapsed {
-            // #869: a shared-port mode hands every worktree the main
-            // worktree's block, so every row links to it.
-            let main_port = worktrees.iter().find(|w| w.is_main).and_then(|w| w.port);
-            for wt in worktrees
-                .iter()
-                .filter(|w| matches(&w.name) || matches(w.path.to_string_lossy().as_ref()))
-            {
-                rows.push(SidebarRow::Worktree {
-                    name: wt.name.clone(),
-                    path: wt.path.clone(),
-                    path_label: wt.path.display().to_string(),
-                    is_current: wt.is_current,
-                    is_main: wt.is_main,
-                    locked: wt.locked,
-                    port: if run_mode.shares_ports() {
-                        main_port
-                    } else {
-                        wt.port
-                    },
                 });
             }
         }

@@ -1,19 +1,10 @@
-//! Sidebar renderer — W2-SIDEBAR: Repository Navigator
-//!
-//! Extracted from mod.rs (T013) and extended to a full 4-section navigator:
-//! LOCAL BRANCHES / REMOTE BRANCHES / TAGS / STASHES
-//!
-//! Public surface:
-//! - `render_sidebar(...)` — called from `render_body` in mod.rs
+//! Graph sidebar row model and item renderers (#864).
 
 use std::collections::HashSet;
 
-use gpui::{
-    div, prelude::*, px, rgb, uniform_list, Context, Entity, SharedString, UniformListScrollHandle,
-};
-use gpui_component::input::{Input, InputState};
+use gpui::{div, prelude::*, px, rgb, Context, Entity, SharedString, UniformListScrollHandle};
+use gpui_component::input::InputState;
 use gpui_component::tooltip::Tooltip;
-use gpui_component::Sizable as _;
 
 use kagi_git::CommitId;
 
@@ -23,16 +14,30 @@ use super::sidebar_rows::{
     split_first_segment, GroupRow, RemoteRow,
 };
 use super::theme::{self, theme};
-use super::{BranchDrag, BranchDragGhost, KagiApp, Msg};
+use super::{BranchDrag, BranchDragGhost, KagiApp};
 
-/// Uniform row height (unscaled) used for **every** virtualized sidebar row.
+/// Row slot height (unscaled) for section headers and every virtualized leaf
+/// outside the WORKTREES pane.
 ///
-/// `uniform_list` requires a single fixed row height — it measures the first
-/// item and applies that height to all of them. Every sidebar row (section
-/// header, group header, branch/remote/tag/worktree/stash leaf, and the
-/// placeholder rows) is therefore pinned to this height so the virtualized
-/// list scrolls correctly regardless of which row happens to be first.
-pub(super) const SIDEBAR_ROW_H: f32 = 24.0;
+/// `uniform_list` measures the first item of a list and applies that height to
+/// all of them. Each pane owns its own list, so every row a pane's list can
+/// draw (group headers and leaves alike) is pinned to that pane's slot height
+/// and the list scrolls correctly regardless of which row happens to be first.
+pub(super) const SIDEBAR_ROW_H: f32 = 20.0;
+
+/// Visible height of a group heading, centered inside its `SIDEBAR_ROW_H` slot
+/// so the LOCAL / REMOTE lists keep one uniform row height.
+const SIDEBAR_GROUP_HEADING_H: f32 = 18.0;
+
+/// Row slot height for the WORKTREES pane. Its list only ever draws worktree
+/// rows (name, path, port link and inspection badge), so it can use a taller
+/// uniform height than the other panes.
+pub(super) const SIDEBAR_WORKTREE_ROW_H: f32 = 24.0;
+
+/// Font size (unscaled) for auxiliary row text — commit age, upstream counts,
+/// PR badge, worktree path / port / inspection badge — one step under the
+/// rows' `text_xs` labels.
+pub(super) const SIDEBAR_AUX_TEXT: f32 = 11.0;
 
 /// Default sidebar width in pixels (T023). Previously `mod.rs::SIDEBAR_DEFAULT`.
 ///
@@ -45,34 +50,36 @@ const SIDEBAR_DEFAULT_WIDTH: f32 = 240.0;
 
 /// Consolidated Repository-Navigator (left sidebar) state.
 ///
-/// Previously six flat `sidebar_*` fields on the `KagiApp` god-struct; grouped
-/// here as the prep step for a future `Entity<SidebarState>` migration
-/// (ADR-0110 Phase 5 Step 5.1). All fields are app-global (not per-tab) and are
-/// preserved across repository reloads. Pure constructible (no `cx`) — the
-/// `filter` `InputState` is created lazily on first focus.
+/// App-global (not per-tab), preserved across repository reloads. `new()`
+/// restores the five-pane weights and collapsed sections from settings once;
+/// the filter `InputState` is created lazily on first focus.
 pub struct SidebarState {
     /// Current sidebar width in pixels (T023: user-resizable).
     pub width: f32,
-    /// PERF-SIDEBAR-VIRT: scroll handle for the navigator `uniform_list`
-    /// ("sidebar-list"). Persisted across frames.
-    pub scroll_handle: UniformListScrollHandle,
-    /// Pre-flattened navigator rows (built in `render`); the `uniform_list`
-    /// processor reads `rows[i]`, so the sidebar costs O(visible rows) per frame.
+    /// Independent virtual-list scroll positions; one per fixed Graph pane.
+    pub scroll_handles: [UniformListScrollHandle; 5],
+    /// Cached navigator rows. Five virtual lists index contiguous ranges of
+    /// this single Vec, so unchanged frames only construct visible leaves.
     pub rows: Vec<SidebarRow>,
+    /// Contiguous header+leaf ranges in `rows`, recomputed only on a row rebuild.
+    pub pane_ranges: [std::ops::Range<usize>; 5],
+    /// Relative heights for expanded pane bodies; collapse never mutates them.
+    pub pane_weights: [u16; 5],
+    /// Measured window-space bounds for drag calculations, including zoom.
+    pub pane_geom: [std::rc::Rc<std::cell::Cell<(f32, f32)>>; 5],
     /// T-PERF-RENDER-002 (ADR-0116 Wave 2): fingerprint of the inputs that
-    /// produced the cached `rows`.  `render` recomputes a cheap fingerprint each
-    /// frame (view epoch + collection lengths + collapsed sets + filter text)
-    /// and only calls [`super::sidebar_rows::build_sidebar_rows`] when it differs, so unchanged frames
-    /// reuse the cache instead of re-allocating O(all-refs) per frame.
+    /// produced the cached `rows`. `render` hashes cheap input revisions,
+    /// collapse sets and filter text; unchanged frames do not rebuild refs.
+    /// A rebuild also refreshes the five pane ranges.
     pub rows_fingerprint: u64,
     /// #354: each row's 1-based `(position, size)` among its tree siblings,
     /// for the accessibility tree. Derived from every row, so it is cached
     /// for the `rows_fingerprint` it was computed at (`tree_positions_for`)
     /// and a scroll batch only reads it; `refresh_tree_positions` recomputes
     /// when `rows` has been rebuilt since.
-    tree_positions: Vec<(usize, usize)>,
+    pub(super) tree_positions: Vec<(usize, usize)>,
     tree_positions_for: Option<u64>,
-    /// Collapsed sections (HashSet of section keys). Preserved across reloads.
+    /// Sole runtime owner of section collapse, restored and persisted as a mask.
     pub collapsed: HashSet<&'static str>,
     /// Lazy `InputState` for the filter input (gpui-component IME 対応); created
     /// on first click of the filter area (requires `&mut Window`).
@@ -89,14 +96,24 @@ pub struct SidebarState {
 
 impl SidebarState {
     pub fn new() -> Self {
+        let layout = super::settings::Settings::load().sidebar_pane_layout();
+        let mut collapsed = HashSet::new();
+        for (index, section) in super::sidebar_panes::SECTIONS.iter().enumerate() {
+            if layout.collapsed_mask & (1 << index) != 0 {
+                collapsed.insert(*section);
+            }
+        }
         Self {
             width: SIDEBAR_DEFAULT_WIDTH,
-            scroll_handle: UniformListScrollHandle::new(),
+            scroll_handles: std::array::from_fn(|_| UniformListScrollHandle::new()),
             rows: Vec::new(),
+            pane_ranges: std::array::from_fn(|_| 0..0),
+            pane_weights: layout.weights,
+            pane_geom: std::array::from_fn(|_| Default::default()),
             rows_fingerprint: u64::MAX,
             tree_positions: Vec::new(),
             tree_positions_for: None,
-            collapsed: HashSet::new(),
+            collapsed,
             filter: None,
             visible: true,
             swipe: Default::default(),
@@ -109,7 +126,7 @@ impl SidebarState {
     /// `render`), so a fingerprint or length mismatch means the rows were
     /// rebuilt — after a refresh, collapse / expand, filter edit or session
     /// switch — and the positions are recomputed once, O(rows) without names.
-    fn refresh_tree_positions(&mut self) {
+    pub(super) fn refresh_tree_positions(&mut self) {
         if self.tree_positions_for == Some(self.rows_fingerprint)
             && self.tree_positions.len() == self.rows.len()
         {
@@ -138,12 +155,6 @@ pub const SECTION_REMOTE: &str = "remote";
 pub const SECTION_TAGS: &str = "tags";
 pub const SECTION_WORKTREES: &str = "worktrees";
 pub const SECTION_STASHES: &str = "stashes";
-/// GitHub Phase 1: open pull requests (from `gh`).
-pub const SECTION_PRS: &str = "prs";
-/// PR sub-group collapse keys (in `branch_groups_collapsed`).
-pub const PR_GROUP_MINE: &str = "prs:mine";
-pub const PR_GROUP_REVIEW: &str = "prs:review";
-pub const PR_GROUP_OTHERS: &str = "prs:others";
 
 /// Build a `.tooltip(...)` closure showing the full (untruncated) name.
 /// Row labels are single-line + ellipsized, so the tooltip is how the user
@@ -158,30 +169,17 @@ pub(super) fn name_tooltip(
 // PERF-SIDEBAR-VIRT: flat row model for `uniform_list`
 // ──────────────────────────────────────────────────────────────
 //
-// On repos with thousands of refs (e.g. zed: ~4500 branches/tags/remotes)
-// the old per-`for`-loop sidebar fed *every* row into taffy on every full
-// window draw, so unrelated redraws (graph scroll, terminal keystrokes) paid
-// an O(all refs) layout cost. We now flatten the whole navigator into a single
-// `Vec<SidebarRow>` (honouring section/group collapse + the filter) and render
-// it with `uniform_list`, so only the visible window of rows is built and laid
-// out per frame — exactly like the commit list.
-//
-// The flat Vec is rebuilt once per render (cheap: just grouping + collapse
-// pruning) and stashed on `KagiApp.sidebar.rows`; the `uniform_list` processor
-// reads `this.sidebar.rows[i]` and dispatches to `build_sidebar_row`, which
-// reproduces every behaviour the old per-section code had (click/jump,
-// dbl-click checkout, delete, drag, drop-to-merge, context menus, collapse
-// toggles, indentation, tooltips, the ✓ HEAD marker, lane colours).
+// Flatten all sections once when the input fingerprint changes; store five
+// contiguous ranges into that Vec on `SidebarState`. Each Graph pane draws only
+// its visible leaf rows via its own `uniform_list` and the common row renderer.
+// Moving a divider or scrolling a pane never regroups thousands of refs.
 
-/// One flattened, virtualized sidebar row.
-///
-/// Each variant carries exactly the data its renderer needs. The whole list is
-/// uniform-height (`SIDEBAR_ROW_H`), so headers and leaves can be interleaved
-/// inside a single `uniform_list`.
+/// One flattened, virtualized sidebar row. A section header starts each pane's
+/// contiguous range and is drawn outside its leaf list so it stays pinned.
+/// Every virtualized leaf in a pane has that pane's uniform slot height.
 #[derive(Debug, Clone)]
 pub enum SidebarRow {
-    /// A top-level section header (LOCAL BRANCHES / REMOTE BRANCHES / TAGS /
-    /// WORKTREES / STASHES). `section` is the static collapse key.
+    /// A top-level pane header. `section` is the static collapse key.
     SectionHeader {
         section: &'static str,
         title: &'static str,
@@ -241,7 +239,6 @@ pub enum SidebarRow {
         path: std::path::PathBuf,
         path_label: String,
         is_current: bool,
-        is_main: bool,
         locked: bool,
         /// First port of the worktree's stored block, shown as
         /// `localhost:<port>` (#855). `None` when it has none.
@@ -249,19 +246,6 @@ pub enum SidebarRow {
     },
     /// A stash leaf.
     Stash { index: usize, message: String },
-    /// GitHub Phase 1: PR sub-group header (Mine / Review requested / Others).
-    PrGroupHeader {
-        key: &'static str,
-        title: &'static str,
-        count: usize,
-        collapsed: bool,
-    },
-    /// GitHub Phase 1: an open pull request. `stacked` = its base is another
-    /// open PR's head.
-    PullRequest {
-        pr: kagi_domain::github::PullRequest,
-        stacked: bool,
-    },
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -271,7 +255,7 @@ pub enum SidebarRow {
 /// Dispatch a single flat row to its renderer. Reads live data from `this`
 /// (upstream info, commit index) so handlers see current state, mirroring the
 /// commit-list per-row builders.
-fn build_sidebar_row(
+pub(super) fn build_sidebar_row(
     this: &KagiApp,
     row: &SidebarRow,
     now_secs: i64,
@@ -320,7 +304,6 @@ fn build_sidebar_row(
             path,
             path_label,
             is_current,
-            is_main,
             locked,
             port,
         } => super::sidebar_worktree_row::build_worktree_row(
@@ -329,7 +312,6 @@ fn build_sidebar_row(
                 path,
                 path_label,
                 is_current: *is_current,
-                is_main: *is_main,
                 locked: *locked,
                 port: *port,
             },
@@ -337,13 +319,6 @@ fn build_sidebar_row(
             cx,
         ),
         SidebarRow::Stash { index, message } => build_stash_row(*index, message, cx),
-        SidebarRow::PrGroupHeader {
-            key,
-            title,
-            count,
-            collapsed,
-        } => build_group_header(key, title, *count, *collapsed, theme::scaled_px(20.), cx),
-        SidebarRow::PullRequest { pr, stacked } => build_pr_row(pr, *stacked, cx),
     }
 }
 
@@ -363,16 +338,14 @@ fn build_section_header(
     ));
     let toggle = cx.listener(
         move |this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
-            if this.sidebar.collapsed.contains(section) {
-                this.sidebar.collapsed.remove(section);
-            } else {
-                this.sidebar.collapsed.insert(section);
-            }
+            this.sidebar.toggle_section(section);
             cx.notify();
         },
     );
     div()
         .id(SharedString::from(format!("sidebar-section-{}", section)))
+        .relative()
+        .child(super::e2e::measure_inside(section))
         .h(theme::scaled_px(SIDEBAR_ROW_H))
         .px_3()
         .flex()
@@ -406,20 +379,29 @@ fn build_group_header(
         this.with_ui(|ui| ui.toggle_branch_group(&key_for_toggle));
         cx.notify();
     });
+    // The `SIDEBAR_ROW_H` slot keeps the pane's list uniform; the visible
+    // heading (and its hover) is the slightly shorter box inside it.
     div()
         .id(SharedString::from(format!("sidebar-group-{}", key)))
         .h(theme::scaled_px(SIDEBAR_ROW_H))
         .flex()
-        .flex_row()
         .items_center()
-        .pl(left_pad)
-        .pr_3()
-        .text_sm()
-        .text_color(rgb(theme().text_sub))
-        .overflow_hidden()
         .on_click(toggle)
-        .hover(|s| s.bg(rgb(theme().surface)))
-        .child(div().flex_1().truncate().child(glabel))
+        .child(
+            div()
+                .h(theme::scaled_px(SIDEBAR_GROUP_HEADING_H))
+                .w_full()
+                .flex()
+                .flex_row()
+                .items_center()
+                .pl(left_pad)
+                .pr_3()
+                .text_xs()
+                .text_color(rgb(theme().text_sub))
+                .overflow_hidden()
+                .hover(|s| s.bg(rgb(theme().surface)))
+                .child(div().flex_1().truncate().child(glabel)),
+        )
         .into_any()
 }
 
@@ -436,7 +418,7 @@ fn branch_row_meta(
                 .flex_shrink(1000.)
                 .min_w(px(0.))
                 .truncate()
-                .text_xs()
+                .text_size(theme::scaled_px(SIDEBAR_AUX_TEXT))
                 .text_color(rgb(theme().text_muted))
                 .child(SharedString::from(format!("  \u{00b7} {age}"))),
         )
@@ -445,7 +427,7 @@ fn branch_row_meta(
                 div()
                     .flex_shrink_0()
                     .ml_2()
-                    .text_xs()
+                    .text_size(theme::scaled_px(SIDEBAR_AUX_TEXT))
                     .text_color(rgb(theme().text_sub))
                     .child(text),
             )
@@ -459,7 +441,7 @@ fn branch_row_meta(
                     .rounded_sm()
                     .border_1()
                     .border_color(rgb(theme().selected))
-                    .text_xs()
+                    .text_size(theme::scaled_px(SIDEBAR_AUX_TEXT))
                     .text_color(rgb(color))
                     .child(text),
             )
@@ -564,7 +546,7 @@ fn build_local_branch_leaf(
             .items_center()
             .pl(left_pad)
             .pr_3()
-            .text_sm()
+            .text_xs()
             .text_color(rgb(text_color))
             .overflow_hidden()
             .on_click(head_click)
@@ -629,7 +611,7 @@ fn build_local_branch_leaf(
             .items_center()
             .pl(left_pad)
             .pr_3()
-            .text_sm()
+            .text_xs()
             .text_color(rgb(text_color))
             .overflow_hidden()
             .on_click(click_handler)
@@ -719,7 +701,7 @@ fn build_remote_leaf(
         .items_center()
         .pl(left_pad)
         .pr_3()
-        .text_sm()
+        .text_xs()
         .text_color(rgb(theme().color_remote))
         .overflow_hidden()
         .on_mouse_down(gpui::MouseButton::Right, menu_click)
@@ -781,7 +763,7 @@ fn build_tag_row(
         .flex_row()
         .items_center()
         .px_3()
-        .text_sm()
+        .text_xs()
         .text_color(rgb(theme().color_tag))
         .overflow_hidden()
         .tooltip(name_tooltip(full_name))
@@ -833,7 +815,7 @@ fn build_stash_row(index: usize, message: &str, cx: &mut Context<KagiApp>) -> gp
         .flex_row()
         .items_center()
         .px_3()
-        .text_sm()
+        .text_xs()
         .text_color(rgb(theme().color_warning))
         .overflow_hidden()
         .on_click(click_handler)
@@ -847,186 +829,6 @@ fn build_stash_row(index: usize, message: &str, cx: &mut Context<KagiApp>) -> gp
                 .child(SharedString::from(raw_label)),
         )
         .into_any()
-}
-
-// ──────────────────────────────────────────────────────────────
-// render_sidebar — main entry point
-// ──────────────────────────────────────────────────────────────
-
-/// Render the left sidebar as a 4-section Repository Navigator.
-///
-/// Sections: LOCAL BRANCHES / REMOTE BRANCHES / TAGS / WORKTREES / STASHES.
-///
-/// PERF-SIDEBAR-VIRT: the section/group/leaf rows are virtualized with
-/// `uniform_list` over the pre-flattened `this.sidebar.rows` (built by
-/// [`super::sidebar_rows::build_sidebar_rows`] in `render`), so only visible
-/// rows are laid out per frame — fixing the O(all refs) taffy cost on huge repos.
-/// The filter input is pinned above the list (it has its own height). All section
-/// headers, group headers and leaves share `SIDEBAR_ROW_H` so the uniform list
-/// scrolls correctly. Every click/jump/dbl-click/drag/drop/context-menu/
-/// collapse behaviour from the old per-`for`-loop version is preserved in the
-/// per-row builders.
-///
-/// State read from `KagiApp`:
-/// - `sidebar.rows` (the virtualization source, flattened in `render`)
-/// - `sidebar.scroll_handle` / `sidebar.filter`
-/// - `sidebar.collapsed` / `branch_groups_collapsed`
-/// - `view().cleanup_rows` (the merged-branches badge)
-///
-/// Every sidebar page is built by `workspace_mode::page_content`, which may ask
-/// for the Graph page while another page is on screen (a gesture previewing its
-/// neighbour). Deriving the inputs here rather than threading them from
-/// `render` is what lets that second call site exist at all.
-pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let filter_input = app.sidebar.filter.clone();
-    let row_count = app.sidebar.rows.len();
-    let scroll_handle = app.sidebar.scroll_handle.clone();
-    // ADR-0128: the badge counts merged-class rows only (stale-only rows are
-    // listed in the table but don't count as "merged").
-    let cleanup_count = app
-        .view()
-        .cleanup_rows
-        .iter()
-        .filter(|r| r.status != kagi_git::ops::MergedBranchStatus::NotMerged)
-        .count();
-
-    // ── Filter input row (pinned above the virtualized list) ──────
-    let filter_area: gpui::AnyElement = if let Some(input_entity) = &filter_input {
-        div()
-            .px_2()
-            .py_1()
-            .flex_shrink_0()
-            .child(Input::new(input_entity).xsmall().appearance(true))
-            .into_any_element()
-    } else {
-        // Placeholder: clicking creates the InputState (requires Window).
-        let create_handler = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, window, cx| {
-            this.ensure_sidebar_filter(window, cx);
-            cx.notify();
-        });
-        div()
-            .id("sidebar-filter-placeholder")
-            .px_2()
-            .py_1()
-            .flex_shrink_0()
-            .on_click(create_handler)
-            .hover(|s| s.bg(rgb(theme().surface)))
-            .child(
-                div()
-                    .h(theme::scaled_px(22.))
-                    .flex()
-                    .items_center()
-                    .px_2()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .bg(rgb(theme().bg_base))
-                    .rounded(theme::scaled_px(4.))
-                    .child(SharedString::from("filter…")),
-            )
-            .into_any_element()
-    };
-
-    // ── Branch Cleanup entry (ADR-0128, pinned above the list) ────
-    // "Merged branches (N)" — N counts the merged-class rows (full / squash?
-    // / grown); stale-only rows are in the table but not in the badge.
-    let cleanup_entry: gpui::AnyElement = {
-        let open_handler = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
-            this.toggle_branch_cleanup_view(cx);
-        });
-        let count_color = if cleanup_count > 0 {
-            theme().color_branch
-        } else {
-            theme().text_muted
-        };
-        div()
-            .id("sidebar-cleanup-entry")
-            .mx_2()
-            .my_1()
-            .px_2()
-            .py_1()
-            .flex_shrink_0()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_1()
-            .rounded(theme::scaled_px(4.))
-            .cursor_pointer()
-            .hover(|s| s.bg(rgb(theme().surface)))
-            .on_click(open_handler)
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(Msg::CleanupTitle.t())),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(count_color))
-                    .child(SharedString::from(format!("({})", cleanup_count))),
-            )
-            .into_any_element()
-    };
-
-    // ── Virtualized navigator list ────────────────────────────────
-    let scrollbar_handle = scroll_handle.clone();
-    let list = super::with_vertical_scrollbar(
-        "sidebar-list-scroll",
-        &scrollbar_handle,
-        uniform_list(
-            "sidebar-list",
-            row_count,
-            cx.processor(|this, range: std::ops::Range<usize>, _window, cx| {
-                // #358: one wall-clock read per rendered batch, not per row.
-                let now_secs = super::commit_list::now_unix_secs();
-                // #354: sibling positions are cached per rows rebuild; only the
-                // drawn rows build their accessible name below.
-                this.sidebar.refresh_tree_positions();
-                range
-                    .filter_map(|i| {
-                        let row = this.sidebar.rows.get(i).cloned()?;
-                        let position = this.sidebar.tree_positions[i];
-                        let spec = super::sidebar_a11y::tree_item(&row);
-                        let el = build_sidebar_row(this, &row, now_secs, cx);
-                        Some(
-                            super::list_a11y::tree_item(
-                                "sidebar",
-                                div().id(("sidebar-a11y", i)).w_full().child(el),
-                                i,
-                                &spec,
-                                position,
-                            )
-                            .into_any_element(),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            }),
-        )
-        .track_scroll(&scroll_handle)
-        .flex_1()
-        .min_h(px(0.))
-        .py_1(),
-        // Hidden scrollbar (user request): the branch list still scrolls via
-        // wheel/trackpad, just without the overlay bar.
-        false,
-    );
-    let list = super::list_a11y::tree("sidebar", list, Msg::A11ySidebar.t());
-
-    // ── Graph page content (the shell around it is the pages renderer) ──
-    div()
-        .relative()
-        .child(super::e2e::measure_inside("worktree-sidebar"))
-        .flex_1()
-        .min_h(px(0.))
-        .w_full()
-        .flex()
-        .flex_col()
-        .bg(rgb(theme().sidebar))
-        .child(filter_area)
-        .child(cleanup_entry)
-        .child(list)
-        .child(super::sidebar_worktree_row::inspection_panel(app, cx))
-        .into_any_element()
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1265,8 +1067,6 @@ mod tests {
         let rows = build_sidebar_rows(
             &branches,
             &[],
-            None,
-            &[],
             &[],
             &[],
             &[],
@@ -1316,100 +1116,4 @@ mod tests {
         rebuild(&mut state, 5, &no_groups, "");
         assert_eq!(branch_position(&state, "feat/b"), Some((2, 2)));
     }
-}
-
-// ──────────────────────────────────────────────────────────────
-// PULL REQUESTS row (GitHub Phase 1)
-// ──────────────────────────────────────────────────────────────
-
-/// `#N title` with a CI glyph and review/draft cues. Click jumps the graph to
-/// the head branch; right-click opens the PR menu (open on GitHub / copy URL).
-fn build_pr_row(
-    pr: &kagi_domain::github::PullRequest,
-    stacked: bool,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    use kagi_domain::github::{CiState, ReviewState};
-    let (ci_glyph, ci_color) = match pr.ci {
-        CiState::Success => ("\u{2713}", theme().color_success),
-        CiState::Failure => ("\u{2717}", theme().color_blocker),
-        CiState::Pending => ("\u{25CF}", theme().color_warning),
-        CiState::None => ("\u{25CB}", theme().text_muted),
-    };
-    let review_glyph = match pr.review {
-        ReviewState::Approved => Some(("\u{2714}", theme().color_success)),
-        ReviewState::ChangesRequested => Some(("\u{21BA}", theme().color_warning)),
-        ReviewState::ReviewRequired | ReviewState::None => None,
-    };
-    // #356: the title is GitHub-origin; neutralize control bytes like every
-    // other PR title surface (and the row's accessible name).
-    let label = format!(
-        "#{} {}",
-        pr.number,
-        kagi_domain::text_safety::sanitize_control_bytes(&pr.title)
-    );
-    let mut tip = format!(
-        "#{} {} \u{2190} {}\n@{}",
-        pr.number, pr.head, pr.base, pr.author
-    );
-    if pr.is_draft {
-        tip.push_str(&format!("\n{}", Msg::PrDraft.t()));
-    }
-    if stacked {
-        tip.push_str(&format!("\n{} {}", Msg::PrStacked.t(), pr.base));
-    }
-    let pr_click = pr.clone();
-    let click_handler = cx.listener(
-        move |this: &mut KagiApp, _e: &gpui::ClickEvent, _window, cx| {
-            this.jump_to_pr_head(&pr_click, cx);
-            cx.notify();
-        },
-    );
-    let pr_menu = pr.clone();
-    let menu_handler = cx.listener(
-        move |this: &mut KagiApp, e: &gpui::MouseDownEvent, _window, cx| {
-            this.with_ui(|ui| ui.pr_menu = Some((pr_menu.clone(), e.position)));
-            cx.stop_propagation();
-            cx.notify();
-        },
-    );
-    div()
-        .id(("sidebar-pr", pr.number as usize))
-        .h(theme::scaled_px(SIDEBAR_ROW_H))
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_1()
-        .px_3()
-        .text_sm()
-        .overflow_hidden()
-        .on_click(click_handler)
-        .on_mouse_down(gpui::MouseButton::Right, menu_handler)
-        .hover(|style| style.bg(rgb(theme().surface)))
-        .tooltip(name_tooltip(SharedString::from(tip)))
-        // Drafts read dimmed; stacked PRs get a small indent so the chain is
-        // visible at a glance (Graphite-style, without the full tree yet).
-        .when(pr.is_draft, |el| el.opacity(0.55))
-        .when(stacked, |el| el.pl(theme::scaled_px(24.)))
-        .child(
-            div()
-                .flex_shrink_0()
-                .w(theme::scaled_px(12.))
-                .text_color(rgb(ci_color))
-                .child(SharedString::from(ci_glyph)),
-        )
-        .child(
-            div()
-                .flex_1()
-                .truncate()
-                .text_color(rgb(theme().text_main))
-                .child(SharedString::from(label)),
-        )
-        .children(review_glyph.map(|(g, c)| {
-            div()
-                .flex_shrink_0()
-                .text_color(rgb(c))
-                .child(SharedString::from(g))
-        }))
-        .into_any()
 }

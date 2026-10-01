@@ -557,7 +557,7 @@ impl KagiApp {
         .when_some(editor_delete_confirm_modal, |el, modal| {
             el.child(render_editor_delete_confirm_modal(modal, cx))
         })
-        // ── Sidebar PR context menu (GitHub Phase 1) ──
+        // ── PRs tab context menu ──
         .when_some(self.ui().pr_menu.clone(), |el, (pr, pos)| {
             el.child(render_pr_menu_overlay(pr, pos, window.viewport_size(), cx))
         })

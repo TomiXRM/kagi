@@ -1,9 +1,13 @@
-//! Real worktree observations through native selection/refresh and stale delivery.
+//! Real worktree observations through the native row hover card, its refresh
+//! and stale delivery.
 use crate::{
     evidence_support::deferred,
     macos::{git, mount, unmount},
 };
-use gpui::{AnyWindowHandle, Entity, Modifiers, VisualTestAppContext};
+use gpui::{
+    point, px, AnyWindowHandle, Bounds, Entity, Modifiers, MouseButton, Pixels, Point,
+    VisualTestAppContext,
+};
 use kagi::ui::{
     e2e,
     i18n::{self, Lang},
@@ -14,7 +18,22 @@ use kagi_git::worktree_inspection::{inspect_worktree, WorktreeInspection};
 use std::{
     path::{Path, PathBuf},
     sync::atomic::AtomicBool,
+    time::Duration,
 };
+
+/// Past GPUI's 500ms hoverable-tooltip show and hide delays. The test clock
+/// only moves when advanced, so a resting pointer opens nothing on its own.
+const TOOLTIP_DELAY: Duration = Duration::from_secs(1);
+/// Recorded bounds a frame must re-prove before the card counts as drawn.
+const CARD_IDS: [&str; 7] = [
+    "worktree-inspection",
+    "worktree-inspection-heading",
+    "worktree-inspection-body",
+    "worktree-inspection-verdict",
+    "worktree-inspection-refresh",
+    "worktree-inspection-measuring",
+    "sidebar-panes",
+];
 
 fn fixture() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
@@ -85,36 +104,148 @@ fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     .unwrap();
 }
 
-fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
-    e2e::clear_control_bounds(window.window_id(), id);
-    draw(cx, window);
-    let bounds =
-        e2e::control_bounds(window.window_id(), id).unwrap_or_else(|| panic!("{id} not drawn"));
-    assert!(f32::from(bounds.size.height) > 0. && f32::from(bounds.size.width) > 0.);
-    cx.simulate_click(window, bounds.center(), Modifiers::none());
-    cx.run_until_parked();
+fn bounds(window: AnyWindowHandle, id: &str) -> Option<Bounds<Pixels>> {
+    e2e::control_bounds(window.window_id(), id)
+}
+
+/// Draw with the card's bounds cleared, so presence is proven by this frame
+/// rather than inherited from an earlier one.
+fn redraw_card(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    for id in CARD_IDS {
+        e2e::clear_control_bounds(window.window_id(), id);
+    }
     draw(cx, window);
 }
 
-fn select_worktree(
+fn card_shown(window: AnyWindowHandle) -> bool {
+    bounds(window, "worktree-inspection").is_some()
+}
+
+/// The five panes' measured spans and their shared viewport.
+fn pane_layout(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) -> ([(f32, f32); 5], Bounds<Pixels>) {
+    let panes = cx.read(|cx| {
+        let sidebar = &app.read(cx).sidebar;
+        std::array::from_fn(|index| sidebar.pane_geom[index].get())
+    });
+    (
+        panes,
+        bounds(window, "sidebar-panes").expect("pane viewport"),
+    )
+}
+
+/// Rest the real pointer on a worktree row — hovering is the only way to
+/// select one. The pointer sits a fixed inset from the row's leading edge;
+/// GPUI opens the card right of the pointer, so an open card never covers the
+/// spot another row is hovered at.
+fn hover_worktree(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     window: AnyWindowHandle,
     name: &str,
-) {
+) -> Point<Pixels> {
     draw(cx, window);
-    // Selection opens a detail panel and shrinks the virtual viewport. Bring
-    // the real row into view before clicking it, without bypassing selection.
     app.update(cx, |app, cx| {
         let index = app.sidebar.rows.iter().position(|row| matches!(
             row, kagi::ui::sidebar::SidebarRow::Worktree { name: row_name, .. } if row_name == name
         )).expect("registered sidebar worktree");
-        app.sidebar
-            .scroll_handle
-            .scroll_to_item(index, gpui::ScrollStrategy::Center);
+        let first_leaf = app.sidebar.pane_ranges[2].start + 1;
+        app.sidebar.scroll_handles[2]
+            .scroll_to_item(index - first_leaf, gpui::ScrollStrategy::Center);
         cx.notify();
     });
-    click(cx, window, &format!("sidebar-worktree-{name}"));
+    let id = format!("sidebar-worktree-{name}");
+    e2e::clear_control_bounds(window.window_id(), &id);
+    draw(cx, window);
+    let row = bounds(window, &id).unwrap_or_else(|| panic!("{id} not drawn"));
+    assert!(f32::from(row.size.height) > 0. && f32::from(row.size.width) > 4.);
+    let pointer = point(row.origin.x + px(4.), row.center().y);
+    cx.simulate_mouse_move(window, pointer, None, Modifiers::none());
+    cx.run_until_parked();
+    pointer
+}
+
+/// Let the show delay pass with the pointer resting, then prove the card is
+/// the hovered row's: GPUI places it a few pixels from the pointer, it stays in
+/// the window, and it floats over the panes instead of taking their height.
+fn open_card(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    pointer: Point<Pixels>,
+    layout: ([(f32, f32); 5], Bounds<Pixels>),
+) -> Bounds<Pixels> {
+    cx.advance_clock(TOOLTIP_DELAY);
+    cx.run_until_parked();
+    redraw_card(cx, window);
+    let card = bounds(window, "worktree-inspection").expect("hover card not shown after the delay");
+    let near = |edge: Pixels, at: Pixels| (f32::from(edge) - f32::from(at)).abs() <= 8.;
+    assert!(
+        (near(card.origin.x, pointer.x) || near(card.right(), pointer.x))
+            && (near(card.origin.y, pointer.y) || near(card.bottom(), pointer.y)),
+        "card {card:?} is not anchored at the hovered row's pointer {pointer:?}"
+    );
+    let viewport = cx
+        .update_window(window, |_, window, _| window.viewport_size())
+        .unwrap();
+    assert!(
+        card.origin.x >= px(0.)
+            && card.origin.y >= px(0.)
+            && card.right() <= viewport.width
+            && card.bottom() <= viewport.height,
+        "card {card:?} overflows the window {viewport:?}"
+    );
+    assert_eq!(
+        pane_layout(cx, app, window),
+        layout,
+        "the hover card took space from the sidebar panes"
+    );
+    let heading = bounds(window, "worktree-inspection-heading").expect("card heading");
+    assert!(
+        heading.size.height > px(0.)
+            && heading.origin.y >= card.origin.y
+            && heading.bottom() <= card.bottom(),
+        "worktree heading is not visible in the card"
+    );
+    card
+}
+
+/// Leave row and card for a neutral spot; the card closes after the hide delay.
+fn leave(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    let sidebar = bounds(window, "worktree-sidebar").expect("sidebar");
+    let away = point(sidebar.origin.x + px(4.), sidebar.bottom() - px(4.));
+    cx.simulate_mouse_move(window, away, None, Modifiers::none());
+    cx.run_until_parked();
+    cx.advance_clock(TOOLTIP_DELAY);
+    cx.run_until_parked();
+    redraw_card(cx, window);
+    assert!(
+        !card_shown(window),
+        "card outlived the pointer leaving row and card"
+    );
+}
+
+/// Carry the pointer from the row into the open card — within the hide delay,
+/// as a hand does — and click a control there.
+fn click_in_card(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
+    e2e::clear_control_bounds(window.window_id(), id);
+    draw(cx, window);
+    let target = bounds(window, id)
+        .unwrap_or_else(|| panic!("{id} not drawn in the card"))
+        .center();
+    cx.simulate_mouse_move(window, target, None, Modifiers::none());
+    cx.run_until_parked();
+    cx.simulate_click(window, target, Modifiers::none());
+    cx.run_until_parked();
+    redraw_card(cx, window);
+    let card = bounds(window, "worktree-inspection").expect("card closed under the pointer");
+    assert!(
+        card.contains(&target),
+        "refresh moved the card away from the pointer: {card:?} / {target:?}"
+    );
 }
 
 fn observation(
@@ -149,30 +280,36 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
     let root = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
     let original_lang = i18n::lang();
+    // At rest nothing is hovered: no card, and nothing docked under the panes.
+    redraw_card(cx, window);
+    assert!(
+        !card_shown(window),
+        "worktree details drawn without a hover"
+    );
+    let layout = pane_layout(cx, &app, window);
     for lang in [Lang::En, Lang::Ja] {
         i18n::set_lang(lang);
-        for (name, verdict) in [
+        // Row to row with no pause between: each card must be the newly
+        // hovered row's, not the one the pointer just left.
+        for (index, (name, verdict)) in [
             ("pushed", Verdict::SafePushed),
             ("dirty", Verdict::Dirty),
             ("locked", Verdict::Locked),
             ("detached", Verdict::SafeMerged),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let path = root.join(name);
-            select_worktree(cx, &app, window, name);
-            let sidebar = e2e::control_bounds(window.window_id(), "worktree-sidebar").unwrap();
-            let panel = e2e::control_bounds(window.window_id(), "worktree-inspection").unwrap();
-            let heading =
-                e2e::control_bounds(window.window_id(), "worktree-inspection-heading").unwrap();
-            assert!(
-                f32::from(panel.size.height) <= f32::from(sidebar.size.height) * 0.4 + 1.,
-                "detail panel displaced the navigator: {panel:?} / {sidebar:?}"
-            );
-            assert!(
-                heading.size.height > gpui::px(0.)
-                    && heading.origin.y >= panel.origin.y
-                    && heading.bottom() <= panel.bottom(),
-                "worktree heading is not visible"
-            );
+            let pointer = hover_worktree(cx, &app, window, name);
+            if index == 0 {
+                redraw_card(cx, window);
+                assert!(
+                    !card_shown(window),
+                    "{name}: card opened before the hover delay"
+                );
+            }
+            let card = open_card(cx, &app, window, pointer, layout);
             let (pending, bytes, reason) = shown(cx, &app, &path);
             assert!(!pending, "{name}: measurement did not settle");
             assert!(
@@ -185,61 +322,121 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                 "{name}/{lang:?}"
             );
             assert!(
-                e2e::control_bounds(window.window_id(), "worktree-inspection-verdict").is_some(),
+                bounds(window, "worktree-inspection-verdict").is_some(),
                 "reason not painted"
             );
             if name == "pushed" {
-                let body =
-                    e2e::control_bounds(window.window_id(), "worktree-inspection-body").unwrap();
-                let reason_before =
-                    e2e::control_bounds(window.window_id(), "worktree-inspection-verdict").unwrap();
+                // Wheel inside the card scrolls its body only: the card, its
+                // heading and Refresh stay put, and the card stays open.
+                let body = bounds(window, "worktree-inspection-body").unwrap();
+                let heading = bounds(window, "worktree-inspection-heading").unwrap();
+                let refresh = bounds(window, "worktree-inspection-refresh").unwrap();
+                let reason_before = bounds(window, "worktree-inspection-verdict").unwrap();
+                cx.simulate_mouse_move(window, body.center(), None, Modifiers::none());
+                cx.run_until_parked();
                 for delta in [-1000., 1000.] {
-                    e2e::clear_control_bounds(window.window_id(), "worktree-inspection-verdict");
                     cx.simulate_event(
                         window,
                         gpui::ScrollWheelEvent {
                             position: body.center(),
-                            delta: gpui::ScrollDelta::Pixels(gpui::point(
-                                gpui::px(0.),
-                                gpui::px(delta),
-                            )),
+                            delta: gpui::ScrollDelta::Pixels(point(px(0.), px(delta))),
                             touch_phase: gpui::TouchPhase::Moved,
                             ..Default::default()
                         },
                     );
-                    draw(cx, window);
+                    cx.run_until_parked();
+                    redraw_card(cx, window);
                     assert_eq!(
-                        e2e::control_bounds(window.window_id(), "worktree-inspection-heading"),
+                        bounds(window, "worktree-inspection"),
+                        Some(card),
+                        "scrolling the card body moved or closed the card"
+                    );
+                    assert_eq!(
+                        bounds(window, "worktree-inspection-heading"),
                         Some(heading),
                         "detail scrolling moved the identity heading"
                     );
+                    assert_eq!(
+                        bounds(window, "worktree-inspection-refresh"),
+                        Some(refresh),
+                        "detail scrolling moved Refresh"
+                    );
+                    let reason_now = bounds(window, "worktree-inspection-verdict");
                     if delta < 0. {
                         assert!(
-                            e2e::control_bounds(window.window_id(), "worktree-inspection-verdict")
-                                .is_none_or(|bounds| bounds.origin.y < reason_before.origin.y),
-                            "detail body did not scroll independently"
+                            reason_now
+                                .is_none_or(|bounds| bounds.origin.y <= reason_before.origin.y),
+                            "detail body scrolled the wrong way"
+                        );
+                    } else {
+                        assert_eq!(
+                            reason_now,
+                            Some(reason_before),
+                            "scrolling back did not restore the detail body"
                         );
                     }
                 }
             }
         }
+        leave(cx, window);
     }
 
-    // Only the transport future is held. Real refresh/selection, request revision,
-    // owner routing and rendering still execute while the old read is pending.
+    // Right-click on the hovered linked worktree: GPUI paints native tooltips
+    // after KagiApp's root overlays, so the card must yield to the menu.
+    let pointer = hover_worktree(cx, &app, window, "pushed");
+    open_card(cx, &app, window, pointer, layout);
+    cx.simulate_mouse_down(window, pointer, MouseButton::Right, Modifiers::none());
+    cx.run_until_parked();
+    e2e::clear_control_bounds(window.window_id(), "worktree-menu-item-0-0");
+    redraw_card(cx, window);
+    assert!(
+        !card_shown(window),
+        "hover card obscures the right-click menu"
+    );
+    cx.read(|cx| {
+        let menu = app.read(cx).worktree_menu.as_ref().expect("worktree menu");
+        assert_eq!(menu.path.as_deref(), Some(root.join("pushed").as_path()));
+    });
+    let first_action =
+        bounds(window, "worktree-menu-item-0-0").expect("visible menu action above card");
+    assert!(first_action.size.width > px(0.) && first_action.size.height > px(0.));
+    let viewport = cx
+        .update_window(window, |_, window, _| window.viewport_size())
+        .unwrap();
+    cx.simulate_click(
+        window,
+        point(viewport.width - px(8.), viewport.height - px(8.)),
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).worktree_menu.is_none()));
+    leave(cx, window);
+
+    // Only the transport future is held. Real hover selection/refresh, request
+    // revision, owner routing and rendering still execute while the old read is
+    // pending.
     let pushed = root.join("pushed");
-    select_worktree(cx, &app, window, "pushed");
+    let pointer = hover_worktree(cx, &app, window, "pushed");
+    open_card(cx, &app, window, pointer, layout);
     let old = observation(cx, &app, &repo, &pushed);
     let (task, reply) = deferred(cx);
     e2e::worktree_inspection::queue(task);
-    click(cx, window, "worktree-inspection-refresh");
+    click_in_card(cx, window, "worktree-inspection-refresh");
     assert!(shown(cx, &app, &pushed).0);
     assert!(
-        e2e::control_bounds(window.window_id(), "worktree-inspection-measuring").is_some(),
+        bounds(window, "worktree-inspection-measuring").is_some(),
         "pending spinner not drawn"
     );
+    // A pointer resting inside the card holds it open past the hide delay.
+    cx.advance_clock(TOOLTIP_DELAY);
+    cx.run_until_parked();
+    redraw_card(cx, window);
+    assert!(
+        card_shown(window) && bounds(window, "worktree-inspection-measuring").is_some(),
+        "card closed with the pointer inside it"
+    );
     std::fs::write(pushed.join("target/new.bin"), vec![4; 8192]).unwrap();
-    click(cx, window, "worktree-inspection-refresh");
+    click_in_card(cx, window, "worktree-inspection-refresh");
     let newer = shown(cx, &app, &pushed);
     assert!(
         newer.1.unwrap() > old.disk_usage.as_ref().unwrap().allocated_bytes,
@@ -252,17 +449,21 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
         newer,
         "superseded read replaced the fresh measurement"
     );
+    // Leaving from inside the card closes it too.
+    leave(cx, window);
 
-    // Changing selection retires the old worktree's pending observation.
+    // Hovering another worktree retires the old worktree's pending observation.
     let dirty = root.join("dirty");
-    select_worktree(cx, &app, window, "dirty");
+    let pointer = hover_worktree(cx, &app, window, "dirty");
+    open_card(cx, &app, window, pointer, layout);
     let cached = shown(cx, &app, &dirty);
     std::fs::write(dirty.join("target/later.bin"), vec![2; 8192]).unwrap();
     let late = observation(cx, &app, &repo, &dirty);
     let (task, reply) = deferred(cx);
     e2e::worktree_inspection::queue(task);
-    click(cx, window, "worktree-inspection-refresh");
-    select_worktree(cx, &app, window, "pushed");
+    click_in_card(cx, window, "worktree-inspection-refresh");
+    // Straight from dirty's card onto pushed's row: the hover alone selects.
+    let pointer = hover_worktree(cx, &app, window, "pushed");
     reply.send(late);
     cx.run_until_parked();
     assert_eq!(
@@ -270,12 +471,13 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
         cached,
         "departed selection accepted an old completion"
     );
+    open_card(cx, &app, window, pointer, layout);
 
     // A missing fetched upstream is typed Unknown, never evidence of publication.
     git(&repo, &["update-ref", "-d", "refs/remotes/origin/pushed"]);
     for lang in [Lang::En, Lang::Ja] {
         i18n::set_lang(lang);
-        click(cx, window, "worktree-inspection-refresh");
+        click_in_card(cx, window, "worktree-inspection-refresh");
         assert_eq!(
             shown(cx, &app, &pushed).2.as_deref(),
             Some(i18n::worktree_removal_verdict_text(Verdict::Unknown(
@@ -289,7 +491,7 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
     let late = observation(cx, &app, &repo, &pushed);
     let (task, reply) = deferred(cx);
     e2e::worktree_inspection::queue(task);
-    click(cx, window, "worktree-inspection-refresh");
+    click_in_card(cx, window, "worktree-inspection-refresh");
     let owner = app.update(cx, |app, cx| {
         let owner = app.active_session().unwrap();
         app.close_tab(0, cx);
@@ -304,6 +506,8 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
             (false, None, None)
         );
     });
+    redraw_card(cx, window);
+    assert!(!card_shown(window), "card outlived its closed tab");
 
     // #779: one accepted observation is not tab-wide coverage. A request
     // retired by leaving the tab left every worktree it never reached
@@ -330,11 +534,11 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
         "reopened tab did not start an automatic sweep"
     );
 
-    // Selecting retires that sweep and measures exactly one worktree — the
+    // Hovering retires that sweep and measures exactly one worktree — the
     // partial cache a tab switch leaves behind once a first result has landed.
     let (first, deliver) = deferred(cx);
     e2e::worktree_inspection::queue(first);
-    select_worktree(cx, &app, window, "pushed");
+    hover_worktree(cx, &app, window, "pushed");
     retired.send(observation(cx, &app, &repo, &pushed));
     cx.run_until_parked();
     deliver.send(observation(cx, &app, &repo, &pushed));
@@ -391,6 +595,6 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
     );
 
     i18n::set_lang(original_lang);
-    eprintln!("[gui-e2e] PASS worktree_inspection EN/JA, ignored allocation, refresh, stale/selection/close rejection, partial-cache resume on return");
+    eprintln!("[gui-e2e] PASS worktree_inspection EN/JA hover card (delay, row anchor, panes intact, row→row, row→card Refresh, leave closes), ignored allocation, refresh, stale/hover/close rejection, partial-cache resume on return");
     unmount(cx, app, window);
 }

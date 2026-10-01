@@ -308,11 +308,12 @@ impl Render for KagiApp {
         // `self.sidebar.rows` below and read by the virtualized list processor.
         // The renderer derives its own inputs from `self` (ADR-0199), so only
         // the filter *text* is needed here, for the rebuild fingerprint.
-        // PERF-SIDEBAR-VIRT: flatten the navigator into `self.sidebar.rows`
-        // (honouring collapse + filter) so the "sidebar-list" uniform_list can
-        // virtualize it. The processor reads the field.
+        // The five Graph pane lists share these rows and rebuild their ranges
+        // only when the fingerprint below changes (#864). Branch-row PR badges
+        // read `github_prs` live when a visible row is drawn, so PR refreshes
+        // never rebuild the rows.
         //
-        // ADR-0116: owner + evidence/read epochs and navigator inputs gate the
+        // ADR-0116: owner + `view_epoch` and navigator inputs gate the
         // O(all-refs) clone+collect. Filter InputState does not notify KagiApp,
         // so its current value is folded in every frame.
         let sidebar_filter_text: String = self
@@ -324,7 +325,6 @@ impl Render for KagiApp {
         let sidebar_fingerprint = sidebar_rows::sidebar_rows_fingerprint(
             self.active_session(),
             self.view_epoch,
-            self.ui().github_prs_epoch,
             self.view().branches.len(),
             self.view().remote_branches.len(),
             self.view().tags.len(),
@@ -337,8 +337,6 @@ impl Render for KagiApp {
         if sidebar_fingerprint != self.sidebar.rows_fingerprint {
             let rows = sidebar_rows::build_sidebar_rows(
                 &self.view().branches,
-                &self.ui().github_prs,
-                self.github_login.as_deref(),
                 &self.view().remote_branches,
                 &self.view().tags,
                 &self.view().stashes,
@@ -350,6 +348,7 @@ impl Render for KagiApp {
                 &self.ui().branch_groups_collapsed,
                 &sidebar_filter_text,
             );
+            self.sidebar.pane_ranges = sidebar_panes::pane_ranges(&rows);
             self.sidebar.rows = rows;
             self.sidebar.rows_fingerprint = sidebar_fingerprint;
         }

@@ -295,7 +295,7 @@ where
         .child(label)
 }
 
-/// GitHub Phase 1: sidebar PR row context menu — Open on GitHub / Copy URL.
+/// PRs tab context menu — Open on GitHub / Copy URL / Jump to branch.
 pub(crate) fn render_pr_menu_overlay(
     pr: kagi_domain::github::PullRequest,
     pos: gpui::Point<gpui::Pixels>,

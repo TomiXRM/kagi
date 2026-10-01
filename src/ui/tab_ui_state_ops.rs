@@ -4,7 +4,6 @@
 
 use super::tab_view::TabUiState;
 use gpui::Entity;
-use std::collections::HashSet;
 
 /// Whether a session's retained panes may act on the repository (ADR-0197
 /// 決定 3 / #722). One value, not a pair of flags, so no order of events can
@@ -159,14 +158,13 @@ impl TabUiState {
             main_diff_commit_read: _,
             compare_view,
         } = self;
-        let default_groups = HashSet::from([super::sidebar::PR_GROUP_OTHERS.to_string()]);
         let dirty = [
             (selected.is_some(), "selected"),
             (*commit_limit != super::DEFAULT_COMMIT_LIMIT, "commit_limit"),
             (*load_more_gen != 0, "load_more_gen"),
             (*graph_scroll_x != 0.0, "graph_scroll_x"),
             (
-                *branch_groups_collapsed != default_groups,
+                !branch_groups_collapsed.is_empty(),
                 "branch_groups_collapsed",
             ),
             (!cleanup_selected.is_empty(), "cleanup_selected"),

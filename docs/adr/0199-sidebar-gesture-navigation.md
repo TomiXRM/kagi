@@ -56,9 +56,9 @@ never translates.
 8. **One page-content builder.** `page_content(app, mode, cx)` builds any page's
    body — Graph's navigator, the PR list, the Issue list — so the page a gesture
    *heads for* is the same element tree as the page it *lands on*. That is why
-   `render_sidebar` derives its inputs (rows, scroll handle, filter, merged
-   count) from `app` instead of having them threaded from `render`: the second
-   call site (previewing a neighbour) has no such thread.
+   `render_sidebar` derives its inputs (cached rows, five pane scroll handles,
+   filter, merged count) from `app` instead of having them threaded from
+   `render`: the second call site (previewing a neighbour) has no such thread.
 
 Pages are positioned **absolutely** in the viewport. A margin would shrink each
 page's content box and re-lay-out the list as it slides; the gesture must

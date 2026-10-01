@@ -394,14 +394,18 @@ fn set_identity(id: u64, identity: Option<serde_json::Value>) {
 
 /// This repository's recorded identity, as JSON (unix: carries dev / ino and
 /// the creation time). `None` — the caller skips — on a filesystem that
-/// reports no creation time (NFS, some Linux filesystems): there the identity
-/// is ambiguous by design and these cases cannot be set up (#900 review).
+/// reports no creation time (NFS, some Linux filesystems) or only whole
+/// seconds: there the identity is ambiguous by design and these cases cannot
+/// be set up (#900 review).
 #[cfg(unix)]
 fn identity_of(dir: &Path) -> Option<serde_json::Value> {
     let id = kagi_git::oplog::RepoIdentity::of(dir).expect("opens");
     let (dev, ino) = id.file_id.expect("unix file id");
-    let Some((born_s, born_ns)) = id.created else {
-        eprintln!("skipped: {} reports no creation time", dir.display());
+    let Some((born_s, born_ns)) = id.created.filter(|&(_, ns)| ns != 0) else {
+        eprintln!(
+            "skipped: {} reports no sub-second creation time",
+            dir.display()
+        );
         return None;
     };
     Some(serde_json::json!({

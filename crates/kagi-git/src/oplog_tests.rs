@@ -548,6 +548,19 @@ fn same_repository_needs_the_file_and_its_birth_to_match() {
         Ambiguous,
         "a file id match alone could be a reused inode"
     );
+    // A whole-second creation time (HFS+, many network filesystems) cannot
+    // tell a delete and re-create within that second from the original.
+    let coarse = id("/r/.git", Some((1, 42)), Some((100, 0)));
+    assert_eq!(
+        coarse.same_repository(&coarse.clone()),
+        Ambiguous,
+        "coarse birth"
+    );
+    assert_eq!(
+        coarse.same_repository(&id("/r/.git", Some((1, 42)), Some((101, 0)))),
+        Different,
+        "a coarse time still proves a difference"
+    );
     // No file id (non-unix): path + birth.
     let windows = id("C:/r/.git", None, Some((100, 5)));
     assert_eq!(windows.same_repository(&windows.clone()), Same);

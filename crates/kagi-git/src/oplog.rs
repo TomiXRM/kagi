@@ -243,6 +243,10 @@ impl RepoIdentity {
     /// - The same file id *and* the same creation time is `Same`; the file id
     ///   alone is not enough, a deleted repository's inode can be handed to a
     ///   new `.git` at the same place (a re-clone of the same remote).
+    /// - A creation time with no sub-second part (`born_ns == 0`: a
+    ///   filesystem that keeps whole seconds) cannot confirm a match — a
+    ///   delete and re-create within that second can reuse both the inode and
+    ///   the time — so an equal one counts as missing (#900 review).
     /// - Without a file id (non-unix): the same path and creation time is
     ///   `Same`, another path `Different`.
     /// - Anything else is `Ambiguous`.
@@ -252,7 +256,8 @@ impl RepoIdentity {
             _ => None,
         };
         let born = match (self.created, other.created) {
-            (Some(a), Some(b)) => Some(a == b),
+            (Some(a), Some(b)) if a != b => Some(false),
+            (Some((_, ns)), Some(_)) if ns != 0 => Some(true),
             _ => None,
         };
         let path = self.common_dir == other.common_dir;

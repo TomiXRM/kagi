@@ -100,6 +100,7 @@ impl KagiApp {
         let el = menu_act!(el, cmds::ThemeOneDark, "theme.oneDark");
         let el = menu_act!(el, cmds::ThemeOneLight, "theme.oneLight");
         let el = menu_act!(el, cmds::ThemeMonokai, "theme.monokai");
+        let el = menu_act!(el, cmds::ThemeColorVision, "theme.colorVision");
         // W22-I18N: language switch actions (always enabled).
         let el = menu_act!(el, cmds::LangEnglish, "lang.english");
         let el = menu_act!(el, cmds::LangJapanese, "lang.japanese");

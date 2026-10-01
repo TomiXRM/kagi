@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
+- PR 一覧（PR モードの表）の accessibility（#354 slice 3、3 本目）。支援技術から表を list として、各行を「番号・タイトル・状態・作者・branch・check・更新」で名前付きの項目として、並び順の何番目か付きで読めるようにしました（表は選択状態を持たないので selected は付けません）。（Refs #354）
 - Operation Log の「取り消す / この時点まで戻す」の確認 card に、戻した後のグラフを表示するようにしました(#334 slice 2c、ADR-0214 §6)。branch が戻る位置と、どの branch からも外れる commit の数を、変化する部分の前後(最大 40 行)だけ、通常の commit graph と同じ描き方で示します。計算は読み込み済みの履歴だけで行い、戻し先がその中に無い場合は推定せず「プレビューできません」と表示します(復元自体はできます)。表示専用で、確認するまで何も書き込みません。(Refs #334)
 - サイドバーの accessibility（#354 slice 3、2 本目）。支援技術からサイドバーを tree として、section・group の見出しを開閉状態付き、branch・remote branch・tag・worktree・stash・PR の各行を階層と兄弟の中での位置付きで読めるようにしました。現在の branch と worktree は名前に「現在」と含めます。（Refs #354）
 - commit 一覧の accessibility（#354 slice 3、最初の一覧）。支援技術から commit 一覧を list box として、各行（WIP・stash・commit）を「件名・作者・日付・短い SHA・ref」で名前付きの選択肢として、選択状態と全体の何番目か付きで読めるようにしました（画面外の行は描画しないため、位置と総数で全長を伝えます）。（Refs #354）
@@ -41,8 +42,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
   あわせて Operation Log パネルの固定文言を `Msg` のキーに移しました(表示は同じ)。(Refs #334)
 
+- 色覚対応テーマを View → Theme メニューから選べない問題、UI 言語切替後に Settings のテーマ名だけ古い言語のままになる問題、開いた Commit Panel の WIP 行が支援技術では未選択になる問題を修正しました。（#354、#889 review）
 - 埋め込み terminal の `KAGI_WORKTREE_PATH` と `KAGI_MAIN_WORKTREE` が、git の workdir をそのまま使っていたため末尾に `/` が付いていた問題を修正しました(main worktree・linked worktree とも)。`"$KAGI_WORKTREE_PATH/foo"` が `//foo` になりません。(#870)
-
 - Cmd+R(Refresh)の読み直しが捨てられ、Kagi の外で変えた状態(起動後に置いた worktree lock の 🔐・右クリックの Unlock など)が画面に反映されない問題を修正しました。Refresh は読み直しの直後に fetch を始めますが、fetch の受付が実行中の読み直しを無効にする一方、何も取得しなかった fetch は読み直しをしないため、Refresh の読み直しが失われていました。fetch は、自分の受付で無効にした読み直しを、取得の有無や失敗に関わらず完了時にやり直します。自動 fetch が watcher の読み直しと重なった場合も同じです。(#851)
 
 - worktree の port block(マシン全体で既定 `3000-3099` / 10 ずつ = 10 block)が尽きると、埋め込み terminal 自体が起動しなかった問題を修正しました。枯渇時は `KAGI_*` を渡さずに terminal を起動し、footer と toast に理由と、`settings.json` の `worktree.port_range` を広げれば割り当てられることを示します(`[kagi] terminal: port block exhausted <path> (range <start>-<end>, per <n>)`)。既定の range は変えていません。あわせて ADR-0171 の「2 つの repo が同じ番号を出しうる」という記述を、全 repo で 1 つの store を共有して番号が重ならない現行の実装に合わせて訂正しました。(#852、Refs #342)

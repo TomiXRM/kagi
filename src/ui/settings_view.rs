@@ -75,7 +75,14 @@ impl SelectItem for ThemeOption {
     type Value = &'static str;
 
     fn title(&self) -> SharedString {
-        SharedString::from(self.name)
+        // SelectState keeps its options across language changes. Resolve the
+        // display name at render time so both the trigger and dropdown switch.
+        let name = theme::THEMES
+            .iter()
+            .find(|theme| theme.slug == self.slug)
+            .map(|theme| theme.display_name())
+            .unwrap_or(self.name);
+        SharedString::from(name)
     }
 
     fn value(&self) -> &Self::Value {

@@ -9,15 +9,6 @@ fn short(oid: &Option<String>) -> String {
     }
 }
 
-/// `'a', 'b'`.
-fn quoted(names: &[String]) -> String {
-    names
-        .iter()
-        .map(|n| format!("'{n}'"))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 /// Where HEAD pointed on one side of a recorded switch (#886). `Box<str>`
 /// keeps `PlanNote` (carried in `Result::Err`) small.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,19 +54,13 @@ pub enum OplogRestoreNote {
     NotRecorded { id: u64, op: String },
     /// blocker — the entry switched or detached HEAD (`from` → `to`):
     /// undoing that is a checkout, which touches the working tree, and a
-    /// restore moves branches only (#886, ADR-0214 §7). `also_moved` = the
-    /// branches the same entry created, moved or deleted (short names; e.g.
-    /// "create and check out"): restoring to it or later would keep those,
-    /// so the way back is all by hand (#912 review). `from_gone` = `from` is
-    /// a branch that no longer exists (a later entry deleted it): it can only
-    /// be checked out after a restore to this entry brings it back.
+    /// restore moves branches only (#886, ADR-0214 §7). One guidance for
+    /// every case; anything more involved is done by hand (#912 review).
     HeadMoved {
         id: u64,
         op: String,
         from: HeadAt,
         to: HeadAt,
-        also_moved: Vec<String>,
-        from_gone: bool,
     },
     /// blocker (op-revert) — a later recorded entry moved the same ref.
     LaterEntryMoved {
@@ -141,48 +126,11 @@ impl OplogRestoreNote {
             OplogRestoreNote::NotRecorded { id, op } => format!(
                 "Operation #{id} ({op}) has no recorded ref moves, so it cannot be undone exactly. Nothing is guessed from the reflog."
             ),
-            OplogRestoreNote::HeadMoved {
-                id,
-                op,
-                from,
-                to,
-                also_moved,
-                from_gone: false,
-            } if also_moved.is_empty() => format!(
-                "Operation #{id} ({op}) switched HEAD from {} to {}. A restore moves branches only, never HEAD, because that would change the working tree. To go back past it: check out {} yourself, then restore to #{id} or a later point.",
+            OplogRestoreNote::HeadMoved { id, op, from, to } => format!(
+                "Operation #{id} ({op}) switched HEAD from {} to {}, so the range cannot be restored: a restore moves branches only, never HEAD, because that would change the working tree. Check out {} yourself, then restore to #{id} or a later point. Anything more involved (several switches, branches it created or deleted) has to be done by hand.",
                 from.label_en(),
                 to.label_en(),
                 from.label_en()
-            ),
-            OplogRestoreNote::HeadMoved {
-                id,
-                op,
-                from,
-                to,
-                also_moved,
-                from_gone: true,
-            } if also_moved.is_empty() => format!(
-                "Operation #{id} ({op}) switched HEAD from {} to {}, and {} no longer exists. A restore moves branches only, never HEAD, because that would change the working tree. To go back past it: first restore to #{id} (that brings {} back), then check out {} yourself, then restore to an earlier point.",
-                from.label_en(),
-                to.label_en(),
-                from.label_en(),
-                from.label_en(),
-                from.label_en()
-            ),
-            OplogRestoreNote::HeadMoved {
-                id,
-                op,
-                from,
-                to,
-                also_moved,
-                ..
-            } => format!(
-                "Operation #{id} ({op}) switched HEAD from {} to {} and also changed {}. A restore moves branches only, never HEAD, so it cannot go back past it. Undo it by hand: check out {}, then delete or move back {}.",
-                from.label_en(),
-                to.label_en(),
-                quoted(also_moved),
-                from.label_en(),
-                quoted(also_moved)
             ),
             OplogRestoreNote::LaterEntryMoved { refname, id, op } => format!(
                 "{refname} was moved again by the later operation #{id} ({op}). Revert that one first, or restore to a point."

@@ -346,6 +346,17 @@ The current suite covers:
   125% in JA, open a file diff and File History; every button is visible and
   clickable, icon-only buttons name themselves in a hover tooltip, and a wide
   window shows the labels again.
+- terminal auto-lock compare-and-unlock (`KAGI_GUI_E2E_ONLY=terminal_auto_lock_race`,
+  `tests/recovery/worktree_lock_reason.rs`): #836 / ADR-0212. (b) Through the
+  Backend race seam (`execute_auto_unlock_worktree_racing`,
+  `AutoUnlockRace::RelockBeforeMove`), a lock replaced between preflight and the
+  release is put back and refused, and the other reason remains. (c) A hand-placed
+  `locked.kagi-*` leftover shows as `LockLeftover` on the real manual unlock card
+  and blocks the auto release; Enter records a refusal and leaves the lock and the
+  leftover. Backend cases (normal release, relock after the move kept, no-clobber
+  restore leaving a leftover, idempotent) are `crates/kagi-git/tests/
+  worktree_autolock_test.rs`. Tier B: Phase 1's steps, plus a `locked.kagi-*` file
+  placed by hand in `.git/worktrees/<name>/` before opening the unlock card.
 - worktree lock reason (`KAGI_GUI_E2E_ONLY=worktree_lock_reason`,
   `tests/recovery/worktree_lock_reason.rs`): #372 item2. EN/JA use the real
   InputState, clipboard paste and focused Enter to review, then a second Enter

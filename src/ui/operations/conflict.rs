@@ -242,7 +242,9 @@ impl KagiApp {
                 } else {
                     self.push_toast(ToastKind::Error, SharedString::from(format!("{}", e)), cx);
                 }
-                self.record_op_persist(
+                // Refused at planning: nothing ran, so "recorded, nothing
+                // moved" — not a missing record that blocks a restore (#891).
+                self.record_conflict_persist(
                     &op_name,
                     StateSummary {
                         head: format!("op={}", mode.session.op.slug()),
@@ -251,6 +253,7 @@ impl KagiApp {
                     OpOutcome::Refused {
                         blockers: vec![format!("{}", e)],
                     },
+                    Some(Vec::new()),
                     &repo_path,
                     cx,
                 );

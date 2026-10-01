@@ -286,11 +286,11 @@ impl Backend {
         let repo = self.path.display().to_string();
         let mut entry = crate::oplog::OpLogEntry::new(op, repo.clone(), before.clone(), outcome)
             .with_actor(self.policy.actor)
-            .with_worktree(Some(repo));
+            .with_worktree(Some(repo))
+            .with_ref_moves(receipt.ref_moves);
         entry.backup_refs = receipt.backup_refs;
         entry.recovery = receipt.recovery;
         entry.failure_code = receipt.failure_code;
-        entry.ref_moves = receipt.ref_moves;
         finalize(entry)
     }
 

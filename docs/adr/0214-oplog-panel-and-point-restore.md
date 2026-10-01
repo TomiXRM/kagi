@@ -76,7 +76,8 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - **conflict 経路は #884 で記録に加えた**。記録点は `Backend::observe_ref_moves` の 1 か所で、`Backend::run` と同じ前後 snapshot を使う。
     - save / dir-file / abort: `run_recorded_conflict` が executor をこれで包み、`record_receipt` に渡す。
     - continue / skip: UI が実行するので、UI がこれで包み、`record_conflict_persist` で記録する。
-    - 実行前の拒否(`record_conflict_refusal` / `record_conflict_save_refusal`)・実行前に捨てた job(`conflict_abandoned`)・repository を開けなかった場合は、何も動いていないことが構造上確かなので `Some(空)` にする。
+    - 実行前の拒否(`record_conflict_refusal` / `record_conflict_save_refusal`、UI の continue の計画時の拒否)・実行前に捨てた job(`conflict_abandoned`)・repository を開けなかった場合は、何も動いていないことが構造上確かなので `Some(空)` にする。
+    - **終了が確認できない(`Unknown`)outcome の移動は記録しない**(#891 review)。process がまだ ref を動かしうるので、観測した snapshot は記録にならない。`OpLogEntry::with_ref_moves` が `Unknown` なら `None` にする。`record_receipt`(`Backend::run` を含む)と UI の `record_conflict_persist` の両方がこれを通るので、restore はその entry をまたげない(fail closed)。
     - これで、Kagi の中で解いた merge(merge → save → merge-commit)や cherry-pick の時点を越えて restore できる。rebase は HEAD が detached を経由するので、引き続き HeadMoved(#886)。
 
 ### 5. slice 2b: op revert / restore to point(2b-1 = backend、2b-2 = UI)
@@ -180,6 +181,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
     - 実行前の拒否は `Some(空)`。
   - Tier A: 新しい `oplog_restore_across_merge`(merge → 実 `run_recorded_conflict` の save → merge commit の後、panel の実ボタンで開いた restore card に blocker が無く、confirm で main が merge 前に戻る)。`stash_conflict_close_reopen` に、UI の continue の記録が `Some(空)` であることを追加した。
 - #884 の変異確認: `run_recorded_conflict` が `None` を記録 → integration 2 件と Tier A(blocker `NotRecorded { op: "conflict-save:merge" }`、つまり #884 以前の状態)、`nothing_moved` を外す → 拒否の integration、UI が moves を捨てる → Tier A(stash continue)が落ちる。
+- #891 review 対応: unit `an_unconfirmed_termination_records_no_ref_moves`(Unknown は `None`、Refused は観測どおり)。`stash_conflict_close_reopen` で、未解決のまま Continue を押した計画時の拒否が `Some(空)` で記録されることを確認する。変異確認: Unknown の規則を外す → unit、計画時の拒否を `None` に戻す → Tier A が落ちる。
 - #878 review 対応(P1)のテスト
   - domain unit: 鎖が途切れると HistoryGap、別 repository の entry は除いて Unknown は blocker、記録外で変わった branch は RefChangedOutsideRecord(記録が説明する branch は除く)、動いて戻った ref が別の値にあれば RefMovedSince。
   - kagi-git integration: oplog から 1 行を消すと HistoryGap、削除・prune した worktree の entry は UnknownRepository、別 worktree で merge の conflict 中は OperationInProgress(その path)、対象の後に `git branch` で作った branch は RefChangedOutsideRecord。

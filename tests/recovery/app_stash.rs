@@ -403,6 +403,25 @@ pub fn scenario_stash_conflict_close_reopen(cx: &mut VisualTestAppContext) {
         app.write_busy_op.is_none() && app.ui().conflict.is_some()
     });
 
+    // #891 review: Continue on the still-unresolved conflict is refused at
+    // planning; that refusal is "recorded, nothing moved", not "no record".
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            let owner = app
+                .active_session()
+                .and_then(|session| app.app_sessions.attachment(session))
+                .expect("continue owner");
+            app.conflict_continue(owner, window, cx);
+        });
+    })
+    .unwrap();
+    let refused = kagi_git::oplog::read_oplog_tail(1).pop().unwrap();
+    assert!(
+        refused.op.ends_with("-continue")
+            && matches!(refused.outcome, kagi_git::OpOutcome::Refused { .. }),
+        "{refused:?}"
+    );
+    assert_eq!(refused.ref_moves, Some(Vec::new()));
     let closed = cx.read(|cx| app.read(cx).active_session().unwrap());
     // Continue and close in the same host turn, before its async reload can
     // present the one-shot drop follow-up.

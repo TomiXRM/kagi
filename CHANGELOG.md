@@ -61,6 +61,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Internal
 
+- GUI E2E `cross_worktree_merge` を #722 P1 r3（03b16092）以降の仕様に合わせて修正しました。別 worktree への drag merge は editor の未保存変更を確認せず、元の tab の editor は変更を保ったまま残ります（← Graph では従来どおり確認）。ADR-0144 の記述も更新。（Fixes #880）
 - Toolbar の利用可能状態 → AccessKit `disabled`(#797 で実装済み)の検証を追加しました。`ButtonState` → (表示, disabled) の pure な変換を切り出して unit で固定し、GUI E2E `toolbar_a11y_disabled` で remote なし fixture の Push / Pull / Stash / Pop が disabled、Branch / Settings が enabled、Terminal は on/off どちらでも disabled にならないこと、dirty にすると Stash が enabled に転じることを確認します。製品の動作は変更していません。（Refs #354）
 - ADR-0211: `git replay` / `git history` を plan パイプラインに載せるための調査と設計（実装なし）。git 2.50.1 で `git replay` を実測し（worktree / index に触らない、出力は `update-ref --stdin` 形式で `<old>` が CAS、他 worktree の branch を rebase できるがその index が古くなる、merge を含むと exit 128、conflict は exit 1 で状態なし、hooks は走らない）、2.53 で replay が既定で ref を更新するようになった事実を含む版ゲート（(a) 隠す、検出は kagi-git に 1 回、`Backend` が保持、experimental は設定で隠す）を提案しました。（Refs #344）
 - headless 起動 hook `KAGI_SELECT_FIRST=1`（`select_headless`）が inspector の changed files を同期で埋めるとき generated/lockfile flags を計算していなかったため、その経路では `Cargo.lock` が「Generated (N)」に畳まれませんでした。通常のクリック選択（非同期 read）では起きず、ユーザー操作への影響はありません。同期経路も files / diffstat / generated flags の 3 つを揃えて埋めるようにし、Tier A に SELECT_FIRST 経路の fold assert を追加しました。（#818）

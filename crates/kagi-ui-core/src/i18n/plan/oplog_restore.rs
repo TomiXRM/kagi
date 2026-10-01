@@ -25,6 +25,9 @@ pub fn note_ja(note: &OplogRestoreNote) -> String {
         OplogRestoreNote::EntryNotLoaded { id } => {
             format!("操作 #{id} はこの repository の読み込まれた操作にありません(別の repository の操作かもしれません)。")
         }
+        OplogRestoreNote::EntryOutsideWindow { id, window } => format!(
+            "操作 #{id} は直近 {window} 件より古い操作です。restore が読むのは直近 {window} 件までなので、ここでは戻せません。"
+        ),
         OplogRestoreNote::NotRecorded { id, op } => format!(
             "操作 #{id}({op})には ref の移動の記録が無いため、正確に戻せません。reflog からの推定は使いません。"
         ),

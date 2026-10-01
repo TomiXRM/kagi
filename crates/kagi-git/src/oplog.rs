@@ -507,6 +507,13 @@ pub fn read_oplog_tail(n: usize) -> Vec<OpLogEntry> {
     tail::read(n, &|_| true).entries
 }
 
+/// The entry with this id, wherever it is in the log (#888). One backward
+/// pass that stops at the match — the whole file only when the id is not
+/// there. For telling "older than a read window" from "not in the log".
+pub fn find_oplog_entry(id: u64) -> Option<OpLogEntry> {
+    tail::read(1, &|entry| entry.id == id).entries.pop()
+}
+
 /// Read the last `n` oplog entries whose repository matches `repo`, newest
 /// first — repo confinement for `kagi_oplog` / `kagi oplog --repo` (#421).
 ///

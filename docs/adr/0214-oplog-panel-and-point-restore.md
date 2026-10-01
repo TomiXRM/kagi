@@ -27,7 +27,8 @@ Kagi の操作はすべて oplog を通るが、UI では bottom panel の Opera
   | preview | 実行前に結果のグラフを描く | in-memory でグラフを再計算し、現在のグラフと並べる |
 
 - **confirm の内容**: 実行後グラフのプレビュー、逆操作の一覧、「できないこと」(untracked の削除は戻らない等)の明示。
-- **未決**(slice 2 以降で決める): #334 §5 の論点。working tree も戻すか、Refused / Failed / Partial の時点の扱い、`--keep` 相当、プレビューを並べるか差分ハイライトか。
+- **未決**(slice 2 以降で決める): #334 §5 の論点。working tree も戻すか、`--keep` 相当、プレビューを並べるか差分ハイライトか。
+  - Refused / Failed / Partial の時点の扱いは #888 で決めた: 記録どおり(何も動いていなければ `Some(空)`、Partial は実際に動いた分)。§4 の「outcome に関わらず実際の差分を記録する」に従い、outcome で分けない。`Unknown` は記録しないのでまたげない(`docs/decisions.md`)。
 
 ### 2. slice 1 の範囲: 読むだけ
 
@@ -163,9 +164,11 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - panel の選択行に「この操作を取り消す…」「この時点まで戻す…」を出す。押すと panel が `OpLogPanelEvent::Restore(Operation)` を出し、app が active な repository で plan して card(`ActiveModal::OplogRestore`)を開く。
   - 記録なしの行(`ref_moves = None`)では両方 disabled にし、理由を出す。
   - card は shared plan card で、warning の Moves(ref ごとの逆操作)と RefsOnly(戻らないもの)を描画する。script 行(`preview_commits`)は commit 一覧として描かない。
-  - destructive なので、最初の confirm(button / Enter)で arm し、二度目で `run_recorded`。CLI / MCP には出さない。
+  - destructive なので、最初の confirm(button / Enter)で arm し、二度目で `run_recorded`。CLI / MCP には出さない(#888 で確定。理由は `docs/decisions.md`)。
   - **記録できなかった receipt は戻す対象にしない**: append に失敗した entry は panel 上で id が placeholder(0)になる。oplog の id は 0 始まりなので、0 は最初の実 entry も指しうる。そこで `entry_for_recording` は `Recording::Failed` の `ref_moves` を落として「記録なし」(推定表示・ボタン disabled)にする。
   - 別 repository の行を選んだ場合、plan は EntryNotLoaded(「この repository の操作にない」)になる。
+  - **読む範囲は oplog の末尾 1000 件**(`ENTRY_SCAN`)。対象がそれより古い場合、範囲を広げず EntryOutsideWindow(「直近 1000 件より古い」)で拒否する(#888)。対象 id が末尾に無いときだけ、log 全体を 1 回だけ後ろから走査して id の有無を確かめる。見つからなければ EntryNotLoaded のまま(retention で消えた、など)。
+    - 見つかった entry は、末尾の entry と同じ規則(`classify_entry`。記録した identity があれば #900 の `same_repository`、無ければ worktree を開く)で帰属を判定し、この repository のもの(Mine)の場合だけ EntryOutsideWindow にする(#910 review)。別の repository の古い entry を「この repository の古い操作」と案内しないため。それ以外は EntryNotLoaded のまま。
 
 ### 6. slice 2c: 実行前のグラフプレビュー(表示専用)
 
@@ -179,6 +182,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
 - **範囲**: 戻し先の行と、消える行が下がっていた行(その下の最初の残る行)を含む最小区間に、前後 4 行を足す。上限 40 行で、窓の外の行数は「… ほか N 行」と出す。lane は最大 8 本分の幅で切る(既存の graph 列と同じく clip)。
   - card の body はスクロールしない(modal の規則)ので、行は自分の高さ上限(`modal_list_max_h`)付きのスクロール領域に入れる。40 行 × 29px は通常の窓に収まらない(#883 review)。
 - **推定しない**: 戻し先 commit が読み込み済み rows に無い場合(削除した branch の作り直し、restore で branch から外れた commit への revert など)は `NotLoaded` とし、「プレビューできません」と明示する。復元そのものは可能。見出しも消える数を言わない中立な「戻した後のグラフ」にする(#883 review。以前は「消える commit はありません」と出て矛盾していた)。
+  - 文言で読み込みの手段を案内する(#888): commit 一覧が途中までなら「commit をさらに読み込む」で表示できることがある。どの branch・tag・remote branch からも届かない commit(削除した branch の先端など)は表示されない。祖先を card が読み足す案は、Tier B(#908)で頻度が分かるまで採らない。
 - **描画**: commit graph と同じ `graph_view::graph_canvas` を行ごとに使う。card への差し込みは `render_plan_modal_wrapper_extra`(`PlanCardExtra { element, clipboard }` を warning の後に描く)。`Copy all` は card のテキストにこの clipboard(見出し・各行・窓外の行数、または NotLoaded の理由)を足す(#883 review)。既存の `wrapper_styled` / `wrapper_staged` は `None` で委譲するので、呼び出し元の署名は変えない。この card は #872 の `ConfirmStage`(Unarmed / Armed)にも乗る。
 - **focus**: card を開くとき root に focus を移す(`focus_root_for_modal`、plan modal の規約)。実ボタンのクリックは root(`track_focus`)が focus を受けるので、現状の入口では Enter / Escape は届いている。キーボードの入口が増えても届くようにするためのもの(#878 review)。
 - **コスト**: card を開くときに 1 回だけ計算して modal に保持する。到達計算は O(rows)、layout は O(rows × lanes)。描画は最大 40 行。
@@ -261,6 +265,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - remove-worktree が `None` を記録する → integration が落ちる。
   - fetch の記録を `None` にする → 統合テストの restore が `NotRecorded { op: "fetch" }` で止まる。UI の fetch で `None` → Tier A `fetch_failure_oplog` が落ちる。
   - lock / unlock、prune / repair、fetch-pr で `None` → それぞれの Tier A が落ちる。lock を前後の観測に戻す → churn の branch が記録されて落ちる。panel に placeholder の entry を渡す → id の一致で落ちる。
+- #888 のテスト: kagi-git integration `an_entry_older_than_the_read_window_says_so`(自分の entry の後に別 repository の entry を 1000 件足すと EntryOutsideWindow { window: 1000 }、log に無い id は EntryNotLoaded)。変異確認: 置き換えをやめる → 落ちる。log 全体の有無を確かめずに置き換える → log に無い id も EntryOutsideWindow になり落ちる。プレビューの文言は wording なのでテストしない。
 - #894 のテスト(kagi-git integration `oplog_restore_test`)
   - 削除・prune した worktree の entry は Mine で、その branch の削除が restore に入る(blocker なし)。identity を外した旧形式の行は UnknownRepository のまま。
   - 削除した無関係の repository の entry は blocker にならない。

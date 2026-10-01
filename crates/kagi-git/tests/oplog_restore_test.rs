@@ -872,6 +872,63 @@ fn a_remove_worktree_records_what_it_moved() {
     assert_eq!(notes, Vec::new(), "{notes:?}");
 }
 
+/// #888: a restore reads the newest 1000 entries. A target older than that
+/// says so — not "another repository's" — and is still refused (the range
+/// is not widened). An id that is nowhere in the log keeps the old note, and
+/// so does an old entry of another repository (#910 review): the entry found
+/// in the whole log is attributed like the tail before it is called too old.
+#[test]
+fn an_entry_older_than_the_read_window_says_so() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let old = create(&repo, "a");
+    let other_tmp = tempfile::tempdir().unwrap();
+    let other = self::repo(other_tmp.path());
+    let others_old = create(&other, "x");
+    let state = StateSummary {
+        head: "branch: main".into(),
+        dirty: "clean".into(),
+    };
+    let elsewhere = OpLogEntry::new(
+        "checkout",
+        "/elsewhere",
+        state.clone(),
+        OpOutcome::Success { after: state },
+    );
+    for _ in 0..1000 {
+        append_oplog(&elsewhere).unwrap();
+    }
+
+    let p = plan(&repo, &Operation::RestoreToPoint { entry_id: old });
+    assert_eq!(
+        restore_blockers(&p),
+        vec![OplogRestoreNote::EntryOutsideWindow {
+            id: old,
+            window: 1000
+        }]
+    );
+    let p = plan(
+        &repo,
+        &Operation::RestoreToPoint {
+            entry_id: others_old,
+        },
+    );
+    assert_eq!(
+        restore_blockers(&p),
+        vec![OplogRestoreNote::EntryNotLoaded { id: others_old }],
+        "another repository's old entry is not this repository's"
+    );
+    let missing = 1_000_000;
+    let p = plan(&repo, &Operation::OpRevert { entry_id: missing });
+    assert_eq!(
+        restore_blockers(&p),
+        vec![OplogRestoreNote::EntryNotLoaded { id: missing }]
+    );
+}
+
 /// #900 review: a successful remove-worktree records the worktree it just
 /// deleted, which no longer opens; its identity is taken from the repository
 /// it ran from instead. Without that the entry is UnknownRepository and

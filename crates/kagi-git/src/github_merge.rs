@@ -76,17 +76,31 @@ pub struct PrMergeStatus {
     pub unresolved_threads: u32,
 }
 
-const MERGE_STATUS_QUERY: &str = "\
-query($owner:String!,$name:String!,$number:Int!){\
- repository(owner:$owner,name:$name){\
-  pullRequest(number:$number){\
-   id mergeStateStatus\
-   reviewThreads(first:100){nodes{isResolved}}\
-   mergeQueueEntry{position estimatedTimeToMerge state\
-    mergeQueue{nextEntryEstimatedTimeToMerge}}}}}";
+/// Plain newlines, never `\` continuations: a continuation also strips the
+/// next line's leading blanks, which glued `mergeStateStatus` to
+/// `reviewThreads` and `state` to `mergeQueue` and made GitHub reject the
+/// whole query (#843, the same bug #837 found in the thread query).
+const MERGE_STATUS_QUERY: &str = "
+query($owner:String!, $name:String!, $number:Int!) {
+  repository(owner:$owner, name:$name) {
+    pullRequest(number:$number) {
+      id
+      mergeStateStatus
+      reviewThreads(first:100) { nodes { isResolved } }
+      mergeQueueEntry {
+        position
+        estimatedTimeToMerge
+        state
+        mergeQueue { nextEntryEstimatedTimeToMerge }
+      }
+    }
+  }
+}";
 
 /// Fetch `mergeStateStatus` + merge-queue position for one PR. `gh api graphql`
-/// (same auth as everything else here). Read-only.
+/// (same auth as everything else here). Read-only. A `gh` that does not answer
+/// (non-zero exit), a GraphQL `errors` answer and an unparsable one are all
+/// errors carrying the reason, never an empty status.
 pub fn pr_merge_status(workdir: &Path, number: u64) -> Result<PrMergeStatus, GitError> {
     let (owner, name) = repo_owner_name(workdir)?;
     let out = crate::cli::gh_command()
@@ -105,12 +119,24 @@ pub fn pr_merge_status(workdir: &Path, number: u64) -> Result<PrMergeStatus, Git
         .current_dir(workdir)
         .output()
         .map_err(|e| GitError::Other(format!("gh: {}", e)))?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
     if !out.status.success() {
-        return Err(GitError::Other(
-            String::from_utf8_lossy(&out.stderr).trim().to_string(),
-        ));
+        // `gh api graphql` exits 1 on a GraphQL `errors` answer and prints it
+        // on stdout; say that, then gh's own stderr, then the bare status.
+        if let Some(e) = serde_json::from_str(&stdout)
+            .ok()
+            .and_then(|v| graphql_error(&v))
+        {
+            return Err(e);
+        }
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(GitError::Other(if stderr.is_empty() {
+            format!("gh exited with {}", out.status)
+        } else {
+            stderr
+        }));
     }
-    parse_merge_status(&String::from_utf8_lossy(&out.stdout))
+    parse_merge_status(&stdout)
 }
 
 /// `owner`/`name` for the repo at `workdir`, via `gh repo view`.
@@ -165,12 +191,18 @@ pub(crate) fn resolve_base_repo(workdir: &Path, base_repo: &str) -> Result<Strin
 
 /// Parse the `gh api graphql` merge-status response. Pure; unit-tested. A
 /// missing `mergeQueueEntry` (non-MQ repo, or not queued) yields `queue: None`
-/// so the UI hides the queue section — nothing to break.
+/// so the UI hides the queue section — nothing to break. A GraphQL `errors`
+/// answer, or one with no pull request in it, is an error (#843): reading it as
+/// a status would show a card built from nothing.
 pub fn parse_merge_status(json: &str) -> Result<PrMergeStatus, GitError> {
     let v: serde_json::Value =
         serde_json::from_str(json).map_err(|e| GitError::Other(format!("gh json: {}", e)))?;
+    if let Some(e) = graphql_error(&v) {
+        return Err(e);
+    }
     let pr = v
         .pointer("/data/repository/pullRequest")
+        .filter(|pr| !pr.is_null())
         .ok_or_else(|| GitError::Other("no pullRequest in response".into()))?;
     let state = MergeStateStatus::from_graphql(
         pr.get("mergeStateStatus")
@@ -215,6 +247,19 @@ pub fn parse_merge_status(json: &str) -> Result<PrMergeStatus, GitError> {
         queue,
         unresolved_threads,
     })
+}
+
+/// The `errors` of a GraphQL answer as one error, if it has any.
+fn graphql_error(v: &serde_json::Value) -> Option<GitError> {
+    let errors = v.get("errors")?.as_array().filter(|e| !e.is_empty())?;
+    let messages: Vec<&str> = errors
+        .iter()
+        .filter_map(|e| e.get("message").and_then(|m| m.as_str()))
+        .collect();
+    Some(GitError::Other(format!(
+        "GraphQL error: {}",
+        messages.join("; ")
+    )))
 }
 
 /// Build the `gh api graphql` args for enqueue/dequeue. Pure so the mutation
@@ -332,6 +377,45 @@ mod tests {
         assert_eq!(s.state, MergeStateStatus::Clean);
         assert!(s.queue.is_none());
         assert_eq!(s.unresolved_threads, 0);
+    }
+
+    /// #843: every field `parse_merge_status` reads must reach GitHub as its
+    /// own name. A `\` continuation strips the next line's indentation and
+    /// glued `mergeStateStatus`+`reviewThreads` and `state`+`mergeQueue`, which
+    /// GitHub rejects — so the merge status was never read.
+    #[test]
+    fn the_query_asks_for_every_field_the_parser_reads() {
+        let names: std::collections::BTreeSet<&str> = MERGE_STATUS_QUERY
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .filter(|name| !name.is_empty())
+            .collect();
+        for field in [
+            "id",
+            "mergeStateStatus",
+            "reviewThreads",
+            "nodes",
+            "isResolved",
+            "mergeQueueEntry",
+            "position",
+            "estimatedTimeToMerge",
+            "state",
+            "mergeQueue",
+            "nextEntryEstimatedTimeToMerge",
+        ] {
+            assert!(names.contains(field), "{field} is not asked for on its own");
+        }
+    }
+
+    /// #843: a GraphQL `errors` answer, or one without the pull request, is an
+    /// error with the reason — not an empty status.
+    #[test]
+    fn a_rejected_or_empty_answer_is_an_error() {
+        let rejected = r#"{"errors":[{"message":"Field 'statemergeQueue' doesn't exist on type 'MergeQueueEntry'"}]}"#;
+        let err = parse_merge_status(rejected).expect_err("errors must not parse");
+        assert!(err.to_string().contains("statemergeQueue"), "{err}");
+        let missing = r#"{"data":{"repository":{"pullRequest":null}}}"#;
+        assert!(parse_merge_status(missing).is_err());
+        assert!(parse_merge_status("not json").is_err());
     }
 
     #[test]

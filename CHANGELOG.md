@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Added
 
 - `git replay --onto` による「worktree を汚さない rebase」の backend（#344 slice 1、ADR-0211）。`Operation::ReplayOnto { branch, onto }` は、別の worktree で checkout 中の branch を含め、作業ツリーと index に触れずに ref だけを動かします。plan は git 自身が印字した `update <ref> <new> <old>` をそのまま載せ、execute は `git update-ref --stdin` の 1 トランザクション（old 値は git が照合）、旧先端は `refs/kagi/backups/` に退避して oplog に記録します。merge を含む範囲・conflict・checkout 中の worktree が dirty・既に追従済みは plan の blocker です。git のバージョン検出（`cli::git_version` / `GitFeatures`、起動時に `[kagi] git: version=… replay=… revert=… history=… fixup=…`）を追加し、2.53 以降で replay が既定で ref を書く仕様差は常に print モードで吸収します。UI はまだありません。（Refs #344）
+- worktree 自動ロックの解除を、ロックファイルを一旦退避(rename)してから中身が自分の token のときだけ消す compare-and-unlock にしました。解除の直前に別の git が別の理由でロックし直していても、そのロックは元に戻して解除を拒否し、他人のロックを消しません。戻す先に新しいロックができていた場合は上書きせず `locked.kagi-*` として残し、次の自動解除はそれを理由に止まり、手動の unlock カードに「中身を確認して `locked` に戻すか削除」と表示します(自動では消しません)。(Refs #772、#836、ADR-0212)
 - PR mode の diff に review thread を重ねて表示するようにしました。thread のある行の横(gutter)に件数バッジが付き、クリックでその行の直下に thread を折り畳み表示します(もう一度で閉じ、閉じれば行の並びは元どおり)。side-by-side 表示では thread の面に応じて左右の gutter に出します。古い位置(outdated)の thread は薄く表示し、解決ボタンは出しません。取得は従来の line comment の REST 呼び出しを GraphQL の review thread 1 本に置き換えたもので、gh の呼び出し数は変わりません。取得に失敗したときは空として黙らず、理由を `[kagi] pr-threads:` の log に 1 行出します。(Refs #351、ADR-0209)
 - 埋め込み terminal の worktree 自動ロック(Phase 1、既定 OFF の opt-in、macOS / Linux)。Settings の「terminal を開いている間 worktree をロック」を ON にすると、linked worktree で terminal を起動したときに Kagi 所有 token(`kagi:auto:<session>`)付きの `git worktree lock` の確認カードを出し、shell 終了(render に依存しない wait で観測)時にそのロックの解除カードを出します。confirm するまで何も書かず、手動のロック・他の terminal のロック・別の worktree のロックは plan と preflight の両方で拒否して触れません。crash 後に残ったロックは従来どおり手動解除で回復します。（#772、ADR-0208）
 - PR mode のファイル一覧に「確認済み」の checkbox と「N / M viewed」(JA「N / M 確認済み」)の進捗を追加しました。確認済みの行は薄く表示されます。印はそのときの head 側のファイル内容(blob)に紐づき、PR の head が進んでそのファイルが変わると自動で未確認に戻ります(変わっていないファイルは確認済みのまま)。状態は `~/.kagi/pr-viewed/` に PR ごとに保存し、壊れたファイルは上書きせず退避します。Operation Log には記録しません。(#351、ADR-0207)
@@ -15,6 +16,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Commit Panel から開いた diff の hunk header に「Stage hunk」/「Unstage hunk」(JA「hunk を stage」/「hunk を unstage」)ボタンを追加しました。unstaged 側では押した hunk だけを index に入れ、staged 側では押した hunk だけを index から戻します(working tree は変更しません)。split view でも header 行に同じボタンが出ます。押した後は diff を読み直し、その側に何も残らなければ pane を閉じます。diff を表示した後にファイルや index が変わって hunk が一致しなくなった場合は、別の hunk を代わりに stage せず理由を示して拒否します。失敗は従来の Stage / Unstage と同じく Operation Log・footer・通知に出ます。行単位の選択や hunk の分割は含みません。(#842、Refs #357)
 
 ### Fixed
+
+- PR の merge 状態(mergeStateStatus・未解決 thread 数・merge queue の位置)が一度も読めていなかった問題を修正しました。GraphQL query を `\` 行継続で書いていたため、継続時に次行の字下げが消えて `mergeStateStatus` と `reviewThreads`、`state` と `mergeQueue` が 1 語につながり、GitHub が query ごと拒否していました。query を改行区切りにし、読み取りに失敗したときは黙って空にせず `[kagi] pr-merge-status: #N read failed: <理由>` を 1 行出します。同じ書き方の再発を防ぐ CI gate `check-string-continuation` も追加しました。(#843)
 
 - コミットのファイルを開いたとき、未キャッシュの diff を UI スレッドで読んでいたため大きな diff で画面が固まる問題を修正しました。読み込みは Compare / WIP と同じくバックグラウンドで行い、読み終わるまで表示中の diff はそのまま残り、2 秒を超えると busy snackbar が理由を示します。読み込み中に別のファイルを開いた・閉じた場合は古い結果を捨て、reload で行番号が変わった場合はコミットの新しい行に付け直して表示します。（#829）
 
@@ -53,6 +56,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - 統合テストの Git fixture 構築を `tests/support/git_fixture.rs` に共通化しました。fixture 用の `git` は継承した `GIT_*`・global/system/XDG 設定・hooks・template を遮断して identity を固定するため、開発者の設定や hook から渡された `GIT_DIR` で fixture の内容が変わったり実 repository に書き込んだりしません。ops / blame / push_tag / pr_conflict_preview / app_read の各 suite を移行し、残りは follow-up で移行します。製品の動作は変更していません。（#514）
 - #514 の follow-up: 残り 72 ファイル（`tests/*.rs`・`tests/recovery/*.rs`・`tests/support/pr_merge_local.rs`）の suite-local な `git` helper を `tests/support/git_fixture.rs` に寄せました。テスト数 713・assertion は移行前後で同一で、明示 opt-in の 5 suite は従来どおりです。製品の動作は変更していません。（Refs #514）
 - Tier A `push_failure_keeps_modal` を、#747 で変わった通知の契約（記録済みの失敗は Operation Log と footer / toast で伝え、閉じるだけの AppNotice は出さない）に合わせました。#747（e5644c6f）以降このシナリオは古い期待（AppNotice の queue）のまま落ちていました。Remote Browse の入力を失わないことは従来どおり確認します。製品の動作は変更していません。（#824）
+- Tier A `stage_failure_notice` を #747 の通知の契約に合わせました。index.lock 下の stage / unstage 失敗(editor・panel・一括ボタン、linked worktree の panel を含む)は Failed footer と Error toast と Operation Log で伝え、閉じるだけの AppNotice は出さないことを確認します。#747(e5644c6f)以降、このシナリオは古い期待(AppNotice)のまま落ちていました。owning repo/path・index 不変・oplog 記録の確認は従来どおりです。製品の動作は変更していません。(#846)
 - backend 専用の統合テスト 61 suite（ops / discard / absorb / conflicts / pull / push / stash / worktree / oplog など）を `tests/` から `crates/kagi-git/tests/` へ、純粋 logic の 2 suite（message_template / trailers）を `kagi-domain` の unit test へ移しました。`cargo test -p kagi-git` だけで主要な mutation / preflight / recovery の契約が走り、GPUI を含む root を build しません。テスト数は移行前後で同じ（2650）で、製品の動作は変更していません。（#515）
 
 ## [0.40.1] - 2026-09-29

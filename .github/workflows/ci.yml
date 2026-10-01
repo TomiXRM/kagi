@@ -76,6 +76,9 @@ jobs:
           # an in-flight indicator is an animated element, never a ⟳ glyph
           # that cannot turn (user report)
           - static-spinner
+          # a `\` continuation never glues two words in a string literal —
+          # it broke both PR GraphQL queries (#837, #843)
+          - string-continuation
           # one 4-digit number, one ADR — parallel merges produced two
           # duplicate numbers before this gate existed (#620)
           - adr-unique-number

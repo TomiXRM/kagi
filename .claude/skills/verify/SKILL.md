@@ -364,6 +364,17 @@ The current suite covers:
   125% in JA, open a file diff and File History; every button is visible and
   clickable, icon-only buttons name themselves in a hover tooltip, and a wide
   window shows the labels again.
+- terminal auto-lock compare-and-unlock (`KAGI_GUI_E2E_ONLY=terminal_auto_lock_race`,
+  `tests/recovery/worktree_lock_reason.rs`): #836 / ADR-0212. (b) Through the
+  Backend race seam (`execute_auto_unlock_worktree_racing`,
+  `AutoUnlockRace::RelockBeforeMove`), a lock replaced between preflight and the
+  release is put back and refused, and the other reason remains. (c) A hand-placed
+  `locked.kagi-*` leftover shows as `LockLeftover` on the real manual unlock card
+  and blocks the auto release; Enter records a refusal and leaves the lock and the
+  leftover. Backend cases (normal release, relock after the move kept, no-clobber
+  restore leaving a leftover, idempotent) are `crates/kagi-git/tests/
+  worktree_autolock_test.rs`. Tier B: Phase 1's steps, plus a `locked.kagi-*` file
+  placed by hand in `.git/worktrees/<name>/` before opening the unlock card.
 - worktree lock reason (`KAGI_GUI_E2E_ONLY=worktree_lock_reason`,
   `tests/recovery/worktree_lock_reason.rs`): #372 item2. EN/JA use the real
   InputState, clipboard paste and focused Enter to review, then a second Enter
@@ -944,14 +955,19 @@ linked destination without touching either worktree.
 
 G: `cargo test -p kagi --lib staging_failure` uses real index.lock and oplog
 sidecar lock fixtures in isolated children; it compares single/batch failure
-details in EN/JA and checks that trust refusal records without requesting a modal.
+details in EN/JA, checks that trust refusal records without requesting a modal,
+and that only a failed oplog append asks for the dismiss-only notice.
 Use a fresh KAGI_LOG_DIR as with all cargo tests.
 
 Tier A filter: `KAGI_GUI_E2E_ONLY=stage_failure_notice`. The scenario covers editor
 paths, panel file indices and batch buttons under index.lock, including a linked
-worktree panel while the main tab remains active. It asserts footer + toast +
-oplog without a dismiss-only modal, the actual owning repo/path, unchanged indexes,
-and a modal only when oplog persistence itself fails. Compile only when PM owns E execution.
+worktree panel while the main tab remains active. Per attempt it asserts the
+Failed footer (cause, path and the actual owning repo), the newest toast is an
+Error `<op>: failed …`, **no** `AppNotice` (ADR-0196 §3 as amended by #747 — a
+recorded failure is never a dismiss-only modal), one more Failed oplog receipt
+for the owning repo, and byte-identical indexes. An admission denial records a
+Refused receipt, again without a notice. Until #846 the scenario still asserted
+the pre-#747 notice and panicked on it. Compile only when PM owns E execution.
 M: hold index.lock, click Stage/Unstage from both surfaces, verify the actual
 cause is visible and no success toast appears. If recording also fails, the
 attempted failure stays visible with the recording error; it is not a success.

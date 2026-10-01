@@ -332,3 +332,143 @@ pub fn scenario_terminal_auto_lock(cx: &mut VisualTestAppContext) {
     theme::set_terminal_auto_lock(restore_auto);
     eprintln!("[gui-e2e] PASS terminal_auto_lock opt-in off/on, confirm-gated acquire, wait-delivered exit, refused release after a manual relock");
 }
+
+/// #836 / ADR-0212: the release is a compare-and-unlock.
+///
+/// (b) Another process replaces this terminal's lock between the preflight
+/// read and the release (reproduced at a fixed point through the Backend race
+/// seam, not by timing): the moved-aside lock is not ours, so it goes back
+/// and the release refuses — the other reason is still the lock.
+/// (c) An interrupted release's `locked.kagi-*` leftover, placed by hand: the
+/// real manual unlock card says so, and the auto release card is blocked —
+/// Enter records the refusal and leaves both the lock and the leftover alone.
+pub fn scenario_terminal_auto_lock_race(cx: &mut VisualTestAppContext) {
+    use kagi_domain::plan_note::{PlanNote, WorktreeNote};
+    use kagi_domain::worktree_autolock::{AutoLockToken, AutoUnlockRace, AutoUnlockTarget};
+
+    let fixture = build_fixture();
+    let main = fixture.path().canonicalize().unwrap();
+    let linked_root = tempfile::tempdir().unwrap();
+    let linked = linked_root.path().join("linked");
+    git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "race-target",
+            linked.to_str().unwrap(),
+        ],
+    );
+    let backend = kagi_git::Backend::open(&main).unwrap();
+    let target = AutoUnlockTarget {
+        token: AutoLockToken::new("tier-a").unwrap(),
+        worktree: backend.linked_worktree_identity("linked").unwrap(),
+    };
+    let token = target.token.reason();
+    let lock_ours = || {
+        git(
+            &main,
+            &[
+                "worktree",
+                "lock",
+                "--reason",
+                &token,
+                linked.to_str().unwrap(),
+            ],
+        )
+    };
+    let admin = main.join(".git/worktrees/linked");
+    let leftovers = || {
+        let mut found: Vec<String> = std::fs::read_dir(&admin)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("locked.kagi-"))
+            .collect();
+        found.sort();
+        found
+    };
+
+    // (b) relocked by someone else after preflight: put back, refused.
+    lock_ours();
+    let plan = backend
+        .plan_auto_unlock_worktree("linked", &target)
+        .unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    let err = backend
+        .execute_auto_unlock_worktree_racing(
+            &plan,
+            "linked",
+            &target,
+            AutoUnlockRace::RelockBeforeMove("someone else".into()),
+        )
+        .unwrap_err();
+    assert!(err.to_string().contains("put back untouched"), "{err}");
+    assert_eq!(lock_reason(&main).as_deref(), Some("someone else"));
+    assert!(leftovers().is_empty(), "restored, nothing left aside");
+
+    // (c) an interrupted release's leftover, placed by hand.
+    git(&main, &["worktree", "unlock", linked.to_str().unwrap()]);
+    lock_ours();
+    let leftover = "locked.kagi-4242-1";
+    std::fs::write(admin.join(leftover), "someone else\n").unwrap();
+    let is_leftover = |note: &PlanNote| matches!(note, PlanNote::Worktree(WorktreeNote::LockLeftover { files, .. }) if files == &vec![leftover.to_string()]);
+
+    let (app, window) = mount(cx, &main);
+    app.update(cx, |app, cx| {
+        app.open_unlock_worktree_modal("linked".into());
+        cx.notify();
+    });
+    paint(cx, window);
+    cx.read(|cx| {
+        let modal = app
+            .read(cx)
+            .unlock_worktree_modal()
+            .expect("manual unlock card");
+        assert!(
+            modal.plan.warnings.iter().any(is_leftover),
+            "the manual card names the leftover: {:?}",
+            modal.plan.warnings
+        );
+    });
+
+    // The terminal's release offer for the same worktree is blocked.
+    let auto_plan = backend
+        .plan_auto_unlock_worktree("linked", &target)
+        .unwrap();
+    assert!(
+        auto_plan.blockers.iter().any(is_leftover),
+        "{:?}",
+        auto_plan.blockers
+    );
+    app.update(cx, |app, cx| {
+        let modal = app.unlock_worktree_modal_mut().expect("card still open");
+        modal.plan = std::sync::Arc::new(auto_plan);
+        modal.auto = Some(target.clone());
+        cx.notify();
+    });
+    paint(cx, window);
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    assert_eq!(
+        lock_reason(&main).as_deref(),
+        Some(token.as_str()),
+        "nothing released"
+    );
+    assert_eq!(
+        leftovers(),
+        vec![leftover.to_string()],
+        "the leftover is left for a person"
+    );
+    let refused = read_oplog_tail_for_repo(&main, 50)
+        .into_iter()
+        .filter(|e| e.op == "unlock-worktree")
+        .any(|e| matches!(e.outcome, OpOutcome::Refused { .. }));
+    assert!(refused, "the blocked release is recorded as refused");
+
+    std::fs::remove_file(admin.join(leftover)).unwrap();
+    git(&main, &["worktree", "unlock", linked.to_str().unwrap()]);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS terminal_auto_lock_race: a replaced lock is put back and refused; a leftover blocks the release and shows on the manual card");
+}

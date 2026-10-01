@@ -354,6 +354,21 @@ fn owner_repo(base_repo: &str) -> Option<String> {
     }
 }
 
+/// The host of a `<host>/<owner>/<repo>` identity, for `gh api --hostname`
+/// (#904 review): an API path drops the host, and without `--hostname`
+/// `gh api` asks github.com — the wrong server for an Enterprise repository.
+/// `None` for a host-less `owner/repo`, which `gh` resolves to its default.
+/// Pure; unit-tested.
+pub fn repo_host(base_repo: &str) -> Option<String> {
+    let parts: Vec<&str> = base_repo
+        .trim()
+        .trim_matches('/')
+        .split('/')
+        .filter(|p| !p.is_empty())
+        .collect();
+    (parts.len() >= 3).then(|| parts[parts.len() - 3].to_string())
+}
+
 /// Sort case-insensitively (a picker reads alphabetically, and GitHub's own
 /// order is by id), with an exact tiebreak so `Bug` and `bug` — two real,
 /// distinct labels — keep a stable relative order.
@@ -363,11 +378,16 @@ fn by_name(a: &str, b: &str) -> std::cmp::Ordering {
         .then_with(|| a.cmp(b))
 }
 
+/// How many labels [`repo_labels`] asks for. A list this long may have been
+/// cut off, so a label missing from it is not proof the label does not exist.
+pub(crate) const REPO_LABEL_LIMIT: usize = 200;
+
 /// Every label defined in the repository, for the label picker.
 ///
-/// Bounded at 200 — `gh label list`'s own paging limit here, and well past the
-/// point a flat picker is usable. Sorted and de-duplicated so the picker's
-/// order does not depend on GitHub's.
+/// Bounded at [`REPO_LABEL_LIMIT`] — `gh label list` pages up to it, and it is
+/// well past the point a flat picker is usable. `-R` carries the host, so an
+/// Enterprise repository is read from its own server. Sorted and de-duplicated
+/// so the picker's order does not depend on GitHub's.
 pub fn repo_labels(workdir: &Path, base_repo: &str) -> Result<Vec<IssueLabel>, GitError> {
     let repo = resolve_base_repo(workdir, base_repo)?;
     let args = vec![
@@ -378,7 +398,7 @@ pub fn repo_labels(workdir: &Path, base_repo: &str) -> Result<Vec<IssueLabel>, G
         "--json".to_string(),
         "name,color".to_string(),
         "--limit".to_string(),
-        "200".to_string(),
+        REPO_LABEL_LIMIT.to_string(),
     ];
     let stdout = read_gh(workdir, &args, "label list")?;
     let mut labels = parse_labels(&stdout)?;
@@ -423,14 +443,7 @@ fn parse_labels(json: &str) -> Result<Vec<IssueLabel>, GitError> {
 /// Sorted and de-duplicated so the picker's order does not depend on GitHub's.
 pub fn repo_assignable_users(workdir: &Path, base_repo: &str) -> Result<Vec<String>, GitError> {
     let repo = resolve_base_repo(workdir, base_repo)?;
-    let path = owner_repo(&repo)
-        .ok_or_else(|| GitError::Other(format!("'{repo}' is not an <owner>/<repo> identity")))?;
-    let args = vec![
-        "api".to_string(),
-        format!("repos/{path}/assignees"),
-        "--jq".to_string(),
-        ".[].login".to_string(),
-    ];
+    let args = assignable_users_args(&repo)?;
     let stdout = read_gh(workdir, &args, "api assignees")?;
     let mut logins: Vec<String> = stdout
         .lines()
@@ -441,6 +454,25 @@ pub fn repo_assignable_users(workdir: &Path, base_repo: &str) -> Result<Vec<Stri
     logins.sort_by(|a, b| by_name(a, b));
     logins.dedup();
     Ok(logins)
+}
+
+/// `gh api` for every assignable user (#904 review): `--paginate` reads past
+/// the first page of 30, and `--hostname` keeps an Enterprise repository on
+/// its own server. Pure; unit-tested.
+fn assignable_users_args(repo: &str) -> Result<Vec<String>, GitError> {
+    let path = owner_repo(repo)
+        .ok_or_else(|| GitError::Other(format!("'{repo}' is not an <owner>/<repo> identity")))?;
+    let mut args = vec!["api".to_string(), "--paginate".to_string()];
+    if let Some(host) = repo_host(repo) {
+        args.push("--hostname".to_string());
+        args.push(host);
+    }
+    args.extend([
+        format!("repos/{path}/assignees"),
+        "--jq".to_string(),
+        ".[].login".to_string(),
+    ]);
+    Ok(args)
 }
 
 #[cfg(test)]
@@ -572,6 +604,39 @@ mod tests {
         );
         assert_eq!(owner_repo("widgets"), None);
         assert_eq!(owner_repo(""), None);
+    }
+
+    /// #904 review: every page, from the repository's own server.
+    #[test]
+    fn assignable_users_read_every_page_on_the_repositorys_host() {
+        assert_eq!(
+            assignable_users_args("ghe.example.invalid/acme/widgets").unwrap(),
+            v(&[
+                "api",
+                "--paginate",
+                "--hostname",
+                "ghe.example.invalid",
+                "repos/acme/widgets/assignees",
+                "--jq",
+                ".[].login",
+            ])
+        );
+        assert_eq!(
+            assignable_users_args("acme/widgets").unwrap(),
+            v(&[
+                "api",
+                "--paginate",
+                "repos/acme/widgets/assignees",
+                "--jq",
+                ".[].login",
+            ]),
+            "a host-less identity leaves the host to gh"
+        );
+        assert_eq!(
+            repo_host("github.com/acme/widgets").as_deref(),
+            Some("github.com")
+        );
+        assert_eq!(repo_host("acme/widgets"), None);
     }
 
     /// A malformed reply is an error, never an empty picker: a label list

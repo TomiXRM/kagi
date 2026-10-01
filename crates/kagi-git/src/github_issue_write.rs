@@ -206,7 +206,7 @@ fn preflight_issue_fields(
             "could not read the repository's {what} to check the issue against them: {error}"
         ))
     };
-    let labels = if fields.labels.is_empty() {
+    let labels: Vec<String> = if fields.labels.is_empty() {
         Vec::new()
     } else {
         crate::github_edit::repo_labels(workdir, base_repo)
@@ -215,6 +215,10 @@ fn preflight_issue_fields(
             .map(|label| label.name)
             .collect()
     };
+    // A list as long as the read's limit may have been cut off: a label
+    // missing from it is left for `gh issue create` to judge rather than
+    // refused here on no evidence (#904 review).
+    let labels_complete = labels.len() < crate::github_edit::REPO_LABEL_LIMIT;
     let assignable = if fields.assignees.is_empty() {
         Vec::new()
     } else {
@@ -222,7 +226,7 @@ fn preflight_issue_fields(
             .map_err(|error| unreadable("assignable users", error))?
     };
     let (unknown, unassignable) = fields.missing(&labels, &assignable);
-    if !unknown.is_empty() {
+    if labels_complete && !unknown.is_empty() {
         return Err(GitError::Blocked(Box::new(PlanNote::Github(
             GithubNote::IssueUnknownLabels { names: unknown },
         ))));

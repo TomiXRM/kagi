@@ -17,15 +17,17 @@ use crate::recovery_operations::wait_idle;
 const BODY: &str = "Export fails on large repositories\n";
 
 /// Labels come from `labels.json`, so a test can delete one between the pick
-/// and the Create. `issue create` records its argv and consumes the body.
+/// and the Create; the viewer login from `login.txt`, absent until the test
+/// writes it. `issue create` records its argv and consumes the body.
 fn install_gh(dir: &Path) -> OfflineGh {
     let labels = dir.join("labels.json");
+    let login = dir.join("login.txt");
     let argv = dir.join("argv.txt");
     OfflineGh::with_script(&format!(
         r#"#!/bin/sh
 case "$1 $2" in
   'label list') cat '{labels}' ;;
-  'api user') echo octocat ;;
+  'api user') cat '{login}' ;;
   'api '*) echo octocat; echo hubot ;;
   'issue create') printf '%s\n' "$@" > '{argv}'; cat > /dev/null
     echo https://example.invalid/example/fixture/issues/9 ;;
@@ -33,6 +35,7 @@ case "$1 $2" in
 esac
 "#,
         labels = labels.display(),
+        login = login.display(),
         argv = argv.display(),
     ))
 }
@@ -140,7 +143,6 @@ pub fn scenario_issue_create_fields(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, cx| {
         app.seed_issue_composer_for_e2e(cx);
         app.show_issues_mode(cx);
-        app.github_login = None;
     });
     paint(cx, window);
     cx.update_window(window, |_, window, cx| {
@@ -151,14 +153,29 @@ pub fn scenario_issue_create_fields(cx: &mut VisualTestAppContext) {
     .unwrap();
     cx.run_until_parked();
 
-    // No login read yet: nobody is claimed as the author.
+    // The repository's host has no login yet: nobody is claimed as the
+    // author, whatever the window-global login says.
+    app.update(cx, |app, _| app.github_login = Some("someone-else".into()));
     assert!(drawn(cx, window, "issue-field-value-labels"));
     assert!(drawn(cx, window, "issue-field-value-assignees"));
     assert!(!drawn(cx, window, "issue-composer-posted-as"));
-    app.update(cx, |app, cx| {
-        app.github_login = Some("octocat".into());
-        cx.notify();
-    });
+
+    // The host's own login arrives with a later Issues read.
+    std::fs::write(gh_dir.path().join("login.txt"), "octocat\n").unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while cx.read(|cx| app.read(cx).github_host_logins.get(&None).is_none()) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the host login was never read"
+        );
+        app.update(cx, |app, cx| app.refresh_github_issues(cx));
+        cx.run_until_parked();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(
+        cx.read(|cx| app.read(cx).github_host_logins.get(&None).cloned()),
+        Some("octocat".into())
+    );
     assert!(
         drawn(cx, window, "issue-composer-posted-as"),
         "the composer says who the issue is posted as"

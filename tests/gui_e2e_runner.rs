@@ -48,9 +48,10 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/file_tree_a11y.rs"]
+mod file_tree_a11y;
 #[path = "support/gui_evidence.rs"]
 mod gui_evidence;
-
 #[cfg(target_os = "macos")]
 #[path = "recovery/operations.rs"]
 mod recovery_operations;
@@ -835,6 +836,10 @@ mod macos {
             (
                 "sidebar_tree_roles",
                 Box::new(crate::recovery_operations::scenario_sidebar_tree_roles),
+            ),
+            (
+                "file_tree_roles",
+                Box::new(crate::file_tree_a11y::scenario_file_tree_roles),
             ),
             (
                 "pr_list_roles",

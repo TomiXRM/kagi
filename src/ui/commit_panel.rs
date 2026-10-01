@@ -89,6 +89,9 @@ pub struct CommitPanelState {
     pub unstaged_tree: Vec<TreeRow>,
     /// PERF: cached tree rows for the staged section (see `unstaged_tree`).
     pub staged_tree: Vec<TreeRow>,
+    /// Incremented when either tree is rebuilt, to invalidate accessible
+    /// sibling positions without traversing all files on each scroll batch.
+    pub(crate) tree_revision: u64,
     /// PERF: O(1) lookup from unstaged file path → index into `unstaged_stats`.
     /// Replaces the per-row `find_stat` linear scan (was O(N²) per frame).
     pub unstaged_stat_index: std::collections::HashMap<PathBuf, usize>,
@@ -161,6 +164,7 @@ impl CommitPanelState {
             tree_view: false,
             unstaged_tree: Vec::new(),
             staged_tree: Vec::new(),
+            tree_revision: 0,
             unstaged_stat_index: std::collections::HashMap::new(),
             staged_stat_index: std::collections::HashMap::new(),
             unstaged_gen_files: Vec::new(),
@@ -331,6 +335,7 @@ impl CommitPanelState {
             .enumerate()
             .map(|(i, s)| (s.path.clone(), i))
             .collect();
+        self.tree_revision = self.tree_revision.wrapping_add(1);
     }
 
     /// issue #348: number of extra rows the "Generated (N)" fold adds to a
@@ -437,6 +442,11 @@ pub struct CommitPanelView {
     pub unstaged_scroll_handle: UniformListScrollHandle,
     /// PERF: scroll handle for the Staged `uniform_list`.
     pub staged_scroll_handle: UniformListScrollHandle,
+    /// Cached TreeItem level and sibling position for each displayed row.
+    /// Keyed by status rebuild and the two independent disclosure flags.
+    pub(crate) tree_layout_for: Option<(u64, bool, bool)>,
+    pub(crate) unstaged_tree_layout: Vec<(usize, (usize, usize))>,
+    pub(crate) staged_tree_layout: Vec<(usize, (usize, usize))>,
     /// WIP-highlight target derived from the parent's open main diff
     /// (`Some((staged, path))` when a WIP file is open in the center diff). Pushed
     /// in by the parent render (`render_body`) — the entity must not read the
@@ -497,6 +507,9 @@ impl CommitPanelView {
             input_lang: kagi_ui_core::i18n::lang(),
             unstaged_scroll_handle: UniformListScrollHandle::new(),
             staged_scroll_handle: UniformListScrollHandle::new(),
+            tree_layout_for: None,
+            unstaged_tree_layout: Vec::new(),
+            staged_tree_layout: Vec::new(),
             active_wip: None,
             panel_render_width: 0.0,
             smart_snapshot: SmartCommitState::default(),

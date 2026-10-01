@@ -92,8 +92,8 @@ fn cp_file_label(
 /// Level and sibling position/size of every tree-view row of a section, in
 /// display order (#354): the pruned file tree at depth + 1, then each
 /// non-empty fold ("Generated", "Agent artifacts") as a top-level item with
-/// its expanded files one level below. Linear; built once per section per
-/// frame by the list's processor.
+/// its expanded files one level below. Linear; rebuilt on status changes or
+/// fold toggles, never by the virtual list's per-scroll processor.
 fn cp_tree_layout(
     panel: &super::commit_panel::CommitPanelState,
     staged: bool,
@@ -943,12 +943,33 @@ impl Render for CommitPanelView {
         // render path (with `&mut Window`), never as a parent per-frame read of
         // the child's input.
         self.sync_inputs(window, cx);
+        self.refresh_tree_layout();
         let panel_width = self.panel_render_width;
         self.render_panel(panel_width, cx)
     }
 }
 
 impl CommitPanelView {
+    /// Keep the accessible sibling positions in sync with the displayed tree.
+    /// The virtual list can render many batches for one scroll; each batch
+    /// only indexes the layout cached here.
+    fn refresh_tree_layout(&mut self) {
+        if !self.state.tree_view {
+            return;
+        }
+        let key = (
+            self.state.tree_revision,
+            self.state.generated_expanded,
+            self.state.agent_expanded,
+        );
+        if self.tree_layout_for == Some(key) {
+            return;
+        }
+        self.unstaged_tree_layout = cp_tree_layout(&self.state, false);
+        self.staged_tree_layout = cp_tree_layout(&self.state, true);
+        self.tree_layout_for = Some(key);
+    }
+
     /// Render the Commit Panel: unstaged/staged sections + diff viewer + message
     /// input + commit button. (Was `KagiApp::render_commit_panel`; retargeted to
     /// the entity — reads `self.state` + the entity's own inputs/scroll handles.
@@ -1499,13 +1520,9 @@ impl CommitPanelView {
                                                   range: std::ops::Range<usize>,
                                                   _window,
                                                   cx| {
-                                                // #354: tree view rows are TreeItems; their
-                                                // levels/positions come from one linear pass
-                                                // over the whole section per frame.
-                                                let layout = view
-                                                    .state
-                                                    .tree_view
-                                                    .then(|| cp_tree_layout(&view.state, false));
+                                                let layout = view.state.tree_view.then_some(
+                                                    view.unstaged_tree_layout.as_slice(),
+                                                );
                                                 range
                                                     .filter_map(|i| match &layout {
                                                         Some(layout) => render_unstaged_tree_row(
@@ -1570,11 +1587,10 @@ impl CommitPanelView {
                                                   range: std::ops::Range<usize>,
                                                   _window,
                                                   cx| {
-                                                // #354: see the unstaged list above.
                                                 let layout = view
                                                     .state
                                                     .tree_view
-                                                    .then(|| cp_tree_layout(&view.state, true));
+                                                    .then_some(view.staged_tree_layout.as_slice());
                                                 range
                                                     .filter_map(|i| match &layout {
                                                         Some(layout) => render_staged_tree_row(

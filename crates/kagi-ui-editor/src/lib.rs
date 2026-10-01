@@ -2652,10 +2652,18 @@ fn render_tree_row(
                 .files
                 .get(file_index)
                 .is_some_and(|f| view.tab_dirty(&f.path));
-            let mut label = Msg::A11yFileTreeFile
-                .t()
-                .replacen("{}", name.as_ref(), 1)
-                .replacen("{}", tree_a11y::file_status(change.as_ref(), false), 1);
+            // Replace only the original translation's placeholders: a Git
+            // file name may itself contain `{}` and must keep its status.
+            let status = tree_a11y::file_status(change.as_ref(), false);
+            let template = Msg::A11yFileTreeFile.t();
+            let mut parts = template.splitn(3, "{}");
+            let mut label =
+                String::with_capacity(template.len() + name.as_ref().len() + status.len());
+            label.push_str(parts.next().unwrap_or_default());
+            label.push_str(name.as_ref());
+            label.push_str(parts.next().unwrap_or_default());
+            label.push_str(status);
+            label.push_str(parts.next().unwrap_or_default());
             if show_dirty_dot {
                 label.push_str(Msg::A11yFileTreeUnsaved.t());
             }

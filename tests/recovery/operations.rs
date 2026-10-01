@@ -2443,3 +2443,112 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
     guard.complete();
     unmount(cx, app, window);
 }
+
+/// #344 slice 2: "Replay <branch> onto <current>…" from the branch menu goes
+/// through the shared rebase card with a two-stage confirm (the plan is
+/// destructive), then moves the branch by ref update only — the branch is
+/// checked out in a second worktree and neither worktree's index or files
+/// change, the backup ref holds the old tip, and the oplog has the receipt.
+pub fn scenario_replay_onto_armed(cx: &mut VisualTestAppContext) {
+    if !kagi_git::cli::GitFeatures::detected().replay_onto {
+        eprintln!("[gui-e2e] SKIP replay_onto_armed: git replay needs git 2.44+");
+        return;
+    }
+    for input in ["enter", "button"] {
+        let fixture = build_fixture();
+        let repo = fixture.path();
+        // feat forks before "second commit"; it lives in its own worktree.
+        git(repo, &["branch", "feat", "HEAD~1"]);
+        let wt = fixture.path().parent().unwrap().join(format!(
+            "{}-wt-feat-{input}",
+            fixture.path().file_name().unwrap().to_string_lossy()
+        ));
+        git(
+            repo,
+            &["worktree", "add", "-q", wt.to_str().unwrap(), "feat"],
+        );
+        std::fs::write(wt.join("feat.txt"), "feature work\n").unwrap();
+        git(&wt, &["add", "."]);
+        git(&wt, &["commit", "-q", "-m", "feat work"]);
+        let feat_before = output(repo, &["rev-parse", "refs/heads/feat"]);
+        let head = output(repo, &["rev-parse", "HEAD"]);
+        // Dirty the current worktree: replay must not care.
+        std::fs::write(repo.join("README.md"), "# fixture\nlocal edit\n").unwrap();
+        let main_status = output(repo, &["status", "--porcelain"]);
+        let main_index = output(repo, &["ls-files", "-s"]);
+        let wt_index = output(&wt, &["ls-files", "-s"]);
+
+        let (app, window) = mount(cx, repo);
+        app.update(cx, |app, cx| app.open_replay_modal("feat".to_string(), cx));
+        wait_idle(cx, &app);
+        cx.read(|cx| {
+            let modal = app
+                .read(cx)
+                .rebase_current_onto_modal()
+                .expect("replay modal");
+            assert!(
+                matches!(modal.op, kagi_git::Operation::ReplayOnto { .. }),
+                "the shared rebase card carries the replay op"
+            );
+            assert!(modal.plan.blockers.is_empty(), "{:?}", modal.plan.blockers);
+            assert!(modal.plan.destructive);
+            assert!(!modal.confirm_armed);
+        });
+        // Planning wrote nothing.
+        assert_eq!(output(repo, &["rev-parse", "refs/heads/feat"]), feat_before);
+
+        confirm_branch_delete(cx, &app, window, input);
+        cx.run_until_parked();
+        assert!(
+            cx.read(|cx| app
+                .read(cx)
+                .rebase_current_onto_modal()
+                .unwrap()
+                .confirm_armed),
+            "{input}: first confirm arms"
+        );
+        assert_eq!(output(repo, &["rev-parse", "refs/heads/feat"]), feat_before);
+        assert!(
+            records(repo, "replay-onto").is_empty(),
+            "arming must not record or execute"
+        );
+
+        confirm_branch_delete(cx, &app, window, input);
+        wait_idle(cx, &app);
+        assert!(cx.read(|cx| app.read(cx).rebase_current_onto_modal().is_none()));
+        let feat_after = output(repo, &["rev-parse", "refs/heads/feat"]);
+        assert_ne!(feat_after, feat_before, "{input}: feat moved");
+        assert_eq!(
+            output(repo, &["rev-parse", "refs/heads/feat~1"]),
+            head,
+            "…onto main"
+        );
+        assert_eq!(output(repo, &["rev-parse", "HEAD"]), head, "HEAD untouched");
+        assert_eq!(
+            output(repo, &["status", "--porcelain"]),
+            main_status,
+            "current worktree untouched"
+        );
+        assert_eq!(output(repo, &["ls-files", "-s"]), main_index);
+        assert_eq!(
+            output(&wt, &["ls-files", "-s"]),
+            wt_index,
+            "other worktree's index untouched"
+        );
+        assert_eq!(
+            output(&wt, &["rev-parse", "HEAD"]),
+            feat_after,
+            "its HEAD follows the ref"
+        );
+        let entries = records(repo, "replay-onto");
+        assert_eq!(entries.len(), 1);
+        assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
+        assert_eq!(entries[0].backup_refs.len(), 1);
+        assert_eq!(
+            output(repo, &["rev-parse", &entries[0].backup_refs[0]]),
+            feat_before
+        );
+        unmount(cx, app, window);
+    }
+    eprintln!("[gui-e2e] PASS replay_onto_armed: Enter/button arm then replay; both worktrees untouched, ref moved, backup + oplog");
+}

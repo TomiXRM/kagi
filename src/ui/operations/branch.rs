@@ -1126,6 +1126,9 @@ impl KagiApp {
             BranchAction::RebaseCurrentOnto => {
                 self.open_rebase_modal(state.name, cx);
             }
+            BranchAction::ReplayOnto => {
+                self.open_replay_modal(state.name, cx);
+            }
             BranchAction::NoUpstreamInfo => {
                 self.status_footer =
                     FooterStatus::Idle(SharedString::from(Msg::BcmNotImplementedYet.t()));

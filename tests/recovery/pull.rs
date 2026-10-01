@@ -746,11 +746,13 @@ pub fn scenario_pull_failure_presents_only_the_decisive_receipt(cx: &mut VisualT
     );
 }
 
-/// #702 review — the completion goes to the tab that asked for it, or nowhere.
+/// #702 review — the completion belongs to the tab that asked for it.
 ///
 /// The app-level test proves the stamp is frozen; this one runs the branch that
 /// *acts* on it. Tab A confirms a pull that will fail, the user leaves for tab B
-/// before the completion lands, and its failure notice must not open over tab B.
+/// before the completion lands: nothing of tab B changes (footer, modal), and
+/// the failure is shown as #747 (e3a6d239) shows a background owner's receipt —
+/// in the window-wide Operation Log and a toast labelled with A's repository.
 pub fn scenario_pull_completion_drops_when_its_tab_is_left(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path();
@@ -777,6 +779,8 @@ pub fn scenario_pull_completion_drops_when_its_tab_is_left(cx: &mut VisualTestAp
         assert!(app.open_repository(other_tab.path().to_path_buf(), cx));
     });
     cx.run_until_parked();
+    // What tab B's footer reads before tab A does anything.
+    let footer_on_b = cx.read(|cx| format!("{:?}", app.read(cx).status_footer));
     app.update(cx, |app, cx| app.switch_repo(0, cx));
     cx.run_until_parked();
 
@@ -810,31 +814,48 @@ pub fn scenario_pull_completion_drops_when_its_tab_is_left(cx: &mut VisualTestAp
     );
     cx.read(|cx| {
         let app = app.read(cx);
+        // Tab B first: what the user is looking at does not change.
+        assert_eq!(app.active_tab, 1, "the user is still on tab B");
         assert!(
             app.pull_modal().is_none(),
             "tab A's failure must not open over tab B"
         );
-        // The receipt is durable either way; what must not happen is its
-        // *presentation* landing on the tab the user is now looking at.
+        assert!(app.app_notice().is_none(), "nor as a notice over tab B");
+        assert_eq!(
+            format!("{:?}", app.status_footer),
+            footer_on_b,
+            "tab B's footer is not tab A's"
+        );
+        // #747: the receipt is in the window-wide log, and the toast says
+        // which repository it came from.
         let panel = app.op_log.as_ref().unwrap().read(cx);
         assert!(
-            !panel
+            panel
                 .entries()
                 .iter()
                 .any(|entry| entry.id == durable[0].id),
-            "tab A's receipt must not be presented on tab B"
+            "tab A's receipt is in the window-wide Operation Log (#747)"
         );
-        match &app.status_footer {
-            kagi::ui::FooterStatus::Failed(text) => {
-                assert!(!text.contains("pull"), "nor its footer: {text}")
-            }
-            _ => {}
-        }
+        let toast = app
+            .toast_stack
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .toasts()
+            .last()
+            .expect("tab A's failure reaches a toast");
+        assert!(
+            matches!(toast.kind, kagi::ui::ToastKind::Error)
+                && toast.message.starts_with(&durable[0].repo)
+                && toast.message.contains("pull"),
+            "the toast is labelled with tab A's repository: {}",
+            toast.message
+        );
     });
 
     unmount(cx, app, window);
     eprintln!(
-        "[gui-e2e] PASS pull_completion_drops_when_its_tab_is_left: the stamp routes it, or nothing does"
+        "[gui-e2e] PASS pull_completion_drops_when_its_tab_is_left: tab B unchanged, A's receipt in the log with its repository"
     );
 }
 
@@ -1519,6 +1540,9 @@ pub fn scenario_pull_failure_notice_displacement_vs_dismissal(cx: &mut VisualTes
 /// changes. Stashing first would hide it from every downstream guard — the
 /// preflight and the execute-time dirty-path check both see a clean tree — and
 /// only the restore would conflict, unannounced. The run must refuse instead.
+/// The refusal is presented as #718 (34d7d1e5) / #747 (e3a6d239) present a
+/// recorded failure: the confirmation closes, and the footer, an error toast
+/// and the Operation Log carry the reason.
 pub fn scenario_pull_refuses_when_the_dirty_set_moved(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path();
@@ -1564,15 +1588,41 @@ pub fn scenario_pull_refuses_when_the_dirty_set_moved(cx: &mut VisualTestAppCont
         "local second\n",
         "the work the user did after confirming is untouched"
     );
+    let refusals = records(repo, "pull");
+    assert_eq!(refusals.len(), 1, "one receipt for the refused run");
+    assert!(
+        matches!(&refusals[0].outcome, OpOutcome::Refused { blockers }
+            if blockers.iter().any(|b| b.contains("changed after this confirmation"))),
+        "the receipt records why: {:?}",
+        refusals[0].outcome
+    );
     cx.read(|cx| {
-        let modal = app
-            .read(cx)
-            .pull_modal()
-            .expect("the modal stays, carrying the refusal");
-        let error = modal.error.clone().expect("a refusal message");
+        let app = app.read(cx);
+        // #718: the confirmation is not put back with the error on it.
         assert!(
-            error.contains("changed after this confirmation"),
-            "the refusal must say why: {error}"
+            app.pull_modal().is_none(),
+            "the stale confirmation is not offered again"
+        );
+        let kagi::ui::FooterStatus::Failed(footer) = &app.status_footer else {
+            panic!("the footer must carry the refusal: {:?}", app.status_footer)
+        };
+        assert!(
+            footer.contains("changed after this confirmation"),
+            "the refusal must say why: {footer}"
+        );
+        let toast = app
+            .toast_stack
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .toasts()
+            .last()
+            .expect("the refusal reaches a toast");
+        assert!(
+            matches!(toast.kind, kagi::ui::ToastKind::Error)
+                && toast.message.contains("changed after this confirmation"),
+            "the toast says why: {}",
+            toast.message
         );
     });
 

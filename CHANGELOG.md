@@ -84,6 +84,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Internal
 
+- GUI E2E の 3 scenario(`cleanup_partial_presentation`、`pull_refuses_when_the_dirty_set_moved`、`pull_completion_drops_when_its_tab_is_left`)の期待値を現行の提示仕様に合わせました。#718 で失敗した pull の確認画面を開き直さなくなり、#747 で記録済みの結果は toast と Operation Log で示すようになり、背景タブの結果は repository 名付きで出るようになっていました。これらの PR で期待値の更新が漏れていたものです。安全性の検査(何も stash / pull しない・local branch を変えない・記録は 1 件・確認画面を再表示しない)は弱めていません。製品の動作は変更していません。(#898)
 - GUI E2E runner で scenario が失敗したとき、`target/gui-e2e/<scenario>/` に失敗証跡を残すようにしました。中身は panic の内容、直近 200 行の `[kagi]` ログ、mount した fixture repository の `git status --short` と `git log --oneline -5`、window の PNG(撮れない場合は理由を書いた `window.txt`)です。stderr には `[gui-e2e] FAIL <scenario>: evidence <dir>` を 1 行出します。window は前面にも画面内にも出しません。終了コードと「最初の失敗で止まる」挙動は変わりません。製品の動作は変更していません。(#516 slice 1)
 - GUI E2E の scenario 間の隔離を監査し(#516 slice 2)、違反を直しました。
   - fixture の外に作っていた worktree / bare repo(3 scenario)を TempDir の中に移しました。

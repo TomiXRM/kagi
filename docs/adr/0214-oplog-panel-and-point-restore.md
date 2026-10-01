@@ -75,7 +75,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - **#885: fetch・GitHub 書き込み・worktree の lock などを記録に加えた**。判定は 2 通りで、推定で `Some(空)` にはしない。
     - **local git を動かす経路は観測する**(`Backend::observe_ref_moves`)。動かさないはずでも、構造を根拠にせず実際の前後を記録する。
       - fetch(`fetch_async_for`、argv `fetch --prune -- <remote>` / `fetch --all --prune`): 書き込み先は `remote.<name>.fetch` の refspec が決める。mirror 型の refspec(`+refs/heads/*:refs/heads/*`)なら同じ argv で local branch も動くので、観測が要る。成功した fetch はこれまでどおり記録しない(local branch が動けば、restore は記録外の reflog 変化として RefChangedOutsideRecord で止まる)。失敗(`FetchFailure.ref_moves`)は観測した移動を記録する。repository を開けなかった場合は何も動いていないので `Some(空)`。
-      - PR の fetch(`fetch-pr`、refspec は `refs/remotes/**` と `refs/kagi/pr/**`): job 全体を観測し、失敗の記録に載せる。
+      - PR の fetch(`fetch-pr`、refspec は `refs/remotes/**` と `refs/kagi/pr/**`): `fetch_pr_refs` の呼び出しだけを観測し、失敗の記録に載せる。その後の commit / diff の解析は観測の外で行う(`Backend::observe_then`。#907 review)。解析中に外部で動いた branch をこの job の移動として記録すると、restore がその無関係な変更を巻き戻しうるため。
       - worktree の lock / unlock(auto-lock の確認も同じ経路)・prune・repair: admin file だけを書くので通常は空。UI の `record_op_persist_moves` で記録する(#884 の `record_conflict_persist` を一般化した)。
       - remove-worktree(#900 review からの追加): 試行全体を前後 snapshot で囲む。branch を残せば空、`delete_branch` なら branch の削除を記録する。実行前に捨てた job・計画の失敗は `Some(空)`。
     - **local ref に触れない経路は `Some(空)`**。共通の builder `OpLogEntry::with_nothing_moved`(= `with_ref_moves(Some(空))`。conflict の `nothing_moved` もこれを使う)で書くので、`Unknown` は `None` のまま。
@@ -248,6 +248,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - kagi-git integration(`oplog_restore_test`)
     - 実際に失敗した fetch を `observe_ref_moves` で包み、UI と同じ builder で記録すると `Some(空)` になり、その前の時点への restore が blocker なしで実行できる。`Unknown` の fetch は `None` で NotRecorded のまま。
     - remove-worktree は、branch を残すと `Some(空)`、`delete_branch` では `refs/heads/wtb` の削除(old = 元の tip)を記録する。#900(削除済み worktree の identity)と合わせて、自分の repository で 2 回の remove をまたぐ restore は blocker なしで plan でき、削除した remove の revert も EntryNotLoaded にならず blocker なしで plan できる。
+    - 観測の範囲(#907 review): `observe_then` は write の前後だけを観測し、その後の read で外部が作った branch は記録しない。変異確認: read まで観測に含める → 落ちる。
   - kagi-git integration(fake `gh`): pr-comment / pr-review / pr-edit / issue create・comment の成功と拒否は `Some(空)`、issue の `Unknown` は `None`、PR merge は実行すると `None`、`gh` 前の拒否は `Some(空)`。
   - Tier A
     - `fetch_failure_oplog`: 実 `fetch_async` の失敗が `Some(空)`(`Unknown` なら `None`)。

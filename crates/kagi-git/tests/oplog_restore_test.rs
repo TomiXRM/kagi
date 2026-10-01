@@ -1014,3 +1014,33 @@ fn a_remove_worktree_entry_keeps_the_identity_read_before_it_ran() {
         kagi_git::oplog::RecordedIdentity::Known(original)
     );
 }
+
+/// #907 review: a job that writes and then analyses (the PR-ref fetch, then
+/// its commits and diff) records only the write's moves. A branch moved by
+/// someone else while the analysis runs is not the job's — recorded, a
+/// restore across the job would undo that unrelated change.
+#[test]
+fn only_the_write_is_observed_not_the_analysis_after_it() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let (result, moves) = backend(&repo).observe_then(
+        |_| {
+            git(&repo, &["branch", "written"]);
+            Ok(())
+        },
+        |_, ()| {
+            git(&repo, &["branch", "moved-meanwhile"]);
+            Ok(())
+        },
+    );
+    result.unwrap();
+    let moved: Vec<String> = moves
+        .expect("observed")
+        .into_iter()
+        .map(|m| m.refname)
+        .collect();
+    assert_eq!(moved, vec!["refs/heads/written".to_string()]);
+}

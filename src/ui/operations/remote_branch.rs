@@ -292,14 +292,15 @@ impl KagiApp {
         let task = cx.background_spawn(async move {
             // #885: the refs this job moved are observed, not assumed (its
             // refspecs target refs/remotes and refs/kagi/pr, but a configured
-            // fetch refspec may also write local branches). Not opened:
-            // nothing ran, nothing moved.
+            // fetch refspec may also write local branches). #907 review: only
+            // the fetch is observed; the analysis after it runs outside, so a
+            // branch moved by someone else meanwhile is not recorded as this
+            // job's. Not opened: nothing ran, nothing moved.
             let (result, ref_moves) = match kagi_git::Backend::open(&repo_path) {
                 Err(error) => (Err(error), Some(Vec::new())),
-                Ok(backend) => {
-                    backend.observe_ref_moves(|backend| -> Result<_, kagi_git::GitError> {
-                        let (outcome, base_tip, head) =
-                            backend.fetch_pr_refs(&base_repo, number, &base_branch, &head_sha)?;
+                Ok(backend) => backend.observe_then(
+                    |backend| backend.fetch_pr_refs(&base_repo, number, &base_branch, &head_sha),
+                    |backend, (outcome, base_tip, head)| {
                         let base = backend
                             .merge_base(&base_tip, &head)
                             .unwrap_or_else(|_| base_tip.clone());
@@ -340,8 +341,8 @@ impl KagiApp {
                                 diff,
                             },
                         ))
-                    })
-                }
+                    },
+                ),
             };
             lease.complete_git(&result);
             (result, ref_moves)

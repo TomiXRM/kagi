@@ -148,6 +148,9 @@ mod recovery_header_fit;
 mod recovery_modal_compact;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/oplog_panel.rs"]
+mod recovery_oplog_panel;
+#[cfg(target_os = "macos")]
 #[path = "recovery/worktree_lock_reason.rs"]
 mod recovery_worktree_lock_reason;
 
@@ -1502,6 +1505,10 @@ mod macos {
                 Box::new(scenario_commit_panel_survives_reload),
             ),
             ("oplog_expand_copy", Box::new(scenario_oplog_expand_copy)),
+            (
+                "oplog_actor_reflog",
+                Box::new(crate::recovery_oplog_panel::scenario_oplog_actor_reflog),
+            ),
             ("create_snapshot", Box::new(scenario_create_snapshot)),
             ("theme_switch", Box::new(scenario_theme_switch)),
             ("agent_provenance", Box::new(scenario_agent_provenance)),

@@ -816,6 +816,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_dialog_a11y_roles),
             ),
             (
+                "sync_to_remote_armed",
+                Box::new(crate::recovery_operations::scenario_sync_to_remote_armed),
+            ),
+            (
                 "replay_onto_armed",
                 Box::new(crate::recovery_operations::scenario_replay_onto_armed),
             ),

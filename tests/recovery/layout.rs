@@ -340,10 +340,13 @@ pub fn scenario_commit_row_layout(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS commit_row_layout 704 matrix cells plus redraw/selection checks over 4 reused windows; native resize unavailable in VisualTestAppContext");
 }
 
+/// Zoom and language as the scenario found them, restored on drop. `set_zoom`
+/// also saves `ui_zoom`, so the saved key is put back too (#516).
 pub(crate) struct GlobalSettings {
     zoom: f32,
     language_env: Option<std::ffi::OsString>,
     language: i18n::Lang,
+    _saved: crate::gui_isolation::SavedKeys,
 }
 
 impl GlobalSettings {
@@ -352,6 +355,7 @@ impl GlobalSettings {
             zoom: theme::zoom(),
             language_env: std::env::var_os("KAGI_LANG"),
             language: i18n::lang(),
+            _saved: crate::gui_isolation::SavedKeys::keep(&["ui_zoom", "lang"]),
         }
     }
 }

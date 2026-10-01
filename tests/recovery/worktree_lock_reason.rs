@@ -90,6 +90,7 @@ fn confirm_reason(
 }
 
 pub fn scenario_worktree_lock_reason(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let original_lang = i18n::lang();
     for language in [i18n::Lang::En, i18n::Lang::Ja] {
         i18n::set_lang(language);
@@ -150,6 +151,8 @@ pub fn scenario_worktree_lock_reason(cx: &mut VisualTestAppContext) {
 ///   the token/identity-checked plan; a manual relock in between is refused
 ///   (contract B) and the manual lock survives.
 pub fn scenario_terminal_auto_lock(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["terminal_auto_lock"]);
+    let _ports = crate::gui_isolation::PortStore::keep();
     use kagi::ui::settings as theme;
     use kagi::ui::terminal::ShellExit;
 

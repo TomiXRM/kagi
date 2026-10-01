@@ -223,6 +223,7 @@ fn drag_and_copy(
 }
 
 pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let before = repo_fingerprint(&repo);

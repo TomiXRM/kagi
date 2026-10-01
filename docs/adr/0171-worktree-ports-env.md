@@ -163,7 +163,9 @@ range is unchanged.
 2. **`run_mode: "nonconcurrent"`** — the "correctly give up on parallelism" escape
    hatch for projects with a single shared DB / fixed callback URL; blocking or
    warning on a second launch is a UX decision left open.
-3. **Sidebar `http://localhost:<port>` link** (click-to-open) — GUI change,
-   needs human eyeballing.
+3. ~~**Sidebar `http://localhost:<port>` link**~~ — done (#855): each WORKTREES
+   row shows its stored block as `localhost:<port>` (click opens the browser).
+   The snapshot reads the store; nothing is assigned by showing a row. A
+   terminal start refreshes the current worktree's row at once.
 4. **Configurable env-var name / bind-to-reserve** — if the `KAGI_PORT` convention
    or the numbers-only race proves insufficient.

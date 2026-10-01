@@ -76,15 +76,16 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
     - **local git を動かす経路は観測する**(`Backend::observe_ref_moves`)。動かさないはずでも、構造を根拠にせず実際の前後を記録する。
       - fetch(`fetch_async_for`、argv `fetch --prune -- <remote>` / `fetch --all --prune`): 書き込み先は `remote.<name>.fetch` の refspec が決める。mirror 型の refspec(`+refs/heads/*:refs/heads/*`)なら同じ argv で local branch も動くので、観測が要る。成功した fetch はこれまでどおり記録しない(local branch が動けば、restore は記録外の reflog 変化として RefChangedOutsideRecord で止まる)。失敗(`FetchFailure.ref_moves`)は観測した移動を記録する。repository を開けなかった場合は何も動いていないので `Some(空)`。
       - PR の fetch(`fetch-pr`、refspec は `refs/remotes/**` と `refs/kagi/pr/**`): `fetch_pr_refs` の呼び出しだけを観測し、失敗の記録に載せる。その後の commit / diff の解析は観測の外で行う(`Backend::observe_then`。#907 review)。解析中に外部で動いた branch をこの job の移動として記録すると、restore がその無関係な変更を巻き戻しうるため。
-      - worktree の lock / unlock(auto-lock の確認も同じ経路)・prune・repair: admin file だけを書くので通常は空。UI の `record_op_persist_moves` で記録する(#884 の `record_conflict_persist` を一般化した)。
       - remove-worktree(#900 review からの追加): 試行全体を前後 snapshot で囲む。branch を残せば空、`delete_branch` なら branch の削除を記録する。実行前に捨てた job・計画の失敗は `Some(空)`。
     - **local ref に触れない経路は `Some(空)`**。共通の builder `OpLogEntry::with_nothing_moved`(= `with_ref_moves(Some(空))`。conflict の `nothing_moved` もこれを使う)で書くので、`Unknown` は `None` のまま。
+      - worktree の lock / unlock(auto-lock の確認も同じ経路)・prune・repair: worktree の admin file だけを書く。前後の snapshot は取らず、UI の `record_op_persist_nothing_moved` で記録する(#907 review)。観測すると、実行中に外部で動いた branch がこの操作の移動として記録され、restore がそれを巻き戻しうる。
       - GitHub 書き込み: `gh pr comment|edit|review -R <repo> …`、`gh issue create|comment -R <repo> …`。argv は GitHub API だけを呼ぶ。
       - PR merge の計画時の拒否(`gh` を実行する前)。
     - **`None` のまま**の経路
       - 実行した PR merge: `--delete-branch` で local branch を消すことがあるため(backup ref も残す)。
       - Pull に付随する fetch の失敗(`record_pull_fetch_failure`): pull の経路は対象外とする。
       - UI の `record_refused`(計画時の拒否): #885 の範囲外。
+  - **UI の記録の panel には採番済みの entry を渡す**(#907 review)。`record_op_impl` と PR fetch の失敗記録は `recording::finalize` が返す entry(log が振った id)を `OpLogPanel::entry_for_recording` で panel に載せる。placeholder の id 0 は別の entry を指しうるので、記録した移動で有効になる「取り消す / この時点まで戻す」を誤った操作に向けてしまう。append に失敗した entry は移動を推定扱いにする。
   - **conflict 経路は #884 で記録に加えた**。記録点は `Backend::observe_ref_moves` の 1 か所で、`Backend::run` と同じ前後 snapshot を使う。
     - save / dir-file / abort: `run_recorded_conflict` が executor をこれで包み、`record_receipt` に渡す。
     - continue / skip: UI が実行するので、UI がこれで包み、`record_op_persist_moves`(#885 で `record_conflict_persist` から改名)で記録する。
@@ -252,14 +253,14 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - kagi-git integration(fake `gh`): pr-comment / pr-review / pr-edit / issue create・comment の成功と拒否は `Some(空)`、issue の `Unknown` は `None`、PR merge は実行すると `None`、`gh` 前の拒否は `Some(空)`。
   - Tier A
     - `fetch_failure_oplog`: 実 `fetch_async` の失敗が `Some(空)`(`Unknown` なら `None`)。
-    - `worktree_lock_reason`: lock / unlock の記録が `Some(空)`。
+    - `worktree_lock_reason`: lock / unlock の記録が `Some(空)`。lock の実行中に別 thread が `refs/heads/churn` を作成・削除し続けても `Some(空)` のまま(#907 review)。panel に出た lock の行の id が、log に永続化された id と一致する(#907 review)。
     - 新しい `worktree_prune_repair_receipt`: prune / repair の記録が `Some(空)`。
     - `pr_open_enters_before_ref_fetch`: 実 `fetch_pr_for_open` の失敗(`fetch-pr`)が `Some(空)`(`Unknown` なら `None`)。
 - #885 の変異確認
   - `with_nothing_moved` が `None` を書く → transport の integration 8 件が落ちる。
   - remove-worktree が `None` を記録する → integration が落ちる。
   - fetch の記録を `None` にする → 統合テストの restore が `NotRecorded { op: "fetch" }` で止まる。UI の fetch で `None` → Tier A `fetch_failure_oplog` が落ちる。
-  - lock / unlock、prune / repair、fetch-pr で `None` → それぞれの Tier A が落ちる。
+  - lock / unlock、prune / repair、fetch-pr で `None` → それぞれの Tier A が落ちる。lock を前後の観測に戻す → churn の branch が記録されて落ちる。panel に placeholder の entry を渡す → id の一致で落ちる。
 - #894 のテスト(kagi-git integration `oplog_restore_test`)
   - 削除・prune した worktree の entry は Mine で、その branch の削除が restore に入る(blocker なし)。identity を外した旧形式の行は UnknownRepository のまま。
   - 削除した無関係の repository の entry は blocker にならない。

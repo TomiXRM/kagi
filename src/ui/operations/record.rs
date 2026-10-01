@@ -73,6 +73,23 @@ impl KagiApp {
         self.record_op_impl(entry, cx, true, None);
     }
 
+    /// [`Self::record_op_persist`] for a write that by construction moves no
+    /// ref — worktree lock / unlock / prune / repair only touch worktree admin
+    /// files (#907 review): recorded, nothing moved (`with_nothing_moved`).
+    /// Not observed: a branch someone else moves meanwhile is not its move.
+    pub(in crate::ui) fn record_op_persist_nothing_moved(
+        &mut self,
+        op: &str,
+        before: StateSummary,
+        outcome: OpOutcome,
+        repo_path: &std::path::Path,
+        cx: &mut Context<Self>,
+    ) {
+        let entry = OpLogEntry::new(op, repo_path.display().to_string(), before, outcome)
+            .with_nothing_moved();
+        self.record_op_impl(entry, cx, true, None);
+    }
+
     /// Record a refusal whose blockers are typed plan notes: every blocker
     /// goes to the oplog, the first one (localized) to the footer and toast.
     pub(crate) fn record_refused(

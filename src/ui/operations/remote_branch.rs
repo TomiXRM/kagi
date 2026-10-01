@@ -518,10 +518,14 @@ impl KagiApp {
             outcome,
         )
         .with_ref_moves(ref_moves);
-        if let Err(error) = kagi_git::oplog::append_oplog(&entry) {
+        // #907 review: the panel gets the appended entry (the log's id), not
+        // the placeholder id 0 — recorded moves enable undo / restore.
+        let recording = kagi_git::backend::recording::finalize(entry);
+        if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {
             klog!("oplog: write failed (non-fatal): {}", error);
-            self.present_oplog_write_failure(&error, cx);
+            self.present_oplog_write_failure(error, cx);
         }
+        let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&recording);
         if let Some(panel) = self.op_log.clone() {
             panel.update(cx, |panel, cx| {
                 panel.push(entry);

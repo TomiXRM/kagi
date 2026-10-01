@@ -444,7 +444,7 @@ use context_menu::{CommitAction, CommitMenuState, MenuContext};
 use detail_panel::CommitDetail;
 use graph_view::graph_canvas;
 use kagi_git::{
-    oplog::{append_oplog, read_oplog_tail, OpLogEntry, OpOutcome},
+    oplog::{read_oplog_tail, OpLogEntry, OpOutcome},
     ops::{default_tracking_branch_name, validate_branch_rename, AmendMode, StateSummary},
     CommitId, FileDiffStat, FileStatus, RepoSnapshot, SkipProgress,
 };
@@ -1667,22 +1667,33 @@ impl KagiApp {
 
         // Callers choose persistence. Already-recorded/attempted receipts are
         // presentation-only, including Refused outcomes: never append twice.
+        // #907 review: the panel gets the entry as appended — with the id the
+        // log assigned — never the placeholder (id 0, which names another
+        // entry). A receipt with recorded moves enables "undo / restore to
+        // here", so a wrong id would point those at the wrong operation. A
+        // failed append shows its moves as an estimate (`entry_for_recording`).
+        let mut shown = None;
         if persist {
-            if let Err(e) = append_oplog(&entry) {
-                klog!("oplog: write failed (non-fatal): {}", e);
+            let recording = kagi_git::backend::recording::finalize(entry.clone());
+            if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {
+                klog!("oplog: write failed (non-fatal): {}", error);
                 // "non-fatal" is true of the operation and false of the promise.
                 // The op already happened, but Kagi's reason to exist includes
                 // leaving a record to recover and audit from — and the in-memory
                 // panel below still shows the entry, so nothing looks wrong until
                 // the next launch, when it is simply gone. Say it out loud
                 // (#643 A1).
-                self.present_oplog_write_failure(&e, cx);
+                self.present_oplog_write_failure(error, cx);
             }
+            shown = Some(crate::ui::oplog_panel::OpLogPanel::entry_for_recording(
+                &recording,
+            ));
         }
 
         // T-BP-004: push to in-memory ring-buffer (newest at front) and collapse
         // any expanded row. Scoped to the op-log entity (ADR-0110 Phase 5).
         if let Some(panel) = self.op_log.clone() {
+            let entry = shown.unwrap_or(entry);
             panel.update(cx, |panel, cx| {
                 panel.push(entry);
                 panel.collapse();

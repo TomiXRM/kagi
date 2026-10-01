@@ -61,6 +61,37 @@ fn enter_reason(
     }
 }
 
+/// #907 review: rewrite `refs/heads/churn` (create / delete, through a
+/// `.lock` file and rename so readers never see half a ref) until stopped —
+/// a branch someone else keeps moving while the lock runs.
+fn churn(
+    repo: &Path,
+) -> (
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+    std::thread::JoinHandle<()>,
+) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let common = git_output(
+        repo,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    );
+    let tip = git_output(repo, &["rev-parse", "HEAD"]);
+    let heads = Path::new(&common).join("refs").join("heads");
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    let flag = stop.clone();
+    let handle = std::thread::spawn(move || {
+        let (lock, path) = (heads.join("churn.lock"), heads.join("churn"));
+        while !flag.load(Ordering::Relaxed) {
+            if std::fs::write(&lock, format!("{tip}\n")).is_ok() {
+                let _ = std::fs::rename(&lock, &path);
+            }
+            let _ = std::fs::remove_file(&path);
+        }
+        let _ = std::fs::remove_file(&path);
+    });
+    (stop, handle)
+}
+
 fn confirm_reason(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
@@ -76,19 +107,38 @@ fn confirm_reason(
     assert!(cx.read(|cx| app.read(cx).lock_worktree_modal().is_some()));
     assert_eq!(lock_reason(repo), None, "reviewing must not acquire a lock");
     paint(cx, window);
+    // #907 review: a branch moved by someone else while the lock runs is not
+    // the lock's move.
+    let (stop, churning) = churn(repo);
     cx.simulate_keystrokes(window, "enter");
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    churning.join().unwrap();
     cx.run_until_parked();
     assert_eq!(lock_reason(repo).as_deref(), Some(reason));
     assert!(cx.read(|cx| app.read(cx).lock_worktree_modal().is_none()));
     let entries = read_oplog_tail_for_repo(repo, 100);
     let entry = entries
         .iter()
-        .rev()
         .find(|entry| entry.op == "lock-worktree")
         .unwrap();
     assert!(matches!(entry.outcome, OpOutcome::Success { .. }));
-    // #885: observed, and a lock moves no ref: "recorded, nothing moved".
+    // #885 / #907 review: a lock moves no ref — recorded, nothing moved,
+    // whatever else moved meanwhile.
     assert_eq!(entry.ref_moves, Some(Vec::new()), "lock-worktree receipt");
+    // #907 review: the panel row carries the id the log assigned, not the
+    // placeholder 0 — its undo / restore buttons act on that id.
+    let shown = cx.read(|cx| {
+        app.read(cx)
+            .op_log
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .entries()
+            .iter()
+            .find(|e| e.op == "lock-worktree")
+            .map(|e| e.id)
+    });
+    assert_eq!(shown, Some(entry.id), "panel id = persisted id");
 }
 
 pub fn scenario_worktree_lock_reason(cx: &mut VisualTestAppContext) {

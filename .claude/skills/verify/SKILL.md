@@ -956,6 +956,24 @@ M: hold index.lock, click Stage/Unstage from both surfaces, verify the actual
 cause is visible and no success toast appears. If recording also fails, the
 attempted failure stays visible with the recording error; it is not a success.
 
+### Hunk staging (#842, Refs #357)
+
+G: `cargo test -p kagi-git --test hunk_staging_test` (a 20-line file edited at
+lines 2 and 18: one hunk staged / unstaged leaves exactly that edit in or out of
+the index, the working tree untouched; a hunk drawn before the file moved and an
+unstage of a range not in the staged diff are refused with `HunkChanged`; an
+untracked file's single hunk is the file) and `cargo test -p kagi-domain
+hunk_range` (header parse).
+
+Tier A filter: `KAGI_GUI_E2E_ONLY=hunk_staging` (`tests/recovery/hunk_staging.rs`).
+It clicks the measured `main-diff-hunk-stage-<row>` on the Commit Panel's
+unstaged diff (index holds the first hunk only, panel lists the file on both
+sides, the re-read diff shows one hunk), then on the staged diff in split view
+(index back to HEAD, pane closed), then under a held index.lock (#490 footer,
+index unchanged). M: open a two-hunk file from the Commit Panel, Stage hunk /
+Unstage hunk in unified and split view (EN/JA labels), and check the panel and
+diff update.
+
 ### Busy snackbar labels (#607)
 
 G covers EN/JA labels, unknown-tag fallback, and lease-mirror settlement without

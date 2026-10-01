@@ -422,12 +422,13 @@ pub(crate) fn render_main_diff_split_row(
     sel_key: u64,
     moved: &HashSet<usize>,
     gutters: Option<(gpui::AnyElement, gpui::AnyElement)>,
+    hunk: Option<&super::diff_view::hunk_action::HunkAction>,
 ) -> gpui::AnyElement {
     let (left_gutter, right_gutter) = gutters.unzip();
     match srows.get(i) {
         None => div().into_any(),
         Some(SplitDiffRow::Full(idx)) => {
-            let row = render_main_diff_row(rows, *idx, sel_key);
+            let row = render_main_diff_row(rows, *idx, sel_key, hunk);
             match left_gutter {
                 Some(gutter) => crate::ui::render_helpers::row_overlay::with_gutter(gutter, row),
                 None => row,

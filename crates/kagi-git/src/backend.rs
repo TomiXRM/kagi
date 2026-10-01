@@ -695,6 +695,26 @@ impl Backend {
         staging::unstage_files(&self.repo, paths)
     }
 
+    /// Stage one unstaged hunk of `path`, named by its header (#842).
+    pub fn stage_hunk(
+        &self,
+        path: &Path,
+        range: kagi_domain::diff::HunkRange,
+    ) -> Result<(), GitError> {
+        self.require_trust()?;
+        crate::hunk_staging::stage_hunk(&self.repo, path, range)
+    }
+
+    /// Unstage one staged hunk of `path`, named by its header (#842).
+    pub fn unstage_hunk(
+        &self,
+        path: &Path,
+        range: kagi_domain::diff::HunkRange,
+    ) -> Result<(), GitError> {
+        self.require_trust()?;
+        crate::hunk_staging::unstage_hunk(&self.repo, path, range)
+    }
+
     pub fn unstaged_file_diff(&self, path: &Path) -> Result<FileDiff, GitError> {
         staging::unstaged_file_diff(&self.repo, path)
     }

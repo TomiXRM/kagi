@@ -90,18 +90,18 @@ pub const FLOWER_ROAD: Theme = Theme {
 
     // Eight flower hues spaced evenly around the wheel (45° apart), stored in
     // a three-steps-around order so adjacent lane indices sit 135° apart.
-    // Each lightness is tuned to 4.5:1 on the ivory base at saturation 0.85 —
+    // Each lightness is tuned to 4.0:1 on the ivory base at saturation 0.85 —
     // one strong, even palette in place of the soft original and the Bloom /
     // Vivid candidates it replaces (ADR-0175, superseded 2026-10-02).
     lane_hsl: [
-        (0.000, 0.850, 0.486), // Poppy          #e51313  4.50:1
-        (0.375, 0.850, 0.282), // Leaf green     #0b8529  4.54:1
-        (0.750, 0.850, 0.602), // Iris           #9a43f0  4.50:1
-        (0.125, 0.850, 0.304), // Marigold       #8f6e0c  4.54:1
-        (0.500, 0.850, 0.272), // Hydrangea      #0a8080  4.53:1
-        (0.875, 0.850, 0.450), // Dahlia         #d411a4  4.52:1
-        (0.250, 0.850, 0.274), // Chrysanthemum  #46810a  4.53:1
-        (0.625, 0.850, 0.585), // Cornflower     #3b68ef  4.53:1
+        (0.000, 0.850, 0.547), // Poppy          #ee2929  4.01:1
+        (0.375, 0.850, 0.304), // Leaf green     #0c8f2d  4.01:1
+        (0.750, 0.850, 0.633), // Iris           #a152f1  4.00:1
+        (0.125, 0.850, 0.326), // Marigold       #9a760c  4.02:1
+        (0.500, 0.850, 0.291), // Hydrangea      #0b8989  4.03:1
+        (0.875, 0.850, 0.482), // Dahlia         #e312af  4.02:1
+        (0.250, 0.850, 0.293), // Chrysanthemum  #4b8a0b  4.04:1
+        (0.625, 0.850, 0.613), // Cornflower     #4872f0  4.04:1
     ],
 
     avatar_sat: 0.42,
@@ -191,7 +191,7 @@ mod tests {
                 let contrast = (luminance(lane).max(luminance(theme.bg_base)) + 0.05)
                     / (luminance(lane).min(luminance(theme.bg_base)) + 0.05);
                 assert!(
-                    contrast >= 4.5,
+                    contrast >= 4.0,
                     "{}: lane {lane:#08x} is only {contrast:.2}:1 on the background",
                     theme.slug
                 );

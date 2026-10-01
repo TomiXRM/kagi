@@ -7,8 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Changed
 
-- テーマ「Flower Road」を 1 つにまとめました。graph の 8 色を色相環に均等に配置し、彩度と濃さを上げて背景に対して 4.5:1 で読めるようにしています。「Flower Road Bloom」「Flower Road Vivid」は削除し、それらを選んでいた設定は「Flower Road」として読み込みます。
-- サイドバー上部の Graph / PRs / Issues で、選択中のタブの文字が背景と近すぎて読みにくいテーマ(Flower Road のベージュ地にピンク、1.6:1)では、通常の文字色で表示するようにしました。
+- テーマ「Flower Road」を 1 つにまとめました。graph の 8 色を色相環に均等に配置し、彩度と濃さを上げて背景に対して 4.0:1 で見分けやすくしています。「Flower Road Bloom」「Flower Road Vivid」は削除し、それらを選んでいた設定は「Flower Road」として読み込みます。
+- サイドバー上部の Graph / PRs / Issues で、選択中のタブの文字が背景と近すぎて読みにくいテーマ(Flower Road のベージュ地にピンク、1.6:1)では、同じピンクを背景に対して 4.5:1 まで濃くして表示するようにしました。
 
 ### Added
 

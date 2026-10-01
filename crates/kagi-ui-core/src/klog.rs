@@ -40,10 +40,12 @@ pub fn keeping_tail() -> bool {
     KEEP_TAIL.load(Ordering::Relaxed)
 }
 
-/// Keep one printed line, dropping the oldest beyond [`TAIL_LINES`].
+/// Print one line and keep it, under one lock: the kept order is the order
+/// the lines reached stderr, however threads interleave (#890 review).
 #[doc(hidden)]
-pub fn keep(line: String) {
+pub fn print_and_keep(line: String) {
     let mut tail = TAIL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    eprintln!("{line}");
     if tail.len() == TAIL_LINES {
         tail.pop_front();
     }
@@ -61,9 +63,7 @@ pub fn tail() -> Vec<String> {
 macro_rules! klog {
     ($($arg:tt)*) => {
         if $crate::klog::keeping_tail() {
-            let line = format!("[kagi] {}", format_args!($($arg)*));
-            eprintln!("{line}");
-            $crate::klog::keep(line);
+            $crate::klog::print_and_keep(format!("[kagi] {}", format_args!($($arg)*)));
         } else {
             eprintln!("[kagi] {}", format_args!($($arg)*))
         }

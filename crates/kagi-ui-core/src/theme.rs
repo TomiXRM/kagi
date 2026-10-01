@@ -192,6 +192,41 @@ impl Theme {
         }
     }
 
+    /// The accent (`color_branch`) as text on `background`, kept readable
+    /// (WCAG AA, 4.5:1): unchanged when it already is, otherwise the same hue
+    /// and saturation with its lightness stepped down (light background) or up
+    /// (dark one) until it reads. Flower Road's pink accent on its beige
+    /// `surface` was 1.6:1 on the selected sidebar tab; it stays pink, deeper.
+    pub fn accent_text_on(&self, background: u32) -> u32 {
+        const MIN: f64 = 4.5;
+        let accent = self.color_branch;
+        if contrast_ratio(accent, background) >= MIN {
+            return accent;
+        }
+        let base = to_hsla(accent);
+        let step = if relative_luminance(background) > 0.5 {
+            -0.005
+        } else {
+            0.005
+        };
+        let to_u32 = |c: Hsla| {
+            let c: gpui::Rgba = c.into();
+            let q = |x: f32| -> u32 { (x.clamp(0.0, 1.0) * 255.0).round() as u32 };
+            (q(c.r) << 16) | (q(c.g) << 8) | q(c.b)
+        };
+        (1..=200)
+            .map(|i| {
+                to_u32(hsla(
+                    base.h,
+                    base.s,
+                    (base.l + step * i as f32).clamp(0.0, 1.0),
+                    1.0,
+                ))
+            })
+            .find(|&c| contrast_ratio(c, background) >= MIN)
+            .unwrap_or(self.text_main)
+    }
+
     /// HSLA colour for graph lane `i` (cycles through the 8-colour palette).
     pub fn lane_color(&self, i: usize) -> Hsla {
         let (h, s, l) = self.lane_hsl[i % self.lane_hsl.len()];
@@ -579,6 +614,8 @@ fn legacy_slug_alias(slug: &str) -> &str {
     match slug {
         "xcode-dark" => "apple-dark",
         "xcode-light" => "apple-light",
+        // ADR-0175's two lane-palette candidates folded into Flower Road.
+        "flower-road-bloom" | "flower-road-vivid" => "flower-road",
         other => other,
     }
 }
@@ -1050,8 +1087,6 @@ pub static THEMES: &[Theme] = &[
     crate::theme_color_vision::COLOR_VISION,
     crate::theme_dracula::DRACULA,
     crate::theme_flower_road::FLOWER_ROAD,
-    crate::theme_flower_road_bloom::FLOWER_ROAD_BLOOM,
-    crate::theme_flower_road_vivid::FLOWER_ROAD_VIVID,
     crate::theme_ibm_pc::IBM_PC,
     crate::theme_monokai::MONOKAI,
     crate::theme_one_dark::ONE_DARK,
@@ -1441,6 +1476,9 @@ mod tests {
     #[test]
     fn legacy_xcode_slugs_alias_to_apple() {
         assert_eq!(index_of("xcode-dark"), index_of("apple-dark"));
+        // ADR-0175's candidates were folded into Flower Road (2026-10-02).
+        assert_eq!(index_of("flower-road-bloom"), index_of("flower-road"));
+        assert_eq!(index_of("flower-road-vivid"), index_of("flower-road"));
         assert_eq!(index_of("xcode-light"), index_of("apple-light"));
         assert!(index_of("apple-dark").is_some());
         assert_eq!(index_of("still-not-a-theme"), None);
@@ -1453,7 +1491,39 @@ mod tests {
         // catppuccin, one-dark, monokai, tokyo-night, ibm-pc, dracula, apple-dark,
         // color-vision
         assert_eq!(dark, 8);
-        // one-light, pinky-boo, catppuccin-latte, apple-light, flower-road ×3
-        assert_eq!(light, 7);
+        // one-light, pinky-boo, catppuccin-latte, apple-light, flower-road
+        assert_eq!(light, 5);
+    }
+}
+
+#[cfg(test)]
+mod accent_text_tests {
+    use super::{contrast_ratio, THEMES};
+
+    /// The selected Graph / PRs / Issues tab draws `accent_text_on(surface)` on
+    /// `surface`: it must be readable in every theme (4.5:1), and keep the
+    /// accent colour wherever the accent itself is readable.
+    #[test]
+    fn the_selected_sidebar_tab_is_readable_in_every_theme() {
+        for t in THEMES {
+            let fg = t.accent_text_on(t.surface);
+            assert!(
+                contrast_ratio(fg, t.surface) >= 4.5,
+                "{}: {:06x} on {:06x} is {:.2}:1",
+                t.slug,
+                fg,
+                t.surface,
+                contrast_ratio(fg, t.surface)
+            );
+            if contrast_ratio(t.color_branch, t.surface) >= 4.5 {
+                assert_eq!(fg, t.color_branch, "{} keeps its accent", t.slug);
+            } else {
+                assert_ne!(
+                    fg, t.text_main,
+                    "{} deepens its accent, not the body text",
+                    t.slug
+                );
+            }
+        }
     }
 }

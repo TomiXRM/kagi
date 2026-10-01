@@ -88,28 +88,20 @@ pub const FLOWER_ROAD: Theme = Theme {
 
     accent: 0xd698ba, // matches color_branch
 
-    // The palette's own hues at a lightness that reads on the base (every lane
-    // >= 4.4:1), ordered so adjacent indices stay distinct. Lane 7 is the
-    // supplied #000 — the one label colour that needed no adjustment.
-    // Flower Road's swimlanes. Ordered so neighbouring lane indices are as far
-    // apart as the set allows — worst adjacent pair 0.39 on a hue+chroma
-    // distance, where the naive order left Silver next to Lavender at 0.02.
-    // The supplied palette had no blue at all (hues 0.28-0.73 were empty),
-    // which is why both added flowers are blue, and why they differ in
-    // lightness so they separate from each other too.
-    //
-    // Used verbatim: they run 1.4-2.3:1 on the ivory, against the 3.5-6.5 the
-    // other light themes' lanes sit at. That is a deliberate trade of
-    // legibility for the palette, not an oversight.
+    // Eight flower hues spaced evenly around the wheel (45° apart), stored in
+    // a three-steps-around order so adjacent lane indices sit 135° apart.
+    // Each lightness is tuned to 4.5:1 on the ivory base at saturation 0.85 —
+    // one strong, even palette in place of the soft original and the Bloom /
+    // Vivid candidates it replaces (ADR-0175, superseded 2026-10-02).
     lane_hsl: [
-        (0.733, 0.490, 0.800), // Lavender     #c7b3e5  1.83:1
-        (0.106, 0.768, 0.594), // Marigold     #e7ad48  1.92:1
-        (0.610, 0.483, 0.704), // Tsuyukusa    #8fa8d8  2.30:1
-        (0.269, 0.153, 0.667), // Sage Green   #a7b79d  2.03:1
-        (0.963, 0.496, 0.751), // Rose         #dfa0ae  2.06:1
-        (0.750, 0.056, 0.788), // Silver       #c9c6cc  1.62:1
-        (0.590, 0.513, 0.775), // Wasurenagusa #a8c3e3  1.74:1
-        (0.147, 0.723, 0.661), // Nanohana     #e7d86a  1.39:1
+        (0.000, 0.850, 0.486), // Poppy          #e51313  4.50:1
+        (0.375, 0.850, 0.282), // Leaf green     #0b8529  4.54:1
+        (0.750, 0.850, 0.602), // Iris           #9a43f0  4.50:1
+        (0.125, 0.850, 0.304), // Marigold       #8f6e0c  4.54:1
+        (0.500, 0.850, 0.272), // Hydrangea      #0a8080  4.53:1
+        (0.875, 0.850, 0.450), // Dahlia         #d411a4  4.52:1
+        (0.250, 0.850, 0.274), // Chrysanthemum  #46810a  4.53:1
+        (0.625, 0.850, 0.585), // Cornflower     #3b68ef  4.53:1
     ],
 
     avatar_sat: 0.42,
@@ -156,9 +148,7 @@ pub const FLOWER_ROAD: Theme = Theme {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        theme_flower_road_bloom::FLOWER_ROAD_BLOOM, theme_flower_road_vivid::FLOWER_ROAD_VIVID,
-    };
+    use super::FLOWER_ROAD;
 
     fn hsl_to_rgb(h: f32, s: f32, l: f32) -> u32 {
         let a = s * l.min(1.0 - l);
@@ -185,8 +175,8 @@ mod tests {
     }
 
     #[test]
-    fn candidates_cover_the_wheel_with_legible_lanes() {
-        for theme in [FLOWER_ROAD_BLOOM, FLOWER_ROAD_VIVID] {
+    fn lanes_cover_the_wheel_evenly_at_text_contrast() {
+        for theme in [FLOWER_ROAD] {
             let mut hues: Vec<f32> = theme.lane_hsl.iter().map(|(hue, _, _)| *hue).collect();
             hues.sort_by(f32::total_cmp);
             for pair in hues.windows(2) {
@@ -201,7 +191,7 @@ mod tests {
                 let contrast = (luminance(lane).max(luminance(theme.bg_base)) + 0.05)
                     / (luminance(lane).min(luminance(theme.bg_base)) + 0.05);
                 assert!(
-                    contrast >= 3.5,
+                    contrast >= 4.5,
                     "{}: lane {lane:#08x} is only {contrast:.2}:1 on the background",
                     theme.slug
                 );

@@ -1,6 +1,6 @@
 # ADR-0175: Flower Road lane-palette candidates
 
-- Status: Accepted
+- Status: Superseded (2026-10-02, see `docs/decisions.md`)
 - Date: 2026-09-07
 - Touches: `crates/kagi-ui-core/src/theme_flower_road*.rs`,
   `crates/kagi-ui-core/src/theme.rs`
@@ -44,3 +44,13 @@ indices differ by 135°; their sorted positions remain exactly 45° apart. Every
 - A unit test guards the new variants' even hue coverage and lane contrast.
 - Each built-in theme has its own module; `theme.rs` now owns only the shared
   types, helpers, palettes, and registry.
+
+## Superseded (2026-10-02)
+
+The comparison is over: Flower Road keeps one palette. The original soft lanes
+and the Bloom / Vivid candidates are replaced by Vivid's evenly spaced wheel
+(same hues, same three-steps-around order), raised to saturation 0.85 and
+darkened so every lane is 4.5:1 on the ivory base. `flower-road-bloom` and
+`flower-road-vivid` resolve to `flower-road` (`legacy_slug_alias`), so a saved
+setting keeps working. The graph's stronger lane-band wash for Flower Road is
+removed: the lanes are no longer pastel.

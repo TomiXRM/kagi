@@ -51,7 +51,7 @@ fn sidebar_mode_nav_cell(
         .when(enabled, |el| el.cursor_pointer())
         .when(active, |el| {
             el.bg(rgb(theme::theme().surface))
-                .text_color(rgb(theme::theme().color_branch))
+                .text_color(rgb(theme::theme().accent_text_on(theme::theme().surface)))
                 .font_weight(gpui::FontWeight::MEDIUM)
         })
         .when(!active, |el| el.text_color(rgb(theme::theme().text_muted)))

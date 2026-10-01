@@ -54,6 +54,7 @@ pub mod pr_list;
 pub mod pr_url;
 pub mod pr_viewed;
 pub mod provenance;
+pub mod ref_moves;
 pub mod ref_update;
 pub mod refs;
 pub mod remote;

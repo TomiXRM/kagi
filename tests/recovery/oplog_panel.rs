@@ -1,6 +1,7 @@
-//! #334 slice 1 (ADR-0214): the Operation Log panel reads — actor and
-//! worktree badges on each row, and a selected row's reflog lines found by its
-//! time window, with a shared second shown as ambiguous. Nothing is written.
+//! #334 (ADR-0214): the Operation Log panel reads — actor and worktree badges
+//! on each row; a selected row shows the ref moves it recorded (slice 2a), or,
+//! for an entry without a record, reflog lines estimated by its time window
+//! with a shared second marked ambiguous (slice 1). Nothing is written.
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -8,6 +9,7 @@ use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::oplog_panel::{entry_worktree, ReflogDetail};
 use kagi::ui::{e2e, KagiApp};
 use kagi_domain::oplog_reflog::Attribution;
+use kagi_domain::ref_moves::RefMove;
 use kagi_git::oplog::{append_oplog, read_oplog_tail, Actor, OpLogEntry, OpOutcome};
 use kagi_git::{Backend, CommitId, Operation, StateSummary};
 
@@ -57,13 +59,14 @@ fn rows_of(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, repo: &Path) ->
     })
 }
 
-/// Click row `i` for real and wait for its reflog read to land.
-fn select(
+/// Click row `i` for real (scrolled into view first) and require the click
+/// to select it.
+fn click_row(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     window: AnyWindowHandle,
     i: usize,
-) -> Vec<(String, String, Attribution)> {
+) {
     let panel = cx.read(|cx| app.read(cx).op_log.clone().expect("op_log"));
     // What a person does for a row below the fold: scroll it into view.
     cx.read(|cx| panel.read(cx).scroll_handle().scroll_to_reveal_item(i));
@@ -82,6 +85,18 @@ fn select(
         Some(i),
         "the click at {point:?} (row {i} at {bounds:?}) must select row {i}"
     );
+}
+
+/// Select a row **without** recorded moves and wait for its estimated
+/// (time-window) reflog lines.
+fn select_estimated(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    i: usize,
+) -> Vec<(String, String, Attribution)> {
+    click_row(cx, app, window, i);
+    let panel = cx.read(|cx| app.read(cx).op_log.clone().expect("op_log"));
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         cx.run_until_parked();
@@ -102,6 +117,41 @@ fn select(
         assert!(Instant::now() < deadline, "row {i}'s reflog never loaded");
         std::thread::sleep(Duration::from_millis(5));
     }
+}
+
+/// Select a row **with** recorded moves: the record is painted, the estimate
+/// is not, and no reflog read was started. Returns the recorded moves.
+fn select_recorded(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    i: usize,
+) -> Vec<RefMove> {
+    for probe in [
+        format!("oplog-recorded-{i}"),
+        format!("oplog-reflog-{i}-0-within"),
+    ] {
+        e2e::clear_control_bounds(window.window_id(), &probe);
+    }
+    click_row(cx, app, window, i);
+    paint(cx, window);
+    assert!(
+        painted(window, &format!("oplog-recorded-{i}")),
+        "row {i}: the record is shown"
+    );
+    assert!(
+        !painted(window, &format!("oplog-reflog-{i}-0-within")),
+        "row {i}: a recorded row shows no estimate"
+    );
+    cx.read(|cx| {
+        let panel = app.read(cx).op_log.clone().expect("op_log");
+        let panel = panel.read(cx);
+        assert!(
+            panel.reflog_detail().is_none(),
+            "no estimate read for a record"
+        );
+        panel.entries()[i].ref_moves.clone().expect("recorded")
+    })
 }
 
 fn painted(window: AnyWindowHandle, name: &str) -> bool {
@@ -207,41 +257,29 @@ pub fn scenario_oplog_actor_reflog(cx: &mut VisualTestAppContext) {
         );
     }
 
-    // ── the checkout's reflog: exactly its own HEAD move ─────────────────
+    // ── recorded rows show their record, not an estimate (#334 slice 2a) ─
     let checkout = rows[1];
-    let lines = select(cx, &app, window, checkout);
-    assert_eq!(
-        lines,
-        vec![(
-            "HEAD".to_string(),
-            "checkout: moving from main to oplog-a".to_string(),
-            Attribution::Within
-        )],
-        "the selected checkout shows its own reflog line only"
-    );
+    let moves = select_recorded(cx, &app, window, checkout);
+    assert_eq!(moves.len(), 1, "{moves:?}");
+    assert_eq!(moves[0].refname, "HEAD");
+    assert_eq!(moves[0].old_symbolic.as_deref(), Some("refs/heads/main"));
+    assert_eq!(moves[0].new_symbolic.as_deref(), Some("refs/heads/oplog-a"));
+    assert!(painted(window, &format!("oplog-refmove-{checkout}-0-HEAD")));
+
+    let created = rows[2];
+    let moves = select_recorded(cx, &app, window, created);
+    assert_eq!(moves.len(), 1, "{moves:?}");
+    assert_eq!(moves[0].refname, "refs/heads/oplog-a");
+    assert_eq!(moves[0].old, None, "created");
     assert!(painted(
         window,
-        &format!("oplog-reflog-{checkout}-0-within")
+        &format!("oplog-refmove-{created}-0-refs/heads/oplog-a")
     ));
-
-    // ── the first creation: its branch's line, not the later checkout ────
-    let created = rows[2];
-    let lines = select(cx, &app, window, created);
-    assert!(
-        lines.iter().any(|(r, m, a)| r == "refs/heads/oplog-a"
-            && m.starts_with("branch: Created from")
-            && *a == Attribution::Within),
-        "{lines:?}"
-    );
-    assert!(
-        !lines.iter().any(|(_, m, _)| m.starts_with("checkout:")),
-        "{lines:?}"
-    );
 
     // ── a shared second is shown, marked, never attributed ───────────────
     let shared_rows = rows_of(cx, &app, &shared);
     assert_eq!(shared_rows.len(), 2);
-    let lines = select(cx, &app, window, shared_rows[0]);
+    let lines = select_estimated(cx, &app, window, shared_rows[0]);
     assert_eq!(
         lines,
         vec![(
@@ -254,7 +292,10 @@ pub fn scenario_oplog_actor_reflog(cx: &mut VisualTestAppContext) {
         window,
         &format!("oplog-reflog-{}-0-ambiguous", shared_rows[0])
     ));
-
+    assert!(
+        !painted(window, &format!("oplog-recorded-{}", shared_rows[0])),
+        "an entry without a record is shown as an estimate only"
+    );
     // ── reading wrote nothing and logged nothing ─────────────────────────
     assert_eq!(
         (repo_fingerprint(&repo), read_oplog_tail(500).len()),
@@ -262,5 +303,5 @@ pub fn scenario_oplog_actor_reflog(cx: &mut VisualTestAppContext) {
         "the panel only reads"
     );
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS oplog_actor_reflog: 3 rows with actor/worktree badges; selection shows its own reflog lines; a shared second is marked ambiguous");
+    eprintln!("[gui-e2e] PASS oplog_actor_reflog: 3 rows with actor/worktree badges; recorded rows show their ref moves, not an estimate; an unrecorded row's shared second is marked ambiguous");
 }

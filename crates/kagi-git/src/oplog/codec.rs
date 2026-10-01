@@ -3,7 +3,7 @@
 //! Keep legacy scalar/default handling at this boundary; append, identity
 //! reconstruction, and retention continue to own their existing policies.
 
-use super::{recovery, Actor, FailureCode, OpLogEntry, OpOutcome, StateSummary};
+use super::{recovery, Actor, FailureCode, OpLogEntry, OpOutcome, RepoIdentity, StateSummary};
 use kagi_domain::ref_moves::RefMove;
 use serde::{de::Error, Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
@@ -98,6 +98,27 @@ struct EntryRef<'a> {
     // a record, not the absence of one.
     #[serde(skip_serializing_if = "Option::is_none")]
     ref_moves: Option<Vec<RefMoveRef<'a>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repo_identity: Option<RepoIdentityRef<'a>>,
+}
+
+/// #894: `{"common_dir": "...", "dev": n, "ino": n}`; dev/ino only on unix.
+#[derive(Serialize)]
+struct RepoIdentityRef<'a> {
+    common_dir: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dev: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ino: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct RepoIdentityRecord {
+    common_dir: String,
+    #[serde(default)]
+    dev: Option<u64>,
+    #[serde(default)]
+    ino: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -152,6 +173,11 @@ struct EntryRecord {
     failure_code: Option<FailureCode>,
     #[serde(default, deserialize_with = "ref_moves")]
     ref_moves: Option<Vec<RefMove>>,
+    // Additive and lenient: a missing or malformed identity is "unknown",
+    // which the restore planner treats as before (open the worktree, fail
+    // closed if it cannot).
+    #[serde(default, deserialize_with = "repo_identity")]
+    repo_identity: Option<RepoIdentity>,
 }
 
 pub(super) fn to_json(entry: &OpLogEntry) -> String {
@@ -180,6 +206,11 @@ pub(super) fn to_json(entry: &OpLogEntry) -> String {
                 })
                 .collect()
         }),
+        repo_identity: entry.repo_identity.as_ref().map(|id| RepoIdentityRef {
+            common_dir: &id.common_dir,
+            dev: id.file_id.map(|(dev, _)| dev),
+            ino: id.file_id.map(|(_, ino)| ino),
+        }),
     };
     // This fixed schema contains only strings, integers, sequences and objects;
     // no fallible map keys, floating-point values, or custom fallible payloads.
@@ -207,6 +238,7 @@ pub(super) fn from_value(value: Value) -> Option<OpLogEntry> {
         recovery: record.recovery,
         failure_code: record.failure_code,
         ref_moves: record.ref_moves,
+        repo_identity: record.repo_identity,
     })
 }
 
@@ -296,5 +328,13 @@ fn ref_moves<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<RefMove>>, D:
                 new_symbolic: r.new_symbolic,
             })
             .collect()
+    }))
+}
+
+fn repo_identity<'de, D: Deserializer<'de>>(d: D) -> Result<Option<RepoIdentity>, D::Error> {
+    let record: Option<RepoIdentityRecord> = serde_json::from_value(Value::deserialize(d)?).ok();
+    Ok(record.map(|r| RepoIdentity {
+        common_dir: r.common_dir,
+        file_id: r.dev.zip(r.ino),
     }))
 }

@@ -92,6 +92,13 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - **範囲は証明できなければ fail closed**(#878 review、restore to point)。planner は全 repository の entry を受け取り、次の場合を blocker にする。
     - 対象以降で `parent → id` の鎖が途切れる(HistoryGap): retention での削除、壊れた行、読めない行。
     - worktree を開けない entry(UnknownRepository): 削除・prune された worktree の entry は、この repository のものだった可能性がある。黙って除外しない。別の repository だと証明できた entry(Other)だけを除く。
+  - **entry は記録時の repository を持つ**(#894)。`repo_identity` = 正規化した common dir の path と、unix ではその `(dev, ino)`。
+    - append の 1 か所(`append_oplog_receipt`)で、entry の worktree(無ければ repo)を開いて埋める。Backend の経路も UI の persist 経路もここを通る。開けない scope(remote の `host:repo`)は `None`。
+    - 分類: identity を持つ entry は、path か `(dev, ino)` が自分と一致すれば Mine、どちらも違えば Other とする(worktree を開かない)。削除済みの worktree の entry も Mine になり、記録した移動は restore に入る。削除した無関係の repository の entry は Other になり、blocker にならない。
+    - identity の無い旧形式の entry だけ、従来どおり worktree を開いて判定する(開けなければ UnknownRepository)。
+    - `(dev, ino)` も持つのは、同じ filesystem 内での移動や rename では inode が変わらないため。path だけだと、移動した repository の自分の entry を Other と誤判定して黙って除外してしまう。
+    - **限界 1**: filesystem をまたいで移動すると、path も `(dev, ino)` も変わるので、それ以前の自分の entry は Other になる。その entry が動かした branch は、記録が説明しない reflog の変化として RefChangedOutsideRecord の blocker になる(fail closed)。対象 entry 自体が移動前のものなら EntryNotLoaded。
+    - **限界 2**: 削除した無関係の repository の `.git` の inode 番号が、この repository に再利用された場合は Mine と誤判定する。その記録は、この repository に無い ref や OID を期待値に持つので、RefMovedSince の blocker になる(fail closed)。
   - append に失敗した操作は鎖に現れない(次の entry の parent は最後に書けた entry)。その操作が動かした branch は、RefMovedSince か RefChangedOutsideRecord で捕まる。
 - **revert**: 対象 entry の各 branch の移動を old に戻す(作成は削除、削除は作り直し)。同じ ref を後続の記録済み entry が動かしていれば blocker(LaterEntryMoved)。
 - **restore to point**: 対象 entry の**直後**の状態に戻す(jj の `op restore` と同じく、対象自身の効果は残す)。それより新しい entry を古い順に合成し、ref ごとに「最古の old を戻し先、最新の new を期待値」とする。動いて元に戻った ref は除く。
@@ -182,6 +189,13 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - Tier A: 新しい `oplog_restore_across_merge`(merge → 実 `run_recorded_conflict` の save → merge commit の後、panel の実ボタンで開いた restore card に blocker が無く、confirm で main が merge 前に戻る)。`stash_conflict_close_reopen` に、UI の continue の記録が `Some(空)` であることを追加した。
 - #884 の変異確認: `run_recorded_conflict` が `None` を記録 → integration 2 件と Tier A(blocker `NotRecorded { op: "conflict-save:merge" }`、つまり #884 以前の状態)、`nothing_moved` を外す → 拒否の integration、UI が moves を捨てる → Tier A(stash continue)が落ちる。
 - #891 review 対応: unit `an_unconfirmed_termination_records_no_ref_moves`(Unknown は `None`、Refused は観測どおり)。`stash_conflict_close_reopen` で、未解決のまま Continue を押した計画時の拒否が `Some(空)` で記録されることを確認する。変異確認: Unknown の規則を外す → unit、計画時の拒否を `None` に戻す → Tier A が落ちる。
+- #894 のテスト(kagi-git integration `oplog_restore_test`)
+  - 削除・prune した worktree の entry は Mine で、その branch の削除が restore に入る(blocker なし)。identity を外した旧形式の行は UnknownRepository のまま。
+  - 削除した無関係の repository の entry は blocker にならない。
+  - 限界 1 の固定: 自分の entry の identity を別 volume のもの(path も inode も違う)に書き換えると、RefChangedOutsideRecord で止まる。
+  - 限界 2 の固定: 別 repository の entry に、この repository の `(dev, ino)` を書くと、その記録の `refs/heads/x` が RefMovedSince(current = 無し)で止まる。
+  - codec unit: 往復、旧行は `None`、不正値でも行は残って `None`。
+- #894 の変異確認: append で埋めない → integration 2 件、`(dev, ino)` を比べない → 限界 2 のテスト、分類で identity を使わない → integration 2 件、codec が書かない → codec と integration が落ちる。
 - #878 review 対応(P1)のテスト
   - domain unit: 鎖が途切れると HistoryGap、別 repository の entry は除いて Unknown は blocker、記録外で変わった branch は RefChangedOutsideRecord(記録が説明する branch は除く)、動いて戻った ref が別の値にあれば RefMovedSince。
   - kagi-git integration: oplog から 1 行を消すと HistoryGap、削除・prune した worktree の entry は UnknownRepository、別 worktree で merge の conflict 中は OperationInProgress(その path)、対象の後に `git branch` で作った branch は RefChangedOutsideRecord。

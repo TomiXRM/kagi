@@ -366,31 +366,178 @@ fn a_missing_entry_in_the_range_blocks_the_restore() {
     );
 }
 
-/// #878 review: an operation recorded in a worktree that is gone (removed and
-/// pruned) can no longer be attributed; it may have moved our branches, so a
-/// restore across it fails closed instead of dropping it.
+/// Rewrite the recorded `repo_identity` of entry `id` in the log (`None`
+/// removes it, as a line written before #894).
+fn set_identity(id: u64, identity: Option<serde_json::Value>) {
+    let log = PathBuf::from(std::env::var("KAGI_LOG_DIR").unwrap()).join("operations.jsonl");
+    let lines: Vec<String> = std::fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .map(|line| {
+            let mut value: serde_json::Value = serde_json::from_str(line).unwrap();
+            if value["id"] == id {
+                let object = value.as_object_mut().unwrap();
+                match &identity {
+                    Some(identity) => {
+                        object.insert("repo_identity".into(), identity.clone());
+                    }
+                    None => {
+                        object.remove("repo_identity");
+                    }
+                }
+            }
+            format!("{value}\n")
+        })
+        .collect();
+    std::fs::write(&log, lines.concat()).unwrap();
+}
+
+/// This repository's recorded identity, as JSON.
+fn identity_of(dir: &Path) -> serde_json::Value {
+    let id = kagi_git::oplog::RepoIdentity::of(dir).expect("opens");
+    let (dev, ino) = id.file_id.expect("unix file id");
+    serde_json::json!({ "common_dir": id.common_dir, "dev": dev, "ino": ino })
+}
+
+/// A worktree `wt` on a branch made before `point`, an operation in it after
+/// `point`, then the worktree removed and pruned.
+fn removed_worktree_entry(tmp: &Path, repo: &Path) -> (u64, u64) {
+    git(repo, &["branch", "wtb"]);
+    let point = create(repo, "a");
+    let wt = tmp.join("wt");
+    git(
+        repo,
+        &["worktree", "add", "-q", wt.to_str().unwrap(), "wtb"],
+    );
+    let moved_there = create(&wt, "made-in-wt");
+    std::fs::remove_dir_all(&wt).unwrap();
+    git(repo, &["worktree", "prune"]);
+    (point, moved_there)
+}
+
+/// #894: an entry records its repository, so one made in a worktree that is
+/// gone is still ours — its move is restored, nothing blocks.
 #[test]
-fn an_entry_of_a_removed_worktree_in_the_range_blocks_the_restore() {
+fn an_entry_of_a_removed_worktree_is_still_this_repositorys() {
     if !test_support::run_isolated() {
         return;
     }
     let tmp = tempfile::tempdir().unwrap();
     let repo = repo(tmp.path());
-    let point = create(&repo, "a");
-    let wt = tmp.path().join("wt");
-    git(
-        &repo,
-        &["worktree", "add", "-q", "-b", "wtb", wt.to_str().unwrap()],
+    let (point, _) = removed_worktree_entry(tmp.path(), &repo);
+
+    let p = plan(&repo, &Operation::RestoreToPoint { entry_id: point });
+    assert!(p.blockers.is_empty(), "{:?}", p.blockers);
+    assert!(
+        p.preview_commits
+            .iter()
+            .any(|line| line.starts_with("restore refs/heads/made-in-wt - ")),
+        "the branch made in the removed worktree is deleted: {:?}",
+        p.preview_commits
     );
-    let moved_there = create(&wt, "made-in-wt");
-    std::fs::remove_dir_all(&wt).unwrap();
-    git(&repo, &["worktree", "prune"]);
+}
+
+/// #878 review, still true for a line written before #894: with no recorded
+/// repository and a worktree that cannot be opened, the entry may be ours,
+/// so the restore fails closed.
+#[test]
+fn a_legacy_entry_of_a_removed_worktree_blocks_the_restore() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let (point, moved_there) = removed_worktree_entry(tmp.path(), &repo);
+    set_identity(moved_there, None);
 
     let p = plan(&repo, &Operation::RestoreToPoint { entry_id: point });
     assert!(
         restore_blockers(&p).iter().any(|n| matches!(
             n,
             OplogRestoreNote::UnknownRepository { id, .. } if *id == moved_there
+        )),
+        "{:?}",
+        p.blockers
+    );
+}
+
+/// #894: an operation in an unrelated repository that has since been deleted
+/// is proven another repository's by its recorded identity: it no longer
+/// blocks the restore.
+#[test]
+fn a_deleted_unrelated_repositorys_entry_does_not_block() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let point = create(&repo, "a");
+    let other_tmp = tempfile::tempdir().unwrap();
+    let other = self::repo(other_tmp.path());
+    create(&other, "elsewhere");
+    create(&repo, "b");
+    drop(other_tmp);
+    assert!(!other.exists());
+
+    let p = plan(&repo, &Operation::RestoreToPoint { entry_id: point });
+    assert!(p.blockers.is_empty(), "{:?}", p.blockers);
+}
+
+/// #894 limit: a repository moved to another filesystem changes both its
+/// path and its `(dev, ino)`, so its own earlier entries read as another
+/// repository's. The restore must not then pass silently: the branch those
+/// entries moved changed after the point with no record that explains it.
+#[test]
+fn own_entries_unrecognised_after_a_cross_filesystem_move_fail_closed() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let point = create(&repo, "a");
+    next_second();
+    let moved = create(&repo, "b");
+    set_identity(
+        moved,
+        Some(serde_json::json!({ "common_dir": "/other-volume/repo/.git", "dev": 1, "ino": 1 })),
+    );
+
+    let p = plan(&repo, &Operation::RestoreToPoint { entry_id: point });
+    assert!(
+        restore_blockers(&p).contains(&OplogRestoreNote::RefChangedOutsideRecord {
+            refname: "refs/heads/b".into()
+        }),
+        "{:?}",
+        p.blockers
+    );
+}
+
+/// #894 limit: an unrelated repository whose `.git` inode number was reused
+/// by ours reads as ours. Its record then names refs and OIDs this
+/// repository does not have, so the restore stops on them instead of acting.
+#[test]
+fn another_repositorys_entry_misread_as_ours_fails_closed() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let point = create(&repo, "a");
+    let other_tmp = tempfile::tempdir().unwrap();
+    let other = self::repo(other_tmp.path());
+    write_file(&other, "a.txt", "only in the other repository\n");
+    commit_all(&other, "other");
+    let foreign = create(&other, "x");
+    let mut misread = identity_of(&repo);
+    misread["common_dir"] = serde_json::json!(identity_of(&other)["common_dir"]);
+    set_identity(foreign, Some(misread));
+
+    let p = plan(&repo, &Operation::RestoreToPoint { entry_id: point });
+    assert!(
+        restore_blockers(&p).iter().any(|n| matches!(
+            n,
+            OplogRestoreNote::RefMovedSince { refname, current: None, .. }
+                if refname == "refs/heads/x"
         )),
         "{:?}",
         p.blockers

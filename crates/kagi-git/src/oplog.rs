@@ -187,6 +187,42 @@ impl From<&crate::GitError> for FailureCode {
     }
 }
 
+/// Which repository an entry was recorded in (#894): the canonical common
+/// dir, and on unix its `(dev, ino)` — which survives renaming or moving the
+/// repository within one filesystem. Filled at append time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoIdentity {
+    pub common_dir: String,
+    pub file_id: Option<(u64, u64)>,
+}
+
+impl RepoIdentity {
+    /// The identity of the repository `path` opens onto. `None` when it does
+    /// not open (a remote scope like `host:repo`, a deleted directory).
+    pub fn of(path: &Path) -> Option<Self> {
+        let repo = git2::Repository::open(path).ok()?;
+        let common = std::fs::canonicalize(repo.commondir()).ok()?;
+        #[cfg(unix)]
+        let file_id = {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(&common).ok().map(|m| (m.dev(), m.ino()))
+        };
+        #[cfg(not(unix))]
+        let file_id = None;
+        Some(Self {
+            common_dir: common.to_string_lossy().into_owned(),
+            file_id,
+        })
+    }
+
+    /// Same repository: the same common dir path, or (where known) the same
+    /// file — a renamed or moved (same filesystem) repository included.
+    pub fn same_repository(&self, other: &Self) -> bool {
+        self.common_dir == other.common_dir
+            || matches!((self.file_id, other.file_id), (Some(a), Some(b)) if a == b)
+    }
+}
+
 /// One entry in the operation log.
 #[derive(Debug, Clone)]
 pub struct OpLogEntry {
@@ -231,6 +267,9 @@ pub struct OpLogEntry {
     /// recorded (written before the field, or by a path that does not record
     /// moves); `Some(empty)` = recorded, nothing moved.
     pub ref_moves: Option<Vec<kagi_domain::ref_moves::RefMove>>,
+    /// The repository the entry was recorded in (#894). `None` for lines
+    /// written before the field, or a scope that does not open (remote).
+    pub repo_identity: Option<RepoIdentity>,
 }
 
 impl OpLogEntry {
@@ -264,6 +303,7 @@ impl OpLogEntry {
             recovery: Vec::new(),
             failure_code: None,
             ref_moves: None,
+            repo_identity: None,
         }
     }
 
@@ -460,6 +500,13 @@ pub fn append_oplog_receipt(entry: &OpLogEntry) -> Result<(PathBuf, OpLogEntry),
     // on `entry` (from `OpLogEntry::new`) are overwritten here.
     // Append and explicit retirement share the stable sidecar lock.
     let mut entry = entry.clone();
+    // #894: the one place every recorder passes — Backend and UI alike — so
+    // every new entry says which repository it belongs to, durably (the
+    // worktree it ran in may later be removed).
+    if entry.repo_identity.is_none() {
+        let scope = entry.worktree.as_deref().unwrap_or(&entry.repo);
+        entry.repo_identity = RepoIdentity::of(Path::new(scope));
+    }
     let last = read_oplog_tail(1);
     match last.first() {
         Some(prev) => {

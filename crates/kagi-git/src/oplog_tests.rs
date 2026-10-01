@@ -55,6 +55,7 @@ fn oplog_filter_scopes_to_bound_repo() {
         recovery: Vec::new(),
         failure_code: None,
         ref_moves: None,
+        repo_identity: None,
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -207,6 +208,7 @@ fn synthetic_entry(id: u64, repo: &str) -> OpLogEntry {
         recovery: Vec::new(),
         failure_code: None,
         ref_moves: None,
+        repo_identity: None,
     }
 }
 
@@ -481,6 +483,34 @@ fn malformed_recovery_degrades_to_empty_without_losing_the_entry() {
         );
         let entry = parse_oplog_line(&line).unwrap_or_else(|| panic!("must parse: {line}"));
         assert!(entry.recovery.is_empty(), "{value}");
+    }
+}
+
+/// #894: the recorded repository round-trips; a line written before the
+/// field, or a malformed value, reads as "unknown" (`None`) and the entry
+/// itself is kept.
+#[test]
+fn repo_identity_is_additive_and_lenient() {
+    let base = concat!(
+        r#"{"timestamp":1000,"op":"checkout","repo":"/tmp/repo","#,
+        r#""before":{"head":"branch: main","dirty":"clean"},"#,
+        r#""outcome":{"kind":"Success","after":{"head":"branch: f","dirty":"clean"}}"#,
+    );
+    let legacy = parse_oplog_line(&format!("{base}}}")).expect("legacy line");
+    assert_eq!(legacy.repo_identity, None);
+
+    let mut entry = legacy.clone();
+    entry.repo_identity = Some(RepoIdentity {
+        common_dir: "/tmp/repo/.git".into(),
+        file_id: Some((16_777_232, 4_242)),
+    });
+    let back = parse_oplog_line(&entry_to_json(&entry)).unwrap();
+    assert_eq!(back.repo_identity, entry.repo_identity);
+
+    for bad in [r#""a string""#, r#"{"dev":1}"#, "42"] {
+        let line = format!(r#"{base},"repo_identity":{bad}}}"#);
+        let read = parse_oplog_line(&line).unwrap_or_else(|| panic!("row dropped: {bad}"));
+        assert_eq!(read.repo_identity, None, "{bad}");
     }
 }
 

@@ -10,6 +10,7 @@ use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
 use std::time::{Duration, Instant};
 
 pub fn scenario_remove_public_boundary(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     for button in [false, true] {
         let fixture = build_fixture();
         let repo = fixture.path().canonicalize().unwrap();

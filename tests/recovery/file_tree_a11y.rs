@@ -48,6 +48,7 @@ fn item<'a>(tree: &'a RecordedTree, needle: &str) -> &'a RecordedTreeItem {
 }
 
 pub fn scenario_file_tree_roles(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let original_language = i18n::lang();
     i18n::set_lang(Lang::En);
     let fixture = build_fixture();

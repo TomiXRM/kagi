@@ -89,6 +89,7 @@ fn wait_for_counts(
 }
 
 pub fn scenario_slow_read_explained(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let (fixture, _remote) = ahead_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let counted = Some(Some(AheadBehind {

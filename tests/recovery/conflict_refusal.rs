@@ -9,16 +9,23 @@ use kagi::ui::{
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
 use std::path::Path;
 
-struct RestoreLanguage(Lang);
+/// The language as it was, and its saved key (#516), restored on drop.
+struct RestoreLanguage {
+    language: Lang,
+    _saved: crate::gui_isolation::SavedKeys,
+}
 
 impl Drop for RestoreLanguage {
     fn drop(&mut self) {
-        i18n::set_lang(self.0);
+        i18n::set_lang(self.language);
     }
 }
 
 pub(super) fn save_and_abort(cx: &mut VisualTestAppContext) {
-    let _restore_language = RestoreLanguage(i18n::lang());
+    let _restore_language = RestoreLanguage {
+        language: i18n::lang(),
+        _saved: crate::gui_isolation::SavedKeys::keep(&["lang"]),
+    };
     for (language, markers, changed) in [
         (
             Lang::En,

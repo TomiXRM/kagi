@@ -7,7 +7,7 @@
 
 use gpui::{Context, Window};
 
-use super::{KagiTerminalSession, ShellExit};
+use super::{AutoLockOffer, KagiTerminalSession, ShellExit};
 use crate::app::SessionId;
 use crate::ui::{FooterStatus, KagiApp, SharedString, ToastKind, UnlockWorktreeModal};
 use kagi_domain::worktree_autolock::{AutoLockToken, AutoUnlockTarget};
@@ -35,6 +35,19 @@ impl KagiApp {
             .terminal_session
             .take()
             .unwrap_or_else(|| KagiTerminalSession::new(repo_path.clone()));
+        // A confirmed lock from an earlier shell still needs its release
+        // decision. Starting another shell must not forget its provenance.
+        if session.view.is_none() && session.auto_lock.is_some() {
+            let message = crate::ui::i18n::Msg::TerminalAutoLockPendingRelease.t();
+            session.start_error = Some(message.into());
+            self.ui
+                .get_mut(&owner)
+                .expect("attached owner")
+                .terminal_session = Some(session);
+            self.status_footer = FooterStatus::Failed(SharedString::from(message));
+            self.push_toast(ToastKind::Error, message, cx);
+            return;
+        }
         // #859: in `nonconcurrent` mode another worktree of this repository
         // with a running shell stops a new one here. Not a write: no oplog.
         if session.view.is_none() {
@@ -75,10 +88,8 @@ impl KagiApp {
                     .map(|shell| (shell.generation, shell.pid))
             })
             .flatten();
-        if started {
-            // A fresh shell: any lock target from a previous spawn is stale.
-            session.clear_auto_lock();
-        }
+        // Only a successful confirm records ownership; the new shell starts
+        // with no prior claim (the guard above keeps pending releases intact).
         if let Some(ui) = self.ui.get_mut(&owner) {
             ui.terminal_session = Some(session);
         }
@@ -147,12 +158,14 @@ impl KagiApp {
     ) {
         // Whether or not the tab is still open (#867 review).
         self.note_shell_wait(owner, generation, &exit);
-        let Some(shell) = self
+        let Some(session) = self
             .ui
             .get_mut(&owner)
             .and_then(|ui| ui.terminal_session.as_mut())
-            .and_then(|session| session.shell.as_mut())
         else {
+            return;
+        };
+        let Some(shell) = session.shell.as_mut() else {
             return;
         };
         if shell.generation != generation {
@@ -165,7 +178,19 @@ impl KagiApp {
         klog!("terminal: shell wait: gen={} status={}", generation, status);
         shell.exit = Some(exit.clone());
         cx.notify();
-        if matches!(exit, ShellExit::Exited { .. }) && crate::ui::settings::terminal_auto_lock() {
+        if matches!(exit, ShellExit::Exited { .. }) {
+            // A shell that exited before the user approved its acquire may
+            // not leave a confirmable card behind.
+            if self.lock_worktree_modal().is_some_and(|modal| {
+                modal
+                    .auto
+                    .as_ref()
+                    .is_some_and(|offer| offer.owner == owner && offer.generation == generation)
+            }) {
+                self.clear_lock_worktree_modal();
+            }
+            // A confirmed lock is eligible for a release proposal even if
+            // the user switched the opt-in OFF after acquiring it.
             self.offer_auto_release(owner, cx);
         }
     }
@@ -175,9 +200,30 @@ impl KagiApp {
     /// worktree, plan a lock with this session's token and open the ordinary
     /// lock card; the user confirms before anything is written.
     pub(crate) fn offer_auto_lock(&mut self, owner: SessionId, cx: &mut Context<Self>) {
-        if !crate::ui::settings::terminal_auto_lock() {
+        if !crate::ui::settings::terminal_auto_lock() || self.active_session() != Some(owner) {
             return;
         }
+        if self.has_active_modal() {
+            // Shell startup is an asynchronous producer, not a user request
+            // to replace a confirmation already occupying the one modal slot.
+            return;
+        }
+        let Some(attachment) = self.app_sessions.attachment(owner) else {
+            return;
+        };
+        if self.repo_path.as_ref() != Some(&attachment.path) {
+            return;
+        }
+        let Some(generation) = self
+            .ui
+            .get(&owner)
+            .and_then(|ui| ui.terminal_session.as_ref())
+            .and_then(|session| session.shell.as_ref())
+            .filter(|shell| shell.exit.is_none())
+            .map(|shell| shell.generation)
+        else {
+            return;
+        };
         let Some(repo) = self.worktree_backend("auto-lock-worktree") else {
             return;
         };
@@ -185,32 +231,38 @@ impl KagiApp {
             klog!("terminal: auto-lock skipped: not a linked worktree");
             return;
         };
-        let target = match repo.linked_worktree_identity(&name) {
-            Ok(worktree) => AutoUnlockTarget {
-                token: session_token(owner),
-                worktree,
-            },
+        let worktree = match repo.linked_worktree_identity(&name) {
+            Ok(worktree) if attachment.worktree.as_ref() == Some(&worktree) => worktree,
+            Ok(_) => {
+                klog!("terminal: auto-lock skipped: repository identity changed");
+                return;
+            }
             Err(e) => {
                 klog!("terminal: auto-lock skipped: {}", e);
                 return;
             }
         };
+        let Some(token) = session_token(owner, generation) else {
+            klog!("terminal: auto-lock skipped: token entropy unavailable");
+            return;
+        };
+        let target = AutoUnlockTarget { token, worktree };
         let reason = target.token.reason();
+        let offer = AutoLockOffer {
+            owner,
+            generation,
+            path: attachment.path,
+            target,
+        };
         match repo.plan_lock_worktree(&name, Some(&reason)) {
             Ok(plan) => {
                 klog!("plan: lock-worktree {} (auto)", name);
-                if let Some(session) = self
-                    .ui
-                    .get_mut(&owner)
-                    .and_then(|ui| ui.terminal_session.as_mut())
-                {
-                    session.auto_lock = Some(target);
-                }
                 self.set_lock_worktree_modal(crate::ui::LockWorktreeModal {
                     plan: std::sync::Arc::new(plan),
                     error: None,
                     name,
                     reason,
+                    auto: Some(offer),
                 });
                 // #817: the terminal just took focus; the card owns Enter /
                 // Escape through the root, so ask for the root on open.
@@ -226,39 +278,60 @@ impl KagiApp {
         }
     }
 
-    /// The shell of `owner`'s terminal exited. If this session offered a lock,
-    /// plan its release; a plan with blockers (the user never confirmed, the
-    /// lock was replaced by hand, another session's token, …) is logged and
-    /// dropped — no card, no write (contract B).
-    fn offer_auto_release(&mut self, owner: SessionId, cx: &mut Context<Self>) {
-        let Some(target) = self
+    /// A confirmed, owner-scoped lock may be offered for release only after
+    /// its exact shell generation has exited. A background tab or an occupied
+    /// modal slot keeps the claim pending until the owner is active again.
+    pub(crate) fn offer_auto_release(&mut self, owner: SessionId, cx: &mut Context<Self>) {
+        if self.active_session() != Some(owner) || self.has_active_modal() {
+            return;
+        }
+        let Some(offer) = self
             .ui
             .get(&owner)
             .and_then(|ui| ui.terminal_session.as_ref())
-            .and_then(|session| session.auto_lock.clone())
+            .and_then(|session| {
+                let claim = session.auto_lock.as_ref()?;
+                let shell = session.shell.as_ref()?;
+                (shell.generation == claim.generation
+                    && matches!(shell.exit, Some(ShellExit::Exited { .. })))
+                .then(|| claim.clone())
+            })
         else {
             return;
         };
-        let Some(repo) = self.worktree_backend("auto-unlock-worktree") else {
+        if !self.auto_lock_owner_is_current(&offer) {
+            klog!("terminal: auto-unlock skipped: repository identity changed");
             return;
+        }
+        let repo = match crate::ui::blocking_ops::open_backend(&offer.path) {
+            Ok(repo) => repo,
+            Err(e) => {
+                klog!("terminal: auto-unlock skipped: {}", e);
+                return;
+            }
         };
-        let name = target
+        if repo.write_worktree_id().ok().as_ref() != Some(&offer.target.worktree) {
+            klog!("terminal: auto-unlock skipped: repository identity changed");
+            return;
+        }
+        let name = offer
+            .target
             .worktree
             .git_dir
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        match repo.plan_auto_unlock_worktree(&name, &target) {
+        match repo.plan_auto_unlock_worktree(&name, &offer.target) {
             Ok(plan) if plan.blockers.is_empty() => {
                 klog!("plan: auto-unlock-worktree {}", name);
                 self.set_unlock_worktree_modal(UnlockWorktreeModal {
                     plan: std::sync::Arc::new(plan),
                     error: None,
                     name,
-                    auto: Some(target),
+                    auto: Some(offer),
                 });
-                // #817: delivered while the terminal (or anything) holds focus;
-                // the release card has no text field, so Enter must reach the root.
+                // #817: the release card has no text field; Enter belongs to
+                // the root, never to the terminal or a departing tab.
                 self.focus_root_for_modal();
                 cx.notify();
             }
@@ -275,20 +348,34 @@ impl KagiApp {
     }
 }
 
-/// The token this process's session `owner` signs its locks with: unique
-/// across processes (PID) and across tab reopenings (session incarnation).
-fn session_token(owner: SessionId) -> AutoLockToken {
+/// The process nonce prevents a restarted app with a reused PID/tab counter
+/// from adopting a lock it did not acquire. Failure to obtain entropy disables
+/// this opt-in operation rather than falling back to a predictable token.
+fn session_token(owner: SessionId, generation: u64) -> Option<AutoLockToken> {
+    static NONCE: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| {
+        let mut bytes = [0u8; 16];
+        getrandom::fill(&mut bytes).ok()?;
+        let mut nonce = String::with_capacity(32);
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        for byte in bytes {
+            nonce.push(HEX[(byte >> 4) as usize] as char);
+            nonce.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+        Some(nonce)
+    });
+    let nonce = &*NONCE;
     AutoLockToken::new(&format!(
-        "{}-{}-{}",
-        std::process::id(),
+        "{}-{}-{}-{}",
+        nonce.as_ref()?,
         owner.tab.0,
-        owner.incarnation
+        owner.incarnation,
+        generation
     ))
-    .expect("pid/tab/incarnation contain no whitespace")
 }
 
 impl KagiTerminalSession {
-    /// Forget an offered lock target (a new spawn gets a fresh one).
+    /// Forget provenance only after the user explicitly declines a release
+    /// or its execution succeeds; a new shell cannot discard an active claim.
     pub(crate) fn clear_auto_lock(&mut self) {
         self.auto_lock = None;
     }

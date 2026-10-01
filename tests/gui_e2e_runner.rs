@@ -809,6 +809,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_modal_no_fallthrough),
             ),
             (
+                "replay_onto_armed",
+                Box::new(crate::recovery_operations::scenario_replay_onto_armed),
+            ),
+            (
                 "remote_browse_modal_routing",
                 Box::new(crate::recovery_operations::scenario_remote_browse_modal_routing),
             ),

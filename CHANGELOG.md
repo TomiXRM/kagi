@@ -37,6 +37,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - fetch の失敗、PR の comment / review / edit、issue の作成・コメント、worktree の lock / unlock / prune / repair / 削除を含む時点への「この時点まで戻す」が、「記録なし」で拒否されていた問題を修正しました(#885、ADR-0214 §4)。これらの操作も、動かした branch を Operation Log に記録します。fetch や worktree の操作は、実行の前後で branch を読んで実際の移動を記録します。mirror 型の設定で fetch が local branch を動かした場合や、worktree の削除で branch も消した場合は、その移動が記録されます。GitHub 側だけを書き換える操作は「動いた branch なし」と記録します。実行した PR merge は local branch を消すことがあるため、終了が確認できない操作と同様に、これまでどおり記録なしで扱います。(Refs #334)
+- 既定 OFF の opt-in「terminal を開いている間 worktree をロック」を ON にした場合の自動ロックを修正しました。これまでは acquire の確認カードを Cancel しても、その提案の token を所有済みとして記録し、shell 終了時に同じ reason の別人のロックを解除提案できました。acquire 成功後だけ所有権を保存し、shell が承認前に終了したらカードを閉じます。解除は元の tab / shell 世代 / repository identity が一致するときだけ提示し、別 tab のカードは上書きせず元の tab まで保留します。token は再起動後に再利用されない random nonce を含み、観測不能や crash 後は従来どおり手動で確認して解除します。既定 OFF の利用者の動作は変わらず、ON でも lock / unlock はそれぞれ確認が必要です。（#772、ADR-0218）
+- 自動ロック取得後、shell 終了時に別の確認カードが開いていた場合、そのカードをボタンで閉じてもロック解除の確認カードが出ない問題を修正しました。modal slot が空いた後に元の tab へ再提示し、解除カード自体を Cancel した場合は再提示しません。（#914 review、#772）
 - Commit Panel を同じ worktree で開き直すか、merge 後に再読込した際に、file tree の兄弟位置が以前のファイル構成のまま残り、新しい行から支援技術向けの TreeItem が欠落する問題を修正しました。新しい状態に差し替えるたびに位置表を無効化します。（#901 review、Refs #354）
 - Operation Log の「取り消す / この時点まで戻す」の確認 card と Operation Log の review 指摘を修正しました(#883 / #871 / #878)。
   - 「戻した後のグラフ」が長いと card の下側が切れて見えなかった問題を修正しました。行は card 内でスクロールします。
@@ -95,6 +97,12 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Internal
 
+- GUI E2E runner が、各 scenario の前後で共有状態を比較するようにしました。
+  - 比較するのは `settings.json`(実行時の session 系 key を除く)、port store、oplog(既存行の不変と追記先)、runner 専用 `TMPDIR` 直下の entry です。
+  - 差分があれば、どの資源が何から何に変わったかを列挙して、その scenario を失敗として扱い、証跡を残します。
+  - 全 scenario を分割実行して見つかった違反は直しました。言語・diff_split・ui_zoom・theme・terminal_auto_lock の保存 key の後始末(19 scenario)、port store の後始末(6 scenario)、共有 oplog の件数を repo で絞っていなかった `push_failure_keeps_modal` です。
+
+  製品の動作は変更していません。(#516 slice 3)
 - GUI E2E の 3 scenario(`cleanup_partial_presentation`、`pull_refuses_when_the_dirty_set_moved`、`pull_completion_drops_when_its_tab_is_left`)の期待値を現行の提示仕様に合わせました。#718 で失敗した pull の確認画面を開き直さなくなり、#747 で記録済みの結果は toast と Operation Log で示すようになり、背景タブの結果は repository 名付きで出るようになっていました。これらの PR で期待値の更新が漏れていたものです。安全性の検査(何も stash / pull しない・local branch を変えない・記録は 1 件・確認画面を再表示しない)は弱めていません。製品の動作は変更していません。(#898)
 - GUI E2E runner で scenario が失敗したとき、`target/gui-e2e/<scenario>/` に失敗証跡を残すようにしました。中身は panic の内容、直近 200 行の `[kagi]` ログ、mount した fixture repository の `git status --short` と `git log --oneline -5`、window の PNG(撮れない場合は理由を書いた `window.txt`)です。stderr には `[gui-e2e] FAIL <scenario>: evidence <dir>` を 1 行出します。window は前面にも画面内にも出しません。終了コードと「最初の失敗で止まる」挙動は変わりません。製品の動作は変更していません。(#516 slice 1)
 - GUI E2E の scenario 間の隔離を監査し(#516 slice 2)、違反を直しました。

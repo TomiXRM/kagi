@@ -10,6 +10,7 @@ use kagi::ui::{
 mod pr_merge_local;
 
 pub fn scenario_fetch_busy_label(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     // Local transport only; no network or delayed child process in the runner.
@@ -491,6 +492,7 @@ pub fn scenario_pr_merge_admission_keeps_the_modal(cx: &mut VisualTestAppContext
 /// than a write latch — but it still owns the modal slot it is about to fill, so
 /// every gate must refuse a second operation while it runs.
 pub fn scenario_merge_plan_latches_planning(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     git(&repo, &["branch", "feature", "HEAD~1"]);
@@ -608,6 +610,7 @@ pub fn scenario_merge_plan_latches_planning(cx: &mut VisualTestAppContext) {
 /// `finish_planning`: a foreground modal wins, and the discarded plan leaves
 /// no stale confirmation or Busy presentation behind.
 pub fn scenario_delete_branch_plan_latches_planning(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     git(&repo, &["branch", "victim", "HEAD~1"]);

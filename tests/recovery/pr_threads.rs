@@ -151,6 +151,7 @@ esac
 /// the tab holds two and both rows are badged; zero would be the old silent
 /// failure.
 pub fn scenario_pr_threads_via_gh(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["diff_split"]);
     let _gh = OfflineGh::with_script(THREADS_GH);
     let split_before = theme::diff_split();
     theme::set_diff_split(false);
@@ -215,6 +216,7 @@ pub fn scenario_pr_threads_via_gh(cx: &mut VisualTestAppContext) {
 }
 
 pub fn scenario_pr_threads(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["diff_split"]);
     let _gh = OfflineGh::install();
     let split_before = theme::diff_split();
     theme::set_diff_split(false);

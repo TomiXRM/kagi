@@ -92,6 +92,7 @@ fn confirm_reason(
 }
 
 pub fn scenario_worktree_lock_reason(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let original_lang = i18n::lang();
     for language in [i18n::Lang::En, i18n::Lang::Ja] {
         i18n::set_lang(language);
@@ -159,6 +160,8 @@ pub fn scenario_worktree_lock_reason(cx: &mut VisualTestAppContext) {
 ///   the token/identity-checked plan; a manual relock in between is refused
 ///   (contract B) and the manual lock survives.
 pub fn scenario_terminal_auto_lock(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["terminal_auto_lock"]);
+    let _ports = crate::gui_isolation::PortStore::keep();
     use kagi::ui::settings as theme;
     use kagi::ui::terminal::ShellExit;
 
@@ -211,6 +214,125 @@ pub fn scenario_terminal_auto_lock(cx: &mut VisualTestAppContext) {
     );
     unmount(cx, app, window);
 
+    // An unconfirmed offer is not ownership. Even if a lock with the offered
+    // reason appears after Cancel (for example after PID/session reuse on a
+    // restart), this shell's exit must not offer to release it.
+    theme::set_terminal_auto_lock(true);
+    let (app, window) = mount(cx, &linked);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |state, cx| state.ensure_terminal(window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let unconfirmed_reason = cx.read(|cx| {
+        app.read(cx)
+            .lock_worktree_modal()
+            .expect("offer opens a confirmation card")
+            .reason
+            .clone()
+    });
+    press_key(cx, &app, window, "escape");
+    assert!(cx.read(|cx| app.read(cx).lock_worktree_modal().is_none()));
+    git(
+        fixture.path(),
+        &[
+            "worktree",
+            "lock",
+            "--reason",
+            &unconfirmed_reason,
+            linked.to_str().unwrap(),
+        ],
+    );
+    app.update(cx, |state, _| {
+        state
+            .ui()
+            .terminal_session
+            .as_ref()
+            .unwrap()
+            .paste_writer
+            .as_ref()
+            .unwrap()
+            .paste_text("exit\n");
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        cx.run_until_parked();
+        if cx.read(|cx| {
+            app.read(cx)
+                .ui()
+                .terminal_session
+                .as_ref()
+                .and_then(|session| session.shell.as_ref())
+                .and_then(|shell| shell.exit.as_ref())
+                .is_some()
+        }) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "unconfirmed shell never exited"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(
+        cx.read(|cx| app.read(cx).unlock_worktree_modal().is_none()),
+        "a canceled acquire must not offer to release someone else's lock"
+    );
+    assert_eq!(
+        lock_reason(fixture.path()).as_deref(),
+        Some(unconfirmed_reason.as_str())
+    );
+    git(
+        fixture.path(),
+        &["worktree", "unlock", linked.to_str().unwrap()],
+    );
+    unmount(cx, app, window);
+
+    // An offer still on screen when its shell exits must disappear. Enter
+    // cannot subsequently acquire a lock for a shell that no longer exists.
+    let (app, window) = mount(cx, &linked);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |state, cx| state.ensure_terminal(window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).lock_worktree_modal().is_some()));
+    app.update(cx, |state, _| {
+        state
+            .ui()
+            .terminal_session
+            .as_ref()
+            .unwrap()
+            .paste_writer
+            .as_ref()
+            .unwrap()
+            .paste_text("exit\n");
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        cx.run_until_parked();
+        if cx.read(|cx| {
+            app.read(cx)
+                .ui()
+                .terminal_session
+                .as_ref()
+                .unwrap()
+                .shell
+                .as_ref()
+                .unwrap()
+                .exit
+                .is_some()
+        }) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "shell never exited");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(cx.read(|cx| app.read(cx).lock_worktree_modal().is_none()));
+    assert!(cx.read(|cx| app.read(cx).unlock_worktree_modal().is_none()));
+    assert_eq!(lock_reason(fixture.path()), None);
+    unmount(cx, app, window);
+
     // ── opt-in on: offer, no write before confirm ────────────────────────
     theme::set_terminal_auto_lock(true);
     let (app, window) = mount(cx, &linked);
@@ -232,12 +354,10 @@ pub fn scenario_terminal_auto_lock(cx: &mut VisualTestAppContext) {
             .terminal_session
             .as_ref()
             .expect("terminal started");
-        let target = session
-            .auto_lock
-            .as_ref()
-            .expect("the offer records its target");
-        assert_eq!(target.token.reason(), modal.reason);
-        assert!(target.worktree.git_dir.ends_with("worktrees/linked"));
+        assert!(session.auto_lock.is_none(), "an offer is not ownership");
+        let offer = modal.auto.as_ref().expect("auto offer has provenance");
+        assert_eq!(offer.target.token.reason(), modal.reason);
+        assert!(offer.target.worktree.git_dir.ends_with("worktrees/linked"));
         (
             session.shell.as_ref().unwrap().pid.unwrap(),
             modal.reason.clone(),
@@ -259,20 +379,78 @@ pub fn scenario_terminal_auto_lock(cx: &mut VisualTestAppContext) {
         Some(token_reason.as_str())
     );
     assert!(cx.read(|cx| app.read(cx).lock_worktree_modal().is_none()));
-
-    // ── shell exit → wait delivery → release offer ───────────────────────
-    app.update(cx, |state, _| {
-        let session = state.ui().terminal_session.as_ref().unwrap();
-        session.paste_writer.as_ref().unwrap().paste_text("exit\n");
+    cx.read(|cx| {
+        let state = app.read(cx);
+        let claim = state
+            .ui()
+            .terminal_session
+            .as_ref()
+            .unwrap()
+            .auto_lock
+            .as_ref()
+            .expect("successful confirm records ownership");
+        assert_eq!(claim.target.token.reason(), token_reason);
+        assert_eq!(claim.generation, 1);
     });
+
+    // Exit while a different repository owns the visible tab. Its worktree
+    // has the same registry name and a manual lock; neither its modal nor
+    // its Git state may be touched by the background shell's completion.
+    let other = build_fixture();
+    let other_linked_root = tempfile::tempdir().unwrap();
+    let other_linked = other_linked_root.path().join("linked");
+    git(
+        other.path(),
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "foreign-target",
+            other_linked.to_str().unwrap(),
+        ],
+    );
+    git(
+        other.path(),
+        &[
+            "worktree",
+            "lock",
+            "--reason",
+            "foreign manual",
+            other_linked.to_str().unwrap(),
+        ],
+    );
+    let owner = cx.read(|cx| app.read(cx).active_session().unwrap());
+    app.update(cx, |state, cx| {
+        assert!(state.open_repository(other_linked.clone(), cx));
+        assert_ne!(state.active_session(), Some(owner));
+        state.open_unlock_worktree_modal("linked".into());
+        assert!(
+            state
+                .unlock_worktree_modal()
+                .is_some_and(|modal| modal.auto.is_none()),
+            "foreign manual confirmation owns the modal slot"
+        );
+        state
+            .ui
+            .get(&owner)
+            .unwrap()
+            .terminal_session
+            .as_ref()
+            .unwrap()
+            .paste_writer
+            .as_ref()
+            .unwrap()
+            .paste_text("exit\n");
+    });
+    // ── shell exit → owner-scoped wait delivery → pending release ───────
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         cx.run_until_parked();
         let exited = cx.read(|cx| {
             app.read(cx)
-                .ui()
-                .terminal_session
-                .as_ref()
+                .ui
+                .get(&owner)
+                .and_then(|ui| ui.terminal_session.as_ref())
                 .and_then(|s| s.shell.as_ref())
                 .and_then(|s| s.exit.clone())
         });
@@ -286,6 +464,20 @@ pub fn scenario_terminal_auto_lock(cx: &mut VisualTestAppContext) {
         );
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
+    assert!(cx.read(|cx| {
+        app.read(cx)
+            .unlock_worktree_modal()
+            .is_some_and(|modal| modal.auto.is_none())
+    }));
+    assert_eq!(lock_reason(other.path()).as_deref(), Some("foreign manual"));
+    assert_eq!(
+        lock_reason(fixture.path()).as_deref(),
+        Some(token_reason.as_str())
+    );
+    press_key(cx, &app, window, "escape");
+    assert!(cx.read(|cx| app.read(cx).unlock_worktree_modal().is_none()));
+    app.update(cx, |state, cx| state.switch_repo(0, cx));
+    cx.run_until_parked();
     cx.read(|cx| {
         let state = app.read(cx);
         let modal = state
@@ -330,13 +522,129 @@ pub fn scenario_terminal_auto_lock(cx: &mut VisualTestAppContext) {
             .to_string();
         assert!(err.contains("refused at preflight"), "{err}");
     });
-    crate::recovery_operations::press_key(cx, &app, window, "escape");
-    cx.run_until_parked();
+    // Declining this *auto* release by button is terminal: it must not be
+    // re-offered by the slot-empty delivery path.
+    click(cx, window, "plan-cancel");
+    assert!(cx.read(|cx| app.read(cx).unlock_worktree_modal().is_none()));
+    assert!(cx.read(|cx| {
+        app.read(cx)
+            .ui()
+            .terminal_session
+            .as_ref()
+            .unwrap()
+            .auto_lock
+            .is_none()
+    }));
     git(
         fixture.path(),
         &["worktree", "unlock", linked.to_str().unwrap()],
     );
     assert_eq!(repo_fingerprint(fixture.path()), before);
+    unmount(cx, app, window);
+
+    // Confirmed ownership survives disabling the setting. After the real
+    // shell exits, the release still requires a second explicit confirmation
+    // and records the linked worktree, not a different visible repository.
+    theme::set_terminal_auto_lock(true);
+    let (app, window) = mount(cx, &linked);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |state, cx| state.ensure_terminal(window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let owned_reason = cx.read(|cx| app.read(cx).lock_worktree_modal().unwrap().reason.clone());
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    assert_eq!(
+        lock_reason(fixture.path()).as_deref(),
+        Some(owned_reason.as_str())
+    );
+    theme::set_terminal_auto_lock(false);
+    app.update(cx, |state, cx| {
+        state.open_unlock_worktree_modal("linked".into());
+        assert!(
+            state
+                .unlock_worktree_modal()
+                .is_some_and(|modal| modal.auto.is_none()),
+            "the manual card owns the slot before this shell exits"
+        );
+        cx.notify();
+    });
+    app.update(cx, |state, _| {
+        state
+            .ui()
+            .terminal_session
+            .as_ref()
+            .unwrap()
+            .paste_writer
+            .as_ref()
+            .unwrap()
+            .paste_text("exit\n");
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        cx.run_until_parked();
+        let exited = cx.read(|cx| {
+            app.read(cx)
+                .ui()
+                .terminal_session
+                .as_ref()
+                .and_then(|session| session.shell.as_ref())
+                .and_then(|shell| shell.exit.as_ref())
+                .is_some_and(|exit| matches!(exit, ShellExit::Exited { .. }))
+        });
+        if exited {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "confirmed owner never received release confirmation"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(
+        cx.read(|cx| {
+            app.read(cx)
+                .unlock_worktree_modal()
+                .is_some_and(|modal| modal.auto.is_none())
+        }),
+        "shell exit must not replace the user's manual confirmation"
+    );
+    click(cx, window, "plan-cancel");
+    assert!(
+        cx.read(|cx| {
+            app.read(cx)
+                .unlock_worktree_modal()
+                .is_some_and(|modal| modal.auto.is_some())
+        }),
+        "clicking Cancel frees the slot and delivers the pending release"
+    );
+    assert_eq!(
+        lock_reason(fixture.path()).as_deref(),
+        Some(owned_reason.as_str()),
+        "exit alone must never unlock"
+    );
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    assert_eq!(lock_reason(fixture.path()), None);
+    assert!(cx.read(|cx| {
+        app.read(cx)
+            .ui()
+            .terminal_session
+            .as_ref()
+            .unwrap()
+            .auto_lock
+            .is_none()
+    }));
+    assert!(
+        read_oplog_tail_for_repo(&linked, 50).iter().any(|entry| {
+            entry.op == "unlock-worktree"
+                && entry.repo == linked.display().to_string()
+                && matches!(entry.outcome, OpOutcome::Success { .. })
+        }),
+        "the owning worktree has a durable successful unlock"
+    );
+    assert_eq!(lock_reason(other.path()).as_deref(), Some("foreign manual"));
     unmount(cx, app, window);
     theme::set_terminal_auto_lock(restore_auto);
     eprintln!("[gui-e2e] PASS terminal_auto_lock opt-in off/on, confirm-gated acquire, wait-delivered exit, refused release after a manual relock");
@@ -442,7 +750,9 @@ pub fn scenario_terminal_auto_lock_race(cx: &mut VisualTestAppContext) {
         );
     });
 
-    // The terminal's release offer for the same worktree is blocked.
+    // The release plan for the same worktree is blocked. Do not forge a UI
+    // terminal owner for this backend race fixture: ownership exists only
+    // after that shell's real acquire confirmation succeeds.
     let auto_plan = backend
         .plan_auto_unlock_worktree("linked", &target)
         .unwrap();
@@ -451,30 +761,11 @@ pub fn scenario_terminal_auto_lock_race(cx: &mut VisualTestAppContext) {
         "{:?}",
         auto_plan.blockers
     );
-    app.update(cx, |app, cx| {
-        let modal = app.unlock_worktree_modal_mut().expect("card still open");
-        modal.plan = std::sync::Arc::new(auto_plan);
-        modal.auto = Some(target.clone());
-        cx.notify();
-    });
-    paint(cx, window);
-    press_enter(cx, &app, window);
-    cx.run_until_parked();
-    assert_eq!(
-        lock_reason(&main).as_deref(),
-        Some(token.as_str()),
-        "nothing released"
-    );
-    assert_eq!(
-        leftovers(),
-        vec![leftover.to_string()],
-        "the leftover is left for a person"
-    );
-    let refused = read_oplog_tail_for_repo(&main, 50)
-        .into_iter()
-        .filter(|e| e.op == "unlock-worktree")
-        .any(|e| matches!(e.outcome, OpOutcome::Refused { .. }));
-    assert!(refused, "the blocked release is recorded as refused");
+    assert!(backend
+        .execute_auto_unlock_worktree(&auto_plan, "linked", &target)
+        .is_err());
+    assert_eq!(lock_reason(&main).as_deref(), Some(token.as_str()));
+    assert_eq!(leftovers(), vec![leftover.to_string()]);
 
     std::fs::remove_file(admin.join(leftover)).unwrap();
     git(&main, &["worktree", "unlock", linked.to_str().unwrap()]);

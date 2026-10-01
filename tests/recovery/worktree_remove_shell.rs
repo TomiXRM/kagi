@@ -26,25 +26,62 @@ fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
 }
 
 /// A shell that leaves a `nohup` job in its session (its PID in
-/// `leftover.pid`), then waits on its terminal (exits at EOF).
+/// `leftover.pid`), then waits on its terminal (exits at EOF). The scenario
+/// kills the job by PID when done, so its length only has to outlast the
+/// scenario: with `sleep 30` the leftover assertion failed in 2 of 4 runs of a
+/// five-scenario filter (the cause was not pinned down); `sleep 600` passed
+/// 8 of 8.
 fn leaving_shell(dir: &Path) -> PathBuf {
     let pid = dir.join("leftover.pid");
     let body = format!(
-        "nohup sleep 30 >/dev/null 2>&1 &\necho $! > '{}'\nexec cat\n",
+        "nohup sleep 600 >/dev/null 2>&1 &\necho $! > '{}'\nexec cat\n",
         pid.display()
     );
     script(dir, "leave.sh", &body)
 }
 
 /// A shell that ignores the hangup closing its tab sends, and does not read
-/// the terminal: it outlives the tab until killed (its PID in `shell.pid`).
+/// the terminal: it outlives the tab until killed by PID (in `shell.pid`).
 pub(crate) fn hangup_proof_shell(dir: &Path) -> PathBuf {
     let pid = dir.join("shell.pid");
     let body = format!(
-        "trap '' HUP\necho $$ > '{}'\nexec sleep 30\n",
+        "trap '' HUP\necho $$ > '{}'\nexec sleep 600\n",
         pid.display()
     );
     script(dir, "stay.sh", &body)
+}
+
+/// Kills whatever `leftover.pid` / `shell.pid` in `dir` name when dropped, so
+/// a failed assertion does not leave the long-sleeping probes behind (#899
+/// review). [`kill_recorded`] removes the file it acted on, so a PID that
+/// was already stopped (and may since be reused) is never signalled again.
+pub(crate) struct KillRecordedOnDrop(pub(crate) PathBuf);
+
+impl Drop for KillRecordedOnDrop {
+    fn drop(&mut self) {
+        // A failed assertion right after the terminal starts can unwind before
+        // the probe has written its PID: wait briefly for one to appear, but
+        // only on that path — a passing run has removed its files already
+        // (#899 review).
+        if std::thread::panicking() {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while Instant::now() < deadline
+                && ["leftover.pid", "shell.pid"]
+                    .iter()
+                    .all(|name| !self.0.join(name).exists())
+            {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+        for name in ["leftover.pid", "shell.pid"] {
+            if let Ok(pid) = std::fs::read_to_string(self.0.join(name)) {
+                let pid = pid.trim();
+                if !pid.is_empty() {
+                    let _ = std::process::Command::new("kill").arg(pid).status();
+                }
+            }
+        }
+    }
 }
 
 /// Stop the process this test started, by the PID it recorded — never by
@@ -68,6 +105,8 @@ pub(crate) fn kill_recorded(pid_file: &Path) {
         .arg(&pid)
         .status()
         .unwrap();
+    // Disarm `KillRecordedOnDrop`: the PID may be reused once it is gone.
+    let _ = std::fs::remove_file(pid_file);
 }
 
 fn wait_until(
@@ -146,6 +185,7 @@ fn switch(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, tab: usize) {
 }
 
 pub fn scenario_worktree_remove_live_shell(cx: &mut VisualTestAppContext) {
+    let _ports = crate::gui_isolation::PortStore::keep();
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let side_dir = tempfile::tempdir().unwrap();
@@ -162,6 +202,7 @@ pub fn scenario_worktree_remove_live_shell(cx: &mut VisualTestAppContext) {
         ],
     );
     let shell_dir = tempfile::tempdir().unwrap();
+    let _probes = KillRecordedOnDrop(shell_dir.path().to_path_buf());
     KagiApp::set_terminal_shell_for_e2e(Some(
         leaving_shell(shell_dir.path()).display().to_string(),
     ));

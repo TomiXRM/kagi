@@ -87,6 +87,7 @@ fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, row: usize) {
 }
 
 pub fn scenario_hunk_staging(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["diff_split"]);
     let split_before = theme::diff_split();
     theme::set_diff_split(false);
     let temp = tempfile::tempdir().unwrap();

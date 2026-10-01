@@ -179,6 +179,7 @@ fn stash_push_clean_tree(cx: &mut VisualTestAppContext) {
 }
 
 pub fn scenario_refusal_reasons(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let language = i18n::lang();
     for lang in [Lang::En, Lang::Ja] {
         i18n::set_lang(lang);

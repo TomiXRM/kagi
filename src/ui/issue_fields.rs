@@ -18,6 +18,16 @@ use super::theme::{self, theme};
 use super::KagiApp;
 
 impl KagiApp {
+    /// The `gh` login an Issue write from the active tab posts as: the one
+    /// on its repository's host. `None` until that host's login has been
+    /// read — the composer then claims nobody (#904 review).
+    pub(super) fn issue_host_login(&self) -> Option<&str> {
+        let repo = self.ui().issue_composer.base_repo.as_deref()?;
+        self.github_host_logins
+            .get(&kagi_git::github::repo_host(repo))
+            .map(String::as_str)
+    }
+
     /// Read the `gh` login on the host of the Issues repository, once per
     /// host (#904 review). `gh issue create -R <host>/<owner>/<repo>` posts as
     /// that host's identity, which on an Enterprise server is not the
@@ -183,23 +193,16 @@ pub(super) fn render_issue_fields(
         // repository's host; there is no choice to offer, so the author is
         // shown, not edited. Until that host's login has been read, nobody is
         // claimed.
-        .children(
-            app.ui()
-                .issue_composer
-                .base_repo
-                .as_deref()
-                .and_then(|repo| {
-                    app.github_host_logins
-                        .get(&kagi_git::github::repo_host(repo))
-                })
-                .map(|login| {
-                    super::e2e::measure_control(
-                        "issue-composer-posted-as",
-                        div().text_xs().text_color(rgb(theme().text_muted)).child(
-                            SharedString::from(Msg::IssuePostedAs.t().replace("{}", login)),
-                        ),
-                    )
-                }),
-        )
+        .children(app.issue_host_login().map(|login| {
+            super::e2e::measure_control(
+                "issue-composer-posted-as",
+                div()
+                    .text_xs()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from(
+                        Msg::IssuePostedAs.t().replace("{}", login),
+                    )),
+            )
+        }))
         .into_any_element()
 }

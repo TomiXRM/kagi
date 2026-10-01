@@ -428,7 +428,11 @@ impl KagiApp {
         });
         if !plan.blockers.is_empty() {
             klog!("refused: {} plan has blockers, not executing", op_name);
-            self.record_refused(op_name, plan.current.clone(), &plan.blockers, &repo, cx);
+            // Same receipt as an execute-time refusal: what was asked for
+            // (#904 review). `fields` is empty for a reply.
+            let entry = Self::refused_entry(op_name, plan.current.clone(), &plan.blockers, &repo)
+                .with_issue_fields(&fields);
+            self.record_refused_entry(op_name, entry, &plan.blockers, cx);
             self.report_plan_failure(
                 op,
                 plan.blockers

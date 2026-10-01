@@ -1,6 +1,6 @@
 # ADR-0208: embedded-terminal cwd auto-lock — Phase 1（所有権と観測の土台）
 
-- Status: **Accepted**（Phase 1 のみ。Phase 2 = 自動 acquire の confirm 省略・複数 terminal の集約・release の自動化は本 ADR の範囲外）
+- Status: **Accepted**（Phase 1 のみ。所有権と tab 配送の安全修正は [ADR-0218](0218-terminal-autolock-owner-confirmation.md)。Phase 2 = 自動 acquire の confirm 省略・複数 terminal の集約・release の自動化は本 ADR の範囲外）
 - Date: 2026-10-01
 - Related: [#772](https://github.com/TomiXRM/kagi/issues/772)（契約 A–D、欠落 1–3）、#372 item 3、
   ADR-0035（worktree lifecycle）、ADR-0177（`record_op_persist` の同期 UI 例外 — lock / unlock）、
@@ -28,8 +28,8 @@
    - 自動 acquire は **既存 `plan_lock_worktree` をそのまま使う**（reason に token を渡すだけ）。
    - 自動 release は既存の手動 unlock を転用せず、同じ file に `plan_/preflight_/execute_auto_unlock_worktree` を足す
      （契約 B: 手動 lock に触れない判定を preflight に持つ）。
-   - UI の release 確認は `UnlockWorktreeModal` に `auto: Option<AutoUnlockTarget>` を足して同じ card / 同じ
-     `confirm_unlock_worktree` から分岐する（modal 変種を増やさない。ADR-0093 の 1 slot はそのまま）。
+   - UI の release 確認は `UnlockWorktreeModal` に `auto: Option<AutoLockOffer>`（owner / 世代 / 凍結 path / `AutoUnlockTarget`）を足して同じ card / 同じ
+     `confirm_unlock_worktree` から分岐する（modal 変種を増やさない。ADR-0093 の 1 slot はそのまま）。所有権の確定時点は ADR-0218。
    - `KagiTerminalSession` に `shell: Option<ShellProcess>`（PID・spawn 世代・wait 結果）を足す。
    - cwd probe は `kagi_git::proc::cwd_of_pid`（macOS `proc_pidinfo(PROC_PIDVNODEPATHINFO)` / Linux `/proc/<pid>/cwd`、
      Windows は `Unsupported`）。

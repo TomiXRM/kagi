@@ -4,6 +4,7 @@
 //! reconstruction, and retention continue to own their existing policies.
 
 use super::{recovery, Actor, FailureCode, OpLogEntry, OpOutcome, StateSummary};
+use kagi_domain::ref_moves::RefMove;
 use serde::{de::Error, Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
@@ -93,6 +94,32 @@ struct EntryRef<'a> {
     recovery: &'a [recovery::RecoveryHandle],
     #[serde(skip_serializing_if = "Option::is_none")]
     failure_code: Option<&'static str>,
+    // Written whenever recorded, an empty list included: "nothing moved" is
+    // a record, not the absence of one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ref_moves: Option<Vec<RefMoveRef<'a>>>,
+}
+
+#[derive(Serialize)]
+struct RefMoveRef<'a> {
+    refname: &'a str,
+    old: Option<&'a str>,
+    new: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    old_symbolic: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    new_symbolic: Option<&'a str>,
+}
+
+#[derive(Deserialize)]
+struct RefMoveRecord {
+    refname: String,
+    old: Option<String>,
+    new: Option<String>,
+    #[serde(default)]
+    old_symbolic: Option<String>,
+    #[serde(default)]
+    new_symbolic: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -123,6 +150,8 @@ struct EntryRecord {
     recovery: Vec<recovery::RecoveryHandle>,
     #[serde(default, deserialize_with = "failure_code")]
     failure_code: Option<FailureCode>,
+    #[serde(default, deserialize_with = "ref_moves")]
+    ref_moves: Option<Vec<RefMove>>,
 }
 
 pub(super) fn to_json(entry: &OpLogEntry) -> String {
@@ -139,6 +168,18 @@ pub(super) fn to_json(entry: &OpLogEntry) -> String {
         backup_refs: &entry.backup_refs,
         recovery: &entry.recovery,
         failure_code: entry.failure_code.map(FailureCode::as_str),
+        ref_moves: entry.ref_moves.as_ref().map(|moves| {
+            moves
+                .iter()
+                .map(|m| RefMoveRef {
+                    refname: &m.refname,
+                    old: m.old.as_deref(),
+                    new: m.new.as_deref(),
+                    old_symbolic: m.old_symbolic.as_deref(),
+                    new_symbolic: m.new_symbolic.as_deref(),
+                })
+                .collect()
+        }),
     };
     // This fixed schema contains only strings, integers, sequences and objects;
     // no fallible map keys, floating-point values, or custom fallible payloads.
@@ -165,6 +206,7 @@ pub(super) fn from_value(value: Value) -> Option<OpLogEntry> {
         backup_refs: record.backup_refs,
         recovery: record.recovery,
         failure_code: record.failure_code,
+        ref_moves: record.ref_moves,
     })
 }
 
@@ -236,4 +278,23 @@ fn read_blockers<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Erro
             .collect(),
         _ => Vec::new(),
     })
+}
+
+// Additive: a missing, null or malformed list reads as "not recorded", which
+// the panel shows as an estimate. A bad record must never drop the whole row,
+// and never turns into a confident "nothing moved".
+fn ref_moves<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<RefMove>>, D::Error> {
+    let records: Option<Vec<RefMoveRecord>> = serde_json::from_value(Value::deserialize(d)?).ok();
+    Ok(records.map(|records| {
+        records
+            .into_iter()
+            .map(|r| RefMove {
+                refname: r.refname,
+                old: r.old,
+                new: r.new,
+                old_symbolic: r.old_symbolic,
+                new_symbolic: r.new_symbolic,
+            })
+            .collect()
+    }))
 }

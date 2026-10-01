@@ -238,8 +238,11 @@ fn render_row(
                 ),
         )
         .when_some(detail, |row, reflog| {
-            row.child(render_detail(i, entry))
-                .child(render_reflog(i, reflog))
+            let row = row.child(render_detail(i, entry));
+            match &entry.ref_moves {
+                Some(moves) => row.child(render_ref_moves(i, moves)),
+                None => row.child(render_reflog(i, reflog)),
+            }
         })
         .into_any_element()
 }
@@ -410,4 +413,65 @@ fn render_reflog(i: usize, reflog: Option<&oplog_panel::ReflogDetail>) -> gpui::
         }
     }
     .into_any_element()
+}
+
+/// #334 slice 2a: the refs the operation recorded moving, by OID — the exact
+/// record (ADR-0214 §4), labelled apart from the time-window estimate.
+fn render_ref_moves(i: usize, moves: &[kagi_domain::ref_moves::RefMove]) -> gpui::AnyElement {
+    let short = |oid: &Option<String>| match oid {
+        Some(oid) => oid.get(..8).unwrap_or(oid).to_string(),
+        None => i18n::oplog_panel::ref_absent().to_string(),
+    };
+    let section = div()
+        .id(("oplog-row-refmoves", i))
+        .relative()
+        .flex()
+        .flex_col()
+        .w_full()
+        .px_3()
+        .pb_1()
+        .bg(rgb(theme().selected))
+        .text_xs()
+        .text_color(rgb(theme().text_sub))
+        .child(
+            div()
+                .text_color(rgb(theme().color_success))
+                .child(i18n::oplog_panel::recorded_heading()),
+        )
+        .child(super::e2e::measure_inside(format!("oplog-recorded-{i}")));
+    if moves.is_empty() {
+        return section
+            .child(
+                div()
+                    .text_color(rgb(theme().text_muted))
+                    .child(i18n::oplog_panel::recorded_none()),
+            )
+            .into_any_element();
+    }
+    section
+        .children(moves.iter().enumerate().map(|(n, m)| {
+            let target = |symbolic: &Option<String>| {
+                symbolic
+                    .as_deref()
+                    .map(|s| format!("{} ", s.trim_start_matches("refs/heads/")))
+                    .unwrap_or_default()
+            };
+            let text = format!(
+                "{}  {}{}→ {}{}",
+                m.refname,
+                target(&m.old_symbolic),
+                short(&m.old),
+                target(&m.new_symbolic),
+                short(&m.new)
+            );
+            div()
+                .relative()
+                .truncate()
+                .child(SharedString::from(text))
+                .child(super::e2e::measure_inside(format!(
+                    "oplog-refmove-{i}-{n}-{}",
+                    m.refname
+                )))
+        }))
+        .into_any_element()
 }

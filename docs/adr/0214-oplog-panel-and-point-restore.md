@@ -1,6 +1,6 @@
-# ADR-0214: Operation Log パネルを一級ビューにする — 全体設計と slice 1(読むだけ)
+# ADR-0214: Operation Log パネルを一級ビューにする — 全体設計、slice 1(読むだけ)、slice 2a(ref 移動の記録)
 
-- Status: **Accepted**(slice 1)。slice 2 以降は本 ADR の設計を前提に個別に Accepted にする
+- Status: **Accepted**(slice 1、slice 2a)。slice 2b 以降は本 ADR の設計を前提に個別に Accepted にする
 - Date: 2026-10-01
 - Related: [#334](https://github.com/TomiXRM/kagi/issues/334)、#333 / ADR-0149(actor・worktree・id/parent)、ADR-0081 / ADR-0084(undo)、ADR-0111(`OpLogPanel`)、#468 / #548(行の展開・コピー)
 
@@ -51,7 +51,34 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
 - **下限が無い場合**: 読み込まれた範囲に直前の entry が無ければ、下限を 60 秒前とし、見出しでそう明示する。
 - **既知の限界**: 窓は時刻だけで決まるので、Kagi の外(terminal の git など)で同じ時間帯に動いた ref も窓に入る。見出しは「この worktree の前の操作以降の reflog」であり、因果関係を主張しない。
 - **slice 2 以降への拘束**: restore / revert / preview は、この時刻窓の帰属を前提にしてはならない。特に `Ambiguous` の行を、復元先や逆適用対象の根拠にしてはならない。
-- **将来の正攻法**: slice 2 で oplog entry に「動かした ref と old / new OID」(`RefMove { refname, old, new }` の列)を持たせる。時刻窓は表示の補助に下げ、時点復元と取り消しは OID で厳密に行う。この変更は oplog スキーマの追加になる(#333 の互換規則に従い additive)。
+- **将来の正攻法**: oplog entry に「動かした ref と old / new OID」を持たせる。→ slice 2a で実装した(§4)。時刻窓は記録の無い entry の表示補助に下がる。
+
+### 4. slice 2a: recorded op は動かした ref を OID で記録する
+
+- **記録点**: `Backend::run_recorded_with_events`(`Backend::run` / `run_recorded` が通る 1 箇所)と、undo / redo の `run_history_move`。
+  - 実行の前後に ref を読み(`backend/reflog.rs::ref_snapshot`)、差分(`kagi_domain::ref_moves::diff`、pure)を entry の `ref_moves` に載せる。
+  - 読むもの: **op を実行した worktree の HEAD**(symbolic 先 + 解決 OID)と `refs/heads/*`。
+  - 他の worktree の HEAD は走査しない。replay-onto などで checkout 先の HEAD が追従しても、それは `refs/heads/<branch>` の差分から導ける(snapshot のコストを増やさない)。
+- **型**: `RefMove { refname, old, new: Option<OID>, old_symbolic, new_symbolic }`。`None` は ref が無かったこと(作成 / 削除)、symbolic は HEAD のみ。entry 側は `Option<Vec<RefMove>>`。
+  - `None`: 記録なし。この field より前に書かれた entry、記録しない経路(下記)、前後どちらかの ref を読めなかった場合。読めない時は誤った差分より記録なしを選ぶ。
+  - `Some(空)`: 記録した結果、何も動いていない。refused / 失敗 / no-op がこれにあたる。
+- **outcome に関わらず実際の差分を記録する**。失敗しても動かなければ空、Partial なら実際に動いた分になる。
+- **wire**: additive。
+  - 欠落・`null`・不正な値は `None` として読む。行ごと捨てず、「何も動いていない」とも読まない。
+  - `Some(空)` は空配列として書く。
+- **repository への書き込みはない**。増えるのは oplog の 1 field だけ。
+- **パネルの表示**
+  - `Some` の entry は記録を「記録」として即表示する(background read なし)。
+  - `None` の entry は §3 の時刻窓を「推定」として表示する。見出しの色と文言で区別する。
+- **既知の限界**
+  - 前後の snapshot の間に、外部の process が動かした ref も差分に入る(op の実行中だけの窓。時刻窓よりはるかに狭い)。
+  - 記録しない経路: conflict の continue / skip / abort(`backend/conflict_ops.rs`)、GitHub 側の書き込み(local の ref を動かさない)、UI が直接記録する経路(fetch、worktree の lock など)。これらは `None` のまま推定で表示する。conflict 経路の記録は restore に必要になった時点で追加する。
+
+### 5. slice 2b 以降(restore / revert / preview)への拘束
+
+- 復元先や逆適用対象は `ref_moves`(`Some`)だけを根拠にする。
+- `None` の entry(推定しか無い時点)は restore / revert の対象にしない。少なくとも confirm で「記録が無いので戻せない」と明示する。
+- revert の衝突判定は「同じ ref を後続の記録済み entry が動かしたか」を `ref_moves` で見る(#334 §5 の論点に対する起点)。
 
 ## 結果
 
@@ -66,3 +93,9 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
     - 共有された秒の行は `Ambiguous` として描画される。
     - repo の指紋と oplog の件数が不変。
 - 変異確認: 曖昧判定を外す、または隣接を worktree で絞らないと、それぞれ上記のテストが落ちる。
+- slice 2a のテスト
+  - domain unit: checkout は HEAD の symbolic だけが動く、作成 / 削除、commit。
+  - codec unit: 旧行は `None`、`Some(空)` が往復する、不正値は行を捨てずに `None`。
+  - kagi-git integration(実 `Backend::run`): checkout / commit / replay-onto(別 worktree で checkout 中の branch は `refs/heads/feat` だけ)/ 失敗 op は `Some(空)` / pipeline 外の `git branch` は次の entry に入らない。
+  - Tier A: 実 run の行は「記録」を描画して推定の読み取りを始めない。記録の無い合成行は推定 + 曖昧。
+- slice 2a の変異確認: 記録を止める → integration と Tier A、HEAD の symbolic を見ない → domain と integration、`Some(空)` を書かない → codec が落ちる。

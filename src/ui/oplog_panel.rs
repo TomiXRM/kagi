@@ -181,6 +181,11 @@ impl OpLogPanel {
         let (Some(entry), Some(window)) = (self.entries.get(i), self.reflog_window(i)) else {
             return;
         };
+        // #334 slice 2a: a recorded entry carries its moves; the time-window
+        // estimate is only for entries without a record.
+        if entry.ref_moves.is_some() {
+            return;
+        }
         let key = EntryKey::of(entry);
         let path = PathBuf::from(entry_worktree(entry));
         let generation = self.reflog_generation;

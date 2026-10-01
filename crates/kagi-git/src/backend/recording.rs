@@ -187,6 +187,13 @@ pub fn recovery_handles(result: &Result<OperationOutcome, GitError>) -> Vec<Reco
     }
 }
 
+/// What a backend attempt leaves on its oplog entry besides the outcome.
+pub(super) struct Receipt {
+    pub backup_refs: Vec<String>,
+    pub recovery: Vec<RecoveryHandle>,
+    pub failure_code: Option<crate::oplog::FailureCode>,
+    pub ref_moves: Option<Vec<kagi_domain::ref_moves::RefMove>>,
+}
 impl Backend {
     /// Build and append the oplog entry for a completed backend attempt
     /// (ADR-0149). `before` comes from the plan; `actor`/`worktree` from
@@ -210,14 +217,48 @@ impl Backend {
         recovery: Vec<RecoveryHandle>,
         failure_code: Option<crate::oplog::FailureCode>,
     ) -> Recording {
+        let receipt = Receipt {
+            backup_refs,
+            recovery,
+            failure_code,
+            ref_moves: None,
+        };
+        self.record_receipt(op, before, outcome, receipt)
+    }
+
+    /// The one place a backend entry is built and appended.
+    pub(super) fn record_receipt(
+        &self,
+        op: &str,
+        before: &ops::StateSummary,
+        outcome: crate::oplog::OpOutcome,
+        receipt: Receipt,
+    ) -> Recording {
         let repo = self.path.display().to_string();
         let mut entry = crate::oplog::OpLogEntry::new(op, repo.clone(), before.clone(), outcome)
             .with_actor(self.policy.actor)
             .with_worktree(Some(repo));
-        entry.backup_refs = backup_refs;
-        entry.recovery = recovery;
-        entry.failure_code = failure_code;
+        entry.backup_refs = receipt.backup_refs;
+        entry.recovery = receipt.recovery;
+        entry.failure_code = receipt.failure_code;
+        entry.ref_moves = receipt.ref_moves;
         finalize(entry)
+    }
+
+    /// The refs `execute` moved (#334 slice 2a): HEAD of this worktree and
+    /// every branch, read before and after, whatever the outcome. `None` when
+    /// either read failed — no record beats a wrong one.
+    pub(super) fn observe_ref_moves<T>(
+        &self,
+        execute: impl FnOnce(&Self) -> T,
+    ) -> (T, Option<Vec<kagi_domain::ref_moves::RefMove>>) {
+        let before = super::reflog::ref_snapshot(&self.repo);
+        let result = execute(self);
+        let after = super::reflog::ref_snapshot(&self.repo);
+        let moves = before
+            .zip(after)
+            .map(|(before, after)| kagi_domain::ref_moves::diff(&before, &after));
+        (result, moves)
     }
 
     /// Preflight, move the recorded branch ref, then persist one entry per attempt.
@@ -227,16 +268,17 @@ impl Backend {
         plan: &OperationPlan,
         entry: &HistoryEntry,
     ) -> Result<ops::HistoryMoveOutcome, GitError> {
-        let result = self
-            .require_trust()
-            .and_then(|()| {
-                self.preflight_check(plan)
-                    .map_err(|e| GitError::Preflight(Box::new(e)))
-            })
-            .and_then(|()| match dir {
-                HistoryMoveDir::Undo => self.execute_undo(entry),
-                HistoryMoveDir::Redo => self.execute_redo(entry),
-            });
+        let (result, ref_moves) = self.observe_ref_moves(|this| {
+            this.require_trust()
+                .and_then(|()| {
+                    this.preflight_check(plan)
+                        .map_err(|e| GitError::Preflight(Box::new(e)))
+                })
+                .and_then(|()| match dir {
+                    HistoryMoveDir::Undo => this.execute_undo(entry),
+                    HistoryMoveDir::Redo => this.execute_redo(entry),
+                })
+        });
         let outcome = match &result {
             Ok(moved) => crate::oplog::OpOutcome::Success {
                 after: ops::StateSummary {
@@ -262,13 +304,16 @@ impl Backend {
         };
         let op_name = format!("{}-{}", dir.label_en_lower(), entry.kind.slug());
         let failure_code = result.as_ref().err().map(crate::oplog::FailureCode::from);
-        self.record_run_oplog_with_backups(
+        self.record_receipt(
             &op_name,
             &plan.current,
             outcome,
-            Vec::new(),
-            handles,
-            failure_code,
+            Receipt {
+                backup_refs: Vec::new(),
+                recovery: handles,
+                failure_code,
+                ref_moves,
+            },
         );
         result
     }

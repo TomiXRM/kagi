@@ -14,6 +14,9 @@ impl Backend {
         fault: Option<stash::StashFaultPoint>,
         mut event: impl FnMut(stash::StashEvent),
     ) -> recording::RunReport {
+        // #334 slice 2a: the refs as execution finds them; diffed below
+        // whatever the outcome (a partial run records what it did move).
+        let refs_before = super::reflog::ref_snapshot(&self.repo);
         let mut partial_after = None;
         let mut backup_refs = Vec::new();
         let mut evidence = stash::StashEvidence::default();
@@ -104,15 +107,21 @@ impl Backend {
             Ok(OperationOutcome::Suggestion(s)) => backup_refs.push(s.reference.clone()),
             _ => {}
         }
-        let recording = self.record_run_oplog_with_backups(
+        let ref_moves = refs_before
+            .zip(super::reflog::ref_snapshot(&self.repo))
+            .map(|(before, after)| kagi_domain::ref_moves::diff(&before, &after));
+        let recording = self.record_receipt(
             op.oplog_name(),
             &plan.current,
             outcome,
-            backup_refs,
-            recording::recovery_handles(&result),
-            // The typed error is still in scope here; by the time the outcome
-            // has been built it is prose (#650).
-            result.as_ref().err().map(crate::oplog::FailureCode::from),
+            recording::Receipt {
+                backup_refs,
+                recovery: recording::recovery_handles(&result),
+                // The typed error is still in scope here; by the time the
+                // outcome has been built it is prose (#650).
+                failure_code: result.as_ref().err().map(crate::oplog::FailureCode::from),
+                ref_moves,
+            },
         );
         recording::RunReport {
             result,

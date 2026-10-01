@@ -570,6 +570,7 @@ pub fn build_sidebar_rows(
     tags: &[Tag],
     stashes: &[Stash],
     worktrees: &[Worktree],
+    run_mode: kagi_domain::worktree_run_mode::RunMode,
     collapsed: &HashSet<&'static str>,
     groups_collapsed: &HashSet<String>,
     filter_text: &str,
@@ -832,6 +833,9 @@ pub fn build_sidebar_rows(
             collapsed: section_collapsed,
         });
         if !section_collapsed {
+            // #869: a shared-port mode hands every worktree the main
+            // worktree's block, so every row links to it.
+            let main_port = worktrees.iter().find(|w| w.is_main).and_then(|w| w.port);
             for wt in worktrees
                 .iter()
                 .filter(|w| matches(&w.name) || matches(w.path.to_string_lossy().as_ref()))
@@ -843,7 +847,11 @@ pub fn build_sidebar_rows(
                     is_current: wt.is_current,
                     is_main: wt.is_main,
                     locked: wt.locked,
-                    port: wt.port,
+                    port: if run_mode.shares_ports() {
+                        main_port
+                    } else {
+                        wt.port
+                    },
                 });
             }
         }

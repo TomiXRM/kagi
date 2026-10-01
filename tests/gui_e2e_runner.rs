@@ -50,6 +50,7 @@ fn main() {
 #[cfg(target_os = "macos")]
 #[path = "recovery/file_tree_a11y.rs"]
 mod file_tree_a11y;
+#[cfg(target_os = "macos")]
 #[path = "support/gui_evidence.rs"]
 mod gui_evidence;
 #[cfg(target_os = "macos")]

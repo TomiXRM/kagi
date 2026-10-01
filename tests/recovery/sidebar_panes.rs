@@ -170,6 +170,45 @@ pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
         weights
     );
 
+    // PR and LOCAL have substantially different whole-pane heights. The
+    // separator must track the first small actual drag, not jump to a
+    // header-subtracted ratio when the flex weights size entire panes.
+    let unequal = bounds(cx, &app);
+    let pr_height = unequal[0].1 - unequal[0].0;
+    let local_height = unequal[1].1 - unequal[1].0;
+    assert!(
+        local_height - pr_height > 24.,
+        "unequal PR/LOCAL panes required: {unequal:?}"
+    );
+    let divider =
+        e2e::control_bounds(window.window_id(), "sidebar-prs-divider").expect("PR/LOCAL divider");
+    let center = divider.center();
+    cx.simulate_mouse_move(window, center, None, Modifiers::none());
+    cx.simulate_mouse_down(window, center, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(
+        window,
+        point(center.x, center.y + px(8.)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    paint(cx, window);
+    let pointer = point(center.x, center.y + px(12.));
+    cx.simulate_mouse_move(window, pointer, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    paint(cx, window);
+    let separator =
+        e2e::control_bounds(window.window_id(), "sidebar-prs-divider").expect("moved divider");
+    let error = (f32::from(separator.center().y) - f32::from(pointer.y)).abs();
+    assert!(
+        error <= 2.,
+        "first PR/LOCAL move must keep separator under pointer: {unequal:?}, target={pointer:?}, actual={separator:?}, error={error}"
+    );
+    cx.simulate_mouse_up(window, pointer, MouseButton::Left, Modifiers::none());
+    redraw(cx, &app, window);
+    let after_drag = bounds(cx, &app);
+    let weights = cx.read(|cx| app.read(cx).sidebar.pane_weights);
+
     // Scroll only LOCAL: REMOTE's drawn visible rows and position stay put.
     let remote_before = list_a11y::recorded_list("sidebar-remote").unwrap().rows;
     app.update(cx, |app, cx| {

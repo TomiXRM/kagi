@@ -37,6 +37,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Graph サイドバーで高さが異なる PR / LOCAL 等の境界をドラッグし始めると、separator が pointer からずれる問題を修正しました。header を含む実測 pane 高から重みを求め、初回の小さな移動から pointer に追従します。（#911 review、ADR-0217）
+
 - Commit Panel を同じ worktree で開き直すか、merge 後に再読込した際に、file tree の兄弟位置が以前のファイル構成のまま残り、新しい行から支援技術向けの TreeItem が欠落する問題を修正しました。新しい状態に差し替えるたびに位置表を無効化します。（#901 review、Refs #354）
 - Operation Log の「取り消す / この時点まで戻す」の確認 card と Operation Log の review 指摘を修正しました(#883 / #871 / #878)。
   - 「戻した後のグラフ」が長いと card の下側が切れて見えなかった問題を修正しました。行は card 内でスクロールします。

@@ -101,9 +101,9 @@ impl SidebarState {
         self.persist_panes();
     }
 
-    /// Adjust the two nearest expanded pane bodies around this divider.
-    /// Pane bounds are paint-measured screen pixels, so there is no assumed
-    /// toolbar/filter/zoom offset and the divider does not jump on first move.
+    /// Adjust the two nearest expanded panes around this divider. The flex
+    /// weights size whole panes (including headers), so measured whole-pane
+    /// heights and the cursor position must use that same coordinate system.
     pub(super) fn resize_pane_pair(&mut self, index: usize, cursor_y: f32, zoom: f32) -> bool {
         if index + 1 >= SECTIONS.len() || self.collapsed.contains(SECTIONS[index]) {
             return false;
@@ -116,15 +116,13 @@ impl SidebarState {
         let (top, first_bottom) = self.pane_geom[index].get();
         let (second_top, bottom) = self.pane_geom[next].get();
         let pair_height = (first_bottom - top) + (bottom - second_top);
-        let body_height = pair_height - 2. * SIDEBAR_ROW_H * zoom;
-        if body_height <= 1. || second_top < first_bottom {
+        if pair_height <= 2. * SIDEBAR_ROW_H * zoom + 1. || second_top < first_bottom {
             return false;
         }
-        let minimum = (24. * zoom).min(body_height / 2.);
-        let first_body =
-            (cursor_y - top - (SIDEBAR_ROW_H + 2.) * zoom).clamp(minimum, body_height - minimum);
+        let minimum = ((SIDEBAR_ROW_H + 24.) * zoom).min(pair_height / 2.);
+        let first_height = (cursor_y - top - 2. * zoom).clamp(minimum, pair_height - minimum);
         let total_weight = u32::from(self.pane_weights[index]) + u32::from(self.pane_weights[next]);
-        let weight = ((first_body / body_height) * total_weight as f32).round() as u32;
+        let weight = ((first_height / pair_height) * total_weight as f32).round() as u32;
         let lower = total_weight.saturating_sub(u16::MAX as u32).max(1);
         let upper = total_weight.saturating_sub(1).min(u16::MAX as u32);
         let weight = weight.clamp(lower, upper);

@@ -19,6 +19,7 @@ Graph の Repository Navigator は PR / local branch / remote branch / worktree 
 
 - pure test: PR 0 件でも最初の pane の見出しが存在し、section と連続 range の順序が一致する。設定の v1 往復と不正値・0・件数違いの既定値フォールバック。
 - native Tier A `sidebar_tree_roles` / `sidebar_panes`: 6 つの名前付き Tree、実マウスの separator drag、独立スクロール、開閉と重みの復元、不正値の起動時不変と header 操作後の v1 書き込み、900px と 600px / 125% の配置・スクロール、再 mount 後の状態復元。
+- #911 review: divider の重みは header を含む pane 全体の実測高と同じ座標系で計算する。PR / LOCAL の高さが異なる状態で初回の小さな実マウスドラッグ後、separator の中心が pointer と一致することを Tier A で検証する。header 分を差し引く旧計算では 12px ずれることを変異で確認した。
 
 ## 却下した案
 

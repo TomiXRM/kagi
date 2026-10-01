@@ -257,50 +257,59 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                 .unwrap_or_default();
             let owner = app.active_session();
             let generation = ui.pr_list_revision();
-            body = body.child(
-                uniform_list(
-                    "pr-home-list",
-                    row_count,
-                    cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
-                        if this.active_session() != owner
-                            || this.ui().pr_list_revision() != generation
-                        {
-                            return Vec::new();
-                        }
-                        let start = range.start.saturating_sub(2);
-                        let end = (range.end + 2).min(render_rows.len());
-                        let visible: BTreeSet<u64> = render_rows[start..end]
-                            .iter()
-                            .filter_map(|(index, _, _)| {
-                                this.ui().pr_list_rows().get(*index).map(|pr| pr.number)
-                            })
-                            .collect();
-                        this.observe_visible_prs(visible, cx);
-                        range
-                            .filter_map(|index| {
-                                render_rows.get(index).and_then(|(source, bucket, why)| {
-                                    let pr = this.ui().pr_list_rows().get(*source)?;
-                                    // Borrowed, not cloned: a `clone()` here
-                                    // copied the whole avatar map for every
-                                    // visible row, every frame (#750 review).
-                                    let status = this.pr_status_availability(pr);
-                                    Some(render_table_row(
-                                        pr,
-                                        *bucket,
-                                        why,
-                                        status,
-                                        now,
-                                        &this.avatars.images,
-                                        cx,
-                                    ))
-                                })
-                            })
-                            .collect::<Vec<_>>()
-                    }),
-                )
-                .track_scroll(&scroll)
+            let list = div()
+                .id("pr-home-list-a11y")
                 .flex_1()
-                .min_h(px(0.)),
+                .min_h(px(0.))
+                .flex()
+                .flex_col();
+            body = body.child(
+                super::list_a11y::plain_list("pr-list", list, Msg::A11yPrList.t()).child(
+                    uniform_list(
+                        "pr-home-list",
+                        row_count,
+                        cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                            if this.active_session() != owner
+                                || this.ui().pr_list_revision() != generation
+                            {
+                                return Vec::new();
+                            }
+                            let start = range.start.saturating_sub(2);
+                            let end = (range.end + 2).min(render_rows.len());
+                            let visible: BTreeSet<u64> = render_rows[start..end]
+                                .iter()
+                                .filter_map(|(index, _, _)| {
+                                    this.ui().pr_list_rows().get(*index).map(|pr| pr.number)
+                                })
+                                .collect();
+                            this.observe_visible_prs(visible, cx);
+                            range
+                                .filter_map(|index| {
+                                    render_rows.get(index).and_then(|(source, bucket, why)| {
+                                        let pr = this.ui().pr_list_rows().get(*source)?;
+                                        // Borrowed, not cloned: a `clone()` here
+                                        // copied the whole avatar map for every
+                                        // visible row, every frame (#750 review).
+                                        let status = this.pr_status_availability(pr);
+                                        Some(render_table_row(
+                                            pr,
+                                            *bucket,
+                                            why,
+                                            status,
+                                            now,
+                                            &this.avatars.images,
+                                            (index, render_rows.len()),
+                                            cx,
+                                        ))
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                        }),
+                    )
+                    .track_scroll(&scroll)
+                    .flex_1()
+                    .min_h(px(0.)),
+                ),
             );
         }
     }
@@ -393,6 +402,9 @@ fn render_column_header() -> gpui::Div {
 /// row says how big a PR is and how stale it is without opening it. The
 /// leading avatar, gutter and hairline are the shared timeline chrome (#750) —
 /// the page stays a table, it just stops being a different table.
+// #354 added the row's list position; the inputs are independent per-row
+// facts, so a parameter struct would only rename them.
+#[allow(clippy::too_many_arguments)]
 fn render_table_row(
     pr: &PullRequest,
     bucket: PrAttention,
@@ -400,6 +412,8 @@ fn render_table_row(
     status: PrDetailAvailability,
     now: i64,
     avatars: &kagi_ui_core::avatar::AvatarImages,
+    // #354: position (0-based) and size within the PR list.
+    (position, size): (usize, usize),
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let open = pr.clone();
@@ -437,6 +451,9 @@ fn render_table_row(
         IssueState::Open if pr.is_draft => Msg::PrDraft.t().to_string(),
         IssueState::Open => reason_text(why),
     };
+    let label = super::list_a11y::pr_row_label(
+        pr.number, &pr.title, &state, &pr.author, &pr.head, &pr.base, &checks, &age,
+    );
     // The cells fill everything right of the shared row's avatar column. The
     // strip must take the table's width, not its own content's: without
     // `flex_1` + `overflow_hidden` a long title sets the column's intrinsic
@@ -531,12 +548,18 @@ fn render_table_row(
                 .flex_shrink_0()
                 .child(SharedString::from(age)),
         );
-    super::timeline_row::clickable(super::timeline_row::row(
-        ("pr-home-row", pr.number as usize),
-        &pr.author,
-        avatars,
-        cells,
-    ))
+    super::list_a11y::list_item(
+        "pr-list",
+        super::timeline_row::clickable(super::timeline_row::row(
+            ("pr-home-row", pr.number as usize),
+            &pr.author,
+            avatars,
+            cells,
+        )),
+        position,
+        size,
+        label,
+    )
     .relative()
     .when(cfg!(feature = "gui-e2e"), |row| {
         row.child(super::e2e::measure_inside(format!(

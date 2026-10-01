@@ -83,6 +83,21 @@ the runner's `macos::open_offscreen` helper, which panics past a budget of 8
 live windows and opens them hidden — set `KAGI_GUI_E2E_VISIBLE=1` to see them
 for triage.
 
+When a scenario panics, the runner writes failure evidence (#516) and prints
+`[gui-e2e] FAIL <scenario>: evidence <dir>`. The directory is
+`target/gui-e2e/<scenario>/` (worktree-local `target/`) and contains:
+
+- `panic.txt`: the panic message.
+- `klog-tail.txt`: the last 200 `[kagi]` lines.
+- `fixture.txt`: `git status --short` and `git log --oneline -5` of every
+  repository mounted through `mount` / `mount_state`.
+- `window-<n>.png` for each window, or `window.txt` saying why there is none.
+  Windows stay off-screen, and without Screen Recording permission
+  `screencapture` cannot capture them.
+
+Read these before re-running a decayed scenario. The next run of that scenario
+deletes the directory first, so whatever is there belongs to the latest run.
+
 For history bisection, strip repository-location variables exported by
 `git bisect run` before launching a Git fixture. Otherwise a fixture's `git init`
 can address the bisected repository instead of its temporary directory (#764).

@@ -5,14 +5,42 @@
 
 use crate::plan_note::OplogRestoreNote;
 use crate::ref_moves::{RefMove, RefSnapshot};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-/// One Operation Log entry of the repository, as the planner needs it.
+/// Which repository an Operation Log entry belongs to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EntryRepo {
+    /// One of this repository's worktrees (same common dir).
+    Mine,
+    /// Another repository.
+    Other,
+    /// Its worktree can no longer be opened (deleted or pruned): it may have
+    /// been one of ours. The path it recorded.
+    Unknown(String),
+}
+
+/// One Operation Log entry, as the planner needs it. The planner gets every
+/// entry of the log (any repository), oldest first, so it can prove the log
+/// is continuous and that no entry of unknown origin sits in the range.
 #[derive(Debug, Clone)]
 pub struct RecordedEntry {
     pub id: u64,
+    /// The previous entry's id (the log's chain, ADR-0149).
+    pub parent: Option<u64>,
+    /// Unix seconds the entry was recorded (after its operation ran).
+    pub timestamp: i64,
     pub op: String,
+    pub repo: EntryRepo,
     pub ref_moves: Option<Vec<RefMove>>,
+}
+
+/// What the backend read besides the log (#878 review).
+#[derive(Debug, Clone, Default)]
+pub struct Observed {
+    /// Local branches whose reflog has an update newer than the target
+    /// entry. One that no recorded move in the range explains changed
+    /// outside the record.
+    pub changed_after_target: BTreeSet<String>,
 }
 
 /// Put `refname` back: it must be at `expect` now and goes to `restore_to`
@@ -59,24 +87,58 @@ fn branch_moves(moves: &[RefMove]) -> impl Iterator<Item = &RefMove> {
     moves.iter().filter(|m| m.refname != "HEAD")
 }
 
-/// `entries` oldest first (by id). `current` = the refs now.
+/// `entries` = the whole log, oldest first (by id). `current` = the refs now.
 pub fn plan(
     entries: &[RecordedEntry],
     target: u64,
     mode: RestoreMode,
     current: &RefSnapshot,
+    observed: &Observed,
 ) -> RestorePlan {
-    let Some(pos) = entries.iter().position(|e| e.id == target) else {
+    let Some(at) = entries
+        .iter()
+        .position(|e| e.id == target && e.repo == EntryRepo::Mine)
+    else {
         return RestorePlan {
             restores: Vec::new(),
             blockers: vec![OplogRestoreNote::EntryNotLoaded { id: target }],
         };
     };
+    let mut blockers = Vec::new();
+    if mode == RestoreMode::RestoreTo {
+        // Every entry after the target must be accounted for: the chain is
+        // unbroken (nothing forgotten, dropped or unparsable), and each is
+        // ours or provably another repository's.
+        for pair in entries[at..].windows(2) {
+            if pair[1].parent != Some(pair[0].id) {
+                blockers.push(OplogRestoreNote::HistoryGap {
+                    after: pair[0].id,
+                    next: pair[1].id,
+                });
+            }
+        }
+        for e in &entries[at + 1..] {
+            if let EntryRepo::Unknown(path) = &e.repo {
+                blockers.push(OplogRestoreNote::UnknownRepository {
+                    id: e.id,
+                    op: e.op.clone(),
+                    path: path.clone(),
+                });
+            }
+        }
+    }
+    let entries: Vec<&RecordedEntry> = entries
+        .iter()
+        .filter(|e| e.repo == EntryRepo::Mine)
+        .collect();
+    let pos = entries
+        .iter()
+        .position(|e| e.id == target)
+        .expect("the target is one of ours");
     let range = match mode {
         RestoreMode::Revert => &entries[pos..=pos],
         RestoreMode::RestoreTo => &entries[pos + 1..],
     };
-    let mut blockers = Vec::new();
     for e in range {
         match &e.ref_moves {
             None => blockers.push(OplogRestoreNote::NotRecorded {
@@ -126,25 +188,39 @@ pub fn plan(
         }
     }
     let restores: Vec<RefRestore> = table
-        .into_iter()
+        .iter()
         .filter(|(_, (to, expect))| to != expect)
         .map(|(refname, (restore_to, expect))| RefRestore {
             refname: refname.to_string(),
-            expect,
-            restore_to,
+            expect: expect.clone(),
+            restore_to: restore_to.clone(),
         })
         .collect();
     if blockers.is_empty() && restores.is_empty() {
         blockers.push(OplogRestoreNote::NothingToRestore);
     }
-    for r in &restores {
-        let now = current.branches.get(&r.refname).cloned();
-        if now != r.expect {
+    // Every ref the range recorded — including one that moved and came back,
+    // which is left alone only if it is still where the record left it.
+    for (refname, (_, expect)) in &table {
+        let now = current.branches.get(*refname).cloned();
+        if now != *expect {
             blockers.push(OplogRestoreNote::RefMovedSince {
-                refname: r.refname.clone(),
-                expected: r.expect.clone(),
+                refname: refname.to_string(),
+                expected: expect.clone(),
                 current: now,
             });
+        }
+    }
+    if mode == RestoreMode::RestoreTo {
+        // A branch created or moved after the target that no recorded entry
+        // moved: restoring would leave it, so the result would not be the
+        // state at the target.
+        for refname in &observed.changed_after_target {
+            if !table.contains_key(refname.as_str()) {
+                blockers.push(OplogRestoreNote::RefChangedOutsideRecord {
+                    refname: refname.clone(),
+                });
+            }
         }
     }
     RestorePlan { restores, blockers }
@@ -227,12 +303,26 @@ mod tests {
         }
     }
 
+    /// One of ours, chained to the previous id.
     fn entry(id: u64, moves: Option<Vec<RefMove>>) -> RecordedEntry {
         RecordedEntry {
             id,
+            parent: id.checked_sub(1),
+            timestamp: id as i64,
             op: format!("op{id}"),
+            repo: EntryRepo::Mine,
             ref_moves: moves,
         }
+    }
+
+    /// The planner with nothing observed outside the log.
+    fn plan(
+        entries: &[RecordedEntry],
+        target: u64,
+        mode: RestoreMode,
+        current: &RefSnapshot,
+    ) -> RestorePlan {
+        super::plan(entries, target, mode, current, &Observed::default())
     }
 
     fn refs(branches: &[(&str, &str)]) -> RefSnapshot {
@@ -244,6 +334,107 @@ mod tests {
                 .map(|(n, o)| (n.to_string(), o.to_string()))
                 .collect(),
         }
+    }
+
+    #[test]
+    fn a_forgotten_or_lost_entry_in_the_range_blocks_the_restore() {
+        // checkpoint, b created (its entry then forgotten), c created.
+        let entries = [
+            entry(1, Some(vec![])),
+            RecordedEntry {
+                parent: Some(2),
+                ..entry(3, Some(vec![mv("refs/heads/c", None, Some("c1"))]))
+            },
+        ];
+        let now = refs(&[("refs/heads/b", "b1"), ("refs/heads/c", "c1")]);
+        let p = plan(&entries, 1, RestoreMode::RestoreTo, &now);
+        assert!(
+            p.blockers
+                .contains(&OplogRestoreNote::HistoryGap { after: 1, next: 3 }),
+            "{:?}",
+            p.blockers
+        );
+        // The same chain intact: no gap.
+        let entries = [
+            entry(1, Some(vec![])),
+            entry(2, Some(vec![])),
+            entries[1].clone(),
+        ];
+        let p = plan(
+            &entries,
+            1,
+            RestoreMode::RestoreTo,
+            &refs(&[("refs/heads/c", "c1")]),
+        );
+        assert!(p.blockers.is_empty(), "{:?}", p.blockers);
+    }
+
+    #[test]
+    fn another_repositorys_entry_is_skipped_but_an_unknown_one_blocks() {
+        let other = RecordedEntry {
+            repo: EntryRepo::Other,
+            ..entry(2, Some(vec![mv("refs/heads/x", None, Some("x1"))]))
+        };
+        let entries = [
+            entry(1, Some(vec![])),
+            other,
+            entry(3, Some(vec![mv(A, None, Some("a1"))])),
+        ];
+        let p = plan(&entries, 1, RestoreMode::RestoreTo, &refs(&[(A, "a1")]));
+        assert!(p.blockers.is_empty(), "{:?}", p.blockers);
+        assert_eq!(
+            p.restores.len(),
+            1,
+            "only our own a; x is another repository's"
+        );
+
+        let mut entries = entries;
+        entries[1].repo = EntryRepo::Unknown("/gone/wt".into());
+        let p = plan(&entries, 1, RestoreMode::RestoreTo, &refs(&[(A, "a1")]));
+        assert!(p.blockers.contains(&OplogRestoreNote::UnknownRepository {
+            id: 2,
+            op: "op2".into(),
+            path: "/gone/wt".into()
+        }));
+    }
+
+    #[test]
+    fn a_branch_changed_after_the_target_without_a_record_blocks() {
+        let entries = [
+            entry(1, Some(vec![])),
+            entry(2, Some(vec![mv(A, None, Some("a1"))])),
+        ];
+        let now = refs(&[(A, "a1"), (B, "b1")]);
+        let observed = Observed {
+            changed_after_target: [A.to_string(), B.to_string()].into(),
+        };
+        let p = super::plan(&entries, 1, RestoreMode::RestoreTo, &now, &observed);
+        assert_eq!(
+            p.blockers,
+            vec![OplogRestoreNote::RefChangedOutsideRecord { refname: B.into() }],
+            "a is explained by entry 2; b by nothing"
+        );
+    }
+
+    #[test]
+    fn a_ref_moved_and_back_by_the_record_must_still_be_there() {
+        let entries = [
+            entry(1, Some(vec![])),
+            entry(2, Some(vec![mv(A, Some("x"), Some("y"))])),
+            entry(3, Some(vec![mv(A, Some("y"), Some("x"))])),
+            entry(4, Some(vec![mv(B, None, Some("b1"))])),
+        ];
+        let p = plan(
+            &entries,
+            1,
+            RestoreMode::RestoreTo,
+            &refs(&[(A, "zz"), (B, "b1")]),
+        );
+        assert!(p.blockers.contains(&OplogRestoreNote::RefMovedSince {
+            refname: A.into(),
+            expected: Some("x".into()),
+            current: Some("zz".into()),
+        }));
     }
 
     const A: &str = "refs/heads/a";

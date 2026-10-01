@@ -390,9 +390,12 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
             .unwrap()
     };
 
-    // An entry of another repository without recorded moves.
+    // An entry of another (existing) repository without recorded moves. It
+    // must be a repository: an entry whose worktree cannot be opened is of
+    // unknown origin and blocks a restore across it (#878 review).
     let elsewhere_root = tempfile::tempdir().unwrap();
     let elsewhere = elsewhere_root.path().canonicalize().unwrap();
+    git(&elsewhere, &["init", "-q", "-b", "main"]);
     let state = StateSummary {
         head: "branch: main".into(),
         dirty: "clean".into(),

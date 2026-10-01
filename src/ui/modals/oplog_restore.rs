@@ -38,7 +38,10 @@ impl OplogRestoreModal {
     /// The first confirm names the action; the second states what it does.
     pub fn confirm_label(&self) -> String {
         if self.confirm_armed {
-            format!("\u{26a0} {}", i18n::oplog_panel::restore_armed())
+            format!(
+                "\u{26a0} {}",
+                i18n::Msg::OplogPanel(i18n::oplog_panel::OplogPanelMsg::RestoreArmed).t()
+            )
         } else {
             self.i18n_op().t().to_string()
         }

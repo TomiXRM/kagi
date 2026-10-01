@@ -309,6 +309,15 @@ pub fn detail_lines(entry: &OpLogEntry) -> Vec<String> {
         format!("  before:  {}", entry.before.head),
         format!("  dirty:   {}", entry.before.dirty),
     ];
+    // What an issue-create asked for, whatever came of it (#904 review).
+    if let Some(fields) = &entry.issue_fields {
+        if !fields.labels.is_empty() {
+            lines.push(format!("  labels:  {}", fields.labels.join(", ")));
+        }
+        if !fields.assignees.is_empty() {
+            lines.push(format!("  assignee: {}", fields.assignees.join(", ")));
+        }
+    }
     match &entry.outcome {
         OpOutcome::Success { after } => {
             lines.push(format!("  after:   {}", after.head));
@@ -413,6 +422,31 @@ mod tests {
                 },
             },
         )
+    }
+
+    /// #904 review: an issue-create's receipt shows the labels and assignees
+    /// it asked for, in the row and in the copied entry.
+    #[test]
+    fn an_issue_create_shows_what_it_asked_for() {
+        let entry = dummy_entry("issue-create").with_issue_fields(
+            &kagi_domain::github::IssueCreateFields {
+                labels: vec!["bug".into(), "docs".into()],
+                assignees: vec!["hubot".into()],
+            },
+        );
+        let lines = detail_lines(&entry);
+        assert!(
+            lines.contains(&"  labels:  bug, docs".to_string()),
+            "{lines:?}"
+        );
+        assert!(
+            lines.contains(&"  assignee: hubot".to_string()),
+            "{lines:?}"
+        );
+        assert!(entry_clipboard_text(&entry).contains("  labels:  bug, docs\n"));
+        assert!(!detail_lines(&dummy_entry("issue-create"))
+            .iter()
+            .any(|line| line.starts_with("  labels:") || line.starts_with("  assignee:")));
     }
 
     #[test]

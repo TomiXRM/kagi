@@ -1,15 +1,17 @@
-//! The PR field picker: the gear on a properties row (ADR-0200 §11).
+//! The field picker: the gear on a PR properties row (ADR-0200 §11), and the
+//! label / assignee buttons of the New Issue composer (#866).
 //!
 //! Reviewers, assignees and labels are the three things a reader of a PR most
 //! often has to change, and until now kagi could only show them. The picker is
 //! a read of what the repository offers plus a toggle list; confirming sends
-//! one `gh pr edit` through the write family.
+//! one `gh pr edit` through the write family. For a New Issue, confirming only
+//! stores the selection in the composer; its Create button is the write.
 
 use gpui::{div, prelude::*, px, rgb, Context, Focusable as _, SharedString};
 
 use super::i18n::Msg;
 use super::modal_shell::{modal_body, modal_card, MODAL_W_SM};
-use super::modals::{PrField, PrFieldsModal};
+use super::modals::{FieldTarget, PrField, PrFieldsModal};
 use super::render_helpers::safe_text;
 use super::theme::{self, theme};
 use super::KagiApp;
@@ -35,6 +37,9 @@ impl KagiApp {
     /// offline and one that shows an empty list (see the comment write, whose
     /// `gh repo view` lookup failed exactly that way).
     pub fn open_pr_fields_modal(&mut self, field: PrField, cx: &mut Context<Self>) {
+        let Some(owner) = self.active_session() else {
+            return;
+        };
         let Some(pr) = self
             .pr_mode()
             .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
@@ -47,25 +52,53 @@ impl KagiApp {
             PrField::Assignees => pr.assignees.clone(),
             PrField::Labels => pr.labels.iter().map(|l| l.name.clone()).collect(),
         };
+        self.open_fields_picker(
+            FieldTarget::Pr {
+                number: pr.number,
+                owner,
+            },
+            pr.base_repo.clone(),
+            field,
+            current,
+        );
+        klog!("pr-fields: open #{} field={:?}", pr.number, field);
+        cx.notify();
+        self.read_field_candidates(field, pr.base_repo.clone(), cx);
+    }
+
+    /// Show the picker for `target`, starting from `current`. The candidates
+    /// arrive from [`Self::read_field_candidates`].
+    pub(super) fn open_fields_picker(
+        &mut self,
+        target: FieldTarget,
+        base_repo: String,
+        field: PrField,
+        current: Vec<String>,
+    ) {
         self.pr_fields_generation = self.pr_fields_generation.wrapping_add(1);
-        let generation = self.pr_fields_generation;
         self.set_pr_fields_modal(PrFieldsModal {
-            generation,
-            number: pr.number,
-            base_repo: pr.base_repo.clone(),
+            generation: self.pr_fields_generation,
+            target,
+            base_repo,
             field,
             current: current.clone(),
             selected: current,
             candidates: None,
             error: None,
         });
-        klog!("pr-fields: open #{} field={:?}", pr.number, field);
-        cx.notify();
+    }
 
+    /// Read what the repository offers for the open picker's field.
+    pub(super) fn read_field_candidates(
+        &mut self,
+        field: PrField,
+        base_repo: String,
+        cx: &mut Context<Self>,
+    ) {
+        let generation = self.pr_fields_generation;
         let Some(repo) = self.repo_path.clone() else {
             return;
         };
-        let base_repo = pr.base_repo.clone();
         cx.spawn(async move |this, acx| {
             let read = acx
                 .background_executor()
@@ -98,6 +131,16 @@ impl KagiApp {
             });
         })
         .detach();
+    }
+
+    /// The picker's Apply: a PR edit is a write; a New Issue selection is
+    /// stored for the composer's Create.
+    pub fn confirm_pr_fields(&mut self, cx: &mut Context<Self>) {
+        match self.pr_fields_modal().map(|modal| modal.target) {
+            Some(FieldTarget::Pr { .. }) => self.start_pr_edit(cx),
+            Some(FieldTarget::NewIssue { .. }) => self.apply_issue_fields(cx),
+            None => {}
+        }
     }
 
     /// Build the picker's filter box while the picker is open and drop it
@@ -163,7 +206,8 @@ pub(crate) fn render_pr_fields_modal(
     modal: PrFieldsModal,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    use gpui_component::Disableable as _;
+    use gpui_component::button::ButtonVariants as _;
+    use gpui_component::{Disableable as _, Selectable as _};
     // What the PR carries always appears, even when it is not in (or ahead of)
     // the repository's list: a value that cannot be seen cannot be removed.
     let mut rows: Vec<String> = modal.current.clone();
@@ -215,54 +259,68 @@ pub(crate) fn render_pr_fields_modal(
         .overflow_y_scroll()
         .flex()
         .flex_col();
-    for (i, value) in rows.iter().enumerate() {
+    for value in rows.iter() {
         let picked = modal.selected.contains(value);
         let v = value.clone();
         let toggle = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
             this.pr_fields_toggle(v.clone(), cx);
         });
+        // A Button per row (#904 review): `Role::Button` with the pick as
+        // `aria_selected`, a tab stop, and Space toggles it like a click
+        // (#354). Enter stays the modal's Apply, as everywhere else.
         list = list.child(
-            div()
-                .id(("pr-fields-row", i))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .px_2()
-                .py_1()
-                .rounded_sm()
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(theme().surface)))
-                .on_click(toggle)
-                .child(
-                    div()
-                        .w(theme::scaled_px(14.))
-                        .flex_shrink_0()
-                        .text_sm()
-                        .text_color(rgb(if picked {
-                            theme().color_success
-                        } else {
-                            theme().text_muted
-                        }))
-                        .child(SharedString::from(if picked {
-                            "\u{2713}"
-                        } else {
-                            "\u{00b7}"
-                        })),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .truncate()
-                        .text_sm()
-                        .text_color(rgb(if picked {
-                            theme().text_main
-                        } else {
-                            theme().text_sub
-                        }))
-                        .child(safe_text(value)),
-                ),
+            // Keyed by the value, not the row index: picking a row re-sorts it
+            // to the top, and an index id would hand its focus to another
+            // candidate (#904 review).
+            gpui_component::button::Button::new(SharedString::from(format!(
+                "pr-fields-row-{value}"
+            )))
+            .ghost()
+            .compact()
+            .w_full()
+            .h_auto()
+            .px_2()
+            .py_1()
+            .rounded(px(4.))
+            .selected(picked)
+            .on_click(toggle)
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .w(theme::scaled_px(14.))
+                            .flex_shrink_0()
+                            .text_sm()
+                            .text_color(rgb(if picked {
+                                theme().color_success
+                            } else {
+                                theme().text_muted
+                            }))
+                            .child(SharedString::from(if picked {
+                                "\u{2713}"
+                            } else {
+                                "\u{00b7}"
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .truncate()
+                            .text_sm()
+                            .text_color(rgb(if picked {
+                                theme().text_main
+                            } else {
+                                theme().text_sub
+                            }))
+                            .child(safe_text(value)),
+                    ),
+            ),
         );
     }
 
@@ -271,16 +329,21 @@ pub(crate) fn render_pr_fields_modal(
         cx.notify();
     });
     let confirm = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        this.start_pr_edit(cx);
+        this.confirm_pr_fields(cx);
     });
 
     let card = modal_card(MODAL_W_SM)
         .child(super::modal_renderers::render_modal_title_row(
-            SharedString::from(format!(
-                "#{} \u{00b7} {}",
-                modal.number,
-                modal.field.title()
-            )),
+            SharedString::from(match modal.target {
+                FieldTarget::Pr { number, .. } => {
+                    format!("#{} \u{00b7} {}", number, modal.field.title())
+                }
+                FieldTarget::NewIssue { .. } => format!(
+                    "{} \u{00b7} {}",
+                    Msg::IssueNewFieldsTitle.t(),
+                    modal.field.title()
+                ),
+            }),
             None,
         ))
         .child(

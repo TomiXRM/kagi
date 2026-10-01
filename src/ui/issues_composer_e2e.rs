@@ -301,14 +301,24 @@ impl KagiApp {
     pub fn settle_issue_write_for_e2e(&mut self, cx: &mut Context<Self>) {
         let owner = self.active_session().expect("fixture session");
         let repo = self.repo_path.clone().expect("fixture repository");
-        let version = self
+        let editor = self
             .ui()
             .issue_composer
             .editors
             .get(&None)
-            .expect("seeded Composer")
-            .storage_version;
-        self.settle_issue_write(owner, repo, None, version, cx);
+            .expect("seeded Composer");
+        let (version, sent) = (editor.storage_version, editor.fields.clone());
+        self.settle_issue_write(owner, repo, None, version, &sent, cx);
+    }
+
+    /// The New Issue composer's chosen labels and assignees (#866).
+    pub fn issue_create_fields_for_e2e(&self) -> kagi_domain::github::IssueCreateFields {
+        self.ui()
+            .issue_composer
+            .editors
+            .get(&None)
+            .map(|editor| editor.fields.clone())
+            .unwrap_or_default()
     }
 
     pub fn issue_preview_for_e2e(&self) -> bool {

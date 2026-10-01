@@ -13,6 +13,7 @@ impl KagiApp {
             "example/fixture",
             "fixture issue",
             "fixture body",
+            &Default::default(),
         ));
         let report_plan = plan.clone();
         let report_repo = repo_path.clone();

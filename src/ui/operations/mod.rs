@@ -98,7 +98,8 @@ pub(crate) struct RunPresentation {
     github_merge: Option<GithubMergePresentation>,
     /// A posted PR comment: clear the composer and re-read the thread.
     pr_comment: Option<u64>,
-    issue_write: Option<(Option<u64>, u64)>,
+    /// A posted Issue write: `(number, storage version, fields sent)`.
+    issue_write: Option<(Option<u64>, u64, kagi_domain::github::IssueCreateFields)>,
     /// A confirmed field edit: the tab's own copy of the PR carries these
     /// values now, until the next list fetch confirms them from GitHub.
     pr_edit: Option<(u64, crate::ui::modals::PrField, Vec<String>)>,
@@ -160,8 +161,13 @@ impl RunPresentation {
         self
     }
 
-    pub(crate) fn issue_write(mut self, number: Option<u64>, revision: u64) -> Self {
-        self.issue_write = Some((number, revision));
+    pub(crate) fn issue_write(
+        mut self,
+        number: Option<u64>,
+        revision: u64,
+        sent: kagi_domain::github::IssueCreateFields,
+    ) -> Self {
+        self.issue_write = Some((number, revision, sent));
         self
     }
 
@@ -438,7 +444,15 @@ impl KagiApp {
                         ),
                         Err(error) => {
                             let failure = OpFailure {
-                                message: crate::ui::i18n::op_failed(op, error),
+                                // A typed refusal speaks the reader's language
+                                // (#866); everything else keeps its own text.
+                                message: match error.blocker() {
+                                    Some(note) => crate::ui::i18n::op_failed(
+                                        op,
+                                        crate::ui::i18n::plan::plan_note_text(note),
+                                    ),
+                                    None => crate::ui::i18n::op_failed(op, error),
+                                },
                                 code: FailureCode::from(error),
                             };
                             let message = failure.message.clone();
@@ -476,12 +490,13 @@ impl KagiApp {
                         // whatever is on screen now (review finding).
                         app.settle_pr_write(Some(stamp.session), repo_path.clone(), number, cx);
                     }
-                    if let Some((number, revision)) = presentation.issue_write.take() {
+                    if let Some((number, revision, sent)) = presentation.issue_write.take() {
                         app.settle_issue_write(
                             stamp.session,
                             repo_path.clone(),
                             number,
                             revision,
+                            &sent,
                             cx,
                         );
                     }

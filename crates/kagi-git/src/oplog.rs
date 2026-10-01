@@ -332,6 +332,11 @@ pub struct OpLogEntry {
     pub ref_moves: Option<Vec<kagi_domain::ref_moves::RefMove>>,
     /// The repository the entry was recorded in (#894).
     pub repo_identity: RecordedIdentity,
+    /// The labels and assignees an `issue-create` asked for (#904 review),
+    /// whatever its outcome: the receipt of a created, unconfirmed or refused
+    /// issue says what was requested. `None` for every other operation, for
+    /// a create with no picks, and for lines written before the field.
+    pub issue_fields: Option<kagi_domain::github::IssueCreateFields>,
 }
 
 impl OpLogEntry {
@@ -366,6 +371,7 @@ impl OpLogEntry {
             failure_code: None,
             ref_moves: None,
             repo_identity: RecordedIdentity::Absent,
+            issue_fields: None,
         }
     }
 
@@ -400,6 +406,13 @@ impl OpLogEntry {
             OpOutcome::Unknown { .. } => None,
             _ => moves,
         };
+        self
+    }
+
+    /// Builder: the labels and assignees an `issue-create` asked for. A
+    /// create with no picks records nothing, so its receipt reads as before.
+    pub fn with_issue_fields(mut self, fields: &kagi_domain::github::IssueCreateFields) -> Self {
+        self.issue_fields = (!fields.is_empty()).then(|| fields.clone());
         self
     }
 }

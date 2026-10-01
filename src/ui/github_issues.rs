@@ -60,6 +60,9 @@ impl KagiApp {
             let generation = ui.begin_github_issues_request();
             (generation, frozen_base_repo, ui.github_issues_request_state)
         };
+        if let Some(base_repo) = frozen_base_repo.as_deref() {
+            self.ensure_issue_host_login(base_repo, cx);
+        }
         let task = issue_list_task(repo, frozen_base_repo, None, state, cx);
         cx.notify();
         cx.spawn(async move |this, acx| {
@@ -71,6 +74,10 @@ impl KagiApp {
                 };
                 if ui.finish_github_issues_request(generation, result) && owner_is_active {
                     cx.notify();
+                }
+                // The first read is what learns the repository identity.
+                if let Some(base_repo) = ui.issue_composer.base_repo.clone() {
+                    app.ensure_issue_host_login(&base_repo, cx);
                 }
             });
         })
@@ -388,6 +395,12 @@ impl KagiApp {
         };
         let draft = editor.draft.clone();
         let storage_version = editor.storage_version;
+        // A reply carries no fields; only the New Issue composer offers them.
+        let fields = if number.is_none() {
+            editor.fields.clone()
+        } else {
+            Default::default()
+        };
         let title = issue_write_title(ui, number, &draft);
         let op_name = if number.is_some() {
             "issue-comment"
@@ -409,11 +422,15 @@ impl KagiApp {
         }
         let plan = Arc::new(match number {
             Some(number) => kagi_git::github::plan_issue_comment(number, &title, &draft.body),
-            None => kagi_git::github::plan_issue_create(&base_repo, &title, &draft.body),
+            None => kagi_git::github::plan_issue_create(&base_repo, &title, &draft.body, &fields),
         });
         if !plan.blockers.is_empty() {
             klog!("refused: {} plan has blockers, not executing", op_name);
-            self.record_refused(op_name, plan.current.clone(), &plan.blockers, &repo, cx);
+            // Same receipt as an execute-time refusal: what was asked for
+            // (#904 review). `fields` is empty for a reply.
+            let entry = Self::refused_entry(op_name, plan.current.clone(), &plan.blockers, &repo)
+                .with_issue_fields(&fields);
+            self.record_refused_entry(op_name, entry, &plan.blockers, cx);
             self.report_plan_failure(
                 op,
                 plan.blockers
@@ -426,6 +443,7 @@ impl KagiApp {
         }
         let rp = repo.clone();
         let bg_plan = plan.clone();
+        let bg_fields = fields.clone();
         self.finish_run(
             cx,
             op_name,
@@ -446,6 +464,7 @@ impl KagiApp {
                         &base_repo,
                         &title,
                         &draft.body,
+                        &bg_fields,
                         &bg_plan,
                     ),
                 })
@@ -457,7 +476,7 @@ impl KagiApp {
                     | kagi_git::OperationOutcome::IssueComment { .. },
                 ) => {
                     klog!("executed: {}", op_name);
-                    RunPresentation::none().issue_write(number, storage_version)
+                    RunPresentation::none().issue_write(number, storage_version, fields.clone())
                 }
                 _ => RunPresentation::none(),
             },
@@ -465,13 +484,15 @@ impl KagiApp {
     }
 
     /// Settlement precedes the presentation guard, but only consumes the sent
-    /// revision. New text typed while a post was in flight is a different draft.
+    /// revision. New text typed while a post was in flight is a different draft;
+    /// likewise labels / assignees changed in flight stay (#866).
     pub(crate) fn settle_issue_write(
         &mut self,
         owner: crate::app::SessionId,
         repo: PathBuf,
         number: Option<u64>,
         version: u64,
+        sent: &kagi_domain::github::IssueCreateFields,
         cx: &mut Context<Self>,
     ) {
         if kagi_git::drafts::clear_issue_draft_if_version(&repo, number, version) {
@@ -488,6 +509,9 @@ impl KagiApp {
                         editor.sync_inputs = true;
                         if number.is_none() {
                             editor.body_revealed = false;
+                            if editor.fields == *sent {
+                                editor.fields = Default::default();
+                            }
                         }
                         if *session == owner {
                             owner_revision = Some(editor.draft.revision);

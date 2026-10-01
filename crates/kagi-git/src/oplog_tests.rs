@@ -56,6 +56,7 @@ fn oplog_filter_scopes_to_bound_repo() {
         failure_code: None,
         ref_moves: None,
         repo_identity: RecordedIdentity::Absent,
+        issue_fields: None,
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -209,6 +210,7 @@ fn synthetic_entry(id: u64, repo: &str) -> OpLogEntry {
         failure_code: None,
         ref_moves: None,
         repo_identity: RecordedIdentity::Absent,
+        issue_fields: None,
     }
 }
 
@@ -744,5 +746,34 @@ fn ref_moves_distinguish_not_recorded_from_nothing_moved() {
         let line = format!(r#"{base},"ref_moves":{value}}}"#);
         let entry = parse_oplog_line(&line).unwrap_or_else(|| panic!("must parse: {line}"));
         assert_eq!(entry.ref_moves, None, "{value}");
+    }
+}
+
+/// #904 review: an issue-create's requested labels and assignees survive the
+/// codec; an entry without them writes no field and a malformed value reads
+/// as "not recorded" without dropping the row.
+#[test]
+fn issue_fields_round_trip_and_stay_additive() {
+    let base = concat!(
+        r#"{"timestamp":1000,"op":"issue-create","repo":"/tmp/repo","#,
+        r#""before":{"head":"o/r","dirty":"new issue"},"#,
+        r#""outcome":{"kind":"Success","after":{"head":"t","dirty":"issue created"}}"#,
+    );
+    let legacy = parse_oplog_line(&format!("{base}}}")).expect("legacy line");
+    assert_eq!(legacy.issue_fields, None);
+    assert!(!entry_to_json(&legacy).contains("issue_fields"));
+
+    let fields = kagi_domain::github::IssueCreateFields {
+        labels: vec!["bug".into(), "Bug".into()],
+        assignees: vec!["octocat".into()],
+    };
+    let entry = legacy.clone().with_issue_fields(&fields);
+    let read = parse_oplog_line(&entry_to_json(&entry)).unwrap();
+    assert_eq!(read.issue_fields, Some(fields));
+
+    for value in ["null", r#""bug""#, r#"{"labels":[1]}"#, r#"{"labels":[]}"#] {
+        let line = format!(r#"{base},"issue_fields":{value}}}"#);
+        let entry = parse_oplog_line(&line).unwrap_or_else(|| panic!("must parse: {line}"));
+        assert_eq!(entry.issue_fields, None, "{value}");
     }
 }

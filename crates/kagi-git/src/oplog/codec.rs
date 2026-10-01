@@ -7,6 +7,8 @@ use super::{
     recovery, Actor, FailureCode, OpLogEntry, OpOutcome, RecordedIdentity, RepoIdentity,
     StateSummary,
 };
+use super::{recovery, Actor, FailureCode, OpLogEntry, OpOutcome, StateSummary};
+use kagi_domain::github::IssueCreateFields;
 use kagi_domain::ref_moves::RefMove;
 use serde::{de::Error, Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
@@ -142,6 +144,21 @@ struct RepoIdentityRecord {
 /// missing one (#900 review).
 fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
     T::deserialize(d).map(Some)
+    issue_fields: Option<IssueFieldsRef<'a>>,
+}
+
+#[derive(Serialize)]
+struct IssueFieldsRef<'a> {
+    labels: &'a [String],
+    assignees: &'a [String],
+}
+
+#[derive(Deserialize)]
+struct IssueFieldsRecord {
+    #[serde(default)]
+    labels: Vec<String>,
+    #[serde(default)]
+    assignees: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -202,6 +219,8 @@ struct EntryRecord {
     // repository's entry for this one (#900 review).
     #[serde(default, deserialize_with = "repo_identity")]
     repo_identity: RecordedIdentity,
+    #[serde(default, deserialize_with = "issue_fields")]
+    issue_fields: Option<IssueCreateFields>,
 }
 
 pub(super) fn to_json(entry: &OpLogEntry) -> String {
@@ -240,6 +259,10 @@ pub(super) fn to_json(entry: &OpLogEntry) -> String {
             }),
             RecordedIdentity::Absent | RecordedIdentity::Invalid => None,
         },
+        issue_fields: entry.issue_fields.as_ref().map(|fields| IssueFieldsRef {
+            labels: &fields.labels,
+            assignees: &fields.assignees,
+        }),
     };
     // This fixed schema contains only strings, integers, sequences and objects;
     // no fallible map keys, floating-point values, or custom fallible payloads.
@@ -268,6 +291,7 @@ pub(super) fn from_value(value: Value) -> Option<OpLogEntry> {
         failure_code: record.failure_code,
         ref_moves: record.ref_moves,
         repo_identity: record.repo_identity,
+        issue_fields: record.issue_fields,
     })
 }
 
@@ -400,4 +424,14 @@ fn valid_identity(r: RepoIdentityRecord) -> Option<RepoIdentity> {
         file_id,
         created,
     })
+// Additive like `ref_moves`: missing, null or malformed reads as "not
+// recorded" and never drops the row (#904 review).
+fn issue_fields<'de, D: Deserializer<'de>>(d: D) -> Result<Option<IssueCreateFields>, D::Error> {
+    let record: Option<IssueFieldsRecord> = serde_json::from_value(Value::deserialize(d)?).ok();
+    Ok(record
+        .map(|r| IssueCreateFields {
+            labels: r.labels,
+            assignees: r.assignees,
+        })
+        .filter(|fields| !fields.is_empty()))
 }

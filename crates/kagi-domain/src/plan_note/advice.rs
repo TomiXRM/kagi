@@ -361,6 +361,12 @@ macro_rules! advice_template_en {
     (WorktreeRemoveLocked) => {
         "Worktree '{}' is locked ({}) — unlock it before removing (kagi never forces)."
     };
+    (WorktreeRemoveLiveShell) => {
+        "A terminal shell Kagi started in worktree '{}' is still running — `exit` it in that terminal first (kagi never ends your processes)."
+    };
+    (WorktreeRemoveLeftoverProcesses) => {
+        "{} process(es) started from a Kagi terminal in worktree '{}' are still running after its shell exited and may be using the directory. Kagi does not stop them; processes started outside Kagi are not checked."
+    };
     (WorktreeRemovesWorktreeDeleteBranch) => {
         "Removes the linked worktree at '{}' and also deletes its branch '{}'."
     };

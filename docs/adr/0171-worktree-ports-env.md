@@ -157,9 +157,30 @@ range is unchanged.
 
 ## Follow-ups (out of scope — tracked under #342 / parent #359)
 
-1. **Terminal process-group handling** — environment injection and cwd are
-   implemented. How running processes are treated on worktree removal and
-   coordination with the #340 lock remain separate follow-ups.
+1. ~~**Terminal process-group handling**~~ — done (#867). Kagi never ends a
+   user's process. What the remove plan does about processes:
+   - **Process facts** (portable-pty 0.9 `unix.rs`): the spawn resets signal
+     dispositions, calls `setsid()` and makes the PTY the controlling
+     terminal (`TIOCSCTTY`). So the shell leads a new session whose id is
+     its PID, and Kagi never signals it or its children.
+   - **Observed on macOS** (a throwaway portable-pty harness, `-l -i` like
+     Kagi), after `exit`:
+     - zsh hangs up its plain `&` jobs; bash leaves them running.
+     - `nohup`, `disown` and `( … &)` survive under both shells.
+     - Every survivor kept the shell's session id. Only a process that calls
+       `setsid` itself (a daemon) leaves the session.
+   - **Remove plan**: a shell Kagi started that is still running in the
+     target worktree is a blocker ("`exit` it in that terminal first"). The
+     live shells are the same set #859 uses (`ShellProcess.exit == None`).
+   - **Leftovers**: Kagi remembers the PID (= session id) of every shell it
+     started this run. If processes remain in an exited shell's session, the
+     plan warns with their count (`kagi_git::proc::session_members`, read
+     only).
+   - **Not covered**: processes started outside Kagi, ones that left the
+     session, and shells from an earlier Kagi run are not detected.
+   - **Plans from the CLI/MCP** have no GUI shells to report.
+   - **Coordination with #340**: the opt-in lock (#772) already blocks removal
+     on its own.
 2. ~~**`run_mode: "nonconcurrent"`**~~ — done (#859, ADR-0213) as the
    `worktree_run_mode` setting: one worktree of a repository at a time runs a
    terminal shell; a second is blocked with the reason.

@@ -312,7 +312,10 @@ impl KagiApp {
             name: name.clone(),
             delete_branch,
         };
-        let job = app::plan_remove(&mut self.app_sessions, request, RemovePolicy::default());
+        // #867: a running Kagi shell in the target blocks; what an exited one
+        // left behind warns. Kagi never ends either.
+        let job = app::plan_remove(&mut self.app_sessions, request, RemovePolicy::default())
+            .with_kagi_shells(self.kagi_shells());
         self.clear_remove_worktree_modal();
         let task = cx.background_spawn(async move { job.run() });
         cx.spawn(async move |this, cx| {

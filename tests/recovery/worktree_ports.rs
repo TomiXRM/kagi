@@ -82,7 +82,11 @@ fn wait_for(path: &Path) -> String {
     }
 }
 
-fn start_terminal(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+pub(crate) fn start_terminal(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |state, cx| state.ensure_terminal(window, cx));
     })
@@ -218,7 +222,7 @@ fn waiting_shell(dir: &Path) -> PathBuf {
 }
 
 /// Whether the active tab's terminal has a shell Kagi has not seen exit.
-fn shell_live(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> bool {
+pub(crate) fn shell_live(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> bool {
     cx.read(|cx| {
         app.read(cx)
             .ui()

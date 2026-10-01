@@ -67,6 +67,9 @@ impl KagiApp {
             |msg| failure_msg = Some(msg),
             |ports| exhausted = Some(ports),
         );
+        let started_pid = started
+            .then(|| session.shell.as_ref().and_then(|shell| shell.pid))
+            .flatten();
         if started {
             // A fresh shell: any lock target from a previous spawn is stale.
             session.clear_auto_lock();
@@ -75,6 +78,7 @@ impl KagiApp {
             ui.terminal_session = Some(session);
         }
         if started {
+            self.record_started_shell(&repo_path, started_pid);
             // #772 / ADR-0208 決定 4: opt-in only; plan → confirm, never a write.
             self.offer_auto_lock(owner, cx);
             // #855: a terminal is what assigns the main worktree its block;

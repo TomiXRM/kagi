@@ -5,6 +5,11 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- テーマ「Flower Road」を 1 つにまとめました。graph の線は「Flower Road Vivid」の 8 色(色相環に均等配置)にしました。「Flower Road Bloom」「Flower Road Vivid」は削除し、それらを選んでいた設定は「Flower Road」として読み込みます。
+- サイドバー上部の Graph / PRs / Issues で、選択中のタブの文字が背景と近すぎて読みにくいテーマ(Flower Road のベージュ地にピンク、1.6:1)では、同じピンクを背景に対して 4.5:1 まで濃くして表示するようにしました。
+
 ### Added
 
 - Issues の「新しい Issue」で、作成前にラベルと担当者を選べるようにしました(#866)。PR の項目編集と同じ picker で repository の一覧から選び、作成時に `gh issue create --label … --assignee …` で送ります。作成直前に repository を読み直し、無くなったラベルや割り当てられない担当者があれば `gh` を呼ばずに Operation Log へ「拒否」と記録して toast で知らせ、入力した本文と選択はそのまま残します。作成者は「<login> として投稿」と表示するだけで変更できません(`gh` は認証中のユーザーで投稿するため)。選択は本文と一緒に下書きへ保存され、アプリを再起動しても残ります(#903)。読めなくなった下書きファイルは上書き・削除せず `<file>.corrupt` として残します。(Closes #866, Closes #903)

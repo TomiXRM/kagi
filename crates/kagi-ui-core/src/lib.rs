@@ -31,8 +31,6 @@ pub mod theme_catppuccin_mocha;
 pub mod theme_color_vision;
 pub mod theme_dracula;
 pub mod theme_flower_road;
-pub mod theme_flower_road_bloom;
-pub mod theme_flower_road_vivid;
 pub mod theme_ibm_pc;
 pub mod theme_monokai;
 pub mod theme_one_dark;

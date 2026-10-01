@@ -154,14 +154,31 @@ pub fn worktree_env(
     Some(WorktreePortEnv { port, vars })
 }
 
+/// What a worktree's terminal starts with (#852).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalEnv {
+    /// The worktree's block and its five `KAGI_*` vars.
+    Ports(WorktreePortEnv),
+    /// No free block is left in `range`: the terminal starts without any
+    /// `KAGI_*` var, and the caller says why. A shell with no port is still a
+    /// shell; refusing to start one because a convenience variable is missing
+    /// left the user without a terminal at all.
+    Exhausted {
+        worktree: PathBuf,
+        range: PortRange,
+        per: u16,
+    },
+}
+
 /// Resolve the owning repository's identity and prepare its terminal environment.
 /// Git metadata stays in the backend; allocation and persistence remain owned
-/// by the existing [`worktree_env`] payload builder.
+/// by the existing [`worktree_env`] payload builder. Range exhaustion is not an
+/// error ([`TerminalEnv::Exhausted`]); a repository that cannot be read is.
 pub fn terminal_env(
     repo_path: &Path,
     range: PortRange,
     per: u16,
-) -> Result<WorktreePortEnv, crate::GitError> {
+) -> Result<TerminalEnv, crate::GitError> {
     let metadata_error = |error: git2::Error| crate::GitError::Other(error.to_string());
     let repo = git2::Repository::open(repo_path).map_err(metadata_error)?;
     let worktree_path = repo
@@ -181,13 +198,20 @@ pub fn terminal_env(
     } else {
         "main".to_owned()
     };
-    worktree_env(
+    let environment = worktree_env(
         worktree_path,
         &name,
         main_path,
         &crate::ops::default_branch_name(&repo),
         range,
         per,
-    )
-    .ok_or_else(|| crate::GitError::Other("worktree port range is exhausted".into()))
+    );
+    Ok(match environment {
+        Some(ports) => TerminalEnv::Ports(ports),
+        None => TerminalEnv::Exhausted {
+            worktree: worktree_path.to_path_buf(),
+            range,
+            per,
+        },
+    })
 }

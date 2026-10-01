@@ -18,6 +18,7 @@
 
 mod autolock;
 mod run_mode;
+pub(crate) use run_mode::StartedShell;
 
 use std::future::Future;
 use std::path::PathBuf;

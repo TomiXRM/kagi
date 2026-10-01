@@ -34,6 +34,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- worktree の削除と `nonconcurrent` モードの判定で、shell が動いたままの terminal タブを閉じると、その shell を終了済みとして扱っていた問題を修正しました。タブを閉じても shell が hangup を無視して動き続けることがあるため、shell の終了を実際に観測するまでは動作中として扱います。shell の終了待ち自体が失敗した場合も、終了扱いにはしません。(#867 / #869 の review 指摘)
 - Operation Log の「この時点まで戻す」が、正確に戻せない範囲でも成功していた問題を修正しました(#878 の review 指摘)。次の場合は理由を示して拒否します。
   - Operation Log の途中の記録が消えている・読めない場合。
   - 範囲に、削除された worktree で行った操作がある場合(この repository の操作だった可能性があるため)。

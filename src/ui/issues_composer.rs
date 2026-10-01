@@ -148,7 +148,18 @@ impl KagiApp {
                             .draft
                             .update(title, body.read(cx).value().to_string());
                         if changed {
-                            app.save_issue_draft_for(owner, repo.clone(), number, cx);
+                            // An emptied composer is a fresh start: its picks
+                            // go with the text, in memory as on disk, so the
+                            // next issue does not inherit them (#913 review).
+                            if editor.draft.is_empty() {
+                                editor.fields = Default::default();
+                            }
+                            // Not before the saved draft has loaded: a save now
+                            // would replace the stored picks with none. The
+                            // load saves the typed text once it lands.
+                            if editor.loaded {
+                                app.save_issue_draft_for(owner, repo.clone(), number, cx);
+                            }
                         }
                         cx.notify();
                     })

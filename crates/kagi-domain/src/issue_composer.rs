@@ -23,6 +23,12 @@ impl IssueDraft {
         true
     }
 
+    /// Nothing worth keeping: title and body are blank. Such a draft is not
+    /// saved, and neither are labels / assignees without it (#903).
+    pub fn is_empty(&self) -> bool {
+        self.title.trim().is_empty() && self.body.trim().is_empty()
+    }
+
     /// Keep an explicit title; otherwise use the first meaningful body line.
     /// Markdown structure prefixes are omitted and fence marker lines are
     /// skipped. The fallback is [`derived_title`]'s: at most 60 Unicode scalar

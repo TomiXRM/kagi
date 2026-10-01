@@ -800,6 +800,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_modal_no_fallthrough),
             ),
             (
+                "dialog_a11y_roles",
+                Box::new(crate::recovery_operations::scenario_dialog_a11y_roles),
+            ),
+            (
                 "replay_onto_armed",
                 Box::new(crate::recovery_operations::scenario_replay_onto_armed),
             ),

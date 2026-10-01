@@ -7,6 +7,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::button_style::KagiButton;
+use super::dialog_a11y::{apply_dialog, dialog_a11y, ConfirmStage, DialogHandler};
 use super::i18n::Msg;
 use super::modal_copy::{modal_copy_button, plan_clipboard_text};
 use super::modal_renderers::{
@@ -25,6 +26,7 @@ use gpui::{div, prelude::*, rgb, Context, KeyDownEvent, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::Sizable as _;
 use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
+use std::rc::Rc;
 
 /// Every fully-bespoke destructive modal in this file badges itself with
 /// `trash-2` (no upstream `IconName` variant — raw asset path, same as the
@@ -69,14 +71,14 @@ pub(crate) fn render_amend_modal(
     let plan = modal.plan.clone();
     let error = modal.error.clone();
 
-    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+    let cancel_handler = cx.listener(|this, _: &(), window, cx| {
         this.cancel_amend_modal();
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh, cx);
         }
         cx.notify();
     });
-    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+    let confirm_handler = cx.listener(|this, _: &(), window, cx| {
         // First click arms; second click executes (handled in start_amend).
         this.start_amend(cx);
         if let Some(fh) = this.root_focus.clone() {
@@ -84,6 +86,14 @@ pub(crate) fn render_amend_modal(
         }
         cx.notify();
     });
+    let cancel: DialogHandler = Rc::new(move |w, a| cancel_handler(&(), w, a));
+    let confirm: DialogHandler = Rc::new(move |w, a| confirm_handler(&(), w, a));
+    // Stage 1 label = "Amend…", stage 2 (armed) = red "Rewrite history".
+    let confirm_label = if armed {
+        Msg::PlanAmendConfirmArmed.t()
+    } else {
+        Msg::PlanAmendConfirm.t()
+    };
 
     // #454: fixed title + non-scrolling body + fixed button row. The buttons
     // must never scroll out of view on a destructive confirm, and the only
@@ -134,7 +144,20 @@ pub(crate) fn render_amend_modal(
         ),
         cx,
     ));
-    let card = modal_card(MODAL_W_MD).child(title_row);
+    let spec = dialog_a11y(
+        &plan_title_text(&plan.title),
+        (!has_blockers).then_some(confirm_label),
+        plan.destructive,
+        ConfirmStage::two_stage(armed),
+    );
+    let card = apply_dialog(
+        "amend-card",
+        modal_card(MODAL_W_MD).id("amend-card"),
+        spec,
+        (!has_blockers).then(|| confirm.clone()),
+        cancel.clone(),
+    )
+    .child(title_row);
     let mut body = modal_body().child(render_current_predicted(
         &plan,
         Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
@@ -333,24 +356,19 @@ pub(crate) fn render_amend_modal(
                     .label(Msg::PlanCancel.t())
                     .ghost()
                     .small()
-                    .on_click(cancel_handler),
+                    .on_click(move |_, w, a| cancel(w, a)),
             ));
 
     if !has_blockers {
-        // Stage 1 label = "Amend\u{2026}", stage 2 (armed) = red "Rewrite history".
-        let label = if armed {
-            "Rewrite history"
-        } else {
-            "Amend\u{2026}"
-        };
-        let confirm = if armed {
+        let label = confirm_label;
+        let button = if armed {
             KagiButton::accent("amend-confirm", label, current_theme().color_blocker, cx)
         } else {
             Button::new("amend-confirm").label(label).primary()
         };
         button_row = button_row.child(super::e2e::measure_control(
             "amend-confirm",
-            confirm.small().on_click(confirm_handler),
+            button.small().on_click(move |_, w, a| confirm(w, a)),
         ));
     }
 
@@ -391,20 +409,31 @@ pub(crate) fn render_discard_modal(
     // Two-stage confirm (T-REARCH-014): first click arms, second executes.
     let armed = modal.confirm_armed;
 
-    let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+    let cancel_handler = cx.listener(|this, _: &(), window, cx| {
         this.cancel_discard_modal();
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh, cx);
         }
         cx.notify();
     });
-    let confirm_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+    let confirm_handler = cx.listener(|this, _: &(), window, cx| {
         this.start_discard(cx);
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh, cx);
         }
         cx.notify();
     });
+    let cancel: DialogHandler = Rc::new(move |w, a| cancel_handler(&(), w, a));
+    let confirm: DialogHandler = Rc::new(move |w, a| confirm_handler(&(), w, a));
+    // Two-stage confirm (T-REARCH-014): first click arms the red Discard
+    // button (label becomes the explicit "Permanently discard N files"); the
+    // second click executes. Both stages stay red — always destructive.
+    let confirm_label = if armed {
+        Msg::PlanDiscardConfirmArmed.t()
+    } else {
+        Msg::PlanDiscardConfirm.t()
+    }
+    .replace("{}", &target_count.to_string());
     let esc_cancel = cx.listener(|this, e: &KeyDownEvent, window, cx| {
         if e.keystroke.key == "escape" {
             this.cancel_discard_modal();
@@ -493,7 +522,7 @@ pub(crate) fn render_discard_modal(
                 .flex_1()
                 .min_w(gpui::px(0.))
                 .child(render_modal_title_row(
-                    SharedString::from(title),
+                    SharedString::from(title.clone()),
                     Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
                 )),
         );
@@ -509,7 +538,20 @@ pub(crate) fn render_discard_modal(
         plan_clipboard_text(&plan, &modal.paths),
         cx,
     ));
-    let card = modal_card(MODAL_W_MD).child(title_row);
+    let spec = dialog_a11y(
+        &title,
+        can_discard.then_some(confirm_label.as_str()),
+        true,
+        ConfirmStage::two_stage(armed),
+    );
+    let card = apply_dialog(
+        "discard-card",
+        modal_card(MODAL_W_MD).id("discard-card"),
+        spec,
+        can_discard.then(|| confirm.clone()),
+        cancel.clone(),
+    )
+    .child(title_row);
     // Target files: a section panel with a count chip (mock `対象ファイル`),
     // never collapsible — a destructive confirm always shows what it acts on.
     // No targets (a blocked "Discard all" with nothing unstaged) renders no
@@ -715,23 +757,19 @@ pub(crate) fn render_discard_modal(
                     .label(Msg::PlanCancel.t())
                     .ghost()
                     .small()
-                    .on_click(cancel_handler),
+                    .on_click(move |_, w, a| cancel(w, a)),
             ));
     if can_discard {
-        // Two-stage confirm (T-REARCH-014): first click arms the red Discard
-        // button (label becomes the explicit "Permanently discard N files");
-        // the second click executes. Mirrors amend's confirm_armed pattern.
-        // Both stages stay red — discard is always a destructive op.
-        let label = if armed {
-            format!("Permanently discard {} file(s)", target_count)
-        } else {
-            format!("Discard {} file(s)", target_count)
-        };
         button_row = button_row.child(super::e2e::measure_control(
             "discard-confirm",
-            KagiButton::accent("discard-confirm", label, current_theme().color_blocker, cx)
-                .small()
-                .on_click(confirm_handler),
+            KagiButton::accent(
+                "discard-confirm",
+                confirm_label,
+                current_theme().color_blocker,
+                cx,
+            )
+            .small()
+            .on_click(move |_, w, a| confirm(w, a)),
         ));
     }
     #[cfg(feature = "gui-e2e")]

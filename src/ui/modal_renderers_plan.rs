@@ -12,8 +12,11 @@
 
 #![allow(clippy::too_many_arguments)]
 
+use super::dialog_a11y::ConfirmStage;
 use super::i18n::Msg;
-use super::modal_renderers::{render_plan_modal_wrapper_styled, ModalIcon};
+use super::modal_renderers::{
+    render_plan_modal_wrapper_staged, render_plan_modal_wrapper_styled, ModalIcon,
+};
 use super::modal_renderers_input::render_input_plan_modal;
 use super::modal_renderers_stash::render_stash_planning;
 use super::modals::worktree::*;
@@ -497,17 +500,14 @@ pub(crate) fn render_delete_branch_modal(
     overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let label = if modal.confirm_armed {
-        Msg::PlanDeleteBranchArmed.t()
-    } else {
-        Msg::PlanDeleteBranch.t()
-    };
-    render_plan_modal_wrapper_styled(
+    let (stage, label) = (modal.confirm_stage(), modal.confirm_label());
+    render_plan_modal_wrapper_staged(
         modal.plan,
         modal.error,
         label,
         None,
         Some((ModalIcon::Path("icons/trash-2.svg"), theme().color_blocker)),
+        stage,
         |this, _cx| this.cancel_delete_branch_modal(),
         |this, cx| this.start_delete_branch(cx),
         overrides,
@@ -530,12 +530,13 @@ pub(crate) fn render_delete_remote_branch_modal(
     } else {
         SharedString::from(Msg::PlanDeleteRemoteBranch.t())
     };
-    render_plan_modal_wrapper_styled(
+    render_plan_modal_wrapper_staged(
         modal.plan,
         modal.error,
         confirm_label,
         None,
         Some((ModalIcon::Path("icons/trash-2.svg"), theme().color_blocker)),
+        ConfirmStage::two_stage(modal.confirm_armed),
         |this, _cx| this.cancel_delete_remote_branch_modal(),
         |this, cx| this.start_delete_remote_branch(cx),
         overrides,
@@ -556,7 +557,7 @@ pub(crate) fn render_reset_current_modal(
     } else {
         SharedString::from(Msg::PlanResetCurrent.t())
     };
-    render_plan_modal_wrapper_styled(
+    render_plan_modal_wrapper_staged(
         modal.plan,
         modal.error,
         confirm_label,
@@ -565,6 +566,7 @@ pub(crate) fn render_reset_current_modal(
             ModalIcon::Path("icons/refresh-cw.svg"),
             theme().color_blocker,
         )),
+        ConfirmStage::two_stage(modal.confirm_armed),
         |this, _cx| this.cancel_reset_current_modal(),
         |this, cx| this.start_reset_current(cx),
         overrides,
@@ -585,12 +587,13 @@ pub(crate) fn render_force_lease_push_modal(
     } else {
         SharedString::from(Msg::PlanForcePush.t())
     };
-    render_plan_modal_wrapper_styled(
+    render_plan_modal_wrapper_staged(
         modal.plan,
         modal.error,
         confirm_label,
         None,
         Some((IconName::ArrowUp.into(), theme().color_blocker)),
+        ConfirmStage::two_stage(modal.confirm_armed),
         |this, _cx| this.cancel_force_lease_push_modal(),
         |this, cx| this.start_force_lease_push(cx),
         overrides,
@@ -633,12 +636,13 @@ pub(crate) fn render_rebase_modal(
     } else {
         theme().color_branch
     };
-    render_plan_modal_wrapper_styled(
+    render_plan_modal_wrapper_staged(
         modal.display_plan(),
         modal.error.clone(),
         modal.confirm_label(),
         None,
         Some((ModalIcon::Path("icons/refresh-cw.svg"), accent)),
+        modal.confirm_stage(),
         |this, _cx| this.cancel_rebase_modal(),
         |this, cx| this.start_rebase(cx),
         overrides,

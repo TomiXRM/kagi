@@ -1194,10 +1194,11 @@ pub struct KagiApp {
     pub planning: Option<&'static str>,
     pub app_sessions: crate::app::Sessions,
     pub(crate) app_notices: std::collections::VecDeque<modals::AppNotice>,
-    /// #867: every shell a Kagi terminal started this run — its worktree
-    /// (canonical) and PID, which is also its session id. Outlives the tab so
-    /// a remove plan can count what an exited shell left behind.
-    pub(crate) started_shells: Vec<(PathBuf, u32)>,
+    /// #867: every shell a Kagi terminal started this run, with whether its
+    /// exit has been observed. Outlives the tab: a closed tab's shell runs
+    /// until it handles the hangup, and its PID (its session id) counts what
+    /// it left behind.
+    pub(crate) started_shells: Vec<terminal::StartedShell>,
     // ── W2-DELETE: Delete-branch modal ───────────────────────
     /// Commit row context menu state (right-click anchor + target row).
     pub commit_menu: Option<CommitMenuState>,

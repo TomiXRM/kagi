@@ -789,6 +789,10 @@ mod macos {
                 Box::new(crate::recovery_worktree_ports::scenario_worktree_port_env),
             ),
             (
+                "external_lock_reload",
+                Box::new(crate::recovery_worktree_lock_reason::scenario_external_lock_reload),
+            ),
+            (
                 "preflight_presentation",
                 Box::new(crate::recovery_operations::scenario_preflight_presentation),
             ),

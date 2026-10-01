@@ -256,6 +256,14 @@ fn oplog_changes(before: &Option<Vec<u8>>, report: &mut String) {
     }
     let before = before.as_deref().unwrap_or_default();
     let after = after.unwrap_or_default();
+    // The writer appends `entry\n`; a missing final newline would glue the
+    // next scenario's entry onto this one (#899 review).
+    if after.len() > before.len() && after.last() != Some(&b'\n') {
+        let _ = writeln!(
+            report,
+            "- operations.jsonl: the appended bytes do not end in a newline"
+        );
+    }
     if after.len() < before.len() || after[..before.len()] != *before {
         let _ = writeln!(
             report,

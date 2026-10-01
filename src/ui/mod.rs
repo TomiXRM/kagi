@@ -2835,6 +2835,9 @@ impl KagiApp {
         if self.active_modal.is_some() {
             self.confirm_open_modal(cx);
             cx.notify();
+            if let Some(owner) = self.active_session() {
+                self.offer_auto_release(owner, cx);
+            }
             return true;
         }
         if self
@@ -2927,6 +2930,9 @@ impl KagiApp {
     fn cancel_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
         if self.active_modal.is_some() {
             self.cancel_open_modal();
+            if let Some(owner) = self.active_session() {
+                self.offer_auto_release(owner, cx);
+            }
             cx.notify();
             return true;
         }

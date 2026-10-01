@@ -584,6 +584,14 @@ fn a_recorded_identity_is_valid_or_invalid_as_a_whole() {
             "unknown key",
             format!(r#"{{"common_dir":{dir},"generation":"v2"}}"#),
         ),
+        (
+            "explicit null file id",
+            format!(r#"{{"common_dir":{dir},"dev":null,"ino":null}}"#),
+        ),
+        (
+            "explicit null birth",
+            format!(r#"{{"common_dir":{dir},"born_s":null,"born_ns":null}}"#),
+        ),
     ];
     for (why, identity) in invalid {
         let read = parse_oplog_line(&line_with_identity(identity))

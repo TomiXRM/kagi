@@ -127,14 +127,21 @@ struct RepoIdentityRef<'a> {
 #[serde(deny_unknown_fields)]
 struct RepoIdentityRecord {
     common_dir: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "present")]
     dev: Option<u64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "present")]
     ino: Option<u64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "present")]
     born_s: Option<u64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "present")]
     born_ns: Option<u32>,
+}
+
+/// A key that is absent reads as `None` (`#[serde(default)]`); a key that is
+/// present must hold a value — an explicit `null` is a broken record, not a
+/// missing one (#900 review).
+fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
+    T::deserialize(d).map(Some)
 }
 
 #[derive(Serialize)]

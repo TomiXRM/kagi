@@ -47,6 +47,7 @@ pub mod message_gen;
 pub mod message_template;
 pub mod moves;
 pub mod operation;
+pub mod oplog_reflog;
 pub mod plan;
 pub mod plan_note;
 pub mod pr_list;

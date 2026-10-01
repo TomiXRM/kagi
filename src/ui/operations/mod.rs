@@ -618,7 +618,7 @@ impl KagiApp {
             self.bottom_tab = BottomTab::OperationLog;
             if let Some(panel) = self.op_log.clone() {
                 panel.update(cx, |panel, cx| {
-                    panel.toggle_expanded(0);
+                    panel.select_row(0, cx);
                     cx.notify();
                 });
             }

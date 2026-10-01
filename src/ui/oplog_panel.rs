@@ -14,7 +14,10 @@
 //! pure constructors have no `cx`). The data methods stay `cx`-free for tests.
 
 use std::collections::VecDeque;
+use std::path::PathBuf;
 
+use gpui::AppContext as _;
+use kagi_domain::oplog_reflog::{Attribution, ReflogLine, ReflogWindow};
 use kagi_git::oplog::{OpLogEntry, OpOutcome};
 
 /// Maximum entries kept in the in-memory ring buffer.
@@ -32,6 +35,54 @@ pub struct OpLogPanel {
     /// so the overflow painted over the rows below. Same swap T-DIFF-WRAP-001
     /// made for the diff panes (`render_helpers::new_diff_list_state`).
     scroll_handle: gpui::ListState,
+    /// #334: the selected entry's reflog lines, keyed by that entry — a push
+    /// shifts row indices, and the detail must never land on another row.
+    reflog: Option<(EntryKey, ReflogDetail)>,
+    /// Bumped per request; a read that finishes under an older value is dropped.
+    reflog_generation: u64,
+}
+
+/// Which entry a reflog detail belongs to. `id` alone is `0` for an attempted
+/// entry whose append failed, so time and op name complete it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EntryKey {
+    id: u64,
+    timestamp: i64,
+    op: String,
+}
+
+impl EntryKey {
+    fn of(entry: &OpLogEntry) -> Self {
+        Self {
+            id: entry.id,
+            timestamp: entry.timestamp,
+            op: entry.op.clone(),
+        }
+    }
+}
+
+/// The reflog section of a selected row (#334 slice 1, ADR-0214). Read-only.
+#[derive(Debug, Clone)]
+pub enum ReflogDetail {
+    Loading,
+    Loaded {
+        window: ReflogWindow,
+        lines: Vec<(ReflogLine, Attribution)>,
+    },
+    Unavailable(String),
+}
+
+/// The working tree an entry ran in — the worktree badge and the reflog's
+/// owner. Old lines without `worktree` fall back to `repo`. `Backend::run`
+/// records the workdir with a trailing separator and other paths without, so
+/// it is dropped: both spellings are one worktree (no I/O — this runs in UI
+/// handlers).
+pub fn entry_worktree(entry: &OpLogEntry) -> &str {
+    let path = entry.worktree.as_deref().unwrap_or(&entry.repo);
+    match path.trim_end_matches(['/', '\\']) {
+        "" => path,
+        trimmed => trimmed,
+    }
 }
 
 /// Issue #468: a fresh op-log [`gpui::ListState`] (item count 0 — the render
@@ -66,11 +117,7 @@ impl OpLogPanel {
     }
 
     pub fn new() -> Self {
-        Self {
-            entries: VecDeque::new(),
-            expanded: None,
-            scroll_handle: new_oplog_list_state(),
-        }
+        Self::from_entries(VecDeque::new())
     }
 
     /// Initialize from a pre-loaded tail (read from disk on tab open).
@@ -79,6 +126,8 @@ impl OpLogPanel {
             entries,
             expanded: None,
             scroll_handle: new_oplog_list_state(),
+            reflog: None,
+            reflog_generation: 0,
         }
     }
 
@@ -117,6 +166,77 @@ impl OpLogPanel {
     /// Collapse any expanded row (called when new entries arrive).
     pub fn collapse(&mut self) {
         self.expanded = None;
+    }
+
+    /// Select (expand) or deselect row `i` — a click, or a failed op opening
+    /// the log on its row — and read the selected entry's reflog lines in the
+    /// background (#334). Reads only: no repository write, no oplog append.
+    pub fn select_row(&mut self, i: usize, cx: &mut gpui::Context<Self>) {
+        self.toggle_expanded(i);
+        self.reflog_generation = self.reflog_generation.wrapping_add(1);
+        self.reflog = None;
+        if self.expanded != Some(i) {
+            return;
+        }
+        let (Some(entry), Some(window)) = (self.entries.get(i), self.reflog_window(i)) else {
+            return;
+        };
+        let key = EntryKey::of(entry);
+        let path = PathBuf::from(entry_worktree(entry));
+        let generation = self.reflog_generation;
+        self.reflog = Some((key.clone(), ReflogDetail::Loading));
+        let read = cx.background_spawn(async move {
+            kagi_git::Backend::open(&path)
+                .and_then(|backend| backend.reflog_lines_between(window.after, window.until))
+                .map(|lines| window.attribute(lines))
+                .map_err(|error| error.to_string())
+        });
+        cx.spawn(async move |this, cx| {
+            let result = read.await;
+            let _ = this.update(cx, |panel, cx| {
+                if panel.reflog_generation != generation {
+                    return;
+                }
+                let detail = match result {
+                    Ok(lines) => ReflogDetail::Loaded { window, lines },
+                    Err(error) => ReflogDetail::Unavailable(error),
+                };
+                panel.reflog = Some((key, detail));
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// The reflog window of row `i`, bounded by the nearest older and newer
+    /// entries **of the same worktree** in the loaded log.
+    pub fn reflog_window(&self, i: usize) -> Option<ReflogWindow> {
+        let entry = self.entries.get(i)?;
+        let worktree = entry_worktree(entry);
+        let same = |e: &&OpLogEntry| entry_worktree(e) == worktree;
+        let older = self
+            .entries
+            .iter()
+            .skip(i + 1)
+            .find(same)
+            .map(|e| e.timestamp);
+        let newer = self
+            .entries
+            .iter()
+            .take(i)
+            .rev()
+            .find(same)
+            .map(|e| e.timestamp);
+        Some(ReflogWindow::for_entry(entry.timestamp, older, newer))
+    }
+
+    /// The reflog detail of the expanded row, if it is that row's.
+    pub fn reflog_detail(&self) -> Option<&ReflogDetail> {
+        let entry = self.entries.get(self.expanded?)?;
+        self.reflog
+            .as_ref()
+            .filter(|(key, _)| *key == EntryKey::of(entry))
+            .map(|(_, detail)| detail)
     }
 
     /// A clone of the scroll handle for `gpui::list` + the scrollbar overlay.
@@ -302,5 +422,32 @@ mod tests {
         let panel = OpLogPanel::from_entries(vd);
         assert_eq!(panel.len(), 2);
         assert_eq!(panel.entries().front().unwrap().op, "a");
+    }
+
+    /// #334: a row's reflog window is bounded by its own worktree's
+    /// neighbours, not by whatever row happens to sit next to it.
+    #[test]
+    fn reflog_window_skips_other_worktrees() {
+        let at = |op: &str, worktree: &str, ts: i64| {
+            let mut e = dummy_entry(op).with_worktree(Some(worktree.to_string()));
+            e.timestamp = ts;
+            e
+        };
+        // Newest first, two worktrees interleaved; `Backend::run` spells
+        // wt1 with a trailing slash, the GUI without.
+        let panel = OpLogPanel::from_entries(VecDeque::from(vec![
+            at("a", "/wt1", 30),
+            at("b", "/wt2", 25),
+            at("c", "/wt1/", 20),
+            at("d", "/wt2", 10),
+        ]));
+        let newest = panel.reflog_window(0).unwrap();
+        assert_eq!((newest.after, newest.until), (20, 30));
+        assert!(!newest.open_start && !newest.shared_second);
+        let oldest_wt1 = panel.reflog_window(2).unwrap();
+        assert!(oldest_wt1.open_start, "no older wt1 entry is loaded");
+        assert_eq!(oldest_wt1.until, 20);
+        let b = panel.reflog_window(1).unwrap();
+        assert_eq!((b.after, b.until), (10, 25));
     }
 }

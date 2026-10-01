@@ -364,6 +364,18 @@ The current suite covers:
   125% in JA, open a file diff and File History; every button is visible and
   clickable, icon-only buttons name themselves in a hover tooltip, and a wide
   window shows the labels again.
+- Operation Log badges and reflog detail (`KAGI_GUI_E2E_ONLY=oplog_actor_reflog`,
+  `tests/recovery/oplog_panel.rs`): #334 slice 1 / ADR-0214. Three real
+  `Backend::run` writes as Human / MCP / CLI, one second apart, become three
+  rows with painted actor and worktree badges. A real click on the checkout row
+  shows exactly its own HEAD reflog line; the first creation shows its branch's
+  `Created from` line and not the later checkout. Two oplog entries of another
+  worktree that share one second with a reflog line show it marked ambiguous.
+  The repo fingerprint and the oplog length are unchanged (reads only). Backend
+  window coverage: `crates/kagi-git/tests/oplog_reflog_test.rs`; attribution
+  rules: `kagi-domain` `oplog_reflog` tests. Tier B: open the Operation Log tab
+  after a few operations (and one through `kagi` CLI / MCP), check the badges,
+  select a row and read its reflog lines.
 - terminal auto-lock compare-and-unlock (`KAGI_GUI_E2E_ONLY=terminal_auto_lock_race`,
   `tests/recovery/worktree_lock_reason.rs`): #836 / ADR-0212. (b) Through the
   Backend race seam (`execute_auto_unlock_worktree_racing`,

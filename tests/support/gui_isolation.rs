@@ -39,7 +39,7 @@ pub(crate) struct PortStore(Option<Vec<u8>>);
 
 impl PortStore {
     pub(crate) fn keep() -> Self {
-        Self(std::fs::read(port_store_path()).ok())
+        Self(read_shared(&port_store_path()))
     }
 }
 
@@ -126,22 +126,41 @@ fn settings() -> Settings {
     }
 }
 
+/// A shared file's bytes, `None` when absent. Any other read failure fails the
+/// scenario: an unreadable file must not compare equal to an empty one (#899
+/// review).
+fn read_shared(path: &Path) -> Option<Vec<u8>> {
+    match std::fs::read(path) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => panic!(
+            "[gui-e2e] shared state `{}` cannot be read: {error}",
+            path.display()
+        ),
+    }
+}
+
 fn tmp_entries() -> BTreeSet<String> {
-    std::fs::read_dir(std::env::temp_dir())
-        .map(|entries| {
-            entries
-                .filter_map(Result::ok)
-                .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                .collect()
+    let dir = std::env::temp_dir();
+    std::fs::read_dir(&dir)
+        .unwrap_or_else(|error| panic!("[gui-e2e] `{}` cannot be listed: {error}", dir.display()))
+        .map(|entry| {
+            entry
+                .unwrap_or_else(|error| {
+                    panic!("[gui-e2e] `{}` cannot be listed: {error}", dir.display())
+                })
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
         })
-        .unwrap_or_default()
+        .collect()
 }
 
 pub(crate) fn snapshot() -> Before {
     Before {
         settings: settings(),
-        ports: std::fs::read(port_store_path()).ok(),
-        oplog: std::fs::read(log_dir().join("operations.jsonl")).unwrap_or_default(),
+        ports: read_shared(&port_store_path()),
+        oplog: read_shared(&log_dir().join("operations.jsonl")).unwrap_or_default(),
         tmp: tmp_entries(),
     }
 }
@@ -194,7 +213,7 @@ fn store_text(bytes: &Option<Vec<u8>>) -> String {
 }
 
 fn oplog_changes(before: &[u8], report: &mut String) {
-    let after = std::fs::read(log_dir().join("operations.jsonl")).unwrap_or_default();
+    let after = read_shared(&log_dir().join("operations.jsonl")).unwrap_or_default();
     if after.len() < before.len() || after[..before.len()] != *before {
         let _ = writeln!(
             report,
@@ -248,8 +267,18 @@ fn oplog_changes(before: &[u8], report: &mut String) {
             continue;
         };
         let local = Path::new(repo);
-        // A remote repository is named by host, not by a local path.
+        // A remote receipt is scoped `<host label>:<path>` (src/remote/mod.rs);
+        // any other non-absolute path is a malformed local scope (#899 review).
         if !local.is_absolute() {
+            let remote = repo.split_once(':').is_some_and(|(host, path)| {
+                !host.is_empty() && !host.contains('/') && !path.is_empty()
+            });
+            if !remote {
+                let _ = writeln!(
+                    report,
+                    "- operations.jsonl: `{repo}` is neither an absolute local path nor `host:path`"
+                );
+            }
             continue;
         }
         let under_root = local.starts_with(&root) || local.starts_with(&raw);
@@ -268,7 +297,7 @@ fn oplog_changes(before: &[u8], report: &mut String) {
 pub(crate) fn check(scenario: &str, before: &Before) {
     let mut report = String::new();
     settings_changes(&before.settings, &mut report);
-    let ports = std::fs::read(port_store_path()).ok();
+    let ports = read_shared(&port_store_path());
     if ports != before.ports {
         let _ = writeln!(
             report,

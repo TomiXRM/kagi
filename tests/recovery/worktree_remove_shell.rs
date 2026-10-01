@@ -51,6 +51,24 @@ pub(crate) fn hangup_proof_shell(dir: &Path) -> PathBuf {
     script(dir, "stay.sh", &body)
 }
 
+/// Kills whatever `leftover.pid` / `shell.pid` in `dir` name when dropped, so
+/// a failed assertion does not leave the long-sleeping probes behind (#899
+/// review). Killing an already-stopped PID is harmless.
+pub(crate) struct KillRecordedOnDrop(pub(crate) PathBuf);
+
+impl Drop for KillRecordedOnDrop {
+    fn drop(&mut self) {
+        for name in ["leftover.pid", "shell.pid"] {
+            if let Ok(pid) = std::fs::read_to_string(self.0.join(name)) {
+                let pid = pid.trim();
+                if !pid.is_empty() {
+                    let _ = std::process::Command::new("kill").arg(pid).status();
+                }
+            }
+        }
+    }
+}
+
 /// Stop the process this test started, by the PID it recorded — never by
 /// name, which would reach a developer's own processes.
 pub(crate) fn kill_recorded(pid_file: &Path) {
@@ -167,6 +185,7 @@ pub fn scenario_worktree_remove_live_shell(cx: &mut VisualTestAppContext) {
         ],
     );
     let shell_dir = tempfile::tempdir().unwrap();
+    let _probes = KillRecordedOnDrop(shell_dir.path().to_path_buf());
     KagiApp::set_terminal_shell_for_e2e(Some(
         leaving_shell(shell_dir.path()).display().to_string(),
     ));

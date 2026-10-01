@@ -790,3 +790,51 @@ fn an_unreadable_identity_fails_closed_instead_of_reading_as_legacy() {
         "legacy: attributed by its path"
     );
 }
+
+/// #900 review: a remove-worktree entry names the repository it ran in,
+/// read before anything ran. Here the repository is moved away and another
+/// one created at its path while the remove is under way; the entry must
+/// keep the original's identity, not take the newcomer's (the removed
+/// worktree no longer opens, so an identity read at append time would come
+/// from whatever sits at `plan.repo` then).
+#[test]
+fn a_remove_worktree_entry_keeps_the_identity_read_before_it_ran() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    git(&repo, &["branch", "wtb"]);
+    let wt = tmp.path().join("wt");
+    git(
+        &repo,
+        &["worktree", "add", "-q", wt.to_str().unwrap(), "wtb"],
+    );
+    let original = kagi_git::oplog::RepoIdentity::of(&repo).unwrap();
+
+    let plan = Backend::plan_recorded_remove(&repo, "wt", false).unwrap();
+    let report = Backend::run_recorded_remove_with_events(
+        &plan,
+        kagi_git::oplog::Actor::Human,
+        None,
+        |event| {
+            if matches!(
+                event,
+                kagi_git::backend::remove::RemoveEvent::ExecutionStarting
+            ) {
+                std::fs::rename(&repo, tmp.path().join("moved")).unwrap();
+                std::fs::create_dir(&repo).unwrap();
+                init_repo(&repo, "main");
+            }
+        },
+    );
+    let newcomer = kagi_git::oplog::RepoIdentity::of(&repo).unwrap();
+    assert_ne!(
+        newcomer.same_repository(&original),
+        kagi_git::oplog::SameRepository::Same
+    );
+    assert_eq!(
+        report.recording.entry().repo_identity,
+        kagi_git::oplog::RecordedIdentity::Known(original)
+    );
+}

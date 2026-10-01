@@ -96,6 +96,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - **entry は記録時の repository を持つ**(#894)。`repo_identity` = 正規化した common dir の path、unix ではその `(dev, ino)`、取れる環境では common dir の作成時刻(`Metadata::created()`、macOS は birthtime、Linux は statx の btime。JSON は `born_s` / `born_ns`)。
     - append の 1 か所(`append_oplog_receipt`)で、entry の worktree を開いて埋める。worktree が無い、または開けない場合は repo を開く(#900 review 3)。remove-worktree の成功は、削除・prune 済みの worktree を `entry.worktree` に記録するので、repo へのフォールバックが無いと UnknownRepository になり、全 repository の restore を止める。Backend の経路も UI の persist 経路もここを通る。どちらも開けない scope(remote の `host:repo`)は `None`。
     - **backend の書き込みは "前" の snapshot と同時に読む**(#900 review 8)。`run_recorded_with_events` と `observe_ref_moves` が ref の前 snapshot と一緒に identity を読み、`record_receipt` が entry に載せる(append はすでにある identity を読み直さない)。append 時に読むと、操作の完了から追記までの間に repository が削除・再 clone されたとき、A の `ref_moves` に B の identity が付く。UI が直接記録する経路(`record_op_persist*`)は前 snapshot を Backend の外で取るので、append 時に読むまま。残る窓は、操作の完了から追記まで(ms 単位)に同じ path へ repository を作り直した場合だけ。
+      - remove-worktree(`run_recorded_remove_with_events`)は `record_receipt` を通らないので、実行の前に `plan.repo` の identity を読み、entry に載せる(#900 review 10)。削除した worktree は後で開けず、append 時に読むと `plan.repo` に後から置かれた別の repository の identity になりうる。
     - 分類(worktree は開かない)。削除済みの worktree の entry は Mine になり、記録した移動は restore に入る。削除した無関係の repository の entry は Other になり、blocker にならない。
 
       | file id `(dev, ino)` | 作成時刻 | path | 判定 |

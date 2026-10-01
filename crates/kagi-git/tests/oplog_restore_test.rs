@@ -322,3 +322,134 @@ fn deleting_a_checked_out_branch_is_refused() {
         p.blockers
     );
 }
+
+/// Sleep into the next wall-clock second, so a later git write's reflog time
+/// is strictly after an entry's timestamp.
+fn next_second() {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+    std::thread::sleep(Duration::from_nanos(
+        1_000_000_000 - u64::from(now.subsec_nanos()) + 20_000_000,
+    ));
+}
+
+/// #878 review: an entry missing from the log (forgotten by retention, lost
+/// to a corrupt line) breaks the chain; restoring across it would silently
+/// keep whatever that entry did, so it is refused.
+#[test]
+fn a_missing_entry_in_the_range_blocks_the_restore() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let point = create(&repo, "a");
+    let forgotten = create(&repo, "b");
+    create(&repo, "c");
+    let log = PathBuf::from(std::env::var("KAGI_LOG_DIR").unwrap()).join("operations.jsonl");
+    let kept: Vec<String> = std::fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .filter(|line| !line.contains(&format!("\"id\":{forgotten},")))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    std::fs::write(&log, kept.concat()).unwrap();
+
+    let p = plan(&repo, &Operation::RestoreToPoint { entry_id: point });
+    assert!(
+        restore_blockers(&p).contains(&OplogRestoreNote::HistoryGap {
+            after: point,
+            next: forgotten + 1
+        }),
+        "{:?}",
+        p.blockers
+    );
+}
+
+/// #878 review: an operation recorded in a worktree that is gone (removed and
+/// pruned) can no longer be attributed; it may have moved our branches, so a
+/// restore across it fails closed instead of dropping it.
+#[test]
+fn an_entry_of_a_removed_worktree_in_the_range_blocks_the_restore() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let point = create(&repo, "a");
+    let wt = tmp.path().join("wt");
+    git(
+        &repo,
+        &["worktree", "add", "-q", "-b", "wtb", wt.to_str().unwrap()],
+    );
+    let moved_there = create(&wt, "made-in-wt");
+    std::fs::remove_dir_all(&wt).unwrap();
+    git(&repo, &["worktree", "prune"]);
+
+    let p = plan(&repo, &Operation::RestoreToPoint { entry_id: point });
+    assert!(
+        restore_blockers(&p).iter().any(|n| matches!(
+            n,
+            OplogRestoreNote::UnknownRepository { id, .. } if *id == moved_there
+        )),
+        "{:?}",
+        p.blockers
+    );
+}
+
+/// #878 review: a merge in progress in *another* worktree blocks too — moving
+/// the branch it builds on would change its HEAD mid-operation.
+#[test]
+fn an_operation_in_progress_in_another_worktree_blocks() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let wt = tmp.path().join("wt");
+    git(
+        &repo,
+        &["worktree", "add", "-q", "-b", "side", wt.to_str().unwrap()],
+    );
+    write_file(&wt, "a.txt", "side\n");
+    commit_all(&wt, "side");
+    let point = create(&repo, "x");
+    commit(&repo, "main\n");
+    assert!(!git_fixture::git_succeeds(&wt, &["merge", "-q", "main"]));
+
+    let p = plan(&repo, &Operation::RestoreToPoint { entry_id: point });
+    let wt_shown = std::fs::canonicalize(&wt).unwrap();
+    assert!(
+        restore_blockers(&p).iter().any(|n| matches!(
+            n,
+            OplogRestoreNote::OperationInProgress { path, .. }
+                if std::fs::canonicalize(path).ok().as_deref() == Some(wt_shown.as_path())
+        )),
+        "{:?}",
+        p.blockers
+    );
+}
+
+/// #878 review: a branch created after the target outside Kagi (a terminal
+/// `git branch`) is in no record, so restoring would leave it: refused.
+#[test]
+fn a_branch_created_after_the_point_outside_the_record_blocks() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let point = create(&repo, "a");
+    create(&repo, "b");
+    next_second();
+    git(&repo, &["branch", "outside"]);
+
+    let p = plan(&repo, &Operation::RestoreToPoint { entry_id: point });
+    assert_eq!(
+        restore_blockers(&p),
+        vec![OplogRestoreNote::RefChangedOutsideRecord {
+            refname: "refs/heads/outside".into()
+        }],
+        "b is explained by its entry; outside by nothing"
+    );
+}

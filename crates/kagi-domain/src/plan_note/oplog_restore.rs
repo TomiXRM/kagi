@@ -35,8 +35,23 @@ pub enum OplogRestoreNote {
         expected: Option<String>,
         current: Option<String>,
     },
-    /// blocker — a merge/rebase/cherry-pick/revert is in progress.
-    OperationInProgress { op: super::InProgressOp },
+    /// blocker — a merge/rebase/cherry-pick/revert is in progress in one of
+    /// the repository's worktrees (`path`): moving a branch under it would
+    /// change the HEAD that operation is built on.
+    OperationInProgress {
+        op: super::InProgressOp,
+        path: String,
+    },
+    /// blocker (restore-to-point) — the Operation Log is not continuous after
+    /// the target: entry `next` does not follow `after` (an entry was
+    /// forgotten, lost or unreadable), so the range is not fully known.
+    HistoryGap { after: u64, next: u64 },
+    /// blocker (restore-to-point) — an entry in the range ran in a worktree
+    /// that can no longer be opened, so it may have been this repository's.
+    UnknownRepository { id: u64, op: String, path: String },
+    /// blocker (restore-to-point) — the branch was created or moved after the
+    /// target by something no recorded entry covers; restoring would leave it.
+    RefChangedOutsideRecord { refname: String },
     /// warning — a branch to move is checked out in a worktree with changes:
     /// they stay (only the ref moves) and mix with the diff to the new tip.
     CheckedOutDirty { branch: String, path: String },
@@ -85,9 +100,18 @@ impl OplogRestoreNote {
                 short(current),
                 short(expected)
             ),
-            OplogRestoreNote::OperationInProgress { op } => format!(
-                "{} is in progress. Finish or abort it first.",
+            OplogRestoreNote::OperationInProgress { op, path } => format!(
+                "{} is in progress in {path}. Finish or abort it first.",
                 op.label_en()
+            ),
+            OplogRestoreNote::HistoryGap { after, next } => format!(
+                "The Operation Log is not continuous after operation #{after}: the next entry is #{next}, so an operation in between is missing (forgotten or unreadable). The range cannot be restored exactly."
+            ),
+            OplogRestoreNote::UnknownRepository { id, op, path } => format!(
+                "Operation #{id} ({op}) ran in {path}, which can no longer be opened, so it may have moved this repository's branches. The range cannot be restored exactly."
+            ),
+            OplogRestoreNote::RefChangedOutsideRecord { refname } => format!(
+                "{refname} was created or moved after that point outside the recorded operations. Restoring would leave it as it is."
             ),
             OplogRestoreNote::CheckedOutDirty { branch, path } => format!(
                 "'{branch}' is checked out in {path} with uncommitted changes. They stay as they are; after the move they show up together with the difference to the restored tip."

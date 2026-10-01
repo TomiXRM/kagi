@@ -83,15 +83,21 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
 - **対象の範囲**
   - 同じ repository の entry(worktree の common dir が一致するもの)。branch は worktree 間で共有されるので、他の worktree の entry も含める。
   - 読むのは oplog の末尾 1000 件。target が無ければ blocker(EntryNotLoaded)。
+  - **範囲は証明できなければ fail closed**(#878 review、restore to point)。planner は全 repository の entry を受け取り、次の場合を blocker にする。
+    - 対象以降で `parent → id` の鎖が途切れる(HistoryGap): retention での削除、壊れた行、読めない行。
+    - worktree を開けない entry(UnknownRepository): 削除・prune された worktree の entry は、この repository のものだった可能性がある。黙って除外しない。別の repository だと証明できた entry(Other)だけを除く。
+  - append に失敗した操作は鎖に現れない(次の entry の parent は最後に書けた entry)。その操作が動かした branch は、RefMovedSince か RefChangedOutsideRecord で捕まる。
 - **revert**: 対象 entry の各 branch の移動を old に戻す(作成は削除、削除は作り直し)。同じ ref を後続の記録済み entry が動かしていれば blocker(LaterEntryMoved)。
 - **restore to point**: 対象 entry の**直後**の状態に戻す(jj の `op restore` と同じく、対象自身の効果は残す)。それより新しい entry を古い順に合成し、ref ごとに「最古の old を戻し先、最新の new を期待値」とする。動いて元に戻った ref は除く。
 - **HEAD**
   - branch に追従しただけの HEAD の移動(commit など、symbolic が同じ)は、その branch の移動として扱う。
   - HEAD の切替・detached を含む entry は blocker(HeadMoved)。戻すには checkout(作業ツリーに触れる)が要るため、2b の対象外。
 - **その他の blocker**
-  - いずれかの ref が期待値に無い(RefMovedSince。記録外での移動)。
+  - 範囲の記録が触れた ref が期待値に無い(RefMovedSince。記録外での移動)。動いて元に戻ったため戻さない ref も、今その値にあることを確かめる。
+  - restore to point: 対象 entry の記録時刻より後に reflog の更新がある local branch のうち、範囲の記録が一度も動かしていないもの(RefChangedOutsideRecord。terminal での `git branch` など)。戻しても残るので、「その時点の branch 状態」にならない。
+    - 限界: reflog を書かない設定(`core.logAllRefUpdates=false`)や、記録外で削除された branch(reflog ごと消える)は検出できない。対象 entry と同じ秒の記録外の変更も検出できない。
   - 戻し先の commit が既に無い(TargetGone)。
-  - merge / rebase などが進行中。
+  - merge / rebase などが**いずれかの worktree で**進行中(OperationInProgress、path 付き)。その worktree が checkout している branch を動かすと、進行中の操作の前提の HEAD が変わる。
   - checkout 中の branch を削除することになる(DeletesCheckedOutBranch)。
 - **checkout 中の branch を動かす場合**: soft な移動(ADR-0084 の undo と同じ)で、その worktree の index とファイルはそのまま。
   - 変更が無ければ warning MovesCheckedOutBranch、未コミットの変更があれば warning CheckedOutDirty(変更は残り、戻した先端との差分と一緒に見える)。
@@ -160,3 +166,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - domain unit(`restore_preview`): branch の削除はその branch 固有の commit だけを消す、tag / remote が保持する commit は残る、移動した branch は戻し先の行に付く、戻し先が範囲外なら NotLoaded、窓 = 変化 ± 4 行で上限 40。
   - Tier A `oplog_restore_card` の拡張: 記録済みの commit を main に 1 つ足す。keep 時点への restore の card で、プレビュー行数 ≤ 40、main の移動先の行が戻し先 commit、消える行 = 1(その commit は描かれない)。restore 後に `git rev-list --count --branches` の減少数と一致する。描画 probe(`restore-preview` / `-removed-1` / `-moved-main-<sha>`)。revert card は、main の戻し先が reload 後の rows に無いので NotLoaded になり、「プレビューできません」が描画される。
 - slice 2c の変異確認: restores を after に適用しない → domain 4 件と Tier A、card の extra を描かない → Tier A、NotLoaded の判定を外す → domain と Tier A が落ちる。
+- #878 review 対応(P1)のテスト
+  - domain unit: 鎖が途切れると HistoryGap、別 repository の entry は除いて Unknown は blocker、記録外で変わった branch は RefChangedOutsideRecord(記録が説明する branch は除く)、動いて戻った ref が別の値にあれば RefMovedSince。
+  - kagi-git integration: oplog から 1 行を消すと HistoryGap、削除・prune した worktree の entry は UnknownRepository、別 worktree で merge の conflict 中は OperationInProgress(その path)、対象の後に `git branch` で作った branch は RefChangedOutsideRecord。
+- 変異確認: 鎖の検査を外す、Unknown を除外扱いにする、変化の検査を外す → それぞれ domain と integration が落ちる。in-progress を呼び出し元の worktree だけにする → integration、動いて戻った ref の検査を restores だけにする → domain が落ちる。

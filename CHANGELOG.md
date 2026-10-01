@@ -19,6 +19,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - Cmd+R(Refresh)の読み直しが捨てられ、Kagi の外で変えた状態(起動後に置いた worktree lock の 🔐・右クリックの Unlock など)が画面に反映されない問題を修正しました。Refresh は読み直しの直後に fetch を始めますが、fetch の受付が実行中の読み直しを無効にする一方、何も取得しなかった fetch は読み直しをしないため、Refresh の読み直しが失われていました。fetch は、自分の受付で無効にした読み直しを、取得の有無や失敗に関わらず完了時にやり直します。自動 fetch が watcher の読み直しと重なった場合も同じです。(#851)
 
+- worktree の port block(マシン全体で既定 `3000-3099` / 10 ずつ = 10 block)が尽きると、埋め込み terminal 自体が起動しなかった問題を修正しました。枯渇時は `KAGI_*` を渡さずに terminal を起動し、footer と toast に理由と、`settings.json` の `worktree.port_range` を広げれば割り当てられることを示します(`[kagi] terminal: port block exhausted <path> (range <start>-<end>, per <n>)`)。既定の range は変えていません。あわせて ADR-0171 の「2 つの repo が同じ番号を出しうる」という記述を、全 repo で 1 つの store を共有して番号が重ならない現行の実装に合わせて訂正しました。(#852、Refs #342)
+
 - PR の merge 状態(mergeStateStatus・未解決 thread 数・merge queue の位置)が一度も読めていなかった問題を修正しました。GraphQL query を `\` 行継続で書いていたため、継続時に次行の字下げが消えて `mergeStateStatus` と `reviewThreads`、`state` と `mergeQueue` が 1 語につながり、GitHub が query ごと拒否していました。query を改行区切りにし、読み取りに失敗したときは黙って空にせず `[kagi] pr-merge-status: #N read failed: <理由>` を 1 行出します。同じ書き方の再発を防ぐ CI gate `check-string-continuation` も追加しました。(#843)
 
 - コミットのファイルを開いたとき、未キャッシュの diff を UI スレッドで読んでいたため大きな diff で画面が固まる問題を修正しました。読み込みは Compare / WIP と同じくバックグラウンドで行い、読み終わるまで表示中の diff はそのまま残り、2 秒を超えると busy snackbar が理由を示します。読み込み中に別のファイルを開いた・閉じた場合は古い結果を捨て、reload で行番号が変わった場合はコミットの新しい行に付け直して表示します。（#829）

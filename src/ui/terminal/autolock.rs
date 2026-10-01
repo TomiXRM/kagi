@@ -9,7 +9,7 @@ use gpui::{Context, Window};
 
 use super::{KagiTerminalSession, ShellExit};
 use crate::app::SessionId;
-use crate::ui::{FooterStatus, KagiApp, SharedString, UnlockWorktreeModal};
+use crate::ui::{FooterStatus, KagiApp, SharedString, ToastKind, UnlockWorktreeModal};
 use kagi_domain::worktree_autolock::{AutoLockToken, AutoUnlockTarget};
 
 impl KagiApp {
@@ -36,9 +36,15 @@ impl KagiApp {
             .take()
             .unwrap_or_else(|| KagiTerminalSession::new(repo_path.clone()));
         let mut failure_msg: Option<String> = None;
-        let started = super::ensure_terminal(&mut session, owner, window, cx, |msg| {
-            failure_msg = Some(msg);
-        });
+        let mut exhausted: Option<super::PortsExhausted> = None;
+        let started = super::ensure_terminal(
+            &mut session,
+            owner,
+            window,
+            cx,
+            |msg| failure_msg = Some(msg),
+            |ports| exhausted = Some(ports),
+        );
         if started {
             // A fresh shell: any lock target from a previous spawn is stale.
             session.clear_auto_lock();
@@ -49,6 +55,17 @@ impl KagiApp {
         if started {
             // #772 / ADR-0208 決定 4: opt-in only; plan → confirm, never a write.
             self.offer_auto_lock(owner, cx);
+        }
+        if let Some(ports) = exhausted {
+            // #852: the shell runs; say why it has no KAGI_PORT and how to
+            // give it one. Not an operation, so no oplog entry.
+            let message = crate::ui::i18n::terminal_ports_exhausted(
+                &ports.worktree.display().to_string(),
+                ports.range,
+                ports.per,
+            );
+            self.status_footer = FooterStatus::Failed(SharedString::from(message.clone()));
+            self.push_toast(ToastKind::Error, message, cx);
         }
 
         if let Some(err) = failure_msg {

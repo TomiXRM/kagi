@@ -189,6 +189,24 @@ pub fn op_failed(op: Op, err: impl std::fmt::Display) -> String {
     }
 }
 
+/// #852: the terminal started without `KAGI_*` because `range` has no free
+/// block of `per` ports left for `worktree`, and how to give it one.
+pub fn terminal_ports_exhausted(worktree: &str, range: (u16, u16), per: u16) -> String {
+    let (start, end) = range;
+    match lang() {
+        Lang::En => format!(
+            "No free port block for {worktree} in {start}-{end} ({per} per worktree): \
+             the terminal started without KAGI_PORT. Widen worktree.port_range in \
+             settings.json to give it one."
+        ),
+        Lang::Ja => format!(
+            "{start}-{end} に {worktree} 用の空き port block がありません(1 worktree あたり \
+             {per}): KAGI_PORT なしで terminal を起動しました。settings.json の \
+             worktree.port_range を広げると割り当てられます。"
+        ),
+    }
+}
+
 /// `"Pull plan failed: <err>"` / `"pull の plan に失敗しました: <err>"` — the
 /// planning step of [`op_failed`]'s operation (plan → confirm → preflight → …).
 pub fn op_plan_failed(op: Op, err: impl std::fmt::Display) -> String {

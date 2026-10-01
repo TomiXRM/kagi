@@ -62,7 +62,8 @@ fn canonical(path: &Path) -> PathBuf {
 /// `Ambiguous` unknown (fail closed) — a file id match with no creation time
 /// to confirm it could be a re-created `.git` on a reused inode (#900). Only
 /// an older entry without an identity is classified by opening its worktree,
-/// and is unknown when that fails.
+/// and is unknown when that fails. An identity that is there but unreadable
+/// is unknown outright — never treated as an older entry (#900 review).
 fn log_entries(repo: &Repository) -> Vec<RecordedEntry> {
     let mine = canonical(repo.commondir());
     let my_identity = crate::oplog::RepoIdentity::of(repo.workdir().unwrap_or(repo.path()));
@@ -71,12 +72,16 @@ fn log_entries(repo: &Repository) -> Vec<RecordedEntry> {
         .into_iter()
         .map(|e| {
             let path = e.worktree.clone().unwrap_or_else(|| e.repo.clone());
+            use crate::oplog::RecordedIdentity;
             let repo = match (&e.repo_identity, &my_identity) {
-                (Some(recorded), Some(mine)) => match recorded.same_repository(mine) {
-                    crate::oplog::SameRepository::Same => EntryRepo::Mine,
-                    crate::oplog::SameRepository::Different => EntryRepo::Other,
-                    crate::oplog::SameRepository::Ambiguous => EntryRepo::Unknown(path.clone()),
-                },
+                (RecordedIdentity::Invalid, _) => EntryRepo::Unknown(path.clone()),
+                (RecordedIdentity::Known(recorded), Some(mine)) => {
+                    match recorded.same_repository(mine) {
+                        crate::oplog::SameRepository::Same => EntryRepo::Mine,
+                        crate::oplog::SameRepository::Different => EntryRepo::Other,
+                        crate::oplog::SameRepository::Ambiguous => EntryRepo::Unknown(path.clone()),
+                    }
+                }
                 _ => {
                     let common = common_of
                         .entry(path.clone())

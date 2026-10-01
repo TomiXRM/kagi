@@ -748,3 +748,45 @@ fn a_removed_worktrees_own_entry_is_attributed_through_its_repository() {
         "its own repository knows the entry: {notes:?}"
     );
 }
+
+/// #900 review: an identity field that is there but unreadable is not an
+/// older line. Read as one, its worktree path — which opens onto this
+/// repository, possibly re-created there — would make it ours; instead the
+/// restore across it fails closed. An older line without the field is still
+/// attributed by its path.
+#[test]
+fn an_unreadable_identity_fails_closed_instead_of_reading_as_legacy() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let point = create(&repo, "a");
+    let entry = create(&repo, "b");
+    let restore = Operation::RestoreToPoint { entry_id: point };
+
+    for invalid in [
+        serde_json::json!("not an identity"),
+        serde_json::json!({ "common_dir": "/x/.git", "dev": 1 }),
+        serde_json::json!({ "common_dir": "/x/.git", "generation": 2 }),
+    ] {
+        set_identity(entry, Some(invalid.clone()));
+        let p = plan(&repo, &restore);
+        assert!(
+            restore_blockers(&p).iter().any(|n| matches!(
+                n,
+                OplogRestoreNote::UnknownRepository { id, .. } if *id == entry
+            )),
+            "{invalid}: {:?}",
+            p.blockers
+        );
+    }
+
+    set_identity(entry, None);
+    let p = plan(&repo, &restore);
+    assert_eq!(
+        restore_blockers(&p),
+        Vec::new(),
+        "legacy: attributed by its path"
+    );
+}

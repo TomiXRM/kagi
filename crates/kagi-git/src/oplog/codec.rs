@@ -3,7 +3,10 @@
 //! Keep legacy scalar/default handling at this boundary; append, identity
 //! reconstruction, and retention continue to own their existing policies.
 
-use super::{recovery, Actor, FailureCode, OpLogEntry, OpOutcome, RepoIdentity, StateSummary};
+use super::{
+    recovery, Actor, FailureCode, OpLogEntry, OpOutcome, RecordedIdentity, RepoIdentity,
+    StateSummary,
+};
 use kagi_domain::ref_moves::RefMove;
 use serde::{de::Error, Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
@@ -118,7 +121,10 @@ struct RepoIdentityRef<'a> {
     born_ns: Option<u32>,
 }
 
+/// Strict: a key this version does not know may change what the identity
+/// means, so it makes the field `Invalid`, not silently ignored.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RepoIdentityRecord {
     common_dir: String,
     #[serde(default)]
@@ -183,11 +189,12 @@ struct EntryRecord {
     failure_code: Option<FailureCode>,
     #[serde(default, deserialize_with = "ref_moves")]
     ref_moves: Option<Vec<RefMove>>,
-    // Additive and lenient: a missing or malformed identity is "unknown",
-    // which the restore planner treats as before (open the worktree, fail
-    // closed if it cannot).
+    // Additive: a line without the field is `Absent` (attributed as before by
+    // opening its worktree). A field that is there but unreadable is
+    // `Invalid` — never `Absent`, whose path fallback could take another
+    // repository's entry for this one (#900 review).
     #[serde(default, deserialize_with = "repo_identity")]
-    repo_identity: Option<RepoIdentity>,
+    repo_identity: RecordedIdentity,
 }
 
 pub(super) fn to_json(entry: &OpLogEntry) -> String {
@@ -216,13 +223,16 @@ pub(super) fn to_json(entry: &OpLogEntry) -> String {
                 })
                 .collect()
         }),
-        repo_identity: entry.repo_identity.as_ref().map(|id| RepoIdentityRef {
-            common_dir: &id.common_dir,
-            dev: id.file_id.map(|(dev, _)| dev),
-            ino: id.file_id.map(|(_, ino)| ino),
-            born_s: id.created.map(|(s, _)| s),
-            born_ns: id.created.map(|(_, ns)| ns),
-        }),
+        repo_identity: match &entry.repo_identity {
+            RecordedIdentity::Known(id) => Some(RepoIdentityRef {
+                common_dir: &id.common_dir,
+                dev: id.file_id.map(|(dev, _)| dev),
+                ino: id.file_id.map(|(_, ino)| ino),
+                born_s: id.created.map(|(s, _)| s),
+                born_ns: id.created.map(|(_, ns)| ns),
+            }),
+            RecordedIdentity::Absent | RecordedIdentity::Invalid => None,
+        },
     };
     // This fixed schema contains only strings, integers, sequences and objects;
     // no fallible map keys, floating-point values, or custom fallible payloads.
@@ -343,11 +353,27 @@ fn ref_moves<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<RefMove>>, D:
     }))
 }
 
-fn repo_identity<'de, D: Deserializer<'de>>(d: D) -> Result<Option<RepoIdentity>, D::Error> {
-    let record: Option<RepoIdentityRecord> = serde_json::from_value(Value::deserialize(d)?).ok();
-    Ok(record.map(|r| RepoIdentity {
-        common_dir: r.common_dir,
-        file_id: r.dev.zip(r.ino),
-        created: r.born_s.zip(r.born_ns),
-    }))
+/// Only called when the key is present (a missing one is `Default`, i.e.
+/// `Absent`), so anything that does not read as a whole identity — `null`,
+/// another type, an unknown key, half of a `(dev, ino)` or birth-time pair —
+/// is `Invalid`.
+fn repo_identity<'de, D: Deserializer<'de>>(d: D) -> Result<RecordedIdentity, D::Error> {
+    let Ok(r) = serde_json::from_value::<RepoIdentityRecord>(Value::deserialize(d)?) else {
+        return Ok(RecordedIdentity::Invalid);
+    };
+    let pair = |a: Option<u64>, b: Option<u64>| match (a, b) {
+        (Some(a), Some(b)) => Ok(Some((a, b))),
+        (None, None) => Ok(None),
+        _ => Err(()),
+    };
+    let file_id = pair(r.dev, r.ino);
+    let created = pair(r.born_s, r.born_ns.map(u64::from));
+    match (file_id, created) {
+        (Ok(file_id), Ok(created)) => Ok(RecordedIdentity::Known(RepoIdentity {
+            common_dir: r.common_dir,
+            file_id,
+            created: created.map(|(s, ns)| (s, ns as u32)),
+        })),
+        _ => Ok(RecordedIdentity::Invalid),
+    }
 }

@@ -14,7 +14,7 @@ fn entry(op: &str) -> OpLogEntry {
         recovery: Vec::new(),
         failure_code: None,
         ref_moves: None,
-        repo_identity: None,
+        repo_identity: Default::default(),
         actor: Actor::Human,
         worktree: None,
         timestamp: 1,

@@ -201,6 +201,21 @@ pub struct RepoIdentity {
     pub created: Option<(u64, u32)>,
 }
 
+/// What an entry says about its repository (#894, #900 review).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum RecordedIdentity {
+    /// No `repo_identity` field: a line written before #894, or a scope that
+    /// does not open (remote). Attributed by opening its worktree.
+    #[default]
+    Absent,
+    Known(RepoIdentity),
+    /// The field is there but unreadable — a wrong type, half of a pair, a
+    /// key this version does not know. Never taken for `Absent`: that would
+    /// fall back to the path and could attribute the entry to a repository
+    /// re-created there. The restore planner fails closed on it.
+    Invalid,
+}
+
 /// How two [`RepoIdentity`]s relate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SameRepository {
@@ -315,9 +330,8 @@ pub struct OpLogEntry {
     /// recorded (written before the field, or by a path that does not record
     /// moves); `Some(empty)` = recorded, nothing moved.
     pub ref_moves: Option<Vec<kagi_domain::ref_moves::RefMove>>,
-    /// The repository the entry was recorded in (#894). `None` for lines
-    /// written before the field, or a scope that does not open (remote).
-    pub repo_identity: Option<RepoIdentity>,
+    /// The repository the entry was recorded in (#894).
+    pub repo_identity: RecordedIdentity,
 }
 
 impl OpLogEntry {
@@ -351,7 +365,7 @@ impl OpLogEntry {
             recovery: Vec::new(),
             failure_code: None,
             ref_moves: None,
-            repo_identity: None,
+            repo_identity: RecordedIdentity::Absent,
         }
     }
 
@@ -553,12 +567,13 @@ pub fn append_oplog_receipt(entry: &OpLogEntry) -> Result<(PathBuf, OpLogEntry),
     // worktree it ran in may later be removed). The worktree first; when it
     // no longer opens — a remove-worktree records the path it just deleted —
     // the repository it was run from (#900 review).
-    if entry.repo_identity.is_none() {
+    if entry.repo_identity == RecordedIdentity::Absent {
         entry.repo_identity = entry
             .worktree
             .as_deref()
             .and_then(|worktree| RepoIdentity::of(Path::new(worktree)))
-            .or_else(|| RepoIdentity::of(Path::new(&entry.repo)));
+            .or_else(|| RepoIdentity::of(Path::new(&entry.repo)))
+            .map_or(RecordedIdentity::Absent, RecordedIdentity::Known);
     }
     let last = read_oplog_tail(1);
     match last.first() {

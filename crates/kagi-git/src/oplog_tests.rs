@@ -55,7 +55,7 @@ fn oplog_filter_scopes_to_bound_repo() {
         recovery: Vec::new(),
         failure_code: None,
         ref_moves: None,
-        repo_identity: None,
+        repo_identity: RecordedIdentity::Absent,
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -208,7 +208,7 @@ fn synthetic_entry(id: u64, repo: &str) -> OpLogEntry {
         recovery: Vec::new(),
         failure_code: None,
         ref_moves: None,
-        repo_identity: None,
+        repo_identity: RecordedIdentity::Absent,
     }
 }
 
@@ -487,31 +487,47 @@ fn malformed_recovery_degrades_to_empty_without_losing_the_entry() {
 }
 
 /// #894: the recorded repository round-trips; a line written before the
-/// field, or a malformed value, reads as "unknown" (`None`) and the entry
-/// itself is kept.
+/// field reads as `Absent` and the entry itself is kept. #900 review: a field
+/// that is there but unreadable — wrong type, `null`, half of a pair, an
+/// unknown key — is `Invalid`, never `Absent` (which would fall back to the
+/// path), and the entry is still kept.
 #[test]
-fn repo_identity_is_additive_and_lenient() {
+fn repo_identity_is_additive_and_strict() {
     let base = concat!(
         r#"{"timestamp":1000,"op":"checkout","repo":"/tmp/repo","#,
         r#""before":{"head":"branch: main","dirty":"clean"},"#,
         r#""outcome":{"kind":"Success","after":{"head":"branch: f","dirty":"clean"}}"#,
     );
     let legacy = parse_oplog_line(&format!("{base}}}")).expect("legacy line");
-    assert_eq!(legacy.repo_identity, None);
+    assert_eq!(legacy.repo_identity, RecordedIdentity::Absent);
 
     let mut entry = legacy.clone();
-    entry.repo_identity = Some(RepoIdentity {
+    entry.repo_identity = RecordedIdentity::Known(RepoIdentity {
         common_dir: "/tmp/repo/.git".into(),
         file_id: Some((16_777_232, 4_242)),
         created: Some((1_700_000_000, 123_456_789)),
     });
     let back = parse_oplog_line(&entry_to_json(&entry)).unwrap();
     assert_eq!(back.repo_identity, entry.repo_identity);
+    let path_only = format!(r#"{base},"repo_identity":{{"common_dir":"/r/.git"}}}}"#);
+    assert!(matches!(
+        parse_oplog_line(&path_only).unwrap().repo_identity,
+        RecordedIdentity::Known(_)
+    ));
 
-    for bad in [r#""a string""#, r#"{"dev":1}"#, "42"] {
+    for bad in [
+        r#""a string""#,
+        "42",
+        "null",
+        r#"{"dev":1}"#,
+        r#"{"common_dir":"/r/.git","dev":1}"#,
+        r#"{"common_dir":"/r/.git","born_s":1}"#,
+        r#"{"common_dir":"/r/.git","dev":"1","ino":2}"#,
+        r#"{"common_dir":"/r/.git","generation":"v2"}"#,
+    ] {
         let line = format!(r#"{base},"repo_identity":{bad}}}"#);
         let read = parse_oplog_line(&line).unwrap_or_else(|| panic!("row dropped: {bad}"));
-        assert_eq!(read.repo_identity, None, "{bad}");
+        assert_eq!(read.repo_identity, RecordedIdentity::Invalid, "{bad}");
     }
 }
 

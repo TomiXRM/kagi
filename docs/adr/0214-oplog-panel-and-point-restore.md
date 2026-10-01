@@ -111,6 +111,8 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
 
       作成時刻の解像度が粗い filesystem(秒精度。HFS+ や一部の network filesystem)では、同じ秒の中で削除と再作成が起きると inode も作成時刻も再利用されうる(#900 review 4)。ns 部が 0 の作成時刻は「秒精度」とみなし、一致しても確認にならないので曖昧にする。違えば Other のまま。`.git` に再利用されない世代 ID を書く案は採らない。ユーザーが頼んでいない repository への書き込みになるため。
     - identity の無い旧形式の entry だけ、従来どおり worktree を開いて判定する(開けなければ UnknownRepository)。
+    - **field はあるが読めない identity は旧形式と区別する**(#900 review 5)。codec は `RecordedIdentity::{Absent, Known, Invalid}` を返す。field が無ければ Absent。文字列・`null`・型違い・組の片側(`dev` だけ、`born_s` だけ)・知らないキー(将来の形式)は Invalid。Invalid を旧形式として扱うと path を開いて判定してしまい、同じ path に作り直した repository の entry を Mine にしうる。そのため Invalid は UnknownRepository とする(fail closed)。
+    - **限界 3**: identity の無い本物の旧形式の行(#894 より前に書かれたもの)は path で判定するので、同じ path に作り直した repository では Mine になる。移行前のデータの限界で、#894 以降に書いた行には当てはまらない。
     - `(dev, ino)` も持つのは、同じ filesystem 内での移動や rename では inode も作成時刻も変わらないため。path だけだと、移動した repository の自分の entry を Other と誤判定して黙って除外してしまう。
     - **限界 1**: filesystem をまたいで移動すると、path も `(dev, ino)` も変わるので、それ以前の自分の entry は Other になる。その entry が動かした branch は、記録が説明しない reflog の変化として RefChangedOutsideRecord の blocker になる(fail closed)。対象 entry 自体が移動前のものなら EntryNotLoaded。
     - **限界 2**: 削除した無関係の repository の `.git` と、`(dev, ino)` も作成時刻(ns 単位)も一致する場合は Mine と誤判定する。APFS / ext4 / btrfs のような ns 精度の filesystem では、同じ ns の中で削除・再作成が起き、しかも同じ inode を得る場合に限られる。その記録は、この repository に無い ref や OID を期待値に持つことが多いので、RefMovedSince の blocker になる(fail closed)。作成時刻を返さない、または秒精度の filesystem では、同じ inode の entry は曖昧になり、restore はその範囲で止まる。偶然 ns 部が 0 になった作成時刻も同じ扱いになる(10 億分の 1 の確率で restore が不要に止まる)。
@@ -216,8 +218,9 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - inode の再利用(#900 review 2): path も `(dev, ino)` もこの repository、作成時刻だけ違う entry は Other(EntryNotLoaded)。作成時刻を消した entry は UnknownRepository。domain 側は `same_repository` の unit で、再利用・移動・作成時刻なし・file id なしの各行を固定する。
   - 削除した worktree の remove-worktree(#900 review 3): identity は repo から取れる。別の repository の restore はその entry をまたいでも blocker なしで実行でき、自分の repository では UnknownRepository にならない。作成時刻を返さない、または秒精度の filesystem では、作成時刻を前提にするテストは理由を出してスキップする。
   - 秒精度の作成時刻(#900 review 4): unit で、ns 部が 0 の一致は Ambiguous、違えば Different であることを固定する。
-  - codec unit: 往復、旧行は `None`、不正値でも行は残って `None`。
-- #894 の変異確認: append で埋めない → integration 2 件、`(dev, ino)` を比べない → 限界 2 のテスト、分類で identity を使わない → integration 2 件、codec が書かない → codec と integration が落ちる。#900 review 2: 作成時刻を比べない → unit と inode 再利用の integration、曖昧を Mine にする → inode 再利用の integration が落ちる。#900 review 3: repo へのフォールバックを外す → 別 repository の restore が UnknownRepository で止まり、remove-worktree の integration が落ちる。#900 review 4: ns 部が 0 の一致も Same にする → unit が落ちる。
+  - codec unit: 往復、旧行は Absent、不正値(文字列・数値・`null`・組の片側・型違い・知らないキー)は Invalid で、行は残る。
+  - 読めない identity(#900 review 5): 自分の entry の `repo_identity` を不正値に書き換えると UnknownRepository で止まる。field を消した旧形式の行は path で判定され、blocker にならない。
+- #894 の変異確認: append で埋めない → integration 2 件、`(dev, ino)` を比べない → 限界 2 のテスト、分類で identity を使わない → integration 2 件、codec が書かない → codec と integration が落ちる。#900 review 2: 作成時刻を比べない → unit と inode 再利用の integration、曖昧を Mine にする → inode 再利用の integration が落ちる。#900 review 3: repo へのフォールバックを外す → 別 repository の restore が UnknownRepository で止まり、remove-worktree の integration が落ちる。#900 review 4: ns 部が 0 の一致も Same にする → unit が落ちる。#900 review 5: codec が不正値を Absent にする → codec unit と integration、分類で Invalid を旧形式として扱う → integration が落ちる。
 - #878 review 対応(P1)のテスト
   - domain unit: 鎖が途切れると HistoryGap、別 repository の entry は除いて Unknown は blocker、記録外で変わった branch は RefChangedOutsideRecord(記録が説明する branch は除く)、動いて戻った ref が別の値にあれば RefMovedSince。
   - kagi-git integration: oplog から 1 行を消すと HistoryGap、削除・prune した worktree の entry は UnknownRepository、別 worktree で merge の conflict 中は OperationInProgress(その path)、対象の後に `git branch` で作った branch は RefChangedOutsideRecord。

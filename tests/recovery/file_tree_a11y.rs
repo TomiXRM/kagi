@@ -177,8 +177,62 @@ pub fn scenario_file_tree_roles(cx: &mut VisualTestAppContext) {
         (1, 2)
     );
     assert_eq!(item(&staged, "report.md").selected, Some(false));
+    // Reattach the *same* panel after its file set changes. from_repo starts
+    // tree_revision at 1 again, so a cache keyed only by that revision would
+    // assign the old sibling count to new rows or omit their TreeItem role.
+    std::fs::write(repo.join("src/beta.txt"), "new\n").unwrap();
+    std::fs::write(repo.join("docs/next.md"), "staged\n").unwrap();
+    git(&repo, &["add", "docs/next.md"]);
+    app.update(cx, |app, cx| {
+        e2e::open_local_panel_no_inputs(app, repo.clone(), cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        panel.entity_id(),
+        cx.read(|cx| app.read(cx).ui().commit_panel.as_ref().unwrap().entity_id()),
+        "reattach must reuse the drawn panel and its existing layout cache"
+    );
+    draw(cx, &app, window);
+    let unstaged = recorded_tree("cp-unstaged-tree").unwrap();
+    let staged = recorded_tree("cp-staged-tree").unwrap();
+    assert_eq!(
+        (
+            item(&unstaged, "beta.txt").level,
+            item(&unstaged, "beta.txt").position,
+            item(&unstaged, "beta.txt").size
+        ),
+        (2, 3, 3)
+    );
+    assert_eq!(
+        (
+            item(&unstaged, "alpha.txt").position,
+            item(&unstaged, "alpha.txt").size
+        ),
+        (2, 3)
+    );
+    assert_eq!(
+        (
+            item(&staged, "next.md").level,
+            item(&staged, "next.md").position,
+            item(&staged, "next.md").size
+        ),
+        (2, 1, 2)
+    );
+    assert_eq!(
+        (
+            item(&staged, "report.md").position,
+            item(&staged, "report.md").size
+        ),
+        (2, 2)
+    );
     panel.update(cx, |view, cx| {
-        view.state.selected_file = Some(CommitPanelFileRef::Staged { index: 0 });
+        let selected = view
+            .state
+            .staged
+            .iter()
+            .position(|file| file.path == Path::new("docs/report.md"))
+            .unwrap();
+        view.state.selected_file = Some(CommitPanelFileRef::Staged { index: selected });
         cx.notify();
     });
     cx.run_until_parked();
@@ -235,7 +289,7 @@ pub fn scenario_file_tree_roles(cx: &mut VisualTestAppContext) {
             new_file.size,
             new_file.selected
         ),
-        (2, 3, 3, Some(false))
+        (2, 4, 4, Some(false))
     );
     panel.update(cx, |view, cx| {
         view.state.tree_view = false;

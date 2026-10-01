@@ -522,6 +522,14 @@ impl CommitPanelView {
         }
     }
 
+    /// A freshly read state restarts `tree_revision` at 1. Invalidate the
+    /// view-owned layout key before replacing it, or equal revision/fold flags
+    /// would reuse positions from the previous file set.
+    pub(crate) fn replace_state(&mut self, state: CommitPanelState) {
+        self.state = state;
+        self.tree_layout_for = None;
+    }
+
     /// Whether a body line is a git trailer (`Key: value` with a hyphenated,
     /// space-free key) — used to keep appended co-authors in one block.
     fn is_trailer_line(line: &str) -> bool {

@@ -120,9 +120,12 @@ The current suite covers:
   render named EN/JA Trees with TreeItems carrying file status, selection,
   level and sibling position. Editor collapse hides descendants and updates
   `expanded`; Commit Panel generated-file disclosure exposes its children and
-  updates positions. A filename containing `{}` retains its literal braces
-  in both languages. The recorder proves renderer attributes, not native
-  VoiceOver delivery; verify the latter on a machine with VoiceOver enabled.
+  updates positions. Reopening the same panel after changing both staged and
+  unstaged file sets reuses its entity but recomputes TreeItem roles and sibling
+  counts (the replacement state restarts its revision). A filename containing
+  `{}` retains its literal braces in both languages. The recorder proves
+  renderer attributes, not native VoiceOver delivery; verify the latter on a
+  machine with VoiceOver enabled.
 - remove refusal reasons (`KAGI_GUI_E2E_ONLY=remove_public_boundary`,
   `tests/recovery/app_remove.rs`): Enter on a locked removal plan delivers the
   specific EN/JA blocker and unlock guidance in AppNotice and bounded toast.

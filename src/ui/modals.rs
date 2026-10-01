@@ -2,6 +2,7 @@
 
 pub mod apply_suggestion;
 pub mod branch_plan;
+pub mod delete_branch;
 pub mod rebase;
 pub mod repo_health;
 pub mod worktree;
@@ -383,60 +384,7 @@ pub struct RevertModal {
 // DeleteBranchModal — state for the delete-branch confirmation overlay (W2-DELETE)
 // ──────────────────────────────────────────────────────────────
 
-/// State for an in-progress delete-branch confirmation (W2-DELETE).
-///
-/// Unmerged deletion requires two confirmations; blockers still refuse.
-/// Recovery retains the tip under a mandatory backup ref.
-#[derive(Clone)]
-pub struct DeleteBranchModal {
-    /// Frozen plan owner, including its departure revision.
-    pub owner: crate::app::Attachment,
-    /// First confirmation arms only unmerged deletion; errors/reopening reset it.
-    pub confirm_armed: bool,
-    /// The local branch name to delete.
-    pub branch_name: String,
-    /// The computed plan.
-    pub plan: std::sync::Arc<OperationPlan>,
-    /// Error message to show if preflight or execute failed.
-    pub error: Option<SharedString>,
-}
-
-impl DeleteBranchModal {
-    /// Settle the global plan latch before deciding whether to display its
-    /// result. Tab departure invalidates approval, not completion. An unrelated
-    /// planning tag is never owned by this plan; the latch is `planning`,
-    /// because planning writes nothing (ADR-0196 Wave 3).
-    pub fn settle_plan(
-        owner: &crate::app::Attachment,
-        current: Option<&crate::app::Attachment>,
-        planning: &mut Option<&'static str>,
-    ) -> bool {
-        if *planning == Some("delete-branch-plan") {
-            *planning = None;
-        }
-        current
-            .is_some_and(|current| current.session == owner.session && current.visit == owner.visit)
-    }
-
-    /// Returns true when this confirmation only arms; false permits the caller
-    /// to continue through its existing blockers/busy/preflight checks.
-    pub fn arm_if_required(&mut self) -> bool {
-        let unmerged = self.plan.warnings.iter().any(|note| {
-            matches!(
-                note,
-                kagi_domain::plan_note::PlanNote::Branch(
-                    kagi_domain::plan_note::BranchNote::DeleteUnmerged { .. }
-                )
-            )
-        });
-        if unmerged && !self.confirm_armed {
-            self.confirm_armed = true;
-            true
-        } else {
-            false
-        }
-    }
-}
+pub use delete_branch::DeleteBranchModal;
 
 /// State for an in-progress delete-remote-branch confirmation
 /// (branch-menu "Advanced / Dangerous" group).

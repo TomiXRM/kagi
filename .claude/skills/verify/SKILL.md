@@ -375,6 +375,14 @@ The current suite covers:
   restore leaving a leftover, idempotent) are `crates/kagi-git/tests/
   worktree_autolock_test.rs`. Tier B: Phase 1's steps, plus a `locked.kagi-*` file
   placed by hand in `.git/worktrees/<name>/` before opening the unlock card.
+- external lock on refresh (`KAGI_GUI_E2E_ONLY=external_lock_reload`,
+  `tests/recovery/worktree_lock_reason.rs`): #851. Opened at the linked
+  worktree and at main, a `git worktree lock` made outside Kagi after launch,
+  then the real Cmd+R (`file.refresh` = manual reload + quiet fetch): the read
+  model, the painted sidebar row (🔐) and the row's right-click menu all report
+  the lock. The fetch's admission supersedes the refresh's read; a no-op fetch
+  must re-issue it. The inspection column (Keep/Unknown) is not part of this —
+  a new read makes cached observations stale by design until re-measured.
 - worktree lock reason (`KAGI_GUI_E2E_ONLY=worktree_lock_reason`,
   `tests/recovery/worktree_lock_reason.rs`): #372 item2. EN/JA use the real
   InputState, clipboard paste and focused Enter to review, then a second Enter

@@ -19,6 +19,7 @@ fn empty_state() -> CommitPanelState {
         tree_view: false,
         unstaged_tree: Vec::new(),
         staged_tree: Vec::new(),
+        tree_revision: 0,
         unstaged_stat_index: std::collections::HashMap::new(),
         staged_stat_index: std::collections::HashMap::new(),
         unstaged_gen_files: Vec::new(),

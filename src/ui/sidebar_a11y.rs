@@ -151,54 +151,10 @@ pub fn tree_item(row: &SidebarRow) -> TreeItemSpec {
     }
 }
 
-/// 1-based position among siblings and sibling count for each row of a
-/// flattened tree given each row's level. Siblings are the consecutive rows
-/// at the same level since the last row at a lower level (their parent).
-pub fn sibling_positions(levels: &[usize]) -> Vec<(usize, usize)> {
-    // Linear: one open sibling run per level on a stack; a run closes (and
-    // its members learn the size) when a shallower row or the end arrives.
-    // Runs over all navigator rows (thousands with many remote branches) each
-    // time they are rebuilt, so this must not be quadratic.
-    let mut out = vec![(0, 0); levels.len()];
-    let mut stack: Vec<(usize, Vec<usize>)> = Vec::new();
-    let close = |run: (usize, Vec<usize>), out: &mut Vec<(usize, usize)>| {
-        let size = run.1.len();
-        for ix in run.1 {
-            out[ix].1 = size;
-        }
-    };
-    for (i, &level) in levels.iter().enumerate() {
-        while stack.last().is_some_and(|(l, _)| *l > level) {
-            let run = stack.pop().expect("checked");
-            close(run, &mut out);
-        }
-        match stack.last_mut() {
-            Some((l, members)) if *l == level => members.push(i),
-            _ => stack.push((level, vec![i])),
-        }
-        out[i].0 = stack.last().expect("pushed").1.len();
-    }
-    while let Some(run) = stack.pop() {
-        close(run, &mut out);
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use kagi_domain::text_safety::sanitize_control_bytes;
-
-    #[test]
-    fn siblings_restart_under_each_parent() {
-        // LOCAL (1) > feat/ (2) > a, b (3) ; main (2) ; TAGS (1) > v1 (2)
-        let levels = [1, 2, 3, 3, 2, 1, 2];
-        assert_eq!(
-            sibling_positions(&levels),
-            vec![(1, 2), (1, 2), (1, 2), (2, 2), (2, 2), (2, 2), (1, 1)]
-        );
-        assert_eq!(sibling_positions(&[]), vec![]);
-    }
 
     #[test]
     fn headers_are_expandable_and_leaves_carry_state_in_the_name() {

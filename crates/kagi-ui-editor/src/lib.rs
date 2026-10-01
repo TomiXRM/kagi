@@ -49,6 +49,7 @@ use kagi_ui_core::file_tree::{self, status_badge, TreeRow};
 use kagi_ui_core::i18n::Msg;
 use kagi_ui_core::klog;
 use kagi_ui_core::theme::{self, theme};
+use kagi_ui_core::tree_a11y;
 
 pub(crate) use panes::{render_history_pane, render_snapshot_pane};
 use save_binding::{deliver, dirty_after_save, SaveDelivery};
@@ -2487,32 +2488,71 @@ fn render_tree_pane(
 
     // Zed-style collapse: the uniform_list virtualizes the *visible* rows;
     // the processor maps a visible position back to its base tree index.
+    // Accessibility levels and sibling positions are computed once per
+    // render from the same visible rows, so they follow the current
+    // collapse state (#354).
     let visible = visible_tree_indices(&view.tree, &view.collapsed);
+    let levels: Vec<usize> = visible
+        .iter()
+        .map(|&i| match &view.tree[i] {
+            TreeRow::Dir { depth, .. } | TreeRow::File { depth, .. } => depth + 1,
+        })
+        .collect();
+    let positions = tree_a11y::sibling_positions(&levels);
     let row_count = visible.len();
     let scroll_handle = view.tree_scroll.clone();
     let scrollbar_handle = scroll_handle.clone();
+    let tree_root = tree_a11y::tree(
+        TREE_A11Y_ID,
+        div()
+            .id(TREE_A11Y_ID)
+            .flex_1()
+            .min_h(px(0.))
+            .flex()
+            .flex_col(),
+        Msg::A11yFileTree.t(),
+    );
     let list = with_vertical_scrollbar(
         "ews-tree-scroll",
         &scrollbar_handle,
-        uniform_list(
-            "ews-tree-list",
-            row_count,
-            cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
-                // `i` is the visible/uniform_list position — passed through
-                // for zebra striping (T-WS-EDITOR-005 finding #8), which must
-                // key on visible position, not the base `tree` index.
-                range
-                    .filter_map(|i| render_tree_row(this, i, *visible.get(i)?, cx))
-                    .collect::<Vec<_>>()
-            }),
-        )
-        .track_scroll(&scroll_handle)
-        .flex_1()
-        .min_h(px(0.)),
+        tree_root.child(
+            uniform_list(
+                "ews-tree-list",
+                row_count,
+                cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                    // `i` is the visible/uniform_list position — passed through
+                    // for zebra striping (T-WS-EDITOR-005 finding #8), which must
+                    // key on visible position, not the base `tree` index.
+                    range
+                        .filter_map(|i| {
+                            let a11y = TreeRowA11y {
+                                level: *levels.get(i)?,
+                                position: *positions.get(i)?,
+                            };
+                            render_tree_row(this, i, *visible.get(i)?, a11y, cx)
+                        })
+                        .collect::<Vec<_>>()
+                }),
+            )
+            .track_scroll(&scroll_handle)
+            .flex_1()
+            .min_h(px(0.)),
+        ),
         false,
     );
     pane = pane.child(list);
     pane.into_any_element()
+}
+
+/// Accessibility id of the editor workspace's file tree.
+const TREE_A11Y_ID: &str = "ews-file-tree";
+
+/// A visible tree row's accessibility shape: its 1-based level and its
+/// 1-based (position, size) among visible siblings.
+#[derive(Clone, Copy)]
+struct TreeRowA11y {
+    level: usize,
+    position: (usize, usize),
 }
 
 /// One row in the left file tree (dir label or a clickable file row).
@@ -2523,6 +2563,7 @@ fn render_tree_row(
     view: &EditorWorkspaceView,
     visible_pos: usize,
     index: usize,
+    a11y: TreeRowA11y,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> Option<gpui::AnyElement> {
     let row = view.tree.get(index)?.clone();
@@ -2538,41 +2579,52 @@ fn render_tree_row(
                 cx.stop_propagation();
                 this.open_tree_menu(TreeMenuTarget::Dir(index), e.position, cx);
             });
+            let label = Msg::A11yFileTreeDir.t().replacen("{}", name.as_ref(), 1);
+            let el = div()
+                .id(("ews-dir", index))
+                .w_full()
+                .flex()
+                .flex_row()
+                .items_center()
+                .pl(theme::scaled_px(8.0 + indent))
+                .py_px()
+                .cursor_pointer()
+                .hover(|s| s.bg(rgb(theme().surface)))
+                .on_click(click)
+                .on_mouse_down(MouseButton::Right, right_click)
+                .child(
+                    div()
+                        .w(theme::scaled_px(12.))
+                        .flex_shrink_0()
+                        .text_xs()
+                        .text_color(rgb(theme().text_muted))
+                        .child(SharedString::from(if is_collapsed {
+                            "\u{25b8}" // ▸
+                        } else {
+                            "\u{25be}" // ▾
+                        })),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .text_xs()
+                        .text_color(rgb(theme().change_dir))
+                        .truncate()
+                        .child(name),
+                );
             Some(
-                div()
-                    .id(("ews-dir", index))
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .pl(theme::scaled_px(8.0 + indent))
-                    .py_px()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(rgb(theme().surface)))
-                    .on_click(click)
-                    .on_mouse_down(MouseButton::Right, right_click)
-                    .child(
-                        div()
-                            .w(theme::scaled_px(12.))
-                            .flex_shrink_0()
-                            .text_xs()
-                            .text_color(rgb(theme().text_muted))
-                            .child(SharedString::from(if is_collapsed {
-                                "\u{25b8}" // ▸
-                            } else {
-                                "\u{25be}" // ▾
-                            })),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.))
-                            .text_xs()
-                            .text_color(rgb(theme().change_dir))
-                            .truncate()
-                            .child(name),
-                    )
-                    .into_any_element(),
+                tree_a11y::tree_item(
+                    TREE_A11Y_ID,
+                    el,
+                    visible_pos,
+                    &label,
+                    a11y.level,
+                    Some(!is_collapsed),
+                    None,
+                    a11y.position,
+                )
+                .into_any_element(),
             )
         }
         TreeRow::File {
@@ -2600,6 +2652,21 @@ fn render_tree_row(
                 .files
                 .get(file_index)
                 .is_some_and(|f| view.tab_dirty(&f.path));
+            // Replace only the original translation's placeholders: a Git
+            // file name may itself contain `{}` and must keep its status.
+            let status = tree_a11y::file_status(change.as_ref(), false);
+            let template = Msg::A11yFileTreeFile.t();
+            let mut parts = template.splitn(3, "{}");
+            let mut label =
+                String::with_capacity(template.len() + name.as_ref().len() + status.len());
+            label.push_str(parts.next().unwrap_or_default());
+            label.push_str(name.as_ref());
+            label.push_str(parts.next().unwrap_or_default());
+            label.push_str(status);
+            label.push_str(parts.next().unwrap_or_default());
+            if show_dirty_dot {
+                label.push_str(Msg::A11yFileTreeUnsaved.t());
+            }
             let click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
                 this.select(file_index, cx);
             });
@@ -2607,49 +2674,59 @@ fn render_tree_row(
                 cx.stop_propagation();
                 this.open_tree_menu(TreeMenuTarget::File(file_index), e.position, cx);
             });
-            Some(
-                div()
-                    .id(("ews-file", file_index))
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .pl(theme::scaled_px(8.0 + indent))
-                    .pr(theme::scaled_px(4.0))
-                    .py_px()
-                    .bg(rgb(row_bg))
-                    .when(!is_selected, |el| el.hover(|s| s.bg(rgb(theme().surface))))
-                    .on_click(click)
-                    .on_mouse_down(MouseButton::Right, right_click)
-                    .cursor_pointer()
-                    .child(
+            let el = div()
+                .id(("ews-file", file_index))
+                .w_full()
+                .flex()
+                .flex_row()
+                .items_center()
+                .pl(theme::scaled_px(8.0 + indent))
+                .pr(theme::scaled_px(4.0))
+                .py_px()
+                .bg(rgb(row_bg))
+                .when(!is_selected, |el| el.hover(|s| s.bg(rgb(theme().surface))))
+                .on_click(click)
+                .on_mouse_down(MouseButton::Right, right_click)
+                .cursor_pointer()
+                .child(
+                    div()
+                        .w(theme::scaled_px(12.))
+                        .flex_shrink_0()
+                        .text_xs()
+                        .text_color(rgb(badge_color))
+                        .child(SharedString::from(badge)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .text_xs()
+                        .text_color(rgb(theme().text_main))
+                        .truncate()
+                        .child(name),
+                )
+                .when(show_dirty_dot, |el| {
+                    el.child(
                         div()
-                            .w(theme::scaled_px(12.))
                             .flex_shrink_0()
+                            .pl(theme::scaled_px(4.))
                             .text_xs()
-                            .text_color(rgb(badge_color))
-                            .child(SharedString::from(badge)),
+                            .text_color(rgb(theme().color_warning))
+                            .child(SharedString::from("\u{25cf}")),
                     )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.))
-                            .text_xs()
-                            .text_color(rgb(theme().text_main))
-                            .truncate()
-                            .child(name),
-                    )
-                    .when(show_dirty_dot, |el| {
-                        el.child(
-                            div()
-                                .flex_shrink_0()
-                                .pl(theme::scaled_px(4.))
-                                .text_xs()
-                                .text_color(rgb(theme().color_warning))
-                                .child(SharedString::from("\u{25cf}")),
-                        )
-                    })
-                    .into_any_element(),
+                });
+            Some(
+                tree_a11y::tree_item(
+                    TREE_A11Y_ID,
+                    el,
+                    visible_pos,
+                    &label,
+                    a11y.level,
+                    None,
+                    Some(is_selected),
+                    a11y.position,
+                )
+                .into_any_element(),
             )
         }
     }

@@ -259,7 +259,7 @@ pub(crate) fn render_pr_fields_modal(
         .overflow_y_scroll()
         .flex()
         .flex_col();
-    for (i, value) in rows.iter().enumerate() {
+    for value in rows.iter() {
         let picked = modal.selected.contains(value);
         let v = value.clone();
         let toggle = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
@@ -269,53 +269,58 @@ pub(crate) fn render_pr_fields_modal(
         // `aria_selected`, a tab stop, and Space toggles it like a click
         // (#354). Enter stays the modal's Apply, as everywhere else.
         list = list.child(
-            gpui_component::button::Button::new(("pr-fields-row", i))
-                .ghost()
-                .compact()
-                .w_full()
-                .h_auto()
-                .px_2()
-                .py_1()
-                .rounded(px(4.))
-                .selected(picked)
-                .on_click(toggle)
-                .child(
-                    div()
-                        .w_full()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            div()
-                                .w(theme::scaled_px(14.))
-                                .flex_shrink_0()
-                                .text_sm()
-                                .text_color(rgb(if picked {
-                                    theme().color_success
-                                } else {
-                                    theme().text_muted
-                                }))
-                                .child(SharedString::from(if picked {
-                                    "\u{2713}"
-                                } else {
-                                    "\u{00b7}"
-                                })),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.))
-                                .truncate()
-                                .text_sm()
-                                .text_color(rgb(if picked {
-                                    theme().text_main
-                                } else {
-                                    theme().text_sub
-                                }))
-                                .child(safe_text(value)),
-                        ),
-                ),
+            // Keyed by the value, not the row index: picking a row re-sorts it
+            // to the top, and an index id would hand its focus to another
+            // candidate (#904 review).
+            gpui_component::button::Button::new(SharedString::from(format!(
+                "pr-fields-row-{value}"
+            )))
+            .ghost()
+            .compact()
+            .w_full()
+            .h_auto()
+            .px_2()
+            .py_1()
+            .rounded(px(4.))
+            .selected(picked)
+            .on_click(toggle)
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .w(theme::scaled_px(14.))
+                            .flex_shrink_0()
+                            .text_sm()
+                            .text_color(rgb(if picked {
+                                theme().color_success
+                            } else {
+                                theme().text_muted
+                            }))
+                            .child(SharedString::from(if picked {
+                                "\u{2713}"
+                            } else {
+                                "\u{00b7}"
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .truncate()
+                            .text_sm()
+                            .text_color(rgb(if picked {
+                                theme().text_main
+                            } else {
+                                theme().text_sub
+                            }))
+                            .child(safe_text(value)),
+                    ),
+            ),
         );
     }
 

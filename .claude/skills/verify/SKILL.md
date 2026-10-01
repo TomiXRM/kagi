@@ -382,8 +382,27 @@ The current suite covers:
   the first shell (its `cat` exits, observed by the #772 wait) lets the main tab
   start. With the setting removed (default `concurrent`) the linked tab starts
   alongside. The decision is unit-tested in `kagi_domain::worktree_run_mode`.
+  #869: while the linked shell runs in `nonconcurrent` mode, the `side` and
+  `main` sidebar rows carry the same port (the main worktree's stored block),
+  and `side` has no store entry. The env side is covered by `kagi-git`
+  `nonconcurrent_hands_every_worktree_the_main_block`.
   Tier B: set the key, open terminals in two worktrees of one repository, read
   the refusal (EN/JA), `exit` the first, then open the second.
+- remove a worktree with a live terminal shell
+  (`KAGI_GUI_E2E_ONLY=worktree_remove_live_shell`,
+  `tests/recovery/worktree_remove_shell.rs`): #867 / ADR-0171 Follow-up 1.
+  - Setup: the shell seam runs a script that starts `nohup sleep 3094 &` and
+    then `exec cat`. The linked worktree's tab starts it.
+  - With the shell running, the remove plan from the main tab carries the
+    `RemoveLiveShell` blocker. Its text names the worktree and says `exit`.
+    Confirming refuses (the notice repeats the reason) and the directory stays.
+  - After EOF to the shell (exit observed): no blocker, and a
+    `RemoveLeftoverProcesses` warning with count 1 for the `nohup` job.
+  - After `pkill` of the job: no warning, and confirming removes the worktree.
+  - Unit tests cover the decision (`kagi_domain::worktree_remove_shells`) and
+    the session probe (`kagi_git::proc::session`).
+  - Tier B: open a worktree's terminal, run `nohup sleep 999 &`, try to remove
+    it (blocked, EN/JA), `exit`, then plan again (warning) and remove.
 - Operation Log badges, recorded ref moves and estimated reflog
   (`KAGI_GUI_E2E_ONLY=oplog_actor_reflog`, `tests/recovery/oplog_panel.rs`):
   #334 slice 1 + 2a / ADR-0214. Three real `Backend::run` writes as Human / MCP /

@@ -348,6 +348,7 @@ pub fn build_terminal_view(
         repo_path,
         kagi_domain::worktree_ports::PortRange { start, end },
         settings.worktree_ports_per_worktree(),
+        settings.worktree_run_mode(),
     )
     .map_err(|error| format!("terminal environment: {error}"))?;
     // #852: no free block is no reason to withhold the shell itself.

@@ -21,6 +21,10 @@ pub(crate) const ADVICE_WORKTREE_REMOVE_DIRTY: &str =
     "worktree に未 commit の変更があります({})。先に commit か stash してください(削除は force しません)。\nworktree `{}`";
 pub(crate) const ADVICE_WORKTREE_REMOVE_LOCKED: &str =
     "worktree はロックされています({})。削除前にロックを解除してください(kagi は force しません)。\nworktree `{}`";
+pub(crate) const ADVICE_WORKTREE_REMOVE_LIVE_SHELL: &str =
+    "この worktree の terminal で Kagi が起動した shell がまだ動いています。先にその terminal で exit してください(kagi はプロセスを終了させません)。\nworktree `{}`";
+pub(crate) const ADVICE_WORKTREE_REMOVE_LEFTOVER_PROCESSES: &str =
+    "この worktree の Kagi terminal から起動したプロセス {} 件が、shell の終了後も動いていて、このディレクトリを使っている可能性があります。kagi は停止しません。Kagi の外で起動したプロセスは確認していません。\nworktree `{}`";
 pub(crate) const ADVICE_WORKTREE_REMOVES_WORKTREE_DELETE_BRANCH: &str =
     "リンク worktree を削除し、branch も削除します。\nworktree `{}` / branch `{}`";
 pub(crate) const ADVICE_WORKTREE_REMOVES_WORKTREE_KEEP_BRANCH: &str =
@@ -121,6 +125,12 @@ pub fn note_ja(note: &WorktreeNote) -> String {
                 None => "(理由の記録なし)".to_string(),
             };
             super::advice_text(Msg::AdviceWorktreeRemoveLocked, &[&reason_display, path])
+        }
+        WorktreeNote::RemoveLiveShell { path } => {
+            super::advice_text(Msg::AdviceWorktreeRemoveLiveShell, &[path])
+        }
+        WorktreeNote::RemoveLeftoverProcesses { path, count } => {
+            super::advice_text(Msg::AdviceWorktreeRemoveLeftoverProcesses, &[count, path])
         }
         WorktreeNote::RemovesWorktree {
             path,

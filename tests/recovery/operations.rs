@@ -3103,3 +3103,69 @@ pub fn scenario_sidebar_tree_roles(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS sidebar_tree_roles: Tree / TreeItem levels, sibling positions, expanded, current named, collapse");
 }
+
+/// #354 slice 3 (PR list): the PR triage table is a `List` (rows open the PR
+/// on click; the table keeps no selection) whose rows are `ListItem`s named
+/// by number, title, state, author, branches, checks and age, positioned in
+/// the filtered order.
+pub fn scenario_pr_list_roles(cx: &mut VisualTestAppContext) {
+    use crate::evidence_support::pull_request;
+    use gpui::Role;
+    use kagi::ui::list_a11y::{clear_recorded_lists, recorded_list};
+    if !kagi_git::github::gh_available() {
+        eprintln!("[gui-e2e] SKIP pr_list_roles: gh not available");
+        return;
+    }
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    let prs = vec![
+        kagi_domain::github::PullRequest {
+            updated_at: "2026-09-03T00:00:00Z".into(),
+            ..pull_request(9, "repair the thing", "main")
+        },
+        kagi_domain::github::PullRequest {
+            updated_at: "2026-09-02T00:00:00Z".into(),
+            ..pull_request(8, "documentation", "main")
+        },
+        kagi_domain::github::PullRequest {
+            updated_at: "2026-09-01T00:00:00Z".into(),
+            ..pull_request(7, "cached", "main")
+        },
+    ];
+    kagi::ui::e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(prs)));
+    app.update(cx, |app, cx| app.refresh_github_prs(cx));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.show_pr_mode(cx));
+    cx.run_until_parked();
+    clear_recorded_lists();
+    app.update(cx, |_, cx| cx.notify());
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    let list = recorded_list("pr-list").expect("PR list drawn");
+    assert_eq!(list.role, Some(Role::List));
+    assert_eq!(list.label, kagi_ui_core::i18n::Msg::A11yPrList.t());
+    assert_eq!(list.size, 3);
+    let labels: Vec<&str> = list.rows.values().map(|(l, _)| l.as_str()).collect();
+    assert_eq!(labels.len(), 3, "{labels:?}");
+    // Updated-desc order: #9, #8, #7 at positions 0, 1, 2.
+    for (pos, (number, title)) in [(9, "repair the thing"), (8, "documentation"), (7, "cached")]
+        .iter()
+        .enumerate()
+    {
+        let (label, selected) = &list.rows[&pos];
+        assert!(
+            label.contains(&format!("#{number}")) && label.contains(title),
+            "{pos}: {label}"
+        );
+        assert!(
+            label.contains("@alice") && label.contains("main"),
+            "{label}"
+        );
+        assert!(!selected, "the table keeps no selection");
+    }
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS pr_list_roles: List + ListItem, named rows in filtered order, positions/size");
+}

@@ -820,6 +820,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_sidebar_tree_roles),
             ),
             (
+                "pr_list_roles",
+                Box::new(crate::recovery_operations::scenario_pr_list_roles),
+            ),
+            (
                 "color_vision_theme",
                 Box::new(crate::recovery_operations::scenario_color_vision_theme),
             ),

@@ -288,9 +288,12 @@ pub fn pr_edit(
         Err(error) => Err(error),
     };
     let repo = workdir.display().to_string();
+    // #885: `gh pr edit -R <repo> <n> …` (`edit_args`) only calls the GitHub
+    // API; no local ref can move, so: recorded, nothing moved.
     let entry =
         crate::oplog::OpLogEntry::new("pr-edit", repo.clone(), plan.current.clone(), outcome)
-            .with_worktree(Some(repo));
+            .with_worktree(Some(repo))
+            .with_nothing_moved();
     crate::backend::recording::RunReport {
         result,
         recording: crate::backend::recording::finalize(entry),

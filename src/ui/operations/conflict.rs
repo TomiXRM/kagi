@@ -244,7 +244,7 @@ impl KagiApp {
                 }
                 // Refused at planning: nothing ran, so "recorded, nothing
                 // moved" — not a missing record that blocks a restore (#891).
-                self.record_conflict_persist(
+                self.record_op_persist_moves(
                     &op_name,
                     StateSummary {
                         head: format!("op={}", mode.session.op.slug()),
@@ -378,7 +378,7 @@ impl KagiApp {
                     Ok(result) => {
                         klog!("executed: {}", op_name);
                         let _ = kagi_git::ResolutionBuffer::clear(&repo_path);
-                        self.record_conflict_persist(
+                        self.record_op_persist_moves(
                             &op_name,
                             StateSummary {
                                 head: format!("op={}", mode.session.op.slug()),
@@ -406,7 +406,7 @@ impl KagiApp {
                         let outcome = unknown.unwrap_or_else(|| OpOutcome::Failed {
                             error: err_msg.clone(),
                         });
-                        self.record_conflict_persist(
+                        self.record_op_persist_moves(
                             &op_name,
                             StateSummary {
                                 head: format!("op={}", mode.session.op.slug()),
@@ -473,7 +473,7 @@ impl KagiApp {
                 // plan's predicted head — a partial / new-conflict continuation
                 // must not be logged as a clean success.
                 let after = result.after.clone();
-                self.record_conflict_persist(
+                self.record_op_persist_moves(
                     &op_name,
                     plan.current.clone(),
                     OpOutcome::Success { after },
@@ -498,7 +498,7 @@ impl KagiApp {
                 let outcome = unknown.unwrap_or_else(|| OpOutcome::Failed {
                     error: err_msg.clone(),
                 });
-                self.record_conflict_persist(
+                self.record_op_persist_moves(
                     &op_name,
                     plan.current.clone(),
                     outcome,

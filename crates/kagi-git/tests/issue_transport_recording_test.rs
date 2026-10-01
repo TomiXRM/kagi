@@ -128,6 +128,8 @@ fn assert_receipt(report: &RunReport, create: bool, workdir: &Path) {
         panic!("expected success: {:?}", entry.outcome);
     };
     assert!(after.dirty.contains(URL));
+    // #885: `gh issue create|comment` only calls the GitHub API.
+    assert_eq!(entry.ref_moves, Some(Vec::new()), "recorded, nothing moved");
 }
 
 #[test]
@@ -178,6 +180,7 @@ fn clean_issue_refusals_record_ghs_reason() {
             panic!("{:?}", entries[0].outcome);
         };
         assert!(error.contains("permission denied"));
+        assert_eq!(entries[0].ref_moves, Some(Vec::new()), "#885");
     }
 }
 
@@ -236,6 +239,8 @@ fn assert_unknown(fixture: &Fixture, create: bool, body: &str) {
         panic!("{:?}", entries[0].outcome);
     };
     assert!(evidence.contains("do not retry blindly"));
+    // #885 / #891 review: Unknown is never "nothing moved".
+    assert_eq!(entries[0].ref_moves, None);
     assert_eq!(
         std::fs::read_to_string(fixture.workdir.join("attempts.txt")).unwrap(),
         "attempt\n"

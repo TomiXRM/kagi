@@ -37,6 +37,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- fetch の失敗、PR の comment / review / edit、issue の作成・コメント、worktree の lock / unlock / prune / repair / 削除を含む時点への「この時点まで戻す」が、「記録なし」で拒否されていた問題を修正しました(#885、ADR-0214 §4)。これらの操作も、動かした branch を Operation Log に記録します。fetch や worktree の操作は、実行の前後で branch を読んで実際の移動を記録します。mirror 型の設定で fetch が local branch を動かした場合や、worktree の削除で branch も消した場合は、その移動が記録されます。GitHub 側だけを書き換える操作は「動いた branch なし」と記録します。実行した PR merge は local branch を消すことがあるため、終了が確認できない操作と同様に、これまでどおり記録なしで扱います。(Refs #334)
 - 「この時点まで戻す / 取り消す」で、直近 1000 件より古い操作を選ぶと「この repository の操作にない」と表示されていた問題を修正しました。古すぎて範囲外であることを示すようにしました(戻せないことは変わりません)。また、プレビューできないときの文言で、「commit をさらに読み込む」で表示できる場合と、どの branch からも届かず表示できない場合を案内するようにしました。(#888、Refs #334)
 - 「この時点まで戻す」が、削除した worktree や、削除した無関係の repository で行った操作を範囲に含むだけで拒否されていた問題を修正しました(#894)。Operation Log の各操作に、記録した repository(common dir と、unix ではそのファイル ID、取れる環境では `.git` の作成時刻)を残すようにしたので、worktree が消えていても、この repository の操作か別の repository の操作かを判定できます。削除した worktree での操作は戻す対象に含まれ、無関係の repository の操作は除かれます。削除して同じ場所に clone し直した repository は、古い `.git` と同じファイル ID を得ても作成時刻で区別し、作成時刻を確かめられなければ拒否します。この記録の無い以前の操作は、これまでどおり判定できなければ拒否します。repository を別の volume に移動した場合のように判定できないときも、黙って戻さずに理由を示して拒否します。(Refs #334)
 - 「この時点まで戻す / 取り消す」が HEAD の切り替えを含む範囲で拒否されるとき、どの操作で HEAD が何から何に切り替わったか(branch、または detached の commit)と、戻す手順(先に元の branch / commit を自分で checkout してから、その操作以降の時点へ戻す)を示すようにしました。HEAD を含む復元は、作業ツリーに触れるため引き続き行いません(ADR-0214 §7)。(#886、Refs #334)

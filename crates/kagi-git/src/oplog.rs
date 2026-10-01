@@ -409,6 +409,16 @@ impl OpLogEntry {
         self
     }
 
+    /// Builder: "recorded, nothing moved" (`Some(empty)`) for an entry whose
+    /// operation provably did not touch a local ref — refused before it ran,
+    /// or a write that by its argv only talks to a remote API (#885). Goes
+    /// through [`Self::with_ref_moves`], so an `Unknown` outcome still
+    /// records `None`. Paths that run local git observe their moves instead
+    /// (`Backend::observe_ref_moves`).
+    pub fn with_nothing_moved(self) -> Self {
+        self.with_ref_moves(Some(Vec::new()))
+    }
+
     /// Builder: the labels and assignees an `issue-create` asked for. A
     /// create with no picks records nothing, so its receipt reads as before.
     pub fn with_issue_fields(mut self, fields: &kagi_domain::github::IssueCreateFields) -> Self {

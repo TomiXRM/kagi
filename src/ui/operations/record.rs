@@ -53,13 +53,13 @@ impl KagiApp {
         self.record_op_impl(entry, cx, true, None);
     }
 
-    /// [`Self::record_op_persist`] for a conflict continue / skip, with the
-    /// refs it moved as observed by `Backend::observe_ref_moves` (#884) —
-    /// the receipt `restore` reads, so a merge or cherry-pick resolved in
-    /// Kagi can be restored across. A refusal before anything ran passes
-    /// `Some(empty)`; an `Unknown` outcome is stored as not recorded
-    /// (`OpLogEntry::with_ref_moves`, #891 review).
-    pub(in crate::ui) fn record_conflict_persist(
+    /// [`Self::record_op_persist`] with the refs the operation moved, as
+    /// observed by `Backend::observe_ref_moves` (#884, #885) — the receipt
+    /// `restore` reads. Used by the UI-recorded writes that run local git:
+    /// conflict continue / skip, fetch, worktree lock / unlock. A refusal
+    /// before anything ran passes `Some(empty)`; an `Unknown` outcome is
+    /// stored as not recorded (`OpLogEntry::with_ref_moves`, #891 review).
+    pub(in crate::ui) fn record_op_persist_moves(
         &mut self,
         op: &str,
         before: StateSummary,
@@ -70,6 +70,23 @@ impl KagiApp {
     ) {
         let entry = OpLogEntry::new(op, repo_path.display().to_string(), before, outcome)
             .with_ref_moves(ref_moves);
+        self.record_op_impl(entry, cx, true, None);
+    }
+
+    /// [`Self::record_op_persist`] for a write that by construction moves no
+    /// ref — worktree lock / unlock / prune / repair only touch worktree admin
+    /// files (#907 review): recorded, nothing moved (`with_nothing_moved`).
+    /// Not observed: a branch someone else moves meanwhile is not its move.
+    pub(in crate::ui) fn record_op_persist_nothing_moved(
+        &mut self,
+        op: &str,
+        before: StateSummary,
+        outcome: OpOutcome,
+        repo_path: &std::path::Path,
+        cx: &mut Context<Self>,
+    ) {
+        let entry = OpLogEntry::new(op, repo_path.display().to_string(), before, outcome)
+            .with_nothing_moved();
         self.record_op_impl(entry, cx, true, None);
     }
 

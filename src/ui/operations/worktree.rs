@@ -454,10 +454,12 @@ impl KagiApp {
         let Some(repo) = self.worktree_backend("prune-worktrees") else {
             return;
         };
+        // #885 / #907 review: prune only drops stale admin dirs — no ref
+        // moves, so recorded as nothing moved, not observed.
         match repo.execute_prune_worktrees(&modal.plan) {
             Ok(pruned) => {
                 klog!("executed: prune-worktrees ({} pruned)", pruned);
-                self.record_op_persist(
+                self.record_op_persist_nothing_moved(
                     "prune-worktrees",
                     modal.plan.current.clone(),
                     OpOutcome::Success {
@@ -475,7 +477,7 @@ impl KagiApp {
             }
             Err(e) => {
                 let err_msg = i18n::op_failed(i18n::Op::PruneWorktrees, e);
-                self.record_op_persist(
+                self.record_op_persist_nothing_moved(
                     "prune-worktrees",
                     modal.plan.current.clone(),
                     OpOutcome::Failed {
@@ -527,10 +529,11 @@ impl KagiApp {
         let Some(repo) = self.worktree_backend("repair-worktrees") else {
             return;
         };
+        // #885 / #907 review: repair only rewrites the worktree link files.
         match repo.execute_repair_worktrees(&modal.plan) {
             Ok(()) => {
                 klog!("executed: repair-worktrees");
-                self.record_op_persist(
+                self.record_op_persist_nothing_moved(
                     "repair-worktrees",
                     modal.plan.current.clone(),
                     OpOutcome::Success {
@@ -546,7 +549,7 @@ impl KagiApp {
             }
             Err(e) => {
                 let err_msg = i18n::op_failed(i18n::Op::RepairWorktrees, e);
-                self.record_op_persist(
+                self.record_op_persist_nothing_moved(
                     "repair-worktrees",
                     modal.plan.current.clone(),
                     OpOutcome::Failed {

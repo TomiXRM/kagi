@@ -836,6 +836,10 @@ mod macos {
                 Box::new(crate::recovery_worktree_lock_reason::scenario_external_lock_reload),
             ),
             (
+                "worktree_prune_repair_receipt",
+                Box::new(crate::recovery_worktree_lock_reason::scenario_worktree_prune_repair_receipt),
+            ),
+            (
                 "preflight_presentation",
                 Box::new(crate::recovery_operations::scenario_preflight_presentation),
             ),

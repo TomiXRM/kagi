@@ -719,6 +719,159 @@ fn a_branch_created_after_the_point_outside_the_record_blocks() {
     );
 }
 
+/// The fetch receipt as the UI writes it (#885, `fetch_async_for`): the
+/// fetch observed by `observe_ref_moves`, recorded through `with_ref_moves`.
+fn failed_fetch(dir: &Path, outcome: impl FnOnce(String) -> OpOutcome) -> u64 {
+    let (result, moves) = backend(dir).observe_ref_moves(|b| b.fetch_remote());
+    let error = result.err().expect("the remote does not exist").to_string();
+    let state = StateSummary {
+        head: "branch: main".into(),
+        dirty: "clean".into(),
+    };
+    let entry = OpLogEntry::new("fetch", dir.display().to_string(), state, outcome(error))
+        .with_worktree(Some(dir.display().to_string()))
+        .with_ref_moves(moves);
+    append_oplog(&entry).unwrap();
+    newest(dir).id
+}
+
+/// #885: a fetch moves no local branch, and its receipt says so
+/// (`Some(empty)`), so a restore to a point before it is not blocked as
+/// "not recorded"; the branch made after it is still taken back.
+#[test]
+fn a_fetch_in_the_range_does_not_block_the_restore() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let missing = tmp.path().join("no-such-remote");
+    git(
+        &repo,
+        &["remote", "add", "origin", missing.to_str().unwrap()],
+    );
+    let point = create(&repo, "a");
+    let at_point = branches(&repo);
+    let fetch = failed_fetch(&repo, |error| OpOutcome::Failed { error });
+    assert_eq!(newest(&repo).ref_moves, Some(Vec::new()), "fetch {fetch}");
+    create(&repo, "b");
+
+    let op = Operation::RestoreToPoint { entry_id: point };
+    let p = plan(&repo, &op);
+    assert_eq!(restore_blockers(&p), Vec::new(), "{:?}", p.blockers);
+    backend(&repo).run(&op, &p).unwrap();
+    assert_eq!(branches(&repo), at_point, "b taken back across the fetch");
+}
+
+/// #885 / #891 review: a fetch whose termination is unconfirmed may still be
+/// writing refs, so it is not recorded however little was observed, and a
+/// restore across it stays blocked.
+#[test]
+fn a_fetch_of_unknown_termination_still_blocks_the_restore() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let missing = tmp.path().join("no-such-remote");
+    git(
+        &repo,
+        &["remote", "add", "origin", missing.to_str().unwrap()],
+    );
+    let point = create(&repo, "a");
+    let fetch = failed_fetch(&repo, |evidence| OpOutcome::Unknown {
+        after: StateSummary {
+            head: "unknown".into(),
+            dirty: "unknown".into(),
+        },
+        evidence,
+    });
+    create(&repo, "b");
+
+    let p = plan(&repo, &Operation::RestoreToPoint { entry_id: point });
+    assert!(
+        restore_blockers(&p).contains(&OplogRestoreNote::NotRecorded {
+            id: fetch,
+            op: "fetch".into()
+        }),
+        "{:?}",
+        p.blockers
+    );
+}
+
+/// Remove the linked worktree `wt` (on `wtb`) through the recorded path and
+/// return its receipt.
+fn remove_wt(dir: &Path, delete_branch: bool) -> OpLogEntry {
+    let plan = Backend::plan_recorded_remove(dir, "wt", delete_branch).unwrap();
+    let report = Backend::run_recorded_remove(&plan, kagi_git::oplog::Actor::Human, None);
+    let entry = newest(dir);
+    assert_eq!(entry.op, "remove-worktree");
+    assert!(
+        matches!(entry.outcome, OpOutcome::Success { .. }),
+        "{:?} / {:?}",
+        entry.outcome,
+        report.progress
+    );
+    entry
+}
+
+/// #885 (#900 review): a remove-worktree records the refs it moved,
+/// observed, not assumed — nothing when the branch is kept, the branch's
+/// deletion when it is not. With #900 the removed worktree's entries are this
+/// repository's, so a restore across both removes has no blocker at all, and
+/// reverting the deleting remove is planned in this repository.
+#[test]
+fn a_remove_worktree_records_what_it_moved() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    git(&repo, &["branch", "wtb"]);
+    let tip = git_output(&repo, &["rev-parse", "wtb"]);
+    let point = create(&repo, "a");
+    let wt = tmp.path().join("wt");
+    git(
+        &repo,
+        &["worktree", "add", "-q", wt.to_str().unwrap(), "wtb"],
+    );
+    let kept = remove_wt(&repo, false);
+    assert_eq!(
+        kept.ref_moves,
+        Some(Vec::new()),
+        "branch kept: nothing moved"
+    );
+
+    git(
+        &repo,
+        &["worktree", "add", "-q", wt.to_str().unwrap(), "wtb"],
+    );
+    let deleted = remove_wt(&repo, true);
+    let moves = deleted.ref_moves.clone().expect("observed");
+    assert_eq!(moves.len(), 1, "{moves:?}");
+    assert_eq!(moves[0].refname, "refs/heads/wtb");
+    assert_eq!(moves[0].old.as_deref(), Some(tip.as_str()));
+    assert_eq!(moves[0].new, None, "deleted");
+
+    let p = plan(&repo, &Operation::RestoreToPoint { entry_id: point });
+    assert_eq!(restore_blockers(&p), Vec::new(), "{:?}", p.blockers);
+
+    let p = plan(
+        &repo,
+        &Operation::OpRevert {
+            entry_id: deleted.id,
+        },
+    );
+    let notes = restore_blockers(&p);
+    assert!(
+        !notes
+            .iter()
+            .any(|n| matches!(n, OplogRestoreNote::EntryNotLoaded { .. })),
+        "the remove is this repository's entry: {notes:?}"
+    );
+    assert_eq!(notes, Vec::new(), "{notes:?}");
+}
+
 /// #888: a restore reads the newest 1000 entries. A target older than that
 /// says so — not "another repository's" — and is still refused (the range
 /// is not widened). An id that is nowhere in the log keeps the old note, and
@@ -780,8 +933,7 @@ fn an_entry_older_than_the_read_window_says_so() {
 /// deleted, which no longer opens; its identity is taken from the repository
 /// it ran from instead. Without that the entry is UnknownRepository and
 /// blocks a restore in *every* repository; with it, another repository
-/// restores across it freely, and its own repository sees its own entry
-/// (blocked only as not recorded — a remove does not record its moves).
+/// restores across it freely, and its own repository sees its own entry.
 #[test]
 fn a_removed_worktrees_own_entry_is_attributed_through_its_repository() {
     if !test_support::run_isolated() {
@@ -918,4 +1070,34 @@ fn a_remove_worktree_entry_keeps_the_identity_read_before_it_ran() {
         report.recording.entry().repo_identity,
         kagi_git::oplog::RecordedIdentity::Known(original)
     );
+}
+
+/// #907 review: a job that writes and then analyses (the PR-ref fetch, then
+/// its commits and diff) records only the write's moves. A branch moved by
+/// someone else while the analysis runs is not the job's — recorded, a
+/// restore across the job would undo that unrelated change.
+#[test]
+fn only_the_write_is_observed_not_the_analysis_after_it() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let (result, moves) = backend(&repo).observe_then(
+        |_| {
+            git(&repo, &["branch", "written"]);
+            Ok(())
+        },
+        |_, ()| {
+            git(&repo, &["branch", "moved-meanwhile"]);
+            Ok(())
+        },
+    );
+    result.unwrap();
+    let moved: Vec<String> = moves
+        .expect("observed")
+        .into_iter()
+        .map(|m| m.refname)
+        .collect();
+    assert_eq!(moved, vec!["refs/heads/written".to_string()]);
 }

@@ -140,6 +140,8 @@ impl KagiApp {
                 return;
             }
         }
+        // #885 / #907 review: a lock only writes the worktree's admin file —
+        // no ref moves, so recorded as nothing moved, not observed.
         match repo.execute_lock_worktree(&modal.plan, &modal.name, Some(&modal.reason)) {
             Ok(()) => {
                 if let Some(offer) = modal.auto.as_ref() {
@@ -152,7 +154,7 @@ impl KagiApp {
                     }
                 }
                 klog!("executed: lock-worktree {}", modal.name);
-                self.record_op_persist(
+                self.record_op_persist_nothing_moved(
                     "lock-worktree",
                     modal.plan.current.clone(),
                     OpOutcome::Success {
@@ -170,7 +172,7 @@ impl KagiApp {
             }
             Err(e) => {
                 let err_msg = i18n::op_failed(i18n::Op::LockWorktree, e);
-                self.record_op_persist(
+                self.record_op_persist_nothing_moved(
                     "lock-worktree",
                     modal.plan.current.clone(),
                     OpOutcome::Failed {
@@ -307,6 +309,7 @@ impl KagiApp {
         }
         // #772: the auto-lock's release offer runs the token/identity-checked
         // op; the manual unlock stays the manual op. Same card, same writer.
+        // #885 / #907 review: an unlock moves no ref: recorded, nothing moved.
         let executed = match modal.auto.as_ref() {
             Some(offer) => {
                 repo.execute_auto_unlock_worktree(&modal.plan, &modal.name, &offer.target)
@@ -350,7 +353,7 @@ impl KagiApp {
                     }
                 }
                 klog!("executed: unlock-worktree {}", modal.name);
-                self.record_op_persist(
+                self.record_op_persist_nothing_moved(
                     "unlock-worktree",
                     modal.plan.current.clone(),
                     OpOutcome::Success {
@@ -368,7 +371,7 @@ impl KagiApp {
             }
             Err(e) => {
                 let err_msg = i18n::op_failed(i18n::Op::UnlockWorktree, e);
-                self.record_op_persist(
+                self.record_op_persist_nothing_moved(
                     "unlock-worktree",
                     modal.plan.current.clone(),
                     OpOutcome::Failed {

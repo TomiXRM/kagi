@@ -290,52 +290,65 @@ impl KagiApp {
         let number = pr.number;
         let recorded_repo = repo_path.clone();
         let task = cx.background_spawn(async move {
-            let result = kagi_git::Backend::open(&repo_path).and_then(|backend| {
-                let (outcome, base_tip, head) =
-                    backend.fetch_pr_refs(&base_repo, number, &base_branch, &head_sha)?;
-                let base = backend
-                    .merge_base(&base_tip, &head)
-                    .unwrap_or_else(|_| base_tip.clone());
-                let commits =
-                    backend.commits_between(&base, &head, crate::ui::pr_mode::COMMIT_LIMIT)?;
-                let files = backend.compare_commits(&base, &head)?;
-                let paths: Vec<_> = files.iter().map(|file| file.path.clone()).collect();
-                let head_blobs = backend.blob_ids_at(&head, &paths)?;
-                let diff = files.first().and_then(|file| {
-                    backend
-                        .compare_file_diff(&base, &head, &file.path)
-                        .ok()
-                        .map(|raw| {
-                            crate::ui::diff_view::build_main_diff_view(
-                                &raw,
-                                &file.path,
-                                0,
-                                MainDiffSource::Compare {
-                                    base: base.clone(),
-                                    target: CompareTarget::Commit(head.clone()),
-                                    file_index: 0,
-                                },
-                            )
-                        })
-                });
-                Ok((
-                    outcome,
-                    LoadedPrLocal {
-                        base,
-                        base_tip,
-                        head,
-                        commits,
-                        files,
-                        head_blobs,
-                        diff,
+            // #885: the refs this job moved are observed, not assumed (its
+            // refspecs target refs/remotes and refs/kagi/pr, but a configured
+            // fetch refspec may also write local branches). #907 review: only
+            // the fetch is observed; the analysis after it runs outside, so a
+            // branch moved by someone else meanwhile is not recorded as this
+            // job's. Not opened: nothing ran, nothing moved.
+            let (result, ref_moves) = match kagi_git::Backend::open(&repo_path) {
+                Err(error) => (Err(error), Some(Vec::new())),
+                Ok(backend) => backend.observe_then(
+                    |backend| backend.fetch_pr_refs(&base_repo, number, &base_branch, &head_sha),
+                    |backend, (outcome, base_tip, head)| {
+                        let base = backend
+                            .merge_base(&base_tip, &head)
+                            .unwrap_or_else(|_| base_tip.clone());
+                        let commits = backend.commits_between(
+                            &base,
+                            &head,
+                            crate::ui::pr_mode::COMMIT_LIMIT,
+                        )?;
+                        let files = backend.compare_commits(&base, &head)?;
+                        let paths: Vec<_> = files.iter().map(|file| file.path.clone()).collect();
+                        let head_blobs = backend.blob_ids_at(&head, &paths)?;
+                        let diff = files.first().and_then(|file| {
+                            backend
+                                .compare_file_diff(&base, &head, &file.path)
+                                .ok()
+                                .map(|raw| {
+                                    crate::ui::diff_view::build_main_diff_view(
+                                        &raw,
+                                        &file.path,
+                                        0,
+                                        MainDiffSource::Compare {
+                                            base: base.clone(),
+                                            target: CompareTarget::Commit(head.clone()),
+                                            file_index: 0,
+                                        },
+                                    )
+                                })
+                        });
+                        Ok((
+                            outcome,
+                            LoadedPrLocal {
+                                base,
+                                base_tip,
+                                head,
+                                commits,
+                                files,
+                                head_blobs,
+                                diff,
+                            },
+                        ))
                     },
-                ))
-            });
+                ),
+            };
             lease.complete_git(&result);
-            result
+            (result, ref_moves)
         });
         cx.spawn(async move |this, acx| {
-            let result = task.await;
+            let (result, ref_moves) = task.await;
             let _ = this.update(acx, |app, cx| match result {
                 Ok((outcome, local)) => {
                     app.refresh_write_busy();
@@ -376,12 +389,12 @@ impl KagiApp {
                     };
                     app.record_pr_fetch_failure(
                         owner,
-                        "fetch-pr",
                         kagi_git::StateSummary {
                             head: format!("PR #{}", pr.number),
                             dirty: "unchanged".into(),
                         },
                         outcome,
+                        ref_moves,
                         &recorded_repo,
                         cx,
                     );
@@ -492,18 +505,27 @@ impl KagiApp {
     fn record_pr_fetch_failure(
         &mut self,
         owner: crate::app::SessionId,
-        op: &str,
         before: kagi_git::StateSummary,
         outcome: kagi_git::oplog::OpOutcome,
+        ref_moves: Option<Vec<kagi_domain::ref_moves::RefMove>>,
         repo_path: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
-        let entry =
-            kagi_git::oplog::OpLogEntry::new(op, repo_path.display().to_string(), before, outcome);
-        if let Err(error) = kagi_git::oplog::append_oplog(&entry) {
+        let entry = kagi_git::oplog::OpLogEntry::new(
+            "fetch-pr",
+            repo_path.display().to_string(),
+            before,
+            outcome,
+        )
+        .with_ref_moves(ref_moves);
+        // #907 review: the panel gets the appended entry (the log's id), not
+        // the placeholder id 0 — recorded moves enable undo / restore.
+        let recording = kagi_git::backend::recording::finalize(entry);
+        if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {
             klog!("oplog: write failed (non-fatal): {}", error);
-            self.present_oplog_write_failure(&error, cx);
+            self.present_oplog_write_failure(error, cx);
         }
+        let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&recording);
         if let Some(panel) = self.op_log.clone() {
             panel.update(cx, |panel, cx| {
                 panel.push(entry);

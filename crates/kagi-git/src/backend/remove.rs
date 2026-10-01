@@ -181,6 +181,10 @@ impl Backend {
         mut event: impl FnMut(RemoveEvent),
     ) -> RemoveReport {
         let mut progress = RemoveProgress::default();
+        // #885: the moves are observed around the whole attempt — a remove
+        // with `delete_branch` deletes the branch, one without moves nothing,
+        // and neither is assumed. Unreadable on either side: not recorded.
+        let refs_before = refs_of(&plan.repo);
         // #900 review: the repository identity is read before anything runs,
         // like the "before" snapshot of `run_recorded_with_events` — the
         // removed worktree no longer opens afterwards, and by then another
@@ -293,12 +297,16 @@ impl Backend {
                 error: "executor panic before mutation".into(),
             },
         };
+        let ref_moves = refs_before
+            .zip(refs_of(&plan.repo))
+            .map(|(before, after)| kagi_domain::ref_moves::diff(&before, &after));
         let mut entry = OpLogEntry::new(
             "remove-worktree",
             plan.repo.display().to_string(),
             plan.preview.current.clone(),
             outcome,
-        );
+        )
+        .with_ref_moves(ref_moves);
         if let Some(identity) = identity_before {
             entry.repo_identity = crate::oplog::RecordedIdentity::Known(identity);
         }
@@ -342,6 +350,7 @@ impl Backend {
         ))
     }
     pub fn abandoned_remove(plan: &RemovePlan, actor: Actor) -> RemoveReport {
+        // Dropped before it ran: nothing moved (#885).
         let mut entry = OpLogEntry::new(
             "remove-worktree",
             plan.repo.display().to_string(),
@@ -349,7 +358,8 @@ impl Backend {
             OpOutcome::Failed {
                 error: "job dropped before execution".into(),
             },
-        );
+        )
+        .with_nothing_moved();
         entry.actor = actor;
         entry.worktree = Some(plan.target.display().to_string());
         RemoveReport {
@@ -363,6 +373,7 @@ impl Backend {
 }
 
 pub fn record_plan_error(path: &Path, actor: Actor, error: &str) -> Recording {
+    // The plan failed: nothing ran, nothing moved (#885).
     let mut entry = OpLogEntry::new(
         "remove-worktree",
         path.display().to_string(),
@@ -373,9 +384,17 @@ pub fn record_plan_error(path: &Path, actor: Actor, error: &str) -> Recording {
         OpOutcome::Failed {
             error: error.into(),
         },
-    );
+    )
+    .with_nothing_moved();
     entry.actor = actor;
     record(entry)
+}
+
+/// HEAD and every branch of the repository at `path` (#885), `None` when it
+/// does not open or read.
+fn refs_of(path: &Path) -> Option<kagi_domain::ref_moves::RefSnapshot> {
+    let backend = Backend::open(path).ok()?;
+    ops::ref_snapshot(&backend.repo)
 }
 
 fn recovery_after(progress: &RemoveProgress) -> ops::StateSummary {

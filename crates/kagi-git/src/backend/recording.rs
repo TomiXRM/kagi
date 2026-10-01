@@ -290,6 +290,23 @@ impl Backend {
         (result, moves)
     }
 
+    /// [`Self::observe_ref_moves`] around `write` only, then `read` on its
+    /// result outside the observation (#907 review). A job that writes (a
+    /// fetch) and then analyses what it fetched records only the write's
+    /// moves: a branch moved by someone else while the analysis runs is not
+    /// this job's, and recording it would let a restore undo it.
+    pub fn observe_then<T, U>(
+        &self,
+        write: impl FnOnce(&Self) -> Result<T, GitError>,
+        read: impl FnOnce(&Self, T) -> Result<U, GitError>,
+    ) -> (
+        Result<U, GitError>,
+        Option<Vec<kagi_domain::ref_moves::RefMove>>,
+    ) {
+        let (written, moves) = self.observe_ref_moves(write);
+        (written.and_then(|value| read(self, value)), moves)
+    }
+
     /// Read the repository's identity next to a "before" ref snapshot
     /// (#900 review). `None` (not readable) leaves the append to read it.
     pub(super) fn capture_identity_before(&self) {

@@ -308,8 +308,14 @@ pub(crate) fn render_plan_modal_wrapper_staged(
     )
 }
 
-/// [`render_plan_modal_wrapper_staged`] with one card-specific element drawn
+/// [`render_plan_modal_wrapper_staged`] with one card-specific section drawn
 /// after the warnings (#334: the restore preview graph). Display only.
+/// `Copy all` copies its `clipboard` text too (#883 review).
+pub(crate) struct PlanCardExtra {
+    pub element: gpui::AnyElement,
+    pub clipboard: String,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_plan_modal_wrapper_extra(
     plan: std::sync::Arc<OperationPlan>,
@@ -318,7 +324,7 @@ pub(crate) fn render_plan_modal_wrapper_extra(
     create_branch_target: Option<CommitId>,
     accent: Option<PlanCardAccent>,
     stage: ConfirmStage,
-    extra: Option<gpui::AnyElement>,
+    extra: Option<PlanCardExtra>,
     cancel_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
     confirm_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
     overrides: &std::collections::HashMap<&'static str, bool>,
@@ -431,7 +437,7 @@ fn render_plan_modal_card_styled(
     accent: Option<PlanCardAccent>,
     stage: ConfirmStage,
     // #334: a card-specific element after the warnings (display only).
-    extra: Option<gpui::AnyElement>,
+    extra: Option<PlanCardExtra>,
     // #462: see [`render_plan_modal_wrapper_styled`].
     overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
@@ -488,7 +494,14 @@ fn render_plan_modal_card_styled(
             .child(modal_copy_button(
                 "plan-card-copy",
                 Msg::ModalCopyAll.t(),
-                plan_clipboard_text(&plan, &plan.preview_commits),
+                match &extra {
+                    Some(extra) => format!(
+                        "{}\n{}",
+                        plan_clipboard_text(&plan, &plan.preview_commits),
+                        extra.clipboard
+                    ),
+                    None => plan_clipboard_text(&plan, &plan.preview_commits),
+                },
                 cx,
             )),
     );
@@ -537,7 +550,7 @@ fn render_plan_modal_card_styled(
         body = body.child(warn_col.flex_shrink_0());
     }
     if let Some(extra) = extra {
-        body = body.child(div().flex_shrink_0().child(extra));
+        body = body.child(div().flex_shrink_0().child(extra.element));
     }
 
     // ── Commits to push (T-HT-004) ────────────────────────

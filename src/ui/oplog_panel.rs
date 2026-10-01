@@ -333,9 +333,36 @@ pub fn detail_lines(entry: &OpLogEntry) -> Vec<String> {
     lines
 }
 
+/// One recorded ref move as text — the expanded row and the copied entry
+/// share it (#871 review). `full` keeps whole OIDs (the copy, for
+/// investigation); the row shows 8 characters. `absent` names a side where
+/// the ref did not exist.
+pub fn ref_move_text(m: &kagi_domain::ref_moves::RefMove, full: bool, absent: &str) -> String {
+    let oid = |oid: &Option<String>| match oid {
+        Some(oid) if full => oid.clone(),
+        Some(oid) => oid.get(..8).unwrap_or(oid).to_string(),
+        None => absent.to_string(),
+    };
+    let target = |symbolic: &Option<String>| {
+        symbolic
+            .as_deref()
+            .map(|s| format!("{} ", s.trim_start_matches("refs/heads/")))
+            .unwrap_or_default()
+    };
+    format!(
+        "{}  {}{}→ {}{}",
+        m.refname,
+        target(&m.old_symbolic),
+        oid(&m.old),
+        target(&m.new_symbolic),
+        oid(&m.new)
+    )
+}
+
 /// Issue #468: the whole entry as one readable multi-line string — the summary
 /// header (time / op / outcome) plus every detail line, i.e. exactly what the
 /// expanded row shows, including the tail the summary row truncates away.
+/// The recorded ref moves are part of it, with whole OIDs (#871 review).
 /// Pure (no gpui, no `cx`) so it is unit-testable.
 pub fn entry_clipboard_text(entry: &OpLogEntry) -> String {
     let mut out = format!(
@@ -347,6 +374,15 @@ pub fn entry_clipboard_text(entry: &OpLogEntry) -> String {
     for line in detail_lines(entry) {
         out.push_str(&line);
         out.push('\n');
+    }
+    match entry.ref_moves.as_deref() {
+        None => {}
+        Some([]) => out.push_str("  ref:     none moved\n"),
+        Some(moves) => {
+            for m in moves {
+                out.push_str(&format!("  ref:     {}\n", ref_move_text(m, true, "-")));
+            }
+        }
     }
     out
 }
@@ -377,6 +413,48 @@ mod tests {
                 },
             },
         )
+    }
+
+    #[test]
+    fn the_copied_entry_carries_its_recorded_ref_moves_whole() {
+        let full_old = "a".repeat(40);
+        let full_new = "b".repeat(40);
+        let mut entry = dummy_entry("commit");
+        entry.ref_moves = Some(vec![
+            kagi_domain::ref_moves::RefMove {
+                refname: "refs/heads/main".into(),
+                old: Some(full_old.clone()),
+                new: Some(full_new.clone()),
+                old_symbolic: None,
+                new_symbolic: None,
+            },
+            kagi_domain::ref_moves::RefMove {
+                refname: "refs/heads/gone".into(),
+                old: Some(full_old.clone()),
+                new: None,
+                old_symbolic: None,
+                new_symbolic: None,
+            },
+        ]);
+        let text = entry_clipboard_text(&entry);
+        assert!(
+            text.contains(&format!(
+                "  ref:     refs/heads/main  {full_old}→ {full_new}\n"
+            )),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!("  ref:     refs/heads/gone  {full_old}→ -\n")),
+            "{text}"
+        );
+
+        entry.ref_moves = Some(Vec::new());
+        assert!(entry_clipboard_text(&entry).contains("  ref:     none moved\n"));
+        entry.ref_moves = None;
+        assert!(
+            !entry_clipboard_text(&entry).contains("ref:"),
+            "not recorded: no line"
+        );
     }
 
     #[test]

@@ -21,11 +21,13 @@ impl Backend {
     /// Cleanup errors never remove another retained entry's recovery roots.
     pub fn execute_forget_oplog_entry(&self, plan: &ForgetOplogPlan) -> recording::RunReport {
         let mut retired = false;
-        let result = self.require_trust().and_then(|()| {
-            if !crate::trust::evaluate(&self.path).is_trusted() {
-                return Err(GitError::Untrusted(self.path.display().to_string()));
-            }
-            retention::execute(&self.repo, plan, &mut retired)
+        let (result, ref_moves) = self.observe_ref_moves(|this| {
+            this.require_trust().and_then(|()| {
+                if !crate::trust::evaluate(&this.path).is_trusted() {
+                    return Err(GitError::Untrusted(this.path.display().to_string()));
+                }
+                retention::execute(&this.repo, plan, &mut retired)
+            })
         });
         let after = ops::StateSummary {
             head: crate::resolve_head(&self.repo)
@@ -47,7 +49,17 @@ impl Backend {
                 error: error.to_string(),
             },
         };
-        let recording = self.record_run_oplog("forget-oplog-entry", &plan.entry().before, outcome);
+        let recording = self.record_receipt(
+            "forget-oplog-entry",
+            &plan.entry().before,
+            outcome,
+            recording::Receipt {
+                backup_refs: Vec::new(),
+                recovery: Vec::new(),
+                failure_code: None,
+                ref_moves,
+            },
+        );
         recording::RunReport {
             result: result.map(|()| super::OperationOutcome::Unit),
             recording,

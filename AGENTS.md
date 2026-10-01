@@ -223,6 +223,12 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
 
 ## Verifying the GUI
 
+**An agent verifies UI changes itself — "not verified in the GUI" is not a finished
+state.** `scripts/pidclick.swift` launches and drives the real app without taking
+the user's pointer or foreground, and `screencapture -l<window id>` photographs it.
+So every change to what the user sees ends with: run Tier B, attach screenshots to
+the PR, and ask the user to look at them. Do not stop and wait to be told to.
+
 The full recipes live in `.claude/skills/verify/SKILL.md` (Codex reads the same
 file through `.agents/skills/kagi-verify`). Read the real file, not a remembered
 copy — the skill changes when seams change.
@@ -232,83 +238,39 @@ copy — the skill changes when seams change.
   them (`gui_isolation::SavedKeys` / `PortStore`); the runner fails a scenario that
   leaves shared state changed (#899). A change to how outcomes are presented runs
   the scenarios that assert that presentation before merging.
-- **Tier B** is the real app driven by `scripts/pidclick.swift` (`CGEventPostToPid`),
-  with screenshots from `screencapture -x -o -l<window id>`. It never moves the
-  user's pointer or takes the foreground — keep `KAGI_NO_ACTIVATE=1`, a unique
-  `USER`, `KAGI_NO_RESTORE=1` and an isolated `KAGI_LOG_DIR`. `cliclick` is banned.
-  - A window hidden behind the user's windows stops repainting: if two screenshots
-    are byte-identical while `[kagi]` lines show the input arrived, the frame is
-    stale. Ask the user to uncover it; do not take the foreground.
+- **Tier B** is the real app: launch it isolated (`KAGI_NO_ACTIVATE=1`, a unique
+  `USER`, `KAGI_NO_RESTORE=1`, its own `KAGI_LOG_DIR`), click and type with
+  `pidclick`, and capture the window by its ID. `cliclick` is banned.
+  - A window hidden behind the user's windows stops repainting: two byte-identical
+    screenshots while `[kagi]` lines show the input arrived mean a stale frame.
+    Ask the user to bring the window forward for a moment; do not take the
+    foreground yourself.
   - Clicking the tab strip needs a key window (no `KAGI_NO_ACTIVATE`); ask first.
   - Coordinates are logical points; a screenshot is physical pixels. Convert with
     the window's own scale factor (logical = physical ÷ `backingScaleFactor`, 2 on
     a Retina panel but not on every display), and re-read them from a fresh
     screenshot every time.
-- "Computer use" tools are not the GUI driver here: Codex Computer Use cannot reach
-  the window server from this environment. Agents that cannot run Tier B say so
-  in the PR and leave it to the primary session.
 - **Screenshots in a PR**: commit only the images to an orphan
   `pr-assets/<topic>` branch (`git hash-object -w` → `git mktree` →
   `git commit-tree`), push it, and link
   `https://raw.githubusercontent.com/TomiXRM/kagi/<sha>/<file>.png`. Never delete
   those branches — the PR's images point at them.
 
-## Working on a PR: push, review, merge
+## Workflow: PRs and multi-agent work
 
-- **Never rewrite a pushed branch.** No force push, no rebase of a pushed branch:
-  take the PR's current base (`origin/main`, or the parent branch of a stacked PR)
-  in with a merge. After every push, confirm the remote head
-  with `git ls-remote origin <branch>` — a non-fast-forward push is rejected, and
-  "pushed" without that check has been wrong.
-- **Conflicts**: `CHANGELOG.md`, ADRs and `docs/decisions.md` keep both sides.
-  **Code conflicts are resolved by reading each hunk**, never by a mechanical
-  "keep both": two PRs adding fields to one struct concatenate into a broken brace
-  structure (#900). If `rerere` learned a bad resolution, redo the merge with
-  `git -c rerere.enabled=false merge`. Git can also merge cleanly and still drop an
-  attribute line (`#[cfg(target_os = "macos")]` before a `mod` in
-  `tests/gui_e2e_runner.rs`, #901) — check the runner after a merge.
-- **Gate before push**: build, `cargo test --workspace`, the touched Tier A
-  scenarios and `uv run --project ci check-all` pass first. Chain them so a failure
-  stops the push (`set -e`, or capture the output and test it) — never with `;`.
-- **Codex review**: read every Codex line comment before a PR is merged, and reply
-  to each one (in Japanese, per the rules below). Fix every P0 and P1, and any P2
-  that can lead to a wrong write, data loss or a misleading action. A theoretical case (a race
-  with another process replacing the repository, a millisecond window) is closed
-  with a reply that gives the reason, and the limit is written into the ADR. Aim
-  for one review round per PR; Codex keeps finding the next corner otherwise.
-- **Merge** only the head commit Codex reviewed, with CI green and no unanswered
-  Codex comment: `gh pr merge N --merge --match-head-commit <sha>`, then confirm the
-  PR reads `MERGED`.
-- **Stacked PRs** set their base to the parent branch and say "change the base to
-  main after #N merges" at the top of the body.
-- `Closes #N` only when the PR meets every acceptance criterion of #N; otherwise
-  `Refs #N` and list what remains. Split a leftover into its own issue.
+The rules for pushing, resolving conflicts, answering Codex review and merging,
+and for driving several agents through herdr, live in
+[`docs/agents/workflow.md`](docs/agents/workflow.md). The ones that are broken most
+often:
 
-## Multi-agent work over herdr
-
-When a PM session drives implementation agents in herdr panes:
-
-- **Send = prompt + Enter.** `herdr agent prompt <pane> '<text>'` places the text;
-  `herdr agent send-keys <pane> enter` submits it. Without the second command
-  nothing is sent. `pane send-text` never submits. An `agent_prompted` result is
-  not proof the agent started — read the pane (`herdr agent read`) or wait for its
-  status (`herdr agent wait`).
-- **Replies go the same way**: an implementation agent reports to the PM pane with
-  `herdr agent prompt <pm pane>` + `send-keys enter`, starting with one tag:
-  `[done]` (PR number, remote head SHA checked with `ls-remote`, gates run, and for
-  each Codex comment: fixed or answered), `[status]`, `[ask]` (a decision the PM
-  owns — stop and wait), `[info]`.
-- **One agent, one worktree, one branch.** Never edit another agent's worktree or
-  push to a branch another agent owns without saying so first. A PM that merges
-  `main` into an agent's PR branch tells that agent before it pushes again.
-- **Verify the premise before assigning.** Before writing "reuse the existing X",
-  search for X — issue bodies go stale. An agent that finds the premise wrong says
-  so instead of building around it.
-- **Messages are scoped to the workspace.** A prompt about another repository or an
-  issue number that does not match this repository is a misroute: report it, do
-  not act on it.
-- Watch usage limits in `herdr agent list` (`limit`); an agent near its limit gets
-  small, finishable tasks.
+- Never rewrite a pushed branch; after a push, check the remote head with
+  `git ls-remote`.
+- Resolve **code** conflicts by reading each hunk — never by keeping both sides.
+- Gate before push (build, tests, touched Tier A, `check-all`), chained so a
+  failure stops the push.
+- Read and answer every Codex comment before merge; fix P0/P1 and P2s that can
+  cause a wrong write.
+- herdr: `agent prompt` places text, `agent send-keys <pane> enter` sends it.
 
 ## Code Review Rules
 

@@ -296,7 +296,7 @@ impl KagiApp {
             a11y_position,
             a11y_size,
             super::list_a11y::wip_row_label(&label, &note),
-            false,
+            is_commit_panel && commit_panel_open,
         )
         .flex()
         .flex_row()

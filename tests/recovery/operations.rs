@@ -2560,6 +2560,8 @@ pub fn scenario_replay_onto_armed(cx: &mut VisualTestAppContext) {
 /// typical vision and ≥ 15 after Machado-2009 protan / deutan / tritan
 /// simulation — where the default theme falls below 15 for deutans.
 pub fn scenario_color_vision_theme(cx: &mut VisualTestAppContext) {
+    use gpui_component::select::SelectItem;
+    use kagi::ui::commands::{self, ThemeColorVision};
     use kagi::ui::i18n::{self, Lang};
     use kagi_ui_core::color_vision::{delta_e, Cvd};
     use kagi_ui_core::theme::theme;
@@ -2586,7 +2588,13 @@ pub fn scenario_color_vision_theme(cx: &mut VisualTestAppContext) {
         "control: Mocha worst deutan ΔE {mocha_deutan:.1}"
     );
 
-    app.update(cx, |app, cx| app.set_theme("color-vision", cx));
+    assert!(commands::THEME_COMMAND_IDS.contains(&"theme.colorVision"));
+    assert_eq!(
+        commands::theme_slug_for_command("theme.colorVision"),
+        Some("color-vision")
+    );
+    cx.dispatch_action(window, ThemeColorVision);
+    cx.run_until_parked();
     cx.update_window(window, |_, window, cx| {
         window.refresh();
         window.draw(cx).clear();
@@ -2617,25 +2625,75 @@ pub fn scenario_color_vision_theme(cx: &mut VisualTestAppContext) {
         eprintln!("[gui-e2e] color_vision {line}");
     }
 
-    // Settings lists it under a localized name.
+    // Keep an option from the picker built at startup: its label must change
+    // when the app language changes, not just in a newly built options vec.
+    let option = kagi::ui::settings_view::theme_options()
+        .into_iter()
+        .find(|o| o.slug == "color-vision")
+        .unwrap();
     let previous = i18n::lang();
     for (lang, want) in [
         (Lang::En, "Color Vision (Blue/Orange)"),
         (Lang::Ja, "色覚対応（青 / 橙）"),
     ] {
-        i18n::set_lang(lang);
-        let names: Vec<String> = kagi::ui::settings_view::theme_options()
-            .iter()
-            .map(|o| o.name.to_string())
-            .collect();
-        assert!(names.iter().any(|n| n == want), "{lang:?}: {names:?}");
+        app.update(cx, |app, cx| app.set_lang(lang, cx));
+        cx.update_window(window, |_, window, cx| {
+            window.refresh();
+            window.draw(cx).clear();
+        })
+        .unwrap();
+        assert_eq!(option.title().as_ref(), want, "{lang:?}: cached option");
     }
-    i18n::set_lang(previous);
+    app.update(cx, |app, cx| app.set_lang(previous, cx));
 
     app.update(cx, |app, cx| app.set_theme(before, cx));
     cx.run_until_parked();
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS color_vision_theme: tokens switched + persisted, ΔE ≥ 20 / ≥ 15 (protan, deutan, tritan), Mocha control < 15, EN/JA name");
+}
+
+/// #889 review: opening the current worktree's Commit Panel selects its WIP
+/// option for both the visual highlight and accessibility.
+pub fn scenario_wip_selected_roles(cx: &mut VisualTestAppContext) {
+    use kagi::ui::list_a11y::{clear_recorded_lists, recorded_list};
+    let fixture = build_fixture();
+    std::fs::write(fixture.path().join("README.md"), "# changed\n").unwrap();
+    let (app, window) = mount(cx, fixture.path());
+    wait_idle(cx, &app);
+    clear_recorded_lists();
+    app.update(cx, |_, cx| cx.notify());
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    let before = recorded_list("commit-list").expect("commit list");
+    assert!(!before.rows[&0].1, "closed WIP is not selected");
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.open_commit_panel(window, cx));
+    })
+    .unwrap();
+    clear_recorded_lists();
+    app.update(cx, |_, cx| cx.notify());
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    assert!(cx.read(|cx| app.read(cx).ui().commit_panel_open));
+    let after = recorded_list("commit-list").expect("commit list after opening panel");
+    assert!(after.rows[&0].1, "open current WIP must be aria-selected");
+    assert_eq!(
+        after
+            .rows
+            .values()
+            .filter(|(_, selected)| *selected)
+            .count(),
+        1,
+        "only the current WIP is selected"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS wip_selected_roles: open WIP is selected for AT");
 }
 
 fn redraw(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
@@ -3102,4 +3160,70 @@ pub fn scenario_sidebar_tree_roles(cx: &mut VisualTestAppContext) {
     );
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS sidebar_tree_roles: Tree / TreeItem levels, sibling positions, expanded, current named, collapse");
+}
+
+/// #354 slice 3 (PR list): the PR triage table is a `List` (rows open the PR
+/// on click; the table keeps no selection) whose rows are `ListItem`s named
+/// by number, title, state, author, branches, checks and age, positioned in
+/// the filtered order.
+pub fn scenario_pr_list_roles(cx: &mut VisualTestAppContext) {
+    use crate::evidence_support::pull_request;
+    use gpui::Role;
+    use kagi::ui::list_a11y::{clear_recorded_lists, recorded_list};
+    if !kagi_git::github::gh_available() {
+        eprintln!("[gui-e2e] SKIP pr_list_roles: gh not available");
+        return;
+    }
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    let prs = vec![
+        kagi_domain::github::PullRequest {
+            updated_at: "2026-09-03T00:00:00Z".into(),
+            ..pull_request(9, "repair the thing", "main")
+        },
+        kagi_domain::github::PullRequest {
+            updated_at: "2026-09-02T00:00:00Z".into(),
+            ..pull_request(8, "documentation", "main")
+        },
+        kagi_domain::github::PullRequest {
+            updated_at: "2026-09-01T00:00:00Z".into(),
+            ..pull_request(7, "cached", "main")
+        },
+    ];
+    kagi::ui::e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(prs)));
+    app.update(cx, |app, cx| app.refresh_github_prs(cx));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.show_pr_mode(cx));
+    cx.run_until_parked();
+    clear_recorded_lists();
+    app.update(cx, |_, cx| cx.notify());
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    let list = recorded_list("pr-list").expect("PR list drawn");
+    assert_eq!(list.role, Some(Role::List));
+    assert_eq!(list.label, kagi_ui_core::i18n::Msg::A11yPrList.t());
+    assert_eq!(list.size, 3);
+    let labels: Vec<&str> = list.rows.values().map(|(l, _)| l.as_str()).collect();
+    assert_eq!(labels.len(), 3, "{labels:?}");
+    // Updated-desc order: #9, #8, #7 at positions 0, 1, 2.
+    for (pos, (number, title)) in [(9, "repair the thing"), (8, "documentation"), (7, "cached")]
+        .iter()
+        .enumerate()
+    {
+        let (label, selected) = &list.rows[&pos];
+        assert!(
+            label.contains(&format!("#{number}")) && label.contains(title),
+            "{pos}: {label}"
+        );
+        assert!(
+            label.contains("@alice") && label.contains("main"),
+            "{label}"
+        );
+        assert!(!selected, "the table keeps no selection");
+    }
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS pr_list_roles: List + ListItem, named rows in filtered order, positions/size");
 }

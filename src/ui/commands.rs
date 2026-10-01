@@ -119,6 +119,7 @@ actions!(
         ThemeOneDark,
         ThemeOneLight,
         ThemeMonokai,
+        ThemeColorVision,
         // View → Language (W22-I18N / ADR-0048): one action per UI language.
         LangEnglish,
         LangJapanese,
@@ -151,6 +152,7 @@ pub fn theme_slug_for_command(id: &str) -> Option<&'static str> {
         "theme.oneDark" => Some("one-dark"),
         "theme.oneLight" => Some("one-light"),
         "theme.monokai" => Some("monokai"),
+        "theme.colorVision" => Some("color-vision"),
         _ => None,
     }
 }
@@ -372,6 +374,7 @@ pub const THEME_COMMAND_IDS: &[&str] = &[
     "theme.oneDark",
     "theme.oneLight",
     "theme.monokai",
+    "theme.colorVision",
 ];
 
 /// The ordered language command ids, as they appear under View → Language.
@@ -729,6 +732,12 @@ pub const COMMANDS: &[Command] = &[
         keystroke: None,
         dangerous: false,
     },
+    Command {
+        id: "theme.colorVision",
+        label: "Color Vision (Blue/Orange)",
+        keystroke: None,
+        dangerous: false,
+    },
     // View → Language (W22-I18N / ADR-0048). The live "✓ " active marker is
     // applied in `lang_submenu`.
     Command {
@@ -800,6 +809,7 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
         | "theme.oneDark"
         | "theme.oneLight"
         | "theme.monokai"
+        | "theme.colorVision"
         // Language switching is always available (W22-I18N).
         | "lang.english"
         | "lang.japanese" => Enabled,
@@ -1050,6 +1060,7 @@ fn theme_submenu() -> Menu {
             "theme.oneDark" => MenuItem::action(label, ThemeOneDark),
             "theme.oneLight" => MenuItem::action(label, ThemeOneLight),
             "theme.monokai" => MenuItem::action(label, ThemeMonokai),
+            "theme.colorVision" => MenuItem::action(label, ThemeColorVision),
             _ => continue,
         };
         items.push(item);
@@ -1661,7 +1672,7 @@ impl KagiApp {
 
             // ── View → Theme (W9-THEME / ADR-0036) ──────────────────
             "theme.catppuccin" | "theme.xcodeDark" | "theme.xcodeLight" | "theme.oneDark"
-            | "theme.oneLight" | "theme.monokai" => {
+            | "theme.oneLight" | "theme.monokai" | "theme.colorVision" => {
                 if let Some(slug) = theme_slug_for_command(id) {
                     self.set_theme(slug, cx);
                 }
@@ -1729,12 +1740,15 @@ impl KagiApp {
     /// 2. Rebuild the menu bar so the "✓ " active marker moves (the label
     ///    changes, so `cx.set_menus` must be re-called — same as the theme
     ///    submenu).
-    /// 3. `cx.notify()` so every prose render path (which reads `Msg::t()` /
-    ///    `lang()` live) repaints in the new language.
+    /// 3. Notify the persistent Settings picker as well as this view; its
+    ///    `SelectItem::title` resolves localized names at render time.
     pub fn set_lang(&mut self, l: Lang, cx: &mut Context<Self>) {
         i18n::set_lang(l);
         klog!("lang: {}", l.slug());
         cx.set_menus(build_menus());
+        if let Some(select) = self.theme_select.as_ref() {
+            select.update(cx, |_, cx| cx.notify());
+        }
         cx.notify();
     }
 

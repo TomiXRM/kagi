@@ -420,10 +420,11 @@ pub(crate) fn render_main_diff_split_row(
     i: usize,
     sel_key: u64,
     moved: &HashSet<usize>,
+    hunk: Option<&super::diff_view::hunk_action::HunkAction>,
 ) -> gpui::AnyElement {
     match srows.get(i) {
         None => div().into_any(),
-        Some(SplitDiffRow::Full(idx)) => render_main_diff_row(rows, *idx, sel_key),
+        Some(SplitDiffRow::Full(idx)) => render_main_diff_row(rows, *idx, sel_key, hunk),
         // No padding and no `items_start` on the row itself: cells stretch to
         // the full row height (flex default), so a wrapped line on one side
         // never leaves an unpainted strip under the shorter cell, and rows sit

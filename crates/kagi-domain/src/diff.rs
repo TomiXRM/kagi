@@ -43,6 +43,56 @@ pub struct Hunk {
     pub lines: Vec<DiffLine>,
 }
 
+impl Hunk {
+    /// The header numbers that identify this hunk.
+    pub fn range(&self) -> HunkRange {
+        HunkRange {
+            old: self.old_range,
+            new: self.new_range,
+        }
+    }
+}
+
+/// A hunk's identity for hunk staging (#842): the four numbers of its
+/// `@@ -old_start,old_lines +new_start,new_lines @@` header. Staging re-reads
+/// the diff and acts only on the hunk with exactly these numbers, so a hunk
+/// shown before the index moved is refused rather than guessed at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct HunkRange {
+    /// `(start, count)` in the old file.
+    pub old: (u32, u32),
+    /// `(start, count)` in the new file.
+    pub new: (u32, u32),
+}
+
+impl HunkRange {
+    /// Parse a unified-diff hunk header (`@@ -a,b +c,d @@ …`). A side without
+    /// a count (`-a`) has one line, as in `git diff`. `None` for anything else.
+    pub fn parse(header: &str) -> Option<Self> {
+        let rest = header.strip_prefix("@@ -")?;
+        let (ranges, _) = rest.split_once(" @@")?;
+        let (old, new) = ranges.split_once(" +")?;
+        let side = |s: &str| -> Option<(u32, u32)> {
+            match s.split_once(',') {
+                Some((start, count)) => Some((start.parse().ok()?, count.parse().ok()?)),
+                None => Some((s.parse().ok()?, 1)),
+            }
+        };
+        Some(Self {
+            old: side(old)?,
+            new: side(new)?,
+        })
+    }
+
+    /// The same hunk seen from the other side (a reversed diff).
+    pub fn reversed(self) -> Self {
+        Self {
+            old: self.new,
+            new: self.old,
+        }
+    }
+}
+
 /// One row of a side-by-side (split) diff: indices into the source line
 /// sequence for the left (old) and right (new) cells (ADR-0124).
 ///
@@ -198,5 +248,62 @@ mod split_pair_tests {
     #[test]
     fn empty_input_is_empty() {
         assert_eq!(split_pairs(&[]), Vec::<SplitPair>::new());
+    }
+}
+
+#[cfg(test)]
+mod hunk_range_tests {
+    use super::HunkRange;
+
+    #[test]
+    fn parses_the_four_header_numbers() {
+        assert_eq!(
+            HunkRange::parse("@@ -12,7 +14,9 @@"),
+            Some(HunkRange {
+                old: (12, 7),
+                new: (14, 9)
+            })
+        );
+        // git appends the enclosing function after the second `@@`.
+        assert_eq!(
+            HunkRange::parse("@@ -1,0 +1,3 @@ fn main() {"),
+            Some(HunkRange {
+                old: (1, 0),
+                new: (1, 3)
+            })
+        );
+    }
+
+    #[test]
+    fn a_side_without_a_count_is_one_line() {
+        assert_eq!(
+            HunkRange::parse("@@ -3 +3,2 @@"),
+            Some(HunkRange {
+                old: (3, 1),
+                new: (3, 2)
+            })
+        );
+    }
+
+    #[test]
+    fn anything_else_is_not_a_hunk() {
+        for header in ["@@", "", "@@ -a,1 +1,1 @@", "@@ -1,1 +1,1", "Conflict 1/2"] {
+            assert_eq!(HunkRange::parse(header), None, "{header:?}");
+        }
+    }
+
+    #[test]
+    fn reversed_swaps_the_sides() {
+        let r = HunkRange {
+            old: (1, 2),
+            new: (3, 4),
+        };
+        assert_eq!(
+            r.reversed(),
+            HunkRange {
+                old: (3, 4),
+                new: (1, 2)
+            }
+        );
     }
 }

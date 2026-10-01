@@ -19,6 +19,7 @@ pub mod discard;
 pub mod editor_fs;
 pub mod force_lease;
 pub mod history;
+mod hunk_stage;
 #[cfg(feature = "gui-e2e")]
 mod issue_write_e2e;
 pub mod merge;

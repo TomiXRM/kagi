@@ -1632,14 +1632,15 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
                     )
                 });
                 let header = DiffHeader::leading(nav);
-                render_diff_list::<KagiApp>(dv, header, conflict_scroll, cx).into_any_element()
+                render_diff_list::<KagiApp>(dv, header, conflict_scroll, None, cx)
+                    .into_any_element()
             }
         };
         content = content.child(body);
     } else {
         // Diff
         let diff_el: gpui::AnyElement = match diff {
-            Some(dv) => render_diff_list::<KagiApp>(dv, DiffHeader::default(), scroll, cx)
+            Some(dv) => render_diff_list::<KagiApp>(dv, DiffHeader::default(), scroll, None, cx)
                 .into_any_element(),
             None => div()
                 .flex_1()

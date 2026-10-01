@@ -525,6 +525,8 @@ pub enum Msg {
     MenuShowFileHistory,
     /// Context menus: open the file in the user's external editor.
     OpenInExternalEditor,
+    DiffStageHunk,
+    DiffUnstageHunk,
     /// Sidebar PR row: the head branch is not fetched locally.
     PrBranchNotFetched,
     /// PR context menu.
@@ -859,6 +861,7 @@ pub enum Msg {
     AdviceCommonDirtyRollbackHint,
     AdviceCommonPartialCloneObjectMissing,
     AdviceCommonSparseExcludedPath,
+    AdviceCommonHunkChanged,
     AdviceCommonMergeConflictWarning,
     AdviceCommitNothingStaged,
     AdviceCommitConflictedFiles,
@@ -1380,6 +1383,8 @@ impl Msg {
             (Ja, AdviceCommonPartialCloneObjectMissing) => plan::common::ADVICE_COMMON_PARTIAL_CLONE_OBJECT_MISSING,
             (En, AdviceCommonSparseExcludedPath) => advice_en!(CommonSparseExcludedPath),
             (Ja, AdviceCommonSparseExcludedPath) => plan::common::ADVICE_COMMON_SPARSE_EXCLUDED_PATH,
+            (En, AdviceCommonHunkChanged) => advice_en!(CommonHunkChanged),
+            (Ja, AdviceCommonHunkChanged) => plan::common::ADVICE_COMMON_HUNK_CHANGED,
             (En, AdviceCommonMergeConflictWarning) => advice_en!(CommonMergeConflictWarning),
             (Ja, AdviceCommonMergeConflictWarning) => plan::common::ADVICE_COMMON_MERGE_CONFLICT_WARNING,
             (En, AdviceCommitNothingStaged) => advice_en!(CommitNothingStaged),
@@ -2244,6 +2249,8 @@ impl Msg {
             (Ja, MenuOpenInEditor) => "エディタで開く",
             (En, MenuShowFileHistory) => "Show File History",
             (En, OpenInExternalEditor) => "Open in External Editor",
+            (En, DiffStageHunk) => "Stage hunk",
+            (En, DiffUnstageHunk) => "Unstage hunk",
             (En, PrBranchNotFetched) => "Branch not fetched",
             (Ja, PrBranchNotFetched) => "branch が未取得です",
             (En, PrOpenOnGitHub) => "Open on GitHub",
@@ -2559,6 +2566,8 @@ impl Msg {
             (En, PrRefreshing) => "Refreshing pull requests…",
             (Ja, PrRefreshing) => "pull request を更新中…",
             (Ja, OpenInExternalEditor) => "外部エディタで開く",
+            (Ja, DiffStageHunk) => "hunk を stage",
+            (Ja, DiffUnstageHunk) => "hunk を unstage",
             (Ja, MenuShowFileHistory) => "ファイルの履歴を表示",
             (Ja, EditorUseAll) => "すべて採用",
             (En, ToggleCommitTemplate) => "Use your commit.template",

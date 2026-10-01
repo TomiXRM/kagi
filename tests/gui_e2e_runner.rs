@@ -52,6 +52,10 @@ fn main() {
 mod recovery_operations;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/hunk_staging.rs"]
+mod hunk_staging;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/reconcile_unobservable.rs"]
 mod reconcile_unobservable;
 
@@ -1424,6 +1428,10 @@ mod macos {
             (
                 "stage_failure_notice",
                 Box::new(crate::recovery_operations::scenario_stage_failure_notice),
+            ),
+            (
+                "hunk_staging",
+                Box::new(crate::hunk_staging::scenario_hunk_staging),
             ),
             (
                 "issue_failure_notice_survives_tab_switch",

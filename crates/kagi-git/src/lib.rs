@@ -66,6 +66,7 @@ pub mod oplog;
 pub mod ops;
 pub mod proc;
 use kagi_domain::refs; // ADR-0121: was a shim file
+mod hunk_staging;
 pub mod resolution;
 pub mod ruleset;
 pub mod session;

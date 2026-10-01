@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
+- Operation Log の「取り消す / この時点まで戻す」の確認 card に、戻した後のグラフを表示するようにしました(#334 slice 2c、ADR-0214 §6)。branch が戻る位置と、どの branch からも外れる commit の数を、変化する部分の前後(最大 40 行)だけ、通常の commit graph と同じ描き方で示します。計算は読み込み済みの履歴だけで行い、戻し先がその中に無い場合は推定せず「プレビューできません」と表示します(復元自体はできます)。表示専用で、確認するまで何も書き込みません。(Refs #334)
 - サイドバーの accessibility（#354 slice 3、2 本目）。支援技術からサイドバーを tree として、section・group の見出しを開閉状態付き、branch・remote branch・tag・worktree・stash・PR の各行を階層と兄弟の中での位置付きで読めるようにしました。現在の branch と worktree は名前に「現在」と含めます。（Refs #354）
 - commit 一覧の accessibility（#354 slice 3、最初の一覧）。支援技術から commit 一覧を list box として、各行（WIP・stash・commit）を「件名・作者・日付・短い SHA・ref」で名前付きの選択肢として、選択状態と全体の何番目か付きで読めるようにしました（画面外の行は描画しないため、位置と総数で全長を伝えます）。（Refs #354）
 - 色覚対応テーマ「Color Vision (Blue/Orange)」/「色覚対応（青 / 橙）」を追加（#354 slice 4、ADR-0216）。Catppuccin Mocha を元に、追加 / 削除・成功 / blocker・ours / theirs・diff 行の背景を Okabe–Ito の青 / 橙に、warning を黄（輝度差）に、graph lane を 8 色の色覚安全パレットに置き換えました。CIEDE2000 で通常視 20 以上、1 型・2 型・3 型色覚のシミュレーション後も 15 以上の色差をテストで保証しています（既定テーマの diff 背景は 2 型で 4.3）。Settings の theme 選択から選べます。（Refs #354）

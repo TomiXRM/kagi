@@ -59,6 +59,20 @@ pub(crate) struct KillRecordedOnDrop(pub(crate) PathBuf);
 
 impl Drop for KillRecordedOnDrop {
     fn drop(&mut self) {
+        // A failed assertion right after the terminal starts can unwind before
+        // the probe has written its PID: wait briefly for one to appear, but
+        // only on that path — a passing run has removed its files already
+        // (#899 review).
+        if std::thread::panicking() {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while Instant::now() < deadline
+                && ["leftover.pid", "shell.pid"]
+                    .iter()
+                    .all(|name| !self.0.join(name).exists())
+            {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
         for name in ["leftover.pid", "shell.pid"] {
             if let Ok(pid) = std::fs::read_to_string(self.0.join(name)) {
                 let pid = pid.trim();

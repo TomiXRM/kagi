@@ -85,6 +85,7 @@ pub(crate) struct Before {
     ports: Option<Vec<u8>>,
     oplog: Option<Vec<u8>>,
     tmp: BTreeSet<String>,
+    quarantined: BTreeSet<String>,
 }
 
 /// `settings.json` as it reads: its keys (absent counts as no keys: the store
@@ -156,12 +157,34 @@ fn tmp_entries() -> BTreeSet<String> {
         .collect()
 }
 
+/// `settings.json.corrupt[.N]` files: the store moves a file that does not
+/// parse aside instead of overwriting it, so a scenario that broke and then
+/// rewrote the settings leaves one behind even when every key is back
+/// (#899 review).
+fn quarantined() -> BTreeSet<String> {
+    let dir = log_dir();
+    std::fs::read_dir(&dir)
+        .unwrap_or_else(|error| panic!("[gui-e2e] `{}` cannot be listed: {error}", dir.display()))
+        .map(|entry| {
+            entry
+                .unwrap_or_else(|error| {
+                    panic!("[gui-e2e] `{}` cannot be listed: {error}", dir.display())
+                })
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|name| name.starts_with("settings.json.corrupt"))
+        .collect()
+}
+
 pub(crate) fn snapshot() -> Before {
     Before {
         settings: settings(),
         ports: read_shared(&port_store_path()),
         oplog: read_shared(&log_dir().join("operations.jsonl")),
         tmp: tmp_entries(),
+        quarantined: quarantined(),
     }
 }
 
@@ -325,6 +348,15 @@ pub(crate) fn check(scenario: &str, before: &Before) {
         );
     }
     oplog_changes(&before.oplog, &mut report);
+    let quarantined = quarantined();
+    for name in quarantined.symmetric_difference(&before.quarantined) {
+        let change = if quarantined.contains(name) {
+            "left behind"
+        } else {
+            "removed"
+        };
+        let _ = writeln!(report, "- settings quarantine `{name}`: {change}");
+    }
     for added in tmp_entries().difference(&before.tmp) {
         let _ = writeln!(
             report,

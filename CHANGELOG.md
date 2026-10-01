@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
+- Issues の「新しい Issue」で、作成前にラベルと担当者を選べるようにしました(#866)。PR の項目編集と同じ picker で repository の一覧から選び、作成時に `gh issue create --label … --assignee …` で送ります。作成直前に repository を読み直し、無くなったラベルや割り当てられない担当者があれば `gh` を呼ばずに Operation Log へ「拒否」と記録して toast で知らせ、入力した本文と選択はそのまま残します。作成者は「<login> として投稿」と表示するだけで変更できません(`gh` は認証中のユーザーで投稿するため)。選択は本文と一緒に下書きへ保存され、アプリを再起動しても残ります(#903)。読めなくなった下書きファイルは上書き・削除せず `<file>.corrupt` として残します。(Closes #866, Closes #903)
 - Editor Workspace と Commit Panel の file tree を支援技術から名前付き tree として読めるようにしました。各ファイルは名前・変更状態・選択状態・階層と兄弟位置を持ち、Editor のフォルダーと Panel の Generated / Agent fold は開閉状態を伝えます。名前は EN/JA に対応し、未保存の編集も読み上げます。通常の flat 表示は tree にしません。（#354 slice 3）
 - Graph のサイドバーを PR / local branch / remote branch / worktree / tag / stash の 6 つの縦ペインに分けました。PR が 0 件でも見出しを表示します。各ペインの見出しは固定、一覧は別々にスクロールでき、境界をドラッグして高さの比率を変更できます。閉じたペインは見出しだけになり、再展開で元の高さ比に戻ります。比率と開閉は `settings.json` に保存され次回起動時も復元されます。狭い画面では 6 枠の外側をスクロールできます。不正な保存値は既定配置で表示し、起動・描画だけでは上書きしません。(#864、ADR-0217)
 - conflict の continue / skip / abort と解決内容の保存(save)も、Operation Log に動かした ref を記録するようにしました(#884、ADR-0214 §4)。これまでは記録なしの扱いだったため、Kagi で conflict を解いた merge や cherry-pick をまたぐ時点には「記録なし」で戻せませんでした。今は merge 前の時点にも復元できます。実行前に拒否された場合は「動いた ref はありません」と記録します。rebase は途中で HEAD が detached になるので、これまでどおり復元の対象外です。(Refs #334)
@@ -39,6 +40,12 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - Graph サイドバーで高さが異なる PR / LOCAL 等の境界をドラッグし始めると、separator が pointer からずれる問題を修正しました。header を含む実測 pane 高から重みを求め、初回の小さな移動から pointer に追従します。（#911 review、ADR-0217）
 
+- fetch の失敗、PR の comment / review / edit、issue の作成・コメント、worktree の lock / unlock / prune / repair / 削除を含む時点への「この時点まで戻す」が、「記録なし」で拒否されていた問題を修正しました(#885、ADR-0214 §4)。これらの操作も、動かした branch を Operation Log に記録します。fetch や worktree の操作は、実行の前後で branch を読んで実際の移動を記録します。mirror 型の設定で fetch が local branch を動かした場合や、worktree の削除で branch も消した場合は、その移動が記録されます。GitHub 側だけを書き換える操作は「動いた branch なし」と記録します。実行した PR merge は local branch を消すことがあるため、終了が確認できない操作と同様に、これまでどおり記録なしで扱います。(Refs #334)
+- 「この時点まで戻す / 取り消す」で、直近 1000 件より古い操作を選ぶと「この repository の操作にない」と表示されていた問題を修正しました。古すぎて範囲外であることを示すようにしました(戻せないことは変わりません)。また、プレビューできないときの文言で、「commit をさらに読み込む」で表示できる場合と、どの branch からも届かず表示できない場合を案内するようにしました。(#888、Refs #334)
+- 「この時点まで戻す」が、削除した worktree や、削除した無関係の repository で行った操作を範囲に含むだけで拒否されていた問題を修正しました(#894)。Operation Log の各操作に、記録した repository(common dir と、unix ではそのファイル ID、取れる環境では `.git` の作成時刻)を残すようにしたので、worktree が消えていても、この repository の操作か別の repository の操作かを判定できます。削除した worktree での操作は戻す対象に含まれ、無関係の repository の操作は除かれます。削除して同じ場所に clone し直した repository は、古い `.git` と同じファイル ID を得ても作成時刻で区別し、作成時刻を確かめられなければ拒否します。この記録の無い以前の操作は、これまでどおり判定できなければ拒否します。repository を別の volume に移動した場合のように判定できないときも、黙って戻さずに理由を示して拒否します。(Refs #334)
+- 「この時点まで戻す / 取り消す」が HEAD の切り替えを含む範囲で拒否されるとき、どの操作で HEAD が何から何に切り替わったか(branch、または detached の commit)と、戻す手順(先に元の branch / commit を自分で checkout してから、その操作以降の時点へ戻す)を示すようにしました。HEAD を含む復元は、作業ツリーに触れるため引き続き行いません(ADR-0214 §7)。(#886、Refs #334)
+- 既定 OFF の opt-in「terminal を開いている間 worktree をロック」を ON にした場合の自動ロックを修正しました。これまでは acquire の確認カードを Cancel しても、その提案の token を所有済みとして記録し、shell 終了時に同じ reason の別人のロックを解除提案できました。acquire 成功後だけ所有権を保存し、shell が承認前に終了したらカードを閉じます。解除は元の tab / shell 世代 / repository identity が一致するときだけ提示し、別 tab のカードは上書きせず元の tab まで保留します。token は再起動後に再利用されない random nonce を含み、観測不能や crash 後は従来どおり手動で確認して解除します。既定 OFF の利用者の動作は変わらず、ON でも lock / unlock はそれぞれ確認が必要です。（#772、ADR-0218）
+- 自動ロック取得後、shell 終了時に別の確認カードが開いていた場合、そのカードをボタンで閉じてもロック解除の確認カードが出ない問題を修正しました。modal slot が空いた後に元の tab へ再提示し、解除カード自体を Cancel した場合は再提示しません。（#914 review、#772）
 - Commit Panel を同じ worktree で開き直すか、merge 後に再読込した際に、file tree の兄弟位置が以前のファイル構成のまま残り、新しい行から支援技術向けの TreeItem が欠落する問題を修正しました。新しい状態に差し替えるたびに位置表を無効化します。（#901 review、Refs #354）
 - Operation Log の「取り消す / この時点まで戻す」の確認 card と Operation Log の review 指摘を修正しました(#883 / #871 / #878)。
   - 「戻した後のグラフ」が長いと card の下側が切れて見えなかった問題を修正しました。行は card 内でスクロールします。

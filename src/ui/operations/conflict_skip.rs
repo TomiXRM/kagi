@@ -128,7 +128,7 @@ impl KagiApp {
             None => klog!("executed: {}", op_name),
             Some(err_msg) => klog!("{} failed: {}", op_name, err_msg),
         }
-        self.record_conflict_persist(
+        self.record_op_persist_moves(
             &op_name,
             plan.current.clone(),
             outcome,

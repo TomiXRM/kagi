@@ -12,10 +12,9 @@ pub struct UnlockWorktreeModal {
     pub error: Option<SharedString>,
     /// Worktree registry name the plan was built for.
     pub name: String,
-    /// #772 / ADR-0208: `Some` when this is the terminal auto-lock's release
-    /// offer. Confirming then runs `execute_auto_unlock_worktree`, which
-    /// re-checks the token and identity, instead of the manual unlock.
-    pub auto: Option<kagi_domain::worktree_autolock::AutoUnlockTarget>,
+    /// Present only for a confirmed lock belonging to this owner and shell
+    /// generation; the auto executor rechecks its token and identity.
+    pub auto: Option<crate::ui::terminal::AutoLockOffer>,
 }
 
 /// State for a remove-worktree confirmation (issue #340). `delete_branch`
@@ -38,6 +37,8 @@ pub struct LockWorktreeModal {
     pub name: String,
     /// Lock reason recorded in `git worktree lock --reason`.
     pub reason: String,
+    /// An offer is not ownership until its confirm executes successfully.
+    pub auto: Option<crate::ui::terminal::AutoLockOffer>,
 }
 
 /// State for a prune-stale-worktrees confirmation (issue #340). Repo-wide;

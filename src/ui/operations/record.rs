@@ -53,13 +53,13 @@ impl KagiApp {
         self.record_op_impl(entry, cx, true, None);
     }
 
-    /// [`Self::record_op_persist`] for a conflict continue / skip, with the
-    /// refs it moved as observed by `Backend::observe_ref_moves` (#884) —
-    /// the receipt `restore` reads, so a merge or cherry-pick resolved in
-    /// Kagi can be restored across. A refusal before anything ran passes
-    /// `Some(empty)`; an `Unknown` outcome is stored as not recorded
-    /// (`OpLogEntry::with_ref_moves`, #891 review).
-    pub(in crate::ui) fn record_conflict_persist(
+    /// [`Self::record_op_persist`] with the refs the operation moved, as
+    /// observed by `Backend::observe_ref_moves` (#884, #885) — the receipt
+    /// `restore` reads. Used by the UI-recorded writes that run local git:
+    /// conflict continue / skip, fetch, worktree lock / unlock. A refusal
+    /// before anything ran passes `Some(empty)`; an `Unknown` outcome is
+    /// stored as not recorded (`OpLogEntry::with_ref_moves`, #891 review).
+    pub(in crate::ui) fn record_op_persist_moves(
         &mut self,
         op: &str,
         before: StateSummary,
@@ -73,6 +73,23 @@ impl KagiApp {
         self.record_op_impl(entry, cx, true, None);
     }
 
+    /// [`Self::record_op_persist`] for a write that by construction moves no
+    /// ref — worktree lock / unlock / prune / repair only touch worktree admin
+    /// files (#907 review): recorded, nothing moved (`with_nothing_moved`).
+    /// Not observed: a branch someone else moves meanwhile is not its move.
+    pub(in crate::ui) fn record_op_persist_nothing_moved(
+        &mut self,
+        op: &str,
+        before: StateSummary,
+        outcome: OpOutcome,
+        repo_path: &std::path::Path,
+        cx: &mut Context<Self>,
+    ) {
+        let entry = OpLogEntry::new(op, repo_path.display().to_string(), before, outcome)
+            .with_nothing_moved();
+        self.record_op_impl(entry, cx, true, None);
+    }
+
     /// Record a refusal whose blockers are typed plan notes: every blocker
     /// goes to the oplog, the first one (localized) to the footer and toast.
     pub(crate) fn record_refused(
@@ -83,12 +100,33 @@ impl KagiApp {
         repo_path: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
-        let shown = typed_refusal(op, blockers);
+        let entry = Self::refused_entry(op, before, blockers, repo_path);
+        self.record_refused_entry(op, entry, blockers, cx);
+    }
+
+    /// The entry [`Self::record_refused`] records, for a caller that adds to
+    /// it — an issue-create carries the fields it asked for (#904 review).
+    pub(crate) fn refused_entry(
+        op: &str,
+        before: StateSummary,
+        blockers: &[PlanNote],
+        repo_path: &std::path::Path,
+    ) -> OpLogEntry {
         let outcome = OpOutcome::Refused {
             blockers: blockers.iter().map(PlanNote::message_en).collect(),
         };
-        let entry = OpLogEntry::new(op, repo_path.display().to_string(), before, outcome);
-        self.record_op_impl(entry, cx, true, shown);
+        OpLogEntry::new(op, repo_path.display().to_string(), before, outcome)
+    }
+
+    /// Record a refusal entry built by [`Self::refused_entry`].
+    pub(crate) fn record_refused_entry(
+        &mut self,
+        op: &str,
+        entry: OpLogEntry,
+        blockers: &[PlanNote],
+        cx: &mut Context<Self>,
+    ) {
+        self.record_op_impl(entry, cx, true, typed_refusal(op, blockers));
     }
 
     /// Present a no-execute receipt the core already wrote for a blocked plan

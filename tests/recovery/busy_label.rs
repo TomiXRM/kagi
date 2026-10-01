@@ -96,6 +96,15 @@ pub fn scenario_fetch_failure_reaches_the_oplog(cx: &mut VisualTestAppContext) {
         ),
         "an unreachable remote is a failure, not a success: {outcome:?}"
     );
+    // #885: the fetch is observed and moved no local ref, so its receipt
+    // says "nothing moved" (a restore across it is not blocked as "not
+    // recorded"); an Unknown termination is never that.
+    let last = entries.last().unwrap();
+    let expected = match last.outcome {
+        kagi_git::oplog::OpOutcome::Unknown { .. } => None,
+        _ => Some(Vec::new()),
+    };
+    assert_eq!(last.ref_moves, expected, "fetch receipt");
 
     // The visible surface must still be there — the oplog record replaces
     // nothing.

@@ -96,9 +96,8 @@ pub struct ConflictReport {
 /// #884: a receipt for a conflict write refused or dropped before anything
 /// ran: recorded as "nothing moved" (`Some(空)`, ADR-0214 §4), so it never
 /// blocks a restore across it the way a missing record does.
-fn nothing_moved(mut entry: crate::oplog::OpLogEntry) -> crate::oplog::OpLogEntry {
-    entry.ref_moves = Some(Vec::new());
-    entry
+fn nothing_moved(entry: crate::oplog::OpLogEntry) -> crate::oplog::OpLogEntry {
+    entry.with_nothing_moved()
 }
 
 impl Backend {

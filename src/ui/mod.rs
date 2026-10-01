@@ -52,6 +52,7 @@ mod github_issue_state;
 mod github_issues;
 mod github_pr_detail;
 mod github_pr_strip;
+mod issue_fields;
 mod issues_composer;
 #[cfg(feature = "gui-e2e")]
 mod issues_composer_e2e;
@@ -444,7 +445,7 @@ use context_menu::{CommitAction, CommitMenuState, MenuContext};
 use detail_panel::CommitDetail;
 use graph_view::graph_canvas;
 use kagi_git::{
-    oplog::{append_oplog, read_oplog_tail, OpLogEntry, OpOutcome},
+    oplog::{read_oplog_tail, OpLogEntry, OpOutcome},
     ops::{default_tracking_branch_name, validate_branch_rename, AmendMode, StateSummary},
     CommitId, FileDiffStat, FileStatus, RepoSnapshot, SkipProgress,
 };
@@ -1176,6 +1177,13 @@ pub struct KagiApp {
     /// The authenticated `gh` login (fetched once by the ticker); drives the
     /// sidebar's Mine / Review requested / Others grouping.
     pub github_login: Option<String>,
+    /// The `gh` login on each repository host (`None`: `gh`'s default host),
+    /// for the New Issue composer's "posted as" (#904 review): an Enterprise
+    /// repository posts as that server's identity, not github.com's.
+    pub github_host_logins: std::collections::HashMap<Option<String>, String>,
+    /// Hosts whose login read is in flight or has settled, so each is asked
+    /// once; a failed read is forgotten so the next Issues read retries it.
+    github_host_login_requests: std::collections::HashSet<Option<String>>,
     /// When `Some`, the refresh icon spins (set on click; cleared after one
     /// full rotation in render).
     pub refresh_spin_started: Option<Instant>,
@@ -1387,6 +1395,8 @@ impl KagiApp {
             transport_holds: Default::default(),
             github_ticker_alive: false,
             github_login: None,
+            github_host_logins: Default::default(),
+            github_host_login_requests: Default::default(),
             write_busy_op: None,
             remote_write: None,
             planning: None,
@@ -1658,22 +1668,33 @@ impl KagiApp {
 
         // Callers choose persistence. Already-recorded/attempted receipts are
         // presentation-only, including Refused outcomes: never append twice.
+        // #907 review: the panel gets the entry as appended — with the id the
+        // log assigned — never the placeholder (id 0, which names another
+        // entry). A receipt with recorded moves enables "undo / restore to
+        // here", so a wrong id would point those at the wrong operation. A
+        // failed append shows its moves as an estimate (`entry_for_recording`).
+        let mut shown = None;
         if persist {
-            if let Err(e) = append_oplog(&entry) {
-                klog!("oplog: write failed (non-fatal): {}", e);
+            let recording = kagi_git::backend::recording::finalize(entry.clone());
+            if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {
+                klog!("oplog: write failed (non-fatal): {}", error);
                 // "non-fatal" is true of the operation and false of the promise.
                 // The op already happened, but Kagi's reason to exist includes
                 // leaving a record to recover and audit from — and the in-memory
                 // panel below still shows the entry, so nothing looks wrong until
                 // the next launch, when it is simply gone. Say it out loud
                 // (#643 A1).
-                self.present_oplog_write_failure(&e, cx);
+                self.present_oplog_write_failure(error, cx);
             }
+            shown = Some(crate::ui::oplog_panel::OpLogPanel::entry_for_recording(
+                &recording,
+            ));
         }
 
         // T-BP-004: push to in-memory ring-buffer (newest at front) and collapse
         // any expanded row. Scoped to the op-log entity (ADR-0110 Phase 5).
         if let Some(panel) = self.op_log.clone() {
+            let entry = shown.unwrap_or(entry);
             panel.update(cx, |panel, cx| {
                 panel.push(entry);
                 panel.collapse();
@@ -2826,6 +2847,9 @@ impl KagiApp {
         if self.active_modal.is_some() {
             self.confirm_open_modal(cx);
             cx.notify();
+            if let Some(owner) = self.active_session() {
+                self.offer_auto_release(owner, cx);
+            }
             return true;
         }
         if self
@@ -2872,7 +2896,7 @@ impl KagiApp {
             M::StashDrop(_) => self.start_stash_drop(cx),
             M::PushTag(_) => self.start_push_tag(cx),
             M::PrMerge(_) => self.start_pr_merge(cx),
-            M::PrFields(_) => self.start_pr_edit(cx),
+            M::PrFields(_) => self.confirm_pr_fields(cx),
             M::Push(_) => self.start_push(cx),
             M::BranchPlan(_) => self.start_branch_plan(cx),
             M::SetUpstream(_) => self.start_set_upstream(cx),
@@ -2918,6 +2942,9 @@ impl KagiApp {
     fn cancel_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
         if self.active_modal.is_some() {
             self.cancel_open_modal();
+            if let Some(owner) = self.active_session() {
+                self.offer_auto_release(owner, cx);
+            }
             cx.notify();
             return true;
         }

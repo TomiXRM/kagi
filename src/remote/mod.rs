@@ -398,6 +398,8 @@ pub fn remote_snapshot(
         branches,
         remote_branches,
         tags,
+        // Kagi's PR heads are local refs; a remote view has none.
+        pr_heads: Vec::new(),
         status,
         stashes,
         worktrees,

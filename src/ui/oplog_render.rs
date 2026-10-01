@@ -420,10 +420,6 @@ fn render_reflog(i: usize, reflog: Option<&oplog_panel::ReflogDetail>) -> gpui::
 /// #334 slice 2a: the refs the operation recorded moving, by OID — the exact
 /// record (ADR-0214 §4), labelled apart from the time-window estimate.
 fn render_ref_moves(i: usize, moves: &[kagi_domain::ref_moves::RefMove]) -> gpui::AnyElement {
-    let short = |oid: &Option<String>| match oid {
-        Some(oid) => oid.get(..8).unwrap_or(oid).to_string(),
-        None => Msg::OplogPanel(P::RefAbsent).t().to_string(),
-    };
     let section = div()
         .id(("oplog-row-refmoves", i))
         .relative()
@@ -452,20 +448,8 @@ fn render_ref_moves(i: usize, moves: &[kagi_domain::ref_moves::RefMove]) -> gpui
     }
     section
         .children(moves.iter().enumerate().map(|(n, m)| {
-            let target = |symbolic: &Option<String>| {
-                symbolic
-                    .as_deref()
-                    .map(|s| format!("{} ", s.trim_start_matches("refs/heads/")))
-                    .unwrap_or_default()
-            };
-            let text = format!(
-                "{}  {}{}→ {}{}",
-                m.refname,
-                target(&m.old_symbolic),
-                short(&m.old),
-                target(&m.new_symbolic),
-                short(&m.new)
-            );
+            let text =
+                super::oplog_panel::ref_move_text(m, false, Msg::OplogPanel(P::RefAbsent).t());
             div()
                 .relative()
                 .truncate()

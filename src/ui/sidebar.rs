@@ -14,16 +14,30 @@ use super::sidebar_rows::{
     split_first_segment, GroupRow, RemoteRow,
 };
 use super::theme::{self, theme};
-use super::{BranchDrag, BranchDragGhost, KagiApp, Msg};
+use super::{BranchDrag, BranchDragGhost, KagiApp};
 
-/// Uniform row height (unscaled) used for **every** virtualized sidebar row.
+/// Row slot height (unscaled) for section headers and every virtualized leaf
+/// outside the WORKTREES pane.
 ///
-/// `uniform_list` requires a single fixed row height — it measures the first
-/// item and applies that height to all of them. Every sidebar row (section
-/// header, group header, branch/remote/tag/worktree/stash leaf, and the
-/// placeholder rows) is therefore pinned to this height so the virtualized
-/// list scrolls correctly regardless of which row happens to be first.
-pub(super) const SIDEBAR_ROW_H: f32 = 24.0;
+/// `uniform_list` measures the first item of a list and applies that height to
+/// all of them. Each pane owns its own list, so every row a pane's list can
+/// draw (group headers and leaves alike) is pinned to that pane's slot height
+/// and the list scrolls correctly regardless of which row happens to be first.
+pub(super) const SIDEBAR_ROW_H: f32 = 20.0;
+
+/// Visible height of a group heading, centered inside its `SIDEBAR_ROW_H` slot
+/// so the LOCAL / REMOTE lists keep one uniform row height.
+const SIDEBAR_GROUP_HEADING_H: f32 = 18.0;
+
+/// Row slot height for the WORKTREES pane. Its list only ever draws worktree
+/// rows (name, path, port link and inspection badge), so it can use a taller
+/// uniform height than the other panes.
+pub(super) const SIDEBAR_WORKTREE_ROW_H: f32 = 24.0;
+
+/// Font size (unscaled) for auxiliary row text — commit age, upstream counts,
+/// PR badge, worktree path / port / inspection badge — one step under the
+/// rows' `text_xs` labels.
+pub(super) const SIDEBAR_AUX_TEXT: f32 = 11.0;
 
 /// Default sidebar width in pixels (T023). Previously `mod.rs::SIDEBAR_DEFAULT`.
 ///
@@ -37,26 +51,26 @@ const SIDEBAR_DEFAULT_WIDTH: f32 = 240.0;
 /// Consolidated Repository-Navigator (left sidebar) state.
 ///
 /// App-global (not per-tab), preserved across repository reloads. `new()`
-/// restores the six-pane weights and collapsed sections from settings once;
+/// restores the five-pane weights and collapsed sections from settings once;
 /// the filter `InputState` is created lazily on first focus.
 pub struct SidebarState {
     /// Current sidebar width in pixels (T023: user-resizable).
     pub width: f32,
     /// Independent virtual-list scroll positions; one per fixed Graph pane.
-    pub scroll_handles: [UniformListScrollHandle; 6],
-    /// Cached navigator rows. Six virtual lists index contiguous ranges of
+    pub scroll_handles: [UniformListScrollHandle; 5],
+    /// Cached navigator rows. Five virtual lists index contiguous ranges of
     /// this single Vec, so unchanged frames only construct visible leaves.
     pub rows: Vec<SidebarRow>,
     /// Contiguous header+leaf ranges in `rows`, recomputed only on a row rebuild.
-    pub pane_ranges: [std::ops::Range<usize>; 6],
+    pub pane_ranges: [std::ops::Range<usize>; 5],
     /// Relative heights for expanded pane bodies; collapse never mutates them.
-    pub pane_weights: [u16; 6],
+    pub pane_weights: [u16; 5],
     /// Measured window-space bounds for drag calculations, including zoom.
-    pub pane_geom: [std::rc::Rc<std::cell::Cell<(f32, f32)>>; 6],
+    pub pane_geom: [std::rc::Rc<std::cell::Cell<(f32, f32)>>; 5],
     /// T-PERF-RENDER-002 (ADR-0116 Wave 2): fingerprint of the inputs that
     /// produced the cached `rows`. `render` hashes cheap input revisions,
     /// collapse sets and filter text; unchanged frames do not rebuild refs.
-    /// A rebuild also refreshes the six pane ranges.
+    /// A rebuild also refreshes the five pane ranges.
     pub rows_fingerprint: u64,
     /// #354: each row's 1-based `(position, size)` among its tree siblings,
     /// for the accessibility tree. Derived from every row, so it is cached
@@ -141,12 +155,6 @@ pub const SECTION_REMOTE: &str = "remote";
 pub const SECTION_TAGS: &str = "tags";
 pub const SECTION_WORKTREES: &str = "worktrees";
 pub const SECTION_STASHES: &str = "stashes";
-/// GitHub Phase 1: open pull requests (from `gh`).
-pub const SECTION_PRS: &str = "prs";
-/// PR sub-group collapse keys (in `branch_groups_collapsed`).
-pub const PR_GROUP_MINE: &str = "prs:mine";
-pub const PR_GROUP_REVIEW: &str = "prs:review";
-pub const PR_GROUP_OTHERS: &str = "prs:others";
 
 /// Build a `.tooltip(...)` closure showing the full (untruncated) name.
 /// Row labels are single-line + ellipsized, so the tooltip is how the user
@@ -161,14 +169,14 @@ pub(super) fn name_tooltip(
 // PERF-SIDEBAR-VIRT: flat row model for `uniform_list`
 // ──────────────────────────────────────────────────────────────
 //
-// Flatten all sections once when the input fingerprint changes; store six
+// Flatten all sections once when the input fingerprint changes; store five
 // contiguous ranges into that Vec on `SidebarState`. Each Graph pane draws only
 // its visible leaf rows via its own `uniform_list` and the common row renderer.
 // Moving a divider or scrolling a pane never regroups thousands of refs.
 
 /// One flattened, virtualized sidebar row. A section header starts each pane's
 /// contiguous range and is drawn outside its leaf list so it stays pinned.
-/// Every virtualized leaf has the same `SIDEBAR_ROW_H`.
+/// Every virtualized leaf in a pane has that pane's uniform slot height.
 #[derive(Debug, Clone)]
 pub enum SidebarRow {
     /// A top-level pane header. `section` is the static collapse key.
@@ -239,19 +247,6 @@ pub enum SidebarRow {
     },
     /// A stash leaf.
     Stash { index: usize, message: String },
-    /// GitHub Phase 1: PR sub-group header (Mine / Review requested / Others).
-    PrGroupHeader {
-        key: &'static str,
-        title: &'static str,
-        count: usize,
-        collapsed: bool,
-    },
-    /// GitHub Phase 1: an open pull request. `stacked` = its base is another
-    /// open PR's head.
-    PullRequest {
-        pr: kagi_domain::github::PullRequest,
-        stacked: bool,
-    },
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -327,13 +322,6 @@ pub(super) fn build_sidebar_row(
             cx,
         ),
         SidebarRow::Stash { index, message } => build_stash_row(*index, message, cx),
-        SidebarRow::PrGroupHeader {
-            key,
-            title,
-            count,
-            collapsed,
-        } => build_group_header(key, title, *count, *collapsed, theme::scaled_px(20.), cx),
-        SidebarRow::PullRequest { pr, stacked } => build_pr_row(pr, *stacked, cx),
     }
 }
 
@@ -394,20 +382,29 @@ fn build_group_header(
         this.with_ui(|ui| ui.toggle_branch_group(&key_for_toggle));
         cx.notify();
     });
+    // The `SIDEBAR_ROW_H` slot keeps the pane's list uniform; the visible
+    // heading (and its hover) is the slightly shorter box inside it.
     div()
         .id(SharedString::from(format!("sidebar-group-{}", key)))
         .h(theme::scaled_px(SIDEBAR_ROW_H))
         .flex()
-        .flex_row()
         .items_center()
-        .pl(left_pad)
-        .pr_3()
-        .text_sm()
-        .text_color(rgb(theme().text_sub))
-        .overflow_hidden()
         .on_click(toggle)
-        .hover(|s| s.bg(rgb(theme().surface)))
-        .child(div().flex_1().truncate().child(glabel))
+        .child(
+            div()
+                .h(theme::scaled_px(SIDEBAR_GROUP_HEADING_H))
+                .w_full()
+                .flex()
+                .flex_row()
+                .items_center()
+                .pl(left_pad)
+                .pr_3()
+                .text_xs()
+                .text_color(rgb(theme().text_sub))
+                .overflow_hidden()
+                .hover(|s| s.bg(rgb(theme().surface)))
+                .child(div().flex_1().truncate().child(glabel)),
+        )
         .into_any()
 }
 
@@ -424,7 +421,7 @@ fn branch_row_meta(
                 .flex_shrink(1000.)
                 .min_w(px(0.))
                 .truncate()
-                .text_xs()
+                .text_size(theme::scaled_px(SIDEBAR_AUX_TEXT))
                 .text_color(rgb(theme().text_muted))
                 .child(SharedString::from(format!("  \u{00b7} {age}"))),
         )
@@ -433,7 +430,7 @@ fn branch_row_meta(
                 div()
                     .flex_shrink_0()
                     .ml_2()
-                    .text_xs()
+                    .text_size(theme::scaled_px(SIDEBAR_AUX_TEXT))
                     .text_color(rgb(theme().text_sub))
                     .child(text),
             )
@@ -447,7 +444,7 @@ fn branch_row_meta(
                     .rounded_sm()
                     .border_1()
                     .border_color(rgb(theme().selected))
-                    .text_xs()
+                    .text_size(theme::scaled_px(SIDEBAR_AUX_TEXT))
                     .text_color(rgb(color))
                     .child(text),
             )
@@ -552,7 +549,7 @@ fn build_local_branch_leaf(
             .items_center()
             .pl(left_pad)
             .pr_3()
-            .text_sm()
+            .text_xs()
             .text_color(rgb(text_color))
             .overflow_hidden()
             .on_click(head_click)
@@ -617,7 +614,7 @@ fn build_local_branch_leaf(
             .items_center()
             .pl(left_pad)
             .pr_3()
-            .text_sm()
+            .text_xs()
             .text_color(rgb(text_color))
             .overflow_hidden()
             .on_click(click_handler)
@@ -707,7 +704,7 @@ fn build_remote_leaf(
         .items_center()
         .pl(left_pad)
         .pr_3()
-        .text_sm()
+        .text_xs()
         .text_color(rgb(theme().color_remote))
         .overflow_hidden()
         .on_mouse_down(gpui::MouseButton::Right, menu_click)
@@ -769,7 +766,7 @@ fn build_tag_row(
         .flex_row()
         .items_center()
         .px_3()
-        .text_sm()
+        .text_xs()
         .text_color(rgb(theme().color_tag))
         .overflow_hidden()
         .tooltip(name_tooltip(full_name))
@@ -821,7 +818,7 @@ fn build_stash_row(index: usize, message: &str, cx: &mut Context<KagiApp>) -> gp
         .flex_row()
         .items_center()
         .px_3()
-        .text_sm()
+        .text_xs()
         .text_color(rgb(theme().color_warning))
         .overflow_hidden()
         .on_click(click_handler)
@@ -1073,8 +1070,6 @@ mod tests {
         let rows = build_sidebar_rows(
             &branches,
             &[],
-            None,
-            &[],
             &[],
             &[],
             &[],
@@ -1124,100 +1119,4 @@ mod tests {
         rebuild(&mut state, 5, &no_groups, "");
         assert_eq!(branch_position(&state, "feat/b"), Some((2, 2)));
     }
-}
-
-// ──────────────────────────────────────────────────────────────
-// PULL REQUESTS row (GitHub Phase 1)
-// ──────────────────────────────────────────────────────────────
-
-/// `#N title` with a CI glyph and review/draft cues. Click jumps the graph to
-/// the head branch; right-click opens the PR menu (open on GitHub / copy URL).
-fn build_pr_row(
-    pr: &kagi_domain::github::PullRequest,
-    stacked: bool,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    use kagi_domain::github::{CiState, ReviewState};
-    let (ci_glyph, ci_color) = match pr.ci {
-        CiState::Success => ("\u{2713}", theme().color_success),
-        CiState::Failure => ("\u{2717}", theme().color_blocker),
-        CiState::Pending => ("\u{25CF}", theme().color_warning),
-        CiState::None => ("\u{25CB}", theme().text_muted),
-    };
-    let review_glyph = match pr.review {
-        ReviewState::Approved => Some(("\u{2714}", theme().color_success)),
-        ReviewState::ChangesRequested => Some(("\u{21BA}", theme().color_warning)),
-        ReviewState::ReviewRequired | ReviewState::None => None,
-    };
-    // #356: the title is GitHub-origin; neutralize control bytes like every
-    // other PR title surface (and the row's accessible name).
-    let label = format!(
-        "#{} {}",
-        pr.number,
-        kagi_domain::text_safety::sanitize_control_bytes(&pr.title)
-    );
-    let mut tip = format!(
-        "#{} {} \u{2190} {}\n@{}",
-        pr.number, pr.head, pr.base, pr.author
-    );
-    if pr.is_draft {
-        tip.push_str(&format!("\n{}", Msg::PrDraft.t()));
-    }
-    if stacked {
-        tip.push_str(&format!("\n{} {}", Msg::PrStacked.t(), pr.base));
-    }
-    let pr_click = pr.clone();
-    let click_handler = cx.listener(
-        move |this: &mut KagiApp, _e: &gpui::ClickEvent, _window, cx| {
-            this.jump_to_pr_head(&pr_click, cx);
-            cx.notify();
-        },
-    );
-    let pr_menu = pr.clone();
-    let menu_handler = cx.listener(
-        move |this: &mut KagiApp, e: &gpui::MouseDownEvent, _window, cx| {
-            this.with_ui(|ui| ui.pr_menu = Some((pr_menu.clone(), e.position)));
-            cx.stop_propagation();
-            cx.notify();
-        },
-    );
-    div()
-        .id(("sidebar-pr", pr.number as usize))
-        .h(theme::scaled_px(SIDEBAR_ROW_H))
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_1()
-        .px_3()
-        .text_sm()
-        .overflow_hidden()
-        .on_click(click_handler)
-        .on_mouse_down(gpui::MouseButton::Right, menu_handler)
-        .hover(|style| style.bg(rgb(theme().surface)))
-        .tooltip(name_tooltip(SharedString::from(tip)))
-        // Drafts read dimmed; stacked PRs get a small indent so the chain is
-        // visible at a glance (Graphite-style, without the full tree yet).
-        .when(pr.is_draft, |el| el.opacity(0.55))
-        .when(stacked, |el| el.pl(theme::scaled_px(24.)))
-        .child(
-            div()
-                .flex_shrink_0()
-                .w(theme::scaled_px(12.))
-                .text_color(rgb(ci_color))
-                .child(SharedString::from(ci_glyph)),
-        )
-        .child(
-            div()
-                .flex_1()
-                .truncate()
-                .text_color(rgb(theme().text_main))
-                .child(SharedString::from(label)),
-        )
-        .children(review_glyph.map(|(g, c)| {
-            div()
-                .flex_shrink_0()
-                .text_color(rgb(c))
-                .child(SharedString::from(g))
-        }))
-        .into_any()
 }

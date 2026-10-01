@@ -17,7 +17,7 @@ use gpui::{div, prelude::*, px, rgb, Context, SharedString};
 use kagi_git::worktree_inspection::WorktreeInspection;
 use kagi_ui_core::slow_read::SlowRead;
 
-use super::sidebar::{name_tooltip, SIDEBAR_ROW_H};
+use super::sidebar::{name_tooltip, SIDEBAR_AUX_TEXT, SIDEBAR_WORKTREE_ROW_H};
 use super::theme::{self, theme};
 use super::{KagiApp, Msg};
 
@@ -274,12 +274,16 @@ fn inspection_badge(app: &KagiApp, path: &Path, name: &str) -> gpui::AnyElement 
                 theme().text_muted,
                 SharedString::from(format!("worktree-measuring-{name}")),
             ))
-            .child(div().text_xs().child(Msg::WorktreeMeasuring.t()))
+            .child(
+                div()
+                    .text_size(theme::scaled_px(SIDEBAR_AUX_TEXT))
+                    .child(Msg::WorktreeMeasuring.t()),
+            )
             .into_any_element();
     }
     let Some(entry) = state.entries.get(path) else {
         return div()
-            .text_xs()
+            .text_size(theme::scaled_px(SIDEBAR_AUX_TEXT))
             .text_color(rgb(theme().text_muted))
             .child(Msg::WorktreeNotMeasured.t())
             .into_any_element();
@@ -300,7 +304,7 @@ fn inspection_badge(app: &KagiApp, path: &Path, name: &str) -> gpui::AnyElement 
         .flex()
         .gap_1()
         .flex_shrink_0()
-        .text_xs()
+        .text_size(theme::scaled_px(SIDEBAR_AUX_TEXT))
         .text_color(rgb(theme().text_sub))
         .id(SharedString::from(format!(
             "worktree-inspection-badge-{name}"
@@ -530,7 +534,7 @@ pub(super) fn build_worktree_row(
     };
     let mut row = div()
         .id(SharedString::from(format!("sidebar-worktree-{}", name)))
-        .h(theme::scaled_px(SIDEBAR_ROW_H))
+        .h(theme::scaled_px(SIDEBAR_WORKTREE_ROW_H))
         // w_full: without it the row sizes to its content and runs past the
         // sidebar clip — the trailing lock chip was never visible and the
         // label never ellipsized (other sidebar rows are width-bounded).
@@ -539,7 +543,7 @@ pub(super) fn build_worktree_row(
         .flex_row()
         .items_center()
         .px_3()
-        .text_sm()
+        .text_xs()
         .text_color(rgb(text_color))
         .overflow_hidden()
         .tooltip(name_tooltip(full_name))
@@ -569,14 +573,14 @@ pub(super) fn build_worktree_row(
                 .ml_2()
                 .flex_1()
                 .min_w(px(0.))
-                .h(theme::scaled_px(SIDEBAR_ROW_H))
+                .h(theme::scaled_px(SIDEBAR_WORKTREE_ROW_H))
                 .overflow_hidden()
                 .flex()
                 .flex_row()
                 .flex_wrap()
                 .child(
                     div()
-                        .h(theme::scaled_px(SIDEBAR_ROW_H))
+                        .h(theme::scaled_px(SIDEBAR_WORKTREE_ROW_H))
                         .flex_grow(1.)
                         .flex_basis(px(0.))
                         .min_w(px(0.))
@@ -586,6 +590,7 @@ pub(super) fn build_worktree_row(
                             div()
                                 .min_w(px(0.))
                                 .truncate()
+                                .text_size(theme::scaled_px(SIDEBAR_AUX_TEXT))
                                 .child(SharedString::from(path_s.to_string())),
                         ),
                 )
@@ -658,13 +663,13 @@ fn port_link(name: &str, port: u16, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         .id(SharedString::from(format!("sidebar-worktree-port-{name}")))
         .relative()
         .flex_shrink_0()
-        .h(theme::scaled_px(SIDEBAR_ROW_H))
+        .h(theme::scaled_px(SIDEBAR_WORKTREE_ROW_H))
         .flex()
         .items_center()
         .whitespace_nowrap()
         .px_1()
         .rounded_sm()
-        .text_xs()
+        .text_size(theme::scaled_px(SIDEBAR_AUX_TEXT))
         .text_color(rgb(theme().color_branch))
         .cursor_pointer()
         .hover(|s| s.bg(rgb(theme().selected)))

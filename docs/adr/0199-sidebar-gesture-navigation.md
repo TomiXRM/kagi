@@ -56,7 +56,7 @@ never translates.
 8. **One page-content builder.** `page_content(app, mode, cx)` builds any page's
    body — Graph's navigator, the PR list, the Issue list — so the page a gesture
    *heads for* is the same element tree as the page it *lands on*. That is why
-   `render_sidebar` derives its inputs (cached rows, six pane scroll handles,
+   `render_sidebar` derives its inputs (cached rows, five pane scroll handles,
    filter, merged count) from `app` instead of having them threaded from
    `render`: the second call site (previewing a neighbour) has no such thread.
 

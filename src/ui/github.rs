@@ -1,4 +1,4 @@
-//! GitHub Phase 1 — sidebar PULL REQUESTS section plumbing.
+//! GitHub Phase 1 — open pull request plumbing.
 //!
 //! Open-PR data comes through `kagi_git::github` and its hardened gh boundary; this
 //! module owns the periodic refresh and the row actions. Read-only end to end.
@@ -250,7 +250,7 @@ impl KagiApp {
         .detach();
     }
 
-    /// Sidebar PR row click: jump the graph to the PR's head branch (local
+    /// PR menu "Jump to branch": jump the graph to the PR's head branch (local
     /// branch first, then `origin/<head>`), the same jump the branch rows do.
     pub fn jump_to_pr_head(&mut self, pr: &PullRequest, cx: &mut Context<Self>) {
         let local = self

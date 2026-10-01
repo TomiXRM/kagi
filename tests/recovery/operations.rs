@@ -3111,9 +3111,10 @@ pub fn scenario_commit_list_roles(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS commit_list_roles: ListBox + ListBoxOption, absolute positions over WIP/stash/commits, one selected, labels, virtualized scroll");
 }
 
-/// #354/#864: each Graph section is its own Tree with a pinned section
-/// TreeItem. Group and leaf positions remain stable inside their pane, and
-/// collapsing a section hides only its leaves.
+/// #354/#864: each of the five Graph sections (LOCAL, REMOTE, WORKTREES,
+/// TAGS, STASHES) is its own Tree with a pinned section TreeItem; pull
+/// requests live only in the PRs tab. Group and leaf positions remain stable
+/// inside their pane, and collapsing a section hides only its leaves.
 pub fn scenario_sidebar_tree_roles(cx: &mut VisualTestAppContext) {
     use gpui::Role;
     use kagi::ui::list_a11y::{clear_recorded_lists, recorded_list};
@@ -3140,8 +3141,7 @@ pub fn scenario_sidebar_tree_roles(cx: &mut VisualTestAppContext) {
         .unwrap();
     };
     redraw(cx);
-    for (id, label) in [
-        ("sidebar-prs", kagi_ui_core::i18n::Msg::A11ySidebarPrs),
+    let trees = [
         ("sidebar-local", kagi_ui_core::i18n::Msg::A11ySidebarLocal),
         ("sidebar-remote", kagi_ui_core::i18n::Msg::A11ySidebarRemote),
         (
@@ -3153,11 +3153,23 @@ pub fn scenario_sidebar_tree_roles(cx: &mut VisualTestAppContext) {
             "sidebar-stashes",
             kagi_ui_core::i18n::Msg::A11ySidebarStashes,
         ),
-    ] {
+    ];
+    for (id, label) in trees {
         let tree = recorded_list(id).unwrap_or_else(|| panic!("{id} drawn"));
         assert_eq!(tree.role, Some(Role::Tree));
         assert_eq!(tree.label, label.t());
+        assert!(
+            !tree
+                .rows
+                .values()
+                .any(|(row, _)| row.contains("PULL REQUESTS")),
+            "{id} carries no pull request section: {tree:?}"
+        );
     }
+    assert!(
+        recorded_list("sidebar-prs").is_none(),
+        "the Graph sidebar draws no PULL REQUESTS pane"
+    );
     let list = recorded_list("sidebar-local").expect("local branches drawn");
     let find = |list: &kagi::ui::list_a11y::RecordedList, needle: &str| {
         list.rows
@@ -3203,7 +3215,7 @@ pub fn scenario_sidebar_tree_roles(cx: &mut VisualTestAppContext) {
         "collapsed leaves are gone"
     );
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS sidebar_tree_roles: Tree / TreeItem levels, sibling positions, expanded, current named, collapse");
+    eprintln!("[gui-e2e] PASS sidebar_tree_roles: five named Trees without a PR pane, TreeItem levels, sibling positions, expanded, current named, collapse");
 }
 
 /// #354 slice 3 (PR list): the PR triage table is a `List` (rows open the PR

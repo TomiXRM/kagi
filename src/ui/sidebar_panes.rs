@@ -1,4 +1,4 @@
-//! Graph sidebar: six independently scrolling, vertically resizable navigator panes (#864).
+//! Graph sidebar: five independently scrolling, vertically resizable navigator panes (#864).
 
 use std::ops::Range;
 
@@ -9,53 +9,63 @@ use gpui::{
 use gpui_component::input::Input;
 use gpui_component::Sizable as _;
 
-use super::sidebar::{build_sidebar_row, SidebarRow, SidebarState, SIDEBAR_ROW_H};
+use super::sidebar::{
+    build_sidebar_row, SidebarRow, SidebarState, SECTION_WORKTREES, SIDEBAR_ROW_H,
+    SIDEBAR_WORKTREE_ROW_H,
+};
 use super::theme::{self, theme};
 use super::{DividerDrag, DividerGhost, DividerKind, KagiApp, Msg};
 
-pub const SECTIONS: [&str; 6] = [
-    super::sidebar::SECTION_PRS,
+pub const SECTIONS: [&str; 5] = [
     super::sidebar::SECTION_LOCAL,
     super::sidebar::SECTION_REMOTE,
-    super::sidebar::SECTION_WORKTREES,
+    SECTION_WORKTREES,
     super::sidebar::SECTION_TAGS,
     super::sidebar::SECTION_STASHES,
 ];
 
-const PANE_IDS: [&str; 6] = [
-    "sidebar-prs",
+const PANE_IDS: [&str; 5] = [
     "sidebar-local",
     "sidebar-remote",
     "sidebar-worktrees",
     "sidebar-tags",
     "sidebar-stashes",
 ];
-const SCROLL_IDS: [&str; 6] = [
-    "sidebar-prs-scroll",
+const SCROLL_IDS: [&str; 5] = [
     "sidebar-local-scroll",
     "sidebar-remote-scroll",
     "sidebar-worktrees-scroll",
     "sidebar-tags-scroll",
     "sidebar-stashes-scroll",
 ];
-const PANE_DIVIDER_IDS: [&str; 5] = [
-    "sidebar-prs-divider",
+const PANE_DIVIDER_IDS: [&str; 4] = [
     "sidebar-local-divider",
     "sidebar-remote-divider",
     "sidebar-worktrees-divider",
     "sidebar-tags-divider",
 ];
-const PANE_LABELS: [Msg; 6] = [
-    Msg::A11ySidebarPrs,
+const PANE_LABELS: [Msg; 5] = [
     Msg::A11ySidebarLocal,
     Msg::A11ySidebarRemote,
     Msg::A11ySidebarWorktrees,
     Msg::A11ySidebarTags,
     Msg::A11ySidebarStashes,
 ];
+
+/// Unscaled uniform row height of one pane's leaf list. `uniform_list` sizes a
+/// list from its first row, and lists are per pane, so only the WORKTREES list
+/// (worktree rows only) is taller; every other list uses the header's slot.
+fn body_row_h(index: usize) -> f32 {
+    if SECTIONS[index] == SECTION_WORKTREES {
+        SIDEBAR_WORKTREE_ROW_H
+    } else {
+        SIDEBAR_ROW_H
+    }
+}
+
 /// Ranges share the existing flattened row cache; a drag never clones or
 /// regroups refs. Each range starts at a section header.
-pub(super) fn pane_ranges(rows: &[SidebarRow]) -> [Range<usize>; 6] {
+pub(super) fn pane_ranges(rows: &[SidebarRow]) -> [Range<usize>; 5] {
     let mut ranges = std::array::from_fn(|_| 0..0);
     let mut previous: Option<usize> = None;
     for (row_index, row) in rows.iter().enumerate() {
@@ -119,8 +129,11 @@ impl SidebarState {
         if pair_height <= 2. * SIDEBAR_ROW_H * zoom + 1. || second_top < first_bottom {
             return false;
         }
-        let minimum = ((SIDEBAR_ROW_H + 24.) * zoom).min(pair_height / 2.);
-        let first_height = (cursor_y - top - 2. * zoom).clamp(minimum, pair_height - minimum);
+        // Each pane keeps its header plus one of its own body rows visible.
+        let first_minimum = ((SIDEBAR_ROW_H + body_row_h(index)) * zoom).min(pair_height / 2.);
+        let second_minimum = ((SIDEBAR_ROW_H + body_row_h(next)) * zoom).min(pair_height / 2.);
+        let first_height =
+            (cursor_y - top - 2. * zoom).clamp(first_minimum, pair_height - second_minimum);
         let total_weight = u32::from(self.pane_weights[index]) + u32::from(self.pane_weights[next]);
         let weight = ((first_height / pair_height) * total_weight as f32).round() as u32;
         let lower = total_weight.saturating_sub(u16::MAX as u32).max(1);
@@ -136,8 +149,8 @@ impl SidebarState {
     }
 }
 
-/// A pane keeps its header fixed while only its leaves scroll. All six Tree
-/// wrappers exist, even for empty sections (PRs included).
+/// A pane keeps its header fixed while only its leaves scroll. All five Tree
+/// wrappers exist, even for empty sections.
 fn render_pane(app: &KagiApp, index: usize, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let range = &app.sidebar.pane_ranges[index];
     let Some(header) = app.sidebar.rows.get(range.start) else {
@@ -157,6 +170,7 @@ fn render_pane(app: &KagiApp, index: usize, cx: &mut Context<KagiApp>) -> gpui::
     let body_start = range.start + 1;
     let body_count = range.end.saturating_sub(body_start);
     let scroll_handle = app.sidebar.scroll_handles[index].clone();
+    let row_h = theme::scaled_px(body_row_h(index));
     let list = super::with_vertical_scrollbar(
         SCROLL_IDS[index],
         &scroll_handle,
@@ -175,7 +189,7 @@ fn render_pane(app: &KagiApp, index: usize, cx: &mut Context<KagiApp>) -> gpui::
                         Some(
                             super::list_a11y::tree_item(
                                 pane_id,
-                                div().id((pane_id, absolute)).w_full().child(el),
+                                div().id((pane_id, absolute)).w_full().h(row_h).child(el),
                                 position + 1,
                                 &spec,
                                 this.sidebar.tree_positions[absolute],
@@ -265,13 +279,13 @@ fn pane_divider(app: &KagiApp, index: usize) -> gpui::AnyElement {
 // render_sidebar — main entry point
 // ──────────────────────────────────────────────────────────────
 
-/// Render six Graph navigator sections with pinned headers and independent
+/// Render five Graph navigator sections with pinned headers and independent
 /// virtualized bodies. Filter and branch cleanup stay above the panes; worktree
 /// inspection stays below. `render` owns the cached flat rows and ranges, so
 /// drawing another workspace page cannot start a Git read or rebuild refs.
 pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let filter_input = app.sidebar.filter.clone();
-    // The six pane bodies share `sidebar.rows`, never copied on layout changes.
+    // The five pane bodies share `sidebar.rows`, never copied on layout changes.
     // ADR-0128: the badge counts merged-class rows only (stale-only rows are
     // listed in the table but don't count as "merged").
     let cleanup_count = app
@@ -368,7 +382,7 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
             .flex_col()
             .flex_1()
             .min_h(px(0.))
-            // Six scaled headers may exceed a short Graph viewport; retain
+            // Five scaled headers may exceed a short Graph viewport; retain
             // every pane and let the stack scroll instead of painting under
             // the bottom panel. Leaf lists still scroll independently.
             .overflow_y_scroll(),
@@ -405,12 +419,10 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn empty_prs_still_have_a_header_and_each_pane_owns_only_its_section() {
+    fn empty_sections_still_have_a_header_and_each_pane_owns_only_its_section() {
         let branches = vec![("main".to_string(), true)];
         let rows = super::super::sidebar_rows::build_sidebar_rows(
             &branches,
-            &[],
-            None,
             &[],
             &[],
             &[],
@@ -421,6 +433,8 @@ mod tests {
             "",
         );
         let ranges = pane_ranges(&rows);
+        assert_eq!(ranges[0].start, 0);
+        assert_eq!(ranges[SECTIONS.len() - 1].end, rows.len());
         for (index, section) in SECTIONS.iter().enumerate() {
             assert!(matches!(
                 &rows[ranges[index].start],
@@ -431,17 +445,17 @@ mod tests {
             }
         }
         assert!(matches!(
-            &rows[ranges[0].start],
+            &rows[ranges[0].start + 1],
+            SidebarRow::LocalBranchLeaf { name, .. } if name == "main"
+        ));
+        assert!(matches!(
+            &rows[ranges[3].start],
             SidebarRow::SectionHeader {
-                section: "prs",
+                section: "tags",
                 count: 0,
                 ..
             }
         ));
-        assert_eq!(ranges[0].end - ranges[0].start, 1);
-        assert!(matches!(
-            &rows[ranges[1].start + 1],
-            SidebarRow::LocalBranchLeaf { name, .. } if name == "main"
-        ));
+        assert_eq!(ranges[3].len(), 1);
     }
 }

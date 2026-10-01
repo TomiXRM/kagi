@@ -5,8 +5,7 @@ use std::collections::HashSet;
 use kagi_git::{CommitId, RemoteBranch, Stash, Tag, Worktree};
 
 use super::sidebar::{
-    SidebarRow, PR_GROUP_MINE, PR_GROUP_OTHERS, PR_GROUP_REVIEW, SECTION_LOCAL, SECTION_PRS,
-    SECTION_REMOTE, SECTION_STASHES, SECTION_TAGS, SECTION_WORKTREES,
+    SidebarRow, SECTION_LOCAL, SECTION_REMOTE, SECTION_STASHES, SECTION_TAGS, SECTION_WORKTREES,
 };
 
 // ──────────────────────────────────────────────────────────────
@@ -283,14 +282,13 @@ pub(super) fn group_remotes<T: Clone>(
 /// `render` recomputes this each frame and only rebuilds `rows` when it changes,
 /// so unchanged frames skip the O(all-refs) clone+collect. The session owner is
 /// part of the key so two tabs with equal per-session epochs cannot reuse each
-/// other's rows. Heavy collection contents are covered by `view_epoch` and
-/// `prs_epoch`; collection lengths are an O(1) backstop. The collapsed sets and
-/// filter text are hashed directly because they can change without either epoch.
+/// other's rows. Heavy collection contents are covered by `view_epoch`;
+/// collection lengths are an O(1) backstop. The collapsed sets and filter text
+/// are hashed directly because they can change without the epoch.
 #[allow(clippy::too_many_arguments)]
 pub fn sidebar_rows_fingerprint(
     owner: Option<crate::app::SessionId>,
     view_epoch: u64,
-    prs_epoch: u64,
     branches_len: usize,
     remote_branches_len: usize,
     tags_len: usize,
@@ -304,7 +302,6 @@ pub fn sidebar_rows_fingerprint(
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     owner.hash(&mut hasher);
     view_epoch.hash(&mut hasher);
-    prs_epoch.hash(&mut hasher);
     branches_len.hash(&mut hasher);
     remote_branches_len.hash(&mut hasher);
     tags_len.hash(&mut hasher);
@@ -342,8 +339,6 @@ pub fn sidebar_rows_fingerprint(
 #[allow(clippy::too_many_arguments)]
 pub fn build_sidebar_rows(
     branches: &[(String, bool)],
-    prs: &[kagi_domain::github::PullRequest],
-    github_login: Option<&str>,
     remote_branches: &[RemoteBranch],
     tags: &[Tag],
     stashes: &[Stash],
@@ -363,61 +358,6 @@ pub fn build_sidebar_rows(
     };
 
     let mut rows: Vec<SidebarRow> = Vec::new();
-
-    // ── PULL REQUESTS — always shown, including an empty "(0)" pane ──
-    {
-        use kagi_domain::github::PrGroup;
-        let section_collapsed = collapsed.contains(SECTION_PRS);
-        rows.push(SidebarRow::SectionHeader {
-            section: SECTION_PRS,
-            title: "PULL REQUESTS",
-            count: prs.len(),
-            collapsed: section_collapsed,
-        });
-        if !section_collapsed {
-            let local_names: Vec<String> = branches.iter().map(|(n, _)| n.clone()).collect();
-            let visible: Vec<&kagi_domain::github::PullRequest> = prs
-                .iter()
-                .filter(|p| {
-                    matches(&p.title) || matches(&p.head) || matches(&format!("#{}", p.number))
-                })
-                .collect();
-            for (group, key, title) in [
-                (PrGroup::Mine, PR_GROUP_MINE, "Mine"),
-                (
-                    PrGroup::ReviewRequested,
-                    PR_GROUP_REVIEW,
-                    "Review requested",
-                ),
-                (PrGroup::Others, PR_GROUP_OTHERS, "Others"),
-            ] {
-                let members: Vec<&kagi_domain::github::PullRequest> = visible
-                    .iter()
-                    .copied()
-                    .filter(|p| p.group_for(github_login, &local_names) == group)
-                    .collect();
-                if members.is_empty() {
-                    continue;
-                }
-                let collapsed_now = !has_filter && groups_collapsed.contains(key);
-                rows.push(SidebarRow::PrGroupHeader {
-                    key,
-                    title,
-                    count: members.len(),
-                    collapsed: collapsed_now,
-                });
-                if collapsed_now {
-                    continue;
-                }
-                for pr in members {
-                    rows.push(SidebarRow::PullRequest {
-                        pr: pr.clone(),
-                        stacked: pr.is_stacked_on(prs),
-                    });
-                }
-            }
-        }
-    }
 
     // ── LOCAL BRANCHES ───────────────────────────────────────────
     {

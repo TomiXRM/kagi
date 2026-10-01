@@ -63,18 +63,18 @@ pub enum CopyTarget {
     Branch,
 }
 
-/// Six sidebar pane weights in PR / local / remote / worktree / tag / stash order
+/// Five sidebar pane weights in local / remote / worktree / tag / stash order
 /// and a persisted snapshot of the collapsed-section set (#864).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SidebarPaneLayout {
-    pub weights: [u16; 6],
+    pub weights: [u16; 5],
     pub collapsed_mask: u8,
 }
 
 impl Default for SidebarPaneLayout {
     fn default() -> Self {
         Self {
-            weights: [1200, 2600, 2200, 1800, 1100, 1100],
+            weights: [3500, 2500, 2000, 1000, 1000],
             collapsed_mask: 0,
         }
     }
@@ -88,7 +88,7 @@ impl SidebarPaneLayout {
         }
         let (weights, mask) = rest.split_once(':')?;
         let mut parts = weights.split(',');
-        let mut weights = [0_u16; 6];
+        let mut weights = [0_u16; 5];
         for weight in &mut weights {
             *weight = parts.next()?.parse().ok()?;
             if *weight == 0 {
@@ -98,7 +98,7 @@ impl SidebarPaneLayout {
         if parts.next().is_some() {
             return None;
         }
-        let collapsed_mask = mask.parse::<u8>().ok().filter(|&m| m < 64)?;
+        let collapsed_mask = mask.parse::<u8>().ok().filter(|&m| m < 32)?;
         Some(Self {
             weights,
             collapsed_mask,
@@ -108,8 +108,8 @@ impl SidebarPaneLayout {
     pub fn encode(self) -> String {
         let w = self.weights;
         format!(
-            "v1:{},{},{},{},{},{}:{}",
-            w[0], w[1], w[2], w[3], w[4], w[5], self.collapsed_mask
+            "v1:{},{},{},{},{}:{}",
+            w[0], w[1], w[2], w[3], w[4], self.collapsed_mask
         )
     }
 }
@@ -296,9 +296,10 @@ impl Settings {
             .unwrap_or_default()
     }
 
-    /// Six Graph sidebar pane weights and collapse bits (#864). A missing,
-    /// malformed, zero-weight or unsupported version uses defaults in memory;
-    /// reading never repairs the raw value on disk.
+    /// Five Graph sidebar pane weights and collapse bits (#864). A missing,
+    /// malformed (including the unreleased six-weight form), zero-weight or
+    /// unsupported version uses defaults in memory; reading never repairs the
+    /// raw value on disk.
     pub fn sidebar_pane_layout(&self) -> SidebarPaneLayout {
         self.get_str("sidebar_panes")
             .as_deref()
@@ -512,8 +513,8 @@ mod tests {
     #[test]
     fn sidebar_pane_layout_rejects_invalid_weights_and_mask_without_repairing_raw() {
         let valid = SidebarPaneLayout {
-            weights: [8, 13, 21, 34, 55, 89],
-            collapsed_mask: 0b101001,
+            weights: [8, 13, 21, 34, 55],
+            collapsed_mask: 0b10101,
         };
         let encoded = valid.encode();
         let parsed = parse(&format!(r#"{{"sidebar_panes":"{encoded}"}}"#));
@@ -525,13 +526,14 @@ mod tests {
 
         for invalid in [
             "garbage",
-            "v2:1,2,3,4,5,6:0",
-            "v1:1,2,3,4,5:0",
-            "v1:1,2,3,4,5,6,7:0",
-            "v1:1,2,3,0,5,6:0",
-            "v1:1,2,3,4,5,65536:0",
-            "v1:1,2,3,4,5,6:64",
-            "v1:1,2,3,4,5,6:0:extra",
+            "v2:1,2,3,4,5:0",
+            "v1:1,2,3,4:0",
+            // The unreleased six-pane value (with a PR pane) is not migrated.
+            "v1:1,2,3,4,5,6:0",
+            "v1:1,2,0,4,5:0",
+            "v1:1,2,3,4,65536:0",
+            "v1:1,2,3,4,5:32",
+            "v1:1,2,3,4,5:0:extra",
         ] {
             let settings = parse(&format!(r#"{{"sidebar_panes":"{invalid}"}}"#));
             assert_eq!(

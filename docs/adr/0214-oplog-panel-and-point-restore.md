@@ -116,6 +116,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
     - `(dev, ino)` も持つのは、同じ filesystem 内での移動や rename では inode も作成時刻も変わらないため。path だけだと、移動した repository の自分の entry を Other と誤判定して黙って除外してしまう。
     - **限界 1**: filesystem をまたいで移動すると、path も `(dev, ino)` も変わるので、それ以前の自分の entry は Other になる。その entry が動かした branch は、記録が説明しない reflog の変化として RefChangedOutsideRecord の blocker になる(fail closed)。対象 entry 自体が移動前のものなら EntryNotLoaded。
     - **限界 2**: 削除した無関係の repository の `.git` と、`(dev, ino)` も作成時刻(ns 単位)も一致する場合は Mine と誤判定する。APFS / ext4 / btrfs のような ns 精度の filesystem では、同じ ns の中で削除・再作成が起き、しかも同じ inode を得る場合に限られる。その記録は、この repository に無い ref や OID を期待値に持つことが多いので、RefMovedSince の blocker になる(fail closed)。作成時刻を返さない、または秒精度の filesystem では、同じ inode の entry は曖昧になり、restore はその範囲で止まる。偶然 ns 部が 0 になった作成時刻も同じ扱いになる(10 億分の 1 の確率で restore が不要に止まる)。
+      - 時刻の精度は値から推定しない(#900 review 6)。ns 部が 0 なら Ambiguous にするのは、明らかに粗い場合だけに足した fail closed で、精度の証明ではない。FAT(作成時刻は 10 ms 単位)や Windows(file id を持たない)では、同じ tick の中に同じ path で作り直した repository を区別できない。
   - append に失敗した操作は鎖に現れない(次の entry の parent は最後に書けた entry)。その操作が動かした branch は、RefMovedSince か RefChangedOutsideRecord で捕まる。
 - **revert**: 対象 entry の各 branch の移動を old に戻す(作成は削除、削除は作り直し)。同じ ref を後続の記録済み entry が動かしていれば blocker(LaterEntryMoved)。
 - **restore to point**: 対象 entry の**直後**の状態に戻す(jj の `op restore` と同じく、対象自身の効果は残す)。それより新しい entry を古い順に合成し、ref ごとに「最古の old を戻し先、最新の new を期待値」とする。動いて元に戻った ref は除く。

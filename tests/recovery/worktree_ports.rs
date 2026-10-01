@@ -340,6 +340,62 @@ pub fn scenario_worktree_nonconcurrent(cx: &mut VisualTestAppContext) {
         "with the other shell gone, this worktree's starts"
     );
 
+    // #877 review: a tab closed while its shell ignores the hangup. The
+    // shell still runs in the side worktree, so the main worktree is still
+    // refused, until it exits.
+    cx.read(|cx| {
+        let session = app.read(cx).ui().terminal_session.as_ref().unwrap();
+        session.paste_writer.as_ref().unwrap().paste_text("\u{4}");
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while shell_live(cx, &app) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the main shell never exited"
+        );
+        cx.run_until_parked();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    KagiApp::set_terminal_shell_for_e2e(Some(
+        crate::recovery_worktree_remove_shell::hangup_proof_shell(shell_dir.path())
+            .display()
+            .to_string(),
+    ));
+    app.update(cx, |app, cx| app.switch_repo(side_tab, cx));
+    cx.run_until_parked();
+    start_terminal(cx, &app, window);
+    assert!(
+        shell_live(cx, &app),
+        "the side shell that ignores hangups starts"
+    );
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.close_tab(side_tab, cx));
+    cx.run_until_parked();
+    // Shells from here on exit at unmount.
+    KagiApp::set_terminal_shell_for_e2e(Some(
+        waiting_shell(shell_dir.path()).display().to_string(),
+    ));
+    start_terminal(cx, &app, window);
+    assert!(
+        !shell_live(cx, &app),
+        "a closed tab's shell that is still running keeps blocking"
+    );
+    crate::recovery_worktree_remove_shell::kill_recorded(&shell_dir.path().join("shell.pid"));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !shell_live(cx, &app) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the main shell never started after the closed tab's shell exited"
+        );
+        cx.run_until_parked();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        start_terminal(cx, &app, window);
+    }
+    assert!(app.update(cx, |app, cx| app.open_repository(side.clone(), cx)));
+    cx.run_until_parked();
+    let side_tab = cx.read(|cx| app.read(cx).tabs.len() - 1);
+
     // Concurrent (the default): the linked worktree starts alongside.
     kagi::ui::settings::write_setting("worktree_run_mode", None);
     app.update(cx, |app, cx| app.switch_repo(side_tab, cx));

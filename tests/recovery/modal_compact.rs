@@ -173,11 +173,13 @@ fn fixture() -> (tempfile::TempDir, PathBuf) {
 }
 
 /// Process-wide UI settings this scenario changes, restored on drop so the
-/// rest of the suite is unaffected however an assertion exits.
+/// rest of the suite is unaffected however an assertion exits. `set_lang` and
+/// `set_zoom` also save their keys, so the saved keys are put back too (#516).
 struct Restore {
     zoom: f32,
     language_env: Option<std::ffi::OsString>,
     language: i18n::Lang,
+    saved: [(&'static str, Option<String>); 2],
 }
 
 impl Restore {
@@ -186,6 +188,7 @@ impl Restore {
             zoom: theme::zoom(),
             language_env: std::env::var_os("KAGI_LANG"),
             language: i18n::lang(),
+            saved: ["lang", "ui_zoom"].map(|key| (key, kagi::ui::settings::read_setting(key))),
         }
     }
 }
@@ -198,6 +201,9 @@ impl Drop for Restore {
         match self.language_env.take() {
             Some(value) => std::env::set_var("KAGI_LANG", value),
             None => std::env::remove_var("KAGI_LANG"),
+        }
+        for (key, value) in &self.saved {
+            kagi::ui::settings::write_setting(key, value.as_deref());
         }
     }
 }
@@ -502,6 +508,12 @@ fn amend_case(
     // detail is what compact mode folds.
     assert_section(cx, case, "amend-warnings", true);
     assert_section(cx, case, "amend-recovery", !case.compact);
+    let (role, text) = kagi::ui::dialog_a11y::recorded_note("amend-warning-0")
+        .expect("amend checklist warning has an accessible note");
+    assert_eq!(role, gpui::Role::Note);
+    let warning =
+        cx.read(|cx| i18n::plan_note_text(&app.read(cx).amend_modal().unwrap().plan.warnings[0]));
+    assert_eq!(text, warning);
 
     if case.viewport.size.height == px(600.) {
         theme::set_zoom(0.8);
@@ -576,6 +588,12 @@ fn amend_case(
     );
     assert_card_fits(cx, case, &["amend-cancel"]);
     assert_body_content(cx, case, "modal-blocker-content");
+    let (role, text) = kagi::ui::dialog_a11y::recorded_note("amend-blocker-0")
+        .expect("blocked amend has an accessible alert");
+    assert_eq!(role, gpui::Role::Alert);
+    let blocker =
+        cx.read(|cx| i18n::plan_note_text(&app.read(cx).amend_modal().unwrap().plan.blockers[0]));
+    assert_eq!(text, blocker);
     assert!(
         one(cx, case.win, "amend-confirm").is_none(),
         "{label}: a blocked plan must not render a confirm button"
@@ -628,6 +646,12 @@ fn discard_case(
     let card = assert_card_fits(cx, case, &["discard-cancel", "discard-confirm"]);
     assert_targets(cx, case, card, targets);
     assert_section(cx, case, "discard-warnings", true);
+    let (role, text) = kagi::ui::dialog_a11y::recorded_note("discard-warning-0")
+        .expect("discard warning has an accessible note");
+    assert_eq!(role, gpui::Role::Note);
+    let warning =
+        cx.read(|cx| i18n::plan_note_text(&app.read(cx).discard_modal().unwrap().plan.warnings[0]));
+    assert_eq!(text, warning);
     assert_section(cx, case, "discard-recovery", !case.compact);
 
     app.update(cx, |app, cx| app.start_discard(cx));

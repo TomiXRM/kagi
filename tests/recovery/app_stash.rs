@@ -154,7 +154,9 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
         let repo = fixture.path().canonicalize().unwrap();
         stash_three(&repo);
         let snap = snapshot(&repo);
-        let before = read_oplog_tail(100).len();
+        // The whole shared log: a 100-entry window stops growing once
+        // earlier scenarios have filled it (#516).
+        let before = read_oplog_tail(usize::MAX).len();
         let (app, window) = mount(cx, &repo);
         app.update(cx, |app, cx| {
             app.enter_remote_view(host.clone(), "/srv/repo".into(), snap, cx);
@@ -185,7 +187,7 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
         wait(cx, &app, |app| {
             !app.app_sessions.has_leases() && matches!(&app.status_footer, FooterStatus::Success(_))
         });
-        let entries = read_oplog_tail(100);
+        let entries = read_oplog_tail(usize::MAX);
         assert_eq!(entries.len(), before + 1);
         assert_eq!(entries[0].op, "stash-drop");
         assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
@@ -198,6 +200,7 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
         );
     }
 
+    let (lang_before, saved_lang) = (i18n::lang(), kagi::ui::settings::read_setting("lang"));
     for (lang, mode, expected_lease) in [
         (i18n::Lang::En, RemoteStashE2eMode::Refused, false),
         (i18n::Lang::Ja, RemoteStashE2eMode::Unknown, true),
@@ -237,7 +240,7 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
     let repo = fixture.path().canonicalize().unwrap();
     stash_three(&repo);
     let snap = snapshot(&repo);
-    let before = read_oplog_tail(100).len();
+    let before = read_oplog_tail(usize::MAX).len();
     let (app, window) = mount(cx, &repo);
     let guard = app.update(cx, |app, _| app.app_sessions.write_lease(&repo).unwrap());
     app.update(cx, |app, cx| {
@@ -254,11 +257,13 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
             FooterStatus::Failed(message) if message.as_ref() == i18n::Msg::OpInProgress.t()
         )
     });
-    assert_eq!(read_oplog_tail(100).len(), before);
+    assert_eq!(read_oplog_tail(usize::MAX).len(), before);
     guard.complete();
     unmount(cx, app, window);
     set_remote_stash_e2e_mode(None);
-    i18n::set_lang(i18n::Lang::En);
+    // The language and its saved key as this scenario found them (#516).
+    i18n::set_lang(lang_before);
+    kagi::ui::settings::write_setting("lang", saved_lang.as_deref());
     eprintln!("[gui-e2e] PASS remote stash-drop Busy/Refused/Unknown EN/JA + Unknown lease hold");
 }
 
@@ -403,6 +408,25 @@ pub fn scenario_stash_conflict_close_reopen(cx: &mut VisualTestAppContext) {
         app.write_busy_op.is_none() && app.ui().conflict.is_some()
     });
 
+    // #891 review: Continue on the still-unresolved conflict is refused at
+    // planning; that refusal is "recorded, nothing moved", not "no record".
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            let owner = app
+                .active_session()
+                .and_then(|session| app.app_sessions.attachment(session))
+                .expect("continue owner");
+            app.conflict_continue(owner, window, cx);
+        });
+    })
+    .unwrap();
+    let refused = kagi_git::oplog::read_oplog_tail(1).pop().unwrap();
+    assert!(
+        refused.op.ends_with("-continue")
+            && matches!(refused.outcome, kagi_git::OpOutcome::Refused { .. }),
+        "{refused:?}"
+    );
+    assert_eq!(refused.ref_moves, Some(Vec::new()));
     let closed = cx.read(|cx| app.read(cx).active_session().unwrap());
     // Continue and close in the same host turn, before its async reload can
     // present the one-shot drop follow-up.
@@ -425,6 +449,11 @@ pub fn scenario_stash_conflict_close_reopen(cx: &mut VisualTestAppContext) {
         });
     })
     .unwrap();
+    // #884: the UI continue records the refs it moved (a stash continue only
+    // stages, so: recorded, nothing moved) — not "no record".
+    let continued = kagi_git::oplog::read_oplog_tail(1).pop().unwrap();
+    assert!(continued.op.ends_with("-continue"), "{}", continued.op);
+    assert_eq!(continued.ref_moves, Some(Vec::new()));
     cx.run_until_parked();
     app.update(cx, |app, cx| {
         assert!(app.open_repository(repo.clone(), cx));

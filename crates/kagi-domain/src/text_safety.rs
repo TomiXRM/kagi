@@ -34,25 +34,33 @@ fn is_display_control(c: char) -> bool {
     (u < 0x20 && c != '\t' && c != '\n') || u == 0x7F || (0x80..=0x9F).contains(&u)
 }
 
-/// Rewrite every display-control byte in `s` as a visible `\xHH` escape,
-/// preserving all other characters (printable ASCII, CJK, emoji, combining
-/// marks, TAB, LF) exactly.
-///
-/// Returns an owned `String`. When `s` contains no control bytes the input is
-/// cloned unchanged (the common case), so callers can wrap freely.
-pub fn sanitize_control_bytes(s: &str) -> String {
+/// Append the display-safe form directly into an existing label. Unlike
+/// `sanitize_control_bytes`, clean input needs no intermediate allocation.
+pub fn append_sanitized_control_bytes(out: &mut String, s: &str) {
     if !s.chars().any(is_display_control) {
-        return s.to_string();
+        out.push_str(s);
+        return;
     }
-    let mut out = String::with_capacity(s.len() + 8);
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
     for c in s.chars() {
         if is_display_control(c) {
-            // All targeted codepoints are <= 0x9F, so two hex digits suffice.
-            out.push_str(&format!("\\x{:02X}", c as u32));
+            let byte = c as u8;
+            out.push('\\');
+            out.push('x');
+            out.push(HEX[(byte >> 4) as usize] as char);
+            out.push(HEX[(byte & 0xF) as usize] as char);
         } else {
             out.push(c);
         }
     }
+}
+
+/// Rewrite every display-control byte in `s` as a visible `\xHH` escape,
+/// preserving all other characters (printable ASCII, CJK, emoji, combining
+/// marks, TAB, LF) exactly.
+pub fn sanitize_control_bytes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    append_sanitized_control_bytes(&mut out, s);
     out
 }
 
@@ -155,6 +163,13 @@ mod tests {
     #[test]
     fn empty_string_unchanged() {
         assert_eq!(sanitize_control_bytes(""), "");
+    }
+
+    #[test]
+    fn append_sanitized_preserves_prefix_and_neutralizes_controls() {
+        let mut out = String::from("branch: ");
+        append_sanitized_control_bytes(&mut out, "日本語\x1b[31m \u{9B}\t");
+        assert_eq!(out, "branch: 日本語\\x1B[31m \\x9B\t");
     }
 
     // ── scan_unsafe_unicode ─────────────────────────────────────

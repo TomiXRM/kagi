@@ -69,13 +69,13 @@ impl KagiApp {
         };
 
         // #540: repository state, not exit status alone, decides progress.
-        let result = self
+        let (result, ref_moves) = self
             .ui()
             .repo_session
             .as_ref()
             .expect("repo session existed while planning conflict skip")
             .backend()
-            .execute_conflict_skip(&mode.session, &mode.buffer);
+            .observe_ref_moves(|b| b.execute_conflict_skip(&mode.session, &mode.buffer));
         let settlement = skip_settlement(&result);
         let unknown = app::settle_conflict_write(guard, &settlement, plan.current.clone());
         self.refresh_write_busy();
@@ -128,7 +128,14 @@ impl KagiApp {
             None => klog!("executed: {}", op_name),
             Some(err_msg) => klog!("{} failed: {}", op_name, err_msg),
         }
-        self.record_op_persist(&op_name, plan.current.clone(), outcome, &repo_path, cx);
+        self.record_conflict_persist(
+            &op_name,
+            plan.current.clone(),
+            outcome,
+            ref_moves,
+            &repo_path,
+            cx,
+        );
         if let Some(evidence) = termination_unknown_evidence {
             self.report_unknown_notice(&repo_path, evidence);
         }

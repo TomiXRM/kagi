@@ -11,6 +11,8 @@ use std::{ffi::OsString, os::unix::fs::PermissionsExt};
 struct RestoreEnvironment {
     path: Option<OsString>,
     language: Lang,
+    /// `set_lang` saves the key too; put it back as it was (#516).
+    saved_language: Option<String>,
 }
 impl Drop for RestoreEnvironment {
     fn drop(&mut self) {
@@ -19,6 +21,7 @@ impl Drop for RestoreEnvironment {
             None => std::env::remove_var("PATH"),
         }
         i18n::set_lang(self.language);
+        kagi::ui::settings::write_setting("lang", self.saved_language.as_deref());
     }
 }
 
@@ -85,6 +88,7 @@ pub(super) fn local_cleanup_notices(cx: &mut VisualTestAppContext) {
     let restore = RestoreEnvironment {
         path: std::env::var_os("PATH"),
         language: i18n::lang(),
+        saved_language: kagi::ui::settings::read_setting("lang"),
     };
     let bin = tempfile::tempdir().unwrap();
     let gh = bin.path().join("gh");
@@ -108,6 +112,9 @@ pub(super) fn local_cleanup_notices(cx: &mut VisualTestAppContext) {
     paths.extend(std::env::split_paths(
         restore.path.as_deref().unwrap_or_default(),
     ));
+    // `gh_available` is cached once per process: settle it against the real
+    // PATH before the fake `gh` is on it (#516).
+    let _ = kagi_git::github::gh_available();
     std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
     for language in [Lang::En, Lang::Ja] {
         i18n::set_lang(language);

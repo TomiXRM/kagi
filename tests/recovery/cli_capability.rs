@@ -67,7 +67,11 @@ fn observe(cx: &mut VisualTestAppContext, condition: &str) {
 
     let before = fingerprint_repository(repo).expect("fingerprint before");
     let shim = shim_dir(condition);
-    let restore = std::env::var("PATH").unwrap_or_default();
+    // `gh_available` is cached once per process: settle it against the real
+    // PATH first, or a run where this scenario mounts first leaves every
+    // later GitHub scenario believing `gh` is missing (#516).
+    let _ = kagi_git::github::gh_available();
+    let restore = std::env::var_os("PATH");
     // SAFETY: the GUI E2E runner is single-threaded on the main thread.
     unsafe { std::env::set_var("PATH", shim.path()) };
 
@@ -105,8 +109,14 @@ fn observe(cx: &mut VisualTestAppContext, condition: &str) {
     );
     eprintln!("[e2-observe]   4. reached the end without panic or hang");
 
-    unsafe { std::env::set_var("PATH", restore) };
     unmount(cx, app, window);
+    // SAFETY: as above.
+    unsafe {
+        match restore {
+            Some(path) => std::env::set_var("PATH", path),
+            None => std::env::remove_var("PATH"),
+        }
+    }
 }
 
 pub fn scenario_backend_cli_capability_observation(cx: &mut VisualTestAppContext) {

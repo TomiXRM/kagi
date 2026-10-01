@@ -244,25 +244,6 @@ pub(super) struct Receipt {
     pub ref_moves: Option<Vec<kagi_domain::ref_moves::RefMove>>,
 }
 impl Backend {
-    /// Build and append the oplog entry for a completed backend attempt
-    /// (ADR-0149) **without** a ref-move record (`ref_moves = None`). Only
-    /// the conflict executor still records this way (#884 moves it onto
-    /// [`Self::observe_ref_moves`]); every other path observes its moves.
-    pub(super) fn record_run_oplog(
-        &self,
-        op: &str,
-        before: &ops::StateSummary,
-        outcome: crate::oplog::OpOutcome,
-    ) -> Recording {
-        let receipt = Receipt {
-            backup_refs: Vec::new(),
-            recovery: Vec::new(),
-            failure_code: None,
-            ref_moves: None,
-        };
-        self.record_receipt(op, before, outcome, receipt)
-    }
-
     /// The one place a backend entry is built and appended.
     pub(super) fn record_receipt(
         &self,
@@ -274,18 +255,23 @@ impl Backend {
         let repo = self.path.display().to_string();
         let mut entry = crate::oplog::OpLogEntry::new(op, repo.clone(), before.clone(), outcome)
             .with_actor(self.policy.actor)
-            .with_worktree(Some(repo));
+            .with_worktree(Some(repo))
+            .with_ref_moves(receipt.ref_moves);
         entry.backup_refs = receipt.backup_refs;
         entry.recovery = receipt.recovery;
         entry.failure_code = receipt.failure_code;
-        entry.ref_moves = receipt.ref_moves;
         finalize(entry)
     }
 
     /// The refs `execute` moved (#334 slice 2a): HEAD of this worktree and
     /// every branch, read before and after, whatever the outcome. `None` when
     /// either read failed — no record beats a wrong one.
-    pub(super) fn observe_ref_moves<T>(
+    ///
+    /// #884: the one recording point for every write whose receipt is not
+    /// built by `Backend::run` — the conflict executor here and the UI's
+    /// continue / skip — so every oplog entry's `ref_moves` comes from the
+    /// same two snapshots.
+    pub fn observe_ref_moves<T>(
         &self,
         execute: impl FnOnce(&Self) -> T,
     ) -> (T, Option<Vec<kagi_domain::ref_moves::RefMove>>) {

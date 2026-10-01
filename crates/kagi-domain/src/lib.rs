@@ -64,6 +64,7 @@ pub mod remote_snapshot;
 pub mod remove;
 pub mod repo_health;
 pub mod resolution;
+pub mod restore_preview;
 pub mod review_thread;
 pub mod ruleset;
 pub mod sequencer_skip;

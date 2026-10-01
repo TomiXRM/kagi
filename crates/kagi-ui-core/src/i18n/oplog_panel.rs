@@ -112,3 +112,33 @@ pub fn restore_armed() -> &'static str {
         Lang::Ja => "本当に branch を戻しますか",
     }
 }
+
+/// #334 slice 2c: heading of the card's after-restore graph.
+pub fn preview_heading(removed: usize) -> String {
+    match (lang(), removed) {
+        (Lang::En, 0) => "Graph after (no commit disappears)".into(),
+        (Lang::En, n) => format!("Graph after ({n} commit(s) no longer on any branch)"),
+        (Lang::Ja, 0) => "戻した後のグラフ(消える commit はありません)".into(),
+        (Lang::Ja, n) => format!("戻した後のグラフ({n} 個の commit がどの branch からも外れます)"),
+    }
+}
+
+/// Rows of the after-restore graph not drawn above / below the window.
+pub fn preview_more(n: usize) -> String {
+    match lang() {
+        Lang::En => format!("… {n} more row(s)"),
+        Lang::Ja => format!("… ほか {n} 行"),
+    }
+}
+
+/// A branch goes back to a commit the tab has not loaded: no guessed graph.
+pub fn preview_not_loaded(branch: &str, oid: &str) -> String {
+    match lang() {
+        Lang::En => format!(
+            "Preview unavailable: '{branch}' goes back to {oid}, which is not in the loaded history. The restore itself is unaffected."
+        ),
+        Lang::Ja => format!(
+            "プレビューできません: `{branch}` の戻し先 {oid} は読み込み済みの履歴にありません。復元そのものには影響しません。"
+        ),
+    }
+}

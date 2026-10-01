@@ -9,7 +9,7 @@
 
 use super::RunPresentation;
 use crate::ui::blocking_ops::open_backend;
-use crate::ui::modal_renderers::render_plan_modal_wrapper_styled;
+use crate::ui::modal_renderers::render_plan_modal_wrapper_extra;
 use crate::ui::modals::oplog_restore::OplogRestoreModal;
 use crate::ui::*;
 use gpui_component::IconName;
@@ -75,11 +75,13 @@ impl KagiApp {
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
+                let preview = super::oplog_restore_preview::build(self.view(), &plan);
                 self.set_oplog_restore_modal(OplogRestoreModal {
                     op,
                     plan: std::sync::Arc::new(plan),
                     error: None,
                     confirm_armed: false,
+                    preview,
                 });
                 cx.notify();
             }
@@ -160,12 +162,18 @@ pub(crate) fn render_oplog_restore_modal(
     overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    render_plan_modal_wrapper_styled(
+    let extra = modal
+        .preview
+        .as_deref()
+        .map(super::oplog_restore_preview::render);
+    render_plan_modal_wrapper_extra(
         modal.display_plan(),
         modal.error.clone(),
         modal.confirm_label(),
         None,
         Some((IconName::Undo2.into(), theme::theme().color_blocker)),
+        modal.confirm_stage(),
+        extra,
         |this, _cx| this.cancel_oplog_restore_modal(),
         |this, cx| this.start_oplog_restore(cx),
         overrides,

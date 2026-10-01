@@ -293,6 +293,37 @@ pub(crate) fn render_plan_modal_wrapper_staged(
     overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    render_plan_modal_wrapper_extra(
+        plan,
+        error,
+        confirm_label,
+        create_branch_target,
+        accent,
+        stage,
+        None,
+        cancel_action,
+        confirm_action,
+        overrides,
+        cx,
+    )
+}
+
+/// [`render_plan_modal_wrapper_staged`] with one card-specific element drawn
+/// after the warnings (#334: the restore preview graph). Display only.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_plan_modal_wrapper_extra(
+    plan: std::sync::Arc<OperationPlan>,
+    error: Option<SharedString>,
+    confirm_label: impl Into<SharedString>,
+    create_branch_target: Option<CommitId>,
+    accent: Option<PlanCardAccent>,
+    stage: ConfirmStage,
+    extra: Option<gpui::AnyElement>,
+    cancel_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
+    confirm_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
+    overrides: &std::collections::HashMap<&'static str, bool>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
     let cancel = cx.listener(move |this, _: &(), window, cx| {
         cancel_action(this, cx);
         if let Some(fh) = this.root_focus.clone() {
@@ -318,6 +349,7 @@ pub(crate) fn render_plan_modal_wrapper_staged(
         create_branch_target,
         accent,
         stage,
+        extra,
         overrides,
         cx,
     )
@@ -398,6 +430,8 @@ fn render_plan_modal_card_styled(
     create_branch_target: Option<CommitId>,
     accent: Option<PlanCardAccent>,
     stage: ConfirmStage,
+    // #334: a card-specific element after the warnings (display only).
+    extra: Option<gpui::AnyElement>,
     // #462: see [`render_plan_modal_wrapper_styled`].
     overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
@@ -501,6 +535,9 @@ fn render_plan_modal_card_styled(
             }
         }
         body = body.child(warn_col.flex_shrink_0());
+    }
+    if let Some(extra) = extra {
+        body = body.child(div().flex_shrink_0().child(extra));
     }
 
     // ── Commits to push (T-HT-004) ────────────────────────

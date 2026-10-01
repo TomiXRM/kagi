@@ -2,8 +2,18 @@
 //! slice 2b, ADR-0214 §5).
 
 use gpui::SharedString;
+use kagi_domain::restore_preview::RestorePreview;
 use kagi_git::{Operation, OperationPlan};
 use kagi_ui_core::i18n;
+
+/// The after-restore graph shown on the card (#334 slice 2c): computed once
+/// when the card opens, from the tab's loaded commits. Display only.
+#[derive(Clone)]
+pub struct RestoreGraphPreview {
+    pub graph: RestorePreview,
+    /// One-line summary per drawn row (same order as the preview's rows).
+    pub summaries: Vec<SharedString>,
+}
 
 /// The planned `Operation::OpRevert` / `RestoreToPoint` and its card. The
 /// plan is destructive, so `confirm_armed` gates the second confirm.
@@ -13,6 +23,8 @@ pub struct OplogRestoreModal {
     pub plan: std::sync::Arc<OperationPlan>,
     pub error: Option<SharedString>,
     pub confirm_armed: bool,
+    /// `None` when the plan moves nothing (a blocked plan).
+    pub preview: Option<std::sync::Arc<RestoreGraphPreview>>,
 }
 
 impl OplogRestoreModal {
@@ -29,6 +41,16 @@ impl OplogRestoreModal {
             format!("\u{26a0} {}", i18n::oplog_panel::restore_armed())
         } else {
             self.i18n_op().t().to_string()
+        }
+    }
+
+    /// Two-stage (#354): tells assistive technology whether the next confirm runs it.
+    pub fn confirm_stage(&self) -> crate::ui::dialog_a11y::ConfirmStage {
+        use crate::ui::dialog_a11y::ConfirmStage;
+        if self.confirm_armed {
+            ConfirmStage::Armed
+        } else {
+            ConfirmStage::Unarmed
         }
     }
 

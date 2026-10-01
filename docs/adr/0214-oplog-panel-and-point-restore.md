@@ -1,6 +1,6 @@
-# ADR-0214: Operation Log パネルを一級ビューにする — 全体設計、slice 1(読むだけ)、slice 2a(ref 移動の記録)、slice 2b(op revert / restore to point)
+# ADR-0214: Operation Log パネルを一級ビューにする — 全体設計、slice 1(読むだけ)、slice 2a(ref 移動の記録)、slice 2b(op revert / restore to point)、slice 2c(実行前のグラフプレビュー)
 
-- Status: **Accepted**(slice 1、2a、2b-1 = backend、2b-2 = UI)。2c(グラフプレビュー)は本 ADR の設計を前提に個別に Accepted にする
+- Status: **Accepted**(slice 1、2a、2b-1 = backend、2b-2 = UI、2c = プレビュー)
 - Date: 2026-10-01
 - Related: [#334](https://github.com/TomiXRM/kagi/issues/334)、#333 / ADR-0149(actor・worktree・id/parent)、ADR-0081 / ADR-0084(undo)、ADR-0111(`OpLogPanel`)、#468 / #548(行の展開・コピー)
 
@@ -109,6 +109,19 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - **記録できなかった receipt は戻す対象にしない**: append に失敗した entry は panel 上で id が placeholder(0)になる。oplog の id は 0 始まりなので、0 は最初の実 entry も指しうる。そこで `entry_for_recording` は `Recording::Failed` の `ref_moves` を落として「記録なし」(推定表示・ボタン disabled)にする。
   - 別 repository の行を選んだ場合、plan は EntryNotLoaded(「この repository の操作にない」)になる。
 
+### 6. slice 2c: 実行前のグラフプレビュー(表示専用)
+
+- **入力**: tab が読み込み済みの rows(id + parents、topo 順)、`branch_targets`、plan の `restore` 行だけを使う。repository は読まず、plan の一部でもない(書き込みなし、preflight にも関わらない)。
+- **計算**(pure、`kagi_domain::restore_preview`)
+  - 戻した後の local branch の先端と、動かない根(remote branch / tag / detached な worktree の HEAD / stash の base)から到達できる commit を求める。attached な HEAD は branch に追従するので根にしない。
+  - 戻す前にどの根からも到達しなかった行(読み込み範囲の外を指す ref など)は消さない。
+  - 残った行は読み込み順の部分列、すなわち topo 順なので、既存の `graph::layout()` をそのまま使う(新しいレイアウトは書かない)。
+  - 消える行数 = 戻す前は到達し、戻した後は到達しない行。
+- **範囲**: 戻し先の行と、消える行が下がっていた行(その下の最初の残る行)を含む最小区間に、前後 4 行を足す。上限 40 行で、窓の外の行数は「… ほか N 行」と出す。lane は最大 8 本分の幅で切る(既存の graph 列と同じく clip)。
+- **推定しない**: 戻し先 commit が読み込み済み rows に無い場合(削除した branch の作り直し、restore で branch から外れた commit への revert など)は `NotLoaded` とし、「プレビューできません」と明示する。復元そのものは可能。
+- **描画**: commit graph と同じ `graph_view::graph_canvas` を行ごとに使う。card への差し込みは `render_plan_modal_wrapper_extra`(`Option<AnyElement>` を warning の後に描く)。既存の `wrapper_styled` / `wrapper_staged` はそれに `None` で委譲するので、呼び出し元の署名は変えない。この card は #872 の `ConfirmStage`(Unarmed / Armed)にも乗る。
+- **コスト**: card を開くときに 1 回だけ計算して modal に保持する。到達計算は O(rows)、layout は O(rows × lanes)。描画は最大 40 行。
+
 ## 結果
 
 - Operation Log の各行で、誰が・どの worktree で行った操作かが一目で分かる。選択すると、その時間帯に動いた ref が reflog の形で読める。
@@ -143,3 +156,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - panel unit: append 済みは id 0 でも戻せる、append 失敗は戻せない。
   - Tier A `oplog_restore_card`: 記録なしの別 repository の行は両ボタン disabled。最初の create-branch の行の実ボタンで card が開き、Moves(drop1 / drop2 の削除)と RefsOnly が並び、`plan-confirm` が描画され、計画では何も動かない。Enter 1 回目で arm、2 回目で restore され、keep は残る。restore 自身の行の「取り消す」で元に戻る(UI 経由の往復)。
 - slice 2b-2 の変異確認: arm を飛ばす → Tier A、`restorable` が記録を見ない → Tier A(disabled の行)、失敗 receipt の記録を残す → panel unit が落ちる。
+- slice 2c のテスト
+  - domain unit(`restore_preview`): branch の削除はその branch 固有の commit だけを消す、tag / remote が保持する commit は残る、移動した branch は戻し先の行に付く、戻し先が範囲外なら NotLoaded、窓 = 変化 ± 4 行で上限 40。
+  - Tier A `oplog_restore_card` の拡張: 記録済みの commit を main に 1 つ足す。keep 時点への restore の card で、プレビュー行数 ≤ 40、main の移動先の行が戻し先 commit、消える行 = 1(その commit は描かれない)。restore 後に `git rev-list --count --branches` の減少数と一致する。描画 probe(`restore-preview` / `-removed-1` / `-moved-main-<sha>`)。revert card は、main の戻し先が reload 後の rows に無いので NotLoaded になり、「プレビューできません」が描画される。
+- slice 2c の変異確認: restores を after に適用しない → domain 4 件と Tier A、card の extra を描かない → Tier A、NotLoaded の判定を外す → domain と Tier A が落ちる。

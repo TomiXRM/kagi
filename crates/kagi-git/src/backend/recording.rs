@@ -245,31 +245,19 @@ pub(super) struct Receipt {
 }
 impl Backend {
     /// Build and append the oplog entry for a completed backend attempt
-    /// (ADR-0149). `before` comes from the plan; `actor`/`worktree` from
-    /// this backend. Write failures are non-fatal (logged to stderr by
-    /// `append_oplog`), mirroring the previous UI behaviour.
+    /// (ADR-0149) **without** a ref-move record (`ref_moves = None`). Only
+    /// the conflict executor still records this way (#884 moves it onto
+    /// [`Self::observe_ref_moves`]); every other path observes its moves.
     pub(super) fn record_run_oplog(
         &self,
         op: &str,
         before: &ops::StateSummary,
         outcome: crate::oplog::OpOutcome,
     ) -> Recording {
-        self.record_run_oplog_with_backups(op, before, outcome, Vec::new(), Vec::new(), None)
-    }
-
-    pub(super) fn record_run_oplog_with_backups(
-        &self,
-        op: &str,
-        before: &ops::StateSummary,
-        outcome: crate::oplog::OpOutcome,
-        backup_refs: Vec<String>,
-        recovery: Vec<RecoveryHandle>,
-        failure_code: Option<crate::oplog::FailureCode>,
-    ) -> Recording {
         let receipt = Receipt {
-            backup_refs,
-            recovery,
-            failure_code,
+            backup_refs: Vec::new(),
+            recovery: Vec::new(),
+            failure_code: None,
             ref_moves: None,
         };
         self.record_receipt(op, before, outcome, receipt)

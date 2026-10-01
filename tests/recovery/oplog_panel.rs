@@ -546,3 +546,154 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS oplog_restore_card: unrecorded row disabled; card lists reverse actions, what stays and the graph after (main's target row, 1 commit off every branch = git's count); two confirms restore; the revert card says its preview is unavailable; the restore is reverted from its own row");
 }
+
+/// #883 review: a long preview, with branch Solo on and a fetched PR head.
+/// - Solo filters the graph only: the preview still counts from every loaded
+///   row (a deleted branch's own commit and main's newest commit leave).
+/// - A commit only a `refs/kagi/pr/**` head still reaches stays.
+/// - The rows scroll in their own capped box (the card body does not), so
+///   the last row can be reached.
+/// - `Copy all` carries the preview.
+pub fn scenario_oplog_restore_preview_review(cx: &mut VisualTestAppContext) {
+    use kagi_domain::restore_preview::RestorePreview;
+
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    // Explicit, increasing commit dates: the graph orders by date within the
+    // topology, so a side commit dated just after its parent is drawn right
+    // above it — deep in the list, far from main's tip.
+    let commit_at = |secs: i64, msg: &str| {
+        let date = format!("@{secs} +0000");
+        let ok = git_command(&repo)
+            .env("GIT_AUTHOR_DATE", &date)
+            .env("GIT_COMMITTER_DATE", &date)
+            .args(["commit", "-q", "--allow-empty", "-m", msg])
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "commit {msg}");
+    };
+    const BASE: i64 = 978_307_200; // 2001-01-01
+    for n in 0..30 {
+        commit_at(BASE + n * 100, &format!("c{n}"));
+    }
+    // A commit hanging deep in main's history, and one only a PR head keeps.
+    let side_commit = |base: &str, secs: i64, msg: &str| -> String {
+        git(&repo, &["checkout", "-q", "-b", "tmp", base]);
+        commit_at(secs, msg);
+        let oid = git_output(&repo, &["rev-parse", "HEAD"]);
+        git(&repo, &["checkout", "-q", "main"]);
+        git(&repo, &["branch", "-q", "-D", "tmp"]);
+        oid
+    };
+    let deep = side_commit("HEAD~28", BASE + 150, "deep");
+    let pr_head = side_commit("HEAD~1", BASE + 2850, "pr head");
+    git(&repo, &["update-ref", "refs/kagi/pr/7/head", &pr_head]);
+    let before = git_output(&repo, &["rev-parse", "main"]);
+
+    let mut backend = Backend::open(&repo).unwrap();
+    let create = |backend: &mut Backend, name: &str, at: &str| {
+        run(
+            backend,
+            Actor::Human,
+            Operation::CreateBranch {
+                name: name.into(),
+                at: CommitId(at.into()),
+            },
+        )
+    };
+    create(&mut backend, "mark", &before);
+    create(&mut backend, "deep", &deep);
+    create(&mut backend, "prb", &pr_head);
+    std::fs::write(repo.join("README.md"), "# fixture\nafter mark\n").unwrap();
+    git(&repo, &["add", "README.md"]);
+    run(
+        &mut backend,
+        Actor::Human,
+        Operation::Commit {
+            message: "after mark".into(),
+        },
+    );
+
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| {
+        app.toggle_branch_solo("mark".into(), CommitId(before.clone()), cx);
+        app.bottom_panel_open = true;
+        app.bottom_tab = kagi::ui::BottomTab::OperationLog;
+        app.bottom_panel_height = 600.;
+        cx.notify();
+    });
+    paint(cx, window);
+    assert!(
+        cx.read(|cx| app.read(cx).view().branch_solo.is_some()),
+        "precondition: Solo is on"
+    );
+    let rows = rows_of(cx, &app, &repo);
+    let mark = rows[3];
+    click_row(cx, &app, window, mark);
+    click_probe(cx, window, &format!("oplog-restore-{mark}-enabled"));
+    let card = restore_card(cx, &app);
+    assert!(card.plan.blockers.is_empty(), "{:?}", card.plan.blockers);
+    let preview = card.preview.clone().expect("preview");
+    let RestorePreview::Graph {
+        rows: drawn,
+        removed,
+        ..
+    } = &preview.graph
+    else {
+        panic!("{:?}", preview.graph)
+    };
+    assert_eq!(
+        *removed, 2,
+        "deep's commit and main's newest leave; the PR head's commit stays (Solo ignored)"
+    );
+    assert!(drawn.len() > 20, "a long window: {}", drawn.len());
+
+    // The rows sit in their own capped, scrolling box.
+    paint(cx, window);
+    let id = window.window_id();
+    let list = e2e::control_bounds(id, "restore-preview-rows").expect("rows box");
+    let last = format!("restore-preview-row-{}", drawn.len() - 1);
+    let row_h = e2e::control_bounds(id, "restore-preview-row-0")
+        .unwrap()
+        .size
+        .height;
+    assert!(
+        list.size.height < row_h * drawn.len() as f32,
+        "the box is capped: {list:?} for {} rows",
+        drawn.len()
+    );
+    cx.simulate_event(
+        window,
+        gpui::ScrollWheelEvent {
+            position: list.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(-100_000.))),
+            touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
+        },
+    );
+    cx.run_until_parked();
+    e2e::clear_control_bounds(id, &last);
+    paint(cx, window);
+    let last_row = e2e::control_bounds(id, &last).expect("last row painted");
+    assert!(
+        last_row.bottom() <= list.bottom() + gpui::px(1.),
+        "scrolled, the last row is inside the box: {last_row:?} vs {list:?}"
+    );
+
+    // Copy all carries the preview.
+    click_probe(cx, window, "plan-card-copy");
+    let copied = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .expect("copied text");
+    assert!(
+        copied.contains(&kagi::ui::i18n::oplog_panel::preview_heading(2)),
+        "{copied}"
+    );
+    assert!(copied.contains("[main ←"), "{copied}");
+
+    press_key(cx, &app, window, "escape");
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS oplog_restore_preview_review: Solo on, PR head kept: removed=2; the rows scroll in a capped box to the last row; Copy all carries the preview");
+}

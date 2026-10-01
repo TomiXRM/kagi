@@ -33,6 +33,14 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Operation Log の「取り消す / この時点まで戻す」の確認 card と Operation Log の review 指摘を修正しました(#883 / #871 / #878)。
+  - 「戻した後のグラフ」が長いと card の下側が切れて見えなかった問題を修正しました。行は card 内でスクロールします。
+  - branch Solo 中や、PR head(`refs/kagi/pr/**`)だけが保持する commit があるときに、どの branch からも外れる commit の数を誤って表示していた問題を修正しました。
+  - プレビューできない場合に「消える commit はありません」と表示していた見出しを中立にしました。
+  - card の「Copy all」に戻した後のグラフも含めるようにしました。
+  - Operation Log の行の「コピー」に、記録された ref の移動(OID 全桁)を含めるようにしました。
+  - absorb と merged branch の一括削除も、動かした ref を記録するようにしました(これまでは「推定」表示で、時点への復元の根拠にできませんでした)。(Refs #334)
+
 - Operation Log の「この時点まで戻す」が、正確に戻せない範囲でも成功していた問題を修正しました(#878 の review 指摘)。次の場合は理由を示して拒否します。
   - Operation Log の途中の記録が消えている・読めない場合。
   - 範囲に、削除された worktree で行った操作がある場合(この repository の操作だった可能性があるため)。

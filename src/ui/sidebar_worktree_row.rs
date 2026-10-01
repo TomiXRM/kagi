@@ -95,6 +95,9 @@ impl KagiApp {
     }
 
     /// Selection retires the old request even when the selected value is cached.
+    /// Re-selecting the row whose measurement is already in flight keeps that
+    /// request: the row hover re-selects every time the pointer comes back
+    /// from its card, and restarting would never let a slow walk finish.
     pub(super) fn select_worktree_inspection(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let read = self
             .active_session()
@@ -109,7 +112,7 @@ impl KagiApp {
             .entries
             .get(&path)
             .is_some_and(|entry| Some(entry.read) == read);
-        if !cached {
+        if !cached && !state.pending.contains(&path) {
             self.refresh_worktree_inspections(Some(std::slice::from_ref(&path)), cx);
         }
         cx.notify();
@@ -257,6 +260,8 @@ fn verdict_text(app: &KagiApp, path: &Path, entry: &InspectionEntry) -> &'static
         .unwrap_or_else(|| Msg::WorktreeInspectionStale.t())
 }
 
+/// The row's at-a-glance size and verdict. It carries no tooltip of its own:
+/// the row's hover card is the one place the full verdict reads.
 fn inspection_badge(app: &KagiApp, path: &Path, name: &str) -> gpui::AnyElement {
     let state = &app.ui().worktree_inspections;
     if state.pending.contains(path) {
@@ -265,10 +270,6 @@ fn inspection_badge(app: &KagiApp, path: &Path, name: &str) -> gpui::AnyElement 
             .items_center()
             .gap_1()
             .flex_shrink_0()
-            .id(SharedString::from(format!(
-                "worktree-inspection-badge-{name}"
-            )))
-            .tooltip(name_tooltip(Msg::WorktreeMeasuring.t().into()))
             .child(super::render_overlay::sync_spinner(
                 12.,
                 theme().text_muted,
@@ -306,87 +307,153 @@ fn inspection_badge(app: &KagiApp, path: &Path, name: &str) -> gpui::AnyElement 
         .flex_shrink_0()
         .text_size(theme::scaled_px(SIDEBAR_AUX_TEXT))
         .text_color(rgb(theme().text_sub))
-        .id(SharedString::from(format!(
-            "worktree-inspection-badge-{name}"
-        )))
-        .tooltip(name_tooltip(verdict_text(app, path, entry).into()))
         .child(text)
         .child(div().text_color(rgb(color)).child(status.t()))
         .into_any_element()
 }
 
-pub(super) fn inspection_panel(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let state = &app.ui().worktree_inspections;
-    let Some(path) = state
-        .selected
-        .as_ref()
-        .filter(|_| app.remote_view.is_none())
-    else {
+/// Hover card width before UI scale: wide enough for the removal guide to wrap
+/// into a few lines, narrow enough to sit beside a default-width sidebar.
+const CARD_W: f32 = 320.;
+/// A stable hover-card height before UI scale: a pending measurement must not
+/// shrink the tooltip and flip it across the pointer, hiding Refresh mid-click.
+const CARD_H: f32 = 300.;
+
+/// A local WORKTREES row's inspection, shown while the row is hovered (#864).
+///
+/// GPUI's hoverable tooltip owns the card's lifetime: it shows after the native
+/// delay, stays while the pointer is on the row or has moved onto the card (so
+/// Refresh is reachable), and hides once the pointer has left both. The card
+/// only reads the tab's cached observation; the row hover's
+/// `select_worktree_inspection` is what starts a measurement.
+struct WorktreeHoverCard {
+    app: gpui::WeakEntity<KagiApp>,
+    path: PathBuf,
+    name: SharedString,
+    port: Option<u16>,
+    /// An observation landing is a `KagiApp` notify; the card repaints with it.
+    _app_changed: Option<gpui::Subscription>,
+}
+
+impl WorktreeHoverCard {
+    fn build(
+        app: gpui::WeakEntity<KagiApp>,
+        path: PathBuf,
+        name: SharedString,
+        port: Option<u16>,
+        cx: &mut gpui::App,
+    ) -> gpui::AnyView {
+        cx.new(|cx: &mut Context<Self>| {
+            let _app_changed = app
+                .upgrade()
+                .map(|entity| cx.observe(&entity, |_, _, cx| cx.notify()));
+            Self {
+                app,
+                path,
+                name,
+                port,
+                _app_changed,
+            }
+        })
+        .into()
+    }
+}
+
+impl gpui::Render for WorktreeHoverCard {
+    fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(entity) = self.app.upgrade() else {
+            return div().into_any_element();
+        };
+        // GPUI lays a tooltip out against no available space and only flips it
+        // at the window edge, so the card bounds itself to the viewport.
+        let viewport = f32::from(window.viewport_size().height);
+        let height = px((viewport - 16.)
+            .min(f32::from(theme::scaled_px(CARD_H)))
+            .max(0.));
+        inspection_card(entity.read(cx), self, height)
+    }
+}
+
+fn inspection_card(
+    app: &KagiApp,
+    card: &WorktreeHoverCard,
+    height: gpui::Pixels,
+) -> gpui::AnyElement {
+    let path = card.path.as_path();
+    // A tab switch or reload can leave the card alive for a frame while its
+    // row is gone; it never shows another tab's (or an SSH tab's) worktree.
+    if app.remote_view.is_some() || !app.view().worktrees.iter().any(|w| w.path == path) {
         return div().into_any_element();
-    };
-    let target = path.clone();
-    let name = app
-        .view()
-        .worktrees
-        .iter()
-        .find(|worktree| &worktree.path == path)
-        .map(|worktree| worktree.name.as_str());
-    let name = name.map(std::borrow::Cow::Borrowed).unwrap_or_else(|| {
-        path.file_name()
-            .unwrap_or(path.as_os_str())
-            .to_string_lossy()
-    });
-    let name = kagi_domain::text_safety::sanitize_control_bytes(&name);
+    }
+    let state = &app.ui().worktree_inspections;
     let path_label = kagi_domain::text_safety::sanitize_control_bytes(&path.display().to_string());
-    let mut panel = div()
+    let refresh_app = card.app.clone();
+    let target = card.path.clone();
+    let heading = div()
+        .id("worktree-inspection-heading")
+        .relative()
+        .child(super::e2e::measure_inside("worktree-inspection-heading"))
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .gap_0p5()
+        .child(
+            div()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(rgb(theme().text_main))
+                .child(format!(
+                    "{}: {}",
+                    Msg::WorktreeInspectionTitle.t(),
+                    card.name
+                )),
+        )
+        .child(
+            div()
+                .id("worktree-inspection-path")
+                .child(SharedString::from(path_label)),
+        )
+        .children(card.port.map(|port| {
+            let url = format!("http://localhost:{port}");
+            div()
+                .id("worktree-inspection-port")
+                .cursor_pointer()
+                .text_color(rgb(theme().color_branch))
+                .child(SharedString::from(format!("localhost:{port}")))
+                .on_click(move |_, _, cx| cx.open_url(&url))
+        }))
+        .child(
+            div().flex().child(
+                div()
+                    .id("worktree-inspection-refresh")
+                    .cursor_pointer()
+                    .relative()
+                    .child(super::e2e::measure_inside("worktree-inspection-refresh"))
+                    .text_color(rgb(theme().color_branch))
+                    .child(Msg::WorktreeInspectionRefresh.t())
+                    .on_click(move |_, _, cx| {
+                        let _ = refresh_app.update(cx, |app, cx| {
+                            app.refresh_worktree_inspections(
+                                Some(std::slice::from_ref(&target)),
+                                cx,
+                            );
+                        });
+                    }),
+            ),
+        );
+    let mut body = div()
         .id("worktree-inspection-body")
         .relative()
         .child(super::e2e::measure_inside("worktree-inspection-body"))
         .flex_1()
         .min_h(px(0.))
-        .gap_1()
         .w_full()
         .min_w(px(0.))
         .overflow_y_scroll()
         .flex()
         .flex_col()
-        .text_xs()
-        .text_color(rgb(theme().text_sub))
-        .child(
-            div()
-                .flex()
-                .gap_2()
-                .child(
-                    div()
-                        .id("worktree-inspection-refresh")
-                        .cursor_pointer()
-                        .relative()
-                        .child(super::e2e::measure_inside("worktree-inspection-refresh"))
-                        .text_color(rgb(theme().color_branch))
-                        .child(Msg::WorktreeInspectionRefresh.t())
-                        .on_click(cx.listener(move |app, _, _, cx| {
-                            app.refresh_worktree_inspections(
-                                Some(std::slice::from_ref(&target)),
-                                cx,
-                            );
-                        })),
-                )
-                .child(
-                    div()
-                        .id("worktree-inspection-close")
-                        .cursor_pointer()
-                        .child(Msg::AppNoticeDismiss.t())
-                        .on_click(cx.listener(|app, _, _, cx| {
-                            if let Some(ui) = app.ui_mut() {
-                                ui.worktree_inspections.cancel();
-                                ui.worktree_inspections.selected = None;
-                            }
-                            cx.notify();
-                        })),
-                ),
-        );
+        .gap_1();
     if state.pending.contains(path) {
-        panel = panel.child(super::e2e::measure_control(
+        body = body.child(super::e2e::measure_control(
             "worktree-inspection-measuring",
             div()
                 .flex()
@@ -399,13 +466,13 @@ pub(super) fn inspection_panel(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                 .child(Msg::WorktreeMeasuring.t()),
         ));
     } else if let Some(entry) = state.entries.get(path) {
-        panel = panel.child(super::e2e::measure_control(
+        body = body.child(super::e2e::measure_control(
             "worktree-inspection-verdict",
             div().child(verdict_text(app, path, entry)),
         ));
         match &entry.report.disk_usage {
             Ok(usage) => {
-                panel = panel
+                body = body
                     .child(format!(
                         "{}: {}",
                         Msg::WorktreeAllocated.t(),
@@ -419,21 +486,21 @@ pub(super) fn inspection_panel(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                     ));
             }
             Err(error) => {
-                panel = panel
+                body = body
                     .child(Msg::WorktreeObservationFailed.t())
                     .child(kagi_domain::text_safety::sanitize_control_bytes(error));
             }
         }
         let timestamp: chrono::DateTime<chrono::Local> = entry.measured_at.into();
-        panel = panel.child(format!(
+        body = body.child(format!(
             "{}: {}",
             Msg::WorktreeMeasuredAt.t(),
             timestamp.format("%H:%M:%S")
         ));
     } else {
-        panel = panel.child(Msg::WorktreeNotMeasured.t());
+        body = body.child(Msg::WorktreeNotMeasured.t());
     }
-    let body = panel
+    let body = body
         .child(Msg::WorktreeLocalRefEvidence.t())
         .child(Msg::WorktreeIgnoredWarning.t())
         .child(Msg::WorktreeRemovalGuide.t());
@@ -441,40 +508,24 @@ pub(super) fn inspection_panel(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
         .id("worktree-inspection")
         .relative()
         .child(super::e2e::measure_inside("worktree-inspection"))
-        .flex_shrink_0()
-        .max_h(gpui::relative(0.4))
-        .min_h(px(0.))
-        .w_full()
-        .min_w(px(0.))
+        // The card overlaps the sidebar: a wheel, click, or hover on it must
+        // not reach the panes and worktree rows beneath.
+        .occlude()
+        .w(theme::scaled_px(CARD_W))
+        .h(height)
         .flex()
         .flex_col()
         .p_2()
         .gap_1()
         .overflow_hidden()
-        .border_t_1()
+        .rounded_md()
+        .border_1()
         .border_color(rgb(theme().surface))
-        .child(
-            div()
-                .id("worktree-inspection-heading")
-                .relative()
-                .child(super::e2e::measure_inside("worktree-inspection-heading"))
-                .flex_shrink_0()
-                .text_xs()
-                .text_color(rgb(theme().text_sub))
-                .child(
-                    div()
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .truncate()
-                        .child(format!("{}: {name}", Msg::WorktreeInspectionTitle.t())),
-                )
-                .child(
-                    div()
-                        .id("worktree-inspection-path")
-                        .truncate()
-                        .tooltip(name_tooltip(path_label.clone().into()))
-                        .child(path_label),
-                ),
-        )
+        .bg(rgb(theme().panel))
+        .shadow_md()
+        .text_xs()
+        .text_color(rgb(theme().text_sub))
+        .child(heading)
         .child(body)
         .into_any_element()
 }
@@ -521,11 +572,14 @@ pub(super) fn build_worktree_row(
     } else {
         SharedString::from(name_s.to_string())
     };
-    // The tooltip carries everything a narrow row gives up: the path and the
-    // port link (#855).
-    let full_name = SharedString::from(match port {
-        Some(port) => format!("{}  {}  localhost:{}", name_label, path_s, port),
-        None => format!("{}  {}", name_label, path_s),
+    // What a narrow row gives up — the path and the port link (#855) — a local
+    // row's hover card carries; an SSH row has no card, so its plain tooltip
+    // carries them instead.
+    let remote_tooltip = is_remote.then(|| {
+        SharedString::from(match port {
+            Some(port) => format!("{}  {}  localhost:{}", name_label, path_s, port),
+            None => format!("{}  {}", name_label, path_s),
+        })
     });
     let text_color = if is_current {
         theme().color_success
@@ -546,7 +600,6 @@ pub(super) fn build_worktree_row(
         .text_xs()
         .text_color(rgb(text_color))
         .overflow_hidden()
-        .tooltip(name_tooltip(full_name))
         // #855: the name is what identifies the row, so it never shrinks.
         // `measure_inside`, not `measure_control`: a wrapper div would put its
         // own flex sizing between this element and the row.
@@ -565,7 +618,7 @@ pub(super) fn build_worktree_row(
         // first, down to nothing. When even the link alone does not fit, it
         // wraps onto a second line that the box clips: it disappears whole
         // instead of being cut to "localhost:30", and the path takes the room
-        // back. The row's tooltip still names it. min_w(0): without it the box
+        // back. The row's hover card still names it. min_w(0): without it the box
         // sizes to the (long) path's min-content width and pushes the lock chip
         // past the clipped row edge (user report).
         .child(
@@ -609,16 +662,34 @@ pub(super) fn build_worktree_row(
     // open, reveal, copy, prune, repair — runs locally. A local directory that
     // happens to share that absolute path would be opened instead of erroring,
     // so a remote view gets no worktree menu at all.
-    if is_remote {
-        return row.into_any();
+    if let Some(tooltip) = remote_tooltip {
+        return row.tooltip(name_tooltip(tooltip)).into_any();
     }
+    // Hovering the row is what selects its inspection, and the card is its
+    // only presentation: moving to another row retires this row's request
+    // (`select_worktree_inspection`), and leaving the row and its card hides
+    // the card without touching the cache.
     let path_for_select = path.to_path_buf();
+    let card_app = cx.weak_entity();
+    let card_path = path.to_path_buf();
+    let card_name = SharedString::from(name_s.to_string());
     row = row
         .gap_1()
         .child(inspection_badge(app, path, name))
-        .on_click(cx.listener(move |app, _, _, cx| {
-            app.select_worktree_inspection(path_for_select.clone(), cx);
-        }));
+        .on_hover(cx.listener(move |app, hovered: &bool, _, cx| {
+            if *hovered {
+                app.select_worktree_inspection(path_for_select.clone(), cx);
+            }
+        }))
+        .hoverable_tooltip(move |_window, cx| {
+            WorktreeHoverCard::build(
+                card_app.clone(),
+                card_path.clone(),
+                card_name.clone(),
+                port,
+                cx,
+            )
+        });
     // The lifecycle items (remove / lock / unlock) are linked worktrees only —
     // the main worktree is never lockable or removable from kagi — but the path
     // items are not, so the main row gets the menu too: from a linked
@@ -650,7 +721,7 @@ pub(super) fn build_worktree_row(
 
 /// `localhost:<port>` for a worktree's stored port block (#855): the first port
 /// of the block its terminal receives as `KAGI_PORT`. A click opens it in the
-/// browser; it does not select the row.
+/// browser.
 fn port_link(name: &str, port: u16, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let url = format!("http://localhost:{port}");
     let open = cx.listener(move |_app: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
@@ -673,8 +744,6 @@ fn port_link(name: &str, port: u16, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         .text_color(rgb(theme().color_branch))
         .cursor_pointer()
         .hover(|s| s.bg(rgb(theme().selected)))
-        // The row selects its inspection on click.
-        .on_mouse_down(gpui::MouseButton::Left, |_e, _w, cx| cx.stop_propagation())
         .on_click(open)
         .child(SharedString::from(format!("localhost:{port}")))
         .child(super::e2e::measure_inside(format!(

@@ -281,8 +281,9 @@ fn pane_divider(app: &KagiApp, index: usize) -> gpui::AnyElement {
 
 /// Render five Graph navigator sections with pinned headers and independent
 /// virtualized bodies. Filter and branch cleanup stay above the panes; worktree
-/// inspection stays below. `render` owns the cached flat rows and ranges, so
-/// drawing another workspace page cannot start a Git read or rebuild refs.
+/// inspection is each local worktree row's hover card, not a pane here.
+/// `render` owns the cached flat rows and ranges, so drawing another workspace
+/// page cannot start a Git read or rebuild refs.
 pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let filter_input = app.sidebar.filter.clone();
     // The five pane bodies share `sidebar.rows`, never copied on layout changes.
@@ -383,8 +384,8 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
             .flex_1()
             .min_h(px(0.))
             // Five scaled headers may exceed a short Graph viewport; retain
-            // every pane and let the stack scroll instead of painting under
-            // the bottom panel. Leaf lists still scroll independently.
+            // every pane and let the stack scroll instead of painting past the
+            // sidebar's bottom edge. Leaf lists still scroll independently.
             .overflow_y_scroll(),
         |container, index| {
             let container = container.child(render_pane(app, index, cx));
@@ -409,7 +410,6 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
         .child(filter_area)
         .child(cleanup_entry)
         .child(panes)
-        .child(super::sidebar_worktree_row::inspection_panel(app, cx))
         .into_any_element()
 }
 

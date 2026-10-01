@@ -324,12 +324,13 @@ The current suite covers:
 - Worktree occupancy and removal advisory (`KAGI_GUI_E2E_ONLY=worktree_inspection`,
   `tests/recovery/worktree_inspection.rs`): real pushed/dirty/locked/detached
   fixtures cover EN/JA reasons, ignored `target/` allocation, explicit refresh,
-  the existing measuring spinner and late-delivery rejection after supersession,
-  selection departure and tab close. Bring virtual sidebar rows into view before
-  clicking; the selected detail panel reduces the navigator's viewport.
-  Actual bounds must cap the panel at 40% of the sidebar in both languages.
-  Check the fixed name/path heading and independently scrolling detail body;
-  Tier B must confirm that selecting another worktree is not obscured.
+  the measuring spinner and late-delivery rejection after supersession,
+  hovering another row and tab close. Bring virtual sidebar rows into view before
+  hovering. The detail card appears for the hovered local worktree only, leaves
+  all five navigator panes their full layout height, and remains actionable when
+  the pointer moves into it. Moving away hides the card; hovering another row
+  changes its identity. Check the name/path heading, independently scrolling
+  body and Refresh action from inside the card in both languages.
   A partial-cache regression accepts one worktree report, switches to another
   repository and returns through the real tab lifecycle. Missing and newly added
   worktrees must then be measured while the completed report remains unchanged,

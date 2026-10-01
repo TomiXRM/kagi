@@ -75,7 +75,7 @@ fn log_entries(repo: &Repository) -> Vec<RecordedEntry> {
             let repo = match common {
                 Some(common) if common == mine => EntryRepo::Mine,
                 Some(_) => EntryRepo::Other,
-                None => EntryRepo::Unknown(path),
+                None => EntryRepo::Unknown(path.clone()),
             };
             RecordedEntry {
                 id: e.id,
@@ -84,6 +84,7 @@ fn log_entries(repo: &Repository) -> Vec<RecordedEntry> {
                 op: e.op,
                 repo,
                 ref_moves: e.ref_moves,
+                worktree: Some(path),
             }
         })
         .collect();
@@ -149,7 +150,30 @@ fn plan_oplog_restore(
     let planned = ref_restore::plan(&entries, entry_id, mode, &current, &observed);
 
     let note = PlanNote::OplogRestore;
-    let mut blockers: Vec<PlanNote> = planned.blockers.into_iter().map(note).collect();
+    // #912 review: a HEAD switch in *this* worktree needs no "where"; one in
+    // another worktree names it, so the checkout is not run here by mistake.
+    let here = canonical(repo.workdir().unwrap_or(repo.path()));
+    let mut blockers: Vec<PlanNote> = planned
+        .blockers
+        .into_iter()
+        .map(|n| match n {
+            OplogRestoreNote::HeadMoved {
+                id,
+                op,
+                from,
+                to,
+                worktree: Some(w),
+            } if canonical(Path::new(&w)) == here => OplogRestoreNote::HeadMoved {
+                id,
+                op,
+                from,
+                to,
+                worktree: None,
+            },
+            other => other,
+        })
+        .map(note)
+        .collect();
     let mut warnings = Vec::new();
     let repositories = super::branch_delete_safety::repositories(repo)?;
     // Any worktree mid-operation: a branch it builds on must not move (#878).

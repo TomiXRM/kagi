@@ -146,6 +146,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
    - blocker HeadMoved は、どの entry で HEAD が何から何に切り替わったかを示す(`HeadMoved { id, op, from, to }`、`HeadAt::{Branch, Detached, Unknown}`、entry の `ref_moves` の HEAD の行から作る)。
    - 手順は 1 種類だけ示す: 「<from> を自分で checkout してから、#id 以降の時点へ restore する」。手で checkout すれば作業ツリーの扱いはユーザーが checkout で決め、restore は branch の移動だけで済む。
    - **それより複雑な場合は手で戻す、と明記して分岐を増やさない**(#912 review)。複数回の HEAD の切替、同じ entry での branch の作成・削除(作成して checkout など)、rename、その後に削除された <from> などに個別の手順を出すと、案内そのものが状況の判定になり、誤った断定(「branch が無いだけなので restore で戻る」など)を生む。一度は `also_moved` / `from_gone` で分岐を足したが、この理由で削除した。
+   - **切替が別の worktree で記録されていれば、その worktree を示す**(#912 review 3)。案内を active な worktree でそのまま実行すると、別の worktree を切り替えてしまう。`RecordedEntry.worktree`(entry の worktree、無ければ repo)を `HeadMoved.worktree` に載せ、restore を計画した worktree と同じなら消す。EN / JA の文言は「<path> の worktree で」を入れる。
 2. **detached HEAD は戻し先にしない**。restore は commit への checkout を行わない。1 と同じく、HEAD を detached にする・detached から戻す entry は HeadMoved。
 3. **他の worktree の detached HEAD は記録しない**。記録は op を実行した worktree の HEAD と `refs/heads/*` だけ(§4)。attached な HEAD は `refs/heads/<branch>` の差分から導ける。detached HEAD は restore が動かさないので、記録しても使い道がない。snapshot のコストも増やさない。
 

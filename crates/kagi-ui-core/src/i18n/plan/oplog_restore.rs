@@ -28,12 +28,24 @@ pub fn note_ja(note: &OplogRestoreNote) -> String {
         OplogRestoreNote::NotRecorded { id, op } => format!(
             "操作 #{id}({op})には ref の移動の記録が無いため、正確に戻せません。reflog からの推定は使いません。"
         ),
-        OplogRestoreNote::HeadMoved { id, op, from, to } => format!(
-            "操作 #{id}({op})で HEAD が {} から {} に切り替わっているので、この範囲は restore できません。restore は branch だけを動かし、HEAD は動かしません(作業ツリーが変わるため)。{} を自分で checkout してから、#{id} 以降の時点へ restore してください。それより複雑な場合(複数回の切り替え、その操作が作成・削除した branch など)は手で戻してください。",
-            head_ja(from),
-            head_ja(to),
-            head_ja(from)
-        ),
+        OplogRestoreNote::HeadMoved {
+            id,
+            op,
+            from,
+            to,
+            worktree,
+        } => {
+            let place = worktree
+                .as_ref()
+                .map(|p| format!("{p} の worktree で"))
+                .unwrap_or_default();
+            format!(
+                "操作 #{id}({op})で{place} HEAD が {} から {} に切り替わっているので、この範囲は restore できません。restore は branch だけを動かし、HEAD は動かしません(作業ツリーが変わるため)。{place} {} を自分で checkout してから、#{id} 以降の時点へ restore してください。それより複雑な場合(複数回の切り替え、その操作が作成・削除した branch など)は手で戻してください。",
+                head_ja(from),
+                head_ja(to),
+                head_ja(from)
+            )
+        }
         OplogRestoreNote::LaterEntryMoved { refname, id, op } => format!(
             "{refname} は後の操作 #{id}({op})でも動いています。先にそちらを取り消すか、時点への復元を使ってください。"
         ),
@@ -114,6 +126,7 @@ mod tests {
             op: "checkout-commit".into(),
             from: HeadAt::Branch("feature".into()),
             to: HeadAt::Detached("0123456789abcdef".into()),
+            worktree: None,
         };
         let en = note.message_en();
         let ja = note_ja(&note);

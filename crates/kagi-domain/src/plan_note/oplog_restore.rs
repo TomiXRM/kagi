@@ -56,11 +56,14 @@ pub enum OplogRestoreNote {
     /// undoing that is a checkout, which touches the working tree, and a
     /// restore moves branches only (#886, ADR-0214 §7). One guidance for
     /// every case; anything more involved is done by hand (#912 review).
+    /// `worktree` = where the switch ran, when that is not the worktree the
+    /// restore is planned from: the checkout belongs there, not here.
     HeadMoved {
         id: u64,
         op: String,
         from: HeadAt,
         to: HeadAt,
+        worktree: Option<String>,
     },
     /// blocker (op-revert) — a later recorded entry moved the same ref.
     LaterEntryMoved {
@@ -126,11 +129,19 @@ impl OplogRestoreNote {
             OplogRestoreNote::NotRecorded { id, op } => format!(
                 "Operation #{id} ({op}) has no recorded ref moves, so it cannot be undone exactly. Nothing is guessed from the reflog."
             ),
-            OplogRestoreNote::HeadMoved { id, op, from, to } => format!(
-                "Operation #{id} ({op}) switched HEAD from {} to {}, so the range cannot be restored: a restore moves branches only, never HEAD, because that would change the working tree. Check out {} yourself, then restore to #{id} or a later point. Anything more involved (several switches, branches it created or deleted) has to be done by hand.",
+            OplogRestoreNote::HeadMoved {
+                id,
+                op,
+                from,
+                to,
+                worktree,
+            } => format!(
+                "Operation #{id} ({op}) switched HEAD{} from {} to {}, so the range cannot be restored: a restore moves branches only, never HEAD, because that would change the working tree. Check out {}{} yourself, then restore to #{id} or a later point. Anything more involved (several switches, branches it created or deleted) has to be done by hand.",
+                worktree.as_ref().map(|p| format!(" in the worktree {p}")).unwrap_or_default(),
                 from.label_en(),
                 to.label_en(),
-                from.label_en()
+                from.label_en(),
+                worktree.as_ref().map(|p| format!(" in {p}")).unwrap_or_default()
             ),
             OplogRestoreNote::LaterEntryMoved { refname, id, op } => format!(
                 "{refname} was moved again by the later operation #{id} ({op}). Revert that one first, or restore to a point."

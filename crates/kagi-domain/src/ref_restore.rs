@@ -32,6 +32,9 @@ pub struct RecordedEntry {
     pub op: String,
     pub repo: EntryRepo,
     pub ref_moves: Option<Vec<RefMove>>,
+    /// The worktree the entry ran in, as recorded (#912 review): a HEAD
+    /// switch is undone by a checkout *there*.
+    pub worktree: Option<String>,
 }
 
 /// What the backend read besides the log (#878 review).
@@ -152,6 +155,7 @@ pub fn plan(
                         op: e.op.clone(),
                         from: HeadAt::of(m.old_symbolic.as_deref(), m.old.as_deref()),
                         to: HeadAt::of(m.new_symbolic.as_deref(), m.new.as_deref()),
+                        worktree: e.worktree.clone(),
                     })
                 }
             }
@@ -315,6 +319,7 @@ mod tests {
             op: format!("op{id}"),
             repo: EntryRepo::Mine,
             ref_moves: moves,
+            worktree: None,
         }
     }
 
@@ -544,6 +549,7 @@ mod tests {
             op: "op3".into(),
             from: HeadAt::Branch("a".into()),
             to: HeadAt::Branch("b".into()),
+            worktree: None,
         }));
 
         // #886: detaching names the commit HEAD was left at.
@@ -566,6 +572,30 @@ mod tests {
                 op: "op3".into(),
                 from: HeadAt::Branch("a".into()),
                 to: HeadAt::Detached("c0".into()),
+                worktree: None,
+            }]
+        );
+
+        // #912 review: a switch recorded in another worktree carries that
+        // worktree, so the checkout is done there and not where the restore
+        // is planned.
+        let linked = RecordedEntry {
+            worktree: Some("/w/linked".into()),
+            ..entry(
+                3,
+                Some(vec![head("c1", "c1", "refs/heads/a", "refs/heads/b")]),
+            )
+        };
+        let entries = [entry(1, Some(vec![])), entry(2, Some(vec![])), linked];
+        let p = plan(&entries, 1, RestoreMode::RestoreTo, &refs(&[(A, "c1")]));
+        assert_eq!(
+            p.blockers,
+            vec![OplogRestoreNote::HeadMoved {
+                id: 3,
+                op: "op3".into(),
+                from: HeadAt::Branch("a".into()),
+                to: HeadAt::Branch("b".into()),
+                worktree: Some("/w/linked".into()),
             }]
         );
     }

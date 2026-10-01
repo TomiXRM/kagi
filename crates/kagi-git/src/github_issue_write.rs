@@ -27,13 +27,26 @@ pub fn issue_create_args(base_repo: &str, title: &str, fields: &IssueCreateField
     ];
     for label in &fields.labels {
         args.push("--label".into());
-        args.push(label.clone());
+        args.push(slice_flag_value(label));
     }
     for login in &fields.assignees {
         args.push("--assignee".into());
-        args.push(login.clone());
+        args.push(slice_flag_value(login));
     }
     args
+}
+
+/// One value for a `gh` string-slice flag (#904 review). `gh` reads each
+/// `--label` / `--assignee` value as a CSV record, so `needs: triage, docs`
+/// would arrive as two labels and a stray `"` makes the flag fail to parse.
+/// Such a value is sent as one quoted CSV field (inner quotes doubled); any
+/// other value is sent as is.
+fn slice_flag_value(value: &str) -> String {
+    if value.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_owned()
+    }
 }
 
 pub fn issue_comment_args(base_repo: &str, number: u64) -> Vec<String> {

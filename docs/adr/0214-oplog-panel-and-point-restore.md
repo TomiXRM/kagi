@@ -58,7 +58,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
 - **記録点**: `Backend::run_recorded_with_events`(`Backend::run` / `run_recorded` が通る 1 箇所)と、undo / redo の `run_history_move`。
   - 実行の前後に ref を読み(`backend/reflog.rs::ref_snapshot`)、差分(`kagi_domain::ref_moves::diff`、pure)を entry の `ref_moves` に載せる。
   - 読むもの: **op を実行した worktree の HEAD**(symbolic 先 + 解決 OID)と `refs/heads/*`。
-  - 他の worktree の HEAD は走査しない。replay-onto などで checkout 先の HEAD が追従しても、それは `refs/heads/<branch>` の差分から導ける(snapshot のコストを増やさない)。
+  - 他の worktree の HEAD は走査しない。replay-onto などで checkout 先の HEAD が追従しても、それは `refs/heads/<branch>` の差分から導ける(snapshot のコストを増やさない)。他の worktree の detached HEAD を記録しない決定は §7。
 - **型**: `RefMove { refname, old, new: Option<OID>, old_symbolic, new_symbolic }`。`None` は ref が無かったこと(作成 / 削除)、symbolic は HEAD のみ。entry 側は `Option<Vec<RefMove>>`。
   - `None`: 記録なし。この field より前に書かれた entry、記録しない経路(下記)、前後どちらかの ref を読めなかった場合。読めない時は誤った差分より記録なしを選ぶ。
   - `Some(空)`: 記録した結果、何も動いていない。refused / 失敗 / no-op がこれにあたる。
@@ -98,7 +98,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
 - **restore to point**: 対象 entry の**直後**の状態に戻す(jj の `op restore` と同じく、対象自身の効果は残す)。それより新しい entry を古い順に合成し、ref ごとに「最古の old を戻し先、最新の new を期待値」とする。動いて元に戻った ref は除く。
 - **HEAD**
   - branch に追従しただけの HEAD の移動(commit など、symbolic が同じ)は、その branch の移動として扱う。
-  - HEAD の切替・detached を含む entry は blocker(HeadMoved)。戻すには checkout(作業ツリーに触れる)が要るため、2b の対象外。
+  - HEAD の切替・detached を含む entry は blocker(HeadMoved)。戻すには checkout(作業ツリーに触れる)が要るため、対象外とする(§7 で確定)。
 - **その他の blocker**
   - 範囲の記録が触れた ref が期待値に無い(RefMovedSince。記録外での移動)。動いて元に戻ったため戻さない ref も、今その値にあることを確かめる。
   - restore to point: 対象 entry の記録時刻より後に reflog の更新がある local branch のうち、範囲の記録が一度も動かしていないもの(RefChangedOutsideRecord。terminal での `git branch` など)。戻しても残るので、「その時点の branch 状態」にならない。
@@ -137,6 +137,20 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
 - **描画**: commit graph と同じ `graph_view::graph_canvas` を行ごとに使う。card への差し込みは `render_plan_modal_wrapper_extra`(`PlanCardExtra { element, clipboard }` を warning の後に描く)。`Copy all` は card のテキストにこの clipboard(見出し・各行・窓外の行数、または NotLoaded の理由)を足す(#883 review)。既存の `wrapper_styled` / `wrapper_staged` は `None` で委譲するので、呼び出し元の署名は変えない。この card は #872 の `ConfirmStage`(Unarmed / Armed)にも乗る。
 - **focus**: card を開くとき root に focus を移す(`focus_root_for_modal`、plan modal の規約)。実ボタンのクリックは root(`track_focus`)が focus を受けるので、現状の入口では Enter / Escape は届いている。キーボードの入口が増えても届くようにするためのもの(#878 review)。
 - **コスト**: card を開くときに 1 回だけ計算して modal に保持する。到達計算は O(rows)、layout は O(rows × lanes)。描画は最大 40 行。
+
+### 7. HEAD を含む restore は行わない(#886)
+
+設計原則として、単純で正しい方を既定にする。restore に checkout を合成すると、作業ツリーに触れる経路が restore に入る。dirty の扱い(blocker か持ち越しか)、restore 自身の revert の往復(HEAD を元に戻す checkout も要る)、plan card の表示(作業ツリーが変わることを示す)がすべて増える。そこで次の 3 点を決める。
+
+1. **HEAD の切替を含む範囲は戻さない**。restore / revert は branch だけを動かし、HEAD は動かさない。branch に追従しただけの HEAD の移動(symbolic が同じ)は、これまでどおりその branch の移動として扱う。
+   - blocker HeadMoved は、どの entry で HEAD が何から何に切り替わったかを示す(`HeadMoved { id, op, from, to }`、`HeadAt::{Branch, Detached, Unknown}`、entry の `ref_moves` の HEAD の行から作る)。
+   - 手順は 1 種類だけ示す: 「<from> を自分で checkout してから、#id 以降の時点へ restore する」。手で checkout すれば作業ツリーの扱いはユーザーが checkout で決め、restore は branch の移動だけで済む。
+   - **それより複雑な場合は手で戻す、と明記して分岐を増やさない**(#912 review)。複数回の HEAD の切替、同じ entry での branch の作成・削除(作成して checkout など)、rename、その後に削除された <from> などに個別の手順を出すと、案内そのものが状況の判定になり、誤った断定(「branch が無いだけなので restore で戻る」など)を生む。一度は `also_moved` / `from_gone` で分岐を足したが、この理由で削除した。
+   - **切替が別の worktree で記録されていれば、その worktree を示す**(#912 review 3)。案内を active な worktree でそのまま実行すると、別の worktree を切り替えてしまう。`RecordedEntry.worktree`(entry の worktree、無ければ repo)を `HeadMoved.worktree` に載せ、restore を計画した worktree と同じなら消す。EN / JA の文言は「<path> の worktree で」を入れる。
+2. **detached HEAD は戻し先にしない**。restore は commit への checkout を行わない。1 と同じく、HEAD を detached にする・detached から戻す entry は HeadMoved。
+3. **他の worktree の detached HEAD は記録しない**。記録は op を実行した worktree の HEAD と `refs/heads/*` だけ(§4)。attached な HEAD は `refs/heads/<branch>` の差分から導ける。detached HEAD は restore が動かさないので、記録しても使い道がない。snapshot のコストも増やさない。
+
+要望が出たら別 issue で再検討する(checkout を含む restore の triple、dirty の扱い、往復のテストから決める)。
 
 ## 結果
 
@@ -186,6 +200,11 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - Tier A: 新しい `oplog_restore_across_merge`(merge → 実 `run_recorded_conflict` の save → merge commit の後、panel の実ボタンで開いた restore card に blocker が無く、confirm で main が merge 前に戻る)。`stash_conflict_close_reopen` に、UI の continue の記録が `Some(空)` であることを追加した。
 - #884 の変異確認: `run_recorded_conflict` が `None` を記録 → integration 2 件と Tier A(blocker `NotRecorded { op: "conflict-save:merge" }`、つまり #884 以前の状態)、`nothing_moved` を外す → 拒否の integration、UI が moves を捨てる → Tier A(stash continue)が落ちる。
 - #891 review 対応: unit `an_unconfirmed_termination_records_no_ref_moves`(Unknown は `None`、Refused は観測どおり)。`stash_conflict_close_reopen` で、未解決のまま Continue を押した計画時の拒否が `Some(空)` で記録されることを確認する。変異確認: Unknown の規則を外す → unit、計画時の拒否を `None` に戻す → Tier A が落ちる。
+- #886 のテスト
+  - domain unit: branch 間の checkout は `from = Branch("a")`・`to = Branch("b")`、detached は `to = Detached(oid)`。
+  - kagi-git integration(実 `Backend::run`): `checkout a` を含む restore は `HeadMoved { from: main, to: a }`、`checkout-commit` の revert は `{ from: a, to: Detached(<oid>) }`。
+  - i18n unit: EN / JA の文言が entry・操作名・両側(短い OID)と、手で checkout する側・「#id 以降の時点へ restore」を含む。
+  - 変異確認: from と to を入れ替える → domain と integration が落ちる。
 - #878 review 対応(P1)のテスト
   - domain unit: 鎖が途切れると HistoryGap、別 repository の entry は除いて Unknown は blocker、記録外で変わった branch は RefChangedOutsideRecord(記録が説明する branch は除く)、動いて戻った ref が別の値にあれば RefMovedSince。
   - kagi-git integration: oplog から 1 行を消すと HistoryGap、削除・prune した worktree の entry は UnknownRepository、別 worktree で merge の conflict 中は OperationInProgress(その path)、対象の後に `git branch` で作った branch は RefChangedOutsideRecord。

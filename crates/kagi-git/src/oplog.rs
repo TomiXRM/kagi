@@ -545,10 +545,15 @@ pub fn append_oplog_receipt(entry: &OpLogEntry) -> Result<(PathBuf, OpLogEntry),
     let mut entry = entry.clone();
     // #894: the one place every recorder passes — Backend and UI alike — so
     // every new entry says which repository it belongs to, durably (the
-    // worktree it ran in may later be removed).
+    // worktree it ran in may later be removed). The worktree first; when it
+    // no longer opens — a remove-worktree records the path it just deleted —
+    // the repository it was run from (#900 review).
     if entry.repo_identity.is_none() {
-        let scope = entry.worktree.as_deref().unwrap_or(&entry.repo);
-        entry.repo_identity = RepoIdentity::of(Path::new(scope));
+        entry.repo_identity = entry
+            .worktree
+            .as_deref()
+            .and_then(|worktree| RepoIdentity::of(Path::new(worktree)))
+            .or_else(|| RepoIdentity::of(Path::new(&entry.repo)));
     }
     let last = read_oplog_tail(1);
     match last.first() {

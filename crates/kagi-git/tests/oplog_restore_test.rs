@@ -392,17 +392,22 @@ fn set_identity(id: u64, identity: Option<serde_json::Value>) {
     std::fs::write(&log, lines.concat()).unwrap();
 }
 
-/// This repository's recorded identity, as JSON (unix: carries dev / ino;
-/// the creation time where the filesystem reports one).
+/// This repository's recorded identity, as JSON (unix: carries dev / ino and
+/// the creation time). `None` — the caller skips — on a filesystem that
+/// reports no creation time (NFS, some Linux filesystems): there the identity
+/// is ambiguous by design and these cases cannot be set up (#900 review).
 #[cfg(unix)]
-fn identity_of(dir: &Path) -> serde_json::Value {
+fn identity_of(dir: &Path) -> Option<serde_json::Value> {
     let id = kagi_git::oplog::RepoIdentity::of(dir).expect("opens");
     let (dev, ino) = id.file_id.expect("unix file id");
-    let (born_s, born_ns) = id.created.expect("creation time on this filesystem");
-    serde_json::json!({
+    let Some((born_s, born_ns)) = id.created else {
+        eprintln!("skipped: {} reports no creation time", dir.display());
+        return None;
+    };
+    Some(serde_json::json!({
         "common_dir": id.common_dir, "dev": dev, "ino": ino,
         "born_s": born_s, "born_ns": born_ns,
-    })
+    }))
 }
 
 /// A worktree `wt` on a branch made before `point`, an operation in it after
@@ -535,8 +540,10 @@ fn another_repositorys_entry_misread_as_ours_fails_closed() {
     write_file(&other, "a.txt", "only in the other repository\n");
     commit_all(&other, "other");
     let foreign = create(&other, "x");
-    let mut misread = identity_of(&repo);
-    misread["common_dir"] = serde_json::json!(identity_of(&other)["common_dir"]);
+    let (Some(mut misread), Some(theirs)) = (identity_of(&repo), identity_of(&other)) else {
+        return;
+    };
+    misread["common_dir"] = theirs["common_dir"].clone();
     set_identity(foreign, Some(misread));
 
     let p = plan(&repo, &Operation::RestoreToPoint { entry_id: point });
@@ -567,8 +574,10 @@ fn an_entry_at_our_path_with_another_file_id_is_not_ours() {
     let other_tmp = tempfile::tempdir().unwrap();
     let other = self::repo(other_tmp.path());
     let earlier = create(&other, "from-the-old-repository");
-    let mut recreated = identity_of(&other);
-    recreated["common_dir"] = identity_of(&repo)["common_dir"].clone();
+    let (Some(mut recreated), Some(ours)) = (identity_of(&other), identity_of(&repo)) else {
+        return;
+    };
+    recreated["common_dir"] = ours["common_dir"].clone();
     set_identity(earlier, Some(recreated));
 
     let p = plan(&repo, &Operation::RestoreToPoint { entry_id: earlier });
@@ -598,7 +607,9 @@ fn a_reused_inode_with_another_birth_time_is_not_ours() {
     let old = create(&other, "from-the-deleted-clone");
     create(&repo, "b");
 
-    let mut reused = identity_of(&repo);
+    let Some(mut reused) = identity_of(&repo) else {
+        return;
+    };
     reused["born_s"] = serde_json::json!(1);
     set_identity(old, Some(reused.clone()));
     let p = plan(&repo, &Operation::RestoreToPoint { entry_id: old });
@@ -677,5 +688,59 @@ fn a_branch_created_after_the_point_outside_the_record_blocks() {
             refname: "refs/heads/outside".into()
         }],
         "b is explained by its entry; outside by nothing"
+    );
+}
+
+/// #900 review: a successful remove-worktree records the worktree it just
+/// deleted, which no longer opens; its identity is taken from the repository
+/// it ran from instead. Without that the entry is UnknownRepository and
+/// blocks a restore in *every* repository; with it, another repository
+/// restores across it freely, and its own repository sees its own entry
+/// (blocked only as not recorded — a remove does not record its moves).
+#[test]
+fn a_removed_worktrees_own_entry_is_attributed_through_its_repository() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let point = create(&repo, "a");
+    let at_point = branches(&repo);
+
+    let other_tmp = tempfile::tempdir().unwrap();
+    let other = self::repo(other_tmp.path());
+    git(&other, &["branch", "wtb"]);
+    let other_point = create(&other, "c");
+    let wt = other_tmp.path().join("wt");
+    git(
+        &other,
+        &["worktree", "add", "-q", wt.to_str().unwrap(), "wtb"],
+    );
+    let removal = Backend::plan_recorded_remove(&other, "wt", false).unwrap();
+    let report = Backend::run_recorded_remove(&removal, kagi_git::oplog::Actor::Human, None);
+    assert!(!wt.exists(), "removed: {:?}", report.progress);
+    let removed = newest(&other);
+    assert_eq!(removed.op, "remove-worktree");
+    assert!(matches!(removed.outcome, OpOutcome::Success { .. }));
+    create(&repo, "b");
+
+    let op = Operation::RestoreToPoint { entry_id: point };
+    let p = plan(&repo, &op);
+    assert_eq!(restore_blockers(&p), Vec::new(), "{:?}", p.blockers);
+    backend(&repo).run(&op, &p).unwrap();
+    assert_eq!(branches(&repo), at_point);
+
+    let p = plan(
+        &other,
+        &Operation::RestoreToPoint {
+            entry_id: other_point,
+        },
+    );
+    let notes = restore_blockers(&p);
+    assert!(
+        !notes
+            .iter()
+            .any(|n| matches!(n, OplogRestoreNote::UnknownRepository { .. })),
+        "its own repository knows the entry: {notes:?}"
     );
 }

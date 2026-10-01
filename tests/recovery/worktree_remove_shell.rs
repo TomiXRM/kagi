@@ -53,7 +53,8 @@ pub(crate) fn hangup_proof_shell(dir: &Path) -> PathBuf {
 
 /// Kills whatever `leftover.pid` / `shell.pid` in `dir` name when dropped, so
 /// a failed assertion does not leave the long-sleeping probes behind (#899
-/// review). Killing an already-stopped PID is harmless.
+/// review). [`kill_recorded`] removes the file it acted on, so a PID that
+/// was already stopped (and may since be reused) is never signalled again.
 pub(crate) struct KillRecordedOnDrop(pub(crate) PathBuf);
 
 impl Drop for KillRecordedOnDrop {
@@ -90,6 +91,8 @@ pub(crate) fn kill_recorded(pid_file: &Path) {
         .arg(&pid)
         .status()
         .unwrap();
+    // Disarm `KillRecordedOnDrop`: the PID may be reused once it is gone.
+    let _ = std::fs::remove_file(pid_file);
 }
 
 fn wait_until(

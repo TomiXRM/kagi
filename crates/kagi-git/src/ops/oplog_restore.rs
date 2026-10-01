@@ -72,32 +72,7 @@ fn log_entries(repo: &Repository) -> Vec<RecordedEntry> {
         .into_iter()
         .map(|e| {
             let path = e.worktree.clone().unwrap_or_else(|| e.repo.clone());
-            use crate::oplog::RecordedIdentity;
-            let repo = match (&e.repo_identity, &my_identity) {
-                (RecordedIdentity::Invalid, _) => EntryRepo::Unknown(path.clone()),
-                (RecordedIdentity::Known(recorded), Some(mine)) => {
-                    match recorded.same_repository(mine) {
-                        crate::oplog::SameRepository::Same => EntryRepo::Mine,
-                        crate::oplog::SameRepository::Different => EntryRepo::Other,
-                        crate::oplog::SameRepository::Ambiguous => EntryRepo::Unknown(path.clone()),
-                    }
-                }
-                _ => {
-                    let common = common_of
-                        .entry(path.clone())
-                        .or_insert_with_key(|path| {
-                            Repository::open(path)
-                                .ok()
-                                .map(|r| canonical(r.commondir()))
-                        })
-                        .clone();
-                    match common {
-                        Some(common) if common == mine => EntryRepo::Mine,
-                        Some(_) => EntryRepo::Other,
-                        None => EntryRepo::Unknown(path.clone()),
-                    }
-                }
-            };
+            let repo = classify_entry(&e, &mine, my_identity.as_ref(), &mut common_of);
             RecordedEntry {
                 id: e.id,
                 parent: e.parent,
@@ -111,6 +86,54 @@ fn log_entries(repo: &Repository) -> Vec<RecordedEntry> {
         .collect();
     entries.sort_by_key(|e| e.id);
     entries
+}
+
+/// Whose entry `e` is (the rules of [`log_entries`]): by its recorded
+/// identity when it has one, by opening its worktree only when it has none.
+/// `common_of` caches the opened worktrees' common dirs.
+fn classify_entry(
+    e: &crate::oplog::OpLogEntry,
+    mine: &Path,
+    my_identity: Option<&crate::oplog::RepoIdentity>,
+    common_of: &mut HashMap<String, Option<PathBuf>>,
+) -> EntryRepo {
+    use crate::oplog::RecordedIdentity;
+    let path = e.worktree.clone().unwrap_or_else(|| e.repo.clone());
+    match (&e.repo_identity, my_identity) {
+        (RecordedIdentity::Invalid, _) => EntryRepo::Unknown(path),
+        (RecordedIdentity::Known(recorded), Some(mine)) => match recorded.same_repository(mine) {
+            crate::oplog::SameRepository::Same => EntryRepo::Mine,
+            crate::oplog::SameRepository::Different => EntryRepo::Other,
+            crate::oplog::SameRepository::Ambiguous => EntryRepo::Unknown(path),
+        },
+        _ => {
+            let common = common_of
+                .entry(path.clone())
+                .or_insert_with_key(|path| {
+                    Repository::open(path)
+                        .ok()
+                        .map(|r| canonical(r.commondir()))
+                })
+                .clone();
+            match common {
+                Some(common) if common == mine => EntryRepo::Mine,
+                Some(_) => EntryRepo::Other,
+                None => EntryRepo::Unknown(path),
+            }
+        }
+    }
+}
+
+/// #888 / #910 review: the entry `id`, looked up in the whole log, exists
+/// and is this repository's — by the same attribution as the loaded tail.
+/// Only then is a target outside the tail "too old" rather than "not ours".
+fn older_and_mine(repo: &Repository, id: u64) -> bool {
+    let Some(entry) = crate::oplog::find_oplog_entry(id) else {
+        return false;
+    };
+    let mine = canonical(repo.commondir());
+    let my_identity = crate::oplog::RepoIdentity::of(repo.workdir().unwrap_or(repo.path()));
+    classify_entry(&entry, &mine, my_identity.as_ref(), &mut HashMap::new()) == EntryRepo::Mine
 }
 
 /// Local branches whose reflog records an update after `after` (unix
@@ -174,10 +197,22 @@ fn plan_oplog_restore(
     // #912 review: a HEAD switch in *this* worktree needs no "where"; one in
     // another worktree names it, so the checkout is not run here by mistake.
     let here = canonical(repo.workdir().unwrap_or(repo.path()));
+    let in_window = entries.iter().any(|e| e.id == entry_id);
     let mut blockers: Vec<PlanNote> = planned
         .blockers
         .into_iter()
         .map(|n| match n {
+            // #888: an id not even in the loaded tail is either older than it
+            // or gone. Only then is the whole log searched, once; the range is
+            // not widened either way. #910 review: the entry found must be
+            // this repository's (the same attribution as the tail) before it
+            // is called too old — another repository's stays "not loaded".
+            OplogRestoreNote::EntryNotLoaded { id } if !in_window && older_and_mine(repo, id) => {
+                OplogRestoreNote::EntryOutsideWindow {
+                    id,
+                    window: ENTRY_SCAN,
+                }
+            }
             OplogRestoreNote::HeadMoved {
                 id,
                 op,

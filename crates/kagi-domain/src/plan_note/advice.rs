@@ -568,6 +568,15 @@ macro_rules! advice_template_en {
     (GithubIssueTitleEmpty) => {
         "The issue title is empty. Write a title or add meaningful text to the body."
     };
+    (GithubIssueCreateFields) => {
+        "The issue is created with labels: {} · assignees: {}."
+    };
+    (GithubIssueUnknownLabels) => {
+        "This repository has no label {}. Nothing was created; pick labels from the repository's list."
+    };
+    (GithubIssueUnassignableUsers) => {
+        "{} cannot be assigned in this repository. Nothing was created; pick assignees from the repository's list."
+    };
     (GithubReviewBodyEmpty) => {
         "GitHub requires a comment on a '{}' review. Write what you want changed before submitting it."
     };

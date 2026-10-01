@@ -598,6 +598,33 @@ The current suite covers:
   `tests/recovery/issue_write_owner.rs`): a recorded Create failure that lands after
   leaving its owner remains in Operation Log without replacing or extending the
   current tab's modal queue, without invoking a GitHub transport;
+- New Issue labels / assignees (`KAGI_GUI_E2E_ONLY=issue_create_fields`,
+  `tests/recovery/issue_create_fields.rs`, #866): the composer's measured
+  `issue-field-open-labels` / `issue-field-open-assignees` (gpui-component
+  `Button`s) open the shared field picker (`FieldTarget::NewIssue`), by click
+  and by keyboard: `keyboard_open` steps the window tab order from the title
+  and sends Enter / Space as key down + key up (GPUI clicks on the up; a bare
+  `simulate_keystrokes` never activates a focused element). Apply only stores
+  the picks. An offline `gh`
+  serves labels from a file the scenario edits, so a label deleted between the
+  pick and the measured `issue-composer-submit` is refused before
+  `gh issue create` runs (Refused oplog entry, toast naming the label, body and
+  picks kept); the retry sends `--label`/`--assignee` and empties the picks;
+  the receipt carries `issue_fields` (Operation Log `labels:` / `assignee:`),
+  a plan-time refusal (body that is only a fence → no title) included.
+  Assignees are picked keyboard-only: Space opens the picker, tab order from
+  the filter box reaches the row Buttons (Space toggles, `aria_selected`) and
+  Apply (Space). `issue-composer-posted-as` and the avatar marker
+  `issue-composer-viewer-<login>` follow the login on the repository's host
+  (`github_host_logins`, read with `gh api user [--hostname]` after an Issues
+  read; `?` until then) — never the window-global `github_login`. Pair
+  with `pr_fields_escape_focus` and `workspace_mode_toolbar` for the PR picker;
+- Field picker ownership (`KAGI_GUI_E2E_ONLY=field_picker_owner`,
+  `tests/recovery/field_picker_owner.rs`, #904 review): a New Issue or PR
+  picker opened in tab A and applied after `switch_repo` to B (which shows
+  the same PR number) is dropped by the switch — `PrFields` is repo-scoped —
+  so neither composer changes and no `pr-edit` is sent. The picker also
+  carries its `owner`; Apply only touches that session;
 - dirty Pull auto-stash success and Pull-failure restoration, including a durable
   Operation Log result without a dismiss-only error modal.
 - reload keeping the open views (`KAGI_GUI_E2E_ONLY=survives_reload`): a commit's diff

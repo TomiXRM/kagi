@@ -43,6 +43,12 @@ pub(crate) const ADVICE_GITHUB_COMMENT_BODY_EMPTY: &str =
     "コメント本文が空です。投稿する文章を入力してください。";
 pub(crate) const ADVICE_GITHUB_ISSUE_TITLE_EMPTY: &str =
     "Issue のタイトルが空です。タイトルか、本文にタイトルとして使える内容を入力してください。";
+pub(crate) const ADVICE_GITHUB_ISSUE_CREATE_FIELDS: &str =
+    "ラベル: {} ・ 担当: {} を付けて Issue を作成します。";
+pub(crate) const ADVICE_GITHUB_ISSUE_UNKNOWN_LABELS: &str =
+    "この repository にはラベル {} がありません。何も作成していません。repository のラベル一覧から選んでください。";
+pub(crate) const ADVICE_GITHUB_ISSUE_UNASSIGNABLE_USERS: &str =
+    "{} はこの repository で担当に設定できません。何も作成していません。repository の一覧から選んでください。";
 pub(crate) const ADVICE_GITHUB_REVIEW_BODY_EMPTY: &str =
     "GitHub は「{}」のレビューにコメントを必須としています。何を変えてほしいかを書いてから提出してください。";
 pub(crate) const ADVICE_GITHUB_FIELD_EDIT_EMPTY: &str =
@@ -114,6 +120,26 @@ pub fn note_ja(note: &GithubNote) -> String {
         }
         GithubNote::CommentBodyEmpty => super::advice_text(Msg::AdviceGithubCommentBodyEmpty, &[]),
         GithubNote::IssueTitleEmpty => super::advice_text(Msg::AdviceGithubIssueTitleEmpty, &[]),
+        GithubNote::IssueCreateFields { labels, assignees } => {
+            let list = |items: &[String]| {
+                if items.is_empty() {
+                    "なし".to_string()
+                } else {
+                    items.join(", ")
+                }
+            };
+            super::advice_text(
+                Msg::AdviceGithubIssueCreateFields,
+                &[&list(labels), &list(assignees)],
+            )
+        }
+        GithubNote::IssueUnknownLabels { names } => {
+            super::advice_text(Msg::AdviceGithubIssueUnknownLabels, &[&names.join(", ")])
+        }
+        GithubNote::IssueUnassignableUsers { names } => super::advice_text(
+            Msg::AdviceGithubIssueUnassignableUsers,
+            &[&names.join(", ")],
+        ),
         GithubNote::ReviewBodyEmpty { verdict } => {
             super::advice_text(Msg::AdviceGithubReviewBodyEmpty, &[verdict])
         }

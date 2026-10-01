@@ -35,6 +35,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- fetch の失敗、PR の comment / review / edit、issue の作成・コメント、worktree の lock / unlock / prune / repair / 削除を含む時点への「この時点まで戻す」が、「記録なし」で拒否されていた問題を修正しました(#885、ADR-0214 §4)。これらの操作も、動かした branch を Operation Log に記録します。fetch や worktree の操作は、実行の前後で branch を読んで実際の移動を記録します。mirror 型の設定で fetch が local branch を動かした場合や、worktree の削除で branch も消した場合は、その移動が記録されます。GitHub 側だけを書き換える操作は「動いた branch なし」と記録します。実行した PR merge は local branch を消すことがあるため、終了が確認できない操作と同様に、これまでどおり記録なしで扱います。(Refs #334)
 - Operation Log の「取り消す / この時点まで戻す」の確認 card と Operation Log の review 指摘を修正しました(#883 / #871 / #878)。
   - 「戻した後のグラフ」が長いと card の下側が切れて見えなかった問題を修正しました。行は card 内でスクロールします。
   - branch Solo 中や、PR head(`refs/kagi/pr/**`)だけが保持する commit があるときに、どの branch からも外れる commit の数を誤って表示していた問題を修正しました。

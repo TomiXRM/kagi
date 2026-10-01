@@ -3,7 +3,8 @@
     uv run --project ci check-all
     uv run --project ci check-all --selftest
     uv run --project ci check-modal-sections
-    uv run --project ci check-loc --write-baseline
+    uv run --project ci check-loc                 # new files over 800 LOC (no baseline)
+    uv run --project ci check-klog --write-baseline
 
 Every command exits 0 on pass and 1 on failure, printing GitHub's `::error::`
 annotations so a red gate points at the offending line in the PR diff.
@@ -11,6 +12,8 @@ annotations so a red gate points at the offending line in the PR diff.
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -19,6 +22,8 @@ from kagi_checks.busy_labels import selftest as busy_label_selftest
 from kagi_checks.rules import (
     ADR_DIR,
     ADR_GRANDFATHERED,
+    LOC_CEILING,
+    LOC_GLOBS,
     MANIFEST_RULES,
     RATCHETS,
     RULES,
@@ -31,6 +36,10 @@ from kagi_checks.rules import (
     adr_selftest,
     adr_stale_allowlist,
     is_excluded,
+    iter_files,
+    loc_count,
+    loc_selftest,
+    read_text,
     ui_lateral_crate_count,
     ui_lateral_hits,
     ui_lateral_manifest_hits,
@@ -304,8 +313,72 @@ def check_klog() -> int:
     return _run_ratchet(_ratchet("klog"), _wants("--write-baseline"))
 
 
+def _git(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, check=False)
+
+
+def _files_added_since_main() -> set[str]:
+    """Repo-relative paths that exist at HEAD and not on the base branch.
+
+    A two-dot diff against `origin/<base>` (not a merge-base) so a shallow CI
+    checkout works: a file added on main after the branch point shows as
+    deleted here, never as added, and `-M` keeps a renamed file out.
+    """
+    base = _loc_base_branch()
+    ref = f"origin/{base}"
+    if _git("rev-parse", "--verify", "-q", ref).returncode != 0:
+        fetched = _git("fetch", "--no-tags", "--depth=1", "origin", f"{base}:refs/remotes/{ref}")
+        if fetched.returncode != 0:
+            raise RuntimeError(f"{ref} is unavailable: {fetched.stderr.strip()}")
+    diff = _git("diff", "--name-only", "--diff-filter=A", "-M", "-z", ref, "HEAD")
+    if diff.returncode != 0:
+        raise RuntimeError(f"git diff against {ref} failed: {diff.stderr.strip()}")
+    return {name for name in diff.stdout.split("\0") if name}
+
+
+def _loc_base_branch() -> str:
+    """The branch "new in this branch" is measured against.
+
+    On a pull request GitHub sets `GITHUB_BASE_REF` to the PR's base (`main`,
+    `develop`, `dev`); a file that already exists on that base is not new
+    there even if `main` lacks it (Codex review on #863). Elsewhere `main`.
+    """
+    return os.environ.get("GITHUB_BASE_REF") or "main"
+
+
 def check_loc() -> int:
-    return _run_ratchet(_ratchet("loc"), _wants("--write-baseline"))
+    """A file that is new in this branch stays under the LOC ceiling.
+
+    Existing files over the ceiling are listed as notices (split them by
+    issue, not by ratchet). On main itself nothing is new, so the gate is
+    always green there; the growth check happens on the pull request.
+    """
+    added = _files_added_since_main()
+    new_over: list[tuple[str, int]] = []
+    old_over: list[tuple[str, int]] = []
+    for rel in iter_files(list(LOC_GLOBS)):
+        count = loc_count(read_text(rel))
+        if not count:
+            continue
+        (new_over if rel.as_posix() in added else old_over).append((rel.as_posix(), count))
+    for name, count in sorted(old_over):
+        print(
+            f"::notice::{name} has {count} LOC (> {LOC_CEILING}); "
+            "split it on a feature boundary when touched."
+        )
+    for name, count in sorted(new_over):
+        print(f"::error::{name} is new in this branch and has {count} LOC (> {LOC_CEILING}).")
+    if new_over:
+        print(
+            f"::error::A new file must stay under {LOC_CEILING} LOC — "
+            "split it on a feature boundary."
+        )
+        return 1
+    print(
+        f"OK: loc — no new file over {LOC_CEILING} LOC "
+        f"({len(old_over)} existing file(s) over it, listed above)."
+    )
+    return 0
 
 
 # ── Everything ──────────────────────────────────────────────────────────────
@@ -381,10 +454,13 @@ def selftest() -> int:
     for issue in ui_lateral_selftest():
         print(f"::error::ui-lateral selftest: {issue}")
         failed = True
+    for issue in loc_selftest():
+        print(f"::error::loc selftest: {issue}")
+        failed = True
     if failed:
         return 1
     print(
-        f"OK: {len(RULES) + len(MANIFEST_RULES) + 4} gates match their samples; "
+        f"OK: {len(RULES) + len(MANIFEST_RULES) + 5} gates match their samples; "
         f"{len(RATCHETS)} ratchet counters match their expected counts."
     )
     return 0
@@ -402,6 +478,7 @@ def check_all() -> int:
     status |= check_busy_labels()
     status |= check_ui_lateral()
     status |= check_adr_unique_number()
+    status |= check_loc()
     for ratchet in RATCHETS:
         status |= _run_ratchet(ratchet, False)
     return status

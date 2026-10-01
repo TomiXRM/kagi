@@ -225,6 +225,25 @@ impl KagiApp {
         cx.notify();
     }
 
+    /// Drop the New Issue editor the way a fresh session starts without one:
+    /// the next Issues read prepares it again and loads the saved draft
+    /// through the production path (#903).
+    pub fn forget_issue_composer_for_e2e(&mut self, cx: &mut Context<Self>) {
+        if let Some(ui) = self.ui_mut() {
+            ui.issue_composer.editors.remove(&None);
+        }
+        cx.notify();
+    }
+
+    /// Whether the New Issue editor has finished loading its saved draft.
+    pub fn issue_composer_loaded_for_e2e(&self) -> bool {
+        self.ui()
+            .issue_composer
+            .editors
+            .get(&None)
+            .is_some_and(|editor| editor.loaded)
+    }
+
     pub fn issue_composer_snapshot_for_e2e(&self) -> (IssueDraft, bool) {
         let editor = self
             .ui()

@@ -292,13 +292,27 @@ impl KagiApp {
                     };
                     editor.loading = false;
                     editor.loaded = true;
-                    if editor.draft.revision == revision
-                        && editor.storage_version == storage_version
-                    {
-                        if let Some((title, body)) = draft {
-                            editor.draft.update(title, body);
+                    let untouched = editor.draft.revision == revision
+                        && editor.storage_version == storage_version;
+                    if untouched {
+                        if let Some(draft) = draft {
+                            editor.draft.update(draft.title, draft.body);
+                            editor.fields = draft.fields;
                             editor.sync_inputs = true;
                         }
+                        cx.notify();
+                        return;
+                    }
+                    // Text typed while the draft loaded wins, and was held
+                    // back from saving until now (#913 review): the saved
+                    // picks join it — nothing could pick before the load —
+                    // and the two are saved together, so neither is lost.
+                    if let Some(draft) = draft.filter(|_| !editor.draft.is_empty()) {
+                        editor.fields = draft.fields;
+                    }
+                    let repo = editor.repo.clone();
+                    if let Some(repo) = repo {
+                        app.save_issue_draft_for(owner, repo, number, cx);
                     }
                     cx.notify();
                 });
@@ -328,6 +342,7 @@ impl KagiApp {
             number,
             &editor.draft.title,
             &editor.draft.body,
+            &editor.fields,
         );
         editor.storage_version = storage_version;
         self.schedule_issue_draft_flush(owner, repo, number, revision, storage_version, cx);

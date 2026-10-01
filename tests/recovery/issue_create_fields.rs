@@ -299,6 +299,39 @@ pub fn scenario_issue_create_fields(cx: &mut VisualTestAppContext) {
         (vec!["bug".into(), "gone".into()], vec!["hubot".into()]),
         "Apply stores the picks in the composer"
     );
+    // #903: the picks are saved with the draft, so a restart restores them.
+    assert_eq!(
+        kagi_git::drafts::load_issue_draft(&repo, None).map(|draft| draft.fields),
+        Some(kagi_domain::github::IssueCreateFields {
+            labels: vec!["bug".into(), "gone".into()],
+            assignees: vec!["hubot".into()],
+        }),
+        "Apply saves the picks with the draft"
+    );
+    // …and a composer that starts again loads them back with the text.
+    app.update(cx, |app, cx| {
+        app.forget_issue_composer_for_e2e(cx);
+        app.refresh_github_issues(cx);
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !cx.read(|cx| app.read(cx).issue_composer_loaded_for_e2e()) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the draft never loaded"
+        );
+        cx.run_until_parked();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    paint(cx, window);
+    assert_eq!(
+        fields(&app, cx),
+        (vec!["bug".into(), "gone".into()], vec!["hubot".into()]),
+        "the reloaded composer has the saved picks"
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e().0.body),
+        BODY
+    );
     assert!(
         issue_creates(&repo).is_empty(),
         "picking is not a write; nothing reaches the oplog before Create"
@@ -423,6 +456,89 @@ pub fn scenario_issue_create_fields(cx: &mut VisualTestAppContext) {
         fields(&app, cx),
         (Vec::new(), Vec::new()),
         "a created issue leaves an empty composer"
+    );
+    assert!(
+        kagi_git::drafts::load_issue_draft(&repo, None).is_none(),
+        "a created issue clears its draft, picks included"
+    );
+
+    // #913 review: text typed while the saved draft is still loading keeps
+    // the saved picks. Save a draft with a pick, then start a composer again
+    // and type before the load lands (the load applies on a later poll).
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.replace_issue_body_for_e2e(BODY, window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    pick(
+        cx,
+        window,
+        &app,
+        "issue-field-open-labels",
+        PrField::Labels,
+        &["bug"],
+    );
+    app.update(cx, |app, cx| {
+        app.forget_issue_composer_for_e2e(cx);
+        app.refresh_github_issues(cx);
+    });
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            assert!(
+                !app.issue_composer_loaded_for_e2e(),
+                "typed before the load"
+            );
+            app.insert_issue_body_for_e2e("typed while loading\n", window, cx)
+        });
+    })
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !cx.read(|cx| app.read(cx).issue_composer_loaded_for_e2e()) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the draft never loaded"
+        );
+        cx.run_until_parked();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert_eq!(
+        cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e().0.body),
+        "typed while loading\n",
+        "the typed text wins"
+    );
+    assert_eq!(
+        fields(&app, cx),
+        (vec!["bug".into()], Vec::new()),
+        "the saved picks survive an edit made during the load"
+    );
+    assert_eq!(
+        kagi_git::drafts::load_issue_draft(&repo, None)
+            .map(|draft| (draft.body, draft.fields.labels)),
+        Some(("typed while loading\n".to_string(), vec!["bug".to_string()])),
+        "both are saved together"
+    );
+
+    // #913 review: emptying the composer drops its picks in memory too, so
+    // the next issue typed into it does not inherit them.
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.replace_issue_body_for_e2e("", window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(fields(&app, cx), (Vec::new(), Vec::new()));
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.replace_issue_body_for_e2e("the next issue\n", window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        fields(&app, cx),
+        (Vec::new(), Vec::new()),
+        "the next issue starts without the old picks"
     );
 
     drop(gh);

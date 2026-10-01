@@ -14,11 +14,15 @@
 //! - Outer [`Draft`] record: JSON encoded/decoded with serde, retaining the
 //!   existing field names and defaults for missing optional fields.
 //! - Issue draft `message`: a `serde_json` string tuple `[title, body]` inside
-//!   that outer record. Commit-message draft payloads remain plain strings.
+//!   that outer record, or `[title, body, labels, assignees]` once a New Issue
+//!   has labels or assignees picked (#903). Commit-message draft payloads
+//!   remain plain strings.
 //!
 //! Reads are deliberately lenient: a missing or corrupt file is treated as "no
 //! draft" so a broken file can never block a commit. Saving an empty (trimmed)
-//! message deletes the file instead of leaving an empty draft behind.
+//! message deletes the file instead of leaving an empty draft behind. An Issue
+//! draft file that does not parse is never replaced or deleted: the next save
+//! moves it aside to `<file>.corrupt[.N]` first (#903).
 //!
 //! # Public API
 //!
@@ -28,7 +32,8 @@
 //! - [`clear_draft`] — delete the draft for a branch (e.g. after a commit)
 //! - [`queue_issue_draft`] / [`flush_issue_draft_if_version`] — keyed Issue autosave
 //! - [`flush_issue_drafts`] — best-effort flush of every pending Issue draft
-//! - [`load_issue_draft`] — read the latest pending or saved Issue draft
+//! - [`load_issue_draft`] — read the latest pending or saved Issue draft as an
+//!   [`IssueDraftRecord`] (text plus a New Issue's picked labels / assignees)
 //! - [`issue_draft_version`] / [`clear_issue_draft_if_version`] — completion guards
 
 use std::collections::BTreeMap;
@@ -36,7 +41,26 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use kagi_domain::github::IssueCreateFields;
+
 use super::GitError;
+
+/// One Issue draft: the composer's text, plus the labels and assignees picked
+/// for a New Issue (#903; always empty for a Reply).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IssueDraftRecord {
+    pub title: String,
+    pub body: String,
+    pub fields: IssueCreateFields,
+}
+
+impl IssueDraftRecord {
+    /// Picks without text are not a draft: the composer collapses and offers
+    /// no Create without text, so they would be restored out of sight.
+    fn is_empty(&self) -> bool {
+        self.title.trim().is_empty() && self.body.trim().is_empty()
+    }
+}
 
 // ────────────────────────────────────────────────────────────
 // Public types
@@ -211,7 +235,7 @@ impl IssueDraftKey {
 
 #[derive(Default)]
 struct IssueDraftQueue {
-    pending: BTreeMap<IssueDraftKey, (String, String)>,
+    pending: BTreeMap<IssueDraftKey, IssueDraftRecord>,
     // Retain versions after flush and clear for process-lifetime completion
     // guards, including when the tab that dispatched a write has closed.
     versions: BTreeMap<IssueDraftKey, u64>,
@@ -237,20 +261,32 @@ fn issue_drafts() -> &'static Mutex<IssueDraftQueue> {
 /// Replace the latest pending Issue draft in memory, without filesystem I/O.
 ///
 /// `None` is the new-Issue Composer; `Some(number)` is that Issue's Reply.
-/// Queue two empty strings to clear. The caller schedules a background flush
-/// through [`flush_issue_draft_if_version`] after its debounce; application
-/// shutdown calls [`flush_issue_drafts`] for anything still pending.
-/// Returns the new token to capture when dispatching an Issue write.
-pub fn queue_issue_draft(repo: &Path, number: Option<u64>, title: &str, body: &str) -> u64 {
+/// Queue empty text to clear; picks without text are cleared with it. The
+/// caller schedules a background flush through [`flush_issue_draft_if_version`]
+/// after its debounce; application shutdown calls [`flush_issue_drafts`] for
+/// anything still pending. Returns the new token to capture when dispatching
+/// an Issue write.
+pub fn queue_issue_draft(
+    repo: &Path,
+    number: Option<u64>,
+    title: &str,
+    body: &str,
+    fields: &IssueCreateFields,
+) -> u64 {
     let key = IssueDraftKey::new(repo, number);
     let mut queue = issue_drafts()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let version = queue.advance(&key);
-    let value = if title.trim().is_empty() && body.trim().is_empty() {
-        (String::new(), String::new())
+    let record = IssueDraftRecord {
+        title: title.to_owned(),
+        body: body.to_owned(),
+        fields: fields.clone(),
+    };
+    let value = if record.is_empty() {
+        IssueDraftRecord::default()
     } else {
-        (title.to_owned(), body.to_owned())
+        record
     };
     queue.pending.insert(key, value);
     version
@@ -286,7 +322,7 @@ pub fn clear_issue_draft_if_version(repo: &Path, number: Option<u64>, version: u
         return false;
     };
     queue.advance(&key);
-    queue.pending.insert(key, (String::new(), String::new()));
+    queue.pending.insert(key, IssueDraftRecord::default());
     true
 }
 
@@ -313,28 +349,129 @@ pub fn flush_issue_draft_if_version(
     let Some(key) = key else {
         return Ok(false);
     };
-    let Some((title, body)) = queue.pending.get(&key) else {
+    let Some(record) = queue.pending.get(&key) else {
         return Ok(false);
     };
-    persist_issue_draft(&key, title, body)?;
+    persist_issue_draft(&key, record)?;
     queue.pending.remove(&key);
     Ok(true)
 }
 
-fn persist_issue_draft(key: &IssueDraftKey, title: &str, body: &str) -> Result<(), GitError> {
+fn persist_issue_draft(key: &IssueDraftKey, record: &IssueDraftRecord) -> Result<(), GitError> {
     let Some(path) = key.path.as_deref() else {
         return Err(GitError::Other(
             "draft: could not determine drafts dir (no HOME or KAGI_LOG_DIR)".into(),
         ));
     };
-    let message = if title.is_empty() && body.is_empty() {
+    set_aside_unreadable_issue_draft(path)?;
+    let message = if record.is_empty() {
         String::new()
-    } else {
+    } else if record.fields.is_empty() {
         // A string tuple serializes without a fallible custom serializer. The
-        // outer ADR-0042 record stays unchanged.
-        serde_json::json!([title, body]).to_string()
+        // outer ADR-0042 record stays unchanged, and so does this payload
+        // when nothing is picked: older builds keep reading it.
+        serde_json::json!([record.title, record.body]).to_string()
+    } else {
+        serde_json::json!([
+            record.title,
+            record.body,
+            record.fields.labels,
+            record.fields.assignees
+        ])
+        .to_string()
     };
     save_draft_at(path, &key.repo, &key.branch, &message, "issue-composer")
+}
+
+/// Decode an Issue draft payload: `[title, body]`, or `[title, body, labels,
+/// assignees]`. Anything else is not an Issue draft.
+fn parse_issue_message(message: &str) -> Option<IssueDraftRecord> {
+    let serde_json::Value::Array(items) = serde_json::from_str(message).ok()? else {
+        return None;
+    };
+    let text = |ix: usize| items.get(ix)?.as_str().map(str::to_owned);
+    let list = |ix: usize| -> Option<Vec<String>> {
+        items
+            .get(ix)?
+            .as_array()?
+            .iter()
+            .map(|item| item.as_str().map(str::to_owned))
+            .collect()
+    };
+    let fields = match items.len() {
+        2 => IssueCreateFields::default(),
+        4 => IssueCreateFields {
+            labels: list(2)?,
+            assignees: list(3)?,
+        },
+        _ => return None,
+    };
+    Some(IssueDraftRecord {
+        title: text(0)?,
+        body: text(1)?,
+        fields,
+    })
+}
+
+/// Move a file at an Issue draft key that is not a readable Issue draft — a
+/// torn write, a hand edit, a format this build does not know — to
+/// `<file>.corrupt` (or `.corrupt.N`), so neither a save nor a clear destroys
+/// it (#903). The aside name is reserved with `create_new`, so an earlier
+/// aside copy is never overwritten either.
+fn set_aside_unreadable_issue_draft(path: &Path) -> Result<(), GitError> {
+    let content = match std::fs::read(path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            return Err(GitError::Other(format!(
+                "draft: read {} before replacing it: {e}",
+                path.display()
+            )))
+        }
+    };
+    let readable = std::str::from_utf8(&content)
+        .ok()
+        .and_then(parse_draft_json)
+        .filter(|draft| draft.mode == "issue-composer")
+        .and_then(|draft| parse_issue_message(&draft.message))
+        .is_some();
+    if readable {
+        return Ok(());
+    }
+    let name = path
+        .file_name()
+        .ok_or_else(|| GitError::Other(format!("draft: {} has no name", path.display())))?
+        .to_string_lossy()
+        .into_owned();
+    for n in 0u32.. {
+        let aside = path.with_file_name(if n == 0 {
+            format!("{name}.corrupt")
+        } else {
+            format!("{name}.corrupt.{n}")
+        });
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&aside)
+        {
+            Ok(_) => {
+                return std::fs::rename(path, &aside).map_err(|e| {
+                    GitError::Other(format!(
+                        "draft: move unreadable {} aside: {e}",
+                        path.display()
+                    ))
+                })
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                return Err(GitError::Other(format!(
+                    "draft: reserve {}: {e}",
+                    aside.display()
+                )))
+            }
+        }
+    }
+    unreachable!("u32 aside names exhausted")
 }
 
 /// Persist all pending Issue drafts using the existing atomic draft boundary.
@@ -347,8 +484,8 @@ pub fn flush_issue_drafts() -> Result<(), GitError> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut first_error = None;
-    queue.pending.retain(|key, (title, body)| {
-        let result = persist_issue_draft(key, title, body);
+    queue.pending.retain(|key, record| {
+        let result = persist_issue_draft(key, record);
         match result {
             Ok(()) => false,
             Err(error) => {
@@ -364,29 +501,21 @@ pub fn flush_issue_drafts() -> Result<(), GitError> {
 
 /// Load the most recent Issue draft, including an update not yet flushed.
 /// A pending clear takes precedence over an older file. Missing/corrupt or
-/// unrelated-mode files follow the existing lenient load contract.
-pub fn load_issue_draft(repo: &Path, number: Option<u64>) -> Option<(String, String)> {
+/// unrelated-mode files follow the existing lenient load contract; a file
+/// written before #903 (`[title, body]`) loads with no picks.
+pub fn load_issue_draft(repo: &Path, number: Option<u64>) -> Option<IssueDraftRecord> {
     let key = IssueDraftKey::new(repo, number);
     let queue = issue_drafts()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some((title, body)) = queue.pending.get(&key) {
-        return if title.is_empty() && body.is_empty() {
-            None
-        } else {
-            Some((title.clone(), body.clone()))
-        };
+    if let Some(record) = queue.pending.get(&key) {
+        return (!record.is_empty()).then(|| record.clone());
     }
     let draft = load_draft_at(key.path.as_deref()?)?;
     if draft.mode != "issue-composer" {
         return None;
     }
-    let (title, body): (String, String) = serde_json::from_str(&draft.message).ok()?;
-    if title.trim().is_empty() && body.trim().is_empty() {
-        None
-    } else {
-        Some((title, body))
-    }
+    parse_issue_message(&draft.message).filter(|record| !record.is_empty())
 }
 
 // ────────────────────────────────────────────────────────────

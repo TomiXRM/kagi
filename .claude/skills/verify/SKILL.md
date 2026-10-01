@@ -614,7 +614,11 @@ The current suite covers:
   a plan-time refusal (body that is only a fence → no title) included.
   Assignees are picked keyboard-only: Space opens the picker, tab order from
   the filter box reaches the row Buttons (Space toggles, `aria_selected`) and
-  Apply (Space). `issue-composer-posted-as` and the avatar marker
+  Apply (Space). Apply saves the picks with the draft, and a composer dropped
+  with `forget_issue_composer_for_e2e` reloads text and picks through the
+  production load (#903; file format and the `.corrupt` set-aside are pinned
+  by `crates/kagi-git/tests/drafts_test.rs`).
+  `issue-composer-posted-as` and the avatar marker
   `issue-composer-viewer-<login>` follow the login on the repository's host
   (`github_host_logins`, read with `gh api user [--hostname]` after an Issues
   read; `?` until then) — never the window-global `github_login`. Pair

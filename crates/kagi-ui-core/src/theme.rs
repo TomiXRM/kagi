@@ -298,6 +298,17 @@ pub fn lane_color_u32(i: usize) -> u32 {
     (q(c.r) << 16) | (q(c.g) << 8) | q(c.b)
 }
 
+/// The built-in themes ordered by name (case-insensitive), for every list a
+/// user picks from. The key is the theme's own `name`, not the localized
+/// display name: a Settings list built in one language stays in order after
+/// switching to the other (#921 review). [`THEMES`] keeps its own order:
+/// index 0 is the default theme.
+pub fn themes_by_name() -> Vec<&'static Theme> {
+    let mut themes: Vec<&'static Theme> = THEMES.iter().collect();
+    themes.sort_by_key(|t| t.name.to_lowercase());
+    themes
+}
+
 /// Index of the active theme (for the menu "✓" marker).
 #[inline]
 pub fn active_index() -> usize {
@@ -1525,5 +1536,24 @@ mod accent_text_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod themes_by_name_tests {
+    use super::{themes_by_name, THEMES};
+
+    #[test]
+    fn every_theme_once_in_name_order() {
+        let sorted = themes_by_name();
+        assert_eq!(sorted.len(), THEMES.len());
+        let names: Vec<String> = sorted.iter().map(|t| t.name.to_lowercase()).collect();
+        let mut expected = names.clone();
+        expected.sort();
+        assert_eq!(names, expected);
+        assert_eq!(
+            THEMES[0].slug, "catppuccin",
+            "the default stays first in THEMES"
+        );
     }
 }

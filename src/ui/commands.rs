@@ -1039,7 +1039,7 @@ fn theme_submenu() -> Menu {
     // the six commands and `continue`d the rest, so the macOS menu offered four
     // themes, the Linux menu six, and Settings all eleven.
     let mut items: Vec<MenuItem> = Vec::with_capacity(THEME_COMMAND_IDS.len());
-    for id in THEME_COMMAND_IDS {
+    for id in theme_command_ids_by_name() {
         let Some(slug) = theme_slug_for_command(id) else {
             continue;
         };
@@ -1053,7 +1053,7 @@ fn theme_submenu() -> Menu {
         };
         let label = SharedString::from(format!("{marker}{}", t.display_name()));
         // Each theme has a distinct action so dispatch is 1:1.
-        let item = match *id {
+        let item = match id {
             "theme.catppuccin" => MenuItem::action(label, ThemeCatppuccin),
             "theme.xcodeDark" => MenuItem::action(label, ThemeXcodeDark),
             "theme.xcodeLight" => MenuItem::action(label, ThemeXcodeLight),
@@ -1070,6 +1070,19 @@ fn theme_submenu() -> Menu {
         items,
         disabled: false,
     }
+}
+
+/// [`THEME_COMMAND_IDS`] in the order of their themes' display names, for the
+/// macOS Theme menu and the Linux dropdown — the same order Settings uses.
+pub fn theme_command_ids_by_name() -> Vec<&'static str> {
+    let mut ids: Vec<&'static str> = THEME_COMMAND_IDS.to_vec();
+    ids.sort_by_key(|id| {
+        theme_slug_for_command(id)
+            .and_then(|slug| theme::THEMES.iter().find(|t| t.slug == slug))
+            .map(|t| t.name.to_lowercase())
+            .unwrap_or_default()
+    });
+    ids
 }
 
 /// Build the View → Language submenu (W22-I18N / ADR-0048).
@@ -2365,5 +2378,32 @@ mod keybinding_tests {
         assert_eq!(effective_keystroke("no.such.command"), None);
 
         std::env::remove_var("KAGI_LOG_DIR");
+    }
+}
+
+#[cfg(test)]
+mod theme_menu_order_tests {
+    use super::{theme_command_ids_by_name, theme_slug_for_command, THEME_COMMAND_IDS};
+    use crate::ui::theme;
+
+    #[test]
+    fn the_theme_menu_lists_every_command_in_name_order() {
+        let ids = theme_command_ids_by_name();
+        assert_eq!(ids.len(), THEME_COMMAND_IDS.len());
+        let names: Vec<String> = ids
+            .iter()
+            .map(|id| {
+                let slug = theme_slug_for_command(id).expect("theme command");
+                theme::THEMES
+                    .iter()
+                    .find(|t| t.slug == slug)
+                    .expect("registered theme")
+                    .name
+                    .to_lowercase()
+            })
+            .collect();
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted);
     }
 }

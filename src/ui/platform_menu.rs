@@ -135,7 +135,7 @@ impl KagiApp {
                 // is applied by `platform_menu_label`) — preserving the previous
                 // View-menu behaviour on Linux.
                 commands::MenuNode::Submenu(commands::DynSubmenu::Theme) => {
-                    for id in commands::THEME_COMMAND_IDS {
+                    for id in commands::theme_command_ids_by_name() {
                         panel = panel.child(command_row(self, cx, row_ix, id));
                         row_ix += 1;
                     }

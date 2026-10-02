@@ -92,8 +92,8 @@ impl SelectItem for ThemeOption {
 
 /// All registered themes as `Select` options.
 pub fn theme_options() -> Vec<ThemeOption> {
-    theme::THEMES
-        .iter()
+    theme::themes_by_name()
+        .into_iter()
         .map(|t| ThemeOption {
             slug: t.slug,
             name: t.display_name(),
@@ -104,7 +104,7 @@ pub fn theme_options() -> Vec<ThemeOption> {
 /// `IndexPath` of the active theme within [`theme_options`] (defaults to row 0).
 pub fn current_theme_index() -> IndexPath {
     let cur = theme().slug;
-    let row = theme::THEMES
+    let row = theme::themes_by_name()
         .iter()
         .position(|t| t.slug == cur)
         .unwrap_or(0);

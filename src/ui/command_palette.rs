@@ -157,7 +157,7 @@ pub fn build_rows(
     // commands, then themes, then languages.
     let mut idx = COMMANDS.len();
     let theme_prefix = i18n::Msg::SettingsTheme.t();
-    for t in theme::THEMES {
+    for t in theme::themes_by_name() {
         let label = format!("{theme_prefix}: {}", t.display_name());
         if let Some(score) = fuzzy_match(query, &label) {
             scored.push((

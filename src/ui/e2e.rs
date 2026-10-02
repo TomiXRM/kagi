@@ -57,6 +57,15 @@ pub(crate) fn record_control_bounds(
 ) {
     CONTROL_BOUNDS.with(|map| map.borrow_mut().insert((id, name.to_string()), bounds));
 }
+/// Wheel events that reached the workspace root (the panes behind overlays).
+static WORKSPACE_SCROLLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub(crate) fn note_workspace_scroll() {
+    WORKSPACE_SCROLLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+#[cfg(feature = "gui-e2e")]
+pub fn workspace_scrolls() -> usize {
+    WORKSPACE_SCROLLS.load(std::sync::atomic::Ordering::Relaxed)
+}
 #[cfg(feature = "gui-e2e")]
 pub fn control_bounds(id: gpui::WindowId, name: &str) -> Option<gpui::Bounds<gpui::Pixels>> {
     CONTROL_BOUNDS.with(|map| map.borrow().get(&(id, name.to_string())).copied())

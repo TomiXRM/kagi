@@ -122,16 +122,10 @@ impl KagiApp {
                     // scaled) region bounds in screen px — use as-is.
                     (geom_top, geom_bottom)
                 } else {
-                    // Transient fallback before first paint: the layout
-                    // chrome is rendered scaled, so scale the constant
-                    // offsets into screen space too.
+                    // The inspector now extends beside the center-only
+                    // bottom panel; only the window-wide status bar is below.
                     let viewport_h = f32::from(window.viewport_size().height);
-                    let bottom_taken = if self.bottom_panel_open {
-                        STATUS_BAR_H + self.bottom_panel_height + BOTTOM_PANEL_DIVIDER_H
-                    } else {
-                        STATUS_BAR_H
-                    };
-                    (INSPECTOR_TOP_OFFSET * z, viewport_h - bottom_taken * z)
+                    (INSPECTOR_TOP_OFFSET * z, viewport_h - STATUS_BAR_H * z)
                 };
                 // The divider itself occupies INSPECTOR_SPLIT_DIVIDER_H of
                 // the region; the flex split applies to the remainder. The

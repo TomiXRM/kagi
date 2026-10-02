@@ -1,7 +1,6 @@
-//! Bottom-panel slot (Operation Log / Terminal / Activity tabs) split out of
-//! `render.rs` (T-SPLIT-RENDER-001 / ADR-0116 Wave 3). Child module of
-//! `crate::ui`, so it keeps direct access to `KagiApp`'s private state.
-//! Behaviour is unchanged — a pure physical move.
+//! Bottom-panel renderer (Operation Log / Terminal / Activity tabs) split out
+//! of `render.rs` (T-SPLIT-RENDER-001 / ADR-0116 Wave 3). `render_body` places
+//! the panel below the center pane, beside the full-height sidebar and inspector.
 
 use super::*;
 
@@ -149,6 +148,7 @@ impl KagiApp {
         Some(
             div()
                 .id("bottom-panel")
+                .relative()
                 .flex()
                 .flex_col()
                 .w_full()
@@ -156,7 +156,10 @@ impl KagiApp {
                 .flex_shrink_0()
                 .child(h_divider)
                 .child(tab_bar)
-                .child(body),
+                .child(body)
+                .when(cfg!(feature = "gui-e2e"), |panel| {
+                    panel.child(e2e::measure_inside("bottom-panel"))
+                }),
         )
     }
 

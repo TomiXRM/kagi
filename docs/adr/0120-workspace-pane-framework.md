@@ -30,6 +30,10 @@
 | left | Navigator / 非表示 | `sidebar.visible` |
 | bottom | OperationLog / Terminal / Activity | `bottom_panel_open` + `BottomTab` |
 
+2026-10-02 追記（ADR-0007 の配置変更）: bottom の内容と `BottomTab` はそのまま、
+物理的な配置だけを center の下に移した。left / right は bottom の横で body の
+全高を使い、Status Bar は引き続き全幅。`resolve_workspace` の優先順位は変えない。
+
 新しいペイン内容の追加は「render_body の正しい分岐位置を考古学で探す」作業であり、
 takeover 系は early-return、right 系は else-if、と追加パターンもバラバラだった。
 一方で、ペイン内容を自己描画する仕組み自体は ADR-0117/0118/0119 の

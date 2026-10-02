@@ -297,8 +297,16 @@ The current suite covers:
   `remote_browse_modal_routing,conflict_abort_escape_focus` for the earlier
   routing contracts. This follow-up uses Tier A; it does not claim Tier B or
   live SSH/GitHub coverage.
-- bottom-panel toggle, graph copy, oplog expand/copy, snapshot creation, theme
-  switching, agent provenance, and WIP-to-HEAD connectors;
+- bottom-panel placement and toggle (`KAGI_GUI_E2E_ONLY=bottom_panel`,
+  `tests/gui_e2e_runner.rs`): the painted Terminal/Operation Log/Activity
+  container occupies only the center workspace width, aligned with the commit
+  list and stopping before the inspector; sidebar and inspector extend beside
+  it to the window-wide status bar. Cmd-J hides it, the action restores it,
+  and dragging its top edge changes its height without changing that alignment.
+  Tier B: photograph the real window with a selected commit (visible right
+  inspector), sidebar, and terminal panel to confirm actual pixels.
+  Graph copy, oplog expand/copy, snapshot creation, theme switching,
+  agent provenance, and WIP-to-HEAD connectors retain their existing scenarios;
 - WIP virtual commit anchors (`KAGI_GUI_E2E_ONLY=commit_row_layout_wip`,
   `tests/recovery/wip_layout.rs`, under the layout suite): actual canvas paints
   must show hollow nodes directly above their own HEADs (columns may repeat),

@@ -494,10 +494,8 @@ impl Render for KagiApp {
         // are read directly from `self` inside `render_commit_panel` (now a `&self`
         // method), so they no longer need to be hoisted/threaded through render_body.
 
-        // T-BP-002: bottom panel state.
+        // The footer keeps its window-wide bottom-panel toggle.
         let bottom_panel_open = self.bottom_panel_open;
-        let bottom_panel_height = self.bottom_panel_height;
-        let bottom_tab = self.bottom_tab;
 
         // T-BP-002: cmd-j toggle action handler.
         let toggle_bottom_panel = cx.listener(|this, _: &ToggleBottomPanel, _window, cx| {
@@ -684,18 +682,6 @@ impl Render for KagiApp {
                     commit_panel_open,
                     commit_panel.clone(),
                     wip_diffstat,
-                    cx,
-                ))
-            })
-            // ── Bottom panel slot (T-BP-002) ─────────────────
-            // Hidden on the conflict-resolution screen (user request): the
-            // 3-pane editor + dashboard own the whole body there. The terminal
-            // returns once the conflict is resolved / the commit panel shows.
-            .when(conflict_entity.is_none() || conflict_merge_pending, |el| {
-                el.children(self.render_bottom_panel_slot(
-                    bottom_panel_open,
-                    bottom_panel_height,
-                    bottom_tab,
                     cx,
                 ))
             })

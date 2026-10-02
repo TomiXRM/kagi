@@ -46,33 +46,75 @@ A control is modern when, for its role:
 5. **It works from the keyboard and for assistive tech** — reachable, focus
    visible, role/name/state exposed — and keeps Kagi's safety contracts.
 
-## The procedure (every UI change)
+## When the procedure applies
+
+| Change | What is required |
+|---|---|
+| **Visual or structural** — a new screen, control or layout; a change to size, spacing, colour role or hierarchy | The whole procedure below, and the PR block. |
+| **State of an existing part** — a new disabled/loading/error state, a keyboard path, an AX name | Steps 3–6 for that part only; the reference may be omitted. |
+| **Wording only**, or no visible change | Nothing from this file. |
+
+## The procedure
 
 1. **Name the role and the density.** Which role from the table below? Is the
    surface dense (sidebar, graph, file lists, modal targets) or open (Home,
    Settings, empty states)? Density is decided per surface, never loosened
    globally.
-2. **Pick a reference.** One concrete screen from a product (GitHub, Linear,
+2. **Pick one reference state.** One screen of one product (GitHub, Linear,
    Raycast, ChatGPT, macOS, Zeron…) for the same role, with what to take and
-   what *not* to take. Put it in the issue.
-3. **Look for the part before building it.** In this order: an existing Kagi
-   helper (`KagiButton`, `modal_shell`, `list_a11y`, `menu_overlay`,
-   `sidebar_*`, `button_style`); a gpui-component part in the pinned
-   source and its story (`crates/story`, run it — research §pinned story);
-   only then a hand-made control. A hand-made interactive control states in
-   the PR why the part did not fit (focus, safety, virtualisation, density).
-4. **Write the state contract** before code: keyboard path and focus-visible,
-   AX role/name/state, disabled reason, loading/empty/error, and any Kagi
-   safety contract the control touches (plan → confirm, one modal slot,
-   oplog-owned errors, Esc/Enter routing).
-5. **Build to the role target**, using the theme roles and `scaled_px` /
-   rem so zoom (0.7–1.5) scales it.
-6. **Compare, then merge.** Tier B: screenshot *before*, *reference* and
-   *after* of the same screen under the matrix that applies (light + dark,
-   EN + JA, zoom 1.0 and 1.25 or 1.5, a narrow width, long text, many rows).
-   In the PR, list what changed and why the remaining differences from the
-   reference are deliberate. Tier A asserts the state contract and geometry
-   (bounds inside the window, `header_fit`-style).
+   what *not* to take. The reference is that product's screen as it is; it is
+   not re-rendered under Kagi's themes or zoom.
+3. **Look for the part before building it**, in this order:
+   1. an existing Kagi helper and its call sites (`KagiButton`,
+      `button_style`, `modal_shell`, `list_a11y`, `menu_overlay`,
+      `sidebar_*`, `toast_stack`);
+   2. the pinned gpui-component source (`Cargo.lock` rev, `crates/ui/src`);
+   3. if that part has a story, run it from a checkout of the same rev
+      (`cargo +stable build --locked -p gpui-component-story`, see
+      [research §pinned story](research-gpui-component.md#pinned-story-の実画面native-macos)) —
+      it shows the upstream Default Light look, not Kagi's;
+   4. then look at the result inside Kagi.
+   A hand-made interactive control says in the PR why the part did not fit
+   (focus, safety, virtualisation, density).
+4. **Write the state contract** before code: for each state, *required* or
+   *not applicable* with a reason. States: rest, hover, pressed,
+   focus-visible, disabled (and how its reason reaches mouse, keyboard and
+   AX), selected, loading, empty, error; plus every Kagi safety contract the
+   control touches (plan → confirm, one modal slot, oplog-owned errors,
+   Esc/Enter routing, IME).
+5. **Build to the role target**, using theme roles and `scaled_px` / rem so
+   zoom (0.7–1.5) scales it. State which owner a value belongs to:
+   `sync_gpui_component_theme` (shared — `Theme.radius` changes every
+   component that reads it), a Kagi token, or a component's fixed value.
+6. **Verify, then compare.**
+   - **Tier A** (scoped with `KAGI_GUI_E2E_ONLY`): deterministic states and
+     geometry — which state shows, bounds inside the window
+     (`header_fit`-style), row counts. Tier A does not prove focus or IME
+     (TestDispatcher, see the verify skill).
+   - **Tier B**: the real app. Pointer, keyboard path, IME Enter/Esc, and the
+     AX tree (Accessibility Inspector) where the contract asks for them.
+     Screenshots of **before** and **after** with the same data, viewport,
+     theme, language, zoom and state; the reference sits beside them.
+   - **Choose the matrix by risk**, not all combinations: zoom 1.0 plus the
+     end the change can break (0.7 for small text, 1.5 for clipping);
+     light and dark when a colour or token changed (and a custom theme when a
+     theme role changed); EN and JA with long text when text width matters;
+     the narrow widths that apply (600/700/750/900); many rows for lists.
+   - **Record what was not observed** and why. An unobserved item is not
+     "done".
+
+## The PR block
+
+```
+UI: <surface> — role <role>, density <dense|open>
+Reference: <product screen + link/image>; take <…>; not take <…>
+Parts: <helper/component used>; rejected <part> because <reason>
+States: rest ✓ hover ✓ focus-visible ✓ disabled ✓ (reason via …) loading n/a (…) …
+Safety contracts kept: <…>
+Values: <value> owned by <theme bridge | Kagi token | component fixed>
+Verified: Tier A <scenarios>; Tier B <matrix chosen + why>; not observed: <…>
+Before / after: <images>
+```
 
 ## Role targets (start here; change only with a measured reason)
 
@@ -81,7 +123,7 @@ the row says a Kagi geometry is kept on purpose.
 
 | Role | Target | Keep / exceptions |
 |---|---|---|
-| Text input (forms, settings, composer) | gpui-component `Input` M = 32 high, radius 6 (`Theme.radius`), 1px border that takes the ring colour on focus | Small (24) in toolbars and filter strips. Placeholder must render — if it does not (#930 found the overlay workaround), fix it once in a shared wrapper, not per screen. |
+| Text input (forms, settings, composer) | gpui-component `Input` M = 32 high, radius 6 (`Theme.radius`), 1px border that takes the ring colour on focus | Small (24) in toolbars and filter strips. The placeholder must render. #930 (unmerged) found it missing in one place and overlaid a hint; find the cause and its conditions (same InputState, IME, zoom) before adding any shared wrapper that could change existing filters. |
 | Search — inline filter | `Input` S = 24, leading search icon, clear (×) when non-empty | Command palette keeps Cmd/Ctrl+P, subsequence fuzzy match and single-Esc close. |
 | Search — hero (Home) | larger box, leading icon, no heavy border, results grouped by heading | Only where search is the screen's main action. |
 | Button | gpui-component `Button` / `KagiButton`: S = 24 in toolbars, M = 32 in forms and dialogs, radius 6 | Toolbar buttons that are unavailable stay clickable to show the reason (render_header); do not convert them to `.disabled(true)`. |
@@ -97,9 +139,20 @@ the row says a Kagi geometry is kept on purpose.
 
 ## In an issue for UI work
 
-Add three lines instead of a style table: **role(s)**, **reference** (link or
-screenshot, what to take / not take), **states that must exist** (from the
-contract above). Acceptance includes the before/reference/after comparison.
+Add three lines instead of a style table: **role(s)**, **reference state**
+(link or screenshot, what to take / not take), **states that must exist**
+(from the contract). Acceptance includes the before/after comparison and the
+PR block.
+
+## Known gaps (do not claim these are met)
+
+- Settings' `Switch` has no keyboard path and no AX role/name/checked state.
+- The repo tab strip has no `Role::Tab` and no keyboard handling; the
+  workspace-mode cells have the role but no keyboard handling.
+- Toolbar buttons expose AX disabled, but their reason reaches only a mouse
+  click (footer); keyboard/AX users do not get it.
+- Library transitions (Switch 150 ms, Tab 200 ms, Dialog 250 ms) do not follow
+  `reduce_motion`.
 
 ## Open questions (to settle with evidence)
 

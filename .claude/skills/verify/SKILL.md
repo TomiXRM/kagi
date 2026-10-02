@@ -148,7 +148,9 @@ The current suite covers:
   palette/menu/Settings selection and fallback, rejected-file toast, folder
   creation/open error, and a background reload held after parsing while a newer
   reload publishes; releasing the old read must not change colours, menus,
-  selection, or toast IDs. Startup loads before the window exists.
+  selection, or toast IDs. A themes folder that cannot be listed (mode 000)
+  keeps the loaded themes and the selection and names the folder in a toast.
+  Startup loads before the window exists.
 - file tree accessibility (`KAGI_GUI_E2E_ONLY=file_tree_roles`,
   `tests/recovery/file_tree_a11y.rs`): #354 Editor Workspace and Commit Panel
   render named EN/JA Trees with TreeItems carrying file status, selection,
@@ -567,11 +569,14 @@ The current suite covers:
   press ⌘T (no foreground needed) or click `+` (needs a key window — ask first);
   "Open Folder…" opens the native dialog, which Tier A does not click.
 - Home's GitHub list and clone (`KAGI_GUI_E2E_ONLY=home_github`,
-  `tests/recovery/home_github.rs`, #923 #924 / ADR-0219): a saved list
-  (`github_repos_cache.json` beside `settings.json`) is on screen the moment
-  the list is read again, with `refreshing` set, and is replaced by the fresh
-  read and saved anew; a Refresh keeps the list drawn beside the
-  `home-github-updating` mark until the read lands. An offline `gh` lists
+  `tests/recovery/home_github.rs`, #923 #924 #930 review / ADR-0219): the
+  stand-in `gh` fails on marker files in a state folder. A saved list
+  (`github_repos_cache.json` beside `settings.json`) is read off the UI
+  thread and stays when the own-list refresh fails (toast names the 502); a
+  second Refresh while one runs joins it (`own-calls` counts one read); a
+  Refresh keeps the list drawn beside the `home-github-updating` mark; a failed
+  `gh api user/orgs` is the `home-github-orgs-failed` row and is not saved
+  over the full list. An offline `gh` lists
   the user's repositories (one whose `origin` matches a recent repository, one
   that is not local) and two organizations — one listed, one refusing with a
   SAML error, which keeps its section with the reason; `repo clone` really
@@ -582,7 +587,11 @@ The current suite covers:
   `replan_clone` — what the native dialog's callback calls; a folder whose
   `widgets` is occupied is refused (the file in it untouched), and once free
   Clone clones, writes one `clone` Success receipt keyed by the destination
-  and opens the clone in place of Home. `recent_repos` is restored by
+  and opens the clone in place of Home. Before that a clone into another
+  folder fails (`fail-clone`): Home stays in front with a `clone: failed`
+  toast drawn there (`toast-stack`). Back on Home, the clone's tab is matched
+  into `home_github.local` though it was opened after the list was read.
+  `recent_repos` is restored by
   `SavedKeys`; `home_tab` also installs an offline `gh` because Home reads
   `gh repo list` whenever it opens, and checks that Remote Browse opened from
   Home is drawn centred over it (`remote-browse-card`). For Tier B use a real

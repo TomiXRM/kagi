@@ -362,6 +362,32 @@ pub fn scenario_theme_custom(cx: &mut VisualTestAppContext) {
     assert_eq!(toasts_naming(cx, &kagi, "Themes reloaded"), reloads_after);
     assert_eq!(toast_ids(cx, &kagi), toast_ids_after, "stale read toasted");
 
+    // The folder cannot be listed (permissions, a lost mount): not an empty
+    // folder. The loaded themes and the selection stay, and the reason is
+    // shown (#930 review).
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        struct Unlock(PathBuf);
+        impl Drop for Unlock {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+            }
+        }
+        std::fs::set_permissions(&files.dir, std::fs::Permissions::from_mode(0o000))
+            .expect("lock the themes folder");
+        let _unlock = Unlock(files.dir.clone());
+        let folder_errors = toasts_naming(cx, &kagi, "cannot read the themes folder");
+        run_palette(cx, &kagi, window, "Reload Themes");
+        assert_eq!(theme::theme().slug, STANDALONE, "the selection stays");
+        assert_eq!(theme::theme().bg_base, 0x556677);
+        assert!(menu_lists(INHERITED) && menu_lists(STANDALONE));
+        assert_eq!(
+            toasts_naming(cx, &kagi, "cannot read the themes folder"),
+            folder_errors + 1,
+            "the unreadable folder is reported"
+        );
+    }
+
     // Removed files: the default theme for this run, the saved slug untouched.
     files.remove_all();
     run_palette(cx, &kagi, window, "Reload Themes");

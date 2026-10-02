@@ -61,12 +61,13 @@ pub fn list_repos(workdir: &Path, owner: Option<&str>) -> Result<RepoList, GitEr
     parse_repo_list(&stdout, REPO_LIST_LIMIT)
 }
 
-/// The organizations the user belongs to. Empty when they cannot be read:
-/// the user's own list still shows.
-pub fn list_org_logins(workdir: &Path) -> Vec<String> {
+/// The organizations the user belongs to. An error is kept, not read as
+/// "none": the caller still shows the user's own list and says why the
+/// organizations are missing.
+pub fn list_org_logins(workdir: &Path) -> Result<Vec<String>, String> {
     crate::github_edit::read_gh(workdir, &org_list_args(), "orgs")
         .map(|stdout| parse_org_logins(&stdout))
-        .unwrap_or_default()
+        .map_err(|error| error.to_string())
 }
 
 /// How many `gh repo list` reads run at once for the organizations.
@@ -104,12 +105,18 @@ pub fn list_org_repos(workdir: &Path, orgs: &[String]) -> Vec<OwnerRepos> {
 
 /// The `host/owner/repo` identity (lower-cased, as
 /// [`RepoListing::identity`]) of the repository at `path`'s `origin`, so a
-/// listed repository can be matched with a local clone. `None` when the path
-/// is not a repository, has no `origin`, or its URL names no repository.
+/// listed repository can be matched with a local clone. An `ssh_config`
+/// alias (`git@work-github:acme/widgets.git`) is resolved to the host it
+/// reaches through `ssh -G`, so this may run a process: call it off the UI
+/// thread. `None` when the path is not a repository, has no `origin`, its
+/// URL names no repository, or its host cannot be established.
 pub fn origin_identity(path: &Path) -> Option<String> {
     let repo = git2::Repository::open(path).ok()?;
     let remote = repo.find_remote("origin").ok()?;
-    crate::backend::remote_ref::repo_identity(remote.url().ok()?)
+    let config = repo.config().ok()?;
+    crate::backend::remote_identity::resolve_repo_identity(remote.url().ok()?, &config)
+        .ok()
+        .flatten()
 }
 
 /// Parse `gh repo list --json …`. Pure; unit-tested. An entry without a name
@@ -220,5 +227,38 @@ mod tests {
     fn malformed_output_is_an_error_not_an_empty_list() {
         assert!(parse_repo_list("not json", 10).is_err());
         assert!(parse_repo_list(r#"{"a":1}"#, 10).is_err());
+    }
+
+    /// A clone whose `origin` goes through an `ssh_config` alias matches the
+    /// listed repository on the host the alias reaches (#930 review).
+    #[cfg(unix)]
+    #[test]
+    fn an_ssh_alias_origin_matches_the_host_it_reaches() {
+        use std::os::unix::fs::PermissionsExt as _;
+        if ["GIT_SSH_COMMAND", "GIT_SSH"]
+            .iter()
+            .any(|key| std::env::var_os(key).is_some_and(|v| !v.is_empty()))
+        {
+            eprintln!("skipping: ssh is replaced in this environment");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path().join("clone")).unwrap();
+        let mut config = repo.config().unwrap();
+        config.set_str("core.sshCommand", "").unwrap();
+        repo.remote("origin", "git@work-github:Acme/Widgets.git")
+            .unwrap();
+        let ssh = dir.path().join("ssh");
+        std::fs::write(
+            &ssh,
+            "#!/bin/sh\nprintf 'user git\\nhostname github.com\\nport 22\\n'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
+        crate::backend::remote_identity::set_ssh_program_for_test(&ssh);
+        assert_eq!(
+            origin_identity(repo.workdir().unwrap()).as_deref(),
+            Some("github.com/acme/widgets")
+        );
     }
 }

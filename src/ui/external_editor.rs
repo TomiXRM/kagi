@@ -33,10 +33,13 @@ fn expand_template(template: &str, file: &Path, line: Option<u32>) -> String {
         .replace("{line}", &line.unwrap_or(1).to_string())
 }
 
-/// The platform opener used when `external_editor` is unset.
+/// The platform opener used when `external_editor` is unset, and to reveal
+/// a folder: `explorer` on Windows, which has no `xdg-open`.
 pub(crate) fn os_opener() -> &'static str {
     if cfg!(target_os = "macos") {
         "open"
+    } else if cfg!(windows) {
+        "explorer"
     } else {
         "xdg-open"
     }

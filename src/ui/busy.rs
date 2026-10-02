@@ -87,7 +87,9 @@ impl KagiApp {
         }
 
         // The toast cards are an independently-rendered child entity.
-        stack = stack.child(toast_stack);
+        stack = stack
+            .child(super::e2e::measure_inside("toast-stack"))
+            .child(toast_stack);
         Some(stack.into_any())
     }
 

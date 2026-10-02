@@ -51,19 +51,20 @@ pub fn themes_dir() -> Option<PathBuf> {
 ///
 /// A missing folder is not an error (most users never create one). On a slug
 /// collision between two files the first by file name wins and the later one
-/// is reported.
-pub(crate) fn load_dir(dir: &Path) -> (Vec<Theme>, Vec<ThemeLoadError>) {
+/// is reported. A folder that exists but cannot be listed is `Err`: that is
+/// not "no themes", and a reload must keep the themes it already has
+/// (#930 review).
+pub(crate) fn load_dir(dir: &Path) -> Result<(Vec<Theme>, Vec<ThemeLoadError>), ThemeLoadError> {
     let mut themes: Vec<Theme> = Vec::new();
     let mut errors = Vec::new();
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (themes, errors),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((themes, errors)),
         Err(e) => {
-            errors.push(ThemeLoadError {
+            return Err(ThemeLoadError {
                 path: dir.to_path_buf(),
                 reason: format!("cannot read the themes folder: {e}"),
-            });
-            return (themes, errors);
+            })
         }
     };
     let mut files: Vec<PathBuf> = entries
@@ -107,7 +108,7 @@ pub(crate) fn load_dir(dir: &Path) -> (Vec<Theme>, Vec<ThemeLoadError>) {
             }),
         }
     }
-    (themes, errors)
+    Ok((themes, errors))
 }
 
 /// Parse and validate one theme file's text into a complete [`Theme`].
@@ -625,7 +626,7 @@ mod tests {
         std::fs::write(dir.path().join("notes.txt"), "ignored").unwrap();
         std::fs::create_dir(dir.path().join("nested.json")).unwrap();
 
-        let (themes, errors) = load_dir(dir.path());
+        let (themes, errors) = load_dir(dir.path()).unwrap();
         let slugs: Vec<&str> = themes.iter().map(|t| &*t.slug).collect();
         assert_eq!(slugs, ["first", "dup", "last"]);
         let rejected: Vec<String> = errors.iter().map(ToString::to_string).collect();
@@ -636,7 +637,19 @@ mod tests {
             "{rejected:?}"
         );
 
-        let (themes, errors) = load_dir(&dir.path().join("absent"));
+        let (themes, errors) = load_dir(&dir.path().join("absent")).unwrap();
         assert!(themes.is_empty() && errors.is_empty());
+    }
+
+    /// A folder that cannot be listed is an error, not an empty folder: the
+    /// themes already loaded must not be replaced by none (#930 review).
+    #[test]
+    fn an_unlistable_folder_is_not_an_empty_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let not_a_dir = dir.path().join("themes");
+        std::fs::write(&not_a_dir, "a file where the folder should be").unwrap();
+        let error = load_dir(&not_a_dir).expect_err("listing a file fails");
+        assert_eq!(error.path, not_a_dir);
+        assert!(error.reason.contains("cannot read the themes folder"));
     }
 }

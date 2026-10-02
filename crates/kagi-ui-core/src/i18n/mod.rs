@@ -640,6 +640,9 @@ pub enum Msg {
     HomeGithubLoading,
     HomeGithubOrgsLoading,
     HomeGithubUpdating,
+    HomeGithubOrgs,
+    /// `{}` = why the organizations could not be listed.
+    HomeGithubOrgsFailed,
     /// `{}` = why the read failed.
     HomeGithubRefreshFailed,
     HomeGithubFailedHint,
@@ -2562,6 +2565,10 @@ impl Msg {
             (Ja, HomeGithubOrgsLoading) => "organization のリポジトリを読み込んでいます…",
             (En, HomeGithubUpdating) => "Updating…",
             (Ja, HomeGithubUpdating) => "更新中…",
+            (En, HomeGithubOrgs) => "Organizations",
+            (Ja, HomeGithubOrgs) => "organization",
+            (En, HomeGithubOrgsFailed) => "Could not list your organizations: {}",
+            (Ja, HomeGithubOrgsFailed) => "所属 organization の一覧を読めませんでした: {}",
             (En, HomeGithubRefreshFailed) => {
                 "Could not refresh the GitHub list (showing the last one): {}"
             }

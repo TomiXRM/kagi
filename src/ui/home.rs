@@ -131,8 +131,12 @@ impl KagiApp {
             div().flex().flex_col().relative().size_full().child(home),
             cx,
         );
+        // Toasts above everything, as in the workspace: an operation that
+        // ends while Home is in front (a failed clone) says so here, with
+        // its details in Operation Log.
         let content = self
             .attach_welcome_window_modals(home, window, cx)
+            .children(self.render_toasts(cx))
             .into_any();
         self.attach_active_modal_key_routing(content, false, cx)
     }

@@ -33,18 +33,31 @@ const ORG_LIST: &str = r#"[
   "isPrivate":true,"description":"an organization's","updatedAt":"2026-10-03T00:00:00Z"}
 ]"#;
 
-fn gh_script(bare: &Path) -> String {
+/// A stand-in `gh`. Marker files in `state` make one call fail: `fail-own`
+/// the next own-list read (once), `fail-orgs` every organization listing,
+/// `fail-clone` every clone. Each own-list read is counted in `own-calls`.
+fn gh_script(bare: &Path, state: &Path) -> String {
     format!(
         "#!/bin/sh\ncase \"$1 $2 $3\" in\n\
-         'api user/orgs '*) printf 'acme-org\\nlocked-org\\n' ;;\n\
-         'repo list --limit') cat <<'JSON'\n{REPO_LIST}\nJSON\n;;\n\
+         'api user/orgs '*) [ -e '{state}/fail-orgs' ] && {{ echo 'HTTP 502: Bad Gateway' >&2; exit 1; }}\n\
+         printf 'acme-org\\nlocked-org\\n' ;;\n\
+         'repo list --limit') echo read >> '{state}/own-calls'\n\
+         [ -e '{state}/fail-own' ] && {{ rm '{state}/fail-own'; echo 'HTTP 502: Bad Gateway' >&2; exit 1; }}\n\
+         cat <<'JSON'\n{REPO_LIST}\nJSON\n;;\n\
          'repo list acme-org') cat <<'JSON'\n{ORG_LIST}\nJSON\n;;\n\
          'repo list locked-org') echo 'Resource protected by organization SAML enforcement' >&2; exit 1 ;;\n\
-         'repo clone '*) git clone -q '{bare}' \"$4\" && \
+         'repo clone '*) [ -e '{state}/fail-clone' ] && {{ echo 'HTTP 502: Bad Gateway' >&2; exit 1; }}\n\
+         git clone -q '{bare}' \"$4\" && \
          git -C \"$4\" remote set-url origin https://github.com/acme/widgets.git ;;\n\
          *) echo \"unexpected gh $*\" >&2; exit 1 ;;\nesac\n",
-        bare = bare.display()
+        bare = bare.display(),
+        state = state.display()
     )
+}
+
+/// The read is over: nothing is loading, refreshing or appending.
+fn settled(app: &KagiApp) -> bool {
+    !app.home_github_reading()
 }
 
 fn wait_for(
@@ -103,9 +116,16 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
     let clones_dir = tempfile::tempdir().unwrap();
     let clones = clones_dir.path().canonicalize().unwrap();
     tabs::record_recent_repo(&local_path);
-    let _gh = OfflineGh::with_script(&gh_script(&bare));
+    let state_dir = tempfile::tempdir().unwrap();
+    let state = state_dir.path().to_path_buf();
+    let _gh = OfflineGh::with_script(&gh_script(&bare, &state));
+    let own_reads =
+        || std::fs::read_to_string(state.join("own-calls")).map_or(0, |s| s.lines().count());
+    let mark = |name: &str| std::fs::write(state.join(name), "").unwrap();
+    let unmark = |name: &str| std::fs::remove_file(state.join(name)).unwrap();
 
-    // The last read is saved: shown at once while the fresh read runs.
+    // The last read is saved and shown, read off the UI thread, while the
+    // fresh read runs. A failed refresh keeps it and says so.
     let cache = github_repos_cache::cache_path(
         settings::settings_path()
             .and_then(|p| p.parent().map(Path::to_path_buf))
@@ -127,21 +147,32 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
         }),
     }];
     github_repos_cache::save(&cache, &stale).unwrap();
+    mark("fail-own");
     let (app, window) = mount(cx, start.path());
     app.update(cx, |app, cx| app.reload_home_github(cx));
+    wait_for(cx, &app, "the failed refresh", settled);
     cx.read(|cx| {
-        let home = &app.read(cx).home_github;
-        assert!(home.refreshing, "a fresh read runs behind the saved list");
+        let app = app.read(cx);
         assert!(
-            matches!(&home.repos, GithubRepos::Loaded { sections, .. } if *sections == stale),
-            "the saved list is on screen before gh answers"
+            matches!(&app.home_github.repos, GithubRepos::Loaded { sections, .. } if *sections == stale),
+            "the saved list stays when gh fails: {:?}",
+            app.home_github.repos
+        );
+        let toasts = app.toast_stack.as_ref().unwrap().read(cx).toasts();
+        assert!(
+            toasts.iter().any(|t| t.message.contains("502")),
+            "the failed refresh says why"
         );
     });
-    wait_for(cx, &app, "the GitHub list", |app| {
-        matches!(app.home_github.repos, GithubRepos::Loaded { .. })
-            && !app.home_github.refreshing
-            && !app.home_github.orgs_loading
+    assert_eq!(own_reads(), 1);
+
+    // Refresh while a read runs joins it: one more `gh` read, not two.
+    app.update(cx, |app, cx| {
+        app.reload_home_github(cx);
+        app.reload_home_github(cx);
     });
+    wait_for(cx, &app, "the GitHub list", settled);
+    assert_eq!(own_reads(), 2, "a second Refresh joins the running read");
     let deadline = Instant::now() + Duration::from_secs(30);
     while github_repos_cache::load(&cache).is_none_or(|saved| saved.len() != 3) {
         assert!(Instant::now() < deadline, "the fresh list is saved");
@@ -160,14 +191,38 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
         drawn(cx, window, "home-gh-acme/widgets"),
         "the list stays while it refreshes"
     );
-    wait_for(cx, &app, "the refresh", |app| {
-        !app.home_github.refreshing && !app.home_github.orgs_loading
-    });
+    wait_for(cx, &app, "the refresh", settled);
     assert!(!drawn(cx, window, "home-github-updating"));
+
+    // The organizations cannot be listed: the list says so instead of
+    // showing none, and the saved organizations are not overwritten.
+    mark("fail-orgs");
+    app.update(cx, |app, cx| app.reload_home_github(cx));
+    wait_for(cx, &app, "the list without organizations", settled);
+    assert!(
+        drawn(cx, window, "home-github-orgs-failed"),
+        "a failed organization listing is a row, not an empty section"
+    );
+    cx.run_until_parked();
+    assert_eq!(
+        github_repos_cache::load(&cache).map(|s| s.len()),
+        Some(3),
+        "a list without its organizations is not saved"
+    );
+    unmark("fail-orgs");
+    app.update(cx, |app, cx| app.reload_home_github(cx));
+    wait_for(cx, &app, "the full list", settled);
+    assert!(!drawn(cx, window, "home-github-orgs-failed"));
     cx.read(|cx| {
-        let GithubRepos::Loaded { sections, local } = &app.read(cx).home_github.repos else {
+        let home = &app.read(cx).home_github;
+        let GithubRepos::Loaded {
+            sections,
+            orgs_error,
+        } = &home.repos
+        else {
             unreachable!()
         };
+        assert_eq!(orgs_error, &None);
         let owners: Vec<_> = sections.iter().map(|s| s.owner.as_deref()).collect();
         assert_eq!(owners, [None, Some("acme-org"), Some("locked-org")]);
         assert_eq!(sections[0].list.as_ref().unwrap().repos.len(), 2);
@@ -181,7 +236,7 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
             "an organization that cannot be read keeps its section and says why"
         );
         assert_eq!(
-            local.get("github.com/acme/local"),
+            home.local.get("github.com/acme/local"),
             Some(&local_path),
             "a recent repository whose origin is listed is known as its clone"
         );
@@ -285,8 +340,42 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
         "mine"
     );
 
-    // Free again: Clone clones, records, and opens the new repository.
+    // A clone that fails leaves Home in front and says so there, in a toast
+    // drawn over Home (its details are in Operation Log).
     std::fs::remove_dir_all(&dest).unwrap();
+    let elsewhere = clones.join("elsewhere");
+    std::fs::create_dir(&elsewhere).unwrap();
+    mark("fail-clone");
+    click_control(cx, window, "home-gh-acme/widgets");
+    cx.run_until_parked();
+    choose_folder(cx, &app, &elsewhere);
+    app.update(cx, |app, cx| app.start_clone(cx));
+    wait_for(cx, &app, "the failed clone", |app| {
+        app.home_github.cloning.is_none()
+    });
+    unmark("fail-clone");
+    assert!(
+        cx.read(|cx| app.read(cx).home.is_some_and(|h| h.front)),
+        "a failed clone stays on Home"
+    );
+    assert!(cx.read(|cx| {
+        let app = app.read(cx);
+        app.toast_stack
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .toasts()
+            .last()
+            .is_some_and(|t| {
+                t.kind == kagi::ui::ToastKind::Error && t.message.starts_with("clone: failed")
+            })
+    }));
+    assert!(
+        drawn(cx, window, "toast-stack"),
+        "the toast is drawn on Home"
+    );
+
+    // Free again: Clone clones, records, and opens the new repository.
     click_control(cx, window, "home-gh-acme/widgets");
     cx.run_until_parked();
     choose_folder(cx, &app, &clones);
@@ -317,6 +406,21 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
         matches!(receipts[0].outcome, OpOutcome::Success { .. }),
         "{:?}",
         receipts[0].outcome
+    );
+
+    // Back on Home, the clone opened as a tab after the list was read is
+    // known as the local one: its row opens it instead of offering a clone.
+    click_control(cx, window, "tab-add");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| app
+            .read(cx)
+            .home_github
+            .local
+            .get("github.com/acme/widgets")
+            .cloned()),
+        Some(dest.clone()),
+        "an open tab is matched with the list"
     );
 
     unmount(cx, app, window);

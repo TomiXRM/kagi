@@ -35,6 +35,8 @@ enum HomeItem {
     Repo(RepoListing, &'static str),
     /// The organizations are still being read: a spinner row at the end.
     Loading,
+    /// The organizations could not be listed at all, and why.
+    OrgsFailed(String),
 }
 
 impl KagiApp {
@@ -45,11 +47,22 @@ impl KagiApp {
         query: String,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let GithubRepos::Loaded { sections, local } = &self.home_github.repos else {
+        let GithubRepos::Loaded {
+            sections,
+            orgs_error,
+        } = &self.home_github.repos
+        else {
             return div().into_any_element();
         };
+        let local = &self.home_github.local;
         let cloning = self.home_github.cloning.as_ref().map(|r| r.source.clone());
-        let mut items = github_items(sections, local, &query, cloning.as_deref());
+        let mut items = github_items(
+            sections,
+            orgs_error.as_deref(),
+            local,
+            &query,
+            cloning.as_deref(),
+        );
         let orgs_loading = self.home_github.orgs_loading;
         if orgs_loading {
             items.push(HomeItem::Loading);
@@ -77,6 +90,9 @@ impl KagiApp {
         gpui::list(state, move |i, _window, _cx| match items.get(i) {
             Some(HomeItem::Heading(title)) => section_heading(title).into_any_element(),
             Some(HomeItem::Note(text)) => muted(text.clone()),
+            Some(HomeItem::OrgsFailed(text)) => {
+                super::e2e::measure_control("home-github-orgs-failed", muted(text.clone()))
+            }
             Some(HomeItem::Loading) => div()
                 .flex()
                 .flex_row()
@@ -106,9 +122,11 @@ impl KagiApp {
 
 /// The list's entries: per owner a heading, its notes (empty, unreadable,
 /// truncated) and the repositories matching `query`; an owner without a
-/// match is left out while filtering.
+/// match is left out while filtering. When the organizations could not be
+/// listed at all, a section says so instead of there being none.
 fn github_items(
     sections: &[OwnerRepos],
+    orgs_error: Option<&str>,
     local: &HashMap<String, PathBuf>,
     query: &str,
     cloning: Option<&str>,
@@ -167,6 +185,12 @@ fn github_items(
                     .replace("{}", &list.repos.len().to_string()),
             ));
         }
+    }
+    if let Some(error) = orgs_error.filter(|_| query.is_empty()) {
+        items.push(HomeItem::Heading(Msg::HomeGithubOrgs.t().to_string()));
+        items.push(HomeItem::OrgsFailed(
+            Msg::HomeGithubOrgsFailed.t().replace("{}", error),
+        ));
     }
     if shown == 0 && !query.is_empty() {
         items.push(HomeItem::Note(Msg::HomeGithubNoMatch.t().to_string()));

@@ -12,7 +12,7 @@
 //! On success the new folder opens as a tab — Home itself becomes that tab
 //! when it is in front.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use gpui::{
@@ -20,7 +20,7 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{InputEvent, InputState};
-use gpui_component::Sizable as _;
+use gpui_component::{Disableable as _, Sizable as _};
 use kagi_git::github_repos::{OwnerRepos, RepoListing};
 use kagi_git::ops::{plan_clone, CloneRequest};
 use kagi_git::OperationPlan;
@@ -40,8 +40,9 @@ pub enum GithubRepos {
     Loaded {
         /// The user's own section first, then one per organization.
         sections: Vec<OwnerRepos>,
-        /// Listed identity (`host/owner/repo`) → a local clone of it.
-        local: HashMap<String, PathBuf>,
+        /// The organizations could not be listed (`gh api user/orgs`
+        /// failed): said in the list rather than shown as none.
+        orgs_error: Option<String>,
     },
     Failed(String),
 }
@@ -50,6 +51,13 @@ pub enum GithubRepos {
 #[derive(Default)]
 pub struct HomeGithub {
     pub repos: GithubRepos,
+    /// Listed identity (`host/owner/repo`) → a local clone of it: the
+    /// recently opened repositories and the open tabs whose `origin` names
+    /// one. Kept apart from the list so either can land first.
+    pub local: HashMap<String, PathBuf>,
+    /// The paths already matched into [`Self::local`], so an open tab is
+    /// read once, not on every frame.
+    local_checked: HashSet<PathBuf>,
     pub filter: Option<Entity<InputState>>,
     /// The clone running now (one per window, ADR-0219 decision 7).
     pub cloning: Option<CloneRequest>,
@@ -100,10 +108,15 @@ impl CloneTarget {
     }
 }
 
+/// The working directory `gh` runs in: the user's home (`USERPROFILE` on
+/// Windows, which sets no `HOME`), else the temporary directory.
 fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
+    ["HOME", "USERPROFILE"]
+        .into_iter()
+        .filter_map(std::env::var_os)
+        .find(|dir| !dir.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"))
+        .unwrap_or_else(std::env::temp_dir)
 }
 
 /// Where the last read is saved: next to `settings.json`.
@@ -131,105 +144,80 @@ impl KagiApp {
         }
     }
 
-    /// Read the lists again. The last saved list (or the one on screen) is
-    /// shown at once while the fresh read runs; with none, the user's own
-    /// list is shown as soon as it lands and the organizations' are appended.
-    /// The own and the organizations' reads run at the same time.
+    /// A read is running. Refresh joins it rather than starting another: a
+    /// superseded read is only ignored, its `gh` processes still run.
+    pub fn home_github_reading(&self) -> bool {
+        matches!(self.home_github.repos, GithubRepos::Loading)
+            || self.home_github.refreshing
+            || self.home_github.orgs_loading
+    }
+
+    /// Read the lists again, unless a read is already running. Everything
+    /// is read at once, off the UI thread: the saved list, the user's own,
+    /// the organizations' and which listed repositories are cloned here.
+    /// The saved list (or the one on screen) shows while the fresh read
+    /// runs; with none, the user's own list shows as soon as it lands and
+    /// the organizations' are appended.
     pub fn reload_home_github(&mut self, cx: &mut Context<Self>) {
+        if self.home_github_reading() {
+            return;
+        }
         self.home_github.generation += 1;
         let generation = self.home_github.generation;
-        self.home_github.orgs_loading = false;
         let started = std::time::Instant::now();
+        let shown = matches!(self.home_github.repos, GithubRepos::Loaded { .. });
+        if shown {
+            self.home_github.refreshing = true;
+        } else {
+            self.home_github.repos = GithubRepos::Loading;
+        }
+        let mut paths = super::tabs::recent_repos();
+        paths.extend(self.open_tab_paths());
+        self.home_github.local_checked.clear();
+        self.match_local_clones(paths, cx);
         let cache = cache_file();
-        if !matches!(self.home_github.repos, GithubRepos::Loaded { .. }) {
-            self.home_github.repos = match cache
+        let saved_cache = cache.clone();
+        let cached = cx.background_spawn(async move {
+            if shown {
+                return None;
+            }
+            cache
                 .as_deref()
                 .and_then(kagi_git::github_repos_cache::load)
-            {
-                Some(sections) => GithubRepos::Loaded {
-                    sections,
-                    local: HashMap::new(),
-                },
-                None => GithubRepos::Loading,
-            };
-        }
-        self.home_github.refreshing = matches!(self.home_github.repos, GithubRepos::Loaded { .. });
-        let mut paths = super::tabs::recent_repos();
-        paths.extend(
-            self.tabs
-                .iter()
-                .filter(|t| t.remote.is_none())
-                .map(|t| t.path.clone()),
-        );
-        // Which listed repositories are already cloned: local reads only, so
-        // it lands well before `gh` and a saved list on screen gets its
-        // Open chips at once.
-        let local = cx.background_spawn(async move {
-            paths
-                .into_iter()
-                .filter_map(|p| kagi_git::github_repos::origin_identity(&p).map(|id| (id, p)))
-                .collect::<HashMap<String, PathBuf>>()
         });
         let own = cx
             .background_spawn(async move { kagi_git::github_repos::list_repos(&home_dir(), None) });
         let orgs = cx.background_spawn(async move {
             let workdir = home_dir();
-            let logins = kagi_git::github_repos::list_org_logins(&workdir);
-            kagi_git::github_repos::list_org_repos(&workdir, &logins)
+            let logins = kagi_git::github_repos::list_org_logins(&workdir)?;
+            Ok(kagi_git::github_repos::list_org_repos(&workdir, &logins))
         });
         cx.spawn(async move |app, acx| {
-            let local = local.await;
-            let _ = app.update(acx, |app, cx| {
-                if app.home_github.generation != generation {
-                    return;
-                }
-                if let GithubRepos::Loaded { local: shown, .. } = &mut app.home_github.repos {
-                    *shown = local.clone();
-                    cx.notify();
-                }
-            });
+            // In this order, each step applied as soon as it is known: the
+            // saved list is a small local file, `gh` is the network.
+            if let Some(sections) = cached.await {
+                let _ = app.update(acx, |app, cx| app.show_saved_list(generation, sections, cx));
+            }
             let list = own.await;
             let own = app
-                .update(acx, |app, cx| {
-                    app.land_own_list(generation, list, &local, cx)
-                })
+                .update(acx, |app, cx| app.land_own_list(generation, list, cx))
                 .ok()
                 .flatten();
             let Some(own) = own else {
                 return;
             };
-            let mut sections = vec![own];
-            sections.extend(orgs.await);
-            let saved = sections.clone();
-            let landed = app
+            let orgs = orgs.await;
+            let save = app
                 .update(acx, |app, cx| {
-                    if app.home_github.generation != generation {
-                        return false;
-                    }
-                    let repos: usize = sections
-                        .iter()
-                        .filter_map(|s| s.list.as_ref().ok())
-                        .map(|l| l.repos.len())
-                        .sum();
-                    klog!(
-                        "home: github owners={} repos={} local={} ms={}",
-                        sections.len(),
-                        repos,
-                        local.len(),
-                        started.elapsed().as_millis()
-                    );
-                    app.home_github.repos = GithubRepos::Loaded { sections, local };
-                    app.home_github.orgs_loading = false;
-                    app.home_github.refreshing = false;
-                    cx.notify();
-                    true
+                    app.land_full_list(generation, own, orgs, started, cx)
                 })
-                .unwrap_or(false);
-            if let (true, Some(path)) = (landed, cache) {
+                .ok()
+                .flatten();
+            if let (Some(sections), Some(path)) = (save, saved_cache) {
                 let saved = acx
-                    .background_spawn(
-                        async move { kagi_git::github_repos_cache::save(&path, &saved) },
-                    )
+                    .background_spawn(async move {
+                        kagi_git::github_repos_cache::save(&path, &sections)
+                    })
                     .await;
                 if let Err(error) = saved {
                     eprintln!("home: could not save the GitHub list cache: {error}");
@@ -237,6 +225,26 @@ impl KagiApp {
             }
         })
         .detach();
+    }
+
+    /// The saved list, read off the UI thread: shown while nothing newer is.
+    fn show_saved_list(
+        &mut self,
+        generation: u64,
+        sections: Vec<OwnerRepos>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.home_github.generation != generation
+            || !matches!(self.home_github.repos, GithubRepos::Loading)
+        {
+            return;
+        }
+        self.home_github.repos = GithubRepos::Loaded {
+            sections,
+            orgs_error: None,
+        };
+        self.home_github.refreshing = true;
+        cx.notify();
     }
 
     /// The user's own list has landed. With nothing on screen it is shown
@@ -247,7 +255,6 @@ impl KagiApp {
         &mut self,
         generation: u64,
         list: Result<kagi_git::github_repos::RepoList, kagi_git::GitError>,
-        local: &HashMap<String, PathBuf>,
         cx: &mut Context<Self>,
     ) -> Option<OwnerRepos> {
         if self.home_github.generation != generation {
@@ -263,7 +270,7 @@ impl KagiApp {
                 if !self.home_github.refreshing {
                     self.home_github.repos = GithubRepos::Loaded {
                         sections: vec![own.clone()],
-                        local: local.clone(),
+                        orgs_error: None,
                     };
                     self.home_github.orgs_loading = true;
                 }
@@ -288,13 +295,110 @@ impl KagiApp {
         }
     }
 
+    /// The organizations' lists have landed after the user's own: the whole
+    /// list replaces what is on screen. Returns what to save — only a
+    /// complete list, so a failed organization listing does not erase the
+    /// saved organizations.
+    fn land_full_list(
+        &mut self,
+        generation: u64,
+        own: OwnerRepos,
+        orgs: Result<Vec<OwnerRepos>, String>,
+        started: std::time::Instant,
+        cx: &mut Context<Self>,
+    ) -> Option<Vec<OwnerRepos>> {
+        if self.home_github.generation != generation {
+            return None;
+        }
+        let mut sections = vec![own];
+        let orgs_error = match orgs {
+            Ok(orgs) => {
+                sections.extend(orgs);
+                None
+            }
+            Err(error) => {
+                klog!("home: github orgs failed: {error}");
+                Some(error)
+            }
+        };
+        let repos: usize = sections
+            .iter()
+            .filter_map(|s| s.list.as_ref().ok())
+            .map(|l| l.repos.len())
+            .sum();
+        klog!(
+            "home: github owners={} repos={} local={} ms={}",
+            sections.len(),
+            repos,
+            self.home_github.local.len(),
+            started.elapsed().as_millis()
+        );
+        let save = orgs_error.is_none().then(|| sections.clone());
+        self.home_github.repos = GithubRepos::Loaded {
+            sections,
+            orgs_error,
+        };
+        self.home_github.orgs_loading = false;
+        self.home_github.refreshing = false;
+        // A repository opened while the list was read is matched too.
+        self.match_open_tabs(cx);
+        cx.notify();
+        save
+    }
+
+    /// The local repositories open as tabs.
+    fn open_tab_paths(&self) -> Vec<PathBuf> {
+        self.tabs
+            .iter()
+            .filter(|t| t.remote.is_none())
+            .map(|t| t.path.clone())
+            .collect()
+    }
+
+    /// Match the open tabs not matched yet — one opened (or cloned) after
+    /// the list was read — so its row says Open instead of offering a
+    /// second clone. Cheap per frame: a set lookup per tab.
+    pub(super) fn match_open_tabs(&mut self, cx: &mut Context<Self>) {
+        let paths = self.open_tab_paths();
+        self.match_local_clones(paths, cx);
+    }
+
+    /// Read the `origin` of each path not matched yet, off the UI thread (an
+    /// `ssh_config` alias asks `ssh -G`), and replace those paths' entries
+    /// in [`HomeGithub::local`] with what they name now.
+    fn match_local_clones(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let paths: Vec<PathBuf> = paths
+            .into_iter()
+            .filter(|p| self.home_github.local_checked.insert(p.clone()))
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        let found = cx.background_spawn(async move {
+            let found: Vec<(String, PathBuf)> = paths
+                .iter()
+                .filter_map(|p| {
+                    kagi_git::github_repos::origin_identity(p).map(|id| (id, p.clone()))
+                })
+                .collect();
+            (paths, found)
+        });
+        cx.spawn(async move |app, acx| {
+            let (paths, found) = found.await;
+            let _ = app.update(acx, |app, cx| {
+                let local = &mut app.home_github.local;
+                local.retain(|_, p| !paths.contains(p));
+                local.extend(found);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// A listed repository was clicked: open its local clone, or review a
     /// clone of it.
     pub fn home_github_pick(&mut self, listing: RepoListing, cx: &mut Context<Self>) {
-        let local = match &self.home_github.repos {
-            GithubRepos::Loaded { local, .. } => local.get(&listing.identity()).cloned(),
-            _ => None,
-        };
+        let local = self.home_github.local.get(&listing.identity()).cloned();
         match local.filter(|p| p.is_dir()) {
             Some(path) => {
                 self.open_repository(path, cx);
@@ -450,11 +554,8 @@ impl KagiApp {
         self.notice_recording_failure("clone", &report.recording, &request.dest);
         self.present_recorded(&report.recording, cx);
         if report.result.is_ok() {
-            if let GithubRepos::Loaded { local, .. } = &mut self.home_github.repos {
-                if let Some(id) = kagi_git::github_repos::origin_identity(&request.dest) {
-                    local.insert(id, request.dest.clone());
-                }
-            }
+            // The new tab is matched into the local index when Home draws
+            // next (`match_open_tabs`), off the UI thread.
             self.open_repository(request.dest, cx);
         }
         cx.notify();
@@ -468,6 +569,8 @@ impl KagiApp {
             app.reload_home_github(cx);
             cx.notify();
         });
+        self.match_open_tabs(cx);
+        let reading = self.home_github_reading();
         let header = div()
             .flex()
             .flex_row()
@@ -504,6 +607,7 @@ impl KagiApp {
                     .ghost()
                     .small()
                     .label(Msg::HomeGithubRefresh.t())
+                    .disabled(reading)
                     .on_click(refresh),
             ));
         let query = self

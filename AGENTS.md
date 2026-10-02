@@ -241,6 +241,10 @@ copy — the skill changes when seams change.
 - **Tier B** is the real app: launch it isolated (`KAGI_NO_ACTIVATE=1`, a unique
   `USER`, `KAGI_NO_RESTORE=1`, its own `KAGI_LOG_DIR`), click and type with
   `pidclick`, and capture the window by its ID. `cliclick` is banned.
+  - **Drive only the process you launched.** Take the PID from `$!` right after
+    starting it and pass it explicitly. Never look Kagi up with `pgrep`,
+    `pidof` or a window title: the user's own Kagi runs on the same machine,
+    and `pgrep -nx kagi` once picked it (#930).
   - A window hidden behind the user's windows stops repainting: two byte-identical
     screenshots while `[kagi]` lines show the input arrived mean a stale frame.
     Ask the user to bring the window forward for a moment; do not take the

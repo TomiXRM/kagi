@@ -6,6 +6,8 @@
 //! blue/orange from the Okabe–Ito palette; warnings are told apart by
 //! luminance (yellow). Everything else is inherited from Mocha.
 
+use std::borrow::Cow;
+
 use crate::{theme::Theme, theme_catppuccin_mocha::CATPPUCCIN_MOCHA};
 
 /// Okabe–Ito sky blue: added / success / ours.
@@ -18,8 +20,8 @@ pub const CVD_YELLOW: u32 = 0xf0e442;
 pub const CVD_PURPLE: u32 = 0xcc79a7;
 
 pub const COLOR_VISION: Theme = Theme {
-    slug: "color-vision",
-    name: "Color Vision (Blue/Orange)",
+    slug: Cow::Borrowed("color-vision"),
+    name: Cow::Borrowed("Color Vision (Blue/Orange)"),
 
     color_head: CVD_ORANGE,
     // Conflict editor: ours = branch, theirs = remote.

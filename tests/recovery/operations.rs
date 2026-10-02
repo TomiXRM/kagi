@@ -2663,10 +2663,10 @@ pub fn scenario_color_vision_theme(cx: &mut VisualTestAppContext) {
     use kagi_ui_core::theme::theme;
     let fixture = build_fixture();
     let (app, window) = mount(cx, fixture.path());
-    let before = theme().slug;
+    let before = theme().slug.to_string();
     app.update(cx, |app, cx| app.set_theme("catppuccin", cx));
     cx.run_until_parked();
-    let mocha = *theme();
+    let mocha = theme();
     let pairs = |t: &kagi_ui_core::theme::Theme| {
         [
             ("change added/deleted", t.change_added, t.change_deleted),
@@ -2675,7 +2675,7 @@ pub fn scenario_color_vision_theme(cx: &mut VisualTestAppContext) {
             ("diff bg added/removed", t.diff_added_bg, t.diff_removed_bg),
         ]
     };
-    let mocha_deutan = pairs(&mocha)
+    let mocha_deutan = pairs(&*mocha)
         .iter()
         .map(|(_, a, b)| delta_e(*a, *b, Some(Cvd::Deuteranopia)))
         .fold(f64::INFINITY, f64::min);
@@ -2684,7 +2684,9 @@ pub fn scenario_color_vision_theme(cx: &mut VisualTestAppContext) {
         "control: Mocha worst deutan ΔE {mocha_deutan:.1}"
     );
 
-    assert!(commands::THEME_COMMAND_IDS.contains(&"theme.colorVision"));
+    assert!(commands::theme_menu_entries()
+        .iter()
+        .any(|entry| entry.slug == "color-vision"));
     assert_eq!(
         commands::theme_slug_for_command("theme.colorVision"),
         Some("color-vision")
@@ -2696,7 +2698,7 @@ pub fn scenario_color_vision_theme(cx: &mut VisualTestAppContext) {
         window.draw(cx).clear();
     })
     .unwrap();
-    let t = *theme();
+    let t = theme();
     assert_eq!(t.slug, "color-vision");
     assert_eq!(
         kagi_ui_core::settings::Settings::load().theme().as_deref(),
@@ -2709,7 +2711,7 @@ pub fn scenario_color_vision_theme(cx: &mut VisualTestAppContext) {
     assert_ne!(t.diff_removed_bg, mocha.diff_removed_bg);
     assert_eq!(t.bg_base, mocha.bg_base, "other tokens are inherited");
     assert_eq!(t.text_main, mocha.text_main);
-    for (name, a, b) in pairs(&t) {
+    for (name, a, b) in pairs(&*t) {
         let normal = delta_e(a, b, None);
         assert!(normal >= 20.0, "{name}: ΔE {normal:.1}");
         let mut line = format!("{name}: normal {normal:.1}");
@@ -2742,7 +2744,7 @@ pub fn scenario_color_vision_theme(cx: &mut VisualTestAppContext) {
     }
     app.update(cx, |app, cx| app.set_lang(previous, cx));
 
-    app.update(cx, |app, cx| app.set_theme(before, cx));
+    app.update(cx, |app, cx| app.set_theme(&before, cx));
     cx.run_until_parked();
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS color_vision_theme: tokens switched + persisted, ΔE ≥ 20 / ≥ 15 (protan, deutan, tritan), Mocha control < 15, EN/JA name");

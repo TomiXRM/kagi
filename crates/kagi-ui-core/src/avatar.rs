@@ -165,7 +165,7 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().expect("tempdir");
-        let prev = crate::theme::theme().slug;
+        let prev = crate::theme::theme().slug.to_string();
         std::env::set_var("KAGI_LOG_DIR", tmp.path());
 
         // Two themes with deliberately different avatar_sat / avatar_light.
@@ -189,7 +189,7 @@ mod tests {
             .unwrap();
         assert_ne!(a.avatar_light, b.avatar_light);
 
-        crate::theme::set_active(prev);
+        crate::theme::set_active(&prev);
         std::env::remove_var("KAGI_LOG_DIR");
     }
 

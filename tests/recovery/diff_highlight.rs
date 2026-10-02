@@ -79,6 +79,12 @@ fn other_theme() -> &'static str {
     }
 }
 
+/// The key of the installed theme `slug` names — what a view records as the
+/// theme its spans were computed with.
+fn key_of(slug: &str) -> theme::ThemeKey {
+    theme::theme_by_slug(slug).expect("built-in theme").key()
+}
+
 fn open_wip(cx: &mut VisualTestAppContext, kagi: &Entity<KagiApp>, index: usize) {
     kagi.update(cx, |app, cx| {
         app.open_main_diff_wip(CommitPanelFileRef::Unstaged { index }, cx)
@@ -86,14 +92,17 @@ fn open_wip(cx: &mut VisualTestAppContext, kagi: &Entity<KagiApp>, index: usize)
 }
 
 /// Every state `read` reports when `entity` notifies, kept alive with it.
-type Seen = (Rc<RefCell<Vec<Option<&'static str>>>>, gpui::Subscription);
+type Seen = (
+    Rc<RefCell<Vec<Option<theme::ThemeKey>>>>,
+    gpui::Subscription,
+);
 
 fn record<T: 'static>(
     cx: &mut VisualTestAppContext,
     entity: &Entity<T>,
-    read: impl Fn(&T, &App) -> Option<Option<&'static str>> + 'static,
+    read: impl Fn(&T, &App) -> Option<Option<theme::ThemeKey>> + 'static,
 ) -> Seen {
-    let seen: Rc<RefCell<Vec<Option<&'static str>>>> = Rc::default();
+    let seen: Rc<RefCell<Vec<Option<theme::ThemeKey>>>> = Rc::default();
     let log = seen.clone();
     let subscription = cx.update(|cx| {
         cx.observe(entity, move |entity, cx| {
@@ -142,7 +151,7 @@ pub fn scenario_diff_highlight_once(cx: &mut VisualTestAppContext) {
     settle(cx, window);
     let lit = main_view(cx, &kagi).expect("the WIP diff opens");
     assert_eq!(lit.lang, Some("rust"));
-    assert_eq!(lit.highlighted, Some(theme::theme().slug));
+    assert_eq!(lit.highlighted, Some(theme::theme().key()));
     assert!(has_spans(&lit), "the spans landed on the WIP diff");
     assert_eq!(counts().0, before.0 + 1, "exactly one highlight");
     settle(cx, window);
@@ -169,14 +178,14 @@ pub fn scenario_diff_highlight_once(cx: &mut VisualTestAppContext) {
     // A theme switch highlights once more, under the new theme.
     let target = other_theme();
     let (theme_before, saved_theme) = (
-        theme::theme().slug,
+        theme::theme().slug.to_string(),
         kagi::ui::settings::read_setting("theme"),
     );
     kagi.update(cx, |app, cx| app.set_theme(target, cx));
     settle(cx, window);
     settle(cx, window);
     let themed = main_view(cx, &kagi).unwrap();
-    assert_eq!(themed.highlighted, Some(target));
+    assert_eq!(themed.highlighted, Some(key_of(target)));
     assert_eq!(counts().0, steady.0 + 1, "one highlight per theme");
 
     // Compare: the same text-first path.
@@ -200,7 +209,7 @@ pub fn scenario_diff_highlight_once(cx: &mut VisualTestAppContext) {
         matches!(&compare.source, MainDiffSource::Compare { base, .. } if *base == head),
         "the compare file diff is shown"
     );
-    assert_eq!(compare.highlighted, Some(target));
+    assert_eq!(compare.highlighted, Some(key_of(target)));
 
     // File History: the embedded diff, same pipeline.
     kagi.update(cx, |app, cx| {
@@ -223,12 +232,12 @@ pub fn scenario_diff_highlight_once(cx: &mut VisualTestAppContext) {
     let fh = cx
         .read(|app| pane.read(app).diff.clone())
         .expect("File History shows the selected entry's diff");
-    assert_eq!(fh.highlighted, Some(target));
+    assert_eq!(fh.highlighted, Some(key_of(target)));
     assert!(has_spans(&fh));
 
     theme::set_diff_split(split_before);
     // The scenarios that follow render under the theme they found (#516).
-    kagi.update(cx, |app, cx| app.set_theme(theme_before, cx));
+    kagi.update(cx, |app, cx| app.set_theme(&theme_before, cx));
     kagi::ui::settings::write_setting("theme", saved_theme.as_deref());
     unmount(cx, kagi, window);
     eprintln!("[gui-e2e] PASS diff_highlight_once");
@@ -284,7 +293,7 @@ pub fn scenario_diff_highlight_stale(cx: &mut VisualTestAppContext) {
     // The theme changes while a highlight is out. The active theme moves
     // without a redraw, so the old request is the only one out when it lands:
     // it must be dropped, not shown. The next frame asks under the new theme.
-    let old = theme::theme().slug;
+    let (old, old_key) = (theme::theme().slug.to_string(), theme::theme().key());
     let target = other_theme();
     commit_file(cx, 0);
     frame(cx, window);
@@ -296,7 +305,7 @@ pub fn scenario_diff_highlight_stale(cx: &mut VisualTestAppContext) {
     let before = counts();
     cx.run_until_parked();
     assert!(
-        !seen.0.borrow().contains(&Some(old)),
+        !seen.0.borrow().contains(&Some(old_key)),
         "{old}'s late spans were shown after the switch: {:?}",
         seen.0.borrow()
     );
@@ -304,8 +313,12 @@ pub fn scenario_diff_highlight_stale(cx: &mut VisualTestAppContext) {
     assert_eq!(counts().1, before.1 + 1, "{old}'s late spans were dropped");
     settle(cx, window);
     let shown = main_view(cx, &kagi).unwrap();
-    assert_eq!(shown.highlighted, Some(target), "{target}'s spans land");
-    assert!(theme::set_active(old));
+    assert_eq!(
+        shown.highlighted,
+        Some(key_of(target)),
+        "{target}'s spans land"
+    );
+    assert!(theme::set_active(&old));
 
     // A read that is still out when a newer diff is installed, or the pane is
     // closed, never lands.

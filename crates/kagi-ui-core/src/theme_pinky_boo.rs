@@ -1,10 +1,12 @@
 //! The pinky boo theme.
 
+use std::borrow::Cow;
+
 use crate::theme::{SyntaxPalette, Theme, LANE_PALETTE_LIGHT};
 
 pub const PINKY_BOO: Theme = Theme {
-    slug: "pinky-boo",
-    name: "Pinky Boo",
+    slug: Cow::Borrowed("pinky-boo"),
+    name: Cow::Borrowed("Pinky Boo"),
     dark: false,
 
     bg_base: 0xfbfbfb,

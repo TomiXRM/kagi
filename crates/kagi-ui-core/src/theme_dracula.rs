@@ -1,10 +1,12 @@
 //! The dracula theme.
 
+use std::borrow::Cow;
+
 use crate::theme::{SyntaxPalette, Theme, LANE_PALETTE_DARK};
 
 pub const DRACULA: Theme = Theme {
-    slug: "dracula",
-    name: "Dracula",
+    slug: Cow::Borrowed("dracula"),
+    name: Cow::Borrowed("Dracula"),
     dark: true,
 
     bg_base: 0x282a36,

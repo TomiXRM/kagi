@@ -1,10 +1,12 @@
 //! The tokyo night theme.
 
+use std::borrow::Cow;
+
 use crate::theme::{SyntaxPalette, Theme, LANE_PALETTE_DARK};
 
 pub const TOKYO_NIGHT: Theme = Theme {
-    slug: "tokyo-night",
-    name: "Tokyo Night",
+    slug: Cow::Borrowed("tokyo-night"),
+    name: Cow::Borrowed("Tokyo Night"),
     dark: true,
 
     bg_base: 0x1a1b26,

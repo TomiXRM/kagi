@@ -45,6 +45,14 @@ A control is modern when, for its role:
    long text — each with a sentence and, where useful, one action.
 5. **It works from the keyboard and for assistive tech** — reachable, focus
    visible, role/name/state exposed — and keeps Kagi's safety contracts.
+6. **The control explains itself; the screen does not explain the control.**
+   No instructional prose in the UI ("To delete this worktree, right-click
+   and choose…"). The affordance — a button, a menu item, an icon, a short
+   state label — is the explanation. Apple's apps and current web apps do not
+   ship how-to paragraphs next to controls; neither does Kagi. A needed
+   warning is a short state ("Uncommitted changes"), not a procedure.
+   Icons carry type and state (folder, branch, lock, terminal, warning) so a
+   row is not a line of text.
 
 ## When the procedure applies
 

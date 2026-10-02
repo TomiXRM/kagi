@@ -23,6 +23,13 @@ pub(crate) fn take() -> Option<gpui::Task<WorktreeInspection>> {
     REPORT.with(|slot| slot.borrow_mut().take())
 }
 
-pub fn status(app: &KagiApp, path: &Path) -> (bool, Option<u64>, Option<String>) {
+pub fn status(
+    app: &KagiApp,
+    path: &Path,
+) -> (
+    bool,
+    Option<u64>,
+    Option<kagi_domain::remove::WorktreeRemovalVerdict>,
+) {
     sidebar_worktree_row::inspection_status(app, path)
 }

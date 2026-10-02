@@ -135,16 +135,15 @@ uv `check-busy-labels` は busy 名の literal と有限な operation/job 名を
 
 The WORKTREES navigator adds a capacity badge and a read-only detail card shown
 while hovering the corresponding local worktree row. Neither creates an approval
-token nor changes removal eligibility. The card directs users to the existing
-right-click removal menu. Planning, confirmation, preflight, execution,
-verification, oplog, backups and lock semantics stay on the boundary above. In
-particular, this change neither deletes build output nor changes which ignored
-files the existing removal implementation preserves. The hover card does not
-reserve space below the five navigator panes. It identifies the hovered worktree
-by name and path, keeps its heading visible while the detail body scrolls, and
-stays interactive when the pointer moves from the row into the card to refresh.
-Its height stays stable as a measurement starts or finishes, preventing GPUI
-from flipping the tooltip to the opposite side of the pointer during Refresh.
+token nor changes removal eligibility. Planning, confirmation, preflight,
+execution, verification, oplog, backups and lock semantics stay on the boundary
+above. The hover card does not reserve space below the five navigator panes.
+It identifies the hovered worktree by name, branch and visually truncated path
+(the full sanitized path remains its AX name) and stays interactive when the
+pointer moves from the row into the card to refresh. An icon-only Refresh
+control keeps an accessible name. Its height stays stable as a measurement
+starts or finishes, preventing GPUI from flipping the tooltip to the opposite
+side of the pointer during Refresh.
 The native tooltip paints after KagiApp's root overlays; while the worktree
 context menu is open, the card yields completely so the menu remains visible
 and clickable. The navigator lists only linked worktrees: the main worktree is
@@ -183,19 +182,32 @@ need a capacity scan just to populate a hidden row.
   schedules missing and newly added linked targets while preserving completed
   cached observations. The renderer performs no I/O and does not repeatedly
   rescan cached worktrees.
-- The hover card displays the local-ref basis and the approved warning:
-  `.gitignore 配下(target/ 等)は Git が守らない — 削除前に確認`.
-  Git cleanliness is not a claim that ignored `.env` or other local files are
-  expendable. SSH worktree paths never enter this local observer.
+- #934: the hover card is a compact **read-only observation**, not a removal
+  guide. It shows name, branch, concise Git-state chips, a local port shortcut
+  when available, path and occupied bytes. It keeps the last measured bytes
+  during a pending/stale scan but does not advertise a stale positive verdict.
+  Tree/branch/lock/terminal/refresh are registered vector icons, not emoji
+  or textual instructions. Refresh is icon-only with an AX name; path
+  truncation is visual only (full sanitized path in AX). Hover and ordinary
+  reload never initiate removal or scan ignored files for a deletion warning.
+- For **Remove worktree**, `ops/worktree_remove.rs::plan_remove_worktree`
+  observes ignored entries in the target linked worktree using read-only
+  `git2` status. If any exist, the plan adds a typed EN/JA warning counting
+  ignored files and top-level ignored folders. A wholly ignored directory is
+  one folder, not a recursive file count. These items are not in the
+  uncommitted-content backup; the warning belongs to the confirmation plan,
+  not to the hover observation. Plan, preflight, executor and no-force refusal
+  semantics otherwise remain unchanged. SSH worktree paths never enter this
+  local observer.
 
 Pure verdict tests and filesystem/Git fixtures cover evidence precedence,
 hardlinks, symlinks, ignored allocation and cancellation. The focused native
 `worktree_inspection` scenario uses real pushed/dirty/locked/detached worktrees,
 hovers visible virtual rows, verifies the card disappears when the pointer
-leaves, checks EN/JA reasons and manual remeasurement, and holds only report
+leaves, checks EN/JA chip states and manual remeasurement, and holds only report
 delivery to prove superseded, departed and closed owners do not accept late
-results. Tier B reviews the four-state fixture and ignored-file warning;
-Windows cross-compilation is not a claim of Windows runtime validation.
+results. Tier B reviews the card and removal warning; Windows
+cross-compilation is not a claim of Windows runtime validation.
 
 ## Typed remove refusal delivery (#353)
 

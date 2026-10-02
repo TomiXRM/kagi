@@ -414,13 +414,14 @@ fn destination_blocker(dest: &Path) -> Option<CloneNote> {
     }
 }
 
-/// Each part a plain name: nothing `gh` could read as a flag, and not `.` or
-/// `..`, which a path would read as a directory step. A leading dot is
-/// otherwise a real repository name (`.github`, `.dotfiles`).
+/// Each part a plain name, and not `.` or `..`, which a path would read as a
+/// directory step. A leading dot or dash is otherwise a real name (`.github`,
+/// `-tools`): `gh` gets `host/owner/repo` as one argument that starts with the
+/// host, so only the host's first character could make it read as a flag
+/// (checked in [`source_is_valid`]).
 fn names_ok(names: &[&str]) -> bool {
     names.iter().all(|name| {
         !name.is_empty()
-            && !name.starts_with('-')
             && !matches!(*name, "." | "..")
             && name
                 .chars()
@@ -464,6 +465,8 @@ mod tests {
             "github.com/acme/widgets.rs",
             "github.com/acme/.github",
             "github.com/acme/.dotfiles",
+            "github.com/acme/-tools",
+            "github.com/-acme/widgets",
             "ghe.example.com:8443/acme/my_repo",
         ] {
             assert!(source_is_valid(ok), "{ok}");

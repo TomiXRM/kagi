@@ -20,6 +20,9 @@ pub enum CloneNote {
     ParentMissing { path: String },
     /// blocker — the destination could not be inspected at all.
     DestinationUnreadable { path: String, error: String },
+    /// blocker — the clone about to run is not the one the confirmed plan
+    /// showed (another source or destination). Nothing is cloned.
+    PlanMismatch { source: String, path: String },
     /// warning — the source is a fork: `gh` also adds an `upstream` remote
     /// pointing at the repository it was forked from.
     ForkAddsUpstream,
@@ -45,6 +48,10 @@ impl CloneNote {
             CloneNote::DestinationUnreadable { path, error } => {
                 format!("'{path}' could not be checked: {error}")
             }
+            CloneNote::PlanMismatch { source, path } => format!(
+                "Cloning '{source}' into '{path}' is not what was reviewed. Review the \
+                 clone again."
+            ),
             CloneNote::ForkAddsUpstream => "This repository is a fork: gh also adds an \
                  'upstream' remote for the repository it was forked from."
                 .to_string(),

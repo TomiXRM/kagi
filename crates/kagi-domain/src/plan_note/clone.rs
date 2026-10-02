@@ -1,15 +1,18 @@
 //! CloneNote — cloning a GitHub repository into a new folder (#923).
 //!
 //! The one write that starts with no repository: the plan is about a source
-//! (`[host/]owner/repo`) and a destination folder, and its only effect is
+//! (`host/owner/repo`) and a destination folder, and its only effect is
 //! that folder. Kagi never deletes it, whatever happens to the clone.
 
 /// Plan notes for the clone op.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CloneNote {
-    /// blocker — the source is not a `[host/]owner/repo` identity Kagi can
+    /// blocker — the source is not a `host/owner/repo` identity Kagi can
     /// hand to `gh repo clone`.
     SourceInvalid { source: String },
+    /// blocker — the source names no host (`owner/repo`): `gh` would clone
+    /// from its configured host, which Kagi could not show or verify.
+    SourceWithoutHost { source: String },
     /// blocker — the destination is not an absolute path.
     DestinationNotAbsolute { path: String },
     /// blocker — the destination path is not valid UTF-8, so the name Kagi
@@ -38,6 +41,10 @@ impl CloneNote {
             CloneNote::SourceInvalid { source } => {
                 format!("'{source}' is not a GitHub repository Kagi can clone.")
             }
+            CloneNote::SourceWithoutHost { source } => format!(
+                "'{source}' does not name its host (host/owner/repo), so Kagi cannot \
+                 tell which server it would be cloned from."
+            ),
             CloneNote::DestinationNotAbsolute { path } => {
                 format!("The destination '{path}' is not an absolute path.")
             }

@@ -49,6 +49,12 @@ impl KagiApp {
         } else if self.branch_menu.is_some() {
             self.branch_menu = None;
             cx.notify();
+        } else if self.stash_menu.is_some() {
+            self.stash_menu = None;
+            cx.notify();
+        } else if self.worktree_menu.is_some() {
+            self.worktree_menu = None;
+            cx.notify();
         } else if self.ui().main_diff.is_some() {
             self.close_main_diff();
             cx.notify();

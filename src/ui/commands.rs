@@ -1079,7 +1079,7 @@ pub fn theme_command_ids_by_name() -> Vec<&'static str> {
     ids.sort_by_key(|id| {
         theme_slug_for_command(id)
             .and_then(|slug| theme::THEMES.iter().find(|t| t.slug == slug))
-            .map(|t| t.display_name().to_lowercase())
+            .map(|t| t.name.to_lowercase())
             .unwrap_or_default()
     });
     ids
@@ -2398,7 +2398,7 @@ mod theme_menu_order_tests {
                     .iter()
                     .find(|t| t.slug == slug)
                     .expect("registered theme")
-                    .display_name()
+                    .name
                     .to_lowercase()
             })
             .collect();

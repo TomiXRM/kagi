@@ -45,6 +45,16 @@ pub struct RepoList {
     pub truncated: bool,
 }
 
+/// One owner's section of the list: the signed-in user's own repositories
+/// (`owner: None`) or one organization's. An organization that cannot be
+/// read (SSO not authorized, …) keeps its section with the reason, so the
+/// rest of the list still shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnerRepos {
+    pub owner: Option<String>,
+    pub list: Result<RepoList, String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

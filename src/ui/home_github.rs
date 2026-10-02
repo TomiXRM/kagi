@@ -21,8 +21,8 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputEvent, InputState};
-use gpui_component::Sizable as _;
-use kagi_git::github_repos::{RepoList, RepoListing};
+use gpui_component::{Icon, IconName, Sizable as _};
+use kagi_git::github_repos::{OwnerRepos, RepoListing};
 use kagi_git::ops::{plan_clone, CloneRequest};
 use kagi_git::OperationPlan;
 
@@ -30,7 +30,7 @@ use super::i18n::Msg;
 use super::modal_renderers::{modal_overlay, render_current_predicted, render_modal_title_row};
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_LG};
 use super::render_helpers::safe_text;
-use super::theme::theme;
+use super::theme::{self, theme};
 use super::KagiApp;
 use kagi_ui_core::i18n::{plan_note_text, plan_title_text};
 
@@ -44,7 +44,8 @@ pub enum GithubRepos {
     NotLoaded,
     Loading,
     Loaded {
-        list: RepoList,
+        /// The user's own section first, then one per organization.
+        sections: Vec<OwnerRepos>,
         /// Listed identity (`host/owner/repo`) → a local clone of it.
         local: HashMap<String, PathBuf>,
     },
@@ -139,7 +140,7 @@ impl KagiApp {
                 .map(|t| t.path.clone()),
         );
         let work = cx.background_spawn(async move {
-            let list = kagi_git::github_repos::list_own_repos(&home_dir());
+            let list = kagi_git::github_repos::list_my_repos(&home_dir());
             let local: HashMap<String, PathBuf> = paths
                 .into_iter()
                 .filter_map(|p| kagi_git::github_repos::origin_identity(&p).map(|id| (id, p)))
@@ -153,14 +154,19 @@ impl KagiApp {
                     return;
                 }
                 app.home_github.repos = match list {
-                    Ok(list) => {
+                    Ok(sections) => {
+                        let repos: usize = sections
+                            .iter()
+                            .filter_map(|s| s.list.as_ref().ok())
+                            .map(|l| l.repos.len())
+                            .sum();
                         klog!(
-                            "home: github repos={} truncated={} local={}",
-                            list.repos.len(),
-                            list.truncated,
+                            "home: github owners={} repos={} local={}",
+                            sections.len(),
+                            repos,
                             local.len()
                         );
-                        GithubRepos::Loaded { list, local }
+                        GithubRepos::Loaded { sections, local }
                     }
                     Err(error) => {
                         klog!("home: github failed: {error}");
@@ -295,7 +301,8 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// The GitHub section of Home's main column.
+    /// The GitHub section of Home's main column: a search field, then one
+    /// section per owner (the user first, then each organization).
     pub(crate) fn render_home_github(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let refresh = cx.listener(|app, _: &gpui::ClickEvent, _, cx| {
             app.reload_home_github(cx);
@@ -309,8 +316,8 @@ impl KagiApp {
             .child(
                 div()
                     .flex_1()
-                    .text_sm()
-                    .text_color(rgb(theme().text_label))
+                    .text_lg()
+                    .text_color(rgb(theme().text_main))
                     .child(SharedString::from(Msg::HomeGithubTitle.t())),
             )
             .child(super::e2e::measure_control(
@@ -325,7 +332,7 @@ impl KagiApp {
             .home_github
             .filter
             .as_ref()
-            .map(|f| f.read(cx).value().to_lowercase())
+            .map(|f| f.read(cx).value().trim().to_lowercase())
             .unwrap_or_default();
         let body = match self.home_github.repos.clone() {
             GithubRepos::NotLoaded | GithubRepos::Loading => {
@@ -343,136 +350,208 @@ impl KagiApp {
                 )
                 .child(muted(Msg::HomeGithubFailedHint.t().to_string()))
                 .into_any_element(),
-            GithubRepos::Loaded { list, local } => {
-                self.render_github_rows(&list, &local, &query, cx)
+            GithubRepos::Loaded { sections, local } => {
+                self.render_github_sections(&sections, &local, &query, cx)
             }
         };
         div()
             .flex()
             .flex_col()
-            .gap_2()
-            .pt_4()
+            .gap_3()
+            .pt_6()
             .child(header)
-            .children(
-                self.home_github
-                    .filter
-                    .as_ref()
-                    .map(|f| Input::new(f).small()),
-            )
+            .children(self.home_github.filter.as_ref().map(search_field))
             .child(body)
             .into_any_element()
     }
 
-    fn render_github_rows(
+    fn render_github_sections(
         &mut self,
-        list: &RepoList,
+        sections: &[OwnerRepos],
         local: &HashMap<String, PathBuf>,
         query: &str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let cloning = self.home_github.cloning.as_ref().map(|r| r.source.clone());
-        let mut rows = div().flex().flex_col();
+        let mut col = div().flex().flex_col().gap_4();
         let mut shown = 0usize;
-        for (i, listing) in list.repos.iter().enumerate() {
-            let matches = query.is_empty()
-                || listing.name_with_owner.to_lowercase().contains(query)
-                || listing.description.to_lowercase().contains(query);
-            if !matches {
+        for section in sections {
+            let title = section
+                .owner
+                .clone()
+                .unwrap_or_else(|| Msg::HomeGithubMine.t().to_string());
+            let list = match &section.list {
+                Ok(list) => list,
+                Err(error) => {
+                    // An unreadable organization still shows, with why;
+                    // filtered out like an empty one while searching.
+                    if query.is_empty() {
+                        col = col.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(section_heading(&title))
+                                .child(muted(Msg::HomeGithubOwnerFailed.t().replace("{}", error))),
+                        );
+                    }
+                    continue;
+                }
+            };
+            let mut rows = div().flex().flex_col();
+            let mut in_section = 0usize;
+            for listing in &list.repos {
+                let matches = query.is_empty()
+                    || listing.name_with_owner.to_lowercase().contains(query)
+                    || listing.description.to_lowercase().contains(query);
+                if !matches {
+                    continue;
+                }
+                in_section += 1;
+                let state = if cloning.as_deref() == Some(listing.clone_source().as_str()) {
+                    Msg::HomeGithubCloning.t()
+                } else if local.contains_key(&listing.identity()) {
+                    Msg::HomeGithubOpen.t()
+                } else {
+                    Msg::HomeGithubClone.t()
+                };
+                rows = rows.child(super::e2e::measure_control(
+                    format!("home-gh-{}", listing.name_with_owner),
+                    github_row(listing.clone(), state, cx),
+                ));
+            }
+            shown += in_section;
+            if in_section == 0 && !query.is_empty() {
                 continue;
             }
-            shown += 1;
-            let state = if cloning.as_deref() == Some(listing.clone_source().as_str()) {
-                Msg::HomeGithubCloning.t()
-            } else if local.contains_key(&listing.identity()) {
-                Msg::HomeGithubOpen.t()
-            } else {
-                Msg::HomeGithubClone.t()
-            };
-            rows = rows.child(super::e2e::measure_control(
-                format!("home-gh-{}", listing.name_with_owner),
-                github_row(i, listing.clone(), state, cx),
-            ));
+            let mut block = div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(section_heading(&title));
+            if list.repos.is_empty() {
+                block = block.child(muted(Msg::HomeGithubEmpty.t().to_string()));
+            }
+            block = block.child(rows);
+            if list.truncated {
+                block = block.child(muted(
+                    Msg::HomeGithubTruncated
+                        .t()
+                        .replace("{}", &list.repos.len().to_string()),
+                ));
+            }
+            col = col.child(block);
         }
-        let mut col = div().flex().flex_col().gap_1();
-        if list.repos.is_empty() {
-            col = col.child(muted(Msg::HomeGithubEmpty.t().to_string()));
-        } else if shown == 0 {
+        if shown == 0 && !query.is_empty() {
             col = col.child(muted(Msg::HomeGithubNoMatch.t().to_string()));
-        }
-        col = col.child(rows);
-        if list.truncated {
-            col = col.child(muted(
-                Msg::HomeGithubTruncated
-                    .t()
-                    .replace("{}", &list.repos.len().to_string()),
-            ));
         }
         col.into_any_element()
     }
 }
 
+/// A large, borderless search field in a soft rounded box with a magnifier
+/// — the search look of current desktop apps, not a form input.
+fn search_field(input: &Entity<InputState>) -> AnyElement {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_3()
+        .px_4()
+        .py_2()
+        .rounded_xl()
+        .bg(rgb(theme().panel))
+        .border_1()
+        .border_color(rgb(theme().surface))
+        .child(
+            Icon::new(IconName::Search)
+                .size(theme::scaled_px(18.))
+                .text_color(rgb(theme().text_muted)),
+        )
+        .child(
+            div().flex_1().min_w(px(0.)).text_lg().child(
+                Input::new(input)
+                    .appearance(false)
+                    .bordered(false)
+                    .cleanable(true)
+                    .large(),
+            ),
+        )
+        .into_any_element()
+}
+
+fn section_heading(title: &str) -> impl IntoElement {
+    div()
+        .px_3()
+        .text_sm()
+        .text_color(rgb(theme().text_muted))
+        .child(SharedString::from(title.to_string()))
+}
+
 fn muted(text: String) -> AnyElement {
     div()
+        .px_3()
         .text_sm()
         .text_color(rgb(theme().text_muted))
         .child(SharedString::from(text))
         .into_any_element()
 }
 
-fn github_row(
-    i: usize,
-    listing: RepoListing,
-    state: &'static str,
-    cx: &mut Context<KagiApp>,
-) -> impl IntoElement {
-    let mut badges = Vec::new();
-    if listing.is_private {
-        badges.push(Msg::HomeGithubPrivate.t());
-    }
-    if listing.is_fork {
-        badges.push(Msg::HomeGithubFork.t());
-    }
-    let title = div()
+/// One repository: its name over its description on the left; on the right
+/// the last update, private / fork marks and what a click does, as a chip.
+fn github_row(listing: RepoListing, state: &'static str, cx: &mut Context<KagiApp>) -> AnyElement {
+    let chip = |text: &str| {
+        div()
+            .flex_shrink_0()
+            .px_2()
+            .rounded_md()
+            .bg(rgb(theme().surface))
+            .text_xs()
+            .text_color(rgb(theme().text_sub))
+            .child(SharedString::from(text.to_string()))
+    };
+    let mut meta = div()
         .flex()
         .flex_row()
         .items_center()
         .gap_2()
-        .child(
+        .flex_shrink_0();
+    if let Some(day) = listing.updated_at.get(..10) {
+        meta = meta.child(
             div()
                 .text_sm()
-                .text_color(rgb(theme().text_main))
-                .truncate()
-                .child(SharedString::from(listing.name_with_owner.clone())),
-        )
-        .children(badges.into_iter().map(|b| {
-            div()
-                .px_1()
-                .rounded_sm()
-                .border_1()
-                .border_color(rgb(theme().surface))
-                .text_xs()
                 .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(b))
-        }));
+                .child(SharedString::from(day.to_string())),
+        );
+    }
+    if listing.is_private {
+        meta = meta.child(chip(Msg::HomeGithubPrivate.t()));
+    }
+    if listing.is_fork {
+        meta = meta.child(chip(Msg::HomeGithubFork.t()));
+    }
+    meta = meta.child(chip(state).text_color(rgb(theme().color_branch)));
     let description = (!listing.description.is_empty()).then(|| {
         div()
-            .text_xs()
+            .text_sm()
             .text_color(rgb(theme().text_muted))
             .truncate()
             .child(safe_text(&listing.description))
     });
+    let id = SharedString::from(format!("home-gh-row-{}", listing.name_with_owner));
+    let name = listing.name().to_string();
     let pick = cx.listener(move |app, _: &gpui::ClickEvent, _, cx| {
         app.home_github_pick(listing.clone(), cx);
     });
     div()
-        .id(("home-gh", i))
+        .id(id)
         .flex()
         .flex_row()
         .items_center()
-        .gap_3()
-        .px_2()
-        .py_1()
-        .rounded_md()
+        .gap_4()
+        .px_3()
+        .py_2()
+        .rounded_lg()
         .cursor(gpui::CursorStyle::PointingHand)
         .hover(|s| s.bg(rgb(theme().surface)))
         .on_click(pick)
@@ -482,16 +561,17 @@ fn github_row(
                 .flex_col()
                 .flex_1()
                 .min_w(px(0.))
-                .child(title)
+                .child(
+                    div()
+                        .text_base()
+                        .text_color(rgb(theme().text_main))
+                        .truncate()
+                        .child(SharedString::from(name)),
+                )
                 .children(description),
         )
-        .child(
-            div()
-                .flex_shrink_0()
-                .text_xs()
-                .text_color(rgb(theme().color_branch))
-                .child(SharedString::from(state)),
-        )
+        .child(meta)
+        .into_any_element()
 }
 
 /// The clone card: the plan's current → predicted box, its warnings and

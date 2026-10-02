@@ -1,9 +1,9 @@
-//! The signed-in user's repositories from `gh repo list`, for the repository
-//! picker (#923). A read: it changes nothing.
+//! The signed-in user's repositories and those of their organizations, from
+//! `gh`, for Home (#923, #924). A read: it changes nothing.
 
 use std::path::Path;
 
-pub use kagi_domain::github_repos::{RepoList, RepoListing};
+pub use kagi_domain::github_repos::{OwnerRepos, RepoList, RepoListing};
 
 use crate::GitError;
 
@@ -12,25 +12,75 @@ use crate::GitError;
 /// have been cut off, and [`RepoList::truncated`] says so.
 pub const REPO_LIST_LIMIT: usize = 1000;
 
-/// `gh repo list --limit <limit> --json …`: the user's own repositories on
-/// `gh`'s default host. Organization repositories are not listed (#924).
-pub fn repo_list_args(limit: usize) -> Vec<String> {
-    vec![
-        "repo".into(),
-        "list".into(),
-        "--limit".into(),
+/// `gh repo list [<owner>] --limit <limit> --json …`: the user's own
+/// repositories (`owner: None`) or one organization's, on `gh`'s default host.
+pub fn repo_list_args(owner: Option<&str>, limit: usize) -> Vec<String> {
+    let mut args = vec!["repo".to_string(), "list".to_string()];
+    args.extend(owner.map(str::to_string));
+    args.extend([
+        "--limit".to_string(),
         limit.to_string(),
-        "--json".into(),
-        "nameWithOwner,url,isFork,isPrivate,description,updatedAt".into(),
-    ]
+        "--json".to_string(),
+        "nameWithOwner,url,isFork,isPrivate,description,updatedAt".to_string(),
+    ]);
+    args
 }
 
-/// Read the user's repositories. `workdir` is only the process's working
+/// `gh api user/orgs --paginate --jq .[].login`: the organizations the user
+/// belongs to, one login per line.
+pub fn org_list_args() -> Vec<String> {
+    ["api", "user/orgs", "--paginate", "--jq", ".[].login"]
+        .map(str::to_string)
+        .to_vec()
+}
+
+/// Organization logins from [`org_list_args`]'s output. Pure. A line that is
+/// not a plain login (letters, digits, `-`, not leading `-`) is dropped: it
+/// is handed to `gh repo list` as an argument.
+pub fn parse_org_logins(stdout: &str) -> Vec<String> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .filter(|login| {
+            !login.is_empty()
+                && !login.starts_with('-')
+                && login.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+/// Read one owner's repositories. `workdir` is only the process's working
 /// directory; `gh repo list` does not depend on it.
-pub fn list_own_repos(workdir: &Path) -> Result<RepoList, GitError> {
-    let stdout =
-        crate::github_edit::read_gh(workdir, &repo_list_args(REPO_LIST_LIMIT), "repo list")?;
+pub fn list_repos(workdir: &Path, owner: Option<&str>) -> Result<RepoList, GitError> {
+    let stdout = crate::github_edit::read_gh(
+        workdir,
+        &repo_list_args(owner, REPO_LIST_LIMIT),
+        "repo list",
+    )?;
     parse_repo_list(&stdout, REPO_LIST_LIMIT)
+}
+
+/// The user's own repositories, then each organization's, one section per
+/// owner. The own read failing (not signed in, no `gh`) fails the whole read;
+/// an organization that cannot be read keeps its section with the reason,
+/// and an unreadable organization list leaves only the user's own section.
+pub fn list_my_repos(workdir: &Path) -> Result<Vec<OwnerRepos>, GitError> {
+    let mut sections = vec![OwnerRepos {
+        owner: None,
+        list: Ok(list_repos(workdir, None)?),
+    }];
+    let orgs = crate::github_edit::read_gh(workdir, &org_list_args(), "orgs")
+        .map(|stdout| parse_org_logins(&stdout))
+        .unwrap_or_default();
+    for org in orgs {
+        let list = list_repos(workdir, Some(&org)).map_err(|error| error.to_string());
+        sections.push(OwnerRepos {
+            owner: Some(org),
+            list,
+        });
+    }
+    Ok(sections)
 }
 
 /// The `host/owner/repo` identity (lower-cased, as
@@ -98,9 +148,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_read_names_its_limit() {
-        let args = repo_list_args(1000);
-        assert_eq!(&args[..4], ["repo", "list", "--limit", "1000"]);
+    fn the_read_names_its_owner_and_limit() {
+        assert_eq!(
+            &repo_list_args(None, 1000)[..4],
+            ["repo", "list", "--limit", "1000"]
+        );
+        assert_eq!(
+            &repo_list_args(Some("acme-org"), 1000)[..5],
+            ["repo", "list", "acme-org", "--limit", "1000"]
+        );
+    }
+
+    /// Each login becomes a `gh repo list` argument: anything that is not a
+    /// plain login (a flag, a path, blank) is dropped.
+    #[test]
+    fn org_logins_are_plain_names_only() {
+        assert_eq!(
+            parse_org_logins("acme-org\n\n  Other1 \n--upload-pack=x\nbad/path\n"),
+            ["acme-org", "Other1"]
+        );
     }
 
     #[test]

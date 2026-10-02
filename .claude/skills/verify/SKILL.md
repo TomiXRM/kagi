@@ -561,9 +561,12 @@ The current suite covers:
   press ⌘T (no foreground needed) or click `+` (needs a key window — ask first);
   "Open Folder…" opens the native dialog, which Tier A does not click.
 - Home's GitHub list and clone (`KAGI_GUI_E2E_ONLY=home_github`,
-  `tests/recovery/home_github.rs`, #923 / ADR-0219): an offline `gh` lists one
-  repository whose `origin` matches a recent repository and one that is not
-  local; `repo clone` really clones a local bare repository. The local row
+  `tests/recovery/home_github.rs`, #923 #924 / ADR-0219): an offline `gh` lists
+  the user's repositories (one whose `origin` matches a recent repository, one
+  that is not local) and two organizations — one listed, one refusing with a
+  SAML error, which keeps its section with the reason; `repo clone` really
+  clones a local bare repository. The organization's row opens a clone card
+  sourced from that owner. The local row
   (`home-gh-<owner>/<repo>`) opens its tab; the other opens the clone card,
   which has no `clone-confirm` while the default folder is occupied (the file
   in it untouched), and once free clones, writes one `clone` Success receipt

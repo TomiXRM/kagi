@@ -26,11 +26,19 @@ const REPO_LIST: &str = r#"[
   "isPrivate":true,"description":"not here yet","updatedAt":"2026-10-02T00:00:00Z"}
 ]"#;
 
+const ORG_LIST: &str = r#"[
+ {"nameWithOwner":"acme-org/tool","url":"https://github.com/acme-org/tool","isFork":false,
+  "isPrivate":true,"description":"an organization's","updatedAt":"2026-10-03T00:00:00Z"}
+]"#;
+
 fn gh_script(bare: &Path) -> String {
     format!(
-        "#!/bin/sh\ncase \"$1 $2\" in\n\
-         'repo list') cat <<'JSON'\n{REPO_LIST}\nJSON\n;;\n\
-         'repo clone') git clone -q '{bare}' \"$4\" && \
+        "#!/bin/sh\ncase \"$1 $2 $3\" in\n\
+         'api user/orgs '*) printf 'acme-org\\nlocked-org\\n' ;;\n\
+         'repo list --limit') cat <<'JSON'\n{REPO_LIST}\nJSON\n;;\n\
+         'repo list acme-org') cat <<'JSON'\n{ORG_LIST}\nJSON\n;;\n\
+         'repo list locked-org') echo 'Resource protected by organization SAML enforcement' >&2; exit 1 ;;\n\
+         'repo clone '*) git clone -q '{bare}' \"$4\" && \
          git -C \"$4\" remote set-url origin https://github.com/acme/widgets.git ;;\n\
          *) echo \"unexpected gh $*\" >&2; exit 1 ;;\nesac\n",
         bare = bare.display()
@@ -102,17 +110,37 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
         matches!(app.home_github.repos, GithubRepos::Loaded { .. })
     });
     cx.read(|cx| {
-        let GithubRepos::Loaded { list, local } = &app.read(cx).home_github.repos else {
+        let GithubRepos::Loaded { sections, local } = &app.read(cx).home_github.repos else {
             unreachable!()
         };
-        assert_eq!(list.repos.len(), 2);
-        assert!(!list.truncated);
+        let owners: Vec<_> = sections.iter().map(|s| s.owner.as_deref()).collect();
+        assert_eq!(owners, [None, Some("acme-org"), Some("locked-org")]);
+        assert_eq!(sections[0].list.as_ref().unwrap().repos.len(), 2);
+        assert_eq!(
+            sections[1].list.as_ref().unwrap().repos[0].name_with_owner,
+            "acme-org/tool",
+            "the organization's repositories are listed too"
+        );
+        assert!(
+            sections[2].list.as_ref().is_err_and(|e| e.contains("SAML")),
+            "an organization that cannot be read keeps its section and says why"
+        );
         assert_eq!(
             local.get("github.com/acme/local"),
             Some(&local_path),
             "a recent repository whose origin is listed is known as its clone"
         );
     });
+
+    // An organization's repository is cloned from its own owner.
+    click_control(cx, window, "home-gh-acme-org/tool");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| app.read(cx).clone_modal().map(|m| m.request.source.clone())),
+        Some("github.com/acme-org/tool".to_string())
+    );
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
 
     // Known locally: the row opens it, in place of Home.
     click_control(cx, window, "home-gh-acme/local");

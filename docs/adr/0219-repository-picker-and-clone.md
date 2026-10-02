@@ -11,7 +11,7 @@
 ## 決定
 
 1. **画面は Home タブ(GitHub の Dashboard 相当)。** 当初案の modal はユーザー確認で却下された(「ポップアップではなくホーム画面」)。`+` と New Tab(⌘T、`file.newTab`)はタブ帯に「Home」タブを 1 つ開く(既にあればそれを前面へ)。Home でリポジトリを選ぶ(または clone が終わる)と、その Home タブがリポジトリのタブになる。リポジトリのタブをクリックすると Home は背面に回り、Home タブから戻れる。⌘W は前面の Home だけを閉じる。タブが無いときは Home が Welcome 画面の代わりになる(タブが無い remote の読み取り専用表示では Home を出せないので、⌘T は従来どおりフォルダー選択)。「Open Repository…」(`file.openRepository`)は従来どおりフォルダー選択を直接開く。Home はセッションを持たない(`RepoTab` ではない)ので、前面にある間はリポジトリ向けのコマンドを無効にし、repo-scoped な modal は他のタブへ移るときと同じく閉じる。中身は最近開いたリポジトリ、自分の GitHub リポジトリ(`gh repo list`、clone・ローカルにあれば開く)、「フォルダーを開く…」と Remote Browse への導線。自分の PR / Issue(全リポジトリ横断)は #928。
-2. **一覧は自分のリポジトリだけ、件数を明示。** `gh repo list --limit 1000`。`gh` は既定 30 件で黙って止まるので、上限に達したら「さらにあり」を表示する。organization のリポジトリは #924。
+2. **一覧は自分と所属 organization のリポジトリ、件数を明示。** 自分は `gh repo list --limit 1000`、organization は `gh api user/orgs --paginate` で得た各 login について `gh repo list <org> --limit 1000`。owner ごとに見出しを付ける。`gh` は既定 30 件で黙って止まるので、上限に達した owner には「さらにあり」を表示する。自分の一覧が読めなければ全体を失敗とし、organization が読めない(SSO 未承認など)ときはその見出しの下に理由を出して他は表示する。organization の login は plain な名前だけを `gh` に渡す(#924 をユーザー要望で取り込み)。
 3. **clone は `gh repo clone <host>/<owner>/<repo> <dest>`。** 一覧を取った `gh` の認証と protocol 設定で clone するので、`git` に credential が無くても private / Enterprise のリポジトリを clone できる。source の host は必須で、host の無い `owner/repo` は plan で拒否する(`SourceWithoutHost`)。host が無いと `gh` は `GH_HOST` の host から clone し、card も verify もその host を名指せないため(#926 review)。一覧は `gh` から host 付きで来るので、呼び出し側は常に host を渡す。fork なら `gh` が `upstream` remote を足すことを card に書く。
 4. **triple は `crates/kagi-git/src/ops/clone.rs`。** `plan_clone`(source と clone 先、拒否理由)→ confirm → `preflight_clone(request, plan)`(実行する request が承認した plan と同じ source・clone 先・fork 表示であること、plan に blocker が無かったこと、同じ検査をやり直す。違えば `PlanMismatch` で Refused、`gh` は呼ばない)→ `execute_clone` → `verify_clone`(clone 先が repository として開け、`origin` が読める host なら source と一致)→ oplog。receipt は `op = "clone"`、repo は clone 先のパス。Success / Refused / Failed / Unknown / Partial(開けるが origin が別)。
 5. **上書きしない、消さない。** clone 先が既にあり空のフォルダーでなければ(ファイル・symlink・中身のあるフォルダー)拒否する。clone 先のパスが UTF-8 でなければ plan で拒否する(以降、card・command・receipt・plan の照合に出る文字列とパスが一対一になる)。clone が失敗・中断して何かが残っても Kagi は消さず、そのパスを card と receipt に出す。消すかどうかはユーザーが決める。
@@ -20,6 +20,6 @@
 
 ## 結果
 
-PR を 3 つに分ける。PR1 = 本 ADR、triple、`gh repo list` の読み取り、integration test。PR2 = Home タブ(最近 / フォルダーを開く / Remote Browse、Welcome の置き換え)。PR3 = Home の GitHub 一覧と clone の card / 実行の配線、Tier A(fake `gh` とローカル bare repository)。キャンセル、organization、clone の進捗表示(% 表示)は範囲外。自分の PR / Issue の一覧は #928。
+PR を 3 つに分ける。PR1 = 本 ADR、triple、`gh repo list` の読み取り、integration test。PR2 = Home タブ(最近 / フォルダーを開く / Remote Browse、Welcome の置き換え)。PR3 = Home の GitHub 一覧(自分と organization)と clone の card / 実行の配線、Tier A(fake `gh` とローカル bare repository)。キャンセル、clone の進捗表示(% 表示)は範囲外。自分の PR / Issue の一覧は #928。
 
 限界: `preflight_clone` の検査から `gh` が clone 先を作るまでの間に、別のプロセスが clone 先を symlink などへ差し替える並行置換は防がない(TOCTOU)。ユーザー自身の並行操作は前提外とし、#900 と同じ扱いにする(#926 review)。

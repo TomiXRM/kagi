@@ -905,6 +905,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_remote_browse_modal_routing),
             ),
             (
+                "graph_escape_clears_selection",
+                Box::new(crate::recovery_operations::scenario_graph_escape_clears_selection),
+            ),
+            (
                 "window_modal_exclusivity",
                 Box::new(crate::recovery_operations::scenario_window_modal_exclusivity),
             ),

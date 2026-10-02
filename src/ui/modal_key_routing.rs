@@ -49,9 +49,23 @@ impl KagiApp {
         } else if self.branch_menu.is_some() {
             self.branch_menu = None;
             cx.notify();
+        } else if self.stash_menu.is_some() {
+            self.stash_menu = None;
+            cx.notify();
+        } else if self.worktree_menu.is_some() {
+            self.worktree_menu = None;
+            cx.notify();
         } else if self.ui().main_diff.is_some() {
             self.close_main_diff();
             cx.notify();
+        } else if self.workspace_mode() == super::workspace_mode::WorkspaceMode::Graph {
+            // Last in the chain: with nothing else to close, Escape clears the
+            // Graph selection (and with it the commit details pane). `select`
+            // on the selected row is the existing toggle-off path.
+            if let Some(index) = self.ui().selected {
+                self.select(index);
+                cx.notify();
+            }
         }
     }
 

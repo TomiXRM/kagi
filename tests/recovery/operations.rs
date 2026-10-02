@@ -798,6 +798,70 @@ pub fn scenario_modal_no_fallthrough(cx: &mut VisualTestAppContext) {
     );
 }
 
+/// Escape with nothing else to close clears the Graph selection, which closes
+/// the commit details pane; a second Escape on no selection does nothing. An
+/// open modal still takes Escape first.
+pub fn scenario_graph_escape_clears_selection(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let (app, window) = mount(cx, repo);
+    let selected = |cx: &mut VisualTestAppContext| cx.read(|cx| app.read(cx).ui().selected);
+
+    app.update(cx, |app, _| app.select_headless(1));
+    assert_eq!(selected(cx), Some(1), "a Graph row is selected");
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert_eq!(
+        selected(cx),
+        None,
+        "graph-escape-clears-selection: Esc must clear the Graph selection"
+    );
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert_eq!(selected(cx), None, "a second Esc on no selection stays put");
+
+    // A sidebar menu opened over the selection closes first (#920 review).
+    app.update(cx, |app, _| app.select_headless(1));
+    app.update(cx, |app, _| {
+        app.worktree_menu = Some(kagi::ui::worktree_menu::WorktreeMenuState {
+            name: "main".into(),
+            locked: false,
+            is_main: true,
+            path: None,
+            position: gpui::point(gpui::px(10.), gpui::px(10.)),
+        });
+    });
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).worktree_menu.is_none()),
+        "graph-escape-menu-first: Esc closes the worktree menu"
+    );
+    assert_eq!(
+        selected(cx),
+        Some(1),
+        "graph-escape-menu-first: the selection behind the menu survives"
+    );
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert_eq!(selected(cx), None);
+
+    // A modal in front keeps Escape: the selection behind it survives.
+    app.update(cx, |app, _| app.select_headless(1));
+    press_enter(cx, &app, window);
+    assert!(cx.read(|cx| app.read(cx).plan_modal().is_some()));
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).plan_modal().is_none()));
+    assert_eq!(
+        selected(cx),
+        Some(1),
+        "graph-escape-modal-first: Esc closes the modal, not the selection behind it"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS graph_escape_clears_selection: Esc clears the Graph selection; a modal keeps Esc first");
+}
+
 /// #643: Remote Browse owns Enter/Esc while it occupies the shared modal slot.
 /// A selected non-HEAD commit and a live diff selection make both historical
 /// fallthrough paths observable.

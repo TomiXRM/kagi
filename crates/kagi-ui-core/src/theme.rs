@@ -511,7 +511,7 @@ pub fn init_diff_split() {
 }
 
 /// Log the persisted **swimlane-visuals** flag at startup (settings.json
-/// `"graph_lane_compact"`, `"true"`/`"false"`; missing → off).
+/// `"graph_lane_compact"`, `"true"`/`"false"`; missing → **on**, 2026-10-02).
 ///
 /// This flag drives the swimlane *visuals* only — avatar commit nodes, the
 /// lane tint band, and the graph lane padding (bin crate `render_helpers.rs`).
@@ -519,7 +519,7 @@ pub fn init_diff_split() {
 /// not read this flag. Backed by an atomic (like `graph_compact`) so the
 /// Settings-screen toggle can flip it live; the loaded value is logged here so
 /// the startup state is debuggable alongside the other settings lines.
-static GRAPH_LANE_COMPACT: AtomicBool = AtomicBool::new(false);
+static GRAPH_LANE_COMPACT: AtomicBool = AtomicBool::new(true);
 
 /// The currently-active swimlane-visuals flag (read at render time).
 #[inline]

@@ -54,6 +54,9 @@ pub struct HomeGithub {
     pub cloning: Option<CloneRequest>,
     /// Bumped per read, so an older read landing late is dropped.
     generation: u64,
+    /// The user's own list is on screen and the organizations' are still
+    /// being read.
+    pub orgs_loading: bool,
     /// The virtualized list of rows, and what it was last built for: the
     /// rows are measured once per build, so a change resets it.
     list: Option<gpui::ListState>,
@@ -67,6 +70,8 @@ struct ListKey {
     generation: u64,
     cloning: Option<String>,
     local: usize,
+    sections: usize,
+    orgs_loading: bool,
 }
 
 /// One entry of the virtualized list.
@@ -75,6 +80,8 @@ enum HomeItem {
     Heading(String),
     Note(String),
     Repo(RepoListing, &'static str),
+    /// The organizations are still being read: a spinner row at the end.
+    Loading,
 }
 
 /// The clone card: which repository, and — once the user has chosen a folder —
@@ -135,11 +142,16 @@ impl KagiApp {
         }
     }
 
-    /// Read `gh repo list` and the local clones again.
+    /// Read the lists again: the user's own (with the local clones) first,
+    /// shown as soon as it lands, then the organizations', read in parallel
+    /// and appended. Waiting for every owner before drawing anything made
+    /// Home look stuck (user report).
     pub fn reload_home_github(&mut self, cx: &mut Context<Self>) {
         self.home_github.generation += 1;
         let generation = self.home_github.generation;
         self.home_github.repos = GithubRepos::Loading;
+        self.home_github.orgs_loading = false;
+        let started = std::time::Instant::now();
         let mut paths = super::tabs::recent_repos();
         paths.extend(
             self.tabs
@@ -147,8 +159,9 @@ impl KagiApp {
                 .filter(|t| t.remote.is_none())
                 .map(|t| t.path.clone()),
         );
-        let work = cx.background_spawn(async move {
-            let list = kagi_git::github_repos::list_my_repos(&home_dir());
+        let own = cx.background_spawn(async move {
+            let workdir = home_dir();
+            let list = kagi_git::github_repos::list_repos(&workdir, None);
             let local: HashMap<String, PathBuf> = paths
                 .into_iter()
                 .filter_map(|p| kagi_git::github_repos::origin_identity(&p).map(|id| (id, p)))
@@ -156,31 +169,64 @@ impl KagiApp {
             (list, local)
         });
         cx.spawn(async move |app, acx| {
-            let (list, local) = work.await;
+            let (list, local) = own.await;
+            let loaded = app
+                .update(acx, |app, cx| {
+                    if app.home_github.generation != generation {
+                        return false;
+                    }
+                    let loaded = match list {
+                        Ok(list) => {
+                            app.home_github.repos = GithubRepos::Loaded {
+                                sections: vec![OwnerRepos {
+                                    owner: None,
+                                    list: Ok(list),
+                                }],
+                                local,
+                            };
+                            app.home_github.orgs_loading = true;
+                            true
+                        }
+                        Err(error) => {
+                            klog!("home: github failed: {error}");
+                            app.home_github.repos = GithubRepos::Failed(error.to_string());
+                            false
+                        }
+                    };
+                    cx.notify();
+                    loaded
+                })
+                .unwrap_or(false);
+            if !loaded {
+                return;
+            }
+            let orgs = acx
+                .background_spawn(async move {
+                    let workdir = home_dir();
+                    let logins = kagi_git::github_repos::list_org_logins(&workdir);
+                    kagi_git::github_repos::list_org_repos(&workdir, &logins)
+                })
+                .await;
             let _ = app.update(acx, |app, cx| {
                 if app.home_github.generation != generation {
                     return;
                 }
-                app.home_github.repos = match list {
-                    Ok(sections) => {
-                        let repos: usize = sections
-                            .iter()
-                            .filter_map(|s| s.list.as_ref().ok())
-                            .map(|l| l.repos.len())
-                            .sum();
-                        klog!(
-                            "home: github owners={} repos={} local={}",
-                            sections.len(),
-                            repos,
-                            local.len()
-                        );
-                        GithubRepos::Loaded { sections, local }
-                    }
-                    Err(error) => {
-                        klog!("home: github failed: {error}");
-                        GithubRepos::Failed(error.to_string())
-                    }
-                };
+                app.home_github.orgs_loading = false;
+                if let GithubRepos::Loaded { sections, local } = &mut app.home_github.repos {
+                    sections.extend(orgs);
+                    let repos: usize = sections
+                        .iter()
+                        .filter_map(|s| s.list.as_ref().ok())
+                        .map(|l| l.repos.len())
+                        .sum();
+                    klog!(
+                        "home: github owners={} repos={} local={} ms={}",
+                        sections.len(),
+                        repos,
+                        local.len(),
+                        started.elapsed().as_millis()
+                    );
+                }
                 cx.notify();
             });
         })
@@ -448,12 +494,18 @@ impl KagiApp {
             return div().into_any_element();
         };
         let cloning = self.home_github.cloning.as_ref().map(|r| r.source.clone());
-        let items = github_items(sections, local, &query, cloning.as_deref());
+        let mut items = github_items(sections, local, &query, cloning.as_deref());
+        let orgs_loading = self.home_github.orgs_loading;
+        if orgs_loading {
+            items.push(HomeItem::Loading);
+        }
         let key = ListKey {
             query,
             generation: self.home_github.generation,
             cloning,
             local: local.len(),
+            sections: sections.len(),
+            orgs_loading,
         };
         let state = self
             .home_github
@@ -470,6 +522,21 @@ impl KagiApp {
         gpui::list(state, move |i, _window, _cx| match items.get(i) {
             Some(HomeItem::Heading(title)) => section_heading(title).into_any_element(),
             Some(HomeItem::Note(text)) => muted(text.clone()),
+            Some(HomeItem::Loading) => div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .px_3()
+                .pt_4()
+                .pb_2()
+                .child(super::render_overlay::sync_spinner(
+                    14.,
+                    theme().text_muted,
+                    "home-github-orgs-loading",
+                ))
+                .child(muted_inline(Msg::HomeGithubOrgsLoading.t()))
+                .into_any_element(),
             Some(HomeItem::Repo(listing, state)) => super::e2e::measure_control(
                 format!("home-gh-{}", listing.name_with_owner),
                 github_row(listing.clone(), state, &app),

@@ -61,26 +61,45 @@ pub fn list_repos(workdir: &Path, owner: Option<&str>) -> Result<RepoList, GitEr
     parse_repo_list(&stdout, REPO_LIST_LIMIT)
 }
 
-/// The user's own repositories, then each organization's, one section per
-/// owner. The own read failing (not signed in, no `gh`) fails the whole read;
-/// an organization that cannot be read keeps its section with the reason,
-/// and an unreadable organization list leaves only the user's own section.
-pub fn list_my_repos(workdir: &Path) -> Result<Vec<OwnerRepos>, GitError> {
-    let mut sections = vec![OwnerRepos {
-        owner: None,
-        list: Ok(list_repos(workdir, None)?),
-    }];
-    let orgs = crate::github_edit::read_gh(workdir, &org_list_args(), "orgs")
+/// The organizations the user belongs to. Empty when they cannot be read:
+/// the user's own list still shows.
+pub fn list_org_logins(workdir: &Path) -> Vec<String> {
+    crate::github_edit::read_gh(workdir, &org_list_args(), "orgs")
         .map(|stdout| parse_org_logins(&stdout))
-        .unwrap_or_default();
-    for org in orgs {
-        let list = list_repos(workdir, Some(&org)).map_err(|error| error.to_string());
-        sections.push(OwnerRepos {
-            owner: Some(org),
-            list,
+        .unwrap_or_default()
+}
+
+/// How many `gh repo list` reads run at once for the organizations.
+const ORG_READS_AT_ONCE: usize = 6;
+
+/// Each organization's repositories, one section per organization in the
+/// order given, read a few at a time in parallel (one `gh` each). An
+/// organization that cannot be read (SSO not authorized, …) keeps its
+/// section with the reason.
+pub fn list_org_repos(workdir: &Path, orgs: &[String]) -> Vec<OwnerRepos> {
+    let mut sections = Vec::with_capacity(orgs.len());
+    for chunk in orgs.chunks(ORG_READS_AT_ONCE) {
+        std::thread::scope(|scope| {
+            let reads: Vec<_> = chunk
+                .iter()
+                .map(|org| {
+                    scope.spawn(move || {
+                        list_repos(workdir, Some(org)).map_err(|error| error.to_string())
+                    })
+                })
+                .collect();
+            for (org, read) in chunk.iter().zip(reads) {
+                let list = read
+                    .join()
+                    .unwrap_or_else(|_| Err("the read stopped unexpectedly".to_string()));
+                sections.push(OwnerRepos {
+                    owner: Some(org.clone()),
+                    list,
+                });
+            }
         });
     }
-    Ok(sections)
+    sections
 }
 
 /// The `host/owner/repo` identity (lower-cased, as

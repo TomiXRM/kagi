@@ -638,6 +638,7 @@ pub enum Msg {
     HomeGithubFilter,
     HomeGithubRefresh,
     HomeGithubLoading,
+    HomeGithubOrgsLoading,
     HomeGithubFailedHint,
     HomeGithubEmpty,
     HomeGithubNoMatch,
@@ -2554,6 +2555,8 @@ impl Msg {
             (Ja, HomeGithubRefresh) => "再読み込み",
             (En, HomeGithubLoading) => "Loading your repositories from GitHub…",
             (Ja, HomeGithubLoading) => "GitHub からリポジトリを読み込んでいます…",
+            (En, HomeGithubOrgsLoading) => "Loading your organizations' repositories…",
+            (Ja, HomeGithubOrgsLoading) => "organization のリポジトリを読み込んでいます…",
             (En, HomeGithubFailedHint) => {
                 "Kagi reads this list with the GitHub CLI. Check `gh auth status` in a terminal, then Refresh."
             }

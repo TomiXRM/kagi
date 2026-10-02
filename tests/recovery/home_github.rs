@@ -106,7 +106,7 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
     let (app, window) = mount(cx, start.path());
     click_control(cx, window, "tab-add");
     wait_for(cx, &app, "the GitHub list", |app| {
-        matches!(app.home_github.repos, GithubRepos::Loaded { .. })
+        matches!(app.home_github.repos, GithubRepos::Loaded { .. }) && !app.home_github.orgs_loading
     });
     cx.read(|cx| {
         let GithubRepos::Loaded { sections, local } = &app.read(cx).home_github.repos else {

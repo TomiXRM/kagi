@@ -9,6 +9,9 @@ pub fn note_ja(note: &CloneNote) -> String {
         CloneNote::SourceInvalid { source } => {
             format!("`{source}` は Kagi が clone できる GitHub のリポジトリではありません。")
         }
+        CloneNote::SourceWithoutHost { source } => format!(
+            "`{source}` には host がありません(host/owner/repo)。どのサーバーから clone するか Kagi が確定できません。"
+        ),
         CloneNote::DestinationNotAbsolute { path } => {
             format!("clone 先 `{path}` が絶対パスではありません。")
         }

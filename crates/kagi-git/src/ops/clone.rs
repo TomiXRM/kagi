@@ -1,7 +1,7 @@
 //! Clone a GitHub repository into a new folder (#923, ADR-0219).
 //!
 //! The one write that starts with no repository, so it has no session, lease
-//! or `Backend`: the plan is about a source (`[host/]owner/repo`) and a
+//! or `Backend`: the plan is about a source (`host/owner/repo`) and a
 //! destination folder, and its only effect is that folder.
 //!
 //! `plan_clone` → (confirm) → `preflight_clone` → `execute_clone` →
@@ -37,7 +37,9 @@ pub const CLONE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// What to clone, and where.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CloneRequest {
-    /// `[host/]owner/repo`, as `gh repo clone` takes it.
+    /// `host/owner/repo`, as `gh repo clone` takes it. The host is required:
+    /// without it `gh` clones from its configured host (`GH_HOST`), which the
+    /// plan and the verify step could not name (#926 review).
     pub source: String,
     /// The folder to create. Absolute; it must not exist yet, or be empty.
     pub dest: PathBuf,
@@ -345,7 +347,11 @@ fn clone_transport(request: &CloneRequest, timeout: Duration) -> Result<(), Stag
 
 fn clone_blockers(request: &CloneRequest) -> Vec<PlanNote> {
     let mut blockers = Vec::new();
-    if !source_is_valid(&request.source) {
+    if source_lacks_host(&request.source) {
+        blockers.push(PlanNote::Clone(CloneNote::SourceWithoutHost {
+            source: request.source.clone(),
+        }));
+    } else if !source_is_valid(&request.source) {
         blockers.push(PlanNote::Clone(CloneNote::SourceInvalid {
             source: request.source.clone(),
         }));
@@ -399,21 +405,25 @@ fn destination_blocker(dest: &Path) -> Option<CloneNote> {
     }
 }
 
-/// `owner/repo` or `host/owner/repo`, each part a plain name: nothing `gh`
-/// could read as a flag or a path.
+/// Each part a plain name: nothing `gh` could read as a flag or a path.
+fn names_ok(names: &[&str]) -> bool {
+    names.iter().all(|name| {
+        !name.is_empty()
+            && !name.starts_with(['-', '.'])
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    })
+}
+
+/// A well-formed `owner/repo` that names no host.
+fn source_lacks_host(source: &str) -> bool {
+    matches!(source.split('/').collect::<Vec<_>>().as_slice(), [owner, repo] if names_ok(&[owner, repo]))
+}
+
+/// `host/owner/repo`, each part a plain name.
 fn source_is_valid(source: &str) -> bool {
-    let parts: Vec<&str> = source.split('/').collect();
-    let names_ok = |names: &[&str]| {
-        names.iter().all(|name| {
-            !name.is_empty()
-                && !name.starts_with(['-', '.'])
-                && name
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-        })
-    };
-    match parts.as_slice() {
-        [owner, repo] => names_ok(&[owner, repo]),
+    match source.split('/').collect::<Vec<_>>().as_slice() {
         [host, owner, repo] => {
             names_ok(&[owner, repo])
                 && !host.is_empty()
@@ -426,15 +436,9 @@ fn source_is_valid(source: &str) -> bool {
     }
 }
 
-/// `host/owner/repo`, lower-cased like [`crate::backend::remote_ref::repo_identity`];
-/// `gh`'s default host when the source names none.
+/// `host/owner/repo`, lower-cased like [`crate::backend::remote_ref::repo_identity`].
 fn source_identity(source: &str) -> String {
-    let identity = if source.matches('/').count() == 1 {
-        format!("github.com/{source}")
-    } else {
-        source.to_string()
-    };
-    identity.to_ascii_lowercase()
+    source.to_ascii_lowercase()
 }
 
 #[cfg(test)]
@@ -444,9 +448,8 @@ mod tests {
     #[test]
     fn sources_gh_can_take_and_nothing_else() {
         for ok in [
-            "acme/widgets",
-            "acme/widgets.rs",
             "github.com/acme/widgets",
+            "github.com/acme/widgets.rs",
             "ghe.example.com:8443/acme/my_repo",
         ] {
             assert!(source_is_valid(ok), "{ok}");
@@ -454,22 +457,40 @@ mod tests {
         for bad in [
             "",
             "widgets",
-            "-acme/widgets",
-            "acme/--upload-pack=x",
-            "acme/../widgets",
+            "acme/widgets",
+            "-host/acme/widgets",
+            "github.com/acme/--upload-pack=x",
+            "github.com/acme/../widgets",
             "a/b/c/d",
-            "acme/wid gets",
-            "acme/.hidden",
+            "github.com/acme/wid gets",
+            "github.com/acme/.hidden",
         ] {
             assert!(!source_is_valid(bad), "{bad}");
         }
     }
 
+    /// `gh` would clone a host-less source from `GH_HOST`, which the plan and
+    /// verify cannot name: refused with its own reason, never guessed.
     #[test]
-    fn identity_defaults_to_github_and_lower_cases() {
-        assert_eq!(source_identity("Acme/Widgets"), "github.com/acme/widgets");
+    fn a_source_without_host_is_refused_by_the_plan() {
+        let request = CloneRequest {
+            source: "acme/widgets".to_string(),
+            dest: PathBuf::from("/nonexistent-kagi-parent/widgets"),
+            is_fork: false,
+        };
+        let plan = plan_clone(&request);
         assert_eq!(
-            source_identity("GHE.example.com/acme/widgets"),
+            plan.blockers.first(),
+            Some(&PlanNote::Clone(CloneNote::SourceWithoutHost {
+                source: "acme/widgets".to_string()
+            }))
+        );
+    }
+
+    #[test]
+    fn identity_keeps_the_host_and_lower_cases() {
+        assert_eq!(
+            source_identity("GHE.example.com/Acme/Widgets"),
             "ghe.example.com/acme/widgets"
         );
     }
@@ -478,13 +499,13 @@ mod tests {
     #[test]
     fn the_shown_command_quotes_a_destination_with_spaces_and_quotes() {
         let request = CloneRequest {
-            source: "acme/widgets".to_string(),
+            source: "github.com/acme/widgets".to_string(),
             dest: PathBuf::from("/Users/me/My Projects/it's here"),
             is_fork: false,
         };
         assert_eq!(
             plan_clone(&request).equivalent_command.as_deref(),
-            Some(r"gh repo clone 'acme/widgets' '/Users/me/My Projects/it'\''s here'")
+            Some(r"gh repo clone 'github.com/acme/widgets' '/Users/me/My Projects/it'\''s here'")
         );
     }
 
@@ -492,7 +513,7 @@ mod tests {
     #[test]
     fn no_command_is_shown_on_windows() {
         let request = CloneRequest {
-            source: "acme/widgets".to_string(),
+            source: "github.com/acme/widgets".to_string(),
             dest: PathBuf::from(r"C:\Users\me\My Projects\widgets"),
             is_fork: false,
         };

@@ -30,9 +30,6 @@ use super::render_helpers::safe_text;
 use super::theme::{self, theme};
 use super::KagiApp;
 
-/// Settings key: the folder the last clone went into, the next default.
-const CLONE_PARENT_KEY: &str = "clone_parent_dir";
-
 /// The GitHub list as Home knows it.
 #[derive(Clone, Debug, Default)]
 pub enum GithubRepos {
@@ -80,43 +77,34 @@ enum HomeItem {
     Repo(RepoListing, &'static str),
 }
 
-/// The clone card: what will be cloned where, and the plan the user confirms.
+/// The clone card: which repository, and — once the user has chosen a folder —
+/// the clone planned for it. Kagi never picks the folder itself (user ruling,
+/// ADR-0219 decision 7): the card opens with none, and Clone stays off until
+/// one is chosen.
 #[derive(Clone, Debug)]
 pub struct CloneModal {
     pub listing: RepoListing,
+    pub target: Option<CloneTarget>,
+}
+
+/// The clone planned for the chosen folder.
+#[derive(Clone, Debug)]
+pub struct CloneTarget {
     pub request: CloneRequest,
     pub plan: OperationPlan,
 }
 
-impl CloneModal {
-    fn new(listing: RepoListing, parent: &Path) -> Self {
+impl CloneTarget {
+    /// Clone `listing` into a new folder named after it inside `parent`.
+    fn new(listing: &RepoListing, parent: &Path) -> Self {
         let request = CloneRequest {
             source: listing.clone_source(),
             dest: parent.join(listing.name()),
             is_fork: listing.is_fork,
         };
         let plan = plan_clone(&request);
-        Self {
-            listing,
-            request,
-            plan,
-        }
+        Self { request, plan }
     }
-}
-
-/// Where a clone goes unless the user picks another folder: where the last
-/// clone went, else beside the most recently opened repository, else HOME.
-pub fn default_clone_parent() -> PathBuf {
-    let saved = super::settings::read_setting(CLONE_PARENT_KEY)
-        .map(PathBuf::from)
-        .filter(|p| p.is_dir());
-    saved
-        .or_else(|| {
-            super::tabs::recent_repos()
-                .first()
-                .and_then(|p| p.parent().map(Path::to_path_buf))
-        })
-        .unwrap_or_else(home_dir)
 }
 
 fn home_dir() -> PathBuf {
@@ -207,24 +195,23 @@ impl KagiApp {
             Some(path) => {
                 self.open_repository(path, cx);
             }
-            None => self.open_clone_card(listing, &default_clone_parent(), cx),
+            None => self.open_clone_card(listing, cx),
         }
         cx.notify();
     }
 
-    pub fn open_clone_card(&mut self, listing: RepoListing, parent: &Path, cx: &mut Context<Self>) {
+    /// Ask where to clone `listing`: the card opens with no folder chosen.
+    pub fn open_clone_card(&mut self, listing: RepoListing, cx: &mut Context<Self>) {
         self.modal_focus = Some(cx.focus_handle());
-        let modal = CloneModal::new(listing, parent);
-        klog!(
-            "clone: plan {} -> {} blockers={}",
-            modal.request.source,
-            modal.request.dest.display(),
-            modal.plan.blockers.len()
-        );
-        self.set_clone_modal(modal);
+        klog!("clone: card {}", listing.clone_source());
+        self.set_clone_modal(CloneModal {
+            listing,
+            target: None,
+        });
     }
 
-    /// Pick another folder to clone into; the card is planned again for it.
+    /// Choose the folder to clone into (the system folder dialog); the card
+    /// is planned for it.
     pub fn change_clone_parent(&mut self, cx: &mut Context<Self>) {
         let receiver = cx.prompt_for_paths(PathPromptOptions {
             files: false,
@@ -246,12 +233,22 @@ impl KagiApp {
         .detach();
     }
 
-    /// Plan the open card again with `parent` as the folder to clone into.
+    /// Plan the open card for a clone inside `parent`.
     pub fn replan_clone(&mut self, parent: &Path, cx: &mut Context<Self>) {
-        let Some(listing) = self.clone_modal().map(|m| m.listing.clone()) else {
+        let Some(modal) = self.clone_modal().cloned() else {
             return;
         };
-        self.open_clone_card(listing, parent, cx);
+        let target = CloneTarget::new(&modal.listing, parent);
+        klog!(
+            "clone: plan {} -> {} blockers={}",
+            target.request.source,
+            target.request.dest.display(),
+            target.plan.blockers.len()
+        );
+        self.set_clone_modal(CloneModal {
+            listing: modal.listing,
+            target: Some(target),
+        });
         cx.notify();
     }
 
@@ -262,10 +259,12 @@ impl KagiApp {
     /// Confirm the card: run the planned clone in the background. Refused on
     /// the spot while another clone of this window is running.
     pub fn start_clone(&mut self, cx: &mut Context<Self>) {
-        let Some(modal) = self.clone_modal().cloned() else {
+        let Some(CloneTarget { request, plan }) =
+            self.clone_modal().and_then(|modal| modal.target.clone())
+        else {
             return;
         };
-        if !modal.plan.blockers.is_empty() {
+        if !plan.blockers.is_empty() {
             return;
         }
         if self.home_github.cloning.is_some() {
@@ -273,7 +272,6 @@ impl KagiApp {
             return;
         }
         self.clear_clone_modal();
-        let CloneModal { request, plan, .. } = modal;
         klog!(
             "clone: start {} -> {}",
             request.source,
@@ -305,9 +303,6 @@ impl KagiApp {
         self.notice_recording_failure("clone", &report.recording, &request.dest);
         self.present_recorded(&report.recording, cx);
         if report.result.is_ok() {
-            if let Some(parent) = request.dest.parent() {
-                super::settings::write_setting(CLONE_PARENT_KEY, Some(&parent.to_string_lossy()));
-            }
             if let GithubRepos::Loaded { local, .. } = &mut self.home_github.repos {
                 if let Some(id) = kagi_git::github_repos::origin_identity(&request.dest) {
                     local.insert(id, request.dest.clone());
@@ -650,9 +645,13 @@ mod tests {
     #[test]
     fn the_card_clones_into_a_folder_named_after_the_repository() {
         let parent = tempfile::tempdir().unwrap();
-        let modal = CloneModal::new(listing("acme/widgets"), parent.path());
-        assert_eq!(modal.request.dest, parent.path().join("widgets"));
-        assert_eq!(modal.request.source, "github.com/acme/widgets");
-        assert!(modal.plan.blockers.is_empty(), "{:?}", modal.plan.blockers);
+        let target = CloneTarget::new(&listing("acme/widgets"), parent.path());
+        assert_eq!(target.request.dest, parent.path().join("widgets"));
+        assert_eq!(target.request.source, "github.com/acme/widgets");
+        assert!(
+            target.plan.blockers.is_empty(),
+            "{:?}",
+            target.plan.blockers
+        );
     }
 }

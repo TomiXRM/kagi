@@ -138,6 +138,32 @@ pub fn scenario_home_tab(cx: &mut VisualTestAppContext) {
     click_control(cx, window, "home-remote");
     cx.run_until_parked();
     assert!(cx.read(|cx| app.read(cx).remote_browse().is_some()));
+    // ... and is drawn over Home, centred in the window, not after Home's
+    // content at the bottom edge.
+    forget(window, "remote-browse-card");
+    let (card, viewport) = cx
+        .update_window(window, |_, window, cx| {
+            window.draw(cx).clear();
+            (
+                kagi::ui::e2e::control_bounds(
+                    window.window_handle().window_id(),
+                    "remote-browse-card",
+                ),
+                window.viewport_size(),
+            )
+        })
+        .unwrap();
+    let card = card.expect("the Remote Browse card is drawn");
+    let centre = card.center();
+    assert!(
+        card.origin.y > gpui::px(0.) && card.bottom() < viewport.height,
+        "the card lies inside the window: {card:?} in {viewport:?}"
+    );
+    assert!(
+        (centre.y - viewport.height / 2.).abs() < viewport.height / 4.
+            && (centre.x - viewport.width / 2.).abs() < viewport.width / 4.,
+        "the card is centred: {card:?} in {viewport:?}"
+    );
     press_key(cx, &app, window, "escape");
     cx.run_until_parked();
     assert!(cx.read(|cx| app.read(cx).remote_browse().is_none()));

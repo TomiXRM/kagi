@@ -186,10 +186,7 @@ impl KagiApp {
     ) -> gpui::Div {
         let modal_focus = self.modal_focus.clone();
         el.when_some(self.remote_browse().cloned(), |el, modal| {
-            el.child(super::e2e::measure_control(
-                "active-modal/remote-browse",
-                render_remote_browse(modal, modal_focus, cx),
-            ))
+            el.child(render_remote_browse(modal, modal_focus, cx))
         })
         .when_some(self.clone_modal().cloned(), |el, modal| {
             el.child(super::home_clone_card::render_clone_modal(
@@ -461,10 +458,7 @@ impl KagiApp {
         })
         // ── Remote SSH browse modal overlay (ADR-0089) ───
         .when_some(remote_browse, |el, modal| {
-            el.child(super::e2e::measure_control(
-                "active-modal/remote-browse",
-                render_remote_browse(modal, modal_focus.clone(), cx),
-            ))
+            el.child(render_remote_browse(modal, modal_focus.clone(), cx))
         })
         // ── Clone card (opened from Home, #923) ──────────
         .when_some(self.clone_modal().cloned(), |el, modal| {

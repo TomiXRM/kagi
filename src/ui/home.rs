@@ -124,7 +124,13 @@ impl KagiApp {
                     .into_any_element(),
             })
             .child(body);
-        let home = self.register_menu_actions(div().size_full().child(home), cx);
+        // A flex box, as the Welcome screen's root was: the window-global
+        // modals attached below are absolute overlays, and in a plain block
+        // box they landed after Home's content instead of covering it.
+        let home = self.register_menu_actions(
+            div().flex().flex_col().relative().size_full().child(home),
+            cx,
+        );
         let content = self
             .attach_welcome_window_modals(home, window, cx)
             .into_any();

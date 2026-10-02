@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::home_github::GithubRepos;
-use kagi::ui::{e2e, settings, tabs, KagiApp};
+use kagi::ui::{e2e, tabs, KagiApp};
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
 
 use crate::app_conflict::click_control;
@@ -78,7 +78,7 @@ fn drawn(cx: &mut VisualTestAppContext, window: AnyWindowHandle, name: &str) -> 
 }
 
 pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
-    let _saved = crate::gui_isolation::SavedKeys::keep(&["recent_repos", "clone_parent_dir"]);
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["recent_repos"]);
     let start = build_fixture();
     let local = build_fixture();
     git(
@@ -100,7 +100,6 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
     );
     let clones_dir = tempfile::tempdir().unwrap();
     let clones = clones_dir.path().canonicalize().unwrap();
-    settings::write_setting("clone_parent_dir", Some(clones.to_str().unwrap()));
     tabs::record_recent_repo(&local_path);
     let _gh = OfflineGh::with_script(&gh_script(&bare));
 
@@ -158,8 +157,13 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
     // An organization's repository is cloned from its own owner.
     click_control(cx, window, "home-gh-acme-org/tool");
     cx.run_until_parked();
+    choose_folder(cx, &app, &clones);
     assert_eq!(
-        cx.read(|cx| app.read(cx).clone_modal().map(|m| m.request.source.clone())),
+        cx.read(|cx| {
+            app.read(cx)
+                .clone_modal()
+                .and_then(|m| m.target.as_ref().map(|t| t.request.source.clone()))
+        }),
         Some("github.com/acme-org/tool".to_string())
     );
     press_key(cx, &app, window, "escape");
@@ -171,33 +175,51 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
     assert_eq!(cx.read(|cx| app.read(cx).home), None);
     assert_eq!(active_path(cx, &app), local_path);
 
-    // Not local, and its default folder is in use: the card refuses.
-    let dest = clones.join("widgets");
-    std::fs::create_dir(&dest).unwrap();
-    std::fs::write(dest.join("mine.txt"), "mine").unwrap();
+    // Not local: the card asks where. No folder is chosen for the user, and
+    // Clone does nothing until one is.
     click_control(cx, window, "tab-add");
     cx.run_until_parked();
     click_control(cx, window, "home-gh-acme/widgets");
     cx.run_until_parked();
-    cx.read(|cx| {
-        let card = app
+    assert!(
+        cx.read(|cx| app
             .read(cx)
             .clone_modal()
-            .expect("the row opens the clone card");
-        assert_eq!(card.request.dest, dest);
-        assert_eq!(card.request.source, "github.com/acme/widgets");
+            .is_some_and(|m| m.target.is_none())),
+        "the card opens without a folder"
+    );
+    click_control(cx, window, "clone-confirm");
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).clone_modal().is_some()));
+    assert!(cx.read(|cx| app.read(cx).home_github.cloning.is_none()));
+
+    // The chosen folder already holds a `widgets` with files: refused.
+    let dest = clones.join("widgets");
+    std::fs::create_dir(&dest).unwrap();
+    std::fs::write(dest.join("mine.txt"), "mine").unwrap();
+    choose_folder(cx, &app, &clones);
+    cx.read(|cx| {
+        let target = app
+            .read(cx)
+            .clone_modal()
+            .and_then(|m| m.target.clone())
+            .expect("the folder is planned");
+        assert_eq!(target.request.dest, dest);
+        assert_eq!(target.request.source, "github.com/acme/widgets");
         assert!(
-            !card.plan.blockers.is_empty(),
+            !target.plan.blockers.is_empty(),
             "an occupied folder is refused"
         );
         assert!(
-            !card.plan.warnings.is_empty(),
+            !target.plan.warnings.is_empty(),
             "a fork says gh adds upstream"
         );
     });
+    click_control(cx, window, "clone-confirm");
+    cx.run_until_parked();
     assert!(
-        !drawn(cx, window, "clone-confirm"),
-        "a refused clone has no Clone button"
+        cx.read(|cx| app.read(cx).home_github.cloning.is_none()),
+        "a refused clone does not start"
     );
     press_key(cx, &app, window, "escape");
     cx.run_until_parked();
@@ -211,10 +233,10 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
     std::fs::remove_dir_all(&dest).unwrap();
     click_control(cx, window, "home-gh-acme/widgets");
     cx.run_until_parked();
-    assert!(drawn(cx, window, "clone-confirm"));
+    choose_folder(cx, &app, &clones);
     click_control(cx, window, "clone-confirm");
     wait_for(cx, &app, "the clone", |app| {
-        app.home_github.cloning.is_none()
+        app.home_github.cloning.is_none() && app.clone_modal().is_none()
     });
     cx.run_until_parked();
     assert_eq!(active_path(cx, &app), dest, "the clone opened as a tab");
@@ -227,11 +249,13 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
         "{:?}",
         receipts[0].outcome
     );
-    assert_eq!(
-        settings::read_setting("clone_parent_dir").as_deref(),
-        Some(clones.to_str().unwrap()),
-        "the folder is the next default"
-    );
 
     unmount(cx, app, window);
+}
+
+/// The folder dialog's answer, delivered through the same method its
+/// callback calls (the native dialog cannot be driven here).
+fn choose_folder(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, parent: &Path) {
+    app.update(cx, |app, cx| app.replan_clone(parent, cx));
+    cx.run_until_parked();
 }

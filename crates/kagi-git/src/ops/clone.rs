@@ -24,6 +24,7 @@ use std::time::Duration;
 use kagi_domain::head::Head;
 use kagi_domain::plan::{OperationPlan, StateSummary};
 use kagi_domain::plan_note::{CloneNote, CloneTitle, PlanDisposition, PlanNote, PlanTitle};
+use kagi_domain::remote::shell_quote;
 
 use crate::backend::recording::RunReport;
 use crate::oplog::{OpLogEntry, OpOutcome};
@@ -88,10 +89,12 @@ pub fn plan_clone(request: &CloneRequest) -> OperationPlan {
         stash_identity: None,
         worktree_digest: None,
         destructive: false,
+        // Shell-quoted so a copied command is the same command for a path
+        // with spaces or quotes (#926 review).
         equivalent_command: Some(format!(
             "gh repo clone {} {}",
-            request.source,
-            request.dest.display()
+            shell_quote(&request.source),
+            shell_quote(&request.dest.to_string_lossy())
         )),
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -418,6 +421,19 @@ mod tests {
         assert_eq!(
             source_identity("GHE.example.com/acme/widgets"),
             "ghe.example.com/acme/widgets"
+        );
+    }
+
+    #[test]
+    fn the_shown_command_quotes_a_destination_with_spaces_and_quotes() {
+        let request = CloneRequest {
+            source: "acme/widgets".to_string(),
+            dest: PathBuf::from("/Users/me/My Projects/it's here"),
+            is_fork: false,
+        };
+        assert_eq!(
+            plan_clone(&request).equivalent_command.as_deref(),
+            Some(r"gh repo clone 'acme/widgets' '/Users/me/My Projects/it'\''s here'")
         );
     }
 }

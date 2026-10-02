@@ -113,6 +113,7 @@ mod render_helpers;
 mod render_overlay;
 mod render_status;
 mod render_wip;
+pub mod repo_picker;
 mod sidebar_a11y;
 pub use kagi_ui_core::settings; // ADR-0121: was a shim file
 mod overlay_focus;
@@ -2884,6 +2885,8 @@ impl KagiApp {
         match modal {
             M::AppNotice(_) => self.confirm_app_notice(cx),
             M::RemoteBrowse(_) => self.confirm_remote_browse(cx),
+            // Nothing to confirm: a row, a button or Esc decides.
+            M::RepoPicker(_) => {}
             M::Update(_) => {}
             M::SmartCommit(smart_commit::SmartCommitModal::Consent) => {
                 self.confirm_smart_consent(cx)
@@ -2975,6 +2978,7 @@ impl KagiApp {
         match modal {
             M::AppNotice(_) => self.cancel_app_notice(),
             M::RemoteBrowse(_) => self.cancel_remote_browse(),
+            M::RepoPicker(_) => self.cancel_repo_picker(),
             M::Update(_) => self.cancel_update_modal(),
             M::SmartCommit(_) => self.clear_smart_commit_modal(),
             M::Checkout(_) => self.cancel_modal(),

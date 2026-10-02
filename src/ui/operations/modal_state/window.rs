@@ -71,6 +71,26 @@ impl KagiApp {
     }
 
     #[inline]
+    pub fn repo_picker(&self) -> Option<&crate::ui::repo_picker::RepoPickerModal> {
+        match &self.active_modal {
+            Some(ActiveModal::RepoPicker(modal)) => Some(modal),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn set_repo_picker(&mut self, modal: crate::ui::repo_picker::RepoPickerModal) {
+        self.replace_modal_from_user(ActiveModal::RepoPicker(modal));
+    }
+
+    #[inline]
+    pub fn clear_repo_picker(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::RepoPicker(_))) {
+            self.active_modal = None;
+        }
+    }
+
+    #[inline]
     pub fn update_modal(&self) -> Option<&UpdateModal> {
         match &self.active_modal {
             Some(ActiveModal::Update(modal)) => Some(modal),
@@ -177,6 +197,7 @@ mod tests {
         assert!(!ActiveModal::AppNotice("done".to_string().into()).is_repo_scoped());
         assert!(!ActiveModal::RemoteBrowse(RemoteBrowseModal::new()).is_repo_scoped());
         assert!(!ActiveModal::Update(UpdateModal::default()).is_repo_scoped());
+        assert!(!ActiveModal::RepoPicker(Default::default()).is_repo_scoped());
         assert!(ActiveModal::StashDrop(StashDropModal {
             plan: None,
             error: None,

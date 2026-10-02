@@ -1566,7 +1566,9 @@ impl KagiApp {
             }
 
             // ── File ────────────────────────────────────────────────
-            "file.newTab" | "file.openRepository" => self.pick_repository(window, cx),
+            // New Tab is the tab strip's `+`: the repository picker (#923).
+            "file.newTab" => self.open_repo_picker(cx),
+            "file.openRepository" => self.pick_repository(window, cx),
             "file.closeTab" => {
                 if !self.tabs.is_empty() {
                     self.close_tab(self.active_tab, cx);

@@ -921,18 +921,19 @@ impl KagiApp {
             strip = strip.child(tab_el);
         }
 
-        // [+] new-tab button at the right end → directory picker.
-        let plus = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
-            this.pick_repository(window, cx);
+        // [+] new-tab button at the right end → the repository picker
+        // (recent repositories, the folder dialog, Remote Browse; #923).
+        let plus = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
+            this.open_repo_picker(cx);
         });
         let plus_btn = Button::new("tab-add")
             .label("+")
             .ghost()
             .small()
-            .tooltip("Open Repository…")
+            .tooltip(Msg::RepoPickerTitle.t())
             .on_click(plus);
 
-        strip = strip.child(plus_btn);
+        strip = strip.child(super::e2e::measure_control("tab-add", plus_btn));
 
         Some(strip.into_any())
     }

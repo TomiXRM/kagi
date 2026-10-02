@@ -110,6 +110,10 @@ mod app_writer_admission;
 mod app_conflict;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/repo_picker.rs"]
+mod repo_picker;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/conflict_abort_slot.rs"]
 mod conflict_abort_slot;
 
@@ -919,6 +923,10 @@ mod macos {
             (
                 "reconcile_unobservable_release",
                 Box::new(crate::reconcile_unobservable::scenario_reconcile_unobservable_release),
+            ),
+            (
+                "repo_picker",
+                Box::new(crate::repo_picker::scenario_repo_picker),
             ),
             (
                 "smart_commit_generation_owner",

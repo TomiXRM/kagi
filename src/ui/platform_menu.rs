@@ -54,7 +54,7 @@ impl KagiApp {
             let state = commands::command_state(this, id);
             let enabled = matches!(state, commands::CommandState::Enabled);
             // `platform_menu_label` adds the "✓ " active marker for the current
-            // theme / language (no-op for ordinary commands).
+            // language (no-op for ordinary commands).
             let label = platform_menu_label(id, command.map(|c| c.label).unwrap_or(id));
             // Render the stored `secondary-*` notation as a platform label
             // (Ctrl+J on Linux), so the menu matches what the user must press.
@@ -131,12 +131,13 @@ impl KagiApp {
                     row_ix += 1;
                 }
                 // ADR-0085 §3: the dropdown has no nested-panel support, so the
-                // dynamic submenus expand inline as command rows (the "✓ " marker
-                // is applied by `platform_menu_label`) — preserving the previous
-                // View-menu behaviour on Linux.
+                // dynamic submenus expand inline as rows — preserving the
+                // previous View-menu behaviour on Linux. Theme rows come from
+                // the same runtime list as the macOS submenu (#922), so custom
+                // themes appear here too.
                 commands::MenuNode::Submenu(commands::DynSubmenu::Theme) => {
-                    for id in commands::theme_command_ids_by_name() {
-                        panel = panel.child(command_row(self, cx, row_ix, id));
+                    for entry in commands::theme_menu_entries() {
+                        panel = panel.child(theme_row(cx, ix, row_ix, entry));
                         row_ix += 1;
                     }
                 }
@@ -182,14 +183,47 @@ impl KagiApp {
     }
 }
 
-// Only the Linux/FreeBSD in-app menu calls this (✓ marker for theme/lang).
+/// One View → Theme row of the dropdown: every registered theme, built-in or
+/// custom, switches by slug (#922).
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn theme_row(
+    cx: &mut Context<KagiApp>,
+    ix: usize,
+    row_ix: usize,
+    entry: commands::ThemeMenuEntry,
+) -> gpui::AnyElement {
+    let label = if entry.active {
+        format!("\u{2713} {}", entry.name)
+    } else {
+        entry.name.to_string()
+    };
+    let slug = entry.slug;
+    let invoke = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+        this.platform_menu_open = None;
+        this.set_theme(&slug, cx);
+        cx.stop_propagation();
+    });
+    div()
+        .id(SharedString::from(format!(
+            "platform-menu-item-{ix}-{row_ix}"
+        )))
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_3()
+        .py(theme::scaled_px(5.0))
+        .text_sm()
+        .text_color(rgb(theme().text_main))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(theme().selected)))
+        .on_click(invoke)
+        .child(div().flex_1().truncate().child(SharedString::from(label)))
+        .into_any_element()
+}
+
+// Only the Linux/FreeBSD in-app menu calls this (✓ marker for the language).
 #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
 fn platform_menu_label(id: &str, fallback: &str) -> String {
-    if let Some(slug) = commands::theme_slug_for_command(id) {
-        if theme::theme().slug == slug {
-            return format!("\u{2713} {fallback}");
-        }
-    }
     if let Some(lang) = commands::lang_for_command(id) {
         if i18n::lang() == lang {
             return format!("\u{2713} {fallback}");

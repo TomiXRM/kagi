@@ -64,25 +64,23 @@ pub type ThemeSelectState = SelectState<Vec<ThemeOption>>;
 
 /// One theme entry shown in the appearance-section `Select`. `Value` is the
 /// stable slug, which the `SelectEvent::Confirm` subscription feeds to
-/// `KagiApp::set_theme`.
+/// `KagiApp::set_theme`. Owned, so a custom theme's option outlives the theme
+/// reload that replaced it (#922).
 #[derive(Clone)]
 pub struct ThemeOption {
-    pub slug: &'static str,
-    pub name: &'static str,
+    pub slug: SharedString,
+    pub name: SharedString,
 }
 
 impl SelectItem for ThemeOption {
-    type Value = &'static str;
+    type Value = SharedString;
 
     fn title(&self) -> SharedString {
         // SelectState keeps its options across language changes. Resolve the
         // display name at render time so both the trigger and dropdown switch.
-        let name = theme::THEMES
-            .iter()
-            .find(|theme| theme.slug == self.slug)
-            .map(|theme| theme.display_name())
-            .unwrap_or(self.name);
-        SharedString::from(name)
+        theme::theme_by_slug(&self.slug)
+            .map(|theme| SharedString::from(theme.display_name().to_string()))
+            .unwrap_or_else(|| self.name.clone())
     }
 
     fn value(&self) -> &Self::Value {
@@ -90,23 +88,23 @@ impl SelectItem for ThemeOption {
     }
 }
 
-/// All registered themes as `Select` options.
+/// All registered themes (built-in and custom) as `Select` options.
 pub fn theme_options() -> Vec<ThemeOption> {
     theme::themes_by_name()
         .into_iter()
         .map(|t| ThemeOption {
-            slug: t.slug,
-            name: t.display_name(),
+            slug: SharedString::from(t.slug.clone()),
+            name: SharedString::from(t.display_name().to_string()),
         })
         .collect()
 }
 
 /// `IndexPath` of the active theme within [`theme_options`] (defaults to row 0).
 pub fn current_theme_index() -> IndexPath {
-    let cur = theme().slug;
+    let cur = theme().key();
     let row = theme::themes_by_name()
         .iter()
-        .position(|t| t.slug == cur)
+        .position(|t| t.key() == cur)
         .unwrap_or(0);
     IndexPath::new(row)
 }
@@ -303,19 +301,11 @@ fn appearance_section(
                 .w(px(220.0));
             super::e2e::measure_control("settings-theme-select", select)
         }
-        None => {
-            let cur = theme().slug;
-            let cur_name = theme::THEMES
-                .iter()
-                .find(|t| t.slug == cur)
-                .map(|t| t.display_name())
-                .unwrap_or(cur);
-            div()
-                .text_sm()
-                .text_color(rgb(theme().text_main))
-                .child(SharedString::from(cur_name))
-                .into_any_element()
-        }
+        None => div()
+            .text_sm()
+            .text_color(rgb(theme().text_main))
+            .child(SharedString::from(theme().display_name().to_string()))
+            .into_any_element(),
     };
 
     // ── UI Zoom stepper:  [−]  110%  [+] ──
@@ -461,6 +451,7 @@ fn appearance_section(
             SharedString::from(Msg::SettingsThemeDesc.t()),
             theme_dropdown.into_any_element(),
         ))
+        .child(super::settings_theme_folder::section(app))
         .child(setting_row(
             SharedString::from(Msg::SettingsZoom.t()),
             SharedString::from(Msg::SettingsZoomDesc.t()),

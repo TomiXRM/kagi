@@ -1,10 +1,12 @@
 //! The catppuccin latte theme.
 
+use std::borrow::Cow;
+
 use crate::theme::{SyntaxPalette, Theme, LANE_PALETTE_LIGHT};
 
 pub const CATPPUCCIN_LATTE: Theme = Theme {
-    slug: "catppuccin-latte",
-    name: "Catppuccin Latte",
+    slug: Cow::Borrowed("catppuccin-latte"),
+    name: Cow::Borrowed("Catppuccin Latte"),
     dark: false,
 
     bg_base: 0xeff1f5,    // base

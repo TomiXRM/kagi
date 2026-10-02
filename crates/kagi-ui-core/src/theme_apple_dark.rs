@@ -1,10 +1,12 @@
 //! The Apple Dark theme (ADR-0125).
 
+use std::borrow::Cow;
+
 use crate::theme::{SyntaxPalette, Theme};
 
 pub const APPLE_DARK: Theme = Theme {
-    slug: "apple-dark",
-    name: "Apple Dark",
+    slug: Cow::Borrowed("apple-dark"),
+    name: Cow::Borrowed("Apple Dark"),
     dark: true,
 
     // systemGray6-dark ramp: base #1c1c1e, chrome one step below, chips above.

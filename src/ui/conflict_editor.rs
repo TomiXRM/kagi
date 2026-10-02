@@ -409,9 +409,9 @@ pub type RowHl = Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>;
 
 /// Cache for both sides' highlights. Row text is fixed for a given file within
 /// a conflict session (selection only flips `taken` flags), so the key is the
-/// path plus the theme slug (a theme switch re-colours the spans).
+/// path plus the theme key (a theme switch or reload re-colours the spans).
 pub struct SideHlCache {
-    key: (std::path::PathBuf, &'static str),
+    key: (std::path::PathBuf, theme::ThemeKey),
     current: Arc<Vec<RowHl>>,
     incoming: Arc<Vec<RowHl>>,
 }
@@ -424,7 +424,7 @@ fn side_highlights(
     model: &kagi_git::resolution::HunkModel,
     side: SelectionSide,
 ) -> Arc<Vec<RowHl>> {
-    let key = (path.to_path_buf(), theme().slug);
+    let key = (path.to_path_buf(), theme().key());
     {
         let cache = chrome.hl_cache.borrow();
         if let Some(c) = cache.as_ref() {
@@ -498,7 +498,7 @@ fn highlight_rows(row_count: usize, texts: &[(usize, &str)], path: &std::path::P
     let mut highlighter = SyntaxHighlighter::new(lang);
     let rope = Rope::from_str(&combined);
     highlighter.update(None, &rope, None);
-    let hl_theme = theme::highlight_theme(theme::theme());
+    let hl_theme = theme::highlight_theme(&theme::theme());
     let mut all_styles = highlighter.styles(&(0..combined.len()), &hl_theme);
 
     // Shared with the diff pane — see `distribute_highlights` for why the
@@ -1245,7 +1245,7 @@ fn pane(
 /// cheap `String` compare replaces a tree-sitter parse on every frame, and a
 /// real selection change re-parses exactly once.
 pub struct ResultHlCache {
-    key: (std::path::PathBuf, &'static str, String),
+    key: (std::path::PathBuf, theme::ThemeKey, String),
     rows: Arc<Vec<RowHl>>,
 }
 
@@ -1259,7 +1259,7 @@ fn result_highlights(
         .map(|l| l.text.as_str())
         .collect::<Vec<_>>()
         .join("\n");
-    let key = (path.to_path_buf(), theme().slug, text);
+    let key = (path.to_path_buf(), theme().key(), text);
     {
         let cache = chrome.result_hl.borrow();
         if let Some(c) = cache.as_ref() {

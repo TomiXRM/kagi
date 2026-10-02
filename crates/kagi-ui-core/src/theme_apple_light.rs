@@ -1,10 +1,12 @@
 //! The Apple Light theme (ADR-0125).
 
+use std::borrow::Cow;
+
 use crate::theme::{SyntaxPalette, Theme};
 
 pub const APPLE_LIGHT: Theme = Theme {
-    slug: "apple-light",
-    name: "Apple Light",
+    slug: Cow::Borrowed("apple-light"),
+    name: Cow::Borrowed("Apple Light"),
     dark: false,
 
     // systemBackground / systemGray6 / systemGray5 ramp.

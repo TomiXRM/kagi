@@ -1,8 +1,8 @@
 //! W9-THEME / ADR-0036: single-source colour theme registry.
 //!
 //! All UI colour comes from the active [`Theme`].  Modules call [`theme()`]
-//! (a `&'static Theme`) every render frame, so switching a theme is just an
-//! atomic index update + `cx.notify()` — no signature churn anywhere.
+//! every render frame, so switching a theme is just an atomic/slot update +
+//! `cx.notify()` — no signature churn anywhere.
 //!
 //! # Design
 //!
@@ -12,19 +12,30 @@
 //! * [`THEMES`] lists the built-in themes; index 0 (Catppuccin Mocha) is the
 //!   default and a byte-exact port of the previously hard-coded constants, so
 //!   the default look has zero regression.
-//! * [`ACTIVE`] is an `AtomicUsize` index into [`THEMES`].  [`set_active`]
-//!   updates it (and persists to `settings.json`); [`theme()`] reads it.
+//! * User themes (#922 / ADR-0219) are JSON files parsed by
+//!   [`crate::theme_custom`] into owned `Arc<Theme>` snapshots. The runtime
+//!   list is `THEMES` followed by those; [`ThemeHandle`] refers to either kind
+//!   without leaking, so a reload frees a generation once nothing uses it.
+//! * [`ACTIVE`] mirrors the active built-in index (lock-free fast path for
+//!   [`theme()`]); a custom theme is held in the registry's active slot.
+//!   [`set_active`] updates both (and persists to `settings.json`).
 //!
 //! # Persistence
 //!
-//! The active theme slug is stored in `~/.kagi/settings.json` (hand-written
-//! JSON, no serde — same approach as `oplog.rs`), honouring `KAGI_LOG_DIR`.
+//! The active theme slug is stored in `~/.kagi/settings.json` through the
+//! `settings` store, honouring `KAGI_LOG_DIR`.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::borrow::Cow;
+use std::ops::Deref;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use gpui::{hsla, rgb, App, Hsla};
+use serde::Serialize;
 
 use crate::settings::{read_setting, write_setting, Settings};
+
+pub use crate::theme_custom::{themes_dir, ThemeLoadError};
 
 // Compatibility re-export: font constants historically lived in `theme`.
 pub use crate::fonts::{ui_font, CJK_FONT, MONO_FONT, UI_FONT};
@@ -36,12 +47,12 @@ pub use crate::fonts::{ui_font, CJK_FONT, MONO_FONT, UI_FONT};
 /// A complete colour theme.  All colour fields are `0xRRGGBB` `u32` (consumed
 /// by `gpui::rgb`) except the lane palette (HSLA), the avatar saturation /
 /// lightness scalars, and the terminal selection alpha.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Theme {
     /// Stable lowercase slug used for menus, settings, and `KAGI_THEME`.
-    pub slug: &'static str,
+    pub slug: Cow<'static, str>,
     /// Human-readable name shown in the View → Theme menu.
-    pub name: &'static str,
+    pub name: Cow<'static, str>,
     /// Whether this is a dark theme (drives diff highlight + alpha choices).
     pub dark: bool,
 
@@ -158,7 +169,7 @@ pub struct Theme {
 /// operators and punctuation no colour at all, and several dark themes leave
 /// punctuation plain — set it to the theme's own `text_main`. Flat is the
 /// design there; inventing a colour would misrepresent the theme.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct SyntaxPalette {
     /// `fn`, `let`, `if`, `pub`, `impl`, `return`…
     pub keyword: u32,
@@ -185,10 +196,10 @@ pub struct SyntaxPalette {
 impl Theme {
     /// Name for menus and Settings. Brand names stay as they are; the
     /// descriptive accessibility theme is localized (#354).
-    pub fn display_name(&self) -> &'static str {
-        match self.slug {
+    pub fn display_name(&self) -> &str {
+        match &*self.slug {
             "color-vision" => crate::i18n::Msg::ThemeColorVision.t(),
-            _ => self.name,
+            _ => &self.name,
         }
     }
 
@@ -234,18 +245,194 @@ impl Theme {
     }
 }
 // ──────────────────────────────────────────────────────────────────────────
-// Active-theme atomic + accessors
+// Runtime theme registry (built-ins + user themes) and the active theme
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Index into [`THEMES`] of the currently-active theme.  Defaults to 0
-/// (Catppuccin Mocha).
+/// A cheap, owned reference to one theme: a built-in `&'static Theme` or a
+/// user theme's shared snapshot. Cloning never allocates (the custom case is
+/// an `Arc` increment), and a handle stays valid after a reload replaces or
+/// removes its theme — the snapshot is freed when the last handle drops.
+#[derive(Clone, Debug)]
+pub struct ThemeHandle(HandleInner);
+
+#[derive(Clone, Debug)]
+enum HandleInner {
+    Builtin(usize),
+    Custom(u64, Arc<Theme>),
+}
+
+/// Identity of one theme *instance*, for caches keyed by "the theme this was
+/// computed with". A reloaded user theme gets a new key even when its slug is
+/// unchanged; keys are never reused within a process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ThemeKey(KeyInner);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum KeyInner {
+    Builtin(usize),
+    Custom(u64),
+}
+
+impl ThemeHandle {
+    #[inline]
+    fn builtin(i: usize) -> Self {
+        Self(HandleInner::Builtin(i))
+    }
+
+    /// This theme instance's identity (see [`ThemeKey`]).
+    #[inline]
+    pub fn key(&self) -> ThemeKey {
+        ThemeKey(match &self.0 {
+            HandleInner::Builtin(i) => KeyInner::Builtin(*i),
+            HandleInner::Custom(id, _) => KeyInner::Custom(*id),
+        })
+    }
+
+    /// Whether this is a user theme loaded from a JSON file.
+    #[inline]
+    pub fn is_custom(&self) -> bool {
+        matches!(self.0, HandleInner::Custom(..))
+    }
+}
+
+impl Deref for ThemeHandle {
+    type Target = Theme;
+
+    #[inline]
+    fn deref(&self) -> &Theme {
+        match &self.0 {
+            HandleInner::Builtin(i) => &THEMES[*i],
+            HandleInner::Custom(_, t) => t,
+        }
+    }
+}
+
+/// The loaded user themes plus the active selection. Readers clone handles
+/// out under the read lock; a reload swaps the whole list under the write
+/// lock, so no reader ever sees half a generation.
+struct Registry {
+    /// User themes in load (file-name) order.
+    custom: Vec<ThemeHandle>,
+    /// The active theme; authoritative whenever [`ACTIVE`] is [`CUSTOM_ACTIVE`].
+    active: ThemeHandle,
+}
+
+static REGISTRY: RwLock<Registry> = RwLock::new(Registry {
+    custom: Vec::new(),
+    active: ThemeHandle(HandleInner::Builtin(0)),
+});
+
+/// Source of [`ThemeKey`]s for user themes; never reused.
+static NEXT_CUSTOM_ID: AtomicU64 = AtomicU64::new(0);
+
+/// Load errors from startup, held until the UI can show them.
+static STARTUP_ERRORS: Mutex<Vec<ThemeLoadError>> = Mutex::new(Vec::new());
+
+/// [`ACTIVE`] value meaning "a user theme is active; read the registry".
+const CUSTOM_ACTIVE: usize = usize::MAX;
+
+/// Index into [`THEMES`] of the active built-in theme, or [`CUSTOM_ACTIVE`].
+/// Defaults to 0 (Catppuccin Mocha). Written only under the registry's write
+/// lock, so it always agrees with `Registry::active`.
 static ACTIVE: AtomicUsize = AtomicUsize::new(0);
 
-/// The currently-active theme.  Called from every render path.
+fn registry() -> RwLockReadGuard<'static, Registry> {
+    REGISTRY.read().unwrap_or_else(|e| e.into_inner())
+}
+
+fn registry_mut() -> RwLockWriteGuard<'static, Registry> {
+    REGISTRY.write().unwrap_or_else(|e| e.into_inner())
+}
+
+impl Registry {
+    fn activate(&mut self, handle: ThemeHandle) {
+        let index = match handle.0 {
+            HandleInner::Builtin(i) => i,
+            HandleInner::Custom(..) => CUSTOM_ACTIVE,
+        };
+        self.active = handle;
+        ACTIVE.store(index, Ordering::Release);
+    }
+
+    fn find(&self, slug: &str) -> Option<ThemeHandle> {
+        match index_of(slug) {
+            Some(i) => Some(ThemeHandle::builtin(i)),
+            None => self.custom.iter().find(|t| t.slug == slug).cloned(),
+        }
+    }
+}
+
+/// The currently-active theme.  Called from every render path: a built-in
+/// theme is a lock-free atomic read, a user theme an `Arc` clone.
 #[inline]
-pub fn theme() -> &'static Theme {
-    let i = ACTIVE.load(Ordering::Relaxed);
-    &THEMES[i.min(THEMES.len() - 1)]
+pub fn theme() -> ThemeHandle {
+    let i = ACTIVE.load(Ordering::Acquire);
+    if i < THEMES.len() {
+        return ThemeHandle::builtin(i);
+    }
+    registry().active.clone()
+}
+
+/// Every selectable theme: [`THEMES`] in order, then the loaded user themes
+/// in file-name order.
+pub fn all_themes() -> Vec<ThemeHandle> {
+    let reg = registry();
+    (0..THEMES.len())
+        .map(ThemeHandle::builtin)
+        .chain(reg.custom.iter().cloned())
+        .collect()
+}
+
+/// The theme with this slug (built-in, including retired aliases, or user).
+pub fn theme_by_slug(slug: &str) -> Option<ThemeHandle> {
+    registry().find(slug)
+}
+
+/// Re-read the user theme folder ([`themes_dir`]) and swap in the result.
+///
+/// The active theme keeps its slug when the new generation still has it (as
+/// the new snapshot); a user theme that disappeared or became invalid falls
+/// back to [`THEMES`]`[0]` for this run only — `settings.json` keeps the slug
+/// so fixing the file and restarting restores it. Returns one error per
+/// rejected file.
+pub fn reload_custom_themes() -> Vec<ThemeLoadError> {
+    let (themes, errors) = match themes_dir() {
+        Some(dir) => crate::theme_custom::load_dir(&dir),
+        None => (Vec::new(), Vec::new()),
+    };
+    install_custom_themes(themes);
+    errors
+}
+
+/// Replace the user-theme generation and re-resolve the active theme.
+fn install_custom_themes(themes: Vec<Theme>) {
+    let custom: Vec<ThemeHandle> = themes
+        .into_iter()
+        .map(|t| {
+            let id = NEXT_CUSTOM_ID.fetch_add(1, Ordering::Relaxed);
+            ThemeHandle(HandleInner::Custom(id, Arc::new(t)))
+        })
+        .collect();
+    let mut reg = registry_mut();
+    let old = std::mem::replace(&mut reg.custom, custom);
+    if reg.active.is_custom() {
+        let next = reg
+            .custom
+            .iter()
+            .find(|t| t.slug == reg.active.slug)
+            .cloned()
+            .unwrap_or_else(|| ThemeHandle::builtin(0));
+        reg.activate(next);
+    }
+    drop(reg);
+    // The previous generation is freed here unless a caller still holds it.
+    drop(old);
+}
+
+/// Errors from loading user themes at startup ([`init_active`]); returns
+/// them once so the UI can report each file after it is ready.
+pub fn take_theme_load_errors() -> Vec<ThemeLoadError> {
+    std::mem::take(&mut *STARTUP_ERRORS.lock().unwrap_or_else(|e| e.into_inner()))
 }
 
 /// GitKraken-style ref-badge styling (user request).
@@ -298,21 +485,15 @@ pub fn lane_color_u32(i: usize) -> u32 {
     (q(c.r) << 16) | (q(c.g) << 8) | q(c.b)
 }
 
-/// The built-in themes ordered by name (case-insensitive), for every list a
-/// user picks from. The key is the theme's own `name`, not the localized
-/// display name: a Settings list built in one language stays in order after
-/// switching to the other (#921 review). [`THEMES`] keeps its own order:
+/// Every theme ordered by name (case-insensitive), for every list a user
+/// picks from. The key is the theme's own `name`, not the localized display
+/// name: a Settings list built in one language stays in order after
+/// switching to the other (#921 review). [`all_themes`] keeps its own order:
 /// index 0 is the default theme.
-pub fn themes_by_name() -> Vec<&'static Theme> {
-    let mut themes: Vec<&'static Theme> = THEMES.iter().collect();
-    themes.sort_by_key(|t| t.name.to_lowercase());
+pub fn themes_by_name() -> Vec<ThemeHandle> {
+    let mut themes = all_themes();
+    themes.sort_by_cached_key(|t| t.name.to_lowercase());
     themes
-}
-
-/// Index of the active theme (for the menu "✓" marker).
-#[inline]
-pub fn active_index() -> usize {
-    ACTIVE.load(Ordering::Relaxed).min(THEMES.len() - 1)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -607,7 +788,8 @@ pub fn init_reduce_motion() {
     klog!("reduce_motion: {}", reduce_motion());
 }
 
-/// Look up a theme index by slug.
+/// Look up a **built-in** theme's index in [`THEMES`] by slug (retired slugs
+/// resolve to their successors). User themes: [`theme_by_slug`].
 pub fn index_of(slug: &str) -> Option<usize> {
     THEMES
         .iter()
@@ -636,17 +818,17 @@ fn legacy_slug_alias(slug: &str) -> &str {
 #[cfg(test)]
 pub(crate) static ACTIVE_THEME_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Set the active theme by slug and persist it to `settings.json`.
-/// Returns `true` if the slug was recognised.
+/// Set the active theme (built-in or user) by slug and persist the slug to
+/// `settings.json`. Returns `true` if the slug was recognised.
 pub fn set_active(slug: &str) -> bool {
-    match index_of(slug) {
-        Some(i) => {
-            ACTIVE.store(i, Ordering::Relaxed);
-            save_settings(slug);
-            true
-        }
-        None => false,
-    }
+    let mut reg = registry_mut();
+    let Some(next) = reg.find(slug) else {
+        return false;
+    };
+    reg.activate(next);
+    drop(reg);
+    save_settings(slug);
+    true
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -665,21 +847,24 @@ pub fn save_settings(slug: &str) {
 
 /// Initialise the active theme at startup.
 ///
-/// Priority: `KAGI_THEME` env override → persisted `settings.json` →
-/// default (Catppuccin Mocha).  Logs `[kagi] theme: <slug> dark=<bool>`.
+/// Loads the user themes first (errors are kept for
+/// [`take_theme_load_errors`]), then resolves `KAGI_THEME` env override →
+/// persisted `settings.json` → default (Catppuccin Mocha) against the full
+/// list.  Logs `[kagi] theme: <slug> dark=<bool>`.
 pub fn init_active() {
-    let slug = std::env::var("KAGI_THEME")
+    let errors = reload_custom_themes();
+    *STARTUP_ERRORS.lock().unwrap_or_else(|e| e.into_inner()) = errors;
+
+    let mut reg = registry_mut();
+    let chosen = std::env::var("KAGI_THEME")
         .ok()
         .filter(|s| !s.is_empty())
-        .filter(|s| index_of(s).is_some())
-        .or_else(load_settings_slug)
-        .filter(|s| index_of(s).is_some());
-
-    if let Some(slug) = slug {
-        if let Some(i) = index_of(&slug) {
-            ACTIVE.store(i, Ordering::Relaxed);
-        }
+        .and_then(|s| reg.find(&s))
+        .or_else(|| load_settings_slug().and_then(|s| reg.find(&s)));
+    if let Some(handle) = chosen {
+        reg.activate(handle);
     }
+    drop(reg);
     let t = theme();
     klog!("theme: {} dark={}", t.slug, t.dark);
 }
@@ -854,7 +1039,7 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
 
     // ── Primary / accent (Checkbox checked, focus ring, links) ──
     gc.colors.primary = to_hsla(k.color_branch);
-    let primary_foreground = primary_button_foreground(k);
+    let primary_foreground = primary_button_foreground(&k);
     gc.colors.primary_foreground = to_hsla(primary_foreground);
     gc.colors.primary_hover = to_hsla(k.color_branch);
     gc.colors.primary_active = to_hsla(k.color_branch);
@@ -904,7 +1089,7 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     gc.colors.button_danger_foreground = to_hsla(0xffffff);
     gc.colors.button_danger_hover = to_hsla(k.color_blocker);
     gc.colors.button_danger_active = to_hsla(k.color_blocker);
-    let warning_foreground = filled_button_foreground(k.color_warning, k);
+    let warning_foreground = filled_button_foreground(k.color_warning, &k);
     gc.colors.button_warning = to_hsla(k.color_warning);
     gc.colors.button_warning_foreground = to_hsla(warning_foreground);
     gc.colors.button_warning_hover = to_hsla(k.color_warning);
@@ -967,7 +1152,7 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     // via [`highlight_theme`] — previously only these five editor surfaces were
     // overridden and `style.syntax` kept gpui-component's bundled palette, so
     // every dark theme highlighted code identically.
-    gc.highlight_theme = highlight_theme(k);
+    gc.highlight_theme = highlight_theme(&k);
 
     // ── Tokens (0.5.2) ──────────────────────────────────────────
     // Widgets increasingly read `theme().tokens.*` (Radio, Select popup, …),
@@ -1159,9 +1344,9 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         // SAFETY: single-threaded under the lock above.
         unsafe { std::env::set_var("KAGI_LOG_DIR", dir.path()) };
-        let restore = active_index();
+        let restore = theme();
         for t in THEMES {
-            assert!(set_active(t.slug), "{}", t.slug);
+            assert!(set_active(&t.slug), "{}", t.slug);
             let got = selection_overlay();
             assert_eq!(
                 got,
@@ -1170,7 +1355,7 @@ mod tests {
                 t.slug
             );
         }
-        ACTIVE.store(restore, Ordering::Relaxed);
+        registry_mut().activate(restore);
         unsafe { std::env::remove_var("KAGI_LOG_DIR") };
     }
 
@@ -1263,7 +1448,7 @@ mod tests {
 
     #[test]
     fn themes_have_unique_slugs() {
-        let mut slugs: Vec<&str> = THEMES.iter().map(|t| t.slug).collect();
+        let mut slugs: Vec<&str> = THEMES.iter().map(|t| &*t.slug).collect();
         slugs.sort_unstable();
         slugs.dedup();
         assert_eq!(slugs.len(), THEMES.len(), "theme slugs must be unique");
@@ -1272,13 +1457,13 @@ mod tests {
     #[test]
     fn index_of_resolves_all_slugs() {
         for (i, t) in THEMES.iter().enumerate() {
-            assert_eq!(index_of(t.slug), Some(i));
+            assert_eq!(index_of(&t.slug), Some(i));
         }
         assert_eq!(index_of("does-not-exist"), None);
     }
 
     /// `set_active` must store the *selected* theme's index — the picker reads
-    /// it back via `active_index()`/`theme()`, and a `set_active` that always
+    /// it back via `theme()`, and a `set_active` that always
     /// stored 0 passed the whole theme suite. Persists, hence the tempdir.
     #[test]
     fn set_active_selects_the_named_theme() {
@@ -1286,16 +1471,16 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().expect("tempdir");
-        let prev = active_index();
+        let prev = theme();
         std::env::set_var("KAGI_LOG_DIR", tmp.path());
 
         // Every built-in theme, not just index 0.
         for (i, t) in THEMES.iter().enumerate() {
-            assert!(set_active(t.slug), "{} must be recognised", t.slug);
+            assert!(set_active(&t.slug), "{} must be recognised", t.slug);
             assert_eq!(
-                active_index(),
-                i,
-                "active_index after set_active({})",
+                theme().key(),
+                ThemeHandle::builtin(i).key(),
+                "theme() after set_active({})",
                 t.slug
             );
             assert_eq!(theme().slug, t.slug, "theme() after set_active({})", t.slug);
@@ -1308,7 +1493,7 @@ mod tests {
         assert!(!set_active("nope"));
         assert_eq!(theme().slug, "apple-dark");
 
-        ACTIVE.store(prev, Ordering::Relaxed);
+        registry_mut().activate(prev);
         std::env::remove_var("KAGI_LOG_DIR");
     }
 
@@ -1425,7 +1610,7 @@ mod tests {
         const LOW_CONTRAST_BY_UPSTREAM_DESIGN: &[&str] = &["catppuccin-latte"];
 
         for t in THEMES {
-            if LOW_CONTRAST_BY_UPSTREAM_DESIGN.contains(&t.slug) {
+            if LOW_CONTRAST_BY_UPSTREAM_DESIGN.contains(&&*t.slug) {
                 continue;
             }
             let s = &t.syntax;
@@ -1540,20 +1725,178 @@ mod accent_text_tests {
 }
 
 #[cfg(test)]
-mod themes_by_name_tests {
-    use super::{themes_by_name, THEMES};
+mod registry_tests {
+    use super::*;
+
+    fn custom(slug: &str, name: &str, base: &Theme) -> Theme {
+        Theme {
+            slug: Cow::Owned(slug.to_owned()),
+            name: Cow::Owned(name.to_owned()),
+            ..base.clone()
+        }
+    }
+
+    /// Puts the registry back to "no user themes, default active" even when
+    /// an assertion fails, so other tests never see this test's themes.
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            install_custom_themes(Vec::new());
+            registry_mut().activate(ThemeHandle::builtin(0));
+        }
+    }
+
+    fn weak(h: &ThemeHandle) -> std::sync::Weak<Theme> {
+        match &h.0 {
+            HandleInner::Custom(_, t) => Arc::downgrade(t),
+            HandleInner::Builtin(_) => panic!("{} is built in", h.slug),
+        }
+    }
 
     #[test]
     fn every_theme_once_in_name_order() {
+        let _g = ACTIVE_THEME_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _reset = Reset;
+        install_custom_themes(vec![
+            custom("zz", "aardvark", &THEMES[1]),
+            custom("mm", "Midnight", &THEMES[2]),
+        ]);
+
         let sorted = themes_by_name();
-        assert_eq!(sorted.len(), THEMES.len());
+        assert_eq!(sorted.len(), THEMES.len() + 2);
         let names: Vec<String> = sorted.iter().map(|t| t.name.to_lowercase()).collect();
         let mut expected = names.clone();
         expected.sort();
         assert_eq!(names, expected);
+        assert_eq!(&*sorted[0].slug, "zz", "user themes sort among built-ins");
+
+        let all = all_themes();
+        assert_eq!(all[0].slug, "catppuccin", "the default stays first");
+        let tail: Vec<&str> = all[THEMES.len()..].iter().map(|t| &*t.slug).collect();
         assert_eq!(
-            THEMES[0].slug, "catppuccin",
-            "the default stays first in THEMES"
+            tail,
+            ["zz", "mm"],
+            "user themes follow THEMES in load order"
         );
+    }
+
+    #[test]
+    fn user_themes_are_selectable_and_persisted_by_slug() {
+        let _g = ACTIVE_THEME_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _reset = Reset;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("KAGI_LOG_DIR", tmp.path());
+        install_custom_themes(vec![custom("mine", "Mine", &THEMES[5])]);
+
+        assert!(set_active("mine"));
+        let t = theme();
+        assert!(t.is_custom());
+        assert_eq!((&*t.slug, t.bg_base), ("mine", THEMES[5].bg_base));
+        assert_eq!(load_settings_slug().as_deref(), Some("mine"));
+        assert_eq!(theme_by_slug("mine").map(|h| h.key()), Some(t.key()));
+        assert_eq!(
+            theme_by_slug("xcode-dark").map(|h| h.key()),
+            index_of("apple-dark").map(|i| ThemeHandle::builtin(i).key())
+        );
+        assert!(theme_by_slug("nope").is_none());
+        std::env::remove_var("KAGI_LOG_DIR");
+    }
+
+    /// A reload keeps the active slug as the new snapshot, keeps old handles
+    /// usable, frees a generation once nothing holds it, and falls back to
+    /// the default — without persisting it — when the active theme is gone.
+    #[test]
+    fn reload_swaps_generations_without_leaking() {
+        let _g = ACTIVE_THEME_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _reset = Reset;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("KAGI_LOG_DIR", tmp.path());
+        let themes = tmp.path().join("themes");
+        std::fs::create_dir(&themes).unwrap();
+        let write = |slug: &str, bg: &str| {
+            std::fs::write(
+                themes.join(format!("{slug}.json")),
+                format!(
+                    r#"{{"slug":"{slug}","name":"{slug}","extends":"one-dark","bg_base":"{bg}"}}"#
+                ),
+            )
+            .unwrap()
+        };
+        write("mine", "#111111");
+        assert!(reload_custom_themes().is_empty());
+        assert!(set_active("mine"));
+
+        let first = theme();
+        let first_gen = weak(&first);
+        write("mine", "#222222");
+        std::fs::write(themes.join("bad.json"), r#"{"slug":"bad"}"#).unwrap();
+        let errors = reload_custom_themes();
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert_eq!(errors[0].path, themes.join("bad.json"));
+
+        let second = theme();
+        assert_eq!((&*second.slug, second.bg_base), ("mine", 0x222222));
+        assert_ne!(second.key(), first.key(), "a reload is a new instance");
+        assert_eq!(first.bg_base, 0x111111, "an old handle stays readable");
+        drop(first);
+        assert!(first_gen.upgrade().is_none(), "the old generation is freed");
+
+        let second_gen = weak(&second);
+        drop(second);
+        std::fs::remove_file(themes.join("mine.json")).unwrap();
+        reload_custom_themes();
+        assert_eq!(theme().key(), ThemeHandle::builtin(0).key());
+        assert!(second_gen.upgrade().is_none(), "the removed theme is freed");
+        assert_eq!(
+            load_settings_slug().as_deref(),
+            Some("mine"),
+            "the fallback is not persisted"
+        );
+
+        // A built-in selection is untouched by reloads.
+        assert!(set_active("dracula"));
+        write("mine", "#333333");
+        reload_custom_themes();
+        assert_eq!(theme().slug, "dracula");
+        std::env::remove_var("KAGI_LOG_DIR");
+    }
+
+    /// Startup loads user themes before resolving the persisted slug, and
+    /// keeps the load errors for the UI.
+    #[test]
+    fn init_active_restores_a_persisted_user_theme() {
+        let _g = ACTIVE_THEME_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _reset = Reset;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("KAGI_LOG_DIR", tmp.path());
+        std::env::remove_var("KAGI_THEME");
+        let themes = tmp.path().join("themes");
+        std::fs::create_dir(&themes).unwrap();
+        std::fs::write(
+            themes.join("mine.json"),
+            r#"{"slug":"mine","name":"Mine","extends":"tokyo-night"}"#,
+        )
+        .unwrap();
+        std::fs::write(themes.join("broken.json"), "{").unwrap();
+        save_settings("mine");
+
+        init_active();
+        assert_eq!(theme().slug, "mine");
+        let errors = take_theme_load_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(
+            errors[0].to_string().starts_with("broken.json: "),
+            "{errors:?}"
+        );
+        assert!(take_theme_load_errors().is_empty(), "errors are taken once");
+        std::env::remove_var("KAGI_LOG_DIR");
     }
 }

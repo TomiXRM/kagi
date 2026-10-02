@@ -24,13 +24,31 @@ pub fn cache_path(settings_dir: &Path) -> PathBuf {
 
 /// Save `sections`, read as `account`, to `path`. Best effort: an error is
 /// returned for the caller to log, and the next read tries again.
+///
+/// On unix the file is readable by its owner only (`0600`), from its first
+/// write on: it names private repositories. The temp file is created fresh
+/// with that mode — `mode` applies only to a file being created, so one
+/// left by an earlier interrupted save is removed first — and the rename
+/// carries it over the old file.
 pub fn save(path: &Path, account: &str, sections: &[OwnerRepos]) -> std::io::Result<()> {
+    use std::io::Write as _;
     let value = json!({
         "account": account,
         "sections": sections.iter().map(section_json).collect::<Vec<_>>(),
     });
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec(&value)?)?;
+    match std::fs::remove_file(&tmp) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(&tmp)?;
+    file.write_all(&serde_json::to_vec(&value)?)?;
+    file.sync_all()?;
+    drop(file);
     std::fs::rename(&tmp, path)
 }
 
@@ -150,6 +168,26 @@ mod tests {
         save(&path, ME, &sections()).unwrap();
         assert_eq!(load(&path, "github.com/someone-else"), None);
         assert_eq!(load(&path, "ghe.example.com/me"), None);
+    }
+
+    /// The saved list names private repositories: owner-only from the
+    /// first save, still owner-only after an update, and also when an
+    /// earlier save left a world-readable temp file behind (#930 review).
+    #[cfg(unix)]
+    #[test]
+    fn the_saved_list_is_readable_by_its_owner_only() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let path = cache_path(dir.path());
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        save(&path, ME, &sections()).unwrap();
+        assert_eq!(mode(&path), 0o600, "first save");
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, "left over").unwrap();
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644)).unwrap();
+        save(&path, ME, &sections()).unwrap();
+        assert_eq!(mode(&path), 0o600, "update over a stale temp file");
+        assert_eq!(load(&path, ME), Some(sections()));
     }
 
     /// A damaged or foreign file is no cache: nothing is shown from it.

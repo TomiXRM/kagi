@@ -56,6 +56,7 @@ pub mod github_issue;
 mod github_issue_write;
 pub mod github_merge;
 pub mod github_pr_list;
+pub mod github_repos;
 pub mod github_review;
 mod github_status_batch;
 pub mod github_threads;

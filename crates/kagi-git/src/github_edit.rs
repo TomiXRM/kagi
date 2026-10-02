@@ -313,7 +313,7 @@ pub fn pr_edit(
 /// An unproven termination is a plain [`GitError::Other`] here, not
 /// `TerminationUnknown`: nothing was written, so there is no lease to hold and
 /// no state to reconcile — only data we do not have.
-fn read_gh(workdir: &Path, args: &[String], what: &str) -> Result<String, GitError> {
+pub(crate) fn read_gh(workdir: &Path, args: &[String], what: &str) -> Result<String, GitError> {
     let mut cmd = crate::cli::gh_command();
     cmd.args(args).current_dir(workdir);
     let out = crate::proc::run_child(&mut cmd, GH_TIMEOUT, None)

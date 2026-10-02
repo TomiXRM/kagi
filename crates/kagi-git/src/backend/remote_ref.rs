@@ -138,7 +138,10 @@ fn scp_identity(url: &str) -> Option<String> {
 pub(super) fn owner_repo(host: &str, path: &str) -> Option<String> {
     let mut segments = path.split('/').filter(|s| !s.is_empty());
     let owner = segments.next()?;
-    let repo = segments.next()?.trim_end_matches(".git");
+    let repo = segments.next()?;
+    // One `.git` suffix is the URL convention; a repository may itself be
+    // named `widgets.git` (#926 review).
+    let repo = repo.strip_suffix(".git").unwrap_or(repo);
     if host.is_empty() || repo.is_empty() {
         return None;
     }
@@ -756,6 +759,16 @@ mod tests {
         assert_eq!(
             repo_identity("myalias:acme/widgets.git").as_deref(),
             Some("myalias/acme/widgets")
+        );
+    }
+
+    /// Only the URL's own `.git` is dropped: a repository named `widgets.git`
+    /// keeps its name.
+    #[test]
+    fn identity_strips_one_dot_git_only() {
+        assert_eq!(
+            repo_identity("https://github.com/acme/widgets.git.git").as_deref(),
+            Some("github.com/acme/widgets.git")
         );
     }
 }

@@ -32,6 +32,7 @@ pub mod github;
 mod github_attention;
 mod github_detail;
 pub mod github_edit;
+pub mod github_repos;
 pub mod graph;
 pub mod head;
 pub mod history;

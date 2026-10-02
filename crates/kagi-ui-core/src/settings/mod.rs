@@ -210,7 +210,7 @@ impl Settings {
     /// When `true` the commit graph draws swimlane visuals (avatar nodes,
     /// lane tint band, lane padding). The lane *layout* itself is always
     /// the gitk-style `graph::layout` (ADR-0122) and is not affected by this key.
-    /// `None` when unset so the caller defaults to off.
+    /// `None` when unset so the caller keeps its default (on).
     pub fn graph_lane_compact(&self) -> Option<bool> {
         self.get_str("graph_lane_compact")
             .map(|s| s.trim() == "true")

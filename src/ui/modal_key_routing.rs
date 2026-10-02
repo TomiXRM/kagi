@@ -52,6 +52,14 @@ impl KagiApp {
         } else if self.ui().main_diff.is_some() {
             self.close_main_diff();
             cx.notify();
+        } else if self.workspace_mode() == super::workspace_mode::WorkspaceMode::Graph {
+            // Last in the chain: with nothing else to close, Escape clears the
+            // Graph selection (and with it the commit details pane). `select`
+            // on the selected row is the existing toggle-off path.
+            if let Some(index) = self.ui().selected {
+                self.select(index);
+                cx.notify();
+            }
         }
     }
 

@@ -33,6 +33,10 @@
 2026-10-02 追記（ADR-0007 の配置変更）: bottom の内容と `BottomTab` はそのまま、
 物理的な配置だけを center の下に移した。left / right は bottom の横で body の
 全高を使い、Status Bar は引き続き全幅。`resolve_workspace` の優先順位は変えない。
+Editor の file tree / hunks、PR / Issues の navigator、PR の swimlane は
+各 mode が内側に持つ left / right のペインなので、bottom を外側の
+takeover 全体の下には置かない。親から渡した panel を各 mode の実際の
+center 列の下に挿入する（Editor は uncached entity の layout 時に受け取る）。
 
 新しいペイン内容の追加は「render_body の正しい分岐位置を考古学で探す」作業であり、
 takeover 系は early-return、right 系は else-if、と追加パターンもバラバラだった。

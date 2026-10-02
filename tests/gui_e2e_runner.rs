@@ -66,6 +66,10 @@ mod recovery_operations;
 mod recovery_sidebar_panes;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/bottom_panel.rs"]
+mod recovery_bottom_panel;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/hunk_staging.rs"]
 mod hunk_staging;
 
@@ -1577,6 +1581,10 @@ mod macos {
                 Box::new(crate::issues_pagination::scenario_issues_pagination),
             ),
             ("bottom_panel", Box::new(scenario_bottom_panel)),
+            (
+                "bottom_panel_nested",
+                Box::new(crate::recovery_bottom_panel::scenario_bottom_panel_nested),
+            ),
             ("graph_copy", Box::new(scenario_graph_copy)),
             (
                 "diff_survives_reload",

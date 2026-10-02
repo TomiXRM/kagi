@@ -305,6 +305,11 @@ The current suite covers:
   and dragging its top edge changes its height without changing that alignment.
   Tier B: photograph the real window with a selected commit (visible right
   inspector), sidebar, and terminal panel to confirm actual pixels.
+  `KAGI_GUI_E2E_ONLY=bottom_panel_nested`
+  (`tests/recovery/bottom_panel.rs`) checks the PR and Issues navigators stay
+  full-height next to the panel under their center panes, and Editor keeps its
+  file tree/hunks beside the panel even after a child-only tree-width change.
+  Tier B: also inspect the Editor and PR workspaces with the panel open.
   Graph copy, oplog expand/copy, snapshot creation, theme switching,
   agent provenance, and WIP-to-HEAD connectors retain their existing scenarios;
 - WIP virtual commit anchors (`KAGI_GUI_E2E_ONLY=commit_row_layout_wip`,

@@ -1026,7 +1026,13 @@ fn pr_center_note(text: SharedString) -> gpui::AnyElement {
 /// mostly-empty fixed block (user request).
 const COMMIT_STRIP_MAX_H: f32 = 210.0;
 const ROW_H: f32 = 24.0;
-pub fn render_pr_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+/// `panel` is the window's bottom panel. It sits under the PR body only, so
+/// the navigator and the swimlane keep the full body height.
+pub fn render_pr_mode(
+    app: &mut KagiApp,
+    panel: Option<gpui::AnyElement>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
     let has_tab = app.pr_mode().is_some_and(|m| m.active.is_some());
     // Faces for the logins on this page (ADR-0200). One attempt per login per
     // process; the pass is a set lookup once they are in hand.
@@ -1052,6 +1058,18 @@ pub fn render_pr_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::Any
         .flex_col()
         .child(render_center(app, cx))
         .child(super::e2e::measure_inside("pr-mode-center-pane"));
+    let center = match panel {
+        None => center.into_any_element(),
+        Some(panel) => div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w(px(0.))
+            .min_h(px(0.))
+            .child(center)
+            .child(panel)
+            .into_any_element(),
+    };
     // The swimlane sits between the navigator and the body: it is about the
     // PRs, not about the file being read, and it is absent with no tab open.
     let lane = super::pr_lane::render_pr_lane(app, cx)

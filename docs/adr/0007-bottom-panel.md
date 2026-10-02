@@ -42,3 +42,11 @@ and the inspector/commit panel run to the status bar. The inspector's fallback
 split geometry subtracts only the status bar, while File History (a center
 takeover) still subtracts the Bottom Panel. Conflict Mode continues to replace
 the body and hide the Bottom Panel until resolution.
+
+Editor / PR / Issues はそれぞれ内側に左右ペインを持つため、外側の center
+takeover 全体の下に Bottom Panel を置かない。PR / Issues は navigator（PR
+では swimlane も）を全高のままにして中央列の下だけへ置く。Editor では
+file tree / hunks を全高に保ち、`EditorWorkspaceElement` が親 `KagiApp` の
+panel element を uncached な Editor entity の layout 中に渡す。Editor から
+`KagiApp` への再入はせず、子 entity の更新でも親から新しい panel を描画する。
+Editor entity を `.cached(...)` に変更するとこの受け渡しが失われるため行わない。

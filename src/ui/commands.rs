@@ -112,7 +112,8 @@ actions!(
         KeyboardShortcuts,
         Documentation,
         ReportIssue,
-        // View → Theme (W9-THEME / ADR-0036): one action per built-in theme.
+        // View → Theme (W9-THEME / ADR-0036): the original fixed theme actions,
+        // kept dispatchable by name. The menus now use `SetTheme` (#922).
         ThemeCatppuccin,
         ThemeXcodeDark,
         ThemeXcodeLight,
@@ -131,6 +132,19 @@ actions!(
         HistoryRedo,
     ]
 );
+
+/// Switch to the registered theme with this slug, built-in or custom (#922).
+///
+/// The View → Theme menus list every theme in [`theme::themes_by_name`], and
+/// custom themes only exist at runtime, so their menu items carry the slug
+/// instead of naming one of the fixed `Theme*` actions above. Those stay so a
+/// dispatch by name (`kagi_menu::ThemeCatppuccin`, …) keeps working. Not
+/// keymap-loadable (`no_json`): a theme is bound by slug, not by keystroke.
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = kagi_menu, no_json)]
+pub struct SetTheme {
+    pub slug: SharedString,
+}
 
 /// Map a language command id back to its [`Lang`].
 pub fn lang_for_command(id: &str) -> Option<Lang> {
@@ -363,20 +377,6 @@ pub fn linux_menu_sections() -> impl Iterator<Item = &'static MenuSection> {
     MENU_BAR.iter().filter(|s| !s.mac_only)
 }
 
-/// The ordered theme command ids, as they appear under View → Theme.  Used by
-/// the Linux dropdown to inline-expand `DynSubmenu::Theme` (macOS nests
-/// [`theme_submenu`] instead).  These mirror the registry's `theme.*` ids.
-#[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
-pub const THEME_COMMAND_IDS: &[&str] = &[
-    "theme.catppuccin",
-    "theme.xcodeDark",
-    "theme.xcodeLight",
-    "theme.oneDark",
-    "theme.oneLight",
-    "theme.monokai",
-    "theme.colorVision",
-];
-
 /// The ordered language command ids, as they appear under View → Language.
 /// Used by the Linux dropdown to inline-expand `DynSubmenu::Language` (macOS
 /// nests [`lang_submenu`] instead).  These mirror the registry's `lang.*` ids.
@@ -553,6 +553,13 @@ pub const COMMANDS: &[Command] = &[
         dangerous: false,
     },
     Command {
+        // #922: re-read the custom theme files (no watcher). Palette-only.
+        id: "view.reloadThemes",
+        label: "Reload Themes",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
         id: "repo.fetch",
         label: "Fetch",
         keystroke: Some("secondary-shift-f"),
@@ -692,8 +699,8 @@ pub const COMMANDS: &[Command] = &[
         keystroke: None,
         dangerous: false,
     },
-    // View → Theme (W9-THEME / ADR-0036). Labels here are the plain theme names;
-    // the live "✓ " active marker is applied in `theme_submenu`.
+    // The fixed theme commands (W9-THEME / ADR-0036), kept so their ids still
+    // dispatch. The menus and palette list every theme at runtime instead (#922).
     Command {
         id: "theme.catppuccin",
         label: "Catppuccin Mocha",
@@ -797,6 +804,8 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
         | "view.toggleTerminal"
         // Command palette (issue #352) — always available.
         | "view.commandPalette"
+        // #922: custom-theme reload is always available.
+        | "view.reloadThemes"
         | "window.minimize"
         | "window.zoom"
         | "window.close"
@@ -1027,45 +1036,23 @@ pub fn build_menus() -> Vec<Menu> {
         .collect()
 }
 
-/// Build the View → Theme submenu (W9-THEME / ADR-0036).
+/// Build the View → Theme submenu (W9-THEME / ADR-0036, #922).
 ///
-/// Each item is one built-in theme; the currently-active theme's label is
-/// prefixed with "✓ ".  Because the label changes when the active theme
-/// changes, the menu bar must be rebuilt (`cx.set_menus`) on every switch —
-/// unlike the disabled/enabled mechanism, which is purely dispatch-tree based.
+/// One item per registered theme — built-in and custom, from
+/// [`theme_menu_entries`] — with the active theme's label prefixed "✓ ".
+/// Because the label changes when the active theme changes (and the list
+/// changes on a theme reload), the menu bar must be rebuilt (`cx.set_menus`)
+/// after either — unlike the disabled/enabled mechanism, which is purely
+/// dispatch-tree based.
 fn theme_submenu() -> Menu {
-    let active = theme::active_index();
-    // Driven by `THEME_COMMAND_IDS`, the same list the Linux dropdown expands.
-    // This used to be a hand-written match on `theme.slug` that covered four of
-    // the six commands and `continue`d the rest, so the macOS menu offered four
-    // themes, the Linux menu six, and Settings all eleven.
-    let mut items: Vec<MenuItem> = Vec::with_capacity(THEME_COMMAND_IDS.len());
-    for id in theme_command_ids_by_name() {
-        let Some(slug) = theme_slug_for_command(id) else {
-            continue;
-        };
-        let Some(t) = theme::THEMES.iter().find(|t| t.slug == slug) else {
-            continue;
-        };
-        let marker = if theme::index_of(slug) == Some(active) {
-            "\u{2713} "
-        } else {
-            "   "
-        };
-        let label = SharedString::from(format!("{marker}{}", t.display_name()));
-        // Each theme has a distinct action so dispatch is 1:1.
-        let item = match id {
-            "theme.catppuccin" => MenuItem::action(label, ThemeCatppuccin),
-            "theme.xcodeDark" => MenuItem::action(label, ThemeXcodeDark),
-            "theme.xcodeLight" => MenuItem::action(label, ThemeXcodeLight),
-            "theme.oneDark" => MenuItem::action(label, ThemeOneDark),
-            "theme.oneLight" => MenuItem::action(label, ThemeOneLight),
-            "theme.monokai" => MenuItem::action(label, ThemeMonokai),
-            "theme.colorVision" => MenuItem::action(label, ThemeColorVision),
-            _ => continue,
-        };
-        items.push(item);
-    }
+    let items = theme_menu_entries()
+        .into_iter()
+        .map(|entry| {
+            let marker = if entry.active { "\u{2713} " } else { "   " };
+            let label = SharedString::from(format!("{marker}{}", entry.name));
+            MenuItem::action(label, SetTheme { slug: entry.slug })
+        })
+        .collect();
     Menu {
         name: "Theme".into(),
         items,
@@ -1073,17 +1060,25 @@ fn theme_submenu() -> Menu {
     }
 }
 
-/// [`THEME_COMMAND_IDS`] in the order of their themes' display names, for the
-/// macOS Theme menu and the Linux dropdown — the same order Settings uses.
-pub fn theme_command_ids_by_name() -> Vec<&'static str> {
-    let mut ids: Vec<&'static str> = THEME_COMMAND_IDS.to_vec();
-    ids.sort_by_key(|id| {
-        theme_slug_for_command(id)
-            .and_then(|slug| theme::THEMES.iter().find(|t| t.slug == slug))
-            .map(|t| t.name.to_lowercase())
-            .unwrap_or_default()
-    });
-    ids
+/// One View → Theme row, shared by the macOS submenu and the Linux dropdown.
+pub struct ThemeMenuEntry {
+    pub slug: SharedString,
+    pub name: SharedString,
+    pub active: bool,
+}
+
+/// Every registered theme in [`theme::themes_by_name`] order — the order
+/// Settings and the command palette use (#921, #922).
+pub fn theme_menu_entries() -> Vec<ThemeMenuEntry> {
+    let active = theme::theme().key();
+    theme::themes_by_name()
+        .into_iter()
+        .map(|t| ThemeMenuEntry {
+            slug: SharedString::from(t.slug.clone()),
+            name: SharedString::from(t.display_name().to_string()),
+            active: t.key() == active,
+        })
+        .collect()
 }
 
 /// Build the View → Language submenu (W22-I18N / ADR-0048).
@@ -1645,6 +1640,8 @@ impl KagiApp {
             }
             // Issue #352: open the command palette.
             "view.commandPalette" => self.open_command_palette(window, cx),
+            // #922: re-read the custom theme files (explicit; no watcher).
+            "view.reloadThemes" => self.reload_themes(window, cx),
             // ── Workspace modes: Graph | PRs | Editor, mutually exclusive ──
             // Each button names the mode it selects (not what it toggles to)
             // and highlights while active — two morphing toggles could both
@@ -1714,7 +1711,7 @@ impl KagiApp {
     }
 
     /// Rebuild terminal config and push it into every retained session.
-    fn apply_terminal_config(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn apply_terminal_config(&mut self, cx: &mut Context<Self>) {
         let new_config = super::terminal::build_terminal_config();
         for session in self
             .ui
@@ -2305,18 +2302,18 @@ mod tests {
         }
     }
 
-    /// The inline-expanded theme/language ids (used by the Linux dropdown) must
-    /// likewise resolve in the registry — same drift guard for the submenus.
+    /// The inline-expanded language ids (used by the Linux dropdown) must
+    /// likewise resolve in the registry — same drift guard for the submenu.
     #[test]
     fn dyn_submenu_ids_exist_in_registry() {
-        for id in THEME_COMMAND_IDS.iter().chain(LANG_COMMAND_IDS.iter()) {
+        for id in LANG_COMMAND_IDS {
             assert!(
                 command(id).is_some(),
                 "dynamic submenu references unknown command id {id:?}"
             );
             assert!(
-                theme_slug_for_command(id).is_some() || lang_for_command(id).is_some(),
-                "dynamic submenu id {id:?} maps to neither a theme nor a language"
+                lang_for_command(id).is_some(),
+                "dynamic submenu id {id:?} maps to no language"
             );
         }
     }
@@ -2388,20 +2385,20 @@ mod keybinding_tests {
 
 #[cfg(test)]
 mod theme_menu_order_tests {
-    use super::{theme_command_ids_by_name, theme_slug_for_command, THEME_COMMAND_IDS};
+    use super::theme_menu_entries;
     use crate::ui::theme;
 
+    /// The View → Theme menus offered seven fixed commands while Settings
+    /// listed every theme (#922): every registered theme is a menu row, in
+    /// the case-insensitive name order the other pickers use.
     #[test]
-    fn the_theme_menu_lists_every_command_in_name_order() {
-        let ids = theme_command_ids_by_name();
-        assert_eq!(ids.len(), THEME_COMMAND_IDS.len());
-        let names: Vec<String> = ids
+    fn the_theme_menu_lists_every_theme_in_name_order() {
+        let entries = theme_menu_entries();
+        let mut slugs: Vec<String> = entries.iter().map(|e| e.slug.to_string()).collect();
+        let names: Vec<String> = slugs
             .iter()
-            .map(|id| {
-                let slug = theme_slug_for_command(id).expect("theme command");
-                theme::THEMES
-                    .iter()
-                    .find(|t| t.slug == slug)
+            .map(|slug| {
+                theme::theme_by_slug(slug)
                     .expect("registered theme")
                     .name
                     .to_lowercase()
@@ -2410,5 +2407,13 @@ mod theme_menu_order_tests {
         let mut sorted = names.clone();
         sorted.sort();
         assert_eq!(names, sorted);
+        slugs.sort();
+        let mut registered: Vec<String> = theme::all_themes()
+            .iter()
+            .map(|t| t.slug.to_string())
+            .collect();
+        registered.sort();
+        assert_eq!(slugs, registered);
+        assert_eq!(entries.iter().filter(|e| e.active).count(), 1);
     }
 }

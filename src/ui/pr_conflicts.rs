@@ -24,7 +24,7 @@ use kagi_git::{PrConflictFile, PrConflictKind};
 
 use super::diff_view::{DiffRow, MainDiffSource, MainDiffView};
 use super::i18n::{self, Lang, Msg};
-use super::theme::theme;
+use super::theme::{self, theme};
 use super::KagiApp;
 use kagi_domain::diff::DiffLineKind;
 
@@ -38,7 +38,7 @@ pub(crate) struct ConflictPreview {
     jumps: Arc<Vec<usize>>,
     empty_message: Option<Msg>,
     lang: Lang,
-    theme_slug: &'static str,
+    theme_key: theme::ThemeKey,
 }
 
 impl ConflictPreview {
@@ -48,8 +48,8 @@ impl ConflictPreview {
 
     pub(crate) fn snapshot(&mut self) -> (MainDiffView, Arc<Vec<usize>>) {
         let lang = i18n::lang();
-        let theme_slug = theme().slug;
-        if self.lang != lang || self.theme_slug != theme_slug {
+        let theme_key = theme().key();
+        if self.lang != lang || self.theme_key != theme_key {
             // Detach from outstanding render snapshots and weak split-cache
             // keys before changing presentation. Source text stays unchanged.
             let rows = Arc::make_mut(&mut self.view.rows);
@@ -61,12 +61,12 @@ impl ConflictPreview {
                     rows[0] = DiffRow::HunkHeader(message.t().into());
                 }
             }
-            if self.theme_slug != theme_slug {
+            if self.theme_key != theme_key {
                 super::diff_view::highlight_diff_rows(rows, &self.path);
             }
             self.lang = lang;
-            self.theme_slug = theme_slug;
-            self.view.highlighted = Some(theme_slug);
+            self.theme_key = theme_key;
+            self.view.highlighted = Some(theme_key);
         }
         (self.view.clone(), Arc::clone(&self.jumps))
     }
@@ -317,6 +317,7 @@ pub(crate) fn conflict_diff_view(f: &PrConflictFile, marker_text: Option<&str>) 
     // taken from the real path, so a conflict in a .rs file reads like Rust.
     // Done here, synchronously, and redone by `snapshot` on a theme switch;
     // `highlighted` tells the shared diff renderer not to request it (#495).
+    let theme_key = theme().key();
     super::diff_view::highlight_diff_rows(&mut rows, &f.path);
 
     let view = MainDiffView {
@@ -326,7 +327,7 @@ pub(crate) fn conflict_diff_view(f: &PrConflictFile, marker_text: Option<&str>) 
         source: MainDiffSource::Synthetic,
         images: None,
         lang: super::diff_view::lang_for_path(&f.path),
-        highlighted: Some(theme().slug),
+        highlighted: Some(theme_key),
     };
     ConflictPreview {
         path: f.path.clone(),
@@ -334,7 +335,7 @@ pub(crate) fn conflict_diff_view(f: &PrConflictFile, marker_text: Option<&str>) 
         jumps: Arc::new(jumps),
         empty_message,
         lang: i18n::lang(),
-        theme_slug: theme().slug,
+        theme_key,
     }
 }
 

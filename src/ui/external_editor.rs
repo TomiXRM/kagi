@@ -34,7 +34,7 @@ fn expand_template(template: &str, file: &Path, line: Option<u32>) -> String {
 }
 
 /// The platform opener used when `external_editor` is unset.
-fn os_opener() -> &'static str {
+pub(crate) fn os_opener() -> &'static str {
     if cfg!(target_os = "macos") {
         "open"
     } else {

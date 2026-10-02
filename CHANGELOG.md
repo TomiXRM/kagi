@@ -5,11 +5,19 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Settings を開いたままスクロールすると、背面の画面(Graph・PRs・Issues・Editor)も一緒にスクロールする問題を修正しました。Settings の背景が、背面へのマウス操作をスクロールも含めて遮るようにしました。
+
 ### Changed
 
 - Graph の「Avatar commit nodes」(commit の点を作者のアバターにする表示)を既定で ON にしました。設定で一度 OFF にしている場合はそのまま OFF です。
 - Graph で行を選択しているとき、Esc で選択を解除できるようにしました(右側の commit 詳細も閉じます)。メニューや diff、確認画面が開いている場合は、従来どおりそちらが先に閉じます。
 - Terminal / Operation Log / Activity の下部パネルをウィンドウ全幅から main pane の下部へ移しました。開くと main の内容だけが縮み、サイドバーと右側の Inspector / Commit Panel に加え Editor の file tree / hunks と PR / Issues の navigator（PR の swimlane も）はステータスバーまで表示されます。従来の高さ変更、Cmd-J、タブ切替、Conflict 画面での非表示は維持します。（ADR-0007）
+
+### Added
+
+- `~/.kagi/themes/*.json` (または `KAGI_LOG_DIR/themes/*.json`) から自作テーマを読み込み、組み込みテーマの色を部分上書きして Settings / メニュー / command palette から選べるようにしました。Settings ではフォルダーのパス表示・作成して開く操作・画面を止めないバックグラウンド再読み込みもできます。再読み込みの連打では最後の結果だけ反映します。形式と各色の用途は [テーマガイド](docs/themes.md) に記載しています。(#922、ADR-0220)
 
 ## [0.41.0] - 2026-10-02
 

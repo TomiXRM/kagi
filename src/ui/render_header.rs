@@ -101,6 +101,11 @@ impl KagiApp {
         let el = menu_act!(el, cmds::ThemeOneLight, "theme.oneLight");
         let el = menu_act!(el, cmds::ThemeMonokai, "theme.monokai");
         let el = menu_act!(el, cmds::ThemeColorVision, "theme.colorVision");
+        // #922: the View → Theme menu items name a theme by slug (built-in or
+        // custom), always available like the fixed actions above.
+        let el = el.on_action(cx.listener(|this, action: &cmds::SetTheme, _window, cx| {
+            this.set_theme(&action.slug, cx);
+        }));
         // W22-I18N: language switch actions (always enabled).
         let el = menu_act!(el, cmds::LangEnglish, "lang.english");
         let el = menu_act!(el, cmds::LangJapanese, "lang.japanese");

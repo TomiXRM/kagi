@@ -19,7 +19,7 @@
 //! plan modal without a text field therefore asks for the root on open, the
 //! same rule the conflict Abort confirmation follows (#755).
 
-use gpui::{Context, Window};
+use gpui::{Context, SharedString, Window};
 
 use super::commands::MenuOverlay;
 use super::KagiApp;
@@ -60,6 +60,14 @@ impl KagiApp {
     pub(super) fn open_settings_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.capture_overlay_return_focus(window, cx);
         self.menu_overlay = Some(MenuOverlay::Settings);
+        // The Select entity survives closing Settings. Menu and palette theme
+        // changes bypass its Confirm event, so sync its highlighted row on open.
+        if let Some(select) = &self.theme_select {
+            let slug = SharedString::from(super::theme::theme().slug.to_string());
+            select.update(cx, |state, cx| {
+                state.set_selected_value(&slug, window, cx);
+            });
+        }
         // Ensure an Ollama probe has run so the Smart Commit model picker is
         // usable even if the commit panel was never opened.
         self.refresh_smart_commit_detection(cx);

@@ -197,3 +197,76 @@ pub fn scenario_settings_close_returns_focus(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS settings_close_returns_focus");
 }
+
+/// Scrolling over Settings must not reach the panes behind it — in every
+/// workspace mode, not only Graph. A probe on the workspace root counts the
+/// wheel events that get past the overlay. Precondition per mode: with
+/// Settings closed the same wheel event does reach the workspace, so the
+/// check can fail.
+pub fn scenario_settings_scroll_stays_in_overlay(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    draw(cx, window);
+    let centre = cx
+        .update_window(window, |_, window, _| {
+            let size = window.viewport_size();
+            gpui::point(size.width * 0.5, size.height * 0.5)
+        })
+        .unwrap();
+    let wheel = |cx: &mut VisualTestAppContext| {
+        cx.simulate_event(
+            window,
+            gpui::ScrollWheelEvent {
+                position: centre,
+                delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(-200.))),
+                touch_phase: gpui::TouchPhase::Moved,
+                ..Default::default()
+            },
+        );
+        draw(cx, window);
+    };
+
+    let modes: [(&str, fn(&mut KagiApp, &mut gpui::Context<KagiApp>)); 4] = [
+        ("Graph", |app, cx| app.show_graph_mode(cx)),
+        ("PRs", |app, cx| app.show_pr_mode(cx)),
+        ("Issues", |app, cx| app.show_issues_mode(cx)),
+        ("Editor", |app, cx| app.show_editor_mode(cx)),
+    ];
+    for (name, show) in modes {
+        app.update(cx, |app, cx| {
+            app.menu_overlay = None;
+            show(app, cx);
+        });
+        draw(cx, window);
+
+        let before = e2e::workspace_scrolls();
+        wheel(cx);
+        assert!(
+            e2e::workspace_scrolls() > before,
+            "precondition ({name}): with Settings closed the wheel reaches the workspace"
+        );
+
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                app.handle_menu_command("app.settings", window, cx)
+            })
+        })
+        .unwrap();
+        draw(cx, window);
+        let before = e2e::workspace_scrolls();
+        wheel(cx);
+        assert_eq!(
+            e2e::workspace_scrolls(),
+            before,
+            "settings-scroll-stays-in-overlay ({name}): a wheel over Settings reached the pane behind it"
+        );
+    }
+    app.update(cx, |app, cx| {
+        app.menu_overlay = None;
+        app.show_graph_mode(cx);
+    });
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS settings_scroll_stays_in_overlay: Graph / PRs / Issues / Editor — the wheel over Settings never reaches the workspace");
+}

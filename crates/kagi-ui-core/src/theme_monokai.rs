@@ -1,10 +1,12 @@
 //! The monokai theme.
 
+use std::borrow::Cow;
+
 use crate::theme::{SyntaxPalette, Theme, LANE_PALETTE_DARK};
 
 pub const MONOKAI: Theme = Theme {
-    slug: "monokai",
-    name: "Monokai (Warm Hybrid)",
+    slug: Cow::Borrowed("monokai"),
+    name: Cow::Borrowed("Monokai (Warm Hybrid)"),
     dark: true,
 
     bg_base: 0x28242a,

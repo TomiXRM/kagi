@@ -1,10 +1,12 @@
 //! The ibm pc theme.
 
+use std::borrow::Cow;
+
 use crate::theme::{SyntaxPalette, Theme, LANE_PALETTE_DARK};
 
 pub const IBM_PC: Theme = Theme {
-    slug: "ibm-pc",
-    name: "IBM PC",
+    slug: Cow::Borrowed("ibm-pc"),
+    name: Cow::Borrowed("IBM PC"),
     dark: true,
 
     bg_base: 0x000000,

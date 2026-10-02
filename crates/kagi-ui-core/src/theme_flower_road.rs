@@ -19,11 +19,13 @@
 //! The theme definition lives in its own module; the registry stays in
 //! `theme.rs`.
 
+use std::borrow::Cow;
+
 use crate::theme::{SyntaxPalette, Theme};
 
 pub const FLOWER_ROAD: Theme = Theme {
-    slug: "flower-road",
-    name: "Flower Road",
+    slug: Cow::Borrowed("flower-road"),
+    name: Cow::Borrowed("Flower Road"),
     dark: false,
 
     // A warm ivory rather than white — the palette this theme is built from is

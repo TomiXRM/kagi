@@ -211,9 +211,9 @@ pub struct MainDiffView {
     pub images: Option<DiffImagePair>,
     /// #495: grammar for the rows (from the file path); `None` = plain text.
     pub lang: Option<&'static str>,
-    /// #495: slug of the theme the rows' spans were computed with; `None`
-    /// while the text is shown unhighlighted. See [`highlight`].
-    pub highlighted: Option<&'static str>,
+    /// #495: the theme the rows' spans were computed with; `None` while the
+    /// text is shown unhighlighted. See [`highlight`].
+    pub highlighted: Option<theme::ThemeKey>,
 }
 
 /// Before/after images for a binary image diff (either side may be missing —
@@ -360,7 +360,7 @@ pub(crate) fn highlight_diff_rows(
     let Some(lang) = lang_for_path(file_path) else {
         return "none";
     };
-    let spans = highlight_rows(rows, lang, &theme::highlight_theme(theme::theme()));
+    let spans = highlight_rows(rows, lang, &theme::highlight_theme(&theme::theme()));
     for (row_i, row_highlights) in spans {
         if let Some(DiffRow::Line { highlights, .. }) = rows.get_mut(row_i) {
             *highlights = row_highlights;

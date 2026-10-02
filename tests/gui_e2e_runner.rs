@@ -56,6 +56,9 @@ mod gui_evidence;
 #[cfg(target_os = "macos")]
 #[path = "support/gui_isolation.rs"]
 mod gui_isolation;
+#[cfg(target_os = "macos")]
+#[path = "recovery/theme_custom.rs"]
+mod theme_custom;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/operations.rs"]
@@ -889,6 +892,14 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_color_vision_theme),
             ),
             (
+                "theme_custom",
+                Box::new(crate::theme_custom::scenario_theme_custom),
+            ),
+            (
+                "theme_folder_controls",
+                Box::new(crate::theme_custom::scenario_theme_folder_controls),
+            ),
+            (
                 "wip_selected_roles",
                 Box::new(crate::recovery_operations::scenario_wip_selected_roles),
             ),
@@ -1175,6 +1186,10 @@ mod macos {
             (
                 "settings_close_returns_focus",
                 Box::new(crate::overlay_focus::scenario_settings_close_returns_focus),
+            ),
+            (
+                "settings_scroll_stays_in_overlay",
+                Box::new(crate::overlay_focus::scenario_settings_scroll_stays_in_overlay),
             ),
             (
                 "pr_fields_escape_focus",
@@ -2299,7 +2314,7 @@ mod macos {
         let repo_path = fixture.path().canonicalize().unwrap();
         let (kagi, win) = mount(cx, &repo_path);
 
-        let before = theme::theme().slug;
+        let before = theme::theme().slug.to_string();
         let saved = kagi::ui::settings::read_setting("theme");
         let target = if before == "dracula" {
             "tokyo-night"
@@ -2309,7 +2324,7 @@ mod macos {
         kagi.update(cx, |app, cx| app.set_theme(target, cx));
         cx.run_until_parked();
 
-        let after = theme::theme().slug;
+        let after = theme::theme().slug.to_string();
         assert_eq!(
             after, target,
             "SetTheme should make {target} the active theme"
@@ -2317,7 +2332,7 @@ mod macos {
         assert_ne!(after, before, "active theme should have changed");
         // Put the theme back for the scenarios that follow (#516): the
         // active theme, gpui_component's copy, and the saved key.
-        kagi.update(cx, |app, cx| app.set_theme(before, cx));
+        kagi.update(cx, |app, cx| app.set_theme(&before, cx));
         kagi::ui::settings::write_setting("theme", saved.as_deref());
         unmount(cx, kagi, win);
         eprintln!("[gui-e2e] PASS theme_switch {before} -> {after}");

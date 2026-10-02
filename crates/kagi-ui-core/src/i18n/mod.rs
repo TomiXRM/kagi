@@ -657,6 +657,11 @@ pub enum Msg {
     CloneChooseFolder,
     CloneConfirm,
     CloneBusy,
+    /// `{}` = elapsed time, `m:ss`.
+    CloneRunning,
+    /// `{}` = the host it downloads from.
+    CloneRunningHint,
+    CloneHide,
     IssuePostedAs,
     IssueNewFieldsTitle,
     IssueReply,
@@ -2589,6 +2594,16 @@ impl Msg {
             (Ja, CloneConfirm) => "clone",
             (En, CloneBusy) => "A clone is already running in this window. Wait for it to finish.",
             (Ja, CloneBusy) => "このウィンドウでは別の clone を実行中です。終わるまで待ってください。",
+            (En, CloneRunning) => "Cloning… {}",
+            (Ja, CloneRunning) => "clone 中… {}",
+            (En, CloneRunningHint) => {
+                "Downloading from {}. A large repository can take a few minutes; closing this card does not stop the clone."
+            }
+            (Ja, CloneRunningHint) => {
+                "{} からダウンロードしています。大きなリポジトリでは数分かかることがあります。このカードを閉じても clone は続きます。"
+            }
+            (En, CloneHide) => "Continue in background",
+            (Ja, CloneHide) => "バックグラウンドで続ける",
             (En, IssuePostedAs) => "Posted as {}",
             (Ja, IssuePostedAs) => "{} として投稿",
             (En, IssueNewFieldsTitle) => "New issue",

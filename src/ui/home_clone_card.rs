@@ -55,7 +55,8 @@ pub(crate) fn render_clone_modal(
         .flex_col()
         .gap_5()
         .child(header(&modal))
-        .child(location(&modal, choose));
+        .child(location(&modal, choose))
+        .children(modal.started.map(|started| progress(&modal, started)));
     if let Some(target) = &modal.target {
         // The shared tinted note rows: warnings read as notes, blockers as
         // alerts to assistive technology (#354).
@@ -82,26 +83,35 @@ pub(crate) fn render_clone_modal(
             ));
         }
     }
-    let buttons = div()
-        .flex()
-        .flex_row()
-        .justify_end()
-        .gap_2()
-        .child(super::e2e::measure_control(
-            "clone-cancel",
-            Button::new("clone-cancel")
-                .label(Msg::PlanCancel.t())
+    let buttons = div().flex().flex_row().justify_end().gap_2();
+    let buttons = if modal.started.is_some() {
+        // No cancel in v1 (ADR-0219 decision 6): the card can only step
+        // aside; the clone keeps going and its result arrives as usual.
+        buttons.child(super::e2e::measure_control(
+            "clone-hide",
+            Button::new("clone-hide")
+                .label(Msg::CloneHide.t())
                 .ghost()
                 .on_click(cancel),
         ))
-        .child(super::e2e::measure_control(
-            "clone-confirm",
-            Button::new("clone-confirm")
-                .primary()
-                .label(Msg::CloneConfirm.t())
-                .disabled(!ready)
-                .on_click(confirm),
-        ));
+    } else {
+        buttons
+            .child(super::e2e::measure_control(
+                "clone-cancel",
+                Button::new("clone-cancel")
+                    .label(Msg::PlanCancel.t())
+                    .ghost()
+                    .on_click(cancel),
+            ))
+            .child(super::e2e::measure_control(
+                "clone-confirm",
+                Button::new("clone-confirm")
+                    .primary()
+                    .label(Msg::CloneConfirm.t())
+                    .disabled(!ready)
+                    .on_click(confirm),
+            ))
+    };
     let card = div()
         .w(theme::scaled_px(CARD_W))
         .flex()
@@ -245,8 +255,47 @@ fn location(
                     Button::new("clone-change-folder")
                         .outline()
                         .label(Msg::CloneChooseFolder.t())
+                        .disabled(modal.started.is_some())
                         .on_click(choose),
                 )),
         )
         .children(created)
+}
+
+/// The running clone: a spinner with the elapsed time, and where it is
+/// downloading from. Redrawn every second by `tick_clone_card`.
+fn progress(modal: &CloneModal, started: std::time::Instant) -> impl IntoElement {
+    let secs = started.elapsed().as_secs();
+    let elapsed = format!("{}:{:02}", secs / 60, secs % 60);
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .px_4()
+        .py_3()
+        .rounded_lg()
+        .bg(rgb(theme().bg_base))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .child(super::render_overlay::sync_spinner(
+                    16.,
+                    theme().color_branch,
+                    "clone-progress-spinner",
+                ))
+                .child(div().text_sm().text_color(rgb(theme().text_main)).child(
+                    SharedString::from(Msg::CloneRunning.t().replace("{}", &elapsed)),
+                )),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(rgb(theme().text_muted))
+                .child(SharedString::from(
+                    Msg::CloneRunningHint.t().replace("{}", &modal.listing.host),
+                )),
+        )
 }

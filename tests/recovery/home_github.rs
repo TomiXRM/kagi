@@ -234,7 +234,20 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
     click_control(cx, window, "home-gh-acme/widgets");
     cx.run_until_parked();
     choose_folder(cx, &app, &clones);
-    click_control(cx, window, "clone-confirm");
+    // Pressing Clone visibly does something at once: the card stays up as
+    // the clone's progress (no silent gap that looks like a missed click).
+    // Called directly — what the button's handler calls — because a
+    // simulated click parks the executor, which runs the local clone to its
+    // end before the running state can be read.
+    app.update(cx, |app, cx| app.start_clone(cx));
+    assert!(
+        cx.read(|cx| {
+            let app = app.read(cx);
+            app.home_github.cloning.is_some()
+                && app.clone_modal().is_some_and(|m| m.started.is_some())
+        }),
+        "the card shows the running clone"
+    );
     wait_for(cx, &app, "the clone", |app| {
         app.home_github.cloning.is_none() && app.clone_modal().is_none()
     });

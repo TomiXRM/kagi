@@ -85,6 +85,9 @@ enum HomeItem {
 pub struct CloneModal {
     pub listing: RepoListing,
     pub target: Option<CloneTarget>,
+    /// Set once Clone is pressed: the card stays up showing the clone in
+    /// progress (and for how long) until it ends or is sent to the background.
+    pub started: Option<std::time::Instant>,
 }
 
 /// The clone planned for the chosen folder.
@@ -207,6 +210,7 @@ impl KagiApp {
         self.set_clone_modal(CloneModal {
             listing,
             target: None,
+            started: None,
         });
     }
 
@@ -238,6 +242,9 @@ impl KagiApp {
         let Some(modal) = self.clone_modal().cloned() else {
             return;
         };
+        if modal.started.is_some() {
+            return;
+        }
         let target = CloneTarget::new(&modal.listing, parent);
         klog!(
             "clone: plan {} -> {} blockers={}",
@@ -248,10 +255,13 @@ impl KagiApp {
         self.set_clone_modal(CloneModal {
             listing: modal.listing,
             target: Some(target),
+            started: None,
         });
         cx.notify();
     }
 
+    /// Close the card. A clone already running keeps going in the background
+    /// (its row reads "Cloning…", and its result arrives as usual).
     pub fn cancel_clone(&mut self) {
         self.clear_clone_modal();
     }
@@ -259,19 +269,27 @@ impl KagiApp {
     /// Confirm the card: run the planned clone in the background. Refused on
     /// the spot while another clone of this window is running.
     pub fn start_clone(&mut self, cx: &mut Context<Self>) {
-        let Some(CloneTarget { request, plan }) =
-            self.clone_modal().and_then(|modal| modal.target.clone())
-        else {
+        let Some(modal) = self.clone_modal().cloned() else {
             return;
         };
-        if !plan.blockers.is_empty() {
+        let Some(CloneTarget { request, plan }) = modal.target.clone() else {
+            return;
+        };
+        if modal.started.is_some() || !plan.blockers.is_empty() {
             return;
         }
         if self.home_github.cloning.is_some() {
             self.push_toast(super::ToastKind::Error, Msg::CloneBusy.t(), cx);
             return;
         }
-        self.clear_clone_modal();
+        // The card stays up as the clone's progress: pressing Clone must
+        // visibly do something at once (user report: a silent 3 s looked like
+        // a missed click or a freeze).
+        self.set_clone_modal(CloneModal {
+            started: Some(std::time::Instant::now()),
+            ..modal
+        });
+        self.tick_clone_card(cx);
         klog!(
             "clone: start {} -> {}",
             request.source,
@@ -288,6 +306,29 @@ impl KagiApp {
         cx.notify();
     }
 
+    /// Redraw the running clone's card once a second, for its elapsed time,
+    /// while it is on screen.
+    fn tick_clone_card(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |app, acx| loop {
+            acx.background_executor()
+                .timer(std::time::Duration::from_secs(1))
+                .await;
+            let running = app
+                .update(acx, |app, cx| {
+                    let running = app.clone_modal().is_some_and(|m| m.started.is_some());
+                    if running {
+                        cx.notify();
+                    }
+                    running
+                })
+                .unwrap_or(false);
+            if !running {
+                break;
+            }
+        })
+        .detach();
+    }
+
     fn finish_clone(
         &mut self,
         request: CloneRequest,
@@ -295,6 +336,11 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         self.home_github.cloning = None;
+        // The card was the clone's progress; its result now arrives as a
+        // toast and in Operation Log (and, on success, as the new tab).
+        if self.clone_modal().is_some_and(|m| m.started.is_some()) {
+            self.clear_clone_modal();
+        }
         klog!(
             "clone: done {} ok={}",
             request.dest.display(),
@@ -349,9 +395,20 @@ impl KagiApp {
             .map(|f| f.read(cx).value().trim().to_lowercase())
             .unwrap_or_default();
         let body = match &self.home_github.repos {
-            GithubRepos::NotLoaded | GithubRepos::Loading => {
-                muted(Msg::HomeGithubLoading.t().to_string())
-            }
+            GithubRepos::NotLoaded | GithubRepos::Loading => div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .px_3()
+                .py_2()
+                .child(super::render_overlay::sync_spinner(
+                    14.,
+                    theme().text_muted,
+                    "home-github-loading",
+                ))
+                .child(muted_inline(Msg::HomeGithubLoading.t()))
+                .into_any_element(),
             GithubRepos::Failed(error) => div()
                 .flex()
                 .flex_col()
@@ -545,6 +602,14 @@ fn muted(text: String) -> AnyElement {
         .text_color(rgb(theme().text_muted))
         .child(SharedString::from(text))
         .into_any_element()
+}
+
+/// Muted text without its own padding, for use beside a spinner.
+fn muted_inline(text: &str) -> impl IntoElement {
+    div()
+        .text_sm()
+        .text_color(rgb(theme().text_muted))
+        .child(SharedString::from(text.to_string()))
 }
 
 /// One repository: its name over its description on the left; on the right

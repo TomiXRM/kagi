@@ -235,6 +235,53 @@ fn a_clone_lands_in_a_new_folder_and_is_recorded() {
     assert!(matches!(receipt.outcome, OpOutcome::Success { .. }));
 }
 
+/// The source names its host, and verify compares the clone's `origin`
+/// against exactly that host: a GitHub Enterprise clone is Success, not a
+/// github.com mismatch. A source without a host is refused before `gh` runs
+/// — `gh` would pick the host from `GH_HOST` (#926 review).
+#[test]
+fn the_source_names_its_host_and_verify_uses_it() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let fixture = Fixture::new(
+        "git clone -q '$BARE' \"$4\" && \
+         git -C \"$4\" remote set-url origin https://ghe.example.com/acme/widgets.git",
+    );
+    let hostless = CloneRequest {
+        source: "acme/widgets".into(),
+        ..fixture.request(&fixture.root.join("hostless"))
+    };
+    let report = execute_clone(&hostless, &plan_clone(&hostless));
+    assert!(
+        matches!(&report.result, Err(GitError::Blocked(note))
+            if matches!(**note, PlanNote::Clone(CloneNote::SourceWithoutHost { .. }))),
+        "{:?}",
+        report.result
+    );
+    assert!(!fixture.attempted(), "gh repo clone must not run");
+    assert!(!fixture.root.join("hostless").exists());
+
+    let dest = fixture.root.join("widgets");
+    let ghe = CloneRequest {
+        source: "ghe.example.com/acme/widgets".into(),
+        ..fixture.request(&dest)
+    };
+    let report = execute_clone(&ghe, &plan_clone(&ghe));
+    assert!(report.result.is_ok(), "{:?}", report.result);
+    let outcomes: Vec<_> = read_oplog_tail(10).into_iter().map(|e| e.outcome).collect();
+    assert_eq!(outcomes.len(), 2, "{outcomes:?}");
+    assert!(
+        outcomes
+            .iter()
+            .any(|o| matches!(o, OpOutcome::Refused { .. }))
+            && outcomes
+                .iter()
+                .any(|o| matches!(o, OpOutcome::Success { .. })),
+        "{outcomes:?}"
+    );
+}
+
 /// The folder filled up between the card and the click: refused before `gh`
 /// runs, and what is there stays untouched.
 #[test]

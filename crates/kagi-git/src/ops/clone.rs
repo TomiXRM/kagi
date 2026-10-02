@@ -24,7 +24,6 @@ use std::time::Duration;
 use kagi_domain::head::Head;
 use kagi_domain::plan::{OperationPlan, StateSummary};
 use kagi_domain::plan_note::{CloneNote, CloneTitle, PlanDisposition, PlanNote, PlanTitle};
-use kagi_domain::remote::shell_quote;
 
 use crate::backend::recording::RunReport;
 use crate::oplog::{OpLogEntry, OpOutcome};
@@ -89,16 +88,29 @@ pub fn plan_clone(request: &CloneRequest) -> OperationPlan {
         stash_identity: None,
         worktree_digest: None,
         destructive: false,
-        // Shell-quoted so a copied command is the same command for a path
-        // with spaces or quotes (#926 review).
-        equivalent_command: Some(format!(
-            "gh repo clone {} {}",
-            shell_quote(&request.source),
-            shell_quote(&request.dest.to_string_lossy())
-        )),
+        equivalent_command: equivalent_command(request),
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
     }
+}
+
+/// The command the card shows, POSIX-shell-quoted so a copied command is the
+/// same command for a path with spaces or quotes (#926 review).
+#[cfg(not(windows))]
+fn equivalent_command(request: &CloneRequest) -> Option<String> {
+    use kagi_domain::remote::shell_quote;
+    Some(format!(
+        "gh repo clone {} {}",
+        shell_quote(&request.source),
+        shell_quote(&request.dest.to_string_lossy())
+    ))
+}
+
+/// None on Windows: POSIX single quotes are not quoting to `cmd.exe`, and a
+/// command Kagi cannot quote faithfully is not shown at all (#926 review).
+#[cfg(windows)]
+fn equivalent_command(_request: &CloneRequest) -> Option<String> {
+    None
 }
 
 /// Immediately before the clone runs: the request must be the one the
@@ -462,6 +474,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn the_shown_command_quotes_a_destination_with_spaces_and_quotes() {
         let request = CloneRequest {
@@ -473,5 +486,16 @@ mod tests {
             plan_clone(&request).equivalent_command.as_deref(),
             Some(r"gh repo clone 'acme/widgets' '/Users/me/My Projects/it'\''s here'")
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn no_command_is_shown_on_windows() {
+        let request = CloneRequest {
+            source: "acme/widgets".to_string(),
+            dest: PathBuf::from(r"C:\Users\me\My Projects\widgets"),
+            is_fork: false,
+        };
+        assert_eq!(plan_clone(&request).equivalent_command, None);
     }
 }

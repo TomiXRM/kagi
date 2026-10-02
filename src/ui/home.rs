@@ -107,7 +107,21 @@ impl KagiApp {
             .font_family(super::UI_FONT)
             .bg(rgb(theme().bg_base))
             .when_some(self.root_focus.clone(), |el, fh| el.track_focus(&fh))
-            .children(self.render_tab_strip(cx))
+            // With no tab there is no strip, but the (transparent, themed)
+            // title bar still needs its band: the traffic lights are drawn
+            // over it and it is what drags the window.
+            .child(match self.render_tab_strip(cx) {
+                Some(strip) => strip,
+                None => div()
+                    .w_full()
+                    .h(theme::scaled_px(super::tabs::TAB_STRIP_H))
+                    .flex_shrink_0()
+                    .bg(rgb(theme().panel))
+                    .border_b_1()
+                    .border_color(rgb(theme().surface))
+                    .window_control_area(gpui::WindowControlArea::Drag)
+                    .into_any_element(),
+            })
             .child(body);
         let home = self.register_menu_actions(div().size_full().child(home), cx);
         let content = self

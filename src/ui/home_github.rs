@@ -19,15 +19,16 @@ use gpui::{
     div, prelude::*, px, rgb, AnyElement, Context, Entity, PathPromptOptions, SharedString, Window,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::input::{Input, InputEvent, InputState};
-use gpui_component::{Icon, IconName, Sizable as _};
+use gpui_component::input::{InputEvent, InputState};
+use gpui_component::Sizable as _;
 use kagi_git::github_repos::{OwnerRepos, RepoListing};
 use kagi_git::ops::{plan_clone, CloneRequest};
 use kagi_git::OperationPlan;
 
+use super::home_github_list::{muted, muted_inline, search_field};
 use super::i18n::Msg;
 use super::render_helpers::safe_text;
-use super::theme::{self, theme};
+use super::theme::theme;
 use super::KagiApp;
 
 /// The GitHub list as Home knows it.
@@ -53,35 +54,17 @@ pub struct HomeGithub {
     /// The clone running now (one per window, ADR-0219 decision 7).
     pub cloning: Option<CloneRequest>,
     /// Bumped per read, so an older read landing late is dropped.
-    generation: u64,
+    pub(super) generation: u64,
     /// The user's own list is on screen and the organizations' are still
     /// being read.
     pub orgs_loading: bool,
+    /// The list on screen is the saved one (or the previous read) and a
+    /// fresh read is running.
+    pub refreshing: bool,
     /// The virtualized list of rows, and what it was last built for: the
     /// rows are measured once per build, so a change resets it.
-    list: Option<gpui::ListState>,
-    list_key: Option<ListKey>,
-}
-
-/// What the list's rows depend on besides the data itself.
-#[derive(Clone, PartialEq, Eq)]
-struct ListKey {
-    query: String,
-    generation: u64,
-    cloning: Option<String>,
-    local: usize,
-    sections: usize,
-    orgs_loading: bool,
-}
-
-/// One entry of the virtualized list.
-#[derive(Clone)]
-enum HomeItem {
-    Heading(String),
-    Note(String),
-    Repo(RepoListing, &'static str),
-    /// The organizations are still being read: a spinner row at the end.
-    Loading,
+    pub(super) list: Option<gpui::ListState>,
+    pub(super) list_key: Option<super::home_github_list::ListKey>,
 }
 
 /// The clone card: which repository, and — once the user has chosen a folder —
@@ -123,6 +106,12 @@ fn home_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/"))
 }
 
+/// Where the last read is saved: next to `settings.json`.
+fn cache_file() -> Option<PathBuf> {
+    super::settings::settings_path()
+        .and_then(|p| p.parent().map(kagi_git::github_repos_cache::cache_path))
+}
+
 impl KagiApp {
     /// Read the list unless it is loaded or loading.
     pub(crate) fn ensure_home_github(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -142,16 +131,29 @@ impl KagiApp {
         }
     }
 
-    /// Read the lists again: the user's own (with the local clones) first,
-    /// shown as soon as it lands, then the organizations', read in parallel
-    /// and appended. Waiting for every owner before drawing anything made
-    /// Home look stuck (user report).
+    /// Read the lists again. The last saved list (or the one on screen) is
+    /// shown at once while the fresh read runs; with none, the user's own
+    /// list is shown as soon as it lands and the organizations' are appended.
+    /// The own and the organizations' reads run at the same time.
     pub fn reload_home_github(&mut self, cx: &mut Context<Self>) {
         self.home_github.generation += 1;
         let generation = self.home_github.generation;
-        self.home_github.repos = GithubRepos::Loading;
         self.home_github.orgs_loading = false;
         let started = std::time::Instant::now();
+        let cache = cache_file();
+        if !matches!(self.home_github.repos, GithubRepos::Loaded { .. }) {
+            self.home_github.repos = match cache
+                .as_deref()
+                .and_then(kagi_git::github_repos_cache::load)
+            {
+                Some(sections) => GithubRepos::Loaded {
+                    sections,
+                    local: HashMap::new(),
+                },
+                None => GithubRepos::Loading,
+            };
+        }
+        self.home_github.refreshing = matches!(self.home_github.repos, GithubRepos::Loaded { .. });
         let mut paths = super::tabs::recent_repos();
         paths.extend(
             self.tabs
@@ -159,61 +161,51 @@ impl KagiApp {
                 .filter(|t| t.remote.is_none())
                 .map(|t| t.path.clone()),
         );
-        let own = cx.background_spawn(async move {
-            let workdir = home_dir();
-            let list = kagi_git::github_repos::list_repos(&workdir, None);
-            let local: HashMap<String, PathBuf> = paths
+        // Which listed repositories are already cloned: local reads only, so
+        // it lands well before `gh` and a saved list on screen gets its
+        // Open chips at once.
+        let local = cx.background_spawn(async move {
+            paths
                 .into_iter()
                 .filter_map(|p| kagi_git::github_repos::origin_identity(&p).map(|id| (id, p)))
-                .collect();
-            (list, local)
+                .collect::<HashMap<String, PathBuf>>()
+        });
+        let own = cx
+            .background_spawn(async move { kagi_git::github_repos::list_repos(&home_dir(), None) });
+        let orgs = cx.background_spawn(async move {
+            let workdir = home_dir();
+            let logins = kagi_git::github_repos::list_org_logins(&workdir);
+            kagi_git::github_repos::list_org_repos(&workdir, &logins)
         });
         cx.spawn(async move |app, acx| {
-            let (list, local) = own.await;
-            let loaded = app
-                .update(acx, |app, cx| {
-                    if app.home_github.generation != generation {
-                        return false;
-                    }
-                    let loaded = match list {
-                        Ok(list) => {
-                            app.home_github.repos = GithubRepos::Loaded {
-                                sections: vec![OwnerRepos {
-                                    owner: None,
-                                    list: Ok(list),
-                                }],
-                                local,
-                            };
-                            app.home_github.orgs_loading = true;
-                            true
-                        }
-                        Err(error) => {
-                            klog!("home: github failed: {error}");
-                            app.home_github.repos = GithubRepos::Failed(error.to_string());
-                            false
-                        }
-                    };
-                    cx.notify();
-                    loaded
-                })
-                .unwrap_or(false);
-            if !loaded {
-                return;
-            }
-            let orgs = acx
-                .background_spawn(async move {
-                    let workdir = home_dir();
-                    let logins = kagi_git::github_repos::list_org_logins(&workdir);
-                    kagi_git::github_repos::list_org_repos(&workdir, &logins)
-                })
-                .await;
+            let local = local.await;
             let _ = app.update(acx, |app, cx| {
                 if app.home_github.generation != generation {
                     return;
                 }
-                app.home_github.orgs_loading = false;
-                if let GithubRepos::Loaded { sections, local } = &mut app.home_github.repos {
-                    sections.extend(orgs);
+                if let GithubRepos::Loaded { local: shown, .. } = &mut app.home_github.repos {
+                    *shown = local.clone();
+                    cx.notify();
+                }
+            });
+            let list = own.await;
+            let own = app
+                .update(acx, |app, cx| {
+                    app.land_own_list(generation, list, &local, cx)
+                })
+                .ok()
+                .flatten();
+            let Some(own) = own else {
+                return;
+            };
+            let mut sections = vec![own];
+            sections.extend(orgs.await);
+            let saved = sections.clone();
+            let landed = app
+                .update(acx, |app, cx| {
+                    if app.home_github.generation != generation {
+                        return false;
+                    }
                     let repos: usize = sections
                         .iter()
                         .filter_map(|s| s.list.as_ref().ok())
@@ -226,11 +218,74 @@ impl KagiApp {
                         local.len(),
                         started.elapsed().as_millis()
                     );
+                    app.home_github.repos = GithubRepos::Loaded { sections, local };
+                    app.home_github.orgs_loading = false;
+                    app.home_github.refreshing = false;
+                    cx.notify();
+                    true
+                })
+                .unwrap_or(false);
+            if let (true, Some(path)) = (landed, cache) {
+                let saved = acx
+                    .background_spawn(
+                        async move { kagi_git::github_repos_cache::save(&path, &saved) },
+                    )
+                    .await;
+                if let Err(error) = saved {
+                    eprintln!("home: could not save the GitHub list cache: {error}");
                 }
-                cx.notify();
-            });
+            }
         })
         .detach();
+    }
+
+    /// The user's own list has landed. With nothing on screen it is shown
+    /// at once (the organizations follow); over a saved list it waits for
+    /// the organizations and the whole list is swapped when complete. A
+    /// failed read keeps a saved list and says so; with none it is the error.
+    fn land_own_list(
+        &mut self,
+        generation: u64,
+        list: Result<kagi_git::github_repos::RepoList, kagi_git::GitError>,
+        local: &HashMap<String, PathBuf>,
+        cx: &mut Context<Self>,
+    ) -> Option<OwnerRepos> {
+        if self.home_github.generation != generation {
+            return None;
+        }
+        cx.notify();
+        match list {
+            Ok(list) => {
+                let own = OwnerRepos {
+                    owner: None,
+                    list: Ok(list),
+                };
+                if !self.home_github.refreshing {
+                    self.home_github.repos = GithubRepos::Loaded {
+                        sections: vec![own.clone()],
+                        local: local.clone(),
+                    };
+                    self.home_github.orgs_loading = true;
+                }
+                Some(own)
+            }
+            Err(error) => {
+                klog!("home: github failed: {error}");
+                if self.home_github.refreshing {
+                    self.home_github.refreshing = false;
+                    self.push_toast(
+                        super::ToastKind::Error,
+                        Msg::HomeGithubRefreshFailed
+                            .t()
+                            .replace("{}", &error.to_string()),
+                        cx,
+                    );
+                } else {
+                    self.home_github.repos = GithubRepos::Failed(error.to_string());
+                }
+                None
+            }
+        }
     }
 
     /// A listed repository was clicked: open its local clone, or review a
@@ -421,11 +476,20 @@ impl KagiApp {
             .flex_shrink_0()
             .child(
                 div()
-                    .flex_1()
                     .text_lg()
                     .text_color(rgb(theme().text_main))
                     .child(SharedString::from(Msg::HomeGithubTitle.t())),
             )
+            // A saved list is on screen while the fresh read runs.
+            .when(self.home_github.refreshing, |el| {
+                el.child(super::render_overlay::sync_spinner(
+                    12.,
+                    theme().text_muted,
+                    "home-github-refreshing",
+                ))
+                .child(muted_inline(Msg::HomeGithubUpdating.t()))
+            })
+            .child(div().flex_1())
             .child(super::e2e::measure_control(
                 "home-github-refresh",
                 Button::new("home-github-refresh")
@@ -486,275 +550,6 @@ impl KagiApp {
             .child(body)
             .into_any_element()
     }
-
-    /// The rows, built once per change of the data or the filter and drawn
-    /// through `gpui::list`, which lays out only what is on screen.
-    fn render_github_list(&mut self, query: String, cx: &mut Context<Self>) -> AnyElement {
-        let GithubRepos::Loaded { sections, local } = &self.home_github.repos else {
-            return div().into_any_element();
-        };
-        let cloning = self.home_github.cloning.as_ref().map(|r| r.source.clone());
-        let mut items = github_items(sections, local, &query, cloning.as_deref());
-        let orgs_loading = self.home_github.orgs_loading;
-        if orgs_loading {
-            items.push(HomeItem::Loading);
-        }
-        let key = ListKey {
-            query,
-            generation: self.home_github.generation,
-            cloning,
-            local: local.len(),
-            sections: sections.len(),
-            orgs_loading,
-        };
-        let state = self
-            .home_github
-            .list
-            .get_or_insert_with(|| {
-                gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(600.))
-            })
-            .clone();
-        if self.home_github.list_key.as_ref() != Some(&key) || state.item_count() != items.len() {
-            state.reset(items.len());
-            self.home_github.list_key = Some(key);
-        }
-        let app = cx.entity();
-        gpui::list(state, move |i, _window, _cx| match items.get(i) {
-            Some(HomeItem::Heading(title)) => section_heading(title).into_any_element(),
-            Some(HomeItem::Note(text)) => muted(text.clone()),
-            Some(HomeItem::Loading) => div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .px_3()
-                .pt_4()
-                .pb_2()
-                .child(super::render_overlay::sync_spinner(
-                    14.,
-                    theme().text_muted,
-                    "home-github-orgs-loading",
-                ))
-                .child(muted_inline(Msg::HomeGithubOrgsLoading.t()))
-                .into_any_element(),
-            Some(HomeItem::Repo(listing, state)) => super::e2e::measure_control(
-                format!("home-gh-{}", listing.name_with_owner),
-                github_row(listing.clone(), state, &app),
-            ),
-            None => div().into_any_element(),
-        })
-        .flex_1()
-        .min_h(px(0.))
-        .into_any_element()
-    }
-}
-
-/// The list's entries: per owner a heading, its notes (empty, unreadable,
-/// truncated) and the repositories matching `query`; an owner without a
-/// match is left out while filtering.
-fn github_items(
-    sections: &[OwnerRepos],
-    local: &HashMap<String, PathBuf>,
-    query: &str,
-    cloning: Option<&str>,
-) -> Vec<HomeItem> {
-    let mut items = Vec::new();
-    let mut shown = 0usize;
-    for section in sections {
-        let title = section
-            .owner
-            .clone()
-            .unwrap_or_else(|| Msg::HomeGithubMine.t().to_string());
-        let list = match &section.list {
-            Ok(list) => list,
-            Err(error) => {
-                if query.is_empty() {
-                    items.push(HomeItem::Heading(title));
-                    items.push(HomeItem::Note(
-                        Msg::HomeGithubOwnerFailed.t().replace("{}", error),
-                    ));
-                }
-                continue;
-            }
-        };
-        let rows: Vec<HomeItem> = list
-            .repos
-            .iter()
-            .filter(|l| {
-                query.is_empty()
-                    || l.name_with_owner.to_lowercase().contains(query)
-                    || l.description.to_lowercase().contains(query)
-            })
-            .map(|l| {
-                let state = if cloning == Some(l.clone_source().as_str()) {
-                    Msg::HomeGithubCloning.t()
-                } else if local.contains_key(&l.identity()) {
-                    Msg::HomeGithubOpen.t()
-                } else {
-                    Msg::HomeGithubClone.t()
-                };
-                HomeItem::Repo(l.clone(), state)
-            })
-            .collect();
-        if rows.is_empty() && !query.is_empty() {
-            continue;
-        }
-        shown += rows.len();
-        items.push(HomeItem::Heading(title));
-        if list.repos.is_empty() {
-            items.push(HomeItem::Note(Msg::HomeGithubEmpty.t().to_string()));
-        }
-        items.extend(rows);
-        if list.truncated {
-            items.push(HomeItem::Note(
-                Msg::HomeGithubTruncated
-                    .t()
-                    .replace("{}", &list.repos.len().to_string()),
-            ));
-        }
-    }
-    if shown == 0 && !query.is_empty() {
-        items.push(HomeItem::Note(Msg::HomeGithubNoMatch.t().to_string()));
-    }
-    items
-}
-
-/// A large, borderless search field in a soft rounded box with a magnifier
-/// — the search look of current desktop apps, not a form input.
-fn search_field(input: &Entity<InputState>) -> AnyElement {
-    // A flex row so the input takes the box's whole width: as a plain child
-    // its `size_full` did not resolve, leaving the text area zero-wide —
-    // typed characters and the placeholder were drawn into nothing.
-    div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .w_full()
-        .px_2()
-        .py_1()
-        .rounded_xl()
-        .bg(rgb(theme().panel))
-        .border_1()
-        .border_color(rgb(theme().surface))
-        .child(
-            Input::new(input)
-                .appearance(false)
-                .cleanable(true)
-                .large()
-                .flex_1()
-                .prefix(
-                    Icon::new(IconName::Search)
-                        .size(theme::scaled_px(18.))
-                        .text_color(rgb(theme().text_muted)),
-                ),
-        )
-        .into_any_element()
-}
-
-fn section_heading(title: &str) -> impl IntoElement {
-    div()
-        .px_3()
-        .pt_3()
-        .pb_1()
-        .text_sm()
-        .text_color(rgb(theme().text_muted))
-        .child(SharedString::from(title.to_string()))
-}
-
-fn muted(text: String) -> AnyElement {
-    div()
-        .px_3()
-        .py_1()
-        .text_sm()
-        .text_color(rgb(theme().text_muted))
-        .child(SharedString::from(text))
-        .into_any_element()
-}
-
-/// Muted text without its own padding, for use beside a spinner.
-fn muted_inline(text: &str) -> impl IntoElement {
-    div()
-        .text_sm()
-        .text_color(rgb(theme().text_muted))
-        .child(SharedString::from(text.to_string()))
-}
-
-/// One repository: its name over its description on the left; on the right
-/// the last update, private / fork marks and what a click does, as a chip.
-fn github_row(listing: RepoListing, state: &'static str, app: &Entity<KagiApp>) -> AnyElement {
-    let chip = |text: &str| {
-        div()
-            .flex_shrink_0()
-            .px_2()
-            .rounded_md()
-            .bg(rgb(theme().surface))
-            .text_xs()
-            .text_color(rgb(theme().text_sub))
-            .child(SharedString::from(text.to_string()))
-    };
-    let mut meta = div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_2()
-        .flex_shrink_0();
-    if let Some(day) = listing.updated_at.get(..10) {
-        meta = meta.child(
-            div()
-                .text_sm()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(day.to_string())),
-        );
-    }
-    if listing.is_private {
-        meta = meta.child(chip(Msg::HomeGithubPrivate.t()));
-    }
-    if listing.is_fork {
-        meta = meta.child(chip(Msg::HomeGithubFork.t()));
-    }
-    meta = meta.child(chip(state).text_color(rgb(theme().color_branch)));
-    let description = (!listing.description.is_empty()).then(|| {
-        div()
-            .text_sm()
-            .text_color(rgb(theme().text_muted))
-            .truncate()
-            .child(safe_text(&listing.description))
-    });
-    let id = SharedString::from(format!("home-gh-row-{}", listing.name_with_owner));
-    let name = listing.name().to_string();
-    let app = app.clone();
-    div()
-        .id(id)
-        .w_full()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_4()
-        .px_3()
-        .py_2()
-        .rounded_lg()
-        .cursor(gpui::CursorStyle::PointingHand)
-        .hover(|s| s.bg(rgb(theme().surface)))
-        .on_click(move |_, _, cx| {
-            app.update(cx, |app, cx| app.home_github_pick(listing.clone(), cx));
-        })
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_w(px(0.))
-                .child(
-                    div()
-                        .text_base()
-                        .text_color(rgb(theme().text_main))
-                        .truncate()
-                        .child(SharedString::from(name)),
-                )
-                .children(description),
-        )
-        .child(meta)
-        .into_any_element()
 }
 
 #[cfg(test)]

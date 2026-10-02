@@ -567,7 +567,10 @@ The current suite covers:
   press ⌘T (no foreground needed) or click `+` (needs a key window — ask first);
   "Open Folder…" opens the native dialog, which Tier A does not click.
 - Home's GitHub list and clone (`KAGI_GUI_E2E_ONLY=home_github`,
-  `tests/recovery/home_github.rs`, #923 #924 / ADR-0219): an offline `gh` lists
+  `tests/recovery/home_github.rs`, #923 #924 / ADR-0219): a saved list
+  (`github_repos_cache.json` beside `settings.json`) is on screen the moment
+  the list is read again, with `refreshing` set, and is replaced by the fresh
+  read and saved anew. An offline `gh` lists
   the user's repositories (one whose `origin` matches a recent repository, one
   that is not local) and two organizations — one listed, one refusing with a
   SAML error, which keeps its section with the reason; `repo clone` really

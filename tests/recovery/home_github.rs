@@ -11,7 +11,9 @@ use std::time::{Duration, Instant};
 
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::home_github::GithubRepos;
-use kagi::ui::{e2e, tabs, KagiApp};
+use kagi::ui::{e2e, settings, tabs, KagiApp};
+use kagi_git::github_repos::{OwnerRepos, RepoList, RepoListing};
+use kagi_git::github_repos_cache;
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
 
 use crate::app_conflict::click_control;
@@ -103,11 +105,51 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
     tabs::record_recent_repo(&local_path);
     let _gh = OfflineGh::with_script(&gh_script(&bare));
 
+    // The last read is saved: shown at once while the fresh read runs.
+    let cache = github_repos_cache::cache_path(
+        settings::settings_path()
+            .and_then(|p| p.parent().map(Path::to_path_buf))
+            .expect("the runner sets KAGI_LOG_DIR")
+            .as_path(),
+    );
+    let stale = vec![OwnerRepos {
+        owner: None,
+        list: Ok(RepoList {
+            truncated: false,
+            repos: vec![RepoListing {
+                name_with_owner: "acme/stale".into(),
+                host: "github.com".into(),
+                is_fork: false,
+                is_private: false,
+                description: String::new(),
+                updated_at: String::new(),
+            }],
+        }),
+    }];
+    github_repos_cache::save(&cache, &stale).unwrap();
     let (app, window) = mount(cx, start.path());
-    click_control(cx, window, "tab-add");
-    wait_for(cx, &app, "the GitHub list", |app| {
-        matches!(app.home_github.repos, GithubRepos::Loaded { .. }) && !app.home_github.orgs_loading
+    app.update(cx, |app, cx| app.reload_home_github(cx));
+    cx.read(|cx| {
+        let home = &app.read(cx).home_github;
+        assert!(home.refreshing, "a fresh read runs behind the saved list");
+        assert!(
+            matches!(&home.repos, GithubRepos::Loaded { sections, .. } if *sections == stale),
+            "the saved list is on screen before gh answers"
+        );
     });
+    wait_for(cx, &app, "the GitHub list", |app| {
+        matches!(app.home_github.repos, GithubRepos::Loaded { .. })
+            && !app.home_github.refreshing
+            && !app.home_github.orgs_loading
+    });
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while github_repos_cache::load(&cache).is_none_or(|saved| saved.len() != 3) {
+        assert!(Instant::now() < deadline, "the fresh list is saved");
+        cx.run_until_parked();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    click_control(cx, window, "tab-add");
+    cx.run_until_parked();
     cx.read(|cx| {
         let GithubRepos::Loaded { sections, local } = &app.read(cx).home_github.repos else {
             unreachable!()

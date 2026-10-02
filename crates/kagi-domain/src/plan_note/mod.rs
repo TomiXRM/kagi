@@ -22,6 +22,7 @@ pub mod checklist;
 pub mod checkout;
 pub mod cherry_revert;
 pub mod cleanup;
+pub mod clone;
 pub mod commit;
 pub mod common;
 pub mod conflicts;
@@ -50,6 +51,7 @@ pub use checklist::ChecklistNote;
 pub use checkout::{CheckoutNote, CheckoutRecovery, CheckoutTitle};
 pub use cherry_revert::{CherryRevertNote, CherryRevertRecovery, CherryRevertTitle};
 pub use cleanup::{CleanupNote, CleanupRecovery, CleanupTitle};
+pub use clone::{CloneNote, CloneTitle};
 pub use commit::{CommitNote, CommitRecovery, CommitTitle};
 pub use common::{CommonNote, DirtyParts, OpPhrase, PlanOp, UntrackedCtx};
 pub use conflicts::{ConflictsNote, ConflictsRecovery, ConflictsTitle};
@@ -113,6 +115,8 @@ pub enum PlanNote {
     Maintenance(MaintenanceNote),
     /// Operation Log revert / restore (#334).
     OplogRestore(OplogRestoreNote),
+    /// Cloning a GitHub repository into a new folder (#923).
+    Clone(CloneNote),
 }
 
 impl PlanNote {
@@ -148,6 +152,7 @@ impl PlanNote {
             PlanNote::Maintenance(n) => n.message_en(),
             PlanNote::Ruleset(n) => n.message_en(),
             PlanNote::OplogRestore(n) => n.message_en(),
+            PlanNote::Clone(n) => n.message_en(),
         }
     }
 }
@@ -191,6 +196,7 @@ pub enum PlanTitle {
     Sync(SyncTitle),
     Maintenance(MaintenanceTitle),
     OplogRestore(OplogRestoreTitle),
+    Clone(CloneTitle),
 }
 
 impl PlanTitle {
@@ -220,6 +226,7 @@ impl PlanTitle {
             PlanTitle::Sync(t) => t.message_en(),
             PlanTitle::Maintenance(t) => t.message_en(),
             PlanTitle::OplogRestore(t) => t.message_en(),
+            PlanTitle::Clone(t) => t.message_en(),
             PlanTitle::Discard {
                 single: Some(path), ..
             } => format!("Discard changes to '{}'", path),
@@ -477,6 +484,7 @@ mod tests {
             PlanNote::Ruleset(RulesetNote::ConstraintsUnknown),
             PlanNote::Maintenance(MaintenanceNote::NoCommits),
             PlanNote::OplogRestore(OplogRestoreNote::NothingToRestore),
+            PlanNote::Clone(CloneNote::ForkAddsUpstream),
         ];
 
         for note in &cases {
@@ -509,6 +517,7 @@ mod tests {
                 PlanNote::Maintenance(n) => n.message_en(),
                 PlanNote::Ruleset(n) => n.message_en(),
                 PlanNote::OplogRestore(n) => n.message_en(),
+                PlanNote::Clone(n) => n.message_en(),
             };
             assert_eq!(note.message_en(), inner, "dispatch arm for {note:?}");
             // … which is never empty, and reaches Display unchanged.
@@ -518,7 +527,7 @@ mod tests {
 
         // One fixture per `PlanNote` variant — bump this when a category is
         // added (and add its row above).
-        assert_eq!(cases.len(), 27, "one fixture per PlanNote variant");
+        assert_eq!(cases.len(), 28, "one fixture per PlanNote variant");
     }
 
     #[test]

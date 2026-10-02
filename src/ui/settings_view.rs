@@ -223,6 +223,11 @@ pub fn render_settings_overlay(
                 .size_full()
                 .bg(rgb(theme().bg_base))
                 .opacity(0.6)
+                // Like `modal_overlay`'s backdrop: block every mouse event,
+                // the scroll wheel included, from reaching the panes behind
+                // Settings. Without it, scrolling Settings also scrolled the
+                // commit list underneath.
+                .occlude()
                 .on_mouse_down(MouseButton::Left, dismiss),
         )
         .child(panel)

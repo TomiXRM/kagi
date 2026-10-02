@@ -2,7 +2,7 @@
 
 kagi ships built-in colour themes (Settings → Appearance, the command palette's
 `Theme: …` entries, and View → Theme). You can add your own as JSON files.
-Design record: [ADR-0219](adr/0219-json-user-themes.md).
+Design record: [ADR-0220](adr/0220-json-user-themes.md).
 
 ## Where theme files live
 

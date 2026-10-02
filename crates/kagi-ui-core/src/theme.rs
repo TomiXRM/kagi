@@ -12,7 +12,7 @@
 //! * [`THEMES`] lists the built-in themes; index 0 (Catppuccin Mocha) is the
 //!   default and a byte-exact port of the previously hard-coded constants, so
 //!   the default look has zero regression.
-//! * User themes (#922 / ADR-0219) are JSON files parsed by
+//! * User themes (#922 / ADR-0220) are JSON files parsed by
 //!   [`crate::theme_custom`] into owned `Arc<Theme>` snapshots. The runtime
 //!   list is `THEMES` followed by those; [`ThemeHandle`] refers to either kind
 //!   without leaking, so a reload frees a generation once nothing uses it.

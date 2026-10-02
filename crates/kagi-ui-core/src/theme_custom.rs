@@ -1,4 +1,4 @@
-//! #922 / ADR-0219: user theme files (`<settings dir>/themes/*.json`).
+//! #922 / ADR-0220: user theme files (`<settings dir>/themes/*.json`).
 //!
 //! A file is one JSON object. `slug` and `name` are required; every other key
 //! is a [`Theme`] field name. `"extends": "<built-in slug>"` inherits the

@@ -1,4 +1,4 @@
-//! `docs/themes.md` is the public custom-theme spec (#922, ADR-0219). These
+//! `docs/themes.md` is the public custom-theme spec (#922, ADR-0220). These
 //! tests keep it honest against the real `Theme`:
 //!
 //! * the token table lists exactly the keys `Theme` serializes to (with

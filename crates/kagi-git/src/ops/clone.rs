@@ -101,10 +101,30 @@ pub fn plan_clone(request: &CloneRequest) -> OperationPlan {
     }
 }
 
-/// The plan's checks again, immediately before the clone runs: the
-/// destination may have been created or filled since the card was shown.
-pub fn preflight_clone(request: &CloneRequest) -> Result<(), GitError> {
-    match clone_blockers(request).into_iter().next() {
+/// Immediately before the clone runs: the request must be the one the
+/// approved `plan` was made for (the same source, destination and fork
+/// warning — #926 review), that plan must have had no blocker, and the
+/// plan's checks must still hold (the destination may have been created or
+/// filled since the card was shown).
+pub fn preflight_clone(request: &CloneRequest, plan: &OperationPlan) -> Result<(), GitError> {
+    if let Some(note) = plan.blockers.first() {
+        return Err(GitError::Blocked(Box::new(note.clone())));
+    }
+    let expected = plan_clone(request);
+    let same_request = plan.title == expected.title
+        && plan.current == expected.current
+        && plan.predicted == expected.predicted
+        && plan.equivalent_command == expected.equivalent_command
+        && plan.warnings == expected.warnings;
+    if !same_request {
+        return Err(GitError::Blocked(Box::new(PlanNote::Clone(
+            CloneNote::PlanMismatch {
+                source: request.source.clone(),
+                path: request.dest.display().to_string(),
+            },
+        ))));
+    }
+    match expected.blockers.into_iter().next() {
         Some(note) => Err(GitError::Blocked(Box::new(note))),
         None => Ok(()),
     }
@@ -124,7 +144,7 @@ pub fn execute_clone_within(
     plan: &OperationPlan,
     timeout: Duration,
 ) -> RunReport {
-    let stage = match preflight_clone(request) {
+    let stage = match preflight_clone(request, plan) {
         Err(GitError::Blocked(note)) => Stage::Refused(*note),
         Err(error) => Stage::Failed(error.to_string()),
         Ok(()) => match clone_transport(request, timeout) {

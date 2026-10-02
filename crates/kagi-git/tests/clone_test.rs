@@ -213,6 +213,41 @@ fn a_destination_filled_after_the_plan_is_refused_before_gh() {
     assert!(matches!(only_receipt().outcome, OpOutcome::Refused { .. }));
 }
 
+/// The plan the user confirmed was for one destination; the request that
+/// reaches the executor names another (also empty, also valid). Refused
+/// before `gh` runs, and neither folder is cloned into (#926 review).
+#[test]
+fn a_request_that_is_not_the_confirmed_plan_is_refused() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let fixture = Fixture::new(CLONE_OK);
+    let confirmed = fixture.root.join("widgets");
+    let plan = plan_clone(&fixture.request(&confirmed));
+    assert_eq!(plan.disposition, PlanDisposition::Ready);
+    let other = fixture.root.join("elsewhere");
+    std::fs::create_dir(&other).unwrap();
+
+    let report = execute_clone(&fixture.request(&other), &plan);
+    assert!(
+        matches!(&report.result, Err(GitError::Blocked(note))
+            if matches!(**note, PlanNote::Clone(CloneNote::PlanMismatch { .. }))),
+        "{:?}",
+        report.result
+    );
+    assert!(!fixture.attempted(), "gh repo clone must not run");
+    assert!(
+        !confirmed.exists(),
+        "the confirmed destination was not created"
+    );
+    assert_eq!(
+        std::fs::read_dir(&other).unwrap().count(),
+        0,
+        "nothing cloned into the other one"
+    );
+    assert!(matches!(only_receipt().outcome, OpOutcome::Refused { .. }));
+}
+
 /// A clone that fails part-way leaves its files where they are, and the
 /// receipt names the folder so the user can decide.
 #[test]

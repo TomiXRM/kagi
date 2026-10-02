@@ -1,0 +1,34 @@
+//! JA strings for `CloneNote` / `CloneTitle` (cloning a GitHub repository,
+//! #923).
+
+use kagi_domain::plan_note::{CloneNote, CloneTitle};
+
+/// Japanese rendering of one clone note.
+pub fn note_ja(note: &CloneNote) -> String {
+    match note {
+        CloneNote::SourceInvalid { source } => {
+            format!("`{source}` は Kagi が clone できる GitHub のリポジトリではありません。")
+        }
+        CloneNote::DestinationNotAbsolute { path } => {
+            format!("clone 先 `{path}` が絶対パスではありません。")
+        }
+        CloneNote::DestinationNotEmpty { path } => format!(
+            "`{path}` は既に存在し、空のフォルダーではありません。別の clone 先を選んでください。Kagi は上書きしません。"
+        ),
+        CloneNote::ParentMissing { path } => format!("フォルダー `{path}` がありません。"),
+        CloneNote::DestinationUnreadable { path, error } => {
+            format!("`{path}` を確認できませんでした: {error}")
+        }
+        CloneNote::ForkAddsUpstream => {
+            "このリポジトリは fork です。gh は fork 元を指す `upstream` remote も追加します。"
+                .to_string()
+        }
+    }
+}
+
+/// Japanese rendering of one clone title.
+pub fn title_ja(title: &CloneTitle) -> String {
+    match title {
+        CloneTitle::Clone { source } => format!("`{source}` を clone"),
+    }
+}

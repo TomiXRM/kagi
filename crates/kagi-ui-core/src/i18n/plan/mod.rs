@@ -11,6 +11,7 @@ pub mod checklist;
 pub mod checkout;
 pub mod cherry_revert;
 pub mod cleanup;
+pub mod clone;
 pub mod commit;
 pub mod common;
 pub mod conflicts;
@@ -101,6 +102,7 @@ pub(crate) fn note_ja_any(note: &PlanNote) -> String {
         PlanNote::Maintenance(n) => maintenance::note_ja(n),
         PlanNote::Ruleset(n) => ruleset::note_ja(n),
         PlanNote::OplogRestore(n) => oplog_restore::note_ja(n),
+        PlanNote::Clone(n) => clone::note_ja(n),
     }
 }
 
@@ -132,6 +134,7 @@ pub fn plan_title_text(title: &PlanTitle) -> String {
             PlanTitle::Sync(t) => sync::title_ja(t),
             PlanTitle::Maintenance(t) => maintenance::title_ja(t),
             PlanTitle::OplogRestore(t) => oplog_restore::title_ja(t),
+            PlanTitle::Clone(t) => clone::title_ja(t),
             PlanTitle::Discard { .. } => discard::title_ja(title),
         },
     }

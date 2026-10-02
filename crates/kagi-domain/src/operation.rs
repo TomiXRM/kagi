@@ -359,6 +359,12 @@ pub enum OperationOutcome {
         number: u64,
         detail: String,
     },
+    /// A GitHub repository cloned into `path` (#923). The receipt is the
+    /// folder: the next step opens it as a tab.
+    Clone {
+        source: String,
+        path: String,
+    },
     /// `gh pr review`'s receipt for a review submitted on a PR — the verdict
     /// half of the same remote-write family as [`Self::PrComment`].
     /// `verdict` is [`crate::github::ReviewVerdict::as_str`], so the receipt

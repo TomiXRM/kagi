@@ -143,6 +143,12 @@ The current suite covers:
 - durable stash-drop recovery; history persistence; cleanup stale-tab,
   preflight, open-failure, and partial presentation; remove's public boundary;
   editor writer admission; commit-row and editor-history layout;
+- custom theme loading (`KAGI_GUI_E2E_ONLY=theme_custom,theme_folder_controls`,
+  `tests/recovery/theme_custom.rs`): #922 startup JSON load and slug restore,
+  palette/menu/Settings selection and fallback, rejected-file toast, folder
+  creation/open error, and a background reload held after parsing while a newer
+  reload publishes; releasing the old read must not change colours, menus,
+  selection, or toast IDs. Startup loads before the window exists.
 - file tree accessibility (`KAGI_GUI_E2E_ONLY=file_tree_roles`,
   `tests/recovery/file_tree_a11y.rs`): #354 Editor Workspace and Commit Panel
   render named EN/JA Trees with TreeItems carrying file status, selection,

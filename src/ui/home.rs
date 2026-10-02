@@ -199,12 +199,14 @@ impl KagiApp {
                     .label(Msg::HomeConnectRemote.t())
                     .on_click(remote),
             ));
+        // The column is bounded and does not scroll as a whole: the GitHub
+        // list below the fixed top part is a virtualized list with its own
+        // scrolling, so typing in its filter re-renders only visible rows.
         div()
             .id("home-main")
             .flex_1()
             .min_w(px(0.))
             .h_full()
-            .overflow_y_scroll()
             // Most of Home is empty surface: let it drag the window, as the
             // Welcome screen did (the themed title bar has no OS drag area
             // when no tab strip is drawn). Controls keep their own clicks.
@@ -216,22 +218,25 @@ impl KagiApp {
                     .gap_4()
                     .mx_auto()
                     .w_full()
+                    .h_full()
                     .max_w(theme::scaled_px(MAIN_MAX_W))
                     .px_6()
                     .pt(theme::scaled_px(48.))
                     .child(
                         div()
+                            .flex_shrink_0()
                             .text_2xl()
                             .text_color(rgb(theme().text_main))
                             .child(SharedString::from(Msg::HomeTitle.t())),
                     )
                     .child(
                         div()
+                            .flex_shrink_0()
                             .text_sm()
                             .text_color(rgb(theme().text_muted))
                             .child(SharedString::from(Msg::HomeSubtitle.t())),
                     )
-                    .child(actions)
+                    .child(actions.flex_shrink_0())
                     .child(self.render_home_github(cx)),
             )
             .into_any_element()

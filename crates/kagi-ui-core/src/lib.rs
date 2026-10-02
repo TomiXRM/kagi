@@ -29,6 +29,7 @@ pub mod theme_apple_light;
 pub mod theme_catppuccin_latte;
 pub mod theme_catppuccin_mocha;
 pub mod theme_color_vision;
+pub mod theme_custom;
 pub mod theme_dracula;
 pub mod theme_flower_road;
 pub mod theme_ibm_pc;

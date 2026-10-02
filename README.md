@@ -113,7 +113,7 @@ A configurable ignore list (gitignore syntax, edited in Settings) keeps binaries
 - **Activity view** — commit and merge charts plus contributor rankings over Day / Week / Month / Year / All windows, with per-bucket tooltips and instant hover read-outs.
 - **Smart commit messages** — rule-based generation always available; a **local Ollama LLM is strictly opt-in** (staged diff only, localhost only, explicit consent).
 - **Async everything** — checkout, commit, stash, pull/push, merge… run off the UI thread with a spinning busy snackbar; the window never freezes.
-- **Make yourself at home** — 11 color themes, English / Japanese UI (Git domain words stay English in both), an integrated terminal, repo tabs, a branch-prefix tree sidebar, an operation log, and uniform UI zoom.
+- **Make yourself at home** — built-in color themes plus [your own JSON themes](docs/themes.md), English / Japanese UI (Git domain words stay English in both), an integrated terminal, repo tabs, a branch-prefix tree sidebar, an operation log, and uniform UI zoom.
 
 ## 📦 Install
 

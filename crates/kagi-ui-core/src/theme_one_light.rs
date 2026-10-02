@@ -1,10 +1,12 @@
 //! The one light theme.
 
+use std::borrow::Cow;
+
 use crate::theme::{SyntaxPalette, Theme, LANE_PALETTE_LIGHT};
 
 pub const ONE_LIGHT: Theme = Theme {
-    slug: "one-light",
-    name: "One Light",
+    slug: Cow::Borrowed("one-light"),
+    name: Cow::Borrowed("One Light"),
     dark: false,
 
     bg_base: 0xfafafa,

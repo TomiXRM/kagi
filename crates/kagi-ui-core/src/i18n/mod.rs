@@ -782,6 +782,18 @@ pub enum Msg {
     SettingsTheme,
     /// Appearance → Theme row description.
     SettingsThemeDesc,
+    /// Appearance → Custom themes row title (#922).
+    SettingsCustomThemes,
+    /// Appearance → Custom themes row description (#922).
+    SettingsCustomThemesDesc,
+    /// Appearance → Custom themes row: link to `docs/themes.md` (#922).
+    SettingsCustomThemesGuide,
+    /// Appearance → Custom themes: open its folder in the OS file manager.
+    SettingsCustomThemesOpen,
+    /// Appearance → Custom themes: reload JSON files without closing Settings.
+    SettingsCustomThemesReload,
+    /// Appearance → Custom themes: displayed if there is no home directory.
+    SettingsThemesFolderUnavailable,
     /// Appearance → UI Zoom row title.
     SettingsZoom,
     /// Appearance → UI Zoom row description.
@@ -2767,6 +2779,18 @@ impl Msg {
             (Ja, SettingsTheme) => "テーマ",
             (En, SettingsThemeDesc) => "Colour theme used across the whole app.",
             (Ja, SettingsThemeDesc) => "アプリ全体で使用するカラーテーマ。",
+            (En, SettingsCustomThemes) => "Custom themes",
+            (Ja, SettingsCustomThemes) => "自作テーマ",
+            (En, SettingsCustomThemesDesc) => "Add JSON files to the folder below, then reload the themes.",
+            (Ja, SettingsCustomThemesDesc) => "下のフォルダーに JSON ファイルを追加し、テーマを再読み込みします。",
+            (En, SettingsCustomThemesGuide) => "Theme file guide",
+            (Ja, SettingsCustomThemesGuide) => "テーマファイルの書き方",
+            (En, SettingsCustomThemesOpen) => "Open theme folder",
+            (Ja, SettingsCustomThemesOpen) => "テーマフォルダーを開く",
+            (En, SettingsCustomThemesReload) => "Reload Themes",
+            (Ja, SettingsCustomThemesReload) => "テーマを再読み込み",
+            (En, SettingsThemesFolderUnavailable) => "Theme folder path unavailable",
+            (Ja, SettingsThemesFolderUnavailable) => "テーマフォルダーのパスが見つかりません",
             (En, SettingsZoom) => "UI Zoom",
             (Ja, SettingsZoom) => "UI ズーム",
             (En, SettingsZoomDesc) => "Scale all text and layout (0.7×–1.5×).",
@@ -3544,6 +3568,31 @@ pub fn copied_fmt(value: &str) -> String {
     }
 }
 
+/// Toast for one theme file that failed to load (#922). `detail` is the
+/// loader's `"<file name>: <reason>"`, kept verbatim.
+pub fn theme_load_failed_fmt(detail: &str) -> String {
+    match lang() {
+        Lang::En => format!("Couldn't load theme {}", detail),
+        Lang::Ja => format!("テーマを読み込めませんでした: {}", detail),
+    }
+}
+
+/// Toast after an explicit theme reload (#922): how many custom themes loaded.
+pub fn themes_reloaded_fmt(custom: usize) -> String {
+    match lang() {
+        Lang::En => format!("Themes reloaded ({} custom)", custom),
+        Lang::Ja => format!("テーマを再読み込みしました（自作 {} 件）", custom),
+    }
+}
+
+/// Error toast after trying to create or open the theme folder (#922).
+pub fn themes_folder_failed_fmt(detail: &str) -> String {
+    match lang() {
+        Lang::En => format!("Couldn't open theme folder: {detail}"),
+        Lang::Ja => format!("テーマフォルダーを開けませんでした: {detail}"),
+    }
+}
+
 /// Smart Commit model-picker note when a model is selected but Ollama is not
 /// running: "<model> — start Ollama to switch". The model name stays verbatim.
 pub fn smart_model_switch_note(model: &str) -> String {
@@ -3650,6 +3699,7 @@ pub fn command_label_ja(id: &str) -> Option<&'static str> {
         "view.togglePrMode" => "Pull Request モード",
         "view.showGraph" => "グラフモード",
         "view.commandPalette" => "コマンドパレット…",
+        "view.reloadThemes" => "テーマを再読み込み",
         "repo.openInFinder" => "Finder で開く",
         "branch.new" => "新規 branch…",
         "branch.checkout" => "branch を checkout…",

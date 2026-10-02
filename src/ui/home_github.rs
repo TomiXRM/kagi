@@ -61,6 +61,27 @@ pub struct HomeGithub {
     pub cloning: Option<CloneRequest>,
     /// Bumped per read, so an older read landing late is dropped.
     generation: u64,
+    /// The virtualized list of rows, and what it was last built for: the
+    /// rows are measured once per build, so a change resets it.
+    list: Option<gpui::ListState>,
+    list_key: Option<ListKey>,
+}
+
+/// What the list's rows depend on besides the data itself.
+#[derive(Clone, PartialEq, Eq)]
+struct ListKey {
+    query: String,
+    generation: u64,
+    cloning: Option<String>,
+    local: usize,
+}
+
+/// One entry of the virtualized list.
+#[derive(Clone)]
+enum HomeItem {
+    Heading(String),
+    Note(String),
+    Repo(RepoListing, &'static str),
 }
 
 /// The clone card: what will be cloned where, and the plan the user confirms.
@@ -301,8 +322,9 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// The GitHub section of Home's main column: a search field, then one
-    /// section per owner (the user first, then each organization).
+    /// The GitHub section of Home's main column: a header and a search field,
+    /// then one section per owner (the user first, then each organization)
+    /// as a virtualized list filling the rest of the column.
     pub(crate) fn render_home_github(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let refresh = cx.listener(|app, _: &gpui::ClickEvent, _, cx| {
             app.reload_home_github(cx);
@@ -313,6 +335,7 @@ impl KagiApp {
             .flex_row()
             .items_center()
             .gap_2()
+            .flex_shrink_0()
             .child(
                 div()
                     .flex_1()
@@ -334,7 +357,7 @@ impl KagiApp {
             .as_ref()
             .map(|f| f.read(cx).value().trim().to_lowercase())
             .unwrap_or_default();
-        let body = match self.home_github.repos.clone() {
+        let body = match &self.home_github.repos {
             GithubRepos::NotLoaded | GithubRepos::Loading => {
                 muted(Msg::HomeGithubLoading.t().to_string())
             }
@@ -346,107 +369,139 @@ impl KagiApp {
                     div()
                         .text_sm()
                         .text_color(rgb(theme().color_blocker))
-                        .child(safe_text(&error)),
+                        .child(safe_text(error)),
                 )
                 .child(muted(Msg::HomeGithubFailedHint.t().to_string()))
                 .into_any_element(),
-            GithubRepos::Loaded { sections, local } => {
-                self.render_github_sections(&sections, &local, &query, cx)
-            }
+            GithubRepos::Loaded { .. } => self.render_github_list(query, cx),
         };
         div()
             .flex()
             .flex_col()
             .gap_3()
             .pt_6()
+            .flex_1()
+            .min_h(px(0.))
             .child(header)
-            .children(self.home_github.filter.as_ref().map(search_field))
+            .children(
+                self.home_github
+                    .filter
+                    .as_ref()
+                    .map(|f| div().flex_shrink_0().child(search_field(f))),
+            )
             .child(body)
             .into_any_element()
     }
 
-    fn render_github_sections(
-        &mut self,
-        sections: &[OwnerRepos],
-        local: &HashMap<String, PathBuf>,
-        query: &str,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    /// The rows, built once per change of the data or the filter and drawn
+    /// through `gpui::list`, which lays out only what is on screen.
+    fn render_github_list(&mut self, query: String, cx: &mut Context<Self>) -> AnyElement {
+        let GithubRepos::Loaded { sections, local } = &self.home_github.repos else {
+            return div().into_any_element();
+        };
         let cloning = self.home_github.cloning.as_ref().map(|r| r.source.clone());
-        let mut col = div().flex().flex_col().gap_4();
-        let mut shown = 0usize;
-        for section in sections {
-            let title = section
-                .owner
-                .clone()
-                .unwrap_or_else(|| Msg::HomeGithubMine.t().to_string());
-            let list = match &section.list {
-                Ok(list) => list,
-                Err(error) => {
-                    // An unreadable organization still shows, with why;
-                    // filtered out like an empty one while searching.
-                    if query.is_empty() {
-                        col = col.child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap_1()
-                                .child(section_heading(&title))
-                                .child(muted(Msg::HomeGithubOwnerFailed.t().replace("{}", error))),
-                        );
-                    }
-                    continue;
+        let items = github_items(sections, local, &query, cloning.as_deref());
+        let key = ListKey {
+            query,
+            generation: self.home_github.generation,
+            cloning,
+            local: local.len(),
+        };
+        let state = self
+            .home_github
+            .list
+            .get_or_insert_with(|| {
+                gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(600.))
+            })
+            .clone();
+        if self.home_github.list_key.as_ref() != Some(&key) || state.item_count() != items.len() {
+            state.reset(items.len());
+            self.home_github.list_key = Some(key);
+        }
+        let app = cx.entity();
+        gpui::list(state, move |i, _window, _cx| match items.get(i) {
+            Some(HomeItem::Heading(title)) => section_heading(title).into_any_element(),
+            Some(HomeItem::Note(text)) => muted(text.clone()),
+            Some(HomeItem::Repo(listing, state)) => super::e2e::measure_control(
+                format!("home-gh-{}", listing.name_with_owner),
+                github_row(listing.clone(), state, &app),
+            ),
+            None => div().into_any_element(),
+        })
+        .flex_1()
+        .min_h(px(0.))
+        .into_any_element()
+    }
+}
+
+/// The list's entries: per owner a heading, its notes (empty, unreadable,
+/// truncated) and the repositories matching `query`; an owner without a
+/// match is left out while filtering.
+fn github_items(
+    sections: &[OwnerRepos],
+    local: &HashMap<String, PathBuf>,
+    query: &str,
+    cloning: Option<&str>,
+) -> Vec<HomeItem> {
+    let mut items = Vec::new();
+    let mut shown = 0usize;
+    for section in sections {
+        let title = section
+            .owner
+            .clone()
+            .unwrap_or_else(|| Msg::HomeGithubMine.t().to_string());
+        let list = match &section.list {
+            Ok(list) => list,
+            Err(error) => {
+                if query.is_empty() {
+                    items.push(HomeItem::Heading(title));
+                    items.push(HomeItem::Note(
+                        Msg::HomeGithubOwnerFailed.t().replace("{}", error),
+                    ));
                 }
-            };
-            let mut rows = div().flex().flex_col();
-            let mut in_section = 0usize;
-            for listing in &list.repos {
-                let matches = query.is_empty()
-                    || listing.name_with_owner.to_lowercase().contains(query)
-                    || listing.description.to_lowercase().contains(query);
-                if !matches {
-                    continue;
-                }
-                in_section += 1;
-                let state = if cloning.as_deref() == Some(listing.clone_source().as_str()) {
+                continue;
+            }
+        };
+        let rows: Vec<HomeItem> = list
+            .repos
+            .iter()
+            .filter(|l| {
+                query.is_empty()
+                    || l.name_with_owner.to_lowercase().contains(query)
+                    || l.description.to_lowercase().contains(query)
+            })
+            .map(|l| {
+                let state = if cloning == Some(l.clone_source().as_str()) {
                     Msg::HomeGithubCloning.t()
-                } else if local.contains_key(&listing.identity()) {
+                } else if local.contains_key(&l.identity()) {
                     Msg::HomeGithubOpen.t()
                 } else {
                     Msg::HomeGithubClone.t()
                 };
-                rows = rows.child(super::e2e::measure_control(
-                    format!("home-gh-{}", listing.name_with_owner),
-                    github_row(listing.clone(), state, cx),
-                ));
-            }
-            shown += in_section;
-            if in_section == 0 && !query.is_empty() {
-                continue;
-            }
-            let mut block = div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(section_heading(&title));
-            if list.repos.is_empty() {
-                block = block.child(muted(Msg::HomeGithubEmpty.t().to_string()));
-            }
-            block = block.child(rows);
-            if list.truncated {
-                block = block.child(muted(
-                    Msg::HomeGithubTruncated
-                        .t()
-                        .replace("{}", &list.repos.len().to_string()),
-                ));
-            }
-            col = col.child(block);
+                HomeItem::Repo(l.clone(), state)
+            })
+            .collect();
+        if rows.is_empty() && !query.is_empty() {
+            continue;
         }
-        if shown == 0 && !query.is_empty() {
-            col = col.child(muted(Msg::HomeGithubNoMatch.t().to_string()));
+        shown += rows.len();
+        items.push(HomeItem::Heading(title));
+        if list.repos.is_empty() {
+            items.push(HomeItem::Note(Msg::HomeGithubEmpty.t().to_string()));
         }
-        col.into_any_element()
+        items.extend(rows);
+        if list.truncated {
+            items.push(HomeItem::Note(
+                Msg::HomeGithubTruncated
+                    .t()
+                    .replace("{}", &list.repos.len().to_string()),
+            ));
+        }
     }
+    if shown == 0 && !query.is_empty() {
+        items.push(HomeItem::Note(Msg::HomeGithubNoMatch.t().to_string()));
+    }
+    items
 }
 
 /// A large, borderless search field in a soft rounded box with a magnifier
@@ -484,6 +539,8 @@ fn search_field(input: &Entity<InputState>) -> AnyElement {
 fn section_heading(title: &str) -> impl IntoElement {
     div()
         .px_3()
+        .pt_3()
+        .pb_1()
         .text_sm()
         .text_color(rgb(theme().text_muted))
         .child(SharedString::from(title.to_string()))
@@ -492,6 +549,7 @@ fn section_heading(title: &str) -> impl IntoElement {
 fn muted(text: String) -> AnyElement {
     div()
         .px_3()
+        .py_1()
         .text_sm()
         .text_color(rgb(theme().text_muted))
         .child(SharedString::from(text))
@@ -500,7 +558,7 @@ fn muted(text: String) -> AnyElement {
 
 /// One repository: its name over its description on the left; on the right
 /// the last update, private / fork marks and what a click does, as a chip.
-fn github_row(listing: RepoListing, state: &'static str, cx: &mut Context<KagiApp>) -> AnyElement {
+fn github_row(listing: RepoListing, state: &'static str, app: &Entity<KagiApp>) -> AnyElement {
     let chip = |text: &str| {
         div()
             .flex_shrink_0()
@@ -541,9 +599,7 @@ fn github_row(listing: RepoListing, state: &'static str, cx: &mut Context<KagiAp
     });
     let id = SharedString::from(format!("home-gh-row-{}", listing.name_with_owner));
     let name = listing.name().to_string();
-    let pick = cx.listener(move |app, _: &gpui::ClickEvent, _, cx| {
-        app.home_github_pick(listing.clone(), cx);
-    });
+    let app = app.clone();
     div()
         .id(id)
         .w_full()
@@ -556,7 +612,9 @@ fn github_row(listing: RepoListing, state: &'static str, cx: &mut Context<KagiAp
         .rounded_lg()
         .cursor(gpui::CursorStyle::PointingHand)
         .hover(|s| s.bg(rgb(theme().surface)))
-        .on_click(pick)
+        .on_click(move |_, _, cx| {
+            app.update(cx, |app, cx| app.home_github_pick(listing.clone(), cx));
+        })
         .child(
             div()
                 .flex()

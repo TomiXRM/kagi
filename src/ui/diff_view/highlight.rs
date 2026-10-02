@@ -9,9 +9,10 @@
 //!   be reused while the request is out. A new selection, a re-read with new
 //!   text, or a close installs other rows (or none), so a late result finds
 //!   nothing to land on;
-//! - the theme slug is captured at request time and compared at landing, so
+//! - the theme key is captured at request time and compared at landing, so
 //!   a result computed under the previous theme is dropped and the next frame
-//!   asks again under the current one.
+//!   asks again under the current one. The key names one installed theme, not
+//!   its slug: a reload that recolours a custom theme counts as a new theme.
 //!
 //! The same input is not highlighted twice: a view records the theme its
 //! spans were computed with ([`MainDiffView::highlighted`]), an outstanding
@@ -38,7 +39,7 @@ pub(crate) trait DiffHighlightHost: 'static {
     fn for_each_diff(&mut self, visit: &mut dyn FnMut(&mut MainDiffView));
 }
 
-type Request = (Weak<Vec<DiffRow>>, &'static str);
+type Request = (Weak<Vec<DiffRow>>, theme::ThemeKey);
 
 thread_local! {
     /// Requests that are out. Claimed while rendering and released when the
@@ -50,27 +51,27 @@ fn is_rows(weak: &Weak<Vec<DiffRow>>, rows: &Arc<Vec<DiffRow>>) -> bool {
     std::ptr::eq(weak.as_ptr(), Arc::as_ptr(rows))
 }
 
-/// Record a request for `rows` under `slug`; `false` when one is already out.
-fn claim(rows: &Arc<Vec<DiffRow>>, slug: &'static str) -> bool {
+/// Record a request for `rows` under `key`; `false` when one is already out.
+fn claim(rows: &Arc<Vec<DiffRow>>, key: theme::ThemeKey) -> bool {
     IN_FLIGHT.with(|requests| {
         let mut requests = requests.borrow_mut();
         requests.retain(|(weak, _)| weak.strong_count() > 0);
         if requests
             .iter()
-            .any(|(weak, s)| *s == slug && is_rows(weak, rows))
+            .any(|(weak, k)| *k == key && is_rows(weak, rows))
         {
             return false;
         }
-        requests.push((Arc::downgrade(rows), slug));
+        requests.push((Arc::downgrade(rows), key));
         true
     })
 }
 
-fn release(rows: &Weak<Vec<DiffRow>>, slug: &'static str) {
+fn release(rows: &Weak<Vec<DiffRow>>, key: theme::ThemeKey) {
     IN_FLIGHT.with(|requests| {
         requests
             .borrow_mut()
-            .retain(|(weak, s)| !(*s == slug && weak.ptr_eq(rows)));
+            .retain(|(weak, k)| !(*k == key && weak.ptr_eq(rows)));
     });
 }
 
@@ -82,8 +83,8 @@ pub(crate) fn ensure_highlight<H: DiffHighlightHost>(view: &MainDiffView, cx: &m
         return;
     };
     let active = theme::theme();
-    let slug = active.slug;
-    if view.highlighted == Some(slug) || !claim(&view.rows, slug) {
+    let key = active.key();
+    if view.highlighted == Some(key) || !claim(&view.rows, key) {
         return;
     }
     #[cfg(feature = "gui-e2e")]
@@ -91,21 +92,21 @@ pub(crate) fn ensure_highlight<H: DiffHighlightHost>(view: &MainDiffView, cx: &m
     let rows = view.rows.clone();
     let requested = Arc::downgrade(&view.rows);
     let work = cx.background_spawn(async move {
-        super::highlight_rows(&rows, lang, &theme::highlight_theme(active))
+        super::highlight_rows(&rows, lang, &theme::highlight_theme(&active))
     });
     cx.spawn(async move |host, acx| {
         let spans = work.await;
-        release(&requested, slug);
+        release(&requested, key);
         let _ = host.update(acx, |host, cx| {
             // Computed under a theme that is no longer active: drop it; the
             // next frame requests the current theme's spans.
-            let mut spans = (theme::theme().slug == slug).then_some(spans);
+            let mut spans = (theme::theme().key() == key).then_some(spans);
             let mut landed = false;
             host.for_each_diff(&mut |view| {
                 let Some(spans) = spans.take_if(|_| is_rows(&requested, &view.rows)) else {
                     return;
                 };
-                view.apply_highlights(slug, spans);
+                view.apply_highlights(key, spans);
                 landed = true;
                 if H::LOG_READY {
                     klog!(
@@ -130,14 +131,14 @@ pub(crate) fn ensure_highlight<H: DiffHighlightHost>(view: &MainDiffView, cx: &m
 impl MainDiffView {
     /// Swap computed spans into the rows. The rows get their own allocation
     /// if a render snapshot still shares them.
-    fn apply_highlights(&mut self, slug: &'static str, spans: RowHighlights) {
+    fn apply_highlights(&mut self, key: theme::ThemeKey, spans: RowHighlights) {
         let rows = Arc::make_mut(&mut self.rows);
         for (row_i, row_highlights) in spans {
             if let Some(DiffRow::Line { highlights, .. }) = rows.get_mut(row_i) {
                 *highlights = row_highlights;
             }
         }
-        self.highlighted = Some(slug);
+        self.highlighted = Some(key);
     }
 
     /// Replace this view with `next`, keeping the current rows — spans,

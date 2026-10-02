@@ -95,6 +95,15 @@ pub enum WorktreeNote {
         branch: Option<String>,
         delete_branch: bool,
     },
+    /// warning (`plan_remove_worktree`) — Git reports ignored content in the
+    /// worktree, which removal deletes with no backup. `files` counts ignored
+    /// files and symlinks (never followed); `folders` counts wholly ignored
+    /// directories Git reports as one entry without listing their contents.
+    RemoveIgnoredFiles {
+        path: String,
+        files: usize,
+        folders: usize,
+    },
     /// warning (`plan_lock_worktree`) — describes the lock about to be placed.
     LocksWorktree {
         path: String,
@@ -272,6 +281,22 @@ impl WorktreeNote {
             WorktreeNote::RemoveLeftoverProcesses { path, count } => format!(
                 crate::advice_template_en!(WorktreeRemoveLeftoverProcesses),
                 count, path
+            ),
+            WorktreeNote::RemoveIgnoredFiles {
+                path,
+                files,
+                folders: 0,
+            } => format!(
+                crate::advice_template_en!(WorktreeRemoveIgnoredFiles),
+                path, files
+            ),
+            WorktreeNote::RemoveIgnoredFiles {
+                path,
+                files,
+                folders,
+            } => format!(
+                crate::advice_template_en!(WorktreeRemoveIgnoredFilesAndFolders),
+                path, files, folders
             ),
             WorktreeNote::RemovesWorktree {
                 path,
@@ -751,6 +776,24 @@ mod tests {
             }
             .message_en(),
             "Removes the linked worktree at '/wt/x' and also deletes its branch 'feat/x'."
+        );
+        assert_eq!(
+            WorktreeNote::RemoveIgnoredFiles {
+                path: "/wt/x".into(),
+                files: 3,
+                folders: 0
+            }
+            .message_en(),
+            "Worktree '/wt/x' has 3 ignored file(s). Git does not track them; removal deletes them permanently."
+        );
+        assert_eq!(
+            WorktreeNote::RemoveIgnoredFiles {
+                path: "/wt/x".into(),
+                files: 3,
+                folders: 1
+            }
+            .message_en(),
+            "Worktree '/wt/x' has 3 ignored file(s) and 1 ignored folder(s) (contents not counted). Git does not track them; removal deletes them permanently."
         );
     }
 

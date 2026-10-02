@@ -717,6 +717,137 @@ fn remove_dirty_worktree_is_blocked() {
     assert!(wt.exists(), "the dirty worktree must be left untouched");
 }
 
+/// `(files, folders)` of every ignored-content note in `notes`.
+fn ignored_counts(notes: &[PlanNote]) -> Vec<(usize, usize)> {
+    notes
+        .iter()
+        .filter_map(|note| match note {
+            PlanNote::Worktree(WorktreeNote::RemoveIgnoredFiles { files, folders, .. }) => {
+                Some((*files, *folders))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// #934: a clean worktree whose only extra content is gitignored is removable,
+/// and the Remove plan says how much ignored content the removal deletes. A
+/// tracked file that matches an ignore pattern is history, not ignored content;
+/// an ignored folder is one entry; a symlink is one file, never followed.
+/// Planning reads only: both indexes and every ignored file survive it.
+#[test]
+fn remove_plan_counts_ignored_content_of_a_clean_worktree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let repo = build_repo(&tmp);
+    let wt = add_worktree(tmp.path(), "wt-ign");
+    write_file(&wt, ".gitignore", "*.log\ntarget/\noutside-link\n");
+    write_file(&wt, "tracked.log", "committed despite the pattern\n");
+    git(&wt, &["add", "-f", ".gitignore", "tracked.log"]);
+    git(&wt, &["commit", "-qm", "ignore rules"]);
+
+    write_file(&wt, "debug.log", "ignored file\n");
+    std::fs::create_dir_all(wt.join("target/deep")).unwrap();
+    write_file(&wt.join("target"), "a.o", "ignored folder\n");
+    write_file(&wt.join("target/deep"), "c.o", "ignored folder\n");
+    // An untracked folder holding only ignored files is listed file by file.
+    std::fs::create_dir(wt.join("notes")).unwrap();
+    write_file(&wt.join("notes"), "x.log", "ignored file\n");
+    let outside = TempDir::new().unwrap();
+    write_file(outside.path(), "a.txt", "outside\n");
+    write_file(outside.path(), "b.txt", "outside\n");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(outside.path(), wt.join("outside-link")).unwrap();
+    let expected_files = if cfg!(unix) { 3 } else { 2 };
+
+    let main_index = tmp.path().join(".git/index");
+    let wt_index = tmp.path().join(".git/worktrees/wt-ign/index");
+    let indexes_before = (
+        std::fs::read(&main_index).unwrap(),
+        std::fs::read(&wt_index).unwrap(),
+    );
+
+    for delete_branch in [false, true] {
+        let plan = plan_remove_worktree(&repo, "wt-ign", delete_branch).expect("plan");
+        assert!(plan.blockers.is_empty(), "blockers: {:?}", plan.blockers);
+        assert_eq!(
+            ignored_counts(&plan.warnings),
+            vec![(expected_files, 1)],
+            "delete_branch={delete_branch}: {:?}",
+            plan.warnings
+        );
+    }
+    let lock = plan_lock_worktree(&repo, "wt-ign", None).expect("lock plan");
+    assert!(
+        ignored_counts(&lock.warnings).is_empty() && ignored_counts(&lock.blockers).is_empty(),
+        "only the Remove plan carries the ignored-content warning: {:?}",
+        lock.warnings
+    );
+
+    assert_eq!(
+        (
+            std::fs::read(&main_index).unwrap(),
+            std::fs::read(&wt_index).unwrap()
+        ),
+        indexes_before,
+        "planning must not write either index"
+    );
+    for kept in ["debug.log", "target/deep/c.o", "notes/x.log"] {
+        assert!(wt.join(kept).exists(), "planning must not touch {kept}");
+    }
+
+    let plan = plan_remove_worktree(&repo, "wt-ign", false).expect("plan");
+    let outcome = execute_remove_worktree(&repo, &plan, "wt-ign", false).expect("execute");
+    assert!(
+        outcome.backups.is_empty(),
+        "ignored content is not backed up"
+    );
+    assert!(!wt.exists(), "the ignored content goes with the worktree");
+    assert!(
+        outside.path().join("a.txt").exists() && outside.path().join("b.txt").exists(),
+        "the symlink target outside the worktree must survive"
+    );
+    assert!(repo.find_branch("wt-ign", git2::BranchType::Local).is_ok());
+}
+
+/// #934: no ignored content, no warning — neither for a clean worktree nor for
+/// a dirty one whose untracked file is plain (not ignored) work.
+#[test]
+fn remove_plan_without_ignored_content_has_no_ignored_warning() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let repo = build_repo(&tmp);
+    add_worktree(tmp.path(), "wt-plain");
+    let dirty = add_worktree(tmp.path(), "wt-untracked");
+    write_file(&dirty, "scratch.txt", "uncommitted work\n");
+
+    let clean = plan_remove_worktree(&repo, "wt-plain", false).expect("plan");
+    assert!(clean.blockers.is_empty(), "blockers: {:?}", clean.blockers);
+    assert!(
+        ignored_counts(&clean.warnings).is_empty(),
+        "{:?}",
+        clean.warnings
+    );
+
+    let plan = plan_remove_worktree(&repo, "wt-untracked", true).expect("plan");
+    assert!(
+        plan.blockers
+            .iter()
+            .any(|b| matches!(b, PlanNote::Worktree(WorktreeNote::RemoveDirty { .. }))),
+        "untracked work still blocks: {:?}",
+        plan.blockers
+    );
+    assert!(
+        ignored_counts(&plan.warnings).is_empty(),
+        "untracked work is not ignored content: {:?}",
+        plan.warnings
+    );
+}
+
 /// The main worktree is never removable (§6). Mutation-verify: execute refuses.
 #[test]
 fn remove_main_worktree_is_always_refused() {

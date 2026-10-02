@@ -12,7 +12,9 @@ use kagi_domain::plan_note::{WorktreeNote, WorktreeRecovery, WorktreeTitle};
 ///
 /// Blockers: the main worktree (never removable), a dirty worktree (kagi never
 /// forces), a locked worktree, or a missing worktree. `delete_branch` controls
-/// whether the plan also promises to delete the checked-out branch.
+/// whether the plan also promises to delete the checked-out branch. Warnings:
+/// the removal itself, any ignored content it deletes (#934), and the
+/// `pre_remove` steps.
 pub fn plan_remove_worktree(
     repo: &Repository,
     name: &str,
@@ -68,6 +70,9 @@ pub fn plan_remove_worktree(
         branch: branch.clone(),
         delete_branch,
     })];
+    if let Some(note) = ignored_content_note(&wt, &path_str) {
+        warnings.push(note);
+    }
     // issue #341: enumerate the typed pre_remove steps from the worktree's own
     // committed config. A command step in an untrusted config marks the note
     // trust-required (and, at execute time, aborts the removal until trusted).
@@ -89,6 +94,40 @@ pub fn plan_remove_worktree(
     });
 
     admin_plan(repo, title, warnings, blockers, recovery, true)
+}
+
+/// issue #934: the ignored content Git reports in the linked worktree — what
+/// removal deletes with no backup (the executor only backs up tracked and
+/// untracked changes). A read-only status walk of that worktree alone; the
+/// index is not refreshed. Git reports a wholly ignored directory as one entry
+/// without descending into it, so `node_modules/` stays one `folders` count and
+/// its contents are not walked; symlinks are entries, never followed. `None`
+/// when nothing is ignored, or when the worktree cannot be read — the dirt check
+/// above treats that as clean too, so no reliable count exists to show.
+fn ignored_content_note(wt: &git2::Worktree, path: &str) -> Option<PlanNote> {
+    let wt_repo = Repository::open_from_worktree(wt).ok()?;
+    let mut opts = git2::StatusOptions::new();
+    opts.include_ignored(true)
+        .recurse_ignored_dirs(false)
+        .include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .exclude_submodules(true);
+    let statuses = wt_repo.statuses(Some(&mut opts)).ok()?;
+    let (mut files, mut folders) = (0, 0);
+    for entry in statuses.iter().filter(|entry| entry.status().is_ignored()) {
+        if entry.path_bytes().ends_with(b"/") {
+            folders += 1;
+        } else {
+            files += 1;
+        }
+    }
+    (files + folders > 0).then(|| {
+        PlanNote::Worktree(WorktreeNote::RemoveIgnoredFiles {
+            path: path.to_string(),
+            files,
+            folders,
+        })
+    })
 }
 
 /// Remove the linked worktree `name`: preflight → ODB-backup any uncommitted

@@ -308,6 +308,18 @@ fn clone_transport(request: &CloneRequest, timeout: Duration) -> Result<(), Stag
             &out,
         )));
     }
+    // An exit status is not the end of the clone: a hook or helper `gh`
+    // started may still be writing into the destination. Only a process
+    // group proven empty lets the outcome be read as finished (#926 review).
+    if !out.group_stopped {
+        return Err(Stage::Unknown(crate::Termination::from_run(
+            format!(
+                "gh repo clone exited with status {status}, but a process it started \
+                 may still be running"
+            ),
+            &out,
+        )));
+    }
     if status == 0 {
         return Ok(());
     }
@@ -337,6 +349,12 @@ fn destination_blocker(dest: &Path) -> Option<CloneNote> {
     let path = dest.display().to_string();
     if !dest.is_absolute() {
         return Some(CloneNote::DestinationNotAbsolute { path });
+    }
+    // Refused here so that, from the plan on, the destination's string (card,
+    // command, receipt, plan comparison) and the path are one-to-one: a lossy
+    // rendering could name another folder (#926 review).
+    if dest.to_str().is_none() {
+        return Some(CloneNote::DestinationNotUtf8 { path });
     }
     // `symlink_metadata`: a symlink is "something already there", even one
     // that points at an empty folder.

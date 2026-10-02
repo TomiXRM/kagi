@@ -86,6 +86,58 @@ fn only_receipt() -> kagi_git::oplog::OpLogEntry {
     entries[0].clone()
 }
 
+/// `gh` exits 0, but a process it started is still running in its group:
+/// the clone may still be writing, so the outcome is Unknown — not Success,
+/// and not verified (#926 review).
+#[test]
+fn a_clone_whose_helper_outlives_gh_is_unknown() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let fixture = Fixture::new(&format!(
+        "{CLONE_OK} && (sleep 4 </dev/null >/dev/null 2>&1 &) ; exit 0"
+    ));
+    let dest = fixture.root.join("widgets");
+    let request = fixture.request(&dest);
+    let report = execute_clone(&request, &plan_clone(&request));
+    let Err(GitError::TerminationUnknown(termination)) = &report.result else {
+        panic!(
+            "exit 0 with a live group must not succeed: {:?}",
+            report.result
+        );
+    };
+    assert!(!termination.child_stopped(), "{termination:?}");
+    assert!(matches!(only_receipt().outcome, OpOutcome::Unknown { .. }));
+}
+
+/// A destination whose name is not UTF-8 is refused by the plan, so every
+/// string Kagi shows or records for a destination names exactly that path.
+#[test]
+fn a_destination_that_is_not_utf8_is_refused() {
+    use std::os::unix::ffi::OsStrExt;
+    if !test_support::run_isolated() {
+        return;
+    }
+    let fixture = Fixture::new(CLONE_OK);
+    let dest = fixture.root.join(std::ffi::OsStr::from_bytes(b"caf\xe9"));
+    let request = fixture.request(&dest);
+    let plan = plan_clone(&request);
+    assert_eq!(
+        plan.blockers,
+        vec![PlanNote::Clone(CloneNote::DestinationNotUtf8 {
+            path: dest.display().to_string()
+        })]
+    );
+    let report = execute_clone(&request, &plan);
+    assert!(
+        matches!(report.result, Err(GitError::Blocked(_))),
+        "{:?}",
+        report.result
+    );
+    assert!(!fixture.attempted(), "gh repo clone must not run");
+    assert!(matches!(only_receipt().outcome, OpOutcome::Refused { .. }));
+}
+
 /// Nothing that already exists is a destination, except an empty folder.
 #[test]
 fn the_plan_refuses_every_destination_it_would_overwrite() {

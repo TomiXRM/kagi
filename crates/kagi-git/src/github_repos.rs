@@ -70,6 +70,26 @@ pub fn list_org_logins(workdir: &Path) -> Result<Vec<String>, String> {
         .map_err(|error| error.to_string())
 }
 
+/// The account `gh repo list` reads as, `<host>/<login>` lower-cased: the
+/// user configured for `gh`'s default host (`GH_HOST`, else `github.com`),
+/// which `gh auth switch` changes. A local read (`gh config get`), so it
+/// does not wait on the network. `None` when a token in the environment
+/// (`GH_TOKEN`, `GITHUB_TOKEN`) overrides the configured user — whose owner
+/// cannot be named without asking GitHub — or no user is configured.
+pub fn active_account(workdir: &Path) -> Option<String> {
+    let set = |key: &str| std::env::var_os(key).filter(|v| !v.is_empty());
+    if set("GH_TOKEN").is_some() || set("GITHUB_TOKEN").is_some() {
+        return None;
+    }
+    let host = set("GH_HOST")
+        .and_then(|h| h.into_string().ok())
+        .unwrap_or_else(|| "github.com".to_string());
+    let args = ["config", "get", "user", "-h", host.as_str()].map(str::to_string);
+    let login = crate::github_edit::read_gh(workdir, &args, "config user").ok()?;
+    let login = login.trim();
+    (!login.is_empty()).then(|| format!("{host}/{login}").to_ascii_lowercase())
+}
+
 /// How many `gh repo list` reads run at once for the organizations.
 const ORG_READS_AT_ONCE: usize = 6;
 

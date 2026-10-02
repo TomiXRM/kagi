@@ -36,9 +36,11 @@ const ORG_LIST: &str = r#"[
 /// A stand-in `gh`. Marker files in `state` make one call fail: `fail-own`
 /// the next own-list read (once), `fail-orgs` every organization listing,
 /// `fail-clone` every clone. Each own-list read is counted in `own-calls`.
+/// The signed-in login is `acme`, or what `state/user` says.
 fn gh_script(bare: &Path, state: &Path) -> String {
     format!(
         "#!/bin/sh\ncase \"$1 $2 $3\" in\n\
+         'config get user') cat '{state}/user' 2>/dev/null || echo acme ;;\n\
          'api user/orgs '*) [ -e '{state}/fail-orgs' ] && {{ echo 'HTTP 502: Bad Gateway' >&2; exit 1; }}\n\
          printf 'acme-org\\nlocked-org\\n' ;;\n\
          'repo list --limit') echo read >> '{state}/own-calls'\n\
@@ -119,13 +121,18 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
     let state_dir = tempfile::tempdir().unwrap();
     let state = state_dir.path().to_path_buf();
     let _gh = OfflineGh::with_script(&gh_script(&bare, &state));
+    // The account is the configured `gh` user only while no token in the
+    // environment overrides it: run without one, as a fresh shell would.
+    let _env = EnvCleared::new(&["GH_TOKEN", "GITHUB_TOKEN", "GH_HOST"]);
     let own_reads =
         || std::fs::read_to_string(state.join("own-calls")).map_or(0, |s| s.lines().count());
     let mark = |name: &str| std::fs::write(state.join(name), "").unwrap();
     let unmark = |name: &str| std::fs::remove_file(state.join(name)).unwrap();
+    const ME: &str = "github.com/acme";
 
     // The last read is saved and shown, read off the UI thread, while the
-    // fresh read runs. A failed refresh keeps it and says so.
+    // fresh read runs. A failed refresh keeps it and says so — but only a
+    // list saved for the account signed in now (#930 review).
     let cache = github_repos_cache::cache_path(
         settings::settings_path()
             .and_then(|p| p.parent().map(Path::to_path_buf))
@@ -146,9 +153,17 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
             }],
         }),
     }];
-    github_repos_cache::save(&cache, &stale).unwrap();
+    github_repos_cache::save(&cache, "github.com/someone-else", &stale).unwrap();
     mark("fail-own");
     let (app, window) = mount(cx, start.path());
+    app.update(cx, |app, cx| app.reload_home_github(cx));
+    wait_for(cx, &app, "the failed read", settled);
+    assert!(
+        cx.read(|cx| matches!(app.read(cx).home_github.repos, GithubRepos::Failed(_))),
+        "another account's saved list is not shown"
+    );
+    github_repos_cache::save(&cache, ME, &stale).unwrap();
+    mark("fail-own");
     app.update(cx, |app, cx| app.reload_home_github(cx));
     wait_for(cx, &app, "the failed refresh", settled);
     cx.read(|cx| {
@@ -164,7 +179,7 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
             "the failed refresh says why"
         );
     });
-    assert_eq!(own_reads(), 1);
+    assert_eq!(own_reads(), 2);
 
     // Refresh while a read runs joins it: one more `gh` read, not two.
     app.update(cx, |app, cx| {
@@ -172,13 +187,27 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
         app.reload_home_github(cx);
     });
     wait_for(cx, &app, "the GitHub list", settled);
-    assert_eq!(own_reads(), 2, "a second Refresh joins the running read");
+    assert_eq!(own_reads(), 3, "a second Refresh joins the running read");
     let deadline = Instant::now() + Duration::from_secs(30);
-    while github_repos_cache::load(&cache).is_none_or(|saved| saved.len() != 3) {
+    while github_repos_cache::load(&cache, ME).is_none_or(|saved| saved.len() != 3) {
         assert!(Instant::now() < deadline, "the fresh list is saved");
         cx.run_until_parked();
         std::thread::sleep(Duration::from_millis(5));
     }
+
+    // `gh auth switch` to another account, and its read fails: the list
+    // read as the previous account is not kept on screen.
+    std::fs::write(state.join("user"), "someone-else\n").unwrap();
+    mark("fail-own");
+    app.update(cx, |app, cx| app.reload_home_github(cx));
+    wait_for(cx, &app, "the other account's read", settled);
+    assert!(
+        cx.read(|cx| matches!(app.read(cx).home_github.repos, GithubRepos::Failed(_))),
+        "the previous account's list is dropped"
+    );
+    std::fs::remove_file(state.join("user")).unwrap();
+    app.update(cx, |app, cx| app.reload_home_github(cx));
+    wait_for(cx, &app, "the list again", settled);
     click_control(cx, window, "tab-add");
     cx.run_until_parked();
     // Refresh keeps the list on screen and marks it as being updated.
@@ -205,7 +234,7 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
     );
     cx.run_until_parked();
     assert_eq!(
-        github_repos_cache::load(&cache).map(|s| s.len()),
+        github_repos_cache::load(&cache, ME).map(|s| s.len()),
         Some(3),
         "a list without its organizations is not saved"
     );
@@ -431,4 +460,31 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
 fn choose_folder(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, parent: &Path) {
     app.update(cx, |app, cx| app.replan_clone(parent, cx));
     cx.run_until_parked();
+}
+
+/// Environment variables removed for the scenario and put back after it.
+struct EnvCleared(Vec<(&'static str, Option<std::ffi::OsString>)>);
+
+impl EnvCleared {
+    fn new(keys: &[&'static str]) -> Self {
+        Self(
+            keys.iter()
+                .map(|key| {
+                    let saved = std::env::var_os(key);
+                    std::env::remove_var(key);
+                    (*key, saved)
+                })
+                .collect(),
+        )
+    }
+}
+
+impl Drop for EnvCleared {
+    fn drop(&mut self) {
+        for (key, saved) in self.0.drain(..) {
+            if let Some(value) = saved {
+                std::env::set_var(key, value);
+            }
+        }
+    }
 }

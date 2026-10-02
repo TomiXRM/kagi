@@ -69,6 +69,9 @@ pub struct HomeGithub {
     /// The list on screen is the saved one (or the previous read) and a
     /// fresh read is running.
     pub refreshing: bool,
+    /// The `gh` account (`<host>/<login>`) the list on screen was read as.
+    /// A list read as another account is not kept across a refresh.
+    shown_account: Option<String>,
     /// The virtualized list of rows, and what it was last built for: the
     /// rows are measured once per build, so a change resets it.
     pub(super) list: Option<gpui::ListState>,
@@ -177,13 +180,16 @@ impl KagiApp {
         self.match_local_clones(paths, cx);
         let cache = cache_file();
         let saved_cache = cache.clone();
+        // The account first (a local read), and the saved list only for it.
         let cached = cx.background_spawn(async move {
-            if shown {
-                return None;
-            }
-            cache
-                .as_deref()
-                .and_then(kagi_git::github_repos_cache::load)
+            let account = kagi_git::github_repos::active_account(&home_dir());
+            let saved = match (&account, &cache) {
+                (Some(account), Some(path)) if !shown => {
+                    kagi_git::github_repos_cache::load(path, account)
+                }
+                _ => None,
+            };
+            (account, saved)
         });
         let own = cx
             .background_spawn(async move { kagi_git::github_repos::list_repos(&home_dir(), None) });
@@ -194,10 +200,11 @@ impl KagiApp {
         });
         cx.spawn(async move |app, acx| {
             // In this order, each step applied as soon as it is known: the
-            // saved list is a small local file, `gh` is the network.
-            if let Some(sections) = cached.await {
-                let _ = app.update(acx, |app, cx| app.show_saved_list(generation, sections, cx));
-            }
+            // account and the saved list are local reads, `gh` is the network.
+            let (account, saved) = cached.await;
+            let _ = app.update(acx, |app, cx| {
+                app.show_saved_list(generation, account.clone(), saved, cx)
+            });
             let list = own.await;
             let own = app
                 .update(acx, |app, cx| app.land_own_list(generation, list, cx))
@@ -213,10 +220,10 @@ impl KagiApp {
                 })
                 .ok()
                 .flatten();
-            if let (Some(sections), Some(path)) = (save, saved_cache) {
+            if let (Some(sections), Some(path), Some(account)) = (save, saved_cache, account) {
                 let saved = acx
                     .background_spawn(async move {
-                        kagi_git::github_repos_cache::save(&path, &sections)
+                        kagi_git::github_repos_cache::save(&path, &account, &sections)
                     })
                     .await;
                 if let Err(error) = saved {
@@ -227,23 +234,36 @@ impl KagiApp {
         .detach();
     }
 
-    /// The saved list, read off the UI thread: shown while nothing newer is.
+    /// The account this read is made as, and the list saved for it, both
+    /// read off the UI thread. A list on screen read as another account
+    /// (`gh auth switch`) is dropped rather than kept through the refresh;
+    /// the saved list is shown while nothing newer is.
     fn show_saved_list(
         &mut self,
         generation: u64,
-        sections: Vec<OwnerRepos>,
+        account: Option<String>,
+        saved: Option<Vec<OwnerRepos>>,
         cx: &mut Context<Self>,
     ) {
-        if self.home_github.generation != generation
-            || !matches!(self.home_github.repos, GithubRepos::Loading)
-        {
+        if self.home_github.generation != generation {
             return;
         }
-        self.home_github.repos = GithubRepos::Loaded {
-            sections,
-            orgs_error: None,
-        };
-        self.home_github.refreshing = true;
+        if self.home_github.shown_account != account
+            && matches!(self.home_github.repos, GithubRepos::Loaded { .. })
+        {
+            self.home_github.repos = GithubRepos::Loading;
+            self.home_github.refreshing = false;
+        }
+        self.home_github.shown_account = account;
+        if let Some(sections) =
+            saved.filter(|_| matches!(self.home_github.repos, GithubRepos::Loading))
+        {
+            self.home_github.repos = GithubRepos::Loaded {
+                sections,
+                orgs_error: None,
+            };
+            self.home_github.refreshing = true;
+        }
         cx.notify();
     }
 

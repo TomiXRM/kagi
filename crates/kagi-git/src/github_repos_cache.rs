@@ -5,6 +5,11 @@
 //! next read, so a file that does not parse is simply ignored and later
 //! overwritten. The write is a temp file in the same folder renamed into
 //! place, so a reader never sees half a file.
+//!
+//! The list is bound to the account it was read as (`<host>/<login>`, from
+//! [`crate::github_repos::active_account`]) and only read back for that
+//! account: after `gh auth switch`, another account's private repository
+//! names are not shown (#930 review).
 
 use std::path::{Path, PathBuf};
 
@@ -17,20 +22,32 @@ pub fn cache_path(settings_dir: &Path) -> PathBuf {
     settings_dir.join("github_repos_cache.json")
 }
 
-/// Save `sections` to `path`. Best effort: an error is returned for the
-/// caller to log, and the next read tries again.
-pub fn save(path: &Path, sections: &[OwnerRepos]) -> std::io::Result<()> {
-    let value = Value::Array(sections.iter().map(section_json).collect());
+/// Save `sections`, read as `account`, to `path`. Best effort: an error is
+/// returned for the caller to log, and the next read tries again.
+pub fn save(path: &Path, account: &str, sections: &[OwnerRepos]) -> std::io::Result<()> {
+    let value = json!({
+        "account": account,
+        "sections": sections.iter().map(section_json).collect::<Vec<_>>(),
+    });
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, serde_json::to_vec(&value)?)?;
     std::fs::rename(&tmp, path)
 }
 
-/// The saved list, or `None` when there is none or it does not parse.
-pub fn load(path: &Path) -> Option<Vec<OwnerRepos>> {
+/// The list saved for `account`, or `None` when there is none, it was read
+/// as another account, or it does not parse.
+pub fn load(path: &Path, account: &str) -> Option<Vec<OwnerRepos>> {
     let bytes = std::fs::read(path).ok()?;
     let value: Value = serde_json::from_slice(&bytes).ok()?;
-    value.as_array()?.iter().map(section_from).collect()
+    if value.get("account")?.as_str()? != account {
+        return None;
+    }
+    value
+        .get("sections")?
+        .as_array()?
+        .iter()
+        .map(section_from)
+        .collect()
 }
 
 fn section_json(section: &OwnerRepos) -> Value {
@@ -112,14 +129,27 @@ mod tests {
         ]
     }
 
+    const ME: &str = "github.com/me";
+
     /// What is saved is what is read back, unreadable owners and the
     /// truncation mark included.
     #[test]
     fn a_saved_list_reads_back_unchanged() {
         let dir = tempfile::tempdir().unwrap();
         let path = cache_path(dir.path());
-        save(&path, &sections()).unwrap();
-        assert_eq!(load(&path), Some(sections()));
+        save(&path, ME, &sections()).unwrap();
+        assert_eq!(load(&path, ME), Some(sections()));
+    }
+
+    /// A list read as one account is not read back for another: after
+    /// `gh auth switch` its private repositories are not shown.
+    #[test]
+    fn a_list_is_read_back_only_for_its_account() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = cache_path(dir.path());
+        save(&path, ME, &sections()).unwrap();
+        assert_eq!(load(&path, "github.com/someone-else"), None);
+        assert_eq!(load(&path, "ghe.example.com/me"), None);
     }
 
     /// A damaged or foreign file is no cache: nothing is shown from it.
@@ -127,11 +157,13 @@ mod tests {
     fn a_file_that_does_not_parse_is_no_cache() {
         let dir = tempfile::tempdir().unwrap();
         let path = cache_path(dir.path());
-        assert_eq!(load(&path), None);
+        assert_eq!(load(&path, ME), None);
         std::fs::write(&path, "{\"half").unwrap();
-        assert_eq!(load(&path), None);
-        let foreign = r#"[{"owner":1,"list":{"truncated":false,"repos":[]}}]"#;
+        assert_eq!(load(&path, ME), None);
+        let foreign = format!(
+            r#"{{"account":"{ME}","sections":[{{"owner":1,"list":{{"truncated":false,"repos":[]}}}}]}}"#
+        );
         std::fs::write(&path, foreign).unwrap();
-        assert_eq!(load(&path), None);
+        assert_eq!(load(&path, ME), None);
     }
 }

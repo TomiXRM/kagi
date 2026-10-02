@@ -57,25 +57,17 @@ pub fn themes_dir() -> Option<PathBuf> {
 pub(crate) fn load_dir(dir: &Path) -> Result<(Vec<Theme>, Vec<ThemeLoadError>), ThemeLoadError> {
     let mut themes: Vec<Theme> = Vec::new();
     let mut errors = Vec::new();
+    let folder_error = |e: std::io::Error| ThemeLoadError {
+        path: dir.to_path_buf(),
+        reason: format!("cannot read the themes folder: {e}"),
+    };
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((themes, errors)),
-        Err(e) => {
-            return Err(ThemeLoadError {
-                path: dir.to_path_buf(),
-                reason: format!("cannot read the themes folder: {e}"),
-            })
-        }
+        Err(e) => return Err(folder_error(e)),
     };
-    let mut files: Vec<PathBuf> = entries
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
-                && path.is_file()
-        })
-        .collect();
-    files.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+    let files =
+        json_files(entries.map(|entry| entry.map(|entry| entry.path()))).map_err(folder_error)?;
 
     // Which file claimed each custom slug, for the collision message.
     let mut owners: Vec<&Path> = Vec::new();
@@ -109,6 +101,28 @@ pub(crate) fn load_dir(dir: &Path) -> Result<(Vec<Theme>, Vec<ThemeLoadError>), 
         }
     }
     Ok((themes, errors))
+}
+
+/// The `*.json` files among a folder's entries, in file-name order. An entry
+/// the listing could not read (a network mount dropping mid-listing) fails
+/// the whole listing: a partial list would install as "these are all the
+/// themes" and drop the rest (#930 review).
+fn json_files(
+    entries: impl Iterator<Item = std::io::Result<PathBuf>>,
+) -> std::io::Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for path in entries {
+        let path = path?;
+        if path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+            && path.is_file()
+        {
+            files.push(path);
+        }
+    }
+    files.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+    Ok(files)
 }
 
 /// Parse and validate one theme file's text into a complete [`Theme`].
@@ -651,5 +665,24 @@ mod tests {
         let error = load_dir(&not_a_dir).expect_err("listing a file fails");
         assert_eq!(error.path, not_a_dir);
         assert!(error.reason.contains("cannot read the themes folder"));
+    }
+
+    /// An entry the listing could not read fails the listing, rather than
+    /// leaving a shorter list that would install as all the themes there
+    /// are (#930 review).
+    #[test]
+    fn an_entry_that_cannot_be_read_fails_the_listing() {
+        let dir = tempfile::tempdir().unwrap();
+        let theme = dir.path().join("a.json");
+        std::fs::write(&theme, "{}").unwrap();
+        let listed = [
+            Ok(theme.clone()),
+            Err(std::io::Error::other("the mount went away")),
+        ];
+        assert!(json_files(listed.into_iter()).is_err());
+        assert_eq!(
+            json_files([Ok(theme.clone())].into_iter()).unwrap(),
+            [theme]
+        );
     }
 }

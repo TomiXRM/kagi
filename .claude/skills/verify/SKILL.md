@@ -570,9 +570,13 @@ The current suite covers:
   "Open Folder…" opens the native dialog, which Tier A does not click.
 - Home's GitHub list and clone (`KAGI_GUI_E2E_ONLY=home_github`,
   `tests/recovery/home_github.rs`, #923 #924 #930 review / ADR-0219): the
-  stand-in `gh` fails on marker files in a state folder. A saved list
+  stand-in `gh` fails on marker files in a state folder and answers
+  `config get user` with `acme` (or `state/user`). A saved list
   (`github_repos_cache.json` beside `settings.json`) is read off the UI
-  thread and stays when the own-list refresh fails (toast names the 502); a
+  thread and shown only for the account it was saved as (`github.com/acme`;
+  one saved as another account is not), and stays when the own-list refresh
+  fails (toast names the 502); after switching the user the shown list is
+  dropped; a
   second Refresh while one runs joins it (`own-calls` counts one read); a
   Refresh keeps the list drawn beside the `home-github-updating` mark; a failed
   `gh api user/orgs` is the `home-github-orgs-failed` row and is not saved

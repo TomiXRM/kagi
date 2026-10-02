@@ -16,7 +16,7 @@
 4. **選択と公開ドキュメント。** 既存の `set_active` / `KagiApp::set_theme` に合流し、`settings.json` には slug の文字列だけを保存する。再起動時の `KAGI_THEME` 優先と既存の `[kagi] theme: … dark=…` 行は維持する。現在の terminal の配色、gpui-component のテーマ橋、`accent_text_on` の可読性補正を自作テーマにも適用する。`docs/themes.md` に最小の継承例・全フィールド例と**実際の呼び出し箇所を調べた**全トークンの用途・値を載せ、README と Settings からリンクする。`Theme` のシリアライズから得たフィールド集合（`syntax.*` を含む）と表の行を比較するテストで追加漏れを防ぐ。
 5. **Settings のフォルダー操作。** Appearance の自作テーマ欄は `themes_dir()` が解決したパスを選択・コピー可能な文字列で示し、「テーマフォルダーを開く」は欠けている空ディレクトリだけを作成してから OS のファイルマネージャー(macOS は `open`、Windows は `explorer`、その他は `xdg-open`)へ渡す。新しい JSON や `settings.json` は書かない。作成・起動に失敗したときはローカライズした bounded toast へ知らせ、I/O は UI thread の外で行う。「テーマを再読み込み」ボタンは command palette と同じ `reload_themes` を呼び、二つ目の再読込経路を作らない。
 6. **再読み込みのスレッドと順序。** `read_custom_themes` は I/O と JSON 解析だけを行い、窓が存在する間の Settings / palette の再読み込みでは `background_spawn` で実行する。完了後に foreground で最新のリクエスト世代だけが registry・menu・Select・terminal / gpui-component の色と toast を一緒に更新し、先に要求された結果は破棄する。起動時だけは窓作成前に同じ読み込み・検証関数を同期実行し、保存済み slug / `KAGI_THEME` を最初の描画前に解決する。起動時の同期処理は開いた窓を止めない。
-7. **列挙できないフォルダーは空ではない。** フォルダーが無いことは「自作テーマなし」だが、権限や一時的な mount 障害でフォルダーを列挙できないことは別の状態として `read_custom_themes` が `Err` を返す。再読み込みはそのとき registry を差し替えず(読み込み済みの自作テーマと選択中のテーマを残す)、理由を bounded toast に出す(#930 review)。
+7. **列挙できないフォルダーは空ではない。** フォルダーが無いことは「自作テーマなし」だが、権限や一時的な mount 障害でフォルダーを列挙できないこと(開けない場合も、列挙の途中で entry が読めない場合も)は別の状態として `read_custom_themes` が `Err` を返す。不完全な一覧を「これで全部」として install しない。再読み込みはそのとき registry を差し替えず(読み込み済みの自作テーマと選択中のテーマを残す)、理由を bounded toast に出す(#930 review)。
 
 ## 却下した案
 

@@ -12,6 +12,9 @@ pub fn note_ja(note: &CloneNote) -> String {
         CloneNote::DestinationNotAbsolute { path } => {
             format!("clone 先 `{path}` が絶対パスではありません。")
         }
+        CloneNote::DestinationNotUtf8 { path } => format!(
+            "clone 先 `{path}` に UTF-8 でない文字が含まれています。UTF-8 の名前の clone 先を選んでください。"
+        ),
         CloneNote::DestinationNotEmpty { path } => format!(
             "`{path}` は既に存在し、空のフォルダーではありません。別の clone 先を選んでください。Kagi は上書きしません。"
         ),

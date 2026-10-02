@@ -12,6 +12,9 @@ pub enum CloneNote {
     SourceInvalid { source: String },
     /// blocker — the destination is not an absolute path.
     DestinationNotAbsolute { path: String },
+    /// blocker — the destination path is not valid UTF-8, so the name Kagi
+    /// shows and records for it would not be the path itself.
+    DestinationNotUtf8 { path: String },
     /// blocker — something already exists at the destination and it is not
     /// an empty folder (a file, a symlink, or a folder with entries). Nothing
     /// is overwritten.
@@ -38,6 +41,10 @@ impl CloneNote {
             CloneNote::DestinationNotAbsolute { path } => {
                 format!("The destination '{path}' is not an absolute path.")
             }
+            CloneNote::DestinationNotUtf8 { path } => format!(
+                "The destination '{path}' contains characters that are not valid UTF-8. \
+                 Choose a destination with a UTF-8 name."
+            ),
             CloneNote::DestinationNotEmpty { path } => format!(
                 "'{path}' already exists and is not an empty folder. Choose another \
                  destination; Kagi does not overwrite it."

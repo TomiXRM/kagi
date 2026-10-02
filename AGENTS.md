@@ -221,6 +221,15 @@ Dependency direction: `kagi(bin)` → `ui`(gpui) + `git`(git2) + `kagi-domain`(p
   Do not routinely clean a worktree target; clean-build benchmarks need an idle
   build window and destroy reusable build artifacts.
 
+## Building UI
+
+Before building or changing any screen, follow
+[`docs/ui/modern-ui.md`](docs/ui/modern-ui.md): name the role and density,
+pick a reference, look for an existing Kagi helper or pinned gpui-component
+part (and its story) before hand-making a control, write the state contract,
+and compare before / reference / after in Tier B. A hand-made interactive
+control says in the PR why the existing part did not fit.
+
 ## Verifying the GUI
 
 **An agent verifies UI changes itself — "not verified in the GUI" is not a finished

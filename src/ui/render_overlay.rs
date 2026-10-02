@@ -192,7 +192,7 @@ impl KagiApp {
             ))
         })
         .when_some(self.clone_modal().cloned(), |el, modal| {
-            el.child(super::home_github::render_clone_modal(
+            el.child(super::home_clone_card::render_clone_modal(
                 modal,
                 self.modal_focus.clone(),
                 cx,
@@ -468,7 +468,7 @@ impl KagiApp {
         })
         // ── Clone card (opened from Home, #923) ──────────
         .when_some(self.clone_modal().cloned(), |el, modal| {
-            el.child(super::home_github::render_clone_modal(
+            el.child(super::home_clone_card::render_clone_modal(
                 modal,
                 modal_focus.clone(),
                 cx,

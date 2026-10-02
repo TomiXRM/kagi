@@ -77,6 +77,7 @@ pub mod graph_wip;
 pub use kagi_ui_core::i18n; // ADR-0121: was a shim file
 pub mod dialog_a11y;
 pub mod home;
+pub mod home_clone_card;
 pub mod home_github;
 pub mod inspector;
 mod inspector_model;

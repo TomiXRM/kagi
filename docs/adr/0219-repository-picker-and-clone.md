@@ -21,3 +21,5 @@
 ## 結果
 
 PR を 3 つに分ける。PR1 = 本 ADR、triple、`gh repo list` の読み取り、integration test。PR2 = 選択画面(最近 / フォルダーを開く / Remote Browse)。PR3 = GitHub 一覧と clone の card / 実行の配線、Tier A(fake `gh` とローカル bare repository)。キャンセル、organization、clone の進捗表示(% 表示)は範囲外。
+
+限界: `preflight_clone` の検査から `gh` が clone 先を作るまでの間に、別のプロセスが clone 先を symlink などへ差し替える並行置換は防がない(TOCTOU)。ユーザー自身の並行操作は前提外とし、#900 と同じ扱いにする(#926 review)。

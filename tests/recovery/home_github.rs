@@ -132,6 +132,29 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
         );
     });
 
+    // The filter spans every owner and drops what does not match.
+    let set_filter = |cx: &mut VisualTestAppContext, text: &'static str| {
+        cx.update_window(window, |_, window, cx| {
+            let input = app
+                .read(cx)
+                .home_github
+                .filter
+                .clone()
+                .expect("Home has a filter");
+            input.update(cx, |state, cx| state.set_value(text, window, cx));
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    set_filter(cx, "TOOL");
+    assert!(
+        drawn(cx, window, "home-gh-acme-org/tool"),
+        "matches across owners, any case"
+    );
+    assert!(!drawn(cx, window, "home-gh-acme/widgets"));
+    set_filter(cx, "");
+    assert!(drawn(cx, window, "home-gh-acme/widgets"));
+
     // An organization's repository is cloned from its own owner.
     click_control(cx, window, "home-gh-acme-org/tool");
     cx.run_until_parked();

@@ -360,7 +360,12 @@ impl KagiApp {
             .gap_3()
             .pt_6()
             .child(header)
-            .children(self.home_github.filter.as_ref().map(search_field))
+            .children(
+                self.home_github
+                    .filter
+                    .as_ref()
+                    .map(|f| search_field(f, query.is_empty())),
+            )
             .child(body)
             .into_any_element()
     }
@@ -450,35 +455,52 @@ impl KagiApp {
 }
 
 /// A large, borderless search field in a soft rounded box with a magnifier
-/// — the search look of current desktop apps, not a form input.
-fn search_field(input: &Entity<InputState>) -> AnyElement {
+/// — the search look of current desktop apps, not a form input. While empty
+/// it shows its own hint (as the sidebar filter does): the input's built-in
+/// placeholder does not draw here. The hint has no listeners, so a click
+/// on it reaches the input underneath.
+fn search_field(input: &Entity<InputState>, empty: bool) -> AnyElement {
     div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_3()
-        .px_4()
-        .py_2()
+        .relative()
+        .w_full()
+        .px_2()
+        .py_1()
         .rounded_xl()
         .bg(rgb(theme().panel))
         .border_1()
         .border_color(rgb(theme().surface))
         .child(
-            Icon::new(IconName::Search)
-                .size(theme::scaled_px(18.))
-                .text_color(rgb(theme().text_muted)),
+            Input::new(input)
+                .appearance(false)
+                .bordered(false)
+                .cleanable(true)
+                .large()
+                .prefix(
+                    Icon::new(IconName::Search)
+                        .size(theme::scaled_px(18.))
+                        .text_color(rgb(theme().text_muted)),
+                ),
         )
-        .child(
-            div().flex_1().min_w(px(0.)).text_lg().child(
-                Input::new(input)
-                    .appearance(false)
-                    .bordered(false)
-                    .cleanable(true)
-                    .large(),
-            ),
-        )
+        .when(empty, |el| {
+            el.child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left(theme::scaled_px(SEARCH_HINT_LEFT))
+                    .flex()
+                    .items_center()
+                    .text_lg()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from(Msg::HomeGithubFilter.t())),
+            )
+        })
         .into_any_element()
 }
+
+/// Where the hint starts: the box's padding, the input's own padding, the
+/// magnifier and the gap after it.
+const SEARCH_HINT_LEFT: f32 = 52.;
 
 fn section_heading(title: &str) -> impl IntoElement {
     div()
@@ -545,6 +567,7 @@ fn github_row(listing: RepoListing, state: &'static str, cx: &mut Context<KagiAp
     });
     div()
         .id(id)
+        .w_full()
         .flex()
         .flex_row()
         .items_center()

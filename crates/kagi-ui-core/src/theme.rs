@@ -388,24 +388,29 @@ pub fn theme_by_slug(slug: &str) -> Option<ThemeHandle> {
     registry().find(slug)
 }
 
-/// Re-read the user theme folder ([`themes_dir`]) and swap in the result.
-///
-/// The active theme keeps its slug when the new generation still has it (as
-/// the new snapshot); a user theme that disappeared or became invalid falls
-/// back to [`THEMES`]`[0]` for this run only — `settings.json` keeps the slug
-/// so fixing the file and restarting restores it. Returns one error per
-/// rejected file.
-pub fn reload_custom_themes() -> Vec<ThemeLoadError> {
-    let (themes, errors) = match themes_dir() {
+/// Re-read the user theme folder ([`themes_dir`]) without changing the active
+/// registry. May perform slow filesystem I/O and JSON parsing; callers with a
+/// live window must run this on a background executor.
+pub fn read_custom_themes() -> (Vec<Theme>, Vec<ThemeLoadError>) {
+    match themes_dir() {
         Some(dir) => crate::theme_custom::load_dir(&dir),
         None => (Vec::new(), Vec::new()),
-    };
+    }
+}
+
+/// Re-read and install user themes synchronously before the first window exists.
+/// The native UI reload uses `read_custom_themes` off-thread and calls
+/// `install_custom_themes` on the foreground after checking its request version.
+pub fn reload_custom_themes() -> Vec<ThemeLoadError> {
+    let (themes, errors) = read_custom_themes();
     install_custom_themes(themes);
     errors
 }
 
 /// Replace the user-theme generation and re-resolve the active theme.
-fn install_custom_themes(themes: Vec<Theme>) {
+/// The selected slug survives a reload if still valid, otherwise it falls back
+/// to the default for this run without rewriting `settings.json`.
+pub fn install_custom_themes(themes: Vec<Theme>) {
     let custom: Vec<ThemeHandle> = themes
         .into_iter()
         .map(|t| {

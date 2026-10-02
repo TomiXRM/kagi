@@ -17,7 +17,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
-- `~/.kagi/themes/*.json` (または `KAGI_LOG_DIR/themes/*.json`) から自作テーマを読み込み、組み込みテーマの色を部分上書きして Settings / メニュー / command palette から選べるようにしました。Settings ではフォルダーのパス表示・作成して開く操作・テーマの再読み込みもできます。形式と各色の用途は [テーマガイド](docs/themes.md) に記載しています。(#922、ADR-0220)
+- `~/.kagi/themes/*.json` (または `KAGI_LOG_DIR/themes/*.json`) から自作テーマを読み込み、組み込みテーマの色を部分上書きして Settings / メニュー / command palette から選べるようにしました。Settings ではフォルダーのパス表示・作成して開く操作・画面を止めないバックグラウンド再読み込みもできます。再読み込みの連打では最後の結果だけ反映します。形式と各色の用途は [テーマガイド](docs/themes.md) に記載しています。(#922、ADR-0220)
 
 ## [0.41.0] - 2026-10-02
 

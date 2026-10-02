@@ -29,7 +29,8 @@ error toast. **Theme file guide** opens this page.
   still overrides the saved choice).
 - After editing files, click **Reload Themes** in Settings → Appearance, or
   run it from the command palette (Japanese UI: 「テーマを再読み込み」).
-  kagi does not watch the folder.
+  Loading and parsing run in the background; only the latest requested reload
+  updates the UI if you click repeatedly. kagi does not watch the folder.
 - Custom themes appear by their `name` in Settings, the command palette and
   View → Theme, sorted together with the built-in themes (case-insensitive,
   by `name`). Picking one saves only its `slug` to `settings.json` (key `theme`),

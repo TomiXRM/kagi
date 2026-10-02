@@ -6,6 +6,7 @@
 //! leaves the others alone; a removed file falls back to the default theme
 //! for the run without rewriting `settings.json`.
 
+use crate::evidence_support::deferred;
 use std::path::PathBuf;
 
 use gpui::{AnyWindowHandle, Entity, SharedString, VisualTestAppContext};
@@ -127,6 +128,18 @@ fn toasts_naming(cx: &mut VisualTestAppContext, kagi: &Entity<KagiApp>, file: &s
             .iter()
             .filter(|toast| toast.message.contains(file))
             .count()
+    })
+}
+
+fn toast_ids(cx: &mut VisualTestAppContext, kagi: &Entity<KagiApp>) -> Vec<u64> {
+    cx.read(|cx| {
+        let stack = kagi.read(cx).toast_stack.clone().expect("toast stack");
+        stack
+            .read(cx)
+            .toasts()
+            .iter()
+            .map(|toast| toast.id)
+            .collect()
     })
 }
 
@@ -319,6 +332,36 @@ pub fn scenario_theme_custom(cx: &mut VisualTestAppContext) {
     assert_eq!(select_shows(cx, &kagi).as_deref(), Some(STANDALONE));
     assert_eq!(toasts_naming(cx, &kagi, BROKEN_FILE), broken_before + 1);
 
+    // A completed older read must never replace the newer edit or issue a
+    // duplicate success/error toast when reload is clicked twice in flight.
+    files.write(
+        "standalone.json",
+        &standalone_theme("tokyo-night", 0x445566),
+    );
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_theme_reload_for_e2e(hold);
+    run_palette(cx, &kagi, window, "Reload Themes");
+    assert_eq!(theme::theme().bg_base, 0x306090, "read not published yet");
+    files.write(
+        "standalone.json",
+        &standalone_theme("tokyo-night", 0x556677),
+    );
+    let reloads_before = toasts_naming(cx, &kagi, "Themes reloaded");
+    run_palette(cx, &kagi, window, "Reload Themes");
+    assert_eq!(theme::theme().bg_base, 0x556677);
+    assert_eq!(gpui_background(cx), expected_background(0x556677));
+    let reloads_after = toasts_naming(cx, &kagi, "Themes reloaded");
+    assert_eq!(reloads_after, reloads_before + 1);
+    let toast_ids_after = toast_ids(cx, &kagi);
+    release.send(());
+    cx.run_until_parked();
+    assert_eq!(theme::theme().bg_base, 0x556677, "stale read published");
+    assert_eq!(gpui_background(cx), expected_background(0x556677));
+    assert_eq!(select_shows(cx, &kagi).as_deref(), Some(STANDALONE));
+    assert!(menu_lists(STANDALONE));
+    assert_eq!(toasts_naming(cx, &kagi, "Themes reloaded"), reloads_after);
+    assert_eq!(toast_ids(cx, &kagi), toast_ids_after, "stale read toasted");
+
     // Removed files: the default theme for this run, the saved slug untouched.
     files.remove_all();
     run_palette(cx, &kagi, window, "Reload Themes");
@@ -425,7 +468,16 @@ pub fn scenario_theme_folder_controls(cx: &mut VisualTestAppContext) {
         folder.to_string_lossy()
     );
     assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 0);
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_theme_reload_for_e2e(hold);
     crate::app_conflict::click_control(cx, window, "settings-custom-themes-reload");
+    cx.run_until_parked();
+    assert_eq!(
+        toasts_naming(cx, &kagi, "Themes reloaded"),
+        0,
+        "Settings reload published before its background read completed"
+    );
+    release.send(());
     cx.run_until_parked();
     assert_eq!(toasts_naming(cx, &kagi, "Themes reloaded"), 1);
     std::fs::remove_dir(&folder).unwrap();

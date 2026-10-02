@@ -62,6 +62,13 @@ pub fn clone_args(request: &CloneRequest) -> Vec<OsString> {
 /// run. Reads the destination on disk; writes nothing.
 pub fn plan_clone(request: &CloneRequest) -> OperationPlan {
     let blockers = clone_blockers(request);
+    // Only for a clone that can run: a blocked plan's paths may not be
+    // faithful (a non-UTF-8 destination renders lossily), and there is
+    // nothing to copy (#926 review).
+    let command = blockers
+        .is_empty()
+        .then(|| equivalent_command(request))
+        .flatten();
     let dest = request.dest.display().to_string();
     let mut warnings = Vec::new();
     if request.is_fork {
@@ -90,7 +97,7 @@ pub fn plan_clone(request: &CloneRequest) -> OperationPlan {
         stash_identity: None,
         worktree_digest: None,
         destructive: false,
-        equivalent_command: equivalent_command(request),
+        equivalent_command: command,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
     }
@@ -128,7 +135,9 @@ pub fn preflight_clone(request: &CloneRequest, plan: &OperationPlan) -> Result<(
     let same_request = plan.title == expected.title
         && plan.current == expected.current
         && plan.predicted == expected.predicted
-        && plan.equivalent_command == expected.equivalent_command
+        // The plan had no blocker (checked above), so it carries the command
+        // for its request; the recomputed plan may be blocked by now.
+        && plan.equivalent_command == equivalent_command(request)
         && plan.warnings == expected.warnings;
     if !same_request {
         return Err(GitError::Blocked(Box::new(PlanNote::Clone(
@@ -405,11 +414,14 @@ fn destination_blocker(dest: &Path) -> Option<CloneNote> {
     }
 }
 
-/// Each part a plain name: nothing `gh` could read as a flag or a path.
+/// Each part a plain name: nothing `gh` could read as a flag, and not `.` or
+/// `..`, which a path would read as a directory step. A leading dot is
+/// otherwise a real repository name (`.github`, `.dotfiles`).
 fn names_ok(names: &[&str]) -> bool {
     names.iter().all(|name| {
         !name.is_empty()
-            && !name.starts_with(['-', '.'])
+            && !name.starts_with('-')
+            && !matches!(*name, "." | "..")
             && name
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
@@ -450,6 +462,8 @@ mod tests {
         for ok in [
             "github.com/acme/widgets",
             "github.com/acme/widgets.rs",
+            "github.com/acme/.github",
+            "github.com/acme/.dotfiles",
             "ghe.example.com:8443/acme/my_repo",
         ] {
             assert!(source_is_valid(ok), "{ok}");
@@ -461,12 +475,31 @@ mod tests {
             "-host/acme/widgets",
             "github.com/acme/--upload-pack=x",
             "github.com/acme/../widgets",
+            "github.com/acme/..",
+            "github.com/acme/.",
+            "github.com/../widgets",
             "a/b/c/d",
             "github.com/acme/wid gets",
-            "github.com/acme/.hidden",
         ] {
             assert!(!source_is_valid(bad), "{bad}");
         }
+    }
+
+    /// A blocked plan offers no command to copy: its destination may only be
+    /// shown lossily (a non-UTF-8 name), so the command would name another
+    /// folder.
+    #[cfg(unix)]
+    #[test]
+    fn a_blocked_plan_shows_no_command() {
+        use std::os::unix::ffi::OsStrExt;
+        let request = CloneRequest {
+            source: "github.com/acme/widgets".to_string(),
+            dest: PathBuf::from(std::ffi::OsStr::from_bytes(b"/tmp/caf\xe9")),
+            is_fork: false,
+        };
+        let plan = plan_clone(&request);
+        assert!(!plan.blockers.is_empty());
+        assert_eq!(plan.equivalent_command, None);
     }
 
     /// `gh` would clone a host-less source from `GH_HOST`, which the plan and
@@ -498,14 +531,20 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn the_shown_command_quotes_a_destination_with_spaces_and_quotes() {
+        let root = tempfile::tempdir().unwrap();
+        let parent = root.path().join("My Projects");
+        std::fs::create_dir(&parent).unwrap();
         let request = CloneRequest {
             source: "github.com/acme/widgets".to_string(),
-            dest: PathBuf::from("/Users/me/My Projects/it's here"),
+            dest: parent.join("it's here"),
             is_fork: false,
         };
         assert_eq!(
-            plan_clone(&request).equivalent_command.as_deref(),
-            Some(r"gh repo clone 'github.com/acme/widgets' '/Users/me/My Projects/it'\''s here'")
+            plan_clone(&request).equivalent_command,
+            Some(format!(
+                r"gh repo clone 'github.com/acme/widgets' '{}/My Projects/it'\''s here'",
+                root.path().display()
+            ))
         );
     }
 

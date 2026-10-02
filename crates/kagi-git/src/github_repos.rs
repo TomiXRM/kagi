@@ -74,11 +74,11 @@ pub fn list_org_logins(workdir: &Path) -> Result<Vec<String>, String> {
 /// user configured for `gh`'s default host (`GH_HOST`, else `github.com`),
 /// which `gh auth switch` changes. A local read (`gh config get`), so it
 /// does not wait on the network. `None` when a token in the environment
-/// (`GH_TOKEN`, `GITHUB_TOKEN`) overrides the configured user — whose owner
-/// cannot be named without asking GitHub — or no user is configured.
+/// overrides the configured user ([`TOKEN_OVERRIDES`]) — whose owner cannot
+/// be named without asking GitHub — or no user is configured.
 pub fn active_account(workdir: &Path) -> Option<String> {
     let set = |key: &str| std::env::var_os(key).filter(|v| !v.is_empty());
-    if set("GH_TOKEN").is_some() || set("GITHUB_TOKEN").is_some() {
+    if token_overrides(|key| set(key).is_some()) {
         return None;
     }
     let host = set("GH_HOST")
@@ -88,6 +88,22 @@ pub fn active_account(workdir: &Path) -> Option<String> {
     let login = crate::github_edit::read_gh(workdir, &args, "config user").ok()?;
     let login = login.trim();
     (!login.is_empty()).then(|| format!("{host}/{login}").to_ascii_lowercase())
+}
+
+/// The environment tokens `gh` authenticates with instead of the configured
+/// user (`gh help environment`): `GH_TOKEN` / `GITHUB_TOKEN` for github.com
+/// and `GH_ENTERPRISE_TOKEN` / `GITHUB_ENTERPRISE_TOKEN` for an Enterprise
+/// Server host.
+pub const TOKEN_OVERRIDES: [&str; 4] = [
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_ENTERPRISE_TOKEN",
+    "GITHUB_ENTERPRISE_TOKEN",
+];
+
+/// Whether any of [`TOKEN_OVERRIDES`] is set, by `is_set`. Pure.
+fn token_overrides(is_set: impl Fn(&str) -> bool) -> bool {
+    TOKEN_OVERRIDES.iter().any(|key| is_set(key))
 }
 
 /// How many `gh repo list` reads run at once for the organizations.
@@ -232,6 +248,22 @@ mod tests {
         assert_eq!(list.repos[0].updated_at, "2026-10-01T00:00:00Z");
         assert_eq!(list.repos[1].clone_source(), "ghe.example.com/acme/ghe");
         assert!(!list.repos[1].is_private);
+    }
+
+    /// Any token `gh` would authenticate with instead of the configured
+    /// user — the Enterprise ones included — leaves the account unnamed, so
+    /// no saved list is shown or written for it (#930 review).
+    #[test]
+    fn every_environment_token_overrides_the_configured_user() {
+        for token in [
+            "GH_TOKEN",
+            "GITHUB_TOKEN",
+            "GH_ENTERPRISE_TOKEN",
+            "GITHUB_ENTERPRISE_TOKEN",
+        ] {
+            assert!(token_overrides(|key| key == token), "{token}");
+        }
+        assert!(!token_overrides(|key| key == "GH_HOST"));
     }
 
     /// As many entries as the limit: more may exist, and the picker says so.

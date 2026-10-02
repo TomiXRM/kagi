@@ -123,7 +123,9 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
     let _gh = OfflineGh::with_script(&gh_script(&bare, &state));
     // The account is the configured `gh` user only while no token in the
     // environment overrides it: run without one, as a fresh shell would.
-    let _env = EnvCleared::new(&["GH_TOKEN", "GITHUB_TOKEN", "GH_HOST"]);
+    let mut cleared = kagi_git::github_repos::TOKEN_OVERRIDES.to_vec();
+    cleared.push("GH_HOST");
+    let _env = EnvCleared::new(&cleared);
     let own_reads =
         || std::fs::read_to_string(state.join("own-calls")).map_or(0, |s| s.lines().count());
     let mark = |name: &str| std::fs::write(state.join(name), "").unwrap();

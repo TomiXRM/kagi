@@ -220,6 +220,9 @@ impl Backend {
             {
                 return Err(io("remove-worktree target changed after plan"));
             }
+            // The re-plan above checks blockers, not the ignored counts that
+            // were shown at confirmation. Refuse growth before trust or steps.
+            ops::preflight_remove_ignored_content(&backend.repo, &plan.preview, &plan.name)?;
             if fault == Some(RemoveFaultPoint::PanicBeforeMutation) {
                 panic!("injected before mutation");
             }

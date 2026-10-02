@@ -104,6 +104,9 @@ pub enum WorktreeNote {
         files: usize,
         folders: usize,
     },
+    /// blocker — ignored content increased after the Remove confirmation;
+    /// deletion must wait for a new plan and explicit confirmation.
+    RemoveIgnoredContentChanged,
     /// warning (`plan_lock_worktree`) — describes the lock about to be placed.
     LocksWorktree {
         path: String,
@@ -298,6 +301,9 @@ impl WorktreeNote {
                 crate::advice_template_en!(WorktreeRemoveIgnoredFilesAndFolders),
                 path, files, folders
             ),
+            WorktreeNote::RemoveIgnoredContentChanged => {
+                "Ignored content grew. Review and confirm again.".to_string()
+            }
             WorktreeNote::RemovesWorktree {
                 path,
                 branch,

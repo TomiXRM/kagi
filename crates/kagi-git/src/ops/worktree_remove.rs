@@ -96,23 +96,21 @@ pub fn plan_remove_worktree(
     admin_plan(repo, title, warnings, blockers, recovery, true)
 }
 
-/// issue #934: the ignored content Git reports in the linked worktree — what
-/// removal deletes with no backup (the executor only backs up tracked and
-/// untracked changes). A read-only status walk of that worktree alone; the
-/// index is not refreshed. Git reports a wholly ignored directory as one entry
-/// without descending into it, so `node_modules/` stays one `folders` count and
-/// its contents are not walked; symlinks are entries, never followed. `None`
-/// when nothing is ignored, or when the worktree cannot be read — the dirt check
-/// above treats that as clean too, so no reliable count exists to show.
-fn ignored_content_note(wt: &git2::Worktree, path: &str) -> Option<PlanNote> {
-    let wt_repo = Repository::open_from_worktree(wt).ok()?;
+/// A read-only status walk of the linked worktree's ignored content. Git
+/// reports an ignored directory as one entry without descending into it;
+/// symlinks are entries, never followed. Fail closed at execution time.
+fn ignored_content_counts(wt: &git2::Worktree) -> Result<(usize, usize), GitError> {
+    let wt_repo = Repository::open_from_worktree(wt)
+        .map_err(|e| GitError::Other(format!("cannot inspect ignored worktree content: {e}")))?;
     let mut opts = git2::StatusOptions::new();
     opts.include_ignored(true)
         .recurse_ignored_dirs(false)
         .include_untracked(true)
         .recurse_untracked_dirs(true)
         .exclude_submodules(true);
-    let statuses = wt_repo.statuses(Some(&mut opts)).ok()?;
+    let statuses = wt_repo
+        .statuses(Some(&mut opts))
+        .map_err(|e| GitError::Other(format!("cannot inspect ignored worktree content: {e}")))?;
     let (mut files, mut folders) = (0, 0);
     for entry in statuses.iter().filter(|entry| entry.status().is_ignored()) {
         if entry.path_bytes().ends_with(b"/") {
@@ -121,6 +119,50 @@ fn ignored_content_note(wt: &git2::Worktree, path: &str) -> Option<PlanNote> {
             files += 1;
         }
     }
+    Ok((files, folders))
+}
+
+/// The confirmed plan carries the counts in its warning, including zero when
+/// it has no ignored-content warning. Re-plan blockers alone do not preserve
+/// what the user saw (#936).
+fn ensure_ignored_content_not_increased(
+    wt: &git2::Worktree,
+    plan: &OperationPlan,
+) -> Result<(), GitError> {
+    let approved = plan
+        .warnings
+        .iter()
+        .find_map(|note| match note {
+            PlanNote::Worktree(WorktreeNote::RemoveIgnoredFiles { files, folders, .. }) => {
+                Some((*files, *folders))
+            }
+            _ => None,
+        })
+        .unwrap_or((0, 0));
+    let current = ignored_content_counts(wt)?;
+    if current.0 > approved.0 || current.1 > approved.1 {
+        return Err(GitError::Blocked(Box::new(PlanNote::Worktree(
+            WorktreeNote::RemoveIgnoredContentChanged,
+        ))));
+    }
+    Ok(())
+}
+
+/// Refuse new unreviewed ignored content before trust or pre_remove steps run.
+pub(crate) fn preflight_remove_ignored_content(
+    repo: &Repository,
+    plan: &OperationPlan,
+    name: &str,
+) -> Result<(), GitError> {
+    let wt = repo
+        .find_worktree(name)
+        .map_err(|e| GitError::Other(format!("cannot inspect worktree ignored content: {e}")))?;
+    ensure_ignored_content_not_increased(&wt, plan)
+}
+
+/// The warning shown when the worktree could be read during planning.
+fn ignored_content_note(wt: &git2::Worktree, path: &str) -> Option<PlanNote> {
+    let (files, folders) = ignored_content_counts(wt).ok()?;
     (files + folders > 0).then(|| {
         PlanNote::Worktree(WorktreeNote::RemoveIgnoredFiles {
             path: path.to_string(),
@@ -265,6 +307,11 @@ pub(crate) fn execute_remove_worktree_progress(
     if fault == Some(Fault::FailAfterBackupBeforeDelete) {
         return partial("injected failure after backup".into());
     }
+
+    // `pre_remove` may create ignored output without changing the dirty
+    // blocker. Nothing below may delete the tree until that output is compared
+    // with the counts the user actually confirmed.
+    ensure_ignored_content_not_increased(&wt, plan)?;
 
     // Containment-checked recursive delete (the ONLY sanctioned one).
     progress.stage = Stage::DeletionStarted;

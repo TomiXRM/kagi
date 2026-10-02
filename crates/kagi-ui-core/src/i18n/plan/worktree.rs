@@ -149,6 +149,9 @@ pub fn note_ja(note: &WorktreeNote) -> String {
             Msg::AdviceWorktreeRemoveIgnoredFilesAndFolders,
             &[files, folders, path],
         ),
+        WorktreeNote::RemoveIgnoredContentChanged => {
+            "ignored が増えました。計画を再確認してください。".to_string()
+        }
         WorktreeNote::RemovesWorktree {
             path,
             branch,

@@ -1,4 +1,5 @@
 //! #523: actual Git GC, persisted receipts and explicit recovery retirement.
+use kagi_domain::plan_note::{PlanNote, WorktreeNote};
 use kagi_domain::remove::RemoveFaultPoint;
 use kagi_git::backend::{recording::Recording, Backend};
 use kagi_git::oplog::{
@@ -243,6 +244,171 @@ fn remove_success_partial_and_unknown_keep_persisted_refs_after_gc() {
             bytes
         );
     }
+}
+
+#[test]
+fn remove_refuses_ignored_content_added_after_confirmation() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new();
+    std::fs::write(f.repo.join(".gitignore"), b"secret*\n").unwrap();
+    git(&f.repo, &["add", ".gitignore"]);
+    git(&f.repo, &["commit", "-qm", "ignore removal contents"]);
+    let linked = f.repo.parent().unwrap().join("linked");
+    git(
+        &f.repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            linked.to_str().unwrap(),
+        ],
+    );
+    std::fs::write(linked.join("secret-first"), b"reviewed").unwrap();
+    let plan = Backend::plan_recorded_remove(&f.repo, "linked", true).unwrap();
+    assert!(plan.preview.blockers.is_empty());
+    std::fs::write(linked.join("secret-second"), b"added after confirmation").unwrap();
+
+    let report = Backend::run_recorded_remove(&plan, Actor::Human, None);
+    let OpOutcome::Refused { blockers } = &report.recording.entry().outcome else {
+        panic!(
+            "new ignored file must refuse removal: {:?}",
+            report.recording.entry()
+        );
+    };
+    assert!(
+        blockers
+            .iter()
+            .any(|reason| reason.contains("confirm again")),
+        "refusal must request a new confirmation: {blockers:?}"
+    );
+    assert!(report.blocker.is_some(), "UI needs the short typed refusal");
+    assert!(linked.join("secret-first").exists());
+    assert_eq!(
+        std::fs::read(linked.join("secret-second")).unwrap(),
+        b"added after confirmation"
+    );
+    let persisted = read_oplog_tail(1).pop().expect("durable refusal");
+    let OpOutcome::Refused { blockers } = &persisted.outcome else {
+        panic!("the oplog must record the refusal: {persisted:?}");
+    };
+    assert!(blockers
+        .iter()
+        .any(|reason| reason.contains("confirm again")));
+    assert!(git2::Repository::open(&f.repo)
+        .unwrap()
+        .find_branch("linked", git2::BranchType::Local)
+        .is_ok());
+}
+
+#[test]
+fn remove_refuses_new_ignored_folder_even_when_total_count_is_unchanged() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new();
+    std::fs::write(f.repo.join(".gitignore"), b"secret*\ntarget/\ncache/\n").unwrap();
+    git(&f.repo, &["add", ".gitignore"]);
+    git(&f.repo, &["commit", "-qm", "ignore directories"]);
+    let linked = f.repo.parent().unwrap().join("linked");
+    git(
+        &f.repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            linked.to_str().unwrap(),
+        ],
+    );
+    std::fs::write(linked.join("secret-first"), b"reviewed").unwrap();
+    std::fs::create_dir(linked.join("target")).unwrap();
+    std::fs::write(linked.join("target/one"), b"reviewed").unwrap();
+    let plan = Backend::plan_recorded_remove(&f.repo, "linked", false).unwrap();
+    assert!(plan.preview.warnings.iter().any(|note| matches!(
+        note,
+        PlanNote::Worktree(WorktreeNote::RemoveIgnoredFiles {
+            files: 1,
+            folders: 1,
+            ..
+        })
+    )));
+
+    std::fs::remove_file(linked.join("secret-first")).unwrap();
+    std::fs::create_dir(linked.join("cache")).unwrap();
+    std::fs::write(linked.join("cache/new"), b"unreviewed").unwrap();
+    let report = Backend::run_recorded_remove(&plan, Actor::Human, None);
+    assert!(
+        matches!(report.recording.entry().outcome, OpOutcome::Refused { .. }),
+        "new folder must be refused even with the same total count: {:?}",
+        report.recording.entry()
+    );
+    assert_eq!(
+        std::fs::read(linked.join("cache/new")).unwrap(),
+        b"unreviewed"
+    );
+    assert!(linked.join("target/one").exists());
+}
+
+#[test]
+fn remove_refuses_ignored_content_created_by_pre_remove_step() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new();
+    std::fs::create_dir(f.repo.join(".kagi")).unwrap();
+    std::fs::write(
+        f.repo.join(".kagi/worktree.toml"),
+        "[[pre_remove]]\ntype='copy'\nfrom='secret'\nto='secret'\n",
+    )
+    .unwrap();
+    git(&f.repo, &["add", ".kagi"]);
+    git(
+        &f.repo,
+        &["commit", "-qm", "pre remove creates ignored file"],
+    );
+    std::fs::write(f.repo.join("secret"), b"new ignored bytes").unwrap();
+    let linked = f.repo.parent().unwrap().join("linked");
+    git(
+        &f.repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            linked.to_str().unwrap(),
+        ],
+    );
+    let plan = Backend::plan_recorded_remove(&f.repo, "linked", true).unwrap();
+    assert!(plan.preview.blockers.is_empty());
+
+    let report = Backend::run_recorded_remove(&plan, Actor::Human, None);
+    let OpOutcome::Partial { error, .. } = &report.recording.entry().outcome else {
+        panic!(
+            "pre-remove change must stop before deletion: {:?}",
+            report.recording.entry()
+        );
+    };
+    assert!(error.contains("confirm again"), "{error}");
+    assert!(report.blocker.is_some(), "UI needs the short typed refusal");
+    assert_eq!(
+        std::fs::read(linked.join("secret")).unwrap(),
+        b"new ignored bytes"
+    );
+    let persisted = read_oplog_tail(1).pop().expect("durable partial receipt");
+    let OpOutcome::Partial { error, .. } = &persisted.outcome else {
+        panic!("the oplog must record the post-step refusal: {persisted:?}");
+    };
+    assert!(error.contains("confirm again"), "{error}");
+    assert!(git2::Repository::open(&f.repo)
+        .unwrap()
+        .find_branch("linked", git2::BranchType::Local)
+        .is_ok());
 }
 
 #[test]

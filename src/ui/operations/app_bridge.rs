@@ -1,6 +1,7 @@
 //! Sole runtime adapter for the first application family.
 use crate::app::{self, Approved, Delivery};
 use crate::ui::*;
+use kagi_domain::plan_note::{PlanNote, WorktreeNote};
 
 fn log_stash_event(
     event: kagi_git::backend::stash::StashEvent,
@@ -418,7 +419,15 @@ impl KagiApp {
                         format!("remove-worktree: result unknown — {}", evidence)
                     }
                 };
-                let text = if matches!(entry.outcome, OpOutcome::Refused { .. }) {
+                let growth_note = report.blocker.as_ref().filter(|note| {
+                    matches!(
+                        note,
+                        PlanNote::Worktree(WorktreeNote::RemoveIgnoredContentChanged)
+                    )
+                });
+                let text = if let Some(note) = growth_note {
+                    i18n::plan_note_text(note)
+                } else if matches!(entry.outcome, OpOutcome::Refused { .. }) {
                     report.blocker.as_ref().map_or_else(
                         || footer.clone(),
                         |blocker| format!("{}: {}", entry.repo, i18n::plan_note_text(blocker)),
@@ -446,7 +455,8 @@ impl KagiApp {
                         cx.notify();
                     });
                 }
-                if report.blocker.is_some()
+                if growth_note.is_none()
+                    && report.blocker.is_some()
                     && matches!(report.recording.entry().outcome, OpOutcome::Refused { .. })
                 {
                     self.app_notices.push_back(text.clone().into());

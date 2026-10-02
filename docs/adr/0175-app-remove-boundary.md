@@ -196,8 +196,16 @@ need a capacity scan just to populate a hidden row.
   ignored files and top-level ignored folders. A wholly ignored directory is
   one folder, not a recursive file count. These items are not in the
   uncommitted-content backup; the warning belongs to the confirmation plan,
-  not to the hover observation. Plan, preflight, executor and no-force refusal
-  semantics otherwise remain unchanged. SSH worktree paths never enter this
+  not to the hover observation. The confirmed warning carries the approved
+  `(files, folders)` (or `(0, 0)` when absent). Preflight re-observes both counts
+  before trust or `pre_remove` steps, and the executor re-observes again after
+  those steps and backup, immediately before directory deletion. An increase
+  in either category refuses removal and requests a fresh confirmation; an
+  unreadable status also refuses deletion. The post-step refusal is a partial
+  receipt because those steps may have changed files, but the worktree and
+  branch are kept. Counts do not attest to new files *inside* an already
+  ignored folder: that folder is deliberately treated as one entry. No-force
+  and lock semantics stay unchanged. SSH worktree paths never enter this
   local observer.
 
 Pure verdict tests and filesystem/Git fixtures cover evidence precedence,

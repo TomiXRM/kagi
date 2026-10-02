@@ -76,6 +76,7 @@ pub mod graph_view;
 pub mod graph_wip;
 pub use kagi_ui_core::i18n; // ADR-0121: was a shim file
 pub mod dialog_a11y;
+pub mod home;
 pub mod inspector;
 mod inspector_model;
 pub mod list_a11y;
@@ -113,7 +114,6 @@ mod render_helpers;
 mod render_overlay;
 mod render_status;
 mod render_wip;
-pub mod repo_picker;
 mod sidebar_a11y;
 pub use kagi_ui_core::settings; // ADR-0121: was a shim file
 mod overlay_focus;
@@ -1023,6 +1023,8 @@ pub struct KagiApp {
     /// guards itself off automatically; this marker drives the read-only UI and
     /// keeps the workspace (not the welcome screen) visible with no local tab.
     pub remote_view: Option<RemoteRepoView>,
+    /// The Home tab (#923, ADR-0219): at most one, owning no session.
+    pub home: Option<home::HomeTab>,
     /// Focus handle used to receive keyboard events for the create-branch modal.
     /// Allocated on demand when the modal is first opened.
     pub modal_focus: Option<FocusHandle>,
@@ -1352,6 +1354,7 @@ impl KagiApp {
             pending_headless_compare: None,
             active_modal: None,
             remote_view: None,
+            home: None,
             modal_focus: None,
             stash_push_focus: None,
             status_footer: FooterStatus::Idle(SharedString::from("Ready")),
@@ -2885,8 +2888,6 @@ impl KagiApp {
         match modal {
             M::AppNotice(_) => self.confirm_app_notice(cx),
             M::RemoteBrowse(_) => self.confirm_remote_browse(cx),
-            // Nothing to confirm: a row, a button or Esc decides.
-            M::RepoPicker(_) => {}
             M::Update(_) => {}
             M::SmartCommit(smart_commit::SmartCommitModal::Consent) => {
                 self.confirm_smart_consent(cx)
@@ -2978,7 +2979,6 @@ impl KagiApp {
         match modal {
             M::AppNotice(_) => self.cancel_app_notice(),
             M::RemoteBrowse(_) => self.cancel_remote_browse(),
-            M::RepoPicker(_) => self.cancel_repo_picker(),
             M::Update(_) => self.cancel_update_modal(),
             M::SmartCommit(_) => self.clear_smart_commit_modal(),
             M::Checkout(_) => self.cancel_modal(),

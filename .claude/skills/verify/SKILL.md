@@ -550,14 +550,16 @@ The current suite covers:
   linked worktree → Lock, edit the reason → Review → inspect the plan, then
   Cancel or confirm. No tab-strip click or foreground activation is required.
   Automatic terminal locking is not part of this change; it is tracked in #772.
-- repository picker (`KAGI_GUI_E2E_ONLY=repo_picker`, `tests/recovery/repo_picker.rs`,
-  #923 / ADR-0219): the tab strip's `+` (`tab-add`) and New Tab (⌘T) open the
-  window-global picker; a recent row opens a new tab, an already open one is
-  switched to (no duplicate), Esc closes it, "Connect to SSH remote…" hands the
-  slot to Remote Browse, and the Welcome screen (no tabs, reached by ⌘T) renders
-  and routes the same picker. `recent_repos` is restored by `SavedKeys`. For
-  Tier B press ⌘T (no foreground needed) or click `+` (needs a key window — ask
-  first); "Open Folder…" opens the native dialog, which Tier A does not click.
+- Home tab (`KAGI_GUI_E2E_ONLY=home_tab,welcome_startup_renders,close_last_tab_welcome_renders`,
+  `tests/recovery/home_tab.rs`, #923 / ADR-0219): the tab strip's `+` (`tab-add`)
+  and New Tab (⌘T) put Home in front (repo commands off, ⌘W closes Home only); a
+  recent row (`home-recent-N`) turns Home into that repository's tab, an already
+  open one is switched to (no duplicate); clicking a repository tab
+  (`repo-tab-N`) only moves Home to the back and its tab (`home-tab`) brings it
+  back; "Connect to SSH remote…" opens Remote Browse over Home; with no tab Home
+  is the whole window. `recent_repos` is restored by `SavedKeys`. For Tier B
+  press ⌘T (no foreground needed) or click `+` (needs a key window — ask first);
+  "Open Folder…" opens the native dialog, which Tier A does not click.
 - modal-slot arbitration (`KAGI_GUI_E2E_ONLY=push_failure_keeps_modal,merge_plan_latch,delete_branch_plan_latch,remote_browse_modal_routing`): a push failure lands behind Remote Browse without losing its input and reaches the Failed footer, an Error toast and one durable receipt — no dismiss-only AppNotice, queued or shown after Remote Browse closes (the #747 contract; #824 bisected the stale notice expectation to `e5644c6f`). Delayed Merge/Delete Branch plans wait behind Remote Browse without losing its input, stale plan state, latches, footers, or notices; a reopened Remote Browse rejects an older in-place completion by generation;
 - unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.
 - toolbar centre actions (Pull…Terminal) drawn only in Graph, not PRs/Editor/Analyze

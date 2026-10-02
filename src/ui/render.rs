@@ -260,12 +260,12 @@ impl Render for KagiApp {
             );
         }
 
-        // W4-TABS / ADR-0028: no open tabs → Welcome screen. A remote read-only
-        // view (ADR-0089 Phase 2b) has no local tab but still renders the
-        // workspace from its applied snapshot.
-        if self.tabs.is_empty() && self.remote_view.is_none() {
-            let welcome = self.render_welcome(window, cx).into_any();
-            return self.platform_window_shell(welcome, cx);
+        // W4-TABS / ADR-0219: Home — in front of the tabs, or the whole window
+        // when none is open. A remote read-only view (ADR-0089 Phase 2b) has no
+        // local tab but still renders the workspace from its applied snapshot.
+        if self.home_in_front() {
+            let home = self.render_home(window, cx);
+            return self.platform_window_shell(home, cx);
         }
 
         // ADR-0089 Phase 2c: in a remote view, lazily load the selected commit's

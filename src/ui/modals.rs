@@ -655,8 +655,6 @@ impl From<String> for AppNotice {
 }
 pub enum ActiveModal {
     RemoteBrowse(super::remote_browse::RemoteBrowseModal),
-    /// The repository picker behind the tab strip's `+` (#923).
-    RepoPicker(super::repo_picker::RepoPickerModal),
     Update(UpdateModal),
     SmartCommit(super::smart_commit::SmartCommitModal),
     AppNotice(AppNotice),
@@ -713,7 +711,7 @@ impl ActiveModal {
     pub fn is_repo_scoped(&self) -> bool {
         use ActiveModal as M;
         match self {
-            M::AppNotice(_) | M::RemoteBrowse(_) | M::RepoPicker(_) | M::Update(_) => false,
+            M::AppNotice(_) | M::RemoteBrowse(_) | M::Update(_) => false,
             M::SmartCommit(_)
             | M::Checkout(_)
             | M::Pull(_)

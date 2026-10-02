@@ -769,8 +769,9 @@ pub fn command(id: &str) -> Option<&'static Command> {
 pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
     use CommandState::{Disabled, Enabled};
 
-    // Whether a repository is open (a tab is active).  Welcome = no repo.
-    let has_repo = !app.tabs.is_empty() && app.repo_path.is_some();
+    // Whether a repository is on screen (a tab is active and Home is not in
+    // front of it, ADR-0219). Home = no repo.
+    let has_repo = !app.tabs.is_empty() && app.repo_path.is_some() && !app.home_in_front();
     // A background git op is running → block state-changing git commands.
     let busy = app.op_latched();
     // A commit row is currently selected.
@@ -822,7 +823,7 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
 
         // ── Repo required ────────────────────────────────────────────────
         "file.closeTab" => {
-            if has_repo {
+            if has_repo || (app.home.is_some() && app.home_in_front()) {
                 Enabled
             } else {
                 Disabled(Msg::NoTabsOpen.t())
@@ -1566,11 +1567,13 @@ impl KagiApp {
             }
 
             // ── File ────────────────────────────────────────────────
-            // New Tab is the tab strip's `+`: the repository picker (#923).
-            "file.newTab" => self.open_repo_picker(cx),
+            // New Tab is the tab strip's `+`: the Home tab (#923).
+            "file.newTab" => self.open_home_tab(window, cx),
             "file.openRepository" => self.pick_repository(window, cx),
             "file.closeTab" => {
-                if !self.tabs.is_empty() {
+                if self.home.is_some() && self.home_in_front() {
+                    self.close_home_tab(cx);
+                } else if !self.tabs.is_empty() {
                     self.close_tab(self.active_tab, cx);
                 }
             }

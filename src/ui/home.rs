@@ -1,0 +1,261 @@
+//! The Home tab (#923, ADR-0219 decision 1): Kagi's dashboard, opened by the
+//! tab strip's `+` and New Tab (⌘T), and shown instead of an empty window
+//! when no repository tab is open.
+//!
+//! Home is not a [`super::tabs::RepoTab`]: it owns no session, worktree or
+//! read model, so nothing keyed by `SessionId` has to know it exists. There is
+//! at most one. While it is in front the repository behind it is not on
+//! screen, so its repo-scoped modals close as on any tab switch and every
+//! repository command is disabled (`commands::command_state`).
+//!
+//! Opening a repository while Home is in front — from Home itself, the folder
+//! dialog or anywhere else — turns Home into that repository's tab; clicking
+//! another tab only moves Home to the back, like a browser's new-tab page.
+
+use std::path::PathBuf;
+
+use gpui::{div, prelude::*, px, rgb, AnyElement, Context, SharedString, Window};
+use gpui_component::button::{Button, ButtonVariants as _};
+
+use super::i18n::Msg;
+use super::render_helpers::safe_text;
+use super::theme::{self, theme};
+use super::KagiApp;
+
+/// The Home tab in the strip.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HomeTab {
+    /// In front of the repository tabs (otherwise it waits in the strip).
+    pub front: bool,
+}
+
+const SIDEBAR_W: f32 = 300.;
+const MAIN_MAX_W: f32 = 720.;
+
+impl KagiApp {
+    /// Does the window show Home? Always when no tab is open (except the
+    /// read-only remote view, which has no tab but a workspace).
+    pub fn home_in_front(&self) -> bool {
+        if self.tabs.is_empty() {
+            self.remote_view.is_none()
+        } else {
+            self.home.is_some_and(|home| home.front)
+        }
+    }
+
+    /// `+` / New Tab: open the Home tab, or bring it to the front.
+    pub fn open_home_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tabs.is_empty() {
+            // Home is already the whole window — except in the remote view,
+            // which has no strip to come back to: there New Tab keeps its old
+            // meaning, the folder dialog.
+            if self.remote_view.is_some() {
+                self.pick_repository(window, cx);
+            }
+            return;
+        }
+        if !self.home_in_front() {
+            self.close_window_slots_of_departing_tab();
+        }
+        self.home = Some(HomeTab { front: true });
+        if let Some(root) = self.root_focus.clone() {
+            window.focus(&root, cx);
+        }
+        klog!("home: front tabs={}", self.tabs.len());
+        cx.notify();
+    }
+
+    /// The Home tab's ×. With no repository tab, Home stays the window.
+    pub fn close_home_tab(&mut self, cx: &mut Context<Self>) {
+        self.home = None;
+        klog!("home: closed");
+        cx.notify();
+    }
+
+    /// A repository tab was clicked: Home (if open) waits in the strip.
+    pub(crate) fn send_home_back(&mut self) {
+        if let Some(home) = self.home.as_mut() {
+            home.front = false;
+        }
+    }
+
+    /// A repository is being opened (or switched to) as a tab: if Home was in
+    /// front, it becomes that tab.
+    pub(crate) fn home_yields_to_repository(&mut self) {
+        if self.home.is_some_and(|home| home.front) {
+            self.home = None;
+        }
+    }
+
+    /// The Home body: the tab strip (when tabs exist), a sidebar of recently
+    /// opened repositories and the main column. Window-global modals and the
+    /// menu commands are attached here because this path returns before the
+    /// workspace compositor.
+    pub fn render_home(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let body = div()
+            .flex()
+            .flex_row()
+            .flex_1()
+            .min_h(px(0.))
+            .child(self.render_home_sidebar(cx))
+            .child(self.render_home_main(cx));
+        let home = div()
+            .id("home")
+            .flex()
+            .flex_col()
+            .size_full()
+            .font_family(super::UI_FONT)
+            .bg(rgb(theme().bg_base))
+            .when_some(self.root_focus.clone(), |el, fh| el.track_focus(&fh))
+            .children(self.render_tab_strip(cx))
+            .child(body);
+        let home = self.register_menu_actions(div().size_full().child(home), cx);
+        let content = self
+            .attach_welcome_window_modals(home, window, cx)
+            .into_any();
+        self.attach_active_modal_key_routing(content, false, cx)
+    }
+
+    fn render_home_sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let recent = super::tabs::recent_repos();
+        let mut list = div().flex().flex_col().gap_1();
+        if recent.is_empty() {
+            list = list.child(
+                div()
+                    .px_2()
+                    .text_sm()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from(Msg::HomeNoRecent.t())),
+            );
+        }
+        for (i, path) in recent.into_iter().enumerate() {
+            list = list.child(super::e2e::measure_control(
+                format!("home-recent-{i}"),
+                recent_row(i, path, cx),
+            ));
+        }
+        div()
+            .id("home-sidebar")
+            .flex()
+            .flex_col()
+            .gap_2()
+            .w(theme::scaled_px(SIDEBAR_W))
+            .flex_shrink_0()
+            .h_full()
+            .p_3()
+            .bg(rgb(theme().panel))
+            .border_r_1()
+            .border_color(rgb(theme().surface))
+            .overflow_y_scroll()
+            .child(
+                div()
+                    .px_2()
+                    .text_xs()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from(Msg::HomeRecent.t())),
+            )
+            .child(list)
+            .into_any_element()
+    }
+
+    fn render_home_main(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let open_folder = cx.listener(|app, _: &gpui::ClickEvent, window, cx| {
+            app.pick_repository(window, cx);
+        });
+        let remote = cx.listener(|app, _: &gpui::ClickEvent, _, cx| {
+            app.open_remote_browse(cx);
+        });
+        let actions = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .child(super::e2e::measure_control(
+                "home-open-folder",
+                Button::new("home-open-folder")
+                    .primary()
+                    .label(Msg::HomeOpenFolder.t())
+                    .on_click(open_folder),
+            ))
+            .child(super::e2e::measure_control(
+                "home-remote",
+                Button::new("home-remote")
+                    .outline()
+                    .label(Msg::HomeConnectRemote.t())
+                    .on_click(remote),
+            ));
+        div()
+            .id("home-main")
+            .flex_1()
+            .min_w(px(0.))
+            .h_full()
+            .overflow_y_scroll()
+            // Most of Home is empty surface: let it drag the window, as the
+            // Welcome screen did (the themed title bar has no OS drag area
+            // when no tab strip is drawn). Controls keep their own clicks.
+            .window_control_area(gpui::WindowControlArea::Drag)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .mx_auto()
+                    .w_full()
+                    .max_w(theme::scaled_px(MAIN_MAX_W))
+                    .px_6()
+                    .pt(theme::scaled_px(48.))
+                    .child(
+                        div()
+                            .text_2xl()
+                            .text_color(rgb(theme().text_main))
+                            .child(SharedString::from(Msg::HomeTitle.t())),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(theme().text_muted))
+                            .child(SharedString::from(Msg::HomeSubtitle.t())),
+                    )
+                    .child(actions),
+            )
+            .into_any_element()
+    }
+}
+
+/// One recently opened repository: its name over its path. Opening it turns
+/// Home into its tab (or switches to the tab it already has).
+fn recent_row(i: usize, path: PathBuf, cx: &mut Context<KagiApp>) -> impl IntoElement {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    let full = path.display().to_string();
+    let open = cx.listener(move |app, _: &gpui::ClickEvent, _, cx| {
+        app.open_repository(path.clone(), cx);
+        cx.notify();
+    });
+    div()
+        .id(("home-recent", i))
+        .flex()
+        .flex_col()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .cursor(gpui::CursorStyle::PointingHand)
+        .hover(|s| s.bg(rgb(theme().surface)))
+        .on_click(open)
+        .child(
+            div()
+                .text_sm()
+                .text_color(rgb(theme().text_main))
+                .truncate()
+                .child(SharedString::from(name)),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(rgb(theme().text_muted))
+                .truncate()
+                .child(safe_text(&full)),
+        )
+}

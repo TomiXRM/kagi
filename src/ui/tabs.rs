@@ -91,6 +91,7 @@ impl KagiApp {
                         .map(|c| c == path)
                         .unwrap_or(false))
         }) {
+            self.home_yields_to_repository();
             self.switch_repo(idx, cx);
             return true;
         }
@@ -117,6 +118,7 @@ impl KagiApp {
         // see that, so switch to that tab rather than opening a second one.
         let session = self.attach_session(path.clone());
         if let Some(idx) = self.tabs.iter().position(|t| t.session == session) {
+            self.home_yields_to_repository();
             self.switch_repo(idx, cx);
             return true;
         }
@@ -131,6 +133,7 @@ impl KagiApp {
         };
         self.tabs.push(tab);
         let new_idx = self.tabs.len() - 1;
+        self.home_yields_to_repository();
         self.switch_repo(new_idx, cx);
         true
     }
@@ -350,6 +353,7 @@ impl KagiApp {
                 self.tabs.len() - 1
             }
         };
+        self.home_yields_to_repository();
         self.active_tab = idx;
         self.remote_view = Some(rv);
         self.publish_tab_view(self.tabs[idx].session, view);
@@ -835,9 +839,11 @@ impl KagiApp {
             // left for the traffic lights drawn over it.
             .window_control_area(gpui::WindowControlArea::Drag)
             .when(cfg!(target_os = "macos"), |s| s.pl(gpui::px(80.)));
+        // With Home in front no repository tab is the selected one (ADR-0219).
+        let home_front = self.home_in_front();
 
         for (i, tab) in tabs.into_iter().enumerate() {
-            let is_active = i == active;
+            let is_active = i == active && !home_front;
             let is_wt = tab.is_worktree;
             // Match the tab colour to the worktree's WIP-row lane colour.
             let wt_color = is_wt.then(|| theme().lane_color(tab.wt_color_idx.unwrap_or(0)));
@@ -865,8 +871,13 @@ impl KagiApp {
                 tab.name.clone()
             });
 
+            // A repository tab click moves Home (if open) to the back; on the
+            // tab already behind it, `switch_repo` is a no-op (#488), so the
+            // notify is what brings the repository back on screen.
             let switch = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
+                this.send_home_back();
                 this.switch_repo(i, cx);
+                cx.notify();
             });
             let close = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
                 this.close_tab(i, cx);
@@ -903,6 +914,7 @@ impl KagiApp {
                 .text_color(rgb(fg))
                 .border_r_1()
                 .border_color(rgb(theme().panel))
+                .child(super::e2e::measure_inside(format!("repo-tab-{i}")))
                 // Top accent as an ABSOLUTE overlay bar (not `border_t_2`): no
                 // layout shift on selection, and an even full-width line with no
                 // corner miter against `border_r_1` (cf. `render_helpers.rs`).
@@ -921,171 +933,88 @@ impl KagiApp {
             strip = strip.child(tab_el);
         }
 
-        // [+] new-tab button at the right end → the repository picker
-        // (recent repositories, the folder dialog, Remote Browse; #923).
-        let plus = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
-            this.open_repo_picker(cx);
+        // The Home tab (ADR-0219), after the repositories.
+        if let Some(home) = self.home {
+            strip = strip.child(render_home_tab(home.front, cx));
+        }
+
+        // [+] new-tab button at the right end → the Home tab (#923).
+        let plus = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
+            this.open_home_tab(window, cx);
         });
         let plus_btn = Button::new("tab-add")
             .label("+")
             .ghost()
             .small()
-            .tooltip(Msg::RepoPickerTitle.t())
+            .tooltip(Msg::HomeTabTitle.t())
             .on_click(plus);
 
         strip = strip.child(super::e2e::measure_control("tab-add", plus_btn));
 
         Some(strip.into_any())
     }
+}
 
-    /// Render the Welcome screen shown when no tab is open (ADR-0028).
-    /// Centred "Open Repository…" button + description.
-    pub fn render_welcome(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
-        let open_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
-            this.pick_repository(window, cx);
-        });
-        let remote_click = cx.listener(|this, _: &gpui::ClickEvent, _w, cx| {
-            this.open_remote_browse(cx);
-        });
-
-        // Primary action: open a local repository (filled accent button).
-        let open_button = div()
-            .id("welcome-open")
-            .px_4()
-            .py_2()
-            .rounded_md()
-            .bg(rgb(theme().selected))
-            .text_color(rgb(theme().text_main))
-            .text_lg()
-            .hover(|s| {
-                s.bg(rgb(theme().color_branch))
-                    .text_color(rgb(theme().bg_base))
-            })
-            .cursor(gpui::CursorStyle::PointingHand)
-            .child(SharedString::from("Open Repository\u{2026}"))
-            .on_click(open_click);
-
-        // Secondary action: connect to a repository over SSH (reuses the
-        // existing remote-browse modal — the same flow as file.connectRemote).
-        let remote_button = div()
-            .id("welcome-remote")
-            .px_4()
-            .py_2()
-            .rounded_md()
-            .border_1()
-            .border_color(rgb(theme().selected))
-            .text_color(rgb(theme().text_main))
-            .text_lg()
-            .hover(|s| s.bg(rgb(theme().surface)))
-            .cursor(gpui::CursorStyle::PointingHand)
-            .child(SharedString::from("Connect to SSH remote\u{2026}"))
-            .on_click(remote_click);
-
-        let buttons = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_3()
-            .child(open_button)
-            .child(remote_button);
-
-        // Recently-opened repositories (most-recent first; missing paths drop).
-        let recent = recent_repos();
-        let recent_section = (!recent.is_empty()).then(|| {
-            let mut list = div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .w(px(420.))
-                .max_w(px(420.))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(theme().text_muted))
-                        .pb_1()
-                        .child(SharedString::from("Recent")),
-                );
-            for path in recent.into_iter().take(8) {
-                let name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| path.to_string_lossy().into_owned());
-                let dir = path.to_string_lossy().into_owned();
-                let p = path.clone();
-                let click = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
-                    this.open_repository(p.clone(), cx);
-                });
-                list = list.child(
-                    div()
-                        .id(SharedString::from(format!("recent-{dir}")))
-                        .flex()
-                        .flex_col()
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .cursor(gpui::CursorStyle::PointingHand)
-                        .hover(|s| s.bg(rgb(theme().surface)))
-                        .on_click(click)
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(rgb(theme().text_main))
-                                .child(SharedString::from(name)),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(rgb(theme().text_muted))
-                                .truncate()
-                                .child(SharedString::from(dir)),
-                        ),
-                );
-            }
-            list
-        });
-
-        let welcome = div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .gap_4()
-            .size_full()
-            .font_family(super::UI_FONT)
-            .bg(rgb(theme().bg_base))
-            .when_some(self.root_focus.clone(), |el, fh| el.track_focus(&fh))
-            // Themed transparent title bar leaves no OS drag area, so let the
-            // (otherwise empty) welcome surface drag the window; the buttons'
-            // own clicks still take precedence.
-            .window_control_area(gpui::WindowControlArea::Drag)
-            .child(
+/// The Home tab's entry in the strip: shaped like a repository tab, with a
+/// house glyph and its own ×.
+fn render_home_tab(front: bool, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let show = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
+        this.open_home_tab(window, cx);
+    });
+    let close = cx.listener(|this, _: &gpui::ClickEvent, _w, cx| {
+        this.close_home_tab(cx);
+    });
+    let close_btn = Button::new("home-tab-close")
+        .label("\u{00d7}") // ×
+        .ghost()
+        .xsmall()
+        .ml(theme::scaled_px(4.))
+        .on_click(close);
+    let (bg, fg) = if front {
+        (theme().selected, theme().text_main)
+    } else {
+        (theme().surface, theme().text_sub)
+    };
+    div()
+        .id("home-tab")
+        .relative()
+        .flex()
+        .flex_row()
+        .items_center()
+        .h_full()
+        .min_w(theme::scaled_px(TAB_MIN_W))
+        .max_w(theme::scaled_px(TAB_MAX_W))
+        .px_2()
+        .gap_1()
+        .bg(rgb(bg))
+        .text_sm()
+        .text_color(rgb(fg))
+        .border_r_1()
+        .border_color(rgb(theme().panel))
+        .child(super::e2e::measure_inside("home-tab"))
+        .when(front, |el| {
+            el.child(
                 div()
-                    .text_2xl()
-                    .text_color(rgb(theme().text_main))
-                    .child(SharedString::from("kagi")),
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .h(px(2.))
+                    .bg(rgb(theme().color_branch)),
             )
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(Msg::NoRepositoryOpenWelcome.t())),
-            )
-            .child(buttons)
-            .when_some(recent_section, |el, list| el.child(list));
-
-        let content = self
-            .attach_welcome_window_modals(welcome, window, cx)
-            .into_any();
-        self.attach_active_modal_key_routing(content, false, cx)
-    }
+        })
+        .cursor(gpui::CursorStyle::PointingHand)
+        .on_click(show)
+        .child(div().flex_1().truncate().child(SharedString::from(format!(
+            "\u{2302} {}",
+            Msg::HomeTabTitle.t()
+        ))))
+        .child(close_btn)
+        .into_any_element()
 }
 
 // ──────────────────────────────────────────────────────────────
-// Recent repositories (Welcome screen)
+// Recent repositories (Home)
 // ──────────────────────────────────────────────────────────────
 
 /// settings.json key holding the recent-repo list (`\u{1f}`-separated paths,

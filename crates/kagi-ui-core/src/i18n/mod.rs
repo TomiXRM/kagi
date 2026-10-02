@@ -624,11 +624,13 @@ pub enum Msg {
     IssueComposeEmpty,
     IssueTitleOptional,
     IssueCreate,
-    RepoPickerTitle,
-    RepoPickerRecent,
-    RepoPickerNoRecent,
-    RepoPickerOpenFolder,
-    RepoPickerConnectRemote,
+    HomeTabTitle,
+    HomeTitle,
+    HomeSubtitle,
+    HomeRecent,
+    HomeNoRecent,
+    HomeOpenFolder,
+    HomeConnectRemote,
     IssuePostedAs,
     IssueNewFieldsTitle,
     IssueReply,
@@ -738,8 +740,6 @@ pub enum Msg {
     Template,
     /// Footer idle status.
     Ready,
-    /// Welcome screen help line.
-    NoRepositoryOpenWelcome,
     /// Branch menu Sync item when no upstream is configured.
     NoUpstreamSet,
 
@@ -2481,16 +2481,24 @@ impl Msg {
             (Ja, IssueTitleOptional) => "タイトル（省略時は本文の先頭行）",
             (En, IssueCreate) => "Create",
             (Ja, IssueCreate) => "作成",
-            (En, RepoPickerTitle) => "Open a repository",
-            (Ja, RepoPickerTitle) => "リポジトリを開く",
-            (En, RepoPickerRecent) => "Recently opened",
-            (Ja, RepoPickerRecent) => "最近開いたリポジトリ",
-            (En, RepoPickerNoRecent) => "No recently opened repositories.",
-            (Ja, RepoPickerNoRecent) => "最近開いたリポジトリはありません。",
-            (En, RepoPickerOpenFolder) => "Open Folder…",
-            (Ja, RepoPickerOpenFolder) => "フォルダーを開く…",
-            (En, RepoPickerConnectRemote) => "Connect to SSH remote…",
-            (Ja, RepoPickerConnectRemote) => "SSH リモートに接続…",
+            (En, HomeTabTitle) => "Home",
+            (Ja, HomeTabTitle) => "ホーム",
+            (En, HomeTitle) => "Open a repository",
+            (Ja, HomeTitle) => "リポジトリを開く",
+            (En, HomeSubtitle) => {
+                "Pick one you opened recently, open a folder, or connect to one over SSH."
+            }
+            (Ja, HomeSubtitle) => {
+                "最近開いたリポジトリを選ぶか、フォルダーを開くか、SSH で接続します。"
+            }
+            (En, HomeRecent) => "Recently opened",
+            (Ja, HomeRecent) => "最近開いたリポジトリ",
+            (En, HomeNoRecent) => "No recently opened repositories.",
+            (Ja, HomeNoRecent) => "最近開いたリポジトリはありません。",
+            (En, HomeOpenFolder) => "Open Folder…",
+            (Ja, HomeOpenFolder) => "フォルダーを開く…",
+            (En, HomeConnectRemote) => "Connect to SSH remote…",
+            (Ja, HomeConnectRemote) => "SSH リモートに接続…",
             (En, IssuePostedAs) => "Posted as {}",
             (Ja, IssuePostedAs) => "{} として投稿",
             (En, IssueNewFieldsTitle) => "New issue",
@@ -2668,12 +2676,6 @@ impl Msg {
             (Ja, Trailers) => "トレーラー",
             (En, Ready) => "Ready",
             (Ja, Ready) => "準備完了",
-            (En, NoRepositoryOpenWelcome) => {
-                "No repository open. Choose a directory to get started."
-            }
-            (Ja, NoRepositoryOpenWelcome) => {
-                "リポジトリが開かれていません。ディレクトリを選んで始めましょう。"
-            }
             (En, NoUpstreamSet) => "No upstream set",
             (Ja, NoUpstreamSet) => "upstream が設定されていません",
 

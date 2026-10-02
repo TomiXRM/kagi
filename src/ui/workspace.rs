@@ -37,6 +37,7 @@
 //! entity-backed panes onto slot resolution. ADR-0197 S5 moves their lifetime
 //! into `TabUiState`; this registry renders but never disposes them on a switch.
 
+use gpui::prelude::FluentBuilder as _;
 use gpui::{div, px, AnyElement, Context, IntoElement, ParentElement, SharedString, Styled};
 use std::sync::Arc;
 
@@ -80,6 +81,7 @@ pub trait WorkspaceItem {
         &self,
         app: &mut KagiApp,
         layout: &WorkspaceLayout,
+        panel: Option<AnyElement>,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement>;
 }
@@ -104,6 +106,7 @@ impl WorkspaceItem for FileHistoryItem {
         &self,
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
+        _panel: Option<AnyElement>,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         let ev = app.ui().file_history.clone()?;
@@ -142,6 +145,7 @@ impl WorkspaceItem for EcosystemItem {
         &self,
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
+        _panel: Option<AnyElement>,
         _cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         let eco = app.ui().ecosystem.clone()?;
@@ -168,9 +172,10 @@ impl WorkspaceItem for PrModeItem {
         &self,
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
+        panel: Option<AnyElement>,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
-        Some(super::pr_mode::render_pr_mode(app, cx))
+        Some(super::pr_mode::render_pr_mode(app, panel, cx))
     }
 }
 
@@ -192,9 +197,10 @@ impl WorkspaceItem for IssuesModeItem {
         &self,
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
+        panel: Option<AnyElement>,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
-        Some(super::issues_mode::render_issues_mode(app, cx))
+        Some(super::issues_mode::render_issues_mode(app, panel, cx))
     }
 }
 
@@ -218,6 +224,7 @@ impl WorkspaceItem for BranchCleanupItem {
         &self,
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
+        _panel: Option<AnyElement>,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         Some(
@@ -256,10 +263,13 @@ impl WorkspaceItem for EditorWorkspaceItem {
     // (T-WS-EDITOR-005 finding #3): the sidebar toggle's `LeftPane::Hidden`
     // still needs to hide the *in-entity* tree pane, which the outside can't
     // reach into.
+    // The host supplies the panel to the Editor entity's center slot during
+    // layout; tree and hunks remain full-height without re-entering KagiApp.
     fn render(
         &self,
         app: &mut KagiApp,
         layout: &WorkspaceLayout,
+        panel: Option<AnyElement>,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         let ev = app.ui().editor_workspace.clone()?;
@@ -279,7 +289,12 @@ impl WorkspaceItem for EditorWorkspaceItem {
                 .flex_1()
                 .min_w(px(0.))
                 .h_full()
-                .child(ev)
+                .child(super::editor_workspace::EditorWorkspaceElement::new(
+                    ev, panel,
+                ))
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    el.child(super::e2e::measure_inside("editor-workspace-slot"))
+                })
                 .into_any_element(),
         )
     }
@@ -309,6 +324,7 @@ impl WorkspaceItem for MainDiffItem {
         &self,
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
+        _panel: Option<AnyElement>,
         _cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         Some(app.ui().main_diff.clone()?.into_any_element())
@@ -359,6 +375,7 @@ impl WorkspaceItem for CommitPanelItem {
         &self,
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
+        _panel: Option<AnyElement>,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         let entity = app.ui().commit_panel.clone()?;
@@ -481,6 +498,7 @@ impl WorkspaceItem for InspectorItem {
         &self,
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
+        _panel: Option<AnyElement>,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         // Changed files + diffstat for the selected commit (vs parent). A cache
@@ -512,6 +530,7 @@ impl WorkspaceItem for CompareItem {
         &self,
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
+        _panel: Option<AnyElement>,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         // No per-file diffstat — W16-DIFFSTAT keeps compare out of scope.

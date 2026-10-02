@@ -66,6 +66,10 @@ mod recovery_operations;
 mod recovery_sidebar_panes;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/bottom_panel.rs"]
+mod recovery_bottom_panel;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/hunk_staging.rs"]
 mod hunk_staging;
 
@@ -281,8 +285,9 @@ mod macos {
     use std::rc::Rc;
 
     use gpui::{
-        point, px, size, AnyWindowHandle, App, Bounds, Entity, Pixels, Render, Size,
-        VisualTestAppContext, Window as GpuiWindow, WindowBounds, WindowHandle, WindowOptions,
+        point, px, size, AnyWindowHandle, App, Bounds, Entity, Modifiers, MouseButton, Pixels,
+        Render, Size, VisualTestAppContext, Window as GpuiWindow, WindowBounds, WindowHandle,
+        WindowOptions,
     };
     use kagi::graph::{EdgeKind, GraphEdge};
     use kagi::ui::{
@@ -1576,6 +1581,10 @@ mod macos {
                 Box::new(crate::issues_pagination::scenario_issues_pagination),
             ),
             ("bottom_panel", Box::new(scenario_bottom_panel)),
+            (
+                "bottom_panel_nested",
+                Box::new(crate::recovery_bottom_panel::scenario_bottom_panel_nested),
+            ),
             ("graph_copy", Box::new(scenario_graph_copy)),
             (
                 "diff_survives_reload",
@@ -1697,15 +1706,72 @@ mod macos {
         0
     }
 
-    /// PoC scenario (ADR-0166): cmd-j keystroke + `ToggleBottomPanel` action flip
-    /// and restore `bottom_panel_open`; the repo is untouched (read-only proof).
+    fn assert_center_bottom_panel(window: AnyWindowHandle) -> Bounds<Pixels> {
+        let bounds = |name| {
+            e2e::control_bounds(window.window_id(), name)
+                .unwrap_or_else(|| panic!("{name} not painted"))
+        };
+        let panel = bounds("bottom-panel");
+        let sidebar = bounds("worktree-sidebar");
+        let center = bounds("commit-list-viewport");
+        let right = bounds("divider-panel");
+        let near = |a: f32, b: f32| (a - b).abs() <= 2.;
+        let panel_left = f32::from(panel.origin.x);
+        let panel_right = panel_left + f32::from(panel.size.width);
+        let panel_bottom = f32::from(panel.origin.y + panel.size.height);
+        let sidebar_right = f32::from(sidebar.origin.x + sidebar.size.width);
+        let sidebar_bottom = f32::from(sidebar.origin.y + sidebar.size.height);
+        let right_bottom = f32::from(right.origin.y + right.size.height);
+        assert!(
+            panel_left >= sidebar_right,
+            "panel overlaps sidebar: {panel:?} {sidebar:?}"
+        );
+        assert!(
+            near(panel_left, f32::from(center.origin.x)),
+            "panel not aligned with center"
+        );
+        assert!(
+            near(panel_right, f32::from(right.origin.x)),
+            "panel extends under inspector"
+        );
+        assert!(
+            near(panel_bottom, sidebar_bottom),
+            "sidebar stops above panel bottom"
+        );
+        assert!(
+            near(panel_bottom, right_bottom),
+            "inspector stops above panel bottom"
+        );
+        assert!(
+            f32::from(center.origin.y + center.size.height) <= f32::from(panel.origin.y) + 2.,
+            "center content overlaps panel"
+        );
+        panel
+    }
+
+    /// Native layout and interactions: the bottom panel occupies the center
+    /// column only; Cmd-J, the action, and resizing keep that geometry.
     fn scenario_bottom_panel(cx: &mut VisualTestAppContext) {
         let fixture = build_fixture();
         let repo_path = fixture.path().canonicalize().unwrap();
         let before_fp = repo_fingerprint(&repo_path);
         let (kagi, win) = mount(cx, &repo_path);
-
+        kagi.update(cx, |app, cx| {
+            app.ui_mut().expect("active session").selected = Some(0);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let redraw = |cx: &mut VisualTestAppContext| {
+            cx.update_window(win, |_, window, cx| {
+                window.refresh();
+                window.draw(cx).clear();
+            })
+            .expect("draw panel layout");
+        };
+        redraw(cx);
         let initial = cx.read(|app| kagi.read(app).bottom_panel_open);
+        assert!(initial, "the default Terminal panel must be visible");
+        let initial_panel = assert_center_bottom_panel(win);
         capture_screenshot_best_effort(cx, win, "before");
 
         cx.simulate_keystrokes(win, "cmd-j"); // keyboard → ToggleBottomPanel
@@ -1715,12 +1781,36 @@ mod macos {
             "cmd-j keystroke should toggle bottom_panel_open ({initial} -> {})",
             !initial
         );
+        redraw(cx);
+        e2e::clear_control_bounds(win.window_id(), "bottom-panel");
+        redraw(cx);
+        assert!(
+            e2e::control_bounds(win.window_id(), "bottom-panel").is_none(),
+            "closed panel should not be drawn"
+        );
 
         cx.dispatch_action(win, ToggleBottomPanel); // registered action path
         let after_action = cx.read(|app| kagi.read(app).bottom_panel_open);
         assert_eq!(
             after_action, initial,
             "ToggleBottomPanel action should restore bottom_panel_open to {initial}"
+        );
+        redraw(cx);
+        let panel = assert_center_bottom_panel(win);
+        let pointer = point(panel.origin.x + px(100.), panel.origin.y + px(2.));
+        cx.simulate_mouse_move(win, pointer, None, Modifiers::none());
+        cx.simulate_mouse_down(win, pointer, MouseButton::Left, Modifiers::none());
+        let first = point(pointer.x, pointer.y - px(12.));
+        cx.simulate_mouse_move(win, first, MouseButton::Left, Modifiers::none());
+        let moved = point(pointer.x, pointer.y - px(48.));
+        cx.simulate_mouse_move(win, moved, MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_up(win, moved, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+        redraw(cx);
+        let resized = assert_center_bottom_panel(win);
+        assert!(
+            f32::from(resized.size.height) > f32::from(initial_panel.size.height) + 30.,
+            "dragging the center-only panel divider should enlarge it"
         );
 
         capture_screenshot_best_effort(cx, win, "after");

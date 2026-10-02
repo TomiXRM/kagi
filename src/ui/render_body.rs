@@ -43,10 +43,10 @@ impl KagiApp {
             + commit_index
     }
 
-    /// Body slot — the main content area: sidebar | divider | commit list | optional panel.
+    /// Body slot: sidebar | (center above bottom panel) | optional right panel.
     ///
-    /// All parameters are pre-cloned values from `render`; no additional
-    /// state access is performed inside this method.
+    /// The bottom panel belongs to the center column, leaving navigation and
+    /// the inspector at their full body height.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn render_body(
         &mut self,
@@ -517,9 +517,8 @@ impl KagiApp {
             .flex()
             .flex_row()
             .flex_1()
-            // min_h(0) — NOT h_full: the body must be able to shrink below its
-            // natural content height, otherwise it pushes the bottom panel and
-            // status bar out of the window on small window sizes (user report).
+            // Only the center column gives up height to the bottom panel;
+            // the body and both side panes still reach the status bar.
             .min_h(px(0.))
             // ── Left slot (W5-MENU: hidden when toggled off) ──
             .when(layout.left == workspace::LeftPane::Navigator, |el| {
@@ -542,29 +541,62 @@ impl KagiApp {
         // precedence is unchanged — it stays in `resolve_workspace`. The
         // non-entity contents (Loading placeholder / CommitList) keep plain
         // arms until B2 migrates them.
-        body_row = match workspace::center_item(layout.center) {
-            Some(item) => match item.render(self, &layout, cx) {
-                Some(el) => body_row.child(el),
-                // Gate raced closed between resolve and render: the Editor and
-                // Diff arms' pre-existing fallback is the commit list, the
-                // takeovers' is an empty center.
+        let panel_open = self.bottom_panel_open;
+        let panel_height = self.bottom_panel_height;
+        let panel_tab = self.bottom_tab;
+        let mut bottom_panel = self
+            .render_bottom_panel_slot(panel_open, panel_height, panel_tab, cx)
+            .map(|panel| panel.into_any_element());
+        // These takeovers render their own side panes. Their actual center
+        // consumes the panel; only the other modes place it in the outer row.
+        let nested = matches!(
+            layout.center,
+            workspace::CenterPane::Editor
+                | workspace::CenterPane::PrMode
+                | workspace::CenterPane::IssuesMode
+        );
+        let center_content = div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w(px(0.))
+            .min_h(px(0.))
+            .overflow_hidden();
+        let center_content = match workspace::center_item(layout.center) {
+            Some(item) => match item.render(
+                self,
+                &layout,
+                if nested { bottom_panel.take() } else { None },
+                cx,
+            ) {
+                Some(el) => center_content.child(el),
+                // If a gate races closed, Editor/Diff fall back to the commit
+                // list while takeover panes keep their empty center.
                 None if matches!(
                     layout.center,
                     workspace::CenterPane::Editor | workspace::CenterPane::Diff
                 ) =>
                 {
-                    body_row.child(commit_list_col)
+                    center_content.child(commit_list_col)
                 }
-                None => body_row,
+                None => center_content,
             },
             None => match layout.center {
-                // W6-TABSPEED loading placeholder.
-                workspace::CenterPane::Loading => body_row.child(render_loading_placeholder(
+                workspace::CenterPane::Loading => center_content.child(render_loading_placeholder(
                     self.loading_tab().unwrap_or_default(),
                 )),
-                _ => body_row.child(commit_list_col),
+                _ => center_content.child(commit_list_col),
             },
         };
+        let center_column = div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w(px(0.))
+            .min_h(px(0.))
+            .child(center_content)
+            .children(bottom_panel);
+        body_row = body_row.child(center_column);
 
         // ── Right slot: commit panel OR inspector (ADR-0120) ─────
         // Build divider 2 (shared between both panel modes).
@@ -573,6 +605,10 @@ impl KagiApp {
             .w(theme::scaled_px(4.))
             .flex_shrink_0()
             .h_full()
+            .relative()
+            .when(cfg!(feature = "gui-e2e"), |divider| {
+                divider.child(e2e::measure_inside("divider-panel"))
+            })
             .bg(rgb(theme().surface))
             .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
             .cursor_col_resize()
@@ -593,8 +629,8 @@ impl KagiApp {
         // so no divider and no panel — same as the old no-op arms. A `None`
         // render (gate raced closed between resolve and render) also renders
         // nothing, exactly as the old per-field arms did.
-        if let Some(el) =
-            workspace::right_item(layout.right).and_then(|item| item.render(self, &layout, cx))
+        if let Some(el) = workspace::right_item(layout.right)
+            .and_then(|item| item.render(self, &layout, None, cx))
         {
             body_row = body_row.child(divider2).child(el);
         }

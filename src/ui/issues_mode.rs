@@ -744,7 +744,14 @@ fn render_center(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
 }
 
 /// Render the sidebar navigator and Composer/Thread main workspace.
-pub fn render_issues_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
+///
+/// `panel` is the window's bottom panel. It sits under the main workspace
+/// only, so the navigator keeps the full body height.
+pub fn render_issues_mode(
+    app: &mut KagiApp,
+    panel: Option<AnyElement>,
+    cx: &mut Context<KagiApp>,
+) -> AnyElement {
     app.ensure_issue_avatars(cx);
     let left = super::e2e::measure_control(
         "issue-mode-left-pane",
@@ -755,6 +762,18 @@ pub fn render_issues_mode(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> AnyEl
         ),
     );
     let center = render_center(app, cx);
+    let center = match panel {
+        None => center,
+        Some(panel) => div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w(px(0.))
+            .min_h(px(0.))
+            .child(center)
+            .child(panel)
+            .into_any_element(),
+    };
     div()
         .id("issue-mode-layout")
         .flex()

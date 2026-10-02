@@ -29,3 +29,24 @@ Git 操作のログ・terminal・将来の Problems 等を表示する、出し�
   スクリーンショット比較で回帰確認する
 - Operation Log の二重管理(ファイル + メモリ)は許容(ファイルは永続監査、メモリは表示用)
 - Terminal タブの中身は ADR-0008 に従う
+
+## Placement revision (2026-10-02)
+
+Decision 1's window-wide Bottom Panel slot is superseded. The shell now lays
+out `Sidebar | (Center workspace above Bottom Panel) | Right Panel`, with the
+Status Bar still spanning the whole window. Terminal, Operation Log, and
+Activity remain the same Bottom Panel tabs and retain their window-global
+open/tab/height state, 18% default, top-edge resize, Cmd-J, and footer entry
+points. Only the center workspace loses height when the panel opens; navigation
+and the inspector/commit panel run to the status bar. The inspector's fallback
+split geometry subtracts only the status bar, while File History (a center
+takeover) still subtracts the Bottom Panel. Conflict Mode continues to replace
+the body and hide the Bottom Panel until resolution.
+
+Editor / PR / Issues はそれぞれ内側に左右ペインを持つため、外側の center
+takeover 全体の下に Bottom Panel を置かない。PR / Issues は navigator（PR
+では swimlane も）を全高のままにして中央列の下だけへ置く。Editor では
+file tree / hunks を全高に保ち、`EditorWorkspaceElement` が親 `KagiApp` の
+panel element を uncached な Editor entity の layout 中に渡す。Editor から
+`KagiApp` への再入はせず、子 entity の更新でも親から新しい panel を描画する。
+Editor entity を `.cached(...)` に変更するとこの受け渡しが失われるため行わない。

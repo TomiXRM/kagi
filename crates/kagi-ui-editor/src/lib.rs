@@ -23,10 +23,13 @@
 //! header toolbar button.
 
 mod blame;
+mod bottom_panel;
 pub mod markdown;
 mod panes;
 mod save_binding;
 mod watcher;
+
+pub use bottom_panel::EditorWorkspaceElement;
 
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
@@ -530,6 +533,10 @@ pub struct EditorWorkspaceView {
     /// Rendered-mermaid cache: `editor_markdown::mermaid_key` → PNG state.
     /// Keyed by content+theme so re-previews and tab switches reuse renders.
     pub mermaid: HashMap<u64, crate::markdown::MermaidState>,
+    /// The host's bottom panel for the frame being laid out. Written only by
+    /// [`EditorWorkspaceElement`] immediately before it lays out this entity,
+    /// then taken by `render` — never held across frames.
+    pub(crate) bottom_panel: Option<AnyElement>,
 }
 
 impl EditorWorkspaceView {
@@ -592,6 +599,7 @@ impl EditorWorkspaceView {
             blame_loading: false,
             preview_markdown: false,
             mermaid: HashMap::new(),
+            bottom_panel: None,
         }
     }
 
@@ -2200,7 +2208,8 @@ impl Render for EditorWorkspaceView {
         if self.preview_markdown {
             self.ensure_preview_mermaids(cx);
         }
-        render_editor_workspace(self, window, cx)
+        let bottom_panel = self.bottom_panel.take();
+        render_editor_workspace(self, bottom_panel, window, cx)
     }
 }
 
@@ -2211,9 +2220,11 @@ impl Render for EditorWorkspaceView {
 /// Render the whole Editor workspace: header + left file tree + center code
 /// viewer + right hunks. Returns the body fragment `render_body` drops in
 /// place of the normal sidebar+center+right area (see the `CenterPane::Editor`
-/// arm in `render_body.rs`).
+/// arm in `render_body.rs`). The host's `bottom_panel` sits under the center
+/// code viewer only; the tree and hunks panes keep the full body height.
 fn render_editor_workspace(
     view: &EditorWorkspaceView,
+    bottom_panel: Option<AnyElement>,
     window: &mut Window,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
@@ -2317,7 +2328,16 @@ fn render_editor_workspace(
         .when(view.show_tree, |el| {
             el.child(render_tree_pane(view, cx)).child(tree_divider)
         })
-        .child(render_center_pane(view, window, cx))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w(px(0.))
+                .min_h(px(0.))
+                .child(render_center_pane(view, window, cx))
+                .children(bottom_panel),
+        )
         .child(hunks_divider)
         .child(render_hunks_pane(view, cx));
 
@@ -2837,7 +2857,7 @@ fn render_center_pane(
     let mut pane = div()
         .flex_1()
         .min_w(px(0.))
-        .h_full()
+        .min_h(px(0.))
         .flex()
         .flex_col()
         .bg(rgb(theme().bg_base));

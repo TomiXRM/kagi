@@ -1169,6 +1169,10 @@ mod macos {
                 Box::new(crate::overlay_focus::scenario_settings_close_returns_focus),
             ),
             (
+                "settings_scroll_stays_in_overlay",
+                Box::new(crate::overlay_focus::scenario_settings_scroll_stays_in_overlay),
+            ),
+            (
                 "pr_fields_escape_focus",
                 Box::new(crate::pr_fields_focus::scenario_pr_fields_escape_focus),
             ),

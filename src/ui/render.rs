@@ -546,6 +546,11 @@ impl Render for KagiApp {
             .size_full()
             .font_family(UI_FONT)
             .bg(rgb(theme().bg_base))
+            // Tier A probe: counts wheel events that reach the workspace
+            // behind every overlay, whichever pane is showing.
+            .when(cfg!(feature = "gui-e2e"), |el| {
+                el.on_scroll_wheel(|_, _, _| super::e2e::note_workspace_scroll())
+            })
             .children(self.render_platform_titlebar(cx))
             // Key events only dispatch along the focus path, so the root must
             // own (and initially hold) focus for window-wide actions to work.

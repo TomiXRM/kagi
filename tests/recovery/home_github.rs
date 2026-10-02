@@ -150,6 +150,20 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
     }
     click_control(cx, window, "tab-add");
     cx.run_until_parked();
+    // Refresh keeps the list on screen and marks it as being updated.
+    app.update(cx, |app, cx| app.reload_home_github(cx));
+    assert!(
+        drawn(cx, window, "home-github-updating"),
+        "a refresh says so"
+    );
+    assert!(
+        drawn(cx, window, "home-gh-acme/widgets"),
+        "the list stays while it refreshes"
+    );
+    wait_for(cx, &app, "the refresh", |app| {
+        !app.home_github.refreshing && !app.home_github.orgs_loading
+    });
+    assert!(!drawn(cx, window, "home-github-updating"));
     cx.read(|cx| {
         let GithubRepos::Loaded { sections, local } = &app.read(cx).home_github.repos else {
             unreachable!()

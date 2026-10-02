@@ -570,7 +570,8 @@ The current suite covers:
   `tests/recovery/home_github.rs`, #923 #924 / ADR-0219): a saved list
   (`github_repos_cache.json` beside `settings.json`) is on screen the moment
   the list is read again, with `refreshing` set, and is replaced by the fresh
-  read and saved anew. An offline `gh` lists
+  read and saved anew; a Refresh keeps the list drawn beside the
+  `home-github-updating` mark until the read lands. An offline `gh` lists
   the user's repositories (one whose `origin` matches a recent repository, one
   that is not local) and two organizations — one listed, one refusing with a
   SAML error, which keeps its section with the reason; `repo clone` really

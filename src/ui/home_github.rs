@@ -482,12 +482,20 @@ impl KagiApp {
             )
             // A saved list is on screen while the fresh read runs.
             .when(self.home_github.refreshing, |el| {
-                el.child(super::render_overlay::sync_spinner(
-                    12.,
-                    theme().text_muted,
-                    "home-github-refreshing",
+                el.child(super::e2e::measure_control(
+                    "home-github-updating",
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .child(super::render_overlay::sync_spinner(
+                            12.,
+                            theme().text_muted,
+                            "home-github-refreshing",
+                        ))
+                        .child(muted_inline(Msg::HomeGithubUpdating.t())),
                 ))
-                .child(muted_inline(Msg::HomeGithubUpdating.t()))
             })
             .child(div().flex_1())
             .child(super::e2e::measure_control(

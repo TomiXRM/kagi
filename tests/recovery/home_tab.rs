@@ -46,6 +46,10 @@ fn forget(window: AnyWindowHandle, name: &str) {
 
 pub fn scenario_home_tab(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["recent_repos"]);
+    // Home reads `gh repo list` when it opens; keep that off the network.
+    let _gh = crate::pr_fields_focus::OfflineGh::with_script(
+        "#!/bin/sh\ncase \"$1 $2\" in 'repo list') echo '[]' ;; *) exit 1 ;; esac\n",
+    );
     let first = build_fixture();
     let second = build_fixture();
     let first_path = first.path().canonicalize().unwrap();

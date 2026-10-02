@@ -631,6 +631,24 @@ pub enum Msg {
     HomeNoRecent,
     HomeOpenFolder,
     HomeConnectRemote,
+    HomeGithubTitle,
+    HomeGithubFilter,
+    HomeGithubRefresh,
+    HomeGithubLoading,
+    HomeGithubFailedHint,
+    HomeGithubEmpty,
+    HomeGithubNoMatch,
+    /// `{}` = how many were read.
+    HomeGithubTruncated,
+    HomeGithubOpen,
+    HomeGithubClone,
+    HomeGithubCloning,
+    HomeGithubPrivate,
+    HomeGithubFork,
+    CloneDestination,
+    CloneChooseFolder,
+    CloneConfirm,
+    CloneBusy,
     IssuePostedAs,
     IssueNewFieldsTitle,
     IssueReply,
@@ -2499,6 +2517,48 @@ impl Msg {
             (Ja, HomeOpenFolder) => "フォルダーを開く…",
             (En, HomeConnectRemote) => "Connect to SSH remote…",
             (Ja, HomeConnectRemote) => "SSH リモートに接続…",
+            (En, HomeGithubTitle) => "Your GitHub repositories",
+            (Ja, HomeGithubTitle) => "自分の GitHub リポジトリ",
+            (En, HomeGithubFilter) => "Filter repositories…",
+            (Ja, HomeGithubFilter) => "リポジトリを絞り込む…",
+            (En, HomeGithubRefresh) => "Refresh",
+            (Ja, HomeGithubRefresh) => "再読み込み",
+            (En, HomeGithubLoading) => "Loading your repositories from GitHub…",
+            (Ja, HomeGithubLoading) => "GitHub からリポジトリを読み込んでいます…",
+            (En, HomeGithubFailedHint) => {
+                "Kagi reads this list with the GitHub CLI. Check `gh auth status` in a terminal, then Refresh."
+            }
+            (Ja, HomeGithubFailedHint) => {
+                "この一覧は GitHub CLI で読み込みます。ターミナルで `gh auth status` を確認してから再読み込みしてください。"
+            }
+            (En, HomeGithubEmpty) => "You have no repositories on GitHub.",
+            (Ja, HomeGithubEmpty) => "GitHub にリポジトリがありません。",
+            (En, HomeGithubNoMatch) => "No repository matches the filter.",
+            (Ja, HomeGithubNoMatch) => "絞り込みに一致するリポジトリはありません。",
+            (En, HomeGithubTruncated) => {
+                "Showing the first {} — more exist on GitHub. Filter, or open the repository by folder."
+            }
+            (Ja, HomeGithubTruncated) => {
+                "先頭の {} 件を表示しています。GitHub にはさらにあります。絞り込むか、フォルダーから開いてください。"
+            }
+            (En, HomeGithubOpen) => "Open",
+            (Ja, HomeGithubOpen) => "開く",
+            (En, HomeGithubClone) => "Clone…",
+            (Ja, HomeGithubClone) => "clone…",
+            (En, HomeGithubCloning) => "Cloning…",
+            (Ja, HomeGithubCloning) => "clone 中…",
+            (En, HomeGithubPrivate) => "Private",
+            (Ja, HomeGithubPrivate) => "非公開",
+            (En, HomeGithubFork) => "Fork",
+            (Ja, HomeGithubFork) => "Fork",
+            (En, CloneDestination) => "Into",
+            (Ja, CloneDestination) => "clone 先",
+            (En, CloneChooseFolder) => "Choose Folder…",
+            (Ja, CloneChooseFolder) => "フォルダーを選ぶ…",
+            (En, CloneConfirm) => "Clone",
+            (Ja, CloneConfirm) => "clone",
+            (En, CloneBusy) => "A clone is already running in this window. Wait for it to finish.",
+            (Ja, CloneBusy) => "このウィンドウでは別の clone を実行中です。終わるまで待ってください。",
             (En, IssuePostedAs) => "Posted as {}",
             (Ja, IssuePostedAs) => "{} として投稿",
             (En, IssueNewFieldsTitle) => "New issue",

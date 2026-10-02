@@ -92,6 +92,7 @@ impl KagiApp {
     /// menu commands are attached here because this path returns before the
     /// workspace compositor.
     pub fn render_home(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        self.ensure_home_github(window, cx);
         let body = div()
             .flex()
             .flex_row()
@@ -230,7 +231,8 @@ impl KagiApp {
                             .text_color(rgb(theme().text_muted))
                             .child(SharedString::from(Msg::HomeSubtitle.t())),
                     )
-                    .child(actions),
+                    .child(actions)
+                    .child(self.render_home_github(cx)),
             )
             .into_any_element()
     }

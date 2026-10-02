@@ -33,6 +33,16 @@ pub fn list_own_repos(workdir: &Path) -> Result<RepoList, GitError> {
     parse_repo_list(&stdout, REPO_LIST_LIMIT)
 }
 
+/// The `host/owner/repo` identity (lower-cased, as
+/// [`RepoListing::identity`]) of the repository at `path`'s `origin`, so a
+/// listed repository can be matched with a local clone. `None` when the path
+/// is not a repository, has no `origin`, or its URL names no repository.
+pub fn origin_identity(path: &Path) -> Option<String> {
+    let repo = git2::Repository::open(path).ok()?;
+    let remote = repo.find_remote("origin").ok()?;
+    crate::backend::remote_ref::repo_identity(remote.url().ok()?)
+}
+
 /// Parse `gh repo list --json …`. Pure; unit-tested. An entry without a name
 /// or a URL whose host can be read is skipped — it could not be cloned.
 /// `truncated` counts what `gh` returned, skipped entries included.

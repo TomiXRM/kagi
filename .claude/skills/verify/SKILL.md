@@ -560,6 +560,19 @@ The current suite covers:
   is the whole window. `recent_repos` is restored by `SavedKeys`. For Tier B
   press ⌘T (no foreground needed) or click `+` (needs a key window — ask first);
   "Open Folder…" opens the native dialog, which Tier A does not click.
+- Home's GitHub list and clone (`KAGI_GUI_E2E_ONLY=home_github`,
+  `tests/recovery/home_github.rs`, #923 / ADR-0219): an offline `gh` lists one
+  repository whose `origin` matches a recent repository and one that is not
+  local; `repo clone` really clones a local bare repository. The local row
+  (`home-gh-<owner>/<repo>`) opens its tab; the other opens the clone card,
+  which has no `clone-confirm` while the default folder is occupied (the file
+  in it untouched), and once free clones, writes one `clone` Success receipt
+  keyed by the destination, saves `clone_parent_dir` and opens the clone in
+  place of Home. `recent_repos` / `clone_parent_dir` are restored by
+  `SavedKeys`; `home_tab` also installs an offline `gh` because Home reads
+  `gh repo list` whenever it opens. For Tier B use a real `gh` login, clone a
+  small repository into a temporary folder ("Choose Folder…" is the native
+  dialog) and check `[kagi] clone: done … ok=true` and the receipt.
 - modal-slot arbitration (`KAGI_GUI_E2E_ONLY=push_failure_keeps_modal,merge_plan_latch,delete_branch_plan_latch,remote_browse_modal_routing`): a push failure lands behind Remote Browse without losing its input and reaches the Failed footer, an Error toast and one durable receipt — no dismiss-only AppNotice, queued or shown after Remote Browse closes (the #747 contract; #824 bisected the stale notice expectation to `e5644c6f`). Delayed Merge/Delete Branch plans wait behind Remote Browse without losing its input, stale plan state, latches, footers, or notices; a reopened Remote Browse rejects an older in-place completion by generation;
 - unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.
 - toolbar centre actions (Pull…Terminal) drawn only in Graph, not PRs/Editor/Analyze

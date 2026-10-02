@@ -191,6 +191,13 @@ impl KagiApp {
                 render_remote_browse(modal, modal_focus, cx),
             ))
         })
+        .when_some(self.clone_modal().cloned(), |el, modal| {
+            el.child(super::home_github::render_clone_modal(
+                modal,
+                self.modal_focus.clone(),
+                cx,
+            ))
+        })
         .when_some(self.update_modal(), |el, _modal| {
             let Some((plan, _)) = self.update_available.as_ref() else {
                 return el;
@@ -457,6 +464,14 @@ impl KagiApp {
             el.child(super::e2e::measure_control(
                 "active-modal/remote-browse",
                 render_remote_browse(modal, modal_focus.clone(), cx),
+            ))
+        })
+        // ── Clone card (opened from Home, #923) ──────────
+        .when_some(self.clone_modal().cloned(), |el, modal| {
+            el.child(super::home_github::render_clone_modal(
+                modal,
+                modal_focus.clone(),
+                cx,
             ))
         })
         // ── Stash push modal overlay ─────────────────────

@@ -77,6 +77,7 @@ pub mod graph_wip;
 pub use kagi_ui_core::i18n; // ADR-0121: was a shim file
 pub mod dialog_a11y;
 pub mod home;
+pub mod home_github;
 pub mod inspector;
 mod inspector_model;
 pub mod list_a11y;
@@ -1025,6 +1026,8 @@ pub struct KagiApp {
     pub remote_view: Option<RemoteRepoView>,
     /// The Home tab (#923, ADR-0219): at most one, owning no session.
     pub home: Option<home::HomeTab>,
+    /// Home's GitHub list and the window's one running clone (#923 PR3).
+    pub home_github: home_github::HomeGithub,
     /// Focus handle used to receive keyboard events for the create-branch modal.
     /// Allocated on demand when the modal is first opened.
     pub modal_focus: Option<FocusHandle>,
@@ -1355,6 +1358,7 @@ impl KagiApp {
             active_modal: None,
             remote_view: None,
             home: None,
+            home_github: Default::default(),
             modal_focus: None,
             stash_push_focus: None,
             status_footer: FooterStatus::Idle(SharedString::from("Ready")),
@@ -2888,6 +2892,7 @@ impl KagiApp {
         match modal {
             M::AppNotice(_) => self.confirm_app_notice(cx),
             M::RemoteBrowse(_) => self.confirm_remote_browse(cx),
+            M::Clone(_) => self.start_clone(cx),
             M::Update(_) => {}
             M::SmartCommit(smart_commit::SmartCommitModal::Consent) => {
                 self.confirm_smart_consent(cx)
@@ -2979,6 +2984,7 @@ impl KagiApp {
         match modal {
             M::AppNotice(_) => self.cancel_app_notice(),
             M::RemoteBrowse(_) => self.cancel_remote_browse(),
+            M::Clone(_) => self.cancel_clone(),
             M::Update(_) => self.cancel_update_modal(),
             M::SmartCommit(_) => self.clear_smart_commit_modal(),
             M::Checkout(_) => self.cancel_modal(),

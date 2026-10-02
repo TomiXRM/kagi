@@ -17,12 +17,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
-<<<<<<< HEAD
 - タブ帯の「+」と New Tab(⌘T)で「Home」タブ(ダッシュボード)を開けるようにしました。最近開いたリポジトリ、フォルダーを開く、SSH リモートへの接続に加え、自分と所属 organization の GitHub リポジトリ一覧(owner ごとの見出し付き、`gh repo list` で各最大 1000 件、それ以上あれば表示。読めない organization はその理由を表示)を検索欄で絞り込み、手元にあるものは開き、無いものは確認カードを経て `gh repo clone` で clone できます。clone 先は既定で前回 clone したフォルダー(初回は最近開いたリポジトリの隣、無ければホーム)で、変更できます。既に何かがあるフォルダーへは clone せず、失敗・中断して残ったものは削除せずに場所を Operation Log に記録します。clone は 30 分で打ち切り、Kagi が起動したプロセスだけを止めます。成功すると Home がそのリポジトリのタブになります。タブが無いときの Welcome 画面は Home に置き換わりました。(Closes #923、Closes #924、ADR-0219)
-||||||| 5b3b83b2
-=======
 - `~/.kagi/themes/*.json` (または `KAGI_LOG_DIR/themes/*.json`) から自作テーマを読み込み、組み込みテーマの色を部分上書きして Settings / メニュー / command palette から選べるようにしました。Settings ではフォルダーのパス表示・作成して開く操作・画面を止めないバックグラウンド再読み込みもできます。再読み込みの連打では最後の結果だけ反映します。形式と各色の用途は [テーマガイド](docs/themes.md) に記載しています。(#922、ADR-0220)
->>>>>>> feat/issue-923-picker-screen
 
 ## [0.41.0] - 2026-10-02
 

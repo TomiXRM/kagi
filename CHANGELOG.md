@@ -9,6 +9,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - Settings を開いたままスクロールすると、背面の画面(Graph・PRs・Issues・Editor)も一緒にスクロールする問題を修正しました。Settings の背景が、背面へのマウス操作をスクロールも含めて遮るようにしました。
 - Worktree 削除の確認後や削除前ステップ後に ignored ファイル・フォルダーが増えた場合、削除前に中止し、計画の再確認を促すようにしました。(#934)
+- 初期化済み submodule を含む worktree は Remove の計画時に削除を拒否し、確認後に初期化された場合も削除前に中止するようにしました。未初期化の submodule は従来どおり扱います。(#934)
 
 ### Changed
 

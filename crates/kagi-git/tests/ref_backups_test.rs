@@ -246,6 +246,156 @@ fn remove_success_partial_and_unknown_keep_persisted_refs_after_gc() {
     }
 }
 
+fn linked_with_submodule(f: &Fixture) -> PathBuf {
+    let source = f.repo.parent().unwrap().join("source");
+    std::fs::create_dir(&source).unwrap();
+    git(&source, &["init", "-q", "-b", "main"]);
+    std::fs::write(source.join(".gitignore"), b"secret\n").unwrap();
+    std::fs::write(source.join("tracked"), b"committed\n").unwrap();
+    git(&source, &["add", "."]);
+    git(&source, &["commit", "-qm", "submodule source"]);
+    git(
+        &f.repo,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            source.to_str().unwrap(),
+            "sub",
+        ],
+    );
+    git(&f.repo, &["commit", "-qm", "add submodule"]);
+    let linked = f.repo.parent().unwrap().join("linked");
+    git(
+        &f.repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            linked.to_str().unwrap(),
+        ],
+    );
+    linked
+}
+
+#[test]
+fn remove_blocks_initialized_submodule_with_ignored_content() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new();
+    let linked = linked_with_submodule(&f);
+    git(
+        &linked,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "--init",
+            "-q",
+        ],
+    );
+    std::fs::write(linked.join("sub/secret"), b"local ignored bytes").unwrap();
+    assert!(git(&linked, &["status", "--porcelain"]).is_empty());
+
+    let plan = Backend::plan_recorded_remove(&f.repo, "linked", true).unwrap();
+    assert!(
+        plan.preview
+            .blockers
+            .contains(&PlanNote::Worktree(WorktreeNote::RemoveContainsSubmodules)),
+        "initialized submodule must block Remove: {:?}",
+        plan.preview.blockers
+    );
+    let report = Backend::run_recorded_remove(&plan, Actor::Human, None);
+    let OpOutcome::Refused { blockers } = &report.recording.entry().outcome else {
+        panic!(
+            "blocked plan must record a refusal: {:?}",
+            report.recording.entry()
+        );
+    };
+    assert!(blockers
+        .iter()
+        .any(|reason| reason == "Contains submodules"));
+    assert_eq!(
+        std::fs::read(linked.join("sub/secret")).unwrap(),
+        b"local ignored bytes"
+    );
+    assert!(git2::Repository::open(&f.repo)
+        .unwrap()
+        .find_branch("linked", git2::BranchType::Local)
+        .is_ok());
+}
+
+#[test]
+fn remove_allows_uninitialized_submodule_and_blocks_late_initialization() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new();
+    let linked = linked_with_submodule(&f);
+    assert!(!linked.join("sub/.git").exists());
+    let plan = Backend::plan_recorded_remove(&f.repo, "linked", false).unwrap();
+    assert!(
+        plan.preview.blockers.is_empty(),
+        "{:?}",
+        plan.preview.blockers
+    );
+
+    git(
+        &linked,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "--init",
+            "-q",
+        ],
+    );
+    std::fs::write(linked.join("sub/secret"), b"created after plan").unwrap();
+    let report = Backend::run_recorded_remove(&plan, Actor::Human, None);
+    let OpOutcome::Refused { blockers } = &report.recording.entry().outcome else {
+        panic!(
+            "late initialization must refuse: {:?}",
+            report.recording.entry()
+        );
+    };
+    assert!(blockers
+        .iter()
+        .any(|reason| reason == "Contains submodules"));
+    assert_eq!(
+        std::fs::read(linked.join("sub/secret")).unwrap(),
+        b"created after plan"
+    );
+    assert!(linked.join("sub/.git").exists());
+}
+
+#[test]
+fn remove_uninitialized_submodule_succeeds_without_force() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new();
+    let linked = linked_with_submodule(&f);
+    let plan = Backend::plan_recorded_remove(&f.repo, "linked", false).unwrap();
+    assert!(
+        plan.preview.blockers.is_empty(),
+        "{:?}",
+        plan.preview.blockers
+    );
+    let report = Backend::run_recorded_remove(&plan, Actor::Human, None);
+    assert!(
+        matches!(report.recording.entry().outcome, OpOutcome::Success { .. }),
+        "uninitialized submodule must not block: {:?}",
+        report.recording.entry()
+    );
+    assert!(!linked.exists());
+}
+
 #[test]
 fn remove_refuses_ignored_content_added_after_confirmation() {
     if !crate::test_support::run_isolated() {

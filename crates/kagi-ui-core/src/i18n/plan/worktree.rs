@@ -152,6 +152,9 @@ pub fn note_ja(note: &WorktreeNote) -> String {
         WorktreeNote::RemoveIgnoredContentChanged => {
             "ignored が増えました。計画を再確認してください。".to_string()
         }
+        WorktreeNote::RemoveContainsSubmodules => {
+            "submodule を含むため削除できません".to_string()
+        }
         WorktreeNote::RemovesWorktree {
             path,
             branch,

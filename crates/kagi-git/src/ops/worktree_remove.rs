@@ -10,11 +10,11 @@ use kagi_domain::plan_note::{WorktreeNote, WorktreeRecovery, WorktreeTitle};
 
 /// Analyse whether removing the linked worktree `name` is safe.
 ///
-/// Blockers: the main worktree (never removable), a dirty worktree (kagi never
-/// forces), a locked worktree, or a missing worktree. `delete_branch` controls
-/// whether the plan also promises to delete the checked-out branch. Warnings:
-/// the removal itself, any ignored content it deletes (#934), and the
-/// `pre_remove` steps.
+/// Blockers: the main worktree (never removable), a dirty, locked, or
+/// submodule-containing worktree, or a missing worktree. `delete_branch`
+/// controls whether the plan also promises to delete the checked-out branch.
+/// Warnings: the removal itself, any ignored content it deletes (#934), and
+/// the `pre_remove` steps.
 pub fn plan_remove_worktree(
     repo: &Repository,
     name: &str,
@@ -52,6 +52,9 @@ pub fn plan_remove_worktree(
     let (branch, dirt) = worktree_branch_and_dirt(&wt);
 
     let mut blockers = Vec::new();
+    if has_initialized_submodule(&wt)? {
+        blockers.push(PlanNote::Worktree(WorktreeNote::RemoveContainsSubmodules));
+    }
     if let Some(summary) = dirt {
         blockers.push(PlanNote::Worktree(WorktreeNote::RemoveDirty {
             path: path_str.clone(),
@@ -94,6 +97,49 @@ pub fn plan_remove_worktree(
     });
 
     admin_plan(repo, title, warnings, blockers, recovery, true)
+}
+
+/// Git refuses to remove worktrees with checked-out submodules without force.
+/// An uninitialized gitlink has no `.git` entry in its worktree directory.
+/// Inspect that entry without following symlinks; an unreadable path cannot be
+/// treated as safe. The tracked submodule paths come from libgit2, not a
+/// recursive walk through ignored contents.
+fn has_initialized_submodule(wt: &git2::Worktree) -> Result<bool, GitError> {
+    let wt_repo = Repository::open_from_worktree(wt)
+        .map_err(|e| GitError::Other(format!("cannot inspect worktree submodules: {e}")))?;
+    let workdir = wt_repo
+        .workdir()
+        .ok_or_else(|| GitError::Other("worktree has no working directory".into()))?;
+    for submodule in wt_repo
+        .submodules()
+        .map_err(|e| GitError::Other(format!("cannot inspect worktree submodules: {e}")))?
+    {
+        let marker = workdir.join(submodule.path()).join(".git");
+        match std::fs::symlink_metadata(&marker) {
+            Ok(_) => return Ok(true),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(GitError::Other(format!(
+                    "cannot inspect worktree submodule: {err}"
+                )));
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// A linked worktree can acquire an initialized submodule after confirmation
+/// or during a pre-remove step. Refuse it through the same typed plan blocker.
+pub(crate) fn preflight_remove_submodules(repo: &Repository, name: &str) -> Result<(), GitError> {
+    let wt = repo
+        .find_worktree(name)
+        .map_err(|e| GitError::Other(format!("cannot inspect worktree submodules: {e}")))?;
+    if has_initialized_submodule(&wt)? {
+        return Err(GitError::Blocked(Box::new(PlanNote::Worktree(
+            WorktreeNote::RemoveContainsSubmodules,
+        ))));
+    }
+    Ok(())
 }
 
 /// A read-only status walk of the linked worktree's ignored content. Git
@@ -246,6 +292,7 @@ pub(crate) fn execute_remove_worktree_progress(
             wt_path.display()
         )));
     }
+    preflight_remove_submodules(repo, name)?;
 
     // Capture the ref before any pre-remove hook. The hook is allowed to take
     // time, so deleting whichever commit the branch points at afterwards would
@@ -284,6 +331,9 @@ pub(crate) fn execute_remove_worktree_progress(
             fault,
         )?;
     }
+    // A pre_remove step can initialize a gitlink. Detect it before trying to
+    // back up this worktree's files, as well as at the deletion boundary.
+    preflight_remove_submodules(repo, name)?;
 
     // Belt-and-suspenders: the plan blocks dirt, but a race could have dirtied
     // the worktree since. Back up any uncommitted content into the main ODB
@@ -312,6 +362,7 @@ pub(crate) fn execute_remove_worktree_progress(
     // blocker. Nothing below may delete the tree until that output is compared
     // with the counts the user actually confirmed.
     ensure_ignored_content_not_increased(&wt, plan)?;
+    preflight_remove_submodules(repo, name)?;
 
     // Containment-checked recursive delete (the ONLY sanctioned one).
     progress.stage = Stage::DeletionStarted;

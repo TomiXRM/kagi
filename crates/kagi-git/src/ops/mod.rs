@@ -175,8 +175,8 @@ pub use tag::*;
 pub use worktree::*;
 pub use worktree_lifecycle::*;
 pub(crate) use worktree_paths::*;
-pub(crate) use worktree_remove::preflight_remove_ignored_content;
 pub use worktree_remove::*;
+pub(crate) use worktree_remove::{preflight_remove_ignored_content, preflight_remove_submodules};
 pub use worktree_steps::*;
 
 // ────────────────────────────────────────────────────────────

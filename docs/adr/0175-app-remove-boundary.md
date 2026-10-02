@@ -207,6 +207,15 @@ need a capacity scan just to populate a hidden row.
   ignored folder: that folder is deliberately treated as one entry. No-force
   and lock semantics stay unchanged. SSH worktree paths never enter this
   local observer.
+- A linked worktree with an initialized submodule is blocked from Remove,
+  matching `git worktree remove` without force. Only tracked submodule paths
+  whose checkout has a `.git` entry count as initialized; an uninitialized
+  gitlink is not a blocker. Planning reads the target worktree's submodule
+  entries without recursively scanning their ignored contents. Preflight
+  repeats the check before trust or steps; execution repeats it after
+  `pre_remove` and immediately before directory deletion. An unreadable
+  submodule observation fails closed. The typed EN/JA blocker is short, with
+  no procedure text; the worktree, submodule files and branch remain untouched.
 
 Pure verdict tests and filesystem/Git fixtures cover evidence precedence,
 hardlinks, symlinks, ignored allocation and cancellation. The focused native

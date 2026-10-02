@@ -212,6 +212,9 @@ impl Backend {
                 return Err(io("remove-worktree admin identity changed after plan"));
             }
             backend.preflight_check(&plan.preview)?;
+            // The target may have initialized a submodule since the plan was
+            // confirmed. Surface the short typed blocker before trust or steps.
+            ops::preflight_remove_submodules(&backend.repo, &plan.name)?;
             // Re-plan target dirt/lock before any trust write or hook.
             if !backend
                 .plan_remove_worktree(&plan.name, plan.delete_branch)?

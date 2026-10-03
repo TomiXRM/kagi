@@ -41,7 +41,6 @@ impl KagiApp {
             // (down+up on the same element) never completes. Same fix as the
             // commit context menu (see context_menu.rs).
             .occlude()
-            .relative()
             .w_full()
             .max_h_full()
             .overflow_y_scroll()
@@ -50,8 +49,14 @@ impl KagiApp {
             .border_1()
             .border_color(rgb(theme().selected))
             .bg(rgb(theme().panel))
-            .shadow_lg()
-            .child(super::e2e::measure_inside("platform-menu-panel"));
+            .shadow_lg();
+        // Tier A reads the panel's bounds (#935); compiled out of normal builds.
+        #[cfg(feature = "gui-e2e")]
+        {
+            panel = panel
+                .relative()
+                .child(super::e2e::measure_inside("platform-menu-panel"));
+        }
 
         // ADR-0085: one clickable command row, reused for plain `Command` nodes
         // and for the inline-expanded Theme/Language submenu rows.  `row_ix` is
@@ -85,11 +90,10 @@ impl KagiApp {
                 _ => None,
             };
 
-            div()
+            let row = div()
                 .id(SharedString::from(format!(
                     "platform-menu-item-{ix}-{row_ix}"
                 )))
-                .relative()
                 .flex()
                 .items_center()
                 .justify_between()
@@ -111,9 +115,6 @@ impl KagiApp {
                     s.tooltip(move |window, cx| Tooltip::new(reason.to_string()).build(window, cx))
                 })
                 .child(div().flex_1().truncate().child(SharedString::from(label)))
-                .child(super::e2e::measure_inside(format!(
-                    "platform-menu-cmd-{id}"
-                )))
                 .when(!key.is_empty(), move |s| {
                     s.child(
                         div()
@@ -121,8 +122,14 @@ impl KagiApp {
                             .text_color(rgb(theme().text_muted))
                             .child(SharedString::from(key)),
                     )
-                })
-                .into_any_element()
+                });
+            // Tier A reads the row's bounds (#935). Absolute and compiled out
+            // of normal builds, where it would be a flow child in the gap.
+            #[cfg(feature = "gui-e2e")]
+            let row = row.relative().child(super::e2e::measure_inside(format!(
+                "platform-menu-cmd-{id}"
+            )));
+            row.into_any_element()
         };
 
         // `row_ix` is a running counter (submenus expand to several rows, so it
@@ -213,6 +220,8 @@ fn theme_row(
     } else {
         entry.name.to_string()
     };
+    // Tier A reads the row's bounds (#935); compiled out of normal builds.
+    #[cfg(feature = "gui-e2e")]
     let probe = super::e2e::measure_inside(format!("platform-menu-theme-{}", entry.slug));
     let slug = entry.slug;
     let invoke = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
@@ -220,11 +229,10 @@ fn theme_row(
         this.set_theme(&slug, cx);
         cx.stop_propagation();
     });
-    div()
+    let row = div()
         .id(SharedString::from(format!(
             "platform-menu-item-{ix}-{row_ix}"
         )))
-        .relative()
         .flex()
         .items_center()
         .gap_2()
@@ -235,9 +243,10 @@ fn theme_row(
         .cursor_pointer()
         .hover(|s| s.bg(rgb(theme().selected)))
         .on_click(invoke)
-        .child(div().flex_1().truncate().child(SharedString::from(label)))
-        .child(probe)
-        .into_any_element()
+        .child(div().flex_1().truncate().child(SharedString::from(label)));
+    #[cfg(feature = "gui-e2e")]
+    let row = row.relative().child(probe);
+    row.into_any_element()
 }
 
 // Only the in-app menu calls this (✓ marker for the language).

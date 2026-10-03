@@ -274,6 +274,19 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
         );
     });
 
+    // The entries are built once per change of what they are built from,
+    // not on every frame (#937).
+    assert!(drawn(cx, window, "home-gh-acme/widgets"));
+    let builds = e2e::home_item_builds();
+    for _ in 0..3 {
+        assert!(drawn(cx, window, "home-gh-acme/widgets"));
+    }
+    assert_eq!(
+        e2e::home_item_builds(),
+        builds,
+        "redrawing does not build the entries again"
+    );
+
     // The filter spans every owner and drops what does not match.
     let set_filter = |cx: &mut VisualTestAppContext, text: &'static str| {
         cx.update_window(window, |_, window, cx| {
@@ -289,6 +302,10 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
         cx.run_until_parked();
     };
     set_filter(cx, "TOOL");
+    assert!(
+        e2e::home_item_builds() > builds,
+        "a new filter builds them again"
+    );
     assert!(
         drawn(cx, window, "home-gh-acme-org/tool"),
         "matches across owners, any case"
@@ -494,6 +511,10 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
             .cloned()),
         Some(dest.clone()),
         "an open tab is matched with the list"
+    );
+    assert!(
+        drawn(cx, window, "home-gh-acme/widgets:Open"),
+        "its row says Open once matched"
     );
 
     unmount(cx, app, window);

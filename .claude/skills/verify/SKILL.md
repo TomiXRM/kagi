@@ -120,11 +120,12 @@ What is compared:
 
 The run also owns `HOME` (and `XDG_CONFIG_HOME`): an empty directory under the
 run root whose `.gitconfig` holds only the fixtures' identity (`poc`). Every
-inherited `GIT_*` is dropped at startup; then `GIT_CONFIG_GLOBAL` names that
-`.gitconfig`, there is no system config, and `GIT_TERMINAL_PROMPT=0`. `git`,
-`gh`, the editor's trash and the terminal never read the developer's dotfiles
-or config. A terminal never starts the user's `$SHELL`: with no seam shell set
-it panics before the spawn, failing the scenario.
+inherited `GIT_*` and `GH_*` (and `GITHUB_TOKEN` / `GITHUB_ENTERPRISE_TOKEN`)
+is dropped at startup; then `GIT_CONFIG_GLOBAL` names that `.gitconfig`, there
+is no system config, and `GIT_TERMINAL_PROMPT=0`. `git`, `gh` (config and
+credentials), the editor's trash and the terminal never read the developer's
+dotfiles or config. A terminal never starts the user's `$SHELL`: with no seam
+shell set it panics before the spawn, failing the scenario.
 
 Restoring state:
 

@@ -231,19 +231,33 @@ impl KagiApp {
         .detach();
     }
 
-    /// Open a PR / issue on GitHub at the URL its search returned, through
-    /// the OS opener (#940 review). The GUI runner records the URL instead,
-    /// so a scenario never launches the user's browser.
-    ///
-    /// Both a row without a clone and any row's Open button come here, and
-    /// either is a later pick that wins: an open still waiting for `gh`
-    /// would otherwise move the user to its repository after this one opened
-    /// on GitHub (#940 review).
-    pub(super) fn open_work_item_url(&mut self, url: &str, cx: &mut Context<Self>) {
+    /// A later choice wins over an open still waiting for `gh`: the open is
+    /// dropped (and the list version bumped), so its late result does not
+    /// move the user to its repository (#940 review). Every later choice on
+    /// Home comes here: opening a row on GitHub, any row's Open button,
+    /// switching pane.
+    fn drop_pending_open(&mut self, cx: &mut Context<Self>) {
         if self.home_github.work.opening.take().is_some() {
             self.home_github.work.version += 1;
             cx.notify();
         }
+    }
+
+    /// Show `pane` of Home's switch.
+    pub fn set_home_pane(&mut self, pane: HomePane, cx: &mut Context<Self>) {
+        if self.home_github.work.pane != pane {
+            self.drop_pending_open(cx);
+            self.home_github.work.pane = pane;
+        }
+        cx.notify();
+    }
+
+    /// Open a PR / issue on GitHub at the URL its search returned, through
+    /// the OS opener (#940 review). The GUI runner records the URL instead,
+    /// so a scenario never launches the user's browser. Both a row without a
+    /// clone and any row's Open button come here.
+    pub(super) fn open_work_item_url(&mut self, url: &str, cx: &mut Context<Self>) {
+        self.drop_pending_open(cx);
         klog!("home: open on github {}", url);
         #[cfg(feature = "gui-e2e")]
         super::e2e::record_opened_url(url);
@@ -316,6 +330,9 @@ impl KagiApp {
                             klog!("home: open issue {}#{} dropped: Home left", key.0, key.1);
                         } else if app.open_repository(path, cx) {
                             app.show_issues_mode(cx);
+                            // The mode may have been loaded for another
+                            // repository; reads and the Reply go to `id`.
+                            app.address_issues_to(&id, cx);
                             app.load_github_issue_detail(key.1, window, cx);
                         }
                         return;
@@ -468,8 +485,7 @@ fn pane_cell(
         })
         .when(!active, |el| el.hover(|s| s.bg(rgb(theme().surface))))
         .on_click(cx.listener(move |app, _: &gpui::ClickEvent, _, cx| {
-            app.home_github.work.pane = pane;
-            cx.notify();
+            app.set_home_pane(pane, cx);
         }))
         .child(SharedString::from(label))
         .children(badge)

@@ -27,6 +27,12 @@ impl KagiApp {
         ISSUE_LIST_FETCH.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
     }
 
+    /// The repository the active session's Issues list is read from and its
+    /// Composer writes to.
+    pub fn issue_write_repo_for_e2e(&self) -> Option<String> {
+        self.ui().issue_composer.base_repo.clone()
+    }
+
     pub fn issue_view_recomputations_for_e2e() -> usize {
         super::issues_mode::issue_view_recomputations()
     }

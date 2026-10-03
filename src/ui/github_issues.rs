@@ -122,6 +122,30 @@ impl KagiApp {
         .detach();
     }
 
+    /// Point the active session's Issues mode at `identity` — a repository
+    /// the caller has just verified `gh` resolves for this clone (#940
+    /// review). A mode loaded while `gh repo set-default` named another
+    /// repository keeps that one as its list and Reply destination; it is
+    /// re-read for `identity` (and its cached issues dropped, as the same
+    /// numbers there are other issues) before anything is selected.
+    pub(super) fn address_issues_to(&mut self, identity: &str, cx: &mut Context<Self>) {
+        let stale = self
+            .ui()
+            .issue_composer
+            .base_repo
+            .as_deref()
+            .is_some_and(|current| !current.eq_ignore_ascii_case(identity));
+        if !stale {
+            return;
+        }
+        klog!("github: issues retarget {identity}");
+        self.with_ui(|ui| {
+            ui.issue_composer.base_repo = Some(identity.to_string());
+            ui.github_issue_details.clear();
+        });
+        self.refresh_github_issues(cx);
+    }
+
     /// Load the selected Issue's body and comments through the same
     /// session-owned background boundary as the list.
     pub fn load_github_issue_detail(

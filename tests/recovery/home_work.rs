@@ -13,7 +13,7 @@ use std::path::Path;
 use gpui::{AnyWindowHandle, VisualTestAppContext};
 use kagi::ui::home_work::HomePane;
 use kagi::ui::workspace_mode::WorkspaceMode;
-use kagi::ui::{e2e, settings, tabs};
+use kagi::ui::{e2e, settings, tabs, KagiApp};
 use kagi_git::github_repos_cache::{self, WorkItem, WorkKind, WorkList, WorkLists};
 
 use crate::app_conflict::click_control;
@@ -87,6 +87,57 @@ fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, name: &str) {
     cx.run_until_parked();
     cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
     cx.run_until_parked();
+}
+
+/// Pick `item` and press the control at `at` in one window update, without
+/// the pump in between: the pick's `gh pr view` cannot finish before the
+/// press (the test dispatcher runs it inside the pump).
+fn pick_then_press(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    app: &gpui::Entity<KagiApp>,
+    item: &WorkItem,
+    at: gpui::Point<gpui::Pixels>,
+) {
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.home_work_pick(WorkKind::MyPrs, item.clone(), window, cx)
+        });
+        let modifiers = gpui::Modifiers::none();
+        for input in [
+            gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                position: at,
+                pressed_button: None,
+                modifiers,
+            }),
+            gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                position: at,
+                modifiers,
+                button: gpui::MouseButton::Left,
+                click_count: 1,
+                first_mouse: false,
+            }),
+            gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
+                position: at,
+                modifiers,
+                button: gpui::MouseButton::Left,
+                click_count: 1,
+            }),
+        ] {
+            window.dispatch_event(input, cx);
+        }
+    })
+    .unwrap();
+}
+
+/// An Issues list read that names `base_repo` and holds no issues.
+fn issue_list(base_repo: &str) -> kagi_domain::github::IssueListSnapshot {
+    kagi_domain::github::IssueListSnapshot {
+        issues: Vec::new(),
+        mentioned_numbers: Vec::new(),
+        base_repo: base_repo.into(),
+        next_cursor: None,
+    }
 }
 
 fn one(number: u64, title: &str) -> WorkList {
@@ -358,35 +409,7 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
     let open_at = e2e::control_bounds(window.window_id(), "home-work-acme/widgets-3-open")
         .unwrap()
         .center();
-    cx.update_window(window, |_, window, cx| {
-        app.update(cx, |app, cx| {
-            app.home_work_pick(WorkKind::MyPrs, local_pr.clone(), window, cx)
-        });
-        let modifiers = gpui::Modifiers::none();
-        for input in [
-            gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
-                position: open_at,
-                pressed_button: None,
-                modifiers,
-            }),
-            gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
-                position: open_at,
-                modifiers,
-                button: gpui::MouseButton::Left,
-                click_count: 1,
-                first_mouse: false,
-            }),
-            gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
-                position: open_at,
-                modifiers,
-                button: gpui::MouseButton::Left,
-                click_count: 1,
-            }),
-        ] {
-            window.dispatch_event(input, cx);
-        }
-    })
-    .unwrap();
+    pick_then_press(cx, window, &app, &local_pr, open_at);
     assert!(
         cx.read(|cx| app.read(cx).home_github.work.opening.is_none()),
         "pressing Open drops the open still in progress"
@@ -403,6 +426,30 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
         cx.read(|cx| app.read(cx).home.is_some()),
         "Home stays in front after Open: the dropped PR does not open"
     );
+
+    // The same for switching pane (#940 review): the pending open is dropped
+    // and the user stays on the pane they chose.
+    assert!(drawn(cx, window, "home-pane-issues"));
+    let pane_at = e2e::control_bounds(window.window_id(), "home-pane-issues")
+        .unwrap()
+        .center();
+    pick_then_press(cx, window, &app, &local_pr, pane_at);
+    assert!(
+        cx.read(|cx| app.read(cx).home_github.work.opening.is_none()),
+        "switching pane drops the open still in progress"
+    );
+    wait_for(cx, &app, "the third dropped refs read", |_| {
+        view_calls() == 4
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.home.is_some(),
+            "Home stays in front after the pane switch"
+        );
+        assert_eq!(app.home_github.work.pane, HomePane::Issues);
+    });
 
     // An issue opens in its clone's Issues mode only while that mode
     // addresses the issue's repository: with `gh repo set-default` pointing
@@ -432,6 +479,28 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
             "it says which repository the clone addresses"
         );
     });
+    // #940 review: the clone's Issues mode is loaded while `gh` resolves it
+    // to acme/upstream, so its list and Reply address acme/upstream. Picking
+    // acme/local's #4 once `gh` resolves the clone to acme/local re-reads the
+    // mode for acme/local before selecting, so a reply cannot land on
+    // acme/upstream's #4.
+    KagiApp::queue_issue_list_fetch_for_e2e(gpui::Task::ready(Ok(issue_list(
+        "github.com/acme/upstream",
+    ))));
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(local_path.clone(), cx));
+        app.show_issues_mode(cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| app.read(cx).issue_write_repo_for_e2e()),
+        Some("github.com/acme/upstream".to_string())
+    );
+    click_control(cx, window, "tab-add");
+    cx.run_until_parked();
+    KagiApp::queue_issue_list_fetch_for_e2e(gpui::Task::ready(Ok(issue_list(
+        "github.com/acme/local",
+    ))));
     std::fs::remove_file(state.join("default-repo")).unwrap();
     click(cx, window, "home-work-acme/local-4");
     cx.read(|cx| {
@@ -442,6 +511,11 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
         );
         assert_eq!(app.workspace_mode(), WorkspaceMode::Issues);
         assert_eq!(app.ui().selected_github_issue, Some(4));
+        assert_eq!(
+            app.issue_write_repo_for_e2e(),
+            Some("github.com/acme/local".to_string()),
+            "the Reply goes to the verified repository"
+        );
     });
 
     unmount(cx, app, window);

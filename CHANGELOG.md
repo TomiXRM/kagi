@@ -64,6 +64,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - GUI E2E runner(Tier A)が開発者の環境を読まないようにしました。`HOME` は run 専用の空の directory(fixture と同じ git の identity だけを置く)にし、継承した `GIT_*`・`GH_*`(と `GITHUB_TOKEN` / `GITHUB_ENTERPRISE_TOKEN`)の環境変数は起動時にすべて除去します(`gh` も開発者の設定と認証情報を使いません)。terminal を起動する scenario は、login shell ではなく行を読むだけの代わりの shell を使います。代わりの shell が無いまま terminal を起動しようとすると、利用者の `$SHELL` を起動する前にその scenario が失敗します。Smart Commit の生成を差し込む scenario は、差し込んだ生成が使われたことを確かめます。(#516)
 - Web(Playwright)の harness は、`crates/kagi-web/dist` が無いと設定の読み込み時に止まり、足りないファイルと実行すべき `scripts/build-web.sh` を示すようにしました。これまでは 60 秒後に webServer のタイムアウトとして失敗し、実行時のハングと区別がつきませんでした。(#516)
 - 検証手順(`.claude/skills/verify/SKILL.md`)の Tier A に、GUI E2E の各 scenario で文字が本物の `InputState` にどう入るか(キー入力・貼り付け・`set_value`)と、`InputState` を使わない代わりの経路(commit panel の `commit_msg` fallback、Remote Browse の host 入力、`queue_*` の読み込み差し替え)の表を追加しました。GPUI の終了時の leak 検出を無効にしている scenario が無いことも確認して記録しました。製品の動作は変更していません。(#516)
+- GUI E2E runner で、bare の `origin` に `main` を push して clone する scenario(`remote_pull_latch` など)が `src refspec main does not match any` で落ちていたのを直しました。新しい repository の既定 branch(`init.defaultBranch = main`)は、これまで Apple Git の vendor 設定から来ていて、#963 で system 設定を読まなくしたときに一緒に消えていました。run の `.gitconfig` と、fixture の `git` が読む command-scope の設定に、この 1 つだけを戻しています。製品の動作は変更していません。(#516)
 
 ## [0.41.0] - 2026-10-02
 

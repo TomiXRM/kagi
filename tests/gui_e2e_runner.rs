@@ -841,7 +841,7 @@ mod macos {
         std::fs::create_dir(&home).expect("runner HOME");
         std::fs::write(
             home.join(".gitconfig"),
-            "[user]\n\tname = poc\n\temail = poc@example.com\n",
+            "[user]\n\tname = poc\n\temail = poc@example.com\n[init]\n\tdefaultBranch = main\n",
         )
         .expect("runner git identity");
         std::env::set_var("HOME", &home);
@@ -876,6 +876,18 @@ mod macos {
         std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
         std::env::set_var("GIT_CONFIG_SYSTEM", "/dev/null");
         std::env::set_var("GIT_TERMINAL_PROMPT", "0");
+        // The fixtures assume a new repository starts on `main` — a bare
+        // `origin` they push `main` to and then clone. That came from Apple
+        // Git's vendor config (`/Library/Developer/CommandLineTools/usr/share/
+        // git-core/gitconfig`: `init.defaultBranch = main`, next to
+        // `credential.helper = osxkeychain`), which `GIT_CONFIG_NOSYSTEM`
+        // rightly drops. Pin the one value back: in the run's `.gitconfig`
+        // above for the product's `git` (which clears `GIT_CONFIG_COUNT`),
+        // and as command-scope config for the fixture `git` helpers, which
+        // set `GIT_CONFIG_GLOBAL=/dev/null` and so never read that file.
+        std::env::set_var("GIT_CONFIG_COUNT", "1");
+        std::env::set_var("GIT_CONFIG_KEY_0", "init.defaultBranch");
+        std::env::set_var("GIT_CONFIG_VALUE_0", "main");
         // #516: a failing scenario leaves evidence in target/gui-e2e/<name>/.
         crate::gui_evidence::install();
 

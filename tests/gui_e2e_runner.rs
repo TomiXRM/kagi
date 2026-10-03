@@ -2016,10 +2016,12 @@ mod macos {
     /// a group of its own. So while the child runs, every process descended
     /// from it is recorded (pid and start time, re-read every
     /// [`TREE_POLL`]); when it ends — by itself or killed at the timeout —
-    /// its group and each recorded process still running with the same start
-    /// time are killed. (A group of its own also means the terminal's Ctrl+C
-    /// reaches only this parent; a child it leaves behind ends at its
-    /// timeout.)
+    /// each recorded process still running with the same start time is
+    /// killed. Its group is killed only at the timeout, while its leader is
+    /// still unreaped: after the reap the pgid is a number the OS may hand to
+    /// someone else (the rule in `kagi_git::proc::group`). (A group of its
+    /// own also means the terminal's Ctrl+C reaches only this parent; a child
+    /// it leaves behind ends at its timeout.)
     fn run_child(runner: &Path, name: &str, timeout: Duration) -> (ChildOutcome, Vec<u32>) {
         use std::os::unix::process::CommandExt as _;
 
@@ -2072,20 +2074,35 @@ mod macos {
                 }
             }
         };
-        // The runner itself is reaped; what it left running (now orphans,
-        // reaped by launchd once killed) ends here.
-        kill_group(root);
+        // The runner is reaped; what it left running (now orphans, reaped by
+        // launchd once killed) ends here, by identity rather than by group.
         kill_recorded(&seen);
-        (outcome, still_running(&seen))
+        (outcome, settled(&seen))
+    }
+
+    /// The recorded processes still running once a just-killed process has
+    /// had a bounded moment to go (2 s): a process in its exit path or a
+    /// zombie launchd has not reaped yet is not "left running".
+    fn settled(seen: &std::collections::HashMap<u32, String>) -> Vec<u32> {
+        let mut left = still_running(seen);
+        for _ in 0..40 {
+            if left.is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+            left = still_running(seen);
+        }
+        left
     }
 
     /// How often `run_child` re-reads the process tree under a scenario.
     const TREE_POLL: Duration = Duration::from_millis(250);
 
-    /// Every process `(pid, start time)` and its parent, from one `ps`.
+    /// Every live process `(pid, parent, start time)`, from one `ps`. Zombies
+    /// (state `Z`) are not live: they have exited and only wait to be reaped.
     fn process_table() -> Vec<(u32, u32, String)> {
         let Ok(out) = Command::new("/bin/ps")
-            .args(["-axo", "pid=,ppid=,lstart="])
+            .args(["-axo", "pid=,ppid=,stat=,lstart="])
             .output()
         else {
             return Vec::new();
@@ -2096,6 +2113,9 @@ mod macos {
                 let mut fields = line.split_whitespace();
                 let pid = fields.next()?.parse().ok()?;
                 let ppid = fields.next()?.parse().ok()?;
+                if fields.next()?.starts_with('Z') {
+                    return None;
+                }
                 Some((pid, ppid, fields.collect::<Vec<_>>().join(" ")))
             })
             .collect()
@@ -2140,8 +2160,9 @@ mod macos {
             .status();
     }
 
-    /// SIGKILL every process in the group `group` leads. A group that is
-    /// already empty is not an error.
+    /// SIGKILL every process in the group `group` leads. Only while the
+    /// leader is unreaped (see [`run_child`]). A group that is already empty
+    /// is not an error.
     fn kill_group(group: u32) {
         let _ = Command::new("/bin/kill")
             .args(["-KILL", "--", &format!("-{group}")])

@@ -937,6 +937,8 @@ impl KagiApp {
                 .ghost()
                 .xsmall()
                 .ml(theme::scaled_px(4.))
+                // The strip is one Tab stop; ⌘W closes the tab in front.
+                .tab_stop(false)
                 .on_click(close);
 
             // Accent bar colour: worktree lane colour (every worktree tab), else
@@ -1028,6 +1030,7 @@ fn render_home_tab(
         .ghost()
         .xsmall()
         .ml(theme::scaled_px(4.))
+        .tab_stop(false)
         .on_click(close);
     let (bg, fg) = if front {
         (theme().selected, theme().text_main)

@@ -356,6 +356,21 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
         })
         .unwrap()
     };
+    // From the window, one Tab reaches the strip on the tab in front, and
+    // the next leaves it: a tab's × is not a stop of its own.
+    cx.update_window(window, |_, window, cx| {
+        let root = app.read(cx).root_focus.clone().expect("root focus");
+        root.focus(window, cx);
+    })
+    .unwrap();
+    tab(cx, window, true);
+    assert_eq!(
+        strip_focus(cx),
+        Some(repos),
+        "Tab lands on the tab in front"
+    );
+    tab(cx, window, true);
+    assert_eq!(strip_focus(cx), None, "one Tab leaves the strip");
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(0, window, cx))
     })

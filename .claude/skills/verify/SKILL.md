@@ -676,9 +676,11 @@ The current suite covers:
   without wrapping, and read nothing (`home_reads_for_e2e`); with Home's
   search focused the arrows do not reach the switch (Enter is not pressed
   into the single-line field: the harness types its "\n"). The repository
-  tab strip (#959): with two repositories and Home, → only moves
-  (`tab_strip_focused_for_e2e`, Home stays in front), Enter switches to the
-  repository, End reaches Home and Space brings it back. For Tier B: Tab
+  tab strip (#959): with two repositories and Home, one Tab from the window
+  lands on the Home tab and the next leaves the strip (a tab's × is not a
+  stop); → only moves (`tab_strip_focused_for_e2e`, Home stays in front),
+  Enter switches to the repository, End reaches Home and Space brings it
+  back. For Tier B: Tab
   to each list, check the ring appears only for keyboard focus, and read the
   roles in Accessibility Inspector.
 - Rows of Home's list (`KAGI_GUI_E2E_ONLY=home_rows`,

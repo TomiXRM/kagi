@@ -414,7 +414,7 @@ pub enum Job {
     Stash(StashJob),
     Conflict(ConflictJob),
     Run(RunJob),
-    RemotePull(RemotePullJob),
+    RemotePull(Box<RemotePullJob>),
 }
 pub enum Event {
     Remove(kagi_git::backend::remove::RemoveEvent),
@@ -430,7 +430,7 @@ impl Job {
             Self::Stash(job) => job.run_with_events(|e| event(Event::Stash(e))).into(),
             Self::Conflict(job) => job.run().into(),
             Self::Run(job) => job.run().into(),
-            Self::RemotePull(job) => job.run().into(),
+            Self::RemotePull(job) => (*job).run().into(),
         }
     }
 }
@@ -439,7 +439,9 @@ pub fn prepare(s: &mut Sessions, approved: Approved) -> Result<Job, AdmissionErr
         Planned::Remove { .. } => prepare_remove(s, approved).map(Job::Remove),
         Planned::Stash { .. } => prepare_stash(s, approved).map(Job::Stash),
         Planned::RemoteStash { .. } => prepare_stash(s, approved).map(Job::Stash),
-        Planned::RemotePull { .. } => prepare_remote_pull(s, approved).map(Job::RemotePull),
+        Planned::RemotePull { .. } => {
+            prepare_remote_pull(s, approved).map(|job| Job::RemotePull(Box::new(job)))
+        }
         Planned::Conflict { .. } => prepare_conflict(s, approved).map(Job::Conflict),
         // The run family binds its own blocking core: see `prepare_run`.
         Planned::Run(_) => Err(AdmissionError::Identity(

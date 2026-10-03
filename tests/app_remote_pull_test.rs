@@ -137,7 +137,7 @@ fn remote_pull_terminal_matrix_and_unobservable_release() {
             panic!("not a remote pull job")
         };
         let id = job.id();
-        let completion = job.with_report_for_test(report(outcome)).run();
+        let completion = (*job).with_report_for_test(report(outcome)).run();
         let deliveries = app::apply(&mut sessions, completion);
         assert!(
             matches!(deliveries.last(), Some(app::Delivery::RemoteCompleted { id: delivered, .. }) if *delivered == id)

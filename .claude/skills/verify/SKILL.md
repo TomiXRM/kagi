@@ -635,7 +635,10 @@ The current suite covers:
   is then loaded as acme/upstream (a queued list read), and once `gh`
   resolves the clone to acme/local the issue row opens it in Issues mode with
   #4 selected and the list and Reply re-addressed to acme/local
-  (`issue_write_repo_for_e2e`). For Tier B use a real `gh`
+  (`issue_write_repo_for_e2e`); a reply drafted to acme/upstream's #4 before
+  that is not in acme/local's #4 Reply and stays stored for acme/upstream
+  (drafts are keyed by the repository written to; `drafts_test` covers the
+  hand-over of pre-#940 drafts). For Tier B use a real `gh`
   login, click each switch cell and one PR / issue row of a local clone.
 - modal-slot arbitration (`KAGI_GUI_E2E_ONLY=push_failure_keeps_modal,merge_plan_latch,delete_branch_plan_latch,remote_browse_modal_routing`): a push failure lands behind Remote Browse without losing its input and reaches the Failed footer, an Error toast and one durable receipt — no dismiss-only AppNotice, queued or shown after Remote Browse closes (the #747 contract; #824 bisected the stale notice expectation to `e5644c6f`). Delayed Merge/Delete Branch plans wait behind Remote Browse without losing its input, stale plan state, latches, footers, or notices; a reopened Remote Browse rejects an older in-place completion by generation;
 - unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.

@@ -12,14 +12,18 @@ impl KagiApp {
     /// - a 4px horizontal divider at the top (drag to resize)
     /// - a tab bar (OperationLog / Terminal)
     /// - a placeholder body area
+    ///
+    /// `visible` is the shown fraction of its height while it opens or
+    /// closes (#950): the panel keeps its full height inside a box that
+    /// clips it, so the Terminal's grid and PTY size stay put.
     pub(super) fn render_bottom_panel_slot(
         &mut self,
-        open: bool,
+        visible: f32,
         height: f32,
         active_tab: BottomTab,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
-        if !open {
+        if visible <= 0. {
             return None;
         }
 
@@ -145,20 +149,33 @@ impl KagiApp {
         // The BottomPanel drag math converts the raw cursor back to this
         // unscaled space (see divider_drag_move).
         let panel_h = height + BOTTOM_PANEL_DIVIDER_H + BOTTOM_PANEL_TAB_H;
+        let panel = div()
+            .id("bottom-panel")
+            .relative()
+            .flex()
+            .flex_col()
+            .w_full()
+            .h(theme::scaled_px(panel_h))
+            .flex_shrink_0()
+            .child(h_divider)
+            .child(tab_bar)
+            .child(body)
+            .when(cfg!(feature = "gui-e2e"), |panel| {
+                panel.child(e2e::measure_inside("bottom-panel"))
+            });
+        // #950: only this box's height moves. The panel hangs from its top
+        // edge, so the tab strip rises from the bottom with it.
         Some(
             div()
-                .id("bottom-panel")
+                .id("bottom-panel-clip")
                 .relative()
-                .flex()
-                .flex_col()
                 .w_full()
-                .h(theme::scaled_px(panel_h))
+                .h(theme::scaled_px(panel_h * visible.min(1.)))
                 .flex_shrink_0()
-                .child(h_divider)
-                .child(tab_bar)
-                .child(body)
-                .when(cfg!(feature = "gui-e2e"), |panel| {
-                    panel.child(e2e::measure_inside("bottom-panel"))
+                .overflow_hidden()
+                .child(panel)
+                .when(cfg!(feature = "gui-e2e"), |clip| {
+                    clip.child(e2e::measure_inside("bottom-panel-clip"))
                 }),
         )
     }

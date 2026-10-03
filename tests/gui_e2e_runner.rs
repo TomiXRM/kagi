@@ -73,6 +73,10 @@ mod recovery_sidebar_panes;
 mod recovery_bottom_panel;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/bottom_panel_motion.rs"]
+mod bottom_panel_motion;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/hunk_staging.rs"]
 mod hunk_staging;
 
@@ -1639,6 +1643,10 @@ mod macos {
             (
                 "bottom_panel_nested",
                 Box::new(crate::recovery_bottom_panel::scenario_bottom_panel_nested),
+            ),
+            (
+                "bottom_panel_motion",
+                Box::new(crate::bottom_panel_motion::scenario_bottom_panel_motion),
             ),
             ("graph_copy", Box::new(scenario_graph_copy)),
             (

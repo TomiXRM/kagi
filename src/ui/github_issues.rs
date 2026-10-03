@@ -130,9 +130,10 @@ impl KagiApp {
     /// Point the active session's Issues mode at `identity` — a repository
     /// the caller has just verified `gh` resolves for this clone (#940
     /// review). A mode loaded while `gh repo set-default` named another
-    /// repository keeps that one as its list and Reply destination; it is
-    /// re-read for `identity` (and its cached issues dropped, as the same
-    /// numbers there are other issues) before anything is selected.
+    /// repository keeps that one as its list and Reply destination; its rows,
+    /// selection and cursor are dropped (the same numbers there are other
+    /// issues) and the list is re-read for `identity` before anything is
+    /// selected (`TabUiState::retarget_github_issues`).
     pub(super) fn address_issues_to(&mut self, identity: &str, cx: &mut Context<Self>) {
         let stale = self
             .ui()
@@ -144,13 +145,7 @@ impl KagiApp {
             return;
         }
         klog!("github: issues retarget {identity}");
-        self.with_ui(|ui| {
-            ui.issue_composer.base_repo = Some(identity.to_string());
-            ui.github_issue_details.clear();
-            // Their drafts are the old repository's: they stay stored there
-            // and the composers are made again for `identity`.
-            ui.issue_composer.editors.clear();
-        });
+        self.with_ui(|ui| ui.retarget_github_issues(identity));
         self.refresh_github_issues(cx);
     }
 

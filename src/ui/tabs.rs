@@ -951,7 +951,7 @@ impl KagiApp {
                 .h_full()
                 .min_w(theme::scaled_px(TAB_MIN_W))
                 .max_w(theme::scaled_px(TAB_MAX_W))
-                .px(theme::scaled_px(8. - ring))
+                .px(super::keyboard_nav::inset(8.))
                 .gap_1()
                 // Worktree tabs are tinted with the SAME lane colour as that
                 // worktree's WIP row (user request), washed when inactive.
@@ -1043,7 +1043,7 @@ fn render_home_tab(
         .h_full()
         .min_w(theme::scaled_px(TAB_MIN_W))
         .max_w(theme::scaled_px(TAB_MAX_W))
-        .px(theme::scaled_px(8. - ring))
+        .px(super::keyboard_nav::inset(8.))
         .gap_1()
         .bg(rgb(bg))
         .text_sm()

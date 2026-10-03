@@ -27,10 +27,11 @@
 //! The focus ring is the one `Input` draws (`sync_gpui_component_theme` maps
 //! gpui-component's `ring` to `color_branch`), shown only for keyboard focus
 //! (`focus_visible`). It is a border kept transparent at rest, so taking focus
-//! does not move anything; callers take its width out of their padding.
+//! does not move anything; callers pad with [`inset`], which takes its width
+//! out of their zoomed padding.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
 use gpui::{
@@ -51,9 +52,20 @@ const ROW_CONTEXT: &str = "KagiRowList";
 
 const CONTEXT: &str = "KagiTabList";
 
-/// The ring's width in px (`border_2`), taken out of the padding of every
-/// element that has it.
+/// The ring's width in px (`border_2`). Not scaled with the UI zoom: a fixed
+/// 2px ring stays crisp and visible at 0.7×, where a scaled one would be a
+/// blurred 1.4px.
 pub(crate) const RING: f32 = 2.;
+
+/// Padding of `n` (px at zoom 1.0) for an element that carries the ring: the
+/// zoomed padding minus the ring's fixed width, so the element's outer size is
+/// the one `scaled_px(n)` padding gave before the ring, at every zoom (#960
+/// review). Subtracting the ring before scaling made a cell 2 − 2·zoom px off:
+/// smaller at 1.5×, larger at 0.7×. The smallest inset in use is
+/// `inset(4.)` at 0.7×, 0.8px.
+pub(crate) fn inset(n: f32) -> gpui::Pixels {
+    super::theme::scaled_px(n) - gpui::px(RING)
+}
 
 /// ←/→/Home/End inside a tab list. The list's context is deeper than the
 /// app-wide `!Terminal && !Input` arrows (PR mode's pane cycling), so these
@@ -271,70 +283,100 @@ impl TabList {
     }
 }
 
-/// The focus handles of one virtualized list's rows, by each row's key, and
-/// the row last focused (#959).
+/// The rows of one virtualized list as built with its entries (#959): each
+/// row's key and its entry in the list. Built only when the entries are, so
+/// a frame that draws the same rows hands the same `Rc` back.
+pub(crate) type RowKeys = Rc<[(String, usize)]>;
+
+/// The focus handles of one virtualized list's rows and the row last focused
+/// (#959). The handles are made again only when the rows change — not on
+/// every frame (#937) — and a row keeps its handle while its key stays.
 #[derive(Default)]
 pub(crate) struct RowFocus {
-    handles: HashMap<String, FocusHandle>,
-    current: Option<String>,
+    keys: RowKeys,
+    handles: Rc<[FocusHandle]>,
+    /// The window's focus when last looked, so the rows are searched only
+    /// when it moves or the rows change.
+    seen: Option<FocusHandle>,
+    /// The row last focused, as its place among `keys`.
+    current: Option<usize>,
 }
 
 impl RowFocus {
-    /// Bring the handles in line with `rows` — each row's key and its entry
-    /// in `state` — and pick the list's Tab stop. A focused row that has
-    /// left the list hands the focus to that stop, or to `fallback` when no
-    /// row is left.
+    /// Bring the handles in line with `keys` and pick the list's Tab stop. A
+    /// focused row that has left the list hands the focus to that stop, or
+    /// to `fallback` when no row is left.
     pub(crate) fn rows(
         &mut self,
-        rows: Vec<(String, usize)>,
+        keys: RowKeys,
         state: &ListState,
         fallback: Option<&FocusHandle>,
         window: &mut Window,
         cx: &mut App,
     ) -> RowList {
-        if let Some((key, _)) = self.handles.iter().find(|(_, h)| h.is_focused(window)) {
-            self.current = Some(key.clone());
+        let focused = window.focused(cx);
+        let moved = focused != self.seen;
+        let rebuild = !Rc::ptr_eq(&keys, &self.keys);
+        let focused_row = if moved || rebuild {
+            focused
+                .as_ref()
+                .and_then(|focus| self.handles.iter().position(|handle| handle == focus))
+        } else {
+            None
+        };
+        if moved {
+            if focused_row.is_some() {
+                self.current = focused_row;
+            }
+            self.seen = focused;
         }
-        let present: HashSet<&str> = rows.iter().map(|(key, _)| key.as_str()).collect();
         let mut lost = false;
-        self.handles.retain(|key, handle| {
-            let keep = present.contains(key.as_str());
-            lost |= !keep && handle.is_focused(window);
-            keep
-        });
-        let handles: Vec<FocusHandle> = rows
-            .iter()
-            .map(|(key, _)| {
-                self.handles
-                    .entry(key.clone())
-                    .or_insert_with(|| cx.focus_handle())
-                    .clone()
-            })
-            .collect();
+        if rebuild {
+            let old: HashMap<&str, &FocusHandle> = self
+                .keys
+                .iter()
+                .zip(self.handles.iter())
+                .map(|((key, _), handle)| (key.as_str(), handle))
+                .collect();
+            let handles: Rc<[FocusHandle]> = keys
+                .iter()
+                .map(|(key, _)| match old.get(key.as_str()) {
+                    Some(handle) => (*handle).clone(),
+                    None => cx.focus_handle(),
+                })
+                .collect();
+            let current = self.current.and_then(|at| {
+                let key = &self.keys[at].0;
+                keys.iter().position(|(k, _)| k == key)
+            });
+            lost = focused_row.is_some() && current.is_none();
+            (self.keys, self.handles, self.current) = (keys, handles, current);
+        }
         // The remembered row while it is drawn; else the first row on
         // screen, so Tab always finds a row that exists.
         let top = state.logical_scroll_top().item_ix;
         let stop = self
             .current
-            .as_ref()
-            .and_then(|current| rows.iter().position(|(key, _)| key == current))
-            .filter(|&at| state.bounds_for_item(rows[at].1).is_some())
-            .or_else(|| rows.iter().position(|&(_, ix)| ix >= top))
-            .or((!rows.is_empty()).then_some(0));
+            .filter(|&at| state.bounds_for_item(self.keys[at].1).is_some())
+            .or_else(|| {
+                let at = self.keys.partition_point(|&(_, ix)| ix < top);
+                (at < self.keys.len()).then_some(at)
+            })
+            .or((!self.keys.is_empty()).then_some(0));
         if lost {
             match stop {
-                Some(at) => handles[at].focus(window, cx),
+                Some(at) => self.handles[at].focus(window, cx),
                 None => {
                     if let Some(fallback) = fallback {
                         fallback.focus(window, cx);
                     }
                 }
             }
-            self.current = stop.map(|at| rows[at].0.clone());
+            self.current = stop;
         }
         RowList {
-            rows: Rc::new(rows),
-            handles: Rc::new(handles),
+            rows: self.keys.clone(),
+            handles: self.handles.clone(),
             stop,
             state: state.clone(),
         }
@@ -343,26 +385,27 @@ impl RowFocus {
     /// The key of the row holding the focus, if any.
     #[cfg(feature = "gui-e2e")]
     pub(crate) fn focused(&self, window: &Window) -> Option<String> {
-        self.handles
+        self.keys
             .iter()
+            .zip(self.handles.iter())
             .find(|(_, handle)| handle.is_focused(window))
-            .map(|(key, _)| key.clone())
+            .map(|((key, _), _)| key.clone())
     }
 
     /// Focus the row `key` (GUI E2E: Tier A cannot press Tab into a list
     /// without walking the whole window).
     #[cfg(feature = "gui-e2e")]
     pub(crate) fn focus(&self, key: &str, window: &mut Window, cx: &mut App) {
-        if let Some(handle) = self.handles.get(key) {
-            handle.focus(window, cx);
+        if let Some(at) = self.keys.iter().position(|(k, _)| k == key) {
+            self.handles[at].focus(window, cx);
         }
     }
 }
 
 /// One virtualized list's rows being drawn.
 pub(crate) struct RowList {
-    rows: Rc<Vec<(String, usize)>>,
-    handles: Rc<Vec<FocusHandle>>,
+    rows: RowKeys,
+    handles: Rc<[FocusHandle]>,
     stop: Option<usize>,
     state: ListState,
 }

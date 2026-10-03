@@ -66,6 +66,16 @@ pub(crate) fn note_workspace_scroll() {
 pub fn workspace_scrolls() -> usize {
     WORKSPACE_SCROLLS.load(std::sync::atomic::Ordering::Relaxed)
 }
+/// Times Home's GitHub list entries were built (#937): once per change of
+/// what they are built from, not per frame.
+static HOME_ITEM_BUILDS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub(crate) fn note_home_items_built() {
+    HOME_ITEM_BUILDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+#[cfg(feature = "gui-e2e")]
+pub fn home_item_builds() -> usize {
+    HOME_ITEM_BUILDS.load(std::sync::atomic::Ordering::Relaxed)
+}
 #[cfg(feature = "gui-e2e")]
 pub fn control_bounds(id: gpui::WindowId, name: &str) -> Option<gpui::Bounds<gpui::Pixels>> {
     CONTROL_BOUNDS.with(|map| map.borrow().get(&(id, name.to_string())).copied())

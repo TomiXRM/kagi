@@ -127,6 +127,8 @@ mod home_tab;
 #[cfg(target_os = "macos")]
 #[path = "recovery/home_github.rs"]
 mod home_github;
+#[path = "recovery/home_list_place.rs"]
+mod home_list_place;
 #[cfg(target_os = "macos")]
 #[path = "recovery/home_rows.rs"]
 mod home_rows;
@@ -987,6 +989,10 @@ mod macos {
             (
                 "home_rows",
                 Box::new(crate::home_rows::scenario_home_rows),
+            ),
+            (
+                "home_list_place",
+                Box::new(crate::home_list_place::scenario_home_list_place),
             ),
             (
                 "smart_commit_generation_owner",

@@ -615,7 +615,15 @@ The current suite covers:
   Before that a clone into another
   folder fails (`fail-clone`): Home stays in front with a `clone: failed`
   toast drawn there (`toast-stack`). Back on Home, the clone's tab is matched
-  into `home_github.local` though it was opened after the list was read.
+  into `home_github.local` though it was opened after the list was read, and
+  its row's chip is drawn as `home-gh-acme/widgets:Open`. The list's entries
+  are built once per change of what they come from (#937): three redraws
+  leave `e2e::home_item_builds()` unchanged, a new filter builds them again.
+  `home_list_place` (`tests/recovery/home_list_place.rs`, #942 review) lists
+  60 repositories, scrolls to entry 30 and checks it stays there — without a
+  rebuild — when the hidden pull request / issue lists land
+  (`reload_home_work_for_e2e`), and in place but rebuilt when the language
+  changes and when a Refresh lands (`home_list_top_for_e2e`).
   `recent_repos` is restored by
   `SavedKeys`; `home_tab` also installs an offline `gh` because Home reads
   `gh repo list` whenever it opens, and checks that Remote Browse opened from

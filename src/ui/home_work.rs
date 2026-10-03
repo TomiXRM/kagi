@@ -496,15 +496,14 @@ fn pane_cell(
         )),
         None => None,
     };
-    let ring = super::keyboard_nav::RING;
     let cell = tabs
         .cell(slot, &name, div().id(id))
         .flex()
         .flex_row()
         .items_center()
         .gap_2()
-        .px(theme::scaled_px(12. - ring))
-        .py(theme::scaled_px(5. - ring))
+        .px(super::keyboard_nav::inset(12.))
+        .py(super::keyboard_nav::inset(5.))
         .rounded_md()
         .cursor_pointer()
         .text_sm()
@@ -514,7 +513,16 @@ fn pane_cell(
                 .font_weight(gpui::FontWeight::MEDIUM)
         })
         .when(!active, |el| el.hover(|s| s.bg(rgb(theme().surface))))
-        .child(SharedString::from(label))
+        // Measured (GUI E2E) so a scenario can check the padding the ring
+        // leaves at every zoom (#960 review).
+        .child(super::e2e::measure_control(
+            match pane {
+                HomePane::Repos => "home-pane-repos-label",
+                HomePane::Prs => "home-pane-prs-label",
+                HomePane::Issues => "home-pane-issues-label",
+            },
+            SharedString::from(label),
+        ))
         .children(badge)
         .min_w(px(0.));
     super::e2e::measure_control(id, cell)

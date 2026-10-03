@@ -78,6 +78,18 @@ pub struct HomeGithub {
     /// rows are measured once per build, so a change resets it.
     pub(super) list: Option<gpui::ListState>,
     pub(super) list_key: Option<super::home_github_list::ListKey>,
+    /// The list's entries as last built for [`Self::list_key`] (#937):
+    /// rebuilt only when the key changes, not on every frame.
+    pub(super) items: std::rc::Rc<[super::home_github_list::HomeItem]>,
+    /// Each entry's place among the rows (headings and notes are not rows),
+    /// for assistive technology (#944), and each row's key and entry, for
+    /// ↑/↓ and the list's one Tab stop (#959). Built with [`Self::items`],
+    /// not on every frame.
+    pub(super) places: std::rc::Rc<[Option<usize>]>,
+    pub(super) row_keys: super::keyboard_nav::RowKeys,
+    /// Bumped whenever the listed repositories or the local clones change,
+    /// so the entries built from them are built again (#937).
+    pub(super) data_version: u64,
     /// The user's open pull requests and issues, and which pane of Home's
     /// switch is showing (#928).
     pub work: super::home_work::HomeWork,
@@ -183,6 +195,7 @@ impl KagiApp {
             self.home_github.refreshing = true;
         } else {
             self.home_github.repos = GithubRepos::Loading;
+            self.home_github.data_version += 1;
         }
         let mut paths = super::tabs::recent_repos();
         paths.extend(self.open_tab_paths());
@@ -269,11 +282,14 @@ impl KagiApp {
         if self.home_github.generation != generation {
             return;
         }
+        // `data_version` moves only when the list on screen does (#942
+        // review): a rebuild resets the list's scroll.
         if self.home_github.shown_account != account
             && matches!(self.home_github.repos, GithubRepos::Loaded { .. })
         {
             self.home_github.repos = GithubRepos::Loading;
             self.home_github.refreshing = false;
+            self.home_github.data_version += 1;
         }
         self.home_github.shown_account = account;
         if let Some(sections) =
@@ -284,6 +300,7 @@ impl KagiApp {
                 orgs_error: None,
             };
             self.home_github.refreshing = true;
+            self.home_github.data_version += 1;
         }
         cx.notify();
     }
@@ -308,12 +325,16 @@ impl KagiApp {
                     owner: None,
                     list: Ok(list),
                 };
+                // Over a list already on screen (a saved one, a refresh) it
+                // waits for the organizations: nothing on screen changes,
+                // so the list keeps its scroll (#942 review).
                 if !self.home_github.refreshing {
                     self.home_github.repos = GithubRepos::Loaded {
                         sections: vec![own.clone()],
                         orgs_error: None,
                     };
                     self.home_github.orgs_loading = true;
+                    self.home_github.data_version += 1;
                 }
                 Some(own)
             }
@@ -329,6 +350,7 @@ impl KagiApp {
                     );
                 } else {
                     self.home_github.repos = GithubRepos::Failed(error.to_string());
+                    self.home_github.data_version += 1;
                 }
                 // Still reading until the organizations' `gh` ends.
                 self.home_github.refreshing = true;
@@ -352,6 +374,7 @@ impl KagiApp {
         if self.home_github.generation != generation {
             return None;
         }
+        self.home_github.data_version += 1;
         let mut sections = vec![own];
         let orgs_error = match orgs {
             Ok(orgs) => {
@@ -429,8 +452,13 @@ impl KagiApp {
             let (paths, found) = found.await;
             let _ = app.update(acx, |app, cx| {
                 let local = &mut app.home_github.local;
+                let before = local.clone();
                 local.retain(|_, p| !paths.contains(p));
                 local.extend(found);
+                // An unchanged match keeps the list (and its scroll).
+                if *local != before {
+                    app.home_github.data_version += 1;
+                }
                 cx.notify();
             });
         })

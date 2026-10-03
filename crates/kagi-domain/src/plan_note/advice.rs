@@ -367,6 +367,12 @@ macro_rules! advice_template_en {
     (WorktreeRemoveLeftoverProcesses) => {
         "{} process(es) started from a Kagi terminal in worktree '{}' are still running after its shell exited and may be using the directory. Kagi does not stop them; processes started outside Kagi are not checked."
     };
+    (WorktreeRemoveIgnoredFiles) => {
+        "Worktree '{}' has {} ignored file(s). Git does not track them; removal deletes them permanently."
+    };
+    (WorktreeRemoveIgnoredFilesAndFolders) => {
+        "Worktree '{}' has {} ignored file(s) and {} ignored folder(s) (contents not counted). Git does not track them; removal deletes them permanently."
+    };
     (WorktreeRemovesWorktreeDeleteBranch) => {
         "Removes the linked worktree at '{}' and also deletes its branch '{}'."
     };

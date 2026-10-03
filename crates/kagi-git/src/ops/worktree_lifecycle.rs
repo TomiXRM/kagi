@@ -130,7 +130,7 @@ pub(super) fn admin_plan(
 }
 
 /// Open a linked worktree as its own repo and return `(branch, dirty_summary)`.
-/// `dirty_summary` is `None` when the worktree is clean or unreadable-as-clean.
+/// Remove checks gitlinks separately, so missing paths do not count as dirt.
 pub(super) fn worktree_branch_and_dirt(wt: &git2::Worktree) -> (Option<String>, Option<String>) {
     let Ok(wt_repo) = Repository::open_from_worktree(wt) else {
         return (None, None);
@@ -139,7 +139,7 @@ pub(super) fn worktree_branch_and_dirt(wt: &git2::Worktree) -> (Option<String>, 
         .head()
         .ok()
         .and_then(|h| h.shorthand().ok().map(str::to_string));
-    let dirty = match working_tree_status(&wt_repo) {
+    let dirty = match crate::status::working_tree_status_for_remove(&wt_repo) {
         Ok(st) if st.is_dirty() => Some(status_summary_display(&st)),
         _ => None,
     };

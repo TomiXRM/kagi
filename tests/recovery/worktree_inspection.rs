@@ -25,11 +25,16 @@ use std::{
 /// only moves when advanced, so a resting pointer opens nothing on its own.
 const TOOLTIP_DELAY: Duration = Duration::from_secs(1);
 /// Recorded bounds a frame must re-prove before the card counts as drawn.
-const CARD_IDS: [&str; 7] = [
+const CARD_IDS: [&str; 12] = [
     "worktree-inspection",
     "worktree-inspection-heading",
+    "worktree-inspection-branch",
+    "worktree-inspection-path",
     "worktree-inspection-body",
-    "worktree-inspection-verdict",
+    "worktree-inspection-dirty",
+    "worktree-inspection-locked",
+    "worktree-inspection-stale",
+    "worktree-inspection-error",
     "worktree-inspection-refresh",
     "worktree-inspection-measuring",
     "sidebar-panes",
@@ -203,13 +208,21 @@ fn open_card(
         layout,
         "the hover card took space from the sidebar panes"
     );
-    let heading = bounds(window, "worktree-inspection-heading").expect("card heading");
-    assert!(
-        heading.size.height > px(0.)
-            && heading.origin.y >= card.origin.y
-            && heading.bottom() <= card.bottom(),
-        "worktree heading is not visible in the card"
-    );
+    for id in [
+        "worktree-inspection-heading",
+        "worktree-inspection-branch",
+        "worktree-inspection-path",
+    ] {
+        let part = bounds(window, id).unwrap_or_else(|| panic!("{id} not drawn"));
+        assert!(
+            part.size.height > px(0.)
+                && part.origin.y >= card.origin.y
+                && part.bottom() <= card.bottom()
+                && part.origin.x >= card.origin.x
+                && part.right() <= card.right(),
+            "{id} is clipped outside the compact hover card"
+        );
+    }
     card
 }
 
@@ -270,7 +283,7 @@ fn shown(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     path: &Path,
-) -> (bool, Option<u64>, Option<String>) {
+) -> (bool, Option<u64>, Option<Verdict>) {
     cx.read(|cx| e2e::worktree_inspection::status(app.read(cx), path))
 }
 
@@ -310,28 +323,29 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                 );
             }
             let card = open_card(cx, &app, window, pointer, layout);
-            let (pending, bytes, reason) = shown(cx, &app, &path);
+            let (pending, bytes, observed) = shown(cx, &app, &path);
             assert!(!pending, "{name}: measurement did not settle");
             assert!(
                 bytes.expect("allocation") >= 65_536,
-                "ignored build output was not counted"
+                "ignored build output was not counted in total size"
+            );
+            assert_eq!(observed, Some(verdict), "{name}/{lang:?}");
+            assert_eq!(
+                bounds(window, "worktree-inspection-dirty").is_some(),
+                name == "dirty",
+                "{name}: incorrect dirty chip"
             );
             assert_eq!(
-                reason.as_deref(),
-                Some(i18n::worktree_removal_verdict_text(verdict)),
-                "{name}/{lang:?}"
-            );
-            assert!(
-                bounds(window, "worktree-inspection-verdict").is_some(),
-                "reason not painted"
+                bounds(window, "worktree-inspection-locked").is_some(),
+                name == "locked",
+                "{name}: incorrect locked chip"
             );
             if name == "pushed" {
-                // Wheel inside the card scrolls its body only: the card, its
-                // heading and Refresh stay put, and the card stays open.
+                // A wheel over the compact card must not scroll the sidebar or
+                // move its identity, path, or icon-only refresh control.
                 let body = bounds(window, "worktree-inspection-body").unwrap();
                 let heading = bounds(window, "worktree-inspection-heading").unwrap();
                 let refresh = bounds(window, "worktree-inspection-refresh").unwrap();
-                let reason_before = bounds(window, "worktree-inspection-verdict").unwrap();
                 cx.simulate_mouse_move(window, body.center(), None, Modifiers::none());
                 cx.run_until_parked();
                 for delta in [-1000., 1000.] {
@@ -346,35 +360,10 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                     );
                     cx.run_until_parked();
                     redraw_card(cx, window);
-                    assert_eq!(
-                        bounds(window, "worktree-inspection"),
-                        Some(card),
-                        "scrolling the card body moved or closed the card"
-                    );
-                    assert_eq!(
-                        bounds(window, "worktree-inspection-heading"),
-                        Some(heading),
-                        "detail scrolling moved the identity heading"
-                    );
-                    assert_eq!(
-                        bounds(window, "worktree-inspection-refresh"),
-                        Some(refresh),
-                        "detail scrolling moved Refresh"
-                    );
-                    let reason_now = bounds(window, "worktree-inspection-verdict");
-                    if delta < 0. {
-                        assert!(
-                            reason_now
-                                .is_none_or(|bounds| bounds.origin.y <= reason_before.origin.y),
-                            "detail body scrolled the wrong way"
-                        );
-                    } else {
-                        assert_eq!(
-                            reason_now,
-                            Some(reason_before),
-                            "scrolling back did not restore the detail body"
-                        );
-                    }
+                    assert_eq!(bounds(window, "worktree-inspection"), Some(card));
+                    assert_eq!(bounds(window, "worktree-inspection-heading"), Some(heading));
+                    assert_eq!(bounds(window, "worktree-inspection-refresh"), Some(refresh));
+                    assert_eq!(pane_layout(cx, &app, window), layout);
                 }
             }
         }
@@ -449,6 +438,31 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
         newer,
         "superseded read replaced the fresh measurement"
     );
+    // The same transport can finish without a disk total. Show a bounded
+    // error chip, not a stale size or the backend's raw filesystem message.
+    let mut unreadable = observation(cx, &app, &repo, &pushed);
+    unreadable.disk_usage = Err("private filesystem detail".to_string());
+    let (task, reply) = deferred(cx);
+    e2e::worktree_inspection::queue(task);
+    click_in_card(cx, window, "worktree-inspection-refresh");
+    reply.send(unreadable);
+    cx.run_until_parked();
+    redraw_card(cx, window);
+    assert!(
+        bounds(window, "worktree-inspection-error").is_some(),
+        "failed disk measurement did not surface as an error chip"
+    );
+    assert_eq!(
+        shown(cx, &app, &pushed).1,
+        None,
+        "failed scan displayed a size"
+    );
+    click_in_card(cx, window, "worktree-inspection-refresh");
+    assert!(
+        shown(cx, &app, &pushed).1.is_some()
+            && bounds(window, "worktree-inspection-error").is_none(),
+        "successful refresh did not clear the failed measurement"
+    );
     // Leaving from inside the card closes it too.
     leave(cx, window);
 
@@ -479,10 +493,8 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
         i18n::set_lang(lang);
         click_in_card(cx, window, "worktree-inspection-refresh");
         assert_eq!(
-            shown(cx, &app, &pushed).2.as_deref(),
-            Some(i18n::worktree_removal_verdict_text(Verdict::Unknown(
-                WorktreeUnknownReason::UpstreamUnavailable
-            )))
+            shown(cx, &app, &pushed).2,
+            Some(Verdict::Unknown(WorktreeUnknownReason::UpstreamUnavailable))
         );
     }
 
@@ -590,8 +602,8 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
         "the completed observation was discarded or re-walked on return"
     );
     assert!(
-        shown(cx, &app, &pushed).2.is_some(),
-        "the completed observation lost its verdict"
+        shown(cx, &app, &pushed).2.is_none(),
+        "a cached observation from before tab departure advertised a fresh verdict"
     );
 
     i18n::set_lang(original_lang);

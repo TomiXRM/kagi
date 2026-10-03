@@ -8,10 +8,13 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Settings を開いたままスクロールすると、背面の画面(Graph・PRs・Issues・Editor)も一緒にスクロールする問題を修正しました。Settings の背景が、背面へのマウス操作をスクロールも含めて遮るようにしました。
+- Worktree 削除の確認後や削除前ステップ後に ignored ファイル・フォルダーが増えた場合、削除前に中止し、計画の再確認を促すようにしました。(#934)
+- 初期化済み、または未初期化でも gitlink のパスにローカルファイルがある worktree は Remove の計画時・実行前に削除を拒否します。空・不在の gitlink は削除可能なままとし、削除前ステップ後の拒否も EN/JA の短い toast に理由だけを表示します。(#934)
 
 ### Changed
 
 - Graph の「Avatar commit nodes」(commit の点を作者のアバターにする表示)を既定で ON にしました。設定で一度 OFF にしている場合はそのまま OFF です。
+- Worktree 行とホバーカードをアイコン・短い状態表示中心に整理し、再計測はアイコンのみ（支援技術向けの名前は維持）にしました。ignored file の注意はホバーから外し、削除時の確認計画で対象のファイル数とフォルダー数を示します。(#934)
 - Graph で行を選択しているとき、Esc で選択を解除できるようにしました(右側の commit 詳細も閉じます)。メニューや diff、確認画面が開いている場合は、従来どおりそちらが先に閉じます。
 - Terminal / Operation Log / Activity の下部パネルをウィンドウ全幅から main pane の下部へ移しました。開くと main の内容だけが縮み、サイドバーと右側の Inspector / Commit Panel に加え Editor の file tree / hunks と PR / Issues の navigator（PR の swimlane も）はステータスバーまで表示されます。従来の高さ変更、Cmd-J、タブ切替、Conflict 画面での非表示は維持します。（ADR-0007）
 
@@ -19,6 +22,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - タブ帯の「+」と New Tab(⌘T)で「Home」タブ(ダッシュボード)を開けるようにしました。最近開いたリポジトリ、フォルダーを開く、SSH リモートへの接続に加え、自分と所属 organization の GitHub リポジトリ一覧(owner ごとの見出し付き、`gh repo list` で各最大 1000 件、それ以上あれば表示。読めない organization はその理由を表示し、organization の一覧自体を読めないときもその旨を一覧に表示)を検索欄で絞り込み、手元にあるものは開き、無いものは clone できます。手元の clone は最近開いたリポジトリと開いているタブの `origin` で照合し、`~/.ssh/config` の別名(`git@work-github:…`)も実際の host に解決します。一覧は前回読んだものを読んだ GitHub アカウントと一緒に `settings.json` と同じフォルダーの `github_repos_cache.json` に保存し、同じアカウントのときだけ Home を開いた瞬間に表示し、自分と organization の一覧を並列に読み直して差し替えます(読み直しに失敗したときは前回の一覧を残して toast で知らせます。`gh auth switch` で別アカウントに切り替えた後は前の一覧を出しません。読み込み中の Refresh は押せません)。clone ではまず保存先のフォルダーを選びます(Kagi が勝手に決めることはなく、選ぶまで clone ボタンは押せません)。選んだフォルダーの中にリポジトリ名のフォルダーを作り、既に何かがあるときは clone しません。失敗・中断して残ったものは削除せずに場所を Operation Log に記録し、Home にも toast で知らせます。clone は 30 分で打ち切り、Kagi が起動したプロセスだけを止めます。成功すると Home がそのリポジトリのタブになります。タブが無いときの Welcome 画面は Home に置き換わりました。(Closes #923、Closes #924、ADR-0219)
 - `~/.kagi/themes/*.json` (または `KAGI_LOG_DIR/themes/*.json`) から自作テーマを読み込み、組み込みテーマの色を部分上書きして Settings / メニュー / command palette から選べるようにしました。Settings ではフォルダーのパス表示・作成して開く操作(Windows では Explorer で開きます)・画面を止めないバックグラウンド再読み込みもできます。再読み込みの連打では最後の結果だけ反映します。フォルダーを列挙できないとき(権限など)は読み込み済みのテーマを残し、理由を toast で知らせます。形式と各色の用途は [テーマガイド](docs/themes.md) に記載しています。(#922、ADR-0220)
+- gpui-component の固定版全 UI 部品、Kagi の画面別操作部品、Zeron の設計例を一次資料と実画面で比較した調査資料を追加しました（#931、実装・外観の変更はありません）。
+- Modern UI の PM 基準案を Kagi と固定版 gpui-component の寸法・操作状態・高密度画面・安全確認に照らして批判した資料を追加しました（#931、実装・外観の変更はありません）。
+- UI 実装ガイドの統合版を実コードと固定版部品に再照合し、PR/Issue 行・タブ・Switch・モーダルの誤認を訂正して、第 2 ラウンドの批判と検証手順の不足を記録しました（#931、UI 動作の変更はありません）。
 
 ## [0.41.0] - 2026-10-02
 

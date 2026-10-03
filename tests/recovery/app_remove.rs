@@ -149,6 +149,7 @@ pub fn scenario_remove_public_boundary(cx: &mut VisualTestAppContext) {
     for language in [Lang::En, Lang::Ja] {
         i18n::set_lang(language);
         refused_locked_remove(cx);
+        partial_submodule_refusal_toast(cx);
     }
     i18n::set_lang(previous);
 }
@@ -268,6 +269,115 @@ fn refused_locked_remove(cx: &mut VisualTestAppContext) {
             .unwrap()
             .trim(),
         "keep this checkout"
+    );
+    unmount(cx, app, window);
+}
+
+/// A read-only plan can become unsafe when a pre_remove copy fills an empty
+/// gitlink directory. The receipt keeps stage evidence; the toast does not.
+fn partial_submodule_refusal_toast(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    git(source.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(source.path().join("tracked"), b"submodule\n").unwrap();
+    git(source.path(), &["add", "."]);
+    git(source.path(), &["commit", "-qm", "submodule source"]);
+    git(
+        &repo,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            source.path().to_str().unwrap(),
+            "sub",
+        ],
+    );
+    std::fs::create_dir(repo.join(".kagi")).unwrap();
+    std::fs::write(repo.join(".gitignore"), b"secret\n").unwrap();
+    std::fs::write(
+        repo.join(".kagi/worktree.toml"),
+        b"[[pre_remove]]\ntype='copy'\nfrom='secret'\nto='sub/secret'\n",
+    )
+    .unwrap();
+    git(&repo, &["add", ".gitignore", ".kagi/worktree.toml"]);
+    git(
+        &repo,
+        &["commit", "-qm", "copy into empty gitlink before remove"],
+    );
+    std::fs::write(repo.join("secret"), b"local bytes from main\n").unwrap();
+    let worktrees = tempfile::tempdir().unwrap();
+    let linked = worktrees.path().join("sub-target");
+    git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "sub-target",
+            linked.to_str().unwrap(),
+        ],
+    );
+
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| {
+        app.open_remove_worktree_modal("sub-target".into(), false, cx);
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        cx.run_until_parked();
+        if cx.read(|cx| app.read(cx).remove_worktree_modal().is_some()) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "submodule plan did not arrive");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    cx.read(|cx| {
+        let plan = &app.read(cx).remove_worktree_modal().unwrap().plan;
+        assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    });
+    cx.update_window(window, |_, window, cx| {
+        window.focus(&app.read(cx).root_focus.clone().unwrap(), cx);
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.simulate_keystrokes(window, "enter");
+    wait_idle(cx, &app);
+
+    let expected = match i18n::lang() {
+        Lang::En => "Contains submodules",
+        Lang::Ja => "submodule を含むため削除できません",
+    };
+    cx.read(|cx| {
+        let state = app.read(cx);
+        let toast = state
+            .toast_stack
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .toasts()
+            .last()
+            .expect("partial refusal toast");
+        assert_eq!(toast.message.as_ref(), expected);
+        assert!(e2e::app_notice_message(state).is_none());
+        assert!(!state.app_sessions.has_leases());
+    });
+    let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+        .into_iter()
+        .filter(|entry| entry.op == "remove-worktree")
+        .collect();
+    assert_eq!(entries.len(), 1);
+    assert!(
+        matches!(&entries[0].outcome, OpOutcome::Partial { error, .. }
+            if error.contains("Contains submodules") && error.contains("stage=")),
+        "durable receipt keeps complete execution evidence: {:?}",
+        entries[0]
+    );
+    assert_eq!(
+        std::fs::read(linked.join("sub/secret")).unwrap(),
+        b"local bytes from main\n"
     );
     unmount(cx, app, window);
 }

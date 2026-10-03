@@ -25,6 +25,10 @@ pub(crate) const ADVICE_WORKTREE_REMOVE_LIVE_SHELL: &str =
     "この worktree の terminal で Kagi が起動した shell がまだ動いています。先にその terminal で exit してください(kagi はプロセスを終了させません)。\nworktree `{}`";
 pub(crate) const ADVICE_WORKTREE_REMOVE_LEFTOVER_PROCESSES: &str =
     "この worktree の Kagi terminal から起動したプロセス {} 件が、shell の終了後も動いていて、このディレクトリを使っている可能性があります。kagi は停止しません。Kagi の外で起動したプロセスは確認していません。\nworktree `{}`";
+pub(crate) const ADVICE_WORKTREE_REMOVE_IGNORED_FILES: &str =
+    "Git が追跡しない ignored ファイルが {} 件あります。削除すると完全に消えます。\nworktree `{}`";
+pub(crate) const ADVICE_WORKTREE_REMOVE_IGNORED_FILES_AND_FOLDERS: &str =
+    "Git が追跡しない ignored ファイル {} 件と ignored フォルダ {} 件(中身は数えていません)があります。削除すると完全に消えます。\nworktree `{}`";
 pub(crate) const ADVICE_WORKTREE_REMOVES_WORKTREE_DELETE_BRANCH: &str =
     "リンク worktree を削除し、branch も削除します。\nworktree `{}` / branch `{}`";
 pub(crate) const ADVICE_WORKTREE_REMOVES_WORKTREE_KEEP_BRANCH: &str =
@@ -131,6 +135,25 @@ pub fn note_ja(note: &WorktreeNote) -> String {
         }
         WorktreeNote::RemoveLeftoverProcesses { path, count } => {
             super::advice_text(Msg::AdviceWorktreeRemoveLeftoverProcesses, &[count, path])
+        }
+        WorktreeNote::RemoveIgnoredFiles {
+            path,
+            files,
+            folders: 0,
+        } => super::advice_text(Msg::AdviceWorktreeRemoveIgnoredFiles, &[files, path]),
+        WorktreeNote::RemoveIgnoredFiles {
+            path,
+            files,
+            folders,
+        } => super::advice_text(
+            Msg::AdviceWorktreeRemoveIgnoredFilesAndFolders,
+            &[files, folders, path],
+        ),
+        WorktreeNote::RemoveIgnoredContentChanged => {
+            "ignored が増えました。計画を再確認してください。".to_string()
+        }
+        WorktreeNote::RemoveContainsSubmodules => {
+            "submodule を含むため削除できません".to_string()
         }
         WorktreeNote::RemovesWorktree {
             path,

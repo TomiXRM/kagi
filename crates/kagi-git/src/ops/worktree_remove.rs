@@ -10,9 +10,11 @@ use kagi_domain::plan_note::{WorktreeNote, WorktreeRecovery, WorktreeTitle};
 
 /// Analyse whether removing the linked worktree `name` is safe.
 ///
-/// Blockers: the main worktree (never removable), a dirty worktree (kagi never
-/// forces), a locked worktree, or a missing worktree. `delete_branch` controls
-/// whether the plan also promises to delete the checked-out branch.
+/// Blockers: the main worktree (never removable), a dirty, locked, or
+/// submodule-containing worktree, or a missing worktree. `delete_branch`
+/// controls whether the plan also promises to delete the checked-out branch.
+/// Warnings: the removal itself, any ignored content it deletes (#934), and
+/// the `pre_remove` steps.
 pub fn plan_remove_worktree(
     repo: &Repository,
     name: &str,
@@ -50,6 +52,9 @@ pub fn plan_remove_worktree(
     let (branch, dirt) = worktree_branch_and_dirt(&wt);
 
     let mut blockers = Vec::new();
+    if has_submodule_content(&wt)? {
+        blockers.push(PlanNote::Worktree(WorktreeNote::RemoveContainsSubmodules));
+    }
     if let Some(summary) = dirt {
         blockers.push(PlanNote::Worktree(WorktreeNote::RemoveDirty {
             path: path_str.clone(),
@@ -68,6 +73,9 @@ pub fn plan_remove_worktree(
         branch: branch.clone(),
         delete_branch,
     })];
+    if let Some(note) = ignored_content_note(&wt, &path_str) {
+        warnings.push(note);
+    }
     // issue #341: enumerate the typed pre_remove steps from the worktree's own
     // committed config. A command step in an untrusted config marks the note
     // trust-required (and, at execute time, aborts the removal until trusted).
@@ -89,6 +97,132 @@ pub fn plan_remove_worktree(
     });
 
     admin_plan(repo, title, warnings, blockers, recovery, true)
+}
+
+/// A populated gitlink path is not safe to remove, even when the submodule is
+/// uninitialized: Git status and ignored scans omit files inside that path.
+/// Check only direct entries, without walking the submodule or following a
+/// symlink at the path. A missing or empty directory remains removable.
+fn has_submodule_content(wt: &git2::Worktree) -> Result<bool, GitError> {
+    let wt_repo = Repository::open_from_worktree(wt)
+        .map_err(|e| GitError::Other(format!("cannot inspect worktree submodules: {e}")))?;
+    let workdir = wt_repo
+        .workdir()
+        .ok_or_else(|| GitError::Other("worktree has no working directory".into()))?;
+    for submodule in wt_repo
+        .submodules()
+        .map_err(|e| GitError::Other(format!("cannot inspect worktree submodules: {e}")))?
+    {
+        let path = workdir.join(submodule.path());
+        match std::fs::symlink_metadata(&path) {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => {
+                return Err(GitError::Other(format!(
+                    "cannot inspect worktree submodule: {err}"
+                )));
+            }
+            Ok(metadata) if !metadata.is_dir() => return Ok(true),
+            Ok(_) => {}
+        }
+        let mut entries = std::fs::read_dir(&path)
+            .map_err(|e| GitError::Other(format!("cannot inspect worktree submodule: {e}")))?;
+        if let Some(entry) = entries.next() {
+            entry
+                .map_err(|e| GitError::Other(format!("cannot inspect worktree submodule: {e}")))?;
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// A linked worktree can acquire submodule content after confirmation or during
+/// a pre-remove step. Refuse it through the same typed plan blocker.
+pub(crate) fn preflight_remove_submodules(repo: &Repository, name: &str) -> Result<(), GitError> {
+    let wt = repo
+        .find_worktree(name)
+        .map_err(|e| GitError::Other(format!("cannot inspect worktree submodules: {e}")))?;
+    if has_submodule_content(&wt)? {
+        return Err(GitError::Blocked(Box::new(PlanNote::Worktree(
+            WorktreeNote::RemoveContainsSubmodules,
+        ))));
+    }
+    Ok(())
+}
+
+/// A read-only status walk of the linked worktree's ignored content. Git
+/// reports an ignored directory as one entry without descending into it;
+/// symlinks are entries, never followed. Fail closed at execution time.
+fn ignored_content_counts(wt: &git2::Worktree) -> Result<(usize, usize), GitError> {
+    let wt_repo = Repository::open_from_worktree(wt)
+        .map_err(|e| GitError::Other(format!("cannot inspect ignored worktree content: {e}")))?;
+    let mut opts = git2::StatusOptions::new();
+    opts.include_ignored(true)
+        .recurse_ignored_dirs(false)
+        .include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .exclude_submodules(true);
+    let statuses = wt_repo
+        .statuses(Some(&mut opts))
+        .map_err(|e| GitError::Other(format!("cannot inspect ignored worktree content: {e}")))?;
+    let (mut files, mut folders) = (0, 0);
+    for entry in statuses.iter().filter(|entry| entry.status().is_ignored()) {
+        if entry.path_bytes().ends_with(b"/") {
+            folders += 1;
+        } else {
+            files += 1;
+        }
+    }
+    Ok((files, folders))
+}
+
+/// The confirmed plan carries the counts in its warning, including zero when
+/// it has no ignored-content warning. Re-plan blockers alone do not preserve
+/// what the user saw (#936).
+fn ensure_ignored_content_not_increased(
+    wt: &git2::Worktree,
+    plan: &OperationPlan,
+) -> Result<(), GitError> {
+    let approved = plan
+        .warnings
+        .iter()
+        .find_map(|note| match note {
+            PlanNote::Worktree(WorktreeNote::RemoveIgnoredFiles { files, folders, .. }) => {
+                Some((*files, *folders))
+            }
+            _ => None,
+        })
+        .unwrap_or((0, 0));
+    let current = ignored_content_counts(wt)?;
+    if current.0 > approved.0 || current.1 > approved.1 {
+        return Err(GitError::Blocked(Box::new(PlanNote::Worktree(
+            WorktreeNote::RemoveIgnoredContentChanged,
+        ))));
+    }
+    Ok(())
+}
+
+/// Refuse new unreviewed ignored content before trust or pre_remove steps run.
+pub(crate) fn preflight_remove_ignored_content(
+    repo: &Repository,
+    plan: &OperationPlan,
+    name: &str,
+) -> Result<(), GitError> {
+    let wt = repo
+        .find_worktree(name)
+        .map_err(|e| GitError::Other(format!("cannot inspect worktree ignored content: {e}")))?;
+    ensure_ignored_content_not_increased(&wt, plan)
+}
+
+/// The warning shown when the worktree could be read during planning.
+fn ignored_content_note(wt: &git2::Worktree, path: &str) -> Option<PlanNote> {
+    let (files, folders) = ignored_content_counts(wt).ok()?;
+    (files + folders > 0).then(|| {
+        PlanNote::Worktree(WorktreeNote::RemoveIgnoredFiles {
+            path: path.to_string(),
+            files,
+            folders,
+        })
+    })
 }
 
 /// Remove the linked worktree `name`: preflight → ODB-backup any uncommitted
@@ -165,6 +299,7 @@ pub(crate) fn execute_remove_worktree_progress(
             wt_path.display()
         )));
     }
+    preflight_remove_submodules(repo, name)?;
 
     // Capture the ref before any pre-remove hook. The hook is allowed to take
     // time, so deleting whichever commit the branch points at afterwards would
@@ -203,6 +338,9 @@ pub(crate) fn execute_remove_worktree_progress(
             fault,
         )?;
     }
+    // A pre_remove step can populate a gitlink. Detect it before trying to
+    // back up this worktree's files, as well as at the deletion boundary.
+    preflight_remove_submodules(repo, name)?;
 
     // Belt-and-suspenders: the plan blocks dirt, but a race could have dirtied
     // the worktree since. Back up any uncommitted content into the main ODB
@@ -226,6 +364,12 @@ pub(crate) fn execute_remove_worktree_progress(
     if fault == Some(Fault::FailAfterBackupBeforeDelete) {
         return partial("injected failure after backup".into());
     }
+
+    // `pre_remove` may create ignored output without changing the dirty
+    // blocker. Nothing below may delete the tree until that output is compared
+    // with the counts the user actually confirmed.
+    ensure_ignored_content_not_increased(&wt, plan)?;
+    preflight_remove_submodules(repo, name)?;
 
     // Containment-checked recursive delete (the ONLY sanctioned one).
     progress.stage = Stage::DeletionStarted;

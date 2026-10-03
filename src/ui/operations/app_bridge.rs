@@ -1,6 +1,7 @@
 //! Sole runtime adapter for the first application family.
 use crate::app::{self, Approved, Delivery};
 use crate::ui::*;
+use kagi_domain::plan_note::{PlanNote, WorktreeNote};
 
 fn log_stash_event(
     event: kagi_git::backend::stash::StashEvent,
@@ -418,7 +419,18 @@ impl KagiApp {
                         format!("remove-worktree: result unknown — {}", evidence)
                     }
                 };
-                let text = if matches!(entry.outcome, OpOutcome::Refused { .. }) {
+                // A typed post-step blocker is the entire toast reason; the
+                // Partial receipt and footer retain the full stage evidence.
+                let concise_note = report.blocker.as_ref().filter(|note| {
+                    matches!(entry.outcome, OpOutcome::Partial { .. })
+                        || matches!(
+                            note,
+                            PlanNote::Worktree(WorktreeNote::RemoveIgnoredContentChanged)
+                        )
+                });
+                let text = if let Some(note) = concise_note {
+                    i18n::plan_note_text(note)
+                } else if matches!(entry.outcome, OpOutcome::Refused { .. }) {
                     report.blocker.as_ref().map_or_else(
                         || footer.clone(),
                         |blocker| format!("{}: {}", entry.repo, i18n::plan_note_text(blocker)),
@@ -446,7 +458,8 @@ impl KagiApp {
                         cx.notify();
                     });
                 }
-                if report.blocker.is_some()
+                if concise_note.is_none()
+                    && report.blocker.is_some()
                     && matches!(report.recording.entry().outcome, OpOutcome::Refused { .. })
                 {
                     self.app_notices.push_back(text.clone().into());

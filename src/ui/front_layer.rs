@@ -37,7 +37,7 @@ pub(crate) enum LayerKind {
 /// followed by MenuOverlay, are in `render.rs:725-738`.
 /// Home draws MenuOverlay then the modal slice (`home.rs:213-231`).
 /// `render_overlay.rs:311-680` iterates that slice; the shell appends the
-/// platform dropdown (`render.rs:753-754`, `mod.rs:3521-3536` on Home).
+/// platform dropdown (`render.rs:753-754`, `mod.rs:3522-3537` on Home).
 pub(crate) const Z_ORDER: [LayerKind; 14] = [
     LayerKind::ConflictFileMenu,  // render.rs:727
     LayerKind::EditorTreeMenu,    // render.rs:728
@@ -52,7 +52,7 @@ pub(crate) const Z_ORDER: [LayerKind; 14] = [
     LayerKind::CommitPlan,        // render_overlay.rs:643-651
     LayerKind::SmartCommit,       // render_overlay.rs:652-656
     LayerKind::Update,            // render_overlay.rs:657-673
-    LayerKind::PlatformMenu,      // render.rs:753-754; mod.rs:3535
+    LayerKind::PlatformMenu,      // render.rs:753-754; mod.rs:3536
 ];
 
 impl LayerKind {
@@ -113,60 +113,6 @@ impl LayerKind {
             | Self::FileMenu
             | Self::PlatformMenu => FrontLayer::Menu,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{LayerKind as L, Z_ORDER};
-
-    #[test]
-    fn every_layer_occurs_exactly_once() {
-        // Exhaustive list: a new enum variant must also be classified here.
-        let all = [
-            L::ConflictFileMenu,
-            L::EditorTreeMenu,
-            L::CoauthorMenu,
-            L::WorkspaceMenus,
-            L::MenuOverlay,
-            L::EarlyModal,
-            L::PrMenu,
-            L::FilterMenu,
-            L::InspectorFileMenu,
-            L::FileMenu,
-            L::CommitPlan,
-            L::SmartCommit,
-            L::Update,
-            L::PlatformMenu,
-        ];
-        for kind in all {
-            let _: () = match kind {
-                L::ConflictFileMenu
-                | L::EditorTreeMenu
-                | L::CoauthorMenu
-                | L::WorkspaceMenus
-                | L::MenuOverlay
-                | L::EarlyModal
-                | L::PrMenu
-                | L::FilterMenu
-                | L::InspectorFileMenu
-                | L::FileMenu
-                | L::CommitPlan
-                | L::SmartCommit
-                | L::Update
-                | L::PlatformMenu => (),
-            };
-            assert_eq!(
-                Z_ORDER.iter().filter(|&&entry| entry == kind).count(),
-                1,
-                "{kind:?}"
-            );
-        }
-        assert_eq!(Z_ORDER.len(), all.len());
-        assert_eq!(Z_ORDER.iter().position(|k| *k == L::MenuOverlay), Some(4));
-        assert_eq!(Z_ORDER.iter().position(|k| *k == L::PlatformMenu), Some(13));
-        let modal = Z_ORDER.iter().filter(|k| k.in_modal_layer()).count();
-        assert_eq!(modal, 8);
     }
 }
 
@@ -314,5 +260,59 @@ impl KagiApp {
         }
         self.close_coauthor_menu(cx);
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LayerKind as L, Z_ORDER};
+
+    #[test]
+    fn every_layer_occurs_exactly_once() {
+        // Exhaustive list: a new enum variant must also be classified here.
+        let all = [
+            L::ConflictFileMenu,
+            L::EditorTreeMenu,
+            L::CoauthorMenu,
+            L::WorkspaceMenus,
+            L::MenuOverlay,
+            L::EarlyModal,
+            L::PrMenu,
+            L::FilterMenu,
+            L::InspectorFileMenu,
+            L::FileMenu,
+            L::CommitPlan,
+            L::SmartCommit,
+            L::Update,
+            L::PlatformMenu,
+        ];
+        for kind in all {
+            let _: () = match kind {
+                L::ConflictFileMenu
+                | L::EditorTreeMenu
+                | L::CoauthorMenu
+                | L::WorkspaceMenus
+                | L::MenuOverlay
+                | L::EarlyModal
+                | L::PrMenu
+                | L::FilterMenu
+                | L::InspectorFileMenu
+                | L::FileMenu
+                | L::CommitPlan
+                | L::SmartCommit
+                | L::Update
+                | L::PlatformMenu => (),
+            };
+            assert_eq!(
+                Z_ORDER.iter().filter(|&&entry| entry == kind).count(),
+                1,
+                "{kind:?}"
+            );
+        }
+        assert_eq!(Z_ORDER.len(), all.len());
+        assert_eq!(Z_ORDER.iter().position(|k| *k == L::MenuOverlay), Some(4));
+        assert_eq!(Z_ORDER.iter().position(|k| *k == L::PlatformMenu), Some(13));
+        let modal = Z_ORDER.iter().filter(|k| k.in_modal_layer()).count();
+        assert_eq!(modal, 8);
     }
 }

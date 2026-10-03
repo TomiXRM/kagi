@@ -1261,6 +1261,9 @@ pub struct KagiApp {
     pub menu_overlay: Option<commands::MenuOverlay>,
     /// Focus and screen identity captured before an overlay opened (#812 / #976).
     pending_focus: Option<overlay_focus::PendingFocus>,
+    /// A focus returned while a pane still animates closed; checked for
+    /// membership again on later frames when its control may have unmounted.
+    restored_focus: Option<gpui::FocusHandle>,
     /// Linux/FreeBSD client-side menu dropdown currently open from the in-app
     /// menu bar. Native macOS menus are provided by `cx.set_menus`, so only the
     /// Linux/FreeBSD titlebar sets this.
@@ -1448,6 +1451,7 @@ impl KagiApp {
             inspector_visible: true,
             menu_overlay: None,
             pending_focus: None,
+            restored_focus: None,
             platform_menu_open: None,
             // W11-AVATAR
             avatars: avatar::AvatarStore::default(),

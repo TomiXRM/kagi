@@ -323,11 +323,15 @@ The current suite covers:
     editor made an indenting multi-line input, Tab stays in it.
   - Unmounted return targets (`KAGI_GUI_E2E_ONLY=settings_hidden_return_target`):
     focus a sidebar mode-nav cell, open Settings through `app.settings`,
-    press raw Cmd+B, let the sidebar finish closing, then Escape; raw Down
-    advances Graph. Repeat with the inspector's selectable commit message
-    focused and raw Cmd+Option+B hiding commit details. Neither retained
-    handle may receive focus after its pane disappears, even in the same
-    session. Disabling the rendered-dispatch-tree membership check must fail.
+    press raw Cmd+B, then Escape *during* the 150 ms close animation,
+    when the restored handle still belongs to the drawn root. Advance the
+    stand-in clock past close; raw Down must reach Graph because
+    `restored_focus` moves to root after unmount. Repeat with the inspector's
+    selectable commit message focused and raw Cmd+Option+B hiding commit
+    details, finishing the animation before Escape. Neither retained handle
+    may receive keys after its pane disappears, even in the same session.
+    Disabling either the return-time membership check or the per-frame
+    `restored_focus` check must fail.
 - overlay focus return (`KAGI_GUI_E2E_ONLY=palette_push_modal_keys,settings_close_returns_focus`,
   `tests/recovery/overlay_focus.rs`): #817 / #812. Every key is raw, with no
   test-side refocusing. The palette scenario first starts the bottom-panel

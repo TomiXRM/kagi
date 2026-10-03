@@ -19,11 +19,9 @@
 //! plan modal without a text field therefore asks for the root on open, the
 //! same rule the conflict Abort confirmation follows (#755).
 
-use gpui::{Context, FocusHandle, Focusable as _, SharedString, Window};
-use gpui_component::input::InputState;
+use gpui::{Context, FocusHandle, SharedString, Window};
 
 use super::commands::MenuOverlay;
-use super::modals::ActiveModal;
 use super::KagiApp;
 use crate::app::SessionId;
 
@@ -59,34 +57,6 @@ impl KagiApp {
         })
     }
 
-    /// Only a field owned by the modal that arrived may keep focus when
-    /// Settings unmounts. A Select popup is outside the trap but not a modal
-    /// input; keeping it would strand the modal's Escape and Tab.
-    fn arriving_modal_input_focused(&self, window: &Window, cx: &Context<Self>) -> bool {
-        let owns_focus = |input: Option<&gpui::Entity<InputState>>| {
-            input.is_some_and(|input| input.read(cx).focus_handle(cx).contains_focused(window, cx))
-        };
-        match self.active_modal.as_ref() {
-            Some(ActiveModal::RemoteBrowse(m)) => {
-                owns_focus(m.host_state.as_ref())
-                    || owns_focus(m.port_state.as_ref())
-                    || owns_focus(m.identity_state.as_ref())
-            }
-            Some(ActiveModal::PrFields(_)) => owns_focus(self.pr_fields_input.as_ref()),
-            Some(ActiveModal::CreateBranch(m)) => owns_focus(m.input_state.as_ref()),
-            Some(ActiveModal::CreateTag(m)) => owns_focus(m.input_state.as_ref()),
-            Some(ActiveModal::StashPush(m)) => owns_focus(m.input_state.as_ref()),
-            Some(ActiveModal::SetUpstream(m)) => owns_focus(m.input_state.as_ref()),
-            Some(ActiveModal::RenameBranch(m)) => owns_focus(m.input_state.as_ref()),
-            Some(ActiveModal::CreateWorktree(m)) => {
-                owns_focus(m.branch_state.as_ref()) || owns_focus(m.path_state.as_ref())
-            }
-            Some(ActiveModal::WorktreeLockReason(m)) => owns_focus(m.input_state.as_ref()),
-            Some(ActiveModal::EditorFsPrompt(m)) => owns_focus(m.input_state.as_ref()),
-            _ => false,
-        }
-    }
-
     /// Remember the focus to return to. Kept from the first overlay when one
     /// replaces another, so the return target is never an overlay's own input.
     pub(super) fn capture_overlay_return_focus(&mut self, window: &Window, cx: &Context<Self>) {
@@ -114,18 +84,19 @@ impl KagiApp {
     /// unmounted elements, so a live handle alone is not a valid return target.
     pub(super) fn apply_pending_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(pending) = self.pending_focus.take() {
-            let focus = if pending.screen == self.focus_screen()
+            let valid = pending.screen == self.focus_screen()
                 && self
                     .root_focus
                     .as_ref()
-                    .is_some_and(|root| root.contains(&pending.focus, window))
-            {
+                    .is_some_and(|root| root.contains(&pending.focus, window));
+            let focus = if valid {
                 Some(pending.focus)
             } else {
                 self.root_focus.clone()
             };
             if let Some(focus) = focus {
                 window.focus(&focus, cx);
+                self.restored_focus = valid.then_some(focus);
             }
         }
     }
@@ -139,9 +110,25 @@ impl KagiApp {
     /// closes, and focus goes to the root unless the arriving modal's own
     /// input already holds it. Settings' return target is dropped, not applied.
     pub(super) fn sync_pending_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // A restored control may remain drawn during its close animation and
+        // unmount later. Only rescue that exact focus; user-directed focus
+        // changes must never be stolen by an old restore target.
+        if let Some(restored) = self.restored_focus.take() {
+            if window.focused(cx).as_ref() == Some(&restored) {
+                if self
+                    .root_focus
+                    .as_ref()
+                    .is_some_and(|root| root.contains(&restored, window))
+                {
+                    self.restored_focus = Some(restored);
+                } else if let Some(root) = &self.root_focus {
+                    window.focus(root, cx);
+                }
+            }
+        }
         if matches!(self.menu_overlay, Some(MenuOverlay::Settings)) && self.modal_in_front(cx) {
             self.menu_overlay = None;
-            self.pending_focus = (!self.arriving_modal_input_focused(window, cx))
+            self.pending_focus = (!self.active_modal_input_focused(window, cx))
                 .then(|| self.pending_root_focus())
                 .flatten();
         }

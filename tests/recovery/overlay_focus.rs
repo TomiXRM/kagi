@@ -867,7 +867,8 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
 }
 
 /// #976: a focus handle can outlive its pane. Settings must not restore it
-/// after the pane disappears, even when the repository session is unchanged.
+/// after the pane disappears, even when the repository session is unchanged;
+/// a restore while the pane is *still closing* must also recover on unmount.
 pub fn scenario_settings_hidden_return_target(cx: &mut VisualTestAppContext) {
     use std::time::{Duration, Instant};
 
@@ -952,17 +953,42 @@ pub fn scenario_settings_hidden_return_target(cx: &mut VisualTestAppContext) {
         cx.read(|cx| !app.read(cx).sidebar.visible),
         "Cmd+B must hide the sidebar while Settings remains open"
     );
-    e2e::set_panel_motion_clock(Some(t0 + Duration::from_millis(300)));
+    // Escape before the 150 ms close animation finishes. The return target
+    // still belongs to the drawn workspace at the moment it is restored.
+    e2e::set_panel_motion_clock(Some(t0 + Duration::from_millis(50)));
     draw(cx, window);
     assert!(
-        cx.read(|cx| app.read(cx).menu_overlay.is_some()),
-        "sidebar toggle must leave Settings open for Escape to restore focus"
+        in_workspace(cx, &sidebar_focus),
+        "precondition: sidebar control remains drawn while closing"
     );
+    keys(cx, window, "escape");
+    draw(cx, window);
+    assert!(
+        cx.read(|cx| app.read(cx).menu_overlay.is_none()),
+        "mid-close: Escape closes Settings before the sidebar unmounts"
+    );
+    assert_eq!(
+        focused(cx),
+        sidebar_focus,
+        "mid-close: Settings restores the still-drawn sidebar control"
+    );
+    e2e::set_panel_motion_clock(Some(t0 + Duration::from_millis(300)));
+    draw(cx, window);
+    draw(cx, window);
     assert!(
         !in_workspace(cx, &sidebar_focus),
-        "precondition: the captured sidebar focus is no longer drawn"
+        "precondition: the sidebar control unmounts when the animation ends"
     );
-    finish(cx, "hidden-sidebar-return");
+    keys(cx, window, "down");
+    assert_eq!(
+        selected(cx),
+        Some(1),
+        "mid-close: raw Down reaches Graph after the restored control unmounts"
+    );
+    assert!(
+        root_focused(cx),
+        "mid-close: focus recovers to the drawn root"
+    );
 
     // Reopen the sidebar so the second leg can focus an inspector control.
     keys(cx, window, "cmd-b");

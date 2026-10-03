@@ -923,6 +923,15 @@ real read produces it. Used by `remote_refresh_departed_owner`,
 `ecosystem_evidence_background_owner`, `ecosystem_evidence_superseded`,
 `ecosystem_evidence_detached_samepath` and `workspace_mode_toolbar`.
 
+The same kind of stand-in, outside `e2e::queue_*`:
+
+- `KagiApp::queue_issue_list_fetch_for_e2e` (the next Issues list read, in
+  place of `gh issue list`): `issues_pagination`, `home_work`.
+- `remote_browse::e2e_transport::queue_remote_connect` (the next Remote Browse connection,
+  in place of `ssh`): `remote_browse_escape_focus`.
+- `e2e::worktree_inspection::queue` (the next worktree inspection, in place of
+  the size and removal-condition read): `worktree_inspection`.
+
 gpui's end-of-run leak detector stays on. `gui-e2e` enables `gpui/test-support`,
 which enables gpui's `leak-detection`. The detector runs when the runner's App
 is dropped, after the last scenario has passed, and a leaked entity fails the

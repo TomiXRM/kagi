@@ -211,6 +211,17 @@ impl KagiApp {
                 .ok()
                 .flatten();
             let Some(own) = own else {
+                // The organizations' read was started with the own one and
+                // its `gh` keeps running: the read stays in flight (Refresh
+                // joins it) until it ends, so repeated Refreshes cannot pile
+                // up `gh` processes (#930 review).
+                let _ = orgs.await;
+                let _ = app.update(acx, |app, cx| {
+                    if app.home_github.generation == generation {
+                        app.home_github.refreshing = false;
+                        cx.notify();
+                    }
+                });
                 return;
             };
             let orgs = orgs.await;
@@ -299,7 +310,6 @@ impl KagiApp {
             Err(error) => {
                 klog!("home: github failed: {error}");
                 if self.home_github.refreshing {
-                    self.home_github.refreshing = false;
                     self.push_toast(
                         super::ToastKind::Error,
                         Msg::HomeGithubRefreshFailed
@@ -310,6 +320,8 @@ impl KagiApp {
                 } else {
                     self.home_github.repos = GithubRepos::Failed(error.to_string());
                 }
+                // Still reading until the organizations' `gh` ends.
+                self.home_github.refreshing = true;
                 None
             }
         }
@@ -492,7 +504,8 @@ impl KagiApp {
     }
 
     /// Confirm the card: run the planned clone in the background. Refused on
-    /// the spot while another clone of this window is running.
+    /// the spot while any operation is latched — another clone, or a write
+    /// or plan in a repository tab (the shared `op_latched` gate).
     pub fn start_clone(&mut self, cx: &mut Context<Self>) {
         let Some(modal) = self.clone_modal().cloned() else {
             return;
@@ -503,8 +516,13 @@ impl KagiApp {
         if modal.started.is_some() || !plan.blockers.is_empty() {
             return;
         }
-        if self.home_github.cloning.is_some() {
-            self.push_toast(super::ToastKind::Error, Msg::CloneBusy.t(), cx);
+        if self.op_latched() {
+            let busy = if self.home_github.cloning.is_some() {
+                Msg::CloneBusy.t()
+            } else {
+                Msg::OpInProgress.t()
+            };
+            self.push_toast(super::ToastKind::Error, busy, cx);
             return;
         }
         // The card stays up as the clone's progress: pressing Clone must

@@ -94,6 +94,14 @@ impl KagiApp {
         cx.notify();
     }
 
+    /// The tab Home covered was closed while Home is in front: `session` is
+    /// now the tab behind it, not yet entered, and leaving Home enters it.
+    pub(crate) fn retarget_home(&mut self, session: crate::app::SessionId) {
+        if let Some(home) = self.home.as_mut().filter(|home| home.front) {
+            home.left = Some(session);
+        }
+    }
+
     /// A repository tab was clicked: Home (if open) waits in the strip.
     /// Returns the tab it had left, for [`KagiApp::return_to_tab`].
     pub(crate) fn send_home_back(&mut self) -> Option<crate::app::SessionId> {

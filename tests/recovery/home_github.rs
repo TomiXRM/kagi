@@ -410,6 +410,17 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
     click_control(cx, window, "home-gh-acme/widgets");
     cx.run_until_parked();
     choose_folder(cx, &app, &clones);
+    // A clone does not start beside an operation already running in a
+    // repository tab: it joins the one write latch (#930 review).
+    app.update(cx, |app, cx| {
+        app.planning = Some("merge-plan");
+        app.start_clone(cx);
+        assert!(
+            app.home_github.cloning.is_none(),
+            "no clone while an operation is latched"
+        );
+        app.planning = None;
+    });
     // Pressing Clone visibly does something at once: the card stays up as
     // the clone's progress (no silent gap that looks like a missed click).
     // Called directly — what the button's handler calls — because a
@@ -429,6 +440,12 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
     assert!(
         !cx.read(|cx| app.read(cx).may_close_host()),
         "closing is held while the clone runs"
+    );
+    // ... and while it runs, repository writes are refused: every gate asks
+    // the same latch.
+    assert!(
+        cx.read(|cx| kagi::ui::e2e::op_latched(app.read(cx))),
+        "a running clone holds the write latch"
     );
     wait_for(cx, &app, "the clone", |app| {
         app.home_github.cloning.is_none() && app.clone_modal().is_none()

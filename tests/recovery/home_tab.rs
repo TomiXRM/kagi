@@ -221,6 +221,35 @@ pub fn scenario_home_tab(cx: &mut VisualTestAppContext) {
     assert!(cx.read(|cx| app.read(cx).remote_browse().is_none()));
     assert_eq!(home(cx, &app), Some(true));
 
+    // Closing the tab Home covers does not enter its neighbour behind Home
+    // (a visit nobody sees could fill the modal slot Enter confirms); the
+    // neighbour is only where Home returns to (#930 review).
+    let covered = cx.read(|cx| app.read(cx).active_tab);
+    app.update(cx, |app, cx| {
+        app.close_tab(covered, cx);
+        assert!(app.home_in_front(), "Home stays in front");
+        assert!(
+            !app.ui().panes_revalidating(),
+            "the neighbour is not entered behind Home"
+        );
+        assert!(!kagi::ui::e2e::active_modal_present(app));
+    });
+    press_key(cx, &app, window, "enter");
+    cx.run_until_parked();
+    assert_eq!(home(cx, &app), Some(true), "Enter confirms nothing");
+    assert!(!cx.read(|cx| kagi::ui::e2e::active_modal_present(app.read(cx))));
+    app.update(cx, |app, cx| {
+        app.close_home_tab(cx);
+        assert!(
+            app.ui().panes_revalidating(),
+            "leaving Home enters the neighbour"
+        );
+    });
+    cx.run_until_parked();
+    assert_eq!(active_path(cx, &app), second_path);
+    click_control(cx, window, "tab-add");
+    cx.run_until_parked();
+
     // With no repository tab, Home is the whole window and opens a tab.
     app.update(cx, |app, cx| {
         app.close_tab(1, cx);

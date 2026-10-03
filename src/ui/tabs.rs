@@ -592,7 +592,20 @@ impl KagiApp {
                 self.log_tabs();
                 cx.notify();
             }
-            // The active tab itself is gone: really switch to the neighbour.
+            // The active tab itself is gone. Behind Home, the neighbour only
+            // becomes where Home returns to: entering it now would start a
+            // visit nobody sees, whose deliveries (a parked Pull confirm)
+            // could fill the modal slot that Home's key routing confirms
+            // (#930 review). Leaving Home enters it (`return_to_tab`).
+            crate::app::TabClose::Activate(new_active) if self.home_in_front() => {
+                self.active_tab = new_active;
+                let session = self.tabs[new_active].session;
+                self.retarget_home(session);
+                self.save_session();
+                self.log_tabs();
+                cx.notify();
+            }
+            // Otherwise really switch to the neighbour.
             crate::app::TabClose::Activate(new_active) => self.switch_repo(new_active, cx),
         }
     }

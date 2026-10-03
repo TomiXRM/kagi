@@ -18,6 +18,7 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{ActiveTheme as _, Sizable as _};
+use kagi_domain::plan_note::{PlanNote, PushNote};
 use kagi_git::{BranchRenameValidation, OperationPlan};
 use kagi_ui_core::i18n::plan_note_text;
 
@@ -138,11 +139,31 @@ pub(crate) fn render_input_plan_modal(
     accent: Option<PlanCardAccent>,
     cancel_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     confirm_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    cx: &gpui::App,
 ) -> gpui::AnyElement {
-    let has_blockers = plan
-        .as_ref()
-        .map(|p| !p.blockers.is_empty())
-        .unwrap_or(true);
+    let field_reason = match validation.as_ref() {
+        Some(BranchRenameValidation::Invalid(reason)) => Some(SharedString::from(
+            crate::ui::i18n::branch_name_error(reason),
+        )),
+        _ => plan.as_ref().and_then(|p| {
+            p.blockers
+                .iter()
+                .find(|note| matches!(note, PlanNote::Push(PushNote::UpstreamFormatInvalid)))
+                .map(|note| SharedString::from(plan_note_text(note)))
+        }),
+    };
+    let has_blockers =
+        field_reason.is_some() || plan.as_ref().is_none_or(|p| !p.blockers.is_empty());
+    let disabled_reason = if has_blockers {
+        error.clone().or_else(|| field_reason.clone()).or_else(|| {
+            plan.as_ref()
+                .and_then(|p| p.blockers.first())
+                .map(|b| SharedString::from(plan_note_text(b)))
+                .or_else(|| Some(Msg::InputPlanPending.t().into()))
+        })
+    } else {
+        None
+    };
     // #454 layer 4: adopt the shared shell — fixed title, scrolling middle,
     // fixed button row. Plan notes are unbounded (a rename can carry many
     // warnings/blockers), so the body is this card's single scroll region.
@@ -150,34 +171,11 @@ pub(crate) fn render_input_plan_modal(
         SharedString::from(title),
         accent.clone(),
     )));
-    let mut body = modal_scroll_body().child(
-        div()
-            .flex_shrink_0()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(current_theme().text_label))
-                    .child(SharedString::from(label)),
-            )
-            .children(input_state.as_ref().map(|st| Input::new(st).small())),
-    );
-
-    if let Some(BranchRenameValidation::Invalid(reason)) = validation {
-        // W29-I18N-WAVE2: localize the keyed branch-name reason.
-        body = body.child(
-            div()
-                .flex_shrink_0()
-                .text_sm()
-                .text_color(rgb(current_theme().color_blocker))
-                .overflow_hidden()
-                .child(SharedString::from(crate::ui::i18n::branch_name_error(
-                    &reason,
-                ))),
-        );
-    }
+    let mut body = modal_scroll_body().child(render_input_modal_field(
+        label,
+        input_state.as_ref(),
+        field_reason,
+    ));
 
     if let Some(plan) = plan {
         body = body.child(
@@ -231,22 +229,29 @@ pub(crate) fn render_input_plan_modal(
         );
     }
 
-    let mut buttons = div().flex().flex_row().gap_2().justify_end().child(
-        Button::new("branch-input-cancel")
-            .label(Msg::PlanCancel.t())
-            .ghost()
-            .small()
-            .on_click(cancel_handler),
-    );
-    if !has_blockers {
-        buttons = buttons.child(
-            Button::new("branch-input-confirm")
-                .label(SharedString::from(confirm_label))
-                .primary()
-                .small()
-                .on_click(confirm_handler),
-        );
-    }
+    let buttons = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        .child(
+            Button::new("branch-input-cancel")
+                .label(Msg::PlanCancel.t())
+                .ghost()
+                .on_click(cancel_handler),
+        )
+        .child(crate::ui::e2e::measure_confirm(render_input_modal_action(
+            || {
+                Button::new("branch-input-confirm")
+                    .label(SharedString::from(confirm_label))
+                    .primary()
+                    .on_click(confirm_handler)
+            },
+            confirm_label,
+            current_theme().color_branch,
+            disabled_reason,
+            cx,
+        )));
     let card = card.child(body).child(div().flex_shrink_0().child(buttons));
 
     modal_overlay(card).into_any_element()

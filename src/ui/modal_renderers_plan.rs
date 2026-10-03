@@ -370,17 +370,18 @@ pub(crate) fn render_set_upstream_modal(
         Msg::PlanSetUpstreamFor
             .t()
             .replace("{}", &modal.branch_name),
-        "Upstream",
+        Msg::InputUpstream.t(),
         modal.input_state,
-        // #510: a failed replan hands over no plan, so the confirm button is
-        // not rendered and the failure text takes its place.
+        // #510: a failed replan hands over no plan; the button remains visibly
+        // unavailable with the failure reason instead of disappearing.
         modal.plan.plan().cloned(),
         None,
         plan_or_exec_error(&modal.plan, modal.error),
-        "Set upstream",
+        Msg::InputSetUpstream.t(),
         Some((IconName::ExternalLink.into(), theme().color_branch)),
         cancel_handler,
         confirm_handler,
+        cx,
     )
 }
 
@@ -404,20 +405,21 @@ pub(crate) fn render_rename_branch_modal(
     });
     render_input_plan_modal(
         Msg::PlanRenameBranch.t().replace("{}", &modal.old_name),
-        "New branch name",
+        Msg::InputNewBranchName.t(),
         modal.input_state,
-        // #510: a failed replan hands over no plan, so the confirm button is
-        // not rendered and the failure text takes its place.
+        // #510: a failed replan hands over no plan; the button remains visibly
+        // unavailable with the failure reason instead of disappearing.
         modal.plan.plan().cloned(),
         Some(modal.validation),
         plan_or_exec_error(&modal.plan, modal.error),
-        "Rename",
+        Msg::InputRename.t(),
         Some((
             ModalIcon::Path("icons/square-pen.svg"),
             theme().color_branch,
         )),
         cancel_handler,
         confirm_handler,
+        cx,
     )
 }
 

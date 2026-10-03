@@ -2008,6 +2008,10 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
     paint(cx, window);
     let disabled = kagi::ui::e2e::confirm_bounds(window.window_id())
         .expect("empty branch name still shows a disabled Create");
+    assert!(
+        disabled.size.width >= gpui::px(40.) && disabled.size.height >= gpui::px(24.),
+        "blocked Create must occupy button space, not a blank wrapper: {disabled:?}"
+    );
     cx.simulate_mouse_move(window, disabled.center(), None, gpui::Modifiers::none());
     cx.run_until_parked();
     cx.simulate_click(window, disabled.center(), gpui::Modifiers::none());
@@ -2077,11 +2081,11 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS create_branch_input_confirm_ime");
 }
 
-/// #956: each of the other input-confirm renderers must expose an unavailable
-/// primary action rather than remove it when its plan cannot run. A real click
-/// at the measured button must leave the modal and repository untouched.
+/// #956: each input-confirm renderer must expose an unavailable primary
+/// action rather than remove it when its plan cannot run. A real click at the
+/// measured button must leave the modal and repository untouched.
 pub fn scenario_input_confirm_disabled_cards(cx: &mut VisualTestAppContext) {
-    for case in ["tag", "worktree", "stash"] {
+    for case in ["tag", "worktree", "stash", "rename", "upstream"] {
         let fixture = build_fixture();
         let repo = fixture.path().canonicalize().unwrap();
         let before = repo_fingerprint(&repo);
@@ -2091,11 +2095,35 @@ pub fn scenario_input_confirm_disabled_cards(cx: &mut VisualTestAppContext) {
             "tag" => app.open_create_tag_modal(head, cx),
             "worktree" => app.open_create_worktree_modal(head, cx),
             "stash" => app.open_stash_push_modal(cx),
+            "rename" => app.open_rename_branch_modal("main".into()),
+            "upstream" => app.open_set_upstream_modal("main".into()),
             _ => unreachable!(),
         });
         paint(cx, window);
+        if case == "upstream" {
+            let input = cx
+                .read(|cx| {
+                    app.read(cx)
+                        .set_upstream_modal()
+                        .and_then(|m| m.input_state.clone())
+                })
+                .expect("the first paint creates the upstream input");
+            cx.update_window(window, |_, window, cx| {
+                input.update(cx, |state, cx| state.set_value("", window, cx));
+            })
+            .unwrap();
+            wait_painted(cx, &app, window, |app| {
+                app.set_upstream_modal()
+                    .and_then(|m| m.plan.plan())
+                    .is_some_and(|plan| !plan.blockers.is_empty())
+            });
+        }
         let button = kagi::ui::e2e::confirm_bounds(window.window_id())
             .unwrap_or_else(|| panic!("{case}: blocked form still shows its primary action"));
+        assert!(
+            button.size.width >= gpui::px(40.) && button.size.height >= gpui::px(24.),
+            "{case}: the primary action must occupy visible button space, not a blank wrapper: {button:?}"
+        );
         cx.simulate_mouse_move(window, button.center(), None, gpui::Modifiers::none());
         cx.run_until_parked();
         cx.simulate_click(window, button.center(), gpui::Modifiers::none());
@@ -2106,6 +2134,8 @@ pub fn scenario_input_confirm_disabled_cards(cx: &mut VisualTestAppContext) {
                 "tag" => app.create_tag_modal().is_some(),
                 "worktree" => app.create_worktree_modal().is_some(),
                 "stash" => app.stash_push_modal().is_some(),
+                "rename" => app.rename_branch_modal().is_some(),
+                "upstream" => app.set_upstream_modal().is_some(),
                 _ => unreachable!(),
             };
             assert!(

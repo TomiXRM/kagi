@@ -2979,15 +2979,7 @@ impl KagiApp {
             }
             front_layer::FrontLayer::CommitPlan => self.cancel_commit_plan_modal(cx),
             front_layer::FrontLayer::Settings => self.menu_overlay = None,
-            front_layer::FrontLayer::Menu => {
-                if self.platform_menu_open.is_some() {
-                    self.platform_menu_open = None;
-                } else if self.menu_overlay.is_some() {
-                    self.menu_overlay = None;
-                } else {
-                    return false; // Workspace-specific context menus close in its fallback.
-                }
-            }
+            front_layer::FrontLayer::Menu => self.close_front_menu(cx),
             front_layer::FrontLayer::None => return false,
         }
         cx.notify();

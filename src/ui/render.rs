@@ -385,58 +385,50 @@ impl Render for KagiApp {
         let commit_menu_overlay = self
             .commit_menu
             .clone()
+            .filter(|_| self.commit_menu_visible())
             .and_then(|state| self.render_commit_menu_overlay(state, window, cx));
         let branch_menu_overlay = self
             .branch_menu
             .clone()
+            .filter(|_| self.branch_menu_visible())
             .and_then(|state| self.render_branch_menu_overlay(state, window, cx));
         let tag_menu_overlay = self
             .tag_menu
             .clone()
+            .filter(|_| self.tag_menu_visible())
             .and_then(|state| self.render_tag_menu_overlay(state, window, cx));
         let stash_menu_overlay = self
             .stash_menu
             .clone()
+            .filter(|_| self.stash_menu_visible())
             .and_then(|state| self.render_stash_menu_overlay(state, window, cx));
         let worktree_menu_overlay = self
             .worktree_menu
             .clone()
+            .filter(|_| self.worktree_menu_visible())
             .and_then(|state| self.render_worktree_menu_overlay(state, window, cx));
-        // T-CONFLICT-DASH-022: per-file "…" overflow menu overlay (anchored at the
-        // click position; rendered TOP-LEVEL on the `KagiApp` context — never
-        // inside the entity render — so its actions defer/dispatch on the parent
-        // without leasing the entity. Reads `file_menu` + `mode` from the entity.
-        let conflict_file_menu_overlay = match conflict_entity.as_ref() {
-            Some(entity) => {
-                let (file_menu, mode) = {
-                    let v = entity.read(cx);
-                    (v.file_menu, v.mode.clone())
+        // Per-file and Editor tree menus render on the root, not inside the
+        // entity, so their actions can dispatch without leasing that entity.
+        let conflict_file_menu_overlay = if self.conflict_file_menu_visible(cx) {
+            conflict_entity.as_ref().and_then(|entity| {
+                let view = entity.read(cx);
+                let (Some((idx, pos)), Some(mode)) = (view.file_menu, view.mode.clone()) else {
+                    return None;
                 };
-                match (mode, file_menu) {
-                    (Some(m), Some((idx, pos))) => Some(conflict_view::render_file_menu(
-                        entity, &m, idx, pos, window, cx,
-                    )),
-                    _ => None,
-                }
-            }
-            None => None,
+                Some(conflict_view::render_file_menu(
+                    entity, &mode, idx, pos, window, cx,
+                ))
+            })
+        } else {
+            None
         };
-        // T-WS-EDITOR-007: the Editor Workspace tree's right-click context
-        // menu overlay — same top-level-on-`KagiApp` pattern as
-        // `conflict_file_menu_overlay` above (reads `tree_menu` from the
-        // entity, so its `on_select` dispatches `KagiApp` methods directly
-        // without leasing the entity).
-        let editor_tree_menu_overlay = match self.ui().editor_workspace.as_ref() {
-            Some(entity) => {
-                let tree_menu = entity.read(cx).tree_menu;
-                match tree_menu {
-                    Some((target, pos)) => {
-                        editor_tree_menu::render_editor_tree_menu(entity, target, pos, window, cx)
-                    }
-                    None => None,
-                }
-            }
-            None => None,
+        let editor_tree_menu_overlay = if self.editor_tree_menu_visible(cx) {
+            self.ui().editor_workspace.as_ref().and_then(|entity| {
+                let (target, pos) = entity.read(cx).tree_menu?;
+                editor_tree_menu::render_editor_tree_menu(entity, target, pos, window, cx)
+            })
+        } else {
+            None
         };
         // T-HT-001: clone toolbar/summary state for header render.
         // W3-NOTIFY: while a background git op runs, disable every git button

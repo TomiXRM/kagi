@@ -1603,6 +1603,10 @@ mod macos {
                 Box::new(crate::file_menu_owner::scenario_file_menu_rejects_stale_owner),
             ),
             (
+                "file_menu_focus_after_open_repository",
+                Box::new(crate::file_menu_owner::scenario_file_menu_focus_after_open_repository),
+            ),
+            (
                 "github_evidence_restores",
                 Box::new(crate::github_evidence_owner::scenario_github_evidence_restores),
             ),

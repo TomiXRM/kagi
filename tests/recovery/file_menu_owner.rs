@@ -181,3 +181,86 @@ pub fn scenario_file_menu_rejects_stale_owner(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS file_menu_rejects_stale_owner");
 }
+
+/// A menu retained for A must neither swallow B's keyboard nor survive Escape.
+pub fn scenario_file_menu_focus_after_open_repository(cx: &mut VisualTestAppContext) {
+    let fixture_a = dirty_fixture();
+    let fixture_b = dirty_fixture();
+    let repo_a = fixture_a.path().canonicalize().unwrap();
+    let repo_b = fixture_b.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo_a);
+    app.update(cx, |app, cx| {
+        e2e::open_local_panel_no_inputs(app, repo_a, cx)
+    });
+    cx.run_until_parked();
+    defer_first_menu(cx, &app, window);
+    cx.run_until_parked();
+    let stale = cx.read(|cx| app.read(cx).file_menu.clone().expect("A menu opened"));
+    assert!(cx.read(|cx| e2e::menu_is_front(app.read(cx), cx)));
+    // File-menu callback opens without moving focus. Start from the workspace
+    // focus the Graph's arrow handler requires, before switching repositories.
+    cx.update_window(window, |_, window, cx| {
+        let root = app.read(cx).root_focus.clone().expect("root focus");
+        window.focus(&root, cx);
+    })
+    .unwrap();
+
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(repo_b.clone(), cx), "open B");
+        // Model a retained callback/menu after session-switch cleanup.
+        app.file_menu = Some(stale.clone());
+        app.select(1);
+        cx.notify();
+    });
+    cx.run_until_parked();
+    assert_ne!(
+        cx.read(|cx| app.read(cx).active_session()),
+        Some(stale.owner)
+    );
+    assert!(
+        !cx.read(|cx| e2e::menu_is_front(app.read(cx), cx)),
+        "A's invisible file menu must not own B's keyboard"
+    );
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    assert!(
+        cx.update_window(window, |_, window, cx| {
+            app.read(cx)
+                .root_focus
+                .as_ref()
+                .is_some_and(|root| root.is_focused(window))
+        })
+        .unwrap(),
+        "the drawn B workspace must retain focus"
+    );
+    cx.simulate_keystrokes(window, "enter");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).plan_modal().is_some()),
+        "Enter must open the selected Graph commit's checkout plan on B"
+    );
+    cx.simulate_keystrokes(window, "escape");
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).plan_modal().is_none()));
+
+    // A visible menu takes Escape, closes through the common path, and
+    // does not let the Graph's selected row toggle off.
+    app.update(cx, |app, cx| {
+        e2e::open_local_panel_no_inputs(app, repo_b.clone(), cx);
+    });
+    cx.run_until_parked();
+    defer_first_menu(cx, &app, window);
+    cx.run_until_parked();
+    assert!(cx.read(|cx| e2e::menu_is_front(app.read(cx), cx)));
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    cx.simulate_keystrokes(window, "escape");
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).file_menu.is_none()));
+    assert_eq!(cx.read(|cx| app.read(cx).ui().selected), Some(1));
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS file_menu_focus_after_open_repository");
+}

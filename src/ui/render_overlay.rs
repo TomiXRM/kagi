@@ -245,7 +245,6 @@ impl KagiApp {
             self.stash_push_focus.clone(),
             commit_panel_open,
             commit_panel,
-            repo_popovers,
             window,
             cx,
         )
@@ -297,7 +296,6 @@ impl KagiApp {
         stash_push_focus: Option<FocusHandle>,
         commit_panel_open: bool,
         commit_panel: Option<Entity<commit_panel::CommitPanelView>>,
-        repo_popovers: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
@@ -606,15 +604,16 @@ impl KagiApp {
         })
         // ── PRs tab context menu ──
         .when_some(
-            self.ui().pr_menu.clone().filter(|_| repo_popovers),
+            self.ui().pr_menu.clone().filter(|_| self.pr_menu_visible()),
             |el, (pr, pos)| el.child(render_pr_menu_overlay(pr, pos, window.viewport_size(), cx)),
         )
-        .when(repo_popovers, |el| {
+        .when(self.filter_menu_visible(), |el| {
             el.children(super::list_filter_strip::render_menu(self, window, cx))
         })
         // ── Inspector/Compare file context menu (History/Edit/Copy) ──
         .when_some(
-            self.inspector_file_menu.filter(|_| repo_popovers),
+            self.inspector_file_menu
+                .filter(|_| self.inspector_file_menu_visible()),
             |el, (fi, pos)| {
                 el.child(render_inspector_file_menu_overlay(
                     fi,
@@ -626,14 +625,7 @@ impl KagiApp {
         )
         // ── Unstaged file context menu (right-click → Discard) ──
         .when_some(
-            file_menu.filter(|menu| {
-                self.active_session() == Some(menu.owner)
-                    && self
-                        .ui()
-                        .commit_panel
-                        .as_ref()
-                        .is_some_and(|panel| panel.read(cx).owner == menu.owner)
-            }),
+            file_menu.filter(|_| self.file_menu_visible(cx)),
             |el, menu| el.child(render_file_menu_overlay(menu, window.viewport_size(), cx)),
         )
         // ── Commit plan modal overlay (T025) ─────────────

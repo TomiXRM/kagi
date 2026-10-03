@@ -16,6 +16,9 @@ impl KagiApp {
         &self,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
+        if !self.platform_menu_visible() {
+            return None;
+        }
         let ix = self.platform_menu_open?;
         // ADR-0085: index into the *filtered* sections (same iterator the heads
         // use), so the open panel matches the head it was launched from and the

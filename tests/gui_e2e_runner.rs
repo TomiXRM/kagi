@@ -170,6 +170,9 @@ mod remote_browse_focus;
 #[cfg(target_os = "macos")]
 #[path = "recovery/overlay_focus.rs"]
 mod overlay_focus;
+#[cfg(target_os = "macos")]
+#[path = "recovery/settings_switches.rs"]
+mod settings_switches;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/pr_fields_focus.rs"]
@@ -1309,6 +1312,10 @@ mod macos {
             (
                 "settings_close_returns_focus",
                 Box::new(crate::overlay_focus::scenario_settings_close_returns_focus),
+            ),
+            (
+                "settings_switches",
+                Box::new(crate::settings_switches::scenario_settings_switches),
             ),
             (
                 "settings_scroll_stays_in_overlay",

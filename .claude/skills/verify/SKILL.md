@@ -302,6 +302,17 @@ The current suite covers:
   Escape and by ×; the next raw ↓/↑ must step File History. Tier B measured
   on 2026-10-01 that the terminal-focus case is what left Escape unmatched
   (`key: "escape"` printed, modal open) while Enter still reached the slot.
+- Settings' switches (`KAGI_GUI_E2E_ONLY=settings_switches`,
+  `tests/recovery/settings_switches.rs`, #970): every switch is a
+  `keyboard_nav::switch`. The scenario opens Settings through `app.settings`,
+  checks each switch is named by its row (`e2e::recorded_switch`), walks Tab
+  from the root over the six in drawing order
+  (`settings_switch_focused_for_e2e`), presses Space then Enter on each of
+  the five Appearance switches and checks the setting is saved each time and
+  the checked state given to assistive technology follows (Smart Commit's
+  is only reached: turning it on probes for local LLMs), and clicks one with
+  the pointer (one flip). `SavedKeys` puts the five settings back. The ring
+  is not observable in Tier A: Tier B Tabs through Settings and looks.
 - modal input transitions (`KAGI_GUI_E2E_ONLY=remote_browse_escape_focus,pr_fields_escape_focus`,
   `tests/recovery/remote_browse_focus.rs`, `tests/recovery/pr_fields_focus.rs`):
   #755 follow-up. Real InputStates own focus before Remote Browse's

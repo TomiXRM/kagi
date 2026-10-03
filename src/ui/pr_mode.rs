@@ -667,7 +667,7 @@ impl KagiApp {
         if dx.abs() < 0.01 {
             return;
         }
-        let max = super::pr_lane::max_scroll(lanes, rail);
+        let max = super::graph_window::max_scroll(lanes, rail);
         let next = (current - dx).clamp(0.0, max);
         let Some(m) = self.pr_mode_mut() else {
             return;

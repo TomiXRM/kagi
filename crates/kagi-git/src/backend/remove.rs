@@ -398,11 +398,13 @@ pub fn record_plan_error(path: &Path, actor: Actor, error: &str) -> Recording {
     record(entry)
 }
 
-/// HEAD and every branch of the repository at `path` (#885), `None` when it
-/// does not open or read.
+/// HEAD and every branch of the common repository at `path` (#915), including
+/// a bare common dir (#938). `Backend::open` rejects bare repos, but these
+/// read-only snapshots must survive either linked worktree's removal.
+/// `None` when the repository or its refs cannot be read.
 fn refs_of(path: &Path) -> Option<kagi_domain::ref_moves::RefSnapshot> {
-    let backend = Backend::open(path).ok()?;
-    ops::ref_snapshot(&backend.repo)
+    let repo = Repository::open(path).ok()?;
+    ops::ref_snapshot(&repo)
 }
 
 fn recovery_after(progress: &RemoveProgress) -> ops::StateSummary {

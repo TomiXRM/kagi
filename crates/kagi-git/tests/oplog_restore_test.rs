@@ -160,6 +160,77 @@ fn restore_to_point_crosses_remove_from_the_deleted_worktrees_own_tab() {
     }
 }
 
+/// #938: a bare common dir has no usable Backend, but its branch refs remain
+/// observable before and after Remove through a surviving linked tab.
+#[test]
+fn bare_backed_recorded_remove_crosses_restore_with_branch_tip_preserved() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for delete_branch in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let seed = repo(tmp.path());
+        let bare = tmp.path().join("bare.git");
+        git(
+            &seed,
+            &[
+                "clone",
+                "--bare",
+                "-q",
+                seed.to_str().unwrap(),
+                bare.to_str().unwrap(),
+            ],
+        );
+        let manager = tmp.path().join("manager");
+        let target = tmp.path().join("target");
+        for (name, path) in [("manager", &manager), ("target", &target)] {
+            git(
+                &bare,
+                &["worktree", "add", "-q", "-b", name, path.to_str().unwrap()],
+            );
+        }
+        let target_tip = git_output(&manager, &["rev-parse", "refs/heads/target"]);
+        let point = create(&manager, "point");
+        let removal = Backend::plan_recorded_remove(&manager, "target", delete_branch).unwrap();
+        assert!(removal.preview.blockers.is_empty());
+        let report = Backend::run_recorded_remove(&removal, kagi_git::oplog::Actor::Human, None);
+        assert!(
+            matches!(report.recording.entry().outcome, OpOutcome::Success { .. }),
+            "{:?}",
+            report.recording.entry()
+        );
+        assert!(!target.exists());
+        assert!(bare.join("HEAD").exists());
+        let moves = report
+            .recording
+            .entry()
+            .ref_moves
+            .as_ref()
+            .expect("bare common dir must record its branch snapshot");
+        if delete_branch {
+            assert_eq!(moves.len(), 1, "{moves:?}");
+            assert_eq!(moves[0].refname, "refs/heads/target");
+            assert_eq!(moves[0].old.as_deref(), Some(target_tip.as_str()));
+            assert_eq!(moves[0].new, None);
+        } else {
+            assert!(moves.is_empty(), "{moves:?}");
+        }
+        create(&manager, "after");
+        let op = Operation::RestoreToPoint { entry_id: point };
+        let planned = plan(&manager, &op);
+        assert!(planned.blockers.is_empty(), "{:?}", planned.blockers);
+        backend(&manager).run(&op, &planned).unwrap();
+        assert_eq!(
+            git_output(&manager, &["rev-parse", "refs/heads/target"]),
+            target_tip
+        );
+        assert!(!git_fixture::git_succeeds(
+            &manager,
+            &["show-ref", "--verify", "refs/heads/after"]
+        ));
+    }
+}
+
 #[test]
 fn restoring_three_operations_back_puts_every_branch_where_it_was() {
     if !test_support::run_isolated() {

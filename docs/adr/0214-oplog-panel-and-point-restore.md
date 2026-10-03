@@ -79,6 +79,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
       - PR の fetch(`fetch-pr`、refspec は `refs/remotes/**` と `refs/kagi/pr/**`): `fetch_pr_refs` の呼び出しだけを観測し、失敗の記録に載せる。その後の commit / diff の解析は観測の外で行う(`Backend::observe_then`。#907 review)。解析中に外部で動いた branch をこの job の移動として記録すると、restore がその無関係な変更を巻き戻しうるため。
       - remove-worktree(#900 review からの追加): 試行全体を前後 snapshot で囲む。branch を残せば空、`delete_branch` なら branch の削除を記録する。実行前に捨てた job・計画の失敗は `Some(空)`。
       - #915: 削除を own tab から実行するとその worktree の `HEAD` / repo path は実行後に読めない。Remove だけは前後とも surviving common dir から main の `HEAD` と共有 `refs/heads/*` を読む。削除する worktree の `HEAD` 消滅は ref 移動としない。これにより branch 維持は `Some(空)`、branch 削除は削除された branch の OID 差分になり、RestoreToPoint がこの entry を越えられる。
+      - #938 review: common dir が bare の場合も `git2::Repository::open` で直接読み取る。`Backend::open` は bare を拒否するため、ここで使うと成功した Remove の `ref_moves` が `None` になり、削除 branch の OID も失う。bare の `HEAD` を前後同じ基準で読み、`run_recorded_remove` の receipt と RestoreToPoint の往復で検証する。
     - **local ref に触れない経路は `Some(空)`**。共通の builder `OpLogEntry::with_nothing_moved`(= `with_ref_moves(Some(空))`。conflict の `nothing_moved` もこれを使う)で書くので、`Unknown` は `None` のまま。
       - worktree の lock / unlock(auto-lock の確認も同じ経路)・prune・repair: worktree の admin file だけを書く。前後の snapshot は取らず、UI の `record_op_persist_nothing_moved` で記録する(#907 review)。観測すると、実行中に外部で動いた branch がこの操作の移動として記録され、restore がそれを巻き戻しうる。
       - GitHub 書き込み: `gh pr comment|edit|review -R <repo> …`、`gh issue create|comment -R <repo> …`。argv は GitHub API だけを呼ぶ。

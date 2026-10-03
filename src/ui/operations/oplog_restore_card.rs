@@ -10,7 +10,7 @@ use crate::ui::modals::oplog_restore::OplogRestoreModal;
 use crate::ui::plan_card_rows::render_note_row;
 use crate::ui::theme::{self, theme};
 use crate::ui::KagiApp;
-use gpui::{div, prelude::*, px, rgb, Context, SharedString};
+use gpui::{div, prelude::*, rgb, Context, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::Sizable as _;
 use kagi_domain::head::Head;
@@ -280,7 +280,11 @@ pub(crate) fn render(
         .flex()
         .flex_col()
         .max_h(theme::scaled_px((modal.restores.len().max(1) as f32) * 31.).min(refs_h))
-        .min_h(px(0.))
+        // These are the destructive targets; supporting detail yields first.
+        .min_h(theme::scaled_px(
+            modal.restores.len().clamp(1, 3) as f32 * 31.,
+        ))
+        .flex_shrink_0()
         .overflow_y_scroll()
         .child(crate::ui::e2e::measure_inside("restore-refs"))
         .children(
@@ -394,12 +398,13 @@ pub(crate) fn render(
     if let Some(preview) = modal.preview.as_deref() {
         body = body.child(
             div()
-                .flex_shrink_0()
+                .min_h(gpui::px(0.))
+                .overflow_hidden()
                 .child(super::oplog_restore_preview::render(preview)),
         );
     }
     if let Some(cmd) = modal.plan.equivalent_command.as_deref() {
-        body = body.child(div().flex_shrink_0().child(
+        body = body.child(div().min_h(gpui::px(0.)).overflow_hidden().child(
             crate::ui::modal_command::render_equivalent_command(
                 cmd,
                 Some(modal.restores.len()),

@@ -29,34 +29,34 @@ pub(crate) fn render_equivalent_command(
         .gap_1()
         .min_w(gpui::px(0.))
         .child(
-            div()
-                .id(SECTION_EQUIVALENT_COMMAND)
-                .relative()
-                .flex_1()
-                .min_w(gpui::px(0.))
-                .flex()
-                .items_center()
-                .gap_1()
-                .cursor_pointer()
-                .role(gpui::Role::Group)
-                .aria_label(SharedString::from(format!("{summary}: {cmd}")))
-                .on_mouse_down(
-                    gpui::MouseButton::Left,
-                    cx.listener(move |this, _ev, _window, cx| {
+            super::keyboard_nav::focusable(
+                div()
+                    .id(SECTION_EQUIVALENT_COMMAND)
+                    .relative()
+                    .flex_1()
+                    .min_w(gpui::px(0.))
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .cursor_pointer()
+                    .role(gpui::Role::Button)
+                    .aria_label(SharedString::from(format!("{summary}: {cmd}")))
+                    .aria_expanded(open)
+                    .on_click(cx.listener(move |this, _ev, _window, cx| {
                         this.toggle_modal_section(SECTION_EQUIVALENT_COMMAND, open);
                         cx.notify();
-                    }),
-                )
-                .child(if open { "▾" } else { "▸" })
-                .child(
-                    div()
-                        .min_w(gpui::px(0.))
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .child(SharedString::from(summary)),
-                )
-                .child(super::e2e::measure_inside(SECTION_EQUIVALENT_COMMAND)),
+                    })),
+            )
+            .child(if open { "▾" } else { "▸" })
+            .child(
+                div()
+                    .min_w(gpui::px(0.))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(SharedString::from(summary)),
+            )
+            .child(super::e2e::measure_inside(SECTION_EQUIVALENT_COMMAND)),
         )
         .child(modal_copy_button(
             "plan-equivalent-command-copy",

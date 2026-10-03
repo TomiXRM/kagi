@@ -265,11 +265,8 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
             .find_branch(&branch_name, BranchType::Local)
             .ok()
             .and_then(|branch| branch.upstream().ok())
-            .and_then(|upstream| {
-                (upstream.name().ok().flatten() == Some(expected_upstream.as_str()))
-                    .then(|| upstream.get().target())
-                    .flatten()
-            })
+            .filter(|upstream| upstream.name().ok().flatten() == Some(expected_upstream.as_str()))
+            .and_then(|upstream| upstream.get().target())
             .zip(match &head {
                 Head::Attached { target, .. } => git2::Oid::from_str(target).ok(),
                 _ => None,
@@ -277,25 +274,43 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
             .is_some_and(|(upstream, local)| {
                 repo.graph_descendant_of(upstream, local).unwrap_or(false)
             });
-        if known_fast_forward
-            && check_operand("remote", &remote_name).is_ok()
-            && check_operand("branch", &branch_name).is_ok()
-        {
-            let operand = |value: &str| {
-                if value
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"._/-".contains(&b))
-                {
-                    value.to_string()
-                } else {
-                    kagi_domain::remote::shell_quote(value)
-                }
-            };
-            Some(format!(
-                "git pull --ff-only {} {}",
-                operand(&remote_name),
-                operand(&branch_name)
-            ))
+        if known_fast_forward && check_operand("remote", &remote_name).is_ok() {
+            // The tracking ref's suffix need not be the remote source branch:
+            // a custom fetch refspec may map release -> origin/main. Use the
+            // configured source, and hide the command if it cannot be proved.
+            let source_branch = repo
+                .config()
+                .ok()
+                .and_then(|config| {
+                    let remote = config
+                        .get_string(&format!("branch.{branch_name}.remote"))
+                        .ok()?;
+                    if remote != remote_name {
+                        return None;
+                    }
+                    config
+                        .get_string(&format!("branch.{branch_name}.merge"))
+                        .ok()
+                })
+                .and_then(|source| source.strip_prefix("refs/heads/").map(str::to_owned))
+                .filter(|source| !source.is_empty() && check_operand("branch", source).is_ok());
+            source_branch.map(|source| {
+                let operand = |value: &str| {
+                    if value
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"._/-".contains(&b))
+                    {
+                        value.to_string()
+                    } else {
+                        kagi_domain::remote::shell_quote(value)
+                    }
+                };
+                format!(
+                    "git pull --ff-only {} {}",
+                    operand(&remote_name),
+                    operand(&source)
+                )
+            })
         } else {
             None
         }

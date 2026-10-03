@@ -166,6 +166,15 @@ fn chip(label: String, color: u32) -> gpui::AnyElement {
         .into_any_element()
 }
 
+/// The rail stores its width unscaled, but graph_canvas paints scaled lanes.
+fn preview_scroll(lanes: usize, focus_lane: usize, width: f32, zoom: f32) -> f32 {
+    let painted_width = width * zoom;
+    let painted_lane_w = graph_view::LANE_W * zoom;
+    graph_window::follow_scroll(focus_lane, painted_width, painted_lane_w).min(
+        graph_window::max_scroll(lanes, painted_width, painted_lane_w),
+    )
+}
+
 pub(crate) fn render(preview: &RestoreGraphPreview) -> gpui::AnyElement {
     let muted = |text: String| {
         div()
@@ -236,8 +245,7 @@ pub(crate) fn render(preview: &RestoreGraphPreview) -> gpui::AnyElement {
         .and_then(|n| preview.rails.get(n))
         .map(|graph| graph_window::column_of(&columns, graph.lane))
         .unwrap_or(0);
-    let scroll = graph_window::follow_scroll(focus_lane, width)
-        .min(graph_window::max_scroll(columns.len(), width));
+    let scroll = preview_scroll(columns.len(), focus_lane, width, theme::scaled(1.));
     let rail = Rail {
         width,
         scroll,
@@ -350,4 +358,25 @@ pub(crate) fn render(preview: &RestoreGraphPreview) -> gpui::AnyElement {
             d.child(muted(i18n::oplog_panel::preview_more(below)))
         })
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zoomed_last_lane_stays_inside_restoration_rail() {
+        let zoom = 2.;
+        let lanes = 10;
+        let focus = 9;
+        let width = graph_window::gutter_width(lanes);
+        let painted_width = width * zoom;
+        let lane_w = graph_view::LANE_W * zoom;
+        let scroll = preview_scroll(lanes, focus, width, zoom);
+        let node_center = (focus as f32 + 0.5) * lane_w - scroll;
+        assert!(
+            node_center >= 0. && node_center <= painted_width,
+            "zoomed focus node {node_center} outside clip 0..{painted_width} (scroll {scroll})"
+        );
+    }
 }

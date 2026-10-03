@@ -99,8 +99,8 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
         .min()
         .unwrap_or(0);
     let scroll = match mode.lane_scroll_x {
-        Some(x) => x.clamp(0.0, max_scroll(lanes, rail)),
-        None => follow_scroll(pr_column, rail),
+        Some(x) => x.clamp(0.0, max_scroll(lanes, rail, graph_view::LANE_W)),
+        None => follow_scroll(pr_column, rail, graph_view::LANE_W),
     };
     // The commit list draws the node as the author's avatar in compact-lane
     // mode; the same setting means the same thing here.
@@ -465,13 +465,17 @@ mod tests {
     fn following_brings_an_off_edge_lane_into_the_rail() {
         let lane_w = graph_view::LANE_W;
         let rail = lane_w * 2.5; // room for two lanes and a sliver
-        assert_eq!(follow_scroll(0, rail), 0.0, "lane 0 is already in view");
-        assert_eq!(follow_scroll(1, rail), 0.0, "so is lane 1");
+        assert_eq!(
+            follow_scroll(0, rail, lane_w),
+            0.0,
+            "lane 0 is already in view"
+        );
+        assert_eq!(follow_scroll(1, rail, lane_w), 0.0, "so is lane 1");
         // Lane 4 of five sits past the right edge: scroll just enough to seat
         // it there, never further.
-        let scrolled = follow_scroll(4, rail);
+        let scrolled = follow_scroll(4, rail, lane_w);
         assert_eq!(scrolled, 5.0 * lane_w - rail);
-        assert!(scrolled > 0.0 && scrolled <= max_scroll(5, rail));
+        assert!(scrolled > 0.0 && scrolled <= max_scroll(5, rail, lane_w));
     }
 
     /// The rail cannot scroll past its lanes, and cannot scroll at all when
@@ -479,8 +483,15 @@ mod tests {
     #[test]
     fn the_rail_stops_at_its_content() {
         let lane_w = graph_view::LANE_W;
-        assert_eq!(max_scroll(1, lane_w * 2.5), 0.0, "nothing to reveal");
-        assert_eq!(max_scroll(5, lane_w * 2.5), 5.0 * lane_w - lane_w * 2.5);
-        assert_eq!(max_scroll(0, lane_w), 0.0, "no lanes, no scrolling");
+        assert_eq!(
+            max_scroll(1, lane_w * 2.5, lane_w),
+            0.0,
+            "nothing to reveal"
+        );
+        assert_eq!(
+            max_scroll(5, lane_w * 2.5, lane_w),
+            5.0 * lane_w - lane_w * 2.5
+        );
+        assert_eq!(max_scroll(0, lane_w, lane_w), 0.0, "no lanes, no scrolling");
     }
 }

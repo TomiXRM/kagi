@@ -171,6 +171,42 @@ fn test_plan_pull_equivalent_only_for_clean_known_fast_forward() {
     );
 }
 
+/// A local `origin/main` tracking ref can fetch `release` rather than remote
+/// `main`; the copyable command must name the remote source of that fetch.
+#[test]
+fn test_plan_pull_equivalent_uses_remote_source_ref() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    git(&r.other, &["checkout", "-qb", "release"]);
+    write_file(&r.other, "release.txt", "from release\n");
+    commit_all(&r.other, "release only");
+    git(&r.other, &["push", "-q", "origin", "release"]);
+    git(
+        &r.local,
+        &[
+            "config",
+            "--replace-all",
+            "remote.origin.fetch",
+            "+refs/heads/release:refs/remotes/origin/main",
+        ],
+    );
+    git(
+        &r.local,
+        &["config", "branch.main.merge", "refs/heads/release"],
+    );
+    git(&r.local, &["fetch", "-q", "origin"]);
+    let plan = plan_pull(&Repository::open(&r.local).unwrap()).expect("mapped FF plan");
+    assert_eq!(
+        plan.equivalent_command.as_deref(),
+        Some("git pull --ff-only origin release"),
+        "remote main is a different branch and must not appear in the command"
+    );
+    git(&r.local, &["pull", "--ff-only", "origin", "release"]);
+    assert_eq!(read_file(&r.local, "release.txt"), "from release\n");
+}
+
 #[test]
 fn test_pull_merge_clean() {
     if !crate::test_support::run_isolated() {

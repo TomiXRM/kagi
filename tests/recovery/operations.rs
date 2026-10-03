@@ -2654,6 +2654,23 @@ pub fn scenario_unmerged_branch_delete_armed(cx: &mut VisualTestAppContext) {
                     .is_some(),
                 "the full command is readable when expanded"
             );
+            // Pointer focus stays on the disclosure: Enter closes it and
+            // Space reopens it without arming the destructive confirmation.
+            crate::keyboard_nav::keys(cx, window, "enter");
+            kagi::ui::e2e::clear_control_bounds(window.window_id(), "plan-equivalent-command-body");
+            paint(cx, window);
+            assert!(
+                kagi::ui::e2e::control_bounds(window.window_id(), "plan-equivalent-command-body")
+                    .is_none(),
+                "Enter on the disclosure must close it"
+            );
+            crate::keyboard_nav::keys(cx, window, "space");
+            paint(cx, window);
+            assert!(
+                kagi::ui::e2e::control_bounds(window.window_id(), "plan-equivalent-command-body")
+                    .is_some(),
+                "Space on the disclosure must reopen it"
+            );
         }
         confirm_branch_delete(cx, &app, window, input);
         wait_idle(cx, &app);

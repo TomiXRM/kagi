@@ -199,19 +199,27 @@ centered arrow; branch and status chips stay on one scrollable line per column.
 The operation plan remains the source of truth. Show an equivalent CLI command
 only when it faithfully describes the executable plan: Pull's `git pull
 --ff-only` belongs to a clean, known fast-forward, not a merge, dirty-tree
-auto-stash or unknown-upstream plan. The collapsed command has its own Copy
-button; Copy all includes its full text.
+auto-stash or unknown-upstream plan; its branch operand comes from
+`branch.<name>.merge`, not the local tracking ref's name (custom fetch refspecs
+can map `release` into `origin/main`). The collapsed command is a keyboard/
+screen-reader accessible button (Enter/Space) with its own Copy button; Copy
+all includes its full text.
 
 Operation Log restore has its own REFS-first card, not a second generic plan
 summary. Show each planned ref's expected and destination OIDs, including
-deletions, then unchanged worktree/index/untracked/stash/remotes and warnings.
-Draw the AFTER graph from the loaded tab's existing commit rails: moved branch
-badges go to their destination, commits no longer reached by any ref are
-muted, and retained commits stay normal. Do not claim a graph projection for
-an unloaded destination or a moved annotated tag. Ref rows are decoded once
-at admission; malformed rows fail closed with a durable Failed receipt and a
-bounded UI preview. Restore keeps its two confirmations and backend
-preflight/verification/recording unchanged.
+red-tinted deletions, then unchanged worktree/index/untracked/stash/remotes and
+warnings. The first three ref targets stay visible at compact window sizes;
+the refs list scrolls independently when longer. Draw the AFTER graph from the
+loaded tab's existing commit rails: moved branch badges go to their
+destination, commits no longer reached by any ref are muted, and retained
+commits stay normal. The preview fits its rows up to six, then scrolls
+independently; lane pitch, rail width and horizontal follow-scroll use the same
+scaled pixels so a focused far-right lane stays visible at zoom > 100%. Do not
+claim a graph projection for an unloaded destination or
+a moved annotated tag. Ref rows are decoded once at admission; malformed
+rows fail closed with a durable Failed receipt and a bounded UI preview.
+Restore keeps its two confirmations and backend preflight/verification/
+recording unchanged.
 
 ## Open questions (to settle with evidence)
 

@@ -2,10 +2,12 @@
 //! on each row; a selected row shows the ref moves it recorded (slice 2a), or,
 //! for an entry without a record, reflog lines estimated by its time window
 //! with a shared second marked ambiguous (slice 1). Nothing is written.
+use std::cell::RefCell;
 use std::path::Path;
+use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
+use gpui::{px, size, AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::oplog_panel::{entry_worktree, ReflogDetail};
 use kagi::ui::{e2e, i18n, KagiApp};
 use kagi_domain::oplog_reflog::Attribution;
@@ -13,7 +15,7 @@ use kagi_domain::ref_moves::RefMove;
 use kagi_git::oplog::{append_oplog, read_oplog_tail, Actor, OpLogEntry, OpOutcome};
 use kagi_git::{Backend, CommitId, Operation, StateSummary};
 
-use crate::macos::{build_fixture, git, mount, repo_fingerprint, unmount};
+use crate::macos::{build_fixture, git, mount, open_offscreen, repo_fingerprint, unmount};
 use crate::recovery_operations::{press_key, wait_idle};
 
 #[path = "../support/git_fixture.rs"]
@@ -536,6 +538,35 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
     assert!(painted(window, "restore-ref-0") && painted(window, "restore-ref-1"));
     assert!(!painted(window, "plan-state-current"));
     assert!(!painted(window, "plan-state-predicted"));
+    // A compact native window must still show destructive targets and Confirm.
+    let small_state = e2e::app_state(&repo).expect("compact app state");
+    let captured: Rc<RefCell<Option<Entity<KagiApp>>>> = Rc::default();
+    let out = captured.clone();
+    let small_window = open_offscreen(cx, size(px(1200.), px(300.)), move |window, cx| {
+        e2e::mount_root(small_state, window, cx, &out)
+    });
+    let small_app = captured.borrow().clone().expect("compact Kagi");
+    let small_window: AnyWindowHandle = small_window.into();
+    small_app.update(cx, |app, cx| {
+        app.open_oplog_restore_modal(Operation::RestoreToPoint { entry_id: keep_id }, cx);
+    });
+    paint(cx, small_window);
+    let id = small_window.window_id();
+    let card_bounds = e2e::control_bounds(id, "modal-card").expect("compact card");
+    let refs_bounds = e2e::control_bounds(id, "restore-refs").expect("compact refs");
+    let confirm_bounds = e2e::control_bounds(id, "plan-confirm").expect("compact confirm");
+    assert!(card_bounds.bottom() <= px(300.));
+    assert!(refs_bounds.size.height >= px(3. * 31. - 1.));
+    assert!(refs_bounds.top() >= card_bounds.top());
+    assert!(refs_bounds.bottom() <= card_bounds.bottom());
+    for n in 0..3 {
+        let row = e2e::control_bounds(id, &format!("restore-ref-{n}")).expect("target ref row");
+        assert!(row.top() >= refs_bounds.top() && row.bottom() <= refs_bounds.bottom() + px(1.));
+        assert!(row.top() >= card_bounds.top() && row.bottom() <= card_bounds.bottom());
+    }
+    assert!(confirm_bounds.bottom() <= card_bounds.bottom() + px(1.));
+    unmount(cx, small_app, small_window);
+
     let count_before = on_branches(&repo);
 
     confirm_twice(cx, &app, window);

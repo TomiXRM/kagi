@@ -41,12 +41,12 @@ pub(super) fn gutter_width(lanes: usize) -> f32 {
     graph_view::LANE_W * (lanes.clamp(1, MAX_RAIL_LANES) as f32 + 0.5)
 }
 
-pub(super) fn max_scroll(lanes: usize, rail: f32) -> f32 {
-    (lanes as f32 * graph_view::LANE_W - rail).max(0.0)
+/// `rail` and `lane_w` must be in the same units as the returned scroll.
+pub(super) fn max_scroll(lanes: usize, rail: f32, lane_w: f32) -> f32 {
+    (lanes as f32 * lane_w - rail).max(0.0)
 }
 
-pub(super) fn follow_scroll(lane: usize, rail: f32) -> f32 {
-    let lane_w = graph_view::LANE_W;
+pub(super) fn follow_scroll(lane: usize, rail: f32, lane_w: f32) -> f32 {
     let left = lane as f32 * lane_w;
     let right = left + lane_w;
     if right > rail {

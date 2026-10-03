@@ -49,7 +49,9 @@ const PR_VIEW: &str = r#"{"number":7,"title":"Fix the local thing",
  "assignees":[],"labels":[],"reviewRequests":[]}"#;
 
 /// A stand-in `gh`. In `state`: `fail-search` fails every search,
-/// `fail-review` the review-request search. Each `pr view` asking for the
+/// `fail-review` the review-request search; `default-repo` names the URL
+/// `gh repo view` resolves the clone to (`gh repo set-default`), else
+/// `acme/local`. Each `pr view` asking for the
 /// refs Home opens a PR with is counted in `view-calls` (PR mode's own
 /// detail reads are not). The test dispatcher runs `gh` inside its pump, so
 /// a state between a read's start and its end is observed by drawing before
@@ -68,6 +70,7 @@ fn gh_script(state: &Path) -> String {
          cat <<'JSON'\n{REVIEW}\nJSON\n;;\n\
          'issues --assignee=@me') cat <<'JSON'\n{ISSUES}\nJSON\n;;\n\
          esac ;;\n\
+         'repo view --json') printf '{{\"url\":\"%s\"}}\\n' \"$(cat '{state}/default-repo' 2>/dev/null || echo https://github.com/acme/local)\" ;;\n\
          'pr view -R') case \"$*\" in *reviewRequests*) echo \"$*\" >> '{state}/view-calls' ;; esac\n\
          cat <<'JSON'\n{PR_VIEW}\nJSON\n;;\n\
          *) echo \"unexpected gh $*\" >&2; exit 1 ;;\nesac\n",
@@ -282,10 +285,28 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
         assert_eq!(tab.pr.head, "fix");
     });
 
-    // An issue opens in Issues mode, selected.
+    // An issue opens in its clone's Issues mode only while that mode
+    // addresses the issue's repository: with `gh repo set-default` pointing
+    // elsewhere the same number is another issue there.
     click_control(cx, window, "tab-add");
     cx.run_until_parked();
     click_control(cx, window, "home-pane-issues");
+    std::fs::write(
+        state.join("default-repo"),
+        "https://github.com/acme/upstream",
+    )
+    .unwrap();
+    click(cx, window, "home-work-acme/local-4");
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.home.is_some(), "Home stays in front");
+        let toasts = app.toast_stack.as_ref().unwrap().read(cx).toasts();
+        assert!(
+            toasts.iter().any(|t| t.message.contains("acme/upstream")),
+            "it says which repository the clone addresses"
+        );
+    });
+    std::fs::remove_file(state.join("default-repo")).unwrap();
     click(cx, window, "home-work-acme/local-4");
     cx.read(|cx| {
         let app = app.read(cx);

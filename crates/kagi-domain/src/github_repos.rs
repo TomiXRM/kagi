@@ -95,6 +95,12 @@ impl WorkItem {
             updated_at: String::new(),
         }
     }
+
+    /// Whether it lives on github.com: its author's login names a
+    /// github.com user (and avatar) only then, not on an Enterprise host.
+    pub fn on_github_com(&self) -> bool {
+        self.host.eq_ignore_ascii_case("github.com")
+    }
 }
 
 /// One `gh search` read. `truncated`: the read hit its `--limit`.

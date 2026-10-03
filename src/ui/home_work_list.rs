@@ -146,12 +146,20 @@ pub(super) fn work_row(
             item.name_with_owner, item.number
         )));
     if kind == WorkKind::ReviewRequests && !item.author.is_empty() {
+        // The login-keyed cache holds github.com users; on an Enterprise
+        // host the same login is someone else, so only the initials show.
+        let none = AvatarImages::default();
+        let images = if item.on_github_com() {
+            avatars.as_ref()
+        } else {
+            &none
+        };
         detail = detail
             .child(kagi_ui_core::commit_header::avatar_circle_with_initials(
                 AVATAR,
                 &item.author,
                 &item.author,
-                avatars,
+                images,
             ))
             .child(safe_text(&item.author));
     }

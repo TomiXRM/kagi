@@ -6,7 +6,9 @@ use super::{
     KagiApp,
 };
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Entity, SharedString, Window};
-use gpui_component::input::{Enter, Input, InputEvent, InputState, Paste};
+use gpui_component::input::{
+    Enter, IndentInline, Input, InputEvent, InputState, OutdentInline, Paste,
+};
 use gpui_component::{button::Button, Disableable, Icon, Sizable};
 use kagi_domain::issue_composer::{fenced_code_paste, title_paste_split, IssueDraft};
 use std::collections::HashMap;
@@ -409,6 +411,18 @@ pub(super) fn render_composer(
                 220.
             } else {
                 100.
+            }))
+            // #909: Tab and Shift+Tab move focus out of the body like every
+            // other field (title → body → Labels → Assignees → Create), so the
+            // controls below are reachable from the keyboard. Indentation keeps
+            // the editor's own Cmd/Ctrl+] and Cmd/Ctrl+[ (block indent).
+            .capture_action(cx.listener(|_, _: &IndentInline, window, cx| {
+                window.focus_next(cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|_, _: &OutdentInline, window, cx| {
+                window.focus_prev(cx);
+                cx.stop_propagation();
             }))
             .capture_action(cx.listener(move |app, _: &Paste, window, cx| {
                 if app.has_active_modal() {

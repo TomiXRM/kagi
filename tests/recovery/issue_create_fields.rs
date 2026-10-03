@@ -86,8 +86,9 @@ fn press(cx: &mut VisualTestAppContext, window: AnyWindowHandle, key: &str) {
     cx.run_until_parked();
 }
 
-/// `hops` steps of the window's tab order (what Tab does) from whatever has
-/// focus, or from the composer title when `from_title`.
+/// `hops` real Tab presses (key down + up) from whatever has focus, or from
+/// the composer title when `from_title`. #909: real keys, so the body editor's
+/// own Tab handling is part of the path.
 fn tab(
     cx: &mut VisualTestAppContext,
     window: AnyWindowHandle,
@@ -96,15 +97,15 @@ fn tab(
     hops: usize,
 ) {
     paint(cx, window);
-    cx.update_window(window, |_, window, cx| {
-        if from_title {
+    if from_title {
+        cx.update_window(window, |_, window, cx| {
             app.update(cx, |app, cx| app.focus_issue_title_for_e2e(window, cx));
-        }
-        for _ in 0..hops {
-            window.focus_next(cx);
-        }
-    })
-    .unwrap();
+        })
+        .unwrap();
+    }
+    for _ in 0..hops {
+        press(cx, window, "tab");
+    }
 }
 
 /// #904 review: open a field picker with the keyboard only. From the title,
@@ -195,6 +196,21 @@ fn issue_creates(repo: &Path) -> Vec<OpOutcome> {
         .collect()
 }
 
+fn body(app: &Entity<KagiApp>, cx: &mut VisualTestAppContext) -> String {
+    cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e().0.body)
+}
+
+fn body_focused(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    app: &Entity<KagiApp>,
+) -> bool {
+    cx.update_window(window, |_, window, cx| {
+        app.read(cx).issue_body_focused_for_e2e(None, window, cx)
+    })
+    .unwrap()
+}
+
 fn fields(app: &Entity<KagiApp>, cx: &mut VisualTestAppContext) -> (Vec<String>, Vec<String>) {
     cx.read(|cx| {
         let fields = app.read(cx).issue_create_fields_for_e2e();
@@ -267,6 +283,32 @@ pub fn scenario_issue_create_fields(cx: &mut VisualTestAppContext) {
 
     // Keyboard only: the entries are tab stops right after the body, and
     // Enter / Space open their pickers.
+    // #909: Tab from the title lands in the body; the next Tab leaves it
+    // (the code editor used to take it as indentation) and Shift+Tab comes
+    // back. Indentation stays reachable on the editor's block indent.
+    tab(cx, window, &app, true, 1);
+    assert!(
+        body_focused(cx, window, &app),
+        "Tab from the title focuses the body"
+    );
+    press(cx, window, "tab");
+    assert!(!body_focused(cx, window, &app), "Tab leaves the body");
+    assert_eq!(body(&app, cx), BODY, "Tab inserts nothing into the body");
+    press(cx, window, "shift-tab");
+    assert!(
+        body_focused(cx, window, &app),
+        "Shift+Tab returns to the body"
+    );
+    assert_eq!(body(&app, cx), BODY, "Shift+Tab removes nothing");
+    let (indent, outdent) = if cfg!(target_os = "macos") {
+        ("cmd-]", "cmd-[")
+    } else {
+        ("ctrl-]", "ctrl-[")
+    };
+    press(cx, window, indent);
+    assert_ne!(body(&app, cx), BODY, "block indent still indents the body");
+    press(cx, window, outdent);
+    assert_eq!(body(&app, cx), BODY, "block outdent undoes it");
     keyboard_open(cx, window, &app, 2, "enter", PrField::Labels);
     cx.simulate_keystrokes(window, "escape");
     assert!(cx.read(|cx| app.read(cx).pr_fields_modal().is_none()));
@@ -341,8 +383,16 @@ pub fn scenario_issue_create_fields(cx: &mut VisualTestAppContext) {
     );
 
     // The label is deleted on GitHub between the pick and the Create.
+    // #909: Create is reached from the keyboard alone — title, body,
+    // Labels, Assignees, Preview, focus mode, Create — and Enter presses it.
     write_labels(gh_dir.path(), &["bug", "docs"]);
-    click(cx, window, "issue-composer-submit");
+    tab(cx, window, &app, true, 6);
+    assert_eq!(
+        body(&app, cx),
+        BODY,
+        "tabbing through the body leaves it as is"
+    );
+    press(cx, window, "enter");
     wait_idle(cx, &app);
     assert!(
         !argv.exists(),

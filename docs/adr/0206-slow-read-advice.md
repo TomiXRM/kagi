@@ -24,7 +24,7 @@ worktree の状態読み込み、worktree 容量の計測、Analyze の hotspot 
    描画ごと止まり、表示できないので対象外(別 issue)。
 3. **表示は既存 busy snackbar への 1 行追記**。write が走っていればラベルは write のまま、無ければ
    read のラベル(例「ahead/behind を計算中…」)を出し、2 行目に
-   「時間がかかっています: <理由>(大きいリポジトリでは <対象> に時間がかかります)」を EN/JA で出す。
+   「<理由>(大きいリポジトリでは <対象> に時間がかかります)」を EN/JA で出す。前置きの「時間がかかっています:」は出さない(2026-10-04、説明文を置かない方針)。
    新しい modal / AppNotice は作らない。2 秒未満の read は snackbar を出さない(常時走る read で点滅
    させない)。
 4. **Skip は「計算をやめて不明として表示する」**。操作のキャンセルではなく、oplog に記録しない。
@@ -61,8 +61,13 @@ worktree の状態読み込み、worktree 容量の計測、Analyze の hotspot 
   clone は別途対象とし、この段階では実装しない。
 - 既存の snackbar の write ラベルを保ち、理由を op kind から機械的に選ぶ。
   未分類なら汎用文と秒数のみ。ETA / 進捗率 / 「中断できません」は表示しない。
+  表示は「<理由> · <秒> s」だけで、前置きの文は付けない。
   write は Skip 不能。read と write が重なれば write の理由と秒数が優先し、
   read の Skip は残してよい。キューおよび running cancel は対象外。
+- **対象外: UI thread で同期に動く write。** snapshot の作成
+  (`create_snapshot_now`)、conflict の continue / skip、stage / unstage / hunk の
+  write は lease を持つが、その間 UI thread が描画できないため、説明を出せない
+  (#995 review)。background へ移す変更は #996(#355 R4)で扱う。
 - `[kagi] busy: slow write <kind> after 2s` は開始した write ごとに 1 回。
   実行が終わっても Unknown の lease が保持される場合、admission と
   reconcile の既存契約は変えない。

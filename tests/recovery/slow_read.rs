@@ -205,16 +205,18 @@ pub fn scenario_slow_write_explained(cx: &mut VisualTestAppContext) {
             Lang::En => "network: waiting for the remote",
             Lang::Ja => "network: remote の応答を待っています",
         };
-        assert!(
-            text.contains(expected_reason) && text.contains("2 s"),
-            "{text}"
+        assert_eq!(
+            text,
+            format!("{expected_reason} · 2 s"),
+            "reason and seconds only"
         );
         assert!(!text.contains("cannot be interrupted"), "{text}");
         advance(cx, TICK * 8);
         let text = drawn_write_advice(cx, window).expect("running fetch updates seconds");
-        assert!(
-            text.contains(expected_reason) && text.contains("4 s"),
-            "{text}"
+        assert_eq!(
+            text,
+            format!("{expected_reason} · 4 s"),
+            "reason and seconds only"
         );
         let after = kagi_ui_core::klog::tail()
             .into_iter()

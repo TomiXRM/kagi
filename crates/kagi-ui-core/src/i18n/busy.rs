@@ -200,11 +200,8 @@ fn slow_write_advice_for(op: &str, seconds: u64, language: Lang) -> String {
         "write-commit-graph" | "enable-fsmonitor" => Msg::SlowWriteLocal,
         _ => Msg::SlowWriteGeneric,
     };
-    let prefix = match language {
-        Lang::En => "Taking a while",
-        Lang::Ja => "時間がかかっています",
-    };
-    format!("{prefix}: {} ({seconds} s)", reason.t_for(language))
+    // The reason and the elapsed seconds only: no lead-in sentence.
+    format!("{} · {seconds} s", reason.t_for(language))
 }
 
 pub fn busy_label(op: &str) -> &'static str {
@@ -279,12 +276,8 @@ fn slow_read_advice_for(read: SlowRead, language: Lang) -> String {
     let (reason, subject) = slow_read_parts(read, language);
     let reason = reason.trim_end_matches('…');
     match language {
-        Lang::En => {
-            format!("Taking a while: {reason} ({subject} takes time in large repositories)")
-        }
-        Lang::Ja => format!(
-            "時間がかかっています: {reason}（大きいリポジトリでは{subject}に時間がかかります）"
-        ),
+        Lang::En => format!("{reason} ({subject} takes time in large repositories)"),
+        Lang::Ja => format!("{reason}（大きいリポジトリでは{subject}に時間がかかります）"),
     }
 }
 
@@ -330,16 +323,16 @@ mod tests {
     }
 
     /// #355: every slow read explains itself in both languages with the
-    /// "taking a while: <reason> (<subject> in large repositories)" shape.
+    /// "<reason> (<subject> in large repositories)" shape, with no lead-in.
     #[test]
     fn slow_read_advice_names_reason_and_subject() {
         assert_eq!(
             slow_read_advice_for(SlowRead::AheadBehind, Lang::En),
-            "Taking a while: Counting ahead/behind (counting commits against each upstream takes time in large repositories)"
+            "Counting ahead/behind (counting commits against each upstream takes time in large repositories)"
         );
         assert_eq!(
             slow_read_advice_for(SlowRead::AheadBehind, Lang::Ja),
-            "時間がかかっています: ahead/behind を計算中（大きいリポジトリでは各ブランチと upstream の差分の計算に時間がかかります）"
+            "ahead/behind を計算中（大きいリポジトリでは各ブランチと upstream の差分の計算に時間がかかります）"
         );
         for read in [
             SlowRead::AheadBehind,
@@ -353,8 +346,14 @@ mod tests {
                 slow_read_parts(read, Lang::Ja),
             );
             assert_ne!(en, ja, "{read:?} is not translated");
-            assert!(slow_read_advice_for(read, Lang::En).starts_with("Taking a while: "));
-            assert!(slow_read_advice_for(read, Lang::Ja).starts_with("時間がかかっています: "));
+            for language in [Lang::En, Lang::Ja] {
+                let advice = slow_read_advice_for(read, language);
+                assert!(
+                    !advice.starts_with("Taking a while")
+                        && !advice.starts_with("時間がかかっています"),
+                    "{advice}"
+                );
+            }
         }
     }
 
@@ -362,19 +361,19 @@ mod tests {
     fn slow_write_advice_names_known_kind_and_elapsed_without_guessing() {
         assert_eq!(
             slow_write_advice_for("pull", 2, Lang::En),
-            "Taking a while: network: waiting for the remote (2 s)"
+            "network: waiting for the remote · 2 s"
         );
         assert_eq!(
             slow_write_advice_for("pull", 4, Lang::Ja),
-            "時間がかかっています: network: remote の応答を待っています (4 s)"
+            "network: remote の応答を待っています · 4 s"
         );
         assert_eq!(
             slow_write_advice_for("checkout", 4, Lang::En),
-            "Taking a while: checkout: updating the worktree (4 s)"
+            "checkout: updating the worktree · 4 s"
         );
         assert_eq!(
             slow_write_advice_for("unexpected-kind", 9, Lang::En),
-            "Taking a while: operation in progress (9 s)"
+            "operation in progress · 9 s"
         );
     }
 }

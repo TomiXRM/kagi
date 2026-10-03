@@ -496,6 +496,23 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
         cx.read(|cx| app.read(cx).issue_write_repo_for_e2e()),
         Some("github.com/acme/upstream".to_string())
     );
+    // A reply to acme/upstream's #4 is drafted there; it is that issue's.
+    app.update(cx, |app, cx| app.seed_issue_reply_for_e2e(4, cx));
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.insert_issue_reply_body_for_e2e(4, "for upstream #4", window, cx)
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let clone = cx.read(|cx| app.read(cx).repo_path.clone().unwrap());
+    let upstream_reply = || {
+        kagi_git::drafts::load_issue_draft(&clone, "github.com/acme/upstream", Some(4))
+            .record
+            .map(|draft| draft.body)
+    };
+    assert_eq!(upstream_reply(), Some("for upstream #4".to_string()));
     click_control(cx, window, "tab-add");
     cx.run_until_parked();
     KagiApp::queue_issue_list_fetch_for_e2e(gpui::Task::ready(Ok(issue_list(
@@ -516,7 +533,17 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
             Some("github.com/acme/local".to_string()),
             "the Reply goes to the verified repository"
         );
+        assert_eq!(
+            app.issue_reply_draft_for_e2e(4).body,
+            "",
+            "acme/upstream's reply is not offered for acme/local's #4"
+        );
     });
+    assert_eq!(
+        upstream_reply(),
+        Some("for upstream #4".to_string()),
+        "and it stays acme/upstream's"
+    );
 
     unmount(cx, app, window);
 }

@@ -155,6 +155,34 @@ pub fn origin_identity(path: &Path) -> Option<String> {
         .flatten()
 }
 
+/// The `host/owner/repo` identity every remote of the clone at `path` names,
+/// when they all name the same one — the only repository `gh` can resolve
+/// the clone to, as `gh repo set-default` picks among its remotes. `None`
+/// when the remotes name two repositories, none, or one whose host cannot
+/// be established (an `ssh_config` alias may run `ssh -G`: call it off the
+/// UI thread).
+pub fn sole_remote_identity(path: &Path) -> Option<String> {
+    let repo = git2::Repository::open(path).ok()?;
+    let config = repo.config().ok()?;
+    let mut sole: Option<String> = None;
+    for name in repo.remotes().ok()?.iter() {
+        let remote = repo.find_remote(name.ok().flatten()?).ok()?;
+        let identity = match crate::backend::remote_identity::resolve_repo_identity(
+            remote.url().ok()?,
+            &config,
+        ) {
+            Ok(Some(identity)) => identity.to_ascii_lowercase(),
+            Ok(None) => continue,
+            Err(_) => return None,
+        };
+        match &sole {
+            Some(seen) if *seen != identity => return None,
+            _ => sole = Some(identity),
+        }
+    }
+    sole
+}
+
 /// Parse `gh repo list --json …`. Pure; unit-tested. An entry without a name
 /// or a URL whose host can be read is skipped — it could not be cloned.
 /// `truncated` counts what `gh` returned, skipped entries included.

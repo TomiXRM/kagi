@@ -11,9 +11,33 @@ use std::sync::Mutex;
 use kagi_domain::github::IssueCreateFields;
 use kagi_git::drafts::{
     clear_draft, clear_issue_draft_if_version, flush_issue_draft_if_version, flush_issue_drafts,
-    issue_draft_version, load_draft, load_issue_draft as load_issue_record, queue_issue_draft,
-    save_draft, IssueDraftRecord,
+    issue_draft_version as addressed_version, load_draft, load_issue_draft as load_addressed,
+    queue_issue_draft as queue_addressed, save_draft, IssueDraftLoad, IssueDraftRecord,
 };
+
+/// The repository the drafts below are written to, and where a New Issue
+/// draft for it is stored.
+const BASE: &str = "github.com/acme/widgets";
+const NEW: &str = ":issue:github.com/acme/widgets:new";
+const REPLY_7: &str = ":issue:github.com/acme/widgets:7";
+
+fn queue_issue_draft(
+    repo: &Path,
+    number: Option<u64>,
+    title: &str,
+    body: &str,
+    fields: &IssueCreateFields,
+) -> u64 {
+    queue_addressed(repo, BASE, number, title, body, fields)
+}
+
+fn issue_draft_version(repo: &Path, number: Option<u64>) -> u64 {
+    addressed_version(repo, BASE, number)
+}
+
+fn load_issue_record(repo: &Path, number: Option<u64>) -> Option<IssueDraftRecord> {
+    load_addressed(repo, BASE, number).record
+}
 
 /// The loaded draft's text; tests that pick labels or assignees read the
 /// whole record.
@@ -214,7 +238,7 @@ fn issue_draft_round_trip_and_pending_latest_value() {
             load_issue_draft(repo, None),
             Some((title.to_owned(), body.to_owned()))
         );
-        let stored = load_draft(repo, ":issue:new").expect("common draft record");
+        let stored = load_draft(repo, NEW).expect("common draft record");
         assert_eq!(stored.mode, "issue-composer");
         assert_eq!(
             serde_json::from_str::<(String, String)>(&stored.message).expect("tuple payload"),
@@ -239,10 +263,10 @@ fn whitespace_only_issue_draft_clears_and_legacy_whitespace_loads_empty() {
             "pending whitespace-only tuple is an empty draft"
         );
         flush_issue_drafts().expect("delete whitespace-only draft");
-        assert!(load_draft(repo, ":issue:new").is_none());
+        assert!(load_draft(repo, NEW).is_none());
 
         let legacy = serde_json::json!([" \t", "\n  "]).to_string();
-        save_draft(repo, ":issue:7", &legacy, "issue-composer").expect("legacy whitespace tuple");
+        save_draft(repo, REPLY_7, &legacy, "issue-composer").expect("legacy whitespace tuple");
         assert!(
             load_issue_draft(repo, Some(7)).is_none(),
             "legacy whitespace-only tuple reads as empty"
@@ -333,7 +357,7 @@ fn issue_clear_replaces_pending_body_and_delayed_flush_cannot_restore_it() {
             .expect("late timer thread")
             .expect("late flush");
         assert!(load_issue_draft(repo, None).is_none());
-        assert!(load_draft(repo, ":issue:new").is_none());
+        assert!(load_draft(repo, NEW).is_none());
     });
 }
 
@@ -383,7 +407,7 @@ fn failed_issue_flush_preserves_pending_value_for_retry() {
             load_issue_draft(repo, None),
             Some(("title".into(), "retry body".into()))
         );
-        assert!(load_draft(repo, ":issue:new").is_some());
+        assert!(load_draft(repo, NEW).is_some());
     });
 }
 
@@ -451,9 +475,9 @@ fn issue_load_rejects_wrong_mode_and_malformed_payload() {
     }
     with_log_dir(|_| {
         let repo = Path::new("/tmp/kagi-it/issue-corrupt");
-        save_draft(repo, ":issue:new", "[\"t\",\"b\"]", "plain").expect("wrong mode");
+        save_draft(repo, NEW, "[\"t\",\"b\"]", "plain").expect("wrong mode");
         assert!(load_issue_draft(repo, None).is_none());
-        save_draft(repo, ":issue:new", "not a tuple", "issue-composer").expect("bad payload");
+        save_draft(repo, NEW, "not a tuple", "issue-composer").expect("bad payload");
         assert!(load_issue_draft(repo, None).is_none());
     });
 }
@@ -491,13 +515,8 @@ fn issue_draft_keeps_picks_and_reads_the_title_body_format() {
     }
     with_log_dir(|log_dir| {
         let repo = Path::new("/tmp/kagi-it/issue-picks");
-        save_draft(
-            repo,
-            ":issue:new",
-            r#"["old title","old body"]"#,
-            "issue-composer",
-        )
-        .expect("pre-#903 draft");
+        save_draft(repo, NEW, r#"["old title","old body"]"#, "issue-composer")
+            .expect("pre-#903 draft");
         assert_eq!(
             load_issue_record(repo, None),
             Some(IssueDraftRecord {
@@ -529,7 +548,7 @@ fn issue_draft_keeps_picks_and_reads_the_title_body_format() {
         queue_issue_draft(repo, None, "", " ", &chosen);
         flush_issue_drafts().expect("clear");
         assert!(load_issue_record(repo, None).is_none());
-        assert!(load_draft(repo, ":issue:new").is_none());
+        assert!(load_draft(repo, NEW).is_none());
     });
 }
 
@@ -544,7 +563,7 @@ fn unreadable_issue_draft_is_moved_aside_not_overwritten() {
     }
     with_log_dir(|log_dir| {
         let repo = Path::new("/tmp/kagi-it/issue-unreadable");
-        save_draft(repo, ":issue:new", "seed", "plain").expect("locate draft storage");
+        save_draft(repo, NEW, "seed", "plain").expect("locate draft storage");
         let (name, _) = drafts_dir_files(log_dir).remove(0);
         let file = log_dir.join("drafts").join(&name);
         let torn = b"{\"repo\":\"/tmp/kagi-it/issue-unread".to_vec();
@@ -560,7 +579,7 @@ fn unreadable_issue_draft_is_moved_aside_not_overwritten() {
 
         let bad_picks = serde_json::json!({
             "repo": "/tmp/kagi-it/issue-unreadable",
-            "branch": ":issue:new",
+            "branch": NEW,
             "message": r#"["t","b",[1],[]]"#,
             "mode": "issue-composer",
         })
@@ -601,16 +620,16 @@ fn posted_issue_draft_version_is_consumed_once_and_survives_flush() {
         assert!(posted > initial);
         flush_issue_drafts().expect("save posted body");
         assert_eq!(posted, issue_draft_version(repo, None));
-        assert!(clear_issue_draft_if_version(repo, None, posted));
+        assert!(clear_issue_draft_if_version(repo, None, posted).is_some());
         assert!(issue_draft_version(repo, None) > posted);
-        assert!(!clear_issue_draft_if_version(repo, None, posted));
+        assert!(clear_issue_draft_if_version(repo, None, posted).is_none());
         assert!(load_issue_draft(repo, None).is_none());
         flush_issue_drafts().expect("persist clear");
         std::thread::spawn(flush_issue_drafts)
             .join()
             .expect("late autosave thread")
             .expect("late autosave flush");
-        assert!(load_draft(repo, ":issue:new").is_none());
+        assert!(load_draft(repo, NEW).is_none());
     });
 }
 
@@ -628,14 +647,14 @@ fn reopened_editor_new_version_protects_draft_from_old_post_completion() {
         assert_eq!(issue_draft_version(repo, Some(7)), posted);
         let edited = queue_issue_draft(repo, Some(7), "", "submitted reply", &no_picks());
         assert!(edited > posted);
-        assert!(!clear_issue_draft_if_version(repo, Some(7), posted));
+        assert!(clear_issue_draft_if_version(repo, Some(7), posted).is_none());
         assert_eq!(issue_draft_version(repo, Some(7)), edited);
         assert_eq!(
             load_issue_draft(repo, Some(7)),
             Some(("".into(), "submitted reply".into()))
         );
         flush_issue_drafts().expect("persist reopened draft");
-        assert!(!clear_issue_draft_if_version(repo, Some(7), posted));
+        assert!(clear_issue_draft_if_version(repo, Some(7), posted).is_none());
         assert!(load_issue_draft(repo, Some(7)).is_some());
     });
 }
@@ -652,13 +671,9 @@ fn issue_version_clear_targets_original_storage_and_checks_issue_identity() {
         let second = tempfile::tempdir().expect("second storage");
         std::env::set_var("KAGI_LOG_DIR", second.path());
         let other = queue_issue_draft(repo, Some(7), "", "other storage reply", &no_picks());
-        assert!(!clear_issue_draft_if_version(repo, Some(8), posted));
-        assert!(!clear_issue_draft_if_version(
-            Path::new("/different"),
-            Some(7),
-            posted
-        ));
-        assert!(clear_issue_draft_if_version(repo, Some(7), posted));
+        assert!(clear_issue_draft_if_version(repo, Some(8), posted).is_none());
+        assert!(clear_issue_draft_if_version(Path::new("/different"), Some(7), posted).is_none());
+        assert!(clear_issue_draft_if_version(repo, Some(7), posted).is_some());
         assert_eq!(issue_draft_version(repo, Some(7)), other);
         flush_issue_drafts().expect("flush clear to original destination");
         assert_eq!(
@@ -667,6 +682,120 @@ fn issue_version_clear_targets_original_storage_and_checks_issue_identity() {
         );
         std::env::set_var("KAGI_LOG_DIR", original);
         assert!(load_issue_draft(repo, Some(7)).is_none());
+    });
+}
+
+/// #940 review: a clone can address another repository after `gh repo
+/// set-default`, where the same number is another Issue. A draft written for
+/// one repository's #7 is not offered for the other's #7, and writing there
+/// does not replace it.
+#[test]
+fn issue_draft_is_kept_per_repository_written_to() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|_| {
+        let repo = Path::new("/tmp/kagi-it/issue-per-repository");
+        let upstream = "github.com/upstream/widgets";
+        queue_addressed(repo, upstream, Some(7), "", "for upstream", &no_picks());
+        queue_addressed(repo, upstream, None, "title", "new upstream", &no_picks());
+        flush_issue_drafts().expect("save upstream drafts");
+        assert_eq!(
+            load_addressed(repo, BASE, Some(7)),
+            IssueDraftLoad::default()
+        );
+        assert_eq!(load_addressed(repo, BASE, None), IssueDraftLoad::default());
+
+        queue_issue_draft(repo, Some(7), "", "for widgets", &no_picks());
+        flush_issue_drafts().expect("save widgets draft");
+        assert_eq!(
+            load_addressed(repo, upstream, Some(7))
+                .record
+                .map(|d| d.body),
+            Some("for upstream".to_string())
+        );
+        assert_eq!(
+            load_issue_draft(repo, Some(7)),
+            Some(("".into(), "for widgets".into()))
+        );
+    });
+}
+
+/// A clone whose remotes are `urls`, for drafts saved before #940.
+fn clone_with_remotes(urls: &[&str]) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("clone dir");
+    let repo = git2::Repository::init(dir.path()).expect("init");
+    for (ix, url) in urls.iter().enumerate() {
+        repo.remote(&format!("r{ix}"), url).expect("remote");
+    }
+    dir
+}
+
+/// A draft saved before #940 does not say which repository it was written
+/// to. It moves, once, to the one repository the clone's remotes name; with
+/// two to choose from it stays where it is, untouched, and the load says so.
+#[test]
+fn unaddressed_draft_moves_only_to_the_sole_remote_repository() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    with_log_dir(|_| {
+        let two = clone_with_remotes(&[
+            "https://github.com/acme/widgets.git",
+            "https://github.com/upstream/widgets.git",
+        ]);
+        save_draft(
+            two.path(),
+            ":issue:7",
+            r#"["","old reply"]"#,
+            "issue-composer",
+        )
+        .expect("pre-#940 draft");
+        let before = load_draft(two.path(), ":issue:7").expect("saved");
+        assert_eq!(
+            load_addressed(two.path(), BASE, Some(7)),
+            IssueDraftLoad {
+                record: None,
+                kept_unaddressed: true,
+            },
+            "either remote may be where it was written"
+        );
+        flush_issue_drafts().expect("flush");
+        assert_eq!(load_draft(two.path(), ":issue:7"), Some(before));
+
+        let one = clone_with_remotes(&[
+            "https://github.com/acme/widgets.git",
+            "git@github.com:acme/widgets.git",
+        ]);
+        save_draft(
+            one.path(),
+            ":issue:7",
+            r#"["","old reply"]"#,
+            "issue-composer",
+        )
+        .expect("pre-#940 draft");
+        assert_eq!(
+            load_addressed(one.path(), "github.com/upstream/widgets", Some(7)),
+            IssueDraftLoad {
+                record: None,
+                kept_unaddressed: true,
+            },
+            "not the repository the remotes name"
+        );
+        assert_eq!(
+            load_addressed(one.path(), BASE, Some(7))
+                .record
+                .map(|d| d.body),
+            Some("old reply".to_string())
+        );
+        flush_issue_drafts().expect("persist the move");
+        assert!(load_draft(one.path(), ":issue:7").is_none(), "offered once");
+        assert_eq!(
+            load_addressed(one.path(), BASE, Some(7))
+                .record
+                .map(|d| d.body),
+            Some("old reply".to_string())
+        );
     });
 }
 

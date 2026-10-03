@@ -63,7 +63,7 @@ impl KagiApp {
         if let Some(base_repo) = frozen_base_repo.as_deref() {
             self.ensure_host_login(base_repo, cx);
         }
-        let task = issue_list_task(repo, frozen_base_repo, None, state, cx);
+        let task = issue_list_task(repo.clone(), frozen_base_repo, None, state, cx);
         cx.notify();
         cx.spawn(async move |this, acx| {
             let result = task.await;
@@ -75,9 +75,14 @@ impl KagiApp {
                 if ui.finish_github_issues_request(generation, result) && owner_is_active {
                     cx.notify();
                 }
-                // The first read is what learns the repository identity.
+                // The first read is what learns the repository identity, and
+                // with it where the composers' drafts are stored.
+                let selected = ui.selected_github_issue;
                 if let Some(base_repo) = ui.issue_composer.base_repo.clone() {
                     app.ensure_host_login(&base_repo, cx);
+                    for number in [None, selected.map(Some)].into_iter().flatten() {
+                        app.prepare_issue_composer_for(owner, repo.clone(), number, cx);
+                    }
                 }
             });
         })
@@ -142,6 +147,9 @@ impl KagiApp {
         self.with_ui(|ui| {
             ui.issue_composer.base_repo = Some(identity.to_string());
             ui.github_issue_details.clear();
+            // Their drafts are the old repository's: they stay stored there
+            // and the composers are made again for `identity`.
+            ui.issue_composer.editors.clear();
         });
         self.refresh_github_issues(cx);
     }
@@ -282,8 +290,24 @@ impl KagiApp {
         let (Some(owner), Some(repo)) = (self.active_session(), self.repo_path.clone()) else {
             return;
         };
+        self.prepare_issue_composer_for(owner, repo, number, cx);
+    }
+
+    /// Make `owner`'s composer for Issue `number` (`None`: a new Issue) and
+    /// load its draft. A draft is stored per repository it is written to
+    /// (#940 review), so there is none until the list read has learnt that.
+    fn prepare_issue_composer_for(
+        &mut self,
+        owner: crate::app::SessionId,
+        repo: PathBuf,
+        number: Option<u64>,
+        cx: &mut Context<Self>,
+    ) {
         let draft_read = {
             let Some(ui) = self.ui.get_mut(&owner) else {
+                return;
+            };
+            let Some(base_repo) = ui.issue_composer.base_repo.clone() else {
                 return;
             };
             let editor = ui.issue_composer.editors.entry(number).or_default();
@@ -292,21 +316,32 @@ impl KagiApp {
             } else {
                 editor.loading = true;
                 editor.repo = Some(repo.clone());
-                let storage_version = kagi_git::drafts::issue_draft_version(&repo, number);
+                editor.base_repo = Some(base_repo.clone());
+                let storage_version =
+                    kagi_git::drafts::issue_draft_version(&repo, &base_repo, number);
                 editor.storage_version = storage_version;
-                Some((storage_version, editor.draft.revision))
+                Some((storage_version, editor.draft.revision, base_repo))
             }
         };
         cx.notify();
 
-        if let Some((storage_version, revision)) = draft_read {
-            let draft_repo = repo.clone();
+        if let Some((storage_version, revision, base_repo)) = draft_read {
+            let (draft_repo, draft_base) = (repo.clone(), base_repo.clone());
             cx.spawn(async move |this, acx| {
-                let draft = acx
+                let loaded = acx
                     .background_executor()
-                    .spawn(async move { kagi_git::drafts::load_issue_draft(&draft_repo, number) })
+                    .spawn(async move {
+                        kagi_git::drafts::load_issue_draft(&draft_repo, &draft_base, number)
+                    })
                     .await;
                 let _ = this.update(acx, |app, cx| {
+                    if loaded.kept_unaddressed {
+                        klog!(
+                            "issues: draft {} kept: saved without its repository, not handed to {}",
+                            number.map_or_else(|| "new".to_string(), |n| format!("#{n}")),
+                            base_repo
+                        );
+                    }
                     let Some(editor) = app
                         .ui
                         .get_mut(&owner)
@@ -314,6 +349,11 @@ impl KagiApp {
                     else {
                         return;
                     };
+                    // Made again for another repository meanwhile.
+                    if editor.base_repo.as_deref() != Some(base_repo.as_str()) {
+                        return;
+                    }
+                    let draft = loaded.record;
                     editor.loading = false;
                     editor.loaded = true;
                     let untouched = editor.draft.revision == revision
@@ -359,10 +399,14 @@ impl KagiApp {
         else {
             return;
         };
+        let Some(base_repo) = editor.base_repo.clone() else {
+            return;
+        };
         let revision = editor.draft.revision;
         editor.saving = true;
         let storage_version = kagi_git::drafts::queue_issue_draft(
             &repo,
+            &base_repo,
             number,
             &editor.draft.title,
             &editor.draft.body,
@@ -432,6 +476,10 @@ impl KagiApp {
         let Some(editor) = ui.issue_composer.editors.get(&number) else {
             return;
         };
+        // The draft is posted only to the repository it was written for.
+        if editor.base_repo.as_deref() != Some(base_repo.as_str()) {
+            return;
+        }
         let draft = editor.draft.clone();
         let storage_version = editor.storage_version;
         // A reply carries no fields; only the New Issue composer offers them.
@@ -534,8 +582,7 @@ impl KagiApp {
         sent: &kagi_domain::github::IssueCreateFields,
         cx: &mut Context<Self>,
     ) {
-        if kagi_git::drafts::clear_issue_draft_if_version(&repo, number, version) {
-            let next = kagi_git::drafts::issue_draft_version(&repo, number);
+        if let Some(next) = kagi_git::drafts::clear_issue_draft_if_version(&repo, number, version) {
             let mut owner_revision = None;
             // A closed/reopened session can be displaying the same saved draft.
             // Consume only this exact storage version, never a new edit, and

@@ -390,21 +390,27 @@ pub fn theme_by_slug(slug: &str) -> Option<ThemeHandle> {
 
 /// Re-read the user theme folder ([`themes_dir`]) without changing the active
 /// registry. May perform slow filesystem I/O and JSON parsing; callers with a
-/// live window must run this on a background executor.
-pub fn read_custom_themes() -> (Vec<Theme>, Vec<ThemeLoadError>) {
+/// live window must run this on a background executor. `Err` when the folder
+/// exists but cannot be listed: keep the themes already installed.
+pub fn read_custom_themes() -> Result<(Vec<Theme>, Vec<ThemeLoadError>), ThemeLoadError> {
     match themes_dir() {
         Some(dir) => crate::theme_custom::load_dir(&dir),
-        None => (Vec::new(), Vec::new()),
+        None => Ok((Vec::new(), Vec::new())),
     }
 }
 
 /// Re-read and install user themes synchronously before the first window exists.
 /// The native UI reload uses `read_custom_themes` off-thread and calls
 /// `install_custom_themes` on the foreground after checking its request version.
+/// An unlistable folder installs nothing and is reported like a bad file.
 pub fn reload_custom_themes() -> Vec<ThemeLoadError> {
-    let (themes, errors) = read_custom_themes();
-    install_custom_themes(themes);
-    errors
+    match read_custom_themes() {
+        Ok((themes, errors)) => {
+            install_custom_themes(themes);
+            errors
+        }
+        Err(error) => vec![error],
+    }
 }
 
 /// Replace the user-theme generation and re-resolve the active theme.

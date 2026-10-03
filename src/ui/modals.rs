@@ -655,6 +655,8 @@ impl From<String> for AppNotice {
 }
 pub enum ActiveModal {
     RemoteBrowse(super::remote_browse::RemoteBrowseModal),
+    /// Review a clone from Home (#923); window-global like Home itself.
+    Clone(super::home_github::CloneModal),
     Update(UpdateModal),
     SmartCommit(super::smart_commit::SmartCommitModal),
     AppNotice(AppNotice),
@@ -711,7 +713,7 @@ impl ActiveModal {
     pub fn is_repo_scoped(&self) -> bool {
         use ActiveModal as M;
         match self {
-            M::AppNotice(_) | M::RemoteBrowse(_) | M::Update(_) => false,
+            M::AppNotice(_) | M::RemoteBrowse(_) | M::Clone(_) | M::Update(_) => false,
             M::SmartCommit(_)
             | M::Checkout(_)
             | M::Pull(_)

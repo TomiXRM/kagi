@@ -1,9 +1,9 @@
-//! The signed-in user's repositories from `gh repo list`, for the repository
-//! picker (#923). A read: it changes nothing.
+//! The signed-in user's repositories and those of their organizations, from
+//! `gh`, for Home (#923, #924). A read: it changes nothing.
 
 use std::path::Path;
 
-pub use kagi_domain::github_repos::{RepoList, RepoListing};
+pub use kagi_domain::github_repos::{OwnerRepos, RepoList, RepoListing};
 
 use crate::GitError;
 
@@ -12,25 +12,147 @@ use crate::GitError;
 /// have been cut off, and [`RepoList::truncated`] says so.
 pub const REPO_LIST_LIMIT: usize = 1000;
 
-/// `gh repo list --limit <limit> --json …`: the user's own repositories on
-/// `gh`'s default host. Organization repositories are not listed (#924).
-pub fn repo_list_args(limit: usize) -> Vec<String> {
-    vec![
-        "repo".into(),
-        "list".into(),
-        "--limit".into(),
+/// `gh repo list [<owner>] --limit <limit> --json …`: the user's own
+/// repositories (`owner: None`) or one organization's, on `gh`'s default host.
+pub fn repo_list_args(owner: Option<&str>, limit: usize) -> Vec<String> {
+    let mut args = vec!["repo".to_string(), "list".to_string()];
+    args.extend(owner.map(str::to_string));
+    args.extend([
+        "--limit".to_string(),
         limit.to_string(),
-        "--json".into(),
-        "nameWithOwner,url,isFork,isPrivate,description,updatedAt".into(),
-    ]
+        "--json".to_string(),
+        "nameWithOwner,url,isFork,isPrivate,description,updatedAt".to_string(),
+    ]);
+    args
 }
 
-/// Read the user's repositories. `workdir` is only the process's working
+/// `gh api user/orgs --paginate --jq .[].login`: the organizations the user
+/// belongs to, one login per line.
+pub fn org_list_args() -> Vec<String> {
+    ["api", "user/orgs", "--paginate", "--jq", ".[].login"]
+        .map(str::to_string)
+        .to_vec()
+}
+
+/// Organization logins from [`org_list_args`]'s output. Pure. A line that is
+/// not a plain login (letters, digits, `-`, not leading `-`) is dropped: it
+/// is handed to `gh repo list` as an argument.
+pub fn parse_org_logins(stdout: &str) -> Vec<String> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .filter(|login| {
+            !login.is_empty()
+                && !login.starts_with('-')
+                && login.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+/// Read one owner's repositories. `workdir` is only the process's working
 /// directory; `gh repo list` does not depend on it.
-pub fn list_own_repos(workdir: &Path) -> Result<RepoList, GitError> {
-    let stdout =
-        crate::github_edit::read_gh(workdir, &repo_list_args(REPO_LIST_LIMIT), "repo list")?;
+pub fn list_repos(workdir: &Path, owner: Option<&str>) -> Result<RepoList, GitError> {
+    let stdout = crate::github_edit::read_gh(
+        workdir,
+        &repo_list_args(owner, REPO_LIST_LIMIT),
+        "repo list",
+    )?;
     parse_repo_list(&stdout, REPO_LIST_LIMIT)
+}
+
+/// The organizations the user belongs to. An error is kept, not read as
+/// "none": the caller still shows the user's own list and says why the
+/// organizations are missing.
+pub fn list_org_logins(workdir: &Path) -> Result<Vec<String>, String> {
+    crate::github_edit::read_gh(workdir, &org_list_args(), "orgs")
+        .map(|stdout| parse_org_logins(&stdout))
+        .map_err(|error| error.to_string())
+}
+
+/// The account `gh repo list` reads as, `<host>/<login>` lower-cased: the
+/// user configured for `gh`'s default host (`GH_HOST`, else `github.com`),
+/// which `gh auth switch` changes. A local read (`gh config get`), so it
+/// does not wait on the network. `None` when a token in the environment
+/// overrides the configured user ([`TOKEN_OVERRIDES`]) — whose owner cannot
+/// be named without asking GitHub — or no user is configured.
+pub fn active_account(workdir: &Path) -> Option<String> {
+    let set = |key: &str| std::env::var_os(key).filter(|v| !v.is_empty());
+    if token_overrides(|key| set(key).is_some()) {
+        return None;
+    }
+    let host = set("GH_HOST")
+        .and_then(|h| h.into_string().ok())
+        .unwrap_or_else(|| "github.com".to_string());
+    let args = ["config", "get", "user", "-h", host.as_str()].map(str::to_string);
+    let login = crate::github_edit::read_gh(workdir, &args, "config user").ok()?;
+    let login = login.trim();
+    (!login.is_empty()).then(|| format!("{host}/{login}").to_ascii_lowercase())
+}
+
+/// The environment tokens `gh` authenticates with instead of the configured
+/// user (`gh help environment`): `GH_TOKEN` / `GITHUB_TOKEN` for github.com
+/// and `GH_ENTERPRISE_TOKEN` / `GITHUB_ENTERPRISE_TOKEN` for an Enterprise
+/// Server host.
+pub const TOKEN_OVERRIDES: [&str; 4] = [
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_ENTERPRISE_TOKEN",
+    "GITHUB_ENTERPRISE_TOKEN",
+];
+
+/// Whether any of [`TOKEN_OVERRIDES`] is set, by `is_set`. Pure.
+fn token_overrides(is_set: impl Fn(&str) -> bool) -> bool {
+    TOKEN_OVERRIDES.iter().any(|key| is_set(key))
+}
+
+/// How many `gh repo list` reads run at once for the organizations.
+const ORG_READS_AT_ONCE: usize = 6;
+
+/// Each organization's repositories, one section per organization in the
+/// order given, read a few at a time in parallel (one `gh` each). An
+/// organization that cannot be read (SSO not authorized, …) keeps its
+/// section with the reason.
+pub fn list_org_repos(workdir: &Path, orgs: &[String]) -> Vec<OwnerRepos> {
+    let mut sections = Vec::with_capacity(orgs.len());
+    for chunk in orgs.chunks(ORG_READS_AT_ONCE) {
+        std::thread::scope(|scope| {
+            let reads: Vec<_> = chunk
+                .iter()
+                .map(|org| {
+                    scope.spawn(move || {
+                        list_repos(workdir, Some(org)).map_err(|error| error.to_string())
+                    })
+                })
+                .collect();
+            for (org, read) in chunk.iter().zip(reads) {
+                let list = read
+                    .join()
+                    .unwrap_or_else(|_| Err("the read stopped unexpectedly".to_string()));
+                sections.push(OwnerRepos {
+                    owner: Some(org.clone()),
+                    list,
+                });
+            }
+        });
+    }
+    sections
+}
+
+/// The `host/owner/repo` identity (lower-cased, as
+/// [`RepoListing::identity`]) of the repository at `path`'s `origin`, so a
+/// listed repository can be matched with a local clone. An `ssh_config`
+/// alias (`git@work-github:acme/widgets.git`) is resolved to the host it
+/// reaches through `ssh -G`, so this may run a process: call it off the UI
+/// thread. `None` when the path is not a repository, has no `origin`, its
+/// URL names no repository, or its host cannot be established.
+pub fn origin_identity(path: &Path) -> Option<String> {
+    let repo = git2::Repository::open(path).ok()?;
+    let remote = repo.find_remote("origin").ok()?;
+    let config = repo.config().ok()?;
+    crate::backend::remote_identity::resolve_repo_identity(remote.url().ok()?, &config)
+        .ok()
+        .flatten()
 }
 
 /// Parse `gh repo list --json …`. Pure; unit-tested. An entry without a name
@@ -88,9 +210,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_read_names_its_limit() {
-        let args = repo_list_args(1000);
-        assert_eq!(&args[..4], ["repo", "list", "--limit", "1000"]);
+    fn the_read_names_its_owner_and_limit() {
+        assert_eq!(
+            &repo_list_args(None, 1000)[..4],
+            ["repo", "list", "--limit", "1000"]
+        );
+        assert_eq!(
+            &repo_list_args(Some("acme-org"), 1000)[..5],
+            ["repo", "list", "acme-org", "--limit", "1000"]
+        );
+    }
+
+    /// Each login becomes a `gh repo list` argument: anything that is not a
+    /// plain login (a flag, a path, blank) is dropped.
+    #[test]
+    fn org_logins_are_plain_names_only() {
+        assert_eq!(
+            parse_org_logins("acme-org\n\n  Other1 \n--upload-pack=x\nbad/path\n"),
+            ["acme-org", "Other1"]
+        );
     }
 
     #[test]
@@ -112,6 +250,22 @@ mod tests {
         assert!(!list.repos[1].is_private);
     }
 
+    /// Any token `gh` would authenticate with instead of the configured
+    /// user — the Enterprise ones included — leaves the account unnamed, so
+    /// no saved list is shown or written for it (#930 review).
+    #[test]
+    fn every_environment_token_overrides_the_configured_user() {
+        for token in [
+            "GH_TOKEN",
+            "GITHUB_TOKEN",
+            "GH_ENTERPRISE_TOKEN",
+            "GITHUB_ENTERPRISE_TOKEN",
+        ] {
+            assert!(token_overrides(|key| key == token), "{token}");
+        }
+        assert!(!token_overrides(|key| key == "GH_HOST"));
+    }
+
     /// As many entries as the limit: more may exist, and the picker says so.
     #[test]
     fn a_full_page_is_truncated() {
@@ -125,5 +279,38 @@ mod tests {
     fn malformed_output_is_an_error_not_an_empty_list() {
         assert!(parse_repo_list("not json", 10).is_err());
         assert!(parse_repo_list(r#"{"a":1}"#, 10).is_err());
+    }
+
+    /// A clone whose `origin` goes through an `ssh_config` alias matches the
+    /// listed repository on the host the alias reaches (#930 review).
+    #[cfg(unix)]
+    #[test]
+    fn an_ssh_alias_origin_matches_the_host_it_reaches() {
+        use std::os::unix::fs::PermissionsExt as _;
+        if ["GIT_SSH_COMMAND", "GIT_SSH"]
+            .iter()
+            .any(|key| std::env::var_os(key).is_some_and(|v| !v.is_empty()))
+        {
+            eprintln!("skipping: ssh is replaced in this environment");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path().join("clone")).unwrap();
+        let mut config = repo.config().unwrap();
+        config.set_str("core.sshCommand", "").unwrap();
+        repo.remote("origin", "git@work-github:Acme/Widgets.git")
+            .unwrap();
+        let ssh = dir.path().join("ssh");
+        std::fs::write(
+            &ssh,
+            "#!/bin/sh\nprintf 'user git\\nhostname github.com\\nport 22\\n'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
+        crate::backend::remote_identity::set_ssh_program_for_test(&ssh);
+        assert_eq!(
+            origin_identity(repo.workdir().unwrap()).as_deref(),
+            Some("github.com/acme/widgets")
+        );
     }
 }

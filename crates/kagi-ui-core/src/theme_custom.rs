@@ -51,30 +51,23 @@ pub fn themes_dir() -> Option<PathBuf> {
 ///
 /// A missing folder is not an error (most users never create one). On a slug
 /// collision between two files the first by file name wins and the later one
-/// is reported.
-pub(crate) fn load_dir(dir: &Path) -> (Vec<Theme>, Vec<ThemeLoadError>) {
+/// is reported. A folder that exists but cannot be listed is `Err`: that is
+/// not "no themes", and a reload must keep the themes it already has
+/// (#930 review).
+pub(crate) fn load_dir(dir: &Path) -> Result<(Vec<Theme>, Vec<ThemeLoadError>), ThemeLoadError> {
     let mut themes: Vec<Theme> = Vec::new();
     let mut errors = Vec::new();
+    let folder_error = |e: std::io::Error| ThemeLoadError {
+        path: dir.to_path_buf(),
+        reason: format!("cannot read the themes folder: {e}"),
+    };
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (themes, errors),
-        Err(e) => {
-            errors.push(ThemeLoadError {
-                path: dir.to_path_buf(),
-                reason: format!("cannot read the themes folder: {e}"),
-            });
-            return (themes, errors);
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((themes, errors)),
+        Err(e) => return Err(folder_error(e)),
     };
-    let mut files: Vec<PathBuf> = entries
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
-                && path.is_file()
-        })
-        .collect();
-    files.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+    let files =
+        json_files(entries.map(|entry| entry.map(|entry| entry.path()))).map_err(folder_error)?;
 
     // Which file claimed each custom slug, for the collision message.
     let mut owners: Vec<&Path> = Vec::new();
@@ -107,7 +100,29 @@ pub(crate) fn load_dir(dir: &Path) -> (Vec<Theme>, Vec<ThemeLoadError>) {
             }),
         }
     }
-    (themes, errors)
+    Ok((themes, errors))
+}
+
+/// The `*.json` files among a folder's entries, in file-name order. An entry
+/// the listing could not read (a network mount dropping mid-listing) fails
+/// the whole listing: a partial list would install as "these are all the
+/// themes" and drop the rest (#930 review).
+fn json_files(
+    entries: impl Iterator<Item = std::io::Result<PathBuf>>,
+) -> std::io::Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for path in entries {
+        let path = path?;
+        if path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+            && path.is_file()
+        {
+            files.push(path);
+        }
+    }
+    files.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+    Ok(files)
 }
 
 /// Parse and validate one theme file's text into a complete [`Theme`].
@@ -625,7 +640,7 @@ mod tests {
         std::fs::write(dir.path().join("notes.txt"), "ignored").unwrap();
         std::fs::create_dir(dir.path().join("nested.json")).unwrap();
 
-        let (themes, errors) = load_dir(dir.path());
+        let (themes, errors) = load_dir(dir.path()).unwrap();
         let slugs: Vec<&str> = themes.iter().map(|t| &*t.slug).collect();
         assert_eq!(slugs, ["first", "dup", "last"]);
         let rejected: Vec<String> = errors.iter().map(ToString::to_string).collect();
@@ -636,7 +651,38 @@ mod tests {
             "{rejected:?}"
         );
 
-        let (themes, errors) = load_dir(&dir.path().join("absent"));
+        let (themes, errors) = load_dir(&dir.path().join("absent")).unwrap();
         assert!(themes.is_empty() && errors.is_empty());
+    }
+
+    /// A folder that cannot be listed is an error, not an empty folder: the
+    /// themes already loaded must not be replaced by none (#930 review).
+    #[test]
+    fn an_unlistable_folder_is_not_an_empty_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let not_a_dir = dir.path().join("themes");
+        std::fs::write(&not_a_dir, "a file where the folder should be").unwrap();
+        let error = load_dir(&not_a_dir).expect_err("listing a file fails");
+        assert_eq!(error.path, not_a_dir);
+        assert!(error.reason.contains("cannot read the themes folder"));
+    }
+
+    /// An entry the listing could not read fails the listing, rather than
+    /// leaving a shorter list that would install as all the themes there
+    /// are (#930 review).
+    #[test]
+    fn an_entry_that_cannot_be_read_fails_the_listing() {
+        let dir = tempfile::tempdir().unwrap();
+        let theme = dir.path().join("a.json");
+        std::fs::write(&theme, "{}").unwrap();
+        let listed = [
+            Ok(theme.clone()),
+            Err(std::io::Error::other("the mount went away")),
+        ];
+        assert!(json_files(listed.into_iter()).is_err());
+        assert_eq!(
+            json_files([Ok(theme.clone())].into_iter()).unwrap(),
+            [theme]
+        );
     }
 }

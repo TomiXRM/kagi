@@ -104,11 +104,23 @@ impl KagiApp {
             loaded
         });
         cx.spawn_in(window, async move |this, cx| {
-            let (themes, errors) = task.await;
+            let loaded = task.await;
             let _ = this.update_in(cx, |app, window, cx| {
                 if THEME_RELOAD_GENERATION.load(Ordering::Relaxed) != generation {
                     return;
                 }
+                // A folder that cannot be listed is not an empty one: the
+                // themes already loaded stay, and the reason is reported.
+                let (themes, errors) = match loaded {
+                    Ok(loaded) => loaded,
+                    Err(error) => {
+                        let kept = theme::all_themes().iter().filter(|t| t.is_custom()).count();
+                        klog!("theme: reload kept custom={kept}");
+                        app.report_theme_load_errors(vec![error], cx);
+                        cx.notify();
+                        return;
+                    }
+                };
                 theme::install_custom_themes(themes);
                 let custom = theme::all_themes().iter().filter(|t| t.is_custom()).count();
                 let active = SharedString::from(theme::theme().slug.clone());

@@ -71,6 +71,26 @@ impl KagiApp {
     }
 
     #[inline]
+    pub fn clone_modal(&self) -> Option<&crate::ui::home_github::CloneModal> {
+        match &self.active_modal {
+            Some(ActiveModal::Clone(modal)) => Some(modal),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn set_clone_modal(&mut self, modal: crate::ui::home_github::CloneModal) {
+        self.replace_modal_from_user(ActiveModal::Clone(modal));
+    }
+
+    #[inline]
+    pub fn clear_clone_modal(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::Clone(_))) {
+            self.active_modal = None;
+        }
+    }
+
+    #[inline]
     pub fn update_modal(&self) -> Option<&UpdateModal> {
         match &self.active_modal {
             Some(ActiveModal::Update(modal)) => Some(modal),

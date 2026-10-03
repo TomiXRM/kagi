@@ -113,6 +113,14 @@ mod app_writer_admission;
 mod app_conflict;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/home_tab.rs"]
+mod home_tab;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/home_github.rs"]
+mod home_github;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/conflict_abort_slot.rs"]
 mod conflict_abort_slot;
 
@@ -930,6 +938,14 @@ mod macos {
             (
                 "reconcile_unobservable_release",
                 Box::new(crate::reconcile_unobservable::scenario_reconcile_unobservable_release),
+            ),
+            (
+                "home_tab",
+                Box::new(crate::home_tab::scenario_home_tab),
+            ),
+            (
+                "home_github",
+                Box::new(crate::home_github::scenario_home_github),
             ),
             (
                 "smart_commit_generation_owner",

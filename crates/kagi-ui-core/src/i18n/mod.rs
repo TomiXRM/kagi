@@ -622,6 +622,51 @@ pub enum Msg {
     IssueComposeEmpty,
     IssueTitleOptional,
     IssueCreate,
+    HomeTabTitle,
+    HomeTitle,
+    HomeSubtitle,
+    HomeRecent,
+    HomeNoRecent,
+    HomeOpenFolder,
+    HomeConnectRemote,
+    HomeGithubTitle,
+    HomeGithubMine,
+    /// `{}` = why the organization could not be read.
+    HomeGithubOwnerFailed,
+    HomeGithubFilter,
+    HomeGithubRefresh,
+    HomeGithubLoading,
+    HomeGithubOrgsLoading,
+    HomeGithubUpdating,
+    HomeGithubOrgs,
+    /// `{}` = why the organizations could not be listed.
+    HomeGithubOrgsFailed,
+    /// `{}` = why the read failed.
+    HomeGithubRefreshFailed,
+    HomeGithubFailedHint,
+    HomeGithubEmpty,
+    HomeGithubNoMatch,
+    /// `{}` = how many were read.
+    HomeGithubTruncated,
+    HomeGithubOpen,
+    HomeGithubClone,
+    HomeGithubCloning,
+    HomeGithubPrivate,
+    HomeGithubFork,
+    /// `{}` = the repository's name.
+    CloneTitle,
+    CloneLocation,
+    CloneNoLocation,
+    /// `{}` = the folder that will be created.
+    CloneWillCreate,
+    CloneChooseFolder,
+    CloneConfirm,
+    CloneBusy,
+    /// `{}` = elapsed time, `m:ss`.
+    CloneRunning,
+    /// `{}` = the host it downloads from.
+    CloneRunningHint,
+    CloneHide,
     IssuePostedAs,
     IssueNewFieldsTitle,
     IssueReply,
@@ -731,8 +776,6 @@ pub enum Msg {
     Template,
     /// Footer idle status.
     Ready,
-    /// Welcome screen help line.
-    NoRepositoryOpenWelcome,
     /// Branch menu Sync item when no upstream is configured.
     NoUpstreamSet,
 
@@ -2490,6 +2533,100 @@ impl Msg {
             (Ja, IssueTitleOptional) => "タイトル（省略時は本文の先頭行）",
             (En, IssueCreate) => "Create",
             (Ja, IssueCreate) => "作成",
+            (En, HomeTabTitle) => "Home",
+            (Ja, HomeTabTitle) => "ホーム",
+            (En, HomeTitle) => "Open a repository",
+            (Ja, HomeTitle) => "リポジトリを開く",
+            (En, HomeSubtitle) => {
+                "Pick one you opened recently, open a folder, or connect to one over SSH."
+            }
+            (Ja, HomeSubtitle) => {
+                "最近開いたリポジトリを選ぶか、フォルダーを開くか、SSH で接続します。"
+            }
+            (En, HomeRecent) => "Recently opened",
+            (Ja, HomeRecent) => "最近開いたリポジトリ",
+            (En, HomeNoRecent) => "No recently opened repositories.",
+            (Ja, HomeNoRecent) => "最近開いたリポジトリはありません。",
+            (En, HomeOpenFolder) => "Open Folder…",
+            (Ja, HomeOpenFolder) => "フォルダーを開く…",
+            (En, HomeConnectRemote) => "Connect to SSH remote…",
+            (Ja, HomeConnectRemote) => "SSH リモートに接続…",
+            (En, HomeGithubTitle) => "GitHub repositories",
+            (Ja, HomeGithubTitle) => "GitHub のリポジトリ",
+            (En, HomeGithubMine) => "Yours",
+            (Ja, HomeGithubMine) => "自分",
+            (En, HomeGithubOwnerFailed) => "Could not be read: {}",
+            (Ja, HomeGithubOwnerFailed) => "読み込めませんでした: {}",
+            (En, HomeGithubFilter) => "Filter repositories…",
+            (Ja, HomeGithubFilter) => "リポジトリを絞り込む…",
+            (En, HomeGithubRefresh) => "Refresh",
+            (Ja, HomeGithubRefresh) => "再読み込み",
+            (En, HomeGithubLoading) => "Loading your repositories from GitHub…",
+            (Ja, HomeGithubLoading) => "GitHub からリポジトリを読み込んでいます…",
+            (En, HomeGithubOrgsLoading) => "Loading your organizations' repositories…",
+            (Ja, HomeGithubOrgsLoading) => "organization のリポジトリを読み込んでいます…",
+            (En, HomeGithubUpdating) => "Updating…",
+            (Ja, HomeGithubUpdating) => "更新中…",
+            (En, HomeGithubOrgs) => "Organizations",
+            (Ja, HomeGithubOrgs) => "organization",
+            (En, HomeGithubOrgsFailed) => "Could not list your organizations: {}",
+            (Ja, HomeGithubOrgsFailed) => "所属 organization の一覧を読めませんでした: {}",
+            (En, HomeGithubRefreshFailed) => {
+                "Could not refresh the GitHub list (showing the last one): {}"
+            }
+            (Ja, HomeGithubRefreshFailed) => {
+                "GitHub の一覧を更新できませんでした(前回の一覧を表示しています): {}"
+            }
+            (En, HomeGithubFailedHint) => {
+                "Kagi reads this list with the GitHub CLI. Check `gh auth status` in a terminal, then Refresh."
+            }
+            (Ja, HomeGithubFailedHint) => {
+                "この一覧は GitHub CLI で読み込みます。ターミナルで `gh auth status` を確認してから再読み込みしてください。"
+            }
+            (En, HomeGithubEmpty) => "You have no repositories on GitHub.",
+            (Ja, HomeGithubEmpty) => "GitHub にリポジトリがありません。",
+            (En, HomeGithubNoMatch) => "No repository matches the filter.",
+            (Ja, HomeGithubNoMatch) => "絞り込みに一致するリポジトリはありません。",
+            (En, HomeGithubTruncated) => {
+                "Showing the first {} — more exist on GitHub. Filter, or open the repository by folder."
+            }
+            (Ja, HomeGithubTruncated) => {
+                "先頭の {} 件を表示しています。GitHub にはさらにあります。絞り込むか、フォルダーから開いてください。"
+            }
+            (En, HomeGithubOpen) => "Open",
+            (Ja, HomeGithubOpen) => "開く",
+            (En, HomeGithubClone) => "Clone",
+            (Ja, HomeGithubClone) => "clone",
+            (En, HomeGithubCloning) => "Cloning…",
+            (Ja, HomeGithubCloning) => "clone 中…",
+            (En, HomeGithubPrivate) => "Private",
+            (Ja, HomeGithubPrivate) => "非公開",
+            (En, HomeGithubFork) => "Fork",
+            (Ja, HomeGithubFork) => "Fork",
+            (En, CloneTitle) => "Clone {}",
+            (Ja, CloneTitle) => "{} を clone",
+            (En, CloneLocation) => "Location",
+            (Ja, CloneLocation) => "保存先",
+            (En, CloneNoLocation) => "Choose a folder to clone into",
+            (Ja, CloneNoLocation) => "clone 先のフォルダーを選んでください",
+            (En, CloneWillCreate) => "Creates {}",
+            (Ja, CloneWillCreate) => "{} を作成します",
+            (En, CloneChooseFolder) => "Choose…",
+            (Ja, CloneChooseFolder) => "選択…",
+            (En, CloneConfirm) => "Clone",
+            (Ja, CloneConfirm) => "clone",
+            (En, CloneBusy) => "A clone is already running in this window. Wait for it to finish.",
+            (Ja, CloneBusy) => "このウィンドウでは別の clone を実行中です。終わるまで待ってください。",
+            (En, CloneRunning) => "Cloning… {}",
+            (Ja, CloneRunning) => "clone 中… {}",
+            (En, CloneRunningHint) => {
+                "Downloading from {}. A large repository can take a few minutes; closing this card does not stop the clone."
+            }
+            (Ja, CloneRunningHint) => {
+                "{} からダウンロードしています。大きなリポジトリでは数分かかることがあります。このカードを閉じても clone は続きます。"
+            }
+            (En, CloneHide) => "Continue in background",
+            (Ja, CloneHide) => "バックグラウンドで続ける",
             (En, IssuePostedAs) => "Posted as {}",
             (Ja, IssuePostedAs) => "{} として投稿",
             (En, IssueNewFieldsTitle) => "New issue",
@@ -2667,12 +2804,6 @@ impl Msg {
             (Ja, Trailers) => "トレーラー",
             (En, Ready) => "Ready",
             (Ja, Ready) => "準備完了",
-            (En, NoRepositoryOpenWelcome) => {
-                "No repository open. Choose a directory to get started."
-            }
-            (Ja, NoRepositoryOpenWelcome) => {
-                "リポジトリが開かれていません。ディレクトリを選んで始めましょう。"
-            }
             (En, NoUpstreamSet) => "No upstream set",
             (Ja, NoUpstreamSet) => "upstream が設定されていません",
 

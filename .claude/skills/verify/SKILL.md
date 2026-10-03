@@ -148,7 +148,9 @@ The current suite covers:
   palette/menu/Settings selection and fallback, rejected-file toast, folder
   creation/open error, and a background reload held after parsing while a newer
   reload publishes; releasing the old read must not change colours, menus,
-  selection, or toast IDs. Startup loads before the window exists.
+  selection, or toast IDs. A themes folder that cannot be listed (mode 000)
+  keeps the loaded themes and the selection and names the folder in a toast.
+  Startup loads before the window exists.
 - file tree accessibility (`KAGI_GUI_E2E_ONLY=file_tree_roles`,
   `tests/recovery/file_tree_a11y.rs`): #354 Editor Workspace and Commit Panel
   render named EN/JA Trees with TreeItems carrying file status, selection,
@@ -556,6 +558,58 @@ The current suite covers:
   linked worktree → Lock, edit the reason → Review → inspect the plan, then
   Cancel or confirm. No tab-strip click or foreground activation is required.
   Automatic terminal locking is not part of this change; it is tracked in #772.
+- Home tab (`KAGI_GUI_E2E_ONLY=home_tab,welcome_startup_renders,close_last_tab_welcome_renders`,
+  `tests/recovery/home_tab.rs`, #923 / ADR-0219): the tab strip's `+` (`tab-add`)
+  and New Tab (⌘T) put Home in front (repo commands off, ⌘W closes Home only); a
+  recent row (`home-recent-N`) turns Home into that repository's tab, an already
+  open one is switched to (no duplicate); clicking a repository tab
+  (`repo-tab-N`) only moves Home to the back and its tab (`home-tab`) brings it
+  back; "Connect to SSH remote…" opens Remote Browse over Home; with no tab Home
+  is the whole window. Home ends the covered tab's visit: a merge plan started
+  just before ⌘T is dropped (no modal), and closing Home re-enters that tab
+  (`panes_revalidating`). Home draws the workspace's modal layer: an AppNotice
+  (`active-modal/app-notice`), a Pull confirmation (`plan-cancel`) and the
+  Editor unsaved-changes guard raised by closing the dirty tab behind Home
+  (`active-modal/editor-dirty-guard`; Esc keeps the tab) are on screen, as is
+  Settings (`settings-theme-select`). Closing the covered tab does not enter
+  its neighbour behind Home. `recent_repos` is restored by `SavedKeys`. For Tier B
+  press ⌘T (no foreground needed) or click `+` (needs a key window — ask first);
+  "Open Folder…" opens the native dialog, which Tier A does not click.
+- Home's GitHub list and clone (`KAGI_GUI_E2E_ONLY=home_github`,
+  `tests/recovery/home_github.rs`, #923 #924 #930 review / ADR-0219): the
+  stand-in `gh` fails on marker files in a state folder and answers
+  `config get user` with `acme` (or `state/user`). A saved list
+  (`github_repos_cache.json` beside `settings.json`) is read off the UI
+  thread and shown only for the account it was saved as (`github.com/acme`;
+  one saved as another account is not), and stays when the own-list refresh
+  fails (toast names the 502); after switching the user the shown list is
+  dropped; a
+  second Refresh while one runs joins it (`own-calls` counts one read); a
+  Refresh keeps the list drawn beside the `home-github-updating` mark; a failed
+  `gh api user/orgs` is the `home-github-orgs-failed` row and is not saved
+  over the full list. An offline `gh` lists
+  the user's repositories (one whose `origin` matches a recent repository, one
+  that is not local) and two organizations — one listed, one refusing with a
+  SAML error, which keeps its section with the reason; `repo clone` really
+  clones a local bare repository. The organization's row opens a clone card
+  sourced from that owner. The local row (`home-gh-<owner>/<repo>`) opens its
+  tab; the other opens the clone card with no folder chosen (Kagi never picks
+  one), where `clone-confirm` does nothing. The folder is supplied through
+  `replan_clone` — what the native dialog's callback calls; a folder whose
+  `widgets` is occupied is refused (the file in it untouched), and once free
+  Clone clones, writes one `clone` Success receipt keyed by the destination
+  and opens the clone in place of Home; while it runs `may_close_host()` is
+  false (⌘Q / window close are held) and true again once it is recorded.
+  Before that a clone into another
+  folder fails (`fail-clone`): Home stays in front with a `clone: failed`
+  toast drawn there (`toast-stack`). Back on Home, the clone's tab is matched
+  into `home_github.local` though it was opened after the list was read.
+  `recent_repos` is restored by
+  `SavedKeys`; `home_tab` also installs an offline `gh` because Home reads
+  `gh repo list` whenever it opens, and checks that Remote Browse opened from
+  Home is drawn centred over it (`remote-browse-card`). For Tier B use a real
+  `gh` login, choose a temporary folder with "Choose…" (the native dialog)
+  and check `[kagi] clone: done … ok=true` and the receipt.
 - modal-slot arbitration (`KAGI_GUI_E2E_ONLY=push_failure_keeps_modal,merge_plan_latch,delete_branch_plan_latch,remote_browse_modal_routing`): a push failure lands behind Remote Browse without losing its input and reaches the Failed footer, an Error toast and one durable receipt — no dismiss-only AppNotice, queued or shown after Remote Browse closes (the #747 contract; #824 bisected the stale notice expectation to `e5644c6f`). Delayed Merge/Delete Branch plans wait behind Remote Browse without losing its input, stale plan state, latches, footers, or notices; a reopened Remote Browse rejects an older in-place completion by generation;
 - unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.
 - toolbar centre actions (Pull…Terminal) drawn only in Graph, not PRs/Editor/Analyze

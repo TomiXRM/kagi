@@ -260,12 +260,12 @@ impl Render for KagiApp {
             );
         }
 
-        // W4-TABS / ADR-0028: no open tabs → Welcome screen. A remote read-only
-        // view (ADR-0089 Phase 2b) has no local tab but still renders the
-        // workspace from its applied snapshot.
-        if self.tabs.is_empty() && self.remote_view.is_none() {
-            let welcome = self.render_welcome(window, cx).into_any();
-            return self.platform_window_shell(welcome, cx);
+        // W4-TABS / ADR-0219: Home — in front of the tabs, or the whole window
+        // when none is open. A remote read-only view (ADR-0089 Phase 2b) has no
+        // local tab but still renders the workspace from its applied snapshot.
+        if self.home_in_front() {
+            let home = self.render_home(window, cx);
+            return self.platform_window_shell(home, cx);
         }
 
         // ADR-0089 Phase 2c: in a remote view, lazily load the selected commit's
@@ -353,43 +353,6 @@ impl Render for KagiApp {
             self.sidebar.rows_fingerprint = sidebar_fingerprint;
         }
 
-        let plan_modal = self.plan_modal().cloned();
-        let pull_modal = self.pull_modal().cloned();
-        let history_modal = self.history_modal().cloned();
-        let amend_modal = self.amend_modal().cloned();
-        let pop_modal = self.pop_modal().cloned();
-        let stash_drop_modal = self.stash_drop_modal().cloned();
-        let unlock_worktree_modal = self.unlock_worktree_modal().cloned();
-        let push_modal = self.push_modal().cloned();
-        let branch_plan_modal = self.branch_plan_modal().cloned();
-        let set_upstream_modal = self.set_upstream_modal().cloned();
-        let rename_branch_modal = self.rename_branch_modal().cloned();
-        let merge_modal = self.merge_modal().cloned();
-        let tracking_checkout_modal = self.tracking_checkout_modal().cloned();
-        let switch_to_latest_modal = self.switch_to_latest_modal().cloned();
-        let create_branch_modal = self.create_branch_modal().cloned();
-        let create_tag_modal = self.create_tag_modal().cloned();
-        let create_worktree_modal = self.create_worktree_modal().cloned();
-        let remote_browse = self.remote_browse().cloned();
-        let delete_branch_modal = self.delete_branch_modal().cloned();
-        let delete_remote_branch_modal = self.delete_remote_branch_modal().cloned();
-        let reset_current_modal = self.reset_current_modal().cloned();
-        let force_lease_push_modal = self.force_lease_push_modal().cloned();
-        let push_tag_modal = self.push_tag_modal().cloned();
-        let rebase_current_onto_modal = self.rebase_current_onto_modal().cloned();
-        let branch_cleanup_modal = self.branch_cleanup_modal().cloned();
-        let discard_modal = self.discard_modal().cloned();
-        let editor_dirty_guard_modal = self.editor_dirty_guard_modal().cloned();
-        let editor_fs_prompt_modal = self.editor_fs_prompt_modal().cloned();
-        let editor_delete_confirm_modal = self.editor_delete_confirm_modal().cloned();
-        let file_menu = self.file_menu.clone();
-        let modal_focus = self.modal_focus.clone();
-        let stash_push_modal = self.stash_push_modal().cloned();
-        let stash_push_focus = self.stash_push_focus.clone();
-        let stash_apply_modal = self.stash_apply_modal().cloned();
-        let cherry_pick_modal = self.cherry_pick_modal().cloned();
-        let revert_modal = self.revert_modal().cloned();
-        let conflict_continue_modal = self.conflict_continue_modal().cloned();
         let status_footer = self.status_footer.clone();
         // ADR-0118 / T-ENTITY-CONFLICT-001: the conflict body is its own
         // `Entity<ConflictView>`. The entity renders itself (`el.child(entity)`);
@@ -705,51 +668,9 @@ impl Render for KagiApp {
             // ── W5-MENU: menu-driven overlay (branch picker / About / shortcuts) ──
             .children(self.render_menu_overlay(window, cx));
 
-        let root = self.attach_modal_overlays(
-            root,
-            plan_modal,
-            pull_modal,
-            history_modal,
-            conflict_continue_modal,
-            amend_modal,
-            pop_modal,
-            stash_drop_modal,
-            push_modal,
-            branch_plan_modal,
-            set_upstream_modal,
-            rename_branch_modal,
-            merge_modal,
-            tracking_checkout_modal,
-            switch_to_latest_modal,
-            create_branch_modal,
-            create_tag_modal,
-            create_worktree_modal,
-            unlock_worktree_modal,
-            remote_browse,
-            self.update_modal().cloned(),
-            stash_push_modal,
-            stash_apply_modal,
-            cherry_pick_modal,
-            revert_modal,
-            delete_branch_modal,
-            delete_remote_branch_modal,
-            reset_current_modal,
-            force_lease_push_modal,
-            push_tag_modal,
-            rebase_current_onto_modal,
-            branch_cleanup_modal,
-            discard_modal,
-            editor_dirty_guard_modal,
-            editor_fs_prompt_modal,
-            editor_delete_confirm_modal,
-            file_menu,
-            modal_focus,
-            stash_push_focus,
-            commit_panel_open,
-            commit_panel,
-            window,
-            cx,
-        );
+        // The modal layer is read from `self` by the one collector Home also
+        // uses, so the two cannot draw different sets of modals.
+        let root = self.attach_modal_layer(root, true, window, cx);
 
         let content = root
             // ── Status bar slot (T017) — last operation result ─

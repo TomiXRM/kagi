@@ -33,20 +33,23 @@ impl KagiApp {
         self.remote_write = Some(name);
     }
 
-    /// Is any operation latched — a write or a planning task? The single
-    /// question every gate asks (ADR-0196 Wave 3).
+    /// Is any operation latched — a write, a planning task or a clone? The
+    /// single question every gate asks (ADR-0196 Wave 3).
     ///
     /// A held **lease** is the truth about every write that can take one;
     /// `remote_write` covers the one that cannot; `planning` writes nothing but
-    /// owns the modal slot it is about to fill. `write_busy_op` is deliberately
-    /// absent: it is only a presentation mirror of the lease, so reading it
-    /// here would answer with the lease twice and with nothing new.
+    /// owns the modal slot it is about to fill; a clone (#930) has no
+    /// repository session to lease, but writes a folder that may lie inside
+    /// an open worktree, so nothing else may start beside it.
+    /// `write_busy_op` is deliberately absent: it is only a presentation
+    /// mirror of the lease, so reading it here would answer with the lease
+    /// twice and with nothing new.
     pub(crate) fn op_latched(&self) -> bool {
         !super::operations::op_may_start(
             self.app_sessions.has_leases(),
             self.remote_write,
             self.planning,
-        )
+        ) || self.home_github.cloning.is_some()
     }
 
     pub(crate) fn busy_snackbar_label(&self) -> Option<&'static str> {
@@ -87,7 +90,9 @@ impl KagiApp {
         }
 
         // The toast cards are an independently-rendered child entity.
-        stack = stack.child(toast_stack);
+        stack = stack
+            .child(super::e2e::measure_inside("toast-stack"))
+            .child(toast_stack);
         Some(stack.into_any())
     }
 

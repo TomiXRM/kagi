@@ -314,7 +314,9 @@ impl KagiApp {
 // Renderer
 // ──────────────────────────────────────────────────────────────
 
-/// One labelled text input row (label above the field).
+/// One labelled field: a small muted label over a soft rounded box holding a
+/// borderless input (the same look as Home's search field). The box is a
+/// flex row so the input takes its whole width.
 fn labeled_input(
     label: &str,
     state: Option<&Entity<gpui_component::input::InputState>>,
@@ -322,14 +324,26 @@ fn labeled_input(
     div()
         .flex()
         .flex_col()
-        .gap_1()
+        .gap_1p5()
         .child(
             div()
-                .text_sm()
-                .text_color(rgb(current_theme().text_label))
+                .text_xs()
+                .text_color(rgb(current_theme().text_muted))
                 .child(SharedString::from(label.to_string())),
         )
-        .children(state.map(|st| Input::new(st).small()))
+        .children(state.map(|st| {
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .w_full()
+                .px_2()
+                .rounded_lg()
+                .bg(rgb(current_theme().bg_base))
+                .border_1()
+                .border_color(rgb(current_theme().surface))
+                .child(Input::new(st).appearance(false).flex_1())
+        }))
 }
 
 pub(crate) fn render_remote_browse(
@@ -356,16 +370,19 @@ pub(crate) fn render_remote_browse(
     };
 
     let mut card = div()
-        .w(theme::scaled_px(560.))
+        .w(theme::scaled_px(520.))
         // Same popup surface as `modal_shell::modal_card` and the Settings
         // panel (`theme.panel`); `modal` is lighter and read as a different
         // surface class next to them (#454 follow-up).
         .bg(rgb(current_theme().panel))
-        .rounded_lg()
-        .p_4()
+        .rounded_xl()
+        .border_1()
+        .border_color(rgb(current_theme().surface))
+        .shadow_lg()
+        .p_6()
         .flex()
         .flex_col()
-        .gap_3();
+        .gap_4();
 
     match modal.stage {
         // ── Connect form ────────────────────────────────────────
@@ -383,32 +400,45 @@ pub(crate) fn render_remote_browse(
             card = card
                 .child(
                     div()
-                        .text_color(rgb(current_theme().text_main))
-                        .text_xl()
-                        .child(SharedString::from("Connect to a remote host (SSH)")),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(current_theme().text_muted))
-                        .child(SharedString::from(
-                            "Uses your system ssh (~/.ssh/config, keys, ssh-agent, \
-                             known_hosts). New or password-only hosts must be set up in a \
-                             terminal first.",
-                        )),
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_color(rgb(current_theme().text_main))
+                                .text_lg()
+                                .child(SharedString::from("Connect to a remote host (SSH)")),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(rgb(current_theme().text_muted))
+                                .child(SharedString::from(
+                                    "Uses your system ssh (~/.ssh/config, keys, ssh-agent, \
+                                     known_hosts). New or password-only hosts must be set up \
+                                     in a terminal first.",
+                                )),
+                        ),
                 )
                 .child(labeled_input(
-                    "Host  (user@host or a ~/.ssh/config alias)",
+                    "Host — user@host or a ~/.ssh/config alias",
                     modal.host_state.as_ref(),
                 ))
-                .child(labeled_input(
-                    "Port  (optional, default 22)",
-                    modal.port_state.as_ref(),
-                ))
-                .child(labeled_input(
-                    "Identity file  (optional)",
-                    modal.identity_state.as_ref(),
-                ));
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_3()
+                        .child(
+                            div()
+                                .w(theme::scaled_px(120.))
+                                .child(labeled_input("Port (optional)", modal.port_state.as_ref())),
+                        )
+                        .child(div().flex_1().child(labeled_input(
+                            "Identity file (optional)",
+                            modal.identity_state.as_ref(),
+                        ))),
+                );
 
             if let Some(ref err) = modal.error {
                 card = card.child(
@@ -425,12 +455,12 @@ pub(crate) fn render_remote_browse(
                     .flex()
                     .flex_row()
                     .gap_2()
+                    .pt_2()
                     .justify_end()
                     .child(
                         Button::new("remote-connect-cancel")
                             .label(Msg::PlanCancel.t())
                             .ghost()
-                            .small()
                             .on_click(cancel),
                     )
                     .child(
@@ -441,7 +471,6 @@ pub(crate) fn render_remote_browse(
                                 "Connect"
                             })
                             .primary()
-                            .small()
                             .loading(busy)
                             .disabled(busy)
                             .on_click(connect),
@@ -681,7 +710,10 @@ pub(crate) fn render_remote_browse(
         }
     });
     let focusable_card = {
-        let base = div().on_key_down(esc_cancel);
+        let base = div()
+            .relative()
+            .on_key_down(esc_cancel)
+            .child(super::e2e::measure_inside("remote-browse-card"));
         if let Some(ref fh) = focus_handle {
             base.track_focus(fh).child(card)
         } else {
@@ -694,6 +726,9 @@ pub(crate) fn render_remote_browse(
         .absolute()
         .top_0()
         .left_0()
+        // Measured from inside: a wrapper around an absolute overlay would
+        // itself be laid out in flow and move the overlay with it.
+        .child(super::e2e::measure_inside("active-modal/remote-browse"))
         .child(
             div()
                 .size_full()

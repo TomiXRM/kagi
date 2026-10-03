@@ -25,13 +25,13 @@ use kagi_domain::worktree_autolock::{
 ///
 /// Refuses (returns `Err`, deletes nothing) when the target:
 /// - is a symlink (never followed into a delete),
-/// - resolves to the main worktree,
-/// - overlaps the main repository (is an ancestor of, or lives inside, it).
+/// - resolves to or contains the managing worktree, main worktree or common dir.
 ///
-/// `main_workdir` is the main repo's working directory; `wt_path` is the
-/// registered worktree path (from `git2::Worktree::path`).
+/// `wt_path` is the registered worktree path.
 pub(crate) fn remove_worktree_dir_checked(
-    main_workdir: &Path,
+    managing_workdir: Option<&Path>,
+    main_workdir: Option<&Path>,
+    common_dir: &Path,
     wt_path: &Path,
 ) -> Result<(), GitError> {
     // A symlinked worktree path is refused outright: canonicalizing it would
@@ -55,28 +55,22 @@ pub(crate) fn remove_worktree_dir_checked(
             wt_path.display()
         ))
     })?;
-    let main = std::fs::canonicalize(main_workdir).map_err(|e| {
-        GitError::Other(format!(
-            "cannot resolve main worktree '{}': {e}",
-            main_workdir.display()
-        ))
-    })?;
-
-    if target == main {
-        return Err(GitError::Other(
-            "refusing to delete the main worktree".to_string(),
-        ));
-    }
-    // The catastrophic case: the target is an ANCESTOR of the repo, so a
-    // recursive delete would take the repository (or the filesystem root) with
-    // it. A worktree nested *inside* the repo is unusual but harmless to delete
-    // — only the ancestor direction is refused.
-    if main.starts_with(&target) {
-        return Err(GitError::Other(format!(
-            "refusing to delete '{}': it contains the main repository at '{}'",
-            target.display(),
-            main.display()
-        )));
+    for (root, label) in [
+        (managing_workdir, "managing worktree"),
+        (main_workdir, "main worktree"),
+        (Some(common_dir), "common repository"),
+    ] {
+        let Some(root) = root else { continue };
+        let protected = std::fs::canonicalize(root).map_err(|e| {
+            GitError::Other(format!("cannot resolve {label} '{}': {e}", root.display()))
+        })?;
+        if protected.starts_with(&target) {
+            return Err(GitError::Other(format!(
+                "refusing to delete '{}': it contains the {label} at '{}'",
+                target.display(),
+                protected.display()
+            )));
+        }
     }
 
     std::fs::remove_dir_all(&target).map_err(|e| {
@@ -85,6 +79,47 @@ pub(crate) fn remove_worktree_dir_checked(
             target.display()
         ))
     })
+}
+
+#[cfg(test)]
+mod checked_delete_tests {
+    use super::*;
+
+    #[test]
+    fn managing_worktree_is_never_recursively_deleted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("linked");
+        let main = tmp.path().join("main");
+        let common = main.join(".git");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::create_dir_all(&common).unwrap();
+        std::fs::write(target.join("keep"), "linked content").unwrap();
+        let err =
+            remove_worktree_dir_checked(Some(&target), Some(&main), &common, &target).unwrap_err();
+        assert!(err.to_string().contains("managing worktree"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(target.join("keep")).unwrap(),
+            "linked content"
+        );
+    }
+
+    #[test]
+    fn nonbare_common_dir_under_target_is_never_recursively_deleted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let main = tmp.path().join("main");
+        let target = tmp.path().join("linked");
+        let common = target.join("common.git");
+        std::fs::create_dir(&main).unwrap();
+        std::fs::create_dir_all(common.join("objects")).unwrap();
+        std::fs::write(common.join("objects/keep"), "retained").unwrap();
+        let err =
+            remove_worktree_dir_checked(Some(&main), Some(&main), &common, &target).unwrap_err();
+        assert!(err.to_string().contains("common repository"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(common.join("objects/keep")).unwrap(),
+            "retained"
+        );
+    }
 }
 
 // ────────────────────────────────────────────────────────────

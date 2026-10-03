@@ -61,7 +61,7 @@ impl KagiApp {
             (generation, frozen_base_repo, ui.github_issues_request_state)
         };
         if let Some(base_repo) = frozen_base_repo.as_deref() {
-            self.ensure_issue_host_login(base_repo, cx);
+            self.ensure_host_login(base_repo, cx);
         }
         let task = issue_list_task(repo, frozen_base_repo, None, state, cx);
         cx.notify();
@@ -77,7 +77,7 @@ impl KagiApp {
                 }
                 // The first read is what learns the repository identity.
                 if let Some(base_repo) = ui.issue_composer.base_repo.clone() {
-                    app.ensure_issue_host_login(&base_repo, cx);
+                    app.ensure_host_login(&base_repo, cx);
                 }
             });
         })

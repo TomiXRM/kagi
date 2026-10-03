@@ -53,6 +53,8 @@ pub(super) fn render_pr_properties(
         });
 
     let avatars = &app.avatars.images;
+    // #906: a login's avatar is the one on the PR's own host.
+    let host = kagi_git::github::repo_host(&pr.base_repo);
     let people = |logins: &[String]| -> gpui::AnyElement {
         if logins.is_empty() {
             return div()
@@ -70,7 +72,10 @@ pub(super) fn render_pr_properties(
                     .items_center()
                     .gap_1()
                     .child(kagi_ui_core::commit_header::avatar_circle(
-                        16., login, login, avatars,
+                        16.,
+                        &kagi_ui_core::avatar::login_key(host, login),
+                        login,
+                        avatars,
                     ))
                     .child(
                         div()
@@ -291,7 +296,10 @@ pub(super) fn render_pr_headline(app: &KagiApp, pr: &PullRequest) -> gpui::AnyEl
                 ))
                 .child(kagi_ui_core::commit_header::avatar_circle(
                     16.,
-                    &pr.author,
+                    &kagi_ui_core::avatar::login_key(
+                        kagi_git::github::repo_host(&pr.base_repo),
+                        &pr.author,
+                    ),
                     &pr.author,
                     &app.avatars.images,
                 ))
@@ -522,10 +530,10 @@ pub(super) fn render_composer(
 ) -> Option<gpui::AnyElement> {
     use gpui_component::{Disableable as _, Sizable as _};
     let input = app.pr_comment_input.clone()?;
-    let number = app
+    let (number, base_repo) = app
         .pr_mode()
         .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
-        .map(|t| t.pr.number)?;
+        .map(|t| (t.pr.number, t.pr.base_repo.as_str()))?;
     // The box is the truth, not the tab's parked copy: a preview of what was
     // parked would show yesterday's text while you type today's. The value is
     // already a `SharedString`; keep it, don't rebuild it every frame.
@@ -565,7 +573,8 @@ pub(super) fn render_composer(
     } else {
         super::timeline_row::body_input(&input).into_any_element()
     };
-    let viewer = app.github_login.as_deref().unwrap_or("?");
+    // #906: the PR's host identity posts the comment, not github.com's.
+    let viewer = app.host_login(base_repo).unwrap_or("?");
     let mut content = super::timeline_row::content_column()
         .gap_2()
         .child(body)
@@ -640,6 +649,7 @@ pub(super) fn render_composer(
         super::timeline_row::composer_frame(
             "pr-mode-composer",
             viewer,
+            kagi_git::github::repo_host(base_repo),
             &app.avatars.images,
             content,
         )

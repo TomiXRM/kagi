@@ -436,8 +436,10 @@ mod reflow_tests {
 /// heading, `_x_` goes italic and the underscores vanish. HTML with every
 /// special character escaped is the only faithful option.
 ///
-/// Blank lines become paragraph breaks; single newlines become `<br>`, so the
-/// author's line breaks survive.
+/// Every line becomes its own paragraph, so the author's line breaks survive:
+/// the pinned `TextView` drops a `<br>` inside a paragraph, which ran a
+/// commit body's bullet lines into one (#946, first seen in the Operation Log
+/// detail, #908). Blank lines only separate lines; a run of them adds nothing.
 pub fn message_to_html(msg: &str) -> String {
     fn escape(s: &str, out: &mut String) {
         for c in s.chars() {
@@ -458,14 +460,11 @@ pub fn message_to_html(msg: &str) -> String {
         .map(|p| p.trim_matches('\n'))
         .filter(|p| !p.trim().is_empty())
     {
-        out.push_str("<p>");
-        for (j, line) in para.split('\n').enumerate() {
-            if j > 0 {
-                out.push_str("<br>");
-            }
+        for line in para.split('\n') {
+            out.push_str("<p>");
             escape(line, &mut out);
+            out.push_str("</p>");
         }
-        out.push_str("</p>");
     }
     out
 }
@@ -512,12 +511,15 @@ mod message_to_html_tests {
         assert!(html.contains("&lt;a@b.example&gt;"), "{html}");
     }
 
+    /// Each line is a block of its own: a `<br>` inside a paragraph is dropped
+    /// by the pinned `TextView`, which joined bullet lines into one (#946).
     #[test]
-    fn blank_lines_split_paragraphs_and_single_newlines_become_breaks() {
+    fn every_line_is_its_own_paragraph() {
         assert_eq!(
-            message_to_html("subject\n\nline one\nline two"),
-            "<p>subject</p><p>line one<br>line two</p>"
+            message_to_html("subject\n\n- one\n- two"),
+            "<p>subject</p><p>- one</p><p>- two</p>"
         );
+        assert!(!message_to_html("a\nb").contains("<br>"));
     }
 
     #[test]
@@ -529,6 +531,9 @@ mod message_to_html_tests {
 
     #[test]
     fn crlf_is_normalised() {
-        assert_eq!(message_to_html("a\r\n\r\nb\r\nc"), "<p>a</p><p>b<br>c</p>");
+        assert_eq!(
+            message_to_html("a\r\n\r\nb\r\nc"),
+            "<p>a</p><p>b</p><p>c</p>"
+        );
     }
 }

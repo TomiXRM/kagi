@@ -181,9 +181,10 @@ impl Backend {
         mut event: impl FnMut(RemoveEvent),
     ) -> RemoveReport {
         let mut progress = RemoveProgress::default();
-        // #885: the moves are observed around the whole attempt — a remove
-        // with `delete_branch` deletes the branch, one without moves nothing,
-        // and neither is assumed. Unreadable on either side: not recorded.
+        // The managing worktree survives every permitted Remove, including
+        // bare-backed linked worktrees. Read its HEAD and shared refs before and
+        // after; a pre_remove checkout must be visible to RestoreToPoint.
+        // Unreadable on either side: not recorded.
         let refs_before = refs_of(&plan.repo);
         // #900 review: the repository identity is read before anything runs,
         // like the "before" snapshot of `run_recorded_with_events` — the
@@ -215,12 +216,21 @@ impl Backend {
             // The target may have initialized a submodule since the plan was
             // confirmed. Surface the short typed blocker before trust or steps.
             ops::preflight_remove_submodules(&backend.repo, &plan.name)?;
-            // Re-plan target dirt/lock before any trust write or hook.
-            if !backend
-                .plan_remove_worktree(&plan.name, plan.delete_branch)?
-                .blockers
-                .is_empty()
-            {
+            // Re-plan before trust or hooks. Preserve typed containment and
+            // own-tab refusals so the UI shows the short blocker.
+            let current = backend.plan_remove_worktree(&plan.name, plan.delete_branch)?;
+            if let Some(blocker) = current.blockers.iter().find(|note| {
+                matches!(
+                    note,
+                    PlanNote::Worktree(
+                        kagi_domain::plan_note::WorktreeNote::RemoveContainsWorktree { .. }
+                            | kagi_domain::plan_note::WorktreeNote::RemoveOpenInTab
+                    )
+                )
+            }) {
+                return Err(GitError::Blocked(Box::new(blocker.clone())));
+            }
+            if !current.blockers.is_empty() {
                 return Err(io("remove-worktree target changed after plan"));
             }
             // The re-plan above checks blockers, not the ignored counts that
@@ -396,11 +406,13 @@ pub fn record_plan_error(path: &Path, actor: Actor, error: &str) -> Recording {
     record(entry)
 }
 
-/// HEAD and every branch of the repository at `path` (#885), `None` when it
-/// does not open or read.
+/// HEAD and every branch of the common repository at `path` (#915), including
+/// a bare common dir (#938). `Backend::open` rejects bare repos, but these
+/// read-only snapshots must survive either linked worktree's removal.
+/// `None` when the repository or its refs cannot be read.
 fn refs_of(path: &Path) -> Option<kagi_domain::ref_moves::RefSnapshot> {
-    let backend = Backend::open(path).ok()?;
-    ops::ref_snapshot(&backend.repo)
+    let repo = Repository::open(path).ok()?;
+    ops::ref_snapshot(&repo)
 }
 
 fn recovery_after(progress: &RemoveProgress) -> ops::StateSummary {

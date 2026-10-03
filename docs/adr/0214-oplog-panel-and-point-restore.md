@@ -78,6 +78,10 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
       - fetch(`fetch_async_for`、argv `fetch --prune -- <remote>` / `fetch --all --prune`): 書き込み先は `remote.<name>.fetch` の refspec が決める。mirror 型の refspec(`+refs/heads/*:refs/heads/*`)なら同じ argv で local branch も動くので、観測が要る。成功した fetch はこれまでどおり記録しない(local branch が動けば、restore は記録外の reflog 変化として RefChangedOutsideRecord で止まる)。失敗(`FetchFailure.ref_moves`)は観測した移動を記録する。repository を開けなかった場合は何も動いていないので `Some(空)`。
       - PR の fetch(`fetch-pr`、refspec は `refs/remotes/**` と `refs/kagi/pr/**`): `fetch_pr_refs` の呼び出しだけを観測し、失敗の記録に載せる。その後の commit / diff の解析は観測の外で行う(`Backend::observe_then`。#907 review)。解析中に外部で動いた branch をこの job の移動として記録すると、restore がその無関係な変更を巻き戻しうるため。
       - remove-worktree(#900 review からの追加): 試行全体を前後 snapshot で囲む。branch を残せば空、`delete_branch` なら branch の削除を記録する。実行前に捨てた job・計画の失敗は `Some(空)`。
+      - #915 / #938: Remove の削除対象を開いている管理タブからの自己削除は計画・preflight で拒否する。別の worktree を削除するときは、前後とも存続する実行元(`plan.repo`)の `HEAD` と共有 ref を読む。`pre_remove` で実行元の checkout が変われば HEAD の symbolic 差分として記録し、RestoreToPoint は HeadMoved で拒否する。branch 維持は HEAD が変わらなければ `Some(空)`、branch 削除は削除された OID 差分になる。
+      - #938 review: bare common dir 自身は `Backend::open` できないが、別の linked worktree を管理元として Remove できる。管理元は存続するので、bare common dir ではなく管理元から ref を読み、HEAD の変更を見落とさない。receipt と RestoreToPoint の往復で検証する。
+      - #938 review: ref 観測に先立ち、Remove の削除境界は管理元の workdir、main workdir がある場合はその場所、common dir を保護する。non-bare でも `--separate-git-dir` の common ODB が削除対象内にあれば、計画・preflight・削除直前に拒否する。
+      - #938 review: main の場所を確証するための `.git` basename や `core.worktree` の特例は廃止。自己削除を拒否する保守的な規則のほうが安全であり、証明不能な layout を削除可能にしない。
     - **local ref に触れない経路は `Some(空)`**。共通の builder `OpLogEntry::with_nothing_moved`(= `with_ref_moves(Some(空))`。conflict の `nothing_moved` もこれを使う)で書くので、`Unknown` は `None` のまま。
       - worktree の lock / unlock(auto-lock の確認も同じ経路)・prune・repair: worktree の admin file だけを書く。前後の snapshot は取らず、UI の `record_op_persist_nothing_moved` で記録する(#907 review)。観測すると、実行中に外部で動いた branch がこの操作の移動として記録され、restore がそれを巻き戻しうる。
       - GitHub 書き込み: `gh pr comment|edit|review -R <repo> …`、`gh issue create|comment -R <repo> …`。argv は GitHub API だけを呼ぶ。

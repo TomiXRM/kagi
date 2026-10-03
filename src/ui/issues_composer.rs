@@ -6,7 +6,9 @@ use super::{
     KagiApp,
 };
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Entity, SharedString, Window};
-use gpui_component::input::{Enter, Input, InputEvent, InputState, Paste};
+use gpui_component::input::{
+    Enter, IndentInline, Input, InputEvent, InputState, OutdentInline, Paste,
+};
 use gpui_component::{button::Button, Disableable, Icon, Sizable};
 use kagi_domain::issue_composer::{fenced_code_paste, title_paste_split, IssueDraft};
 use std::collections::HashMap;
@@ -293,7 +295,8 @@ pub(super) fn render_composer(
         && editor.draft.title.trim().is_empty()
         && editor.draft.body.trim().is_empty();
     // The same identity "Posted as" names: the login on the repository's
-    // host, never the window-global github.com one (#904 review).
+    // host, never github.com's when the repository is elsewhere (#904
+    // review, #906).
     let viewer = app.issue_host_login().unwrap_or("?");
     let repo = state
         .base_repo
@@ -408,6 +411,18 @@ pub(super) fn render_composer(
                 220.
             } else {
                 100.
+            }))
+            // #909: Tab and Shift+Tab move focus out of the body like every
+            // other field (title → body → Labels → Assignees → Create), so the
+            // controls below are reachable from the keyboard. Indentation keeps
+            // the editor's own Cmd/Ctrl+] and Cmd/Ctrl+[ (block indent).
+            .capture_action(cx.listener(|_, _: &IndentInline, window, cx| {
+                window.focus_next(cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|_, _: &OutdentInline, window, cx| {
+                window.focus_prev(cx);
+                cx.stop_propagation();
             }))
             .capture_action(cx.listener(move |app, _: &Paste, window, cx| {
                 if app.has_active_modal() {
@@ -559,12 +574,18 @@ pub(super) fn render_composer(
     {
         content = content.child(super::e2e::measure_inside(format!("{id}-viewer-{viewer}")));
     }
-    let composer = super::timeline_row::composer_frame(id, viewer, &app.avatars.images, content)
-        .border_b_1()
-        .border_color(rgb(theme().selected))
-        .key_context("IssueComposer")
-        .on_action(cx.listener(move |app, _: &FocusIssueEditor, window, cx| {
-            app.toggle_issue_focus(number, window, cx)
-        }));
+    let composer = super::timeline_row::composer_frame(
+        id,
+        viewer,
+        app.issue_repo_host(),
+        &app.avatars.images,
+        content,
+    )
+    .border_b_1()
+    .border_color(rgb(theme().selected))
+    .key_context("IssueComposer")
+    .on_action(cx.listener(move |app, _: &FocusIssueEditor, window, cx| {
+        app.toggle_issue_focus(number, window, cx)
+    }));
     super::e2e::measure_control(id, composer).into_any_element()
 }

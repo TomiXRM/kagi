@@ -216,6 +216,9 @@ impl Render for KagiApp {
                 .work
                 .pane_focus
                 .yield_focus(fallback.as_ref(), window, cx);
+        } else {
+            // The same for the Graph sidebar's rows and headers (#981).
+            self.yield_sidebar_focus(window, cx);
         }
         // Before any tab list picks its Tab stop this frame (#968).
         super::keyboard_nav::forget_roving_without_focus(window);
@@ -367,9 +370,14 @@ impl Render for KagiApp {
                 &sidebar_filter_text,
             );
             self.sidebar.pane_ranges = sidebar_panes::pane_ranges(&rows);
+            self.sidebar
+                .focus
+                .set_keys(&rows, &self.sidebar.pane_ranges);
             self.sidebar.rows = rows;
             self.sidebar.rows_fingerprint = sidebar_fingerprint;
         }
+        // Every pane's Tab stop and rows, before the sidebar is drawn (#981).
+        self.sync_sidebar_focus(window, cx);
 
         let status_footer = self.status_footer.clone();
         // ADR-0118 / T-ENTITY-CONFLICT-001: the conflict body is its own

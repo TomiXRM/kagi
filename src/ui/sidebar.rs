@@ -94,6 +94,8 @@ pub struct SidebarState {
     pub settle_gen: u64,
     /// The Graph / PRs / Issues cells, for the keyboard (#944).
     pub(crate) mode_focus: super::keyboard_nav::TabFocus,
+    /// The panes' rows and headers, for the keyboard (#981).
+    pub(crate) focus: super::sidebar_focus::SidebarFocus,
 }
 
 impl SidebarState {
@@ -121,6 +123,7 @@ impl SidebarState {
             swipe: Default::default(),
             settle_gen: 0,
             mode_focus: Default::default(),
+            focus: Default::default(),
         }
     }
 

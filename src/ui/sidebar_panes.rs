@@ -157,16 +157,16 @@ fn render_pane(app: &KagiApp, index: usize, cx: &mut Context<KagiApp>) -> gpui::
         return div().into_any_element();
     };
     let pane_id = PANE_IDS[index];
+    let collapsed = app.sidebar.collapsed.contains(SECTIONS[index]);
     let header_spec = super::sidebar_a11y::tree_item(header);
     let header_el = build_sidebar_row(app, header, super::commit_list::now_unix_secs(), cx);
     let header_el = super::list_a11y::tree_item(
         pane_id,
-        div().id(("sidebar-pane-header", index)).child(header_el),
+        super::sidebar_focus::header(app, index, collapsed, header_el, cx),
         0,
         &header_spec,
         (1, 1),
     );
-    let collapsed = app.sidebar.collapsed.contains(SECTIONS[index]);
     let body_start = range.start + 1;
     let body_count = range.end.saturating_sub(body_start);
     let scroll_handle = app.sidebar.scroll_handles[index].clone();
@@ -180,16 +180,26 @@ fn render_pane(app: &KagiApp, index: usize, cx: &mut Context<KagiApp>) -> gpui::
             cx.processor(move |this, visible: Range<usize>, _window, cx| {
                 let now_secs = super::commit_list::now_unix_secs();
                 this.sidebar.refresh_tree_positions();
+                // What the pane's keyboard Tab stop may land on (#981).
+                this.sidebar.focus.drawn[index] = visible.clone();
+                let rows = this.sidebar.focus.lists[index].clone();
                 visible
                     .filter_map(|position| {
                         let absolute = body_start + position;
                         let row = this.sidebar.rows.get(absolute).cloned()?;
                         let spec = super::sidebar_a11y::tree_item(&row);
                         let el = build_sidebar_row(this, &row, now_secs, cx);
+                        let slot = div().id((pane_id, absolute)).w_full().h(row_h);
+                        let slot = match rows.as_deref().filter(|rows| position < rows.len()) {
+                            Some(rows) => {
+                                super::sidebar_focus::row(this, rows, position, slot, row, el, cx)
+                            }
+                            None => slot.child(el),
+                        };
                         Some(
                             super::list_a11y::tree_item(
                                 pane_id,
-                                div().id((pane_id, absolute)).w_full().h(row_h).child(el),
+                                slot,
                                 position + 1,
                                 &spec,
                                 this.sidebar.tree_positions[absolute],
@@ -205,6 +215,11 @@ fn render_pane(app: &KagiApp, index: usize, cx: &mut Context<KagiApp>) -> gpui::
         .min_h(px(0.)),
         false,
     );
+    // ↑/↓ are the rows' only while the focus is in this pane's list.
+    let list = match app.sidebar.focus.lists[index].as_deref() {
+        Some(rows) => rows.list(list),
+        None => list,
+    };
     let tree = super::list_a11y::tree(
         pane_id,
         div()
@@ -285,6 +300,8 @@ fn pane_divider(app: &KagiApp, index: usize) -> gpui::AnyElement {
 /// `render` owns the cached flat rows and ranges, so drawing another workspace
 /// page cannot start a Git read or rebuild refs.
 pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    // Next frame's keyboard state knows the panes were on screen (#981).
+    app.sidebar.focus.shown.set(true);
     let filter_input = app.sidebar.filter.clone();
     // The five pane bodies share `sidebar.rows`, never copied on layout changes.
     // ADR-0128: the badge counts merged-class rows only (stale-only rows are

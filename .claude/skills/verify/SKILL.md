@@ -327,6 +327,18 @@ The current suite covers:
   each Home pane names `home-pane-panel` after the pane, without the count.
   `gh` is a failing stand-in. What VoiceOver speaks is not observable by an
   agent (the #972 probe found the native AX tree exposes no GPUI content).
+- Sidebar rows from the keyboard (`KAGI_GUI_E2E_ONLY=sidebar_rows`,
+  `tests/recovery/sidebar_rows.rs`, #981): a fixture with branches alpha /
+  beta / gamma, tags v1 / v2 and a linked worktree. ↓ from LOCAL's first row
+  moves to the next and stops at LOCAL's last row (never into REMOTE or
+  WORKTREES), ↑ stops at its first; TAGS collapsed by a click on its header,
+  Tab from the window reaches that header (`sidebar_header_focused_for_e2e`)
+  and Enter opens TAGS onto `tag:v1`; Enter on the worktree row opens the
+  keyboard's inspection card (`sidebar-worktree-keyboard-card`), Escape
+  closes it and the row keeps the focus. Rows are read and focused through
+  `sidebar_row_focused_for_e2e` / `focus_sidebar_row_for_e2e` (keys
+  `branch:` / `group:` / `remote:` / `tag:` / `worktree:<path>` /
+  `stash:<n>`). The ring is not observable in Tier A.
 - modal input transitions (`KAGI_GUI_E2E_ONLY=remote_browse_escape_focus,pr_fields_escape_focus`,
   `tests/recovery/remote_browse_focus.rs`, `tests/recovery/pr_fields_focus.rs`):
   #755 follow-up. Real InputStates own focus before Remote Browse's

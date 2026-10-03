@@ -1,0 +1,341 @@
+//! The Graph sidebar's rows from the keyboard (#981).
+//!
+//! Each of the five panes is its own tree and its own Tab stop: the row the
+//! keyboard last reached while it is drawn, else the first row on screen
+//! (`keyboard_nav::RowFocus` over the pane's `uniform_list`). ↑/↓ stay inside
+//! the pane. A collapsed pane has no rows, so its Tab stop is its header,
+//! and Enter / Space open the pane and move to its first row.
+//!
+//! Enter / Space press a row: a branch opens its checkout plan (the current
+//! branch: jumps to it), a worktree opens or closes its inspection card (the
+//! hover card, anchored to the row; Escape closes it too), a group opens or
+//! closes, a remote branch or tag jumps to its commit, a stash opens its
+//! peek. The rest is what a click does; a double-click's checkout is Enter
+//! because a single click on a branch only jumps to it.
+//!
+//! A pointer click does not put the focus on a row: the window takes it, as
+//! before, so ↑/↓ after clicking a branch still step the graph.
+
+use std::cell::Cell;
+use std::ops::Range;
+use std::path::PathBuf;
+use std::rc::Rc;
+
+use gpui::{
+    deferred, div, point, prelude::*, px, AnchoredPositionMode, AnyElement, ClickEvent, Context,
+    Div, FocusHandle, MouseButton, Stateful, Window,
+};
+
+use super::keyboard_nav::{FocusSlots, RowFocus, RowKeys, RowList, RowScroll, RING};
+use super::sidebar::SidebarRow;
+use super::KagiApp;
+
+const PANES: usize = 5;
+
+/// The WORKTREES pane (`sidebar_panes::SECTIONS[2]`), whose rows open the
+/// keyboard's inspection card.
+const WORKTREES: usize = 2;
+
+/// The sidebar panes' keyboard state, kept across frames.
+#[derive(Default)]
+pub(crate) struct SidebarFocus {
+    /// Each pane's rows as `(key, item)`, built with the sidebar's rows.
+    keys: [RowKeys; PANES],
+    rows: [RowFocus; PANES],
+    /// This frame's rows, for `render_pane`.
+    pub(super) lists: [Option<Rc<RowList>>; PANES],
+    /// The items each pane's list was last asked to draw.
+    pub(super) drawn: [Range<usize>; PANES],
+    /// The headers: a collapsed pane's Tab stop.
+    pub(super) headers: FocusSlots,
+    /// A pane opened from its header by the keyboard: its first row takes
+    /// the focus once its rows are built.
+    open_first: [bool; PANES],
+    /// The worktree whose inspection card the keyboard opened.
+    pub(super) card: Option<PathBuf>,
+    /// The sidebar was drawn (set by `render_sidebar`, taken each frame).
+    pub(super) shown: Cell<bool>,
+}
+
+/// A row's key among its pane's rows; `None` for a pane header, which is not
+/// one of the list's rows.
+fn row_key(row: &SidebarRow) -> Option<String> {
+    Some(match row {
+        SidebarRow::SectionHeader { .. } => return None,
+        SidebarRow::LocalGroupHeader { key, .. }
+        | SidebarRow::RemoteHeader { key, .. }
+        | SidebarRow::RemoteSubGroup { key, .. } => format!("group:{key}"),
+        SidebarRow::LocalBranchLeaf { name, .. } => format!("branch:{name}"),
+        SidebarRow::RemoteLeaf { display, .. } => format!("remote:{display}"),
+        SidebarRow::Tag { name, .. } => format!("tag:{name}"),
+        SidebarRow::Worktree { path, .. } => format!("worktree:{}", path.display()),
+        SidebarRow::Stash { index, .. } => format!("stash:{index}"),
+    })
+}
+
+impl SidebarFocus {
+    /// The sidebar's rows were rebuilt: each pane's rows, keyed, as the item
+    /// they are in its list (the pane's rows after its header).
+    pub(super) fn set_keys(&mut self, rows: &[SidebarRow], ranges: &[Range<usize>; PANES]) {
+        for (pane, range) in ranges.iter().enumerate() {
+            let body = rows.get(range.start + 1..range.end).unwrap_or_default();
+            self.keys[pane] = body
+                .iter()
+                .enumerate()
+                .filter_map(|(item, row)| row_key(row).map(|key| (key, item)))
+                .collect();
+        }
+    }
+}
+
+impl KagiApp {
+    /// Each workspace frame, before the sidebar is drawn: every pane's Tab
+    /// stop and rows. A pane that was not drawn last frame (collapsed, the
+    /// sidebar hidden, another page in front) has no row on screen, so a row
+    /// holding the focus hands it on — to the pane's header while the sidebar
+    /// is drawn, else to the window — as a row scrolled away does.
+    pub(super) fn sync_sidebar_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let root = self.root_focus.clone();
+        let shown = self.sidebar.focus.shown.take();
+        for pane in 0..PANES {
+            let header = self.sidebar.focus.headers.get(pane, cx);
+            if !shown && header.is_focused(window) {
+                if let Some(root) = &root {
+                    root.focus(window, cx);
+                }
+            }
+            let drawn = std::mem::take(&mut self.sidebar.focus.drawn[pane]);
+            let scroll = RowScroll::Uniform(self.sidebar.scroll_handles[pane].clone(), drawn);
+            let fallback = if shown { Some(&header) } else { root.as_ref() };
+            let focus = &mut self.sidebar.focus;
+            let list =
+                focus.rows[pane].rows(focus.keys[pane].clone(), &scroll, fallback, window, cx);
+            if std::mem::take(&mut focus.open_first[pane]) {
+                focus.rows[pane].focus_first(&scroll, window, cx);
+            }
+            focus.lists[pane] = Some(Rc::new(list));
+        }
+        // The keyboard's inspection card lives while its row has the focus.
+        if let Some(path) = &self.sidebar.focus.card {
+            // The key is `worktree:` and the path as `Path::display` writes
+            // it, which is `to_string_lossy` (borrowed for a UTF-8 path).
+            let held = self.sidebar.focus.rows[WORKTREES]
+                .focused(window)
+                .and_then(|key| key.strip_prefix("worktree:"))
+                .is_some_and(|key| key == path.to_string_lossy());
+            if !held {
+                self.sidebar.focus.card = None;
+            }
+        }
+    }
+
+    /// Home is in front, so the sidebar is not drawn: a focus on one of its
+    /// rows or headers goes to the window. The rows are remembered; what was
+    /// drawn before Home is forgotten, so coming back starts from nothing on
+    /// screen.
+    pub(super) fn yield_sidebar_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let root = self.root_focus.clone();
+        for pane in 0..PANES {
+            self.sidebar.focus.rows[pane].yield_focus(root.as_ref(), window, cx);
+            let header = self.sidebar.focus.headers.get(pane, cx);
+            if header.is_focused(window) {
+                if let Some(root) = &root {
+                    root.focus(window, cx);
+                }
+            }
+            self.sidebar.focus.drawn[pane] = 0..0;
+        }
+        self.sidebar.focus.shown.set(false);
+        self.sidebar.focus.card = None;
+    }
+
+    /// Enter / Space on a collapsed pane's header: open it, and its first row
+    /// takes the focus once its rows are built.
+    fn open_sidebar_pane(&mut self, pane: usize, cx: &mut Context<Self>) {
+        let section = super::sidebar_panes::SECTIONS[pane];
+        if self.sidebar.collapsed.contains(section) {
+            self.sidebar.toggle_section(section);
+            self.sidebar.focus.open_first[pane] = true;
+            cx.notify();
+        }
+    }
+
+    /// Enter / Space on a row: its main action (see the module docs).
+    fn activate_sidebar_row(&mut self, row: &SidebarRow, cx: &mut Context<Self>) {
+        match row {
+            SidebarRow::SectionHeader { .. } => {}
+            SidebarRow::LocalGroupHeader { key, .. }
+            | SidebarRow::RemoteHeader { key, .. }
+            | SidebarRow::RemoteSubGroup { key, .. } => {
+                self.with_ui(|ui| ui.toggle_branch_group(key));
+            }
+            SidebarRow::LocalBranchLeaf {
+                name,
+                is_head: true,
+                ..
+            } => self.jump_to_branch(name),
+            SidebarRow::LocalBranchLeaf { name, .. } => {
+                self.open_plan_modal(name.clone());
+                // The plan's Enter / Escape run through the root (#817);
+                // left on the row, Enter would press the row again.
+                if self.active_modal.is_some() {
+                    self.focus_root_for_modal();
+                }
+            }
+            SidebarRow::RemoteLeaf { target, .. } | SidebarRow::Tag { target, .. } => {
+                if self.view().commit_row_index.contains_key(target) {
+                    self.jump_to_commit(target);
+                }
+            }
+            SidebarRow::Stash { index, .. } => self.open_stash_peek(*index, cx),
+            // An SSH tab's worktree has no card (its row carries a tooltip).
+            SidebarRow::Worktree { path, .. } if self.remote_view.is_none() => {
+                if self.sidebar.focus.card.as_ref() == Some(path) {
+                    self.sidebar.focus.card = None;
+                } else {
+                    self.sidebar.focus.card = Some(path.clone());
+                    self.select_worktree_inspection(path.clone(), cx);
+                }
+            }
+            SidebarRow::Worktree { .. } => {}
+        }
+        cx.notify();
+    }
+}
+
+/// A pane header: the pane's Tab stop while it is collapsed, opened by
+/// Enter / Space. `header` is the drawn heading, which keeps its own click.
+pub(super) fn header(
+    app: &KagiApp,
+    pane: usize,
+    collapsed: bool,
+    header: AnyElement,
+    cx: &mut Context<KagiApp>,
+) -> Stateful<Div> {
+    let focus = app.sidebar.focus.headers.get(pane, cx);
+    super::keyboard_nav::focusable(
+        div()
+            .id(("sidebar-pane-header", pane))
+            .track_focus(&focus.tab_index(0).tab_stop(collapsed)),
+    )
+    .on_click(cx.listener(move |this, event: &ClickEvent, _window, cx| {
+        if event.is_keyboard() {
+            this.open_sidebar_pane(pane, cx);
+        }
+    }))
+    .child(under_ring(header, app.root_focus.clone()))
+}
+
+/// Row `at` of `list`: its Tab stop, ↑/↓, and Enter / Space for its main
+/// action. `el` is the row's slot; `row` what it draws.
+pub(super) fn row(
+    app: &KagiApp,
+    list: &RowList,
+    at: usize,
+    el: Stateful<Div>,
+    row: SidebarRow,
+    drawn: AnyElement,
+    cx: &mut Context<KagiApp>,
+) -> Stateful<Div> {
+    let card = match &row {
+        SidebarRow::Worktree {
+            name,
+            branch,
+            path,
+            port,
+            ..
+        } if app.sidebar.focus.card.as_ref() == Some(path) => Some((
+            path.clone(),
+            super::sidebar_worktree_row::keyboard_card(
+                app,
+                path.clone(),
+                name,
+                branch.as_deref(),
+                *port,
+                cx,
+            ),
+        )),
+        _ => None,
+    };
+    let el = list
+        .row(at, el)
+        .child(under_ring(drawn, app.root_focus.clone()))
+        .on_click(cx.listener(move |this, event: &ClickEvent, _window, cx| {
+            if event.is_keyboard() {
+                this.activate_sidebar_row(&row, cx);
+            }
+        }));
+    match card {
+        Some((path, card)) => {
+            let width = super::theme::scaled_px(app.sidebar.width);
+            // Escape is bound to an action (`CloseMainDiff`), which runs
+            // before key listeners: the row takes it while its card is open.
+            el.on_action(
+                cx.listener(move |this, _: &super::CloseMainDiff, _window, cx| {
+                    if this.sidebar.focus.card.as_ref() == Some(&path) {
+                        this.sidebar.focus.card = None;
+                        cx.notify();
+                    } else {
+                        cx.propagate();
+                    }
+                }),
+            )
+            .child(deferred(
+                gpui::anchored()
+                    .position_mode(AnchoredPositionMode::Local)
+                    .position(point(width, px(0.)))
+                    .snap_to_window_with_margin(px(8.))
+                    .child(card),
+            ))
+        }
+        _ => el,
+    }
+}
+
+/// What a ringed slot draws: pulled out under the ring by its width, so the
+/// row looks as it did before it had one (the ring paints over its edge).
+/// A pointer press gives the window the focus, as before, not the slot.
+fn under_ring(el: AnyElement, root: Option<FocusHandle>) -> Div {
+    div()
+        .m(-px(RING))
+        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            if let Some(root) = &root {
+                window.focus(root, cx);
+            }
+            window.prevent_default();
+        })
+        .child(el)
+}
+
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    /// The pane and key of the sidebar row holding the focus, if any.
+    pub fn sidebar_row_focused_for_e2e(&self, window: &Window) -> Option<(usize, String)> {
+        (0..PANES).find_map(|pane| {
+            self.sidebar.focus.rows[pane]
+                .focused(window)
+                .map(|key| (pane, key.to_string()))
+        })
+    }
+
+    /// Focus the sidebar row `key` of `pane`.
+    pub fn focus_sidebar_row_for_e2e(
+        &self,
+        pane: usize,
+        key: &str,
+        window: &mut Window,
+        cx: &mut gpui::App,
+    ) {
+        self.sidebar.focus.rows[pane].focus(key, window, cx);
+    }
+
+    /// Which pane header holds the focus, if any.
+    pub fn sidebar_header_focused_for_e2e(&self, window: &Window) -> Option<usize> {
+        self.sidebar.focus.headers.focused(window)
+    }
+
+    /// The worktree whose inspection card the keyboard opened.
+    pub fn sidebar_keyboard_card_for_e2e(&self) -> Option<PathBuf> {
+        self.sidebar.focus.card.clone()
+    }
+}

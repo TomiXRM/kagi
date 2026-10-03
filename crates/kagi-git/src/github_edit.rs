@@ -344,7 +344,7 @@ pub(crate) fn read_gh(workdir: &Path, args: &[String], what: &str) -> Result<Str
 /// github.com and on an Enterprise host are different repositories), but an
 /// API *path* is host-relative: `gh api github.com/acme/widgets/assignees`
 /// would be a 404. Pure; unit-tested.
-fn owner_repo(base_repo: &str) -> Option<String> {
+pub(crate) fn owner_repo(base_repo: &str) -> Option<String> {
     let parts: Vec<&str> = base_repo
         .trim()
         .trim_matches('/')

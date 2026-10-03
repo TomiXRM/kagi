@@ -313,20 +313,20 @@ impl KagiApp {
         reset_view_if_not_conflicting(m, pr);
         cx.notify();
         self.prioritize_pr_details(pr.number, cx);
-        self.pr_mode_load_conversation(pr.number, cx);
+        self.pr_mode_load_conversation(pr, cx);
         self.fetch_pr_for_open(pr.clone(), cx);
     }
 
-    /// Fetch reviews + comments, and separately the merge status, for `number`
+    /// Fetch reviews + comments, and separately the merge status, for `pr`
     /// in the background and drop them on the matching tab. Once per tab open
     /// (never per list refresh — the list ticker must stay one call). The two
     /// run side by side so each tab's loader ends on its own data.
-    pub(super) fn pr_mode_load_conversation(&mut self, number: u64, cx: &mut Context<Self>) {
+    pub(super) fn pr_mode_load_conversation(&mut self, pr: &PullRequest, cx: &mut Context<Self>) {
         let owner = self.active_session();
         let Some(repo) = self.repo_path.clone() else {
             return;
         };
-        self.pr_mode_load_conversation_for(owner, repo, number, cx);
+        self.pr_mode_load_conversation_for(owner, repo, pr.base_repo.clone(), pr.number, cx);
     }
 
     /// The same load, for a named owner and the repository the read belongs to
@@ -338,21 +338,32 @@ impl KagiApp {
     /// here would run `gh` against whichever repository is active - or not at
     /// all, on Welcome or a remote view - and file the answer on the original
     /// PR (review findings, `w5:p19`).
+    ///
+    /// `repo` is only the working directory `gh` runs in; every read names
+    /// `base_repo`, the repository the PR lives in (#940 review P1). The
+    /// directory's `gh` default can be another repository — a clone opened
+    /// from Home whose `gh repo set-default` points elsewhere — and the same
+    /// number there is another PR, whose conversation would sit under this
+    /// PR's body and invite a reply grounded in it.
     fn pr_mode_load_conversation_for(
         &mut self,
         owner: Option<crate::app::SessionId>,
         repo: std::path::PathBuf,
+        base_repo: String,
         number: u64,
         cx: &mut Context<Self>,
     ) {
         let repo2 = repo.clone();
+        let base_repo2 = base_repo.clone();
         cx.spawn(async move |this, acx| {
             // #347: mergeStateStatus + merge-queue position. A failure
             // (non-GitHub host, old gh, no MQ) is not fatal — the card just
             // does not appear — but it says why (#843).
             let merge_status = acx
                 .background_executor()
-                .spawn(async move { kagi_git::github::pr_merge_status(&repo2, number) })
+                .spawn(
+                    async move { kagi_git::github::pr_merge_status(&repo2, &base_repo2, number) },
+                )
                 .await;
             let _ = this.update(acx, |app, cx| {
                 let Some(t) = app
@@ -395,8 +406,10 @@ impl KagiApp {
                             // Two calls: `gh pr view` for the verdicts + issue
                             // comments, `gh api graphql` for the review threads
                             // (line comments with their anchor side and state).
-                            let convo = kagi_git::github::pr_conversation(&repo, number);
-                            let lines = kagi_git::github::pr_review_threads(&repo, number);
+                            let convo =
+                                kagi_git::github::pr_conversation(&repo, &base_repo, number);
+                            let lines =
+                                kagi_git::github::pr_review_threads(&repo, &base_repo, number);
                             (convo, lines)
                         })
                         .await
@@ -831,7 +844,16 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         self.clear_pr_comment_draft_for(owner, number, cx);
-        self.pr_mode_load_conversation_for(owner, repo, number, cx);
+        // The thread is re-read from the repository the PR lives in, which
+        // the tab carries; with no tab there is nothing to land the read on.
+        let Some(base_repo) = self
+            .pr_mode_of(owner)
+            .and_then(|m| m.tabs.iter().find(|t| t.pr.number == number))
+            .map(|t| t.pr.base_repo.clone())
+        else {
+            return;
+        };
+        self.pr_mode_load_conversation_for(owner, repo, base_repo, number, cx);
     }
 
     /// Empty the composer for `number` in `owner`'s tabs - the text is on the

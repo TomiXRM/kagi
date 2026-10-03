@@ -19,17 +19,86 @@
 //! plan modal without a text field therefore asks for the root on open, the
 //! same rule the conflict Abort confirmation follows (#755).
 
-use gpui::{Context, SharedString, Window};
+use gpui::{Context, FocusHandle, Focusable as _, SharedString, Window};
+use gpui_component::input::InputState;
 
 use super::commands::MenuOverlay;
+use super::modals::ActiveModal;
 use super::KagiApp;
+use crate::app::SessionId;
+
+/// The focus belongs to the screen on which an overlay was opened, not to a
+/// retained entity from a tab that may have been closed or switched away.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FocusScreen {
+    Home,
+    Session(SessionId),
+    None,
+}
+
+pub(super) struct PendingFocus {
+    focus: FocusHandle,
+    screen: FocusScreen,
+}
 
 impl KagiApp {
+    fn focus_screen(&self) -> FocusScreen {
+        if self.home_in_front() {
+            FocusScreen::Home
+        } else {
+            self.active_session()
+                .map(FocusScreen::Session)
+                .unwrap_or(FocusScreen::None)
+        }
+    }
+
+    fn pending_root_focus(&self) -> Option<PendingFocus> {
+        self.root_focus.clone().map(|focus| PendingFocus {
+            focus,
+            screen: self.focus_screen(),
+        })
+    }
+
+    /// Only a field owned by the modal that arrived may keep focus when
+    /// Settings unmounts. A Select popup is outside the trap but not a modal
+    /// input; keeping it would strand the modal's Escape and Tab.
+    fn arriving_modal_input_focused(&self, window: &Window, cx: &Context<Self>) -> bool {
+        let owns_focus = |input: Option<&gpui::Entity<InputState>>| {
+            input.is_some_and(|input| input.read(cx).focus_handle(cx).contains_focused(window, cx))
+        };
+        match self.active_modal.as_ref() {
+            Some(ActiveModal::RemoteBrowse(m)) => {
+                owns_focus(m.host_state.as_ref())
+                    || owns_focus(m.port_state.as_ref())
+                    || owns_focus(m.identity_state.as_ref())
+            }
+            Some(ActiveModal::PrFields(_)) => owns_focus(self.pr_fields_input.as_ref()),
+            Some(ActiveModal::CreateBranch(m)) => owns_focus(m.input_state.as_ref()),
+            Some(ActiveModal::CreateTag(m)) => owns_focus(m.input_state.as_ref()),
+            Some(ActiveModal::StashPush(m)) => owns_focus(m.input_state.as_ref()),
+            Some(ActiveModal::SetUpstream(m)) => owns_focus(m.input_state.as_ref()),
+            Some(ActiveModal::RenameBranch(m)) => owns_focus(m.input_state.as_ref()),
+            Some(ActiveModal::CreateWorktree(m)) => {
+                owns_focus(m.branch_state.as_ref()) || owns_focus(m.path_state.as_ref())
+            }
+            Some(ActiveModal::WorktreeLockReason(m)) => owns_focus(m.input_state.as_ref()),
+            Some(ActiveModal::EditorFsPrompt(m)) => owns_focus(m.input_state.as_ref()),
+            _ => false,
+        }
+    }
+
     /// Remember the focus to return to. Kept from the first overlay when one
     /// replaces another, so the return target is never an overlay's own input.
     pub(super) fn capture_overlay_return_focus(&mut self, window: &Window, cx: &Context<Self>) {
         if self.pending_focus.is_none() {
-            self.pending_focus = window.focused(cx).or_else(|| self.root_focus.clone());
+            self.pending_focus =
+                window
+                    .focused(cx)
+                    .or_else(|| self.root_focus.clone())
+                    .map(|focus| PendingFocus {
+                        focus,
+                        screen: self.focus_screen(),
+                    });
         }
     }
 
@@ -37,13 +106,22 @@ impl KagiApp {
     /// takes the root whatever held focus (the terminal, an input) when it
     /// opened. Applied on the next render: the openers have no `Window`.
     pub(super) fn focus_root_for_modal(&mut self) {
-        self.pending_focus = self.root_focus.clone();
+        self.pending_focus = self.pending_root_focus();
     }
 
     /// Apply the pending focus now.
     pub(super) fn apply_pending_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(focus) = self.pending_focus.take() {
-            window.focus(&focus, cx);
+        if let Some(pending) = self.pending_focus.take() {
+            // Root is the default focus of every screen; never restore a
+            // retained handle belonging to a different session (or Home).
+            let focus = if pending.screen == self.focus_screen() {
+                Some(pending.focus)
+            } else {
+                self.root_focus.clone()
+            };
+            if let Some(focus) = focus {
+                window.focus(&focus, cx);
+            }
         }
     }
 
@@ -53,15 +131,14 @@ impl KagiApp {
     ///
     /// Settings yields to a modal that arrives while it is open (an async
     /// plan landing, #976 review): it draws behind the modal layer, so it
-    /// closes, and a focus still in its trap goes to the root, where the
-    /// modal's keys are routed. A modal that already took the focus (its own
-    /// field) keeps it: Settings' return target is dropped, not applied.
+    /// closes, and focus goes to the root unless the arriving modal's own
+    /// input already holds it. Settings' return target is dropped, not applied.
     pub(super) fn sync_pending_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(self.menu_overlay, Some(MenuOverlay::Settings)) && self.modal_in_front(cx) {
             self.menu_overlay = None;
-            let trapped = (self.settings_focus.as_ref())
-                .is_some_and(|trap| trap.contains_focused(window, cx));
-            self.pending_focus = trapped.then(|| self.root_focus.clone()).flatten();
+            self.pending_focus = (!self.arriving_modal_input_focused(window, cx))
+                .then(|| self.pending_root_focus())
+                .flatten();
         }
         // Backstop (#976 review): while Settings is open with no modal in
         // front, the focus belongs in its trap. Whatever moved it to the
@@ -109,7 +186,7 @@ impl KagiApp {
     /// next render pass ([`Self::sync_pending_focus`]).
     pub(super) fn leave_settings_for_overlay(&mut self) {
         if matches!(self.menu_overlay, Some(MenuOverlay::Settings)) {
-            self.pending_focus = self.root_focus.clone();
+            self.pending_focus = self.pending_root_focus();
         }
     }
 

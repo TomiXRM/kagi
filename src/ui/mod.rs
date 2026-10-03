@@ -1255,8 +1255,8 @@ pub struct KagiApp {
     /// Transient overlay opened from the menu bar (branch picker / About /
     /// Keyboard Shortcuts).  `None` when no menu overlay is visible.
     pub menu_overlay: Option<commands::MenuOverlay>,
-    /// Focus the next render applies (#812 / #817, `overlay_focus.rs`).
-    pending_focus: Option<gpui::FocusHandle>,
+    /// Focus and screen identity captured before an overlay opened (#812 / #976).
+    pending_focus: Option<overlay_focus::PendingFocus>,
     /// Linux/FreeBSD client-side menu dropdown currently open from the in-app
     /// menu bar. Native macOS menus are provided by `cx.set_menus`, so only the
     /// Linux/FreeBSD titlebar sets this.

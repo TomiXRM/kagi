@@ -509,10 +509,17 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
     })
     .unwrap();
     draw(cx, window);
-    assert_eq!(
-        held(cx, &app, window),
-        Held::Trap,
-        "precondition: Settings open"
+    let picker = e2e::control_bounds(window.window_id(), "settings-theme-select")
+        .expect("Settings draws the theme picker");
+    cx.simulate_click(window, picker.center(), Modifiers::none());
+    draw(cx, window);
+    assert!(
+        cx.update_window(window, |_, window, cx| {
+            let select = app.read(cx).theme_select.clone().expect("theme picker");
+            select.read(cx).focus_handle(cx).is_focused(window)
+        })
+        .unwrap(),
+        "precondition: the open theme Select popup holds focus outside the trap"
     );
     app.update(cx, |app, cx| app.open_stash_push_modal(cx));
     draw(cx, window);
@@ -527,7 +534,48 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
     keys(cx, window, "escape");
     assert!(
         cx.read(|cx| app.read(cx).stash_push_modal().is_none()),
-        "settings-yields-to-modal: Escape must reach the arrived modal"
+        "settings-select-yields-to-modal: Escape must close the arrived modal even with the theme popup open"
+    );
+
+    // A fieldless modal cannot steal focus during input initialization. Its
+    // Escape has to be routed away from the Select popup by the yield itself.
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.handle_menu_command("app.settings", window, cx)
+        })
+    })
+    .unwrap();
+    draw(cx, window);
+    let picker = e2e::control_bounds(window.window_id(), "settings-theme-select")
+        .expect("Settings theme picker");
+    cx.simulate_click(window, picker.center(), Modifiers::none());
+    draw(cx, window);
+    assert!(
+        cx.update_window(window, |_, window, cx| {
+            let app = app.read(cx);
+            let select = app.theme_select.clone().expect("theme picker");
+            select.read(cx).focus_handle(cx).is_focused(window)
+                && !app.settings_trap_focused_for_e2e(window)
+        })
+        .unwrap(),
+        "precondition: the fieldless modal arrives while the theme Select holds focus"
+    );
+    app.update(cx, |app, cx| app.open_push_modal(cx));
+    draw(cx, window);
+    assert!(
+        cx.update_window(window, |_, window, cx| {
+            app.read(cx)
+                .root_focus
+                .as_ref()
+                .is_some_and(|root| root.is_focused(window))
+        })
+        .unwrap(),
+        "settings-select-fieldless-modal-focus: the popup must yield focus to the modal's root"
+    );
+    keys(cx, window, "escape");
+    assert!(
+        cx.read(|cx| app.read(cx).push_modal().is_none()),
+        "settings-select-fieldless-modal-escape: Escape must close the arrived fieldless modal"
     );
 
     // The Commit Panel's plan confirmation (its own storage) is in front
@@ -695,6 +743,54 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
         Held::Terminal,
         "settings-closes-for-command: the opened terminal must hold the focus"
     );
+
+    // Settings' return target belongs to its opening screen. Switch to a
+    // second repository without a Window-bearing command (as an async tab
+    // activation can), then close Settings: the old terminal is still alive
+    // but cannot own keys on the newly active repository.
+    let other_fixture = build_fixture();
+    let other = other_fixture.path().canonicalize().unwrap();
+    assert!(app.update(cx, |app, cx| app.open_repository(other.clone(), cx)));
+    draw(cx, window);
+    app.update(cx, |app, cx| {
+        app.open_file_history(std::path::PathBuf::from("README.md"), None, cx);
+    });
+    draw(cx, window);
+    let other_history = cx
+        .read(|cx| app.read(cx).ui().file_history.clone())
+        .expect("second repository File History");
+    assert!(
+        cx.read(|cx| other_history.read(cx).data.commit_count()) >= 2,
+        "precondition: the destination has history to step"
+    );
+    assert_eq!(cx.read(|cx| other_history.read(cx).data.selected), 0);
+    assert!(app.update(cx, |app, cx| app.open_repository(repo.clone(), cx)));
+    draw(cx, window);
+    start_terminal(cx);
+    open_settings(cx);
+    assert_eq!(held(cx, &app, window), Held::Trap);
+    assert!(app.update(cx, |app, cx| app.open_repository(other.clone(), cx)));
+    draw(cx, window);
+    keys(cx, window, "escape");
+    assert!(
+        cx.read(|cx| app.read(cx).menu_overlay.is_none()),
+        "settings-tab-switch-escape: Escape closes Settings on the new tab"
+    );
+    assert!(
+        cx.update_window(window, |_, window, cx| {
+            let root = app.read(cx).root_focus.clone().expect("root focus");
+            root.is_focused(window)
+        })
+        .unwrap(),
+        "settings-tab-switch-focus: closing Settings must not restore the old tab's terminal"
+    );
+    keys(cx, window, "down");
+    assert_eq!(
+        cx.read(|cx| other_history.read(cx).data.selected),
+        1,
+        "settings-tab-switch-keys: Down must reach the new tab's File History"
+    );
+    drop(other_history);
 
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS settings_focus_trap");

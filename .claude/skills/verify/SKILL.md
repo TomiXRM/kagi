@@ -121,11 +121,14 @@ What is compared:
 - `operations.jsonl`: the bytes already there must stay the same, and every
   appended entry's repo must be under the run's temporary directory or remote.
 - Direct entries of the run's own `TMPDIR`: none may be added.
-- The user's own shell: no terminal may resolve `$SHELL` (the seam unset).
 
 The run also owns `HOME` (and `XDG_CONFIG_HOME`): an empty directory under the
-run root whose `.gitconfig` holds only the fixtures' identity (`poc`). `git`,
-`gh`, the editor's trash and the terminal never read the developer's dotfiles.
+run root whose `.gitconfig` holds only the fixtures' identity (`poc`). Every
+inherited `GIT_*` is dropped at startup; then `GIT_CONFIG_GLOBAL` names that
+`.gitconfig`, there is no system config, and `GIT_TERMINAL_PROMPT=0`. `git`,
+`gh`, the editor's trash and the terminal never read the developer's dotfiles
+or config. A terminal never starts the user's `$SHELL`: with no seam shell set
+it panics before the spawn, failing the scenario.
 
 Restoring state:
 

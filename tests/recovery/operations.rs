@@ -2233,11 +2233,25 @@ pub fn scenario_input_confirm_disabled_cards(cx: &mut VisualTestAppContext) {
             });
         }
         kagi::ui::e2e::clear_control_bounds(window.window_id(), "input-recovery");
+        if case == "upstream" {
+            kagi::ui::e2e::clear_control_bounds(window.window_id(), "input-field-error");
+            kagi::ui::e2e::clear_control_bounds(window.window_id(), "input-plan-blockers");
+        }
         paint(cx, window);
         assert!(
             kagi::ui::e2e::control_bounds(window.window_id(), "input-recovery").is_none(),
             "{case}: empty or blocked input must not render a recovery line"
         );
+        if case == "upstream" {
+            assert!(
+                kagi::ui::e2e::control_bounds(window.window_id(), "input-field-error").is_some(),
+                "invalid upstream must explain its format error beneath the input"
+            );
+            assert!(
+                kagi::ui::e2e::control_bounds(window.window_id(), "input-plan-blockers").is_none(),
+                "the same upstream format blocker must not also be listed in the plan"
+            );
+        }
         let button = kagi::ui::e2e::confirm_bounds(window.window_id())
             .unwrap_or_else(|| panic!("{case}: blocked form still shows its primary action"));
         assert!(

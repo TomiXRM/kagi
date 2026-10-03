@@ -44,7 +44,8 @@ pub(crate) fn render_input_modal_field(
         )
         .children(state.map(Input::new));
     match reason {
-        Some(reason) => field.child(
+        Some(reason) => field.child(crate::ui::e2e::measure_control(
+            "input-field-error",
             div()
                 .id(label)
                 .role(Role::Alert)
@@ -57,7 +58,7 @@ pub(crate) fn render_input_modal_field(
                     move |window, cx| Tooltip::new(reason.clone()).build(window, cx)
                 })
                 .child(reason),
-        ),
+        )),
         None => field,
     }
 }
@@ -226,7 +227,13 @@ pub(crate) fn render_input_plan_modal(
         }
         if !plan.blockers.is_empty() {
             let mut block_col = div().flex().flex_col().gap_1();
+            let mut displayed = false;
             for blocker in &plan.blockers {
+                // The upstream format blocker is already the field's error.
+                if matches!(blocker, PlanNote::Push(PushNote::UpstreamFormatInvalid)) {
+                    continue;
+                }
+                displayed = true;
                 block_col = block_col.child(
                     div()
                         .text_sm()
@@ -238,7 +245,12 @@ pub(crate) fn render_input_plan_modal(
                         ))),
                 );
             }
-            body = body.child(block_col.flex_shrink_0());
+            if displayed {
+                body = body.child(crate::ui::e2e::measure_control(
+                    "input-plan-blockers",
+                    block_col.flex_shrink_0(),
+                ));
+            }
         }
         if input_valid && !has_blockers {
             if let Some(recovery) = plan.recovery.as_ref().filter(|r| !r.commands.is_empty()) {

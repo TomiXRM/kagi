@@ -406,9 +406,11 @@ The current suite covers:
   untracked file to verify its real plan has both status counts, a warning and
   a clean predicted state; its two preview regions stack and align, its ready
   and blocked actions are 24px high, and planning never writes to the repository.
-  An empty name or a blocked plan renders no
-  `input-recovery` row across all six cards; Create Branch has no recovery
-  row even when ready. A ready Tag plan displays its structured Git command.
+  An empty name or a blocked plan renders no `input-recovery` row across all
+  six cards. Set Upstream's invalid format appears below its input once, not
+  again in the plan blocker list; a measured invalid-plan card catches duplicates.
+  Create Branch has no recovery row even when ready. A ready Tag plan displays
+  its structured Git command.
   A real marked-text Enter in ready Branch, Rename Branch and Set Upstream
   plans must leave the modal open and the repository unchanged; ordinary
   Enter after unmarking still creates the new branch. These are hidden native

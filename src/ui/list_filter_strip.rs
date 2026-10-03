@@ -587,6 +587,7 @@ pub(super) fn render_menu(
                 app.with_ui(|ui| ui.filter_controls.menu = None);
             }
         },
+        None,
         window,
         cx,
     ))

@@ -786,7 +786,7 @@ fn with_ring(el: Stateful<Div>) -> Stateful<Div> {
 
 /// Enter / Space press the focused element (gpui's keyboard click, already
 /// armed by the time this runs); nothing above it may act on them too.
-fn stop_activation_keys(event: &KeyDownEvent, _: &mut Window, cx: &mut App) {
+pub(crate) fn stop_activation_keys(event: &KeyDownEvent, _: &mut Window, cx: &mut App) {
     let stroke = &event.keystroke;
     if (stroke.key == "enter" || stroke.key == "space") && !stroke.modifiers.modified() {
         cx.stop_propagation();

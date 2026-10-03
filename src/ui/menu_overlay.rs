@@ -10,11 +10,12 @@
 
 use gpui::{
     div, prelude::*, px, rgb, AnyElement, ClickEvent, Context, IntoElement, MouseButton,
-    MouseDownEvent, Pixels, Point, SharedString, Window,
+    MouseDownEvent, Pixels, Point, Role, SharedString, Window,
 };
 use gpui_component::tooltip::Tooltip;
 
 use super::context_menu::{ItemState, MenuGroup, MenuItem};
+use super::menu_keys::{MenuFirst, MenuKeys, MenuLast, MenuNext, MenuPrev, Step, MENU_CONTEXT};
 use super::theme::{self, theme};
 use super::KagiApp;
 
@@ -35,6 +36,8 @@ const MENU_SEPARATOR_H: f32 = 9.0;
 /// * `position` — cursor anchor in unscaled window px.
 /// * `on_dismiss` — clears the owning menu state (run for the backdrop click).
 /// * `on_select` — clears the owning state and dispatches the chosen action.
+/// * `keys` — the context menus' keyboard (#985, see `menu_keys`); `None`
+///   for a menu without it (the pointer and the window's Escape only).
 #[allow(clippy::too_many_arguments)]
 pub fn render_menu_overlay<A>(
     id: &'static str,
@@ -46,6 +49,7 @@ pub fn render_menu_overlay<A>(
     groups: Vec<MenuGroup<A>>,
     on_dismiss: impl Fn(&mut KagiApp, &mut Window, &mut Context<KagiApp>) + Clone + 'static,
     on_select: impl Fn(&mut KagiApp, A, &mut Window, &mut Context<KagiApp>) + Clone + 'static,
+    keys: Option<&MenuKeys>,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement
@@ -125,9 +129,26 @@ where
                 .text_sm()
                 .text_color(rgb(theme().text_main))
                 .truncate()
-                .child(header),
+                .child(header.clone()),
+        )
+        .role(Role::Menu)
+        .aria_label(header);
+    // #985: the menu's keyboard (see `menu_keys`). The enabled items' slots
+    // count the drawn (not hidden) items in drawing order.
+    if let Some(keys) = keys {
+        let opened = keys.drawn(
+            groups
+                .iter()
+                .flat_map(|group| group.items.iter())
+                .filter(|item| item.state != ItemState::Hidden)
+                .enumerate()
+                .filter(|(_, item)| item.state == ItemState::Enabled)
+                .map(|(slot, _)| slot),
         );
+        menu = with_menu_keys(menu.key_context(MENU_CONTEXT), keys, opened, window, cx);
+    }
 
+    let mut slot = 0_usize;
     let mut previous_group = false;
     for (group_ix, group) in groups.into_iter().enumerate() {
         if !group
@@ -180,8 +201,10 @@ where
                 item_ix,
                 item,
                 on_select.clone(),
+                keys.map(|keys| keys.item(slot, cx)),
                 cx,
             ));
+            slot += 1;
         }
     }
 
@@ -207,12 +230,41 @@ where
         .into_any_element()
 }
 
+/// The menu's ↑/↓/Home/End, and the focus on its first enabled item when
+/// it has just `opened`.
+fn with_menu_keys(
+    menu: gpui::Stateful<gpui::Div>,
+    keys: &MenuKeys,
+    opened: bool,
+    window: &mut Window,
+    cx: &mut Context<KagiApp>,
+) -> gpui::Stateful<gpui::Div> {
+    if opened {
+        keys.step(Step::First, window, cx);
+    }
+    let step = |step: Step| {
+        let keys = keys.clone();
+        move |window: &mut Window, cx: &mut gpui::App| keys.step(step, window, cx)
+    };
+    let (prev, next, first, last) = (
+        step(Step::Prev),
+        step(Step::Next),
+        step(Step::First),
+        step(Step::Last),
+    );
+    menu.on_action(move |_: &MenuPrev, window, cx| prev(window, cx))
+        .on_action(move |_: &MenuNext, window, cx| next(window, cx))
+        .on_action(move |_: &MenuFirst, window, cx| first(window, cx))
+        .on_action(move |_: &MenuLast, window, cx| last(window, cx))
+}
+
 fn render_menu_item<A>(
     item_id_prefix: &'static str,
     group_ix: usize,
     item_ix: usize,
     item: MenuItem<A>,
     on_select: impl Fn(&mut KagiApp, A, &mut Window, &mut Context<KagiApp>) + 'static,
+    focus: Option<gpui::FocusHandle>,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement
 where
@@ -243,6 +295,8 @@ where
             "{}-{}-{}",
             item_id_prefix, group_ix, item_ix
         )))
+        .role(Role::MenuItem)
+        .aria_label(item.label.clone())
         .h(theme::scaled_px(MENU_ROW_H))
         .px_3()
         .flex()
@@ -253,11 +307,25 @@ where
         .overflow_hidden()
         .child(div().flex_1().truncate().child(text));
 
+    let row = match (enabled, focus) {
+        // #985: the menu's keyboard stops on enabled items only (↑/↓ rove;
+        // Enter / Space press one through gpui's keyboard click on
+        // `on_click`). Keyboard focus shows as the pointer's hover does.
+        (true, Some(focus)) => row
+            .track_focus(&focus.tab_index(0).tab_stop(false))
+            .on_key_down(super::keyboard_nav::stop_activation_keys)
+            .focus_visible(|style| style.bg(rgb(theme().selected))),
+        _ => row,
+    };
     let row = if enabled {
         row.on_click(click)
             .hover(|style| style.bg(rgb(theme().selected)).cursor_pointer())
     } else {
+        // gpui has no aria_disabled setter; the node's own builder has one.
         row.hover(|style| style.bg(rgb(theme().surface)))
+            .a11y_synthetic_children(|builder: &mut gpui::A11ySubtreeBuilder| {
+                builder.parent_node().set_disabled();
+            })
     };
 
     let row = match item.state {

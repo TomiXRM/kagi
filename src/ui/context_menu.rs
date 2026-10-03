@@ -267,6 +267,7 @@ pub fn render_commit_menu_overlay(
     target: CommitId,
     header: SharedString,
     groups: Vec<MenuGroup>,
+    keys: &super::menu_keys::MenuKeys,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -290,6 +291,7 @@ pub fn render_commit_menu_overlay(
         groups,
         on_dismiss,
         on_select,
+        Some(keys),
         window,
         cx,
     )

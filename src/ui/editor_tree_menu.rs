@@ -306,6 +306,7 @@ pub fn render_editor_tree_menu(
         groups,
         on_dismiss,
         on_select,
+        None,
         window,
         cx,
     ))

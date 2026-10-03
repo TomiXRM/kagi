@@ -457,6 +457,7 @@ impl KagiApp {
                                                 .as_ref()
                                                 .map(|solo| &solo.visible_commits),
                                             (prefix_count, prefix_count + rows_len),
+                                            &this.context_anchor,
                                             cx,
                                         )
                                         .into_iter()

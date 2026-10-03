@@ -739,9 +739,30 @@ The current suite covers:
   stop, not the arrowed-to one (#968). Home's switch: ←/→/Home/End select as they move,
   without wrapping, and read nothing (`home_reads_for_e2e`); with Home's
   search focused the arrows do not reach the switch (Enter is not pressed
-  into the single-line field: the harness types its "\n"). For Tier B: Tab
+  into the single-line field: the harness types its "\n"). The repository
+  tab strip (#959): with two repositories and Home, one Tab from the window
+  lands on the Home tab and the next leaves the strip (a tab's × is not a
+  stop); → only moves (`tab_strip_focused_for_e2e`, Home stays in front),
+  Enter switches to the repository, End reaches Home and Space brings it
+  back; with a repository in front, the Tab that leaves the strip is not the
+  + (Enter there leaves Home behind), and closing Home while its cell holds
+  the focus gives the focus to the window. For Tier B: Tab
   to each list, check the ring appears only for keyboard focus, and read the
   roles in Accessibility Inspector.
+- Rows of Home's list (`KAGI_GUI_E2E_ONLY=home_rows`,
+  `tests/recovery/home_rows.rs`, #959): a stand-in `gh` lists 60
+  repositories and two pull requests. Tab from the switch reaches the list
+  at its first row and one more Tab leaves it; ↓ forty times focuses `r40`
+  and scrolls it into view; ↑/↓ stop at the ends; Tab out and Shift+Tab back
+  returns to `r40`; a filter that drops the focused row moves the focus to
+  the first row left, and one that drops every row to the window; with the
+  search field focused ↓ stays the field's; PR rows step the same way; a
+  second stand-in `gh` for another account whose list read fails turns the
+  list into Loading then Failed, and the focused row's focus goes to the
+  window. Rows
+  are focused through `focus_home_row_for_e2e` and read through
+  `home_row_focused_for_e2e` (keys `repo:<owner>/<name>`,
+  `<kind>:<owner>/<name>#<n>`).
 - Toolbar unavailable reasons (`KAGI_GUI_E2E_ONLY=toolbar_keyboard_reasons`,
   `tests/recovery/toolbar_keyboard.rs`, #972): starting at the root, GPUI's
   `focus_next` visits the rendered toolbar in visual order; an F19 key-down

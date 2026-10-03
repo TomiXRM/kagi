@@ -364,5 +364,235 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
     keys(cx, window, "right end left");
     assert_eq!(pane(cx, &app), HomePane::Prs);
 
+    // The repository tab strip (#959): the arrows only move between tabs —
+    // switching reads the repository again — and Enter / Space switch.
+    let second = build_fixture();
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(second.path().to_path_buf(), cx));
+    });
+    cx.run_until_parked();
+    click_control(cx, window, "tab-add");
+    cx.run_until_parked();
+    let (repos, home_front) = cx.read(|cx| {
+        let app = app.read(cx);
+        (app.tabs.len(), app.home.is_some_and(|home| home.front))
+    });
+    assert!(home_front, "Home is in front");
+    let strip_focus = |cx: &mut VisualTestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            window.draw(cx).clear();
+            app.read(cx).tab_strip_focused_for_e2e(window)
+        })
+        .unwrap()
+    };
+    // From the window, one Tab reaches the strip on the tab in front, and
+    // the next leaves it: a tab's × is not a stop of its own.
+    cx.update_window(window, |_, window, cx| {
+        let root = app.read(cx).root_focus.clone().expect("root focus");
+        root.focus(window, cx);
+    })
+    .unwrap();
+    tab(cx, window, true);
+    assert_eq!(
+        strip_focus(cx),
+        Some(repos),
+        "Tab lands on the tab in front"
+    );
+    tab(cx, window, true);
+    assert_eq!(strip_focus(cx), None, "one Tab leaves the strip");
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(0, window, cx))
+    })
+    .unwrap();
+    keys(cx, window, "right");
+    assert_eq!(strip_focus(cx), Some(1));
+    assert!(
+        cx.read(|cx| app.read(cx).home.is_some_and(|home| home.front)),
+        "an arrow does not switch"
+    );
+    keys(cx, window, "enter");
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(!app.home.is_some_and(|home| home.front), "Enter switches");
+        assert_eq!(app.active_tab, 1);
+    });
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(0, window, cx))
+    })
+    .unwrap();
+    keys(cx, window, "end");
+    assert_eq!(strip_focus(cx), Some(repos), "Home is the last tab");
+    keys(cx, window, "space");
+    assert!(
+        cx.read(|cx| app.read(cx).home.is_some_and(|home| home.front)),
+        "Space brings Home to the front"
+    );
+    // The key pressed on Home's cell leaves the focus there, as Enter on a
+    // repository's cell does, so ← goes on working (#961 review).
+    assert_eq!(
+        strip_focus(cx),
+        Some(repos),
+        "the focus stays on Home's cell after Space"
+    );
+    keys(cx, window, "left");
+    assert_eq!(
+        strip_focus(cx),
+        Some(repos - 1),
+        "← moves to the last repository"
+    );
+
+    // With a repository in front and Home behind it, the + after the tabs
+    // would bring Home forward when pressed: the Tab that leaves the strip
+    // must not stop on it (#961 review).
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(0, window, cx))
+    })
+    .unwrap();
+    keys(cx, window, "enter");
+    assert!(cx.read(|cx| app.read(cx).home.is_some_and(|home| !home.front)));
+    // Tab out and Shift+Tab back: the strip's stop is the tab in front.
+    tab(cx, window, true);
+    tab(cx, window, false);
+    assert_eq!(
+        strip_focus(cx),
+        Some(0),
+        "the strip's stop is the tab in front"
+    );
+    tab(cx, window, true);
+    assert_eq!(strip_focus(cx), None, "one Tab leaves the strip");
+    keys(cx, window, "enter");
+    assert!(
+        cx.read(|cx| app.read(cx).home.is_some_and(|home| !home.front)),
+        "the Tab after the strip is not the + (Enter would bring Home forward)"
+    );
+
+    // Closing the tab whose cell holds the focus hands it to the window
+    // instead of leaving it on a cell nothing draws (#961 review).
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(repos, window, cx))
+    })
+    .unwrap();
+    assert_eq!(strip_focus(cx), Some(repos), "precondition: Home's cell");
+    app.update(cx, |app, cx| app.close_home_tab(cx));
+    cx.run_until_parked();
+    assert_eq!(strip_focus(cx), None);
+    assert!(
+        root_focused(cx, &app, window),
+        "the closed Home tab's focus goes to the window"
+    );
+    // ⌘W with the focus arrowed to another tab's cell closes the tab in
+    // front, not that one; the cells after it move up a slot, and the focus
+    // and the arrowed-to cell move with their tab (#961 review): Enter then
+    // switches to the tab that had the focus.
+    assert_eq!(
+        cx.read(|cx| app.read(cx).tabs.len()),
+        2,
+        "two repository tabs"
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_tab),
+        0,
+        "the first in front"
+    );
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(0, window, cx))
+    })
+    .unwrap();
+    keys(cx, window, "right");
+    assert_eq!(strip_focus(cx), Some(1), "precondition: on the second tab");
+    app.update(cx, |app, cx| app.close_tab(0, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        strip_focus(cx),
+        Some(0),
+        "the focus moved with the second tab into the first slot"
+    );
+    keys(cx, window, "enter");
+    let (tabs, active, path) = cx.read(|cx| {
+        let app = app.read(cx);
+        (
+            app.tabs.len(),
+            app.active_tab,
+            app.tabs.first().map(|tab| tab.path.clone()),
+        )
+    });
+    assert_eq!((tabs, active), (1, 0));
+    assert_eq!(
+        path.map(|p| p.canonicalize().unwrap()),
+        Some(second.path().canonicalize().unwrap()),
+        "the tab left is the one the focus was on"
+    );
+    let third = build_fixture();
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(third.path().to_path_buf(), cx));
+    });
+    cx.run_until_parked();
+    // The same for a tab that is not the last: its cell is drawn again, for
+    // the tab after it, so the focus must not pass to that tab (#961 review).
+    assert!(repos >= 2, "two repository tabs");
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(0, window, cx))
+    })
+    .unwrap();
+    assert_eq!(
+        strip_focus(cx),
+        Some(0),
+        "precondition: the first tab's cell"
+    );
+    app.update(cx, |app, cx| app.close_tab(0, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        strip_focus(cx),
+        None,
+        "the tab that moved into the closed tab's cell does not get its focus"
+    );
+    assert!(
+        root_focused(cx, &app, window),
+        "the closed first tab's focus goes to the window"
+    );
+
+    // A repository opened while the focus is on Home's cell (Home behind)
+    // is added before Home: Home's cell, its handle and the focus move to
+    // the next slot with it, and Enter brings Home forward, not the new tab
+    // (#961 review: the strip's cells are keyed by tab, not by slot).
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.open_home_tab(window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(0, window, cx))
+    })
+    .unwrap();
+    keys(cx, window, "enter");
+    assert!(
+        cx.read(|cx| app.read(cx).home.is_some_and(|home| !home.front)),
+        "precondition: Home behind the repository"
+    );
+    let before = cx.read(|cx| app.read(cx).tabs.len());
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.focus_tab_strip_for_e2e(before, window, cx)
+        })
+    })
+    .unwrap();
+    assert_eq!(strip_focus(cx), Some(before), "precondition: Home's cell");
+    let fourth = build_fixture();
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(fourth.path().to_path_buf(), cx));
+    });
+    cx.run_until_parked();
+    assert_eq!(cx.read(|cx| app.read(cx).tabs.len()), before + 1);
+    assert_eq!(
+        strip_focus(cx),
+        Some(before + 1),
+        "the focus stays on Home's cell, now after the new tab"
+    );
+    keys(cx, window, "enter");
+    assert!(
+        cx.read(|cx| app.read(cx).home.is_some_and(|home| home.front)),
+        "Enter on the focused cell brings Home forward, not the new tab"
+    );
+
     unmount(cx, app, window);
 }

@@ -370,17 +370,18 @@ pub(crate) fn render_set_upstream_modal(
         Msg::PlanSetUpstreamFor
             .t()
             .replace("{}", &modal.branch_name),
-        "Upstream",
+        Msg::InputUpstream.t(),
         modal.input_state,
-        // #510: a failed replan hands over no plan, so the confirm button is
-        // not rendered and the failure text takes its place.
+        // #510: a failed replan hands over no plan; the button remains visibly
+        // unavailable with the failure reason instead of disappearing.
         modal.plan.plan().cloned(),
         None,
         plan_or_exec_error(&modal.plan, modal.error),
-        "Set upstream",
-        Some((IconName::ExternalLink.into(), theme().color_branch)),
+        Msg::InputSetUpstream.t(),
+        (IconName::ExternalLink.into(), theme().color_branch),
         cancel_handler,
         confirm_handler,
+        cx,
     )
 }
 
@@ -404,20 +405,21 @@ pub(crate) fn render_rename_branch_modal(
     });
     render_input_plan_modal(
         Msg::PlanRenameBranch.t().replace("{}", &modal.old_name),
-        "New branch name",
+        Msg::InputNewBranchName.t(),
         modal.input_state,
-        // #510: a failed replan hands over no plan, so the confirm button is
-        // not rendered and the failure text takes its place.
+        // #510: a failed replan hands over no plan; the button remains visibly
+        // unavailable with the failure reason instead of disappearing.
         modal.plan.plan().cloned(),
         Some(modal.validation),
         plan_or_exec_error(&modal.plan, modal.error),
-        "Rename",
-        Some((
+        Msg::InputRename.t(),
+        (
             ModalIcon::Path("icons/square-pen.svg"),
             theme().color_branch,
-        )),
+        ),
         cancel_handler,
         confirm_handler,
+        cx,
     )
 }
 
@@ -732,14 +734,30 @@ pub(crate) fn render_recovery_box(text: &str, color: u32) -> gpui::AnyElement {
         .flex_col()
         .pt(theme_mod::scaled_px(6.))
         .gap(theme_mod::scaled_px(10.));
-    for (is_command, lines) in groups {
+    for (group_index, (is_command, lines)) in groups.into_iter().enumerate() {
         col = col.child(if is_command {
-            render_recovery_commands(&lines, rule_color)
+            render_recovery_commands(lines.iter().copied(), rule_color, group_index)
         } else {
             render_recovery_prose(&lines)
         });
     }
     col.into_any_element()
+}
+
+/// Input cards show only the structured, copyable commands once their input
+/// and plan are ready. Unlike the general recovery box, this never renders
+/// localized explanatory prose or infers commands from display text.
+pub(crate) fn render_input_recovery_commands(commands: &[String], color: u32) -> gpui::AnyElement {
+    let (_, rule_color, _) = theme_mod::badge_style(color);
+    let lines = commands.iter().map(String::as_str);
+    crate::ui::e2e::measure_control(
+        "input-recovery",
+        div()
+            .w_full()
+            .pt(theme_mod::scaled_px(6.))
+            .child(render_recovery_commands(lines, rule_color, 0)),
+    )
+    .into_any_element()
 }
 
 /// A consecutive run of non-command recovery lines: small, proportional, and
@@ -772,22 +790,37 @@ fn render_recovery_prose(lines: &[&str]) -> gpui::AnyElement {
 /// A consecutive run of `git ...` command lines: monospace, set off from the
 /// prose by a single hairline accent rule — no fill, no border-all-round, so
 /// it can't be mistaken for a button.
-fn render_recovery_commands(lines: &[&str], rule_color: u32) -> gpui::AnyElement {
+fn render_recovery_commands<'a>(
+    lines: impl IntoIterator<Item = &'a str>,
+    rule_color: u32,
+    group_index: usize,
+) -> gpui::AnyElement {
     let mut block = div()
         .w_full()
         .flex()
         .flex_col()
         .gap(theme_mod::scaled_px(2.));
-    for line in lines {
+    for (line_index, line) in lines.into_iter().enumerate() {
         block = block.child(
-            // Same `w_full` rule as the prose: a long `git ...` line wraps
-            // inside the accent rule instead of escaping the card.
+            // Preserve the exact command when a branch name has no wrap
+            // opportunity. Its intrinsic-width child can scroll inside the
+            // clipped modal instead of silently losing the branch suffix.
             div()
+                .id(format!(
+                    "modal-recovery-command-scroll-{group_index}-{line_index}"
+                ))
                 .w_full()
-                .font_family(MONO_FONT)
-                .text_xs()
-                .text_color(rgb(theme().text_sub))
-                .child(SharedString::from(line.to_string())),
+                .flex()
+                .overflow_x_scroll()
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .whitespace_nowrap()
+                        .font_family(MONO_FONT)
+                        .text_xs()
+                        .text_color(rgb(theme().text_sub))
+                        .child(SharedString::from(line.to_string())),
+                ),
         );
     }
     div()

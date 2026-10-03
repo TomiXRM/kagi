@@ -568,6 +568,13 @@ impl IssueListTab {
         }
     }
 
+    /// Whether membership is "yours" and so needs the viewer's login on the
+    /// repository's host (#906). Mentions come from the server's own
+    /// `@me` search, so they do not.
+    pub const fn needs_viewer(self) -> bool {
+        matches!(self, Self::AssignedToMe | Self::CreatedByMe)
+    }
+
     pub fn accepts(self, issue: &Issue, viewer: Option<&str>, mentioned: &[u64]) -> bool {
         match self {
             Self::AssignedToMe => viewer.is_some_and(|viewer| {
@@ -661,6 +668,21 @@ mod issue_tests {
         assert_eq!(tab, IssueListTab::RecentlyUpdated);
         let issue = issue(7, "alice", &[], "2026-01-01T00:00:00Z");
         assert!(tab.accepts(&issue, None, &[]));
+    }
+
+    /// #906: the tabs flagged as needing a viewer are exactly the ones that
+    /// accept nothing without one — the ones the navigator must not show as
+    /// a confirmed (empty) answer while the host login is unknown.
+    #[test]
+    fn tabs_that_need_a_viewer_are_the_ones_blind_without_one() {
+        let mine = issue(5, "alice", &["alice"], "2026-01-01T00:00:00Z");
+        for tab in IssueListTab::ALL {
+            assert_eq!(
+                tab.needs_viewer(),
+                tab.accepts(&mine, Some("alice"), &[5]) && !tab.accepts(&mine, None, &[5]),
+                "{tab:?}"
+            );
+        }
     }
 }
 

@@ -85,8 +85,14 @@ impl KagiApp {
             make(3, "mentioned", "carol", &[], "2026-09-19T00:00:00Z"),
             make(4, "recent", "dave", &[], "2026-09-20T00:00:00Z"),
         ];
-        self.github_login = Some("alice".into());
         let ui = self.ui_mut().expect("fixture session");
+        // #906: "me" is the login on the Issues repository's host.
+        let base_repo = ui
+            .issue_composer
+            .base_repo
+            .get_or_insert_with(|| "github.com/example/fixture".into())
+            .clone();
+        let host = kagi_git::github::repo_host(&base_repo).map(str::to_owned);
         ui.github_issues_gen = ui.github_issues_gen.wrapping_add(1);
         ui.github_issues = issues;
         ui.github_issue_mentions = vec![3];
@@ -98,6 +104,7 @@ impl KagiApp {
         ui.github_issues_error = None;
         ui.github_issue_details
             .insert(4, make(4, "recent", "dave", &[], "2026-09-20T00:00:00Z"));
+        self.github_host_logins.insert(host, "alice".into());
         cx.notify();
     }
 
@@ -315,6 +322,21 @@ impl KagiApp {
             .any(|input| input.read(cx).focus_handle(cx).is_focused(window))
     }
 
+    /// Whether the composer's body editor (not the title) has focus (#909).
+    pub fn issue_body_focused_for_e2e(
+        &self,
+        number: Option<u64>,
+        window: &Window,
+        cx: &App,
+    ) -> bool {
+        self.ui()
+            .issue_composer
+            .editors
+            .get(&number)
+            .and_then(|editor| editor.body_input.as_ref())
+            .is_some_and(|input| input.read(cx).focus_handle(cx).is_focused(window))
+    }
+
     /// Settle the currently queued New Issue revision through the production
     /// completion path, without dispatching a GitHub write in this harness.
     pub fn settle_issue_write_for_e2e(&mut self, cx: &mut Context<Self>) {
@@ -441,5 +463,29 @@ impl KagiApp {
 
     pub fn selected_issue_for_e2e(&self) -> Option<u64> {
         self.ui().selected_github_issue
+    }
+}
+
+impl KagiApp {
+    /// Seed a completed Issues read for `base_repo` (`<host>/<owner>/<repo>`)
+    /// without touching any host login (#906).
+    pub fn seed_issue_list_for_e2e(
+        &mut self,
+        base_repo: &str,
+        issues: Vec<kagi_domain::github::Issue>,
+        cx: &mut Context<Self>,
+    ) {
+        let ui = self.ui_mut().expect("fixture session");
+        ui.issue_composer.base_repo = Some(base_repo.to_string());
+        ui.github_issues_gen = ui.github_issues_gen.wrapping_add(1);
+        ui.github_issues = issues;
+        ui.github_issue_mentions = Vec::new();
+        ui.github_issues_loaded = true;
+        ui.github_issues_loading = false;
+        ui.github_issues_loading_more = false;
+        ui.github_issues_cursor = None;
+        ui.github_issues_list.reset(0);
+        ui.github_issues_error = None;
+        cx.notify();
     }
 }

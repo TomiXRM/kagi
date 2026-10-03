@@ -228,6 +228,14 @@ mod file_menu_owner;
 mod issue_write_owner;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/ghe_viewer_login.rs"]
+mod ghe_viewer_login;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/platform_menu_scroll.rs"]
+mod platform_menu_scroll;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/field_picker_owner.rs"]
 mod field_picker_owner;
 
@@ -1596,12 +1604,24 @@ mod macos {
                 ),
             ),
             (
+                "platform_menu_scroll",
+                Box::new(crate::platform_menu_scroll::scenario_platform_menu_scroll),
+            ),
+            (
                 "field_picker_owner",
                 Box::new(crate::field_picker_owner::scenario_field_picker_owner),
             ),
             (
                 "issue_create_fields",
                 Box::new(crate::issue_create_fields::scenario_issue_create_fields),
+            ),
+            (
+                "ghe_viewer_login",
+                Box::new(crate::ghe_viewer_login::scenario_ghe_viewer_login),
+            ),
+            (
+                "ghe_viewer_login_closed_only",
+                Box::new(crate::ghe_viewer_login::scenario_ghe_viewer_login_closed_only),
             ),
             (
                 "workspace_mode_toolbar",

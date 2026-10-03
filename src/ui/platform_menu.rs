@@ -4,11 +4,14 @@
 //! `impl KagiApp` block. Behaviour and signatures are unchanged; a descendant
 //! module can access `KagiApp` privates, but `render_platform_menu_dropdown`
 //! is called from `render.rs` (a sibling), so it is `pub(crate)` here.
+//!
+//! Only the Linux/FreeBSD titlebar opens the dropdown (`platform_menu_open`),
+//! but the renderer compiles on every target so the macOS GUI runner can lay
+//! it out (#935); elsewhere it returns `None` because nothing opens it.
 
 use crate::ui::*;
 
 impl KagiApp {
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     pub(crate) fn render_platform_menu_dropdown(
         &self,
         cx: &mut Context<Self>,
@@ -24,23 +27,36 @@ impl KagiApp {
             cx.notify();
         });
 
+        // #935: the panel's height follows its rows (every theme, custom ones
+        // included, plus the language rows), so it is capped to the window
+        // and scrolls inside itself. The column holding it spans from just
+        // below the menu bar to a margin above the window's bottom edge;
+        // the panel takes at most that column's height. The column has no
+        // listeners, so clicks beside the panel still reach the backdrop.
         let mut panel = div()
+            .id("platform-menu-panel")
             // Block mouse events from reaching the dismiss backdrop below —
             // without this, pressing a menu item fires the backdrop's
             // on_mouse_down first, the menu unmounts, and the item's on_click
             // (down+up on the same element) never completes. Same fix as the
             // commit context menu (see context_menu.rs).
             .occlude()
-            .absolute()
-            .top_1()
-            .left(theme::scaled_px(8.0 + ix as f32 * 78.0))
-            .w(theme::scaled_px(260.0))
+            .w_full()
+            .max_h_full()
+            .overflow_y_scroll()
             .py_1()
             .rounded(theme::scaled_px(6.0))
             .border_1()
             .border_color(rgb(theme().selected))
             .bg(rgb(theme().panel))
             .shadow_lg();
+        // Tier A reads the panel's bounds (#935); compiled out of normal builds.
+        #[cfg(feature = "gui-e2e")]
+        {
+            panel = panel
+                .relative()
+                .child(super::e2e::measure_inside("platform-menu-panel"));
+        }
 
         // ADR-0085: one clickable command row, reused for plain `Command` nodes
         // and for the inline-expanded Theme/Language submenu rows.  `row_ix` is
@@ -74,7 +90,7 @@ impl KagiApp {
                 _ => None,
             };
 
-            div()
+            let row = div()
                 .id(SharedString::from(format!(
                     "platform-menu-item-{ix}-{row_ix}"
                 )))
@@ -106,8 +122,14 @@ impl KagiApp {
                             .text_color(rgb(theme().text_muted))
                             .child(SharedString::from(key)),
                     )
-                })
-                .into_any_element()
+                });
+            // Tier A reads the row's bounds (#935). Absolute and compiled out
+            // of normal builds, where it would be a flow child in the gap.
+            #[cfg(feature = "gui-e2e")]
+            let row = row.relative().child(super::e2e::measure_inside(format!(
+                "platform-menu-cmd-{id}"
+            )));
+            row.into_any_element()
         };
 
         // `row_ix` is a running counter (submenus expand to several rows, so it
@@ -169,23 +191,24 @@ impl KagiApp {
                         .bottom_0()
                         .on_mouse_down(MouseButton::Left, dismiss),
                 )
-                .child(panel)
+                .child(
+                    div()
+                        .absolute()
+                        .top_1()
+                        .bottom(theme::scaled_px(8.0))
+                        .left(theme::scaled_px(8.0 + ix as f32 * 78.0))
+                        .w(theme::scaled_px(260.0))
+                        .flex()
+                        .flex_col()
+                        .child(panel),
+                )
                 .into_any_element(),
         )
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-    pub(crate) fn render_platform_menu_dropdown(
-        &self,
-        _cx: &mut Context<Self>,
-    ) -> Option<gpui::AnyElement> {
-        None
     }
 }
 
 /// One View → Theme row of the dropdown: every registered theme, built-in or
 /// custom, switches by slug (#922).
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn theme_row(
     cx: &mut Context<KagiApp>,
     ix: usize,
@@ -197,13 +220,16 @@ fn theme_row(
     } else {
         entry.name.to_string()
     };
+    // Tier A reads the row's bounds (#935); compiled out of normal builds.
+    #[cfg(feature = "gui-e2e")]
+    let probe = super::e2e::measure_inside(format!("platform-menu-theme-{}", entry.slug));
     let slug = entry.slug;
     let invoke = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
         this.platform_menu_open = None;
         this.set_theme(&slug, cx);
         cx.stop_propagation();
     });
-    div()
+    let row = div()
         .id(SharedString::from(format!(
             "platform-menu-item-{ix}-{row_ix}"
         )))
@@ -217,12 +243,13 @@ fn theme_row(
         .cursor_pointer()
         .hover(|s| s.bg(rgb(theme().selected)))
         .on_click(invoke)
-        .child(div().flex_1().truncate().child(SharedString::from(label)))
-        .into_any_element()
+        .child(div().flex_1().truncate().child(SharedString::from(label)));
+    #[cfg(feature = "gui-e2e")]
+    let row = row.relative().child(probe);
+    row.into_any_element()
 }
 
-// Only the Linux/FreeBSD in-app menu calls this (✓ marker for the language).
-#[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
+// Only the in-app menu calls this (✓ marker for the language).
 fn platform_menu_label(id: &str, fallback: &str) -> String {
     if let Some(lang) = commands::lang_for_command(id) {
         if i18n::lang() == lang {
@@ -230,4 +257,18 @@ fn platform_menu_label(id: &str, fallback: &str) -> String {
         }
     }
     fallback.to_string()
+}
+
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    /// Open the in-app menu section labelled `label`, as its Linux/FreeBSD
+    /// head does on click (#935). `false` when no such section is drawn.
+    pub fn open_platform_menu_for_e2e(&mut self, label: &str, cx: &mut Context<Self>) -> bool {
+        let Some(ix) = commands::linux_menu_sections().position(|s| s.label == label) else {
+            return false;
+        };
+        self.platform_menu_open = Some(ix);
+        cx.notify();
+        true
+    }
 }

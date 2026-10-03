@@ -1183,12 +1183,11 @@ pub struct KagiApp {
     pub auto_fetch_ticker_alive: bool,
     transport_holds: operations::transport_hold::TransportHolds,
     pub github_ticker_alive: bool,
-    /// The authenticated `gh` login (fetched once by the ticker); drives the
-    /// sidebar's Mine / Review requested / Others grouping.
-    pub github_login: Option<String>,
-    /// The `gh` login on each repository host (`None`: `gh`'s default host),
-    /// for the New Issue composer's "posted as" (#904 review): an Enterprise
-    /// repository posts as that server's identity, not github.com's.
+    /// The `gh` login on each repository host (`None`: `gh`'s default host).
+    /// It is who "me" is for that host's repositories — the PR Mine / Review /
+    /// Assigned split, the Issues Assigned / Created tabs (#906) and the New
+    /// Issue composer's "posted as" (#904 review): an Enterprise repository's
+    /// identity is that server's, not github.com's.
     pub github_host_logins: std::collections::HashMap<Option<String>, String>,
     /// Hosts whose login read is in flight or has settled, so each is asked
     /// once; a failed read is forgotten so the next Issues read retries it.
@@ -1244,9 +1243,8 @@ pub struct KagiApp {
     /// Focus the next render applies (#812 / #817, `overlay_focus.rs`).
     pending_focus: Option<gpui::FocusHandle>,
     /// Linux/FreeBSD client-side menu dropdown currently open from the in-app
-    /// menu bar. Native macOS menus are provided by `cx.set_menus`, so this is
-    /// only read on Linux/FreeBSD (dead on other targets).
-    #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
+    /// menu bar. Native macOS menus are provided by `cx.set_menus`, so only the
+    /// Linux/FreeBSD titlebar sets this.
     pub platform_menu_open: Option<usize>,
     // ── W11-AVATAR: GitHub avatar images (ADR-0037) ──────────────
     /// Resolved-avatar cache (memory images + per-repo fetch guard), grouped
@@ -1405,7 +1403,6 @@ impl KagiApp {
             auto_fetch_ticker_alive: false,
             transport_holds: Default::default(),
             github_ticker_alive: false,
-            github_login: None,
             github_host_logins: Default::default(),
             github_host_login_requests: Default::default(),
             write_busy_op: None,

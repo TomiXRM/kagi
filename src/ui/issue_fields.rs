@@ -18,23 +18,41 @@ use super::theme::{self, theme};
 use super::KagiApp;
 
 impl KagiApp {
-    /// The `gh` login an Issue write from the active tab posts as: the one
-    /// on its repository's host. `None` until that host's login has been
-    /// read — the composer then claims nobody (#904 review).
+    /// The `gh` login an Issue write from the active tab posts as, and who
+    /// "me" is in its Issues list: the one on its repository's host. `None`
+    /// until that host's login has been read — the composer then claims
+    /// nobody (#904 review) and the list does not claim anything is yours
+    /// (#906).
     pub(super) fn issue_host_login(&self) -> Option<&str> {
-        let repo = self.ui().issue_composer.base_repo.as_deref()?;
-        self.github_host_logins
-            .get(&kagi_git::github::repo_host(repo))
-            .map(String::as_str)
+        self.host_login(self.ui().issue_composer.base_repo.as_deref()?)
     }
 
-    /// Read the `gh` login on the host of the Issues repository, once per
-    /// host (#904 review). `gh issue create -R <host>/<owner>/<repo>` posts as
-    /// that host's identity, which on an Enterprise server is not the
-    /// window-global github.com login. A failed read claims nobody and is
-    /// asked again on the next Issues read.
-    pub(super) fn ensure_issue_host_login(&mut self, base_repo: &str, cx: &mut Context<Self>) {
+    /// The host of the active tab's Issues repository: where its logins'
+    /// avatars live (#906). `None` until the repository identity is read.
+    pub(super) fn issue_repo_host(&self) -> Option<&str> {
+        kagi_git::github::repo_host(self.ui().issue_composer.base_repo.as_deref()?)
+    }
+
+    /// The `gh` login on the host of `base_repo` (`<host>/<owner>/<repo>`),
+    /// or `None` until [`Self::ensure_host_login`] has read it. A login is
+    /// only an identity on its own server: an Enterprise repository's "me" is
+    /// not the github.com account (#906). A linear scan of the few hosts
+    /// seen so far, so a renderer can ask per row without allocating.
+    pub(super) fn host_login(&self, base_repo: &str) -> Option<&str> {
         let host = kagi_git::github::repo_host(base_repo);
+        self.github_host_logins
+            .iter()
+            .find(|(known, _)| known.as_deref() == host)
+            .map(|(_, login)| login.as_str())
+    }
+
+    /// Read the `gh` login on the host of `base_repo`, once per host (#904
+    /// review, #906). `gh issue create -R <host>/<owner>/<repo>` posts as that
+    /// host's identity, and the Issues / PR lists judge "mine" by it; on an
+    /// Enterprise server it is not the github.com login. A failed read claims
+    /// nobody and is asked again on the next PR or Issues read.
+    pub(super) fn ensure_host_login(&mut self, base_repo: &str, cx: &mut Context<Self>) {
+        let host = kagi_git::github::repo_host(base_repo).map(str::to_owned);
         if !self.github_host_login_requests.insert(host.clone()) {
             return;
         }
@@ -48,6 +66,12 @@ impl KagiApp {
                 match login {
                     Some(login) => {
                         app.github_host_logins.insert(host, login);
+                        // The PR Mine / Review split is cached per session by
+                        // epoch; every attached session may hold rows on this
+                        // host, including an inactive one.
+                        for ui in app.ui.values_mut() {
+                            ui.github_prs_epoch = ui.github_prs_epoch.wrapping_add(1);
+                        }
                     }
                     None => {
                         app.github_host_login_requests.remove(&host);

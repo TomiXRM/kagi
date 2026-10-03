@@ -24,7 +24,10 @@ export default defineConfig({
     },
   },
   webServer: {
-    command: `python3 -m http.server 8899 -d ${JSON.stringify(DIST)}`,
+    // The dist path goes in `cwd`, not the command: the command runs in a
+    // shell, which would expand a `$` or backtick in the checkout path.
+    command: "python3 -m http.server 8899",
+    cwd: DIST,
     url: "http://127.0.0.1:8899",
     reuseExistingServer: true,
   },

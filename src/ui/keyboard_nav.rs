@@ -17,8 +17,9 @@
 //! holds the focus, and the tab list's bindings are scoped to its own key
 //! context.
 //!
-//! A row list (a virtualized `gpui::list`) is one Tab stop too: the row last
-//! focused while it is drawn, else the first row on screen. ↑/↓ move to the
+//! A row list (a virtualized `gpui::list` or `uniform_list`, see
+//! [`RowScroll`]) is one Tab stop too: the row last focused while it is
+//! drawn, else the first row on screen. ↑/↓ move to the
 //! neighbouring row, scrolling it into view first (#959). Its rows' focus
 //! handles live in app state by each row's key, so a row scrolled out of view
 //! keeps its handle, and a focused row that leaves the list (a filter, a read
@@ -36,7 +37,8 @@ use std::rc::{Rc, Weak};
 
 use gpui::{
     actions, prelude::*, rgb, transparent_black, App, ClickEvent, Div, FocusHandle, KeyBinding,
-    KeyDownEvent, ListState, Role, SharedString, Stateful, Window,
+    KeyDownEvent, ListState, Role, ScrollStrategy, SharedString, Stateful, UniformListScrollHandle,
+    Window,
 };
 
 use super::theme::theme;
@@ -419,6 +421,45 @@ impl TabList {
 /// a frame that draws the same rows hands the same `Rc` back.
 pub(crate) type RowKeys = Rc<[(String, usize)]>;
 
+/// How a row list scrolls and what it drew last frame: a `gpui::list`'s
+/// [`ListState`], or a `uniform_list`'s handle with the range of items its
+/// processor was last asked for (#981) — a `uniform_list` keeps no bounds per
+/// item, but it draws exactly the items it asks for. Cheap to clone.
+#[derive(Clone)]
+pub(crate) enum RowScroll {
+    List(ListState),
+    Uniform(UniformListScrollHandle, std::ops::Range<usize>),
+}
+
+impl RowScroll {
+    /// The entry at the top of the list's viewport.
+    fn top(&self) -> usize {
+        match self {
+            Self::List(state) => state.logical_scroll_top().item_ix,
+            // The first item it drew is the one at the top (the handle's own
+            // `logical_scroll_top_index` is test-only in gpui).
+            Self::Uniform(_, drawn) => drawn.start,
+        }
+    }
+
+    /// Whether entry `ix` was drawn last frame.
+    fn drawn(&self, ix: usize) -> bool {
+        match self {
+            Self::List(state) => state.bounds_for_item(ix).is_some(),
+            Self::Uniform(_, drawn) => drawn.contains(&ix),
+        }
+    }
+
+    /// Scroll entry `ix` into view, as little as it takes.
+    fn reveal(&self, ix: usize) {
+        match self {
+            Self::List(state) => state.scroll_to_reveal_item(ix),
+            // Not strict: it scrolls only when the item is out of view.
+            Self::Uniform(handle, _) => handle.scroll_to_item(ix, ScrollStrategy::Top),
+        }
+    }
+}
+
 /// The focus handles of one virtualized list's rows and the row last focused
 /// (#959). The handles are made again only when the rows change — not on
 /// every frame (#937) — and a row keeps its handle while its key stays.
@@ -448,7 +489,7 @@ impl RowFocus {
     pub(crate) fn rows(
         &mut self,
         keys: RowKeys,
-        state: &ListState,
+        scroll: &RowScroll,
         fallback: Option<&FocusHandle>,
         window: &mut Window,
         cx: &mut App,
@@ -509,7 +550,7 @@ impl RowFocus {
         // rows or before the next ones. The first row at or after the top
         // entry is the only candidate — a later one is further down — and it
         // counts only if drawn.
-        let top = state.logical_scroll_top().item_ix;
+        let top = scroll.top();
         let first = self.keys.partition_point(|&(_, ix)| ix < top);
         // On the frame the rows were rebuilt the list has no bounds yet (it
         // was reset or put back at its scroll top, and lays the rows out in
@@ -521,7 +562,7 @@ impl RowFocus {
         if rebuild {
             window.request_animation_frame();
         }
-        let drawn = |at: usize| !rebuild && state.bounds_for_item(self.keys[at].1).is_some();
+        let drawn = |at: usize| !rebuild && scroll.drawn(self.keys[at].1);
         // The row holding the focus — itself or a control inside it, its
         // Open button (#961 review) — scrolled out of the drawn range by the
         // wheel is unmounted: no ↑/↓, no ring. Not on the frame the focus
@@ -550,7 +591,7 @@ impl RowFocus {
             rows: self.keys.clone(),
             handles: self.handles.clone(),
             stop,
-            state: state.clone(),
+            scroll: scroll.clone(),
         }
     }
 
@@ -607,13 +648,28 @@ impl RowFocus {
     }
 
     /// The key of the row holding the focus, if any.
-    #[cfg(feature = "gui-e2e")]
-    pub(crate) fn focused(&self, window: &Window) -> Option<String> {
+    pub(crate) fn focused(&self, window: &Window) -> Option<&str> {
         self.keys
             .iter()
             .zip(self.handles.iter())
             .find(|(_, handle)| handle.is_focused(window))
-            .map(|((key, _), _)| key.clone())
+            .map(|((key, _), _)| key.as_str())
+    }
+
+    /// Focus the first row, scrolling it into view (a pane opened from the
+    /// keyboard, #981). False when there is no row.
+    pub(crate) fn focus_first(
+        &self,
+        scroll: &RowScroll,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let Some((handle, (_, ix))) = self.handles.first().zip(self.keys.first()) else {
+            return false;
+        };
+        scroll.reveal(*ix);
+        handle.focus(window, cx);
+        true
     }
 
     /// Focus the row `key` (GUI E2E: Tier A cannot press Tab into a list
@@ -631,7 +687,7 @@ pub(crate) struct RowList {
     rows: RowKeys,
     handles: Rc<[FocusHandle]>,
     stop: Option<usize>,
-    state: ListState,
+    scroll: RowScroll,
 }
 
 impl RowList {
@@ -653,13 +709,13 @@ impl RowList {
             .tab_index(0)
             .tab_stop(self.stop == Some(at));
         let step = |delta: isize| {
-            let (rows, handles, state) =
-                (self.rows.clone(), self.handles.clone(), self.state.clone());
+            let (rows, handles, scroll) =
+                (self.rows.clone(), self.handles.clone(), self.scroll.clone());
             move |window: &mut Window, cx: &mut App| {
                 let Some(to) = at.checked_add_signed(delta).filter(|&to| to < rows.len()) else {
                     return;
                 };
-                state.scroll_to_reveal_item(rows[to].1);
+                scroll.reveal(rows[to].1);
                 handles[to].focus(window, cx);
             }
         };

@@ -132,113 +132,202 @@ pub(crate) fn modal_overlay(card: impl IntoElement) -> gpui::Div {
         )
 }
 
-/// Shared plan-confirmation card: title / current→predicted / warnings /
-/// blockers / recovery / error / Cancel + confirm buttons.  The confirm
-/// button is hidden whenever the plan has blockers.
-///
-/// ── Richer-card helpers (accent-gated; Pull/Push/Create-Branch today) ────
-///
-/// One current/predicted comparison block. Plain (`accent: None`) matches
-/// every modal's original two-line layout exactly. The icon-badge accent
-/// path wraps both states in a tinted card with a centred accent-coloured
-/// arrow between them instead of a "→ Predicted" text label. Also used by
-/// the bespoke create-branch card (user request 2026-07-23: match Pull's
-/// state-transition display instead of a separate one-off layout).
+/// Shared plan comparison helpers. Summary strings can also carry operation
+/// prose, so turn only known status forms into labeled chips and preserve all
+/// other descriptions verbatim in fallback chips.
+pub(crate) fn plan_state_chip(text: &str, icon: &'static str, color: u32) -> gpui::AnyElement {
+    let (bg, border, foreground) = theme::badge_style(color);
+    div()
+        .flex_shrink_0()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_1()
+        .whitespace_nowrap()
+        .px_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(gpui::rgba(border))
+        .bg(gpui::rgba(bg))
+        .text_color(rgb(foreground))
+        .when(icon.is_empty(), |chip| {
+            chip.child(SharedString::from("\u{2713}"))
+        })
+        .when(!icon.is_empty(), |chip| {
+            chip.child(
+                gpui::svg()
+                    .path(icon)
+                    .flex_shrink_0()
+                    .w(theme::scaled_px(11.))
+                    .h(theme::scaled_px(11.))
+                    .text_color(rgb(foreground)),
+            )
+        })
+        .child(SharedString::from(text.to_owned()))
+        .into_any_element()
+}
+
+fn plan_head_chips(head: &str) -> Vec<gpui::AnyElement> {
+    let t = current_theme();
+    if let Some(rest) = head.strip_prefix("branch: ") {
+        // A branch name contains no whitespace. Everything after it is plan
+        // detail (tip, tracking, merge summary, etc.) and must remain visible.
+        let name_end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        if name_end > 0 {
+            let mut chips = vec![plan_state_chip(
+                &rest[..name_end],
+                "icons/laptop.svg",
+                t.color_head,
+            )];
+            if name_end < rest.len() {
+                chips.push(plan_state_chip(
+                    &rest[name_end..],
+                    "icons/circle-dot.svg",
+                    t.color_head,
+                ));
+            }
+            return chips;
+        }
+    }
+    let (icon, color) = if head.starts_with("detached: ") {
+        ("icons/git-compare.svg", t.color_head)
+    } else if head.starts_with("unborn (") || head == "unborn" {
+        ("icons/git-branch.svg", t.color_branch)
+    } else if head == "HEAD" || head.starts_with("HEAD ") {
+        ("icons/git-branch.svg", t.color_head)
+    } else if head.starts_with("stash@{") || head.starts_with("stash: ") {
+        ("icons/inbox.svg", t.color_tag)
+    } else if head.starts_with("remote: ") {
+        ("icons/cloud.svg", t.color_remote)
+    } else {
+        ("icons/circle-dot.svg", t.color_head)
+    };
+    vec![plan_state_chip(head, icon, color)]
+}
+
+pub(crate) fn plan_status_chips(dirty: &str) -> Vec<gpui::AnyElement> {
+    let t = current_theme();
+    if dirty == "clean" {
+        return vec![plan_state_chip("", "", t.color_success)];
+    }
+    // Count-only forms are emitted by status_summary_display. In particular,
+    // "3 conflicted file(s) (resolve in Conflict Mode)" is NOT just a count:
+    // preserve the entire predicted description instead of losing the caveat.
+    let mut parts = Vec::new();
+    for part in dirty.split(", ") {
+        let Some((count, kind)) = part.split_once(' ') else {
+            return vec![plan_state_chip(dirty, "icons/circle-dot.svg", t.text_sub)];
+        };
+        if count.parse::<usize>().is_err() {
+            return vec![plan_state_chip(dirty, "icons/circle-dot.svg", t.text_sub)];
+        }
+        let (icon, color) = match kind {
+            "staged" => ("icons/plus.svg", t.color_success),
+            "modified" => ("icons/square-pen.svg", t.color_warning),
+            "untracked" => ("icons/file-text.svg", t.color_tag),
+            "conflicted" => ("icons/git-merge.svg", t.color_blocker),
+            _ => return vec![plan_state_chip(dirty, "icons/circle-dot.svg", t.text_sub)],
+        };
+        parts.push(plan_state_chip(part, icon, color));
+    }
+    parts
+}
+
+fn plan_state(head: &str, dirty: &str, id: &'static str, label: &str) -> gpui::AnyElement {
+    let full = SharedString::from(format!("{label}: {head} [{dirty}]"));
+    div()
+        .id(id)
+        .role(gpui::Role::Group)
+        .aria_label(full.clone())
+        .tooltip(move |window, cx| {
+            gpui_component::tooltip::Tooltip::new(full.clone()).build(window, cx)
+        })
+        .relative()
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_xs()
+                        .text_color(rgb(current_theme().text_label))
+                        .child(SharedString::from(label)),
+                )
+                .children(plan_head_chips(head)),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .children(plan_status_chips(dirty)),
+        )
+        .when(cfg!(feature = "gui-e2e"), |state| {
+            state.child(super::e2e::measure_inside(if label == "CURRENT" {
+                "plan-state-current"
+            } else {
+                "plan-state-predicted"
+            }))
+        })
+        .into_any_element()
+}
 pub(crate) fn render_current_predicted(
     plan: &OperationPlan,
     accent: Option<PlanCardAccent>,
 ) -> gpui::AnyElement {
-    let state_line = |head: &str, dirty: &str| {
-        div()
-            .flex()
-            .flex_row()
-            .items_start()
-            .flex_wrap()
-            .gap_2()
-            .text_sm()
-            .when(modal_compact(), |row| row.text_xs().gap_1())
-            .child(
-                // #454: the row wraps (`flex_wrap`) and the head may shrink to
-                // the line width (`flex_shrink` + `min_w(0)`), so a long head
-                // wraps inside the card instead of running out of it.
-                // `flex_1` here is wrong: basis 0 wants zero width and the
-                // text ends up one character per line — measured, not guessed.
-                div()
-                    .flex_shrink(1.)
-                    .min_w(gpui::px(0.))
-                    .text_color(rgb(current_theme().text_main))
-                    .child(SharedString::from(head.to_string())),
-            )
-            .child(
-                // Shrinkable too: on a predicted state this "[...]" carries the
-                // whole transition ("[旧 <sha> → 新 <new> (…)]"), so pinning it
-                // with `flex_shrink_0` is what pushed it out of the card.
-                div()
-                    .flex_shrink(1.)
-                    .min_w(gpui::px(0.))
-                    .text_color(rgb(current_theme().text_sub))
-                    .child(SharedString::from(format!("[{}]", dirty))),
-            )
-    };
-    match accent {
-        None => div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(current_theme().text_label))
-                    .child(SharedString::from("Current")),
-            )
-            .child(state_line(&plan.current.head, &plan.current.dirty))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(current_theme().text_label))
-                    .child(SharedString::from("\u{2192} Predicted")),
-            )
-            .child(state_line(&plan.predicted.head, &plan.predicted.dirty))
-            .into_any_element(),
-        Some((_, color)) => div()
-            .rounded_md()
-            // Same theme-independent tint as the section panels: `surface`
-            // equals `modal` in several themes (Apple Dark et al), which left
-            // this block invisible on the card.
-            .bg(gpui::rgba(theme::panel_style().0))
-            .px_3()
-            .py_2()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .when(modal_compact(), |column| column.px_2().py_1().gap_0p5())
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(current_theme().text_label))
-                    .child(SharedString::from("CURRENT")),
-            )
-            .child(state_line(&plan.current.head, &plan.current.dirty))
-            .when(!modal_compact(), |column| {
-                column.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .py(theme::scaled_px(1.))
-                        .text_color(rgb(color))
-                        .child(SharedString::from("\u{2193}")),
-                )
-            })
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(current_theme().text_label))
-                    .child(SharedString::from("PREDICTED")),
-            )
-            .child(state_line(&plan.predicted.head, &plan.predicted.dirty))
-            .into_any_element(),
-    }
+    let color = accent
+        .map(|(_, color)| color)
+        .unwrap_or(current_theme().color_branch);
+    div()
+        .min_w(gpui::px(0.))
+        .id("plan-state-comparison")
+        .w_full()
+        .rounded_md()
+        .bg(gpui::rgba(theme::panel_style().0))
+        .text_sm()
+        .when(modal_compact(), |row| row.text_xs())
+        .px_3()
+        .py_2()
+        .when(modal_compact(), |row| row.px_2().py_1())
+        // Keep even long non-branch plan descriptions readable without
+        // squeezing the modal or truncating the safety context.
+        .overflow_x_scroll()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_2()
+        .when(modal_compact(), |row| row.gap_1())
+        .child(plan_state(
+            &plan.current.head,
+            &plan.current.dirty,
+            "plan-current-state",
+            "CURRENT",
+        ))
+        .child(
+            div()
+                .relative()
+                .flex_shrink_0()
+                .text_color(rgb(color))
+                .child(SharedString::from("\u{2192}"))
+                .when(cfg!(feature = "gui-e2e"), |arrow| {
+                    arrow.child(super::e2e::measure_inside("plan-state-arrow"))
+                }),
+        )
+        .child(plan_state(
+            &plan.predicted.head,
+            &plan.predicted.dirty,
+            "plan-predicted-state",
+            "PREDICTED",
+        ))
+        .into_any_element()
 }
 
 /// Shared scaffold for the plan-confirmation modals. Builds the cancel/confirm

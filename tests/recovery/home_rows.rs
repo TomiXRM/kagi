@@ -201,5 +201,38 @@ pub fn scenario_home_rows(cx: &mut VisualTestAppContext) {
     keys(cx, window, "down");
     assert_eq!(row(cx, &app, window).as_deref(), Some("MyPrs:acme/r00#1"));
 
+    // Another account's read replaces the list on screen with Loading, and
+    // the read fails (#961 review): no row is drawn any more, so a focused
+    // row hands the focus to the window rather than keep it out of sight.
+    app.update(cx, |app, cx| app.set_home_pane(HomePane::Repos, cx));
+    cx.run_until_parked();
+    focus_row(cx, &app, window, "repo:acme/r00");
+    assert_eq!(row(cx, &app, window).as_deref(), Some("repo:acme/r00"));
+    let _other = OfflineGh::with_script(
+        "#!/bin/sh\ncase \"$1 $2 $3\" in\n\
+         'config get user') echo someone-else ;;\n\
+         'api user/orgs '*) ;;\n\
+         'search '*) echo '[]' ;;\n\
+         *) echo 'gh: offline' >&2; exit 1 ;;\nesac\n",
+    );
+    app.update(cx, |app, cx| app.reload_home_github(cx));
+    wait_for(cx, &app, "the failed read", |app| {
+        matches!(
+            app.home_github.repos,
+            kagi::ui::home_github::GithubRepos::Failed(_)
+        )
+    });
+    assert_eq!(row(cx, &app, window), None);
+    let root = cx
+        .update_window(window, |_, window, cx| {
+            window.draw(cx).clear();
+            app.read(cx)
+                .root_focus
+                .as_ref()
+                .is_some_and(|focus| focus.is_focused(window))
+        })
+        .unwrap();
+    assert!(root, "the list's focused row hands the focus to the window");
+
     unmount(cx, app, window);
 }

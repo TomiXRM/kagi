@@ -399,5 +399,45 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
         "Space brings Home to the front"
     );
 
+    // With a repository in front and Home behind it, the + after the tabs
+    // would bring Home forward when pressed: the Tab that leaves the strip
+    // must not stop on it (#961 review).
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(0, window, cx))
+    })
+    .unwrap();
+    keys(cx, window, "enter");
+    assert!(cx.read(|cx| app.read(cx).home.is_some_and(|home| !home.front)));
+    // Tab out and Shift+Tab back: the strip's stop is the tab in front.
+    tab(cx, window, true);
+    tab(cx, window, false);
+    assert_eq!(
+        strip_focus(cx),
+        Some(0),
+        "the strip's stop is the tab in front"
+    );
+    tab(cx, window, true);
+    assert_eq!(strip_focus(cx), None, "one Tab leaves the strip");
+    keys(cx, window, "enter");
+    assert!(
+        cx.read(|cx| app.read(cx).home.is_some_and(|home| !home.front)),
+        "the Tab after the strip is not the + (Enter would bring Home forward)"
+    );
+
+    // Closing the tab whose cell holds the focus hands it to the window
+    // instead of leaving it on a cell nothing draws (#961 review).
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(repos, window, cx))
+    })
+    .unwrap();
+    assert_eq!(strip_focus(cx), Some(repos), "precondition: Home's cell");
+    app.update(cx, |app, cx| app.close_home_tab(cx));
+    cx.run_until_parked();
+    assert_eq!(strip_focus(cx), None);
+    assert!(
+        root_focused(cx, &app, window),
+        "the closed Home tab's focus goes to the window"
+    );
+
     unmount(cx, app, window);
 }

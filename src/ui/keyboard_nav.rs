@@ -137,6 +137,28 @@ impl TabFocus {
         handles[..slots].to_vec()
     }
 
+    /// Only the first `slots` cells are drawn now (a tab closed, or the list
+    /// is gone): a later cell holding the focus would keep it with nothing
+    /// on screen tracking it, out of reach of the window's keys, so the focus
+    /// goes to `fallback`.
+    pub(crate) fn release_from(
+        &self,
+        slots: usize,
+        fallback: Option<&FocusHandle>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let lost = self
+            .handles
+            .borrow()
+            .iter()
+            .skip(slots)
+            .any(|handle| handle.is_focused(window));
+        if let Some(fallback) = fallback.filter(|_| lost) {
+            fallback.focus(window, cx);
+        }
+    }
+
     /// Focus the cell in `slot` (GUI E2E: Tier A cannot press Tab).
     #[cfg(feature = "gui-e2e")]
     pub(crate) fn focus(&self, slot: usize, window: &mut Window, cx: &mut App) {
@@ -380,6 +402,23 @@ impl RowFocus {
             stop,
             state: state.clone(),
         }
+    }
+
+    /// The list is not drawn (still loading, or failed): no row is left, so
+    /// a focused row hands the focus to `fallback`, and the rows are
+    /// forgotten.
+    pub(crate) fn release(
+        &mut self,
+        fallback: Option<&FocusHandle>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if self.handles.iter().any(|handle| handle.is_focused(window)) {
+            if let Some(fallback) = fallback {
+                fallback.focus(window, cx);
+            }
+        }
+        *self = Self::default();
     }
 
     /// The key of the row holding the focus, if any.

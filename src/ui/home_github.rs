@@ -728,6 +728,16 @@ impl KagiApp {
             .as_ref()
             .map(|f| f.read(cx).value().trim().to_lowercase())
             .unwrap_or_default();
+        // Repositories still loading, or failed: the list is not drawn, so a
+        // row that holds the focus hands it to the window (#961 review).
+        if self.home_github.work.pane == super::home_work::HomePane::Repos
+            && !matches!(self.home_github.repos, GithubRepos::Loaded { .. })
+        {
+            let fallback = self.root_focus.clone();
+            self.home_github
+                .row_focus
+                .release(fallback.as_ref(), window, cx);
+        }
         let body = match (&self.home_github.repos, self.home_github.work.pane) {
             (_, super::home_work::HomePane::Prs | super::home_work::HomePane::Issues) => {
                 self.render_github_list(query, window, cx)

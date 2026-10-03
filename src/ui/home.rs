@@ -171,7 +171,7 @@ impl KagiApp {
             // With no tab there is no strip, but the (transparent, themed)
             // title bar still needs its band: the traffic lights are drawn
             // over it and it is what drags the window.
-            .child(match self.render_tab_strip(cx) {
+            .child(match self.render_tab_strip(window, cx) {
                 Some(strip) => strip,
                 None => div()
                     .w_full()

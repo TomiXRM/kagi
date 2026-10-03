@@ -127,6 +127,7 @@ mod home_tab;
 #[cfg(target_os = "macos")]
 #[path = "recovery/home_github.rs"]
 mod home_github;
+#[cfg(target_os = "macos")]
 #[path = "recovery/home_list_place.rs"]
 mod home_list_place;
 #[cfg(target_os = "macos")]

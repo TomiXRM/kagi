@@ -680,7 +680,9 @@ The current suite covers:
   lands on the Home tab and the next leaves the strip (a tab's × is not a
   stop); → only moves (`tab_strip_focused_for_e2e`, Home stays in front),
   Enter switches to the repository, End reaches Home and Space brings it
-  back. For Tier B: Tab
+  back; with a repository in front, the Tab that leaves the strip is not the
+  + (Enter there leaves Home behind), and closing Home while its cell holds
+  the focus gives the focus to the window. For Tier B: Tab
   to each list, check the ring appears only for keyboard focus, and read the
   roles in Accessibility Inspector.
 - Rows of Home's list (`KAGI_GUI_E2E_ONLY=home_rows`,
@@ -690,7 +692,10 @@ The current suite covers:
   and scrolls it into view; ↑/↓ stop at the ends; Tab out and Shift+Tab back
   returns to `r40`; a filter that drops the focused row moves the focus to
   the first row left, and one that drops every row to the window; with the
-  search field focused ↓ stays the field's; PR rows step the same way. Rows
+  search field focused ↓ stays the field's; PR rows step the same way; a
+  second stand-in `gh` for another account whose list read fails turns the
+  list into Loading then Failed, and the focused row's focus goes to the
+  window. Rows
   are focused through `focus_home_row_for_e2e` and read through
   `home_row_focused_for_e2e` (keys `repo:<owner>/<name>`,
   `<kind>:<owner>/<name>#<n>`).

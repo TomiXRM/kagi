@@ -841,7 +841,20 @@ impl KagiApp {
 
     /// Render the repository tab strip (above the header toolbar).  Returns
     /// `None` when no tabs are open (Welcome screen is shown instead).
-    pub fn render_tab_strip(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+    pub fn render_tab_strip(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        // A closed tab's cell (Home's, the last repository's) that still
+        // holds the focus hands it to the window (#961 review).
+        let drawn = if self.tabs.is_empty() {
+            0
+        } else {
+            self.tabs.len() + usize::from(self.home.is_some())
+        };
+        self.tab_strip_focus
+            .release_from(drawn, self.root_focus.as_ref(), window, cx);
         if self.tabs.is_empty() {
             return None;
         }
@@ -1006,6 +1019,8 @@ impl KagiApp {
             .ghost()
             .small()
             .tooltip(Msg::HomeTabTitle.t())
+            // The strip is one Tab stop (#961 review); ⌘T opens Home.
+            .tab_stop(false)
             .on_click(plus);
 
         strip = strip.child(super::e2e::measure_control("tab-add", plus_btn));

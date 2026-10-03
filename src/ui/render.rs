@@ -619,7 +619,7 @@ impl Render for KagiApp {
             // any command whose handler is absent — the ADR-0029 disabled model.
             .map(|el| self.register_menu_actions(el, cx))
             // ── W4-TABS: repository tab strip (above the header toolbar) ──
-            .children(self.render_tab_strip(cx))
+            .children(self.render_tab_strip(window, cx))
             // ── Header slot ──────────────────────────────────
             // ADR-0013: pass HEAD commit summary for Undo label (first row = HEAD).
             .child(self.render_header_slot(toolbar_state, status_summary, cx))

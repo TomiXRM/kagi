@@ -81,13 +81,19 @@ func sendToCursor(_ message: String, pid: pid_t) -> Bool {
 }
 
 /// Start `pidcursor --pid <pid>` detached (its own session, no terminal), from
-/// the directory pidclick runs from.
+/// the directory pidclick runs from. Its stderr goes to `<pid>.log` beside its
+/// socket, so a daemon that cannot start leaves its reason there.
 func startCursor(pid: pid_t) -> Bool {
     let directory = (URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().path as NSString)
         .deletingLastPathComponent
     let daemon = (directory as NSString).appendingPathComponent("pidcursor")
     guard FileManager.default.isExecutableFile(atPath: daemon) else {
         warn("no cursor: \(daemon) is not built (swiftc scripts/pidcursor.swift -o \(daemon)); --no-cursor silences this")
+        return false
+    }
+    let socketDirectory = cursorSocketDirectory()
+    if mkdir(socketDirectory, 0o700) != 0 && errno != EEXIST {
+        warn("no cursor: cannot create \(socketDirectory): \(String(cString: strerror(errno)))")
         return false
     }
     var attributes: posix_spawnattr_t?
@@ -99,19 +105,25 @@ func startCursor(pid: pid_t) -> Bool {
     defer { posix_spawn_file_actions_destroy(&files) }
     posix_spawn_file_actions_addopen(&files, 0, "/dev/null", O_RDONLY, 0)
     posix_spawn_file_actions_addopen(&files, 1, "/dev/null", O_WRONLY, 0)
-    posix_spawn_file_actions_addopen(&files, 2, "/dev/null", O_WRONLY, 0)
+    posix_spawn_file_actions_addopen(&files, 2, cursorLogPath(for: pid), O_WRONLY | O_CREAT | O_TRUNC, 0o600)
     let argv: [UnsafeMutablePointer<CChar>?] = [strdup(daemon), strdup("--pid"), strdup(String(pid)), nil]
     defer { argv.forEach { free($0) } }
     var child: pid_t = 0
-    guard posix_spawn(&child, daemon, &files, &attributes, argv, environ) == 0 else {
-        warn("no cursor: could not start \(daemon)")
+    let spawned = posix_spawn(&child, daemon, &files, &attributes, argv, environ)
+    guard spawned == 0 else {
+        warn("no cursor: could not start \(daemon): \(String(cString: strerror(spawned)))")
         return false
     }
     return true
 }
 
+func cursorLogPath(for pid: pid_t) -> String {
+    (cursorSocketDirectory() as NSString).appendingPathComponent("\(pid).log")
+}
+
 /// Show the agent cursor at `x`,`y` (window-relative) and wait for it to get
-/// there. Never fails the action: without a cursor the event is posted anyway.
+/// there. Never fails the action: without a cursor the event is posted anyway,
+/// after one line on stderr saying why there is none.
 func showCursor(_ operation: String, pid: pid_t, window: CGWindowID, x: Double, y: Double, extra: String = "") {
     let message = "\(operation) \(window) \(x) \(y)\(extra.isEmpty ? "" : " \(extra)")"
     var delivered = sendToCursor(message, pid: pid)
@@ -119,6 +131,11 @@ func showCursor(_ operation: String, pid: pid_t, window: CGWindowID, x: Double, 
         for _ in 0..<50 where !delivered {
             usleep(20_000)
             delivered = sendToCursor(message, pid: pid)
+        }
+        if !delivered {
+            let log = (try? String(contentsOfFile: cursorLogPath(for: pid), encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            warn("no cursor: pidcursor did not answer on \(cursorSocketPath(for: pid))\(log.isEmpty ? "" : ": \(log)")")
         }
     }
     if delivered { usleep(cursorGlideMicroseconds) }

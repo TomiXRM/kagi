@@ -111,8 +111,10 @@ func ownSocket() -> Int32 {
     return fd
 }
 
+/// A normal end: the socket and pidclick's log of this daemon go with it.
 func finish() -> Never {
     unlink(socketPath)
+    unlink((cursorSocketDirectory() as NSString).appendingPathComponent("\(targetPID).log"))
     exit(0)
 }
 

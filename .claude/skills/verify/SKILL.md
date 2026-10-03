@@ -917,8 +917,15 @@ where they act, so a person watching the run can follow it. pidclick sends one
 datagram to `<per-user temp dir>/pidcursor/<PID>.sock` and, when nothing listens,
 starts `pidcursor --pid <PID>` from its own directory (detached, its own
 session), then waits about 0.3 s for the cursor to glide there before it posts
-the event. A missing `pidcursor` binary prints one warning and the event is
-posted anyway. `key` and `type` do not move it.
+the event. When there is no cursor — `pidcursor` not built, or a daemon that
+could not start (its stderr is kept as `<PID>.log` beside the socket, e.g. a
+full disk) — pidclick prints one `pidclick: no cursor: …` line with the reason
+and posts the event anyway. `key` and `type` do not move it.
+
+Pick the window by size, not by order: Kagi also owns small layer-0 windows
+(title-bar strips, helpers), and the first one `windows --pid` lists is not
+necessarily the main window — `pidclick` then refuses it or the coordinates
+fall outside it. Take the largest layer-0 window for the PID.
 
 - **It never takes the foreground.** The daemon is an accessory app that never
   activates, with one click-through, non-activating panel the size of the

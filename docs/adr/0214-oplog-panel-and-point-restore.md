@@ -27,7 +27,7 @@ Kagi の操作はすべて oplog を通るが、UI では bottom panel の Opera
   | preview | 実行前に結果のグラフを描く | in-memory でグラフを再計算し、現在のグラフと並べる |
 
 - **confirm の内容**: 実行後グラフのプレビュー(正しく投影できる場合)、逆操作の一覧、「できないこと」(untracked の削除は戻らない等)の明示。
-- **#887: 未決を解消**。作業ツリー / index / untracked は戻さず、checkout や `--keep` 相当の自動調整はしない。未コミット変更の保全や競合判定を ref の一括更新と混ぜないため。stash は push / pop / drop の原状復元を対象外とし、既存の stash-drop recovery を利用する。**local tag は戻す**: `refs/tags/*` を記録し、lightweight は commit OID、annotated は peeled commit ではなく tag object の raw ref OID を CAS 付きで戻す。remote-tracking branch は fetch で再度上書きされるため対象外。`RefsOnly` は戻さない作業ツリー・index・untracked・stash・remote branch だけを短く列挙する。既存の Refused / Failed / Partial の扱いは記録どおり(何も動いていなければ `Some(空)`、Partial は実際に動いた分)。`Unknown` は記録しないのでまたげない(`docs/decisions.md`)。
+- **#887: 未決を解消**。作業ツリー / index / untracked は戻さず、checkout や `--keep` 相当の自動調整はしない。未コミット変更の保全や競合判定を ref の一括更新と混ぜないため。stash は push / pop / drop の原状復元を対象外とし、既存の stash-drop recovery を利用する。**local tag は戻す**: `refs/tags/*` の raw ref OID を記録する。lightweight tag は commit に加えて tree object も直接指せる。annotated tag は peeled commit ではなく tag object を指す。いずれも CAS 付きで戻す。remote-tracking branch は fetch で再度上書きされるため対象外。`RefsOnly` は戻さない作業ツリー・index・untracked・stash・remote branch だけを短く列挙する。既存の Refused / Failed / Partial の扱いは記録どおり(何も動いていなければ `Some(空)`、Partial は実際に動いた分)。`Unknown` は記録しないのでまたげない(`docs/decisions.md`)。
 
 ### 2. slice 1 の範囲: 読むだけ
 
@@ -61,12 +61,13 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - 他の worktree の HEAD は走査しない。replay-onto などで checkout 先の HEAD が追従しても、それは `refs/heads/<branch>` の差分から導ける(snapshot のコストを増やさない)。他の worktree の detached HEAD を記録しない決定は §7。
 - **型**: `RefMove { refname, old, new: Option<OID>, old_symbolic, new_symbolic }`。`None` は ref が無かったこと(作成 / 削除)、symbolic は HEAD のみ。entry 側は `Option<Vec<RefMove>>`。
   - `None`: 記録なし。この field より前に書かれた entry、記録しない経路(下記)、前後どちらかの ref を読めなかった場合。読めない時は誤った差分より記録なしを選ぶ。
-  - `Some(空)`: 記録した結果、何も動いていない。refused / 失敗 / no-op がこれにあたる。
+  - `Some(空)`: 記録した観測範囲では何も動いていない。refused / 失敗 / no-op がこれにあたる。#953: `ref_scope` が無い旧行は branches だけを読んだため、`Some(空)` でも tag が動いていた可能性がある。
 - **outcome に関わらず実際の差分を記録する**。失敗しても動かなければ空、Partial なら実際に動いた分になる。
 - **wire**: additive。
-  - 欠落・`null`・不正な値は `None` として読む。行ごと捨てず、「何も動いていない」とも読まない。
-  - `Some(空)` は空配列として書く。
-- **repository への書き込みはない**。増えるのは oplog の 1 field だけ。
+  - `ref_moves` の欠落・`null`・不正な値は `None` として読む。行ごと捨てず、「何も動いていない」とも読まない。`Some(空)` は空配列として書く。
+  - #953: tag も含めた前後観測、または local ref を動かさなかったことが確実な新しい entry にだけ `ref_scope: "heads-and-tags"` を書く。旧版の `ref_moves` は `refs/heads/*` のみだったため、field が無い・未知・不正なら `LegacyOrUnknown` とし、`Some(空)` でも tag 完備とみなさない。`Unknown` outcome と snapshot 失敗は引き続き `ref_moves: None`。
+  - panel は旧行の記録済み branch 差分を表示し続ける。一方、restore planner へ渡すときは `HeadsAndTags` 以外の `ref_moves` を `None` にして、既存の `NotRecorded` blocker で fail closed にする。backend の plan / preflight の両方が同じ判定を通る。旧ログを書き換えず、tag を見ていない行を含む復元を推定で通さない。
+- **repository への書き込みはない**。増えるのは oplog の `ref_moves` と `ref_scope`。
 - **パネルの表示**
   - `Some` の entry は記録を「記録」として即表示する(background read なし)。
   - `None` の entry は §3 の時刻窓を「推定」として表示する。見出しの色と文言で区別する。
@@ -100,7 +101,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
 
 ### 5. slice 2b: op revert / restore to point(2b-1 = backend、2b-2 = UI)
 
-- **根拠は記録だけ**: 復元先や逆適用対象は `ref_moves`(`Some`)だけを根拠にする。範囲内に `None` の entry(推定しか無い時点)があれば blocker にし、推定(§3)は使わない。
+- **根拠は記録だけ**: 復元先や逆適用対象は tag まで観測した `ref_moves`(`Some`、`ref_scope: "heads-and-tags"`)だけを根拠にする。範囲内に `None` の entry、または branch しか観測していない旧 entry があれば `NotRecorded` blocker にし、推定(§3)は使わない(#953)。
 - **Operation**: `Operation::OpRevert { entry_id }`(oplog 名 `op-revert`)と `Operation::RestoreToPoint { entry_id }`(`restore-to-point`)。
   - `Backend::run` を通すので、自分の ref の移動も記録される(§4)。戻した操作もさらに戻せる。
   - triple は `ops/oplog_restore.rs`。計画は pure な `kagi_domain::ref_restore::plan`。
@@ -152,7 +153,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - 範囲の記録が触れた local branch / tag ref が期待値に無い(RefMovedSince。記録外での移動)。動いて元に戻ったため戻さない ref も、今その値にあることを確かめる。
   - restore to point: 対象 entry の記録時刻より後に reflog の更新がある local branch のうち、範囲の記録が一度も動かしていないもの(RefChangedOutsideRecord。terminal での `git branch` など)。戻しても残るので、「その時点の branch 状態」にならない。
     - 限界: reflog を書かない設定(`core.logAllRefUpdates=false`)や、記録外で削除された branch(reflog ごと消える)は検出できない。対象 entry と同じ秒の記録外の変更も検出できない。tag reflog は通常無いため、**その範囲で記録されていない tag** の記録外作成・変更・削除はこの判定では検出できない。記録に現れた tag には raw OID の期待値照合を行い、plan→execute 間の変更も preflight で拒否する。
-  - 戻し先の commit / tag object が既に無い(TargetGone)。
+  - 戻し先の object(commit / tag / tree など)が既に無い(TargetGone)。
   - merge / rebase などが**いずれかの worktree で**進行中(OperationInProgress、path 付き)。その worktree が checkout している branch を動かすと、進行中の操作の前提の HEAD が変わる。
   - checkout 中の branch を削除することになる(DeletesCheckedOutBranch)。
 - **checkout 中の branch を動かす場合**: soft な移動(ADR-0084 の undo と同じ)で、その worktree の index とファイルはそのまま。
@@ -160,13 +161,13 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - 設計時は dirty を blocker にしていたが、2b-1 の実装中に変更した。checkout 中の branch を restore すると、その worktree は必ず「dirty」になる(restore 由来の差分)。dirty を blocker にすると、その restore を revert できなくなり「戻したことも戻せる」が成り立たない。
 - **plan / preflight / execute**
   - plan: 戻す内容を `restore <ref> <to|-> <expect|->` の行として載せる(`preview_commits`)。destructive で二段 confirm。warning に、ref ごとの逆操作(Moves)と「戻らないもの」(RefsOnly: 作業ツリー / index / untracked / stash / remote branch)を出す。
-  - preflight: 再計画して、行が確認したものと一致すること。移動する tag は commit と tag object の raw OID を区別して照合する。
-  - execute: 動かす全 ref の現在の raw OID を `refs/kagi/backups/<op>/<i>` に保持 → `git update-ref --stdin` の 1 トランザクション(`update` / `create` / `delete` に old 値を付け、git が再照合)→ 各 ref を verify。tag object を指す backup も oplog の append / retire で検証し、tag ref の recovery kind は `tag-ref`(branch tip と区別する)。
+  - preflight: 再計画して、行が確認したものと一致すること。移動する tag は peeled ではない raw OID を照合する(commit、tag、tree object のいずれでも同じ)。
+  - execute: 動かす全 ref の現在の raw OID を `refs/kagi/backups/<op>/<i>` に保持 → `git update-ref --stdin` の 1 トランザクション(`update` / `create` / `delete` に old 値を付け、git が再照合)→ 各 ref を verify。#953: lightweight tag が指す tree object も oplog の append / retire の両方で正当な recovery root として受け入れる(blob / commit / tag object の許可も維持)。tag ref の recovery kind は `tag-ref`(branch tip と区別する)。
   - 結果は `OperationOutcome::OplogRestore`。backup は recovery handle になる。
 - **2b-2(UI)**
   - panel の選択行に「この操作を取り消す…」「この時点まで戻す…」を出す。押すと panel が `OpLogPanelEvent::Restore(Operation)` を出し、app が active な repository で plan して card(`ActiveModal::OplogRestore`)を開く。
   - 記録なしの行(`ref_moves = None`)では両方 disabled にし、理由を出す。
-  - card は shared plan card で、warning の Moves(ref ごとの逆操作)と RefsOnly(戻らないもの)を描画する。script 行(`preview_commits`)は commit 一覧として描かない。
+  - card は shared plan card で、warning の Moves(ref ごとの逆操作)と RefsOnly(戻らないもの)を描画する。script 行(`preview_commits`)は commit 一覧として描かない。#953: `display_plan` では同じ説明を繰り返す recovery 段落を非表示にする。実行に使う元の plan の recovery、二段 confirm、warning と `git update-ref --stdin` の相当コマンドは維持する。
   - destructive なので、最初の confirm(button / Enter)で arm し、二度目で `run_recorded`。CLI / MCP には出さない(#888 で確定。理由は `docs/decisions.md`)。
   - **記録できなかった receipt は戻す対象にしない**: append に失敗した entry は panel 上で id が placeholder(0)になる。oplog の id は 0 始まりなので、0 は最初の実 entry も指しうる。そこで `entry_for_recording` は `Recording::Failed` の `ref_moves` を落として「記録なし」(推定表示・ボタン disabled)にする。
   - 別 repository の行を選んだ場合、plan は EntryNotLoaded(「この repository の操作にない」)になる。
@@ -184,10 +185,10 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - 消える行数 = 戻す前は到達し、戻した後は到達しない行。
 - **範囲**: 戻し先の行と、消える行が下がっていた行(その下の最初の残る行)を含む最小区間に、前後 4 行を足す。上限 40 行で、窓の外の行数は「… ほか N 行」と出す。lane は最大 8 本分の幅で切る(既存の graph 列と同じく clip)。
   - card の body はスクロールしない(modal の規則)ので、行は自分の高さ上限(`modal_list_max_h`)付きのスクロール領域に入れる。40 行 × 29px は通常の窓に収まらない(#883 review)。
-- **推定しない**: 戻し先 commit が読み込み済み rows に無い場合(削除した branch の作り直し、restore で branch から外れた commit への revert など)は `NotLoaded` とし、「プレビューできません」と明示する。復元そのものは可能。見出しも消える数を言わない中立な「戻した後のグラフ」にする(#883 review。以前は「消える commit はありません」と出て矛盾していた)。
-  - **#887 tag の投影を推定しない**: plan に変更する local tag が含まれたら、annotated tag の raw OID は commit ではなく tag object を指す場合があるので branch-only graph を描かない。`TagChange` として EN/JA の理由を card と Copy all に出し、消える commit 数も主張しない。restore の plan / preflight / 実行には影響しない。tag を動かさない branch-only の計画では従来どおり tag は固定の根。
-  - 文言で読み込みの手段を案内する(#888): commit 一覧が途中までなら「commit をさらに読み込む」で表示できることがある。どの branch・tag・remote branch からも届かない commit(削除した branch の先端など)は表示されない。祖先を card が読み足す案は、Tier B(#908)で頻度が分かるまで採らない。
-- **描画**: commit graph と同じ `graph_view::graph_canvas` を行ごとに使う。card への差し込みは `render_plan_modal_wrapper_extra`(`PlanCardExtra { element, clipboard }` を warning の後に描く)。`Copy all` は card のテキストにこの clipboard(見出し・各行・窓外の行数、または NotLoaded の理由)を足す(#883 review)。既存の `wrapper_styled` / `wrapper_staged` は `None` で委譲するので、呼び出し元の署名は変えない。この card は #872 の `ConfirmStage`(Unarmed / Armed)にも乗る。
+- **推定しない**: 戻し先 commit が読み込み済み rows に無い場合(削除した branch の作り直し、restore で branch から外れた commit への revert など)は `NotLoaded` とする。復元そのものは可能。見出しは消える数を言わない中立な「戻した後のグラフ」にし、カードと Copy all には「戻し先が読み込み済みの履歴外」という短い状態を 1 行で出す(#883、#953)。以前は「消える commit はありません」と出て矛盾していた。
+  - **#887 tag の投影を推定しない**: plan に変更する local tag が含まれたら、annotated tag の raw OID は commit ではなく tag object を指す場合があるので branch-only graph を描かない。`TagChange` としてカードと Copy all には「local tag が変更されるためプレビューなし」という短い状態を 1 行で出し、消える commit 数も主張しない(#953)。restore の plan / preflight / 実行には影響しない。tag を動かさない branch-only の計画では従来どおり tag は固定の根。
+  - `NotLoaded` は commit 一覧が途中までなら「commit をさらに読み込む」で表示できる場合もあるが、どの branch・tag・remote branch からも届かない commit(削除した branch の先端など)は表示されない(#888)。#953 ではこの長い説明をカードから外し、祖先を card が読み足す案も Tier B(#908)で頻度が分かるまで採らない。
+- **描画**: commit graph と同じ `graph_view::graph_canvas` を行ごとに使う。card への差し込みは `render_plan_modal_wrapper_extra`(`PlanCardExtra { element, clipboard }` を warning の後に描く)。`Copy all` は card のテキストにこの clipboard(見出し・各行・窓外の行数、またはプレビュー不可の短い状態)を足す(#883、#953)。既存の `wrapper_styled` / `wrapper_staged` は `None` で委譲するので、呼び出し元の署名は変えない。この card は #872 の `ConfirmStage`(Unarmed / Armed)にも乗る。
 - **focus**: card を開くとき root に focus を移す(`focus_root_for_modal`、plan modal の規約)。実ボタンのクリックは root(`track_focus`)が focus を受けるので、現状の入口では Enter / Escape は届いている。キーボードの入口が増えても届くようにするためのもの(#878 review)。
 - **コスト**: card を開くときに 1 回だけ計算して modal に保持する。到達計算は O(rows)、layout は O(rows × lanes)。描画は最大 40 行。
 
@@ -201,7 +202,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
    - **それより複雑な場合は手で戻す、と明記して分岐を増やさない**(#912 review)。複数回の HEAD の切替、同じ entry での branch の作成・削除(作成して checkout など)、rename、その後に削除された <from> などに個別の手順を出すと、案内そのものが状況の判定になり、誤った断定(「branch が無いだけなので restore で戻る」など)を生む。一度は `also_moved` / `from_gone` で分岐を足したが、この理由で削除した。
    - **切替が別の worktree で記録されていれば、その worktree を示す**(#912 review 3)。案内を active な worktree でそのまま実行すると、別の worktree を切り替えてしまう。`RecordedEntry.worktree`(entry の worktree、無ければ repo)を `HeadMoved.worktree` に載せ、restore を計画した worktree と同じなら消す。EN / JA の文言は「<path> の worktree で」を入れる。
 2. **detached HEAD は戻し先にしない**。restore は commit への checkout を行わない。1 と同じく、HEAD を detached にする・detached から戻す entry は HeadMoved。
-3. **他の worktree の detached HEAD は記録しない**。記録は op を実行した worktree の HEAD と `refs/heads/*` だけ(§4)。attached な HEAD は `refs/heads/<branch>` の差分から導ける。detached HEAD は restore が動かさないので、記録しても使い道がない。snapshot のコストも増やさない。
+3. **他の worktree の detached HEAD は記録しない**。記録は op を実行した worktree の HEAD と `refs/heads/*`、`refs/tags/*`(§4)。attached な HEAD は `refs/heads/<branch>` の差分から導ける。detached HEAD は restore が動かさないので、記録しても使い道がない。snapshot のコストも増やさない。
 
 要望が出たら別 issue で再検討する(checkout を含む restore の triple、dirty の扱い、往復のテストから決める)。
 
@@ -241,7 +242,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
 - slice 2b-2 の変異確認: arm を飛ばす → Tier A、`restorable` が記録を見ない → Tier A(disabled の行)、失敗 receipt の記録を残す → panel unit が落ちる。
 - slice 2c のテスト
   - domain unit(`restore_preview`): branch の削除はその branch 固有の commit だけを消す、tag / remote が保持する commit は残る、移動した branch は戻し先の行に付く、戻し先が範囲外なら NotLoaded、窓 = 変化 ± 4 行で上限 40。
-  - Tier A `oplog_restore_card` の拡張: 記録済みの commit を main に 1 つ足す。keep 時点への restore の card で、プレビュー行数 ≤ 40、main の移動先の行が戻し先 commit、消える行 = 1(その commit は描かれない)。restore 後に `git rev-list --count --branches` の減少数と一致する。描画 probe(`restore-preview` / `-removed-1` / `-moved-main-<sha>`)。revert card は、main の戻し先が reload 後の rows に無いので NotLoaded になり、「プレビューできません」が描画される。
+  - Tier A `oplog_restore_card` の拡張: 記録済みの commit を main に 1 つ足す。keep 時点への restore の card で、プレビュー行数 ≤ 40、main の移動先の行が戻し先 commit、消える行 = 1(その commit は描かれない)。restore 後に `git rev-list --count --branches` の減少数と一致する。描画 probe(`restore-preview` / `-removed-1` / `-moved-main-<sha>`)。revert card は、main の戻し先が reload 後の rows に無いので NotLoaded になり、短い状態を EN/JA の Copy all に 1 行だけ出す。#953 の Tier A は recovery 段落が非表示であることも検証する。
 - slice 2c の変異確認: restores を after に適用しない → domain 4 件と Tier A、card の extra を描かない → Tier A、NotLoaded の判定を外す → domain と Tier A が落ちる。
 - #884 のテスト
   - kagi-git integration(`oplog_conflict_ref_moves_test`)
@@ -297,6 +298,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
     - 消える数 = 2(deep の commit と main の最新。PR head の commit は残る)。
     - 行の箱が上限で止まり(33 行でも箱は行の合計より低い)、wheel で最後の行が箱の中に入る。
     - 実際の `Copy all`(`plan-card-copy` の probe)で、見出しと `main ←` が clipboard に入る。
-  - unit: NotLoaded の見出しは「消える数」を言わない、Copy all の文字列(見出し・移動・窓外の行数・NotLoaded の理由)、Operation Log の entry コピーに記録された ref 移動(OID 全桁、`none moved`、記録なしは行なし)。
+  - unit: NotLoaded の見出しは「消える数」を言わない、Copy all の graph 行(見出し・移動・窓外の行数)、Operation Log の entry コピーに記録された ref 移動(OID 全桁、`none moved`、記録なしは行なし)。NotLoaded の短い状態と recovery 段落の非表示は Tier A で EN/JA を確認する(#953)。
+  - #953 Codex P1: 実 tag 作成と、旧 wire の `ref_moves: []`(scope なし)を同じ repository に置き、OpRevert と RestoreToPoint の両方が `NotRecorded` で止まる。新 entry は `HeadsAndTags` を round-trip し、tag の往復は維持する。未知の scope も `LegacyOrUnknown` として読む。
   - kagi-git integration: absorb は作業 branch の移動を、merged branch の一括削除は削除(new = 無し)を `ref_moves` に記録する。
 - 変異確認: Solo の全行を使わない → 消える数 0、PR head を根にしない → 3、上限を外す → 箱が 957px、Copy all の clipboard を空にする → Tier A が落ちる。NotLoaded の見出しを `preview_heading(0)` に戻す・entry コピーから移動を外す → unit、absorb / 一括削除の記録を `None` にする → integration が落ちる。focus の変更は現状の入口では観測できないためテストなし(実ボタンのクリックで root が focus を得ることを確認した)。

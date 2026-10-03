@@ -32,6 +32,18 @@ pub(super) fn io(error: impl std::fmt::Display) -> GitError {
     GitError::Other(format!("oplog retention: {error}"))
 }
 
+fn valid_backup_kind(kind: Option<git2::ObjectType>) -> bool {
+    matches!(
+        kind,
+        Some(
+            git2::ObjectType::Blob
+                | git2::ObjectType::Tree
+                | git2::ObjectType::Commit
+                | git2::ObjectType::Tag
+        )
+    )
+}
+
 /// Stable sidecar lock survives atomic log replacement. Append shares it.
 /// Fail closed if another writer owns it; do not block a GUI thread on a lock.
 pub(super) fn lock(path: &std::path::Path) -> Result<File, GitError> {
@@ -99,11 +111,8 @@ pub(crate) fn plan(repo: &Repository, entry: &OpLogEntry) -> Result<ForgetOplogP
             .target()
             .ok_or_else(|| io("backup ref is symbolic"))?;
         let object = repo.find_object(oid, None).map_err(io)?;
-        if !matches!(
-            object.kind(),
-            Some(git2::ObjectType::Blob | git2::ObjectType::Commit | git2::ObjectType::Tag)
-        ) {
-            return Err(io("backup is neither a blob, commit nor tag object"));
+        if !valid_backup_kind(object.kind()) {
+            return Err(io("backup is not a blob, tree, commit or tag object"));
         }
         refs.push((name.clone(), oid));
     }
@@ -225,11 +234,8 @@ pub(super) fn validate_append_roots(entry: &OpLogEntry) -> Result<(), GitError> 
             .target()
             .ok_or_else(|| io("backup ref is symbolic"))?;
         let object = repo.find_object(oid, None).map_err(io)?;
-        if !matches!(
-            object.kind(),
-            Some(git2::ObjectType::Blob | git2::ObjectType::Commit | git2::ObjectType::Tag)
-        ) {
-            return Err(io("backup is neither a blob, commit nor tag object"));
+        if !valid_backup_kind(object.kind()) {
+            return Err(io("backup is not a blob, tree, commit or tag object"));
         }
     }
     Ok(())

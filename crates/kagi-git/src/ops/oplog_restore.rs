@@ -84,7 +84,12 @@ fn log_entries(repo: &Repository) -> Vec<RecordedEntry> {
                 timestamp: e.timestamp,
                 op: e.op,
                 repo,
-                ref_moves: e.ref_moves,
+                // Pre-#887 rows recorded branches only. Even an empty list
+                // cannot prove a tag stayed put: treat it as NotRecorded for
+                // restore, while preserving the panel's historical display.
+                ref_moves: e
+                    .ref_moves
+                    .filter(|_| e.ref_scope == crate::oplog::RefScope::HeadsAndTags),
                 worktree: Some(path),
             }
         })

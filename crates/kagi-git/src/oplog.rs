@@ -286,6 +286,18 @@ impl RepoIdentity {
     }
 }
 
+/// What a recorded ref move list is known to cover. Old lines can contain
+/// `ref_moves: []` even after a tag moved: the observer read branches only.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RefScope {
+    /// No scope marker (pre-#887), or an unknown/malformed future scope.
+    #[default]
+    LegacyOrUnknown,
+    /// HEAD, local branches and local tags were observed, or the operation
+    /// provably did not touch local refs.
+    HeadsAndTags,
+}
+
 /// One entry in the operation log.
 #[derive(Debug, Clone)]
 pub struct OpLogEntry {
@@ -330,6 +342,9 @@ pub struct OpLogEntry {
     /// `None` = not recorded (older entry or a path without ref observation);
     /// `Some(empty)` = recorded, nothing moved.
     pub ref_moves: Option<Vec<kagi_domain::ref_moves::RefMove>>,
+    /// Explicit scope of `ref_moves`. A legacy list still displays in the
+    /// panel but must not be used to undo branches and tags together (#953).
+    pub ref_scope: RefScope,
     /// The repository the entry was recorded in (#894).
     pub repo_identity: RecordedIdentity,
     /// The labels and assignees an `issue-create` asked for (#904 review),
@@ -370,6 +385,7 @@ impl OpLogEntry {
             recovery: Vec::new(),
             failure_code: None,
             ref_moves: None,
+            ref_scope: RefScope::LegacyOrUnknown,
             repo_identity: RecordedIdentity::Absent,
             issue_fields: None,
         }
@@ -405,6 +421,11 @@ impl OpLogEntry {
         self.ref_moves = match self.outcome {
             OpOutcome::Unknown { .. } => None,
             _ => moves,
+        };
+        self.ref_scope = if self.ref_moves.is_some() {
+            RefScope::HeadsAndTags
+        } else {
+            RefScope::LegacyOrUnknown
         };
         self
     }

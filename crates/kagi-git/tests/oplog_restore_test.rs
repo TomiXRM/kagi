@@ -9,7 +9,9 @@ use git_fixture::{commit_all, git, git_output, init_repo, write_file};
 mod test_support;
 
 use kagi_domain::plan_note::{HeadAt, OplogRestoreNote, PlanNote};
-use kagi_git::oplog::{append_oplog, read_oplog_tail_for_repo, OpLogEntry, OpOutcome};
+use kagi_git::oplog::{
+    append_oplog, entry_to_json, read_oplog_tail_for_repo, OpLogEntry, OpOutcome, RefScope,
+};
 use kagi_git::{Backend, CommitId, GitError, Operation, OperationPlan, StateSummary};
 use std::path::{Path, PathBuf};
 
@@ -127,6 +129,7 @@ fn recorded_lightweight_tag_creation_can_be_reverted_and_recreated() {
             at: CommitId(tip.clone()),
         },
     );
+    assert_eq!(newest(&repo).ref_scope, RefScope::HeadsAndTags);
     assert_eq!(
         newest(&repo)
             .ref_moves
@@ -150,6 +153,69 @@ fn recorded_lightweight_tag_creation_can_be_reverted_and_recreated() {
     assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
     backend(&repo).run(&recreate, &approved).unwrap();
     assert_eq!(git_output(&repo, &["rev-parse", "refs/tags/light"]), tip);
+}
+
+#[test]
+fn legacy_branch_only_tag_entry_blocks_revert_and_restore_to_point() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let point = create(&repo, "point");
+    // The pre-tag observer recorded branch moves only: CreateTag succeeded,
+    // but its receipt said `ref_moves: []`. Reproduce the old wire row, not
+    // a new receipt with tag-inclusive observation scope.
+    git(&repo, &["tag", "legacy"]);
+    let state = StateSummary {
+        head: "branch: main".into(),
+        dirty: "clean".into(),
+    };
+    let mut entry = OpLogEntry::new(
+        "create-tag",
+        repo.display().to_string(),
+        state.clone(),
+        OpOutcome::Success { after: state },
+    )
+    .with_worktree(Some(repo.display().to_string()))
+    .with_ref_moves(Some(Vec::new()));
+    entry.id = point + 1;
+    entry.parent = Some(point);
+    let mut old_wire: serde_json::Value = serde_json::from_str(&entry_to_json(&entry)).unwrap();
+    old_wire.as_object_mut().unwrap().remove("ref_scope");
+    let log = PathBuf::from(std::env::var("KAGI_LOG_DIR").unwrap()).join("operations.jsonl");
+    use std::io::Write;
+    writeln!(
+        std::fs::OpenOptions::new().append(true).open(log).unwrap(),
+        "{old_wire}"
+    )
+    .unwrap();
+    let legacy_id = newest(&repo).id;
+    assert_eq!(legacy_id, entry.id);
+    assert_eq!(newest(&repo).ref_moves, Some(Vec::new()));
+    assert_eq!(newest(&repo).ref_scope, RefScope::LegacyOrUnknown);
+
+    for (op, expected) in [
+        (
+            Operation::OpRevert {
+                entry_id: legacy_id,
+            },
+            legacy_id,
+        ),
+        (Operation::RestoreToPoint { entry_id: point }, legacy_id),
+    ] {
+        assert!(
+            restore_blockers(&plan(&repo, &op)).contains(&OplogRestoreNote::NotRecorded {
+                id: expected,
+                op: "create-tag".into(),
+            }),
+            "{op:?} must not treat a branch-only observation as tag-complete"
+        );
+    }
+    assert!(git_fixture::git_succeeds(
+        &repo,
+        &["show-ref", "--verify", "refs/tags/legacy"]
+    ));
 }
 
 #[test]
@@ -347,6 +413,68 @@ fn moved_annotated_tag_retains_its_raw_object_and_leaves_index_tree_and_remote_a
     assert_eq!(
         git_output(&repo, &["rev-parse", "refs/tags/release"]),
         second_tag
+    );
+}
+
+#[test]
+fn tree_tag_restore_records_its_backup_and_can_retire_the_receipt() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let first_tree = git_output(&repo, &["rev-parse", "HEAD^{tree}"]);
+    observed_tag_write(&repo, "create-tree-tag", &["tag", "release", &first_tree]);
+    let point = create(&repo, "point");
+    commit(&repo, "later\n");
+    let second_tree = git_output(&repo, &["rev-parse", "HEAD^{tree}"]);
+    assert_ne!(first_tree, second_tree);
+    observed_tag_write(
+        &repo,
+        "move-tree-tag",
+        &["update-ref", "refs/tags/release", &second_tree, &first_tree],
+    );
+
+    let restore = Operation::RestoreToPoint { entry_id: point };
+    let approved = plan(&repo, &restore);
+    assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
+    let report = backend(&repo).run_recorded(&restore, &approved);
+    assert!(report.result.is_ok(), "{:?}", report.result);
+    assert!(
+        matches!(
+            report.recording,
+            kagi_git::backend::recording::Recording::Appended { .. }
+        ),
+        "tree-tag restore must record its ref update: {:?}",
+        report.recording
+    );
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/tags/release"]),
+        first_tree
+    );
+    let receipt = newest(&repo);
+    assert_eq!(receipt.op, "restore-to-point");
+    let backup = receipt
+        .backup_refs
+        .iter()
+        .find(|reference| git_output(&repo, &["rev-parse", reference]) == second_tree)
+        .expect("the moved tree tag needs a retained backup");
+    assert_eq!(git_output(&repo, &["cat-file", "-t", backup]), "tree");
+    assert!(receipt.recovery.iter().any(|handle| {
+        handle.kind == kagi_git::oplog::recovery::TAG_REF
+            && handle.oid == second_tree
+            && handle.reference.as_deref() == Some(backup)
+    }));
+    let backend = backend(&repo);
+    let forget = backend.plan_forget_oplog_entry(&receipt).unwrap();
+    backend.execute_forget_oplog_entry(&forget).result.unwrap();
+    assert!(!git_fixture::git_succeeds(
+        &repo,
+        &["show-ref", "--verify", backup]
+    ));
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/tags/release"]),
+        first_tree
     );
 }
 

@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::oplog_panel::{entry_worktree, ReflogDetail};
-use kagi::ui::{e2e, KagiApp};
+use kagi::ui::{e2e, i18n, KagiApp};
 use kagi_domain::oplog_reflog::Attribution;
 use kagi_domain::ref_moves::RefMove;
 use kagi_git::oplog::{append_oplog, read_oplog_tail, Actor, OpLogEntry, OpOutcome};
@@ -355,6 +355,8 @@ fn confirm_twice(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: A
 /// preview is unavailable when the target is not loaded.
 pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
     use kagi_domain::plan_note::{OplogRestoreNote, PlanNote};
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_language = i18n::lang();
 
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
@@ -536,8 +538,31 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
             oid: main_after.clone(),
         })
     );
-    paint(cx, window);
-    assert!(painted(window, "restore-preview-unavailable"));
+    for (language, status) in [
+        (
+            i18n::Lang::En,
+            "No preview: target commit is outside loaded history",
+        ),
+        (
+            i18n::Lang::Ja,
+            "プレビューなし: 戻し先の commit は読み込み済みの履歴外",
+        ),
+    ] {
+        i18n::set_lang(language);
+        paint(cx, window);
+        assert!(painted(window, "restore-preview-unavailable"));
+        assert!(!painted(window, "plan-recovery-scroll"));
+        click_probe(cx, window, "plan-card-copy");
+        let copied = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .unwrap();
+        assert!(copied.contains(status), "{copied}");
+        assert_eq!(copied.matches(status).count(), 1, "{copied}");
+        assert!(!copied.contains("This is itself recorded"), "{copied}");
+        assert!(!copied.contains("これ自体"), "{copied}");
+    }
+    i18n::set_lang(original_language);
     confirm_twice(cx, &app, window);
     assert_eq!(branch_names(&repo), all_branches, "the restore is undone");
     assert_eq!(git_output(&repo, &["rev-parse", "main"]), main_after);
@@ -554,6 +579,8 @@ pub fn scenario_oplog_restore_tag_preview(cx: &mut VisualTestAppContext) {
     use kagi_domain::restore_preview::RestorePreview;
 
     let fixture = build_fixture();
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_language = i18n::lang();
     let repo = fixture.path().canonicalize().unwrap();
     let head = CommitId(git_output(&repo, &["rev-parse", "HEAD"]));
     let mut backend = Backend::open(&repo).unwrap();
@@ -596,8 +623,32 @@ pub fn scenario_oplog_restore_tag_preview(cx: &mut VisualTestAppContext) {
             if refname == "refs/tags/release"
     )));
     assert_eq!(card.preview.unwrap().graph, RestorePreview::TagChange);
-    paint(cx, window);
-    assert!(painted(window, "restore-preview-unavailable"));
+    for (language, status) in [
+        (i18n::Lang::En, "No preview: local tags change"),
+        (i18n::Lang::Ja, "プレビューなし: local tag が変更されます"),
+    ] {
+        i18n::set_lang(language);
+        paint(cx, window);
+        assert!(painted(window, "restore-preview-unavailable"));
+        assert!(!painted(window, "plan-recovery-scroll"));
+        click_probe(cx, window, "plan-card-copy");
+        let copied = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .unwrap();
+        assert_eq!(copied.matches("\nwarning:").count(), 2, "{copied}");
+        assert!(copied.contains("refs/tags/release"), "{copied}");
+        assert!(copied.contains(status), "{copied}");
+        assert_eq!(copied.matches(status).count(), 1, "{copied}");
+        assert!(!copied.contains("This is itself recorded"), "{copied}");
+        assert!(!copied.contains("これ自体"), "{copied}");
+    }
+    assert!(restore_card(cx, &app)
+        .plan
+        .equivalent_command
+        .as_deref()
+        .is_some_and(|command| command.starts_with("git update-ref --stdin")));
+    i18n::set_lang(original_language);
     confirm_twice(cx, &app, window);
     assert!(!git_fixture::git_succeeds(
         &repo,

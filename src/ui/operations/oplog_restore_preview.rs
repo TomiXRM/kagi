@@ -102,21 +102,14 @@ pub(crate) fn heading_text(graph: &RestorePreview) -> String {
     }
 }
 
-fn not_loaded_text(refname: &str, oid: &str) -> String {
-    i18n::oplog_panel::preview_not_loaded(
-        refname.trim_start_matches("refs/heads/"),
-        oid.get(..7).unwrap_or(oid),
-    )
-}
-
 /// The preview as text, for the card's `Copy all` (#883 review): heading,
 /// then each drawn row (short id, branches moving there, branches staying,
 /// summary), or the reason no graph is drawn.
 pub(crate) fn clipboard_text(preview: &RestoreGraphPreview) -> String {
     let mut out = format!("{}\n", heading_text(&preview.graph));
     match &preview.graph {
-        RestorePreview::NotLoaded { refname, oid } => {
-            out.push_str(&format!("  {}\n", not_loaded_text(refname, oid)));
+        RestorePreview::NotLoaded { .. } => {
+            out.push_str(&format!("  {}\n", i18n::oplog_panel::preview_not_loaded()));
         }
         RestorePreview::TagChange => {
             out.push_str(&format!(
@@ -196,13 +189,13 @@ fn render(preview: &RestoreGraphPreview) -> gpui::AnyElement {
         .child(muted(heading_text(&preview.graph)))
         .child(crate::ui::e2e::measure_inside("restore-preview"));
     let (rows, lane_count, removed, above, below) = match &preview.graph {
-        RestorePreview::NotLoaded { refname, oid } => {
+        RestorePreview::NotLoaded { .. } => {
             return section
                 .child(
                     div()
                         .relative()
                         .text_color(rgb(theme().color_warning))
-                        .child(SharedString::from(not_loaded_text(refname, oid)))
+                        .child(i18n::oplog_panel::preview_not_loaded())
                         .child(crate::ui::e2e::measure_inside(
                             "restore-preview-unavailable",
                         )),
@@ -379,15 +372,5 @@ mod tests {
         assert!(text.contains("  11111111 [main ←] second\n"), "{text}");
         assert!(text.contains("  22222222 [keep] first\n"), "{text}");
         assert!(text.contains(&i18n::oplog_panel::preview_more(5)), "{text}");
-
-        let unavailable = RestoreGraphPreview {
-            graph: RestorePreview::NotLoaded {
-                refname: "refs/heads/main".into(),
-                oid: "abcdef0123".into(),
-            },
-            summaries: Vec::new(),
-        };
-        assert!(clipboard_text(&unavailable)
-            .contains(&not_loaded_text("refs/heads/main", "abcdef0123")));
     }
 }

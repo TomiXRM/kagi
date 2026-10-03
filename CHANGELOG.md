@@ -10,6 +10,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Settings を開いたままスクロールすると、背面の画面(Graph・PRs・Issues・Editor)も一緒にスクロールする問題を修正しました。Settings の背景が、背面へのマウス操作をスクロールも含めて遮るようにしました。
 - Worktree 削除の確認後や削除前ステップ後に ignored ファイル・フォルダーが増えた場合、削除前に中止し、計画の再確認を促すようにしました。(#934)
 - 初期化済み、または未初期化でも gitlink のパスにローカルファイルがある worktree は Remove の計画時・実行前に削除を拒否します。空・不在の gitlink は削除可能なままとし、削除前ステップ後の拒否も EN/JA の短い toast に理由だけを表示します。(#934)
+- 削除対象 worktree 自身のタブから Remove しても共通 repository で ref の前後を観測し、branch 維持は `Some(空)`、branch 削除は OID 差分を記録します。RestoreToPoint がこの記録を越えられ、main worktree の削除は main / linked のどちらのタブからも拒否されます。(#915)
 
 ### Changed
 

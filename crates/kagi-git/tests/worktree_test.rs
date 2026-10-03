@@ -848,7 +848,8 @@ fn remove_plan_without_ignored_content_has_no_ignored_warning() {
     );
 }
 
-/// The main worktree is never removable (§6). Mutation-verify: execute refuses.
+/// Main is never removable from either its own management tab or a linked tab.
+/// The executor must reject even when a caller presents a blocked plan.
 #[test]
 fn remove_main_worktree_is_always_refused() {
     if !crate::test_support::run_isolated() {
@@ -856,19 +857,25 @@ fn remove_main_worktree_is_always_refused() {
     }
     let tmp = TempDir::new().unwrap();
     let repo = build_repo(&tmp);
+    let linked = add_worktree(tmp.path(), "wt-safe");
+    let linked_repo = Repository::open(&linked).unwrap();
 
-    let plan = plan_remove_worktree(&repo, "main", false).expect("plan");
-    assert!(
-        plan.blockers
-            .iter()
-            .any(|b| matches!(b, PlanNote::Worktree(WorktreeNote::RemoveMainRefused))),
-        "main worktree removal must be refused: {:?}",
-        plan.blockers
-    );
-    assert!(
-        execute_remove_worktree(&repo, &plan, "main", false).is_err(),
-        "execute must refuse to remove the main worktree"
-    );
+    for manager in [&repo, &linked_repo] {
+        let plan = plan_remove_worktree(manager, "main", false).expect("plan");
+        assert!(
+            plan.blockers
+                .iter()
+                .any(|b| matches!(b, PlanNote::Worktree(WorktreeNote::RemoveMainRefused))),
+            "main worktree removal must be refused from either tab: {:?}",
+            plan.blockers
+        );
+        assert!(
+            execute_remove_worktree(manager, &plan, "main", false).is_err(),
+            "execute must refuse to remove the main worktree"
+        );
+        assert!(tmp.path().join("README.md").exists());
+        assert!(linked.join("README.md").exists());
+    }
 }
 
 /// `lock --reason` records the reason in `git worktree list --porcelain` (§6).

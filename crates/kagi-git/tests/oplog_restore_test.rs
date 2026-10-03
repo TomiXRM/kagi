@@ -88,6 +88,78 @@ fn commit(dir: &Path, content: &str) -> u64 {
     )
 }
 
+/// #915: the operation owner may be the linked worktree that is removed.
+/// Its admin directory disappears, but the common repository and its branches
+/// remain observable for the receipt and every later restore.
+#[test]
+fn restore_to_point_crosses_remove_from_the_deleted_worktrees_own_tab() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for delete_branch in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = repo(tmp.path());
+        let linked = tmp.path().join("linked");
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "side",
+                linked.to_str().unwrap(),
+            ],
+        );
+        let side_tip = git_output(&repo, &["rev-parse", "refs/heads/side"]);
+        let point = create(&repo, "point");
+        let remove = Backend::plan_recorded_remove(&linked, "linked", delete_branch).unwrap();
+        assert!(
+            remove.preview.blockers.is_empty(),
+            "{:?}",
+            remove.preview.blockers
+        );
+        let report = Backend::run_recorded_remove(&remove, kagi_git::oplog::Actor::Human, None);
+        assert!(
+            matches!(report.recording.entry().outcome, OpOutcome::Success { .. }),
+            "{:?}",
+            report.recording.entry()
+        );
+        assert!(!linked.exists());
+        // The removed worktree is no longer openable for path-based tail
+        // filtering; this isolated child owns the last global receipt.
+        let entry = kagi_git::oplog::read_oplog_tail(1)
+            .pop()
+            .expect("removed worktree receipt");
+        assert_eq!(entry.op, "remove-worktree");
+        let moves = entry
+            .ref_moves
+            .expect("a removed own tab must still record branch observations");
+        if delete_branch {
+            assert_eq!(moves.len(), 1, "{moves:?}");
+            assert_eq!(moves[0].refname, "refs/heads/side");
+            assert_eq!(moves[0].old.as_deref(), Some(side_tip.as_str()));
+            assert_eq!(moves[0].new, None);
+        } else {
+            assert!(moves.is_empty(), "{moves:?}");
+        }
+        create(&repo, "after");
+
+        let op = Operation::RestoreToPoint { entry_id: point };
+        let planned = plan(&repo, &op);
+        assert!(planned.blockers.is_empty(), "{:?}", planned.blockers);
+        backend(&repo).run(&op, &planned).unwrap();
+        assert_eq!(
+            git_output(&repo, &["rev-parse", "refs/heads/side"]),
+            side_tip
+        );
+        assert!(!git_fixture::git_succeeds(
+            &repo,
+            &["show-ref", "--verify", "refs/heads/after"]
+        ));
+    }
+}
+
 #[test]
 fn restoring_three_operations_back_puts_every_branch_where_it_was() {
     if !test_support::run_isolated() {

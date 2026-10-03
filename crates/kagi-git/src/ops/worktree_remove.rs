@@ -269,7 +269,12 @@ pub(crate) fn execute_remove_worktree_progress(
     }
     preflight_check(repo, plan)?;
 
-    let main_workdir = repo
+    // The removal may be requested from the linked worktree's own tab. Its
+    // workdir is the deletion target, not the main worktree: derive the
+    // containment anchor from the shared repository instead (#915).
+    let main_repo = Repository::open(repo.commondir())
+        .map_err(|e| GitError::Other(format!("cannot open main worktree: {e}")))?;
+    let main_workdir = main_repo
         .workdir()
         .ok_or_else(|| GitError::Other("bare repositories are not supported".to_string()))?
         .to_path_buf();

@@ -575,10 +575,60 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
         cx.read(|cx| app.read(cx).menu_overlay.is_none()),
         "settings-not-behind-commit-plan: Settings opened behind the commit plan"
     );
+    let open_settings = |cx: &mut VisualTestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                app.handle_menu_command("app.settings", window, cx)
+            })
+        })
+        .unwrap();
+        draw(cx, window);
+    };
+    let open_home = |cx: &mut VisualTestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| app.open_home_tab(window, cx))
+        })
+        .unwrap();
+        draw(cx, window);
+    };
+    // The same plan kept behind Home is not drawn: it does not block Settings.
+    open_home(cx);
+    open_settings(cx);
+    assert!(
+        cx.read(|cx| app.read(cx).menu_overlay.is_some()),
+        "settings-over-home-with-hidden-plan: a plan not drawn must not block Settings"
+    );
+    keys(cx, window, "escape");
     app.update(cx, |app, cx| {
+        app.close_home_tab(cx);
         let panel = app.ui().commit_panel.clone().expect("Commit Panel");
         panel.update(cx, |panel, _| panel.state.plan_modal = None);
     });
+    draw(cx, window);
+
+    // New Tab (Home) while Settings is open closes Settings first: the
+    // focus Home moves to the root must not cycle outside a trap that
+    // still covers the screen.
+    open_settings(cx);
+    assert_eq!(
+        held(cx, &app, window),
+        Held::Trap,
+        "precondition: Settings open"
+    );
+    open_home(cx);
+    assert!(
+        cx.read(|cx| app.read(cx).menu_overlay.is_none() && app.read(cx).home_in_front()),
+        "settings-closes-for-home: Home opened under a still-open Settings"
+    );
+    for _ in 0..2 {
+        keys(cx, window, "tab");
+        assert_eq!(
+            held(cx, &app, window),
+            Held::Elsewhere,
+            "settings-closes-for-home: Tab must move over Home, not Settings or the terminal"
+        );
+    }
+    app.update(cx, |app, cx| app.close_home_tab(cx));
 
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS settings_focus_trap");

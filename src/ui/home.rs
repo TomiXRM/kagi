@@ -72,6 +72,16 @@ impl KagiApp {
             }
         };
         self.home = Some(HomeTab { front: true, left });
+        // Settings belongs to the screen being left: close it before the
+        // focus moves to the root, or Tab would cycle outside its trap while
+        // it still covers Home (#976 review).
+        if matches!(
+            self.menu_overlay,
+            Some(super::commands::MenuOverlay::Settings)
+        ) {
+            self.menu_overlay = None;
+            self.pending_focus = None;
+        }
         if let Some(root) = self.root_focus.clone() {
             window.focus(&root, cx);
         }

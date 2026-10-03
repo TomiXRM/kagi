@@ -69,11 +69,16 @@ impl KagiApp {
     }
 
     /// A modal drawn in front of the menu overlays: the modal slot, or the
-    /// Commit Panel's plan confirmation (its own storage).
+    /// Commit Panel's plan confirmation (its own storage) — the latter only
+    /// when it is drawn, under the same condition as `attach_modal_layer`:
+    /// not with Home in front, and only while the panel is open (#976
+    /// review). A plan kept behind Home does not block Settings.
     fn modal_in_front(&self, cx: &Context<Self>) -> bool {
         self.has_active_modal()
-            || (self.ui().commit_panel.as_ref())
-                .is_some_and(|panel| panel.read(cx).state.plan_modal.is_some())
+            || (!self.home_in_front()
+                && self.ui().commit_panel_open
+                && (self.ui().commit_panel.as_ref())
+                    .is_some_and(|panel| panel.read(cx).state.plan_modal.is_some()))
     }
 
     /// Open Settings (toolbar button, menu, palette).

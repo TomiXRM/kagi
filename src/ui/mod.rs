@@ -12,7 +12,6 @@ mod avatar_lookup;
 mod avatar_resolve;
 pub mod badges;
 pub mod blocking_ops;
-mod bottom_panel_motion;
 pub mod branch_cleanup;
 pub mod branch_menu;
 mod busy;
@@ -60,6 +59,7 @@ mod issues_composer_e2e;
 pub mod issues_mode;
 mod issues_thread;
 mod list_filter_strip;
+mod panel_motion;
 mod pr_attention;
 pub mod pr_conflicts;
 pub mod pr_conversation;
@@ -1059,8 +1059,9 @@ pub struct KagiApp {
     pub bottom_panel_open: bool,
     /// Current height of the bottom panel in pixels (clamped 80 .. viewport*0.6).
     pub bottom_panel_height: f32,
-    /// The panel's open / close motion toward `bottom_panel_open` (#950).
-    pub(crate) bottom_motion: bottom_panel_motion::PanelMotion,
+    /// How the bottom panel, the sidebar and the right pane slide open and
+    /// closed toward their toggles (#950, #955).
+    pub(crate) panel_motion: panel_motion::PanelMotions,
     /// Active tab in the bottom panel.
     pub bottom_tab: BottomTab,
     /// Time bucketing for the bottom-panel "Activity" chart (Day/Week/Month).
@@ -1378,7 +1379,7 @@ impl KagiApp {
                 .unwrap_or(GRAPH_COL_DEFAULT),
             bottom_panel_open: true, // user request: terminal visible by default
             bottom_panel_height: BOTTOM_PANEL_H_UNSET,
-            bottom_motion: Default::default(),
+            panel_motion: Default::default(),
             bottom_tab: BottomTab::Terminal, // user request: terminal is the default tab
             activity_granularity: kagi_domain::activity::Granularity::Week,
             activity_hover: None,

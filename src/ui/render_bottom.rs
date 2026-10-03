@@ -163,20 +163,20 @@ impl KagiApp {
             .when(cfg!(feature = "gui-e2e"), |panel| {
                 panel.child(e2e::measure_inside("bottom-panel"))
             });
-        // #950: only this box's height moves. The panel hangs from its top
+        // #950: only the clip's height moves. The panel hangs from its top
         // edge, so the tab strip rises from the bottom with it.
         Some(
-            div()
-                .id("bottom-panel-clip")
-                .relative()
-                .w_full()
-                .h(theme::scaled_px(panel_h * visible.min(1.)))
-                .flex_shrink_0()
-                .overflow_hidden()
-                .child(panel)
-                .when(cfg!(feature = "gui-e2e"), |clip| {
-                    clip.child(e2e::measure_inside("bottom-panel-clip"))
-                }),
+            super::panel_motion::clip(
+                "bottom-panel-clip",
+                super::panel_motion::Axis::Vertical,
+                super::panel_motion::Anchor::Start,
+                theme::scaled_px(panel_h),
+                visible,
+                panel,
+            )
+            .when(cfg!(feature = "gui-e2e"), |clip| {
+                clip.child(e2e::measure_inside("bottom-panel-clip"))
+            }),
         )
     }
 

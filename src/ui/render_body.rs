@@ -513,20 +513,69 @@ impl KagiApp {
             editor_mode: workspace::EditorWorkspaceItem.is_open(self),
         });
 
+        // #955: the side panes slide toward what the layout shows, but only
+        // when their own toggle moved them; a layout change jumps. Switching
+        // between Inspector, Compare and Commit Panel keeps the slot shown,
+        // so it is no motion at all.
+        let motion_now = super::panel_motion::now();
+        let motion_instant = super::panel_motion::instant();
+        let sidebar_shown = layout.left == workspace::LeftPane::Navigator;
+        self.panel_motion.sync_sidebar(
+            sidebar_shown,
+            self.sidebar.visible,
+            motion_now,
+            motion_instant,
+        );
+        let right_shown = matches!(
+            layout.right,
+            workspace::RightPane::Inspector
+                | workspace::RightPane::Compare
+                | workspace::RightPane::CommitPanel
+        );
+        self.panel_motion.sync_right(
+            right_shown,
+            self.inspector_visible,
+            motion_now,
+            motion_instant,
+        );
+        if right_shown {
+            self.panel_motion.right_pane = Some(layout.right);
+        }
+        let sidebar_fraction = self.panel_motion.sidebar.visible(motion_now);
+        let right_fraction = self.panel_motion.right.visible(motion_now);
+
         let mut body_row = div()
             .flex()
             .flex_row()
             .flex_1()
             // Only the center column gives up height to the bottom panel;
             // the body and both side panes still reach the status bar.
-            .min_h(px(0.))
-            // ── Left slot (W5-MENU: hidden when toggled off) ──
-            .when(layout.left == workspace::LeftPane::Navigator, |el| {
-                let mode = self.workspace_mode();
-                el.child(workspace_mode::render_sidebar_pages(self, mode, cx))
-                    // ── Sidebar divider ───────────────────────
-                    .child(divider1)
-            });
+            .min_h(px(0.));
+        // ── Left slot (W5-MENU: hidden when toggled off) ──
+        // Drawn while it is shown or still closing; the divider travels with
+        // the sidebar's edge inside the clip, which hangs it from the right.
+        if sidebar_fraction > 0. {
+            let mode = self.workspace_mode();
+            let sidebar = div()
+                .flex()
+                .flex_row()
+                .size_full()
+                .child(workspace_mode::render_sidebar_pages(self, mode, cx))
+                .child(divider1);
+            body_row = body_row.child(
+                super::panel_motion::clip(
+                    "sidebar-clip",
+                    super::panel_motion::Axis::Horizontal,
+                    super::panel_motion::Anchor::End,
+                    theme::scaled_px(self.sidebar.width + 4.),
+                    sidebar_fraction,
+                    sidebar,
+                )
+                .when(cfg!(feature = "gui-e2e"), |clip| {
+                    clip.child(e2e::measure_inside("sidebar-clip"))
+                }),
+            );
+        }
 
         // ── Center slot ──────────────────────────────────
         // Takeovers (FileHistory / Ecosystem) span center + right; the resolver
@@ -541,9 +590,7 @@ impl KagiApp {
         // precedence is unchanged — it stays in `resolve_workspace`. The
         // non-entity contents (Loading placeholder / CommitList) keep plain
         // arms until B2 migrates them.
-        let panel_visible = self
-            .bottom_motion
-            .visible(super::bottom_panel_motion::now());
+        let panel_visible = self.panel_motion.bottom.visible(motion_now);
         let panel_height = self.bottom_panel_height;
         let panel_tab = self.bottom_tab;
         let mut bottom_panel = self
@@ -631,10 +678,36 @@ impl KagiApp {
         // so no divider and no panel — same as the old no-op arms. A `None`
         // render (gate raced closed between resolve and render) also renders
         // nothing, exactly as the old per-field arms did.
-        if let Some(el) = workspace::right_item(layout.right)
+        // Drawn while shown or still closing (then the pane last shown); the
+        // divider travels with the pane's edge inside the clip.
+        let right_pane = if right_shown {
+            Some(layout.right)
+        } else {
+            self.panel_motion.right_pane.filter(|_| right_fraction > 0.)
+        };
+        if let Some(el) = right_pane
+            .and_then(workspace::right_item)
             .and_then(|item| item.render(self, &layout, None, cx))
         {
-            body_row = body_row.child(divider2).child(el);
+            let pane = div()
+                .flex()
+                .flex_row()
+                .size_full()
+                .child(divider2)
+                .child(el);
+            body_row = body_row.child(
+                super::panel_motion::clip(
+                    "right-pane-clip",
+                    super::panel_motion::Axis::Horizontal,
+                    super::panel_motion::Anchor::Start,
+                    theme::scaled_px(self.panel_width + 4.),
+                    right_fraction,
+                    pane,
+                )
+                .when(cfg!(feature = "gui-e2e"), |clip| {
+                    clip.child(e2e::measure_inside("right-pane-clip"))
+                }),
+            );
         }
 
         body_row

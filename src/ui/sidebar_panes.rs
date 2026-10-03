@@ -300,8 +300,6 @@ fn pane_divider(app: &KagiApp, index: usize) -> gpui::AnyElement {
 /// `render` owns the cached flat rows and ranges, so drawing another workspace
 /// page cannot start a Git read or rebuild refs.
 pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    // Next frame's keyboard state knows the panes were on screen (#981).
-    app.sidebar.focus.shown.set(true);
     let filter_input = app.sidebar.filter.clone();
     // The five pane bodies share `sidebar.rows`, never copied on layout changes.
     // ADR-0128: the badge counts merged-class rows only (stale-only rows are

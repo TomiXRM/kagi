@@ -3,8 +3,9 @@
 //! Each of the five panes is its own tree and its own Tab stop: the row the
 //! keyboard last reached while it is drawn, else the first row on screen
 //! (`keyboard_nav::RowFocus` over the pane's `uniform_list`). ↑/↓ stay inside
-//! the pane. A collapsed pane has no rows, so its Tab stop is its header,
-//! and Enter / Space open the pane and move to its first row.
+//! the pane. A pane with no rows — collapsed, empty, or emptied by the
+//! filter — has its header as its Tab stop instead (#981 review), and on a
+//! collapsed one Enter / Space open the pane and move to its first row.
 //!
 //! Enter / Space press a row: a branch opens its checkout plan (the current
 //! branch: jumps to it), a worktree opens or closes its inspection card (the
@@ -16,7 +17,6 @@
 //! A pointer click does not put the focus on a row: the window takes it, as
 //! before, so ↑/↓ after clicking a branch still step the graph.
 
-use std::cell::Cell;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -53,8 +53,6 @@ pub(crate) struct SidebarFocus {
     open_first: [bool; PANES],
     /// The worktree whose inspection card the keyboard opened.
     pub(super) card: Option<PathBuf>,
-    /// The sidebar was drawn (set by `render_sidebar`, taken each frame).
-    pub(super) shown: Cell<bool>,
 }
 
 /// A row's key among its pane's rows; `None` for a pane header, which is not
@@ -86,30 +84,39 @@ impl SidebarFocus {
                 .collect();
         }
     }
+
+    /// Whether `pane` has rows (a collapsed or empty pane has none).
+    pub(super) fn has_rows(&self, pane: usize) -> bool {
+        !self.keys[pane].is_empty()
+    }
 }
 
 impl KagiApp {
-    /// Each workspace frame, before the sidebar is drawn: every pane's Tab
-    /// stop and rows. A pane that was not drawn last frame (collapsed, the
-    /// sidebar hidden, another page in front) has no row on screen, so a row
-    /// holding the focus hands it on — to the pane's header while the sidebar
-    /// is drawn, else to the window — as a row scrolled away does.
-    pub(super) fn sync_sidebar_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let root = self.root_focus.clone();
-        let shown = self.sidebar.focus.shown.take();
+    /// Each workspace frame, as the body is laid out: every pane's Tab stop
+    /// and rows. `front` is whether this frame draws the panes — the sidebar
+    /// is shown (or still closing) and on its Graph page. Decided from this
+    /// frame's layout, not from what the last frame drew: the frame the
+    /// sidebar closes on may be the last one drawn (#981 review), so a focus
+    /// left on a row then would stay on nothing. Out of front, the focus
+    /// goes to the window; in front, a row holding it that is not on screen
+    /// hands it to the pane's header, as a row scrolled away does.
+    pub(super) fn sync_sidebar_focus(
+        &mut self,
+        front: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !front {
+            self.yield_sidebar_focus(window, cx);
+            return;
+        }
         for pane in 0..PANES {
             let header = self.sidebar.focus.headers.get(pane, cx);
-            if !shown && header.is_focused(window) {
-                if let Some(root) = &root {
-                    root.focus(window, cx);
-                }
-            }
             let drawn = std::mem::take(&mut self.sidebar.focus.drawn[pane]);
             let scroll = RowScroll::Uniform(self.sidebar.scroll_handles[pane].clone(), drawn);
-            let fallback = if shown { Some(&header) } else { root.as_ref() };
             let focus = &mut self.sidebar.focus;
             let list =
-                focus.rows[pane].rows(focus.keys[pane].clone(), &scroll, fallback, window, cx);
+                focus.rows[pane].rows(focus.keys[pane].clone(), &scroll, Some(&header), window, cx);
             if std::mem::take(&mut focus.open_first[pane]) {
                 focus.rows[pane].focus_first(&scroll, window, cx);
             }
@@ -129,10 +136,10 @@ impl KagiApp {
         }
     }
 
-    /// Home is in front, so the sidebar is not drawn: a focus on one of its
-    /// rows or headers goes to the window. The rows are remembered; what was
-    /// drawn before Home is forgotten, so coming back starts from nothing on
-    /// screen.
+    /// The panes are not drawn this frame (Home in front, Conflict Mode, the
+    /// sidebar hidden, another page): a focus on one of their rows or
+    /// headers goes to the window. The rows are remembered; what was drawn
+    /// before is forgotten, so coming back starts from nothing on screen.
     pub(super) fn yield_sidebar_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root_focus.clone();
         for pane in 0..PANES {
@@ -144,8 +151,8 @@ impl KagiApp {
                 }
             }
             self.sidebar.focus.drawn[pane] = 0..0;
+            self.sidebar.focus.lists[pane] = None;
         }
-        self.sidebar.focus.shown.set(false);
         self.sidebar.focus.card = None;
     }
 
@@ -203,8 +210,9 @@ impl KagiApp {
     }
 }
 
-/// A pane header: the pane's Tab stop while it is collapsed, opened by
-/// Enter / Space. `header` is the drawn heading, which keeps its own click.
+/// A pane header: the pane's Tab stop while the pane has no rows (collapsed
+/// or empty), so every pane keeps one; on a collapsed pane Enter / Space open
+/// it. `header` is the drawn heading, which keeps its own click.
 pub(super) fn header(
     app: &KagiApp,
     pane: usize,
@@ -213,10 +221,11 @@ pub(super) fn header(
     cx: &mut Context<KagiApp>,
 ) -> Stateful<Div> {
     let focus = app.sidebar.focus.headers.get(pane, cx);
+    let stop = collapsed || !app.sidebar.focus.has_rows(pane);
     super::keyboard_nav::focusable(
         div()
             .id(("sidebar-pane-header", pane))
-            .track_focus(&focus.tab_index(0).tab_stop(collapsed)),
+            .track_focus(&focus.tab_index(0).tab_stop(stop)),
     )
     .on_click(cx.listener(move |this, event: &ClickEvent, _window, cx| {
         if event.is_keyboard() {

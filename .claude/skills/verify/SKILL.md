@@ -342,7 +342,11 @@ The current suite covers:
   closes it and the row keeps the focus. Rows are read and focused through
   `sidebar_row_focused_for_e2e` / `focus_sidebar_row_for_e2e` (keys
   `branch:` / `group:` / `remote:` / `tag:` / `worktree:<path>` /
-  `stash:<n>`). The ring is not observable in Tier A.
+  `stash:<n>`). From the #987 review: `view.toggleSidebar` with a row
+  focused leaves no row focused and the root focused on that one drawn
+  frame (no pump: a later frame would hide the bug), and Tab from the
+  window reaches the open-but-empty REMOTE pane's header. The ring is not
+  observable in Tier A.
 - modal input transitions (`KAGI_GUI_E2E_ONLY=remote_browse_escape_focus,pr_fields_escape_focus`,
   `tests/recovery/remote_browse_focus.rs`, `tests/recovery/pr_fields_focus.rs`):
   #755 follow-up. Real InputStates own focus before Remote Browse's

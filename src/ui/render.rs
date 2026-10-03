@@ -376,9 +376,6 @@ impl Render for KagiApp {
             self.sidebar.rows = rows;
             self.sidebar.rows_fingerprint = sidebar_fingerprint;
         }
-        // Every pane's Tab stop and rows, before the sidebar is drawn (#981).
-        self.sync_sidebar_focus(window, cx);
-
         let status_footer = self.status_footer.clone();
         // ADR-0118 / T-ENTITY-CONFLICT-001: the conflict body is its own
         // `Entity<ConflictView>`. The entity renders itself (`el.child(entity)`);
@@ -390,6 +387,11 @@ impl Render for KagiApp {
         // resolution body (ADR-0068). Conflict Mode is still active (MERGE_HEAD
         // present) but the editor is hidden behind the commit message panel.
         let conflict_merge_pending = self.ui().conflict_merge_pending;
+        // Conflict Mode replaces the body, the sidebar's panes with it; the
+        // body's frames sync them as they lay the sidebar out (#981).
+        if conflict_entity.is_some() && !conflict_merge_pending {
+            self.yield_sidebar_focus(window, cx);
+        }
         let commit_menu_overlay = self
             .commit_menu
             .clone()
@@ -684,6 +686,7 @@ impl Render for KagiApp {
                     commit_panel_open,
                     commit_panel.clone(),
                     wip_diffstat,
+                    window,
                     cx,
                 ))
             })

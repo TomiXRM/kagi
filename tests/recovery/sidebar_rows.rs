@@ -1,6 +1,8 @@
 //! The Graph sidebar's rows from the keyboard (#981), Tier A: ↑/↓ step a
-//! pane's rows and never leave the pane; a collapsed pane's Tab stop is its
-//! header, and Enter opens it onto its first row; Enter on a worktree row
+//! pane's rows and never leave the pane; hiding the sidebar with a row
+//! focused hands the focus to the window on that very frame; a pane with no
+//! rows (empty, or collapsed) keeps a Tab stop on its header, and on a
+//! collapsed one Enter opens it onto its first row; Enter on a worktree row
 //! opens its inspection card and Escape closes it, the row keeping the focus.
 use std::path::PathBuf;
 
@@ -12,6 +14,7 @@ use crate::keyboard_nav::keys;
 use crate::macos::{build_fixture, git, mount, unmount};
 
 const LOCAL: usize = 0;
+const REMOTE: usize = 1;
 const WORKTREES: usize = 2;
 const TAGS: usize = 3;
 
@@ -92,6 +95,55 @@ pub fn scenario_sidebar_rows(cx: &mut VisualTestAppContext) {
         last = now;
     }
     assert_eq!(last.1, "branch:alpha", "↑ stops at LOCAL's first row");
+
+    // The sidebar hidden with a row focused (#981 review): the frame that
+    // stops drawing it may be the last one drawn, so on that frame the focus
+    // goes to the window — it is not left on a row that is no longer there.
+    let (row_after, root_after) = cx
+        .update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                app.handle_menu_command("view.toggleSidebar", window, cx)
+            });
+            window.draw(cx).clear();
+            let root = app.read(cx).root_focus.clone().unwrap();
+            (
+                app.read(cx).sidebar_row_focused_for_e2e(window),
+                root.is_focused(window),
+            )
+        })
+        .unwrap();
+    assert_eq!(row_after, None, "no row keeps the focus once hidden");
+    assert!(root_after, "the window has the focus on the hiding frame");
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.handle_menu_command("view.toggleSidebar", window, cx)
+        });
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    // REMOTE is open but empty (no remote): its header is its Tab stop, so
+    // every pane keeps one (#981 review).
+    assert!(
+        app.read_with(cx, |app, _| !app.sidebar.collapsed.contains("remote")),
+        "precondition: REMOTE is open"
+    );
+    let empty = cx
+        .update_window(window, |_, window, cx| {
+            let root = app.read(cx).root_focus.clone().unwrap();
+            root.focus(window, cx);
+            window.draw(cx).clear();
+            (0..300).find_map(|_| {
+                window.focus_next(cx);
+                window.draw(cx).clear();
+                app.read(cx)
+                    .sidebar_header_focused_for_e2e(window)
+                    .filter(|&pane| pane == REMOTE)
+            })
+        })
+        .unwrap();
+    assert_eq!(empty, Some(REMOTE), "Tab reaches the empty pane's header");
 
     // TAGS collapsed: its rows are gone, and its header is its Tab stop.
     crate::app_conflict::click_control(cx, window, "tags");

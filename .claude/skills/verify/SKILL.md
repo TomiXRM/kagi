@@ -321,6 +321,13 @@ The current suite covers:
     without the focus on open, the focus stays on the terminal; without the
     return-focus capture, Escape does not return to the terminal; with the
     editor made an indenting multi-line input, Tab stays in it.
+  - Unmounted return targets (`KAGI_GUI_E2E_ONLY=settings_hidden_return_target`):
+    focus a sidebar mode-nav cell, open Settings through `app.settings`,
+    press raw Cmd+B, let the sidebar finish closing, then Escape; raw Down
+    advances Graph. Repeat with the inspector's selectable commit message
+    focused and raw Cmd+Option+B hiding commit details. Neither retained
+    handle may receive focus after its pane disappears, even in the same
+    session. Disabling the rendered-dispatch-tree membership check must fail.
 - overlay focus return (`KAGI_GUI_E2E_ONLY=palette_push_modal_keys,settings_close_returns_focus`,
   `tests/recovery/overlay_focus.rs`): #817 / #812. Every key is raw, with no
   test-side refocusing. The palette scenario first starts the bottom-panel

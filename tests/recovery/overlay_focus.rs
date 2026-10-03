@@ -865,3 +865,153 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS settings_focus_trap");
 }
+
+/// #976: a focus handle can outlive its pane. Settings must not restore it
+/// after the pane disappears, even when the repository session is unchanged.
+pub fn scenario_settings_hidden_return_target(cx: &mut VisualTestAppContext) {
+    use std::time::{Duration, Instant};
+
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| {
+        app.select(0);
+        cx.notify();
+    });
+    draw(cx, window);
+    assert!(
+        cx.read(|cx| app.read(cx).view().rows.len()) >= 2,
+        "precondition: Graph has at least two commits"
+    );
+    let selected = |cx: &mut VisualTestAppContext| cx.read(|cx| app.read(cx).ui().selected);
+    let root_focused = |cx: &mut VisualTestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            app.read(cx)
+                .root_focus
+                .as_ref()
+                .is_some_and(|root| root.is_focused(window))
+        })
+        .unwrap()
+    };
+    let focused = |cx: &mut VisualTestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            window
+                .focused(cx)
+                .expect("focus handle before opening Settings")
+        })
+        .unwrap()
+    };
+    let in_workspace = |cx: &mut VisualTestAppContext, focus: &gpui::FocusHandle| {
+        cx.update_window(window, |_, window, cx| {
+            let root = app.read(cx).root_focus.clone().expect("workspace root");
+            root.contains(focus, window)
+        })
+        .unwrap()
+    };
+    let open_settings = |cx: &mut VisualTestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                app.handle_menu_command("app.settings", window, cx)
+            })
+        })
+        .unwrap();
+        draw(cx, window);
+    };
+    let finish = |cx: &mut VisualTestAppContext, label: &str| {
+        keys(cx, window, "escape");
+        draw(cx, window);
+        assert!(
+            cx.read(|cx| app.read(cx).menu_overlay.is_none()),
+            "{label}: Escape closes Settings"
+        );
+        keys(cx, window, "down");
+        assert_eq!(
+            selected(cx),
+            Some(1),
+            "{label}: raw Down must advance the Graph after Settings closes"
+        );
+        assert!(root_focused(cx), "{label}: focus returns to the drawn root");
+    };
+
+    let t0 = Instant::now();
+    e2e::set_panel_motion_clock(Some(t0));
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_mode_nav_for_e2e(0, window, cx))
+    })
+    .unwrap();
+    draw(cx, window);
+    assert!(!root_focused(cx), "precondition: mode-nav cell owns focus");
+    let sidebar_focus = focused(cx);
+    assert!(
+        in_workspace(cx, &sidebar_focus),
+        "precondition: mode-nav focus belongs to the visible workspace"
+    );
+    open_settings(cx);
+    keys(cx, window, "cmd-b");
+    assert!(
+        cx.read(|cx| !app.read(cx).sidebar.visible),
+        "Cmd+B must hide the sidebar while Settings remains open"
+    );
+    e2e::set_panel_motion_clock(Some(t0 + Duration::from_millis(300)));
+    draw(cx, window);
+    assert!(
+        cx.read(|cx| app.read(cx).menu_overlay.is_some()),
+        "sidebar toggle must leave Settings open for Escape to restore focus"
+    );
+    assert!(
+        !in_workspace(cx, &sidebar_focus),
+        "precondition: the captured sidebar focus is no longer drawn"
+    );
+    finish(cx, "hidden-sidebar-return");
+
+    // Reopen the sidebar so the second leg can focus an inspector control.
+    keys(cx, window, "cmd-b");
+    assert!(cx.read(|cx| app.read(cx).sidebar.visible));
+    app.update(cx, |app, cx| {
+        app.select(0);
+        cx.notify();
+    });
+    e2e::set_panel_motion_clock(Some(t0 + Duration::from_millis(600)));
+    draw(cx, window);
+    let message = e2e::control_bounds(window.window_id(), "inspector-message-scroll")
+        .expect("the inspector's selectable commit message is drawn");
+    cx.simulate_click(
+        window,
+        gpui::point(
+            message.origin.x + gpui::px(24.),
+            message.origin.y + gpui::px(12.),
+        ),
+        Modifiers::none(),
+    );
+    draw(cx, window);
+    assert!(
+        !root_focused(cx),
+        "precondition: clicking the inspector's TextView focuses it"
+    );
+    let inspector_focus = focused(cx);
+    assert!(
+        in_workspace(cx, &inspector_focus),
+        "precondition: the inspector focus belongs to the visible workspace"
+    );
+    open_settings(cx);
+    keys(cx, window, "cmd-alt-b");
+    assert!(
+        cx.read(|cx| !app.read(cx).inspector_visible),
+        "Cmd+Option+B must hide commit details while Settings remains open"
+    );
+    e2e::set_panel_motion_clock(Some(t0 + Duration::from_millis(900)));
+    draw(cx, window);
+    assert!(
+        cx.read(|cx| app.read(cx).menu_overlay.is_some()),
+        "commit-details toggle must leave Settings open"
+    );
+    assert!(
+        !in_workspace(cx, &inspector_focus),
+        "precondition: the captured inspector focus is no longer drawn"
+    );
+    finish(cx, "hidden-commit-details-return");
+
+    e2e::set_panel_motion_clock(None);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS settings_hidden_return_target");
+}

@@ -109,12 +109,17 @@ impl KagiApp {
         self.pending_focus = self.pending_root_focus();
     }
 
-    /// Apply the pending focus now.
+    /// Apply the pending focus only if its screen and its element still belong
+    /// to the most recently drawn workspace. GPUI retains focus handles for
+    /// unmounted elements, so a live handle alone is not a valid return target.
     pub(super) fn apply_pending_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(pending) = self.pending_focus.take() {
-            // Root is the default focus of every screen; never restore a
-            // retained handle belonging to a different session (or Home).
-            let focus = if pending.screen == self.focus_screen() {
+            let focus = if pending.screen == self.focus_screen()
+                && self
+                    .root_focus
+                    .as_ref()
+                    .is_some_and(|root| root.contains(&pending.focus, window))
+            {
                 Some(pending.focus)
             } else {
                 self.root_focus.clone()

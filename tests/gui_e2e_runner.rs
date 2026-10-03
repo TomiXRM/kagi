@@ -1249,6 +1249,10 @@ mod macos {
                 Box::new(crate::overlay_focus::scenario_settings_focus_trap),
             ),
             (
+                "settings_hidden_return_target",
+                Box::new(crate::overlay_focus::scenario_settings_hidden_return_target),
+            ),
+            (
                 "settings_switches",
                 Box::new(crate::settings_switches::scenario_settings_switches),
             ),

@@ -141,6 +141,65 @@ pub fn scenario_remote_branch_fetch_failed_after_departure(cx: &mut VisualTestAp
             .any(|entry| entry.op == "fetch-remote-branch"),
         "failure was recorded on the active tab instead of the owner"
     );
+    assert!(
+        kagi_ui_core::klog::tail().iter().any(|line| {
+            line.starts_with("[kagi] fetch-remote-branch: failed origin/main — ")
+                && line.contains(missing.to_str().unwrap())
+        }),
+        "departed failure lost its unchanged klog contract line"
+    );
+    unmount(cx, app, window);
+}
+
+/// A successful branch fetch also emits its contract line after departure;
+/// only the footer and toast belong to the active tab.
+pub fn scenario_remote_branch_fetch_success_after_departure(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let other = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let other_repo = other.path().canonicalize().unwrap();
+    let remote_root = tempfile::tempdir().unwrap();
+    let remote = remote_root.path().join("origin.git");
+    git(&repo, &["init", "--bare", "-q", remote.to_str().unwrap()]);
+    git(
+        &repo,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    git(&repo, &["push", "-q", "origin", "main"]);
+
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| assert!(app.open_repository(other_repo, cx)));
+    cx.run_until_parked();
+    let contract_line = "[kagi] fetch-remote-branch: ok origin/main";
+    let before = kagi_ui_core::klog::tail()
+        .iter()
+        .filter(|line| line.as_str() == contract_line)
+        .count();
+    app.update(cx, |app, cx| {
+        app.switch_repo(0, cx);
+        app.fetch_remote_branch_async("origin/main".into(), cx);
+        app.switch_repo(1, cx);
+        app.status_footer = FooterStatus::Idle("other tab sentinel".into());
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        kagi_ui_core::klog::tail()
+            .iter()
+            .filter(|line| line.as_str() == contract_line)
+            .count(),
+        before + 1,
+        "departed success lost its unchanged klog contract line"
+    );
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(matches!(&state.status_footer, FooterStatus::Idle(text) if text.as_ref() == "other tab sentinel"));
+        assert!(!state.app_sessions.has_leases());
+        assert!(
+            !state.toast_stack.as_ref().unwrap().read(cx).toasts().iter()
+                .any(|toast| toast.message.as_ref().contains("Fetched origin/main")),
+            "departed success displayed on the other tab"
+        );
+    });
     unmount(cx, app, window);
 }
 

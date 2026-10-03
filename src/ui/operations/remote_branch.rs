@@ -239,10 +239,6 @@ impl KagiApp {
                     app.notice_reconcile_required(id, op, &path);
                 }
                 app.present_app_notice();
-                if !current {
-                    cx.notify();
-                    return;
-                }
                 let result = result.map_err(|e| {
                     if open_failed {
                         i18n::op_failed(i18n::Op::RepoOpen, e)
@@ -250,9 +246,16 @@ impl KagiApp {
                         e.to_string()
                     }
                 });
+                match &result {
+                    Ok(_) => klog!("fetch-remote-branch: ok {}", remote_branch),
+                    Err(e) => klog!("fetch-remote-branch: failed {} — {}", remote_branch, e),
+                }
+                if !current {
+                    cx.notify();
+                    return;
+                }
                 match result {
                     Ok(outcome) => {
-                        klog!("fetch-remote-branch: ok {}", remote_branch);
                         if outcome.changed {
                             app.reload(cx);
                         }
@@ -267,7 +270,6 @@ impl KagiApp {
                         );
                     }
                     Err(e) => {
-                        klog!("fetch-remote-branch: failed {} — {}", remote_branch, e);
                         let msg = i18n::op_failed(i18n::Op::Fetch, e);
                         app.status_footer = FooterStatus::Failed(SharedString::from(msg.clone()));
                         app.push_toast(ToastKind::Error, msg, cx);

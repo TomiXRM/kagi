@@ -66,9 +66,32 @@ fn row_key(row: &SidebarRow) -> Option<String> {
         SidebarRow::LocalBranchLeaf { name, .. } => format!("branch:{name}"),
         SidebarRow::RemoteLeaf { display, .. } => format!("remote:{display}"),
         SidebarRow::Tag { name, .. } => format!("tag:{name}"),
-        SidebarRow::Worktree { path, .. } => format!("worktree:{}", path.display()),
+        SidebarRow::Worktree { path, .. } => worktree_key(path),
         SidebarRow::Stash { index, .. } => format!("stash:{index}"),
     })
+}
+
+/// A worktree row's key, lossless (#987 review): its path as text when it is
+/// UTF-8, else its bytes in hex under another prefix — two paths that
+/// `Path::display` would print alike keep their own keys, and handles.
+fn worktree_key(path: &std::path::Path) -> String {
+    match path.to_str() {
+        Some(text) => format!("worktree:{text}"),
+        None => {
+            let bytes = path.as_os_str().as_encoded_bytes();
+            let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+            format!("worktree-bytes:{hex}")
+        }
+    }
+}
+
+/// Whether `key` is the row key of the worktree at `path` (no allocation for
+/// a UTF-8 path, which is every path the card is opened on in practice).
+fn is_worktree_key(key: &str, path: &std::path::Path) -> bool {
+    match path.to_str() {
+        Some(text) => key.strip_prefix("worktree:") == Some(text),
+        None => key == worktree_key(path),
+    }
 }
 
 impl SidebarFocus {
@@ -124,12 +147,9 @@ impl KagiApp {
         }
         // The keyboard's inspection card lives while its row has the focus.
         if let Some(path) = &self.sidebar.focus.card {
-            // The key is `worktree:` and the path as `Path::display` writes
-            // it, which is `to_string_lossy` (borrowed for a UTF-8 path).
             let held = self.sidebar.focus.rows[WORKTREES]
                 .focused(window)
-                .and_then(|key| key.strip_prefix("worktree:"))
-                .is_some_and(|key| key == path.to_string_lossy());
+                .is_some_and(|key| is_worktree_key(key, path));
             if !held {
                 self.sidebar.focus.card = None;
             }
@@ -346,5 +366,30 @@ impl KagiApp {
     /// The worktree whose inspection card the keyboard opened.
     pub fn sidebar_keyboard_card_for_e2e(&self) -> Option<PathBuf> {
         self.sidebar.focus.card.clone()
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::Path;
+
+    use super::{is_worktree_key, worktree_key};
+
+    /// Two worktree paths that `Path::display` prints alike (each invalid
+    /// byte becomes U+FFFD) keep their own row keys, so their rows keep their
+    /// own focus handles; each key still names its own path (#987 review).
+    #[test]
+    fn worktree_keys_tell_apart_paths_that_display_alike() {
+        let a = Path::new(OsStr::from_bytes(b"/wt/\xff"));
+        let b = Path::new(OsStr::from_bytes(b"/wt/\xfe"));
+        assert_eq!(a.display().to_string(), b.display().to_string());
+        assert_ne!(worktree_key(a), worktree_key(b));
+        assert!(is_worktree_key(&worktree_key(a), a));
+        assert!(!is_worktree_key(&worktree_key(a), b));
+        let utf8 = Path::new("/wt/one");
+        assert_eq!(worktree_key(utf8), "worktree:/wt/one");
+        assert!(is_worktree_key("worktree:/wt/one", utf8));
     }
 }

@@ -77,7 +77,14 @@ fn description_card(
             &body,
             style,
         ));
-    super::timeline_row::row("pr-mode-description", &pr.author, avatars, content).into_any_element()
+    super::timeline_row::row(
+        "pr-mode-description",
+        &pr.author,
+        kagi_git::github::repo_host(&pr.base_repo),
+        avatars,
+        content,
+    )
+    .into_any_element()
 }
 
 /// "Loading…" with the bobbing dots, while a tab's own fetch is still out
@@ -206,6 +213,7 @@ fn render_entry(
     number: u64,
     i: usize,
     e: &Entry,
+    host: Option<&str>,
     avatars: &kagi_ui_core::avatar::AvatarImages,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -288,6 +296,7 @@ fn render_entry(
     super::timeline_row::row(
         ("pr-convo-entry", number as usize * 1000 + i),
         &e.author,
+        host,
         avatars,
         content,
     )
@@ -463,14 +472,13 @@ pub(super) fn render_feed_item(
         }
         FeedItem::Entry(i) => {
             // Retain the entries for this row; avatars are borrowed from the host.
-            let entries = app
-                .pr_mode()
-                .and_then(|m| m.tabs.get(tab_ix))
-                .map(|t| t.feed_entries.clone());
+            let tab = app.pr_mode().and_then(|m| m.tabs.get(tab_ix));
+            let entries = tab.map(|t| t.feed_entries.clone());
+            let host = tab.and_then(|t| kagi_git::github::repo_host(&t.pr.base_repo));
             match entries.as_ref().and_then(|e| e.get(i)) {
                 Some(entry) => block(super::e2e::measure_control(
                     format!("pr-feed-entry-{i}"),
-                    render_entry(number, i, entry, &app.avatars.images, cx),
+                    render_entry(number, i, entry, host, &app.avatars.images, cx),
                 )),
                 None => div().into_any_element(),
             }

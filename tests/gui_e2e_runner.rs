@@ -228,6 +228,10 @@ mod file_menu_owner;
 mod issue_write_owner;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/ghe_viewer_login.rs"]
+mod ghe_viewer_login;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/platform_menu_scroll.rs"]
 mod platform_menu_scroll;
 
@@ -1610,6 +1614,14 @@ mod macos {
             (
                 "issue_create_fields",
                 Box::new(crate::issue_create_fields::scenario_issue_create_fields),
+            ),
+            (
+                "ghe_viewer_login",
+                Box::new(crate::ghe_viewer_login::scenario_ghe_viewer_login),
+            ),
+            (
+                "ghe_viewer_login_closed_only",
+                Box::new(crate::ghe_viewer_login::scenario_ghe_viewer_login_closed_only),
             ),
             (
                 "workspace_mode_toolbar",

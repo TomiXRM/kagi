@@ -8,6 +8,7 @@ use gpui::{prelude::*, Context};
 use std::sync::Arc;
 
 use super::{avatar_fetch, KagiApp};
+use kagi_ui_core::avatar::login_key;
 use kagi_ui_core::klog;
 
 impl KagiApp {
@@ -107,22 +108,31 @@ impl KagiApp {
         })
         .detach();
     }
+    /// Fetch the avatars of `candidates`, GitHub logins on `host` (#906): the
+    /// image is stored and attempted under [`login_key`], and fetched from
+    /// that host, so an Enterprise login never borrows the github.com face
+    /// of a different person with the same name.
     fn ensure_github_login_avatars(
         &mut self,
         candidates: Vec<String>,
+        host: Option<String>,
         source: &'static str,
         cx: &mut Context<Self>,
     ) {
         if avatar_fetch::offline() {
             return;
         }
-        let mut logins: Vec<String> = Vec::new();
+        let mut logins: Vec<(String, String)> = Vec::new();
         for login in candidates {
-            if login.is_empty() || self.avatars.images.contains_key(&login) {
+            if login.is_empty() {
                 continue;
             }
-            if self.avatars.attempted.insert(login.clone()) {
-                logins.push(login);
+            let key = login_key(host.as_deref(), &login).into_owned();
+            if self.avatars.images.contains_key(&key) {
+                continue;
+            }
+            if self.avatars.attempted.insert(key.clone()) {
+                logins.push((key, login));
             }
         }
         if logins.is_empty() {
@@ -131,12 +141,12 @@ impl KagiApp {
 
         let task = cx.background_spawn(async move {
             let mut out: Vec<(String, std::sync::Arc<gpui::Image>)> = Vec::new();
-            for login in logins {
-                let url = avatar_fetch::avatar_url_for_username(&login);
+            for (key, login) in logins {
+                let url = avatar_fetch::avatar_url_for_login(host.as_deref(), &login);
                 if let Some(image) =
                     avatar_fetch::fetch_avatar_bytes(&url).and_then(avatar_fetch::image_from_bytes)
                 {
-                    out.push((login, image));
+                    out.push((key, image));
                 }
             }
             out
@@ -157,12 +167,14 @@ impl KagiApp {
     }
 
     /// Avatars for the GitHub **logins** on the PR page (ADR-0200): its author,
-    /// its reviewers and assignees, and everyone in its conversation.
+    /// its reviewers and assignees, everyone in its conversation, and the
+    /// viewer the composer posts as.
     ///
-    /// Keyed by login in the same `avatars.images` map the commit rows use -
-    /// a login has no `@`, a commit author's email does, so the two key spaces
-    /// cannot collide. The URL is GitHub's own avatar CDN, which needs no API
-    /// call and no token: one GET per login, disk-cached by
+    /// Keyed by [`login_key`] in the same `avatars.images` map the commit rows
+    /// use - a login key has no `@`, a commit author's email does, so the two
+    /// key spaces cannot collide. On github.com the URL is GitHub's own avatar
+    /// CDN, which needs no API call and no token; an Enterprise PR's logins
+    /// are fetched from that server (#906). One GET per login, disk-cached by
     /// [`super::avatar_fetch`], attempted once per process.
     pub(crate) fn ensure_pr_avatars(&mut self, cx: &mut Context<Self>) {
         let Some(mode) = self.pr_mode() else {
@@ -171,6 +183,7 @@ impl KagiApp {
         let Some(tab) = mode.active.and_then(|ix| mode.tabs.get(ix)) else {
             return;
         };
+        let host = kagi_git::github::repo_host(&tab.pr.base_repo).map(str::to_owned);
         let mut candidates: Vec<String> = Vec::new();
         candidates.push(tab.pr.author.clone());
         candidates.extend(tab.pr.reviewers.iter().cloned());
@@ -178,14 +191,17 @@ impl KagiApp {
         candidates.extend(tab.reviews.iter().map(|r| r.author.clone()));
         candidates.extend(tab.comments.iter().map(|c| c.author.clone()));
         candidates.extend(tab.line_comments.iter().map(|c| c.author.clone()));
-        self.ensure_github_login_avatars(candidates, "pr", cx);
+        candidates.extend(self.host_login(&tab.pr.base_repo).map(str::to_owned));
+        self.ensure_github_login_avatars(candidates, host, "pr", cx);
     }
 
     /// Resolve the viewer, Issue authors, and the selected conversation's
-    /// authors through the same login-keyed cache and CDN path as PR avatars.
+    /// authors through the same login-keyed cache as PR avatars, on the
+    /// Issues repository's host (#906).
     pub(crate) fn ensure_issue_avatars(&mut self, cx: &mut Context<Self>) {
+        let host = self.issue_repo_host().map(str::to_owned);
         let mut candidates = Vec::new();
-        candidates.extend(self.github_login.iter().cloned());
+        candidates.extend(self.issue_host_login().map(str::to_owned));
         let ui = self.ui();
         candidates.extend(ui.github_issues.iter().map(|issue| issue.author.clone()));
         if let Some(issue) = ui
@@ -195,6 +211,6 @@ impl KagiApp {
             candidates.push(issue.author.clone());
             candidates.extend(issue.comments.iter().map(|comment| comment.author.clone()));
         }
-        self.ensure_github_login_avatars(candidates, "issue", cx);
+        self.ensure_github_login_avatars(candidates, host, "issue", cx);
     }
 }

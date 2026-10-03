@@ -28,7 +28,9 @@ pub(super) fn ci_glyph(ci: CiState) -> (&'static str, u32) {
 /// PRs bucketed by what the user should do. L2 availability is part of the
 /// verdict, so absent checks cannot look ready.
 pub(super) fn focus_queue(app: &KagiApp) -> Vec<(PrAttention, Vec<(PullRequest, PrReason)>)> {
-    let login = app.github_login.clone();
+    let rows = app.ui().pr_list_rows();
+    // #906: "me" is the login on each PR's own host.
+    let viewers = super::pr_nav::row_viewers(app, rows);
     let local: Vec<String> = app
         .view()
         .branches
@@ -46,8 +48,8 @@ pub(super) fn focus_queue(app: &KagiApp) -> Vec<(PrAttention, Vec<(PullRequest, 
     .into_iter()
     .map(|attention| (attention, Vec::new()))
     .collect();
-    for pr in app.ui().pr_list_rows() {
-        let group = pr.group_for(login.as_deref(), &local);
+    for (pr, me) in rows.iter().zip(viewers) {
+        let group = pr.group_for(me, &local);
         let (attention, reason) = pr.attention_with_status(
             group == PrGroup::Mine,
             group == PrGroup::ReviewRequested,

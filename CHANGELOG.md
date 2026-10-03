@@ -15,8 +15,11 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Remove 対象のディレクトリ内に別の登録済み worktree がある場合は、実行元のタブを問わず計画・実行前・削除直前に拒否します。ignored フォルダー内の未バックアップのファイルも保護し、削除対象自身のタブからの Remove は引き続き可能です。(#915、#938)
 - 別の worktree を Remove するときに削除前ステップで実行元の checkout が変わったら、Operation Log に HEAD 移動を記録し、その記録を越える RestoreToPoint を拒否します。自己削除のときだけ存続する common dir の HEAD を観測します。(#915、#938)
 - `--separate-git-dir` で common dir が削除対象 worktree の中にある場合は、main workdir が別の場所でも Remove を計画・実行前・削除直前に拒否し、共通 ODB / refs を保護します。(#915、#938)
+- GitHub Enterprise の repository で、Issues の「Assigned to me / Created by me」と PR の Mine などの判定に github.com のアカウントを使っていた問題を修正しました。repository のサーバーでのアカウントで判定し、それがまだ分からない間は件数を「—」にして、空だとは表示しません。Enterprise のユーザーのアバターも、github.com の同名ユーザーではなく、そのサーバーから取得します。(#906)
 - New Issue の本文エディタが Tab を字下げとして取り込み、キーボードだけでは下のラベル・担当者・Create へ進めなかった問題を修正しました。Issue の本文エディタ(新規・返信)でも Tab / Shift+Tab でフォーカスが移動し、字下げは Cmd+] / Cmd+[(Linux / Windows は Ctrl+] / Ctrl+[)で行えます。(#909)
 - Linux / FreeBSD の View メニューで、テーマ一覧がウィンドウの下へはみ出し、後半のテーマや言語の項目を選べなかった問題を修正しました。メニューの高さをウィンドウ内に収め、入りきらない項目はメニューの中でスクロールして選べます。(#935)
+- Operation Log で行を開いたときの詳細が「before: branch: maindirty: cleanafter: …」のように 1 行につながって表示されていた問題を修正しました。before / dirty / after などを 1 項目ずつ改行して表示します。(#908)
+- Operation Log の操作者の表示を、日本語表示でも「人」ではなく「Human」にしました(CLI / MCP と同じく英語の表記)。(#908)
 
 ### Changed
 

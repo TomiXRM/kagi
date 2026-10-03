@@ -49,6 +49,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - gpui-component の固定版全 UI 部品、Kagi の画面別操作部品、Zeron の設計例を一次資料と実画面で比較した調査資料を追加しました（#931、実装・外観の変更はありません）。
 - Modern UI の PM 基準案を Kagi と固定版 gpui-component の寸法・操作状態・高密度画面・安全確認に照らして批判した資料を追加しました（#931、実装・外観の変更はありません）。
 - UI 実装ガイドの統合版を実コードと固定版部品に再照合し、PR/Issue 行・タブ・Switch・モーダルの誤認を訂正して、第 2 ラウンドの批判と検証手順の不足を記録しました（#931、UI 動作の変更はありません）。
+- UI 実装ガイド(`docs/ui/modern-ui.md`)に、下部パネル・サイドバー・右ペインの開閉で共有する `panel_motion`(開く 180ms ease-out、閉じる 150ms ease-in、`reduce_motion` と layout の切り替えでは即座、動いている間は divider のドラッグを無視)を既存部品として追記し、ガイドの有無で同じ画面を作らせた #931 の A/B の結論を記録しました(兄弟部品がある画面では見た目は変わらず、効くのは検証と記録)。UI 動作の変更はありません。
 
 ### Internal
 

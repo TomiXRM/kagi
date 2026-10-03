@@ -41,6 +41,10 @@ survive GC and are retained with their oplog entries.
   is passed by mutable reference from outside catch_unwind, updated before
   side effects and immediately after each backup. Verification is explicit.
 - #915 / #938: linked 自身からの Remove でも削除境界を実行元の workdir に置かない。main workdir がある repository はその path、bare common dir はその common dir を削除から守る。削除前 copy / symlink ステップの source は main workdir が無い場合に実行元 linked worktree を使い、削除境界と混同しない。
+- #938: recorded Remove の前後 snapshot は管理元が残る場合はその
+  worktree の HEAD、管理元自身を削除する場合だけ surviving common dir
+  の HEAD を観測する。同じ source を前後で使い、削除前 step による
+  管理元の checkout は HEAD 移動として記録して restore を拒否する。
 - `Unknown { after, evidence }` is additive. Evidence is a human-readable
   string carrying stage, verification, termination and step observations.
   Partial/Unknown after contains full blob and branch OIDs. Existing variants

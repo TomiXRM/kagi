@@ -181,12 +181,18 @@ impl Backend {
         mut event: impl FnMut(RemoveEvent),
     ) -> RemoveReport {
         let mut progress = RemoveProgress::default();
-        // Observe through the shared repository: the owner may be the linked
-        // worktree we delete, but its common dir and branch refs survive.
-        // Using the same main HEAD on both sides also avoids recording the
-        // disappearance of the removed worktree's per-worktree HEAD (#915).
+        // When the manager survives, observe its own HEAD: a pre_remove step
+        // can checkout another branch there, and restore must see HeadMoved.
+        // Only self-removal needs the surviving common dir, because the
+        // removed worktree's per-worktree HEAD disappears (#915). The same
+        // source on both sides also keeps bare-backed refs observable (#938).
+        let snapshot_path = if plan.repo == plan.target {
+            &plan.common_dir.0
+        } else {
+            &plan.repo
+        };
         // Unreadable on either side: not recorded.
-        let refs_before = refs_of(&plan.common_dir.0);
+        let refs_before = refs_of(snapshot_path);
         // #900 review: the repository identity is read before anything runs,
         // like the "before" snapshot of `run_recorded_with_events` — the
         // removed worktree no longer opens afterwards, and by then another
@@ -314,7 +320,7 @@ impl Backend {
             },
         };
         let ref_moves = refs_before
-            .zip(refs_of(&plan.common_dir.0))
+            .zip(refs_of(snapshot_path))
             .map(|(before, after)| kagi_domain::ref_moves::diff(&before, &after));
         let mut entry = OpLogEntry::new(
             "remove-worktree",

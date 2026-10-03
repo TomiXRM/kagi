@@ -19,6 +19,10 @@ pub enum Planned {
         request: RemoteStashRequest,
         policy: StashPolicy,
     },
+    RemotePull {
+        plan: Box<RemotePullPlan>,
+        request: RemotePullRequest,
+    },
     Conflict {
         plan: Box<kagi_git::backend::conflict_ops::ConflictPlan>,
         request: ConflictAppRequest,
@@ -37,6 +41,7 @@ impl Planned {
             Self::Remove { request, .. } => OwnerAttachment::Local(request.owner.clone()),
             Self::Stash { request, .. } => OwnerAttachment::Local(request.owner.clone()),
             Self::RemoteStash { request, .. } => OwnerAttachment::Remote(request.owner.clone()),
+            Self::RemotePull { request, .. } => OwnerAttachment::Remote(request.owner.clone()),
             Self::Conflict { request, .. } => OwnerAttachment::Local(request.owner.clone()),
             Self::Run(request) => OwnerAttachment::Local(request.owner.clone()),
             Self::Pull(request) => OwnerAttachment::Local(request.owner.clone()),
@@ -47,6 +52,7 @@ impl Planned {
             Self::Remove { plan, .. } => WriteScope::Local(plan.common_dir.clone()),
             Self::Stash { plan, .. } => WriteScope::Local(plan.common_dir.clone()),
             Self::RemoteStash { plan, .. } => WriteScope::Remote(plan.repo_id.clone()),
+            Self::RemotePull { plan, .. } => WriteScope::Remote(plan.repo_id.clone()),
             Self::Conflict { plan, .. } => WriteScope::Local(plan.common_dir().clone()),
             Self::Run(request) => WriteScope::Local(request.repo.clone()),
             Self::Pull(request) => WriteScope::Local(request.repo.clone()),
@@ -68,6 +74,7 @@ impl Planned {
             // Remote invalidation is routed to its frozen session; local
             // WorktreeId sibling discovery cannot describe a remote repository.
             Self::RemoteStash { .. } => false,
+            Self::RemotePull { .. } => false,
             Self::Conflict { .. } => false,
             // Conservative: every run-pipeline write may move refs or HEAD, so
             // every open sibling is told. Index-only families are not here.
@@ -187,6 +194,13 @@ fn identity_matches(s: &Sessions, prepared: &Planned) -> Result<(), AdmissionErr
                 ));
             }
         }
+        Planned::RemotePull { request, .. } => {
+            if s.worktree_of(request.owner.session).is_some() {
+                return Err(AdmissionError::Identity(
+                    "a remote operation requires a remote tab attachment".into(),
+                ));
+            }
+        }
         Planned::Conflict { plan, request, .. } => {
             s.confirm_identity(&request.owner)?;
             if request.owner.worktree.as_ref() != Some(plan.worktree()) {
@@ -260,6 +274,7 @@ pub fn approve(
         Planned::Remove { policy, .. } => Policy::Remove(policy.clone()),
         Planned::Stash { policy, .. } => Policy::Stash(*policy),
         Planned::RemoteStash { policy, .. } => Policy::Stash(*policy),
+        Planned::RemotePull { .. } => Policy::Stash(kagi_git::backend::ExecutionPolicy::default()),
         Planned::Conflict { policy, .. } => Policy::Conflict(*policy),
         // A run plan has no token to spend; it is admitted by `approve_run`.
         Planned::Run(_) => return Err(AdmissionError::StaleApproval),
@@ -347,6 +362,12 @@ pub enum Completion {
     Conflict(Box<ConflictCompletion>),
     Run(Box<RunCompletion>),
     Pull(Box<PullCompletion>),
+    RemotePull(Box<RemotePullCompletion>),
+}
+impl From<RemotePullCompletion> for Completion {
+    fn from(c: RemotePullCompletion) -> Self {
+        Self::RemotePull(Box::new(c))
+    }
 }
 impl From<PullCompletion> for Completion {
     fn from(c: PullCompletion) -> Self {
@@ -378,6 +399,7 @@ pub enum FamilyEvidence {
     Remove(kagi_git::backend::remove::RemoveReport),
     Stash(kagi_git::backend::stash::StashReport),
     RemoteStash(crate::remote::stash::RemoteStashReport),
+    RemotePull(crate::remote::RemotePullReport),
     Conflict(kagi_git::backend::conflict_ops::ConflictReport),
     Run(kagi_git::backend::recording::RunReport),
     Pull(PullReport),
@@ -392,6 +414,7 @@ pub enum Job {
     Stash(StashJob),
     Conflict(ConflictJob),
     Run(RunJob),
+    RemotePull(RemotePullJob),
 }
 pub enum Event {
     Remove(kagi_git::backend::remove::RemoveEvent),
@@ -407,6 +430,7 @@ impl Job {
             Self::Stash(job) => job.run_with_events(|e| event(Event::Stash(e))).into(),
             Self::Conflict(job) => job.run().into(),
             Self::Run(job) => job.run().into(),
+            Self::RemotePull(job) => job.run().into(),
         }
     }
 }
@@ -415,6 +439,7 @@ pub fn prepare(s: &mut Sessions, approved: Approved) -> Result<Job, AdmissionErr
         Planned::Remove { .. } => prepare_remove(s, approved).map(Job::Remove),
         Planned::Stash { .. } => prepare_stash(s, approved).map(Job::Stash),
         Planned::RemoteStash { .. } => prepare_stash(s, approved).map(Job::Stash),
+        Planned::RemotePull { .. } => prepare_remote_pull(s, approved).map(Job::RemotePull),
         Planned::Conflict { .. } => prepare_conflict(s, approved).map(Job::Conflict),
         // The run family binds its own blocking core: see `prepare_run`.
         Planned::Run(_) => Err(AdmissionError::Identity(

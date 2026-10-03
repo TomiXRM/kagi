@@ -70,6 +70,16 @@ impl std::fmt::Display for SshConfigError {
 
 /// Parse and validate the security-relevant subset of OpenSSH `-G` output.
 pub fn parse_effective_ssh_config(text: &str) -> Result<EffectiveSshConfig, SshConfigError> {
+    parse_ssh_config(text, false)
+}
+
+/// Pull uses the host's ordinary SSH route, including ssh-agent and proxies.
+/// Stash deliberately retains the stronger frozen-connection policy above.
+pub fn parse_pull_ssh_config(text: &str) -> Result<EffectiveSshConfig, SshConfigError> {
+    parse_ssh_config(text, true)
+}
+
+fn parse_ssh_config(text: &str, pull: bool) -> Result<EffectiveSshConfig, SshConfigError> {
     let mut hostname = None;
     let mut user = None;
     let mut port = None;
@@ -89,7 +99,7 @@ pub fn parse_effective_ssh_config(text: &str) -> Result<EffectiveSshConfig, SshC
             "user" => user = Some(value.to_string()),
             "port" => port = value.parse::<u16>().ok(),
             "hostkeyalias" if value != "none" => host_key_alias = Some(value.to_string()),
-            "identityfile" => identity_files.push(value.to_string()),
+            "identityfile" if !pull || value != "none" => identity_files.push(value.to_string()),
             "certificatefile" if value != "none" => certificate_files.push(value.to_string()),
             "userknownhostsfile" => {
                 user_known_hosts_files.extend(value.split_whitespace().map(str::to_string))
@@ -98,13 +108,13 @@ pub fn parse_effective_ssh_config(text: &str) -> Result<EffectiveSshConfig, SshC
                 global_known_hosts_files.extend(value.split_whitespace().map(str::to_string))
             }
             "hostkeyalgorithms" => host_key_algorithms.extend(value.split(',').map(str::to_string)),
-            "proxyjump" | "proxycommand" if value != "none" => {
+            "proxyjump" | "proxycommand" if !pull && value != "none" => {
                 return Err(SshConfigError::Unsupported("proxy routing"))
             }
-            "controlmaster" if value != "no" && value != "false" => {
+            "controlmaster" if !pull && value != "no" && value != "false" => {
                 return Err(SshConfigError::Unsupported("ControlMaster"))
             }
-            "controlpath" if value != "none" => {
+            "controlpath" if !pull && value != "none" => {
                 return Err(SshConfigError::Unsupported("ControlPath"))
             }
             _ => {}
@@ -121,7 +131,9 @@ pub fn parse_effective_ssh_config(text: &str) -> Result<EffectiveSshConfig, SshC
         global_known_hosts_files,
         host_key_algorithms,
     };
-    if config.identity_files.is_empty() || config.identity_files.iter().all(|p| p == "none") {
+    if !pull
+        && (config.identity_files.is_empty() || config.identity_files.iter().all(|p| p == "none"))
+    {
         return Err(SshConfigError::Unsupported("agent-only authentication"));
     }
     for path in config
@@ -135,6 +147,19 @@ pub fn parse_effective_ssh_config(text: &str) -> Result<EffectiveSshConfig, SshC
         }
     }
     Ok(config)
+}
+
+/// The SSH common-dir probe must return exactly one absolute physical path.
+pub fn parse_pull_common_dir(bytes: &[u8]) -> Result<String, &'static str> {
+    let fields: Vec<_> = bytes.split(|byte| *byte == 0).collect();
+    if fields.len() != 3 || fields[0] != b"KAGI-COMMON-DIR" || fields[2] != b"KAGI-END\n" {
+        return Err("malformed common-dir frame");
+    }
+    let path = std::str::from_utf8(fields[1]).map_err(|_| "common-dir is not UTF-8")?;
+    if !path.starts_with('/') || path.contains('\n') || path.contains('\u{fffd}') {
+        return Err("common-dir is not a physical absolute path");
+    }
+    Ok(path.to_string())
 }
 
 /// Build the literal direct-SSH argv prefix from an already frozen identity.
@@ -569,6 +594,30 @@ mod tests {
             )),
             Err(SshConfigError::UnexpandedToken(_))
         ));
+    }
+
+    #[test]
+    fn pull_accepts_agent_and_normal_ssh_routing_but_rejects_malformed_port() {
+        let config = "hostname host.example\nuser alice\nport 2222\nidentityfile none\nproxyjump hop\ncontrolmaster auto\ncontrolpath /tmp/socket\n";
+        let parsed = parse_pull_ssh_config(config).unwrap();
+        assert_eq!(parsed.hostname, "host.example");
+        assert!(parsed.identity_files.is_empty());
+        assert_eq!(parsed.port, 2222);
+        assert_eq!(
+            parse_pull_ssh_config(&config.replace("port 2222", "port invalid")),
+            Err(SshConfigError::Malformed("port"))
+        );
+    }
+
+    #[test]
+    fn pull_common_dir_requires_exact_frame_and_physical_absolute_path() {
+        assert_eq!(
+            parse_pull_common_dir(b"KAGI-COMMON-DIR\0/srv/repo/.git\0KAGI-END\n"),
+            Ok("/srv/repo/.git".into())
+        );
+        assert!(parse_pull_common_dir(b"KAGI-COMMON-DIR\0relative\0KAGI-END\n").is_err());
+        assert!(parse_pull_common_dir(b"KAGI-COMMON-DIR\0/srv/repo\0KAGI-END\nextra").is_err());
+        assert!(parse_pull_common_dir(b"KAGI-COMMON-DIR\0/srv/\xff\0KAGI-END\n").is_err());
     }
 
     #[test]

@@ -507,7 +507,7 @@ pub(crate) fn plan_pr_merge(
 // `kagi_git::github::*`.
 pub use crate::github_fetch::{
     apply_pr_fetch, classify_gh_failure, issue_detail, list_issues, list_merged_prs, list_prs,
-    pr_body_detail, pr_status_detail, PrFetchError, PrFetchOutcome,
+    pr_body_detail, pr_for_open, pr_status_detail, PrFetchError, PrFetchOutcome,
 };
 // The pull-request list shapes (the L1 GraphQL page and gh's flat `--json`
 // array) are parsed in `github_pr_list`, re-exported for the same reason.

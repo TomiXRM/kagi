@@ -199,7 +199,7 @@ pub fn parse_repo_list(json: &str, limit: usize) -> Result<RepoList, GitError> {
 }
 
 /// The host of an `https://host/owner/repo` URL.
-fn url_host(url: &str) -> Option<String> {
+pub(crate) fn url_host(url: &str) -> Option<String> {
     let (_, rest) = url.split_once("://")?;
     let host = rest.split('/').next()?;
     (!host.is_empty()).then(|| host.to_string())

@@ -359,6 +359,42 @@ pub fn pr_body_detail(
     )
 }
 
+/// The fields of one [`PR_LIST_QUERY`] node, as `gh pr view --json` names
+/// them: what opening a PR in PR mode needs (head / base refs and SHA).
+const PR_OPEN_FIELDS: &str = "number,title,url,state,isDraft,isCrossRepository,createdAt,\
+    updatedAt,headRefName,headRefOid,baseRefName,reviewDecision,author,assignees,labels,\
+    reviewRequests";
+
+/// One PR's list row, read by itself so it can be opened (#928). Home's
+/// cross-repository search returns no head / base refs, and the
+/// repository's own list is one 100-PR page that may not contain it.
+/// `base_repo` is `host/owner/repo`.
+pub fn pr_for_open(
+    workdir: &Path,
+    base_repo: &str,
+    number: u64,
+) -> Result<PullRequest, PrFetchError> {
+    let number = number.to_string();
+    fetch_json(
+        workdir,
+        &[
+            "pr",
+            "view",
+            "-R",
+            base_repo,
+            &number,
+            "--json",
+            PR_OPEN_FIELDS,
+        ],
+        |json| {
+            parse_pr_list(&format!("[{json}]"))?
+                .into_iter()
+                .next()
+                .ok_or_else(|| crate::GitError::Other("gh pr view: no pull request".into()))
+        },
+    )
+}
+
 /// Recently **merged** PRs, keyed by their head branch by the caller.
 ///
 /// A separate, deliberately cheaper call than [`list_prs`]: Branch Cleanup

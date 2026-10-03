@@ -119,6 +119,9 @@ mod home_tab;
 #[cfg(target_os = "macos")]
 #[path = "recovery/home_github.rs"]
 mod home_github;
+#[cfg(target_os = "macos")]
+#[path = "recovery/home_work.rs"]
+mod home_work;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/conflict_abort_slot.rs"]
@@ -946,6 +949,10 @@ mod macos {
             (
                 "home_github",
                 Box::new(crate::home_github::scenario_home_github),
+            ),
+            (
+                "home_work",
+                Box::new(crate::home_work::scenario_home_work),
             ),
             (
                 "smart_commit_generation_owner",

@@ -197,4 +197,19 @@ impl KagiApp {
         }
         self.ensure_github_login_avatars(candidates, "issue", cx);
     }
+
+    /// Avatars for Home's review-request rows (#928): the authors waiting
+    /// for the user's review, through the same login-keyed cache.
+    pub(crate) fn ensure_home_avatars(&mut self, cx: &mut Context<Self>) {
+        let Some(lists) = self.home_github.work.lists.as_ref() else {
+            return;
+        };
+        let candidates = lists
+            .review_requests
+            .items
+            .iter()
+            .map(|item| item.author.clone())
+            .collect();
+        self.ensure_github_login_avatars(candidates, "home", cx);
+    }
 }

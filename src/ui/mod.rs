@@ -80,6 +80,8 @@ pub mod home;
 pub mod home_clone_card;
 pub mod home_github;
 mod home_github_list;
+pub mod home_work;
+mod home_work_list;
 pub mod inspector;
 mod inspector_model;
 pub mod list_a11y;

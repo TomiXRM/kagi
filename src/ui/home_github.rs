@@ -76,6 +76,9 @@ pub struct HomeGithub {
     /// rows are measured once per build, so a change resets it.
     pub(super) list: Option<gpui::ListState>,
     pub(super) list_key: Option<super::home_github_list::ListKey>,
+    /// The user's open pull requests and issues, and which pane of Home's
+    /// switch is showing (#928).
+    pub work: super::home_work::HomeWork,
 }
 
 /// The clone card: which repository, and — once the user has chosen a folder —
@@ -113,7 +116,7 @@ impl CloneTarget {
 
 /// The working directory `gh` runs in: the user's home (`USERPROFILE` on
 /// Windows, which sets no `HOME`), else the temporary directory.
-fn home_dir() -> PathBuf {
+pub(super) fn home_dir() -> PathBuf {
     ["HOME", "USERPROFILE"]
         .into_iter()
         .filter_map(std::env::var_os)
@@ -153,6 +156,7 @@ impl KagiApp {
         matches!(self.home_github.repos, GithubRepos::Loading)
             || self.home_github.refreshing
             || self.home_github.orgs_loading
+            || self.home_github.work.reading
     }
 
     /// Read the lists again, unless a read is already running. Everything
@@ -167,6 +171,8 @@ impl KagiApp {
         }
         self.home_github.generation += 1;
         let generation = self.home_github.generation;
+        // The pull request / issue lists are read with it (#928).
+        self.reload_home_work(cx);
         let started = std::time::Instant::now();
         let shown = matches!(self.home_github.repos, GithubRepos::Loaded { .. });
         if shown {
@@ -615,29 +621,28 @@ impl KagiApp {
             .items_center()
             .gap_2()
             .flex_shrink_0()
-            .child(
-                div()
-                    .text_lg()
-                    .text_color(rgb(theme().text_main))
-                    .child(SharedString::from(Msg::HomeGithubTitle.t())),
-            )
+            .child(self.render_home_panes(cx))
             // A saved list is on screen while the fresh read runs.
-            .when(self.home_github.refreshing, |el| {
-                el.child(super::e2e::measure_control(
-                    "home-github-updating",
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_1()
-                        .child(super::render_overlay::sync_spinner(
-                            12.,
-                            theme().text_muted,
-                            "home-github-refreshing",
-                        ))
-                        .child(muted_inline(Msg::HomeGithubUpdating.t())),
-                ))
-            })
+            .when(
+                self.home_github.refreshing
+                    || (self.home_github.work.reading && self.home_github.work.lists.is_some()),
+                |el| {
+                    el.child(super::e2e::measure_control(
+                        "home-github-updating",
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_1()
+                            .child(super::render_overlay::sync_spinner(
+                                12.,
+                                theme().text_muted,
+                                "home-github-refreshing",
+                            ))
+                            .child(muted_inline(Msg::HomeGithubUpdating.t())),
+                    ))
+                },
+            )
             .child(div().flex_1())
             .child(super::e2e::measure_control(
                 "home-github-refresh",
@@ -654,8 +659,11 @@ impl KagiApp {
             .as_ref()
             .map(|f| f.read(cx).value().trim().to_lowercase())
             .unwrap_or_default();
-        let body = match &self.home_github.repos {
-            GithubRepos::NotLoaded | GithubRepos::Loading => div()
+        let body = match (&self.home_github.repos, self.home_github.work.pane) {
+            (_, super::home_work::HomePane::Prs | super::home_work::HomePane::Issues) => {
+                self.render_github_list(query, cx)
+            }
+            (GithubRepos::NotLoaded | GithubRepos::Loading, _) => div()
                 .flex()
                 .flex_row()
                 .items_center()
@@ -669,7 +677,7 @@ impl KagiApp {
                 ))
                 .child(muted_inline(Msg::HomeGithubLoading.t()))
                 .into_any_element(),
-            GithubRepos::Failed(error) => div()
+            (GithubRepos::Failed(error), _) => div()
                 .flex()
                 .flex_col()
                 .gap_1()
@@ -681,7 +689,7 @@ impl KagiApp {
                 )
                 .child(muted(Msg::HomeGithubFailedHint.t().to_string()))
                 .into_any_element(),
-            GithubRepos::Loaded { .. } => self.render_github_list(query, cx),
+            (GithubRepos::Loaded { .. }, _) => self.render_github_list(query, cx),
         };
         div()
             .flex()

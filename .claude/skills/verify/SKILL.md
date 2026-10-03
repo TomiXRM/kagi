@@ -610,6 +610,21 @@ The current suite covers:
   Home is drawn centred over it (`remote-browse-card`). For Tier B use a real
   `gh` login, choose a temporary folder with "Choose…" (the native dialog)
   and check `[kagi] clone: done … ok=true` and the receipt.
+- Home's pull requests and issues (`KAGI_GUI_E2E_ONLY=home_work`,
+  `tests/recovery/home_work.rs`, #928 / ADR-0219 decision 8): an offline
+  `gh` answers the three `gh search`es (a PR and an issue of a repository
+  cloned locally, a draft PR of one that is not, a review request) and
+  `pr view -R`; marker files hold the searches (`hold-search`) or
+  `pr view` (`hold-view`) and fail the review search (`fail-review`). Before
+  the lists land the switch draws `home-pane-prs-spinner` (never a count of
+  0) and the pane `home-work-loading`; lists saved as another account are not
+  shown. Rows are `home-work-<owner>/<repo>-<N>`. A failed search draws
+  `home-work-failed` above the list read before and saves nothing; the
+  non-local row opens the clone card; the local PR row draws its
+  `-opening` spinner while `pr view` runs, ignores a second click (one
+  `view-calls`), then opens PR #7 in the clone's tab; the issue row opens
+  the clone in Issues mode with #4 selected. For Tier B use a real `gh`
+  login, click each switch cell and one PR / issue row of a local clone.
 - modal-slot arbitration (`KAGI_GUI_E2E_ONLY=push_failure_keeps_modal,merge_plan_latch,delete_branch_plan_latch,remote_browse_modal_routing`): a push failure lands behind Remote Browse without losing its input and reaches the Failed footer, an Error toast and one durable receipt — no dismiss-only AppNotice, queued or shown after Remote Browse closes (the #747 contract; #824 bisected the stale notice expectation to `e5644c6f`). Delayed Merge/Delete Branch plans wait behind Remote Browse without losing its input, stale plan state, latches, footers, or notices; a reopened Remote Browse rejects an older in-place completion by generation;
 - unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.
 - toolbar centre actions (Pull…Terminal) drawn only in Graph, not PRs/Editor/Analyze

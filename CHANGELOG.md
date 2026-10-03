@@ -53,6 +53,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Internal
 
 - Web(Playwright)の harness は、`crates/kagi-web/dist` が無いと設定の読み込み時に止まり、足りないファイルと実行すべき `scripts/build-web.sh` を示すようにしました。これまでは 60 秒後に webServer のタイムアウトとして失敗し、実行時のハングと区別がつきませんでした。(#516)
+- 検証手順(`.claude/skills/verify/SKILL.md`)の Tier A に、GUI E2E の各 scenario で文字が本物の `InputState` にどう入るか(キー入力・貼り付け・`set_value`)と、`InputState` を使わない代わりの経路(commit panel の `commit_msg` fallback、Remote Browse の host 入力、`queue_*` の読み込み差し替え)の表を追加しました。GPUI の終了時の leak 検出を無効にしている scenario が無いことも確認して記録しました。製品の動作は変更していません。(#516)
 
 ## [0.41.0] - 2026-10-02
 

@@ -41,9 +41,21 @@ thread_local! {
 }
 
 /// Where a scenario's evidence goes.
-fn evidence_dir(scenario: &str) -> PathBuf {
+pub(crate) fn evidence_dir(scenario: &str) -> PathBuf {
     let base = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "target".to_string());
     PathBuf::from(base).join("gui-e2e").join(scenario)
+}
+
+/// `KAGI_GUI_E2E_KEEP_GOING`: a re-executed scenario failed with `reason`
+/// (its exit status, a timeout). Recorded as `exit.txt` beside whatever the
+/// child wrote — the only record when it died before its panic hook ran
+/// (a crash, a kill) or failed after the scenario passed (a leaked entity
+/// at teardown).
+pub(crate) fn exit_record(scenario: &str, reason: &str) {
+    let dir = evidence_dir(scenario);
+    if std::fs::create_dir_all(&dir).is_ok() {
+        let _ = std::fs::write(dir.join("exit.txt"), format!("{reason}\n"));
+    }
 }
 
 /// Keep the `[kagi]` tail and write the text evidence on any panic of this

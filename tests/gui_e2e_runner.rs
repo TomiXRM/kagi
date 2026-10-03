@@ -57,6 +57,9 @@ mod gui_evidence;
 #[path = "support/gui_isolation.rs"]
 mod gui_isolation;
 #[cfg(target_os = "macos")]
+#[path = "support/proc_identity.rs"]
+mod proc_identity;
+#[cfg(target_os = "macos")]
 #[path = "recovery/theme_custom.rs"]
 mod theme_custom;
 
@@ -329,6 +332,9 @@ mod perf_inspector_derived;
 mod macos {
     use std::path::{Path, PathBuf};
     use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    use crate::proc_identity;
 
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -817,90 +823,8 @@ mod macos {
             return 0;
         }
         let filters = scenario_filters();
-
-        // #516: one directory owns everything the run writes. `TMPDIR` points
-        // into it for the whole run (`tempfile`, git and shells use it), so
-        // whatever a scenario leaves behind there is the scenario's own — not
-        // another process's on a shared machine.
-        let run_root = tempfile::Builder::new()
-            .prefix("kagi-gui-e2e-")
-            .tempdir()
-            .expect("runner root");
-        let run_tmp = run_root.path().join("tmp");
-        std::fs::create_dir(&run_tmp).expect("runner TMPDIR");
-        std::env::set_var("TMPDIR", &run_tmp);
-        // Redirect settings.json to a throwaway dir so scenarios that touch
-        // settings (graph_copy_target, theme via set_active) never read or clobber
-        // the developer's real `~/.kagi/settings.json` (ADR-0091 flat-string file).
-        let log_dir = run_root.path().join("log");
-        std::fs::create_dir(&log_dir).expect("settings dir");
-        std::env::set_var("KAGI_LOG_DIR", &log_dir);
-        // #516: and `HOME`. The product (the editor's trash, `gh`'s working
-        // directory, terminal fonts), the `git` and `gh` it runs and the shells it starts all
-        // read the developer's dotfiles under it: identity, aliases, hooks,
-        // credential helpers, rc files, history. Here they find an empty home
-        // with only a fixed identity, the fixtures' own.
-        let home = run_root.path().join("home");
-        std::fs::create_dir(&home).expect("runner HOME");
-        std::fs::write(
-            home.join(".gitconfig"),
-            "[user]\n\tname = poc\n\temail = poc@example.com\n[init]\n\tdefaultBranch = main\n",
-        )
-        .expect("runner git identity");
-        std::env::set_var("HOME", &home);
-        std::env::set_var("XDG_CONFIG_HOME", home.join(".config"));
-        // #963 review: `HOME` alone is not enough. An inherited `GIT_*`
-        // still reaches every `git` the product runs: `GIT_CONFIG_GLOBAL` /
-        // `GIT_CONFIG_SYSTEM` naming the developer's config by absolute path,
-        // `GIT_CONFIG_COUNT` / `GIT_CONFIG_PARAMETERS` injecting keys,
-        // `GIT_DIR` / `GIT_WORK_TREE` from a hook or `git bisect run`. Drop
-        // them all, as `support/git_fixture.rs` does for fixture commands, then
-        // pin only what the run needs: the global config is the run's own
-        // `.gitconfig`, there is no system config, and nothing prompts.
-        // The same for `gh`: `GH_CONFIG_DIR` outranks `$XDG_CONFIG_HOME/gh`,
-        // and `GH_TOKEN` / `GITHUB_TOKEN` (and their Enterprise forms)
-        // outrank its stored login, so a scenario whose seam missed would
-        // talk to GitHub as the developer (`gh help environment`). With them
-        // gone, `gh` reads the run's empty home.
-        let inherited: Vec<_> = std::env::vars_os()
-            .map(|(key, _)| key)
-            .filter(|key| {
-                let key = key.to_string_lossy();
-                key.starts_with("GIT_")
-                    || key.starts_with("GH_")
-                    || key == "GITHUB_TOKEN"
-                    || key == "GITHUB_ENTERPRISE_TOKEN"
-            })
-            .collect();
-        for key in inherited {
-            std::env::remove_var(key);
-        }
-        std::env::set_var("GIT_CONFIG_GLOBAL", home.join(".gitconfig"));
-        std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
-        std::env::set_var("GIT_CONFIG_SYSTEM", "/dev/null");
-        std::env::set_var("GIT_TERMINAL_PROMPT", "0");
-        // The fixtures assume a new repository starts on `main` — a bare
-        // `origin` they push `main` to and then clone. That came from Apple
-        // Git's vendor config (`/Library/Developer/CommandLineTools/usr/share/
-        // git-core/gitconfig`: `init.defaultBranch = main`, next to
-        // `credential.helper = osxkeychain`), which `GIT_CONFIG_NOSYSTEM`
-        // rightly drops. Pin the one value back: in the run's `.gitconfig`
-        // above for the product's `git` (which clears `GIT_CONFIG_COUNT`),
-        // and as command-scope config for the fixture `git` helpers, which
-        // set `GIT_CONFIG_GLOBAL=/dev/null` and so never read that file.
-        std::env::set_var("GIT_CONFIG_COUNT", "1");
-        std::env::set_var("GIT_CONFIG_KEY_0", "init.defaultBranch");
-        std::env::set_var("GIT_CONFIG_VALUE_0", "main");
-        // #516: a failing scenario leaves evidence in target/gui-e2e/<name>/.
-        crate::gui_evidence::install();
-
-        // Shared context: real Mac platform + bundled assets, one-time app init
-        // (fonts, gpui_component, theme sync, the cmd-j / cmd-c bindings).
-        theme::init_active();
-        let mut cx = VisualTestAppContext::with_asset_source(e2e::platform(), e2e::asset_source());
-        let native_pool = NativeAutoreleasePool::new();
-        cx.update(e2e::init_app);
-        let mut scenarios: Vec<(&str, Box<dyn FnMut(&mut VisualTestAppContext)>)> = vec![
+        let exact = std::env::var("KAGI_GUI_E2E_EXACT").ok();
+        let mut scenarios: Vec<Scenario> = vec![
             (
                 "stash_drop_persists",
                 Box::new(crate::recovery_operations::scenario_stash_drop_persists),
@@ -1856,12 +1780,106 @@ mod macos {
                 ),
             ),
         ];
+        // #516: KAGI_GUI_E2E_KEEP_GOING=1 re-runs this runner once per
+        // scenario instead (`keep_going`), before anything here is set up.
+        if exact.is_none() && std::env::var("KAGI_GUI_E2E_KEEP_GOING").as_deref() == Ok("1") {
+            // #967 review: the filter stays required. KEEP_GOING without it
+            // would run every scenario, each for up to the timeout — the
+            // unscoped run that once took macOS down (#549).
+            let Some(filters) = filters.as_deref() else {
+                eprintln!(
+                    "[gui-e2e] ERROR: KAGI_GUI_E2E_KEEP_GOING needs KAGI_GUI_E2E_ONLY=<scenario substrings>"
+                );
+                return 1;
+            };
+            return keep_going(&scenarios, Some(filters));
+        }
+
+        // #516: one directory owns everything the run writes. `TMPDIR` points
+        // into it for the whole run (`tempfile`, git and shells use it), so
+        // whatever a scenario leaves behind there is the scenario's own — not
+        // another process's on a shared machine.
+        let run_root = tempfile::Builder::new()
+            .prefix("kagi-gui-e2e-")
+            .tempdir()
+            .expect("runner root");
+        let run_tmp = run_root.path().join("tmp");
+        std::fs::create_dir(&run_tmp).expect("runner TMPDIR");
+        std::env::set_var("TMPDIR", &run_tmp);
+        // Redirect settings.json to a throwaway dir so scenarios that touch
+        // settings (graph_copy_target, theme via set_active) never read or clobber
+        // the developer's real `~/.kagi/settings.json` (ADR-0091 flat-string file).
+        let log_dir = run_root.path().join("log");
+        std::fs::create_dir(&log_dir).expect("settings dir");
+        std::env::set_var("KAGI_LOG_DIR", &log_dir);
+        // #516: and `HOME`. The product (the editor's trash, `gh`'s working
+        // directory, terminal fonts), the `git` and `gh` it runs and the shells it starts all
+        // read the developer's dotfiles under it: identity, aliases, hooks,
+        // credential helpers, rc files, history. Here they find an empty home
+        // with only a fixed identity, the fixtures' own.
+        let home = run_root.path().join("home");
+        std::fs::create_dir(&home).expect("runner HOME");
+        std::fs::write(
+            home.join(".gitconfig"),
+            "[user]\n\tname = poc\n\temail = poc@example.com\n[init]\n\tdefaultBranch = main\n",
+        )
+        .expect("runner git identity");
+        std::env::set_var("HOME", &home);
+        std::env::set_var("XDG_CONFIG_HOME", home.join(".config"));
+        // #963 review: `HOME` alone is not enough. An inherited `GIT_*`
+        // still reaches every `git` the product runs: `GIT_CONFIG_GLOBAL` /
+        // `GIT_CONFIG_SYSTEM` naming the developer's config by absolute path,
+        // `GIT_CONFIG_COUNT` / `GIT_CONFIG_PARAMETERS` injecting keys,
+        // `GIT_DIR` / `GIT_WORK_TREE` from a hook or `git bisect run`. Drop
+        // them all, as `support/git_fixture.rs` does for fixture commands, then
+        // pin only what the run needs: the global config is the run's own
+        // `.gitconfig`, there is no system config, and nothing prompts.
+        // The same for `gh`: `GH_CONFIG_DIR` outranks `$XDG_CONFIG_HOME/gh`,
+        // and `GH_TOKEN` / `GITHUB_TOKEN` (and their Enterprise forms)
+        // outrank its stored login, so a scenario whose seam missed would
+        // talk to GitHub as the developer (`gh help environment`). With them
+        // gone, `gh` reads the run's empty home.
+        let inherited: Vec<_> = std::env::vars_os()
+            .map(|(key, _)| key)
+            .filter(|key| {
+                let key = key.to_string_lossy();
+                key.starts_with("GIT_")
+                    || key.starts_with("GH_")
+                    || key == "GITHUB_TOKEN"
+                    || key == "GITHUB_ENTERPRISE_TOKEN"
+            })
+            .collect();
+        for key in inherited {
+            std::env::remove_var(key);
+        }
+        std::env::set_var("GIT_CONFIG_GLOBAL", home.join(".gitconfig"));
+        std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
+        std::env::set_var("GIT_CONFIG_SYSTEM", "/dev/null");
+        std::env::set_var("GIT_TERMINAL_PROMPT", "0");
+        // The fixtures assume a new repository starts on `main` — a bare
+        // `origin` they push `main` to and then clone. That came from Apple
+        // Git's vendor config (`/Library/Developer/CommandLineTools/usr/share/
+        // git-core/gitconfig`: `init.defaultBranch = main`, next to
+        // `credential.helper = osxkeychain`), which `GIT_CONFIG_NOSYSTEM`
+        // rightly drops. Pin the one value back: in the run's `.gitconfig`
+        // above for the product's `git` (which clears `GIT_CONFIG_COUNT`),
+        // and as command-scope config for the fixture `git` helpers, which
+        // set `GIT_CONFIG_GLOBAL=/dev/null` and so never read that file.
+        std::env::set_var("GIT_CONFIG_COUNT", "1");
+        std::env::set_var("GIT_CONFIG_KEY_0", "init.defaultBranch");
+        std::env::set_var("GIT_CONFIG_VALUE_0", "main");
+        // #516: a failing scenario leaves evidence in target/gui-e2e/<name>/.
+        crate::gui_evidence::install();
+
+        // Shared context: real Mac platform + bundled assets, one-time app init
+        // (fonts, gpui_component, theme sync, the cmd-j / cmd-c bindings).
+        theme::init_active();
+        let mut cx = VisualTestAppContext::with_asset_source(e2e::platform(), e2e::asset_source());
+        let native_pool = NativeAutoreleasePool::new();
+        cx.update(e2e::init_app);
         let mut executed = 0;
         for (name, scenario) in &mut scenarios {
-            if filters
-                .as_ref()
-                .is_none_or(|filters| filters.iter().any(|filter| name.contains(filter)))
-            {
+            if selected(name, filters.as_deref(), exact.as_deref()) {
                 set_current_scenario(name);
                 crate::gui_evidence::begin(name);
                 // #516 slice 3: shared state is compared inside the same
@@ -1879,7 +1897,7 @@ mod macos {
                     }
                 }
                 executed += 1;
-            } else {
+            } else if exact.is_none() {
                 eprintln!("[gui-e2e] SKIP {} (filtered)", name);
             }
         }
@@ -1895,12 +1913,473 @@ mod macos {
         cx.update(|_| {});
         cx.run_until_parked();
 
+        if exact.is_some() {
+            // A re-executed child: the KEEP_GOING parent reports the run.
+        } else if filters.is_none() {
+            eprintln!("[gui-e2e] PASS all scenarios");
+        } else {
+            eprintln!("[gui-e2e] PASS filtered scenarios");
+        }
+        0
+    }
+
+    type Scenario = (&'static str, Box<dyn FnMut(&mut VisualTestAppContext)>);
+
+    /// Whether `name` runs: only the one a re-executed child was given
+    /// (`KAGI_GUI_E2E_EXACT`), else every match of `KAGI_GUI_E2E_ONLY`.
+    fn selected(name: &str, filters: Option<&[String]>, exact: Option<&str>) -> bool {
+        match exact {
+            Some(exact) => name == exact,
+            None => {
+                filters.is_none_or(|filters| filters.iter().any(|filter| name.contains(filter)))
+            }
+        }
+    }
+
+    /// How long one re-executed scenario may run before `keep_going` kills it
+    /// (`KAGI_GUI_E2E_TIMEOUT_SECS` overrides it), so a hung scenario fails
+    /// on its own instead of stopping the run.
+    const SCENARIO_TIMEOUT: Duration = Duration::from_secs(600);
+
+    /// How one re-executed scenario ended.
+    enum ChildOutcome {
+        Passed,
+        Exited(std::process::ExitStatus),
+        TimedOut(Duration),
+        /// The parent got SIGINT / SIGTERM; the child was stopped like a
+        /// timed-out one.
+        Interrupted,
+        NotStarted(std::io::Error),
+    }
+
+    /// Set by [`on_interrupt`] when this KEEP_GOING parent gets SIGINT or
+    /// SIGTERM.
+    static INTERRUPTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    extern "C" fn on_interrupt(_signal: std::ffi::c_int) {
+        // Async-signal-safe: one atomic store, nothing else.
+        INTERRUPTED.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    extern "C" {
+        fn signal(signum: std::ffi::c_int, handler: extern "C" fn(std::ffi::c_int)) -> usize;
+    }
+
+    /// Each child runner leads a process group of its own, so the terminal's
+    /// Ctrl+C reaches only this parent (#967 review). Catch it — and SIGTERM —
+    /// so the running child, its group and its recorded descendants are
+    /// stopped and reaped, and its `TMPDIR` removed, before the run ends.
+    fn catch_interrupts() {
+        const SIGINT: std::ffi::c_int = 2;
+        const SIGTERM: std::ffi::c_int = 15;
+        // SAFETY: installs a handler that only stores to an atomic.
+        unsafe {
+            signal(SIGINT, on_interrupt);
+            signal(SIGTERM, on_interrupt);
+        }
+    }
+
+    fn interrupted() -> bool {
+        INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// `KAGI_GUI_E2E_KEEP_GOING=1` (#516): run each selected scenario in its
+    /// own re-executed runner (`KAGI_GUI_E2E_EXACT=<name>`, one at a time), so
+    /// a failure — a panic, a crash that takes the process down, or a hang
+    /// past the timeout — fails that scenario and the rest still run. A
+    /// panicked GPUI context is never reused. Each child sets up its own run
+    /// directory, `HOME`, settings and evidence, exactly as a single filtered
+    /// run does, under a `TMPDIR` this process removes after it. Prints one
+    /// PASS / FAIL line per scenario; returns 1 if any failed.
+    fn keep_going(scenarios: &[Scenario], filters: Option<&[String]>) -> i32 {
+        let names: Vec<&str> = scenarios
+            .iter()
+            .map(|(name, _)| *name)
+            .filter(|name| selected(name, filters, None))
+            .collect();
+        if names.is_empty() {
+            eprintln!(
+                "[gui-e2e] ERROR: KAGI_GUI_E2E_ONLY={filters:?} matched no enabled scenarios"
+            );
+            return 1;
+        }
+        let timeout = std::env::var("KAGI_GUI_E2E_TIMEOUT_SECS")
+            .ok()
+            .and_then(|secs| secs.parse().ok())
+            .map_or(SCENARIO_TIMEOUT, Duration::from_secs);
+        let runner = std::env::current_exe().expect("the runner's own executable");
+        catch_interrupts();
+        let mut results = Vec::with_capacity(names.len());
+        for (at, name) in names.iter().enumerate() {
+            if interrupted() {
+                break;
+            }
+            eprintln!("[gui-e2e] KEEP_GOING {}/{} {name}", at + 1, names.len());
+            // A directory that exists afterwards is this child's, not an
+            // earlier run's: a child that dies before `begin` leaves none.
+            let evidence = crate::gui_evidence::evidence_dir(name);
+            let _ = std::fs::remove_dir_all(&evidence);
+            let (outcome, cleanup) = run_child(&runner, name, timeout);
+            let ended = match &outcome {
+                ChildOutcome::Passed => None,
+                ChildOutcome::Exited(status) => Some(status.to_string()),
+                ChildOutcome::TimedOut(after) => {
+                    Some(format!("timeout after {}s (killed)", after.as_secs()))
+                }
+                ChildOutcome::Interrupted => Some("interrupted (killed)".to_string()),
+                ChildOutcome::NotStarted(error) => {
+                    Some(format!("the runner did not start: {error}"))
+                }
+            };
+            // A process the scenario started that survived the kill would
+            // run next to the following scenarios: that fails the scenario,
+            // and its pids are named so it can be found. So does a cleanup
+            // that cannot tell what is left (see `Tracked::settled`).
+            let left = (!cleanup.is_empty()).then(|| cleanup.join("; "));
+            let line = match (ended, left) {
+                (Some(ended), Some(left)) => Some(format!("{ended}; {left}")),
+                (ended, left) => ended.or(left),
+            };
+            if let Some(reason) = &line {
+                crate::gui_evidence::exit_record(name, reason);
+            }
+            results.push((*name, line, evidence));
+        }
+        let failed: Vec<&str> = results
+            .iter()
+            .filter(|(_, line, _)| line.is_some())
+            .map(|(name, _, _)| *name)
+            .collect();
+        let passed = results.len() - failed.len();
+        eprintln!(
+            "[gui-e2e] KEEP_GOING summary: {passed} passed, {} failed of {}",
+            failed.len(),
+            names.len()
+        );
+        if interrupted() {
+            let not_run = &names[results.len()..];
+            eprintln!(
+                "[gui-e2e] KEEP_GOING interrupted; not run: {}",
+                if not_run.is_empty() {
+                    "none".to_string()
+                } else {
+                    not_run.join(", ")
+                }
+            );
+        }
+        for (name, line, evidence) in &results {
+            match line {
+                None => eprintln!("[gui-e2e]   PASS {name}"),
+                Some(reason) => {
+                    let shown = std::path::absolute(evidence).unwrap_or(evidence.clone());
+                    eprintln!(
+                        "[gui-e2e]   FAIL {name}: {reason} — evidence {}",
+                        shown.display()
+                    );
+                }
+            }
+        }
+        if interrupted() {
+            return 130;
+        }
+        if !failed.is_empty() {
+            eprintln!(
+                "[gui-e2e] FAIL {} of {} scenarios: {}",
+                failed.len(),
+                names.len(),
+                failed.join(", ")
+            );
+            return 1;
+        }
         if filters.is_none() {
             eprintln!("[gui-e2e] PASS all scenarios");
         } else {
             eprintln!("[gui-e2e] PASS filtered scenarios");
         }
         0
+    }
+
+    /// Run `name` alone in a fresh runner process and wait for it, killing it
+    /// past `timeout`. Its `TMPDIR` is a directory of its own, removed once it
+    /// has ended, so even a killed child leaves no fixture behind.
+    ///
+    /// Nothing the scenario started may outlive it next to the next one
+    /// (#967 review). The child leads a process group of its own, but the
+    /// product puts some of what it starts outside that group: the terminal's
+    /// PTY shell runs `setsid`, and `kagi_git::proc` gives every `git` / `ssh`
+    /// a group of its own. So while the child runs, every process descended
+    /// from it is recorded (pid and start time, re-read every
+    /// [`TREE_POLL`]); when it ends — by itself or killed at the timeout —
+    /// each recorded process still running with the same start time is
+    /// killed. Its group is killed only at the timeout, while its leader is
+    /// still unreaped: after the reap the pgid is a number the OS may hand to
+    /// someone else (the rule in `kagi_git::proc::group`). (A group of its
+    /// own also means the terminal's Ctrl+C reaches only this parent, which
+    /// then stops the child as at a timeout: see [`catch_interrupts`].)
+    fn run_child(runner: &Path, name: &str, timeout: Duration) -> (ChildOutcome, Vec<String>) {
+        use std::os::unix::process::CommandExt as _;
+
+        let tmp = match tempfile::Builder::new()
+            .prefix("kagi-gui-e2e-child-")
+            .tempdir()
+        {
+            Ok(tmp) => tmp,
+            Err(error) => return (ChildOutcome::NotStarted(error), Vec::new()),
+        };
+        let mut child = match std::process::Command::new(runner)
+            .env("KAGI_GUI_E2E_EXACT", name)
+            .env_remove("KAGI_GUI_E2E_KEEP_GOING")
+            .env("TMPDIR", tmp.path())
+            .process_group(0)
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(error) => return (ChildOutcome::NotStarted(error), Vec::new()),
+        };
+        let root = child.id();
+        let started = Instant::now();
+        let mut tree = Tracked::default();
+        let mut polled = started;
+        let outcome = loop {
+            if polled.elapsed() >= TREE_POLL {
+                tree.record(root);
+                polled = Instant::now();
+            }
+            match child.try_wait() {
+                Ok(Some(status)) if status.success() => break ChildOutcome::Passed,
+                Ok(Some(status)) => break ChildOutcome::Exited(status),
+                Ok(None) if started.elapsed() >= timeout || interrupted() => {
+                    tree.stop(&mut child);
+                    if interrupted() {
+                        break ChildOutcome::Interrupted;
+                    }
+                    break ChildOutcome::TimedOut(timeout);
+                }
+                Ok(None) => std::thread::sleep(TREE_POLL),
+                Err(error) => {
+                    tree.stop(&mut child);
+                    break ChildOutcome::NotStarted(error);
+                }
+            }
+        };
+        // The runner is reaped; what it left running (now orphans, reaped by
+        // launchd once killed) ends here, by identity rather than by group.
+        tree.kill();
+        (outcome, tree.settled())
+    }
+
+    /// The processes a scenario's runner started: each pid with the
+    /// microsecond it started ([`proc_identity`]), so a pid the OS has
+    /// handed to someone else is never signalled. `ps` finds the tree; the
+    /// kernel says who each pid is. What could not be read is remembered and
+    /// fails the scenario rather than reporting that nothing is left
+    /// (#967 review).
+    #[derive(Default)]
+    struct Tracked {
+        seen: std::collections::HashMap<u32, proc_identity::Started>,
+        /// Pids in the tree whose identity the kernel would not give, at
+        /// recording or at kill time: never signalled.
+        unknown: std::collections::BTreeSet<u32>,
+        /// The first failure to read the process table.
+        table: Option<String>,
+        /// Signals that could not be sent.
+        failed: Vec<String>,
+    }
+
+    impl Tracked {
+        /// Record every process now descended from `root`.
+        fn record(&mut self, root: u32) {
+            match descendants(root) {
+                Ok(found) => {
+                    for pid in found {
+                        match proc_identity::started(pid) {
+                            // A pid seen before under another start time was
+                            // reused: the earlier process is gone.
+                            Ok(Some(at)) => {
+                                self.seen.insert(pid, at);
+                            }
+                            // Gone between `ps` and the kernel read.
+                            Ok(None) => {}
+                            Err(_) => {
+                                self.unknown.insert(pid);
+                            }
+                        }
+                    }
+                }
+                Err(error) => {
+                    self.table.get_or_insert(error);
+                }
+            }
+        }
+
+        /// The recorded processes that are still the same process. Asks the
+        /// kernel per pid, not `ps`, so it works when nothing can be spawned.
+        fn still_running(&mut self) -> Vec<u32> {
+            let mut alive = Vec::new();
+            for (&pid, &at) in &self.seen {
+                match proc_identity::identity(pid, at) {
+                    proc_identity::Identity::Same => alive.push(pid),
+                    proc_identity::Identity::Gone => {}
+                    proc_identity::Identity::Unknown(_) => {
+                        self.unknown.insert(pid);
+                    }
+                }
+            }
+            alive
+        }
+
+        /// SIGKILL each recorded process still running.
+        fn kill(&mut self) {
+            for pid in self.still_running() {
+                if let Err(error) = proc_identity::sigkill(pid as i32) {
+                    self.failed.push(error);
+                }
+            }
+        }
+
+        /// Stop a runner still running at its timeout or an interrupt: read
+        /// the tree while it is alive (once killed, its children move to
+        /// launchd and cannot be traced back), kill the descendants, then
+        /// the runner's group while its leader is unreaped. The reap waits
+        /// only for a runner a signal reached.
+        fn stop(&mut self, child: &mut std::process::Child) {
+            self.record(child.id());
+            self.kill();
+            let group = proc_identity::sigkill(-(child.id() as i32));
+            let reached = match group {
+                Ok(()) => true,
+                Err(error) => {
+                    self.failed.push(error);
+                    proc_identity::sigkill(child.id() as i32)
+                        .map_err(|error| self.failed.push(error))
+                        .is_ok()
+                }
+            };
+            if reached {
+                let _ = child.wait();
+            } else {
+                self.failed
+                    .push(format!("runner pid {} not stopped", child.id()));
+            }
+        }
+
+        /// What is wrong after the cleanup, once a just-killed process has
+        /// had a bounded moment to go (2 s; a process in its exit path is
+        /// not "left running"). Empty: the scenario left nothing behind.
+        fn settled(mut self) -> Vec<String> {
+            let mut left = self.still_running();
+            for _ in 0..40 {
+                if left.is_empty() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+                left = self.still_running();
+            }
+            let pids = |pids: &mut dyn Iterator<Item = &u32>| {
+                pids.map(u32::to_string).collect::<Vec<_>>().join(", ")
+            };
+            let mut problems = Vec::new();
+            if !left.is_empty() {
+                left.sort_unstable();
+                problems.push(format!(
+                    "left running after the kill: pid {}",
+                    pids(&mut left.iter())
+                ));
+            }
+            if let Some(error) = &self.table {
+                problems.push(format!(
+                    "process table unavailable ({error}); what is left is unknown"
+                ));
+            }
+            if !self.unknown.is_empty() {
+                problems.push(format!(
+                    "identity unknown, not killed: pid {}",
+                    pids(&mut self.unknown.iter())
+                ));
+            }
+            problems.extend(self.failed);
+            problems
+        }
+    }
+
+    /// How often `run_child` re-reads the process tree under a scenario.
+    ///
+    /// The known limit (#967 review): a process started — and moved to a
+    /// session of its own — after the last read and before the runner ends
+    /// by itself is not recorded, and survives. macOS has no supported way
+    /// to follow every fork (`NOTE_TRACK` for `EVFILT_PROC` is "no longer
+    /// supported as of 10.5", `sys/event.h`), so the window is narrowed to
+    /// one poll interval rather than closed; see `docs/decisions.md`. A
+    /// timeout reads the tree once more before it kills, so a hung scenario
+    /// has no such window.
+    const TREE_POLL: Duration = Duration::from_millis(50);
+
+    /// Every live process `(pid, parent)`. A `ps` that fails (it may not
+    /// start when the scenario has used up the process or FD limit) is tried
+    /// 3 times, 50 ms apart, before it is an error.
+    fn process_table() -> Result<Vec<(u32, u32)>, String> {
+        let mut result = read_process_table();
+        for _ in 0..2 {
+            if result.is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+            result = read_process_table();
+        }
+        result
+    }
+
+    /// One `ps`. Zombies (state `Z`) are not live: they have exited and only
+    /// wait to be reaped. A `ps` that cannot start, fails, prints a line it
+    /// cannot parse or prints no process at all (it always lists itself) is
+    /// an error, never an empty table.
+    fn read_process_table() -> Result<Vec<(u32, u32)>, String> {
+        let out = Command::new("/bin/ps")
+            .args(["-axo", "pid=,ppid=,stat="])
+            .output()
+            .map_err(|error| format!("ps did not run: {error}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "ps failed ({}): {}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        let mut table = Vec::new();
+        let mut listed = false;
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            let [pid, ppid, stat] = fields.as_slice() else {
+                return Err(format!("ps printed a line it should not: {line:?}"));
+            };
+            let (Ok(pid), Ok(ppid)) = (pid.parse(), ppid.parse()) else {
+                return Err(format!("ps printed a line it should not: {line:?}"));
+            };
+            listed = true;
+            if !stat.starts_with('Z') {
+                table.push((pid, ppid));
+            }
+        }
+        if !listed {
+            return Err("ps listed no process".to_string());
+        }
+        Ok(table)
+    }
+
+    /// The processes descended from `root` (not `root` itself), whatever
+    /// group or session they are in.
+    fn descendants(root: u32) -> Result<std::collections::BTreeSet<u32>, String> {
+        let table = process_table()?;
+        let mut found = std::collections::BTreeSet::new();
+        let mut frontier = vec![root];
+        while let Some(parent) = frontier.pop() {
+            for &(pid, ppid) in &table {
+                if ppid == parent && found.insert(pid) {
+                    frontier.push(pid);
+                }
+            }
+        }
+        Ok(found)
     }
 
     fn assert_center_bottom_panel(window: AnyWindowHandle) -> Bounds<Pixels> {

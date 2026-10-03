@@ -40,6 +40,9 @@ survive GC and are retained with their oplog entries.
   together out of lifecycle.rs; other lifecycle bodies are unchanged. Progress
   is passed by mutable reference from outside catch_unwind, updated before
   side effects and immediately after each backup. Verification is explicit.
+- #915 / #938: 安全性に対して複雑すぎる main の場所の証明・削除後の surviving common dir 観測を廃止し、削除対象の worktree を開いている管理タブからの Remove は計画・preflight で短い EN/JA 理由を示して拒否する。別タブからの Remove は維持する。
+- #938: 削除境界は実行元 `repo.workdir()`、common dir、`Repository::open(repo.commondir()).workdir()` がある場合はその main workdir を保護する。対象内の別の登録済み worktree も計画・preflight・削除直前で拒否する。non-bare でも `--separate-git-dir` の common dir が対象内にあれば拒否する。common dir から推測される main の場所が不確かな場合も削除側に倒さない。
+- #938: 別タブからの recorded Remove は前後とも存続する実行元の HEAD と共有 ref を読む。削除前 copy / symlink ステップの source は常に実行元 `repo.workdir()` とし、`--separate-git-dir` で common repository から推測した main workdir は使わない。実行元の checkout が変われば HEAD 移動を記録し RestoreToPoint を拒否する。
 - `Unknown { after, evidence }` is additive. Evidence is a human-readable
   string carrying stage, verification, termination and step observations.
   Partial/Unknown after contains full blob and branch OIDs. Existing variants
@@ -225,6 +228,18 @@ need a capacity scan just to populate a hidden row.
   evidence in the oplog, while its toast shows only the localized blocker.
   Refusal does not delete the worktree, submodule files or branch; an approved
   `pre_remove` step may already have changed files when the refusal occurs.
+
+- #938: Remove の削除対象内に**別の登録済み worktree**（main を含む）
+  がある場合、実行元の worktree に関係なく typed EN/JA blocker で拒否する。
+  この判定では対象自身の登録だけを除く。対象自身のタブからの Remove は、
+  別の blocker(`RemoveOpenInTab`)で plan と preflight の両方で拒否する。
+  Git の登録パスを列挙・正規化して確認し、読み取りに失敗した場合は削除しない。
+  同じ判定を plan、承認後の preflight、`pre_remove` とバックアップを
+  終えた recursive delete の直前に行う。ignored フォルダーが既にある場合、
+  内側の worktree を後から作っても ignored 件数は増えず、既存の dirty /
+  ignored / main-root チェックだけでは内側の未バックアップの内容を守れない。
+  preflight の拒否は Refused、`pre_remove` 後の拒否は Partial receipt
+  として oplog に詳細を保ち、内側・外側の worktree と branch を削除しない。
 
 Pure verdict tests and filesystem/Git fixtures cover evidence precedence,
 hardlinks, symlinks, ignored allocation and cancellation. The focused native

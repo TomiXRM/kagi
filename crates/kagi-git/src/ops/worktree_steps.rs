@@ -205,9 +205,9 @@ pub fn trust_worktree_config(cfg: &LoadedWorktreeConfig) -> Result<(), GitError>
 // executor
 // ────────────────────────────────────────────────────────────
 
-/// Where a step runs: `main_root` is the source (main worktree) for copy/
-/// symlink; `worktree` is the freshly-created / to-be-removed worktree and the
-/// working directory for commands.
+/// Where a step runs: `main_root` is the source for copy/symlink (main
+/// checkout after creation, managing checkout before removal). `worktree` is
+/// the created / to-be-removed worktree and working directory for commands.
 pub struct StepEnv {
     pub main_root: PathBuf,
     pub worktree: PathBuf,
@@ -312,14 +312,14 @@ pub(crate) fn run_pre_remove_progress(
     Ok(())
 }
 
-/// Copy `from` (in the main worktree) to `to` (in the worktree). Never
-/// overwrites an existing destination.
+/// Copy `from` (in the source checkout) to `to` (in the target worktree).
+/// Never overwrites an existing destination.
 ///
 /// Path-confined (issue #392): `from` must resolve to a real file inside the
-/// main worktree and `to` to a location inside the new worktree — after symlink
-/// resolution, so neither an absolute path, a `..`, nor a symlink can read from
-/// or write to anywhere outside the repo boundary. `Copy`'s "closed side
-/// effects" (the reason it needs no trust prompt) are what these checks enforce.
+/// source checkout and `to` to a location inside the target worktree — after
+/// symlink resolution, so neither an absolute path, a `..`, nor a symlink can
+/// read from or write to anywhere outside the repo boundary. `Copy`'s "closed
+/// side effects" (the reason it needs no trust prompt) are enforced here.
 fn do_copy(env: &StepEnv, from: &str, to: &str) -> Result<(), GitError> {
     reject_escaping_relative("copy source", from)?;
     reject_escaping_relative("copy destination", to)?;
@@ -349,18 +349,18 @@ fn do_copy(env: &StepEnv, from: &str, to: &str) -> Result<(), GitError> {
     })
 }
 
-/// Canonicalize a boundary directory (main worktree / new worktree) so the
+/// Canonicalize a boundary directory (source / target checkout) so the
 /// containment prefix check is reliable. Both exist while steps run.
 fn canonical_boundary(dir: &Path) -> Result<PathBuf, GitError> {
     std::fs::canonicalize(dir)
         .map_err(|e| GitError::Other(format!("'{}' is not accessible: {e}", dir.display())))
 }
 
-/// Create a symlink at `to` (in the worktree) pointing at the **absolute** path
-/// of `from` (in the main worktree). The four worktree-link safety rules
-/// (issue #341 §5): a directory is one link (symlinks never recurse); the
-/// target is absolute; `.git` is always excluded; an existing destination is
-/// **never overwritten** (asserted).
+/// Create a symlink at `to` (in the target worktree) pointing at the
+/// **absolute** path of `from` (in the source checkout). The four worktree-link
+/// safety rules (issue #341 §5): a directory links as one link (symlinks never
+/// recurse); the target is absolute; `.git` is excluded; an existing
+/// destination is **never overwritten** (asserted).
 fn do_symlink(env: &StepEnv, from: &str, to: &str) -> Result<(), GitError> {
     if Path::new(from)
         .components()
@@ -378,7 +378,7 @@ fn do_symlink(env: &StepEnv, from: &str, to: &str) -> Result<(), GitError> {
     let main = canonical_boundary(&env.main_root)?;
     let wt = canonical_boundary(&env.worktree)?;
     // Absolute target, canonicalized so the link survives a relative-CWD chdir,
-    // and proven to stay inside the main worktree.
+    // and proven to stay inside the source checkout.
     let target = resolve_contained(&main, &main.join(from))?;
     let link_lexical = wt.join(to);
     // Never overwrite (symlink_metadata: do not follow — an existing symlink

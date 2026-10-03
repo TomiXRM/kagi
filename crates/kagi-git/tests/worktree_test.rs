@@ -848,7 +848,243 @@ fn remove_plan_without_ignored_content_has_no_ignored_warning() {
     );
 }
 
-/// The main worktree is never removable (§6). Mutation-verify: execute refuses.
+/// An ignored directory can hide a different registered linked worktree.
+/// Refusing the outer removal preserves that inner worktree's untracked bytes.
+#[test]
+fn remove_plan_blocks_nested_registered_worktree_from_every_tab() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let main = TempDir::new().unwrap();
+    build_repo(&main);
+    write_file(main.path(), ".gitignore", "nested/\n");
+    git(main.path(), &["add", ".gitignore"]);
+    git(main.path(), &["commit", "-qm", "ignore nested worktree"]);
+    let dirs = TempDir::new().unwrap();
+    let outer = dirs.path().join("outer");
+    git(
+        main.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "outer",
+            outer.to_str().unwrap(),
+        ],
+    );
+    let inner = outer.join("nested/inner");
+    std::fs::create_dir_all(inner.parent().unwrap()).unwrap();
+    git(
+        main.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "inner",
+            inner.to_str().unwrap(),
+        ],
+    );
+    write_file(&inner, "untracked.txt", "never discard this\n");
+
+    let expected_path = inner.canonicalize().unwrap();
+    for manager in [main.path(), inner.as_path()] {
+        let repo = Repository::open(manager).unwrap();
+        let plan = plan_remove_worktree(&repo, "outer", false).expect("plan");
+        assert!(
+            plan.blockers.iter().any(|note| matches!(
+                note,
+                PlanNote::Worktree(WorktreeNote::RemoveContainsWorktree { path })
+                    if Path::new(path) == expected_path
+            )),
+            "outer contains a registered inner worktree: {:?}",
+            plan.blockers
+        );
+        assert_eq!(
+            std::fs::read_to_string(inner.join("untracked.txt")).unwrap(),
+            "never discard this\n"
+        );
+    }
+}
+
+/// Registering the inner worktree after confirmation must block recorded
+/// preflight even though ignored-directory counts and outer status stay fixed.
+#[test]
+fn remove_preflight_blocks_new_nested_registered_worktree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let main = TempDir::new().unwrap();
+    build_repo(&main);
+    write_file(main.path(), ".gitignore", "nested/\n");
+    git(main.path(), &["add", ".gitignore"]);
+    git(main.path(), &["commit", "-qm", "ignore nested worktree"]);
+    let dirs = TempDir::new().unwrap();
+    let outer = dirs.path().join("outer");
+    git(
+        main.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "outer",
+            outer.to_str().unwrap(),
+        ],
+    );
+    std::fs::create_dir(outer.join("nested")).unwrap();
+    write_file(&outer, "nested/seed", "ignored directory already present\n");
+    let plan = kagi_git::Backend::plan_recorded_remove(main.path(), "outer", false).unwrap();
+    assert!(
+        plan.preview.blockers.is_empty(),
+        "{:?}",
+        plan.preview.blockers
+    );
+    assert_eq!(ignored_counts(&plan.preview.warnings), vec![(0, 1)]);
+
+    let inner = outer.join("nested/inner");
+    git(
+        main.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "inner",
+            inner.to_str().unwrap(),
+        ],
+    );
+    write_file(&inner, "untracked.txt", "never discard this\n");
+    let current =
+        plan_remove_worktree(&Repository::open(main.path()).unwrap(), "outer", false).unwrap();
+    assert_eq!(ignored_counts(&current.warnings), vec![(0, 1)]);
+    let report = kagi_git::Backend::run_recorded_remove(&plan, kagi_git::oplog::Actor::Human, None);
+    assert!(matches!(
+        report.blocker,
+        Some(PlanNote::Worktree(
+            WorktreeNote::RemoveContainsWorktree { .. }
+        ))
+    ));
+    assert!(matches!(
+        report.recording.entry().outcome,
+        kagi_git::oplog::OpOutcome::Refused { .. }
+    ));
+    assert_eq!(
+        std::fs::read_to_string(inner.join("untracked.txt")).unwrap(),
+        "never discard this\n"
+    );
+}
+
+/// A non-bare repository's common dir may be separate from its main workdir
+/// and live under the linked target. Refuse before deleting the object store.
+#[test]
+fn remove_refuses_linked_target_containing_separate_git_dir() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let main = TempDir::new().unwrap();
+    let repo = build_repo(&main);
+    write_file(main.path(), ".gitignore", "common.git/\n");
+    git(main.path(), &["add", ".gitignore"]);
+    git(main.path(), &["commit", "-qm", "ignore separate git dir"]);
+    let paths = TempDir::new().unwrap();
+    let target = paths.path().join("target");
+    git(
+        main.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "target",
+            target.to_str().unwrap(),
+        ],
+    );
+    drop(repo);
+    let common = target.join("common.git");
+    git(
+        main.path(),
+        &[
+            "init",
+            "-q",
+            "--separate-git-dir",
+            common.to_str().unwrap(),
+            main.path().to_str().unwrap(),
+        ],
+    );
+    git(
+        main.path(),
+        &["config", "core.worktree", main.path().to_str().unwrap()],
+    );
+    git(
+        main.path(),
+        &["worktree", "repair", target.to_str().unwrap()],
+    );
+    let repo = Repository::open(main.path()).unwrap();
+    assert_eq!(
+        repo.commondir().canonicalize().unwrap(),
+        common.canonicalize().unwrap()
+    );
+    assert_eq!(
+        repo.workdir().unwrap().canonicalize().unwrap(),
+        main.path().canonicalize().unwrap()
+    );
+    assert!(
+        Repository::open(&target).is_ok(),
+        "target remains a linked worktree"
+    );
+    let plan = plan_remove_worktree(&repo, "target", false).unwrap();
+    assert!(
+        plan.blockers.iter().any(|note| matches!(
+            note,
+            PlanNote::Worktree(WorktreeNote::RemoveContainsWorktree { path })
+                if Path::new(path) == common.canonicalize().unwrap()
+        )),
+        "a linked target containing the ODB must be refused: {:?}",
+        plan.blockers
+    );
+    assert!(common.join("objects").exists(), "the common ODB survives");
+}
+
+/// A linked checkout cannot delete itself from the tab that owns it. The
+/// refusal is a recorded plan blocker, before any pre-remove hooks or backups.
+#[test]
+fn remove_from_its_own_tab_is_refused_before_mutation() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let main = TempDir::new().unwrap();
+    build_repo(&main);
+    let target = add_worktree(main.path(), "self-target");
+    let repo = Repository::open(&target).unwrap();
+    let plan = plan_remove_worktree(&repo, "self-target", true).unwrap();
+    assert!(
+        plan.blockers
+            .iter()
+            .any(|note| note.message_en().contains("open in this tab")),
+        "own-tab Remove must have an explicit blocker: {:?}",
+        plan.blockers
+    );
+    let report = kagi_git::Backend::run_recorded_remove(
+        &kagi_git::Backend::plan_recorded_remove(&target, "self-target", true).unwrap(),
+        kagi_git::oplog::Actor::Human,
+        None,
+    );
+    assert!(report
+        .blocker
+        .as_ref()
+        .is_some_and(|note| note.message_en().contains("open in this tab")));
+    assert!(matches!(
+        report.recording.entry().outcome,
+        kagi_git::oplog::OpOutcome::Refused { .. }
+    ));
+    assert!(target.join("README.md").exists());
+    assert!(main.path().join("README.md").exists());
+}
+
+/// Main is never removable from either its own management tab or a linked tab.
+/// The executor must reject even when a caller presents a blocked plan.
 #[test]
 fn remove_main_worktree_is_always_refused() {
     if !crate::test_support::run_isolated() {
@@ -856,19 +1092,178 @@ fn remove_main_worktree_is_always_refused() {
     }
     let tmp = TempDir::new().unwrap();
     let repo = build_repo(&tmp);
+    let linked = add_worktree(tmp.path(), "wt-safe");
+    let linked_repo = Repository::open(&linked).unwrap();
 
-    let plan = plan_remove_worktree(&repo, "main", false).expect("plan");
-    assert!(
-        plan.blockers
-            .iter()
-            .any(|b| matches!(b, PlanNote::Worktree(WorktreeNote::RemoveMainRefused))),
-        "main worktree removal must be refused: {:?}",
-        plan.blockers
+    for manager in [&repo, &linked_repo] {
+        let plan = plan_remove_worktree(manager, "main", false).expect("plan");
+        assert!(
+            plan.blockers
+                .iter()
+                .any(|b| matches!(b, PlanNote::Worktree(WorktreeNote::RemoveMainRefused))),
+            "main worktree removal must be refused from either tab: {:?}",
+            plan.blockers
+        );
+        assert!(
+            execute_remove_worktree(manager, &plan, "main", false).is_err(),
+            "execute must refuse to remove the main worktree"
+        );
+        assert!(tmp.path().join("README.md").exists());
+        assert!(linked.join("README.md").exists());
+    }
+}
+
+/// A separate common dir without core.worktree does not identify the main
+/// checkout. A pre_remove copy must read from the surviving managing tab,
+/// not from the path git2 infers for the common repository.
+#[test]
+fn remove_pre_remove_reads_from_managing_worktree_with_separate_git_dir() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let base = TempDir::new().unwrap();
+    let main = base.path().join("main");
+    let common = base.path().join("separate.git");
+    let manager = base.path().join("manager");
+    let target = base.path().join("target");
+    git(
+        base.path(),
+        &[
+            "init",
+            "-q",
+            "-b",
+            "main",
+            "--separate-git-dir",
+            common.to_str().unwrap(),
+            main.to_str().unwrap(),
+        ],
     );
-    assert!(
-        execute_remove_worktree(&repo, &plan, "main", false).is_err(),
-        "execute must refuse to remove the main worktree"
+    write_file(&main, "README.md", "# test\n");
+    std::fs::create_dir(main.join(".kagi")).unwrap();
+    write_file(
+        &main,
+        ".kagi/worktree.toml",
+        "[[pre_remove]]\ntype='copy'\nfrom='source.txt'\nto='copied.txt'\n",
     );
+    git(&main, &["add", "."]);
+    git(&main, &["commit", "-qm", "pre-remove copy"]);
+    for (branch, path) in [("manager", &manager), ("target", &target)] {
+        git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                branch,
+                path.to_str().unwrap(),
+            ],
+        );
+    }
+    assert!(!git_fixture::git_succeeds(
+        &main,
+        &["config", "--local", "--get", "core.worktree"]
+    ));
+    let guessed = Repository::open(&common).unwrap();
+    assert_ne!(
+        guessed.workdir().unwrap().canonicalize().unwrap(),
+        manager.canonicalize().unwrap(),
+        "the common repository does not identify the managing checkout"
+    );
+    let source = b"only the managing checkout contains these bytes\n";
+    std::fs::write(manager.join("source.txt"), source).unwrap();
+    let plan = kagi_git::Backend::plan_recorded_remove(&manager, "target", false).unwrap();
+    assert!(
+        plan.preview.blockers.is_empty(),
+        "{:?}",
+        plan.preview.blockers
+    );
+    let report = kagi_git::Backend::run_recorded_remove(&plan, kagi_git::oplog::Actor::Human, None);
+    assert!(
+        matches!(
+            report.recording.entry().outcome,
+            kagi_git::oplog::OpOutcome::Success { .. }
+        ),
+        "{:?}",
+        report.recording.entry()
+    );
+    assert!(!target.exists());
+    let copied = report
+        .recording
+        .entry()
+        .recovery
+        .iter()
+        .find(|handle| {
+            handle.kind == kagi_git::oplog::recovery::FILE_BACKUP
+                && handle.path.as_deref() == Some("copied.txt")
+        })
+        .expect("copied bytes must be recoverable after Remove");
+    let repo = Repository::open(&manager).unwrap();
+    let blob = repo
+        .find_blob(git2::Oid::from_str(&copied.oid).unwrap())
+        .unwrap();
+    assert_eq!(blob.content(), source);
+    assert!(common.join("objects").exists());
+    assert!(main.join("README.md").exists());
+}
+
+/// Bare repositories have no main workdir. A linked tab must still be able
+/// to remove another linked worktree without deleting the shared common dir.
+#[test]
+fn remove_other_linked_worktree_from_bare_backed_tab() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let seed = TempDir::new().unwrap();
+    build_repo(&seed);
+    let base = TempDir::new().unwrap();
+    let bare = base.path().join("repo.git");
+    git(
+        seed.path(),
+        &[
+            "clone",
+            "--bare",
+            "-q",
+            seed.path().to_str().unwrap(),
+            bare.to_str().unwrap(),
+        ],
+    );
+    let manager = base.path().join("manager");
+    let target = base.path().join("target");
+    git(
+        &bare,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "manager",
+            manager.to_str().unwrap(),
+        ],
+    );
+    git(
+        &bare,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "target",
+            target.to_str().unwrap(),
+        ],
+    );
+
+    let repo = Repository::open(&manager).expect("linked manager");
+    assert_eq!(
+        repo.commondir().canonicalize().unwrap(),
+        bare.canonicalize().unwrap()
+    );
+    let plan = plan_remove_worktree(&repo, "target", false).expect("plan");
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    execute_remove_worktree(&repo, &plan, "target", false).expect("remove linked worktree");
+    assert!(!target.exists());
+    assert!(manager.join("README.md").exists());
+    assert!(bare.join("HEAD").exists(), "bare common dir survives");
 }
 
 /// `lock --reason` records the reason in `git worktree list --porcelain` (§6).

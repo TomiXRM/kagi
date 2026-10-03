@@ -293,7 +293,8 @@ pub(super) fn render_composer(
         && editor.draft.title.trim().is_empty()
         && editor.draft.body.trim().is_empty();
     // The same identity "Posted as" names: the login on the repository's
-    // host, never the window-global github.com one (#904 review).
+    // host, never github.com's when the repository is elsewhere (#904
+    // review, #906).
     let viewer = app.issue_host_login().unwrap_or("?");
     let repo = state
         .base_repo
@@ -559,12 +560,18 @@ pub(super) fn render_composer(
     {
         content = content.child(super::e2e::measure_inside(format!("{id}-viewer-{viewer}")));
     }
-    let composer = super::timeline_row::composer_frame(id, viewer, &app.avatars.images, content)
-        .border_b_1()
-        .border_color(rgb(theme().selected))
-        .key_context("IssueComposer")
-        .on_action(cx.listener(move |app, _: &FocusIssueEditor, window, cx| {
-            app.toggle_issue_focus(number, window, cx)
-        }));
+    let composer = super::timeline_row::composer_frame(
+        id,
+        viewer,
+        app.issue_repo_host(),
+        &app.avatars.images,
+        content,
+    )
+    .border_b_1()
+    .border_color(rgb(theme().selected))
+    .key_context("IssueComposer")
+    .on_action(cx.listener(move |app, _: &FocusIssueEditor, window, cx| {
+        app.toggle_issue_focus(number, window, cx)
+    }));
     super::e2e::measure_control(id, composer).into_any_element()
 }

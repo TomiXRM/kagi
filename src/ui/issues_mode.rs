@@ -13,6 +13,7 @@ use super::i18n::Msg;
 use super::render_helpers::safe_text;
 use super::tab_view::TabUiState;
 use super::theme::{self, theme};
+use super::workspace_mode::SectionCount;
 use super::KagiApp;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -228,16 +229,28 @@ pub(super) fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> Any
                         .child(safe_text(message)),
                 );
             }
+            // #906: "me" is the login on the Issues repository's host, not
+            // the github.com account. Until it is read, the tabs that mean
+            // "yours" claim neither a count nor an empty list.
+            let viewer = app.issue_host_login();
             let (order, tab_counts) = {
-                let view = ui.issue_view(app.github_login.as_deref());
+                let view = ui.issue_view(viewer);
                 (Rc::clone(&view.order), view.tab_counts)
             };
             for tab in IssueListTab::ALL {
                 let active = tab == ui.github_issue_tab;
+                let unknown = viewer.is_none() && issue_count > 0 && tab.needs_viewer();
                 let header = super::workspace_mode::sidebar_section_header(
                     ("issue-filter-tab", tab.index()),
                     issue_tab_label(tab),
-                    (tab_counts[tab.index()], ui.github_issues_cursor.is_some()),
+                    if unknown {
+                        SectionCount::Unknown
+                    } else {
+                        SectionCount::Known {
+                            n: tab_counts[tab.index()],
+                            more: ui.github_issues_cursor.is_some(),
+                        }
+                    },
                     active,
                     false,
                     cx,
@@ -253,6 +266,8 @@ pub(super) fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> Any
                 if order.is_empty() {
                     let (id, message) = if issue_count == 0 {
                         ("issue-mode-list-empty", Msg::IssuesEmpty.t())
+                    } else if unknown {
+                        ("issue-filter-viewer-unknown", Msg::IssuesViewerUnknown.t())
                     } else {
                         ("issue-filter-empty", Msg::IssuesFilterEmpty.t())
                     };
@@ -418,11 +433,23 @@ fn render_main_list_status(
                 );
             }
             if filtered_count == 0 {
-                list = list.child(status_text(
-                    "issue-main-list-empty",
-                    Msg::IssuesFilterEmpty.t(),
-                    theme().text_muted,
-                ));
+                // #906: a "yours" tab with an unknown host login is not empty.
+                let unknown = ui.github_issue_tab.needs_viewer()
+                    && !ui.github_issues.is_empty()
+                    && app.issue_host_login().is_none();
+                list = list.child(if unknown {
+                    status_text(
+                        "issue-main-list-viewer-unknown",
+                        Msg::IssuesViewerUnknown.t(),
+                        theme().text_muted,
+                    )
+                } else {
+                    status_text(
+                        "issue-main-list-empty",
+                        Msg::IssuesFilterEmpty.t(),
+                        theme().text_muted,
+                    )
+                });
             }
 
             list
@@ -486,6 +513,7 @@ fn render_main_issue_row(app: &KagiApp, issue: &Issue, cx: &mut Context<KagiApp>
     let row = super::timeline_row::clickable(super::timeline_row::row(
         ("issue-main-row", number as usize),
         &issue.author,
+        app.issue_repo_host(),
         &app.avatars.images,
         content,
     ))
@@ -499,7 +527,7 @@ fn render_main_issue_row(app: &KagiApp, issue: &Issue, cx: &mut Context<KagiApp>
 fn render_main_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
     let ui = app.ui();
     let state = ui.github_issues_list.clone();
-    let order = Rc::clone(&ui.issue_view(app.github_login.as_deref()).order);
+    let order = Rc::clone(&ui.issue_view(app.issue_host_login()).order);
     let filtered_count = order.len();
     // Composer, shared strip, status, Issue rows, then the loading/retry tail.
     let count = filtered_count + 4;

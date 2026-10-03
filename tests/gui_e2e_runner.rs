@@ -228,6 +228,10 @@ mod file_menu_owner;
 mod issue_write_owner;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/ghe_viewer_login.rs"]
+mod ghe_viewer_login;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/field_picker_owner.rs"]
 mod field_picker_owner;
 
@@ -1602,6 +1606,10 @@ mod macos {
             (
                 "issue_create_fields",
                 Box::new(crate::issue_create_fields::scenario_issue_create_fields),
+            ),
+            (
+                "ghe_viewer_login",
+                Box::new(crate::ghe_viewer_login::scenario_ghe_viewer_login),
             ),
             (
                 "workspace_mode_toolbar",

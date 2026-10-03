@@ -146,8 +146,19 @@ impl KagiApp {
                         ui.github_prs_loaded = true;
                         ui.github_prs_epoch = ui.github_prs_epoch.wrapping_add(1);
                     }
-                    moved
+                    // #906: "mine" is the login on the PRs' own host.
+                    let mut hosts: Vec<String> = Vec::new();
+                    for pr in &ui.github_prs {
+                        if !pr.base_repo.is_empty() && !hosts.contains(&pr.base_repo) {
+                            hosts.push(pr.base_repo.clone());
+                        }
+                    }
+                    (moved, hosts)
                 };
+                let (answered, base_repos) = answered;
+                for base_repo in &base_repos {
+                    app.ensure_host_login(base_repo, cx);
+                }
                 app.reload_moved_pr_tabs(owner_is_active, &answered, cx);
                 app.refresh_pr_detail_targets(owner, repo.clone(), cx);
                 if owner_is_active {
@@ -193,8 +204,9 @@ impl KagiApp {
     }
 
     /// Lazily spawn the PR refresh ticker (called from `render`, like the
-    /// auto-fetch ticker). Fetches the login once, refreshes immediately,
-    /// then every `GITHUB_REFRESH_SECS`. Exits when the repo closes.
+    /// auto-fetch ticker). Refreshes immediately, then every
+    /// `GITHUB_REFRESH_SECS`. Exits when the repo closes. Who "me" is comes
+    /// from the login on each repository's host (`ensure_host_login`, #906).
     pub fn ensure_github_ticker(&mut self, cx: &mut Context<Self>) {
         if self.github_ticker_alive || self.repo_path.is_none() {
             return;
@@ -215,21 +227,6 @@ impl KagiApp {
                 return;
             }
             klog!("github: ticker start ({}s)", GITHUB_REFRESH_SECS);
-            // Who am I? Once per ticker; the grouping is best-effort without it.
-            let login = acx
-                .background_executor()
-                .spawn(async { kagi_git::github::current_login(None) })
-                .await;
-            let _ = this.update(acx, |app, cx| {
-                app.github_login = login;
-                // The Mine/Others split depends on this global capability.
-                // Every attached session may own cached rows, including an
-                // inactive one whose epoch happens to equal the active tab's.
-                for ui in app.ui.values_mut() {
-                    ui.github_prs_epoch = ui.github_prs_epoch.wrapping_add(1);
-                }
-                cx.notify();
-            });
             loop {
                 let keep = this.update(acx, |app, cx| {
                     if app.repo_path.is_none() {

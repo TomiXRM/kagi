@@ -226,8 +226,11 @@ pub fn scenario_issue_create_fields(cx: &mut VisualTestAppContext) {
     cx.run_until_parked();
 
     // The repository's host has no login yet: nobody is claimed as the
-    // author, whatever the window-global login says.
-    app.update(cx, |app, _| app.github_login = Some("someone-else".into()));
+    // author, whatever another host's login is (#906).
+    app.update(cx, |app, _| {
+        app.github_host_logins
+            .insert(Some("ghe.example.com".into()), "someone-else".into());
+    });
     assert!(drawn(cx, window, "issue-field-value-labels"));
     assert!(drawn(cx, window, "issue-field-value-assignees"));
     assert!(!drawn(cx, window, "issue-composer-posted-as"));

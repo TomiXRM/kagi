@@ -178,12 +178,14 @@ impl KagiApp {
         // Ecosystem (ADR-0119) — read-only hot-spot analysis; open the
         // full-screen view. Disabled when no repo is open.
         let ecosystem_on = self.repo_path.is_some();
-        let no_repo_reason = Msg::NoRepoOpen.t();
+        let no_repo_reason = (!ecosystem_on).then(|| Msg::NoRepoOpen.t());
         let ecosystem_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
             if this.repo_path.is_some() {
                 this.open_ecosystem_view(cx);
             } else {
-                this.status_footer = FooterStatus::Idle(SharedString::from(no_repo_reason));
+                this.status_footer = FooterStatus::Idle(SharedString::from(
+                    no_repo_reason.unwrap_or_else(|| Msg::NoRepoOpen.t()),
+                ));
                 cx.notify();
             }
         });
@@ -196,7 +198,9 @@ impl KagiApp {
             if this.repo_path.is_some() {
                 this.handle_menu_command("view.toggleEditorWorkspace", window, cx);
             } else {
-                this.status_footer = FooterStatus::Idle(SharedString::from(no_repo_reason));
+                this.status_footer = FooterStatus::Idle(SharedString::from(
+                    no_repo_reason.unwrap_or_else(|| Msg::NoRepoOpen.t()),
+                ));
             }
             cx.notify();
         });
@@ -844,7 +848,7 @@ impl KagiApp {
                             "Editor",
                             gpui_component::Icon::default().path("icons/square-pen.svg"),
                             ButtonState::Availability(editor_ws_on),
-                            (!editor_ws_on).then_some(no_repo_reason),
+                            no_repo_reason,
                             0,
                         )
                         .when(mode == WorkspaceMode::Editor, mode_on)
@@ -859,7 +863,7 @@ impl KagiApp {
                             "Analyze",
                             gpui_component::Icon::new(gpui_component::IconName::ChartPie),
                             ButtonState::Availability(ecosystem_on),
-                            (!ecosystem_on).then_some(no_repo_reason),
+                            no_repo_reason,
                             0,
                         )
                         .on_click(ecosystem_click),

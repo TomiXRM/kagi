@@ -727,7 +727,15 @@ The current suite covers:
   fingerprint must remain unchanged. Before adding focus stops this scenario
   failed (none reachable); mutating Pull's description input to `None`
   fails its AX assertion. TestDispatcher cannot prove OS Tab/VoiceOver
-  speech or the visible ring: use Tier B for those.
+  speech (the native AX tree did not expose GPUI content during the #972
+  foreground probe). Tier B on macOS with a clean one-commit repository and
+  explicit foreground permission: pointer-click unavailable Pull, Tab to
+  unavailable Push shows the focus-visible ring, and Enter changes the footer
+  to the existing no-remote reason without changing HEAD, status or stash.
+  The native `AXUIElement` query returned only the window's title-bar
+  controls (`AXGroup` for content had zero children), so actual VoiceOver
+  announcement of `aria_description` remains unobserved; do not present the
+  Tier A attribute oracle as a spoken-word measurement.
 - modal-slot arbitration (`KAGI_GUI_E2E_ONLY=push_failure_keeps_modal,merge_plan_latch,delete_branch_plan_latch,remote_browse_modal_routing`): a push failure lands behind Remote Browse without losing its input and reaches the Failed footer, an Error toast and one durable receipt — no dismiss-only AppNotice, queued or shown after Remote Browse closes (the #747 contract; #824 bisected the stale notice expectation to `e5644c6f`). Delayed Merge/Delete Branch plans wait behind Remote Browse without losing its input, stale plan state, latches, footers, or notices; a reopened Remote Browse rejects an older in-place completion by generation;
 - unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.
 - toolbar centre actions (Pull…Terminal) drawn only in Graph, not PRs/Editor/Analyze

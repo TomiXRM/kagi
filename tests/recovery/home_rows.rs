@@ -50,19 +50,22 @@ fn gh_script() -> String {
     )
 }
 
-/// A stand-in `gh` listing three repositories and thirty organizations that
-/// cannot be read: their headings and notes follow the rows, more than a
-/// screen of them.
+/// A stand-in `gh` listing three repositories, then organizations: thirty
+/// that cannot be read, `org30` with three repositories, and thirty more that
+/// cannot be read. Each unreadable one is a heading and a note, so each run
+/// of them is more than a screen of entries with no row.
 fn orgs_script() -> String {
-    let repos = (0..3)
-        .map(|i| {
-            format!(
-                r#"{{"nameWithOwner":"acme/r{i:02}","url":"https://github.com/acme/r{i:02}","isFork":false,"isPrivate":false,"description":"","updatedAt":"2026-10-01T00:00:00Z"}}"#
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(",");
-    let orgs = (0..30)
+    let repos = |owner: &str| {
+        (0..3)
+            .map(|i| {
+                format!(
+                    r#"{{"nameWithOwner":"{owner}/r{i:02}","url":"https://github.com/{owner}/r{i:02}","isFork":false,"isPrivate":false,"description":"","updatedAt":"2026-10-01T00:00:00Z"}}"#
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let orgs = (0..61)
         .map(|i| format!("org{i:02}"))
         .collect::<Vec<_>>()
         .join("\n");
@@ -70,9 +73,12 @@ fn orgs_script() -> String {
         "#!/bin/sh\ncase \"$1 $2 $3\" in\n\
          'config get user') echo acme ;;\n\
          'api user/orgs '*) cat <<'EOF'\n{orgs}\nEOF\n;;\n\
-         'repo list --limit') cat <<'JSON'\n[{repos}]\nJSON\n;;\n\
+         'repo list --limit') cat <<'JSON'\n[{mine}]\nJSON\n;;\n\
+         'repo list org30') cat <<'JSON'\n[{org30}]\nJSON\n;;\n\
          'search '*) echo '[]' ;;\n\
-         *) echo \"gh: $*: HTTP 403\" >&2; exit 1 ;;\nesac\n"
+         *) echo \"gh: $*: HTTP 403\" >&2; exit 1 ;;\nesac\n",
+        mine = repos("acme"),
+        org30 = repos("org30"),
     )
 }
 
@@ -417,36 +423,51 @@ pub fn scenario_home_rows(cx: &mut VisualTestAppContext) {
     .unwrap();
     wait_for(cx, &app, "the lists again", settled);
 
-    // Rows followed by more than a screen of headings and notes (thirty
-    // organizations that cannot be read), scrolled to the end with a row
-    // focused (#961 review): no row is on screen, so there is no Tab stop
-    // in the list, and the focus goes to the window, not to row 0.
+    // Runs of headings and notes longer than a screen (organizations that
+    // cannot be read), with a row focused and scrolled away (#961 review):
+    // with no row on screen there is no Tab stop in the list and the focus
+    // goes to the window — neither to a row below the screen (org30's,
+    // after the first run) nor to row 0 (after the last run).
     {
         let _orgs = OfflineGh::with_script(&orgs_script());
         app.update(cx, |app, cx| app.set_home_pane(HomePane::Repos, cx));
         app.update(cx, |app, cx| app.reload_home_github(cx));
         wait_for(cx, &app, "the organizations' read", settled);
-        assert!(drawn(cx, window, "home-gh-acme/r02"));
-        focus_row(cx, &app, window, "repo:acme/r02");
-        wheel(cx, -20000.);
-        for repo in ["r00", "r01", "r02"] {
-            assert!(
-                !drawn(cx, window, &format!("home-gh-acme/{repo}")),
-                "precondition: no row on screen ({repo} is drawn)"
-            );
-        }
-        assert_eq!(row(cx, &app, window), None, "no row keeps the focus");
-        let root = cx
-            .update_window(window, |_, window, cx| {
+        let no_row_on_screen = |cx: &mut VisualTestAppContext| {
+            for owner in ["acme", "org30"] {
+                for repo in ["r00", "r01", "r02"] {
+                    let name = format!("home-gh-{owner}/{repo}");
+                    assert!(!drawn(cx, window, &name), "precondition: {name} is drawn");
+                }
+            }
+        };
+        let root_has_focus = |cx: &mut VisualTestAppContext| {
+            cx.update_window(window, |_, window, cx| {
                 window.draw(cx).clear();
                 app.read(cx)
                     .root_focus
                     .as_ref()
                     .is_some_and(|focus| focus.is_focused(window))
             })
-            .unwrap();
-        assert!(root, "with no row on screen, the window has the focus");
-        wheel(cx, 20000.);
+            .unwrap()
+        };
+        for (scroll, place) in [(-700., "within the first run"), (-50000., "at the end")] {
+            wheel(cx, 50000.);
+            assert!(drawn(cx, window, "home-gh-acme/r02"));
+            focus_row(cx, &app, window, "repo:acme/r02");
+            wheel(cx, scroll);
+            no_row_on_screen(cx);
+            assert_eq!(
+                row(cx, &app, window),
+                None,
+                "no row keeps the focus ({place})"
+            );
+            assert!(
+                root_has_focus(cx),
+                "with no row on screen ({place}), the window has the focus"
+            );
+        }
+        wheel(cx, 50000.);
     }
 
     // Another account's read replaces the list on screen with Loading, and

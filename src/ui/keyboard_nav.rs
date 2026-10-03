@@ -493,10 +493,15 @@ impl RowFocus {
         }
         // The remembered row while it is drawn; else the first row on
         // screen, so Tab always finds a row that exists. None when no row is
-        // on screen (only headings or notes after the rows, #961 review):
-        // an undrawn row is no Tab stop.
+        // on screen (#961 review): only headings or notes are, after the
+        // rows or before the next ones. The first row at or after the top
+        // entry is the only candidate — a later one is further down — and it
+        // counts only if drawn.
         let top = state.logical_scroll_top().item_ix;
-        let drawn = |at: usize| state.bounds_for_item(self.keys[at].1).is_some();
+        // On the frame the rows were rebuilt the list has no bounds yet (it
+        // was reset and lays the rows out in this frame): every row counts as
+        // drawn, and the first at the top is the stop, as before any scroll.
+        let drawn = |at: usize| rebuild || state.bounds_for_item(self.keys[at].1).is_some();
         // The row holding the focus — itself or a control inside it, its
         // Open button (#961 review) — scrolled out of the drawn range by the
         // wheel is unmounted: no ↑/↓, no ring. Not on the frame the focus
@@ -504,7 +509,7 @@ impl RowFocus {
         let scrolled_away = !moved && self.holds && self.current.is_some_and(|at| !drawn(at));
         let stop = self.current.filter(|&at| drawn(at)).or_else(|| {
             let at = self.keys.partition_point(|&(_, ix)| ix < top);
-            (at < self.keys.len()).then_some(at)
+            (at < self.keys.len() && drawn(at)).then_some(at)
         });
         if lost || scrolled_away {
             match stop {

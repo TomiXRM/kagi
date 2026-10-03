@@ -442,3 +442,83 @@ pub fn scenario_fetch_old_visit_drops_pull_waiter(cx: &mut VisualTestAppContext)
     });
     unmount(cx, app, window);
 }
+
+/// A new-visit Pull joined to an old-visit flight must see that flight's
+/// failure even though the old waiter remains stale and the receipt is singular.
+pub fn scenario_fetch_new_visit_waiter_sees_old_flight_failure(cx: &mut VisualTestAppContext) {
+    let fixture_a = build_fixture();
+    let fixture_b = build_fixture();
+    let repo_a = fixture_a.path().canonicalize().unwrap();
+    let repo_b = fixture_b.path().canonicalize().unwrap();
+    let missing = repo_a.join("no-such-origin");
+    git(
+        &repo_a,
+        &["remote", "add", "origin", missing.to_str().unwrap()],
+    );
+    dirty(&repo_a);
+
+    let (app, window) = mount(cx, &repo_a);
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(repo_b.clone(), cx))
+    });
+    cx.run_until_parked();
+    let before = kagi_git::oplog::read_oplog_tail_for_repo(&repo_a, 100)
+        .iter()
+        .filter(|entry| entry.op == "fetch")
+        .count();
+    app.update(cx, |app, cx| {
+        app.switch_repo(0, cx);
+        let owner = app.active_session().unwrap();
+        assert!(app.fetch_async_for(false, None, cx));
+        app.open_pull_modal(cx);
+        let old_visit = app.fetch_in_flight.as_ref().unwrap().visit;
+        assert_eq!(
+            app.fetch_in_flight.as_ref().unwrap().waiters,
+            vec![(owner, old_visit)]
+        );
+        app.switch_repo(1, cx);
+        app.switch_repo(0, cx);
+        let new_visit = app.app_sessions.attachment(owner).unwrap().visit;
+        assert_ne!(new_visit, old_visit);
+        app.open_pull_modal(cx);
+        assert_eq!(
+            app.fetch_in_flight.as_ref().unwrap().waiters,
+            vec![(owner, old_visit), (owner, new_visit)]
+        );
+        assert!(app.pull_modal().is_none());
+    });
+    // The dispatcher holds the fetch until now, after both Pull requests.
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.fetch_in_flight.is_none());
+        assert!(app.pull_modal().is_none(), "a failed fetch must not open Pull");
+        assert!(
+            matches!(&app.status_footer, FooterStatus::Failed(text) if text.as_ref().starts_with("Fetch failed:")),
+            "the new visit's Pull did not receive the failure: {:?}",
+            app.status_footer
+        );
+        let toast_stack = app.toast_stack.as_ref().expect("mounted toast stack");
+        assert_eq!(
+            toast_stack.read(cx).toasts().iter().filter(|toast| {
+                toast.message.as_ref().starts_with("Fetch failed:")
+            }).count(),
+            1,
+            "only the current waiter receives one failure preview"
+        );
+    });
+    let receipts: Vec<_> = kagi_git::oplog::read_oplog_tail_for_repo(&repo_a, 100)
+        .into_iter()
+        .filter(|entry| entry.op == "fetch")
+        .collect();
+    assert_eq!(
+        receipts.len(),
+        before + 1,
+        "one flight owns one durable failure"
+    );
+    assert!(matches!(
+        receipts.last().unwrap().outcome,
+        kagi_git::oplog::OpOutcome::Failed { .. }
+    ));
+    unmount(cx, app, window);
+}

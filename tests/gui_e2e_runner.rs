@@ -1641,6 +1641,10 @@ mod macos {
                 Box::new(crate::fetch_owner::scenario_fetch_old_visit_drops_pull_waiter),
             ),
             (
+                "fetch_new_visit_waiter_sees_old_flight_failure",
+                Box::new(crate::fetch_owner::scenario_fetch_new_visit_waiter_sees_old_flight_failure),
+            ),
+            (
                 "remote_branch_fetch_panic",
                 Box::new(crate::guard_writer_panic::scenario_remote_branch_fetch_panic),
             ),

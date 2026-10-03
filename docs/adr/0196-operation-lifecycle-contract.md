@@ -345,6 +345,9 @@ acknowledge → 次の write** を Tier A の実経路で確認した。`WriteGu
 fetch 失敗は waiter ごとに記録せず、fetch 自身が一度だけ永続化する。
 remote branch fetch の通常失敗も、表示中 tab ではなく開始時の frozen repository
 へ必ず永続化する。PR ref fetch の通常失敗は既に同じ境界で記録している。
+ただし旧 visit の fetch に新 visit の dirty Pull が相乗りした場合は、
+新 waiter に結果を配送する。失敗なら新 visit に短い footer/toast のみ表示し、
+fetch 自体の receipt は重複させない（#992 review 4175367910）。
 
 **pull（A' 採用 = 上記 (a) の改訂結果）**: `FamilyEvidence::Pull(PullReport)`。
 `PullReport { steps: Vec<RunReport>, terminal }` は実際に走った child の receipt を

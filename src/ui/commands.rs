@@ -2002,33 +2002,41 @@ impl KagiApp {
                 app.poll_app_jobs(cx);
                 app.present_app_notice();
                 // A visit is a stay in the same tab, not merely its session.
-                // Record the old flight's failure even after departure, but
-                // deliver only the requests still belonging to this visit.
+                // The flight owns one receipt; only waiters on the current
+                // visit may receive a result from an earlier visit's flight.
                 if app.active_session() != Some(flight.owner)
                     || app.app_sessions.attachment(flight.owner).map(|a| a.visit)
                         != Some(flight.visit)
                 {
-                    if let Err(failure) = &mut result {
-                        let entry = kagi_git::oplog::OpLogEntry::new(
-                            "fetch",
-                            repo_path_guard.display().to_string(),
-                            flight.before,
-                            failure.outcome(),
-                        )
-                        .with_ref_moves(failure.ref_moves.take());
-                        if let kagi_git::backend::recording::Recording::Failed { error, .. } =
-                            kagi_git::backend::recording::finalize(entry)
-                        {
-                            app.present_oplog_write_failure(error, cx);
+                    let current_waiter = flight.waiters.iter().any(|(session, visit)| {
+                        app.active_session() == Some(*session)
+                            && app.app_sessions.visit(*session) == Some(*visit)
+                    });
+                    match &mut result {
+                        Err(failure) => {
+                            let entry = kagi_git::oplog::OpLogEntry::new(
+                                "fetch",
+                                repo_path_guard.display().to_string(),
+                                flight.before,
+                                failure.outcome(),
+                            )
+                            .with_ref_moves(failure.ref_moves.take());
+                            if let kagi_git::backend::recording::Recording::Failed {
+                                error, ..
+                            } = kagi_git::backend::recording::finalize(entry)
+                            {
+                                app.present_oplog_write_failure(error, cx);
+                            }
+                            if current_waiter {
+                                let preview = format!("Fetch failed: {}", failure.message);
+                                app.status_footer =
+                                    FooterStatus::Failed(SharedString::from(preview.clone()));
+                                app.push_toast(ToastKind::Error, preview, cx);
+                                cx.notify();
+                            }
                         }
-                    }
-                    for (session, visit) in flight.waiters {
-                        if app.active_session() == Some(session)
-                            && app.app_sessions.visit(session) == Some(visit)
-                            && result.is_ok()
-                        {
-                            app.deliver_pull_confirm(session, cx);
-                        }
+                        Ok(_) if current_waiter => app.deliver_pull_confirm(flight.owner, cx),
+                        Ok(_) => {}
                     }
                     return;
                 }

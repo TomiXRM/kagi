@@ -953,10 +953,11 @@ The current suite covers:
   plans after departure and revisit while releasing the planning latch.
 - guard writer abandonment (`tests/recovery/fetch_owner.rs`,
   `tests/recovery/guard_writer_panic.rs`):
-  `KAGI_GUI_E2E_ONLY=fetch_panicked_worker_reconciles,fetch_previous_visit_is_not_presented,fetch_old_visit_drops_pull_waiter,remote_branch_fetch_panic,remote_branch_fetch_failed_after_departure,pr_ref_fetch_panic,editor_save_panic,pull_confirm_departure_discards_old_visit`
+  `KAGI_GUI_E2E_ONLY=fetch_panicked_worker_reconciles,fetch_previous_visit_is_not_presented,fetch_old_visit_drops_pull_waiter,fetch_new_visit_waiter_sees_old_flight_failure,remote_branch_fetch_panic,remote_branch_fetch_failed_after_departure,pr_ref_fetch_panic,editor_save_panic,pull_confirm_departure_discards_old_visit`
   exercises the admitted background work's panic, Unknown receipt and reconcile
-  notice, acknowledgement and fresh admission. Departing and returning to the
-  same tab drops an old Pull waiter; the old fetch failure is recorded once.
+  notice, acknowledgement and fresh admission. Departing and returning drops
+  the old Pull waiter; a new visit's Pull joined to the old fetch gets its
+  failure footer and toast, with one receipt and no old-visit confirmation.
   A failed remote-branch fetch records against its frozen repo even while
   another tab is active, without changing that tab's footer/toast. `TestDispatcher`
   propagates an uncaught task panic before `Task::fallible()` can deliver `None`;

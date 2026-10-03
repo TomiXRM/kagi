@@ -162,7 +162,8 @@ oplog に永続化する。記録済みの結果を閉じるだけの `AppNotice
 
 失敗した fetch の receipt は waiter から追加記録しない。別 tab 表示中の失敗も
 元の repository の oplog に一度だけ永続化する。古い visit の modal/footer/toast
-は表示しない。
+は表示しない。ただし旧 visit の fetch がまだ走っている間に新 visit で Pull を要求したら、
+新 visit の waiter にだけ失敗の短い footer/toast を配送する（#992 review）。
 
 ### 2c. 確認の約束は stash の前に照合する（#626 review 3 周目）
 

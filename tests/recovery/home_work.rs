@@ -308,6 +308,48 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
         assert_eq!(tab.pr.head, "fix");
     });
 
+    // #940 review: the later pick wins. A local PR still waiting for
+    // `gh pr view` is dropped when another row is picked meanwhile — here
+    // one without a clone, which opens on GitHub; the first must not then
+    // move the user to its repository when its refs arrive.
+    click_control(cx, window, "tab-add");
+    cx.run_until_parked();
+    let (local_pr, remote_pr) = cx.read(|cx| {
+        let items = &app
+            .read(cx)
+            .home_github
+            .work
+            .lists
+            .as_ref()
+            .unwrap()
+            .my_prs
+            .items;
+        (items[0].clone(), items[1].clone())
+    });
+    assert_eq!((local_pr.number, remote_pr.number), (7, 3));
+    let _ = e2e::take_opened_urls();
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.home_work_pick(WorkKind::MyPrs, local_pr.clone(), window, cx);
+            app.home_work_pick(WorkKind::MyPrs, remote_pr.clone(), window, cx);
+        })
+    })
+    .unwrap();
+    assert!(
+        cx.read(|cx| app.read(cx).home_github.work.opening.is_none()),
+        "the later pick drops the open still in progress"
+    );
+    wait_for(cx, &app, "the dropped refs read", |_| view_calls() == 2);
+    cx.run_until_parked();
+    assert_eq!(
+        e2e::take_opened_urls(),
+        vec!["https://github.com/acme/widgets/pull/3".to_string()]
+    );
+    assert!(
+        cx.read(|cx| app.read(cx).home.is_some()),
+        "Home stays in front: the dropped PR does not open"
+    );
+
     // An issue opens in its clone's Issues mode only while that mode
     // addresses the issue's repository: with `gh repo set-default` pointing
     // elsewhere the same number is another issue there.

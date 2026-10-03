@@ -108,6 +108,20 @@ pub fn avatar_url_for_username(username: &str) -> String {
     format!("https://avatars.githubusercontent.com/{username}?s=64")
 }
 
+/// The avatar URL for the GitHub `login` on `host` (#906). github.com logins
+/// use the avatars CDN; an Enterprise login is that server's own
+/// `/<login>.png`, never the CDN, where the same name can be someone else.
+/// A private Enterprise server refuses the unauthenticated GET, which leaves
+/// the initials circle rather than another person's face.
+pub fn avatar_url_for_login(host: Option<&str>, login: &str) -> String {
+    match host {
+        Some(host) if !host.eq_ignore_ascii_case("github.com") => {
+            format!("https://{host}/{login}.png?size=64")
+        }
+        _ => avatar_url_for_username(login),
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // remote URL → (owner, repo)
 // ──────────────────────────────────────────────────────────────────────────
@@ -575,6 +589,22 @@ mod tests {
         assert_eq!(
             avatar_url_for_username("octocat"),
             "https://avatars.githubusercontent.com/octocat?s=64"
+        );
+    }
+
+    #[test]
+    fn enterprise_logins_never_resolve_through_the_github_com_cdn() {
+        assert_eq!(
+            avatar_url_for_login(Some("ghe.example.com"), "octocat"),
+            "https://ghe.example.com/octocat.png?size=64"
+        );
+        assert_eq!(
+            avatar_url_for_login(Some("github.com"), "octocat"),
+            avatar_url_for_username("octocat")
+        );
+        assert_eq!(
+            avatar_url_for_login(None, "octocat"),
+            avatar_url_for_username("octocat")
         );
     }
 

@@ -60,19 +60,29 @@ fn sidebar_mode_nav_cell(
         .into_any_element()
 }
 
+/// What a navigator section header says about how many rows it holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SectionCount {
+    /// `n` rows; `more` when the list has further pages, so `n` is a floor.
+    Known { n: usize, more: bool },
+    /// The section is "yours" (Mine, Assigned, …) and who you are on the
+    /// repository's host is not known yet, so no count is claimed (#906).
+    Unknown,
+}
+
 /// Shared PR/Issue navigator section chrome: disclosure state, label, count,
 /// padding and hover behavior stay identical across both GitHub pages.
 pub(super) fn sidebar_section_header(
     id: (&'static str, usize),
     label: &'static str,
-    (count, has_more): (usize, bool),
+    count: SectionCount,
     open: bool,
     emphasize_count: bool,
     cx: &mut Context<KagiApp>,
     on_click: impl Fn(&mut KagiApp, &gpui::ClickEvent, &mut gpui::Window, &mut Context<KagiApp>)
         + 'static,
 ) -> gpui::AnyElement {
-    div()
+    let header = div()
         .id(id)
         .flex()
         .flex_row()
@@ -103,22 +113,38 @@ pub(super) fn sidebar_section_header(
                 .child(SharedString::from(label)),
         )
         .child(div().flex_1().min_w(px(0.)))
-        .child(
+        .child({
+            let (text, emphasized): (SharedString, bool) = match count {
+                SectionCount::Known { n, more } => (
+                    if more && n > 0 {
+                        format!("({n}+)").into()
+                    } else {
+                        n.to_string().into()
+                    },
+                    n > 0 && emphasize_count,
+                ),
+                SectionCount::Unknown => ("\u{2014}".into(), false),
+            };
             div()
                 .flex_shrink_0()
                 .text_xs()
-                .text_color(rgb(if count > 0 && emphasize_count {
+                .text_color(rgb(if emphasized {
                     theme::theme().color_branch
                 } else {
                     theme::theme().text_muted
                 }))
-                .child(SharedString::from(if has_more && count > 0 {
-                    format!("({count}+)")
-                } else {
-                    count.to_string()
-                })),
-        )
-        .into_any_element()
+                .child(text)
+        });
+    // Tier A reads which headers withhold their count (#906). Absolute and
+    // compiled out of normal builds, where it would be a flow child.
+    #[cfg(feature = "gui-e2e")]
+    let header = header.when(count == SectionCount::Unknown, |header| {
+        header.relative().child(super::e2e::measure_inside(format!(
+            "{}-{}-count-unknown",
+            id.0, id.1
+        )))
+    });
+    header.into_any_element()
 }
 
 /// Shared selectable row shell for GitHub sidebar lists. Feature renderers

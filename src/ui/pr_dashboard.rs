@@ -553,6 +553,7 @@ fn render_table_row(
         super::timeline_row::clickable(super::timeline_row::row(
             ("pr-home-row", pr.number as usize),
             &pr.author,
+            kagi_git::github::repo_host(&pr.base_repo),
             avatars,
             cells,
         )),

@@ -15,25 +15,48 @@ use super::pr_attention::attention_color;
 use super::pr_mode::{focus_border, PrFocus};
 use super::render_helpers::safe_text;
 use super::theme::{self, theme};
+use super::workspace_mode::SectionCount;
 use super::KagiApp;
 
 /// A fold-and-count header, the shape the navigator's sections share with the
-/// Graph page's sections: a disclosure mark, the name, the count.
+/// Graph page's sections: a disclosure mark, the name, the count. `None`: who
+/// "me" is on the PRs' host is not known yet, so no count is claimed (#906).
 fn render_section_header(
     section: PrSection,
-    count: usize,
+    count: Option<usize>,
     open: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     super::workspace_mode::sidebar_section_header(
         ("pr-mode-section", section.index()),
         pr_section_label(section),
-        (count, false),
+        match count {
+            Some(n) => SectionCount::Known { n, more: false },
+            None => SectionCount::Unknown,
+        },
         open,
         section == PrSection::Inbox,
         cx,
         move |this, _, _w, cx| this.pr_mode_toggle_section(section, cx),
     )
+}
+
+/// Who "me" is for each PR row: the `gh` login on that row's host (#906), not
+/// the github.com account — an Enterprise repository's PRs are judged by
+/// that server's identity. Looked up once per run of rows on the same
+/// repository (a list is one repository), not once per row.
+pub(super) fn row_viewers<'a>(app: &'a KagiApp, rows: &'a [PullRequest]) -> Vec<Option<&'a str>> {
+    let mut last: Option<(&str, Option<&str>)> = None;
+    rows.iter()
+        .map(|pr| match last {
+            Some((repo, login)) if repo == pr.base_repo => login,
+            _ => {
+                let login = app.host_login(&pr.base_repo);
+                last = Some((&pr.base_repo, login));
+                login
+            }
+        })
+        .collect()
 }
 
 pub(super) fn pr_section_label(section: PrSection) -> &'static str {
@@ -64,9 +87,10 @@ pub(super) struct PrListRow {
 /// unfolded. Headers are always returned — a section with nothing in it says
 /// so with a zero, which is information.
 pub(super) fn pr_sections(app: &KagiApp) -> Vec<(PrSection, bool, Vec<PrListRow>)> {
-    let me = app.github_login.clone();
     let local: Vec<String> = app.view().branches.iter().map(|(n, _)| n.clone()).collect();
-    let indices = apply_prs(app.ui().pr_list_rows(), &app.ui().github_pr_filter, |pr| {
+    let rows = app.ui().pr_list_rows();
+    let viewers = row_viewers(app, rows);
+    let indices = apply_prs(rows, &app.ui().github_pr_filter, |pr| {
         app.pr_status_availability(pr)
     });
     let open = app
@@ -78,17 +102,12 @@ pub(super) fn pr_sections(app: &KagiApp) -> Vec<(PrSection, bool, Vec<PrListRow>
         .map(|section| {
             let members: Vec<PrListRow> = indices
                 .iter()
-                .map(|&index| &app.ui().pr_list_rows()[index])
-                .filter(|pr| {
-                    section.accepts_with_status(
-                        pr,
-                        me.as_deref(),
-                        &local,
-                        app.pr_status_availability(pr),
-                    )
+                .map(|&index| (&rows[index], viewers[index]))
+                .filter(|(pr, me)| {
+                    section.accepts_with_status(pr, *me, &local, app.pr_status_availability(pr))
                 })
-                .map(|pr| {
-                    let group = pr.group_for(me.as_deref(), &local);
+                .map(|(pr, me)| {
+                    let group = pr.group_for(me, &local);
                     let (attention, _why) = pr.attention_with_status(
                         group == PrGroup::Mine,
                         group == PrGroup::ReviewRequested,
@@ -148,8 +167,12 @@ pub(super) fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::
                 .child(SharedString::from(Msg::PrPaneEmpty.t())),
         );
     }
+    // #906: every section depends on who "me" is; until the login on the
+    // PRs' host is known, the rows still list but no count is claimed.
+    let viewer_known = row_viewers(app, all).iter().all(Option::is_some);
     for (section, open, members) in pr_sections(app) {
-        body = body.child(render_section_header(section, members.len(), open, cx));
+        let count = viewer_known.then_some(members.len());
+        body = body.child(render_section_header(section, count, open, cx));
         if !open {
             continue;
         }
@@ -358,4 +381,25 @@ fn render_pr_card(
         .child(edge)
         .child(card);
     super::e2e::measure_control(format!("pr-mode-card-{}", pr.number), row)
+}
+
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    /// The PR numbers the navigator lists under `section`, from the same
+    /// projection the renderer draws (#906).
+    pub fn pr_section_numbers_for_e2e(&self, section: PrSection) -> Vec<u64> {
+        pr_sections(self)
+            .into_iter()
+            .find(|(candidate, _, _)| *candidate == section)
+            .map(|(_, _, members)| members.iter().map(|row| row.pr.number).collect())
+            .unwrap_or_default()
+    }
+
+    /// Whether the `gh` login read for `host` is in flight or has landed
+    /// (#906); a failed read is forgotten and reads `false` again.
+    pub fn host_login_requested_for_e2e(&self, host: Option<&str>) -> bool {
+        self.github_host_login_requests
+            .iter()
+            .any(|requested| requested.as_deref() == host)
+    }
 }

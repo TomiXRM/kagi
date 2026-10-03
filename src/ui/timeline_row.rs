@@ -12,7 +12,7 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::text::{TextView, TextViewStyle};
 use gpui_component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _};
-use kagi_ui_core::avatar::AvatarImages;
+use kagi_ui_core::avatar::{login_key, AvatarImages};
 
 use super::i18n::Msg;
 use super::render_helpers::safe_text;
@@ -31,10 +31,13 @@ pub(super) const ROW_PY: f32 = 16.;
 /// separator — borderless rows, no cards (ADR-0201).
 ///
 /// The content is the caller's: a column of meta/body for a feed post, a
-/// strip of fixed-width cells for the PR home table.
+/// strip of fixed-width cells for the PR home table. `host` is the host of
+/// the repository the row belongs to: a login's avatar is looked up on that
+/// server (#906).
 pub(super) fn row(
     id: impl Into<ElementId>,
     author: &str,
+    host: Option<&str>,
     avatars: &AvatarImages,
     content: Div,
 ) -> Stateful<Div> {
@@ -51,7 +54,10 @@ pub(super) fn row(
         .border_color(rgb(theme().selected))
         .text_color(rgb(theme().text_main))
         .child(kagi_ui_core::commit_header::avatar_circle_with_initials(
-            AVATAR, author, author, avatars,
+            AVATAR,
+            &login_key(host, author),
+            author,
+            avatars,
         ))
         .child(content)
 }
@@ -175,6 +181,7 @@ pub(super) fn state_dot(label: impl Into<SharedString>, color: u32) -> Div {
 pub(super) fn composer_frame(
     id: impl Into<ElementId>,
     viewer: &str,
+    host: Option<&str>,
     avatars: &AvatarImages,
     content: Div,
 ) -> Stateful<Div> {
@@ -188,7 +195,10 @@ pub(super) fn composer_frame(
         .pt(theme::scaled_px(20.))
         .pb(theme::scaled_px(14.))
         .child(kagi_ui_core::commit_header::avatar_circle_with_initials(
-            AVATAR, viewer, viewer, avatars,
+            AVATAR,
+            &login_key(host, viewer),
+            viewer,
+            avatars,
         ))
         .child(content)
 }

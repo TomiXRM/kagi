@@ -111,8 +111,8 @@ impl KagiApp {
                 let outcome = kagi_git::github::apply_pr_fetch(rows, result);
                 ui.github_prs_strip.error =
                     outcome.error.as_ref().map(super::github::fetch_error_text);
-                let moved = if outcome.error.is_none() {
-                    for row in rows {
+                let (moved, base_repos) = if outcome.error.is_none() {
+                    for row in rows.iter_mut() {
                         let cached = ui
                             .github_prs
                             .iter()
@@ -130,11 +130,17 @@ impl KagiApp {
                             kagi_domain::github::inherit_pr_details(row, cached);
                         }
                     }
+                    // #906: a Closed / All list can show PRs the open list
+                    // never did; "mine" there is the login on their host too.
+                    let base_repos = super::github::distinct_base_repos(rows);
                     ui.github_prs_epoch = ui.github_prs_epoch.wrapping_add(1);
-                    super::github_pr_detail::sync_open_pr_tabs(ui)
+                    (super::github_pr_detail::sync_open_pr_tabs(ui), base_repos)
                 } else {
-                    Vec::new()
+                    (Vec::new(), Vec::new())
                 };
+                for base_repo in &base_repos {
+                    app.ensure_host_login(base_repo, cx);
+                }
                 let active = app.active_session() == Some(owner);
                 app.reload_moved_pr_tabs(active, &moved, cx);
                 app.refresh_pr_detail_targets(owner, repo, cx);

@@ -137,6 +137,9 @@ mod home_list_place;
 #[path = "recovery/home_p2.rs"]
 mod home_p2;
 #[cfg(target_os = "macos")]
+#[path = "recovery/home_rows.rs"]
+mod home_rows;
+#[cfg(target_os = "macos")]
 #[path = "recovery/home_work.rs"]
 mod home_work;
 #[cfg(target_os = "macos")]
@@ -973,6 +976,10 @@ mod macos {
             (
                 "keyboard_nav",
                 Box::new(crate::keyboard_nav::scenario_keyboard_nav),
+            ),
+            (
+                "home_rows",
+                Box::new(crate::home_rows::scenario_home_rows),
             ),
             (
                 "home_list_place",

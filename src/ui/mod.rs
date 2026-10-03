@@ -1049,6 +1049,9 @@ pub struct KagiApp {
     /// `sidebar_*` fields (ADR-0110 Phase 5 Step 5.1). App-global; preserved
     /// across reloads.
     pub sidebar: sidebar::SidebarState,
+    /// The repository tab strip's cells (repositories, then Home), for the
+    /// keyboard (#959).
+    pub(crate) tab_strip_focus: keyboard_nav::TabFocus,
     /// Current detail/diff panel width in pixels (T023: user-resizable).
     pub panel_width: f32,
     /// T030: Width of the badge (branch/tag) column in pixels.
@@ -1374,6 +1377,7 @@ impl KagiApp {
             stash_push_focus: None,
             status_footer: FooterStatus::Idle(SharedString::from("Ready")),
             sidebar: sidebar::SidebarState::new(),
+            tab_strip_focus: Default::default(),
             panel_width: PANEL_DEFAULT,
             badge_col_w: theme::read_col_width("badge_col_w")
                 .map(|w| w.clamp(BADGE_COL_MIN, BADGE_COL_MAX))

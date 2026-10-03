@@ -159,7 +159,7 @@ impl KagiApp {
             .flex_1()
             .min_h(px(0.))
             .child(self.render_home_sidebar(cx))
-            .child(self.render_home_main(cx));
+            .child(self.render_home_main(window, cx));
         let home = div()
             .id("home")
             .flex()
@@ -171,7 +171,7 @@ impl KagiApp {
             // With no tab there is no strip, but the (transparent, themed)
             // title bar still needs its band: the traffic lights are drawn
             // over it and it is what drags the window.
-            .child(match self.render_tab_strip(cx) {
+            .child(match self.render_tab_strip(window, cx) {
                 Some(strip) => strip,
                 None => div()
                     .w_full()
@@ -256,7 +256,7 @@ impl KagiApp {
             .into_any_element()
     }
 
-    fn render_home_main(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_home_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let open_folder = cx.listener(|app, _: &gpui::ClickEvent, window, cx| {
             app.pick_repository(window, cx);
         });
@@ -313,7 +313,7 @@ impl KagiApp {
                             .child(SharedString::from(Msg::HomeTitle.t())),
                     )
                     .child(actions.flex_shrink_0())
-                    .child(self.render_home_github(cx)),
+                    .child(self.render_home_github(window, cx)),
             )
             .into_any_element()
     }

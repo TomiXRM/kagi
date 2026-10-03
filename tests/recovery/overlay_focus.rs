@@ -56,6 +56,7 @@ fn open_push_from_palette(
 
 pub fn scenario_palette_push_modal_keys(cx: &mut VisualTestAppContext) {
     let _ports = crate::gui_isolation::PortStore::keep();
+    let _shell = crate::gui_isolation::StandInShell::install();
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let before = repo_fingerprint(&repo);

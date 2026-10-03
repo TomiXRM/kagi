@@ -212,6 +212,7 @@ pub fn scenario_worktree_lock_reason(cx: &mut VisualTestAppContext) {
 pub fn scenario_terminal_auto_lock(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["terminal_auto_lock"]);
     let _ports = crate::gui_isolation::PortStore::keep();
+    let _shell = crate::gui_isolation::StandInShell::install();
     use kagi::ui::settings as theme;
     use kagi::ui::terminal::ShellExit;
 

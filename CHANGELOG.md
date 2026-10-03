@@ -11,6 +11,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Worktree 削除の確認後や削除前ステップ後に ignored ファイル・フォルダーが増えた場合、削除前に中止し、計画の再確認を促すようにしました。(#934)
 - 初期化済み、または未初期化でも gitlink のパスにローカルファイルがある worktree は Remove の計画時・実行前に削除を拒否します。空・不在の gitlink は削除可能なままとし、削除前ステップ後の拒否も EN/JA の短い toast に理由だけを表示します。(#934)
 - New Issue の本文エディタが Tab を字下げとして取り込み、キーボードだけでは下のラベル・担当者・Create へ進めなかった問題を修正しました。Issue の本文エディタ(新規・返信)でも Tab / Shift+Tab でフォーカスが移動し、字下げは Cmd+] / Cmd+[(Linux / Windows は Ctrl+] / Ctrl+[)で行えます。(#909)
+- Linux / FreeBSD の View メニューで、テーマ一覧がウィンドウの下へはみ出し、後半のテーマや言語の項目を選べなかった問題を修正しました。メニューの高さをウィンドウ内に収め、入りきらない項目はメニューの中でスクロールして選べます。(#935)
 
 ### Changed
 

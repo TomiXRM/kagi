@@ -271,3 +271,160 @@ pub fn scenario_settings_scroll_stays_in_overlay(cx: &mut VisualTestAppContext) 
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS settings_scroll_stays_in_overlay: Graph / PRs / Issues / Editor — the wheel over Settings never reaches the workspace");
 }
+
+/// Where the focus is, as #974 needs to see it.
+#[derive(Debug, PartialEq, Eq)]
+enum Held {
+    Terminal,
+    /// Settings' trap container itself: no control, so no ring.
+    Trap,
+    /// A control inside Settings (`editor`: the Analyze-ignore editor).
+    InSettings {
+        editor: bool,
+    },
+    Elsewhere,
+}
+
+fn held(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) -> Held {
+    cx.update_window(window, |_, window, cx| {
+        let app = app.read(cx);
+        if app.terminal_focused_for_e2e(window, cx) {
+            Held::Terminal
+        } else if app.settings_trap_focused_for_e2e(window) {
+            Held::Trap
+        } else if app.settings_trap_contains_focus_for_e2e(window, cx) {
+            let editor = app
+                .analyze_ignore_input
+                .as_ref()
+                .is_some_and(|input| input.read(cx).focus_handle(cx).contains_focused(window, cx));
+            Held::InSettings { editor }
+        } else {
+            Held::Elsewhere
+        }
+    })
+    .unwrap()
+}
+
+/// #974: Settings opened over a focused terminal keeps Tab / Shift+Tab
+/// inside its panel — the terminal's shell never holds the focus, so no key
+/// reaches it — and Escape gives the focus back to the terminal. Opened by
+/// pointer, the focus lands on the trap container, which draws no ring.
+pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
+    let _ports = crate::gui_isolation::PortStore::keep();
+    let _shell = crate::gui_isolation::StandInShell::install();
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    let start_terminal = |cx: &mut VisualTestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                app.bottom_panel_open = true;
+                app.bottom_tab = kagi::ui::BottomTab::Terminal;
+                app.ensure_terminal(window, cx);
+            })
+        })
+        .unwrap();
+        draw(cx, window);
+        assert_eq!(
+            held(cx, &app, window),
+            Held::Terminal,
+            "precondition: the terminal holds the focus"
+        );
+    };
+    start_terminal(cx);
+
+    // Opened from the menu (the keyboard / palette route).
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.handle_menu_command("app.settings", window, cx)
+        })
+    })
+    .unwrap();
+    draw(cx, window);
+    assert_eq!(
+        held(cx, &app, window),
+        Held::Trap,
+        "settings-open-takes-focus: opening Settings must move the focus into it"
+    );
+
+    // Tab walks the controls up to the Analyze-ignore editor (which keeps
+    // Tab for indenting: a known gap), never leaving the panel.
+    let mut steps = 0;
+    loop {
+        keys(cx, window, "tab");
+        steps += 1;
+        let now = held(cx, &app, window);
+        assert!(
+            matches!(now, Held::InSettings { .. }),
+            "settings-tab-trapped: Tab #{steps} left Settings: {now:?}"
+        );
+        if now == (Held::InSettings { editor: true }) {
+            break;
+        }
+        assert!(steps < 60, "Tab never reached the Analyze-ignore editor");
+    }
+    assert!(
+        steps >= 3,
+        "Tab must visit Settings' controls, took {steps}"
+    );
+
+    // Both ends wrap: from the container, Shift+Tab lands on the panel's
+    // last stop (past the editor); Tab from there wraps to the first one.
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_settings_trap_for_e2e(window, cx))
+    })
+    .unwrap();
+    for (key, what) in [
+        ("shift-tab", "wrap to the last stop"),
+        ("tab", "wrap to the first stop"),
+        ("shift-tab", "back to the last stop"),
+    ] {
+        keys(cx, window, key);
+        assert_eq!(
+            held(cx, &app, window),
+            Held::InSettings { editor: false },
+            "settings-tab-wraps: {key} must {what} inside Settings"
+        );
+    }
+
+    keys(cx, window, "escape");
+    assert!(
+        cx.read(|cx| app.read(cx).menu_overlay.is_none()),
+        "settings-escape-closes: Escape must close Settings"
+    );
+    draw(cx, window);
+    assert_eq!(
+        held(cx, &app, window),
+        Held::Terminal,
+        "settings-escape-returns-focus: Escape must give the focus back to the terminal"
+    );
+
+    // Opened by pointer: the focus is on the container, not on a control
+    // that would show its ring for a mouse user.
+    let button = e2e::control_bounds(window.window_id(), "tb-settings").expect("Settings button");
+    cx.simulate_click(window, button.center(), Modifiers::none());
+    draw(cx, window);
+    assert!(
+        cx.read(|cx| app.read(cx).menu_overlay.is_some()),
+        "the click opens Settings"
+    );
+    assert_eq!(
+        held(cx, &app, window),
+        Held::Trap,
+        "settings-pointer-open: a pointer open must focus the ring-less container"
+    );
+    // The click itself took the focus to the toolbar button before Settings
+    // opened, so that is where Escape returns it (the control that opened
+    // Settings, as #817 returns focus to wherever it was).
+    keys(cx, window, "escape");
+    draw(cx, window);
+    assert!(cx.read(|cx| app.read(cx).menu_overlay.is_none()));
+    assert_eq!(
+        held(cx, &app, window),
+        Held::Elsewhere,
+        "settings-pointer-close: Escape returns the focus out of Settings"
+    );
+
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS settings_focus_trap");
+}

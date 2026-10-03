@@ -1119,6 +1119,11 @@ pub struct KagiApp {
     /// Focus handles of Settings' switches, one per toggle in drawing order
     /// (#970), handed to the overlay's renderer.
     pub(crate) settings_switches: keyboard_nav::FocusSlots,
+    /// Settings' focus trap (#974): the panel tracks this handle, and
+    /// opening Settings focuses it, so Tab / Shift+Tab cycle inside the
+    /// panel (gpui-component's Root) instead of reaching the terminal or the
+    /// workspace underneath. Built on the first open.
+    pub(crate) settings_focus: Option<gpui::FocusHandle>,
     /// ADR-0119: multi-line editor backing the Settings → "Analyze ignore"
     /// section (the gitignore-format exclude file). Lazily created when Settings
     /// opens (needs a `Window`).
@@ -1400,6 +1405,7 @@ impl KagiApp {
             graph_compact: theme::compact_graph(),
             theme_select: None,
             settings_switches: Default::default(),
+            settings_focus: None,
             analyze_ignore_input: None,
             command_palette_input: None,
             pr_comment_input: None,

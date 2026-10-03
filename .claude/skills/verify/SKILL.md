@@ -291,6 +291,22 @@ The current suite covers:
   Escape prints nothing. That is exactly what the accepted run recorded —
   no key line, modal closed. A printed `escape` with the modal still open is
   the interesting failure: the key arrived and no binding matched.
+- Settings focus trap (`KAGI_GUI_E2E_ONLY=settings_focus_trap`,
+  `tests/recovery/overlay_focus.rs`, #974):
+  - Setup: a stand-in shell runs in the bottom-panel terminal, which holds
+    the focus. Settings is then opened with `app.settings`, and the focus
+    must be on the trap container.
+  - Raw Tab: every press stays inside Settings, up to the Analyze-ignore
+    editor. That editor keeps Tab for indenting, which is a known gap.
+  - Wrapping: from the container, Shift+Tab, Tab and Shift+Tab wrap around
+    both ends while staying inside.
+  - Close: Escape closes Settings and gives the focus back to the terminal.
+  - Pointer open: a click on `tb-settings` lands the focus on the ring-less
+    container. Escape then takes it out of Settings, back to the clicked
+    button.
+  - Checked mutations: without `.focus_trap` the wrap leaves Settings;
+    without the focus on open, the focus stays on the terminal; without the
+    return-focus capture, Escape does not return to the terminal.
 - overlay focus return (`KAGI_GUI_E2E_ONLY=palette_push_modal_keys,settings_close_returns_focus`,
   `tests/recovery/overlay_focus.rs`): #817 / #812. Every key is raw, with no
   test-side refocusing. The palette scenario first starts the bottom-panel

@@ -823,14 +823,18 @@ impl KagiApp {
                             cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
                                 this.open_settings_overlay(window, cx)
                             });
-                        make_btn(
+                        // Measured so Tier A opens Settings by pointer (#974).
+                        super::e2e::measure_control(
                             "tb-settings",
-                            "Settings",
-                            gpui_component::Icon::new(gpui_component::IconName::Settings),
-                            ButtonState::Availability(true),
-                            0,
+                            make_btn(
+                                "tb-settings",
+                                "Settings",
+                                gpui_component::Icon::new(gpui_component::IconName::Settings),
+                                ButtonState::Availability(true),
+                                0,
+                            )
+                            .on_click(settings_click),
                         )
-                        .on_click(settings_click)
                     }),
             )
     }

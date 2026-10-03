@@ -57,9 +57,21 @@ impl KagiApp {
     }
 
     /// Open Settings (toolbar button, menu, palette).
+    ///
+    /// Focus moves into the panel — to its trap container, not to a control
+    /// (#974): until it does, Tab still goes wherever focus was, e.g. the
+    /// terminal's shell, and Escape (bound `!Terminal`) cannot close
+    /// Settings. The container is no Tab stop and draws no ring, so opening
+    /// by pointer shows none; the first Tab enters the panel's first stop.
+    /// Closing returns focus as above.
     pub(super) fn open_settings_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.capture_overlay_return_focus(window, cx);
         self.menu_overlay = Some(MenuOverlay::Settings);
+        let trap = self
+            .settings_focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
+        window.focus(&trap, cx);
         // The Select entity survives closing Settings. Menu and palette theme
         // changes bypass its Confirm event, so sync its highlighted row on open.
         if let Some(select) = &self.theme_select {

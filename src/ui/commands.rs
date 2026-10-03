@@ -2123,6 +2123,7 @@ impl KagiApp {
                 cx.entity(),
                 self.theme_select.clone(),
                 self.settings_switches.clone(),
+                self.settings_focus.clone(),
                 self.smart_commit.clone(),
                 self.analyze_ignore_input.clone(),
                 window,

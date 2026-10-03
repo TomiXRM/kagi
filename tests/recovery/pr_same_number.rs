@@ -12,12 +12,47 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use gpui::{Entity, VisualTestAppContext};
+use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::KagiApp;
 
 use crate::evidence_support::pull_request;
 use crate::macos::{build_fixture, mount, unmount};
 use crate::pr_fields_focus::OfflineGh;
+
+fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .expect("draw the PR window");
+}
+
+/// The parked draft of `base_repo`'s #7.
+fn draft(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, base_repo: &str) -> String {
+    cx.read(|cx| {
+        app.read(cx)
+            .pr_mode()
+            .and_then(|mode| {
+                mode.tabs
+                    .iter()
+                    .find(|t| t.pr.number == 7 && t.pr.base_repo == base_repo)
+            })
+            .map(|t| t.comment_draft.clone())
+            .expect("the tab")
+    })
+}
+
+/// What the composer's box shows.
+fn composer(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> String {
+    cx.read(|cx| {
+        app.read(cx)
+            .pr_comment_input
+            .as_ref()
+            .map(|input| input.read(cx).value().to_string())
+            .unwrap_or_default()
+    })
+}
 
 const A: &str = "github.com/acme/a";
 const B: &str = "github.com/acme/b";
@@ -154,6 +189,38 @@ pub fn scenario_pr_same_number(cx: &mut VisualTestAppContext) {
     assert!(
         calls.iter().any(|c| c == "detail-b"),
         "opening B#7 reads B's details although the list holds A#7: {calls:?}"
+    );
+
+    // #940 review: the one composer follows the PR by repository and number.
+    // A draft typed on B#7 (open, as it was opened last) is not carried to
+    // A#7 when A's tab comes forward, and comes back with B's tab.
+    paint(cx, window);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            let input = app
+                .pr_comment_input
+                .clone()
+                .expect("the composer's box exists once drawn");
+            input.update(cx, |state, cx| {
+                state.replace("for B".to_owned(), window, cx)
+            });
+        })
+    })
+    .unwrap();
+    paint(cx, window);
+    app.update(cx, |app, cx| app.pr_mode_open(&a7, cx));
+    paint(cx, window);
+    assert_eq!(
+        (draft(cx, &app, A), draft(cx, &app, B), composer(cx, &app)),
+        (String::new(), "for B".to_string(), String::new()),
+        "B#7's draft stays B's; A#7 opens with its own (empty) box"
+    );
+    app.update(cx, |app, cx| app.pr_mode_open(&b7, cx));
+    paint(cx, window);
+    assert_eq!(
+        composer(cx, &app),
+        "for B",
+        "B's draft comes back with B's tab"
     );
 
     unmount(cx, app, window);

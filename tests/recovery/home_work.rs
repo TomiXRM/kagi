@@ -57,7 +57,10 @@ const PR_VIEW: &str = r#"{"number":7,"title":"Fix the local thing",
 /// detail reads are not). PR mode's conversation, review-thread and
 /// merge-status reads of #7 are logged in `thread-calls` as
 /// `convo-` / `threads-` / `merge-` + `local` when they name
-/// `github.com/acme/local`, else `other` (#940 review P1). The test
+/// `github.com/acme/local`, else `other` (#940 review P1). The Issues list
+/// read and `gh issue view` are logged in `issue-calls` the same way
+/// (`list-` / `view-`). `flip-after-verify` makes the next `gh repo view`
+/// answer as usual and then move `set-default` to acme/upstream. The test
 /// dispatcher runs `gh` inside its pump, so
 /// a state between a read's start and its end is observed by drawing before
 /// the pump runs, not by holding `gh`.
@@ -75,13 +78,17 @@ fn gh_script(state: &Path) -> String {
          cat <<'JSON'\n{REVIEW}\nJSON\n;;\n\
          'issues --assignee=@me') cat <<'JSON'\n{ISSUES}\nJSON\n;;\n\
          esac ;;\n\
-         'repo view --json') printf '{{\"url\":\"%s\"}}\\n' \"$(cat '{state}/default-repo' 2>/dev/null || echo https://github.com/acme/local)\" ;;\n\
+         'repo view --json') printf '{{\"url\":\"%s\"}}\\n' \"$(cat '{state}/default-repo' 2>/dev/null || echo https://github.com/acme/local)\"\n\
+         [ -e '{state}/flip-after-verify' ] && {{ rm '{state}/flip-after-verify'; echo https://github.com/acme/upstream > '{state}/default-repo'; }}; true ;;\n\
+         'issue view '*) case \"$*\" in *'-R github.com/acme/local '*) echo view-local ;; *) echo view-other ;; esac >> '{state}/issue-calls'\n\
+         echo 'gh: offline' >&2; exit 1 ;;\n\
          'pr view -R') case \"$*\" in *reviewRequests*) echo \"$*\" >> '{state}/view-calls' ;; esac\n\
          cat <<'JSON'\n{PR_VIEW}\nJSON\n;;\n\
          'pr view 7') case \"$*\" in *' --json reviews,comments') ;; *) echo \"unexpected gh $*\" >&2; exit 1 ;; esac\n\
          case \"$*\" in 'pr view 7 -R github.com/acme/local --json reviews,comments') echo convo-local ;; *) echo convo-other ;; esac >> '{state}/thread-calls'\n\
          echo '{{\"reviews\":[],\"comments\":[]}}' ;;\n\
-         'api graphql '*) case \"$*\" in *reviewThreads*) ;; *) echo \"unexpected gh $*\" >&2; exit 1 ;; esac\n\
+         'api graphql '*) case \"$*\" in *mentions=*) case \"$*\" in *'-F name=local '*) echo list-local ;; *) echo list-other ;; esac >> '{state}/issue-calls'; echo 'gh: offline' >&2; exit 1 ;; esac\n\
+         case \"$*\" in *reviewThreads*) ;; *) echo \"unexpected gh $*\" >&2; exit 1 ;; esac\n\
          case \"$*\" in *mergeStateStatus*) what=merge ;; *) what=threads ;; esac\n\
          case \"$*\" in *'--hostname github.com -f owner=acme -f name=local '*) echo $what-local ;; *) echo $what-other ;; esac >> '{state}/thread-calls'\n\
          echo 'gh: offline' >&2; exit 1 ;;\n\
@@ -516,6 +523,52 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
         vec!["https://github.com/acme/local/issues/4".to_string()]
     );
     assert!(cx.read(|cx| app.read(cx).home.is_some()));
+    // #940 review P1: the clone's Issues mode has never loaded, so it knows
+    // no repository yet. `gh` resolves the clone to acme/local when the pick
+    // is verified, and `set-default` moves to acme/upstream right after. The
+    // list and the issue are still read from the verified acme/local.
+    let issue_calls = || {
+        std::fs::read_to_string(state.join("issue-calls"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    mark("flip-after-verify");
+    click(cx, window, "home-work-acme/local-4");
+    wait_for(cx, &app, "the Issues list and issue reads", |_| {
+        let calls = issue_calls();
+        calls.iter().any(|c| c.starts_with("list-")) && calls.iter().any(|c| c.starts_with("view-"))
+    });
+    assert!(
+        !state.join("flip-after-verify").exists(),
+        "precondition: set-default moved after the verification"
+    );
+    assert_eq!(
+        issue_calls()
+            .iter()
+            .filter(|c| !c.ends_with("-local"))
+            .count(),
+        0,
+        "every Issues read names the verified acme/local: {:?}",
+        issue_calls()
+    );
+    // Close the clone's tab, so the next open starts a session whose Issues
+    // mode has not loaded yet, as the steps below expect.
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert_eq!(
+            std::fs::canonicalize(&app.tabs[app.active_tab].path).unwrap(),
+            local_path
+        );
+    });
+    app.update(cx, |app, cx| {
+        let open = app.active_tab;
+        app.close_tab(open, cx);
+    });
+    cx.run_until_parked();
+    click_control(cx, window, "tab-add");
+    cx.run_until_parked();
     std::fs::write(
         state.join("default-repo"),
         "https://github.com/acme/upstream",

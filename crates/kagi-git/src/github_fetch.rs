@@ -524,11 +524,37 @@ pub fn repository_identity(workdir: &Path) -> Result<String, PrFetchError> {
 }
 
 /// Full read-only data for one selected issue, including body and comments.
-pub fn issue_detail(workdir: &Path, number: u64) -> Result<Issue, PrFetchError> {
+///
+/// Read from `frozen_base_repo` — the repository the Issues list and the
+/// Reply address — with `-R` (#940 review P1). Without it `gh issue view`
+/// reads the working directory's current default repository, which may
+/// have changed since the list was read, and the same number there is
+/// another issue. Only when no repository is known yet is it resolved the
+/// same way as [`list_issues`].
+pub fn issue_detail(
+    workdir: &Path,
+    frozen_base_repo: Option<&str>,
+    number: u64,
+) -> Result<Issue, PrFetchError> {
+    let base_repo = match frozen_base_repo
+        .map(str::trim)
+        .filter(|repo| !repo.is_empty())
+    {
+        Some(repo) => repo.to_string(),
+        None => repository_identity(workdir)?,
+    };
     let number = number.to_string();
     fetch_json(
         workdir,
-        &["issue", "view", &number, "--json", ISSUE_DETAIL_FIELDS],
+        &[
+            "issue",
+            "view",
+            &number,
+            "-R",
+            &base_repo,
+            "--json",
+            ISSUE_DETAIL_FIELDS,
+        ],
         parse_issue_detail,
     )
 }

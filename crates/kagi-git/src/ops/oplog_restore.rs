@@ -7,7 +7,8 @@
 //! one `git update-ref --stdin` transaction in which git re-checks every old
 //! value) → verify → oplog (via `Backend::run`, so the restore records its own
 //! ref moves and can itself be reverted). No working tree, index or HEAD
-//! target is touched: an entry that switched HEAD is a blocker.
+//! checkout is touched: an entry that switched HEAD is a blocker. A checked-out
+//! branch moving does change the OID HEAD resolves to, without a checkout.
 
 use super::*;
 use kagi_domain::operation::Operation;

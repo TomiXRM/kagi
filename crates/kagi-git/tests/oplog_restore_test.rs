@@ -328,6 +328,26 @@ fn moved_annotated_tag_retains_its_raw_object_and_leaves_index_tree_and_remote_a
         git_output(&repo, &["rev-parse", "refs/remotes/origin/main"]),
         remote
     );
+    // Explicit retirement must accept a raw tag-object recovery root; its
+    // lifetime ends with the receipt, without touching the restored tag.
+    let backend = backend(&repo);
+    let forget = backend.plan_forget_oplog_entry(&receipt).unwrap();
+    assert_eq!(
+        forget.backup_refs().collect::<Vec<_>>(),
+        receipt
+            .backup_refs
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+    );
+    backend.execute_forget_oplog_entry(&forget).result.unwrap();
+    assert!(receipt.backup_refs.iter().all(|reference| {
+        !git_fixture::git_succeeds(&repo, &["show-ref", "--verify", reference])
+    }));
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/tags/release"]),
+        second_tag
+    );
 }
 
 #[test]

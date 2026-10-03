@@ -579,6 +579,7 @@ pub fn scenario_oplog_restore_tag_preview(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, cx| {
         app.bottom_panel_open = true;
         app.bottom_tab = kagi::ui::BottomTab::OperationLog;
+        app.bottom_panel_height = 600.;
         cx.notify();
     });
     paint(cx, window);

@@ -50,6 +50,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Modern UI の PM 基準案を Kagi と固定版 gpui-component の寸法・操作状態・高密度画面・安全確認に照らして批判した資料を追加しました（#931、実装・外観の変更はありません）。
 - UI 実装ガイドの統合版を実コードと固定版部品に再照合し、PR/Issue 行・タブ・Switch・モーダルの誤認を訂正して、第 2 ラウンドの批判と検証手順の不足を記録しました（#931、UI 動作の変更はありません）。
 
+### Internal
+
+- Web(Playwright)の harness は、`crates/kagi-web/dist` が無いと設定の読み込み時に止まり、足りないファイルと実行すべき `scripts/build-web.sh` を示すようにしました。これまでは 60 秒後に webServer のタイムアウトとして失敗し、実行時のハングと区別がつきませんでした。(#516)
+
 ## [0.41.0] - 2026-10-02
 
 ### Changed

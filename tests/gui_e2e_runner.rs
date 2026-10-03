@@ -1018,6 +1018,10 @@ mod macos {
                 Box::new(crate::context_menu_keys::scenario_context_menu_keys_short),
             ),
             (
+                "context_menu_keys_reload",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_reload),
+            ),
+            (
                 "home_list_place",
                 Box::new(crate::home_list_place::scenario_home_list_place),
             ),

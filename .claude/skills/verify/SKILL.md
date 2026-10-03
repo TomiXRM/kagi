@@ -845,7 +845,13 @@ The current suite covers:
   window, where the HEAD commit's menu (~535px) is taller than the window;
   End focuses the last enabled item (`commit-menu-item-4-2`) and scrolls it
   inside the window (its measured bottom ≤ 420). Mutation: no scroll on a
-  key move fails with the item at 453.
+  key move fails with the item at 453. `context_menu_keys_reload`: the
+  `feature` branch menu opened from its sidebar row with Shift+F10, then an
+  external `git checkout feature` and `reload`: the landed reload closes the
+  menu (`apply_reload_data` closes every context menu through
+  `close_context_menus`, branch and tag menus included) and ↓ moves the
+  Graph. Mutation: the pre-fix clears (commit / stash / worktree only) fail
+  "the reload closed the menu".
 - Toolbar unavailable reasons (`KAGI_GUI_E2E_ONLY=toolbar_keyboard_reasons`,
   `tests/recovery/toolbar_keyboard.rs`, #972): starting at the root, GPUI's
   `focus_next` visits the rendered toolbar in visual order; an F19 key-down

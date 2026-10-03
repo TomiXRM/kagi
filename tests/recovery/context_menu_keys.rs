@@ -249,24 +249,7 @@ pub fn scenario_context_menu_keys_home(cx: &mut VisualTestAppContext) {
         "no menu is up on the tab Home gave back"
     );
     cx.run_until_parked();
-    // Coming back re-reads the tab, which resets its selection once the
-    // read lands: select again until the selection holds.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    loop {
-        select_head(cx, &app, window);
-        cx.run_until_parked();
-        if cx.read(|cx| app.read(cx).ui().selected) == Some(0) {
-            break;
-        }
-        assert!(std::time::Instant::now() < deadline, "the tab settles");
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    keys(cx, window, "down");
-    assert_eq!(
-        cx.read(|cx| app.read(cx).ui().selected),
-        Some(1),
-        "↓ reaches the Graph"
-    );
+    assert_down_reaches_graph(cx, &app, window);
     unmount(cx, app, window);
 }
 
@@ -312,5 +295,68 @@ pub fn scenario_context_menu_keys_short(cx: &mut VisualTestAppContext) {
         after <= HEIGHT,
         "End scrolled the focused item into the window (bottom {after} > {HEIGHT})"
     );
+    unmount(cx, app, window);
+}
+
+/// A re-read resets the selection once it lands: select the first commit
+/// until the selection holds, then ↓ must move the Graph's selection.
+fn assert_down_reaches_graph(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        select_head(cx, app, window);
+        cx.run_until_parked();
+        if cx.read(|cx| app.read(cx).ui().selected) == Some(0) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "the tab settles");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    keys(cx, window, "down");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().selected),
+        Some(1),
+        "↓ reaches the Graph"
+    );
+}
+
+/// A branch menu left open across an external checkout: the reload that
+/// lands closes it (its items were planned against the old HEAD; #991
+/// review), so no focus stays on an item that is gone or changed, and ↓
+/// moves the Graph's selection.
+pub fn scenario_context_menu_keys_reload(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    git(repo, &["branch", "feature"]);
+    git(repo, &["commit", "-q", "--allow-empty", "-m", "two"]);
+    let (app, window) = mount(cx, repo);
+    cx.update_window(window, |_, window, cx| {
+        window.draw(cx).clear();
+        app.update(cx, |app, cx| {
+            app.focus_sidebar_row_for_e2e(LOCAL, "branch:feature", window, cx)
+        });
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    keys(cx, window, "shift-f10");
+    assert!(cx.read(|cx| app.read(cx).branch_menu.is_some()));
+    assert!(
+        menu(cx, &app, window).0.is_some(),
+        "the menu holds the focus"
+    );
+
+    git(repo, &["checkout", "-q", "feature"]);
+    app.update(cx, |app, cx| app.reload(cx));
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert!(
+        cx.read(|cx| app.read(cx).branch_menu.is_none()),
+        "the reload closed the menu"
+    );
+    assert_down_reaches_graph(cx, &app, window);
     unmount(cx, app, window);
 }

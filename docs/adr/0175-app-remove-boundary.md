@@ -40,7 +40,7 @@ survive GC and are retained with their oplog entries.
   together out of lifecycle.rs; other lifecycle bodies are unchanged. Progress
   is passed by mutable reference from outside catch_unwind, updated before
   side effects and immediately after each backup. Verification is explicit.
-- #915 / #938: linked 自身からの Remove でも削除境界を実行元の workdir に置かない。main workdir がある repository はその path、bare common dir はその common dir を削除から守る。削除前 copy / symlink ステップの source は main workdir が無い場合に実行元 linked worktree を使い、削除境界と混同しない。
+- #915 / #938: linked 自身からの Remove でも削除境界を実行元の workdir に置かない。main workdir **と** common dir の両方を常に守る。non-bare でも `--separate-git-dir` の common dir が削除対象内にある場合は計画・実行前・削除直前に拒否する。削除前 copy / symlink ステップの source は main workdir が無い場合に実行元 linked worktree を使い、削除境界と混同しない。
 - #938: recorded Remove の前後 snapshot は管理元が残る場合はその
   worktree の HEAD、管理元自身を削除する場合だけ surviving common dir
   の HEAD を観測する。同じ source を前後で使い、削除前 step による

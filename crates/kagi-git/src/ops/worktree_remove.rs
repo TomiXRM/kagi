@@ -103,9 +103,9 @@ pub fn plan_remove_worktree(
 }
 
 /// A target may contain another registered worktree under an ignored
-/// directory. Its files are not in the target's dirty status or backups.
-/// Ignore only the target's own registration; protect every other linked
-/// worktree, including the manager, and the main worktree when present.
+/// directory, or the common ODB when --separate-git-dir places it there.
+/// Neither is covered by the target's dirty status or backups. Ignore only
+/// the target's own registration; always protect the main and common dirs.
 fn nested_registered_worktree(
     repo: &Repository,
     name: &str,
@@ -155,6 +155,15 @@ fn nested_registered_worktree(
                 },
             )));
         }
+    }
+    let common = std::fs::canonicalize(repo.commondir())
+        .map_err(|e| GitError::Other(format!("cannot resolve common repository: {e}")))?;
+    if common.starts_with(&target) {
+        return Ok(Some(PlanNote::Worktree(
+            WorktreeNote::RemoveContainsWorktree {
+                path: common.display().to_string(),
+            },
+        )));
     }
     Ok(None)
 }
@@ -345,15 +354,11 @@ pub(crate) fn execute_remove_worktree_progress(
     }
     preflight_check(repo, plan)?;
 
-    // A linked worktree may be the deletion target. Its own workdir cannot
-    // anchor containment; use the surviving main workdir, or the shared
-    // common dir when the repository is bare (#915, #938).
+    // A linked target's own workdir cannot anchor containment. Protect the
+    // surviving main workdir AND the common dir: --separate-git-dir can place
+    // the ODB under the target even for a non-bare repository (#938).
     let main_repo = Repository::open(repo.commondir())
         .map_err(|e| GitError::Other(format!("cannot open common repository: {e}")))?;
-    let protected_root = main_repo
-        .workdir()
-        .unwrap_or_else(|| main_repo.commondir())
-        .to_path_buf();
     // Pre-remove copy/symlink steps still source from a worktree. With a bare
     // common dir, preserve the caller's linked worktree as their source.
     let step_source = main_repo
@@ -463,7 +468,9 @@ pub(crate) fn execute_remove_worktree_progress(
 
     // Containment-checked recursive delete (the ONLY sanctioned one).
     progress.stage = Stage::DeletionStarted;
-    if let Err(e) = remove_worktree_dir_checked(&protected_root, &wt_path) {
+    if let Err(e) =
+        remove_worktree_dir_checked(main_repo.workdir(), main_repo.commondir(), &wt_path)
+    {
         return partial(e.to_string());
     }
     if fault == Some(Fault::PanicAfterDeletionStarted) {

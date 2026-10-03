@@ -25,13 +25,14 @@ use kagi_domain::worktree_autolock::{
 ///
 /// Refuses (returns `Err`, deletes nothing) when the target:
 /// - is a symlink (never followed into a delete),
-/// - resolves to the main worktree (or the bare common directory),
-/// - contains the main repository or bare common directory.
+/// - resolves to or contains the main worktree,
+/// - resolves to or contains the common dir (which can be separate from the
+///   main workdir even for a non-bare repository).
 ///
-/// `main_workdir` is the main repo's working directory, or its common dir
-/// when bare; `wt_path` is the registered worktree path.
+/// `wt_path` is the registered worktree path.
 pub(crate) fn remove_worktree_dir_checked(
-    main_workdir: &Path,
+    main_workdir: Option<&Path>,
+    common_dir: &Path,
     wt_path: &Path,
 ) -> Result<(), GitError> {
     // A symlinked worktree path is refused outright: canonicalizing it would
@@ -55,27 +56,39 @@ pub(crate) fn remove_worktree_dir_checked(
             wt_path.display()
         ))
     })?;
-    let main = std::fs::canonicalize(main_workdir).map_err(|e| {
+    // Both paths matter: --separate-git-dir permits the common ODB to live
+    // under a linked target while the main workdir survives elsewhere.
+    if let Some(main_workdir) = main_workdir {
+        let main = std::fs::canonicalize(main_workdir).map_err(|e| {
+            GitError::Other(format!(
+                "cannot resolve main worktree '{}': {e}",
+                main_workdir.display()
+            ))
+        })?;
+        if target == main {
+            return Err(GitError::Other(
+                "refusing to delete the main worktree".to_string(),
+            ));
+        }
+        if main.starts_with(&target) {
+            return Err(GitError::Other(format!(
+                "refusing to delete '{}': it contains the main repository at '{}'",
+                target.display(),
+                main.display()
+            )));
+        }
+    }
+    let common = std::fs::canonicalize(common_dir).map_err(|e| {
         GitError::Other(format!(
-            "cannot resolve main worktree '{}': {e}",
-            main_workdir.display()
+            "cannot resolve common repository '{}': {e}",
+            common_dir.display()
         ))
     })?;
-
-    if target == main {
-        return Err(GitError::Other(
-            "refusing to delete the main worktree".to_string(),
-        ));
-    }
-    // The catastrophic case: the target is an ANCESTOR of the repo, so a
-    // recursive delete would take the repository (or the filesystem root) with
-    // it. A worktree nested *inside* the repo is unusual but harmless to delete
-    // — only the ancestor direction is refused.
-    if main.starts_with(&target) {
+    if common.starts_with(&target) {
         return Err(GitError::Other(format!(
-            "refusing to delete '{}': it contains the main repository at '{}'",
+            "refusing to delete '{}': it contains the common repository at '{}'",
             target.display(),
-            main.display()
+            common.display()
         )));
     }
 
@@ -85,6 +98,28 @@ pub(crate) fn remove_worktree_dir_checked(
             target.display()
         ))
     })
+}
+
+#[cfg(test)]
+mod checked_delete_tests {
+    use super::*;
+
+    #[test]
+    fn nonbare_common_dir_under_target_is_never_recursively_deleted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let main = tmp.path().join("main");
+        let target = tmp.path().join("linked");
+        let common = target.join("common.git");
+        std::fs::create_dir(&main).unwrap();
+        std::fs::create_dir_all(common.join("objects")).unwrap();
+        std::fs::write(common.join("objects/keep"), "retained").unwrap();
+        let err = remove_worktree_dir_checked(Some(&main), &common, &target).unwrap_err();
+        assert!(err.to_string().contains("common repository"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(common.join("objects/keep")).unwrap(),
+            "retained"
+        );
+    }
 }
 
 // ────────────────────────────────────────────────────────────

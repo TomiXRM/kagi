@@ -976,6 +976,77 @@ fn remove_preflight_blocks_new_nested_registered_worktree() {
     );
 }
 
+/// A non-bare repository's common dir may be separate from its main workdir
+/// and live under the linked target. Refuse before deleting the object store.
+#[test]
+fn remove_refuses_linked_target_containing_separate_git_dir() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let main = TempDir::new().unwrap();
+    let repo = build_repo(&main);
+    write_file(main.path(), ".gitignore", "common.git/\n");
+    git(main.path(), &["add", ".gitignore"]);
+    git(main.path(), &["commit", "-qm", "ignore separate git dir"]);
+    let paths = TempDir::new().unwrap();
+    let target = paths.path().join("target");
+    git(
+        main.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "target",
+            target.to_str().unwrap(),
+        ],
+    );
+    drop(repo);
+    let common = target.join("common.git");
+    git(
+        main.path(),
+        &[
+            "init",
+            "-q",
+            "--separate-git-dir",
+            common.to_str().unwrap(),
+            main.path().to_str().unwrap(),
+        ],
+    );
+    git(
+        main.path(),
+        &["config", "core.worktree", main.path().to_str().unwrap()],
+    );
+    git(
+        main.path(),
+        &["worktree", "repair", target.to_str().unwrap()],
+    );
+    let repo = Repository::open(main.path()).unwrap();
+    assert_eq!(
+        repo.commondir().canonicalize().unwrap(),
+        common.canonicalize().unwrap()
+    );
+    assert_eq!(
+        repo.workdir().unwrap().canonicalize().unwrap(),
+        main.path().canonicalize().unwrap()
+    );
+    assert!(
+        Repository::open(&target).is_ok(),
+        "target remains a linked worktree"
+    );
+    let plan = plan_remove_worktree(&repo, "target", false).unwrap();
+    assert!(
+        plan.blockers.iter().any(|note| matches!(
+            note,
+            PlanNote::Worktree(WorktreeNote::RemoveContainsWorktree { path })
+                if Path::new(path) == common.canonicalize().unwrap()
+        )),
+        "a linked target containing the ODB must be refused: {:?}",
+        plan.blockers
+    );
+    assert!(common.join("objects").exists(), "the common ODB survives");
+}
+
 /// Main is never removable from either its own management tab or a linked tab.
 /// The executor must reject even when a caller presents a blocked plan.
 #[test]

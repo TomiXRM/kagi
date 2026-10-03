@@ -36,7 +36,7 @@ use std::rc::{Rc, Weak};
 
 use gpui::{
     actions, prelude::*, rgb, transparent_black, App, ClickEvent, Div, FocusHandle, KeyBinding,
-    KeyDownEvent, ListState, Role, SharedString, Stateful, Window,
+    KeyDownEvent, ListOffset, ListState, Role, SharedString, Stateful, Window,
 };
 
 use super::theme::theme;
@@ -46,7 +46,17 @@ actions!(
     [TabListPrev, TabListNext, TabListFirst, TabListLast]
 );
 
-actions!(kagi_row_list, [RowListPrev, RowListNext]);
+actions!(
+    kagi_row_list,
+    [
+        RowListPrev,
+        RowListNext,
+        RowListFirst,
+        RowListLast,
+        RowListPageUp,
+        RowListPageDown
+    ]
+);
 
 const ROW_CONTEXT: &str = "KagiRowList";
 
@@ -87,6 +97,12 @@ pub(crate) fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("up", RowListPrev, Some(ROW_CONTEXT)),
         KeyBinding::new("down", RowListNext, Some(ROW_CONTEXT)),
+        KeyBinding::new("home", RowListFirst, Some(ROW_CONTEXT)),
+        KeyBinding::new("end", RowListLast, Some(ROW_CONTEXT)),
+        KeyBinding::new("pageup", RowListPageUp, Some(ROW_CONTEXT)),
+        KeyBinding::new("pagedown", RowListPageDown, Some(ROW_CONTEXT)),
+        KeyBinding::new("cmd-up", RowListFirst, Some(ROW_CONTEXT)),
+        KeyBinding::new("cmd-down", RowListLast, Some(ROW_CONTEXT)),
     ]);
     cx.intercept_keystrokes(|event, _, _| {
         if event.keystroke.key == "tab" {
@@ -546,11 +562,21 @@ impl RowFocus {
             }
             self.current = stop;
         }
+        let viewport = state.viewport_bounds();
+        let visible = self
+            .keys
+            .iter()
+            .skip(first)
+            .filter_map(|(_, ix)| state.bounds_for_item(*ix))
+            .take_while(|bounds| bounds.top() < viewport.bottom())
+            .filter(|bounds| bounds.bottom() > viewport.top())
+            .count();
         RowList {
             rows: self.keys.clone(),
             handles: self.handles.clone(),
             stop,
             state: state.clone(),
+            page_size: visible.saturating_sub(1).max(1),
         }
     }
 
@@ -632,6 +658,7 @@ pub(crate) struct RowList {
     handles: Rc<[FocusHandle]>,
     stop: Option<usize>,
     state: ListState,
+    page_size: usize,
 }
 
 impl RowList {
@@ -652,22 +679,40 @@ impl RowList {
             .clone()
             .tab_index(0)
             .tab_stop(self.stop == Some(at));
-        let step = |delta: isize| {
+        let move_to = |to: usize| {
             let (rows, handles, state) =
                 (self.rows.clone(), self.handles.clone(), self.state.clone());
             move |window: &mut Window, cx: &mut App| {
-                let Some(to) = at.checked_add_signed(delta).filter(|&to| to < rows.len()) else {
-                    return;
-                };
-                state.scroll_to_reveal_item(rows[to].1);
+                let to = to.min(rows.len() - 1);
+                let item = rows[to].1;
+                state.scroll_to_reveal_item(item);
+                // gpui's lazy list does not yet know the height of distant
+                // items. Reveal cannot reach one until it has been measured;
+                // anchor it directly so the next layout can draw that row.
+                if state.bounds_for_item(item).is_none() {
+                    state.scroll_to(ListOffset {
+                        item_ix: item,
+                        offset_in_item: gpui::px(0.),
+                    });
+                }
                 handles[to].focus(window, cx);
             }
         };
-        let (prev, next) = (step(-1), step(1));
+        let (page, last) = (self.page_size, self.rows.len() - 1);
+        let prev = move_to(at.saturating_sub(1));
+        let next = move_to(at.saturating_add(1));
+        let first = move_to(0);
+        let end = move_to(last);
+        let page_up = move_to(at.saturating_sub(page));
+        let page_down = move_to(at.saturating_add(page));
         with_ring(el.track_focus(&handle))
             .on_key_down(stop_activation_keys)
             .on_action(move |_: &RowListPrev, window, cx| prev(window, cx))
             .on_action(move |_: &RowListNext, window, cx| next(window, cx))
+            .on_action(move |_: &RowListFirst, window, cx| first(window, cx))
+            .on_action(move |_: &RowListLast, window, cx| end(window, cx))
+            .on_action(move |_: &RowListPageUp, window, cx| page_up(window, cx))
+            .on_action(move |_: &RowListPageDown, window, cx| page_down(window, cx))
     }
 }
 

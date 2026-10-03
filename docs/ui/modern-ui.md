@@ -169,9 +169,12 @@ PR block.
 
 ## Known gaps (do not claim these are met)
 
-- Only Home's list has the row keyboard path (one Tab stop, ↑/↓); the PR /
-  Issue navigators and the Graph sidebar do not. Within it, only ↑/↓ move:
-  there is no Home / End / Page Up / Page Down between rows.
+- Only Home's list has the row keyboard path (one Tab stop, ↑/↓ and
+  Home/End/PageUp/PageDown, with Cmd+↑/↓ for the ends); the PR / Issue
+  navigators and the Graph sidebar do not. The commit graph pages from
+  root focus only while Graph is visible and no menu overlay or confirmation
+  modal covers it, independently of Home's row focus. Its ↑/↓ keys use
+  the same visibility guard.
 - gpui shows `focus_visible` only while the last input was a key: moving the
   mouse hides the ring while the focus stays, so the next Enter / Space
   presses an element with no ring (gpui-wide; #960 review).

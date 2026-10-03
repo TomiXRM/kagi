@@ -297,7 +297,12 @@ final class Overlay {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.becomesKeyOnlyIfNeeded = true
-        panel.collectionBehavior = [.ignoresCycle, .fullScreenAuxiliary]
+        // On every Space, like cua-driver's overlay: a panel tied to the Space
+        // it was created on could not follow the target window to another
+        // Space (#949 review). Where the target is not on screen, `pin()`
+        // orders the panel out, so joining every Space never shows it over
+        // other windows.
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         panel.contentView = view
         Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in self?.housekeeping() }
     }

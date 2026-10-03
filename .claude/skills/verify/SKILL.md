@@ -928,9 +928,10 @@ and posts the event anyway. `key` and `type` do not move it.
   activates, with one click-through, non-activating panel the size of the
   target window, ordered just above that window. It comes to the very front
   only when the target window already is the frontmost window, so it never
-  covers another app. While the target window is off screen (another Space,
-  minimized), so is the cursor. It follows only windows of the PID it was
-  started for.
+  covers another app. The panel joins every Space, so it follows the target
+  window to whichever Space shows it; while the target window is off screen
+  (another Space, minimized), the cursor is ordered out. It follows only
+  windows of the PID it was started for.
 - **It ends by itself:** when the target process exits (checked: killing the
   test Kagi ends it within 0.2 s and removes the socket), or after 10 minutes
   without a message (`PIDCURSOR_IDLE_EXIT=<seconds>` overrides, for testing).

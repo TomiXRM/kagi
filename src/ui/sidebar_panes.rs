@@ -177,12 +177,23 @@ fn render_pane(app: &KagiApp, index: usize, cx: &mut Context<KagiApp>) -> gpui::
         uniform_list(
             pane_id,
             body_count,
-            cx.processor(move |this, visible: Range<usize>, _window, cx| {
+            cx.processor(move |this, visible: Range<usize>, window, cx| {
                 let now_secs = super::commit_list::now_unix_secs();
                 this.sidebar.refresh_tree_positions();
-                // What the pane's keyboard Tab stop may land on (#981).
-                this.sidebar.focus.drawn[index] = visible.clone();
-                let rows = this.sidebar.focus.lists[index].clone();
+                // What the pane's keyboard Tab stop may land on (#981). The
+                // range can change after this frame's stop was picked (a
+                // wheel, a divider, a resize): the rows drawn now take the
+                // stop at once, and a frame is asked for so the focus of a
+                // row that scrolled out moves on (#987 review).
+                let focus = &mut this.sidebar.focus;
+                if focus.seen[index] != visible {
+                    focus.seen[index] = visible.clone();
+                    window.request_animation_frame();
+                }
+                focus.drawn[index] = visible.clone();
+                let rows = focus.lists[index]
+                    .as_deref()
+                    .map(|rows| rows.as_drawn(&visible));
                 visible
                     .filter_map(|position| {
                         let absolute = body_start + position;
@@ -190,7 +201,7 @@ fn render_pane(app: &KagiApp, index: usize, cx: &mut Context<KagiApp>) -> gpui::
                         let spec = super::sidebar_a11y::tree_item(&row);
                         let el = build_sidebar_row(this, &row, now_secs, cx);
                         let slot = div().id((pane_id, absolute)).w_full().h(row_h);
-                        let slot = match rows.as_deref().filter(|rows| position < rows.len()) {
+                        let slot = match rows.as_ref().filter(|rows| position < rows.len()) {
                             Some(rows) => {
                                 super::sidebar_focus::row(this, rows, position, slot, row, el, cx)
                             }

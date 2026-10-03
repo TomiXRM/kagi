@@ -1264,6 +1264,10 @@ mod macos {
                 Box::new(crate::sidebar_rows::scenario_sidebar_rows_short),
             ),
             (
+                "sidebar_rows_scroll",
+                Box::new(crate::sidebar_rows::scenario_sidebar_rows_scroll),
+            ),
+            (
                 "repo_tab_panels",
                 Box::new(crate::tab_panels::scenario_repo_tab_panels),
             ),

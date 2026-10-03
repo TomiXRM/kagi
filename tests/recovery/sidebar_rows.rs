@@ -69,6 +69,77 @@ pub fn scenario_sidebar_rows_short(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
 }
 
+/// LOCAL scrolled after its Tab stop was picked (#987 review: a wheel, a
+/// divider drag or a resize changes what the list draws). On that very frame
+/// a row it draws is the stop — not the remembered row, scrolled out — and a
+/// focused row scrolled out hands its focus to a drawn row on the next.
+pub fn scenario_sidebar_rows_scroll(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    for index in 0..40 {
+        git(repo, &["branch", &format!("b{index:02}")]);
+    }
+    let (app, window) = mount(cx, repo);
+    let focus_row = |cx: &mut VisualTestAppContext, key: &str| {
+        cx.update_window(window, |_, window, cx| {
+            window.draw(cx).clear();
+            app.update(cx, |app, cx| {
+                app.focus_sidebar_row_for_e2e(LOCAL, key, window, cx)
+            });
+            window.draw(cx).clear();
+        })
+        .unwrap();
+    };
+    let scroll_local = |cx: &mut VisualTestAppContext, item: usize| {
+        app.read_with(cx, |app, _| {
+            app.sidebar.scroll_handles[LOCAL].scroll_to_item_strict(item, gpui::ScrollStrategy::Top)
+        });
+    };
+
+    // b00 remembered, then the window takes the focus and LOCAL scrolls to
+    // its end: Tab over the one frame that scrolls reaches a drawn LOCAL row.
+    focus_row(cx, "branch:b00");
+    let reached = cx
+        .update_window(window, |_, window, cx| {
+            let root = app.read(cx).root_focus.clone().unwrap();
+            root.focus(window, cx);
+            window.draw(cx).clear();
+            app.read(cx).sidebar.scroll_handles[LOCAL]
+                .scroll_to_item_strict(40, gpui::ScrollStrategy::Top);
+            window.draw(cx).clear();
+            (0..300).find_map(|_| {
+                window.focus_next(cx);
+                app.read(cx).sidebar_row_focused_for_e2e(window)
+            })
+        })
+        .unwrap();
+    let (pane, key) = reached.expect("Tab reaches a LOCAL row");
+    assert_eq!(pane, LOCAL);
+    assert_ne!(key, "branch:b00", "not the row scrolled out");
+
+    // A focused row scrolled out: the next frame hands its focus on.
+    scroll_local(cx, 0);
+    focus_row(cx, "branch:b00");
+    scroll_local(cx, 40);
+    cx.update_window(window, |_, window, cx| {
+        window.draw(cx).clear();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    let after = cx
+        .update_window(window, |_, window, cx| {
+            app.read(cx).sidebar_row_focused_for_e2e(window)
+        })
+        .unwrap();
+    assert!(
+        after
+            .as_ref()
+            .is_some_and(|(pane, key)| *pane == LOCAL && key != "branch:b00"),
+        "the focus moved to a drawn LOCAL row ({after:?})"
+    );
+    unmount(cx, app, window);
+}
+
 const LOCAL: usize = 0;
 const REMOTE: usize = 1;
 const WORKTREES: usize = 2;

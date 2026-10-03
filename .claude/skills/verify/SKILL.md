@@ -349,8 +349,11 @@ The current suite covers:
   to Graph in one update with one drawn frame, Tab (no frame between)
   still reaches a LOCAL row: what the panes drew when last shown is kept
   while they are away. `sidebar_rows_short` mounts a 300px-high window,
-  where LOCAL has rows but draws none: Tab reaches LOCAL's header. The ring
-  is not observable in Tier A.
+  where LOCAL has rows but draws none: Tab reaches LOCAL's header.
+  `sidebar_rows_scroll` (40 branches): with b00 remembered, LOCAL scrolled
+  to its end inside the one drawn frame still offers a drawn row to Tab (not
+  b00); a focused b00 scrolled out has its focus on a drawn LOCAL row after
+  the next frame. The ring is not observable in Tier A.
 - modal input transitions (`KAGI_GUI_E2E_ONLY=remote_browse_escape_focus,pr_fields_escape_focus`,
   `tests/recovery/remote_browse_focus.rs`, `tests/recovery/pr_fields_focus.rs`):
   #755 follow-up. Real InputStates own focus before Remote Browse's

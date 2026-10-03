@@ -707,6 +707,25 @@ impl RowList {
         self.stop.is_some()
     }
 
+    /// This list as a `uniform_list` draws it this frame, `visible` being
+    /// the items its processor was asked for: those are on screen now, so the
+    /// stop moves to the first of them when the one picked from last frame's
+    /// range has scrolled out (#987 review — a wheel, a divider drag or a
+    /// resize changes the range after the stop was picked).
+    pub(crate) fn as_drawn(&self, visible: &std::ops::Range<usize>) -> RowList {
+        let on = |at: usize| visible.contains(&self.rows[at].1);
+        let stop = self.stop.filter(|&at| on(at)).or_else(|| {
+            let first = self.rows.partition_point(|&(_, ix)| ix < visible.start);
+            (first < self.rows.len() && on(first)).then_some(first)
+        });
+        RowList {
+            rows: self.rows.clone(),
+            handles: self.handles.clone(),
+            stop,
+            scroll: self.scroll.clone(),
+        }
+    }
+
     /// The row at `at` (its place among the rows): Tab reaches it when it is
     /// the list's stop, ↑/↓ move from it, Enter/Space press it (`on_click`).
     pub(crate) fn row(&self, at: usize, el: Stateful<Div>) -> Stateful<Div> {

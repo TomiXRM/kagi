@@ -49,6 +49,9 @@ pub(crate) struct SidebarFocus {
     /// while the panes are away, so the frame they come back on still has
     /// its rows' Tab stops — #981 review).
     pub(super) drawn: [Range<usize>; PANES],
+    /// The items each pane's list was last asked to draw, kept across
+    /// frames: a change asks for one more frame (#987 review).
+    pub(super) seen: [Range<usize>; PANES],
     /// The headers: a collapsed pane's Tab stop.
     pub(super) headers: FocusSlots,
     /// A pane opened from its header by the keyboard: its first row takes

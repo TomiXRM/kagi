@@ -627,7 +627,9 @@ The current suite covers:
   `home-work-failed` above the list read before and saves nothing; the
   non-local row opens the clone card; the local PR row draws its
   `-opening` spinner while `pr view` runs, ignores a second click (one
-  `view-calls`), then opens PR #7 in the clone's tab; the issue row opens
+  `view-calls`), then opens PR #7 in the clone's tab; with `state/default-repo`
+  naming `acme/upstream` (`gh repo set-default` elsewhere) the issue row
+  stays on Home with a toast naming that repository, and without it opens
   the clone in Issues mode with #4 selected. For Tier B use a real `gh`
   login, click each switch cell and one PR / issue row of a local clone.
 - modal-slot arbitration (`KAGI_GUI_E2E_ONLY=push_failure_keeps_modal,merge_plan_latch,delete_branch_plan_latch,remote_browse_modal_routing`): a push failure lands behind Remote Browse without losing its input and reaches the Failed footer, an Error toast and one durable receipt — no dismiss-only AppNotice, queued or shown after Remote Browse closes (the #747 contract; #824 bisected the stale notice expectation to `e5644c6f`). Delayed Merge/Delete Branch plans wait behind Remote Browse without losing its input, stale plan state, latches, footers, or notices; a reopened Remote Browse rejects an older in-place completion by generation;

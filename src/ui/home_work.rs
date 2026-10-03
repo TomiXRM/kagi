@@ -187,8 +187,9 @@ impl KagiApp {
 
     /// A PR or issue row was clicked. With a local clone of its repository
     /// it opens as a tab showing that PR (once `gh pr view` has its refs) or
-    /// issue; without one the clone card opens. A click on a row whose PR is
-    /// still being prepared is ignored.
+    /// issue (once the clone is known to address that repository); without
+    /// one the clone card opens. A click on a row still being prepared is
+    /// ignored.
     pub fn home_work_pick(
         &mut self,
         kind: WorkKind,
@@ -211,16 +212,14 @@ impl KagiApp {
             cx.notify();
             return;
         };
+        self.home_github.work.opening = Some(key.clone());
+        self.home_github.work.version += 1;
+        cx.notify();
         if !kind.is_pr() {
-            if self.open_repository(path, cx) {
-                self.show_issues_mode(cx);
-                self.load_github_issue_detail(item.number, window, cx);
-            }
+            self.open_issue_when_addressed(key, path, window, cx);
             return;
         }
         klog!("home: open pr {}#{}", key.0, key.1);
-        self.home_github.work.opening = Some(key.clone());
-        self.home_github.work.version += 1;
         let (base_repo, number) = key.clone();
         let read = cx.background_spawn(async move {
             kagi_git::github::pr_for_open(&home_dir(), &base_repo, number)
@@ -230,7 +229,6 @@ impl KagiApp {
             let _ = app.update(acx, |app, cx| app.finish_opening_pr(key, path, pr, cx));
         })
         .detach();
-        cx.notify();
     }
 
     /// The PR's refs have arrived. Opened only while it is still the PR
@@ -266,6 +264,57 @@ impl KagiApp {
                 self.push_toast(super::ToastKind::Error, message, cx);
             }
         }
+    }
+
+    /// An issue opens in its clone's Issues mode, which reads and writes the
+    /// repository `gh` resolves for the clone (`gh repo set-default`, else
+    /// `origin`). Only when that is the issue's own repository: otherwise the
+    /// same number there is another issue, and a reply would go to it.
+    fn open_issue_when_addressed(
+        &mut self,
+        key: (String, u64),
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        klog!("home: open issue {}#{}", key.0, key.1);
+        let dir = path.clone();
+        let read =
+            cx.background_spawn(async move { kagi_git::github_fetch::repository_identity(&dir) });
+        cx.spawn_in(window, async move |app, acx| {
+            let addressed = read.await;
+            let _ = app.update_in(acx, |app, window, cx| {
+                if app.home_github.work.opening.as_ref() != Some(&key) {
+                    return;
+                }
+                app.home_github.work.opening = None;
+                app.home_github.work.version += 1;
+                cx.notify();
+                let error = match addressed {
+                    Ok(id) if id.eq_ignore_ascii_case(&key.0) => {
+                        if !app.home_in_front() {
+                            klog!("home: open issue {}#{} dropped: Home left", key.0, key.1);
+                        } else if app.open_repository(path, cx) {
+                            app.show_issues_mode(cx);
+                            app.load_github_issue_detail(key.1, window, cx);
+                        }
+                        return;
+                    }
+                    Ok(id) => Msg::HomeWorkOtherRepo
+                        .t()
+                        .replacen("{}", &key.1.to_string(), 1)
+                        .replacen("{}", &key.0, 1)
+                        .replacen("{}", &id, 1),
+                    Err(error) => Msg::HomeWorkOpenFailed
+                        .t()
+                        .replacen("{}", &key.1.to_string(), 1)
+                        .replacen("{}", &error.to_string(), 1),
+                };
+                klog!("home: open issue {}#{} refused: {error}", key.0, key.1);
+                app.push_toast(super::ToastKind::Error, error, cx);
+            });
+        })
+        .detach();
     }
 
     /// Home's Repositories / Pull requests / Issues switch, with counts. A

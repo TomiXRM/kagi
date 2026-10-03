@@ -668,6 +668,9 @@ pub enum Msg {
     HomeWorkFailed,
     /// `{}` = the PR number, then why it could not be opened.
     HomeWorkOpenFailed,
+    /// `{}` = the issue number, its repository, the repository the clone's
+    /// Issues mode addresses.
+    HomeWorkOtherRepo,
     HomeGithubPrivate,
     HomeGithubFork,
     /// `{}` = the repository's name.
@@ -2640,6 +2643,8 @@ impl Msg {
             (Ja, HomeWorkFailed) => "読み込めませんでした: {}",
             (En, HomeWorkOpenFailed) => "Could not open #{}: {}",
             (Ja, HomeWorkOpenFailed) => "#{} を開けませんでした: {}",
+            (En, HomeWorkOtherRepo) => "#{} is in {}; this clone's GitHub repository is {}",
+            (Ja, HomeWorkOtherRepo) => "#{} は {} の Issue です。この clone の GitHub リポジトリは {} です",
             (En, HomeGithubPrivate) => "Private",
             (Ja, HomeGithubPrivate) => "非公開",
             (En, HomeGithubFork) => "Fork",

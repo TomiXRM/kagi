@@ -199,7 +199,10 @@ impl KagiApp {
     }
 
     /// Avatars for Home's review-request rows (#928): the authors waiting
-    /// for the user's review, through the same login-keyed cache.
+    /// for the user's review, through the same login-keyed cache. Only
+    /// github.com logins: the cache fetches from github.com, where an
+    /// Enterprise login names someone else (or no one) and should not be
+    /// sent.
     pub(crate) fn ensure_home_avatars(&mut self, cx: &mut Context<Self>) {
         let Some(lists) = self.home_github.work.lists.as_ref() else {
             return;
@@ -208,6 +211,7 @@ impl KagiApp {
             .review_requests
             .items
             .iter()
+            .filter(|item| item.on_github_com())
             .map(|item| item.author.clone())
             .collect();
         self.ensure_github_login_avatars(candidates, "home", cx);

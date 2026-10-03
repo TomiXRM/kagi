@@ -315,6 +315,21 @@ impl KagiApp {
             .any(|input| input.read(cx).focus_handle(cx).is_focused(window))
     }
 
+    /// Whether the composer's body editor (not the title) has focus (#909).
+    pub fn issue_body_focused_for_e2e(
+        &self,
+        number: Option<u64>,
+        window: &Window,
+        cx: &App,
+    ) -> bool {
+        self.ui()
+            .issue_composer
+            .editors
+            .get(&number)
+            .and_then(|editor| editor.body_input.as_ref())
+            .is_some_and(|input| input.read(cx).focus_handle(cx).is_focused(window))
+    }
+
     /// Settle the currently queued New Issue revision through the production
     /// completion path, without dispatching a GitHub write in this harness.
     pub fn settle_issue_write_for_e2e(&mut self, cx: &mut Context<Self>) {

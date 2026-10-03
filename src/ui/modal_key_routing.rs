@@ -69,6 +69,31 @@ impl KagiApp {
         }
     }
 
+    /// An IME's Enter accepts the marked text; it must not also confirm a Git
+    /// write. All six input-confirm cards keep InputState as their only text
+    /// owner, so query that state rather than keeping a second composition flag.
+    fn input_modal_is_composing(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        use modals::ActiveModal as M;
+        let mut marked = |input: Option<&Entity<gpui_component::input::InputState>>| {
+            input.is_some_and(|input| {
+                input.update(cx, |state, cx| {
+                    gpui::EntityInputHandler::marked_text_range(state, window, cx).is_some()
+                })
+            })
+        };
+        match self.active_modal.as_ref() {
+            Some(M::CreateBranch(modal)) => marked(modal.input_state.as_ref()),
+            Some(M::CreateTag(modal)) => marked(modal.input_state.as_ref()),
+            Some(M::CreateWorktree(modal)) => {
+                marked(modal.branch_state.as_ref()) || marked(modal.path_state.as_ref())
+            }
+            Some(M::StashPush(modal)) => marked(modal.input_state.as_ref()),
+            Some(M::RenameBranch(modal)) => marked(modal.input_state.as_ref()),
+            Some(M::SetUpstream(modal)) => marked(modal.input_state.as_ref()),
+            _ => false,
+        }
+    }
+
     /// Attach the complete key routing for the single modal slot. Both the
     /// workspace and Welcome render paths pass through this wrapper, so a new
     /// modal key cannot be wired on only one surface.
@@ -97,6 +122,10 @@ impl KagiApp {
                 && !ks.modifiers.alt
                 && !ks.modifiers.shift
             {
+                if this.input_modal_is_composing(window, cx) {
+                    cx.stop_propagation();
+                    return;
+                }
                 if !this.confirm_active_modal(cx) && workspace_fallbacks {
                     this.checkout_selected_commit(window, cx);
                 }

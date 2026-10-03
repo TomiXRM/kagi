@@ -11,6 +11,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Worktree 削除の確認後や削除前ステップ後に ignored ファイル・フォルダーが増えた場合、削除前に中止し、計画の再確認を促すようにしました。(#934)
 - 初期化済み、または未初期化でも gitlink のパスにローカルファイルがある worktree は Remove の計画時・実行前に削除を拒否します。空・不在の gitlink は削除可能なままとし、削除前ステップ後の拒否も EN/JA の短い toast に理由だけを表示します。(#934)
 - Linux / FreeBSD の View メニューで、テーマ一覧がウィンドウの下へはみ出し、後半のテーマや言語の項目を選べなかった問題を修正しました。メニューの高さをウィンドウ内に収め、入りきらない項目はメニューの中でスクロールして選べます。(#935)
+- Operation Log で行を開いたときの詳細が「before: branch: maindirty: cleanafter: …」のように 1 行につながって表示されていた問題を修正しました。before / dirty / after などを 1 項目ずつ改行して表示します。(#908)
+- Operation Log の操作者の表示を、日本語表示でも「人」ではなく「Human」にしました(CLI / MCP と同じく英語の表記)。(#908)
 
 ### Changed
 

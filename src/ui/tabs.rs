@@ -91,8 +91,8 @@ impl KagiApp {
                         .map(|c| c == path)
                         .unwrap_or(false))
         }) {
-            self.home_yields_to_repository();
-            self.switch_repo(idx, cx);
+            let left = self.home_yields_to_repository();
+            self.return_to_tab(idx, left, cx);
             return true;
         }
 
@@ -118,8 +118,8 @@ impl KagiApp {
         // see that, so switch to that tab rather than opening a second one.
         let session = self.attach_session(path.clone());
         if let Some(idx) = self.tabs.iter().position(|t| t.session == session) {
-            self.home_yields_to_repository();
-            self.switch_repo(idx, cx);
+            let left = self.home_yields_to_repository();
+            self.return_to_tab(idx, left, cx);
             return true;
         }
 
@@ -133,8 +133,8 @@ impl KagiApp {
         };
         self.tabs.push(tab);
         let new_idx = self.tabs.len() - 1;
-        self.home_yields_to_repository();
-        self.switch_repo(new_idx, cx);
+        let left = self.home_yields_to_repository();
+        self.return_to_tab(new_idx, left, cx);
         true
     }
 
@@ -149,7 +149,7 @@ impl KagiApp {
     /// and keeps its incarnation, but the visit ends: a pending stash follow-up
     /// proposal is discarded and a completion landing afterwards cannot create a
     /// new one. Returning re-observes the real conflict state instead.
-    fn depart_active_tab(&mut self) {
+    pub(crate) fn depart_active_tab(&mut self) {
         if let Some(session) = self.active_session() {
             self.app_sessions.depart(session);
             if let Some(ui) = self.ui.get_mut(&session) {
@@ -175,15 +175,25 @@ impl KagiApp {
     /// active immediately; repository-derived state is then revalidated in the
     /// background and the watcher is re-armed (ADR-0197).
     pub fn switch_repo(&mut self, index: usize, cx: &mut Context<Self>) {
-        let tab = match self.tabs.get(index) {
-            Some(t) => t.clone(),
-            None => return,
+        let Some(tab) = self.tabs.get(index) else {
+            return;
         };
         // #488: re-selecting the tab that is already on screen is a no-op. A
         // reset here would drop selection, undo history and the owner's visit.
         if index == self.active_tab && self.live_tab_path().as_ref() == Some(&tab.path) {
             return;
         }
+        self.enter_tab(index, cx);
+    }
+
+    /// Make tab `index` the one on screen and begin its visit: the body of a
+    /// tab switch, also used to come back to the tab Home was covering (whose
+    /// visit Home ended, so returning is not the #488 no-op).
+    pub(crate) fn enter_tab(&mut self, index: usize, cx: &mut Context<Self>) {
+        let tab = match self.tabs.get(index) {
+            Some(t) => t.clone(),
+            None => return,
+        };
         // ADR-0197 決定 3: a plain tab switch retains the departing owner's
         // editor and its unsaved buffer, so it must not be gated on dirtiness.
         // The dirty guard stays only on owner-destroying paths (close / reopen).
@@ -353,7 +363,7 @@ impl KagiApp {
                 self.tabs.len() - 1
             }
         };
-        self.home_yields_to_repository();
+        let _ = self.home_yields_to_repository();
         self.active_tab = idx;
         self.remote_view = Some(rv);
         self.publish_tab_view(self.tabs[idx].session, view);
@@ -875,8 +885,8 @@ impl KagiApp {
             // tab already behind it, `switch_repo` is a no-op (#488), so the
             // notify is what brings the repository back on screen.
             let switch = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
-                this.send_home_back();
-                this.switch_repo(i, cx);
+                let left = this.send_home_back();
+                this.return_to_tab(i, left, cx);
                 cx.notify();
             });
             let close = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {

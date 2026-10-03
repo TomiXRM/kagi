@@ -27,6 +27,10 @@ use super::KagiApp;
 pub struct HomeTab {
     /// In front of the repository tabs (otherwise it waits in the strip).
     pub front: bool,
+    /// The repository tab whose visit ended when Home came to the front. A
+    /// plan or result still in flight for it is dropped (its visit changed),
+    /// and going back to it re-enters it like any tab switch.
+    left: Option<crate::app::SessionId>,
 }
 
 const SIDEBAR_W: f32 = 300.;
@@ -44,6 +48,11 @@ impl KagiApp {
     }
 
     /// `+` / New Tab: open the Home tab, or bring it to the front.
+    ///
+    /// The repository on screen is left like on any tab switch: its visit
+    /// ends (`depart_active_tab`), so an async plan or result for it that
+    /// lands while Home is in front is dropped rather than put in the modal
+    /// slot, where Home's key routing could confirm it unseen (#927 review).
     pub fn open_home_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.tabs.is_empty() {
             // Home is already the whole window — except in the remote view,
@@ -54,10 +63,15 @@ impl KagiApp {
             }
             return;
         }
-        if !self.home_in_front() {
-            self.close_window_slots_of_departing_tab();
-        }
-        self.home = Some(HomeTab { front: true });
+        let left = match self.home {
+            Some(home) if home.front => home.left,
+            _ => {
+                let left = self.active_session();
+                self.depart_active_tab();
+                left
+            }
+        };
+        self.home = Some(HomeTab { front: true, left });
         if let Some(root) = self.root_focus.clone() {
             window.focus(&root, cx);
         }
@@ -65,26 +79,54 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// The Home tab's ×. With no repository tab, Home stays the window.
+    /// The Home tab's ×. With no repository tab, Home stays the window;
+    /// otherwise the tab behind it is entered again.
     pub fn close_home_tab(&mut self, cx: &mut Context<Self>) {
+        let left = self
+            .home
+            .filter(|home| home.front)
+            .and_then(|home| home.left);
         self.home = None;
         klog!("home: closed");
+        if !self.tabs.is_empty() {
+            self.return_to_tab(self.active_tab, left, cx);
+        }
         cx.notify();
     }
 
     /// A repository tab was clicked: Home (if open) waits in the strip.
-    pub(crate) fn send_home_back(&mut self) {
-        if let Some(home) = self.home.as_mut() {
-            home.front = false;
-        }
+    /// Returns the tab it had left, for [`KagiApp::return_to_tab`].
+    pub(crate) fn send_home_back(&mut self) -> Option<crate::app::SessionId> {
+        let home = self.home.as_mut()?;
+        let left = if home.front { home.left.take() } else { None };
+        home.front = false;
+        left
     }
 
     /// A repository is being opened (or switched to) as a tab: if Home was in
-    /// front, it becomes that tab.
-    pub(crate) fn home_yields_to_repository(&mut self) {
-        if self.home.is_some_and(|home| home.front) {
-            self.home = None;
+    /// front, it becomes that tab. Returns the tab Home had left.
+    pub(crate) fn home_yields_to_repository(&mut self) -> Option<crate::app::SessionId> {
+        let home = self.home.filter(|home| home.front)?;
+        self.home = None;
+        home.left
+    }
+
+    /// Show tab `index` after Home: the tab Home had left is entered again
+    /// (its visit ended, so a re-select must not be the usual no-op), any
+    /// other is an ordinary switch.
+    pub(crate) fn return_to_tab(
+        &mut self,
+        index: usize,
+        left: Option<crate::app::SessionId>,
+        cx: &mut Context<Self>,
+    ) {
+        let session = self.tabs.get(index).map(|tab| tab.session);
+        if left.is_some() && session == left {
+            self.enter_tab(index, cx);
+        } else {
+            self.switch_repo(index, cx);
         }
+        cx.notify();
     }
 
     /// The Home body: the tab strip (when tabs exist), a sidebar of recently
@@ -127,8 +169,18 @@ impl KagiApp {
         // A flex box, as the Welcome screen's root was: the window-global
         // modals attached below are absolute overlays, and in a plain block
         // box they landed after Home's content instead of covering it.
+        // The menu-driven overlays (Settings, About, Shortcuts, the command
+        // palette) are window-global and stay enabled on Home, so they are
+        // drawn here too, below the modals as in the workspace (#927 review).
+        let menu_overlay = self.render_menu_overlay(window, cx);
         let home = self.register_menu_actions(
-            div().flex().flex_col().relative().size_full().child(home),
+            div()
+                .flex()
+                .flex_col()
+                .relative()
+                .size_full()
+                .child(home)
+                .children(menu_overlay),
             cx,
         );
         // Toasts above everything, as in the workspace: an operation that

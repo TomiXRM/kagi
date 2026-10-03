@@ -5,10 +5,10 @@
 //! whole window.
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::commands::{command_state, CommandState};
-use kagi::ui::{home::HomeTab, tabs, KagiApp};
+use kagi::ui::{tabs, KagiApp};
 
 use crate::app_conflict::click_control;
-use crate::macos::{build_fixture, mount, unmount};
+use crate::macos::{build_fixture, git, mount, unmount};
 use crate::recovery_operations::press_key;
 
 fn active_path(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> std::path::PathBuf {
@@ -18,8 +18,9 @@ fn active_path(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> std::pat
     })
 }
 
-fn home(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> Option<HomeTab> {
-    cx.read(|cx| app.read(cx).home)
+/// Whether Home is open, and if so whether it is in front.
+fn home(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> Option<bool> {
+    cx.read(|cx| app.read(cx).home.map(|home| home.front))
 }
 
 fn tab_count(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> usize {
@@ -44,6 +45,14 @@ fn forget(window: AnyWindowHandle, name: &str) {
     kagi::ui::e2e::clear_control_bounds(window.window_id(), name);
 }
 
+/// Draw, then say whether `name` was laid out in this frame.
+fn drawn(cx: &mut VisualTestAppContext, window: AnyWindowHandle, name: &str) -> bool {
+    forget(window, name);
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    kagi::ui::e2e::control_bounds(window.window_id(), name).is_some()
+}
+
 pub fn scenario_home_tab(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["recent_repos"]);
     // Home reads `gh repo list` when it opens; keep that off the network.
@@ -59,15 +68,41 @@ pub fn scenario_home_tab(cx: &mut VisualTestAppContext) {
     tabs::record_recent_repo(&first_path);
     tabs::record_recent_repo(&second_path);
 
+    // Home ends the visit of the tab it covers, like a tab switch: a plan
+    // still being built for that repository is dropped instead of landing
+    // in the modal slot behind Home, where Enter could confirm it unseen
+    // (#927 review).
+    git(&first_path, &["branch", "feature", "HEAD~1"]);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.open_merge_modal("feature".into(), None, cx);
+            app.open_home_tab(window, cx);
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.home_in_front());
+        assert!(app.merge_modal().is_none(), "the plan was dropped");
+        assert!(!kagi::ui::e2e::active_modal_present(app));
+    });
+    // Leaving Home enters that tab again — its visit ended, so this is not
+    // the no-op of re-selecting the tab on screen (#488).
+    app.update(cx, |app, cx| {
+        app.close_home_tab(cx);
+        assert!(
+            app.ui().panes_revalidating(),
+            "the tab Home covered is re-entered"
+        );
+    });
+    cx.run_until_parked();
+
     // `+` puts Home in front; the repository behind it is off screen, so its
     // commands are off and ⌘W would close Home, not the repository.
     click_control(cx, window, "tab-add");
     cx.run_until_parked();
-    assert_eq!(
-        home(cx, &app),
-        Some(HomeTab { front: true }),
-        "`+` opens Home"
-    );
+    assert_eq!(home(cx, &app), Some(true), "`+` opens Home");
     cx.read(|cx| {
         let app = app.read(cx);
         assert!(app.home_in_front());
@@ -91,14 +126,10 @@ pub fn scenario_home_tab(cx: &mut VisualTestAppContext) {
     // Clicking a repository tab — even the one right behind Home — only
     // moves Home to the back; its tab stays in the strip.
     menu(cx, &app, window, "file.newTab");
-    assert_eq!(
-        home(cx, &app),
-        Some(HomeTab { front: true }),
-        "New Tab opens Home"
-    );
+    assert_eq!(home(cx, &app), Some(true), "New Tab opens Home");
     click_control(cx, window, "repo-tab-1");
     cx.run_until_parked();
-    assert_eq!(home(cx, &app), Some(HomeTab { front: false }));
+    assert_eq!(home(cx, &app), Some(false));
     assert_eq!(active_path(cx, &app), second_path);
     assert!(cx.read(|cx| !app.read(cx).home_in_front()));
     cx.read(|cx| {
@@ -115,7 +146,28 @@ pub fn scenario_home_tab(cx: &mut VisualTestAppContext) {
     forget(window, "home-tab");
     click_control(cx, window, "home-tab");
     cx.run_until_parked();
-    assert_eq!(home(cx, &app), Some(HomeTab { front: true }));
+    assert_eq!(home(cx, &app), Some(true));
+    // Window-global overlays are drawn over Home: an AppNotice (Enter and
+    // Esc reach it, so it must be readable first) and the menu overlays
+    // such as Settings (#927 review).
+    app.update(cx, |app, _| {
+        kagi::ui::e2e::deliver_app_notice(app, "home notice")
+    });
+    assert!(
+        drawn(cx, window, "active-modal/app-notice"),
+        "an AppNotice is drawn over Home"
+    );
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    menu(cx, &app, window, "app.settings");
+    assert!(
+        drawn(cx, window, "settings-theme-select"),
+        "Settings is drawn over Home"
+    );
+    app.update(cx, |app, cx| {
+        app.menu_overlay = None;
+        cx.notify();
+    });
     menu(cx, &app, window, "file.closeTab");
     assert_eq!(home(cx, &app), None, "⌘W closes Home");
     assert_eq!(tab_count(cx, &app), 2, "and no repository tab");
@@ -167,7 +219,7 @@ pub fn scenario_home_tab(cx: &mut VisualTestAppContext) {
     press_key(cx, &app, window, "escape");
     cx.run_until_parked();
     assert!(cx.read(|cx| app.read(cx).remote_browse().is_none()));
-    assert_eq!(home(cx, &app), Some(HomeTab { front: true }));
+    assert_eq!(home(cx, &app), Some(true));
 
     // With no repository tab, Home is the whole window and opens a tab.
     app.update(cx, |app, cx| {

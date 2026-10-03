@@ -847,7 +847,9 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
         }
         // Refresh also drives the remote read-only view's re-snapshot (ADR-0089).
         "file.refresh" => {
-            if has_repo || app.remote_view.is_some() {
+            // The remote read-only view has no `repo_path` but is a repository
+            // on screen — unless Home is in front of it (#927 review).
+            if has_repo || (app.remote_view.is_some() && !app.home_in_front()) {
                 Enabled
             } else {
                 Disabled(Msg::NoRepoOpen.t())
@@ -896,7 +898,7 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
             }
         }
         "view.toggleDiffView" => {
-            if diff_open {
+            if diff_open && !app.home_in_front() {
                 Enabled
             } else {
                 Disabled(Msg::DiffNotOpen.t())

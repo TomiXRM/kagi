@@ -176,8 +176,10 @@ impl gpui::Render for toast_stack::ToastStack {
 // `gpui::list` + a selectable detail block, and this file keeps the toasts.
 
 impl KagiApp {
-    /// The Welcome screen returns before the normal overlay compositor, so
-    /// window-global modals need the same single-slot rendering here.
+    /// The Welcome screen (now Home) returns before the normal overlay
+    /// compositor, so window-global modals need the same single-slot rendering
+    /// here — the AppNotice among them: Home's key routing delivers Enter and
+    /// Esc to it, so it must be on screen to be read first (#927 review).
     pub(super) fn attach_welcome_window_modals(
         &self,
         el: gpui::Div,
@@ -209,6 +211,9 @@ impl KagiApp {
                     cx,
                 ),
             ))
+        })
+        .when_some(self.app_notice().cloned(), |el, notice| {
+            el.child(render_app_notice_modal(notice, cx))
         })
     }
 

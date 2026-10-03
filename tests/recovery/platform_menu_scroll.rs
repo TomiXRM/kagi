@@ -331,3 +331,56 @@ pub fn scenario_platform_menu_modal_settings(cx: &mut VisualTestAppContext) {
     unmount(cx, app, win);
     eprintln!("[gui-e2e] PASS platform_menu_modal_settings");
 }
+
+/// #976 review: opening Settings while a menu drawn above its layer is open
+/// (the filter popover) closes that menu first, so Settings is the front
+/// layer and Tab cycles where the user can see it.
+pub fn scenario_filter_menu_then_settings(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, win) = mount_short(cx, &repo);
+    app.update(cx, |app, cx| app.show_issues_mode(cx));
+    cx.run_until_parked();
+    let bounds =
+        measure(cx, win, &["list-filter-state"])[0].expect("Issues filter State chip is visible");
+    cx.simulate_click(win, bounds.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| e2e::menu_is_front(app.read(cx), cx)),
+        "precondition: the filter menu is open"
+    );
+
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.handle_menu_command("app.settings", window, cx)
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.menu_overlay.is_some() && !e2e::menu_is_front(app, cx),
+            "filter-menu-then-settings: Settings opened under the filter menu"
+        );
+    });
+    for step in 1..=3 {
+        cx.update_window(win, |_, window, cx| {
+            window.refresh();
+            window.draw(cx).clear();
+        })
+        .unwrap();
+        cx.simulate_keystrokes(win, "tab");
+        cx.run_until_parked();
+        assert!(
+            cx.update_window(win, |_, window, cx| {
+                app.read(cx)
+                    .settings_trap_contains_focus_for_e2e(window, cx)
+            })
+            .unwrap(),
+            "filter-menu-then-settings: Tab #{step} left the visible Settings"
+        );
+    }
+    unmount(cx, app, win);
+    eprintln!("[gui-e2e] PASS filter_menu_then_settings");
+}

@@ -202,6 +202,10 @@ impl KagiApp {
         if self.has_modal_or_visible_plan(cx) {
             return;
         }
+        // A menu drawn above Settings' layer (the PR / filter / Inspector
+        // file menus, the platform dropdown) would keep the front and leave
+        // Settings' Tab cycling unseen behind it (#976 review).
+        self.close_layers_above(super::front_layer::LayerKind::MenuOverlay, cx);
         self.capture_overlay_return_focus(window, cx);
         self.menu_overlay = Some(MenuOverlay::Settings);
         let trap = self

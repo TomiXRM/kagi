@@ -236,30 +236,65 @@ impl KagiApp {
     /// Escape is not an action on a repository, so there is no reason to leave
     /// a second menu behind the first one.
     pub(crate) fn close_front_menu(&mut self, cx: &mut gpui::Context<Self>) {
-        self.platform_menu_open = None;
-        self.menu_overlay = None;
-        self.commit_menu = None;
-        self.branch_menu = None;
-        self.stash_menu = None;
-        self.tag_menu = None;
-        self.worktree_menu = None;
-        self.file_menu = None;
-        self.inspector_file_menu = None;
-        self.with_ui(|ui| {
-            ui.pr_menu = None;
-            ui.filter_controls.menu = None;
-        });
-        if let Some(entity) = self.ui().conflict.clone() {
-            entity.update(cx, |view, cx| {
-                view.file_menu = None;
-                cx.notify();
-            });
+        for kind in Z_ORDER {
+            self.close_menu_layer(kind, cx);
         }
-        if let Some(entity) = self.ui().editor_workspace.clone() {
-            entity.update(cx, |view, cx| view.close_tree_menu(cx));
-        }
-        self.close_coauthor_menu(cx);
         cx.notify();
+    }
+
+    /// Close every menu drawn above `kind` in [`Z_ORDER`], so a layer that is
+    /// about to take the keyboard (Settings, opened into `MenuOverlay`) is
+    /// not left underneath a menu that keeps the front (#976 review). Modal
+    /// layers are not closed here: they block Settings' admission instead.
+    pub(crate) fn close_layers_above(&mut self, kind: LayerKind, cx: &mut gpui::Context<Self>) {
+        let Some(at) = Z_ORDER.iter().position(|layer| *layer == kind) else {
+            return;
+        };
+        for layer in &Z_ORDER[at + 1..] {
+            self.close_menu_layer(*layer, cx);
+        }
+        cx.notify();
+    }
+
+    /// The one closer table: how each menu layer is closed. Modal layers
+    /// have no closer here (they are answered or cancelled through their own
+    /// confirm / cancel paths).
+    fn close_menu_layer(&mut self, kind: LayerKind, cx: &mut gpui::Context<Self>) {
+        match kind {
+            LayerKind::ConflictFileMenu => {
+                if let Some(entity) = self.ui().conflict.clone() {
+                    entity.update(cx, |view, cx| {
+                        view.file_menu = None;
+                        cx.notify();
+                    });
+                }
+            }
+            LayerKind::EditorTreeMenu => {
+                if let Some(entity) = self.ui().editor_workspace.clone() {
+                    entity.update(cx, |view, cx| view.close_tree_menu(cx));
+                }
+            }
+            LayerKind::CoauthorMenu => {
+                self.close_coauthor_menu(cx);
+            }
+            LayerKind::WorkspaceMenus => {
+                self.commit_menu = None;
+                self.branch_menu = None;
+                self.stash_menu = None;
+                self.tag_menu = None;
+                self.worktree_menu = None;
+            }
+            LayerKind::MenuOverlay => self.menu_overlay = None,
+            LayerKind::PrMenu => self.with_ui(|ui| ui.pr_menu = None),
+            LayerKind::FilterMenu => self.with_ui(|ui| ui.filter_controls.menu = None),
+            LayerKind::InspectorFileMenu => self.inspector_file_menu = None,
+            LayerKind::FileMenu => self.file_menu = None,
+            LayerKind::PlatformMenu => self.platform_menu_open = None,
+            LayerKind::EarlyModal
+            | LayerKind::CommitPlan
+            | LayerKind::SmartCommit
+            | LayerKind::Update => {}
+        }
     }
 }
 

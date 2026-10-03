@@ -170,8 +170,11 @@ PR block.
 ## Known gaps (do not claim these are met)
 
 - Home's list and the Graph sidebar's panes have the row keyboard path (one
-  Tab stop, ↑/↓); the PR / Issue navigators do not. Within it, only ↑/↓
-  move: there is no Home / End / Page Up / Page Down between rows.
+  Tab stop, ↑/↓ and Home/End/PageUp/PageDown, with Cmd+↑/↓ for the ends);
+  the PR / Issue navigators do not. The commit graph pages from
+  root focus only while Graph is visible and no menu overlay or confirmation
+  modal covers it, independently of Home's row focus. Its ↑/↓ keys use
+  the same visibility guard.
 - The Graph sidebar (#981): a pane collapses only by the pointer; the
   keyboard-opened worktree card's Refresh and port link are pointer-only;
   the branch row's × and the right-click menus have no keyboard path (#985);

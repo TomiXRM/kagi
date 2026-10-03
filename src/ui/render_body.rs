@@ -42,6 +42,30 @@ impl KagiApp {
             + view.stash_graph_rows.len()
             + commit_index
     }
+    /// Collect the same center-pane gates for rendering and keyboard routing.
+    pub(super) fn workspace_inputs(
+        &self,
+        commit_panel_open: bool,
+        commit_panel_present: bool,
+        has_detail: bool,
+    ) -> workspace::WorkspaceInputs {
+        workspace::WorkspaceInputs {
+            sidebar_visible: self.sidebar.visible,
+            file_history_open: workspace::FileHistoryItem.is_open(self),
+            ecosystem_open: workspace::EcosystemItem.is_open(self),
+            branch_cleanup_open: workspace::BranchCleanupItem.is_open(self),
+            pr_mode: workspace::PrModeItem.is_open(self),
+            issues_mode: workspace::IssuesModeItem.is_open(self),
+            loading: self.loading_tab().is_some(),
+            diff_open: workspace::MainDiffItem.is_open(self),
+            commit_panel_open,
+            commit_panel_present,
+            compare_open: workspace::CompareItem.is_open(self),
+            inspector_visible: self.inspector_visible,
+            has_detail,
+            editor_mode: workspace::EditorWorkspaceItem.is_open(self),
+        }
+    }
 
     /// Body slot: sidebar | (center above bottom panel) | optional right panel.
     ///
@@ -492,27 +516,13 @@ impl KagiApp {
                     })
             });
 
-        // ADR-0120: resolve what each slot shows. The precedence lives in
-        // `workspace::resolve_workspace` (one pure, unit-tested function), not
-        // in branch ordering here — this method only routes on the result.
-        // ADR-0121 B1: the entity-backed panes' gates come from their
-        // registered items' `is_open` (same field reads, one source of truth).
-        let layout = workspace::resolve_workspace(&workspace::WorkspaceInputs {
-            sidebar_visible: self.sidebar.visible,
-            file_history_open: workspace::FileHistoryItem.is_open(self),
-            ecosystem_open: workspace::EcosystemItem.is_open(self),
-            branch_cleanup_open: workspace::BranchCleanupItem.is_open(self),
-            pr_mode: workspace::PrModeItem.is_open(self),
-            issues_mode: workspace::IssuesModeItem.is_open(self),
-            loading: self.loading_tab().is_some(),
-            diff_open: workspace::MainDiffItem.is_open(self),
+        // ADR-0120: rendering and keyboard routing resolve the same center
+        // from the same gates; precedence lives only in `resolve_workspace`.
+        let layout = workspace::resolve_workspace(&self.workspace_inputs(
             commit_panel_open,
-            commit_panel_present: commit_panel.is_some(),
-            compare_open: workspace::CompareItem.is_open(self),
-            inspector_visible: self.inspector_visible,
-            has_detail: detail.is_some(),
-            editor_mode: workspace::EditorWorkspaceItem.is_open(self),
-        });
+            commit_panel.is_some(),
+            detail.is_some(),
+        ));
 
         // #955: the side panes slide toward what the layout shows, but only
         // when their own toggle moved them; a layout change jumps. Switching

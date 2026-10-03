@@ -37,8 +37,8 @@ use std::rc::{Rc, Weak};
 
 use gpui::{
     actions, prelude::*, rgb, transparent_black, App, ClickEvent, Div, FocusHandle, KeyBinding,
-    KeyDownEvent, ListState, Role, ScrollStrategy, SharedString, Stateful, UniformListScrollHandle,
-    Window,
+    KeyDownEvent, ListOffset, ListState, Role, ScrollStrategy, SharedString, Stateful,
+    UniformListScrollHandle, Window,
 };
 
 use super::theme::theme;
@@ -48,7 +48,17 @@ actions!(
     [TabListPrev, TabListNext, TabListFirst, TabListLast]
 );
 
-actions!(kagi_row_list, [RowListPrev, RowListNext]);
+actions!(
+    kagi_row_list,
+    [
+        RowListPrev,
+        RowListNext,
+        RowListFirst,
+        RowListLast,
+        RowListPageUp,
+        RowListPageDown
+    ]
+);
 
 const ROW_CONTEXT: &str = "KagiRowList";
 
@@ -89,6 +99,12 @@ pub(crate) fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("up", RowListPrev, Some(ROW_CONTEXT)),
         KeyBinding::new("down", RowListNext, Some(ROW_CONTEXT)),
+        KeyBinding::new("home", RowListFirst, Some(ROW_CONTEXT)),
+        KeyBinding::new("end", RowListLast, Some(ROW_CONTEXT)),
+        KeyBinding::new("pageup", RowListPageUp, Some(ROW_CONTEXT)),
+        KeyBinding::new("pagedown", RowListPageDown, Some(ROW_CONTEXT)),
+        KeyBinding::new("cmd-up", RowListFirst, Some(ROW_CONTEXT)),
+        KeyBinding::new("cmd-down", RowListLast, Some(ROW_CONTEXT)),
     ]);
     cx.intercept_keystrokes(|event, _, _| {
         if event.keystroke.key == "tab" {
@@ -453,11 +469,56 @@ impl RowScroll {
     /// Scroll entry `ix` into view, as little as it takes.
     fn reveal(&self, ix: usize) {
         match self {
-            Self::List(state) => state.scroll_to_reveal_item(ix),
+            Self::List(state) => {
+                state.scroll_to_reveal_item(ix);
+                // gpui's lazy list does not yet know the height of distant
+                // items. Reveal cannot reach one until it has been measured;
+                // anchor it directly so the next layout can draw that row.
+                if state.bounds_for_item(ix).is_none() {
+                    state.scroll_to(ListOffset {
+                        item_ix: ix,
+                        offset_in_item: gpui::px(0.),
+                    });
+                }
+            }
             // Not strict: it scrolls only when the item is out of view.
             Self::Uniform(handle, _) => handle.scroll_to_item(ix, ScrollStrategy::Top),
         }
     }
+
+    /// How far Page Up / Page Down move, counted from `first`, the first row
+    /// at the top.
+    fn page_size(&self, keys: &[(String, usize)], first: usize) -> usize {
+        match self {
+            Self::List(state) => {
+                let viewport = state.viewport_bounds();
+                page(
+                    keys.iter()
+                        .skip(first)
+                        .filter_map(|(_, ix)| state.bounds_for_item(*ix))
+                        .take_while(|bounds| bounds.top() < viewport.bottom())
+                        .filter(|bounds| bounds.bottom() > viewport.top())
+                        .count(),
+                )
+            }
+            Self::Uniform(_, drawn) => uniform_page(keys, first, drawn),
+        }
+    }
+}
+
+/// A page: the rows on screen less one, at least one.
+fn page(visible: usize) -> usize {
+    visible.saturating_sub(1).max(1)
+}
+
+/// A page of a `uniform_list` that drew the items `drawn`.
+fn uniform_page(keys: &[(String, usize)], first: usize, drawn: &std::ops::Range<usize>) -> usize {
+    page(
+        keys.iter()
+            .skip(first)
+            .take_while(|(_, ix)| drawn.contains(ix))
+            .count(),
+    )
 }
 
 /// The focus handles of one virtualized list's rows and the row last focused
@@ -592,6 +653,7 @@ impl RowFocus {
             handles: self.handles.clone(),
             stop,
             scroll: scroll.clone(),
+            page_size: scroll.page_size(&self.keys, first),
         }
     }
 
@@ -688,6 +750,7 @@ pub(crate) struct RowList {
     handles: Rc<[FocusHandle]>,
     stop: Option<usize>,
     scroll: RowScroll,
+    page_size: usize,
 }
 
 impl RowList {
@@ -721,15 +784,17 @@ impl RowList {
     /// resize changes the range after the stop was picked).
     pub(crate) fn as_drawn(&self, visible: &std::ops::Range<usize>) -> RowList {
         let on = |at: usize| visible.contains(&self.rows[at].1);
-        let stop = self.stop.filter(|&at| on(at)).or_else(|| {
-            let first = self.rows.partition_point(|&(_, ix)| ix < visible.start);
-            (first < self.rows.len() && on(first)).then_some(first)
-        });
+        let first = self.rows.partition_point(|&(_, ix)| ix < visible.start);
+        let stop = self
+            .stop
+            .filter(|&at| on(at))
+            .or_else(|| (first < self.rows.len() && on(first)).then_some(first));
         RowList {
             rows: self.rows.clone(),
             handles: self.handles.clone(),
             stop,
             scroll: self.scroll.clone(),
+            page_size: uniform_page(&self.rows, first, visible),
         }
     }
 
@@ -740,22 +805,30 @@ impl RowList {
             .clone()
             .tab_index(0)
             .tab_stop(self.stop == Some(at));
-        let step = |delta: isize| {
+        let move_to = |to: usize| {
             let (rows, handles, scroll) =
                 (self.rows.clone(), self.handles.clone(), self.scroll.clone());
             move |window: &mut Window, cx: &mut App| {
-                let Some(to) = at.checked_add_signed(delta).filter(|&to| to < rows.len()) else {
-                    return;
-                };
+                let to = to.min(rows.len() - 1);
                 scroll.reveal(rows[to].1);
                 handles[to].focus(window, cx);
             }
         };
-        let (prev, next) = (step(-1), step(1));
+        let (page, last) = (self.page_size, self.rows.len() - 1);
+        let prev = move_to(at.saturating_sub(1));
+        let next = move_to(at.saturating_add(1));
+        let first = move_to(0);
+        let end = move_to(last);
+        let page_up = move_to(at.saturating_sub(page));
+        let page_down = move_to(at.saturating_add(page));
         with_ring(el.track_focus(&handle))
             .on_key_down(stop_activation_keys)
             .on_action(move |_: &RowListPrev, window, cx| prev(window, cx))
             .on_action(move |_: &RowListNext, window, cx| next(window, cx))
+            .on_action(move |_: &RowListFirst, window, cx| first(window, cx))
+            .on_action(move |_: &RowListLast, window, cx| end(window, cx))
+            .on_action(move |_: &RowListPageUp, window, cx| page_up(window, cx))
+            .on_action(move |_: &RowListPageDown, window, cx| page_down(window, cx))
     }
 }
 

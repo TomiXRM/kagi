@@ -196,6 +196,10 @@ pub fn scenario_sidebar_rows_keys(cx: &mut VisualTestAppContext) {
         message.as_deref().is_some_and(|m| m.ends_with("first")),
         "the focus stays on the stash it was on ({message:?})"
     );
+    // Home (#986's keys, through the same row list) goes to the pane's top.
+    keys(cx, window, "home");
+    let top = app.read_with(cx, |app, _| app.sidebar_row_keys_for_e2e(STASHES))[0].clone();
+    assert_eq!(focused(cx, &app, window), Some((STASHES, top)));
 
     // REMOTE empty, its header focused; a refresh brings a remote branch.
     assert_eq!(tab_to_header(cx, &app, window, REMOTE), Some(REMOTE));

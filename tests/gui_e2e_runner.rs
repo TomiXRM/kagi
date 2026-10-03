@@ -128,6 +128,9 @@ mod app_conflict;
 mod home_tab;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/commit_paging.rs"]
+mod commit_paging;
+#[cfg(target_os = "macos")]
 #[path = "recovery/home_github.rs"]
 mod home_github;
 #[cfg(target_os = "macos")]
@@ -986,6 +989,14 @@ mod macos {
             (
                 "home_rows",
                 Box::new(crate::home_rows::scenario_home_rows),
+            ),
+            (
+                "home_row_paging",
+                Box::new(crate::home_rows::scenario_home_row_paging),
+            ),
+            (
+                "commit_paging",
+                Box::new(crate::commit_paging::scenario_commit_paging),
             ),
             (
                 "home_list_place",

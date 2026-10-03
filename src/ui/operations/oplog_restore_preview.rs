@@ -250,8 +250,10 @@ pub(crate) fn render(preview: &RestoreGraphPreview) -> gpui::AnyElement {
         .flex()
         .flex_col()
         .min_h(px(0.))
-        // Six-row fixed viewport: short previews retain the same card geometry.
-        .h(theme::scaled_px(6. * graph_view::ROW_H))
+        // Fit short previews; cap long histories at six rows with independent scrolling.
+        .h(theme::scaled_px(
+            rows.len().min(6) as f32 * graph_view::ROW_H,
+        ))
         .overflow_y_scroll()
         .child(crate::ui::e2e::measure_inside("restore-preview-rows"))
         .children(rows.iter().enumerate().map(|(n, row)| {

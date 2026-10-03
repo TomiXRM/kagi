@@ -48,6 +48,20 @@ fn chip(label: impl Into<SharedString>, color: u32) -> gpui::AnyElement {
         .child(label.into())
         .into_any_element()
 }
+fn delete_chip(label: impl Into<SharedString>) -> gpui::AnyElement {
+    let color = theme().color_blocker;
+    let (bg, _, _) = theme::badge_style(color);
+    div()
+        .px_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(gpui::rgba((color << 8) | 0x99))
+        .bg(gpui::rgba(bg))
+        .text_color(rgb(color))
+        .text_xs()
+        .child(label.into())
+        .into_any_element()
+}
 
 fn ref_row(row: &RefRestore, head: Option<&str>, index: usize) -> gpui::AnyElement {
     let name = ref_name(&row.refname);
@@ -100,10 +114,10 @@ fn ref_row(row: &RefRestore, head: Option<&str>, index: usize) -> gpui::AnyEleme
             )
         })
         .when(row.restore_to.is_none(), |el| {
-            el.child(chip(
-                format!("× {}", text(OplogPanelMsg::RestoreDelete)),
-                theme().color_blocker,
-            ))
+            el.child(delete_chip(format!(
+                "× {}",
+                text(OplogPanelMsg::RestoreDelete)
+            )))
         })
         .child(crate::ui::e2e::measure_inside(format!(
             "restore-ref-{index}"

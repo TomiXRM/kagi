@@ -500,6 +500,18 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
         panic!("every target is loaded: {:?}", preview.graph)
     };
     assert!(prow.len() <= kagi_domain::restore_preview::PREVIEW_MAX_ROWS);
+    assert!(prow.len() < 6, "short preview fixture: {} rows", prow.len());
+    let list = e2e::control_bounds(window.window_id(), "restore-preview-rows")
+        .expect("short preview viewport");
+    let row_h = e2e::control_bounds(window.window_id(), "restore-preview-row-0")
+        .expect("first preview row")
+        .size
+        .height;
+    assert!(
+        (list.size.height - row_h * prow.len() as f32).abs() < gpui::px(1.),
+        "viewport should fit its {} rows: {list:?}, row height {row_h:?}",
+        prow.len()
+    );
     assert_eq!(*removed, 1, "the commit made on main after the branches");
     let main_row = prow
         .iter()

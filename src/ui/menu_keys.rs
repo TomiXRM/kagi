@@ -134,8 +134,8 @@ pub(crate) enum Step {
 pub struct RowAnchor(Rc<Cell<Option<Bounds<Pixels>>>>);
 
 impl RowAnchor {
-    /// A zero-size probe recording its parent's bounds: give it to the
-    /// selected row only.
+    /// A probe filling its parent (painting nothing), recording the parent's
+    /// bounds: give it to the selected row only.
     pub(crate) fn probe(&self) -> impl IntoElement {
         let anchor = self.0.clone();
         canvas(
@@ -198,9 +198,10 @@ impl KagiApp {
     }
 
     /// The context-menu key on the window: the selected commit's menu, below
-    /// its row. Nothing while a modal or a menu is open.
+    /// its row. Only where the arrows move the commit selection (#986's
+    /// guard): the Graph's commit list in front, no menu or modal over it.
     pub(super) fn open_context_menu_from_key(&mut self, window: &Window, cx: &mut Context<Self>) {
-        if self.active_modal.is_some() || self.any_context_menu_open() {
+        if !self.commit_list_has_focus(window, cx) {
             return;
         }
         let Some(row) = self.ui().selected else {

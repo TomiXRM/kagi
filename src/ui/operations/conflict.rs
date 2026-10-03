@@ -584,7 +584,7 @@ impl KagiApp {
 
     /// Open the integrated terminal at the repository root (ADR-0060 / T-051).
     pub fn conflict_open_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_settings_for_command();
+        self.close_settings_for_command(window, cx);
         self.bottom_panel_open = true;
         self.bottom_tab = BottomTab::Terminal;
         self.ensure_terminal(window, cx);

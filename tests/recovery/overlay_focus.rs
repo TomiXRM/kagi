@@ -744,6 +744,76 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
         "settings-closes-for-command: the opened terminal must hold the focus"
     );
 
+    // Cmd+J and View → Toggle Terminal share the bottom-panel action, not
+    // the Open in Terminal command. Closing either direction must discard
+    // Settings' saved terminal focus, even when the panel becomes hidden.
+    for panel_was_open in [true, false] {
+        if panel_was_open {
+            start_terminal(cx);
+        } else {
+            app.update(cx, |app, _| app.bottom_panel_open = false);
+            draw(cx, window);
+        }
+        open_settings(cx);
+        assert_eq!(held(cx, &app, window), Held::Trap);
+        keys(cx, window, "cmd-j");
+        draw(cx, window);
+        assert!(
+            cx.read(|cx| app.read(cx).menu_overlay.is_none()),
+            "settings-toggle-terminal: Cmd+J must close Settings (panel was open: {panel_was_open})"
+        );
+        assert_eq!(
+            cx.read(|cx| app.read(cx).bottom_panel_open),
+            !panel_was_open,
+            "settings-toggle-terminal: Cmd+J must toggle the panel"
+        );
+        keys(cx, window, "escape");
+        for _ in 0..3 {
+            draw(cx, window);
+        }
+        assert_ne!(
+            held(cx, &app, window),
+            Held::Terminal,
+            "settings-toggle-terminal: Escape must not restore a hidden terminal (panel was open: {panel_was_open})"
+        );
+        assert!(
+            cx.update_window(window, |_, window, cx| {
+                app.read(cx)
+                    .root_focus
+                    .as_ref()
+                    .is_some_and(|root| root.is_focused(window))
+            })
+            .unwrap(),
+            "settings-toggle-terminal: keys must land on the visible root after Cmd+J"
+        );
+    }
+
+    // The platform menu / palette calls the command id directly instead of
+    // dispatching the GPUI action. It must use the same toggle transition.
+    start_terminal(cx);
+    open_settings(cx);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.handle_menu_command("view.toggleTerminal", window, cx)
+        })
+    })
+    .unwrap();
+    draw(cx, window);
+    assert!(
+        cx.read(|cx| app.read(cx).menu_overlay.is_none() && !app.read(cx).bottom_panel_open),
+        "settings-toggle-terminal-menu: the command route must close Settings and the panel"
+    );
+    assert!(
+        cx.update_window(window, |_, window, cx| {
+            app.read(cx)
+                .root_focus
+                .as_ref()
+                .is_some_and(|root| root.is_focused(window))
+        })
+        .unwrap(),
+        "settings-toggle-terminal-menu: focus must stay on the visible root"
+    );
+
     // Settings' return target belongs to its opening screen. Switch to a
     // second repository without a Window-bearing command (as an async tab
     // activation can), then close Settings: the old terminal is still alive

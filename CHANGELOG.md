@@ -14,6 +14,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Operation Log の RestoreToPoint 確認カードから重複する説明文を外し、グラフを表示できないときは EN/JA とも短い状態だけを表示します。ref の移動と戻さない対象の警告、および Git の相当コマンドはそのまま表示します。旧ログの branch だけを観測した記録は tag を含む復元の根拠にせず、安全のため実行前に拒否します。Kagi 外で動いた tag は reflog が残る場合だけ検出し、同じ tag / branch をその後で Kagi が動かしても、記録外の遷移が一つでもあれば拒否します。reflog の無い tag は戻せない限界を「変更なし」行で明示します。(#953)
 - Settings を開いたままスクロールすると、背面の画面(Graph・PRs・Issues・Editor)も一緒にスクロールする問題を修正しました。Settings の背景が、背面へのマウス操作をスクロールも含めて遮るようにしました。
 - Terminal に focus がある状態で Settings を開くと、Settings の中で押した Tab が Terminal の shell に届き、Esc でも Settings が閉じない問題を修正しました。Settings を開くと focus が Settings に移り、Tab / Shift+Tab は Settings の中だけを循環します。閉じると、開く前の場所(Terminal など)に focus が戻ります。ただし開いている間に別タブへ切り替わった場合は古い Terminal ではなく新しい画面へ戻し、テーマの選択 popup を開いたまま modal が届いた場合はその modal の入力欄以外の focus をウィンドウへ移して Esc を届かせます。(#974)
+- Settings を開いたまま Cmd+J または View → Toggle Terminal で下部パネルを閉じると、Esc の後に非表示の Terminal へ focus が戻り、画面のキー操作が効かなくなる問題を修正しました。開閉どちらでも Settings を閉じ、表示中の画面に focus を戻します。(#974、#976 review)
 - Worktree 削除の確認後や削除前ステップ後に ignored ファイル・フォルダーが増えた場合、削除前に中止し、計画の再確認を促すようにしました。(#934)
 - 初期化済み、または未初期化でも gitlink のパスにローカルファイルがある worktree は Remove の計画時・実行前に削除を拒否します。空・不在の gitlink は削除可能なままとし、削除前ステップ後の拒否も EN/JA の短い toast に理由だけを表示します。(#934)
 - Remove は削除対象の worktree を開いているタブからは計画・実行前に拒否し、EN/JA の短い理由を示すようにしました。自己削除に必要だった main worktree の場所の証明と削除後の観測は、安全性に対して複雑すぎるため廃止しました。main worktree の削除も、main / linked のどちらのタブからも拒否します。(#915、#938)

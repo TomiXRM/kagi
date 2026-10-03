@@ -487,9 +487,8 @@ impl Render for KagiApp {
         );
 
         // T-BP-002: cmd-j toggle action handler.
-        let toggle_bottom_panel = cx.listener(|this, _: &ToggleBottomPanel, _window, cx| {
-            this.bottom_panel_open = !this.bottom_panel_open;
-            cx.notify();
+        let toggle_bottom_panel = cx.listener(|this, _: &ToggleBottomPanel, window, cx| {
+            this.toggle_bottom_panel(window, cx);
         });
 
         // T-WS-EDITOR-002: Cmd-S saves the Editor Workspace's dirty buffer.

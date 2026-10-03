@@ -168,14 +168,21 @@ impl KagiApp {
         }
     }
 
-    /// A command that acts on the panes behind Settings (open the terminal,
-    /// New Tab, ...) closes Settings first and drops its return target, so
-    /// the focus the command gives lands on a screen with no trap over it
-    /// (#976 review). The one path for every such command.
-    pub(super) fn close_settings_for_command(&mut self) {
+    /// A command acting on panes behind Settings closes it and discards its
+    /// return target. Move focus to the visible root as well: when a command
+    /// hides the focused terminal (rather than opening it), neither its old
+    /// handle nor Settings' now-unmounted trap may receive the next key.
+    pub(super) fn close_settings_for_command(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if matches!(self.menu_overlay, Some(MenuOverlay::Settings)) {
             self.menu_overlay = None;
             self.pending_focus = None;
+            if let Some(root) = &self.root_focus {
+                window.focus(root, cx);
+            }
         }
     }
 

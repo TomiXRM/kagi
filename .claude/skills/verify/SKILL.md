@@ -310,6 +310,13 @@ The current suite covers:
   - Pointer open: a click on `tb-settings` lands the focus on the ring-less
     container. Escape then takes it out of Settings, back to the clicked
     button.
+  - Toggle: from a focused terminal, Settings → raw Cmd+J closes both
+    Settings and the bottom panel; Escape and several frames later focus
+    remains on the visible root, not the hidden terminal. Repeat with the
+    panel initially closed to verify the opening direction and with the
+    command-id route used by the platform menu / palette. Removing the
+    Settings-close helper from the shared toggle fails
+    `settings-toggle-terminal: Cmd+J must close Settings`.
   - Checked mutations: without `.focus_trap` the wrap leaves Settings;
     without the focus on open, the focus stays on the terminal; without the
     return-focus capture, Escape does not return to the terminal; with the

@@ -316,7 +316,9 @@ pub enum Msg {
     PushNoRemote,
     PushNothing,
     StashClean,
+    StashBusy,
     PopEmpty,
+    PopBusy,
     // Legacy undo-commit disabled-reason strings (UndoDetached / UndoUnborn /
     // UndoAhead0) were removed when the toolbar Undo button was generalised to
     // operation-history undo (T-UNDOREDO-001); the headless undo-commit path in
@@ -2099,8 +2101,12 @@ impl Msg {
             (Ja, PushNothing) => "Push: nothing to push (ahead=0)",
             (En, StashClean) => "Stash: working tree is clean — nothing to stash",
             (Ja, StashClean) => "Stash: working tree is clean — nothing to stash",
+            (En, StashBusy) => "Stash: another operation is in progress",
+            (Ja, StashBusy) => "Stash: 別の操作が実行中です",
             (En, PopEmpty) => "Pop: stash is empty",
             (Ja, PopEmpty) => "Pop: stash が空です",
+            (En, PopBusy) => "Pop: another operation is in progress",
+            (Ja, PopBusy) => "Pop: 別の操作が実行中です",
             // ── Operation Undo / Redo (ADR-0081; domain words English) ──
             (En, Undo) | (Ja, Undo) => "Undo",
             (En, Redo) | (Ja, Redo) => "Redo",

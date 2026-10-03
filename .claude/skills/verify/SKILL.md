@@ -732,6 +732,25 @@ The current suite covers:
   into the single-line field: the harness types its "\n"). For Tier B: Tab
   to each list, check the ring appears only for keyboard focus, and read the
   roles in Accessibility Inspector.
+- Toolbar unavailable reasons (`KAGI_GUI_E2E_ONLY=toolbar_keyboard_reasons`,
+  `tests/recovery/toolbar_keyboard.rs`, #972): starting at the root, GPUI's
+  `focus_next` visits the rendered toolbar in visual order; an F19 key-down
+  identifies the actual focus owner. Pull / Push / Stash / Pop / Undo / Redo
+  stay AX-disabled but reachable; Enter and Space produce their localized
+  pointer-click footer reason, and the exact value passed to
+  `aria_description` is recorded by `e2e::toolbar_description`. The fixture
+  fingerprint must remain unchanged. Before adding focus stops this scenario
+  failed (none reachable); mutating Pull's description input to `None`
+  fails its AX assertion. TestDispatcher cannot prove OS Tab/VoiceOver
+  speech (the native AX tree did not expose GPUI content during the #972
+  foreground probe). Tier B on macOS with a clean one-commit repository and
+  explicit foreground permission: pointer-click unavailable Pull, Tab to
+  unavailable Push shows the focus-visible ring, and Enter changes the footer
+  to the existing no-remote reason without changing HEAD, status or stash.
+  The native `AXUIElement` query returned only the window's title-bar
+  controls (`AXGroup` for content had zero children), so actual VoiceOver
+  announcement of `aria_description` remains unobserved; do not present the
+  Tier A attribute oracle as a spoken-word measurement.
 - modal-slot arbitration (`KAGI_GUI_E2E_ONLY=push_failure_keeps_modal,merge_plan_latch,delete_branch_plan_latch,remote_browse_modal_routing`): a push failure lands behind Remote Browse without losing its input and reaches the Failed footer, an Error toast and one durable receipt — no dismiss-only AppNotice, queued or shown after Remote Browse closes (the #747 contract; #824 bisected the stale notice expectation to `e5644c6f`). Delayed Merge/Delete Branch plans wait behind Remote Browse without losing its input, stale plan state, latches, footers, or notices; a reopened Remote Browse rejects an older in-place completion by generation;
 - unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.
 - toolbar centre actions (Pull…Terminal) drawn only in Graph, not PRs/Editor/Analyze

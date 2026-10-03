@@ -545,6 +545,7 @@ impl KagiApp {
         let right_fraction = self.panel_motion.right.visible(motion_now);
 
         let mut body_row = div()
+            .id("repo-tab-panel")
             .flex()
             .flex_row()
             .flex_1()
@@ -710,7 +711,15 @@ impl KagiApp {
             );
         }
 
-        body_row
+        // The repository tab's content, named after the tab (#983). The
+        // toolbar, operation strip and status bar stay outside, as siblings
+        // on the root; Conflict Mode replaces this row and has no panel.
+        match self.tabs.get(self.active_tab) {
+            Some(tab) => {
+                super::tab_panel_a11y::tab_panel(body_row, "repo-tab-panel", tab.name.clone())
+            }
+            None => body_row,
+        }
     }
 }
 

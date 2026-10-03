@@ -1253,6 +1253,10 @@ mod macos {
                 Box::new(crate::tab_panels::scenario_tab_panels),
             ),
             (
+                "repo_tab_panels",
+                Box::new(crate::tab_panels::scenario_repo_tab_panels),
+            ),
+            (
                 "settings_scroll_stays_in_overlay",
                 Box::new(crate::overlay_focus::scenario_settings_scroll_stays_in_overlay),
             ),

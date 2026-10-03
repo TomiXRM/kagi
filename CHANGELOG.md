@@ -53,6 +53,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
+- リポジトリのタブ帯で選んだタブの中身(サイドバー・中央・右ペインの本体)と Home の本体を、支援技術に「選択中のタブの中身(tab panel)」として伝えるようにしました。名前はそのタブの名前です。toolbar とステータスバーは中身に含めません。Conflict Mode の画面はまだ tab panel ではありません。見た目は変わりません。(#983)
 - Home の「リポジトリ / Pull Request / Issue」の切り替えの下の一覧と、サイドバー上部の Graph / PRs / Issues の下のページを、支援技術に「選択中のタブの中身(tab panel)」として伝えるようにしました。名前は選択中のタブの名前(件数なし)です。Branch Cleanup などタブが選ばれていない間のページは tab panel にしません。見た目は変わりません。(#979)
 - Settings のスイッチ(Graph の表示 2 つ・自動 fetch・動きを減らす・terminal の自動ロック・Smart Commit)をキーボードと支援技術から操作できるようにしました。Tab で 1 つずつ移動し、Space / Enter で切り替えます。読み上げでは行の見出しを名前とするスイッチとして、オン / オフの状態とともに伝わります。キーボードで focus したときだけ枠が出ます。見た目とマウス操作はこれまでどおりです。(#970)
 - Home に「リポジトリ / Pull Request / Issue」の切り替え(件数付き)を追加し、全リポジトリ横断で自分が作った open な PR、自分にレビュー依頼された open な PR(依頼者のアバター付き)、自分に assign された open な Issue を一覧できるようにしました(`gh search`、各最大 100 件、それ以上あれば表示)。行をクリックすると手元の clone のタブでその PR / Issue を開き、手元に無ければ GitHub で開きます。行の右の「Open」はどの行でも GitHub で開きます。読み込み中の件数は 0 ではなく spinner で示し、一覧はリポジトリ一覧と同じくアカウントごとに保存して次回すぐに表示します。(#928、ADR-0219)

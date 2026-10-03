@@ -654,6 +654,44 @@ pub fn ensure_smart_commit_detection(app: &mut KagiApp, cx: &mut gpui::Context<K
     app.ensure_smart_commit_detection(cx);
 }
 
+/// Fetch the avatars of Home's review-request authors now, as a landed read
+/// does (#968).
+#[cfg(feature = "gui-e2e")]
+pub fn ensure_home_avatars(app: &mut KagiApp, cx: &mut gpui::Context<KagiApp>) {
+    app.ensure_home_avatars(cx);
+}
+
+/// Whether the review-request row for `item` finds its author's avatar
+/// image (else it draws the initials circle).
+#[cfg(feature = "gui-e2e")]
+pub fn home_review_avatar_shown(
+    app: &KagiApp,
+    item: &kagi_git::github_repos_cache::WorkItem,
+) -> bool {
+    app.avatars
+        .images
+        .contains_key(super::home_work_list::review_avatar_key(item).as_ref())
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static CLONE_TICKERS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The clone card's redraw tickers running now (#968).
+#[cfg(feature = "gui-e2e")]
+pub fn clone_tickers() -> usize {
+    CLONE_TICKERS.with(std::cell::Cell::get)
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn clone_ticker_started() {
+    CLONE_TICKERS.with(|n| n.set(n.get() + 1));
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn clone_ticker_ended() {
+    CLONE_TICKERS.with(|n| n.set(n.get() - 1));
+}
+
 #[cfg(feature = "gui-e2e")]
 pub fn seed_modal_list_scroll(app: &KagiApp, item: usize) {
     app.modal_list_scroll

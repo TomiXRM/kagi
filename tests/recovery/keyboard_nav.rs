@@ -183,6 +183,35 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
         })
         .unwrap();
     assert_eq!(reached, Some(0), "Tab reaches the selected mode cell");
+    // An arrow moves the focus to PRs without selecting it; then the focus
+    // goes elsewhere another way than Tab (a pointer click on another
+    // control, here the window's own focus). The next Tab must land on the
+    // selected cell again, not on the cell the arrow left (#968).
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_mode_nav_for_e2e(0, window, cx))
+    })
+    .unwrap();
+    keys(cx, window, "right");
+    assert_eq!(nav_focus(cx, &app, window), Some(1), "precondition: on PRs");
+    assert_eq!(mode(cx, &app), WorkspaceMode::Graph, "an arrow only moves");
+    let reached = cx
+        .update_window(window, |_, window, cx| {
+            let root = app.read(cx).root_focus.clone().unwrap();
+            root.focus(window, cx);
+            // The frame after the focus left, as on screen.
+            window.draw(cx).clear();
+            (0..40).find_map(|_| {
+                window.focus_next(cx);
+                window.draw(cx).clear();
+                app.read(cx).mode_nav_focused_for_e2e(window)
+            })
+        })
+        .unwrap();
+    assert_eq!(
+        reached,
+        Some(0),
+        "after the focus left another way, Tab lands on the selected mode cell"
+    );
     // The nav's top margin (`mt_1`) and the cell's padding, 4 + 4 at 1.0.
     let nav = (
         "sidebar-mode-nav",

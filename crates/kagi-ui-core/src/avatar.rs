@@ -24,11 +24,17 @@ pub type AvatarImages = HashMap<String, Arc<gpui::Image>>;
 /// not github.com's `alice`, so off github.com the key carries the host. That
 /// key has a `/` and no `@`, so it collides with neither a github.com login
 /// nor an author email. `None` is a repository identity without a host, which
-/// `gh` resolves to github.com.
+/// `gh` resolves to github.com. The host is lower-cased, as host names are
+/// case-insensitive: an image stored under `ghe.example.com` is found from
+/// an item that spells it `GHE.example.com` (#968).
 pub fn login_key<'a>(host: Option<&str>, login: &'a str) -> std::borrow::Cow<'a, str> {
     match host {
         Some(host) if !host.eq_ignore_ascii_case("github.com") => {
-            std::borrow::Cow::Owned(format!("{host}/{login}"))
+            let mut key = String::with_capacity(host.len() + 1 + login.len());
+            key.extend(host.chars().map(|c| c.to_ascii_lowercase()));
+            key.push('/');
+            key.push_str(login);
+            std::borrow::Cow::Owned(key)
         }
         _ => std::borrow::Cow::Borrowed(login),
     }
@@ -140,6 +146,11 @@ mod tests {
         assert_eq!(login_key(Some("GitHub.com"), "alice"), "alice");
         let enterprise = login_key(Some("ghe.example.com"), "alice");
         assert_eq!(enterprise, "ghe.example.com/alice");
+        assert_eq!(
+            login_key(Some("GHE.Example.com"), "alice"),
+            enterprise,
+            "the host's case does not make another key"
+        );
         assert!(
             !enterprise.contains('@'),
             "never shaped like an author email"

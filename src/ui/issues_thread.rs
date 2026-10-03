@@ -231,6 +231,12 @@ fn post(
             ),
         ))
         .children(issue_meta.map(|(_, label, color)| super::timeline_row::state_dot(label, color)));
-    super::timeline_row::row(SharedString::from(id), author, &app.avatars.images, content)
-        .into_any_element()
+    super::timeline_row::row(
+        SharedString::from(id),
+        author,
+        app.issue_repo_host(),
+        &app.avatars.images,
+        content,
+    )
+    .into_any_element()
 }

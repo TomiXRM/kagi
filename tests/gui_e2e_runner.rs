@@ -73,6 +73,10 @@ mod recovery_sidebar_panes;
 mod recovery_bottom_panel;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/bottom_panel_motion.rs"]
+mod bottom_panel_motion;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/hunk_staging.rs"]
 mod hunk_staging;
 
@@ -229,6 +233,14 @@ mod file_menu_owner;
 #[cfg(target_os = "macos")]
 #[path = "recovery/issue_write_owner.rs"]
 mod issue_write_owner;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/ghe_viewer_login.rs"]
+mod ghe_viewer_login;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/platform_menu_scroll.rs"]
+mod platform_menu_scroll;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/field_picker_owner.rs"]
@@ -1603,12 +1615,24 @@ mod macos {
                 ),
             ),
             (
+                "platform_menu_scroll",
+                Box::new(crate::platform_menu_scroll::scenario_platform_menu_scroll),
+            ),
+            (
                 "field_picker_owner",
                 Box::new(crate::field_picker_owner::scenario_field_picker_owner),
             ),
             (
                 "issue_create_fields",
                 Box::new(crate::issue_create_fields::scenario_issue_create_fields),
+            ),
+            (
+                "ghe_viewer_login",
+                Box::new(crate::ghe_viewer_login::scenario_ghe_viewer_login),
+            ),
+            (
+                "ghe_viewer_login_closed_only",
+                Box::new(crate::ghe_viewer_login::scenario_ghe_viewer_login_closed_only),
             ),
             (
                 "workspace_mode_toolbar",
@@ -1626,6 +1650,10 @@ mod macos {
             (
                 "bottom_panel_nested",
                 Box::new(crate::recovery_bottom_panel::scenario_bottom_panel_nested),
+            ),
+            (
+                "bottom_panel_motion",
+                Box::new(crate::bottom_panel_motion::scenario_bottom_panel_motion),
             ),
             ("graph_copy", Box::new(scenario_graph_copy)),
             (

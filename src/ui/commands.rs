@@ -225,8 +225,7 @@ pub struct MenuSection {
     pub items: &'static [MenuNode],
     /// macOS-only section (relies on the responder chain).  Linux skips it
     /// entirely — see ADR-0085 §4 (the intentional Edit-menu OS difference).
-    /// Only read by `linux_menu_sections` (dead on non-Linux targets).
-    #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
+    /// Read by `linux_menu_sections`.
     pub mac_only: bool,
 }
 
@@ -372,7 +371,6 @@ pub const MENU_BAR: &[MenuSection] = &[
 /// minus the `mac_only` sections (the Edit menu — ADR-0085 §3/§4).  Heads and
 /// the open dropdown both iterate this so their indices (and the dropdown's
 /// left offset) stay aligned.
-#[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
 pub fn linux_menu_sections() -> impl Iterator<Item = &'static MenuSection> {
     MENU_BAR.iter().filter(|s| !s.mac_only)
 }
@@ -380,7 +378,6 @@ pub fn linux_menu_sections() -> impl Iterator<Item = &'static MenuSection> {
 /// The ordered language command ids, as they appear under View → Language.
 /// Used by the Linux dropdown to inline-expand `DynSubmenu::Language` (macOS
 /// nests [`lang_submenu`] instead).  These mirror the registry's `lang.*` ids.
-#[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
 pub const LANG_COMMAND_IDS: &[&str] = &["lang.english", "lang.japanese"];
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1332,7 +1329,6 @@ pub fn register_keybindings(cx: &mut App) {
 /// a `Ctrl+Shift+O`-style label so the menu shows what the user must actually
 /// press. (The macOS native menu derives its accelerator from the keymap, so it
 /// does not go through here.)
-#[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
 pub fn display_keystroke(ks: &str) -> String {
     // Peel the key (last segment) off the modifiers. The key itself may be "-"
     // (zoom out, written "secondary--"), so handle that trailing case first.

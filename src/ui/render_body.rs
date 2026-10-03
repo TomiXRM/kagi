@@ -541,11 +541,13 @@ impl KagiApp {
         // precedence is unchanged — it stays in `resolve_workspace`. The
         // non-entity contents (Loading placeholder / CommitList) keep plain
         // arms until B2 migrates them.
-        let panel_open = self.bottom_panel_open;
+        let panel_visible = self
+            .bottom_motion
+            .visible(super::bottom_panel_motion::now());
         let panel_height = self.bottom_panel_height;
         let panel_tab = self.bottom_tab;
         let mut bottom_panel = self
-            .render_bottom_panel_slot(panel_open, panel_height, panel_tab, cx)
+            .render_bottom_panel_slot(panel_visible, panel_height, panel_tab, cx)
             .map(|panel| panel.into_any_element());
         // These takeovers render their own side panes. Their actual center
         // consumes the panel; only the other modes place it in the outer row.

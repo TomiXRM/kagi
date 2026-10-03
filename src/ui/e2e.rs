@@ -810,6 +810,8 @@ pub fn active_ui_writer_available(app: &mut KagiApp) -> bool {
 #[cfg(feature = "gui-e2e")]
 thread_local! {
     static OPENED_URLS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static PANEL_MOTION_CLOCK: std::cell::Cell<Option<std::time::Instant>> =
+        const { std::cell::Cell::new(None) };
 }
 
 /// A URL Kagi asked the OS to open, recorded instead of launching the
@@ -823,4 +825,16 @@ pub(crate) fn record_opened_url(url: &str) {
 #[cfg(feature = "gui-e2e")]
 pub fn take_opened_urls() -> Vec<String> {
     OPENED_URLS.with(|urls| std::mem::take(&mut *urls.borrow_mut()))
+}
+
+/// Drive the bottom panel's motion from a stand-in clock (#950); `None`
+/// returns to the runner's default, where the panel jumps to its end.
+#[cfg(feature = "gui-e2e")]
+pub fn set_panel_motion_clock(now: Option<std::time::Instant>) {
+    PANEL_MOTION_CLOCK.with(|clock| clock.set(now));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn panel_motion_clock() -> Option<std::time::Instant> {
+    PANEL_MOTION_CLOCK.with(|clock| clock.get())
 }

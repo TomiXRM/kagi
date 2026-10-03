@@ -459,6 +459,17 @@ impl Render for KagiApp {
 
         // The footer keeps its window-wide bottom-panel toggle.
         let bottom_panel_open = self.bottom_panel_open;
+        // #950: the panel slides toward `bottom_panel_open`, whoever set it;
+        // keep drawing frames until it arrives.
+        let motion_now = super::bottom_panel_motion::now();
+        self.bottom_motion.sync(
+            bottom_panel_open,
+            motion_now,
+            super::bottom_panel_motion::instant(),
+        );
+        if self.bottom_motion.animating(motion_now) {
+            window.request_animation_frame();
+        }
 
         // T-BP-002: cmd-j toggle action handler.
         let toggle_bottom_panel = cx.listener(|this, _: &ToggleBottomPanel, _window, cx| {

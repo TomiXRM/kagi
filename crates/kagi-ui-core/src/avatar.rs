@@ -18,6 +18,22 @@ use gpui::{hsla, Hsla};
 /// `Arc<AvatarImages>` snapshots, sharing the map rather than copying its keys.
 pub type AvatarImages = HashMap<String, Arc<gpui::Image>>;
 
+/// The [`AvatarImages`] key for the GitHub `login` on `host` (#906).
+///
+/// A login is unique only on its own server: `alice` on an Enterprise host is
+/// not github.com's `alice`, so off github.com the key carries the host. That
+/// key has a `/` and no `@`, so it collides with neither a github.com login
+/// nor an author email. `None` is a repository identity without a host, which
+/// `gh` resolves to github.com.
+pub fn login_key<'a>(host: Option<&str>, login: &'a str) -> std::borrow::Cow<'a, str> {
+    match host {
+        Some(host) if !host.eq_ignore_ascii_case("github.com") => {
+            std::borrow::Cow::Owned(format!("{host}/{login}"))
+        }
+        _ => std::borrow::Cow::Borrowed(login),
+    }
+}
+
 // ──────────────────────────────────────────────────────────────
 // FNV-1a hash (32-bit)
 // ──────────────────────────────────────────────────────────────
@@ -116,6 +132,19 @@ pub fn avatar_initials(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn login_keys_separate_enterprise_users_from_github_com_and_emails() {
+        assert_eq!(login_key(None, "alice"), "alice");
+        assert_eq!(login_key(Some("github.com"), "alice"), "alice");
+        assert_eq!(login_key(Some("GitHub.com"), "alice"), "alice");
+        let enterprise = login_key(Some("ghe.example.com"), "alice");
+        assert_eq!(enterprise, "ghe.example.com/alice");
+        assert!(
+            !enterprise.contains('@'),
+            "never shaped like an author email"
+        );
+    }
 
     // ── avatar_color tests ───────────────────────────────────
 

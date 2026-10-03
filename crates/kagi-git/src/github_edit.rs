@@ -361,15 +361,17 @@ fn owner_repo(base_repo: &str) -> Option<String> {
 /// (#904 review): an API path drops the host, and without `--hostname`
 /// `gh api` asks github.com — the wrong server for an Enterprise repository.
 /// `None` for a host-less `owner/repo`, which `gh` resolves to its default.
-/// Pure; unit-tested.
-pub fn repo_host(base_repo: &str) -> Option<String> {
-    let parts: Vec<&str> = base_repo
+/// Borrows, so a renderer can ask per row without allocating (#906). Pure;
+/// unit-tested.
+pub fn repo_host(base_repo: &str) -> Option<&str> {
+    let mut parts = base_repo
         .trim()
         .trim_matches('/')
-        .split('/')
-        .filter(|p| !p.is_empty())
-        .collect();
-    (parts.len() >= 3).then(|| parts[parts.len() - 3].to_string())
+        .rsplit('/')
+        .filter(|p| !p.is_empty());
+    parts.next()?;
+    parts.next()?;
+    parts.next()
 }
 
 /// Sort case-insensitively (a picker reads alphabetically, and GitHub's own
@@ -468,7 +470,7 @@ fn assignable_users_args(repo: &str) -> Result<Vec<String>, GitError> {
     let mut args = vec!["api".to_string(), "--paginate".to_string()];
     if let Some(host) = repo_host(repo) {
         args.push("--hostname".to_string());
-        args.push(host);
+        args.push(host.to_string());
     }
     args.extend([
         format!("repos/{path}/assignees"),
@@ -635,10 +637,7 @@ mod tests {
             ]),
             "a host-less identity leaves the host to gh"
         );
-        assert_eq!(
-            repo_host("github.com/acme/widgets").as_deref(),
-            Some("github.com")
-        );
+        assert_eq!(repo_host("github.com/acme/widgets"), Some("github.com"));
         assert_eq!(repo_host("acme/widgets"), None);
     }
 

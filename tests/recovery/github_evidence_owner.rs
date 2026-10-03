@@ -141,9 +141,11 @@ pub fn scenario_github_evidence_restores(cx: &mut VisualTestAppContext) {
     // own text across the hairline under it (user report), so the row must be
     // at least as tall as what it contains.
     // INBOX keeps what is broken or ready *for the viewer*, so the row only
-    // exists once the app knows whose PRs these are - the fixture's author.
+    // exists once the app knows whose PRs these are - the fixture's author,
+    // as the login on the PR's own host (#906).
     app.update(cx, |app, cx| {
-        app.github_login = Some("alice".to_string());
+        app.github_host_logins
+            .insert(Some("github.com".to_string()), "alice".to_string());
         app.show_pr_mode(cx);
     });
     e2e::clear_control_bounds(window.window_id(), "pr-mode-card-101");

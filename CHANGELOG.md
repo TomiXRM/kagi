@@ -10,6 +10,17 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Settings を開いたままスクロールすると、背面の画面(Graph・PRs・Issues・Editor)も一緒にスクロールする問題を修正しました。Settings の背景が、背面へのマウス操作をスクロールも含めて遮るようにしました。
 - Worktree 削除の確認後や削除前ステップ後に ignored ファイル・フォルダーが増えた場合、削除前に中止し、計画の再確認を促すようにしました。(#934)
 - 初期化済み、または未初期化でも gitlink のパスにローカルファイルがある worktree は Remove の計画時・実行前に削除を拒否します。空・不在の gitlink は削除可能なままとし、削除前ステップ後の拒否も EN/JA の短い toast に理由だけを表示します。(#934)
+- Remove は削除対象の worktree を開いているタブからは計画・実行前に拒否し、EN/JA の短い理由を示すようにしました。自己削除に必要だった main worktree の場所の証明と削除後の観測は、安全性に対して複雑すぎるため廃止しました。main worktree の削除も、main / linked のどちらのタブからも拒否します。(#915、#938)
+- 存続する別タブからの recorded Remove は実行元の HEAD と共有 ref の前後を観測します。branch 維持は `Some(空)`、branch 削除は OID 差分を記録し、RestoreToPoint でも利用します。削除前ステップで実行元の checkout が変わった場合は HEAD 移動も記録し、その記録を越える RestoreToPoint を拒否します。(#915、#938)
+- bare repository を common dir とする複数の linked worktree でも、linked 側から別の linked worktree を Remove できます。削除前 copy / symlink ステップの入力元は bare / non-bare を問わず実行元の checkout とし、`--separate-git-dir` の common dir から推測した main を使いません。recorded Remove は存続する実行元から ref を読みます。(#915、#938)
+- Remove 対象のディレクトリ内に別の登録済み worktree がある場合は、実行元のタブを問わず計画・実行前・削除直前に拒否します。ignored フォルダー内の未バックアップのファイルも保護します。(#915、#938)
+- `--separate-git-dir` で common dir が削除対象 worktree の中にある場合は、main workdir が別の場所でも Remove を計画・実行前・削除直前に拒否し、共通 ODB / refs を保護します。削除境界では実行元の workdir、common dir、および common repository の main workdir がある場合はその場所を保護します。(#915、#938)
+- GitHub Enterprise の repository で、Issues の「Assigned to me / Created by me」と PR の Mine などの判定に github.com のアカウントを使っていた問題を修正しました。repository のサーバーでのアカウントで判定し、それがまだ分からない間は件数を「—」にして、空だとは表示しません。Enterprise のユーザーのアバターも、github.com の同名ユーザーではなく、そのサーバーから取得します。(#906)
+- New Issue の本文エディタが Tab を字下げとして取り込み、キーボードだけでは下のラベル・担当者・Create へ進めなかった問題を修正しました。Issue の本文エディタ(新規・返信)でも Tab / Shift+Tab でフォーカスが移動し、字下げは Cmd+] / Cmd+[(Linux / Windows は Ctrl+] / Ctrl+[)で行えます。(#909)
+- Linux / FreeBSD の View メニューで、テーマ一覧がウィンドウの下へはみ出し、後半のテーマや言語の項目を選べなかった問題を修正しました。メニューの高さをウィンドウ内に収め、入りきらない項目はメニューの中でスクロールして選べます。(#935)
+- Operation Log で行を開いたときの詳細が「before: branch: maindirty: cleanafter: …」のように 1 行につながって表示されていた問題を修正しました。before / dirty / after などを 1 項目ずつ改行して表示します。(#908)
+- Operation Log の操作者の表示を、日本語表示でも「人」ではなく「Human」にしました(CLI / MCP と同じく英語の表記)。(#908)
+- Inspector の commit 本文で、箇条書きなど改行で区切られた行が「- bump the version- tag the release」のように 1 行につながって表示されていた問題を修正しました。本文の改行どおりに 1 行ずつ表示します。(#946)
 
 ### Changed
 
@@ -18,6 +29,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Graph で行を選択しているとき、Esc で選択を解除できるようにしました(右側の commit 詳細も閉じます)。メニューや diff、確認画面が開いている場合は、従来どおりそちらが先に閉じます。
 - Terminal / Operation Log / Activity の下部パネルをウィンドウ全幅から main pane の下部へ移しました。開くと main の内容だけが縮み、サイドバーと右側の Inspector / Commit Panel に加え Editor の file tree / hunks と PR / Issues の navigator（PR の swimlane も）はステータスバーまで表示されます。従来の高さ変更、Cmd-J、タブ切替、Conflict 画面での非表示は維持します。（ADR-0007）
 - Home の見出しの下にあった説明文(「最近開いたリポジトリを選ぶか、フォルダーを開くか、SSH で接続します。」)を削除しました。見出しとボタンはそのままです。
+- Cmd+J の下部パネル(Terminal / Operation Log / Activity)を、高さのアニメーションで出し入れするようにしました(開く 180ms ease-out、閉じる 150ms ease-in)。途中でもう一度押すと、その位置から逆向きに戻ります。動く間も Terminal の行数・桁数は変わりません。「動きを減らす」が有効なら即座に切り替わります。(#950)
 
 ### Added
 

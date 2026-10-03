@@ -234,7 +234,9 @@ control says in the PR why the existing part did not fit.
 
 **An agent verifies UI changes itself — "not verified in the GUI" is not a finished
 state.** `scripts/pidclick.swift` launches and drives the real app without taking
-the user's pointer or foreground, and `screencapture -l<window id>` photographs it.
+the user's pointer or foreground, `scripts/pidcursor.swift` (built next to it) shows
+where it acts with an agent cursor just above that one window, and
+`screencapture -l<window id>` photographs it.
 So every change to what the user sees ends with: run Tier B, attach screenshots to
 the PR, and ask the user to look at them. Do not stop and wait to be told to.
 

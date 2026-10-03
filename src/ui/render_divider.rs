@@ -27,6 +27,23 @@ impl KagiApp {
         // to logical space (divide by zoom) before clamping/storing, and
         // interpret the 4px divider's 2px half-offset in scaled space too.
         let z = theme::zoom();
+        // #957 review: while a pane slides, its divider (and the Graph's
+        // column dividers, which follow the sidebar's edge) is not where the
+        // saved size puts it, so the formulas below would turn the cursor
+        // into the wrong size. Ignore the drag until the pane settles; the
+        // next move after that is absolute again, so nothing jumps.
+        let now = super::panel_motion::now();
+        let sliding = match drag.kind {
+            DividerKind::Sidebar | DividerKind::BadgeCol | DividerKind::GraphCol => {
+                self.panel_motion.sidebar.animating(now)
+            }
+            DividerKind::Panel => self.panel_motion.right.animating(now),
+            DividerKind::BottomPanel => self.panel_motion.bottom.animating(now),
+            _ => false,
+        };
+        if sliding {
+            return;
+        }
         match drag.kind {
             DividerKind::Sidebar | DividerKind::PrModeLeft => {
                 // Divider sits at x = sidebar_width * zoom; centre on cursor.

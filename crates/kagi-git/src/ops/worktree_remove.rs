@@ -52,6 +52,9 @@ pub fn plan_remove_worktree(
     let (branch, dirt) = worktree_branch_and_dirt(&wt);
 
     let mut blockers = Vec::new();
+    if let Some(blocker) = nested_registered_worktree(repo, name, &path)? {
+        blockers.push(blocker);
+    }
     if has_submodule_content(&wt)? {
         blockers.push(PlanNote::Worktree(WorktreeNote::RemoveContainsSubmodules));
     }
@@ -97,6 +100,79 @@ pub fn plan_remove_worktree(
     });
 
     admin_plan(repo, title, warnings, blockers, recovery, true)
+}
+
+/// A target may contain another registered worktree under an ignored
+/// directory. Its files are not in the target's dirty status or backups.
+/// Ignore only the target's own registration; protect every other linked
+/// worktree, including the manager, and the main worktree when present.
+fn nested_registered_worktree(
+    repo: &Repository,
+    name: &str,
+    target_path: &Path,
+) -> Result<Option<PlanNote>, GitError> {
+    let target = std::fs::canonicalize(target_path)
+        .map_err(|e| GitError::Other(format!("cannot resolve removal target: {e}")))?;
+    let names = repo
+        .worktrees()
+        .map_err(|e| GitError::Other(format!("cannot list registered worktrees: {e}")))?;
+    for registered in names.iter() {
+        let registered = registered
+            .map_err(|e| GitError::Other(format!("cannot read registered worktree name: {e}")))?
+            .ok_or_else(|| GitError::Other("invalid registered worktree name".into()))?;
+        if registered == name {
+            continue;
+        }
+        let other = repo
+            .find_worktree(registered)
+            .map_err(|e| GitError::Other(format!("cannot inspect registered worktree: {e}")))?;
+        let path = match std::fs::canonicalize(other.path()) {
+            Ok(path) => path,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => other.path().to_path_buf(),
+            Err(e) => {
+                return Err(GitError::Other(format!(
+                    "cannot resolve registered worktree: {e}"
+                )));
+            }
+        };
+        if path.starts_with(&target) {
+            return Ok(Some(PlanNote::Worktree(
+                WorktreeNote::RemoveContainsWorktree {
+                    path: path.display().to_string(),
+                },
+            )));
+        }
+    }
+    let main = Repository::open(repo.commondir())
+        .map_err(|e| GitError::Other(format!("cannot open common repository: {e}")))?;
+    if let Some(workdir) = main.workdir() {
+        let path = std::fs::canonicalize(workdir)
+            .map_err(|e| GitError::Other(format!("cannot resolve main worktree: {e}")))?;
+        if path.starts_with(&target) {
+            return Ok(Some(PlanNote::Worktree(
+                WorktreeNote::RemoveContainsWorktree {
+                    path: path.display().to_string(),
+                },
+            )));
+        }
+    }
+    Ok(None)
+}
+
+/// Re-check the same registered paths before hooks and immediately before
+/// deletion. A newly nested worktree must stop even when the target stays
+/// clean because its parent directory is ignored.
+pub(crate) fn preflight_remove_nested_worktrees(
+    repo: &Repository,
+    name: &str,
+) -> Result<(), GitError> {
+    let wt = repo
+        .find_worktree(name)
+        .map_err(|e| GitError::Other(format!("cannot inspect removal target: {e}")))?;
+    if let Some(blocker) = nested_registered_worktree(repo, name, wt.path())? {
+        return Err(GitError::Blocked(Box::new(blocker)));
+    }
+    Ok(())
 }
 
 /// A populated gitlink path is not safe to remove, even when the submodule is
@@ -312,6 +388,7 @@ pub(crate) fn execute_remove_worktree_progress(
         )));
     }
     preflight_remove_submodules(repo, name)?;
+    preflight_remove_nested_worktrees(repo, name)?;
 
     // Capture the ref before any pre-remove hook. The hook is allowed to take
     // time, so deleting whichever commit the branch points at afterwards would
@@ -382,6 +459,7 @@ pub(crate) fn execute_remove_worktree_progress(
     // with the counts the user actually confirmed.
     ensure_ignored_content_not_increased(&wt, plan)?;
     preflight_remove_submodules(repo, name)?;
+    preflight_remove_nested_worktrees(repo, name)?;
 
     // Containment-checked recursive delete (the ONLY sanctioned one).
     progress.stage = Stage::DeletionStarted;
@@ -726,6 +804,96 @@ mod tests {
             "worktree must survive when the pre_remove command fails"
         );
 
+        std::env::remove_var("KAGI_LOG_DIR");
+    }
+
+    /// A trusted pre-remove command can register a new worktree after
+    /// preflight. Recheck immediately before recursive deletion: the ignored
+    /// directory was present at plan time, so its count has not grown.
+    #[test]
+    fn pre_remove_nested_worktree_survives_final_deletion_guard() {
+        if std::env::var_os("KAGI_REMOVE_NESTED_UNIT_CHILD").is_none() {
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "ops::worktree_remove::tests::pre_remove_nested_worktree_survives_final_deletion_guard",
+                    "--nocapture",
+                ])
+                .env("KAGI_REMOVE_NESTED_UNIT_CHILD", "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        use crate::ops::{load_worktree_config, trust_worktree_config};
+        let store = tempfile::tempdir().unwrap();
+        std::env::set_var("KAGI_LOG_DIR", store.path());
+        for key in ["KAGI_OPEN_REPO", "KAGI_MENU_DUMP", "KAGI_SELECT_FIRST"] {
+            std::env::remove_var(key);
+        }
+        let td = tempfile::tempdir().unwrap();
+        let main = td.path().join("main");
+        std::fs::create_dir(&main).unwrap();
+        git(&main, &["init", "-q", "-b", "main"]);
+        std::fs::write(main.join("README.md"), "unbacked bytes\n").unwrap();
+        std::fs::write(main.join(".gitignore"), "nested/\n").unwrap();
+        let outer = td.path().join("outer");
+        let inner = outer.join("nested/inner");
+        std::fs::create_dir(main.join(".kagi")).unwrap();
+        let config = format!(
+            "[[pre_remove]]\ntype = \"command\"\nrun = \"git -C {} worktree add -q -b inner {}\"\n\
+             [[pre_remove]]\ntype = \"command\"\nrun = \"cp README.md nested/inner/untracked.txt\"\n",
+            main.display(),
+            inner.display()
+        );
+        std::fs::write(main.join(".kagi/worktree.toml"), config).unwrap();
+        git(&main, &["add", "."]);
+        git(&main, &["commit", "-qm", "base"]);
+        git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "outer",
+                outer.to_str().unwrap(),
+            ],
+        );
+        std::fs::create_dir(outer.join("nested")).unwrap();
+        std::fs::write(outer.join("nested/seed"), "ignored seed\n").unwrap();
+        let cfg = load_worktree_config(&outer).unwrap().unwrap();
+        trust_worktree_config(&cfg).unwrap();
+        let repo = Repository::open(&main).unwrap();
+        let plan = plan_remove_worktree(&repo, "outer", false).unwrap();
+        assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+        assert_eq!(
+            ignored_content_counts(&repo.find_worktree("outer").unwrap()).unwrap(),
+            (0, 1)
+        );
+        let error = execute_remove_worktree(&repo, &plan, "outer", false)
+            .expect_err("a newly registered inner worktree must stop deletion");
+        assert!(
+            matches!(
+                error,
+                GitError::Blocked(note)
+                    if matches!(
+                        *note,
+                        PlanNote::Worktree(WorktreeNote::RemoveContainsWorktree { .. })
+                    )
+            ),
+            "expected nested registered worktree blocker"
+        );
+        assert_eq!(
+            std::fs::read_to_string(inner.join("untracked.txt")).unwrap(),
+            "unbacked bytes\n"
+        );
+        assert!(outer.exists() && repo.find_worktree("inner").is_ok());
         std::env::remove_var("KAGI_LOG_DIR");
     }
 }

@@ -848,6 +848,134 @@ fn remove_plan_without_ignored_content_has_no_ignored_warning() {
     );
 }
 
+/// An ignored directory can hide a different registered linked worktree.
+/// Refusing the outer removal preserves that inner worktree's untracked bytes.
+#[test]
+fn remove_plan_blocks_nested_registered_worktree_from_every_tab() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let main = TempDir::new().unwrap();
+    build_repo(&main);
+    write_file(main.path(), ".gitignore", "nested/\n");
+    git(main.path(), &["add", ".gitignore"]);
+    git(main.path(), &["commit", "-qm", "ignore nested worktree"]);
+    let dirs = TempDir::new().unwrap();
+    let outer = dirs.path().join("outer");
+    git(
+        main.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "outer",
+            outer.to_str().unwrap(),
+        ],
+    );
+    let inner = outer.join("nested/inner");
+    std::fs::create_dir_all(inner.parent().unwrap()).unwrap();
+    git(
+        main.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "inner",
+            inner.to_str().unwrap(),
+        ],
+    );
+    write_file(&inner, "untracked.txt", "never discard this\n");
+
+    let expected_path = inner.canonicalize().unwrap();
+    for manager in [main.path(), inner.as_path()] {
+        let repo = Repository::open(manager).unwrap();
+        let plan = plan_remove_worktree(&repo, "outer", false).expect("plan");
+        assert!(
+            plan.blockers.iter().any(|note| matches!(
+                note,
+                PlanNote::Worktree(WorktreeNote::RemoveContainsWorktree { path })
+                    if Path::new(path) == expected_path
+            )),
+            "outer contains a registered inner worktree: {:?}",
+            plan.blockers
+        );
+        assert_eq!(
+            std::fs::read_to_string(inner.join("untracked.txt")).unwrap(),
+            "never discard this\n"
+        );
+    }
+}
+
+/// Registering the inner worktree after confirmation must block recorded
+/// preflight even though ignored-directory counts and outer status stay fixed.
+#[test]
+fn remove_preflight_blocks_new_nested_registered_worktree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let main = TempDir::new().unwrap();
+    build_repo(&main);
+    write_file(main.path(), ".gitignore", "nested/\n");
+    git(main.path(), &["add", ".gitignore"]);
+    git(main.path(), &["commit", "-qm", "ignore nested worktree"]);
+    let dirs = TempDir::new().unwrap();
+    let outer = dirs.path().join("outer");
+    git(
+        main.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "outer",
+            outer.to_str().unwrap(),
+        ],
+    );
+    std::fs::create_dir(outer.join("nested")).unwrap();
+    write_file(&outer, "nested/seed", "ignored directory already present\n");
+    let plan = kagi_git::Backend::plan_recorded_remove(main.path(), "outer", false).unwrap();
+    assert!(
+        plan.preview.blockers.is_empty(),
+        "{:?}",
+        plan.preview.blockers
+    );
+    assert_eq!(ignored_counts(&plan.preview.warnings), vec![(0, 1)]);
+
+    let inner = outer.join("nested/inner");
+    git(
+        main.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "inner",
+            inner.to_str().unwrap(),
+        ],
+    );
+    write_file(&inner, "untracked.txt", "never discard this\n");
+    let current =
+        plan_remove_worktree(&Repository::open(main.path()).unwrap(), "outer", false).unwrap();
+    assert_eq!(ignored_counts(&current.warnings), vec![(0, 1)]);
+    let report = kagi_git::Backend::run_recorded_remove(&plan, kagi_git::oplog::Actor::Human, None);
+    assert!(matches!(
+        report.blocker,
+        Some(PlanNote::Worktree(
+            WorktreeNote::RemoveContainsWorktree { .. }
+        ))
+    ));
+    assert!(matches!(
+        report.recording.entry().outcome,
+        kagi_git::oplog::OpOutcome::Refused { .. }
+    ));
+    assert_eq!(
+        std::fs::read_to_string(inner.join("untracked.txt")).unwrap(),
+        "never discard this\n"
+    );
+}
+
 /// Main is never removable from either its own management tab or a linked tab.
 /// The executor must reject even when a caller presents a blocked plan.
 #[test]

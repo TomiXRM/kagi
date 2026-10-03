@@ -217,12 +217,20 @@ impl Backend {
             // The target may have initialized a submodule since the plan was
             // confirmed. Surface the short typed blocker before trust or steps.
             ops::preflight_remove_submodules(&backend.repo, &plan.name)?;
-            // Re-plan target dirt/lock before any trust write or hook.
-            if !backend
-                .plan_remove_worktree(&plan.name, plan.delete_branch)?
-                .blockers
-                .is_empty()
-            {
+            // Re-plan before trust or hooks. Preserve the typed nested-worktree
+            // blocker so the UI can explain why a once-safe removal is refused.
+            let current = backend.plan_remove_worktree(&plan.name, plan.delete_branch)?;
+            if let Some(blocker) = current.blockers.iter().find(|note| {
+                matches!(
+                    note,
+                    PlanNote::Worktree(
+                        kagi_domain::plan_note::WorktreeNote::RemoveContainsWorktree { .. }
+                    )
+                )
+            }) {
+                return Err(GitError::Blocked(Box::new(blocker.clone())));
+            }
+            if !current.blockers.is_empty() {
                 return Err(io("remove-worktree target changed after plan"));
             }
             // The re-plan above checks blockers, not the ignored counts that

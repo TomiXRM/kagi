@@ -110,6 +110,9 @@ pub enum WorktreeNote {
     /// blocker — a tracked gitlink has a populated checkout or local content.
     /// Even uninitialized submodules can contain files Git status omits.
     RemoveContainsSubmodules,
+    /// blocker (#938): a different registered worktree is inside the target
+    /// directory; recursive removal would delete its unbacked-up content.
+    RemoveContainsWorktree { path: String },
     /// warning (`plan_lock_worktree`) — describes the lock about to be placed.
     LocksWorktree {
         path: String,
@@ -308,6 +311,9 @@ impl WorktreeNote {
                 "Ignored content grew. Review and confirm again.".to_string()
             }
             WorktreeNote::RemoveContainsSubmodules => "Contains submodules".to_string(),
+            WorktreeNote::RemoveContainsWorktree { path } => {
+                format!("Registered worktree at '{path}' is inside the removal target.")
+            }
             WorktreeNote::RemovesWorktree {
                 path,
                 branch,

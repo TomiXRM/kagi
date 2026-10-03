@@ -227,6 +227,17 @@ need a capacity scan just to populate a hidden row.
   Refusal does not delete the worktree, submodule files or branch; an approved
   `pre_remove` step may already have changed files when the refusal occurs.
 
+- #938: Remove の削除対象内に**別の登録済み worktree**（main を含む）
+  がある場合、実行元の worktree に関係なく typed EN/JA blocker で拒否する。
+  対象自身の登録だけは除くため、対象自身のタブからの Remove は許可する。
+  Git の登録パスを列挙・正規化して確認し、読み取りに失敗した場合は削除しない。
+  同じ判定を plan、承認後の preflight、`pre_remove` とバックアップを
+  終えた recursive delete の直前に行う。ignored フォルダーが既にある場合、
+  内側の worktree を後から作っても ignored 件数は増えず、既存の dirty /
+  ignored / main-root チェックだけでは内側の未バックアップの内容を守れない。
+  preflight の拒否は Refused、`pre_remove` 後の拒否は Partial receipt
+  として oplog に詳細を保ち、内側・外側の worktree と branch を削除しない。
+
 Pure verdict tests and filesystem/Git fixtures cover evidence precedence,
 hardlinks, symlinks, ignored allocation and cancellation. The focused native
 `worktree_inspection` scenario uses real pushed/dirty/locked/detached worktrees,

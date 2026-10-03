@@ -155,6 +155,9 @@ pub fn note_ja(note: &WorktreeNote) -> String {
         WorktreeNote::RemoveContainsSubmodules => {
             "submodule を含むため削除できません".to_string()
         }
+        WorktreeNote::RemoveContainsWorktree { path } => {
+            format!("削除対象に登録済み worktree（{path}）が含まれます。")
+        }
         WorktreeNote::RemovesWorktree {
             path,
             branch,

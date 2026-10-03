@@ -12,6 +12,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - 初期化済み、または未初期化でも gitlink のパスにローカルファイルがある worktree は Remove の計画時・実行前に削除を拒否します。空・不在の gitlink は削除可能なままとし、削除前ステップ後の拒否も EN/JA の短い toast に理由だけを表示します。(#934)
 - 削除対象 worktree 自身のタブから Remove しても共通 repository で ref の前後を観測し、branch 維持は `Some(空)`、branch 削除は OID 差分を記録します。RestoreToPoint がこの記録を越えられ、main worktree の削除は main / linked のどちらのタブからも拒否されます。(#915)
 - bare repository を common dir とする複数の linked worktree でも、linked 側から別の linked worktree を Remove できます。削除の境界は bare common dir を守り、削除前ステップの入力元は実行元の linked worktree に保ちます。recorded Remove は bare common dir から ref を読み、branch 維持を `Some(空)`、branch 削除を OID 差分として記録します。(#915)
+- Remove 対象のディレクトリ内に別の登録済み worktree がある場合は、実行元のタブを問わず計画・実行前・削除直前に拒否します。ignored フォルダー内の未バックアップのファイルも保護し、削除対象自身のタブからの Remove は引き続き可能です。(#915、#938)
 - Linux / FreeBSD の View メニューで、テーマ一覧がウィンドウの下へはみ出し、後半のテーマや言語の項目を選べなかった問題を修正しました。メニューの高さをウィンドウ内に収め、入りきらない項目はメニューの中でスクロールして選べます。(#935)
 
 ### Changed

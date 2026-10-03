@@ -252,12 +252,12 @@ fn render_row(
 /// The expanded detail block: every line of the entry, soft-wrapped (never
 /// truncated — the row is variable-height now) and drag-selectable.
 ///
-/// Each line is its own paragraph, with no gap between them: the pinned
-/// `TextView` drops a `<br>` inside a paragraph, which ran the lines into one
-/// ("before: branch: maindirty: clean…", #908 Tier B). Leading / aligned
-/// spaces still collapse on screen; the clipboard copy keeps the alignment.
+/// `message_to_html` puts every line in its own paragraph (the pinned
+/// `TextView` drops a `<br>` inside one, #908 / #946); the gap between them is
+/// 0 so the lines sit together. Leading / aligned spaces still collapse on
+/// screen; the clipboard copy keeps the alignment.
 fn render_detail(i: usize, entry: &OpLogEntry) -> gpui::AnyElement {
-    let text = oplog_panel::detail_lines(entry).join("\n\n");
+    let text = oplog_panel::detail_lines(entry).join("\n");
     let selectable = text.len() <= SELECTABLE_DETAIL_MAX;
     let html = SharedString::from(kagi_domain::message::message_to_html(&text));
     let style = gpui_component::text::TextViewStyle {

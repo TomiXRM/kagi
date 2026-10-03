@@ -1,6 +1,6 @@
 ---
 name: kagi-verify
-description: Verify Kagi changes against fixture repositories, the native GUI, and the browser story harness. Use for runtime, fixture, or E2E validation work in this repository. Driving the real GUI does NOT require taking the pointer, and does not take the foreground either — except a scenario that clicks the tab strip, which needs a key window, so ask the user first or use a machine nobody is working on. Tier B uses scripts/pidclick.swift (CGEventPostToPid). cliclick is banned for new validation.
+description: Verify Kagi changes against fixture repositories, the native GUI, and the browser story harness. Use for runtime, fixture, or E2E validation work in this repository. Driving the real GUI does NOT require taking the pointer, and does not take the foreground either — except a scenario that clicks the tab strip, which needs a key window, so ask the user first or use a machine nobody is working on. Tier B uses scripts/pidclick.swift (CGEventPostToPid), which shows where it acts with the scripts/pidcursor.swift agent cursor. cliclick is banned for new validation.
 ---
 
 # Kagi verification recipe
@@ -841,7 +841,8 @@ state assertions and Tier B's live-window inspection together.
 
 ## Tier B — real GUI driver
 
-Build `scripts/pidclick.swift`, launch Kagi with a unique `USER` value, and retain
+Build `scripts/pidclick.swift` and, into the same directory, `scripts/pidcursor.swift`
+(the agent cursor, below). Launch Kagi with a unique `USER` value, and retain
 all three isolation flags. `USER` namespaces the per-user socket name, while
 `KAGI_NO_RESTORE=1` and `KAGI_LOG_DIR` prevent fixture work from changing the
 user's persisted session, settings, trust, or oplog. `KAGI_NO_ACTIVATE=1` avoids
@@ -849,6 +850,7 @@ stealing the foreground application.
 
 ```bash
 swiftc scripts/pidclick.swift -o /tmp/pidclick
+swiftc scripts/pidcursor.swift -o /tmp/pidcursor
 VERIFY_USER="kagi-verify-$RANDOM"
 VERIFY_LOG_DIR="$(mktemp -d)"
 USER="$VERIFY_USER" KAGI_NO_ACTIVATE=1 KAGI_NO_RESTORE=1 \
@@ -856,7 +858,9 @@ USER="$VERIFY_USER" KAGI_NO_ACTIVATE=1 KAGI_NO_RESTORE=1 \
   2>"$VERIFY_LOG_DIR/kagi.stderr" &
 PID=$!
 /tmp/pidclick windows --pid "$PID"
-# Select Kagi's layer-0 application window from this listing, then set its ID:
+# Select Kagi's main window: the LARGEST layer-0 window of this PID, not the
+# first one listed — Kagi also owns small layer-0 windows (title-bar strips,
+# helpers), which pidclick refuses or the coordinates fall outside of. Set its ID:
 WID=12345 # Replace with the selected window ID from the listing.
 ```
 
@@ -909,6 +913,35 @@ them with pidclick's logical coordinates.
 screencapture -x -o -l"$WID" "$VERIFY_LOG_DIR/window.png"
 tail -f "$VERIFY_LOG_DIR/kagi.stderr" # [kagi] contract lines
 ```
+
+**The agent cursor (#948).** `move`, `click`, `rclick` and `scroll` also show
+where they act, so a person watching the run can follow it. pidclick sends one
+datagram to `<per-user temp dir>/pidcursor/<PID>.sock` and, when nothing listens,
+starts `pidcursor --pid <PID>` from its own directory (detached, its own
+session), then waits about 0.3 s for the cursor to glide there before it posts
+the event. When there is no cursor — `pidcursor` not built, or a daemon that
+could not start (its stderr is kept as `<PID>.log` beside the socket, e.g. a
+full disk) — pidclick prints one `pidclick: no cursor: …` line with the reason
+and posts the event anyway. `key` and `type` do not move it.
+
+- **It never takes the foreground.** The daemon is an accessory app that never
+  activates, with one click-through, non-activating panel the size of the
+  target window, ordered just above that window. It comes to the very front
+  only when the target window already is the frontmost window, so it never
+  covers another app. The panel joins every Space, so it follows the target
+  window to whichever Space shows it; while the target window is off screen
+  (another Space, minimized), the cursor is ordered out. It follows only
+  windows of the PID it was started for.
+- **It ends by itself:** when the target process exits (checked: killing the
+  test Kagi ends it within 0.2 s and removes the socket), or after 10 minutes
+  without a message (`PIDCURSOR_IDLE_EXIT=<seconds>` overrides, for testing).
+  After 15 s without a message it fades out over 180 ms and comes back with
+  the next one.
+- **Screenshots do not show it.** `screencapture -l<WID>` captures only the
+  target window, and the cursor is a separate window, so before / after images
+  stay clean.
+- **Turn it off** with `--no-cursor` or `PIDCLICK_CURSOR=0` (for timing-sensitive
+  scenarios, where the 0.3 s wait matters).
 
 Read `$VERIFY_LOG_DIR/operations.jsonl` as well as the visible footer and
 `[kagi]` log. `KAGI_LOG_DIR` intentionally makes `src/main.rs::headless_mode()`

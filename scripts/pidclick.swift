@@ -1,15 +1,22 @@
 // Post mouse and keyboard events to one macOS process without moving the system cursor.
 //
 // swiftc scripts/pidclick.swift -o /tmp/pidclick
+// swiftc scripts/pidcursor.swift -o /tmp/pidcursor   # the cursor, next to pidclick
 // /tmp/pidclick windows --pid <pid>
 // /tmp/pidclick --pid <pid> --window-id <id> move <x> <y>
 // /tmp/pidclick --pid <pid> --window-id <id> click <x> <y>
 // /tmp/pidclick --pid <pid> --window-id <id> rclick <x> <y>
+// /tmp/pidclick --pid <pid> --window-id <id> scroll <x> <y> <lines>
 // /tmp/pidclick --pid <pid> --window-id <id> key <keycode> [cmd] [shift] [alt] [ctrl]
 // /tmp/pidclick --pid <pid> --window-id <id> type <text>
 //
 // Coordinates are logical points relative to the target window's top-left corner.
 // The responsible process needs macOS Accessibility permission.
+//
+// `move`, `click`, `rclick` and `scroll` also show where they act (#948): they
+// tell the pidcursor daemon for this PID, starting it from pidclick's own
+// directory when it is not running, and wait for its cursor to glide there
+// before posting. `--no-cursor` or `PIDCLICK_CURSOR=0` turns this off.
 import Carbon
 import CoreGraphics
 import Foundation
@@ -19,12 +26,119 @@ func fail(_ message: String) -> Never {
     exit(2)
 }
 
+func warn(_ message: String) {
+    FileHandle.standardError.write(Data(("pidclick: \(message)\n").utf8))
+}
+
 func usage() -> Never {
-    fail("usage: pidclick windows --pid <pid> | pidclick --pid <pid> --window-id <id> move|click|rclick <x> <y> | scroll <x> <y> <lines> | key <keycode> [cmd|shift|alt|ctrl ...] | type <text>")
+    fail("usage: pidclick windows --pid <pid> | pidclick --pid <pid> --window-id <id> [--no-cursor] move|click|rclick <x> <y> | scroll <x> <y> <lines> | key <keycode> [cmd|shift|alt|ctrl ...] | type <text>")
 }
 
 func printUsage() {
-    print("usage: pidclick windows --pid <pid> | pidclick --pid <pid> --window-id <id> move|click|rclick <x> <y> | scroll <x> <y> <lines> | key <keycode> [cmd|shift|alt|ctrl ...] | type <text>")
+    print("usage: pidclick windows --pid <pid> | pidclick --pid <pid> --window-id <id> [--no-cursor] move|click|rclick <x> <y> | scroll <x> <y> <lines> | key <keycode> [cmd|shift|alt|ctrl ...] | type <text>")
+}
+
+// MARK: - The cursor daemon's socket (keep in step with pidcursor.swift)
+
+func cursorSocketDirectory() -> String {
+    var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+    let length = confstr(_CS_DARWIN_USER_TEMP_DIR, &buffer, buffer.count)
+    let temp = length > 0 ? String(cString: buffer) : NSTemporaryDirectory()
+    return (temp as NSString).appendingPathComponent("pidcursor")
+}
+
+func cursorSocketPath(for pid: pid_t) -> String {
+    (cursorSocketDirectory() as NSString).appendingPathComponent("\(pid).sock")
+}
+
+func withSocketAddress<T>(_ path: String, _ body: (UnsafePointer<sockaddr>, socklen_t) -> T) -> T? {
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    let bytes = Array(path.utf8)
+    guard bytes.count < MemoryLayout.size(ofValue: address.sun_path) else { return nil }
+    withUnsafeMutableBytes(of: &address.sun_path) { raw in
+        raw.copyBytes(from: bytes)
+        raw[bytes.count] = 0
+    }
+    address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+    return withUnsafePointer(to: &address) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            body($0, socklen_t(MemoryLayout<sockaddr_un>.size))
+        }
+    }
+}
+
+/// pidcursor's glide time: the cursor arrives before the event does.
+let cursorGlideMicroseconds: useconds_t = 300_000
+
+/// One datagram to the daemon; false when nothing is listening.
+func sendToCursor(_ message: String, pid: pid_t) -> Bool {
+    let fd = socket(AF_UNIX, SOCK_DGRAM, 0)
+    guard fd >= 0 else { return false }
+    defer { close(fd) }
+    let bytes = Array(message.utf8)
+    return withSocketAddress(cursorSocketPath(for: pid)) { sendto(fd, bytes, bytes.count, 0, $0, $1) } == bytes.count
+}
+
+/// Start `pidcursor --pid <pid>` detached (its own session, no terminal), from
+/// the directory pidclick runs from. Its stderr goes to `<pid>.log` beside its
+/// socket, so a daemon that cannot start leaves its reason there.
+func startCursor(pid: pid_t) -> Bool {
+    let directory = (URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().path as NSString)
+        .deletingLastPathComponent
+    let daemon = (directory as NSString).appendingPathComponent("pidcursor")
+    guard FileManager.default.isExecutableFile(atPath: daemon) else {
+        warn("no cursor: \(daemon) is not built (swiftc scripts/pidcursor.swift -o \(daemon)); --no-cursor silences this")
+        return false
+    }
+    let socketDirectory = cursorSocketDirectory()
+    if mkdir(socketDirectory, 0o700) != 0 && errno != EEXIST {
+        warn("no cursor: cannot create \(socketDirectory): \(String(cString: strerror(errno)))")
+        return false
+    }
+    var attributes: posix_spawnattr_t?
+    posix_spawnattr_init(&attributes)
+    defer { posix_spawnattr_destroy(&attributes) }
+    posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSID))
+    var files: posix_spawn_file_actions_t?
+    posix_spawn_file_actions_init(&files)
+    defer { posix_spawn_file_actions_destroy(&files) }
+    posix_spawn_file_actions_addopen(&files, 0, "/dev/null", O_RDONLY, 0)
+    posix_spawn_file_actions_addopen(&files, 1, "/dev/null", O_WRONLY, 0)
+    posix_spawn_file_actions_addopen(&files, 2, cursorLogPath(for: pid), O_WRONLY | O_CREAT | O_TRUNC, 0o600)
+    let argv: [UnsafeMutablePointer<CChar>?] = [strdup(daemon), strdup("--pid"), strdup(String(pid)), nil]
+    defer { argv.forEach { free($0) } }
+    var child: pid_t = 0
+    let spawned = posix_spawn(&child, daemon, &files, &attributes, argv, environ)
+    guard spawned == 0 else {
+        warn("no cursor: could not start \(daemon): \(String(cString: strerror(spawned)))")
+        return false
+    }
+    return true
+}
+
+func cursorLogPath(for pid: pid_t) -> String {
+    (cursorSocketDirectory() as NSString).appendingPathComponent("\(pid).log")
+}
+
+/// Show the agent cursor at `x`,`y` (window-relative) and wait for it to get
+/// there. Never fails the action: without a cursor the event is posted anyway,
+/// after one line on stderr saying why there is none.
+func showCursor(_ operation: String, pid: pid_t, window: CGWindowID, x: Double, y: Double, extra: String = "") {
+    let message = "\(operation) \(window) \(x) \(y)\(extra.isEmpty ? "" : " \(extra)")"
+    var delivered = sendToCursor(message, pid: pid)
+    if !delivered, startCursor(pid: pid) {
+        for _ in 0..<50 where !delivered {
+            usleep(20_000)
+            delivered = sendToCursor(message, pid: pid)
+        }
+        if !delivered {
+            let log = (try? String(contentsOfFile: cursorLogPath(for: pid), encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            warn("no cursor: pidcursor did not answer on \(cursorSocketPath(for: pid))\(log.isEmpty ? "" : ": \(log)")")
+        }
+    }
+    if delivered { usleep(cursorGlideMicroseconds) }
 }
 
 func parsePID(_ value: String) -> pid_t? {
@@ -88,6 +202,7 @@ var arguments = Array(CommandLine.arguments.dropFirst())
 var pid: pid_t?
 var windowID: CGWindowID?
 var command: [String] = []
+var cursorWanted = ProcessInfo.processInfo.environment["PIDCLICK_CURSOR"] != "0"
 if arguments.count == 1, arguments[0] == "--help" || arguments[0] == "-h" {
     printUsage()
     exit(0)
@@ -110,6 +225,9 @@ while index < arguments.count {
               let parsed = parseWindowID(arguments[index + 1]) else { usage() }
         windowID = parsed
         index += 2
+    case "--no-cursor" where command.isEmpty:
+        cursorWanted = false
+        index += 1
     default:
         command.append(arguments[index])
         index += 1
@@ -213,12 +331,25 @@ func currentLayoutMap() -> [Character: (code: UInt16, shifted: Bool)]? {
 }
 
 let values = command.dropFirst()
+
+/// Show the agent cursor at a global `location` inside the target window.
+func cursor(_ operation: String, at location: CGPoint, extra: String = "") {
+    guard cursorWanted else { return }
+    showCursor(
+        operation, pid: pid, window: target.id,
+        x: location.x - target.bounds.minX, y: location.y - target.bounds.minY, extra: extra
+    )
+}
+
 switch operation {
 case "move":
-    post(mouse(.mouseMoved, at: point(from: values), button: .left))
+    let location = point(from: values)
+    cursor("move", at: location)
+    post(mouse(.mouseMoved, at: location, button: .left))
 case "click", "rclick":
     let location = point(from: values)
     let button: CGMouseButton = operation == "rclick" ? .right : .left
+    cursor(operation, at: location)
     post(mouse(.mouseMoved, at: location, button: .left)) // GPUI needs hover before a click.
     post(mouse(button == .right ? .rightMouseDown : .leftMouseDown, at: location, button: button))
     post(mouse(button == .right ? .rightMouseUp : .leftMouseUp, at: location, button: button))
@@ -229,6 +360,7 @@ case "scroll":
     guard values.count == 3, let lines = Int32(values[values.index(values.startIndex, offsetBy: 2)])
     else { fail("scroll takes <x> <y> <lines>") }
     let location = point(from: values.prefix(2))
+    cursor("scroll", at: location, extra: String(lines))
     post(mouse(.mouseMoved, at: location, button: .left)) // the list under the pointer scrolls.
     guard let wheel = CGEvent(
         scrollWheelEvent2Source: source,

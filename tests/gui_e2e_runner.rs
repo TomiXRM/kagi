@@ -1741,7 +1741,16 @@ mod macos {
         // #516: KAGI_GUI_E2E_KEEP_GOING=1 re-runs this runner once per
         // scenario instead (`keep_going`), before anything here is set up.
         if exact.is_none() && std::env::var("KAGI_GUI_E2E_KEEP_GOING").as_deref() == Ok("1") {
-            return keep_going(&scenarios, filters.as_deref());
+            // #967 review: the filter stays required. KEEP_GOING without it
+            // would run every scenario, each for up to the timeout — the
+            // unscoped run that once took macOS down (#549).
+            let Some(filters) = filters.as_deref() else {
+                eprintln!(
+                    "[gui-e2e] ERROR: KAGI_GUI_E2E_KEEP_GOING needs KAGI_GUI_E2E_ONLY=<scenario substrings>"
+                );
+                return 1;
+            };
+            return keep_going(&scenarios, Some(filters));
         }
 
         // #516: one directory owns everything the run writes. `TMPDIR` points
@@ -1977,7 +1986,16 @@ mod macos {
     /// Run `name` alone in a fresh runner process and wait for it, killing it
     /// past `timeout`. Its `TMPDIR` is a directory of its own, removed once it
     /// has ended, so even a killed child leaves no fixture behind.
+    ///
+    /// The child leads a process group of its own (#967 review): a scenario's
+    /// terminal shell, stand-in `ssh` or `git` belongs to it, so ending the
+    /// group — after a timeout, and after any end, for whatever the scenario
+    /// left running — leaves nothing of that scenario alive next to the next
+    /// one. (A group of its own also means the terminal's Ctrl+C reaches only
+    /// this parent; a child it leaves behind ends at its timeout.)
     fn run_child(runner: &Path, name: &str, timeout: Duration) -> ChildOutcome {
+        use std::os::unix::process::CommandExt as _;
+
         let tmp = match tempfile::Builder::new()
             .prefix("kagi-gui-e2e-child-")
             .tempdir()
@@ -1989,29 +2007,44 @@ mod macos {
             .env("KAGI_GUI_E2E_EXACT", name)
             .env_remove("KAGI_GUI_E2E_KEEP_GOING")
             .env("TMPDIR", tmp.path())
+            .process_group(0)
             .spawn()
         {
             Ok(child) => child,
             Err(error) => return ChildOutcome::NotStarted(error),
         };
+        let group = child.id();
         let started = Instant::now();
-        loop {
+        let outcome = loop {
             match child.try_wait() {
-                Ok(Some(status)) if status.success() => return ChildOutcome::Passed,
-                Ok(Some(status)) => return ChildOutcome::Exited(status),
+                Ok(Some(status)) if status.success() => break ChildOutcome::Passed,
+                Ok(Some(status)) => break ChildOutcome::Exited(status),
                 Ok(None) if started.elapsed() >= timeout => {
-                    let _ = child.kill();
+                    kill_group(group);
                     let _ = child.wait();
-                    return ChildOutcome::TimedOut(timeout);
+                    break ChildOutcome::TimedOut(timeout);
                 }
                 Ok(None) => std::thread::sleep(Duration::from_millis(100)),
                 Err(error) => {
-                    let _ = child.kill();
+                    kill_group(group);
                     let _ = child.wait();
-                    return ChildOutcome::NotStarted(error);
+                    break ChildOutcome::NotStarted(error);
                 }
             }
-        }
+        };
+        // The runner itself is reaped; what it started and left in its group
+        // (now orphans, reaped by launchd once killed) ends here.
+        kill_group(group);
+        outcome
+    }
+
+    /// SIGKILL every process in the group `group` leads. A group that is
+    /// already empty is not an error.
+    fn kill_group(group: u32) {
+        let _ = Command::new("/bin/kill")
+            .args(["-KILL", "--", &format!("-{group}")])
+            .stderr(std::process::Stdio::null())
+            .status();
     }
 
     fn assert_center_bottom_panel(window: AnyWindowHandle) -> Bounds<Pixels> {

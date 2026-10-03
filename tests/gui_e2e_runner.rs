@@ -1620,6 +1620,10 @@ mod macos {
                 Box::new(crate::ghe_viewer_login::scenario_ghe_viewer_login),
             ),
             (
+                "ghe_viewer_login_closed_only",
+                Box::new(crate::ghe_viewer_login::scenario_ghe_viewer_login_closed_only),
+            ),
+            (
                 "workspace_mode_toolbar",
                 Box::new(crate::workspace_mode_toolbar::scenario_workspace_mode_toolbar),
             ),

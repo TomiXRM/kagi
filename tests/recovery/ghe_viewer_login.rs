@@ -223,3 +223,54 @@ pub fn scenario_ghe_viewer_login(cx: &mut VisualTestAppContext) {
         "[gui-e2e] PASS ghe_viewer_login: Mine / Assigned / Created follow the Enterprise host's login, and nothing is claimed while it is unknown"
     );
 }
+
+/// #945 review: a repository whose open list is empty and whose Closed list
+/// holds the Enterprise PRs. The Closed read is the only one that names the
+/// host, so it has to ask for the login there itself.
+pub fn scenario_ghe_viewer_login_closed_only(cx: &mut VisualTestAppContext) {
+    let gh_dir = tempfile::tempdir().expect("offline gh state");
+    let _gh = install_gh(gh_dir.path());
+    std::fs::write(gh_dir.path().join("ghe_login.txt"), "ghe-me\n").unwrap();
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+
+    refresh_prs(cx, &app, Vec::new());
+    assert!(
+        !cx.read(|cx| app.read(cx).host_login_requested_for_e2e(Some(HOST))),
+        "an empty open list names no host"
+    );
+
+    let mut closed = enterprise_pr(21, "ghe-me");
+    closed.state = IssueState::Closed;
+    app.update(cx, |app, cx| app.show_pr_mode(cx));
+    cx.run_until_parked();
+    e2e::queue_github_pr_fetch(
+        cx.background_executor
+            .spawn(async move { Ok(vec![closed]) }),
+    );
+    click(cx, window, "list-filter-state");
+    click(cx, window, "list-filter-option-0-1");
+    wait(
+        cx,
+        "the Closed list never asked for the Enterprise login",
+        |cx| {
+            cx.read(|cx| {
+                app.read(cx)
+                    .github_host_logins
+                    .get(&Some(HOST.into()))
+                    .is_some()
+            })
+        },
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).pr_section_numbers_for_e2e(PrSection::Mine)),
+        vec![21],
+        "the closed Enterprise PR is yours by the Enterprise login"
+    );
+
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS ghe_viewer_login_closed_only: a Closed-only list reads the Enterprise login itself"
+    );
+}

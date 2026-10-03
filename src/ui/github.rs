@@ -147,13 +147,7 @@ impl KagiApp {
                         ui.github_prs_epoch = ui.github_prs_epoch.wrapping_add(1);
                     }
                     // #906: "mine" is the login on the PRs' own host.
-                    let mut hosts: Vec<String> = Vec::new();
-                    for pr in &ui.github_prs {
-                        if !pr.base_repo.is_empty() && !hosts.contains(&pr.base_repo) {
-                            hosts.push(pr.base_repo.clone());
-                        }
-                    }
-                    (moved, hosts)
+                    (moved, distinct_base_repos(&ui.github_prs))
                 };
                 let (answered, base_repos) = answered;
                 for base_repo in &base_repos {
@@ -828,4 +822,17 @@ impl KagiApp {
             cx.notify();
         }
     }
+}
+
+/// The distinct `<host>/<owner>/<repo>` identities of `prs`, so a completed
+/// PR read can ask for the login on each host it showed (#906). Rows whose
+/// identity could not be read are skipped.
+pub(super) fn distinct_base_repos(prs: &[PullRequest]) -> Vec<String> {
+    let mut repos: Vec<String> = Vec::new();
+    for pr in prs {
+        if !pr.base_repo.is_empty() && !repos.contains(&pr.base_repo) {
+            repos.push(pr.base_repo.clone());
+        }
+    }
+    repos
 }

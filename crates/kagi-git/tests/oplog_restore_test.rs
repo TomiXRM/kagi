@@ -90,9 +90,9 @@ fn commit(dir: &Path, content: &str) -> u64 {
     )
 }
 
-/// Record a real local tag write with the same observer and oplog builder used
+/// Record a real local ref write with the same observer and oplog builder used
 /// for writes whose ref names are not known until execution.
-fn observed_tag_write(dir: &Path, op: &str, args: &[&str]) -> u64 {
+fn observed_ref_write(dir: &Path, op: &str, args: &[&str]) -> u64 {
     let (result, moves) = backend(dir).observe_ref_moves(|_| {
         git(dir, args);
         Ok::<(), GitError>(())
@@ -272,7 +272,7 @@ fn annotated_tag_delete_and_lightweight_tag_move_round_trip_to_point() {
             at: CommitId(first.clone()),
         },
     );
-    observed_tag_write(
+    observed_ref_write(
         &repo,
         "create-annotated-tag",
         &["tag", "-a", "annotated", "-m", "note"],
@@ -285,12 +285,12 @@ fn annotated_tag_delete_and_lightweight_tag_move_round_trip_to_point() {
     let point = create(&repo, "point");
     commit(&repo, "later\n");
     let second = git_output(&repo, &["rev-parse", "HEAD"]);
-    observed_tag_write(
+    observed_ref_write(
         &repo,
         "move-tag",
         &["update-ref", "refs/tags/light", &second, &first],
     );
-    observed_tag_write(
+    observed_ref_write(
         &repo,
         "delete-tag",
         &["update-ref", "-d", "refs/tags/annotated", &tag_object],
@@ -338,14 +338,14 @@ fn moved_annotated_tag_retains_its_raw_object_and_leaves_index_tree_and_remote_a
     }
     let tmp = tempfile::tempdir().unwrap();
     let repo = repo(tmp.path());
-    observed_tag_write(
+    observed_ref_write(
         &repo,
         "create-annotated-tag",
         &["tag", "-a", "release", "-m", "first"],
     );
     let first_tag = git_output(&repo, &["rev-parse", "refs/tags/release"]);
     let point = create(&repo, "point");
-    observed_tag_write(
+    observed_ref_write(
         &repo,
         "move-annotated-tag",
         &["tag", "-fa", "release", "-m", "second"],
@@ -463,12 +463,12 @@ fn tree_tag_restore_records_its_backup_and_can_retire_the_receipt() {
     let tmp = tempfile::tempdir().unwrap();
     let repo = repo(tmp.path());
     let first_tree = git_output(&repo, &["rev-parse", "HEAD^{tree}"]);
-    observed_tag_write(&repo, "create-tree-tag", &["tag", "release", &first_tree]);
+    observed_ref_write(&repo, "create-tree-tag", &["tag", "release", &first_tree]);
     let point = create(&repo, "point");
     commit(&repo, "later\n");
     let second_tree = git_output(&repo, &["rev-parse", "HEAD^{tree}"]);
     assert_ne!(first_tree, second_tree);
-    observed_tag_write(
+    observed_ref_write(
         &repo,
         "move-tree-tag",
         &["update-ref", "refs/tags/release", &second_tree, &first_tree],
@@ -1482,6 +1482,72 @@ fn a_tag_without_a_reflog_stays_unchanged_with_an_explicit_restore_warning() {
         &repo,
         &["show-ref", "--verify", "refs/heads/later"]
     ));
+}
+
+fn interleaved_external_ref_move_blocks_restore(refname: &str) {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let first = git_output(&repo, &["rev-parse", "HEAD"]);
+    commit(&repo, "second\n");
+    let second = git_output(&repo, &["rev-parse", "HEAD"]);
+    commit(&repo, "third\n");
+    let third = git_output(&repo, &["rev-parse", "HEAD"]);
+    git(&repo, &["config", "core.logAllRefUpdates", "always"]);
+    git(&repo, &["update-ref", refname, &first]);
+    let point = create(&repo, "point");
+
+    next_second();
+    git(&repo, &["update-ref", refname, &second, &first]);
+    observed_ref_write(
+        &repo,
+        "recorded-ref-move",
+        &["update-ref", refname, &third, &second],
+    );
+    let receipt = newest(&repo);
+    assert_eq!(
+        receipt
+            .ref_moves
+            .as_ref()
+            .and_then(|moves| moves.iter().find(|m| m.refname == refname))
+            .map(|m| (m.old.as_deref(), m.new.as_deref())),
+        Some((Some(second.as_str()), Some(third.as_str()))),
+        "the later Kagi receipt explains B→C, not the external A→B"
+    );
+    assert!(
+        repo.join(".git/logs").join(refname).exists(),
+        "the ref must have a real reflog"
+    );
+
+    let restore = Operation::RestoreToPoint { entry_id: point };
+    let planned = plan(&repo, &restore);
+    assert!(
+        restore_blockers(&planned).contains(&OplogRestoreNote::RefChangedOutsideRecord {
+            refname: refname.into(),
+        }),
+        "an external A→B cannot be explained by recorded B→C: {:?}",
+        planned.blockers
+    );
+    assert!(
+        backend(&repo).run(&restore, &planned).is_err(),
+        "preflight must refuse the unexplained reflog transition"
+    );
+    assert_eq!(git_output(&repo, &["rev-parse", refname]), third);
+}
+
+#[test]
+fn external_tag_move_before_a_recorded_move_still_blocks_restore_to_point() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    interleaved_external_ref_move_blocks_restore("refs/tags/release");
+}
+
+#[test]
+fn external_branch_move_before_a_recorded_move_still_blocks_restore_to_point() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    interleaved_external_ref_move_blocks_restore("refs/heads/side");
 }
 
 /// The fetch receipt as the UI writes it (#885, `fetch_async_for`): the

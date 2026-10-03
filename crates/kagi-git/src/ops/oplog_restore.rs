@@ -15,9 +15,9 @@ use kagi_domain::operation::Operation;
 use kagi_domain::plan_note::{OplogRestoreNote, OplogRestoreRecovery, OplogRestoreTitle};
 use kagi_domain::ref_moves::RefSnapshot;
 use kagi_domain::ref_restore::{
-    self, EntryRepo, Observed, RecordedEntry, RefRestore, RestoreMode, RestoredRef,
+    self, EntryRepo, Observed, RecordedEntry, RefRestore, RefTransition, RestoreMode, RestoredRef,
 };
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 
 /// How many Operation Log entries are searched for the target and its range.
 const ENTRY_SCAN: usize = 1000;
@@ -146,28 +146,46 @@ fn older_and_mine(repo: &Repository, id: u64) -> bool {
     classify_entry(&entry, &mine, my_identity.as_ref(), &mut HashMap::new()) == EntryRepo::Mine
 }
 
-/// Local branches and tags whose available reflog records an update after
-/// `after` (unix seconds). The planner decides which updates its recorded
-/// entries explain. Tags normally have no reflog; absence is not evidence
-/// they stayed put, so the confirmation card warns about that limitation.
-fn local_refs_changed_after(repo: &Repository, after: i64) -> Result<BTreeSet<String>, GitError> {
-    let mut changed = BTreeSet::new();
+/// Available local branch and tag reflog transitions newer than `after`
+/// (unix seconds), oldest first per ref. A ref with no reflog is not assumed
+/// unchanged; the confirmation card explains the limitation for tags.
+fn local_ref_transitions_after(
+    repo: &Repository,
+    after: i64,
+) -> Result<BTreeMap<String, Vec<RefTransition>>, GitError> {
+    let mut changed = BTreeMap::new();
     for glob in ["refs/heads/*", "refs/tags/*"] {
         let refs = repo
             .references_glob(glob)
             .map_err(|e| GitError::Other(e.message().to_string()))?;
-        for reference in refs.flatten() {
-            let Ok(name) = reference.name() else {
-                continue;
+        for reference in refs {
+            let reference = reference.map_err(|e| GitError::Other(e.message().to_string()))?;
+            let name = reference
+                .name()
+                .map_err(|e| GitError::Other(e.to_string()))?;
+            let log = match repo.reflog(name) {
+                Ok(log) => log,
+                Err(e) if e.code() == git2::ErrorCode::NotFound => continue,
+                Err(e) => return Err(GitError::Other(e.message().to_string())),
             };
-            let Ok(log) = repo.reflog(name) else {
-                continue;
-            };
-            if log
-                .iter()
-                .any(|line| line.committer().when().seconds() > after)
-            {
-                changed.insert(name.to_string());
+            let mut transitions = Vec::new();
+            // libgit2 exposes index 0 as the newest line.
+            for i in (0..log.len()).rev() {
+                let line = log
+                    .get(i)
+                    .ok_or_else(|| GitError::Other(format!("reflog entry disappeared: {name}")))?;
+                if line.committer().when().seconds() <= after {
+                    continue;
+                }
+                let old = line.id_old();
+                let new = line.id_new();
+                transitions.push(RefTransition {
+                    old: (!old.is_zero()).then(|| old.to_string()),
+                    new: (!new.is_zero()).then(|| new.to_string()),
+                });
+            }
+            if !transitions.is_empty() {
+                changed.insert(name.to_string(), transitions);
             }
         }
     }
@@ -198,7 +216,7 @@ fn plan_oplog_restore(
     let op = target.map(|e| e.op.clone()).unwrap_or_default();
     let observed = match target {
         Some(t) if mode == RestoreMode::RestoreTo => Observed {
-            changed_after_target: local_refs_changed_after(repo, t.timestamp)?,
+            transitions_after_target: local_ref_transitions_after(repo, t.timestamp)?,
         },
         _ => Observed::default(),
     };

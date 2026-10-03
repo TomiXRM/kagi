@@ -1,7 +1,10 @@
 import { defineConfig } from "@playwright/test";
+import { assertHarnessBuilt, DIST } from "./harness";
 
-// Serves the wasm-bindgen output built by scripts/build-web.sh.
-// Build first: ../scripts/build-web.sh
+// Serves the wasm-bindgen output built by scripts/build-web.sh, and refuses
+// to start without it (see harness.ts).
+assertHarnessBuilt();
+
 export default defineConfig({
   testDir: "./tests",
   timeout: 60_000,
@@ -21,7 +24,7 @@ export default defineConfig({
     },
   },
   webServer: {
-    command: "python3 -m http.server 8899 -d ../crates/kagi-web/dist",
+    command: `python3 -m http.server 8899 -d ${JSON.stringify(DIST)}`,
     url: "http://127.0.0.1:8899",
     reuseExistingServer: true,
   },

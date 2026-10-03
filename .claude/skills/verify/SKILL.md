@@ -614,11 +614,13 @@ The current suite covers:
   `tests/recovery/home_work.rs`, #928 / ADR-0219 decision 8): an offline
   `gh` answers the three `gh search`es (a PR and an issue of a repository
   cloned locally, a draft PR of one that is not, a review request) and
-  `pr view -R`; marker files hold the searches (`hold-search`) or
-  `pr view` (`hold-view`) and fail the review search (`fail-review`). Before
-  the lists land the switch draws `home-pane-prs-spinner` (never a count of
-  0) and the pane `home-work-loading`; lists saved as another account are not
-  shown. Rows are `home-work-<owner>/<repo>-<N>`. A failed search draws
+  `pr view -R`; marker files fail every search (`fail-search`) or the review
+  search (`fail-review`), and `state/user` switches the `gh` account. The
+  test dispatcher runs `gh` inside its pump, so Home is opened and drawn
+  before the pump: the switch draws `home-pane-prs-spinner` (never a count of
+  0) and the pane `home-work-loading`. Lists saved as another account are not
+  shown; after the account switch that account's saved lists are, and stay
+  when its searches fail. Rows are `home-work-<owner>/<repo>-<N>`. A failed search draws
   `home-work-failed` above the list read before and saves nothing; the
   non-local row opens the clone card; the local PR row draws its
   `-opening` spinner while `pr view` runs, ignores a second click (one

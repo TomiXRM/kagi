@@ -57,7 +57,7 @@ const PR_VIEW: &str = r#"{"number":7,"title":"Fix the local thing",
 fn gh_script(state: &Path) -> String {
     format!(
         "#!/bin/sh\ncase \"$1 $2 $3\" in\n\
-         'config get user') echo acme ;;\n\
+         'config get user') cat '{state}/user' 2>/dev/null || echo acme ;;\n\
          'api user/orgs '*) ;;\n\
          'repo list --limit') echo '[]' ;;\n\
          'search '*) [ -e '{state}/fail-search' ] && {{ echo 'HTTP 502: Bad Gateway' >&2; exit 1; }}\n\
@@ -134,8 +134,9 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
     );
     let _ = std::fs::remove_file(&cache);
 
-    // Lists saved as another account are not shown, even when every search
-    // fails: each list says why instead.
+    // Before anything is read the switch shows a spinner where the count
+    // will be — never 0 — and the pane a spinner row. Home opens and draws
+    // without the pump running, so the reads have not run yet.
     let saved = |title: &str| WorkLists {
         my_prs: one(1, title),
         ..WorkLists::default()
@@ -143,40 +144,40 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
     github_repos_cache::save_work(&cache, "github.com/someone-else", &saved("theirs")).unwrap();
     mark("fail-search");
     let (app, window) = mount(cx, start.path());
-    click_control(cx, window, "tab-add");
-    cx.run_until_parked();
-    wait_for(cx, &app, "the failed searches", settled);
-    click_control(cx, window, "home-pane-prs");
-    assert_eq!(
-        cx.read(|cx| app.read(cx).home_github.work.pane),
-        HomePane::Prs
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.home_github.work.pane = HomePane::Prs;
+            app.open_home_tab(window, cx);
+        })
+    })
+    .unwrap();
+    assert!(
+        drawn(cx, window, "home-pane-prs-spinner"),
+        "no count before the lists are read"
     );
+    assert!(drawn(cx, window, "home-work-loading"));
+
+    // Lists saved as another account are not shown, even when every search
+    // fails: each list says why instead.
+    wait_for(cx, &app, "the failed searches", settled);
+    assert!(!drawn(cx, window, "home-pane-prs-spinner"));
     assert!(drawn(cx, window, "home-work-failed"));
     assert!(
         !drawn(cx, window, "home-work-acme/local-1"),
         "another account's saved lists are not shown"
     );
 
-    // Before anything is read the switch shows a spinner where the count
-    // will be — never 0 — and the pane a spinner row; then the lists saved
-    // for this account, kept when the searches fail.
-    github_repos_cache::save_work(&cache, "github.com/acme", &saved("mine")).unwrap();
-    app.update(cx, |app, cx| {
-        app.home_github.work.lists = None;
-        app.reload_home_github(cx);
-    });
-    assert!(
-        drawn(cx, window, "home-pane-prs-spinner"),
-        "no count before the lists are read"
-    );
-    assert!(drawn(cx, window, "home-work-loading"));
-    wait_for(cx, &app, "the saved lists", settled);
-    assert!(!drawn(cx, window, "home-pane-prs-spinner"));
+    // `gh auth switch` to that account: its saved lists replace the ones
+    // read as the previous account, and stay when its searches fail.
+    std::fs::write(state.join("user"), "someone-else\n").unwrap();
+    app.update(cx, |app, cx| app.reload_home_github(cx));
+    wait_for(cx, &app, "the other account's lists", settled);
     assert!(
         drawn(cx, window, "home-work-acme/local-1"),
-        "this account's saved lists are shown and kept when gh fails"
+        "the signed-in account's saved lists are shown and kept when gh fails"
     );
 
+    std::fs::remove_file(state.join("user")).unwrap();
     unmark("fail-search");
     app.update(cx, |app, cx| app.reload_home_github(cx));
     wait_for(cx, &app, "the lists", settled);
@@ -184,7 +185,10 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
         app.home_github.local.contains_key("github.com/acme/local")
     });
     assert!(!drawn(cx, window, "home-work-failed"));
-    assert!(!drawn(cx, window, "home-work-acme/local-1"));
+    assert!(
+        !drawn(cx, window, "home-work-acme/local-1"),
+        "the lists read as the previous account are dropped"
+    );
     assert!(drawn(cx, window, "home-work-acme/local-7"));
     assert!(drawn(cx, window, "home-work-acme/widgets-3"));
     assert!(

@@ -61,9 +61,10 @@ fn work_cache_file() -> Option<PathBuf> {
 
 impl KagiApp {
     /// Read the three lists again, unless a read is running: the account
-    /// and the list saved for it first (local reads), then the three `gh
-    /// search`es side by side. A list on screen read as another account is
-    /// dropped, as the repository list's is.
+    /// and the list saved for it first (local reads; shown when nothing is
+    /// on screen for that account), then the three `gh search`es side by
+    /// side. A list on screen read as another account is dropped, as the
+    /// repository list's is.
     pub(super) fn reload_home_work(&mut self, cx: &mut Context<Self>) {
         let work = &mut self.home_github.work;
         if work.reading {
@@ -72,14 +73,13 @@ impl KagiApp {
         work.generation += 1;
         work.reading = true;
         let generation = work.generation;
-        let shown = work.lists.is_some();
         let started = std::time::Instant::now();
         let cache = work_cache_file();
         let saved_cache = cache.clone();
         let cached = cx.background_spawn(async move {
             let account = kagi_git::github_repos::active_account(&home_dir());
             let saved = match (&account, &cache) {
-                (Some(account), Some(path)) if !shown => {
+                (Some(account), Some(path)) => {
                     kagi_git::github_repos_cache::load_work(path, account)
                 }
                 _ => None,

@@ -54,6 +54,18 @@ A control is modern when, for its role:
    Icons carry type and state (folder, branch, lock, terminal, warning) so a
    row is not a line of text.
 
+What this guide changes was measured once (#931 A/B: the same "Go to ref"
+popover built by two agents from one base, one with this file and one
+without). Where the screen has sibling parts to copy — there, the command
+palette's frame, `Input`, rows and `KagiButton` — both results looked the
+same: an agent reuses siblings without being told. The difference was in
+verification and record: only the run with the guide wrote the PR block,
+recorded what it left out and why, and listed what it had not observed
+(real-window focus, IME, AX); the other never launched the GUI. So expect
+this file to change *how a change is checked and reported*, not how a
+screen with siblings looks. Its effect on looks is to be measured on a
+screen with no siblings to copy (#934's worktree row).
+
 ## When the procedure applies
 
 | Change | What is required |
@@ -144,6 +156,7 @@ the row says a Kagi geometry is kept on purpose.
 | Toggle / checkbox / radio | gpui-component `Checkbox` for selection, `RadioGroup` for a mutually exclusive choice; `Switch` is already used for immediately applied *app preferences*. | Pinned `Switch` handles mouse down but provides no focus/key path or AX role/name/checked state ([`switch.rs`](https://github.com/longbridge/gpui-component/blob/b004e595cf5de98a73b6b561394a559a94ae1e2a/crates/ui/src/switch.rs#L142-L225)). Add those behaviours or use an accessible alternative before calling the control keyboard/AX-complete. A toggle that changes the repository still needs the Git write pipeline. |
 | Empty / loading / error | a sentence + one action; skeleton rows that match the final layout for lists; error with what to do and a retry | Git write errors: short toast + Operation Log, never a permanent toast. |
 | Motion | instant or ≤ 150 ms for hover/press; Kagi-owned animations honour `reduce_motion` | A library transition that cannot be turned off is listed as an exception in the PR. |
+| Pane open / close | Kagi `panel_motion` ([`panel_motion.rs`](../../src/ui/panel_motion.rs)), shared by the bottom panel, the left sidebar and the right pane: open 180 ms ease-out, close 150 ms ease-in; a toggle in mid-flight turns around from where the pane is, its time scaled by the distance left. Only the outer box's size moves; the content keeps its size and is clipped (`panel_motion::clip`), so the Terminal's grid and the panes' layouts never change while they slide. | A pane appears or disappears at once when the layout, not its own toggle, changed it (a takeover, Conflict, Editor), and with `reduce_motion`. Use it for any new pane that opens and closes rather than a second timing. |
 
 ## In an issue for UI work
 

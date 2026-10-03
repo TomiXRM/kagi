@@ -806,3 +806,21 @@ pub(crate) fn take_squash_scan() -> Option<gpui::Task<SquashScanResult>> {
 pub fn active_ui_writer_available(app: &mut KagiApp) -> bool {
     app.ui_mut().is_some()
 }
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static PANEL_MOTION_CLOCK: std::cell::Cell<Option<std::time::Instant>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Drive the bottom panel's motion from a stand-in clock (#950); `None`
+/// returns to the runner's default, where the panel jumps to its end.
+#[cfg(feature = "gui-e2e")]
+pub fn set_panel_motion_clock(now: Option<std::time::Instant>) {
+    PANEL_MOTION_CLOCK.with(|clock| clock.set(now));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn panel_motion_clock() -> Option<std::time::Instant> {
+    PANEL_MOTION_CLOCK.with(|clock| clock.get())
+}

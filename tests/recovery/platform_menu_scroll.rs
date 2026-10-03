@@ -384,3 +384,48 @@ pub fn scenario_filter_menu_then_settings(cx: &mut VisualTestAppContext) {
     unmount(cx, app, win);
     eprintln!("[gui-e2e] PASS filter_menu_then_settings");
 }
+
+/// #976 review: the co-author picker lives in the workspace body. When an
+/// asynchronous conflict detection replaces that body with Conflict Mode,
+/// the picker is no longer drawn and must not stay the front layer, or
+/// Enter / Escape would be consumed by a menu the user cannot see.
+pub fn scenario_coauthor_menu_under_conflict(cx: &mut VisualTestAppContext) {
+    let fixture = crate::app_conflict::content_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, win) = crate::macos::mount(cx, &repo);
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        e2e::open_local_panel_no_inputs(app, repo.clone(), cx);
+    });
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        let panel = app.ui().commit_panel.clone().expect("Commit Panel");
+        panel.update(cx, |panel, cx| panel.toggle_coauthor_menu(cx));
+    });
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| e2e::menu_is_front(app.read(cx), cx)),
+        "precondition: the co-author picker is the front layer"
+    );
+
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    cx.update_window(win, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.ui().conflict.is_some() && !app.ui().conflict_merge_pending,
+            "precondition: Conflict Mode replaced the body"
+        );
+        assert!(
+            !e2e::menu_is_front(app, cx),
+            "coauthor-under-conflict: an undrawn co-author picker kept the keyboard"
+        );
+    });
+    unmount(cx, app, win);
+    eprintln!("[gui-e2e] PASS coauthor_menu_under_conflict");
+}

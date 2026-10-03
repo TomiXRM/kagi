@@ -143,17 +143,24 @@ impl KagiApp {
         !self.home_in_front() && self.worktree_menu.is_some()
     }
 
+    /// The normal workspace body is on screen: not Home in front, and not
+    /// replaced by Conflict Mode's body (`render.rs`, `conflict_body_visible`).
+    /// The menus anchored in that body are drawn only with it (#976 review).
+    pub(crate) fn workspace_body_drawn(&self) -> bool {
+        !self.home_in_front() && !self.conflict_body_visible()
+    }
+
     pub(crate) fn inspector_file_menu_visible(&self) -> bool {
-        !self.home_in_front() && self.inspector_file_menu.is_some()
+        self.workspace_body_drawn() && self.inspector_file_menu.is_some()
     }
 
     pub(crate) fn pr_menu_visible(&self) -> bool {
-        !self.home_in_front() && self.ui().pr_menu.is_some()
+        self.workspace_body_drawn() && self.ui().pr_menu.is_some()
     }
 
     pub(crate) fn file_menu_visible(&self, cx: &App) -> bool {
         self.file_menu.as_ref().is_some_and(|menu| {
-            !self.home_in_front()
+            self.workspace_body_drawn()
                 && self.active_session() == Some(menu.owner)
                 && self
                     .ui()
@@ -164,7 +171,7 @@ impl KagiApp {
     }
 
     pub(crate) fn filter_menu_visible(&self) -> bool {
-        !self.home_in_front() && super::list_filter_strip::menu_visible(self)
+        self.workspace_body_drawn() && super::list_filter_strip::menu_visible(self)
     }
 
     pub(crate) fn conflict_file_menu_visible(&self, cx: &App) -> bool {
@@ -186,7 +193,7 @@ impl KagiApp {
     }
 
     pub(crate) fn coauthor_menu_visible(&self, cx: &App) -> bool {
-        !self.home_in_front()
+        self.workspace_body_drawn()
             && self.ui().commit_panel_open
             && self
                 .ui()

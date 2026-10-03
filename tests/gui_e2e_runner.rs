@@ -1739,6 +1739,10 @@ mod macos {
                 Box::new(crate::platform_menu_scroll::scenario_filter_menu_then_settings),
             ),
             (
+                "coauthor_menu_under_conflict",
+                Box::new(crate::platform_menu_scroll::scenario_coauthor_menu_under_conflict),
+            ),
+            (
                 "platform_menu_modal_settings",
                 Box::new(crate::platform_menu_scroll::scenario_platform_menu_modal_settings),
             ),

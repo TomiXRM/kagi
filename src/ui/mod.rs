@@ -3100,7 +3100,7 @@ impl KagiApp {
     }
 
     /// Conflict Mode replaces the normal body before workspace slots are resolved.
-    fn conflict_body_visible(&self) -> bool {
+    pub(crate) fn conflict_body_visible(&self) -> bool {
         self.ui().conflict.is_some() && !self.ui().conflict_merge_pending
     }
 

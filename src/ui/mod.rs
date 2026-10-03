@@ -1222,12 +1222,9 @@ pub struct KagiApp {
     /// The lease's presentation mirror — the in-flight write's name, for the
     /// busy snackbar. `refresh_write_busy` retires it; the gate never reads it.
     pub write_busy_op: Option<&'static str>,
-    /// Exclusion latch for the one write that can hold no lease, remote pull
-    /// over SSH. Rules on [`KagiApp::mark_remote_write`], why in ADR-0196 決定 5.
-    pub remote_write: Option<&'static str>,
     /// A *planning* task in flight (`merge-plan`, `delete-branch-plan`): no
     /// lease, but it owns the modal slot. Ask [`KagiApp::op_latched`], never
-    /// one of these three alone (ADR-0196).
+    /// this field alone (ADR-0196).
     pub planning: Option<&'static str>,
     pub app_sessions: crate::app::Sessions,
     pub(crate) app_notices: std::collections::VecDeque<modals::AppNotice>,
@@ -1428,7 +1425,6 @@ impl KagiApp {
             github_host_logins: Default::default(),
             github_host_login_requests: Default::default(),
             write_busy_op: None,
-            remote_write: None,
             planning: None,
             app_sessions: crate::app::Sessions::new(),
             app_notices: std::collections::VecDeque::new(),

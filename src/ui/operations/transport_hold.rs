@@ -12,6 +12,7 @@ use std::{
 pub(crate) struct TransportHolds(HashSet<(PathBuf, String)>);
 
 impl TransportHolds {
+    #[cfg(test)]
     pub(crate) fn settle(&mut self, owner: &Path, operation: &str, outcome: &OpOutcome) -> bool {
         let hold = matches!(
             outcome,
@@ -30,23 +31,6 @@ impl TransportHolds {
     }
 }
 impl KagiApp {
-    pub(crate) fn settle_transport(&mut self, owner: &Path, operation: &str, outcome: &OpOutcome) {
-        if self.transport_holds.settle(owner, operation, outcome) {
-            let evidence = match outcome {
-                OpOutcome::Unknown { evidence, .. } => evidence.as_str(),
-                OpOutcome::Partial { error, .. } => error.as_str(),
-                _ => "",
-            };
-            self.report_unknown_notice(
-                owner,
-                format!(
-                    "{operation}: {evidence}. {}",
-                    crate::ui::i18n::Msg::TransportRetryHeld.t()
-                ),
-            );
-        }
-    }
-
     /// Settlement for one run-family receipt, before the stale-tab guard: what
     /// the execution boundary made durable is delivered whatever the tab is
     /// doing now (#501, ADR-0196 Wave 3).
@@ -129,7 +113,7 @@ mod tests {
             head: "unknown".into(),
             dirty: "unknown".into(),
         };
-        for op in ["pull", "pr-merge #1"] {
+        for op in ["pr-merge #1", "pr-merge #2"] {
             assert!(holds.settle(
                 owner,
                 op,
@@ -141,16 +125,16 @@ mod tests {
             assert!(holds.contains(owner, op));
             assert!(!holds.contains(Path::new("other:/repo"), op));
         }
-        assert!(!holds.contains(owner, "pr-merge #2"));
+        assert!(!holds.contains(owner, "pr-merge #3"));
         assert!(holds.settle(
             owner,
-            "partial",
+            "pr-merge #3",
             &OpOutcome::Partial {
                 after,
                 error: "changed".into()
             }
         ));
-        assert!(holds.contains(owner, "partial"));
+        assert!(holds.contains(owner, "pr-merge #3"));
         assert!(!holds.settle(
             owner,
             "failed",
@@ -162,11 +146,11 @@ mod tests {
         // A later failed observation must not release an earlier uncertain execution.
         holds.settle(
             owner,
-            "pull",
+            "pr-merge #1",
             &OpOutcome::Failed {
                 error: "offline".into(),
             },
         );
-        assert!(holds.contains(owner, "pull"));
+        assert!(holds.contains(owner, "pr-merge #1"));
     }
 }

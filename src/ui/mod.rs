@@ -3072,11 +3072,11 @@ impl KagiApp {
     }
 
     fn select_commit_index(&mut self, next: usize) {
+        self.ui()
+            .commit_scroll_handle
+            .scroll_to_item(self.commit_list_index(next), ScrollStrategy::Center);
+        // `select` toggles on a repeated index; guard selection, not reveal.
         if self.ui().selected != Some(next) {
-            self.ui()
-                .commit_scroll_handle
-                .scroll_to_item(self.commit_list_index(next), ScrollStrategy::Center);
-            // `select` toggles on a repeated index; guarded above.
             self.select(next);
         }
     }
@@ -3104,11 +3104,9 @@ impl KagiApp {
 
     fn commit_list_has_focus(&self, window: &Window) -> bool {
         self.root_has_focus(window)
-            && self.ui().file_history.is_none()
-            && self.pr_mode().is_none()
-            && self.ui().editor_workspace.is_none()
-            && self.ui().main_diff.is_none()
-            && self.ui().ecosystem.is_none()
+            && !self.home_in_front()
+            && workspace::resolve_workspace(&self.workspace_inputs(false, false, false)).center
+                == workspace::CenterPane::CommitList
     }
 
     /// Commit list coordinates and rendered row height for the GUI viewport

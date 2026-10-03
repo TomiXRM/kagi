@@ -65,6 +65,27 @@ pub fn scenario_commit_paging(cx: &mut VisualTestAppContext) {
     };
     keys(cx, window, "home");
     assert_at(cx, 0);
+    // Wheel scrolling does not change selection. Home must still reveal the
+    // already-selected first row after it has left the viewport.
+    let viewport = e2e::control_bounds(window.window_id(), "commit-list-viewport")
+        .expect("commit viewport drawn");
+    cx.simulate_event(
+        window,
+        gpui::ScrollWheelEvent {
+            position: viewport.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(-100_000.))),
+            touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
+        },
+    );
+    let (selected, _, inside) = graph(cx, &app, window);
+    assert_eq!(selected, Some(0), "wheel must not change commit selection");
+    assert!(
+        !inside,
+        "wheel must move the selected first row out of view"
+    );
+    keys(cx, window, "home");
+    assert_at(cx, 0);
     keys(cx, window, "pagedown");
     assert_at(cx, page);
     keys(cx, window, "pageup");
@@ -79,5 +100,30 @@ pub fn scenario_commit_paging(cx: &mut VisualTestAppContext) {
     assert_at(cx, 0);
     keys(cx, window, "cmd-down");
     assert_at(cx, LAST);
+    // Home and other center takeovers leave the covered commit untouched.
+    keys(cx, window, "home");
+    assert_at(cx, 0);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.open_home_tab(window, cx))
+    })
+    .unwrap();
+    keys(cx, window, "end");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().selected),
+        Some(0),
+        "End on Home must not change the hidden commit selection"
+    );
+    app.update(cx, |app, cx| app.close_home_tab(cx));
+    cx.run_until_parked();
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |app, cx| app.open_branch_cleanup_view(cx))
+    })
+    .unwrap();
+    keys(cx, window, "end");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().selected),
+        Some(0),
+        "End in Branch Cleanup must not change the hidden commit selection"
+    );
     unmount(cx, app, window);
 }

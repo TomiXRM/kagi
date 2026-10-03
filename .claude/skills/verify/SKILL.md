@@ -774,9 +774,12 @@ The current suite covers:
   After each jump, the focused row's bounds fit inside that viewport.
 - Commit graph paging (`KAGI_GUI_E2E_ONLY=commit_paging`,
   `tests/recovery/commit_paging.rs`, #980): a 200-commit fixture with root
-  focus presses the same raw keys, checks selection (page step =
-  floor(viewport height / uniform row height) minus one, minimum one) and
-  checks the selected row against the measured `commit-list-viewport`.
+  focus presses the raw Home / End / PageUp / PageDown and Cmd+↑/↓ keys,
+  checks selection (page step = floor(viewport height / uniform row height)
+  minus one, minimum one) and checks the selected row against the measured
+  `commit-list-viewport`. Wheel-scroll the selected first row out of view;
+  Home reveals it without toggling selection. End on Home and Branch Cleanup
+  must leave the covered commit selection unchanged.
 - Toolbar unavailable reasons (`KAGI_GUI_E2E_ONLY=toolbar_keyboard_reasons`,
   `tests/recovery/toolbar_keyboard.rs`, #972): starting at the root, GPUI's
   `focus_next` visits the rendered toolbar in visual order; an F19 key-down

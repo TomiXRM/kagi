@@ -135,7 +135,7 @@ pub(crate) fn modal_overlay(card: impl IntoElement) -> gpui::Div {
 /// Shared plan comparison helpers. Summary strings can also carry operation
 /// prose, so turn only known status forms into labeled chips and preserve all
 /// other descriptions verbatim in fallback chips.
-fn plan_state_chip(text: &str, icon: &'static str, color: u32) -> gpui::AnyElement {
+pub(crate) fn plan_state_chip(text: &str, icon: &'static str, color: u32) -> gpui::AnyElement {
     let (bg, border, foreground) = theme::badge_style(color);
     div()
         .flex_shrink_0()
@@ -205,7 +205,7 @@ fn plan_head_chips(head: &str) -> Vec<gpui::AnyElement> {
     vec![plan_state_chip(head, icon, color)]
 }
 
-fn plan_status_chips(dirty: &str) -> Vec<gpui::AnyElement> {
+pub(crate) fn plan_status_chips(dirty: &str) -> Vec<gpui::AnyElement> {
     let t = current_theme();
     if dirty == "clean" {
         return vec![plan_state_chip("", "", t.color_success)];

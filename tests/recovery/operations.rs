@@ -2113,6 +2113,61 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS create_branch_input_confirm_ime");
 }
 
+/// #956: Stash shows its actual before/after state in two stacked regions.
+/// A dirty, untracked-inclusive fixture proves the preview without executing
+/// the Git write; the shared Create Branch preview remains horizontal.
+pub fn scenario_stash_push_stacked_preview(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    std::fs::write(repo.join("README.md"), "modified before stash\n").unwrap();
+    std::fs::write(repo.join("not-tracked.txt"), "untracked before stash\n").unwrap();
+    let before = repo_fingerprint(&repo);
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.open_stash_push_modal(cx));
+    wait_painted(cx, &app, window, |app| {
+        app.stash_push_modal()
+            .and_then(|modal| modal.plan.as_ref())
+            .is_some_and(|plan| plan.blockers.is_empty())
+    });
+    cx.read(|cx| {
+        let modal = app.read(cx).stash_push_modal().unwrap();
+        let plan = modal.plan.as_ref().unwrap();
+        assert!(plan.current.dirty.contains("1 modified"));
+        assert!(plan.current.dirty.contains("1 untracked"));
+        assert_eq!(plan.predicted.dirty, "clean");
+        assert!(
+            !plan.warnings.is_empty(),
+            "including untracked needs warning"
+        );
+    });
+    for name in ["plan-state-current", "plan-state-predicted"] {
+        kagi::ui::e2e::clear_control_bounds(window.window_id(), name);
+    }
+    paint(cx, window);
+    let current = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-current")
+        .expect("current state is visible");
+    let after = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-predicted")
+        .expect("after state is visible");
+    assert!(
+        current.bottom() <= after.top() + gpui::px(1.)
+            && f32::from(current.left() - after.left()).abs() <= 2.,
+        "Stash current and after must stack and align: {current:?}, {after:?}"
+    );
+    let action = kagi::ui::e2e::confirm_bounds(window.window_id())
+        .expect("Stash confirm action remains visible");
+    assert!(
+        action.size.height <= gpui::px(24.),
+        "Stash action must use compact 24px control rather than the oversized 32px default: {action:?}"
+    );
+    assert_eq!(
+        before,
+        repo_fingerprint(&repo),
+        "Stash planning is read-only"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS stash_push_stacked_preview");
+}
+
 /// #956: each input-confirm renderer must expose an unavailable primary
 /// action rather than remove it when its plan cannot run. A real click at the
 /// measured button must leave the modal and repository untouched.
@@ -2181,6 +2236,13 @@ pub fn scenario_input_confirm_disabled_cards(cx: &mut VisualTestAppContext) {
             button.size.width >= gpui::px(40.) && button.size.height >= gpui::px(24.),
             "{case}: the primary action must occupy visible button space, not a blank wrapper: {button:?}"
         );
+        if case == "stash" {
+            assert_eq!(
+                button.size.height,
+                gpui::px(24.),
+                "the blocked Stash action keeps the same compact size as the ready action"
+            );
+        }
         cx.simulate_mouse_move(window, button.center(), None, gpui::Modifiers::none());
         cx.run_until_parked();
         cx.simulate_click(window, button.center(), gpui::Modifiers::none());

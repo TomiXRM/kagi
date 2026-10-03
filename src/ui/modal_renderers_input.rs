@@ -95,6 +95,13 @@ pub(crate) fn render_input_modal_heading(
     }
 }
 
+/// Size of the shared action, including its inert disabled representation.
+#[derive(Clone, Copy)]
+pub(crate) enum InputActionSize {
+    Regular,
+    Small,
+}
+
 /// gpui-component's disabled Button suppresses clicks and focus but exposes an
 /// enabled AX node. Draw the unavailable state as an inert, reason-bearing AX
 /// Button instead. Ready actions keep the actual gpui-component Button.
@@ -103,6 +110,17 @@ pub(crate) fn render_input_modal_action(
     label: &'static str,
     accent: u32,
     reason: Option<SharedString>,
+    cx: &gpui::App,
+) -> gpui::AnyElement {
+    render_input_modal_action_with_size(button, label, accent, reason, InputActionSize::Regular, cx)
+}
+
+pub(crate) fn render_input_modal_action_with_size(
+    button: impl FnOnce() -> Button,
+    label: &'static str,
+    accent: u32,
+    reason: Option<SharedString>,
+    size: InputActionSize,
     cx: &gpui::App,
 ) -> gpui::AnyElement {
     match reason {
@@ -121,6 +139,9 @@ pub(crate) fn render_input_modal_action(
             .justify_center()
             .h_8()
             .px_4()
+            .when(matches!(size, InputActionSize::Small), |button| {
+                button.h_6().px_3().text_xs()
+            })
             .rounded(cx.theme().radius)
             .bg(Hsla::from(rgb(accent)).opacity(0.15))
             .text_color(cx.theme().muted_foreground.opacity(0.5))

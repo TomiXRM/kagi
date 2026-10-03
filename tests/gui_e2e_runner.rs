@@ -1318,6 +1318,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_create_branch_input_confirm_ime),
             ),
             (
+                "stash_push_stacked_preview",
+                Box::new(crate::recovery_operations::scenario_stash_push_stacked_preview),
+            ),
+            (
                 "input_confirm_disabled_cards",
                 Box::new(crate::recovery_operations::scenario_input_confirm_disabled_cards),
             ),

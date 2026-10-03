@@ -19,6 +19,7 @@ mod smart;
 mod window;
 mod worktree;
 
+use super::super::i18n::Msg;
 use super::super::modals::worktree::CreateWorktreeModal;
 use super::super::modals::ActiveModal;
 use super::super::modals::{
@@ -840,7 +841,7 @@ impl KagiApp {
         if let Some(m) = self.stash_push_modal_mut() {
             if m.input_state.is_none() {
                 let st = cx
-                    .new(|cx| InputState::new(window, cx).placeholder("stash message (optional)"));
+                    .new(|cx| InputState::new(window, cx).placeholder(Msg::InputStashMessage.t()));
                 st.update(cx, |s, cx| s.focus(window, cx));
                 m.input_state = Some(st);
             }

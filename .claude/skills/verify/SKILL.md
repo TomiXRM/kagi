@@ -386,10 +386,14 @@ The current suite covers:
   A blocked plan has no confirm button, and the fixture's HEAD + porcelain
   status remains unchanged. Git operations use only a local bare repo.
   `modal_sections` is the pre-migration disclosure baseline and remains unchanged;
-- Input-confirm cards (`KAGI_GUI_E2E_ONLY=create_branch_input_confirm_ime,input_confirm_disabled_cards`,
+- Input-confirm cards (`KAGI_GUI_E2E_ONLY=create_branch_input_confirm_ime,input_confirm_disabled_cards,stash_push_stacked_preview`,
   `tests/recovery/operations.rs`): #956. The real Create Branch card measures
   `plan-state-current`, `plan-state-arrow`, and `plan-state-predicted` in
-  one horizontally aligned row. An empty name or a blocked plan renders no
+  one horizontally aligned row. Stash Push uses a dirty tracked file and an
+  untracked file to verify its real plan has both status counts, a warning and
+  a clean predicted state; its two preview regions stack and align, its ready
+  and blocked actions are 24px high, and planning never writes to the repository.
+  An empty name or a blocked plan renders no
   `input-recovery` row across all six cards; Create Branch has no recovery
   row even when ready. A ready Tag plan displays its structured Git command.
   A real marked-text Enter in ready Branch, Rename Branch and Set Upstream

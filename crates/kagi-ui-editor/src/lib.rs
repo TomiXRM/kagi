@@ -271,6 +271,11 @@ pub struct EditorSaveRequest {
     text: String,
     snapshot: Option<String>,
 }
+impl EditorSaveRequest {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
 
 /// `Conflict` preserves disk bytes until the user decides via the banner.
 enum SaveOutcome {
@@ -1654,13 +1659,15 @@ impl EditorWorkspaceView {
         }));
     }
 
-    /// The host supplies an owned reservation's completion callback. Dropping
-    /// it without invoking it (panic/cancellation) must retain the reservation.
+    /// The host supplies an owned reservation's terminal callback. It lives
+    /// outside the worker and runs even when that worker unwinds or the pane is
+    /// gone. The host alone classifies uncertainty and records its receipt.
     /// No app/Git dependency crosses the pane boundary.
     pub fn save_reserved(
         &mut self,
         request: EditorSaveRequest,
-        complete: Box<dyn FnOnce() + Send>,
+        complete: Box<dyn FnOnce(bool) -> Option<String> + Send>,
+        panic_for_e2e: bool,
         cx: &mut Context<Self>,
     ) {
         let EditorSaveRequest {
@@ -1672,6 +1679,13 @@ impl EditorWorkspaceView {
         } = request;
 
         let task = cx.background_spawn(async move {
+            if panic_for_e2e {
+                // The native TestDispatcher propagates uncaught task panics;
+                // return an absent worker completion after a real injected
+                // panic so the host's ordinary abandonment path runs.
+                let _ = std::panic::catch_unwind(|| panic!("injected editor save task panic"));
+                return None;
+            }
             let result = (|| {
                 // A missing file is NOT a conflict: saving simply recreates it.
                 // Any other read error means the disk-vs-snapshot comparison
@@ -1692,11 +1706,19 @@ impl EditorWorkspaceView {
                     Err(e) => SaveOutcome::Failed(e.to_string()),
                 }
             })();
-            complete();
-            result
+            Some(result)
         });
         cx.spawn(async move |view, acx| {
-            let result = task.await;
+            let outcome = task.fallible().await.flatten();
+            let record_error = complete(outcome.is_some());
+            let result = outcome.unwrap_or_else(|| {
+                SaveOutcome::Failed(match record_error {
+                    Some(error) => format!("save task unwound; {error}"),
+                    None => {
+                        "save task unwound; outcome unknown — inspect the operation notice".into()
+                    }
+                })
+            });
             let _ = view.update(acx, |v, cx| match result {
                 SaveOutcome::Saved(text) => {
                     klog!("editor-ws: saved {}", path.display());

@@ -1,0 +1,222 @@
+//! Panic recovery through the actual background writer tasks and host completions.
+use std::time::{Duration, Instant};
+
+use gpui::{Focusable, VisualTestAppContext};
+use kagi::ui::{FooterStatus, KagiApp};
+use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
+
+use crate::macos::{build_fixture, git, mount, unmount};
+fn acknowledge_panicked_writer(app: &gpui::Entity<KagiApp>, cx: &mut VisualTestAppContext) {
+    app.update(cx, |app, cx| {
+        kagi::ui::e2e::poll_app_jobs(app, cx);
+        kagi::ui::e2e::present_app_notice(app);
+        let ids = app.app_sessions.reconcile_ids();
+        assert_eq!(ids.len(), 1, "panic must register one reconcile exit");
+        assert!(
+            app.app_sessions.has_leases(),
+            "Unknown must retain admission"
+        );
+        assert!(
+            kagi::ui::e2e::app_notice_message(app).is_some(),
+            "reconcile notice must be offered"
+        );
+        let read = kagi::app::read_reconcile(&app.app_sessions, ids[0])
+            .expect("stopped writer is readable");
+        assert!(
+            read.stop_proven() && read.resolved(),
+            "stopped local writer may be acknowledged"
+        );
+        kagi::app::acknowledge(&mut app.app_sessions, read).unwrap();
+    });
+}
+
+pub fn scenario_remote_branch_fetch_panic(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let bare = tempfile::tempdir().unwrap();
+    let remote = bare.path().join("origin.git");
+    git(&repo, &["init", "--bare", "-q", remote.to_str().unwrap()]);
+    git(
+        &repo,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    git(&repo, &["push", "-q", "origin", "main"]);
+    let (app, window) = mount(cx, &repo);
+    KagiApp::panic_next_branch_fetch_for_e2e();
+    app.update(cx, |app, cx| {
+        app.fetch_remote_branch_async("origin/main".into(), cx)
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.app_sessions.has_leases(),
+            "panicked branch fetch silently released its writer lease"
+        );
+        assert!(
+            matches!(app.status_footer, FooterStatus::Failed(_)),
+            "panicked fetch must not claim success"
+        );
+    });
+    let receipts = read_oplog_tail_for_repo(&repo, 20);
+    assert!(
+        receipts.iter().any(
+            |r| r.op == "fetch-remote-branch" && matches!(r.outcome, OpOutcome::Unknown { .. })
+        ),
+        "panicked branch fetch needs a durable Unknown receipt"
+    );
+    acknowledge_panicked_writer(&app, cx);
+    app.update(cx, |app, cx| {
+        app.fetch_remote_branch_async("origin/main".into(), cx)
+    });
+    cx.run_until_parked();
+    assert!(
+        !cx.read(|cx| app.read(cx).app_sessions.has_leases()),
+        "retry must settle"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS remote_branch_fetch_panic");
+}
+
+pub fn scenario_pr_ref_fetch_panic(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    cx.run_until_parked();
+    KagiApp::panic_next_pr_fetch_for_e2e();
+    app.update(cx, |app, cx| {
+        app.pr_mode_open(&crate::cleanup_publish_owner::pr(355, "missing"), cx)
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.app_sessions.has_leases(),
+            "panicked PR fetch silently released its writer lease"
+        );
+        assert!(
+            !app.pr_mode().unwrap().tabs[0].local_refs_loading,
+            "panicked PR fetch left its tab loading forever"
+        );
+    });
+    let receipts = read_oplog_tail_for_repo(&repo, 20);
+    assert!(
+        receipts
+            .iter()
+            .any(|r| r.op == "fetch-pr" && matches!(r.outcome, OpOutcome::Unknown { .. })),
+        "panicked PR fetch needs a durable Unknown receipt"
+    );
+    acknowledge_panicked_writer(&app, cx);
+    app.update(cx, |app, cx| {
+        app.pr_mode_open(&crate::cleanup_publish_owner::pr(355, "missing"), cx)
+    });
+    cx.run_until_parked();
+    assert!(
+        !cx.read(|cx| app.read(cx).pr_mode().unwrap().tabs[0].local_refs_loading),
+        "a fresh PR fetch must be allowed after the panic"
+    );
+    let other = build_fixture();
+    let other_repo = other.path().canonicalize().unwrap();
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(other_repo, cx));
+    });
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    cx.run_until_parked();
+    KagiApp::panic_next_pr_fetch_for_e2e();
+    let owner = app.update(cx, |app, cx| {
+        let owner = app.active_session().unwrap();
+        app.pr_mode_open(
+            &crate::cleanup_publish_owner::pr(356, "another-missing"),
+            cx,
+        );
+        assert!(app.pr_mode().unwrap().tabs[0].local_refs_loading);
+        app.switch_repo(1, cx);
+        app.status_footer = FooterStatus::Idle("other tab sentinel".into());
+        owner
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(matches!(&state.status_footer, FooterStatus::Idle(text) if text.as_ref() == "other tab sentinel"),
+            "old PR fetch presented in a different owner's footer");
+        assert!(!state.ui.get(&owner).unwrap().pr_mode.as_ref().unwrap().tabs[0].local_refs_loading,
+            "old visit left its PR loading latch set in the background tab");
+    });
+    // A stale completion still owns its receipt and reconciliation, not B's UI.
+    assert!(read_oplog_tail_for_repo(&repo, 20)
+        .iter()
+        .any(|entry| entry.op == "fetch-pr"
+            && matches!(entry.outcome, OpOutcome::Unknown { .. })
+            && entry.before.head == "PR #356"));
+    acknowledge_panicked_writer(&app, cx);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS pr_ref_fetch_panic");
+}
+
+pub fn scenario_editor_save_panic(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let before = std::fs::read(repo.join("README.md")).unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.open_editor_workspace(cx));
+    let editor = cx
+        .read(|cx| app.read(cx).ui().editor_workspace.clone())
+        .unwrap();
+    editor.update(cx, |view, cx| view.open_tab("README.md".into(), cx));
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        cx.run_until_parked();
+        if cx.read(|cx| editor.read(cx).editor.is_some() && editor.read(cx).content.is_some()) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "editor did not load");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    cx.update_window(window, |_, window, cx| {
+        let input = editor.read(cx).editor.clone().unwrap();
+        window.focus(&input.read(cx).focus_handle(cx), cx);
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.simulate_keystrokes(window, "x");
+    cx.run_until_parked();
+    assert!(cx.read(|cx| editor.read(cx).dirty));
+    KagiApp::panic_next_editor_save_for_e2e();
+    app.update(cx, |app, cx| app.save_editor_file(cx));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).app_sessions.has_leases()),
+        "panicked editor save silently released its writer lease"
+    );
+    assert!(
+        cx.read(|cx| editor.read(cx).dirty),
+        "panicked save must leave the buffer dirty"
+    );
+    assert_eq!(
+        std::fs::read(repo.join("README.md")).unwrap(),
+        before,
+        "panicked save must not claim to have written"
+    );
+    let receipts = read_oplog_tail_for_repo(&repo, 20);
+    assert!(
+        receipts
+            .iter()
+            .any(|r| r.op == "editor-save" && matches!(r.outcome, OpOutcome::Unknown { .. })),
+        "panicked editor save needs a durable Unknown receipt"
+    );
+    acknowledge_panicked_writer(&app, cx);
+    app.update(cx, |app, cx| app.save_editor_file(cx));
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        cx.run_until_parked();
+        if cx.read(|cx| !editor.read(cx).dirty && !app.read(cx).app_sessions.has_leases()) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "editor retry did not settle");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    drop(editor);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS editor_save_panic");
+}

@@ -329,6 +329,17 @@ latest 20 run（20 distinct SHA）の Windows job が **20/20 success**（failur
 settle matrix」の実機統合は今回の検証に含まれない。#728 は blocking CI の選択肢で
 完了とする。
 
+**#355 段階 0（2026-10-04）**: 上の「全 family の matrix」のうち、
+background task で動く guard writer（単独 fetch、remote branch fetch、
+PR ref fetch、Editor 保存）の **task unwind → Unknown receipt → reconcile →
+acknowledge → 次の write** を Tier A の実経路で確認した。`WriteGuard` の Drop は
+引き続き解放しない。job 外に保持した abandonment が supervisor の停止証拠と
+`UnaccountedWrite` を届け、停止済みでも結果不明の write は確認前に再実行させない。
+単独 fetch の結果は開始時の `session + visit` 以外へ表示せず、古い visit の
+失敗 receipt は永続記録する。Busy は plan revision を消費しない。remote SSH pull
+の lease 化は #989 の範囲であり、実機 Windows と全 family の matrix は引き続き
+未検証である。
+
 **pull（A' 採用 = 上記 (a) の改訂結果）**: `FamilyEvidence::Pull(PullReport)`。
 `PullReport { steps: Vec<RunReport>, terminal }` は実際に走った child の receipt を
 実行順で運び、settle は最後の step ではなく `terminal.decisive`（pull 失敗後に restore

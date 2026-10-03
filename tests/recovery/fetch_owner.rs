@@ -237,3 +237,110 @@ pub fn scenario_fetch_detach_retains_flight_and_isolates_reopen(cx: &mut VisualT
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS fetch_detach_retains_flight_and_isolates_reopen");
 }
+
+/// A panicking executor must not strand the flight or silently unlock the
+/// repository: its Unknown receipt and reconcile notice are the exit.
+pub fn scenario_fetch_panicked_worker_reconciles(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    git(&repo, &["remote", "add", "origin", repo.to_str().unwrap()]);
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| {
+        app.panic_next_fetch_for_e2e();
+        assert!(app.fetch_async_for(false, None, cx));
+        assert!(app.fetch_in_flight.is_some());
+    });
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        kagi::ui::e2e::poll_app_jobs(app, cx);
+        kagi::ui::e2e::present_app_notice(app);
+        assert!(
+            app.fetch_in_flight.is_none(),
+            "panicked fetch stranded its flight"
+        );
+        let ids = app.app_sessions.reconcile_ids();
+        assert_eq!(ids.len(), 1, "panicked fetch has no reconcile exit");
+        assert!(
+            app.app_sessions.has_leases(),
+            "Unknown must retain its lease"
+        );
+        assert!(
+            kagi::ui::e2e::app_notice_message(app).is_some(),
+            "reconcile path must be offered"
+        );
+        let read = kagi::app::read_reconcile(&app.app_sessions, ids[0]).unwrap();
+        assert!(read.stop_proven() && read.resolved());
+        kagi::app::acknowledge(&mut app.app_sessions, read).unwrap();
+        assert!(
+            app.fetch_async_for(false, None, cx),
+            "ack permits another fetch"
+        );
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.fetch_in_flight.is_none());
+        assert!(!app.app_sessions.has_leases());
+    });
+    let records: Vec<_> = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100)
+        .into_iter()
+        .filter(|entry| entry.op == "fetch")
+        .collect();
+    assert_eq!(records.len(), 1, "one durable panic receipt");
+    assert!(matches!(
+        records[0].outcome,
+        kagi_git::oplog::OpOutcome::Unknown { .. }
+    ));
+    unmount(cx, app, window);
+}
+
+/// Returning to the same tab creates a new visit, not a new permission to
+/// present the earlier fetch's footer or timestamp.
+pub fn scenario_fetch_previous_visit_is_not_presented(cx: &mut VisualTestAppContext) {
+    let fixture_a = build_fixture();
+    let fixture_b = build_fixture();
+    let repo_a = fixture_a.path().canonicalize().unwrap();
+    let repo_b = fixture_b.path().canonicalize().unwrap();
+    let missing = repo_a.join("no-such-origin");
+    git(
+        &repo_a,
+        &["remote", "add", "origin", missing.to_str().unwrap()],
+    );
+    let (app, window) = mount(cx, &repo_a);
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(repo_b.clone(), cx))
+    });
+    cx.run_until_parked();
+    let before = kagi_git::oplog::read_oplog_tail_for_repo(&repo_a, 100).len();
+    app.update(cx, |app, cx| {
+        app.switch_repo(0, cx);
+        let owner = app.active_session().unwrap();
+        let old_visit = app.app_sessions.attachment(owner).unwrap().visit;
+        assert!(app.fetch_async_for(false, None, cx));
+        app.switch_repo(1, cx);
+        app.switch_repo(0, cx);
+        assert_ne!(app.app_sessions.attachment(owner).unwrap().visit, old_visit);
+        app.status_footer = FooterStatus::Idle(SharedString::from("new visit sentinel"));
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.fetch_in_flight.is_none(), "old flight must terminalize");
+        assert!(
+            matches!(&app.status_footer, FooterStatus::Idle(text) if text.as_ref() == "new visit sentinel"),
+            "old visit overwrote the new visit's footer: {:?}",
+            app.status_footer
+        );
+    });
+    let records = kagi_git::oplog::read_oplog_tail_for_repo(&repo_a, 100);
+    assert_eq!(
+        records.len(),
+        before + 1,
+        "old visit retains its durable receipt"
+    );
+    assert!(matches!(
+        records.last().unwrap().outcome,
+        kagi_git::oplog::OpOutcome::Failed { .. }
+    ));
+    unmount(cx, app, window);
+}

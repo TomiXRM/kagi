@@ -11,6 +11,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- background の fetch・remote branch fetch・PR ref fetch・Editor 保存が異常終了したとき、write lease と実行中の表示が理由なく残り、以後の書き込みを拒否し続ける問題を修正しました。不明な結果を Operation Log に記録し、reconcile の確認後に次の書き込みを許可します。fetch の完了が元のタブへ戻った後の新しい滞在に表示される問題と、Busy の拒否で確認済み計画が失効する問題も修正しました。(#355 段階 0)
 - Home や Branch Cleanup が Graph を隠している間、または Settings・確認 modal・メニュー(menu overlay、commit / branch / stash / tag / worktree の右クリック、Linux / FreeBSD の platform menu など)が Graph に重なる間、End / Home / PageUp / PageDown と ↑/↓ で背面の commit 選択が変わる問題を修正しました。選択中の先頭行をホイールで画面外へスクロールした後も、Home で再表示できます。(#980)
 
 - ツールバーで使えない Pull / Push / Stash / Pop / Undo / Redo も Tab で選べるようにしました。キーボードで選ぶと枠が表示され、Enter / Space はクリックと同じ理由を下部に示します。AX のボタン名は維持し、使えない理由を `aria_description` に設定します。(#972)

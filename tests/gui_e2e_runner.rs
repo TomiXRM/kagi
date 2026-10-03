@@ -259,6 +259,10 @@ mod remote_refresh_owner;
 mod fetch_owner;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/guard_writer_panic.rs"]
+mod guard_writer_panic;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/file_menu_owner.rs"]
 mod file_menu_owner;
 
@@ -1596,6 +1600,26 @@ mod macos {
             (
                 "fetch_owner_display_isolated",
                 Box::new(crate::fetch_owner::scenario_fetch_owner_display_isolated),
+            ),
+            (
+                "fetch_panicked_worker_reconciles",
+                Box::new(crate::fetch_owner::scenario_fetch_panicked_worker_reconciles),
+            ),
+            (
+                "fetch_previous_visit_is_not_presented",
+                Box::new(crate::fetch_owner::scenario_fetch_previous_visit_is_not_presented),
+            ),
+            (
+                "remote_branch_fetch_panic",
+                Box::new(crate::guard_writer_panic::scenario_remote_branch_fetch_panic),
+            ),
+            (
+                "pr_ref_fetch_panic",
+                Box::new(crate::guard_writer_panic::scenario_pr_ref_fetch_panic),
+            ),
+            (
+                "editor_save_panic",
+                Box::new(crate::guard_writer_panic::scenario_editor_save_panic),
             ),
             (
                 "file_menu_freezes_path",

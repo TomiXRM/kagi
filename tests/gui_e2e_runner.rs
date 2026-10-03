@@ -2093,8 +2093,8 @@ mod macos {
     /// killed. Its group is killed only at the timeout, while its leader is
     /// still unreaped: after the reap the pgid is a number the OS may hand to
     /// someone else (the rule in `kagi_git::proc::group`). (A group of its
-    /// own also means the terminal's Ctrl+C reaches only this parent; a child
-    /// it leaves behind ends at its timeout.)
+    /// own also means the terminal's Ctrl+C reaches only this parent, which
+    /// then stops the child as at a timeout: see [`catch_interrupts`].)
     fn run_child(
         runner: &Path,
         name: &str,

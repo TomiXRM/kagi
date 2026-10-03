@@ -624,7 +624,6 @@ pub enum Msg {
     IssueCreate,
     HomeTabTitle,
     HomeTitle,
-    HomeSubtitle,
     HomeRecent,
     HomeNoRecent,
     HomeOpenFolder,
@@ -2558,12 +2557,6 @@ impl Msg {
             (Ja, HomeTabTitle) => "ホーム",
             (En, HomeTitle) => "Open a repository",
             (Ja, HomeTitle) => "リポジトリを開く",
-            (En, HomeSubtitle) => {
-                "Pick one you opened recently, open a folder, or connect to one over SSH."
-            }
-            (Ja, HomeSubtitle) => {
-                "最近開いたリポジトリを選ぶか、フォルダーを開くか、SSH で接続します。"
-            }
             (En, HomeRecent) => "Recently opened",
             (Ja, HomeRecent) => "最近開いたリポジトリ",
             (En, HomeNoRecent) => "No recently opened repositories.",

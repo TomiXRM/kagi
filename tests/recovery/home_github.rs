@@ -448,6 +448,20 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
         cx.read(|cx| kagi::ui::e2e::op_latched(app.read(cx))),
         "a running clone holds the write latch"
     );
+    // The card sent to the background comes back when the row, now
+    // "Cloning…", is clicked: still the running clone, not a new card that
+    // could not start and would outlive the clone (#944). Called directly,
+    // as above, so the clone is still running.
+    app.update(cx, |app, cx| {
+        let listing = app.clone_modal().unwrap().listing.clone();
+        app.cancel_clone();
+        assert!(app.clone_modal().is_none());
+        app.home_github_pick(listing, cx);
+        assert!(
+            app.clone_modal().is_some_and(|m| m.started.is_some()),
+            "the running clone's card is back"
+        );
+    });
     wait_for(cx, &app, "the clone", |app| {
         app.home_github.cloning.is_none() && app.clone_modal().is_none()
     });

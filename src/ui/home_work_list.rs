@@ -26,6 +26,22 @@ pub(super) enum WorkRowState {
     Opening,
 }
 
+/// The review-request authors whose avatars Home shows, per host they are
+/// fetched from (#944): an Enterprise login goes to its own server, where
+/// it names its user, never to github.com.
+pub(super) fn review_avatar_requests(
+    items: &[WorkItem],
+) -> std::collections::BTreeMap<String, Vec<String>> {
+    let mut requests = std::collections::BTreeMap::<String, Vec<String>>::new();
+    for item in items.iter().filter(|item| !item.author.is_empty()) {
+        let logins = requests.entry(item.host.to_ascii_lowercase()).or_default();
+        if !logins.contains(&item.author) {
+            logins.push(item.author.clone());
+        }
+    }
+    requests
+}
+
 const AVATAR: f32 = 20.;
 
 fn heading(kind: WorkKind) -> &'static str {
@@ -110,11 +126,13 @@ pub(super) fn work_items(work: &HomeWork, pane: HomePane, query: &str) -> Vec<Ho
 
 /// One PR or issue: its kind as an icon, the title over `owner/repo #N` and
 /// the last update; a review request also shows who asked, with their
-/// avatar. At the end what a click does, or a spinner while it opens.
+/// avatar. At the end what a click does, or a spinner while it opens. It is
+/// row `place.0` of the `place.1` in the list, and Tab reaches it.
 pub(super) fn work_row(
     kind: WorkKind,
     item: &WorkItem,
     state: WorkRowState,
+    place: (usize, usize),
     avatars: &Arc<AvatarImages>,
     app: &Entity<KagiApp>,
 ) -> AnyElement {
@@ -136,20 +154,14 @@ pub(super) fn work_row(
             item.name_with_owner, item.number
         )));
     if kind == WorkKind::ReviewRequests && !item.author.is_empty() {
-        // The login-keyed cache holds github.com users; on an Enterprise
-        // host the same login is someone else, so only the initials show.
-        let none = AvatarImages::default();
-        let images = if item.on_github_com() {
-            avatars.as_ref()
-        } else {
-            &none
-        };
+        // Keyed by the item's host (#906): an Enterprise login is fetched
+        // from that server, never shown as github.com's user of that name.
         detail = detail
             .child(kagi_ui_core::commit_header::avatar_circle_with_initials(
                 AVATAR,
+                &kagi_ui_core::avatar::login_key(Some(&item.host), &item.author),
                 &item.author,
-                &item.author,
-                images,
+                avatars,
             ))
             .child(safe_text(&item.author));
     }
@@ -188,48 +200,55 @@ pub(super) fn work_row(
     };
     let app = app.clone();
     let picked = item.clone();
-    let row = div()
-        .id(SharedString::from(key.clone()))
-        .w_full()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_3()
-        .px_3()
-        .py_2()
-        .rounded_lg()
-        .when(state != WorkRowState::Opening, |el| {
-            el.cursor(gpui::CursorStyle::PointingHand)
-                .hover(|s| s.bg(rgb(theme().surface)))
-        })
-        .on_click(move |_, window, cx| {
-            app.update(cx, |app, cx| {
-                app.home_work_pick(kind, picked.clone(), window, cx)
-            });
-        })
-        .child(
-            gpui::svg()
-                .path(icon)
-                .flex_shrink_0()
-                .size(theme::scaled_px(16.))
-                .text_color(rgb(color)),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_w(px(0.))
-                .child(
-                    div()
-                        .text_base()
-                        .text_color(rgb(theme().text_main))
-                        .truncate()
-                        .child(safe_text(&item.title)),
-                )
-                .child(detail),
-        )
-        .child(end);
+    let label = format!("{}, {} #{}", item.title, item.name_with_owner, item.number);
+    let ring = super::keyboard_nav::RING;
+    let row = super::keyboard_nav::focusable_row(super::list_a11y::list_item(
+        super::home_github_list::HOME_LIST,
+        div().id(SharedString::from(key.clone())),
+        place.0,
+        place.1,
+        label,
+    ))
+    .w_full()
+    .flex()
+    .flex_row()
+    .items_center()
+    .gap_3()
+    .px(theme::scaled_px(12. - ring))
+    .py(theme::scaled_px(8. - ring))
+    .rounded_lg()
+    .when(state != WorkRowState::Opening, |el| {
+        el.cursor(gpui::CursorStyle::PointingHand)
+            .hover(|s| s.bg(rgb(theme().surface)))
+    })
+    .on_click(move |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.home_work_pick(kind, picked.clone(), window, cx)
+        });
+    })
+    .child(
+        gpui::svg()
+            .path(icon)
+            .flex_shrink_0()
+            .size(theme::scaled_px(16.))
+            .text_color(rgb(color)),
+    )
+    .child(
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w(px(0.))
+            .child(
+                div()
+                    .text_base()
+                    .text_color(rgb(theme().text_main))
+                    .truncate()
+                    .child(safe_text(&item.title)),
+            )
+            .child(detail),
+    )
+    .child(end);
     super::e2e::measure_control(key, row)
 }
 
@@ -243,4 +262,45 @@ fn chip(text: &str, color: u32) -> AnyElement {
         .text_color(rgb(color))
         .child(SharedString::from(text.to_string()))
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn review(host: &str, author: &str) -> WorkItem {
+        WorkItem {
+            host: host.into(),
+            name_with_owner: "acme/widgets".into(),
+            number: 1,
+            title: String::new(),
+            url: String::new(),
+            is_draft: false,
+            author: author.into(),
+            updated_at: String::new(),
+        }
+    }
+
+    /// An Enterprise reviewer's avatar is asked of its own server, under the
+    /// same login as a github.com user it must not be confused with.
+    #[test]
+    fn review_avatars_are_requested_from_each_items_host() {
+        let requests = review_avatar_requests(&[
+            review("github.com", "octo"),
+            review("GHE.example.com", "octo"),
+            review("ghe.example.com", "hubot"),
+            review("github.com", "octo"),
+            review("github.com", ""),
+        ]);
+        assert_eq!(
+            requests.into_iter().collect::<Vec<_>>(),
+            vec![
+                (
+                    "ghe.example.com".to_string(),
+                    vec!["octo".into(), "hubot".into()]
+                ),
+                ("github.com".to_string(), vec!["octo".to_string()]),
+            ]
+        );
+    }
 }

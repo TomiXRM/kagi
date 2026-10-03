@@ -293,6 +293,16 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
         cx.read(|cx| app.read(cx).clone_modal().is_none()),
         "the clone card belongs to the Repositories tab"
     );
+    // #944: the click left the row focused; Enter and Space press it again,
+    // as gpui's keyboard click on the row's own handler.
+    for key in ["enter", "space"] {
+        crate::keyboard_nav::keys(cx, window, key);
+        assert_eq!(
+            e2e::take_opened_urls(),
+            vec!["https://github.com/acme/widgets/pull/3".to_string()],
+            "{key} presses the focused row"
+        );
+    }
     // Every row's end is Open (on GitHub), cloned or not, and pressing it
     // does not also run the row's click: no refs read, no spinner.
     click(cx, window, "home-work-acme/widgets-3-open");

@@ -59,7 +59,11 @@ impl KagiApp {
     ) -> AnyElement {
         let pane = self.home_github.work.pane;
         let local = &self.home_github.local;
-        let cloning = self.home_github.cloning.as_ref().map(|r| r.source.clone());
+        let cloning = self
+            .home_github
+            .cloning
+            .as_ref()
+            .map(|card| card.listing.clone_source());
         let (items, sections, orgs_loading) = match (pane, &self.home_github.repos) {
             (HomePane::Prs | HomePane::Issues, _) => {
                 (work_items(&self.home_github.work, pane, &query), 0, false)
@@ -112,7 +116,21 @@ impl KagiApp {
         }
         let app = cx.entity();
         let avatars = self.avatars.images.clone();
-        gpui::list(state, move |i, _window, _cx| match items.get(i) {
+        // A row's place among the rows (headings and notes are not rows), so
+        // assistive technology learns the whole length of a list it only
+        // sees part of (#944).
+        let mut next = 0;
+        let positions: Vec<Option<usize>> = items
+            .iter()
+            .map(|item| {
+                matches!(item, HomeItem::Repo(..) | HomeItem::Work(..)).then(|| {
+                    next += 1;
+                    next - 1
+                })
+            })
+            .collect();
+        let rows = next;
+        let list = gpui::list(state, move |i, _window, _cx| match items.get(i) {
             Some(HomeItem::Heading(title)) => section_heading(title).into_any_element(),
             Some(HomeItem::Note(text)) => muted(text.clone()),
             Some(HomeItem::OrgsFailed(text)) => {
@@ -136,7 +154,8 @@ impl KagiApp {
                     .child(muted_inline(text)),
             ),
             Some(HomeItem::Work(kind, item, state)) => {
-                work_row(*kind, item, *state, &avatars, &app)
+                let place = (positions[i].unwrap_or(0), rows);
+                work_row(*kind, item, *state, place, &avatars, &app)
             }
             Some(HomeItem::WorkFailed(text)) => super::e2e::measure_control(
                 "home-work-failed",
@@ -149,15 +168,34 @@ impl KagiApp {
             ),
             Some(HomeItem::Repo(listing, state)) => super::e2e::measure_control(
                 format!("home-gh-{}", listing.name_with_owner),
-                github_row(listing.clone(), state, &app),
+                github_row(
+                    listing.clone(),
+                    state,
+                    (positions[i].unwrap_or(0), rows),
+                    &app,
+                ),
             ),
             None => div().into_any_element(),
         })
         .flex_1()
-        .min_h(px(0.))
+        .min_h(px(0.));
+        let name = match pane {
+            HomePane::Repos => Msg::HomePaneRepos.t(),
+            HomePane::Prs => Msg::HomePanePrs.t(),
+            HomePane::Issues => Msg::HomePaneIssues.t(),
+        };
+        super::list_a11y::plain_list(
+            HOME_LIST,
+            div().id(HOME_LIST).flex().flex_col().flex_1().min_h(px(0.)),
+            name,
+        )
+        .child(list)
         .into_any_element()
     }
 }
+
+/// The list's id, which its rows name as theirs.
+pub(super) const HOME_LIST: &str = "home-list";
 
 /// The list's entries: per owner a heading, its notes (empty, unreadable,
 /// truncated) and the repositories matching `query`; an owner without a
@@ -299,7 +337,13 @@ pub(super) fn muted_inline(text: &str) -> impl IntoElement {
 
 /// One repository: its name over its description on the left; on the right
 /// the last update, private / fork marks and what a click does, as a chip.
-fn github_row(listing: RepoListing, state: &'static str, app: &Entity<KagiApp>) -> AnyElement {
+/// It is row `place.0` of the `place.1` in the list, and Tab reaches it.
+fn github_row(
+    listing: RepoListing,
+    state: &'static str,
+    place: (usize, usize),
+    app: &Entity<KagiApp>,
+) -> AnyElement {
     let chip = |text: &str| {
         div()
             .flex_shrink_0()
@@ -340,37 +384,44 @@ fn github_row(listing: RepoListing, state: &'static str, app: &Entity<KagiApp>) 
     });
     let id = SharedString::from(format!("home-gh-row-{}", listing.name_with_owner));
     let name = listing.name().to_string();
+    let label = format!("{}, {state}", listing.name_with_owner);
     let app = app.clone();
-    div()
-        .id(id)
-        .w_full()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_4()
-        .px_3()
-        .py_2()
-        .rounded_lg()
-        .cursor(gpui::CursorStyle::PointingHand)
-        .hover(|s| s.bg(rgb(theme().surface)))
-        .on_click(move |_, _, cx| {
-            app.update(cx, |app, cx| app.home_github_pick(listing.clone(), cx));
-        })
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_w(px(0.))
-                .child(
-                    div()
-                        .text_base()
-                        .text_color(rgb(theme().text_main))
-                        .truncate()
-                        .child(SharedString::from(name)),
-                )
-                .children(description),
-        )
-        .child(meta)
-        .into_any_element()
+    let ring = super::keyboard_nav::RING;
+    super::keyboard_nav::focusable_row(super::list_a11y::list_item(
+        HOME_LIST,
+        div().id(id),
+        place.0,
+        place.1,
+        label,
+    ))
+    .w_full()
+    .flex()
+    .flex_row()
+    .items_center()
+    .gap_4()
+    .px(theme::scaled_px(12. - ring))
+    .py(theme::scaled_px(8. - ring))
+    .rounded_lg()
+    .cursor(gpui::CursorStyle::PointingHand)
+    .hover(|s| s.bg(rgb(theme().surface)))
+    .on_click(move |_, _, cx| {
+        app.update(cx, |app, cx| app.home_github_pick(listing.clone(), cx));
+    })
+    .child(
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w(px(0.))
+            .child(
+                div()
+                    .text_base()
+                    .text_color(rgb(theme().text_main))
+                    .truncate()
+                    .child(SharedString::from(name)),
+            )
+            .children(description),
+    )
+    .child(meta)
+    .into_any_element()
 }

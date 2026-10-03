@@ -22,6 +22,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Operation Log の操作者の表示を、日本語表示でも「人」ではなく「Human」にしました(CLI / MCP と同じく英語の表記)。(#908)
 - Inspector の commit 本文で、箇条書きなど改行で区切られた行が「- bump the version- tag the release」のように 1 行につながって表示されていた問題を修正しました。本文の改行どおりに 1 行ずつ表示します。(#946)
 - Issues の下書き(新しい Issue と返信)を、clone ごと・番号ごとに加えて書き込み先の repository ごとに保存するようにしました。`gh repo set-default` で別の repository に切り替えた後、同じ番号の別 Issue の欄に前の repository 宛ての下書きが出て、そのまま投稿されることはありません(前の下書きは消さずに残ります)。以前の版で保存した下書きは、clone の remote が指す repository が 1 つだけのときにその repository へ 1 回だけ引き継ぎ、複数あるときは引き継がずに元の場所に残します。(#940 review)
+- Home の「リポジトリ / Pull Request / Issue」の切り替えと、左上の Graph / PRs / Issues の切り替えを、キーボードで操作できるようにしました。Tab で選択中のタブに移動し、←/→ で隣へ、Home / End で端へ移動します。Home の切り替えは移動と同時に表示が切り替わり、Graph / PRs / Issues は移動のあと Enter / Space で切り替わります(PRs / Issues は開くと一覧を読み込むため)。Home のリポジトリ行と PR / Issue 行も Tab で移動でき、Enter / Space でクリックと同じ動作をします。キーボードで移動したときだけ、入力欄と同じ色の枠を表示します。行どうしの ↑/↓ と、タブ帯のキーボード操作は #959 で対応します。(#944)
+- clone 中のリポジトリ行(「Cloning…」)をクリックすると、開始前の新しい clone card が開き、clone が終わっても残っていた問題を修正しました。実行中の clone の card を前面に戻します。(#944)
+- Home のレビュー依頼の行で、GitHub Enterprise のユーザーのアバターを表示するようにしました。github.com の同名ユーザーではなく、その Enterprise のサーバーから取得します。(#944)
 
 ### Changed
 

@@ -140,7 +140,7 @@ the row says a Kagi geometry is kept on purpose.
 | Menu / context menu | Kagi `menu_overlay` (keeps disabled-reason tooltips and danger rows); pinned PopupMenu rows are 26 fixed | Adopt PopupMenu only where those contracts are not needed. |
 | Modal / confirmation | Kagi `modal_shell` (target list not hideable behind disclosure; long lists scroll inside their panel; fixed action row; existing widths 504/576/648) | The target rows are not all simultaneously on-screen when the list is long ([`modal_shell.rs`](../../src/ui/modal_shell.rs#L440-L461)). Do not replace with gpui-component Dialog (448 fixed, different focus/Esc). Borrow its look, not its behaviour. |
 | Toast | Kagi `toast_stack` (bounded preview, max 4, info 4 s / error 8 s); the Operation Log owns detail | Not gpui-component Notification. |
-| Tabs / segmented | Kagi's workspace-mode nav exposes `Role::Tab`/`TabList`; its selected label uses `accent_text_on(surface)` (at least 4.5:1). | The repo tab strip has no `Role::Tab` or focus/key handling, and workspace-mode cells also lack focus/key handling ([`tabs.rs`](../../src/ui/tabs.rs#L885-L919), [`workspace_mode.rs`](../../src/ui/workspace_mode.rs#L40-L60)). Do not claim keyboard-complete tabs until each surface is implemented and checked. Pinned Tab/TabBar has no keyboard focus either. |
+| Tabs / segmented | Kagi's `keyboard_nav::TabList` ([`keyboard_nav.rs`](../../src/ui/keyboard_nav.rs)): `Role::Tab`/`TabList`, one Tab stop (the selected cell), ←/→/Home/End between cells, Enter/Space select, a `focus_visible` ring in the Input ring colour, focus handed back after a pointer click. Automatic activation where selecting starts nothing (Home's switch); manual where it starts a read (the workspace-mode nav). The selected label uses `accent_text_on(surface)` (at least 4.5:1). | The repo tab strip has no `Role::Tab` or focus/key handling yet ([`tabs.rs`](../../src/ui/tabs.rs#L885-L919), #959). Pinned Tab/TabBar has no keyboard focus either. Rows of a virtualized list are Tab stops (`keyboard_nav::focusable_row`) but have no ↑/↓ (#959). |
 | Toggle / checkbox / radio | gpui-component `Checkbox` for selection, `RadioGroup` for a mutually exclusive choice; `Switch` is already used for immediately applied *app preferences*. | Pinned `Switch` handles mouse down but provides no focus/key path or AX role/name/checked state ([`switch.rs`](https://github.com/longbridge/gpui-component/blob/b004e595cf5de98a73b6b561394a559a94ae1e2a/crates/ui/src/switch.rs#L142-L225)). Add those behaviours or use an accessible alternative before calling the control keyboard/AX-complete. A toggle that changes the repository still needs the Git write pipeline. |
 | Empty / loading / error | a sentence + one action; skeleton rows that match the final layout for lists; error with what to do and a retry | Git write errors: short toast + Operation Log, never a permanent toast. |
 | Motion | instant or ≤ 150 ms for hover/press; Kagi-owned animations honour `reduce_motion` | A library transition that cannot be turned off is listed as an exception in the PR. |
@@ -155,8 +155,8 @@ PR block.
 ## Known gaps (do not claim these are met)
 
 - Settings' `Switch` has no keyboard path and no AX role/name/checked state.
-- The repo tab strip has no `Role::Tab` and no keyboard handling; the
-  workspace-mode cells have the role but no keyboard handling.
+- The repo tab strip has no `Role::Tab` and no keyboard handling (#959).
+- Rows of Home's virtualized list are reached with Tab, not ↑/↓ (#959).
 - Toolbar buttons expose AX disabled, but their reason reaches only a mouse
   click (footer); keyboard/AX users do not get it.
 - Library transitions (Switch 150 ms, Tab 200 ms, Dialog 250 ms) do not follow

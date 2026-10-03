@@ -29,33 +29,26 @@ pub enum WorkspaceMode {
 /// One mode cell in the sidebar's pinned navigation row. Mode selection remains
 /// here with the canonical dispatchers; the sidebar only hosts the element.
 fn sidebar_mode_nav_cell(
+    tabs: &super::keyboard_nav::TabList,
+    slot: usize,
     id: &'static str,
     label: &'static str,
     active: bool,
-    enabled: bool,
-    cx: &mut Context<KagiApp>,
-    on_click: impl Fn(&mut KagiApp, &gpui::ClickEvent, &mut gpui::Window, &mut Context<KagiApp>)
-        + 'static,
 ) -> gpui::AnyElement {
-    div()
-        .id(id)
-        .role(gpui::Role::Tab)
-        .aria_label(label)
-        .aria_selected(active)
+    tabs.cell(slot, label, div().id(id))
         .flex_1()
-        .py_1()
+        .py(theme::scaled_px(4. - super::keyboard_nav::RING))
         .flex()
         .justify_center()
         .text_xs()
         .rounded(theme::scaled_px(4.))
-        .when(enabled, |el| el.cursor_pointer())
+        .cursor_pointer()
         .when(active, |el| {
             el.bg(rgb(theme::theme().surface))
                 .text_color(rgb(theme::theme().accent_text_on(theme::theme().surface)))
                 .font_weight(gpui::FontWeight::MEDIUM)
         })
         .when(!active, |el| el.text_color(rgb(theme::theme().text_muted)))
-        .when(enabled, |el| el.on_click(cx.listener(on_click)))
         .child(SharedString::from(label))
         .into_any_element()
 }
@@ -164,47 +157,57 @@ pub(super) fn sidebar_list_row(active: bool) -> gpui::Div {
 
 /// Graph / PRs / Issues navigation, rendered in the sidebar but owned by
 /// workspace-mode dispatch so the visual highlight and resolved center takeover cannot drift.
+///
+/// Keyboard (#944): the arrows only move between the cells; Enter / Space
+/// enter the mode, as entering PRs or Issues starts a read.
 pub(super) fn render_sidebar_mode_nav(
+    app: &KagiApp,
     mode: WorkspaceMode,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let prs_available = kagi_git::github::gh_available();
+    const MODES: [WorkspaceMode; 3] = [
+        WorkspaceMode::Graph,
+        WorkspaceMode::Prs,
+        WorkspaceMode::Issues,
+    ];
+    let shown = if prs_available {
+        vec![0, 1, 2]
+    } else {
+        vec![0]
+    };
+    let entity = cx.weak_entity();
+    let tabs = super::keyboard_nav::TabList::new(
+        &app.sidebar.mode_focus,
+        MODES.len(),
+        shown,
+        MODES.iter().position(|&m| m == mode),
+        super::keyboard_nav::Activation::Manual,
+        app.root_focus.clone(),
+        move |slot, _, cx| {
+            let _ = entity.update(cx, |app, cx| match MODES[slot] {
+                WorkspaceMode::Prs => app.show_pr_mode(cx),
+                WorkspaceMode::Issues => app.show_issues_mode(cx),
+                _ => app.show_graph_mode(cx),
+            });
+        },
+        cx,
+    );
+    let cell =
+        |slot: usize, id, label| sidebar_mode_nav_cell(&tabs, slot, id, label, mode == MODES[slot]);
     super::e2e::measure_control(
         "sidebar-mode-nav",
-        div()
-            .id("sidebar-mode-nav")
-            .role(gpui::Role::TabList)
+        tabs.list(div().id("sidebar-mode-nav"))
             .flex_shrink_0()
             .mx_2()
             .mt_1()
             .mb_1()
             .flex()
             .gap_1()
-            .child(sidebar_mode_nav_cell(
-                "sidebar-mode-graph",
-                Msg::WorkspaceGraph.t(),
-                mode == WorkspaceMode::Graph,
-                true,
-                cx,
-                |this, _, _window, cx| this.show_graph_mode(cx),
-            ))
+            .child(cell(0, "sidebar-mode-graph", Msg::WorkspaceGraph.t()))
             .when(prs_available, |el| {
-                el.child(sidebar_mode_nav_cell(
-                    "sidebar-mode-prs",
-                    Msg::WorkspacePrs.t(),
-                    mode == WorkspaceMode::Prs,
-                    true,
-                    cx,
-                    |this, _, _window, cx| this.show_pr_mode(cx),
-                ))
-                .child(sidebar_mode_nav_cell(
-                    "sidebar-mode-issues",
-                    Msg::WorkspaceIssues.t(),
-                    mode == WorkspaceMode::Issues,
-                    true,
-                    cx,
-                    |this, _, _window, cx| this.show_issues_mode(cx),
-                ))
+                el.child(cell(1, "sidebar-mode-prs", Msg::WorkspacePrs.t()))
+                    .child(cell(2, "sidebar-mode-issues", Msg::WorkspaceIssues.t()))
             }),
     )
 }
@@ -390,7 +393,7 @@ pub(super) fn render_sidebar_pages(
         .flex_col()
         .bg(rgb(theme::theme().sidebar))
         .on_scroll_wheel(cx.listener(KagiApp::sidebar_scroll))
-        .child(render_sidebar_mode_nav(mode, cx))
+        .child(render_sidebar_mode_nav(app, mode, cx))
         .child(viewport)
         .into_any_element()
 }

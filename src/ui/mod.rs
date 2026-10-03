@@ -85,6 +85,7 @@ pub mod home_work;
 mod home_work_list;
 pub mod inspector;
 mod inspector_model;
+pub(crate) mod keyboard_nav;
 pub mod list_a11y;
 pub mod main_diff_pane;
 pub mod menu_overlay;

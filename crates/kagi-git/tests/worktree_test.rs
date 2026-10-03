@@ -878,6 +878,65 @@ fn remove_main_worktree_is_always_refused() {
     }
 }
 
+/// Bare repositories have no main workdir. A linked tab must still be able
+/// to remove another linked worktree without deleting the shared common dir.
+#[test]
+fn remove_other_linked_worktree_from_bare_backed_tab() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let seed = TempDir::new().unwrap();
+    build_repo(&seed);
+    let base = TempDir::new().unwrap();
+    let bare = base.path().join("repo.git");
+    git(
+        seed.path(),
+        &[
+            "clone",
+            "--bare",
+            "-q",
+            seed.path().to_str().unwrap(),
+            bare.to_str().unwrap(),
+        ],
+    );
+    let manager = base.path().join("manager");
+    let target = base.path().join("target");
+    git(
+        &bare,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "manager",
+            manager.to_str().unwrap(),
+        ],
+    );
+    git(
+        &bare,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "target",
+            target.to_str().unwrap(),
+        ],
+    );
+
+    let repo = Repository::open(&manager).expect("linked manager");
+    assert_eq!(
+        repo.commondir().canonicalize().unwrap(),
+        bare.canonicalize().unwrap()
+    );
+    let plan = plan_remove_worktree(&repo, "target", false).expect("plan");
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    execute_remove_worktree(&repo, &plan, "target", false).expect("remove linked worktree");
+    assert!(!target.exists());
+    assert!(manager.join("README.md").exists());
+    assert!(bare.join("HEAD").exists(), "bare common dir survives");
+}
+
 /// `lock --reason` records the reason in `git worktree list --porcelain` (§6).
 #[test]
 fn lock_worktree_reason_appears_in_porcelain() {

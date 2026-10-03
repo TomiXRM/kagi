@@ -25,11 +25,11 @@ use kagi_domain::worktree_autolock::{
 ///
 /// Refuses (returns `Err`, deletes nothing) when the target:
 /// - is a symlink (never followed into a delete),
-/// - resolves to the main worktree,
-/// - overlaps the main repository (is an ancestor of, or lives inside, it).
+/// - resolves to the main worktree (or the bare common directory),
+/// - contains the main repository or bare common directory.
 ///
-/// `main_workdir` is the main repo's working directory; `wt_path` is the
-/// registered worktree path (from `git2::Worktree::path`).
+/// `main_workdir` is the main repo's working directory, or its common dir
+/// when bare; `wt_path` is the registered worktree path.
 pub(crate) fn remove_worktree_dir_checked(
     main_workdir: &Path,
     wt_path: &Path,

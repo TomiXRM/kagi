@@ -269,14 +269,21 @@ pub(crate) fn execute_remove_worktree_progress(
     }
     preflight_check(repo, plan)?;
 
-    // The removal may be requested from the linked worktree's own tab. Its
-    // workdir is the deletion target, not the main worktree: derive the
-    // containment anchor from the shared repository instead (#915).
+    // A linked worktree may be the deletion target. Its own workdir cannot
+    // anchor containment; use the surviving main workdir, or the shared
+    // common dir when the repository is bare (#915, #938).
     let main_repo = Repository::open(repo.commondir())
-        .map_err(|e| GitError::Other(format!("cannot open main worktree: {e}")))?;
-    let main_workdir = main_repo
+        .map_err(|e| GitError::Other(format!("cannot open common repository: {e}")))?;
+    let protected_root = main_repo
         .workdir()
-        .ok_or_else(|| GitError::Other("bare repositories are not supported".to_string()))?
+        .unwrap_or_else(|| main_repo.commondir())
+        .to_path_buf();
+    // Pre-remove copy/symlink steps still source from a worktree. With a bare
+    // common dir, preserve the caller's linked worktree as their source.
+    let step_source = main_repo
+        .workdir()
+        .or_else(|| repo.workdir())
+        .ok_or_else(|| GitError::Other("no worktree for pre-remove steps".to_string()))?
         .to_path_buf();
 
     let wt = repo
@@ -332,7 +339,7 @@ pub(crate) fn execute_remove_worktree_progress(
         }
         let trusted = is_worktree_config_trusted(&cfg);
         let env = StepEnv {
-            main_root: main_workdir.clone(),
+            main_root: step_source.clone(),
             worktree: wt_path.clone(),
         };
         super::worktree_steps::run_pre_remove_progress(
@@ -378,7 +385,7 @@ pub(crate) fn execute_remove_worktree_progress(
 
     // Containment-checked recursive delete (the ONLY sanctioned one).
     progress.stage = Stage::DeletionStarted;
-    if let Err(e) = remove_worktree_dir_checked(&main_workdir, &wt_path) {
+    if let Err(e) = remove_worktree_dir_checked(&protected_root, &wt_path) {
         return partial(e.to_string());
     }
     if fault == Some(Fault::PanicAfterDeletionStarted) {

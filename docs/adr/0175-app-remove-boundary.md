@@ -40,6 +40,7 @@ survive GC and are retained with their oplog entries.
   together out of lifecycle.rs; other lifecycle bodies are unchanged. Progress
   is passed by mutable reference from outside catch_unwind, updated before
   side effects and immediately after each backup. Verification is explicit.
+- #915 / #938: linked 自身からの Remove でも削除境界を実行元の workdir に置かない。main workdir がある repository はその path、bare common dir はその common dir を削除から守る。削除前 copy / symlink ステップの source は main workdir が無い場合に実行元 linked worktree を使い、削除境界と混同しない。
 - `Unknown { after, evidence }` is additive. Evidence is a human-readable
   string carrying stage, verification, termination and step observations.
   Partial/Unknown after contains full blob and branch OIDs. Existing variants

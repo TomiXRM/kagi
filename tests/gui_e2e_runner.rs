@@ -131,6 +131,9 @@ mod home_github;
 #[path = "recovery/home_list_place.rs"]
 mod home_list_place;
 #[cfg(target_os = "macos")]
+#[path = "recovery/home_p2.rs"]
+mod home_p2;
+#[cfg(target_os = "macos")]
 #[path = "recovery/home_work.rs"]
 mod home_work;
 #[cfg(target_os = "macos")]
@@ -1031,6 +1034,14 @@ mod macos {
             (
                 "home_list_place",
                 Box::new(crate::home_list_place::scenario_home_list_place),
+            ),
+            (
+                "home_review_avatar_host",
+                Box::new(crate::home_p2::scenario_home_review_avatar_host),
+            ),
+            (
+                "clone_card_ticker",
+                Box::new(crate::home_p2::scenario_clone_card_ticker),
             ),
             (
                 "smart_commit_generation_owner",

@@ -63,6 +63,10 @@ pub struct HomeGithub {
     /// card: the card is its progress, and it can be sent to the background
     /// and brought back.
     pub cloning: Option<CloneModal>,
+    /// Bumped each time the clone card's redraw ticker starts: an older
+    /// ticker still asleep sees it changed and stops, so reopening the card
+    /// within its second does not leave two running (#968).
+    clone_tick: u64,
     /// Bumped per read, so an older read landing late is dropped.
     pub(super) generation: u64,
     /// The user's own list is on screen and the organizations' are still
@@ -618,24 +622,34 @@ impl KagiApp {
     }
 
     /// Redraw the running clone's card once a second, for its elapsed time,
-    /// while it is on screen.
+    /// while it is on screen. Only the latest ticker runs: one started
+    /// before it ends at its next wake (#968).
     fn tick_clone_card(&mut self, cx: &mut Context<Self>) {
-        cx.spawn(async move |app, acx| loop {
-            acx.background_executor()
-                .timer(std::time::Duration::from_secs(1))
-                .await;
-            let running = app
-                .update(acx, |app, cx| {
-                    let running = app.clone_modal().is_some_and(|m| m.started.is_some());
-                    if running {
-                        cx.notify();
-                    }
-                    running
-                })
-                .unwrap_or(false);
-            if !running {
-                break;
+        self.home_github.clone_tick += 1;
+        let tick = self.home_github.clone_tick;
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::clone_ticker_started();
+        cx.spawn(async move |app, acx| {
+            loop {
+                acx.background_executor()
+                    .timer(std::time::Duration::from_secs(1))
+                    .await;
+                let running = app
+                    .update(acx, |app, cx| {
+                        let running = app.home_github.clone_tick == tick
+                            && app.clone_modal().is_some_and(|m| m.started.is_some());
+                        if running {
+                            cx.notify();
+                        }
+                        running
+                    })
+                    .unwrap_or(false);
+                if !running {
+                    break;
+                }
             }
+            #[cfg(feature = "gui-e2e")]
+            super::e2e::clone_ticker_ended();
         })
         .detach();
     }

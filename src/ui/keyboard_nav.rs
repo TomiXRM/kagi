@@ -671,6 +671,11 @@ impl RowList {
     }
 }
 
+/// A control that Tab reaches and Enter/Space press (its `on_click`).
+pub(crate) fn focusable(el: Stateful<Div>) -> Stateful<Div> {
+    with_ring(el.tab_index(0)).on_key_down(stop_activation_keys)
+}
+
 /// Focus handles for a fixed set of controls, one per slot, made as slots
 /// appear and kept across frames. Cheap to clone: a renderer that may not
 /// read `KagiApp` (it runs during the app's own update) is handed a clone.

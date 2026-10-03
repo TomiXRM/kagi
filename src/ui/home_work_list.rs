@@ -127,12 +127,14 @@ pub(super) fn work_items(work: &HomeWork, pane: HomePane, query: &str) -> Vec<Ho
 /// One PR or issue: its kind as an icon, the title over `owner/repo #N` and
 /// the last update; a review request also shows who asked, with their
 /// avatar. At the end what a click does, or a spinner while it opens. It is
-/// row `place.0` of the `place.1` in the list, and Tab reaches it.
+/// row `at` of `rows`: ↑/↓ move from it, Tab reaches it as the list's stop.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn work_row(
     kind: WorkKind,
     item: &WorkItem,
     state: WorkRowState,
-    place: (usize, usize),
+    rows: &super::keyboard_nav::RowList,
+    at: usize,
     avatars: &Arc<AvatarImages>,
     app: &Entity<KagiApp>,
 ) -> AnyElement {
@@ -202,53 +204,57 @@ pub(super) fn work_row(
     let picked = item.clone();
     let label = format!("{}, {} #{}", item.title, item.name_with_owner, item.number);
     let ring = super::keyboard_nav::RING;
-    let row = super::keyboard_nav::focusable_row(super::list_a11y::list_item(
-        super::home_github_list::HOME_LIST,
-        div().id(SharedString::from(key.clone())),
-        place.0,
-        place.1,
-        label,
-    ))
-    .w_full()
-    .flex()
-    .flex_row()
-    .items_center()
-    .gap_3()
-    .px(theme::scaled_px(12. - ring))
-    .py(theme::scaled_px(8. - ring))
-    .rounded_lg()
-    .when(state != WorkRowState::Opening, |el| {
-        el.cursor(gpui::CursorStyle::PointingHand)
-            .hover(|s| s.bg(rgb(theme().surface)))
-    })
-    .on_click(move |_, window, cx| {
-        app.update(cx, |app, cx| {
-            app.home_work_pick(kind, picked.clone(), window, cx)
-        });
-    })
-    .child(
-        gpui::svg()
-            .path(icon)
-            .flex_shrink_0()
-            .size(theme::scaled_px(16.))
-            .text_color(rgb(color)),
-    )
-    .child(
-        div()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_w(px(0.))
-            .child(
-                div()
-                    .text_base()
-                    .text_color(rgb(theme().text_main))
-                    .truncate()
-                    .child(safe_text(&item.title)),
-            )
-            .child(detail),
-    )
-    .child(end);
+    let row = rows
+        .row(
+            at,
+            super::list_a11y::list_item(
+                super::home_github_list::HOME_LIST,
+                div().id(SharedString::from(key.clone())),
+                at,
+                rows.len(),
+                label,
+            ),
+        )
+        .w_full()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_3()
+        .px(theme::scaled_px(12. - ring))
+        .py(theme::scaled_px(8. - ring))
+        .rounded_lg()
+        .when(state != WorkRowState::Opening, |el| {
+            el.cursor(gpui::CursorStyle::PointingHand)
+                .hover(|s| s.bg(rgb(theme().surface)))
+        })
+        .on_click(move |_, window, cx| {
+            app.update(cx, |app, cx| {
+                app.home_work_pick(kind, picked.clone(), window, cx)
+            });
+        })
+        .child(
+            gpui::svg()
+                .path(icon)
+                .flex_shrink_0()
+                .size(theme::scaled_px(16.))
+                .text_color(rgb(color)),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w(px(0.))
+                .child(
+                    div()
+                        .text_base()
+                        .text_color(rgb(theme().text_main))
+                        .truncate()
+                        .child(safe_text(&item.title)),
+                )
+                .child(detail),
+        )
+        .child(end);
     super::e2e::measure_control(key, row)
 }
 

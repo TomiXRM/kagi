@@ -539,6 +539,28 @@ impl KagiApp {
         self.sidebar.mode_focus.focused(window)
     }
 
+    /// The key of Home's list row holding the focus (`repo:<owner>/<name>`,
+    /// `<kind>:<owner>/<name>#<number>`), if any.
+    pub fn home_row_focused_for_e2e(&self, window: &Window) -> Option<String> {
+        self.home_github.row_focus.focused(window)
+    }
+
+    /// Focus Home's list row `key`.
+    pub fn focus_home_row_for_e2e(&self, key: &str, window: &mut Window, cx: &mut gpui::App) {
+        self.home_github.row_focus.focus(key, window, cx);
+    }
+
+    /// Focus the repository tab strip's cell `slot` (Home is after the
+    /// repositories).
+    pub fn focus_tab_strip_for_e2e(&self, slot: usize, window: &mut Window, cx: &mut gpui::App) {
+        self.tab_strip_focus.focus(slot, window, cx);
+    }
+
+    /// Which cell of the repository tab strip holds the focus, if any.
+    pub fn tab_strip_focused_for_e2e(&self, window: &Window) -> Option<usize> {
+        self.tab_strip_focus.focused(window)
+    }
+
     /// How many times Home's repository list and its PR / issue lists have
     /// been read.
     pub fn home_reads_for_e2e(&self) -> (u64, u64) {

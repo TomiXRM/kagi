@@ -248,5 +248,54 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
     keys(cx, window, "right end left");
     assert_eq!(pane(cx, &app), HomePane::Prs);
 
+    // The repository tab strip (#959): the arrows only move between tabs —
+    // switching reads the repository again — and Enter / Space switch.
+    let second = build_fixture();
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(second.path().to_path_buf(), cx));
+    });
+    cx.run_until_parked();
+    click_control(cx, window, "tab-add");
+    cx.run_until_parked();
+    let (repos, home_front) = cx.read(|cx| {
+        let app = app.read(cx);
+        (app.tabs.len(), app.home.is_some_and(|home| home.front))
+    });
+    assert!(home_front, "Home is in front");
+    let strip_focus = |cx: &mut VisualTestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            window.draw(cx).clear();
+            app.read(cx).tab_strip_focused_for_e2e(window)
+        })
+        .unwrap()
+    };
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(0, window, cx))
+    })
+    .unwrap();
+    keys(cx, window, "right");
+    assert_eq!(strip_focus(cx), Some(1));
+    assert!(
+        cx.read(|cx| app.read(cx).home.is_some_and(|home| home.front)),
+        "an arrow does not switch"
+    );
+    keys(cx, window, "enter");
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(!app.home.is_some_and(|home| home.front), "Enter switches");
+        assert_eq!(app.active_tab, 1);
+    });
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(0, window, cx))
+    })
+    .unwrap();
+    keys(cx, window, "end");
+    assert_eq!(strip_focus(cx), Some(repos), "Home is the last tab");
+    keys(cx, window, "space");
+    assert!(
+        cx.read(|cx| app.read(cx).home.is_some_and(|home| home.front)),
+        "Space brings Home to the front"
+    );
+
     unmount(cx, app, window);
 }

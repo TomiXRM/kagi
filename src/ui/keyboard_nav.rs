@@ -17,17 +17,25 @@
 //! holds the focus, and the tab list's bindings are scoped to its own key
 //! context.
 //!
+//! A row list (a virtualized `gpui::list`) is one Tab stop too: the row last
+//! focused while it is drawn, else the first row on screen. ↑/↓ move to the
+//! neighbouring row, scrolling it into view first (#959). Its rows' focus
+//! handles live in app state by each row's key, so a row scrolled out of view
+//! keeps its handle, and a focused row that leaves the list (a filter, a read
+//! landing) hands the focus on rather than leaving it nowhere.
+//!
 //! The focus ring is the one `Input` draws (`sync_gpui_component_theme` maps
 //! gpui-component's `ring` to `color_branch`), shown only for keyboard focus
 //! (`focus_visible`). It is a border kept transparent at rest, so taking focus
 //! does not move anything; callers take its width out of their padding.
 
 use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 
 use gpui::{
     actions, prelude::*, rgb, transparent_black, App, ClickEvent, Div, FocusHandle, KeyBinding,
-    KeyDownEvent, Role, SharedString, Stateful, Window,
+    KeyDownEvent, ListState, Role, SharedString, Stateful, Window,
 };
 
 use super::theme::theme;
@@ -36,6 +44,10 @@ actions!(
     kagi_tab_list,
     [TabListPrev, TabListNext, TabListFirst, TabListLast]
 );
+
+actions!(kagi_row_list, [RowListPrev, RowListNext]);
+
+const ROW_CONTEXT: &str = "KagiRowList";
 
 const CONTEXT: &str = "KagiTabList";
 
@@ -57,6 +69,12 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new("right", TabListNext, Some(CONTEXT)),
         KeyBinding::new("home", TabListFirst, Some(CONTEXT)),
         KeyBinding::new("end", TabListLast, Some(CONTEXT)),
+    ]);
+    // The row list's ↑/↓ outrank the app-wide `!Terminal && !Input` up/down
+    // (stepping through a diff's files) the same way, and only inside a list.
+    cx.bind_keys([
+        KeyBinding::new("up", RowListPrev, Some(ROW_CONTEXT)),
+        KeyBinding::new("down", RowListNext, Some(ROW_CONTEXT)),
     ]);
     cx.intercept_keystrokes(|event, _, _| {
         if event.keystroke.key == "tab" {
@@ -253,9 +271,137 @@ impl TabList {
     }
 }
 
-/// A row that Tab reaches and Enter/Space press (its `on_click`).
-pub(crate) fn focusable_row(el: Stateful<Div>) -> Stateful<Div> {
-    with_ring(el.tab_index(0)).on_key_down(stop_activation_keys)
+/// The focus handles of one virtualized list's rows, by each row's key, and
+/// the row last focused (#959).
+#[derive(Default)]
+pub(crate) struct RowFocus {
+    handles: HashMap<String, FocusHandle>,
+    current: Option<String>,
+}
+
+impl RowFocus {
+    /// Bring the handles in line with `rows` — each row's key and its entry
+    /// in `state` — and pick the list's Tab stop. A focused row that has
+    /// left the list hands the focus to that stop, or to `fallback` when no
+    /// row is left.
+    pub(crate) fn rows(
+        &mut self,
+        rows: Vec<(String, usize)>,
+        state: &ListState,
+        fallback: Option<&FocusHandle>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> RowList {
+        if let Some((key, _)) = self.handles.iter().find(|(_, h)| h.is_focused(window)) {
+            self.current = Some(key.clone());
+        }
+        let present: HashSet<&str> = rows.iter().map(|(key, _)| key.as_str()).collect();
+        let mut lost = false;
+        self.handles.retain(|key, handle| {
+            let keep = present.contains(key.as_str());
+            lost |= !keep && handle.is_focused(window);
+            keep
+        });
+        let handles: Vec<FocusHandle> = rows
+            .iter()
+            .map(|(key, _)| {
+                self.handles
+                    .entry(key.clone())
+                    .or_insert_with(|| cx.focus_handle())
+                    .clone()
+            })
+            .collect();
+        // The remembered row while it is drawn; else the first row on
+        // screen, so Tab always finds a row that exists.
+        let top = state.logical_scroll_top().item_ix;
+        let stop = self
+            .current
+            .as_ref()
+            .and_then(|current| rows.iter().position(|(key, _)| key == current))
+            .filter(|&at| state.bounds_for_item(rows[at].1).is_some())
+            .or_else(|| rows.iter().position(|&(_, ix)| ix >= top))
+            .or((!rows.is_empty()).then_some(0));
+        if lost {
+            match stop {
+                Some(at) => handles[at].focus(window, cx),
+                None => {
+                    if let Some(fallback) = fallback {
+                        fallback.focus(window, cx);
+                    }
+                }
+            }
+            self.current = stop.map(|at| rows[at].0.clone());
+        }
+        RowList {
+            rows: Rc::new(rows),
+            handles: Rc::new(handles),
+            stop,
+            state: state.clone(),
+        }
+    }
+
+    /// The key of the row holding the focus, if any.
+    #[cfg(feature = "gui-e2e")]
+    pub(crate) fn focused(&self, window: &Window) -> Option<String> {
+        self.handles
+            .iter()
+            .find(|(_, handle)| handle.is_focused(window))
+            .map(|(key, _)| key.clone())
+    }
+
+    /// Focus the row `key` (GUI E2E: Tier A cannot press Tab into a list
+    /// without walking the whole window).
+    #[cfg(feature = "gui-e2e")]
+    pub(crate) fn focus(&self, key: &str, window: &mut Window, cx: &mut App) {
+        if let Some(handle) = self.handles.get(key) {
+            handle.focus(window, cx);
+        }
+    }
+}
+
+/// One virtualized list's rows being drawn.
+pub(crate) struct RowList {
+    rows: Rc<Vec<(String, usize)>>,
+    handles: Rc<Vec<FocusHandle>>,
+    stop: Option<usize>,
+    state: ListState,
+}
+
+impl RowList {
+    /// The list's container.
+    pub(crate) fn list(&self, el: Stateful<Div>) -> Stateful<Div> {
+        el.key_context(ROW_CONTEXT)
+    }
+
+    /// How many rows the list has.
+    pub(crate) fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// The row at `at` (its place among the rows): Tab reaches it when it is
+    /// the list's stop, ↑/↓ move from it, Enter/Space press it (`on_click`).
+    pub(crate) fn row(&self, at: usize, el: Stateful<Div>) -> Stateful<Div> {
+        let handle = self.handles[at]
+            .clone()
+            .tab_index(0)
+            .tab_stop(self.stop == Some(at));
+        let step = |delta: isize| {
+            let (rows, handles, state) =
+                (self.rows.clone(), self.handles.clone(), self.state.clone());
+            move |window: &mut Window, cx: &mut App| {
+                let Some(to) = at.checked_add_signed(delta).filter(|&to| to < rows.len()) else {
+                    return;
+                };
+                state.scroll_to_reveal_item(rows[to].1);
+                handles[to].focus(window, cx);
+            }
+        };
+        let (prev, next) = (step(-1), step(1));
+        with_ring(el.track_focus(&handle))
+            .on_key_down(stop_activation_keys)
+            .on_action(move |_: &RowListPrev, window, cx| prev(window, cx))
+            .on_action(move |_: &RowListNext, window, cx| next(window, cx))
+    }
 }
 
 fn with_ring(el: Stateful<Div>) -> Stateful<Div> {

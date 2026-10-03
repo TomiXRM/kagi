@@ -667,9 +667,23 @@ The current suite covers:
   focus back to the root. Home's switch: ←/→/Home/End select as they move,
   without wrapping, and read nothing (`home_reads_for_e2e`); with Home's
   search focused the arrows do not reach the switch (Enter is not pressed
-  into the single-line field: the harness types its "\n"). For Tier B: Tab
+  into the single-line field: the harness types its "\n"). The repository
+  tab strip (#959): with two repositories and Home, → only moves
+  (`tab_strip_focused_for_e2e`, Home stays in front), Enter switches to the
+  repository, End reaches Home and Space brings it back. For Tier B: Tab
   to each list, check the ring appears only for keyboard focus, and read the
   roles in Accessibility Inspector.
+- Rows of Home's list (`KAGI_GUI_E2E_ONLY=home_rows`,
+  `tests/recovery/home_rows.rs`, #959): a stand-in `gh` lists 60
+  repositories and two pull requests. Tab from the switch reaches the list
+  at its first row and one more Tab leaves it; ↓ forty times focuses `r40`
+  and scrolls it into view; ↑/↓ stop at the ends; Tab out and Shift+Tab back
+  returns to `r40`; a filter that drops the focused row moves the focus to
+  the first row left, and one that drops every row to the window; with the
+  search field focused ↓ stays the field's; PR rows step the same way. Rows
+  are focused through `focus_home_row_for_e2e` and read through
+  `home_row_focused_for_e2e` (keys `repo:<owner>/<name>`,
+  `<kind>:<owner>/<name>#<n>`).
 - modal-slot arbitration (`KAGI_GUI_E2E_ONLY=push_failure_keeps_modal,merge_plan_latch,delete_branch_plan_latch,remote_browse_modal_routing`): a push failure lands behind Remote Browse without losing its input and reaches the Failed footer, an Error toast and one durable receipt — no dismiss-only AppNotice, queued or shown after Remote Browse closes (the #747 contract; #824 bisected the stale notice expectation to `e5644c6f`). Delayed Merge/Delete Branch plans wait behind Remote Browse without losing its input, stale plan state, latches, footers, or notices; a reopened Remote Browse rejects an older in-place completion by generation;
 - unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.
 - toolbar centre actions (Pull…Terminal) drawn only in Graph, not PRs/Editor/Analyze

@@ -81,6 +81,8 @@ pub struct HomeGithub {
     /// The user's open pull requests and issues, and which pane of Home's
     /// switch is showing (#928).
     pub work: super::home_work::HomeWork,
+    /// The list's rows, for the keyboard (#959).
+    pub(crate) row_focus: super::keyboard_nav::RowFocus,
 }
 
 /// The clone card: which repository, and — once the user has chosen a folder —
@@ -626,7 +628,11 @@ impl KagiApp {
     /// The GitHub section of Home's main column: a header and a search field,
     /// then one section per owner (the user first, then each organization)
     /// as a virtualized list filling the rest of the column.
-    pub(crate) fn render_home_github(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_home_github(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let refresh = cx.listener(|app, _: &gpui::ClickEvent, _, cx| {
             app.reload_home_github(cx);
             cx.notify();
@@ -679,7 +685,7 @@ impl KagiApp {
             .unwrap_or_default();
         let body = match (&self.home_github.repos, self.home_github.work.pane) {
             (_, super::home_work::HomePane::Prs | super::home_work::HomePane::Issues) => {
-                self.render_github_list(query, cx)
+                self.render_github_list(query, window, cx)
             }
             (GithubRepos::NotLoaded | GithubRepos::Loading, _) => div()
                 .flex()
@@ -707,7 +713,7 @@ impl KagiApp {
                 )
                 .child(muted(Msg::HomeGithubFailedHint.t().to_string()))
                 .into_any_element(),
-            (GithubRepos::Loaded { .. }, _) => self.render_github_list(query, cx),
+            (GithubRepos::Loaded { .. }, _) => self.render_github_list(query, window, cx),
         };
         div()
             .flex()

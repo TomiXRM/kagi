@@ -167,6 +167,32 @@ impl Default for PullRequest {
     }
 }
 
+/// Which pull request: the repository it targets (`base_repo`,
+/// `<host>/<owner>/<repo>`) and its number there. A number alone names a
+/// different PR in every repository, and one session can hold tabs from two
+/// repositories (a clone opened from Home while `gh repo set-default` names
+/// another), so every PR tab, detail read, conversation, merge status and
+/// composer is matched with this (#940 review).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PrKey {
+    pub base_repo: String,
+    pub number: u64,
+}
+
+impl PullRequest {
+    pub fn key(&self) -> PrKey {
+        PrKey {
+            base_repo: self.base_repo.clone(),
+            number: self.number,
+        }
+    }
+
+    /// Whether this is the PR `key` names, without allocating.
+    pub fn is(&self, key: &PrKey) -> bool {
+        self.number == key.number && self.base_repo == key.base_repo
+    }
+}
+
 /// Which sidebar group a PR belongs to, from the viewer's perspective.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrGroup {

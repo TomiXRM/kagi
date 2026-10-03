@@ -159,6 +159,9 @@ pub fn note_ja(note: &WorktreeNote) -> String {
         WorktreeNote::RemoveContainsWorktree { path } => {
             format!("削除対象に登録済み worktree（{path}）が含まれます。")
         }
+        WorktreeNote::RemoveContainsRepository { path } => {
+            format!("削除対象にリポジトリ（{path}）が含まれます。")
+        }
         WorktreeNote::RemovesWorktree {
             path,
             branch,

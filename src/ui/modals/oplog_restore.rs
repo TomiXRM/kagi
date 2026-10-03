@@ -57,12 +57,13 @@ impl OplogRestoreModal {
         }
     }
 
-    /// The plan to draw. Its `preview_commits` are the `restore …` lines the
-    /// backend re-checks, not commits; the user-facing list is the `Moves`
-    /// warnings (the reverse actions) and `RefsOnly` (what is not restored).
+    /// The display-only card shows the ref moves, refs left unchanged, graph
+    /// preview and Git command. Its generic recovery prose repeats that same
+    /// explanation; keep the executable plan and its recovery intact.
     pub fn display_plan(&self) -> std::sync::Arc<OperationPlan> {
         std::sync::Arc::new(OperationPlan {
             preview_commits: Vec::new(),
+            recovery: None,
             ..(*self.plan).clone()
         })
     }

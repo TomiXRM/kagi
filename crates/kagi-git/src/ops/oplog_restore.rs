@@ -1,29 +1,32 @@
-//! Op-revert / restore-to-point (#334 slice 2b, ADR-0214 §5): put branches
-//! back where Operation Log entries **recorded** them, by ref update only.
+//! Op-revert / restore-to-point (#334 slice 2b, ADR-0214 §5): put local
+//! branches and tags back where Operation Log entries **recorded** them, by
+//! ref update only.
 //!
 //! plan → confirm (two-stage, destructive) → preflight (re-plan, same
 //! restores) → execute (retain every moved tip under `refs/kagi/backups/`,
 //! one `git update-ref --stdin` transaction in which git re-checks every old
 //! value) → verify → oplog (via `Backend::run`, so the restore records its own
 //! ref moves and can itself be reverted). No working tree, index or HEAD
-//! target is touched: an entry that switched HEAD is a blocker.
+//! checkout is touched: an entry that switched HEAD is a blocker. A checked-out
+//! branch moving does change the OID HEAD resolves to, without a checkout.
 
 use super::*;
 use kagi_domain::operation::Operation;
 use kagi_domain::plan_note::{OplogRestoreNote, OplogRestoreRecovery, OplogRestoreTitle};
 use kagi_domain::ref_moves::RefSnapshot;
 use kagi_domain::ref_restore::{
-    self, EntryRepo, Observed, RecordedEntry, RefRestore, RestoreMode, RestoredRef,
+    self, EntryRepo, Observed, RecordedEntry, RefRestore, RefTransition, RestoreMode, RestoredRef,
 };
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 
 /// How many Operation Log entries are searched for the target and its range.
 const ENTRY_SCAN: usize = 1000;
 
-/// HEAD of the worktree `repo` is (its symbolic target and commit) and every
-/// `refs/heads/*` (#334 slice 2a). Other worktrees' HEADs are not read: a
-/// branch they hold moving shows in `refs/heads/*`. `None` when the refs
-/// cannot be read — callers then record (or plan) nothing rather than guess.
+/// HEAD of the worktree `repo` (symbolic target and commit) and every local
+/// branch or tag by raw ref OID. An annotated tag records its tag-object OID,
+/// not the peeled commit. Other worktrees' HEADs are not read: branches they
+/// hold moving show in `refs/heads/*`. `None` when refs cannot be read —
+/// callers then record (or plan) nothing rather than guess.
 pub(crate) fn ref_snapshot(repo: &Repository) -> Option<RefSnapshot> {
     let head = repo.find_reference("HEAD").ok()?;
     let head_symbolic = head.symbolic_target().ok().flatten().map(str::to_string);
@@ -33,18 +36,20 @@ pub(crate) fn ref_snapshot(repo: &Repository) -> Option<RefSnapshot> {
         .ok()
         .and_then(|r| r.target())
         .map(|o| o.to_string());
-    let mut branches = std::collections::BTreeMap::new();
-    for reference in repo.references_glob("refs/heads/*").ok()? {
-        let reference = reference.ok()?;
-        let (Ok(name), Some(oid)) = (reference.name(), reference.target()) else {
-            continue;
-        };
-        branches.insert(name.to_string(), oid.to_string());
+    let mut refs = std::collections::BTreeMap::new();
+    for glob in ["refs/heads/*", "refs/tags/*"] {
+        for reference in repo.references_glob(glob).ok()? {
+            let reference = reference.ok()?;
+            let (Ok(name), Some(oid)) = (reference.name(), reference.target()) else {
+                continue;
+            };
+            refs.insert(name.to_string(), oid.to_string());
+        }
     }
     Some(RefSnapshot {
         head_oid,
         head_symbolic,
-        branches,
+        refs,
     })
 }
 
@@ -79,7 +84,12 @@ fn log_entries(repo: &Repository) -> Vec<RecordedEntry> {
                 timestamp: e.timestamp,
                 op: e.op,
                 repo,
-                ref_moves: e.ref_moves,
+                // Pre-#887 rows recorded branches only. Even an empty list
+                // cannot prove a tag stayed put: treat it as NotRecorded for
+                // restore, while preserving the panel's historical display.
+                ref_moves: e
+                    .ref_moves
+                    .filter(|_| e.ref_scope == crate::oplog::RefScope::HeadsAndTags),
                 worktree: Some(path),
             }
         })
@@ -136,26 +146,47 @@ fn older_and_mine(repo: &Repository, id: u64) -> bool {
     classify_entry(&entry, &mine, my_identity.as_ref(), &mut HashMap::new()) == EntryRepo::Mine
 }
 
-/// Local branches whose reflog records an update after `after` (unix
-/// seconds): created or moved since the target entry was recorded. Which of
-/// them the record explains is the planner's decision.
-fn branches_changed_after(repo: &Repository, after: i64) -> Result<BTreeSet<String>, GitError> {
-    let mut changed = BTreeSet::new();
-    let refs = repo
-        .references_glob("refs/heads/*")
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
-    for reference in refs.flatten() {
-        let Ok(name) = reference.name() else {
-            continue;
-        };
-        let Ok(log) = repo.reflog(name) else {
-            continue;
-        };
-        if log
-            .iter()
-            .any(|line| line.committer().when().seconds() > after)
-        {
-            changed.insert(name.to_string());
+/// Available local branch and tag reflog transitions newer than `after`
+/// (unix seconds), oldest first per ref. A ref with no reflog is not assumed
+/// unchanged; the confirmation card explains the limitation for tags.
+fn local_ref_transitions_after(
+    repo: &Repository,
+    after: i64,
+) -> Result<BTreeMap<String, Vec<RefTransition>>, GitError> {
+    let mut changed = BTreeMap::new();
+    for glob in ["refs/heads/*", "refs/tags/*"] {
+        let refs = repo
+            .references_glob(glob)
+            .map_err(|e| GitError::Other(e.message().to_string()))?;
+        for reference in refs {
+            let reference = reference.map_err(|e| GitError::Other(e.message().to_string()))?;
+            let name = reference
+                .name()
+                .map_err(|e| GitError::Other(e.to_string()))?;
+            let log = match repo.reflog(name) {
+                Ok(log) => log,
+                Err(e) if e.code() == git2::ErrorCode::NotFound => continue,
+                Err(e) => return Err(GitError::Other(e.message().to_string())),
+            };
+            let mut transitions = Vec::new();
+            // libgit2 exposes index 0 as the newest line.
+            for i in (0..log.len()).rev() {
+                let line = log
+                    .get(i)
+                    .ok_or_else(|| GitError::Other(format!("reflog entry disappeared: {name}")))?;
+                if line.committer().when().seconds() <= after {
+                    continue;
+                }
+                let old = line.id_old();
+                let new = line.id_new();
+                transitions.push(RefTransition {
+                    old: (!old.is_zero()).then(|| old.to_string()),
+                    new: (!new.is_zero()).then(|| new.to_string()),
+                });
+            }
+            if !transitions.is_empty() {
+                changed.insert(name.to_string(), transitions);
+            }
         }
     }
     Ok(changed)
@@ -166,7 +197,7 @@ pub fn plan_op_revert(repo: &Repository, entry_id: u64) -> Result<OperationPlan,
     plan_oplog_restore(repo, RestoreMode::Revert, entry_id)
 }
 
-/// Plan putting every branch back where it was right after `entry_id`.
+/// Plan putting every local branch and tag back where it was right after `entry_id`.
 pub fn plan_restore_to_point(repo: &Repository, entry_id: u64) -> Result<OperationPlan, GitError> {
     plan_oplog_restore(repo, RestoreMode::RestoreTo, entry_id)
 }
@@ -185,12 +216,12 @@ fn plan_oplog_restore(
     let op = target.map(|e| e.op.clone()).unwrap_or_default();
     let observed = match target {
         Some(t) if mode == RestoreMode::RestoreTo => Observed {
-            changed_after_target: branches_changed_after(repo, t.timestamp)?,
+            transitions_after_target: local_ref_transitions_after(repo, t.timestamp)?,
         },
         _ => Observed::default(),
     };
     let current = ref_snapshot(repo)
-        .ok_or_else(|| GitError::Other("cannot read the repository's branches".to_string()))?;
+        .ok_or_else(|| GitError::Other("cannot read the repository's local refs".to_string()))?;
     let planned = ref_restore::plan(&entries, entry_id, mode, &current, &observed);
 
     let note = PlanNote::OplogRestore;
@@ -248,9 +279,13 @@ fn plan_oplog_restore(
             to: r.restore_to.clone(),
         }));
         if let Some(target) = &r.restore_to {
-            let present = git2::Oid::from_str(target)
-                .ok()
-                .is_some_and(|oid| repo.find_commit(oid).is_ok());
+            let present = git2::Oid::from_str(target).ok().is_some_and(|oid| {
+                if r.refname.starts_with("refs/tags/") {
+                    repo.find_object(oid, None).is_ok()
+                } else {
+                    repo.find_commit(oid).is_ok()
+                }
+            });
             if !present {
                 blockers.push(note(OplogRestoreNote::TargetGone {
                     refname: r.refname.clone(),
@@ -258,11 +293,13 @@ fn plan_oplog_restore(
                 }));
             }
         }
-        let branch = r.refname.trim_start_matches("refs/heads/").to_string();
-        let Some(path) = super::branch_delete_safety::checked_out_at(&repositories, &branch)?
-        else {
+        let Some(branch) = r.refname.strip_prefix("refs/heads/") else {
             continue;
         };
+        let Some(path) = super::branch_delete_safety::checked_out_at(&repositories, branch)? else {
+            continue;
+        };
+        let branch = branch.to_string();
         let shown = path.display().to_string();
         let checked_out_dirty = Repository::open(&path)
             .map_err(|e| GitError::Other(e.message().to_string()))
@@ -314,7 +351,7 @@ fn plan_oplog_restore(
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: ref_restore::to_lines(&planned.restores),
-        // Rewriting where branches point is destructive (two-stage confirm).
+        // Moving or deleting local branches and tags is destructive (two-stage confirm).
         destructive: true,
         equivalent_command: Some(format!(
             "git update-ref --stdin <<'EOF'\n{}EOF",
@@ -351,7 +388,7 @@ pub fn preflight_oplog_restore(
     let now = ref_restore::from_lines(&fresh.preview_commits).map_err(|e| refused(&e))?;
     if now != confirmed {
         return Err(refused(
-            "the branches changed since planning; please re-plan",
+            "the local refs changed since planning; please re-plan",
         ));
     }
     Ok(confirmed)

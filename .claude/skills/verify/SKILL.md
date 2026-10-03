@@ -519,6 +519,16 @@ The current suite covers:
   no longer loaded, so it paints `restore-preview-unavailable`. Domain rules:
   `kagi-domain` `restore_preview`. Tier B: read the graph after on the card
   (EN/JA) before confirming.
+- Operation Log local-tag restore (`KAGI_GUI_E2E_ONLY=oplog_restore_tag_preview`,
+  `tests/recovery/oplog_panel.rs`): #887. A recorded branch point followed by
+  a recorded local tag opens Restore to this point. The card lists the tag
+  deletion, paints a neutral unavailable graph preview rather than predicting
+  commit rows, and two confirmations delete only that tag. Backend round trips
+  lightweight and annotated tags through their raw OIDs, with CAS drift
+  refusal and retained annotated objects in
+  `crates/kagi-git/tests/oplog_restore_test.rs`. Tier B: create a local tag
+  after an earlier recorded operation, inspect the card and its neutral
+  preview, then confirm and check that only the local tag disappeared.
 - Operation Log restore across a resolved merge
   (`KAGI_GUI_E2E_ONLY=oplog_restore_across_merge`, `tests/recovery/oplog_panel.rs`):
   #884 / ADR-0214 §4. `create-branch mark` → `merge-into-conflict side` → the

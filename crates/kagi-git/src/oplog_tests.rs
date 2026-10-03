@@ -55,6 +55,7 @@ fn oplog_filter_scopes_to_bound_repo() {
         recovery: Vec::new(),
         failure_code: None,
         ref_moves: None,
+        ref_scope: Default::default(),
         repo_identity: RecordedIdentity::Absent,
         issue_fields: None,
         id: 0,
@@ -209,6 +210,7 @@ fn synthetic_entry(id: u64, repo: &str) -> OpLogEntry {
         recovery: Vec::new(),
         failure_code: None,
         ref_moves: None,
+        ref_scope: Default::default(),
         repo_identity: RecordedIdentity::Absent,
         issue_fields: None,
     }
@@ -705,10 +707,9 @@ fn an_unconfirmed_termination_records_no_ref_moves() {
     );
 }
 
-/// #334 slice 2a: `ref_moves` is additive. A line written before the field is
-/// "not recorded" (`None`), never "nothing moved"; "nothing moved" survives a
-/// round trip as itself; a malformed list is "not recorded" and the entry
-/// still reads.
+/// #334 / #953: an older entry may have a branch-only move list, including
+/// `[]` after CreateTag. Preserve it for display, but only a tagged entry
+/// proves that both branches and tags were observed for restore.
 #[test]
 fn ref_moves_distinguish_not_recorded_from_nothing_moved() {
     let base = concat!(
@@ -718,12 +719,20 @@ fn ref_moves_distinguish_not_recorded_from_nothing_moved() {
     );
     let legacy = parse_oplog_line(&format!("{base}}}")).expect("legacy line");
     assert_eq!(legacy.ref_moves, None, "absent = not recorded");
+    assert_eq!(legacy.ref_scope, RefScope::LegacyOrUnknown);
+    let old_empty = parse_oplog_line(&format!(r#"{base},"ref_moves":[]}}"#)).unwrap();
+    assert_eq!(old_empty.ref_moves, Some(Vec::new()));
+    assert_eq!(old_empty.ref_scope, RefScope::LegacyOrUnknown);
 
-    let mut entry = legacy.clone();
-    entry.ref_moves = Some(Vec::new());
+    let entry = legacy.clone().with_ref_moves(Some(Vec::new()));
     let empty = parse_oplog_line(&entry_to_json(&entry)).unwrap();
     assert_eq!(empty.ref_moves, Some(Vec::new()), "recorded, nothing moved");
-
+    assert_eq!(empty.ref_scope, RefScope::HeadsAndTags);
+    let unknown = parse_oplog_line(&format!(
+        r#"{base},"ref_moves":[],"ref_scope":"future-scope"}}"#
+    ))
+    .unwrap();
+    assert_eq!(unknown.ref_scope, RefScope::LegacyOrUnknown);
     let head = kagi_domain::ref_moves::RefMove {
         refname: "HEAD".into(),
         old: Some("a".repeat(40)),
@@ -738,7 +747,7 @@ fn ref_moves_distinguish_not_recorded_from_nothing_moved() {
         old_symbolic: None,
         new_symbolic: None,
     };
-    entry.ref_moves = Some(vec![head, created]);
+    let entry = entry.with_ref_moves(Some(vec![head, created]));
     let full = parse_oplog_line(&entry_to_json(&entry)).unwrap();
     assert_eq!(full.ref_moves, entry.ref_moves);
 

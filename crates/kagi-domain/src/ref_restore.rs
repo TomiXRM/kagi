@@ -1,11 +1,11 @@
 //! Op-revert / restore-to-point planning (#334 slice 2b, ADR-0214 §5): which
-//! branches to put back, from the **recorded** ref moves of Operation Log
-//! entries alone. Pure — the backend supplies the entries and current refs,
-//! applies the result as one `git update-ref --stdin` transaction.
+//! local branches and tags to put back, from the **recorded** ref moves of
+//! Operation Log entries alone. Pure — the backend supplies the entries and
+//! current refs, and applies the result in one `git update-ref --stdin` transaction.
 
 use crate::plan_note::{HeadAt, OplogRestoreNote};
 use crate::ref_moves::{RefMove, RefSnapshot};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 /// Which repository an Operation Log entry belongs to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,10 +40,17 @@ pub struct RecordedEntry {
 /// What the backend read besides the log (#878 review).
 #[derive(Debug, Clone, Default)]
 pub struct Observed {
-    /// Local branches whose reflog has an update newer than the target
-    /// entry. One that no recorded move in the range explains changed
-    /// outside the record.
-    pub changed_after_target: BTreeSet<String>,
+    /// Available reflog transitions newer than the target entry, oldest
+    /// first, for each local branch or tag. A ref name alone cannot prove a
+    /// transition was caused by a recorded operation on that same ref.
+    pub transitions_after_target: BTreeMap<String, Vec<RefTransition>>,
+}
+
+/// A single available reflog transition. Git's zero OID means no ref existed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefTransition {
+    pub old: Option<String>,
+    pub new: Option<String>,
 }
 
 /// Put `refname` back: it must be at `expect` now and goes to `restore_to`
@@ -86,8 +93,10 @@ fn switches_head(m: &RefMove) -> bool {
     m.refname == "HEAD" && !(m.old_symbolic.is_some() && m.old_symbolic == m.new_symbolic)
 }
 
-fn branch_moves(moves: &[RefMove]) -> impl Iterator<Item = &RefMove> {
-    moves.iter().filter(|m| m.refname != "HEAD")
+fn restorable_moves(moves: &[RefMove]) -> impl Iterator<Item = &RefMove> {
+    moves
+        .iter()
+        .filter(|m| m.refname.starts_with("refs/heads/") || m.refname.starts_with("refs/tags/"))
 }
 
 /// `entries` = the whole log, oldest first (by id). `current` = the refs now.
@@ -162,12 +171,7 @@ pub fn plan(
         }
     }
     if mode == RestoreMode::Revert {
-        for m in entries[pos]
-            .ref_moves
-            .iter()
-            .flatten()
-            .filter(|m| m.refname != "HEAD")
-        {
+        for m in restorable_moves(entries[pos].ref_moves.as_deref().unwrap_or_default()) {
             let later = entries[pos + 1..].iter().find(|later| {
                 later
                     .ref_moves
@@ -187,7 +191,7 @@ pub fn plan(
     // refname → (restore_to = oldest `old` in the range, expect = newest `new`).
     let mut table: BTreeMap<&str, (Option<String>, Option<String>)> = BTreeMap::new();
     for e in range {
-        for m in branch_moves(e.ref_moves.as_deref().unwrap_or_default()) {
+        for m in restorable_moves(e.ref_moves.as_deref().unwrap_or_default()) {
             table
                 .entry(m.refname.as_str())
                 .and_modify(|(_, expect)| *expect = m.new.clone())
@@ -209,7 +213,7 @@ pub fn plan(
     // Every ref the range recorded — including one that moved and came back,
     // which is left alone only if it is still where the record left it.
     for (refname, (_, expect)) in &table {
-        let now = current.branches.get(*refname).cloned();
+        let now = current.refs.get(*refname).cloned();
         if now != *expect {
             blockers.push(OplogRestoreNote::RefMovedSince {
                 refname: refname.to_string(),
@@ -219,11 +223,21 @@ pub fn plan(
         }
     }
     if mode == RestoreMode::RestoreTo {
-        // A branch created or moved after the target that no recorded entry
-        // moved: restoring would leave it, so the result would not be the
-        // state at the target.
-        for refname in &observed.changed_after_target {
-            if !table.contains_key(refname.as_str()) {
+        // Every observed update must match one recorded move in the same order.
+        // Matching only the ref name lets an external A→B update hide behind a
+        // later recorded B→C move and restores B instead of the target's A.
+        // A reflog can omit same-second updates (the scanner starts strictly
+        // after the target timestamp), so observed moves match an ordered
+        // subsequence of the record rather than requiring equal lengths.
+        for (refname, transitions) in &observed.transitions_after_target {
+            let mut recorded = range
+                .iter()
+                .flat_map(|e| e.ref_moves.iter().flatten())
+                .filter(|m| m.refname == *refname);
+            if !transitions
+                .iter()
+                .all(|observed| recorded.any(|m| m.old == observed.old && m.new == observed.new))
+            {
                 blockers.push(OplogRestoreNote::RefChangedOutsideRecord {
                     refname: refname.clone(),
                 });
@@ -257,7 +271,9 @@ pub fn from_lines(lines: &[String]) -> Result<Vec<RefRestore>, String> {
         .iter()
         .map(
             |line| match line.split(' ').collect::<Vec<_>>().as_slice() {
-                ["restore", refname, to, expect] if refname.starts_with("refs/heads/") => {
+                ["restore", refname, to, expect]
+                    if refname.starts_with("refs/heads/") || refname.starts_with("refs/tags/") =>
+                {
                     Ok(RefRestore {
                         refname: refname.to_string(),
                         expect: side(expect),
@@ -333,11 +349,11 @@ mod tests {
         super::plan(entries, target, mode, current, &Observed::default())
     }
 
-    fn refs(branches: &[(&str, &str)]) -> RefSnapshot {
+    fn refs(entries: &[(&str, &str)]) -> RefSnapshot {
         RefSnapshot {
             head_oid: None,
             head_symbolic: None,
-            branches: branches
+            refs: entries
                 .iter()
                 .map(|(n, o)| (n.to_string(), o.to_string()))
                 .collect(),
@@ -414,7 +430,23 @@ mod tests {
         ];
         let now = refs(&[(A, "a1"), (B, "b1")]);
         let observed = Observed {
-            changed_after_target: [A.to_string(), B.to_string()].into(),
+            transitions_after_target: [
+                (
+                    A.to_string(),
+                    vec![RefTransition {
+                        old: None,
+                        new: Some("a1".into()),
+                    }],
+                ),
+                (
+                    B.to_string(),
+                    vec![RefTransition {
+                        old: None,
+                        new: Some("b1".into()),
+                    }],
+                ),
+            ]
+            .into(),
         };
         let p = super::plan(&entries, 1, RestoreMode::RestoreTo, &now, &observed);
         assert_eq!(
@@ -422,6 +454,37 @@ mod tests {
             vec![OplogRestoreNote::RefChangedOutsideRecord { refname: B.into() }],
             "a is explained by entry 2; b by nothing"
         );
+    }
+
+    #[test]
+    fn a_recorded_later_move_does_not_explain_an_earlier_external_transition() {
+        let entries = [
+            entry(1, Some(vec![])),
+            entry(2, Some(vec![mv(A, Some("b"), Some("c"))])),
+        ];
+        let now = refs(&[(A, "c")]);
+        let recorded = RefTransition {
+            old: Some("b".into()),
+            new: Some("c".into()),
+        };
+        let outside = RefTransition {
+            old: Some("a".into()),
+            new: Some("b".into()),
+        };
+        let observed = Observed {
+            transitions_after_target: [(A.into(), vec![outside.clone(), recorded.clone()])].into(),
+        };
+        let p = super::plan(&entries, 1, RestoreMode::RestoreTo, &now, &observed);
+        assert_eq!(
+            p.blockers,
+            vec![OplogRestoreNote::RefChangedOutsideRecord { refname: A.into() }]
+        );
+        let observed = Observed {
+            transitions_after_target: [(A.into(), vec![recorded])].into(),
+        };
+        let p = super::plan(&entries, 1, RestoreMode::RestoreTo, &now, &observed);
+        assert!(p.blockers.is_empty(), "{:?}", p.blockers);
+        assert_eq!(p.restores[0].restore_to.as_deref(), Some("b"));
     }
 
     #[test]

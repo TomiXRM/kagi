@@ -130,27 +130,29 @@ impl KagiApp {
     /// Point the active session's Issues mode at `identity` — a repository
     /// the caller has just verified `gh` resolves for this clone (#940
     /// review). A mode loaded while `gh repo set-default` named another
-    /// repository keeps that one as its list and Reply destination; it is
-    /// re-read for `identity` (and its cached issues dropped, as the same
-    /// numbers there are other issues) before anything is selected.
+    /// repository keeps that one as its list and Reply destination; its rows,
+    /// selection and cursor are dropped (the same numbers there are other
+    /// issues) and the list is re-read for `identity` before anything is
+    /// selected (`TabUiState::retarget_github_issues`).
+    ///
+    /// A mode that has not learnt its repository yet (a new tab, `None`) is
+    /// pointed at `identity` too: left alone, its first list read and the
+    /// issue detail would resolve the default repository again, and a
+    /// `set-default` changed since the verification would show another
+    /// repository's issue under this number (#940 review P1). A read already
+    /// in flight for the unknown repository is refused by the generation.
     pub(super) fn address_issues_to(&mut self, identity: &str, cx: &mut Context<Self>) {
-        let stale = self
+        let addressed = self
             .ui()
             .issue_composer
             .base_repo
             .as_deref()
-            .is_some_and(|current| !current.eq_ignore_ascii_case(identity));
-        if !stale {
+            .is_some_and(|current| current.eq_ignore_ascii_case(identity));
+        if addressed {
             return;
         }
         klog!("github: issues retarget {identity}");
-        self.with_ui(|ui| {
-            ui.issue_composer.base_repo = Some(identity.to_string());
-            ui.github_issue_details.clear();
-            // Their drafts are the old repository's: they stay stored there
-            // and the composers are made again for `identity`.
-            ui.issue_composer.editors.clear();
-        });
+        self.with_ui(|ui| ui.retarget_github_issues(identity));
         self.refresh_github_issues(cx);
     }
 
@@ -244,7 +246,10 @@ impl KagiApp {
         number: u64,
         cx: &mut Context<Self>,
     ) {
-        let (generation, selected) = {
+        // The detail is read from the repository the list and the Reply
+        // address, frozen now: a default repository changed meanwhile names
+        // another issue under this number (#940 review P1).
+        let (generation, selected, base_repo) = {
             let Some(ui) = self.ui.get_mut(&owner) else {
                 return;
             };
@@ -254,13 +259,15 @@ impl KagiApp {
             } else {
                 ui.github_issue_detail_gen
             };
-            (generation, selected)
+            (generation, selected, ui.issue_composer.base_repo.clone())
         };
         cx.notify();
         cx.spawn(async move |this, acx| {
             let result = acx
                 .background_executor()
-                .spawn(async move { kagi_git::github::issue_detail(&repo, number) })
+                .spawn(async move {
+                    kagi_git::github::issue_detail(&repo, base_repo.as_deref(), number)
+                })
                 .await;
             let _ = this.update(acx, |app, cx| {
                 let owner_is_active = app.active_session() == Some(owner);

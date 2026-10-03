@@ -258,6 +258,39 @@ impl TabUiState {
         }
         true
     }
+
+    /// Point the Issues list and the Reply at another repository (#940
+    /// review P1): `gh repo set-default` changed and Home opened an issue of
+    /// `identity`.
+    ///
+    /// Every row, mention, cursor, page, cached detail and the selection
+    /// describe the previous repository, where the same numbers are other
+    /// issues. They are dropped here rather than left on screen until the
+    /// re-read lands: a failed refresh keeps the last accepted list (see
+    /// [`Self::finish_github_issues_request`]), so an old row would stay
+    /// selectable with `identity` as its Reply destination. Until
+    /// `identity`'s first page is accepted there is nothing to select. Both
+    /// generations advance, so a list, page or detail read still in flight
+    /// for the previous repository is refused when it completes.
+    pub(super) fn retarget_github_issues(&mut self, identity: &str) {
+        self.issue_composer.base_repo = Some(identity.to_string());
+        // Their drafts are the old repository's: they stay stored there and
+        // the composers are made again for `identity`.
+        self.issue_composer.editors.clear();
+        self.github_issues_gen = self.github_issues_gen.wrapping_add(1);
+        self.github_issues.clear();
+        self.github_issue_mentions.clear();
+        self.github_issues_loaded = false;
+        self.github_issues_loading = false;
+        self.github_issues_loading_more = false;
+        self.github_issues_cursor = None;
+        self.github_issues_page = 0;
+        self.github_issues_error = None;
+        self.github_issues_list.reset(0);
+        self.invalidate_issue_view();
+        self.github_issue_details.clear();
+        self.clear_github_issue_selection();
+    }
 }
 
 /// The transitions above are the whole Issue request contract, so their

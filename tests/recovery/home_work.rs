@@ -54,7 +54,14 @@ const PR_VIEW: &str = r#"{"number":7,"title":"Fix the local thing",
 /// `gh repo view` resolves the clone to (`gh repo set-default`), else
 /// `acme/local`. Each `pr view` asking for the
 /// refs Home opens a PR with is counted in `view-calls` (PR mode's own
-/// detail reads are not). The test dispatcher runs `gh` inside its pump, so
+/// detail reads are not). PR mode's conversation, review-thread and
+/// merge-status reads of #7 are logged in `thread-calls` as
+/// `convo-` / `threads-` / `merge-` + `local` when they name
+/// `github.com/acme/local`, else `other` (#940 review P1). The Issues list
+/// read and `gh issue view` are logged in `issue-calls` the same way
+/// (`list-` / `view-`). `flip-after-verify` makes the next `gh repo view`
+/// answer as usual and then move `set-default` to acme/upstream. The test
+/// dispatcher runs `gh` inside its pump, so
 /// a state between a read's start and its end is observed by drawing before
 /// the pump runs, not by holding `gh`.
 fn gh_script(state: &Path) -> String {
@@ -71,9 +78,20 @@ fn gh_script(state: &Path) -> String {
          cat <<'JSON'\n{REVIEW}\nJSON\n;;\n\
          'issues --assignee=@me') cat <<'JSON'\n{ISSUES}\nJSON\n;;\n\
          esac ;;\n\
-         'repo view --json') printf '{{\"url\":\"%s\"}}\\n' \"$(cat '{state}/default-repo' 2>/dev/null || echo https://github.com/acme/local)\" ;;\n\
+         'repo view --json') printf '{{\"url\":\"%s\"}}\\n' \"$(cat '{state}/default-repo' 2>/dev/null || echo https://github.com/acme/local)\"\n\
+         [ -e '{state}/flip-after-verify' ] && {{ rm '{state}/flip-after-verify'; echo https://github.com/acme/upstream > '{state}/default-repo'; }}; true ;;\n\
+         'issue view '*) case \"$*\" in *'-R github.com/acme/local '*) echo view-local ;; *) echo view-other ;; esac >> '{state}/issue-calls'\n\
+         echo 'gh: offline' >&2; exit 1 ;;\n\
          'pr view -R') case \"$*\" in *reviewRequests*) echo \"$*\" >> '{state}/view-calls' ;; esac\n\
          cat <<'JSON'\n{PR_VIEW}\nJSON\n;;\n\
+         'pr view 7') case \"$*\" in *' --json reviews,comments') ;; *) echo \"unexpected gh $*\" >&2; exit 1 ;; esac\n\
+         case \"$*\" in 'pr view 7 -R github.com/acme/local --json reviews,comments') echo convo-local ;; *) echo convo-other ;; esac >> '{state}/thread-calls'\n\
+         echo '{{\"reviews\":[],\"comments\":[]}}' ;;\n\
+         'api graphql '*) case \"$*\" in *mentions=*) case \"$*\" in *'-F name=local '*) echo list-local ;; *) echo list-other ;; esac >> '{state}/issue-calls'; echo 'gh: offline' >&2; exit 1 ;; esac\n\
+         case \"$*\" in *reviewThreads*) ;; *) echo \"unexpected gh $*\" >&2; exit 1 ;; esac\n\
+         case \"$*\" in *mergeStateStatus*) what=merge ;; *) what=threads ;; esac\n\
+         case \"$*\" in *'--hostname github.com -f owner=acme -f name=local '*) echo $what-local ;; *) echo $what-other ;; esac >> '{state}/thread-calls'\n\
+         echo 'gh: offline' >&2; exit 1 ;;\n\
          *) echo \"unexpected gh $*\" >&2; exit 1 ;;\nesac\n",
         state = state.display()
     )
@@ -130,10 +148,24 @@ fn pick_then_press(
     .unwrap();
 }
 
-/// An Issues list read that names `base_repo` and holds no issues.
-fn issue_list(base_repo: &str) -> kagi_domain::github::IssueListSnapshot {
+/// An Issues list read that names `base_repo` and holds `numbers`.
+fn issue_list(base_repo: &str, numbers: &[u64]) -> kagi_domain::github::IssueListSnapshot {
+    let issue = |number: u64| kagi_domain::github::Issue {
+        number,
+        title: format!("{base_repo} #{number}"),
+        state: kagi_domain::github::IssueState::Open,
+        url: format!("https://{base_repo}/issues/{number}"),
+        author: "octo".into(),
+        assignees: Vec::new(),
+        labels: Vec::new(),
+        body: String::new(),
+        comments: Vec::new(),
+        comment_count: 0,
+        created_at: String::new(),
+        updated_at: String::new(),
+    };
     kagi_domain::github::IssueListSnapshot {
-        issues: Vec::new(),
+        issues: numbers.iter().copied().map(issue).collect(),
         mentioned_numbers: Vec::new(),
         base_repo: base_repo.into(),
         next_cursor: None,
@@ -340,6 +372,14 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
         })
         .unwrap();
     };
+    // #940 review P1: `gh repo set-default` in the clone names acme/upstream,
+    // whose #7 is another PR. The PR's conversation, threads and merge
+    // status are still read from acme/local.
+    std::fs::write(
+        state.join("default-repo"),
+        "https://github.com/acme/upstream",
+    )
+    .unwrap();
     pick(cx);
     assert_eq!(
         cx.read(|cx| app.read(cx).home_github.work.opening.clone()),
@@ -368,6 +408,25 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
         assert_eq!(tab.pr.number, 7);
         assert_eq!(tab.pr.head, "fix");
     });
+    wait_for(cx, &app, "the PR's conversation and merge status", |app| {
+        app.pr_mode().is_some_and(|mode| {
+            mode.tabs
+                .iter()
+                .any(|t| t.pr.number == 7 && t.conversation_loaded && t.merge_status_loaded)
+        })
+    });
+    let mut thread_calls: Vec<String> = std::fs::read_to_string(state.join("thread-calls"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    thread_calls.sort();
+    assert_eq!(
+        thread_calls,
+        ["convo-local", "merge-local", "threads-local"],
+        "every read of the PR's thread names acme/local, not the clone's gh default"
+    );
+    std::fs::remove_file(state.join("default-repo")).unwrap();
 
     // #940 review: the later pick wins. A local PR still waiting for
     // `gh pr view` is dropped when another row is picked meanwhile — here
@@ -474,6 +533,52 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
         vec!["https://github.com/acme/local/issues/4".to_string()]
     );
     assert!(cx.read(|cx| app.read(cx).home.is_some()));
+    // #940 review P1: the clone's Issues mode has never loaded, so it knows
+    // no repository yet. `gh` resolves the clone to acme/local when the pick
+    // is verified, and `set-default` moves to acme/upstream right after. The
+    // list and the issue are still read from the verified acme/local.
+    let issue_calls = || {
+        std::fs::read_to_string(state.join("issue-calls"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    mark("flip-after-verify");
+    click(cx, window, "home-work-acme/local-4");
+    wait_for(cx, &app, "the Issues list and issue reads", |_| {
+        let calls = issue_calls();
+        calls.iter().any(|c| c.starts_with("list-")) && calls.iter().any(|c| c.starts_with("view-"))
+    });
+    assert!(
+        !state.join("flip-after-verify").exists(),
+        "precondition: set-default moved after the verification"
+    );
+    assert_eq!(
+        issue_calls()
+            .iter()
+            .filter(|c| !c.ends_with("-local"))
+            .count(),
+        0,
+        "every Issues read names the verified acme/local: {:?}",
+        issue_calls()
+    );
+    // Close the clone's tab, so the next open starts a session whose Issues
+    // mode has not loaded yet, as the steps below expect.
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert_eq!(
+            std::fs::canonicalize(&app.tabs[app.active_tab].path).unwrap(),
+            local_path
+        );
+    });
+    app.update(cx, |app, cx| {
+        let open = app.active_tab;
+        app.close_tab(open, cx);
+    });
+    cx.run_until_parked();
+    click_control(cx, window, "tab-add");
+    cx.run_until_parked();
     std::fs::write(
         state.join("default-repo"),
         "https://github.com/acme/upstream",
@@ -496,6 +601,7 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
     // acme/upstream's #4.
     KagiApp::queue_issue_list_fetch_for_e2e(gpui::Task::ready(Ok(issue_list(
         "github.com/acme/upstream",
+        &[4],
     ))));
     app.update(cx, |app, cx| {
         assert!(app.open_repository(local_path.clone(), cx));
@@ -505,6 +611,11 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
     assert_eq!(
         cx.read(|cx| app.read(cx).issue_write_repo_for_e2e()),
         Some("github.com/acme/upstream".to_string())
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().github_issues.len()),
+        1,
+        "acme/upstream's #4 is listed"
     );
     // A reply to acme/upstream's #4 is drafted there; it is that issue's.
     app.update(cx, |app, cx| app.seed_issue_reply_for_e2e(4, cx));
@@ -525,9 +636,11 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
     assert_eq!(upstream_reply(), Some("for upstream #4".to_string()));
     click_control(cx, window, "tab-add");
     cx.run_until_parked();
-    KagiApp::queue_issue_list_fetch_for_e2e(gpui::Task::ready(Ok(issue_list(
-        "github.com/acme/local",
-    ))));
+    // #940 review P1: acme/local's list cannot be read. acme/upstream's #4
+    // row is still not offered, as answering it would go to acme/local.
+    KagiApp::queue_issue_list_fetch_for_e2e(gpui::Task::ready(Err(
+        kagi_git::github::PrFetchError::Network("offline".into()),
+    )));
     std::fs::remove_file(state.join("default-repo")).unwrap();
     click(cx, window, "home-work-acme/local-4");
     cx.read(|cx| {
@@ -547,6 +660,11 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
             app.issue_reply_draft_for_e2e(4).body,
             "",
             "acme/upstream's reply is not offered for acme/local's #4"
+        );
+        assert!(
+            app.ui().github_issues.is_empty(),
+            "acme/upstream's rows are dropped when the list is re-addressed: {:?}",
+            app.ui().github_issues
         );
     });
     assert_eq!(

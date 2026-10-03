@@ -1629,6 +1629,7 @@ impl KagiApp {
                 klog!("menu: bottom_panel_open={}", self.bottom_panel_open);
                 if self.bottom_panel_open {
                     self.bottom_tab = BottomTab::Terminal;
+                    self.close_settings_for_command();
                     self.ensure_terminal(window, cx);
                 }
             }
@@ -1806,6 +1807,7 @@ impl KagiApp {
     /// Open the bottom Terminal panel for the current repo (Repository / File →
     /// Open in Terminal).  Reuses the existing terminal-session plumbing.
     fn menu_open_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_settings_for_command();
         self.bottom_panel_open = true;
         self.bottom_tab = BottomTab::Terminal;
         self.ensure_terminal(window, cx);

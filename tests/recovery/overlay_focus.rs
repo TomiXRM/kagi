@@ -662,6 +662,40 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
         );
     }
 
+    // (b) Backstop: whatever moves the focus out of an open Settings (here
+    // the root, focused directly) — the next frame puts it back in the trap.
+    open_settings(cx);
+    cx.update_window(window, |_, window, cx| {
+        let root = app.read(cx).root_focus.clone().expect("root focus");
+        window.focus(&root, cx);
+    })
+    .unwrap();
+    draw(cx, window);
+    assert_eq!(
+        held(cx, &app, window),
+        Held::Trap,
+        "settings-focus-backstop: a focus moved out of Settings must return to its trap"
+    );
+
+    // (a) A command acting behind Settings (File → Open in Terminal) closes
+    // Settings first; the terminal it opens holds the focus.
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.handle_menu_command("file.openInTerminal", window, cx)
+        })
+    })
+    .unwrap();
+    draw(cx, window);
+    assert!(
+        cx.read(|cx| app.read(cx).menu_overlay.is_none()),
+        "settings-closes-for-command: Open in Terminal left Settings open"
+    );
+    assert_eq!(
+        held(cx, &app, window),
+        Held::Terminal,
+        "settings-closes-for-command: the opened terminal must hold the focus"
+    );
+
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS settings_focus_trap");
 }

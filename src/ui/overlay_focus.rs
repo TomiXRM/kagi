@@ -63,6 +63,23 @@ impl KagiApp {
                 .is_some_and(|trap| trap.contains_focused(window, cx));
             self.pending_focus = trapped.then(|| self.root_focus.clone()).flatten();
         }
+        // Backstop (#976 review): while Settings is open with no modal in
+        // front, the focus belongs in its trap. Whatever moved it to the
+        // app's own panes behind — a command that focuses one, or a path not
+        // yet known — it goes back to the container once, here, on the next
+        // frame. A popup gpui-component's Root draws for a control in
+        // Settings (the theme picker's list) is outside the app's tree and is
+        // left alone.
+        if matches!(self.menu_overlay, Some(MenuOverlay::Settings)) {
+            if let Some(trap) = self.settings_focus.clone() {
+                let behind = window.focused(cx).is_none()
+                    || (self.root_focus.as_ref())
+                        .is_some_and(|root| root.contains_focused(window, cx));
+                if behind && !trap.is_focused(window) && !trap.contains_focused(window, cx) {
+                    window.focus(&trap, cx);
+                }
+            }
+        }
         // The menu overlays that hold no focus of their own (Info, the
         // branch picker) route their keys through the root, so a pending
         // focus lands while they are open too.
@@ -71,6 +88,17 @@ impl KagiApp {
             Some(MenuOverlay::Settings | MenuOverlay::CommandPalette)
         ) {
             self.apply_pending_focus(window, cx);
+        }
+    }
+
+    /// A command that acts on the panes behind Settings (open the terminal,
+    /// New Tab, ...) closes Settings first and drops its return target, so
+    /// the focus the command gives lands on a screen with no trap over it
+    /// (#976 review). The one path for every such command.
+    pub(super) fn close_settings_for_command(&mut self) {
+        if matches!(self.menu_overlay, Some(MenuOverlay::Settings)) {
+            self.menu_overlay = None;
+            self.pending_focus = None;
         }
     }
 

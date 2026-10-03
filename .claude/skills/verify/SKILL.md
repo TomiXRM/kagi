@@ -1136,6 +1136,14 @@ bash scripts/build-web.sh
 cd e2e && npm install && npx playwright install chromium && npx playwright test
 ```
 
+Without the build the run stops at once, before any server starts:
+`kagi-web harness not built: <files> missing in …/crates/kagi-web/dist`, with
+`scripts/build-web.sh` to run (`e2e/harness.ts`, #516). It used to surface as
+`Timed out waiting 60000ms from config.webServer`, which read like a runtime
+hang. The check runs while `playwright.config.ts` loads: Playwright waits for
+the `webServer` before it runs a `globalSetup`, so a check there would sit
+behind the same timeout (measured: 61 s).
+
 ## Maintenance
 
 When a PR changes a verification seam, environment flag, script, or runner feature,

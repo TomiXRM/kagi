@@ -40,12 +40,9 @@ survive GC and are retained with their oplog entries.
   together out of lifecycle.rs; other lifecycle bodies are unchanged. Progress
   is passed by mutable reference from outside catch_unwind, updated before
   side effects and immediately after each backup. Verification is explicit.
-- #915 / #938: linked 自身からの Remove でも削除境界を実行元の workdir に置かない。main workdir **と** common dir の両方を常に守る。non-bare でも `--separate-git-dir` の common dir が削除対象内にある場合は計画・実行前・削除直前に拒否する。削除前 copy / symlink ステップの source は main workdir が無い場合に実行元 linked worktree を使い、削除境界と混同しない。
-- #938 review: `Repository::open(common).workdir()` は `--separate-git-dir` で `core.worktree` が無くても推測した path を返すことがあり、main が ignored フォルダーへ移動していると self-remove が main を巻き込む。main の証明は (1) common dir が main の親ディレクトリ直下の `.git` **ディレクトリ**、または (2) `core.worktree` があり、その workdir の `.git`(gitfile / ディレクトリ)を開いた git dir が common dir そのもの、とする。bare は main workdir が無い。いずれでも証明できない non-bare は計画・preflight・削除直前に短い EN/JA blocker で拒否する。通常の `.git` 配置での own-tab Remove は維持し、common dir から推測した workdir は保護根拠にも削除前ステップの source にも使わない。
-- #938: recorded Remove の前後 snapshot は管理元が残る場合はその
-  worktree の HEAD、管理元自身を削除する場合だけ surviving common dir
-  の HEAD を観測する。同じ source を前後で使い、削除前 step による
-  管理元の checkout は HEAD 移動として記録して restore を拒否する。
+- #915 / #938: 安全性に対して複雑すぎる main の場所の証明・削除後の surviving common dir 観測を廃止し、削除対象の worktree を開いている管理タブからの Remove は計画・preflight で短い EN/JA 理由を示して拒否する。別タブからの Remove は維持する。
+- #938: 削除境界は実行元 `repo.workdir()`、common dir、`Repository::open(repo.commondir()).workdir()` がある場合はその main workdir を保護する。対象内の別の登録済み worktree も計画・preflight・削除直前で拒否する。non-bare でも `--separate-git-dir` の common dir が対象内にあれば拒否する。common dir から推測される main の場所が不確かな場合も削除側に倒さない。
+- #938: 別タブからの recorded Remove は前後とも存続する実行元の HEAD と共有 ref を読む。削除前 copy / symlink ステップの source は main workdir が無い bare-backed repo では実行元 linked worktree を使う。実行元の checkout が変われば HEAD 移動を記録し RestoreToPoint を拒否する。
 - `Unknown { after, evidence }` is additive. Evidence is a human-readable
   string carrying stage, verification, termination and step observations.
   Partial/Unknown after contains full blob and branch OIDs. Existing variants

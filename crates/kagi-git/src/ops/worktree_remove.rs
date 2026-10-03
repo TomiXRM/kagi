@@ -104,8 +104,7 @@ pub fn plan_remove_worktree(
 
 /// A target may contain another registered worktree under an ignored
 /// directory, or the common ODB when --separate-git-dir places it there.
-/// Protect both the common dir and the verified main checkout; if a non-bare
-/// main checkout cannot be verified, no recursive removal is safe.
+/// Never remove the managing worktree, main worktree or common directory.
 fn nested_registered_worktree(
     repo: &Repository,
     name: &str,
@@ -113,6 +112,16 @@ fn nested_registered_worktree(
 ) -> Result<Option<PlanNote>, GitError> {
     let target = std::fs::canonicalize(target_path)
         .map_err(|e| GitError::Other(format!("cannot resolve removal target: {e}")))?;
+    let manager = repo
+        .workdir()
+        .map(|path| {
+            std::fs::canonicalize(path)
+                .map_err(|e| GitError::Other(format!("cannot resolve managing worktree: {e}")))
+        })
+        .transpose()?;
+    if manager.as_deref() == Some(target.as_path()) {
+        return Ok(Some(PlanNote::Worktree(WorktreeNote::RemoveOpenInTab)));
+    }
     let names = repo
         .worktrees()
         .map_err(|e| GitError::Other(format!("cannot list registered worktrees: {e}")))?;
@@ -152,19 +161,29 @@ fn nested_registered_worktree(
             },
         )));
     }
+    if let Some(path) = manager {
+        if path.starts_with(&target) {
+            return Ok(Some(PlanNote::Worktree(
+                WorktreeNote::RemoveContainsWorktree {
+                    path: path.display().to_string(),
+                },
+            )));
+        }
+    }
     let main = Repository::open(repo.commondir())
         .map_err(|e| GitError::Other(format!("cannot open common repository: {e}")))?;
-    match super::worktree_lifecycle::main_checkout(&main)? {
-        super::worktree_lifecycle::MainCheckout::Verified(path) if path.starts_with(&target) => Ok(
-            Some(PlanNote::Worktree(WorktreeNote::RemoveContainsWorktree {
-                path: path.display().to_string(),
-            })),
-        ),
-        super::worktree_lifecycle::MainCheckout::Unverified => Ok(Some(PlanNote::Worktree(
-            WorktreeNote::RemoveMainLocationUnknown,
-        ))),
-        _ => Ok(None),
+    if let Some(workdir) = main.workdir() {
+        let path = std::fs::canonicalize(workdir)
+            .map_err(|e| GitError::Other(format!("cannot resolve main worktree: {e}")))?;
+        if path.starts_with(&target) {
+            return Ok(Some(PlanNote::Worktree(
+                WorktreeNote::RemoveContainsWorktree {
+                    path: path.display().to_string(),
+                },
+            )));
+        }
     }
+    Ok(None)
 }
 
 /// Re-check the same registered paths before hooks and immediately before
@@ -353,23 +372,15 @@ pub(crate) fn execute_remove_worktree_progress(
     }
     preflight_check(repo, plan)?;
 
-    // Never treat libgit2's workdir inferred from a separate common dir as a
-    // surviving main checkout. Only a verified path anchors containment and
-    // pre-remove steps; bare repos use the caller's linked worktree as source.
+    // Pre-remove steps read from the main worktree when there is one; a bare
+    // common repository has no workdir, so use the managing linked checkout.
     let main_repo = Repository::open(repo.commondir())
         .map_err(|e| GitError::Other(format!("cannot open common repository: {e}")))?;
-    let step_source = match super::worktree_lifecycle::main_checkout(&main_repo)? {
-        super::worktree_lifecycle::MainCheckout::Verified(path) => path,
-        super::worktree_lifecycle::MainCheckout::Bare => repo
-            .workdir()
-            .ok_or_else(|| GitError::Other("no worktree for pre-remove steps".to_string()))?
-            .to_path_buf(),
-        super::worktree_lifecycle::MainCheckout::Unverified => {
-            return Err(GitError::Blocked(Box::new(PlanNote::Worktree(
-                WorktreeNote::RemoveMainLocationUnknown,
-            ))));
-        }
-    };
+    let step_source = main_repo
+        .workdir()
+        .or_else(|| repo.workdir())
+        .ok_or_else(|| GitError::Other("no worktree for pre-remove steps".to_string()))?
+        .to_path_buf();
 
     let wt = repo
         .find_worktree(name)
@@ -471,11 +482,15 @@ pub(crate) fn execute_remove_worktree_progress(
     preflight_remove_nested_worktrees(repo, name)?;
 
     // Containment-checked recursive delete (the ONLY sanctioned one).
-    progress.stage = Stage::DeletionStarted;
     let main_repo = Repository::open(repo.commondir())
         .map_err(|e| GitError::Other(format!("cannot reopen common repository: {e}")))?;
-    let main_checkout = super::worktree_lifecycle::main_checkout(&main_repo)?;
-    if let Err(e) = remove_worktree_dir_checked(&main_checkout, main_repo.commondir(), &wt_path) {
+    progress.stage = Stage::DeletionStarted;
+    if let Err(e) = remove_worktree_dir_checked(
+        repo.workdir(),
+        main_repo.workdir(),
+        main_repo.commondir(),
+        &wt_path,
+    ) {
         return partial(e.to_string());
     }
     if fault == Some(Fault::PanicAfterDeletionStarted) {

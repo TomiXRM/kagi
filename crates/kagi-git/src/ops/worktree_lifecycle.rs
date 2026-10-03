@@ -19,79 +19,18 @@ use kagi_domain::worktree_autolock::{
 // Containment-checked worktree directory removal (the safety hole fix)
 // ────────────────────────────────────────────────────────────
 
-/// A delete can trust the common repository's main checkout only when its
-/// location is established independently of libgit2's inferred `workdir()`.
-pub(crate) enum MainCheckout {
-    Bare,
-    Verified(PathBuf),
-    Unverified,
-}
-
-pub(crate) fn main_checkout(main: &Repository) -> Result<MainCheckout, GitError> {
-    if main.is_bare() {
-        return Ok(MainCheckout::Bare);
-    }
-    let common = std::fs::canonicalize(main.commondir())
-        .map_err(|e| GitError::Other(format!("cannot resolve common repository: {e}")))?;
-    // In a conventional repository, the common dir itself is the main
-    // checkout's `.git` directory, not a separate gitfile destination.
-    if common.file_name() == Some(std::ffi::OsStr::new(".git")) {
-        if let Some(parent) = common.parent() {
-            let marker = parent.join(".git");
-            if marker.is_dir()
-                && std::fs::canonicalize(&marker).ok().as_deref() == Some(common.as_path())
-            {
-                return Ok(MainCheckout::Verified(parent.to_path_buf()));
-            }
-        }
-    }
-    let configured = main
-        .config()
-        .map_err(|e| GitError::Other(format!("cannot inspect main worktree config: {e}")))?;
-    match configured.get_entry("core.worktree") {
-        Ok(_) => {}
-        Err(e) if e.code() == git2::ErrorCode::NotFound => {
-            return Ok(MainCheckout::Unverified);
-        }
-        Err(e) => return Err(GitError::Other(format!("cannot read core.worktree: {e}"))),
-    }
-    let Some(workdir) = main.workdir() else {
-        return Ok(MainCheckout::Unverified);
-    };
-    let marker = workdir.join(".git");
-    let Ok(meta) = std::fs::symlink_metadata(&marker) else {
-        return Ok(MainCheckout::Unverified);
-    };
-    if !meta.file_type().is_file() && !meta.file_type().is_dir() {
-        return Ok(MainCheckout::Unverified);
-    }
-    let Ok(opened) = Repository::open(workdir) else {
-        return Ok(MainCheckout::Unverified);
-    };
-    let Ok(git_dir) = std::fs::canonicalize(opened.path()) else {
-        return Ok(MainCheckout::Unverified);
-    };
-    if git_dir != common {
-        return Ok(MainCheckout::Unverified);
-    }
-    let path = std::fs::canonicalize(workdir)
-        .map_err(|e| GitError::Other(format!("cannot resolve main worktree: {e}")))?;
-    Ok(MainCheckout::Verified(path))
-}
-
 /// Recursively delete a worktree's working directory **only** after proving it
 /// is safe to do so. This is the single place in the codebase allowed to
 /// `remove_dir_all` a worktree path.
 ///
 /// Refuses (returns `Err`, deletes nothing) when the target:
 /// - is a symlink (never followed into a delete),
-/// - resolves to or contains the main worktree,
-/// - resolves to or contains the common dir (which can be separate from the
-///   main workdir even for a non-bare repository).
+/// - resolves to or contains the managing worktree, main worktree or common dir.
 ///
 /// `wt_path` is the registered worktree path.
 pub(crate) fn remove_worktree_dir_checked(
-    main_checkout: &MainCheckout,
+    managing_workdir: Option<&Path>,
+    main_workdir: Option<&Path>,
     common_dir: &Path,
     wt_path: &Path,
 ) -> Result<(), GitError> {
@@ -116,42 +55,22 @@ pub(crate) fn remove_worktree_dir_checked(
             wt_path.display()
         ))
     })?;
-    // Both paths matter: --separate-git-dir permits the common ODB to live
-    // under a linked target while the main workdir survives elsewhere.
-    match main_checkout {
-        MainCheckout::Unverified => {
-            return Err(GitError::Blocked(Box::new(PlanNote::Worktree(
-                WorktreeNote::RemoveMainLocationUnknown,
-            ))));
+    for (root, label) in [
+        (managing_workdir, "managing worktree"),
+        (main_workdir, "main worktree"),
+        (Some(common_dir), "common repository"),
+    ] {
+        let Some(root) = root else { continue };
+        let protected = std::fs::canonicalize(root).map_err(|e| {
+            GitError::Other(format!("cannot resolve {label} '{}': {e}", root.display()))
+        })?;
+        if protected.starts_with(&target) {
+            return Err(GitError::Other(format!(
+                "refusing to delete '{}': it contains the {label} at '{}'",
+                target.display(),
+                protected.display()
+            )));
         }
-        MainCheckout::Bare => {}
-        MainCheckout::Verified(main) => {
-            if target == *main {
-                return Err(GitError::Other(
-                    "refusing to delete the main worktree".to_string(),
-                ));
-            }
-            if main.starts_with(&target) {
-                return Err(GitError::Other(format!(
-                    "refusing to delete '{}': it contains the main repository at '{}'",
-                    target.display(),
-                    main.display()
-                )));
-            }
-        }
-    }
-    let common = std::fs::canonicalize(common_dir).map_err(|e| {
-        GitError::Other(format!(
-            "cannot resolve common repository '{}': {e}",
-            common_dir.display()
-        ))
-    })?;
-    if common.starts_with(&target) {
-        return Err(GitError::Other(format!(
-            "refusing to delete '{}': it contains the common repository at '{}'",
-            target.display(),
-            common.display()
-        )));
     }
 
     std::fs::remove_dir_all(&target).map_err(|e| {
@@ -167,6 +86,24 @@ mod checked_delete_tests {
     use super::*;
 
     #[test]
+    fn managing_worktree_is_never_recursively_deleted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("linked");
+        let main = tmp.path().join("main");
+        let common = main.join(".git");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::create_dir_all(&common).unwrap();
+        std::fs::write(target.join("keep"), "linked content").unwrap();
+        let err =
+            remove_worktree_dir_checked(Some(&target), Some(&main), &common, &target).unwrap_err();
+        assert!(err.to_string().contains("managing worktree"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(target.join("keep")).unwrap(),
+            "linked content"
+        );
+    }
+
+    #[test]
     fn nonbare_common_dir_under_target_is_never_recursively_deleted() {
         let tmp = tempfile::tempdir().unwrap();
         let main = tmp.path().join("main");
@@ -175,31 +112,13 @@ mod checked_delete_tests {
         std::fs::create_dir(&main).unwrap();
         std::fs::create_dir_all(common.join("objects")).unwrap();
         std::fs::write(common.join("objects/keep"), "retained").unwrap();
-        let err = remove_worktree_dir_checked(&MainCheckout::Verified(main), &common, &target)
-            .unwrap_err();
+        let err =
+            remove_worktree_dir_checked(Some(&main), Some(&main), &common, &target).unwrap_err();
         assert!(err.to_string().contains("common repository"), "{err}");
         assert_eq!(
             std::fs::read_to_string(common.join("objects/keep")).unwrap(),
             "retained"
         );
-    }
-    #[test]
-    fn unverified_main_checkout_cannot_pass_the_final_recursive_delete_guard() {
-        let tmp = tempfile::tempdir().unwrap();
-        let common = tmp.path().join("common.git");
-        let target = tmp.path().join("linked");
-        std::fs::create_dir(&common).unwrap();
-        std::fs::create_dir(&target).unwrap();
-        let marker = target.join("keep");
-        std::fs::write(&marker, "main checkout\n").unwrap();
-        let err =
-            remove_worktree_dir_checked(&MainCheckout::Unverified, &common, &target).unwrap_err();
-        assert!(matches!(
-            err,
-            GitError::Blocked(note)
-                if matches!(*note, PlanNote::Worktree(WorktreeNote::RemoveMainLocationUnknown))
-        ));
-        assert_eq!(std::fs::read_to_string(marker).unwrap(), "main checkout\n");
     }
 }
 

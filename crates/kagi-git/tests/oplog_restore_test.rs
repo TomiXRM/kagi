@@ -88,11 +88,10 @@ fn commit(dir: &Path, content: &str) -> u64 {
     )
 }
 
-/// #915: the operation owner may be the linked worktree that is removed.
-/// Its admin directory disappears, but the common repository and its branches
-/// remain observable for the receipt and every later restore.
+/// #915: Remove from a surviving managing worktree observes deleted branch
+/// OIDs (or `Some(empty)` when kept), so RestoreToPoint can cross its receipt.
 #[test]
-fn restore_to_point_crosses_remove_from_the_deleted_worktrees_own_tab() {
+fn restore_to_point_crosses_remove_from_a_separate_tab() {
     if !test_support::run_isolated() {
         return;
     }
@@ -113,7 +112,7 @@ fn restore_to_point_crosses_remove_from_the_deleted_worktrees_own_tab() {
         );
         let side_tip = git_output(&repo, &["rev-parse", "refs/heads/side"]);
         let point = create(&repo, "point");
-        let remove = Backend::plan_recorded_remove(&linked, "linked", delete_branch).unwrap();
+        let remove = Backend::plan_recorded_remove(&repo, "linked", delete_branch).unwrap();
         assert!(
             remove.preview.blockers.is_empty(),
             "{:?}",
@@ -126,15 +125,11 @@ fn restore_to_point_crosses_remove_from_the_deleted_worktrees_own_tab() {
             report.recording.entry()
         );
         assert!(!linked.exists());
-        // The removed worktree is no longer openable for path-based tail
-        // filtering; this isolated child owns the last global receipt.
-        let entry = kagi_git::oplog::read_oplog_tail(1)
-            .pop()
-            .expect("removed worktree receipt");
+        let entry = newest(&repo);
         assert_eq!(entry.op, "remove-worktree");
         let moves = entry
             .ref_moves
-            .expect("a removed own tab must still record branch observations");
+            .expect("a separate-tab Remove must record branch observations");
         if delete_branch {
             assert_eq!(moves.len(), 1, "{moves:?}");
             assert_eq!(moves[0].refname, "refs/heads/side");

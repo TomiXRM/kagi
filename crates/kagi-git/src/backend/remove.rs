@@ -181,18 +181,11 @@ impl Backend {
         mut event: impl FnMut(RemoveEvent),
     ) -> RemoveReport {
         let mut progress = RemoveProgress::default();
-        // When the manager survives, observe its own HEAD: a pre_remove step
-        // can checkout another branch there, and restore must see HeadMoved.
-        // Only self-removal needs the surviving common dir, because the
-        // removed worktree's per-worktree HEAD disappears (#915). The same
-        // source on both sides also keeps bare-backed refs observable (#938).
-        let snapshot_path = if plan.repo == plan.target {
-            &plan.common_dir.0
-        } else {
-            &plan.repo
-        };
+        // The managing worktree survives every permitted Remove, including
+        // bare-backed linked worktrees. Read its HEAD and shared refs before and
+        // after; a pre_remove checkout must be visible to RestoreToPoint.
         // Unreadable on either side: not recorded.
-        let refs_before = refs_of(snapshot_path);
+        let refs_before = refs_of(&plan.repo);
         // #900 review: the repository identity is read before anything runs,
         // like the "before" snapshot of `run_recorded_with_events` — the
         // removed worktree no longer opens afterwards, and by then another
@@ -223,16 +216,15 @@ impl Backend {
             // The target may have initialized a submodule since the plan was
             // confirmed. Surface the short typed blocker before trust or steps.
             ops::preflight_remove_submodules(&backend.repo, &plan.name)?;
-            // Re-plan before trust or hooks. Preserve safety blockers as typed
-            // notes, including a main checkout whose location is no longer
-            // provable after the user confirmed the earlier plan.
+            // Re-plan before trust or hooks. Preserve typed containment and
+            // own-tab refusals so the UI shows the short blocker.
             let current = backend.plan_remove_worktree(&plan.name, plan.delete_branch)?;
             if let Some(blocker) = current.blockers.iter().find(|note| {
                 matches!(
                     note,
                     PlanNote::Worktree(
                         kagi_domain::plan_note::WorktreeNote::RemoveContainsWorktree { .. }
-                            | kagi_domain::plan_note::WorktreeNote::RemoveMainLocationUnknown
+                            | kagi_domain::plan_note::WorktreeNote::RemoveOpenInTab
                     )
                 )
             }) {
@@ -322,7 +314,7 @@ impl Backend {
             },
         };
         let ref_moves = refs_before
-            .zip(refs_of(snapshot_path))
+            .zip(refs_of(&plan.repo))
             .map(|(before, after)| kagi_domain::ref_moves::diff(&before, &after));
         let mut entry = OpLogEntry::new(
             "remove-worktree",

@@ -70,9 +70,8 @@ pub enum WorktreeNote {
     /// blocker (`plan_remove_worktree`) — the target is the main worktree,
     /// which is never removable.
     RemoveMainRefused,
-    /// blocker (#938): the main checkout cannot be located from the common
-    /// repository, so a recursive linked-worktree delete cannot be proven safe.
-    RemoveMainLocationUnknown,
+    /// blocker (#938) — the target is open in the managing tab.
+    RemoveOpenInTab,
     /// blocker (`plan_remove_worktree`) — the worktree has uncommitted changes;
     /// removal is refused (kagi never forces).
     RemoveDirty { path: String, summary: String },
@@ -273,6 +272,7 @@ impl WorktreeNote {
             WorktreeNote::RemoveMainRefused => {
                 "This is the main worktree — it cannot be removed.".to_string()
             }
+            WorktreeNote::RemoveOpenInTab => "This worktree is open in this tab.".to_string(),
             WorktreeNote::RemoveDirty { path, summary } => format!(
                 crate::advice_template_en!(WorktreeRemoveDirty),
                 path, summary
@@ -316,9 +316,6 @@ impl WorktreeNote {
             WorktreeNote::RemoveContainsSubmodules => "Contains submodules".to_string(),
             WorktreeNote::RemoveContainsWorktree { path } => {
                 format!("Registered worktree at '{path}' is inside the removal target.")
-            }
-            WorktreeNote::RemoveMainLocationUnknown => {
-                "Cannot verify the main worktree location; removal is blocked.".to_string()
             }
             WorktreeNote::RemovesWorktree {
                 path,

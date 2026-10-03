@@ -120,9 +120,7 @@ pub fn note_ja(note: &WorktreeNote) -> String {
             ],
         ),
         WorktreeNote::RemoveMainRefused => "main worktree は削除できません。".to_string(),
-        WorktreeNote::RemoveMainLocationUnknown => {
-            "main worktree の場所を確認できないため削除できません。".to_string()
-        }
+        WorktreeNote::RemoveOpenInTab => "このタブで開いている worktree です。".to_string(),
         WorktreeNote::RemoveDirty { path, summary } => {
             super::advice_text(Msg::AdviceWorktreeRemoveDirty, &[summary, path])
         }

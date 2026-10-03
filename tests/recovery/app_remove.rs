@@ -6,7 +6,7 @@ use kagi::ui::{
     e2e,
     i18n::{self, Lang},
 };
-use kagi_git::oplog::{read_oplog_tail, read_oplog_tail_for_repo, OpOutcome};
+use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
 use std::time::{Duration, Instant};
 
 pub fn scenario_remove_public_boundary(cx: &mut VisualTestAppContext) {
@@ -145,10 +145,10 @@ pub fn scenario_remove_public_boundary(cx: &mut VisualTestAppContext) {
             if button { "button" } else { "raw Enter" }
         );
     }
-    remove_from_own_tab_and_keep_main(cx);
     let previous = i18n::lang();
     for language in [Lang::En, Lang::Ja] {
         i18n::set_lang(language);
+        refuse_remove_from_own_tab(cx);
         refused_locked_remove(cx);
         partial_submodule_refusal_toast(cx);
     }
@@ -167,9 +167,9 @@ fn wait_idle(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
     }
 }
 
-/// Main is blocked from both tabs. Removing the current linked tab instead
-/// must leave the main tab active and record an observable no-move receipt.
-fn remove_from_own_tab_and_keep_main(cx: &mut VisualTestAppContext) {
+/// Main is blocked from both tabs; a linked checkout cannot be removed from
+/// its own tab, and both tabs remain attached after the localized refusal.
+fn refuse_remove_from_own_tab(cx: &mut VisualTestAppContext) {
     use kagi_domain::plan_note::{PlanNote, WorktreeNote};
 
     let fixture = build_fixture();
@@ -188,6 +188,7 @@ fn remove_from_own_tab_and_keep_main(cx: &mut VisualTestAppContext) {
         ],
     );
     let before = repo_fingerprint(&repo);
+    let linked_before = repo_fingerprint(&linked);
     let (app, window) = mount(cx, &repo);
     let main_owner = cx.read(|cx| app.read(cx).active_session().unwrap());
 
@@ -222,17 +223,19 @@ fn remove_from_own_tab_and_keep_main(cx: &mut VisualTestAppContext) {
         app.open_remove_worktree_modal("self-target".into(), false, cx);
     });
     wait_remove_plan(cx, &app);
-    cx.read(|cx| {
-        assert!(
-            app.read(cx)
-                .remove_worktree_modal()
-                .unwrap()
-                .plan
-                .blockers
-                .is_empty(),
-            "self-target is a clean linked worktree"
-        );
+    let expected = cx.read(|cx| {
+        let state = app.read(cx);
+        let note = &state.remove_worktree_modal().unwrap().plan.blockers[0];
+        assert_eq!(note, &PlanNote::Worktree(WorktreeNote::RemoveOpenInTab));
+        i18n::plan_note_text(note)
     });
+    assert_eq!(
+        expected,
+        match i18n::lang() {
+            Lang::En => "This worktree is open in this tab.",
+            Lang::Ja => "このタブで開いている worktree です。",
+        }
+    );
     cx.update_window(window, |_, window, cx| {
         window.focus(&app.read(cx).root_focus.clone().unwrap(), cx);
         window.draw(cx).clear();
@@ -240,22 +243,28 @@ fn remove_from_own_tab_and_keep_main(cx: &mut VisualTestAppContext) {
     .unwrap();
     cx.simulate_keystrokes(window, "enter");
     wait_idle(cx, &app);
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
 
-    assert!(!linked.exists());
+    assert!(linked.exists());
     cx.read(|cx| {
         let state = app.read(cx);
-        assert_eq!(state.tabs.len(), 1);
-        assert_eq!(state.tabs[0].path, repo);
-        assert_eq!(state.active_tab, 0, "main is the surviving active tab");
-        assert_eq!(state.active_session(), Some(main_owner));
+        assert!(state.remove_worktree_modal().is_none());
+        let notice = e2e::app_notice_message(state).expect("own-tab refusal notice");
+        assert!(notice.contains(&expected), "notice: {notice}");
+        assert_eq!(state.tabs.len(), 2);
+        assert_eq!(state.active_session(), Some(linked_owner));
         assert!(state.app_sessions.is_attached(main_owner));
-        assert!(!state.app_sessions.is_attached(linked_owner));
+        assert!(state.app_sessions.is_attached(linked_owner));
     });
-    let entry = read_oplog_tail(1).pop().expect("self-tab remove receipt");
-    assert_eq!(entry.op, "remove-worktree");
-    assert!(matches!(entry.outcome, OpOutcome::Success { .. }));
+    let entry = read_oplog_tail_for_repo(&linked, 100)
+        .into_iter()
+        .find(|entry| entry.op == "remove-worktree")
+        .expect("own-tab refusal receipt");
+    assert!(matches!(entry.outcome, OpOutcome::Refused { .. }));
     assert_eq!(entry.ref_moves, Some(Vec::new()));
-    assert_eq!(entry.worktree.as_deref(), linked.to_str());
+    assert_eq!(repo_fingerprint(&repo), before);
+    assert_eq!(repo_fingerprint(&linked), linked_before);
     unmount(cx, app, window);
 }
 

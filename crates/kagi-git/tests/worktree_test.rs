@@ -1047,6 +1047,113 @@ fn remove_refuses_linked_target_containing_separate_git_dir() {
     assert!(common.join("objects").exists(), "the common ODB survives");
 }
 
+/// A separate common dir without core.worktree does not identify the main
+/// checkout. The main checkout may move into an ignored folder of the linked
+/// target without making that target dirty; self-removal must fail closed.
+#[test]
+fn remove_self_refuses_unverified_separate_main_checkout() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let main = TempDir::new().unwrap();
+    let layout = TempDir::new().unwrap();
+    let repo = build_repo(&main);
+    write_file(main.path(), ".gitignore", "ignored/\n");
+    git(main.path(), &["add", ".gitignore"]);
+    git(main.path(), &["commit", "-qm", "ignore nested checkout"]);
+    let target = layout.path().join("target");
+    git(
+        main.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "target",
+            target.to_str().unwrap(),
+        ],
+    );
+    drop(repo);
+    let common = layout.path().join("common.git");
+    git(
+        main.path(),
+        &[
+            "init",
+            "-q",
+            "--separate-git-dir",
+            common.to_str().unwrap(),
+            main.path().to_str().unwrap(),
+        ],
+    );
+    git(
+        main.path(),
+        &["worktree", "repair", target.to_str().unwrap()],
+    );
+    assert!(!git_fixture::git_succeeds(
+        main.path(),
+        &["config", "--local", "--get", "core.worktree"]
+    ));
+    // A configured worktree whose .git gitfile points at the common dir is
+    // provable, even though the ODB is outside the checkout.
+    git(
+        main.path(),
+        &["config", "core.worktree", main.path().to_str().unwrap()],
+    );
+    let approved = kagi_git::Backend::plan_recorded_remove(&target, "target", false).unwrap();
+    assert!(
+        approved.preview.blockers.is_empty(),
+        "{:?}",
+        approved.preview.blockers
+    );
+    // Merely configuring a path is insufficient: this linked checkout's
+    // gitfile points to its admin dir, not directly to the common dir.
+    git(
+        main.path(),
+        &["config", "core.worktree", target.to_str().unwrap()],
+    );
+    let wrong = plan_remove_worktree(&Repository::open(&target).unwrap(), "target", false).unwrap();
+    assert!(wrong.blockers.iter().any(|b| matches!(
+        b,
+        PlanNote::Worktree(WorktreeNote::RemoveMainLocationUnknown)
+    )));
+    git(main.path(), &["config", "--unset", "core.worktree"]);
+    let moved = target.join("ignored/main");
+    std::fs::create_dir(target.join("ignored")).unwrap();
+    std::fs::rename(main.path(), &moved).unwrap();
+    let repo = Repository::open(&target).unwrap();
+    assert!(!Repository::open(&common).unwrap().is_bare());
+    assert_eq!(
+        repo.commondir().canonicalize().unwrap(),
+        common.canonicalize().unwrap()
+    );
+    let marker = moved.join("README.md");
+    assert!(marker.exists());
+
+    let plan = plan_remove_worktree(&repo, "target", false).unwrap();
+    assert!(
+        plan.blockers.iter().any(|b| matches!(
+            b,
+            PlanNote::Worktree(WorktreeNote::RemoveMainLocationUnknown)
+        )),
+        "cannot trust the workdir inferred from a separate common dir: {:?}",
+        plan.blockers
+    );
+    let report =
+        kagi_git::Backend::run_recorded_remove(&approved, kagi_git::oplog::Actor::Human, None);
+    assert!(matches!(
+        report.blocker,
+        Some(PlanNote::Worktree(WorktreeNote::RemoveMainLocationUnknown))
+    ));
+    assert!(matches!(
+        report.recording.entry().outcome,
+        kagi_git::oplog::OpOutcome::Refused { .. }
+    ));
+    assert!(
+        marker.exists(),
+        "refusal must leave the main checkout intact"
+    );
+}
+
 /// Main is never removable from either its own management tab or a linked tab.
 /// The executor must reject even when a caller presents a blocked plan.
 #[test]

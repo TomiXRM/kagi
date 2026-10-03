@@ -41,6 +41,7 @@ survive GC and are retained with their oplog entries.
   is passed by mutable reference from outside catch_unwind, updated before
   side effects and immediately after each backup. Verification is explicit.
 - #915 / #938: linked 自身からの Remove でも削除境界を実行元の workdir に置かない。main workdir **と** common dir の両方を常に守る。non-bare でも `--separate-git-dir` の common dir が削除対象内にある場合は計画・実行前・削除直前に拒否する。削除前 copy / symlink ステップの source は main workdir が無い場合に実行元 linked worktree を使い、削除境界と混同しない。
+- #938 review: `Repository::open(common).workdir()` は `--separate-git-dir` で `core.worktree` が無くても推測した path を返すことがあり、main が ignored フォルダーへ移動していると self-remove が main を巻き込む。main の証明は (1) common dir が main の親ディレクトリ直下の `.git` **ディレクトリ**、または (2) `core.worktree` があり、その workdir の `.git`(gitfile / ディレクトリ)を開いた git dir が common dir そのもの、とする。bare は main workdir が無い。いずれでも証明できない non-bare は計画・preflight・削除直前に短い EN/JA blocker で拒否する。通常の `.git` 配置での own-tab Remove は維持し、common dir から推測した workdir は保護根拠にも削除前ステップの source にも使わない。
 - #938: recorded Remove の前後 snapshot は管理元が残る場合はその
   worktree の HEAD、管理元自身を削除する場合だけ surviving common dir
   の HEAD を観測する。同じ source を前後で使い、削除前 step による

@@ -223,14 +223,16 @@ impl Backend {
             // The target may have initialized a submodule since the plan was
             // confirmed. Surface the short typed blocker before trust or steps.
             ops::preflight_remove_submodules(&backend.repo, &plan.name)?;
-            // Re-plan before trust or hooks. Preserve the typed nested-worktree
-            // blocker so the UI can explain why a once-safe removal is refused.
+            // Re-plan before trust or hooks. Preserve safety blockers as typed
+            // notes, including a main checkout whose location is no longer
+            // provable after the user confirmed the earlier plan.
             let current = backend.plan_remove_worktree(&plan.name, plan.delete_branch)?;
             if let Some(blocker) = current.blockers.iter().find(|note| {
                 matches!(
                     note,
                     PlanNote::Worktree(
                         kagi_domain::plan_note::WorktreeNote::RemoveContainsWorktree { .. }
+                            | kagi_domain::plan_note::WorktreeNote::RemoveMainLocationUnknown
                     )
                 )
             }) {

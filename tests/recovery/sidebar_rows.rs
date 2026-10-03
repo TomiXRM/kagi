@@ -4,14 +4,70 @@
 //! rows (empty, or collapsed) keeps a Tab stop on its header, and on a
 //! collapsed one Enter opens it onto its first row; Enter on a worktree row
 //! opens its inspection card and Escape closes it, the row keeping the focus.
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 
-use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
+use gpui::{px, size, AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::sidebar::SidebarRow;
 use kagi::ui::{e2e, KagiApp};
 
 use crate::keyboard_nav::keys;
-use crate::macos::{build_fixture, git, mount, unmount};
+use crate::macos::{build_fixture, git, mount, open_offscreen, unmount};
+use crate::pr_fields_focus::OfflineGh;
+
+/// Tab from the window, drawing between steps, until `pane`'s header holds
+/// the focus; `None` when a whole cycle passes it by.
+fn tab_to_header(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    pane: usize,
+) -> Option<usize> {
+    cx.update_window(window, |_, window, cx| {
+        let root = app.read(cx).root_focus.clone().unwrap();
+        root.focus(window, cx);
+        window.draw(cx).clear();
+        (0..300).find_map(|_| {
+            window.focus_next(cx);
+            window.draw(cx).clear();
+            app.read(cx)
+                .sidebar_header_focused_for_e2e(window)
+                .filter(|&at| at == pane)
+        })
+    })
+    .unwrap()
+}
+
+/// A sidebar too short to draw any pane's rows (#987 review): a 300px-high
+/// window. LOCAL has rows, none drawn, so its header is its Tab stop.
+pub fn scenario_sidebar_rows_short(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    crate::gui_evidence::fixture(fixture.path());
+    let state = e2e::app_state(fixture.path()).expect("fixture app state");
+    let captured: Rc<RefCell<Option<Entity<KagiApp>>>> = Rc::default();
+    let output = captured.clone();
+    let window = open_offscreen(cx, size(px(1440.), px(300.)), move |window, cx| {
+        e2e::mount_root(state, window, cx, &output)
+    });
+    let app = captured.borrow().clone().expect("mounted KagiApp");
+    let window: AnyWindowHandle = window.into();
+    cx.run_until_parked();
+    assert!(
+        app.read_with(cx, |app, _| app
+            .sidebar
+            .rows
+            .iter()
+            .any(|row| matches!(row, SidebarRow::LocalBranchLeaf { .. }))),
+        "precondition: LOCAL has rows"
+    );
+    assert_eq!(
+        tab_to_header(cx, &app, window, LOCAL),
+        Some(LOCAL),
+        "Tab reaches LOCAL's header when none of its rows is drawn"
+    );
+    unmount(cx, app, window);
+}
 
 const LOCAL: usize = 0;
 const REMOTE: usize = 1;
@@ -144,6 +200,34 @@ pub fn scenario_sidebar_rows(cx: &mut VisualTestAppContext) {
         })
         .unwrap();
     assert_eq!(empty, Some(REMOTE), "Tab reaches the empty pane's header");
+
+    // Issues in front, then Graph again (#987 review): the frame the panes
+    // come back on is the only one drawn, and Tab over it, with no frame
+    // after, still reaches a LOCAL row.
+    let _gh = OfflineGh::with_script("#!/bin/sh\necho 'gh: offline' >&2\nexit 1\n");
+    app.update(cx, |app, cx| app.show_issues_mode(cx));
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    let back = cx
+        .update_window(window, |_, window, cx| {
+            // Back to Graph and its one frame, in one update: no other frame
+            // may run in between.
+            app.update(cx, |app, cx| app.show_graph_mode(cx));
+            let root = app.read(cx).root_focus.clone().unwrap();
+            root.focus(window, cx);
+            window.draw(cx).clear();
+            (0..300).find_map(|_| {
+                window.focus_next(cx);
+                app.read(cx).sidebar_row_focused_for_e2e(window)
+            })
+        })
+        .unwrap();
+    assert_eq!(
+        back.map(|(pane, _)| pane),
+        Some(LOCAL),
+        "Tab over the frame Graph comes back on reaches a LOCAL row"
+    );
 
     // TAGS collapsed: its rows are gone, and its header is its Tab stop.
     crate::app_conflict::click_control(cx, window, "tags");

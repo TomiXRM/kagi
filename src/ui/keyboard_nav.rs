@@ -701,6 +701,12 @@ impl RowList {
         self.rows.len()
     }
 
+    /// Whether a drawn row is the list's Tab stop this frame (none while no
+    /// row is known to be on screen).
+    pub(crate) fn has_stop(&self) -> bool {
+        self.stop.is_some()
+    }
+
     /// The row at `at` (its place among the rows): Tab reaches it when it is
     /// the list's stop, ↑/↓ move from it, Enter/Space press it (`on_click`).
     pub(crate) fn row(&self, at: usize, el: Stateful<Div>) -> Stateful<Div> {

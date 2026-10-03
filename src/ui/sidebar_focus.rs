@@ -3,9 +3,10 @@
 //! Each of the five panes is its own tree and its own Tab stop: the row the
 //! keyboard last reached while it is drawn, else the first row on screen
 //! (`keyboard_nav::RowFocus` over the pane's `uniform_list`). ↑/↓ stay inside
-//! the pane. A pane with no rows — collapsed, empty, or emptied by the
-//! filter — has its header as its Tab stop instead (#981 review), and on a
-//! collapsed one Enter / Space open the pane and move to its first row.
+//! the pane. A pane that offers no drawn row — collapsed, empty, emptied by
+//! the filter, or too short to draw one — has its header as its Tab stop
+//! instead (#981 review), and on a collapsed one Enter / Space open the pane
+//! and move to its first row.
 //!
 //! Enter / Space press a row: a branch opens its checkout plan (the current
 //! branch: jumps to it), a worktree opens or closes its inspection card (the
@@ -44,7 +45,9 @@ pub(crate) struct SidebarFocus {
     rows: [RowFocus; PANES],
     /// This frame's rows, for `render_pane`.
     pub(super) lists: [Option<Rc<RowList>>; PANES],
-    /// The items each pane's list was last asked to draw.
+    /// The items each pane's list drew when it was last on screen (kept
+    /// while the panes are away, so the frame they come back on still has
+    /// its rows' Tab stops — #981 review).
     pub(super) drawn: [Range<usize>; PANES],
     /// The headers: a collapsed pane's Tab stop.
     pub(super) headers: FocusSlots,
@@ -53,6 +56,8 @@ pub(crate) struct SidebarFocus {
     open_first: [bool; PANES],
     /// The worktree whose inspection card the keyboard opened.
     pub(super) card: Option<PathBuf>,
+    /// The panes were not drawn last frame.
+    away: bool,
 }
 
 /// A row's key among its pane's rows; `None` for a pane header, which is not
@@ -107,11 +112,6 @@ impl SidebarFocus {
                 .collect();
         }
     }
-
-    /// Whether `pane` has rows (a collapsed or empty pane has none).
-    pub(super) fn has_rows(&self, pane: usize) -> bool {
-        !self.keys[pane].is_empty()
-    }
 }
 
 impl KagiApp {
@@ -132,6 +132,12 @@ impl KagiApp {
         if !front {
             self.yield_sidebar_focus(window, cx);
             return;
+        }
+        // Back on screen: this frame picks the Tab stops from what the panes
+        // drew when last shown; the next one, asked for here, from what this
+        // one draws — nothing else may draw it (#981 review).
+        if std::mem::take(&mut self.sidebar.focus.away) {
+            window.request_animation_frame();
         }
         for pane in 0..PANES {
             let header = self.sidebar.focus.headers.get(pane, cx);
@@ -158,8 +164,8 @@ impl KagiApp {
 
     /// The panes are not drawn this frame (Home in front, Conflict Mode, the
     /// sidebar hidden, another page): a focus on one of their rows or
-    /// headers goes to the window. The rows are remembered; what was drawn
-    /// before is forgotten, so coming back starts from nothing on screen.
+    /// headers goes to the window. The rows, and what the panes drew when
+    /// last shown, are remembered for when they come back.
     pub(super) fn yield_sidebar_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.root_focus.clone();
         for pane in 0..PANES {
@@ -170,9 +176,9 @@ impl KagiApp {
                     root.focus(window, cx);
                 }
             }
-            self.sidebar.focus.drawn[pane] = 0..0;
             self.sidebar.focus.lists[pane] = None;
         }
+        self.sidebar.focus.away = true;
         self.sidebar.focus.card = None;
     }
 
@@ -230,9 +236,10 @@ impl KagiApp {
     }
 }
 
-/// A pane header: the pane's Tab stop while the pane has no rows (collapsed
-/// or empty), so every pane keeps one; on a collapsed pane Enter / Space open
-/// it. `header` is the drawn heading, which keeps its own click.
+/// A pane header: the pane's Tab stop while the pane offers no drawn row to
+/// Tab to (collapsed, empty, or too short to draw one), so every pane keeps
+/// one; on a collapsed pane Enter / Space open it. `header` is the drawn
+/// heading, which keeps its own click.
 pub(super) fn header(
     app: &KagiApp,
     pane: usize,
@@ -241,7 +248,12 @@ pub(super) fn header(
     cx: &mut Context<KagiApp>,
 ) -> Stateful<Div> {
     let focus = app.sidebar.focus.headers.get(pane, cx);
-    let stop = collapsed || !app.sidebar.focus.has_rows(pane);
+    // The header stands in while the pane offers no row to Tab to: collapsed,
+    // empty, filtered empty, or too short to draw one (#981 review).
+    let stop = collapsed
+        || !app.sidebar.focus.lists[pane]
+            .as_deref()
+            .is_some_and(RowList::has_stop);
     super::keyboard_nav::focusable(
         div()
             .id(("sidebar-pane-header", pane))

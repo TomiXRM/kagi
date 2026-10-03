@@ -345,8 +345,12 @@ The current suite covers:
   `stash:<n>`). From the #987 review: `view.toggleSidebar` with a row
   focused leaves no row focused and the root focused on that one drawn
   frame (no pump: a later frame would hide the bug), and Tab from the
-  window reaches the open-but-empty REMOTE pane's header. The ring is not
-  observable in Tier A.
+  window reaches the open-but-empty REMOTE pane's header. Back from Issues
+  to Graph in one update with one drawn frame, Tab (no frame between)
+  still reaches a LOCAL row: what the panes drew when last shown is kept
+  while they are away. `sidebar_rows_short` mounts a 300px-high window,
+  where LOCAL has rows but draws none: Tab reaches LOCAL's header. The ring
+  is not observable in Tier A.
 - modal input transitions (`KAGI_GUI_E2E_ONLY=remote_browse_escape_focus,pr_fields_escape_focus`,
   `tests/recovery/remote_browse_focus.rs`, `tests/recovery/pr_fields_focus.rs`):
   #755 follow-up. Real InputStates own focus before Remote Browse's

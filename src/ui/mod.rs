@@ -47,6 +47,7 @@ mod external_editor;
 pub mod file_history;
 pub mod file_menu;
 mod fonts;
+mod front_layer;
 mod github;
 mod github_issue_state;
 mod github_issues;
@@ -2879,30 +2880,23 @@ impl KagiApp {
     /// rebase-onto), and Enter over those modals checked out the commit
     /// selected behind them.
     fn confirm_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.active_modal.is_some() {
-            self.confirm_open_modal(cx);
-            cx.notify();
-            if let Some(owner) = self.active_session() {
-                self.offer_auto_release(owner, cx);
+        match self.front_layer(cx) {
+            front_layer::FrontLayer::Modal => {
+                self.confirm_open_modal(cx);
+                cx.notify();
+                if let Some(owner) = self.active_session() {
+                    self.offer_auto_release(owner, cx);
+                }
+                true
             }
-            return true;
+            front_layer::FrontLayer::CommitPlan => {
+                self.start_commit(cx);
+                cx.notify();
+                true
+            }
+            front_layer::FrontLayer::Settings | front_layer::FrontLayer::Menu => true,
+            front_layer::FrontLayer::None => false,
         }
-        if self
-            .ui()
-            .commit_panel
-            .as_ref()
-            .is_some_and(|e| e.read(cx).state.plan_modal.is_some())
-        {
-            self.start_commit(cx);
-        } else if self.menu_overlay.is_some() {
-            // Open but no single confirm action — consume Enter (don't check out
-            // a commit), but take no action.
-            return true;
-        } else {
-            return false;
-        }
-        cx.notify();
-        true
     }
 
     /// Confirm whichever [`ActiveModal`] owns the slot. Split out of
@@ -2976,25 +2970,25 @@ impl KagiApp {
     /// Esc while a modal is open: cancel/close the active modal. Returns `true`
     /// if a modal was open.
     fn cancel_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.active_modal.is_some() {
-            self.cancel_open_modal();
-            if let Some(owner) = self.active_session() {
-                self.offer_auto_release(owner, cx);
+        match self.front_layer(cx) {
+            front_layer::FrontLayer::Modal => {
+                self.cancel_open_modal();
+                if let Some(owner) = self.active_session() {
+                    self.offer_auto_release(owner, cx);
+                }
             }
-            cx.notify();
-            return true;
-        }
-        if self
-            .ui()
-            .commit_panel
-            .as_ref()
-            .is_some_and(|e| e.read(cx).state.plan_modal.is_some())
-        {
-            self.cancel_commit_plan_modal(cx);
-        } else if self.menu_overlay.is_some() {
-            self.menu_overlay = None;
-        } else {
-            return false;
+            front_layer::FrontLayer::CommitPlan => self.cancel_commit_plan_modal(cx),
+            front_layer::FrontLayer::Settings => self.menu_overlay = None,
+            front_layer::FrontLayer::Menu => {
+                if self.platform_menu_open.is_some() {
+                    self.platform_menu_open = None;
+                } else if self.menu_overlay.is_some() {
+                    self.menu_overlay = None;
+                } else {
+                    return false; // Workspace-specific context menus close in its fallback.
+                }
+            }
+            front_layer::FrontLayer::None => return false,
         }
         cx.notify();
         true

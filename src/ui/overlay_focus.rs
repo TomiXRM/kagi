@@ -22,6 +22,7 @@
 use gpui::{Context, FocusHandle, SharedString, Window};
 
 use super::commands::MenuOverlay;
+use super::front_layer::FrontLayer;
 use super::KagiApp;
 use crate::app::SessionId;
 
@@ -105,10 +106,8 @@ impl KagiApp {
     /// `cancel_active_modal`, the × and backdrop listeners) and the modal
     /// openers land here.
     ///
-    /// Settings yields to a modal that arrives while it is open (an async
-    /// plan landing, #976 review): it draws behind the modal layer, so it
-    /// closes, and focus goes to the root unless the arriving modal's own
-    /// input already holds it. Settings' return target is dropped, not applied.
+    /// Settings yields to a visible modal that arrives while it is open
+    /// (#976 review). Its return target is dropped rather than applied.
     pub(super) fn sync_pending_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // A restored control may remain drawn during its close animation and
         // unmount later. Only rescue that exact focus; user-directed focus
@@ -126,20 +125,21 @@ impl KagiApp {
                 }
             }
         }
-        if matches!(self.menu_overlay, Some(MenuOverlay::Settings)) && self.modal_in_front(cx) {
+        if matches!(self.menu_overlay, Some(MenuOverlay::Settings))
+            && matches!(
+                self.front_layer(cx),
+                FrontLayer::Modal | FrontLayer::CommitPlan
+            )
+        {
             self.menu_overlay = None;
             self.pending_focus = (!self.active_modal_input_focused(window, cx))
                 .then(|| self.pending_root_focus())
                 .flatten();
         }
-        // Backstop (#976 review): while Settings is open with no modal in
-        // front, the focus belongs in its trap. Whatever moved it to the
-        // app's own panes behind — a command that focuses one, or a path not
-        // yet known — it goes back to the container once, here, on the next
-        // frame. A popup gpui-component's Root draws for a control in
-        // Settings (the theme picker's list) is outside the app's tree and is
-        // left alone.
-        if matches!(self.menu_overlay, Some(MenuOverlay::Settings)) {
+        // Backstop (#976 review): only when Settings is the visible front
+        // layer does focus belong in its trap. A gpui-component popup drawn
+        // outside the app's tree is left alone.
+        if self.front_layer(cx) == FrontLayer::Settings {
             if let Some(trap) = self.settings_focus.clone() {
                 let behind = window.focused(cx).is_none()
                     || (self.root_focus.as_ref())
@@ -189,19 +189,6 @@ impl KagiApp {
         }
     }
 
-    /// A modal drawn in front of the menu overlays: the modal slot, or the
-    /// Commit Panel's plan confirmation (its own storage) — the latter only
-    /// when it is drawn, under the same condition as `attach_modal_layer`:
-    /// not with Home in front, and only while the panel is open (#976
-    /// review). A plan kept behind Home does not block Settings.
-    fn modal_in_front(&self, cx: &Context<Self>) -> bool {
-        self.has_active_modal()
-            || (!self.home_in_front()
-                && self.ui().commit_panel_open
-                && (self.ui().commit_panel.as_ref())
-                    .is_some_and(|panel| panel.read(cx).state.plan_modal.is_some()))
-    }
-
     /// Open Settings (toolbar button, menu, palette).
     ///
     /// Focus moves into the panel — to its trap container, not to a control
@@ -211,13 +198,13 @@ impl KagiApp {
     /// by pointer shows none; the first Tab enters the panel's first stop.
     /// Closing returns focus as above.
     ///
-    /// Not while a modal is in front (#976 review): Settings draws behind
-    /// the modal layer — the modal slot and the Commit Panel's plan alike —
-    /// so taking the focus into it would leave the visible modal's field and
-    /// keys dead. The modal is finished or cancelled first, as the
-    /// one-modal-at-a-time rule has it.
+    /// A visible modal owns the keys first; an undrawn plan behind Home
+    /// cannot prevent Settings from opening.
     pub(super) fn open_settings_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.modal_in_front(cx) {
+        if matches!(
+            self.front_layer(cx),
+            FrontLayer::Modal | FrontLayer::CommitPlan
+        ) {
             return;
         }
         self.capture_overlay_return_focus(window, cx);

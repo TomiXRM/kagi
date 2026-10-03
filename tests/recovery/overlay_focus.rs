@@ -639,14 +639,31 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
         .unwrap();
         draw(cx, window);
     };
-    // The same plan kept behind Home is not drawn: it does not block Settings.
+    // Home hides the retained Commit Panel plan. Its keys must address the
+    // Settings layer, never the plan's write path.
     open_home(cx);
+    let before_hidden_plan_keys = repo_fingerprint(&repo);
     open_settings(cx);
     assert!(
         cx.read(|cx| app.read(cx).menu_overlay.is_some()),
         "settings-over-home-with-hidden-plan: a plan not drawn must not block Settings"
     );
     keys(cx, window, "escape");
+    assert!(
+        cx.read(|cx| app.read(cx).menu_overlay.is_none()) && plan_open(cx),
+        "settings-over-hidden-plan-escape: Escape closes Settings and retains the hidden plan"
+    );
+    open_settings(cx);
+    keys(cx, window, "enter");
+    assert!(
+        plan_open(cx),
+        "settings-over-hidden-plan-enter: Enter must not consume the hidden commit plan"
+    );
+    assert_eq!(
+        repo_fingerprint(&repo),
+        before_hidden_plan_keys,
+        "settings-over-hidden-plan-enter: Enter must not write a commit"
+    );
     app.update(cx, |app, cx| {
         app.close_home_tab(cx);
         let panel = app.ui().commit_panel.clone().expect("Commit Panel");

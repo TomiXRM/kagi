@@ -459,17 +459,14 @@ impl Render for KagiApp {
 
         // The footer keeps its window-wide bottom-panel toggle.
         let bottom_panel_open = self.bottom_panel_open;
-        // #950: the panel slides toward `bottom_panel_open`, whoever set it;
-        // keep drawing frames until it arrives.
-        let motion_now = super::bottom_panel_motion::now();
-        self.bottom_motion.sync(
+        // #950: the panel slides toward `bottom_panel_open`, whoever set it.
+        // The side panes follow their layout in `render_body` (#955); the
+        // next frame is requested below, once all three have been synced.
+        self.panel_motion.bottom.sync(
             bottom_panel_open,
-            motion_now,
-            super::bottom_panel_motion::instant(),
+            super::panel_motion::now(),
+            super::panel_motion::instant(),
         );
-        if self.bottom_motion.animating(motion_now) {
-            window.request_animation_frame();
-        }
 
         // T-BP-002: cmd-j toggle action handler.
         let toggle_bottom_panel = cx.listener(|this, _: &ToggleBottomPanel, _window, cx| {
@@ -682,6 +679,10 @@ impl Render for KagiApp {
         // The modal layer is read from `self` by the one collector Home also
         // uses, so the two cannot draw different sets of modals.
         let root = self.attach_modal_layer(root, true, window, cx);
+        // Keep drawing frames while a pane is still sliding (#950, #955).
+        if self.panel_motion.animating(super::panel_motion::now()) {
+            window.request_animation_frame();
+        }
 
         let content = root
             // ── Status bar slot (T017) — last operation result ─

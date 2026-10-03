@@ -201,6 +201,29 @@ pub fn scenario_home_rows(cx: &mut VisualTestAppContext) {
     keys(cx, window, "down");
     assert_eq!(row(cx, &app, window).as_deref(), Some("MyPrs:acme/r00#1"));
 
+    // ⌘W closes Home with a row focused (#961 review): Home is no longer
+    // drawn, so the row hands the focus to the window rather than keep it on
+    // a handle nothing tracks.
+    app.update(cx, |app, cx| app.close_home_tab(cx));
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).home.is_none()));
+    assert_eq!(row(cx, &app, window), None);
+    let root = cx
+        .update_window(window, |_, window, cx| {
+            window.draw(cx).clear();
+            app.read(cx)
+                .root_focus
+                .as_ref()
+                .is_some_and(|focus| focus.is_focused(window))
+        })
+        .unwrap();
+    assert!(root, "closing Home hands its row's focus to the window");
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.open_home_tab(window, cx))
+    })
+    .unwrap();
+    wait_for(cx, &app, "the lists again", settled);
+
     // Another account's read replaces the list on screen with Loading, and
     // the read fails (#961 review): no row is drawn any more, so a focused
     // row hands the focus to the window rather than keep it out of sight.

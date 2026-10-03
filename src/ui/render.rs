@@ -201,6 +201,17 @@ impl Render for KagiApp {
         self.sync_issue_inputs(window, cx);
         self.sync_list_filter_input(window, cx);
         self.sync_pending_focus(window, cx);
+        // Home's rows are drawn only with Home in front. Every way off it
+        // (⌘W, a repository tab, a row that opens its clone) leaves a focused
+        // row with nothing tracking it, out of the window's keys: the focus
+        // goes to the window (#961 review). The row is still remembered for
+        // when Home is back.
+        if !self.home_in_front() {
+            let fallback = self.root_focus.clone();
+            self.home_github
+                .row_focus
+                .yield_focus(fallback.as_ref(), window, cx);
+        }
 
         if std::env::var("KAGI_DEBUG_RENDER").as_deref() == Ok("1") {
             use std::sync::atomic::{AtomicU64, Ordering as O};

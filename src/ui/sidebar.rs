@@ -92,6 +92,8 @@ pub struct SidebarState {
     /// superseded or abandoned so its frame loop retires instead of ticking
     /// the next gesture twice as fast.
     pub settle_gen: u64,
+    /// The Graph / PRs / Issues cells, for the keyboard (#944).
+    pub(crate) mode_focus: super::keyboard_nav::TabFocus,
 }
 
 impl SidebarState {
@@ -118,6 +120,7 @@ impl SidebarState {
             visible: true,
             swipe: Default::default(),
             settle_gen: 0,
+            mode_focus: Default::default(),
         }
     }
 

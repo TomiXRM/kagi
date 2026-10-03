@@ -24,6 +24,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Operation Log の操作者の表示を、日本語表示でも「人」ではなく「Human」にしました(CLI / MCP と同じく英語の表記)。(#908)
 - Inspector の commit 本文で、箇条書きなど改行で区切られた行が「- bump the version- tag the release」のように 1 行につながって表示されていた問題を修正しました。本文の改行どおりに 1 行ずつ表示します。(#946)
 - Issues の下書き(新しい Issue と返信)を、clone ごと・番号ごとに加えて書き込み先の repository ごとに保存するようにしました。`gh repo set-default` で別の repository に切り替えた後、同じ番号の別 Issue の欄に前の repository 宛ての下書きが出て、そのまま投稿されることはありません(前の下書きは消さずに残ります)。以前の版で保存した下書きは、clone の remote が指す repository が 1 つだけのときにその repository へ 1 回だけ引き継ぎ、複数あるときは引き継がずに元の場所に残します。(#940 review)
+- Home の「リポジトリ / Pull Request / Issue」の切り替えと、左上の Graph / PRs / Issues の切り替えを、キーボードで操作できるようにしました。Tab で選択中のタブに移動し、←/→ で隣へ、Home / End で端へ移動します。Home の切り替えは移動と同時に表示が切り替わり、Graph / PRs / Issues は移動のあと Enter / Space で切り替わります(PRs / Issues は開くと一覧を読み込むため)。Home のリポジトリ行と PR / Issue 行も Tab で移動でき、Enter / Space でクリックと同じ動作をします。キーボードで移動したときだけ、入力欄と同じ色の枠を表示します。行どうしの ↑/↓ と、タブ帯のキーボード操作は #959 で対応します。(#944)
+- clone 中のリポジトリ行(「Cloning…」)をクリックすると、開始前の新しい clone card が開き、clone が終わっても残っていた問題を修正しました。実行中の clone の card を前面に戻します。(#944)
+- Home のレビュー依頼の行で、GitHub Enterprise のユーザーのアバターを表示するようにしました。github.com の同名ユーザーではなく、その Enterprise のサーバーから取得します。(#944)
 - PR を開いたときの会話・レビュースレッド・merge 状態を、その PR の repository から読むようにしました。これまでは clone の `gh repo set-default` が指す repository から読んでいたため、Home から別の repository を指す clone で PR を開くと、同じ番号の別 PR の会話が本文の下に並ぶことがありました。(#940 review)
 - `gh repo set-default` を別の repository に切り替えた後に Home からその repository の Issue を開くと、前の repository の Issue 一覧が残り、その行を選ぶと新しい repository の同じ番号の Issue に返信できてしまう問題を修正しました。宛先が変わった時点で前の一覧・選択・続きの読み込み位置を消し、新しい repository の一覧が読めるまで行は表示しません。(#940 review)
 - 同じタブに別の repository の同じ番号の PR(A の #7 と B の #7)を開いていると、B の会話・レビュースレッド・merge 状態が A の PR 画面に入ることがあった問題を修正しました。PR の画面・詳細の読み込み・会話・merge 状態・コメント欄の下書きを、番号だけでなく repository と番号の組で対応づけます。Home から開いた PR の詳細も、PR 一覧にある別の repository の同じ番号の PR ではなく、開いた PR のものを読みます。(#940 review)
@@ -53,7 +56,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Internal
 
-- GUI E2E runner(Tier A)が開発者の環境を読まないようにしました。`HOME` は run 専用の空の directory(fixture と同じ git の identity だけを置く)にし、継承した `GIT_*` の環境変数は起動時にすべて除去します。terminal を起動する scenario は、login shell ではなく行を読むだけの代わりの shell を使います。代わりの shell が無いまま terminal を起動しようとすると、利用者の `$SHELL` を起動する前にその scenario が失敗します。Smart Commit の生成を差し込む scenario は、差し込んだ生成が使われたことを確かめます。(#516)
+- GUI E2E runner(Tier A)が開発者の環境を読まないようにしました。`HOME` は run 専用の空の directory(fixture と同じ git の identity だけを置く)にし、継承した `GIT_*`・`GH_*`(と `GITHUB_TOKEN` / `GITHUB_ENTERPRISE_TOKEN`)の環境変数は起動時にすべて除去します(`gh` も開発者の設定と認証情報を使いません)。terminal を起動する scenario は、login shell ではなく行を読むだけの代わりの shell を使います。代わりの shell が無いまま terminal を起動しようとすると、利用者の `$SHELL` を起動する前にその scenario が失敗します。Smart Commit の生成を差し込む scenario は、差し込んだ生成が使われたことを確かめます。(#516)
 - Web(Playwright)の harness は、`crates/kagi-web/dist` が無いと設定の読み込み時に止まり、足りないファイルと実行すべき `scripts/build-web.sh` を示すようにしました。これまでは 60 秒後に webServer のタイムアウトとして失敗し、実行時のハングと区別がつきませんでした。(#516)
 - GUI E2E runner に `KAGI_GUI_E2E_KEEP_GOING=1` を追加しました。選んだ scenario を 1 つずつ別の runner process で実行するので、1 つが失敗(panic・crash・既定 600 秒の timeout)しても残りを実行し、最後に scenario ごとの PASS / FAIL と失敗の証跡の場所を一覧にします。1 つでも失敗すれば終了コードは 1 です。既定は従来どおり最初の失敗で止まります。(#516)
 

@@ -133,6 +133,9 @@ mod home_list_place;
 #[cfg(target_os = "macos")]
 #[path = "recovery/home_work.rs"]
 mod home_work;
+#[cfg(target_os = "macos")]
+#[path = "recovery/keyboard_nav.rs"]
+mod keyboard_nav;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/conflict_abort_slot.rs"]
@@ -951,6 +954,10 @@ mod macos {
             (
                 "home_work",
                 Box::new(crate::home_work::scenario_home_work),
+            ),
+            (
+                "keyboard_nav",
+                Box::new(crate::keyboard_nav::scenario_keyboard_nav),
             ),
             (
                 "home_list_place",
@@ -1776,9 +1783,20 @@ mod macos {
         // them all, as `support/git_fixture.rs` does for fixture commands, then
         // pin only what the run needs: the global config is the run's own
         // `.gitconfig`, there is no system config, and nothing prompts.
+        // The same for `gh`: `GH_CONFIG_DIR` outranks `$XDG_CONFIG_HOME/gh`,
+        // and `GH_TOKEN` / `GITHUB_TOKEN` (and their Enterprise forms)
+        // outrank its stored login, so a scenario whose seam missed would
+        // talk to GitHub as the developer (`gh help environment`). With them
+        // gone, `gh` reads the run's empty home.
         let inherited: Vec<_> = std::env::vars_os()
             .map(|(key, _)| key)
-            .filter(|key| key.to_string_lossy().starts_with("GIT_"))
+            .filter(|key| {
+                let key = key.to_string_lossy();
+                key.starts_with("GIT_")
+                    || key.starts_with("GH_")
+                    || key == "GITHUB_TOKEN"
+                    || key == "GITHUB_ENTERPRISE_TOKEN"
+            })
             .collect();
         for key in inherited {
             std::env::remove_var(key);

@@ -219,6 +219,18 @@ pub(crate) struct UnaccountedWrite {
     pub group: Option<u32>,
 }
 
+/// Admission time and the one-shot explanation belong to the lease itself:
+/// settling a write removes both, including after a background panic.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LeaseRecord {
+    id: OperationId,
+    started: std::time::Instant,
+    slow_logged: bool,
+    /// Guard drop or reconciled Unknown is not a running write, even when the
+    /// safety lease must remain reserved until observation.
+    running: bool,
+}
+
 pub struct Sessions {
     pub(crate) abandoned_tx: std::sync::mpsc::Sender<Completion>,
     abandoned_rx: std::sync::mpsc::Receiver<Completion>,
@@ -235,7 +247,7 @@ pub struct Sessions {
     pub(crate) plan_owner: Option<SessionId>,
     pub(crate) revision: RequestId,
     pub(crate) operations: HashMap<OperationId, InFlight>,
-    pub(crate) leases: Arc<Mutex<HashMap<WriteScope, OperationId>>>,
+    pub(crate) leases: Arc<Mutex<HashMap<WriteScope, LeaseRecord>>>,
     pub(crate) stale: HashSet<WorktreeId>,
     pub(crate) reconcile: HashMap<OperationId, ReconcileEntry>,
     pub(crate) settled: HashSet<OperationId>,
@@ -461,6 +473,38 @@ impl Sessions {
             .map(|leases| !leases.is_empty())
             .unwrap_or(true)
     }
+    /// Only a still-running admitted write can explain its elapsed time.
+    /// Unknown outcomes retain exclusion but not a stale "running" explanation.
+    pub fn running_lease(&self) -> Option<(OperationId, std::time::Instant)> {
+        let leases = self.leases.lock().ok()?;
+        let lease = leases.values().next()?;
+        (lease.running && !self.reconcile.contains_key(&lease.id))
+            .then_some((lease.id, lease.started))
+    }
+    /// Mark a threshold crossing once on its actual lease, not on the UI
+    /// presentation mirror. Returns whether this crossing was new.
+    pub fn note_slow_lease(&self, id: OperationId) -> bool {
+        let Ok(mut leases) = self.leases.lock() else {
+            return false;
+        };
+        let Some(lease) = leases.values_mut().find(|lease| lease.id == id) else {
+            return false;
+        };
+        if !lease.running || lease.slow_logged || self.reconcile.contains_key(&id) {
+            return false;
+        }
+        lease.slow_logged = true;
+        true
+    }
+    /// Deterministic GUI clock seam: overwrite only the admitted lease's clock.
+    #[cfg(feature = "gui-e2e")]
+    pub fn set_lease_start_for_e2e(&self, id: OperationId, now: std::time::Instant) {
+        if let Ok(mut leases) = self.leases.lock() {
+            if let Some(lease) = leases.values_mut().find(|lease| lease.id == id) {
+                lease.started = now;
+            }
+        }
+    }
     /// Operations parked awaiting reconcile (ADR-0196 決定 2.4). The ids the
     /// acknowledge path takes to [`prepare_reconcile`]; a retained lease with
     /// none of these would be a dead end.
@@ -506,12 +550,20 @@ impl Sessions {
         if !leases.is_empty() {
             return Err(AdmissionError::Busy);
         }
-        leases.insert(scope, id);
+        leases.insert(
+            scope,
+            LeaseRecord {
+                id,
+                started: std::time::Instant::now(),
+                slow_logged: false,
+                running: true,
+            },
+        );
         Ok(())
     }
     pub(crate) fn release_lease(&self, scope: &WriteScope, id: OperationId) {
         if let Ok(mut leases) = self.leases.lock() {
-            if leases.get(scope) == Some(&id) {
+            if leases.get(scope).is_some_and(|lease| lease.id == id) {
                 leases.remove(scope);
             }
         }
@@ -559,7 +611,7 @@ impl Sessions {
 /// termination. Call `complete` only after the writer has definitely stopped.
 #[must_use = "hold the reservation until completion; dropping it retains the lease"]
 pub struct WriteGuard {
-    leases: Arc<Mutex<HashMap<WriteScope, OperationId>>>,
+    leases: Arc<Mutex<HashMap<WriteScope, LeaseRecord>>>,
     scope: WriteScope,
     id: OperationId,
     op: &'static str,
@@ -567,6 +619,21 @@ pub struct WriteGuard {
     path: PathBuf,
     unaccounted: std::sync::mpsc::Sender<UnaccountedWrite>,
 }
+impl Drop for WriteGuard {
+    fn drop(&mut self) {
+        // Unwinding or dropping a guard cannot unlock the repository, but its
+        // work is no longer an observed running write. Keep the safety lease.
+        if let Ok(mut leases) = self.leases.lock() {
+            if let Some(lease) = leases
+                .get_mut(&self.scope)
+                .filter(|lease| lease.id == self.id)
+            {
+                lease.running = false;
+            }
+        }
+    }
+}
+
 impl WriteGuard {
     /// Name the write. The name also decides which settle rule it is under —
     /// see [`GuardKind`], where the classification lives.
@@ -577,7 +644,10 @@ impl WriteGuard {
     }
     pub fn complete(self) {
         if let Ok(mut leases) = self.leases.lock() {
-            if leases.get(&self.scope) == Some(&self.id) {
+            if leases
+                .get(&self.scope)
+                .is_some_and(|lease| lease.id == self.id)
+            {
                 leases.remove(&self.scope);
             }
         }

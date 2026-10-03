@@ -28,7 +28,7 @@ use crate::settings::{read_setting, write_setting};
 // Lang + active-language atomic
 /// UI language.  `En` is index 0 (the default), `Ja` is index 1.
 pub mod busy;
-pub use busy::{busy_label, slow_read_advice, slow_read_label, slow_read_skip};
+pub use busy::{busy_label, slow_read_advice, slow_read_label, slow_read_skip, slow_write_advice};
 pub mod op;
 pub mod oplog_panel;
 pub mod plan;
@@ -184,6 +184,16 @@ pub enum Msg {
     // ── Generic guards / footers ────────────────────────────────────
     /// "another operation is in progress" (was "別の操作が実行中です").
     OpInProgress,
+    SlowWriteNetwork,
+    SlowWriteRebase,
+    SlowWriteCheckout,
+    SlowWriteMerge,
+    SlowWriteCommit,
+    SlowWriteStash,
+    SlowWriteWorktree,
+    SlowWriteConflict,
+    SlowWriteLocal,
+    SlowWriteGeneric,
     RemoteOpAwaitingCompletion,
     TransportRetryHeld,
     NoRepoOpen,
@@ -1906,6 +1916,26 @@ impl Msg {
             (Ja, AppNoticeDismiss) => "閉じる",
             (En, OpInProgress) => "another operation is in progress",
             (Ja, OpInProgress) => "別の操作が実行中です",
+            (En, SlowWriteNetwork) => "network: waiting for the remote",
+            (Ja, SlowWriteNetwork) => "network: remote の応答を待っています",
+            (En, SlowWriteRebase) => "rebase: replaying commits",
+            (Ja, SlowWriteRebase) => "rebase: commit を適用中",
+            (En, SlowWriteCheckout) => "checkout: updating the worktree",
+            (Ja, SlowWriteCheckout) => "checkout: worktree を更新中",
+            (En, SlowWriteMerge) => "merge: combining changes",
+            (Ja, SlowWriteMerge) => "merge: 変更を統合中",
+            (En, SlowWriteCommit) => "commit: writing repository history",
+            (Ja, SlowWriteCommit) => "commit: 履歴を書き込み中",
+            (En, SlowWriteStash) => "stash: updating saved changes",
+            (Ja, SlowWriteStash) => "stash: 保存した変更を更新中",
+            (En, SlowWriteWorktree) => "worktree: updating local files",
+            (Ja, SlowWriteWorktree) => "worktree: ローカルファイルを更新中",
+            (En, SlowWriteConflict) => "conflict resolution: updating local files",
+            (Ja, SlowWriteConflict) => "競合解決: ローカルファイルを更新中",
+            (En, SlowWriteLocal) => "writing local repository data",
+            (Ja, SlowWriteLocal) => "ローカルの repository データを書き込み中",
+            (En, SlowWriteGeneric) => "operation in progress",
+            (Ja, SlowWriteGeneric) => "処理中",
             (En, TransportRetryHeld) => "Retry is disabled because the operation may have changed remote state. Inspect it before restarting Kagi.",
             (Ja, TransportRetryHeld) => "remote の状態が変わった可能性があるため、再実行を停止しています。状態を確認してから Kagi を再起動してください。",
             (En, RemoteOpAwaitingCompletion) => "Waiting to confirm that the remote operation stopped. Do not retry it; inspect the remote state and completion token.",

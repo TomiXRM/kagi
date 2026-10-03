@@ -50,3 +50,19 @@ worktree の状態読み込み、worktree 容量の計測、Analyze の hotspot 
   plain snapshot(MCP・reconcile)は Skip しないので従来どおり必ず数える。
 - 経過秒数と「中断できません」の文言は、PM 決定の表示形式に合わせて本 slice では出さない。
   ADR-0204 決定 6 の残り(queue と write 側の説明)は Draft のまま。
+
+## Amendment (2026-10-04): lease-holding running writes (#355 stage 1)
+
+- 同じ 2 秒定数と 250 ms の再描画周期で、lease に入った write の
+  **lease 予約時刻**からの経過秒数を説明する。plan / click からは測らない。
+  timestamp と一回だけの klog は lease record に置き、settlement と一緒に消える。
+  Unknown / panic で lease が残るときは reconcile の要求を維持しつつ、
+  「実行中」の説明は止める。remote SSH pull は #989 の lease 移行後、
+  clone は別途対象とし、この段階では実装しない。
+- 既存の snackbar の write ラベルを保ち、理由を op kind から機械的に選ぶ。
+  未分類なら汎用文と秒数のみ。ETA / 進捗率 / 「中断できません」は表示しない。
+  write は Skip 不能。read と write が重なれば write の理由と秒数が優先し、
+  read の Skip は残してよい。キューおよび running cancel は対象外。
+- `[kagi] busy: slow write <kind> after 2s` は開始した write ごとに 1 回。
+  実行が終わっても Unknown の lease が保持される場合、admission と
+  reconcile の既存契約は変えない。

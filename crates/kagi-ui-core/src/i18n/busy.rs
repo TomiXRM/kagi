@@ -155,6 +155,58 @@ const LABELS: &[(&str, &str, &str)] = &[
     ("conflict-abort", "Aborting operation…", "操作を中止中…"),
 ];
 
+/// A mechanical explanation of the running operation's kind, never an
+/// inferred bottleneck. Unknown kinds have an honest generic description.
+pub fn slow_write_advice(op: &str, seconds: u64) -> String {
+    slow_write_advice_for(op, seconds, lang())
+}
+
+fn slow_write_advice_for(op: &str, seconds: u64, language: Lang) -> String {
+    use super::Msg;
+    let reason = match op {
+        "fetch"
+        | "pull"
+        | "push"
+        | "branch-pull-ff"
+        | "branch-push"
+        | "branch-push-set-upstream"
+        | "force-with-lease-push"
+        | "push-tag"
+        | "sync-to-remote"
+        | "delete-remote-branch"
+        | "remote-stash-drop"
+        | "pr-merge"
+        | "issue-create"
+        | "issue-comment" => Msg::SlowWriteNetwork,
+        "rebase" | "replay-onto" | "cherry-pick" | "revert" => Msg::SlowWriteRebase,
+        "checkout" | "checkout-commit" | "checkout-tracking" | "switch" | "switch-to-latest"
+        | "reset-current" | "reset" => Msg::SlowWriteCheckout,
+        "merge" | "merge-into" | "merge-commit" => Msg::SlowWriteMerge,
+        "commit" | "amend" | "undo" | "op-revert" | "create-branch" | "delete-branch"
+        | "rename-branch" | "set-upstream" | "create-tag" | "branch-cleanup"
+        | "restore-to-point" => Msg::SlowWriteCommit,
+        "stash" | "stash-push" | "stash-apply" | "stash-pop" | "stash-drop" | "snapshot"
+        | "restore-snapshot" => Msg::SlowWriteStash,
+        "create-worktree" | "open-worktree" | "remove-worktree" | "discard" | "editor-save"
+        | "stage" | "unstage" | "stage-all" | "unstage-all" | "apply-suggestion" => {
+            Msg::SlowWriteWorktree
+        }
+        "conflict-save"
+        | "conflict-continue"
+        | "conflict-skip"
+        | "conflict-abort"
+        | "conflict-dir-file:keep-directory"
+        | "conflict-dir-file:keep-file" => Msg::SlowWriteConflict,
+        "write-commit-graph" | "enable-fsmonitor" => Msg::SlowWriteLocal,
+        _ => Msg::SlowWriteGeneric,
+    };
+    let prefix = match language {
+        Lang::En => "Taking a while",
+        Lang::Ja => "時間がかかっています",
+    };
+    format!("{prefix}: {} ({seconds} s)", reason.t_for(language))
+}
+
 pub fn busy_label(op: &str) -> &'static str {
     label_for(op, lang())
 }
@@ -304,5 +356,25 @@ mod tests {
             assert!(slow_read_advice_for(read, Lang::En).starts_with("Taking a while: "));
             assert!(slow_read_advice_for(read, Lang::Ja).starts_with("時間がかかっています: "));
         }
+    }
+
+    #[test]
+    fn slow_write_advice_names_known_kind_and_elapsed_without_guessing() {
+        assert_eq!(
+            slow_write_advice_for("pull", 2, Lang::En),
+            "Taking a while: network: waiting for the remote (2 s)"
+        );
+        assert_eq!(
+            slow_write_advice_for("pull", 4, Lang::Ja),
+            "時間がかかっています: network: remote の応答を待っています (4 s)"
+        );
+        assert_eq!(
+            slow_write_advice_for("checkout", 4, Lang::En),
+            "Taking a while: checkout: updating the worktree (4 s)"
+        );
+        assert_eq!(
+            slow_write_advice_for("unexpected-kind", 9, Lang::En),
+            "Taking a while: operation in progress (9 s)"
+        );
     }
 }

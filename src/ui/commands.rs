@@ -1900,7 +1900,13 @@ impl KagiApp {
             self.refresh_spin_started = Some(Instant::now());
             klog!("fetch: start");
         }
+        #[cfg(feature = "gui-e2e")]
+        let hold = super::busy::take_fetch_hold();
         let task = cx.background_spawn(async move {
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
             let (result, ref_moves, open_failed) = match kagi_git::Backend::open(&repo_path) {
                 // Nothing ran: nothing moved.
                 Err(error) => (Err(error), Some(Vec::new()), true),

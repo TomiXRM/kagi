@@ -1073,8 +1073,8 @@ mod macos {
                 Box::new(crate::recovery_pull::scenario_remote_pull_holds_its_latch),
             ),
             (
-                "pull_confirm_parks_for_its_tab",
-                Box::new(crate::recovery_pull::scenario_pull_confirm_parks_for_its_tab),
+                "pull_confirm_departure_discards_old_visit",
+                Box::new(crate::recovery_pull::scenario_pull_confirm_departure_discards_old_visit),
             ),
             (
                 "pull_confirm_yields_to_another_modal",
@@ -1637,8 +1637,16 @@ mod macos {
                 Box::new(crate::fetch_owner::scenario_fetch_previous_visit_is_not_presented),
             ),
             (
+                "fetch_old_visit_drops_pull_waiter",
+                Box::new(crate::fetch_owner::scenario_fetch_old_visit_drops_pull_waiter),
+            ),
+            (
                 "remote_branch_fetch_panic",
                 Box::new(crate::guard_writer_panic::scenario_remote_branch_fetch_panic),
+            ),
+            (
+                "remote_branch_fetch_failed_after_departure",
+                Box::new(crate::guard_writer_panic::scenario_remote_branch_fetch_failed_after_departure),
             ),
             (
                 "pr_ref_fetch_panic",

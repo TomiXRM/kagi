@@ -1485,7 +1485,7 @@ pub struct FetchFlight {
     /// Frozen before dispatch: an earlier visit's failure is recorded even
     /// when the tab is no longer the display owner.
     pub before: kagi_git::StateSummary,
-    pub waiters: Vec<crate::app::SessionId>,
+    pub waiters: Vec<(crate::app::SessionId, u64)>,
     /// Admission superseded the owner's read in flight (`app::admit`), which a
     /// no-op fetch would never replace (ADR-0127): the completion owes it (#851).
     pub superseded_read: bool,
@@ -1895,14 +1895,17 @@ impl KagiApp {
     ) -> bool {
         self.refresh_write_busy();
         if let Some(flight) = self.fetch_in_flight.as_mut() {
-            // A Pull may piggyback only on a fetch launched by this exact tab
-            // incarnation. A path is a locator, not repository identity.
+            // Only this incarnation can join; its request retains the visit
+            // even if the user leaves and returns before completion.
             if let Some(session) = pull_confirm.filter(|session| *session == flight.owner) {
-                if !flight.waiters.contains(&session) {
-                    flight.waiters.push(session);
+                if let Some(visit) = self.app_sessions.visit(session) {
+                    let waiter = (session, visit);
+                    if !flight.waiters.contains(&waiter) {
+                        flight.waiters.push(waiter);
+                    }
+                    klog!("pull-confirm: waiting on the fetch already in flight");
+                    return true;
                 }
-                klog!("pull-confirm: waiting on the fetch already in flight");
-                return true;
             }
             return false;
         }
@@ -1936,7 +1939,10 @@ impl KagiApp {
             owner,
             visit,
             before,
-            waiters: pull_confirm.into_iter().collect(),
+            waiters: pull_confirm
+                .map(|session| (session, visit))
+                .into_iter()
+                .collect(),
             superseded_read,
         });
         let repo_path_guard = repo_path.clone();
@@ -1981,7 +1987,7 @@ impl KagiApp {
             }))
         });
         cx.spawn(async move |this, acx| {
-            let result = task.fallible().await.flatten().unwrap_or_else(|| {
+            let mut result = task.fallible().await.flatten().unwrap_or_else(|| {
                 let error = abandonment.into_unknown();
                 Err(FetchFailure {
                     message: error.to_string(),
@@ -1996,37 +2002,37 @@ impl KagiApp {
                 app.poll_app_jobs(cx);
                 app.present_app_notice();
                 // A visit is a stay in the same tab, not merely its session.
-                // The old flight still owns its receipt and Pull waiters, but
-                // must not put a result on the new visit's screen.
+                // Record the old flight's failure even after departure, but
+                // deliver only the requests still belonging to this visit.
                 if app.active_session() != Some(flight.owner)
                     || app.app_sessions.attachment(flight.owner).map(|a| a.visit)
                         != Some(flight.visit)
                 {
-                    let error = match result {
-                        Err(failure) => {
-                            let entry = kagi_git::oplog::OpLogEntry::new(
-                                "fetch",
-                                repo_path_guard.display().to_string(),
-                                flight.before,
-                                failure.outcome(),
-                            )
-                            .with_ref_moves(failure.ref_moves);
-                            if let kagi_git::backend::recording::Recording::Failed {
-                                error, ..
-                            } = kagi_git::backend::recording::finalize(entry)
-                            {
-                                app.present_oplog_write_failure(error, cx);
-                            }
-                            Some(failure.message)
+                    if let Err(failure) = &mut result {
+                        let entry = kagi_git::oplog::OpLogEntry::new(
+                            "fetch",
+                            repo_path_guard.display().to_string(),
+                            flight.before,
+                            failure.outcome(),
+                        )
+                        .with_ref_moves(failure.ref_moves.take());
+                        if let kagi_git::backend::recording::Recording::Failed { error, .. } =
+                            kagi_git::backend::recording::finalize(entry)
+                        {
+                            app.present_oplog_write_failure(error, cx);
                         }
-                        Ok(_) => None,
-                    };
-                    for session in flight.waiters {
-                        app.deliver_pull_confirm(session, error.clone(), cx);
+                    }
+                    for (session, visit) in flight.waiters {
+                        if app.active_session() == Some(session)
+                            && app.app_sessions.visit(session) == Some(visit)
+                            && result.is_ok()
+                        {
+                            app.deliver_pull_confirm(session, cx);
+                        }
                     }
                     return;
                 }
-                let fetch_error = result.as_ref().err().map(|f| f.message.clone());
+                let fetch_succeeded = result.is_ok();
                 if flight.superseded_read && !result.as_ref().is_ok_and(|o| o.changed) {
                     app.reload(cx);
                 }
@@ -2080,10 +2086,16 @@ impl KagiApp {
                         }
                     }
                 }
-                // Every request, including the one that launched this fetch,
-                // is drained with the flight and delivered exactly once.
-                for session in flight.waiters {
-                    app.deliver_pull_confirm(session, fetch_error.clone(), cx);
+                // Failed fetches already own one durable receipt. A waiter
+                // only offers a confirmation after a successful fetch.
+                if fetch_succeeded {
+                    for (session, visit) in flight.waiters {
+                        if app.active_session() == Some(session)
+                            && app.app_sessions.visit(session) == Some(visit)
+                        {
+                            app.deliver_pull_confirm(session, cx);
+                        }
+                    }
                 }
                 cx.notify();
             });

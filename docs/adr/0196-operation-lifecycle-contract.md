@@ -340,6 +340,12 @@ acknowledge → 次の write** を Tier A の実経路で確認した。`WriteGu
 の lease 化は #989 の範囲であり、実機 Windows と全 family の matrix は引き続き
 未検証である。
 
+**#992 review（2026-10-04）**: dirty Pull の fetch waiter も要求時の
+`session + visit` を保持し、離脱済み visit への確認提案を破棄する。
+fetch 失敗は waiter ごとに記録せず、fetch 自身が一度だけ永続化する。
+remote branch fetch の通常失敗も、表示中 tab ではなく開始時の frozen repository
+へ必ず永続化する。PR ref fetch の通常失敗は既に同じ境界で記録している。
+
 **pull（A' 採用 = 上記 (a) の改訂結果）**: `FamilyEvidence::Pull(PullReport)`。
 `PullReport { steps: Vec<RunReport>, terminal }` は実際に走った child の receipt を
 実行順で運び、settle は最後の step ではなく `terminal.decisive`（pull 失敗後に restore

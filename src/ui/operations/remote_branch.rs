@@ -204,7 +204,23 @@ impl KagiApp {
                 let current = owner.is_some_and(|owner| {
                     app.active_session() == Some(owner) && app.app_sessions.visit(owner) == visit
                 });
-                if let Err(kagi_git::GitError::TerminationUnknown(reason)) = &result {
+                if let Err(error) = &result {
+                    let outcome = if let kagi_git::GitError::TerminationUnknown(reason) = error {
+                        kagi_git::oplog::OpOutcome::Unknown {
+                            after: kagi_git::StateSummary {
+                                head: "unknown".into(),
+                                dirty: "unknown".into(),
+                            },
+                            evidence: reason.to_string(),
+                        }
+                    } else {
+                        let detail = if open_failed {
+                            i18n::op_failed(i18n::Op::RepoOpen, error)
+                        } else {
+                            error.to_string()
+                        };
+                        kagi_git::oplog::OpOutcome::Failed { error: detail }
+                    };
                     app.record_ref_fetch_failure(
                         "fetch-remote-branch",
                         owner,
@@ -213,13 +229,7 @@ impl KagiApp {
                             head: format!("remote branch {remote_branch}"),
                             dirty: "unchanged".into(),
                         },
-                        kagi_git::oplog::OpOutcome::Unknown {
-                            after: kagi_git::StateSummary {
-                                head: "unknown".into(),
-                                dirty: "unknown".into(),
-                            },
-                            evidence: reason.to_string(),
-                        },
+                        outcome,
                         None,
                         &repo_path,
                         cx,

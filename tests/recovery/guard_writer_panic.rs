@@ -78,6 +78,72 @@ pub fn scenario_remote_branch_fetch_panic(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS remote_branch_fetch_panic");
 }
 
+/// A normal failed fetch still belongs to the repository it was started for,
+/// even if another tab is visible before the worker runs.
+pub fn scenario_remote_branch_fetch_failed_after_departure(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let other = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let other_repo = other.path().canonicalize().unwrap();
+    let missing = repo.join("missing-remote");
+    git(
+        &repo,
+        &["remote", "add", "origin", missing.to_str().unwrap()],
+    );
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(other_repo.clone(), cx))
+    });
+    cx.run_until_parked();
+    let before = read_oplog_tail_for_repo(&repo, 100)
+        .iter()
+        .filter(|entry| entry.op == "fetch-remote-branch")
+        .count();
+    app.update(cx, |app, cx| {
+        app.switch_repo(0, cx);
+        app.fetch_remote_branch_async("origin/main".into(), cx);
+        app.switch_repo(1, cx);
+        app.status_footer = FooterStatus::Idle("other tab sentinel".into());
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(!app.app_sessions.has_leases(), "failed fetch did not settle");
+        assert!(
+            matches!(&app.status_footer, FooterStatus::Idle(text) if text.as_ref() == "other tab sentinel"),
+            "old branch fetch changed the current footer"
+        );
+        let toasts = app.toast_stack.as_ref().expect("mounted toast stack");
+        assert!(
+            !toasts.read(cx).toasts().iter().any(|toast| {
+                toast.message.as_ref().contains("Fetched origin/main")
+                    || toast.message.as_ref().contains("Fetch failed")
+            }),
+            "old branch fetch displayed a toast on the current tab"
+        );
+    });
+    let receipts: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+        .into_iter()
+        .filter(|entry| entry.op == "fetch-remote-branch")
+        .collect();
+    assert_eq!(
+        receipts.len(),
+        before + 1,
+        "frozen repository has one failure"
+    );
+    assert!(
+        matches!(receipts.last().unwrap().outcome, OpOutcome::Failed { .. }),
+        "ordinary transport failure must not become Unknown"
+    );
+    assert!(
+        !read_oplog_tail_for_repo(&other_repo, 100)
+            .iter()
+            .any(|entry| entry.op == "fetch-remote-branch"),
+        "failure was recorded on the active tab instead of the owner"
+    );
+    unmount(cx, app, window);
+}
+
 pub fn scenario_pr_ref_fetch_panic(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();

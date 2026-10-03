@@ -89,7 +89,6 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
       - PR merge の計画時の拒否(`gh` を実行する前)。
     - **`None` のまま**の経路
       - 実行した PR merge: `--delete-branch` で local branch を消すことがあるため(backup ref も残す)。
-      - Pull に付随する fetch の失敗(`record_pull_fetch_failure`): pull の経路は対象外とする。
       - UI の `record_refused`(計画時の拒否): #885 の範囲外。
   - **UI の記録の panel には採番済みの entry を渡す**(#907 review)。`record_op_impl` と PR fetch の失敗記録は `recording::finalize` が返す entry(log が振った id)を `OpLogPanel::entry_for_recording` で panel に載せる。placeholder の id 0 は別の entry を指しうるので、記録した移動で有効になる「取り消す / この時点まで戻す」を誤った操作に向けてしまう。append に失敗した entry は移動を推定扱いにする。
   - **conflict 経路は #884 で記録に加えた**。記録点は `Backend::observe_ref_moves` の 1 か所で、`Backend::run` と同じ前後 snapshot を使う。

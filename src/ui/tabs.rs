@@ -282,12 +282,6 @@ impl KagiApp {
         // Background (re)load to refresh / fill the cache.
         self.load_repo_async(tab.session, tab.path.clone(), tab.name.clone(), cx);
 
-        // #625 / ADR-0192: this tab may have pressed Pull, waited for its
-        // pre-confirmation fetch, and been left while it ran. The answer
-        // belongs to *this* tab, so it was parked rather than shown over
-        // another repository — deliver it now that the tab is back on screen.
-        // Root presentation was reset above, so nothing clears it again.
-        self.deliver_parked_pull_confirm(cx);
         // #772: a shell may have exited while its owner was in another tab.
         // Only that owner's return may present its pending, confirmed release.
         self.offer_auto_release(tab.session, cx);

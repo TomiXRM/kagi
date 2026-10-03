@@ -20,15 +20,19 @@ use super::theme::{self, theme};
 use super::KagiApp;
 
 /// Everything the list's entries are built from (#937): the filter, the
-/// pane, the versions of the repositories / local clones and of the pull
-/// request / issue lists, the clone running and whether organizations are
-/// still being read. The entries are built again only when it changes.
+/// pane and what that pane shows — the repositories / local clones, the clone
+/// running and whether organizations are still being read for Repositories;
+/// the pull request / issue lists for the other two — and the language their
+/// text is in. The entries are built again only when it changes. The panes
+/// not on screen are not part of it: a read landing for one of them must not
+/// rebuild (and so scroll back to the top) the list being read (#942 review).
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct ListKey {
     query: String,
     pane: HomePane,
-    data_version: u64,
-    work_version: u64,
+    lang: super::i18n::Lang,
+    /// `data_version` for Repositories, the work lists' `version` otherwise.
+    version: u64,
     cloning: Option<String>,
     orgs_loading: bool,
 }
@@ -65,13 +69,20 @@ impl KagiApp {
         {
             return div().into_any_element();
         }
+        let repos = pane == HomePane::Repos;
         let key = ListKey {
             query,
             pane,
-            data_version: self.home_github.data_version,
-            work_version: self.home_github.work.version,
-            cloning: self.home_github.cloning.as_ref().map(|r| r.source.clone()),
-            orgs_loading: self.home_github.orgs_loading,
+            lang: super::i18n::lang(),
+            version: if repos {
+                self.home_github.data_version
+            } else {
+                self.home_github.work.version
+            },
+            cloning: repos
+                .then(|| self.home_github.cloning.as_ref().map(|r| r.source.clone()))
+                .flatten(),
+            orgs_loading: repos && self.home_github.orgs_loading,
         };
         let state = self
             .home_github
@@ -81,8 +92,19 @@ impl KagiApp {
             })
             .clone();
         if self.home_github.list_key.as_ref() != Some(&key) {
+            // The same list read again (a refresh landing, another language)
+            // keeps its place; another pane or filter starts at the top.
+            let same_view = self
+                .home_github
+                .list_key
+                .as_ref()
+                .is_some_and(|old| old.pane == key.pane && old.query == key.query);
+            let top = state.logical_scroll_top();
             let items = self.build_home_items(&key);
             state.reset(items.len());
+            if same_view && top.item_ix < items.len() {
+                state.scroll_to(top);
+            }
             self.home_github.items = items.into();
             self.home_github.list_key = Some(key);
         }
@@ -381,4 +403,31 @@ fn github_row(listing: RepoListing, state: &'static str, app: &Entity<KagiApp>) 
         )
         .child(meta)
         .into_any_element()
+}
+
+/// Tier A hooks for the list's place (#942 review).
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    /// Scroll Home's list so entry `ix` is at its top.
+    pub fn scroll_home_list_for_e2e(&self, ix: usize) {
+        if let Some(state) = &self.home_github.list {
+            state.scroll_to(gpui::ListOffset {
+                item_ix: ix,
+                offset_in_item: px(0.),
+            });
+        }
+    }
+
+    /// The entry at the top of Home's list.
+    pub fn home_list_top_for_e2e(&self) -> Option<usize> {
+        self.home_github
+            .list
+            .as_ref()
+            .map(|state| state.logical_scroll_top().item_ix)
+    }
+
+    /// Read only the pull request / issue lists again, as a Refresh does.
+    pub fn reload_home_work_for_e2e(&mut self, cx: &mut Context<Self>) {
+        self.reload_home_work(cx);
+    }
 }

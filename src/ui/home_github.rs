@@ -272,12 +272,14 @@ impl KagiApp {
         if self.home_github.generation != generation {
             return;
         }
-        self.home_github.data_version += 1;
+        // `data_version` moves only when the list on screen does (#942
+        // review): a rebuild resets the list's scroll.
         if self.home_github.shown_account != account
             && matches!(self.home_github.repos, GithubRepos::Loaded { .. })
         {
             self.home_github.repos = GithubRepos::Loading;
             self.home_github.refreshing = false;
+            self.home_github.data_version += 1;
         }
         self.home_github.shown_account = account;
         if let Some(sections) =
@@ -288,6 +290,7 @@ impl KagiApp {
                 orgs_error: None,
             };
             self.home_github.refreshing = true;
+            self.home_github.data_version += 1;
         }
         cx.notify();
     }
@@ -305,7 +308,6 @@ impl KagiApp {
         if self.home_github.generation != generation {
             return None;
         }
-        self.home_github.data_version += 1;
         cx.notify();
         match list {
             Ok(list) => {
@@ -313,12 +315,16 @@ impl KagiApp {
                     owner: None,
                     list: Ok(list),
                 };
+                // Over a list already on screen (a saved one, a refresh) it
+                // waits for the organizations: nothing on screen changes,
+                // so the list keeps its scroll (#942 review).
                 if !self.home_github.refreshing {
                     self.home_github.repos = GithubRepos::Loaded {
                         sections: vec![own.clone()],
                         orgs_error: None,
                     };
                     self.home_github.orgs_loading = true;
+                    self.home_github.data_version += 1;
                 }
                 Some(own)
             }
@@ -334,6 +340,7 @@ impl KagiApp {
                     );
                 } else {
                     self.home_github.repos = GithubRepos::Failed(error.to_string());
+                    self.home_github.data_version += 1;
                 }
                 // Still reading until the organizations' `gh` ends.
                 self.home_github.refreshing = true;
@@ -435,9 +442,13 @@ impl KagiApp {
             let (paths, found) = found.await;
             let _ = app.update(acx, |app, cx| {
                 let local = &mut app.home_github.local;
+                let before = local.clone();
                 local.retain(|_, p| !paths.contains(p));
                 local.extend(found);
-                app.home_github.data_version += 1;
+                // An unchanged match keeps the list (and its scroll).
+                if *local != before {
+                    app.home_github.data_version += 1;
+                }
                 cx.notify();
             });
         })

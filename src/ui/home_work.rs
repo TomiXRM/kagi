@@ -209,13 +209,6 @@ impl KagiApp {
             .cloned()
             .filter(|path| path.is_dir());
         let Some(path) = local else {
-            // The later pick wins: an open still waiting for `gh` would
-            // otherwise move the user to its repository after this row
-            // opened on GitHub (#940 review).
-            if self.home_github.work.opening.take().is_some() {
-                self.home_github.work.version += 1;
-                cx.notify();
-            }
             self.open_work_item_url(&item.url, cx);
             return;
         };
@@ -241,13 +234,19 @@ impl KagiApp {
     /// Open a PR / issue on GitHub at the URL its search returned, through
     /// the OS opener (#940 review). The GUI runner records the URL instead,
     /// so a scenario never launches the user's browser.
+    ///
+    /// Both a row without a clone and any row's Open button come here, and
+    /// either is a later pick that wins: an open still waiting for `gh`
+    /// would otherwise move the user to its repository after this one opened
+    /// on GitHub (#940 review).
     pub(super) fn open_work_item_url(&mut self, url: &str, cx: &mut Context<Self>) {
+        if self.home_github.work.opening.take().is_some() {
+            self.home_github.work.version += 1;
+            cx.notify();
+        }
         klog!("home: open on github {}", url);
         #[cfg(feature = "gui-e2e")]
-        {
-            let _ = cx;
-            super::e2e::record_opened_url(url);
-        }
+        super::e2e::record_opened_url(url);
         #[cfg(not(feature = "gui-e2e"))]
         cx.open_url(url);
     }

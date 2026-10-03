@@ -350,6 +350,60 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
         "Home stays in front: the dropped PR does not open"
     );
 
+    // The same for a row's Open button (#940 review): pressed while a local
+    // PR is still opening, it opens its row on GitHub and drops that open.
+    // The pick and the press go in without the pump in between, so the
+    // refs read cannot finish first.
+    assert!(drawn(cx, window, "home-work-acme/widgets-3-open"));
+    let open_at = e2e::control_bounds(window.window_id(), "home-work-acme/widgets-3-open")
+        .unwrap()
+        .center();
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.home_work_pick(WorkKind::MyPrs, local_pr.clone(), window, cx)
+        });
+        let modifiers = gpui::Modifiers::none();
+        for input in [
+            gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                position: open_at,
+                pressed_button: None,
+                modifiers,
+            }),
+            gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                position: open_at,
+                modifiers,
+                button: gpui::MouseButton::Left,
+                click_count: 1,
+                first_mouse: false,
+            }),
+            gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
+                position: open_at,
+                modifiers,
+                button: gpui::MouseButton::Left,
+                click_count: 1,
+            }),
+        ] {
+            window.dispatch_event(input, cx);
+        }
+    })
+    .unwrap();
+    assert!(
+        cx.read(|cx| app.read(cx).home_github.work.opening.is_none()),
+        "pressing Open drops the open still in progress"
+    );
+    wait_for(cx, &app, "the second dropped refs read", |_| {
+        view_calls() == 3
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        e2e::take_opened_urls(),
+        vec!["https://github.com/acme/widgets/pull/3".to_string()]
+    );
+    assert!(
+        cx.read(|cx| app.read(cx).home.is_some()),
+        "Home stays in front after Open: the dropped PR does not open"
+    );
+
     // An issue opens in its clone's Issues mode only while that mode
     // addresses the issue's repository: with `gh repo set-default` pointing
     // elsewhere the same number is another issue there.

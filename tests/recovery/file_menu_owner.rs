@@ -207,12 +207,20 @@ pub fn scenario_file_menu_focus_after_open_repository(cx: &mut VisualTestAppCont
 
     app.update(cx, |app, cx| {
         assert!(app.open_repository(repo_b.clone(), cx), "open B");
-        // Model a retained callback/menu after session-switch cleanup.
+    });
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).file_menu.is_none()),
+        "departing A clears its owner-scoped menu"
+    );
+    app.update(cx, |app, cx| {
+        assert!(app.view().rows.len() >= 2, "B has a parent commit");
+        // A retained callback can still arrive after session-switch cleanup.
         app.file_menu = Some(stale.clone());
         app.select(1);
         cx.notify();
     });
-    cx.run_until_parked();
+    assert_eq!(cx.read(|cx| app.read(cx).ui().selected), Some(1));
     assert_ne!(
         cx.read(|cx| app.read(cx).active_session()),
         Some(stale.owner)
@@ -252,6 +260,11 @@ pub fn scenario_file_menu_focus_after_open_repository(cx: &mut VisualTestAppCont
         e2e::open_local_panel_no_inputs(app, repo_b.clone(), cx);
     });
     cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        app.select(1);
+        cx.notify();
+    });
+    assert_eq!(cx.read(|cx| app.read(cx).ui().selected), Some(1));
     defer_first_menu(cx, &app, window);
     cx.run_until_parked();
     assert!(cx.read(|cx| e2e::menu_is_front(app.read(cx), cx)));

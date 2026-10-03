@@ -195,6 +195,10 @@ actions!(
         CloseMainDiff,
         CopyDiffSelection,
         DiffPrevFile,
+        CommitFirst,
+        CommitLast,
+        CommitPageUp,
+        CommitPageDown,
         PrModePrevPane,
         PrModeNextPane,
         DiffNextFile,
@@ -458,7 +462,7 @@ use graph_view::graph_canvas;
 use kagi_git::{
     oplog::{read_oplog_tail, OpLogEntry, OpOutcome},
     ops::{default_tracking_branch_name, validate_branch_rename, AmendMode, StateSummary},
-    CommitId, FileDiffStat, FileStatus, RepoSnapshot, SkipProgress,
+    CommitId, RepoSnapshot, SkipProgress,
 };
 
 // ──────────────────────────────────────────────────────────────
@@ -3048,26 +3052,74 @@ impl KagiApp {
         }
     }
 
-    /// Move the commit selection up/down by `delta` rows (arrow keys).
-    /// No selection yet → selects the first row. Idempotent at the ends.
+    /// Move the commit selection by `delta` rows; arrows and paging share
+    /// the same clamping, selection and centered reveal.
     pub fn step_commit_selection(&mut self, delta: i64) {
         if self.view().rows.is_empty() {
             return;
         }
         let next = match self.ui().selected {
             None => 0,
-            Some(cur) => {
-                let n = cur as i64 + delta;
-                n.clamp(0, self.view().rows.len() as i64 - 1) as usize
-            }
+            Some(cur) => (cur as i64)
+                .saturating_add(delta)
+                .clamp(0, self.view().rows.len() as i64 - 1) as usize,
         };
+        self.select_commit_index(next);
+    }
+
+    fn select_commit_index(&mut self, next: usize) {
+        self.ui()
+            .commit_scroll_handle
+            .scroll_to_item(self.commit_list_index(next), ScrollStrategy::Center);
+        // `select` toggles on a repeated index; guard selection, not reveal.
         if self.ui().selected != Some(next) {
-            self.ui()
-                .commit_scroll_handle
-                .scroll_to_item(self.commit_list_index(next), ScrollStrategy::Center);
-            // `select` toggles on a repeated index; guarded above.
             self.select(next);
         }
+    }
+
+    fn commit_page_size(&self) -> i64 {
+        let height = self
+            .ui()
+            .commit_scroll_handle
+            .0
+            .borrow()
+            .base_handle
+            .bounds()
+            .size
+            .height;
+        ((f32::from(height) / row_height(self.graph_compact)).floor() as usize)
+            .saturating_sub(1)
+            .max(1) as i64
+    }
+
+    fn jump_commit_selection(&mut self, last: bool) {
+        if !self.view().rows.is_empty() {
+            self.select_commit_index(if last { self.view().rows.len() - 1 } else { 0 });
+        }
+    }
+
+    /// Conflict Mode replaces the normal body before workspace slots are resolved.
+    fn conflict_body_visible(&self) -> bool {
+        self.ui().conflict.is_some() && !self.ui().conflict_merge_pending
+    }
+
+    fn commit_list_has_focus(&self, window: &Window, cx: &Context<Self>) -> bool {
+        self.root_has_focus(window)
+            && self.front_layer(cx) == front_layer::FrontLayer::None
+            && !self.conflict_body_visible()
+            && !self.home_in_front()
+            && workspace::resolve_workspace(&self.workspace_inputs(false, false, false)).center
+                == workspace::CenterPane::CommitList
+    }
+
+    /// Commit list coordinates and rendered row height for the GUI viewport
+    /// assertion (the shared list may include WIP and stash rows before commits).
+    #[cfg(feature = "gui-e2e")]
+    pub fn commit_row_geometry_for_e2e(&self, index: usize) -> (usize, f32) {
+        (
+            self.commit_list_index(index),
+            row_height(self.graph_compact),
+        )
     }
 
     /// W2-SIDEBAR: Lazily create the sidebar filter InputState (requires &mut Window).

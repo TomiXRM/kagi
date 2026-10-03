@@ -617,6 +617,31 @@ impl KagiApp {
         self.home_github.row_focus.holds_focus(window, cx)
     }
 
+    /// Rows intersecting Home's viewport, and whether the focused row is
+    /// fully inside it. Bounds, not virtualization overdraw, define visibility.
+    pub fn home_row_viewport_for_e2e(&self, window: &Window) -> (Vec<String>, bool) {
+        let Some(state) = &self.home_github.list else {
+            return (Vec::new(), false);
+        };
+        let viewport = state.viewport_bounds();
+        let focused = self.home_github.row_focus.focused(window);
+        let mut visible = Vec::new();
+        let mut focused_inside = false;
+        for (key, ix) in self.home_github.row_keys.iter() {
+            let Some(bounds) = state.bounds_for_item(*ix) else {
+                continue;
+            };
+            if bounds.top() < viewport.bottom() && bounds.bottom() > viewport.top() {
+                visible.push(key.clone());
+            }
+            if focused.as_deref() == Some(key) {
+                focused_inside =
+                    bounds.top() >= viewport.top() && bounds.bottom() <= viewport.bottom();
+            }
+        }
+        (visible, focused_inside)
+    }
+
     /// Focus Home's list row `key`.
     pub fn focus_home_row_for_e2e(&self, key: &str, window: &mut Window, cx: &mut gpui::App) {
         self.home_github.row_focus.focus(key, window, cx);

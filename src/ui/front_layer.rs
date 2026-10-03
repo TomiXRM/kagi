@@ -23,7 +23,11 @@ impl KagiApp {
     /// The root and its renderers share these gates: retained session-owned
     /// menus are not keyboard owners when their pane is not drawn.
     pub(crate) fn commit_menu_visible(&self) -> bool {
-        !self.home_in_front() && self.commit_menu.is_some()
+        !self.home_in_front()
+            && self.commit_menu.as_ref().is_some_and(|menu| {
+                self.view().details.get(menu.row_index).is_some()
+                    && self.view().rows.get(menu.row_index).is_some()
+            })
     }
 
     pub(crate) fn branch_menu_visible(&self) -> bool {
@@ -92,13 +96,16 @@ impl KagiApp {
                 .commit_panel
                 .as_ref()
                 .is_some_and(|panel| panel.read(cx).coauthor_menu_visible())
+            && super::workspace::resolve_workspace(&self.workspace_inputs(true, true, false)).right
+                == super::workspace::RightPane::CommitPanel
     }
 
-    pub(crate) fn platform_menu_visible(&self) -> bool {
-        self.platform_menu_open
-            .is_some_and(|ix| super::commands::linux_menu_sections().nth(ix).is_some())
+    pub(crate) fn visible_platform_menu_section(
+        &self,
+    ) -> Option<(usize, &'static super::commands::MenuSection)> {
+        let ix = self.platform_menu_open?;
+        Some((ix, super::commands::linux_menu_sections().nth(ix)?))
     }
-
     /// Rendered in the workspace, never on Home.
     pub(crate) fn workspace_menu_visible(&self, cx: &App) -> bool {
         self.commit_menu_visible()
@@ -135,7 +142,7 @@ impl KagiApp {
         if matches!(self.menu_overlay, Some(MenuOverlay::Settings)) {
             return FrontLayer::Settings;
         }
-        if self.platform_menu_visible()
+        if self.visible_platform_menu_section().is_some()
             || self.menu_overlay.is_some()
             || self.workspace_menu_visible(cx)
         {

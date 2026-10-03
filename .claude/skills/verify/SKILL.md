@@ -804,6 +804,23 @@ The current suite covers:
   are focused through `focus_home_row_for_e2e` and read through
   `home_row_focused_for_e2e` (keys `repo:<owner>/<name>`,
   `<kind>:<owner>/<name>#<n>`).
+- Home row paging (`KAGI_GUI_E2E_ONLY=home_row_paging`,
+  `tests/recovery/home_rows.rs`, #980): 60 repository rows, raw Home / End /
+  PageUp / PageDown and Cmd+↑/↓ move row focus; the expected step is the
+  number of rows intersecting the list viewport minus one (minimum one).
+  After each jump, the focused row's bounds fit inside that viewport.
+- Commit graph paging (`KAGI_GUI_E2E_ONLY=commit_paging`,
+  `tests/recovery/commit_paging.rs`, #980): a 200-commit fixture with root
+  focus presses the raw Home / End / PageUp / PageDown and Cmd+↑/↓ keys,
+  checks selection (page step = floor(viewport height / uniform row height)
+  minus one, minimum one) and checks the selected row against the measured
+  `commit-list-viewport`. Wheel-scroll the selected first row out of view;
+  Home reveals it without toggling selection. With root focus retained, End
+  and Down behind the open commit context menu leave selection unchanged;
+  replacing the shared front-layer guard with a menu_overlay-only guard fails
+  the End assertion. End on Home, Branch Cleanup, and the Conflict Mode body
+  must also leave the covered commit selection unchanged; the conflict leg
+  uses `app_conflict::content_fixture` and a real detector pass.
 - Toolbar unavailable reasons (`KAGI_GUI_E2E_ONLY=toolbar_keyboard_reasons`,
   `tests/recovery/toolbar_keyboard.rs`, #972): starting at the root, GPUI's
   `focus_next` visits the rendered toolbar in visual order; an F19 key-down
@@ -939,7 +956,8 @@ The current suite covers:
   File-menu tests defer the real panel callback, renumber rows, click the measured
   Discard control, deliver a retained action after changing owners, and assert
   that an invisible A menu cannot consume B's keyboard after `open_repository`.
-  The focus scenario checks raw Down on Graph and Escape on a visible menu.
+  The focus scenario checks raw Enter opens B's Graph checkout plan and Escape
+  closes a visible menu without clearing Graph selection.
   The existing `unmerged_branch_delete_armed` scenario also rejects delayed
   plans after departure and revisit while releasing the planning latch.
 - session-owned positioning and Smart Commit state

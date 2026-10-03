@@ -1166,8 +1166,9 @@ pub fn effective_keystroke(id: &str) -> Option<String> {
 ///   Toggle Terminal — re-binding would double it),
 /// - all Edit actions (os_action only — must not shadow text-input).
 use crate::ui::{
-    CloseMainDiff, CopyDiffSelection, DiffNextFile, DiffPrevFile, PrModeNextPane, PrModePrevPane,
-    SaveEditorFile, TerminalSendShiftTab, TerminalSendTab,
+    CloseMainDiff, CommitFirst, CommitLast, CommitPageDown, CommitPageUp, CopyDiffSelection,
+    DiffNextFile, DiffPrevFile, PrModeNextPane, PrModePrevPane, SaveEditorFile,
+    TerminalSendShiftTab, TerminalSendTab,
 };
 
 /// Every app-level [`KeyBinding`] the real window installs.
@@ -1222,6 +1223,12 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("up", DiffPrevFile, Some("!Terminal && !Input")),
         KeyBinding::new("down", DiffNextFile, Some("!Terminal && !Input")),
+        KeyBinding::new("home", CommitFirst, Some("!Terminal && !Input")),
+        KeyBinding::new("end", CommitLast, Some("!Terminal && !Input")),
+        KeyBinding::new("pageup", CommitPageUp, Some("!Terminal && !Input")),
+        KeyBinding::new("pagedown", CommitPageDown, Some("!Terminal && !Input")),
+        KeyBinding::new("cmd-up", CommitFirst, Some("!Terminal && !Input")),
+        KeyBinding::new("cmd-down", CommitLast, Some("!Terminal && !Input")),
         // GitHub Phase 1c: ←/→ cycle PR mode's focused pane. No-op outside
         // PR mode (handler checks), so graph mode keeps ←/→ free.
         KeyBinding::new("left", PrModePrevPane, Some("!Terminal && !Input")),

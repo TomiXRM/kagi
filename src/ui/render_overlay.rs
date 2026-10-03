@@ -198,7 +198,10 @@ impl KagiApp {
             (
                 self.ui().commit_panel_open,
                 self.ui().commit_panel.clone(),
-                self.file_menu.clone(),
+                self.file_menu
+                    .as_ref()
+                    .filter(|_| self.file_menu_visible(cx))
+                    .cloned(),
             )
         } else {
             (false, None, None)
@@ -624,10 +627,9 @@ impl KagiApp {
             },
         )
         // ── Unstaged file context menu (right-click → Discard) ──
-        .when_some(
-            file_menu.filter(|_| self.file_menu_visible(cx)),
-            |el, menu| el.child(render_file_menu_overlay(menu, window.viewport_size(), cx)),
-        )
+        .when_some(file_menu, |el, menu| {
+            el.child(render_file_menu_overlay(menu, window.viewport_size(), cx))
+        })
         // ── Commit plan modal overlay (T025) ─────────────
         .when(commit_panel_open && commit_plan_modal.is_some(), |el| {
             if let Some(plan_modal) = commit_plan_modal.clone() {

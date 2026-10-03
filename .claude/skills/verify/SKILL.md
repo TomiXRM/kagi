@@ -296,8 +296,10 @@ The current suite covers:
   - Setup: a stand-in shell runs in the bottom-panel terminal, which holds
     the focus. Settings is then opened with `app.settings`, and the focus
     must be on the trap container.
-  - Raw Tab: every press stays inside Settings, up to the Analyze-ignore
-    editor. That editor keeps Tab for indenting, which is a known gap.
+  - Raw Tab: every press stays inside Settings. It walks into the
+    Analyze-ignore editor and out again to Save without editing the text,
+    and returns to the editor after one full turn. Shift+Tab also leaves
+    the editor (#977).
   - Wrapping: from the container, Shift+Tab, Tab and Shift+Tab wrap around
     both ends while staying inside.
   - Close: Escape closes Settings and gives the focus back to the terminal.
@@ -306,7 +308,8 @@ The current suite covers:
     button.
   - Checked mutations: without `.focus_trap` the wrap leaves Settings;
     without the focus on open, the focus stays on the terminal; without the
-    return-focus capture, Escape does not return to the terminal.
+    return-focus capture, Escape does not return to the terminal; with the
+    editor made an indenting multi-line input, Tab stays in it.
 - overlay focus return (`KAGI_GUI_E2E_ONLY=palette_push_modal_keys,settings_close_returns_focus`,
   `tests/recovery/overlay_focus.rs`): #817 / #812. Every key is raw, with no
   test-side refocusing. The palette scenario first starts the bottom-panel

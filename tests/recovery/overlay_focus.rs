@@ -347,25 +347,65 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
         "settings-open-takes-focus: opening Settings must move the focus into it"
     );
 
-    // Tab walks the controls up to the Analyze-ignore editor (which keeps
-    // Tab for indenting: a known gap), never leaving the panel.
-    let mut steps = 0;
-    loop {
-        keys(cx, window, "tab");
-        steps += 1;
-        let now = held(cx, &app, window);
-        assert!(
-            matches!(now, Held::InSettings { .. }),
-            "settings-tab-trapped: Tab #{steps} left Settings: {now:?}"
-        );
-        if now == (Held::InSettings { editor: true }) {
-            break;
+    // Tab walks the controls up to the Analyze-ignore editor, never leaving
+    // the panel.
+    let editor_text = |cx: &mut VisualTestAppContext| {
+        cx.read(|cx| {
+            let input = app.read(cx).analyze_ignore_input.clone().expect("editor");
+            input.read(cx).value().to_string()
+        })
+    };
+    let tab_to_editor = |cx: &mut VisualTestAppContext| {
+        let mut steps = 0;
+        loop {
+            keys(cx, window, "tab");
+            steps += 1;
+            let now = held(cx, &app, window);
+            assert!(
+                matches!(now, Held::InSettings { .. }),
+                "settings-tab-trapped: Tab #{steps} left Settings: {now:?}"
+            );
+            if now == (Held::InSettings { editor: true }) {
+                return steps;
+            }
+            assert!(steps < 60, "Tab never reached the Analyze-ignore editor");
         }
-        assert!(steps < 60, "Tab never reached the Analyze-ignore editor");
-    }
+    };
+    let steps = tab_to_editor(cx);
     assert!(
         steps >= 3,
         "Tab must visit Settings' controls, took {steps}"
+    );
+    let text = editor_text(cx);
+
+    // The editor never keeps Tab: it is an auto-grow input, which gpui-
+    // component does not indent, so Tab / Shift+Tab fall through to Root and
+    // move on (to Save), and the walk comes back to the editor after one
+    // full turn of the trap (#977). A code editor or plain multi-line input
+    // here would take Tab for indenting and stop the walk.
+    keys(cx, window, "tab");
+    assert_eq!(
+        held(cx, &app, window),
+        Held::InSettings { editor: false },
+        "analyze-ignore-tab-leaves: Tab must move from the editor to Save"
+    );
+    let turn = 1 + tab_to_editor(cx);
+    assert!(
+        turn > steps,
+        "analyze-ignore-tab-cycles: a full turn ({turn}) must pass every stop"
+    );
+    keys(cx, window, "shift-tab");
+    assert_eq!(
+        held(cx, &app, window),
+        Held::InSettings { editor: false },
+        "analyze-ignore-shift-tab-leaves: Shift+Tab must move out of the editor"
+    );
+    keys(cx, window, "tab");
+    assert_eq!(held(cx, &app, window), Held::InSettings { editor: true });
+    assert_eq!(
+        editor_text(cx),
+        text,
+        "analyze-ignore-tab-no-indent: Tab / Shift+Tab must not edit the text"
     );
 
     // Both ends wrap: from the container, Shift+Tab lands on the panel's

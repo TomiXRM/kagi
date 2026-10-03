@@ -179,9 +179,6 @@ PR block.
   click (footer); keyboard/AX users do not get it.
 - Library transitions (Switch 150 ms, Tab 200 ms, Dialog 250 ms) do not follow
   `reduce_motion`.
-- In Settings, the Analyze-ignore editor keeps Tab / Shift+Tab for indenting,
-  so they never leave it. The Save button below it is reached only by
-  Shift+Tab from the panel's first stop, which wraps to the last (#974).
 - Settings' focus trap is gpui-component Root's: when Tab steps out of the
   panel, it searches for the way back with at most 100 focus moves over the
   window's Tab stops. A window with more stops than that would let the wrap

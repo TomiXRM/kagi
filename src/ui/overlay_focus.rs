@@ -50,10 +50,30 @@ impl KagiApp {
     /// Render pass: the closes that run without a `Window` (Escape through
     /// `cancel_active_modal`, the × and backdrop listeners) and the modal
     /// openers land here.
+    ///
+    /// Settings yields to a modal that arrives while it is open (an async
+    /// plan landing, #976 review): it draws behind the modal layer, so it
+    /// closes, and a focus still in its trap goes to the root, where the
+    /// modal's keys are routed. A modal that already took the focus (its own
+    /// field) keeps it: Settings' return target is dropped, not applied.
     pub(super) fn sync_pending_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.menu_overlay, Some(MenuOverlay::Settings)) && self.modal_in_front(cx) {
+            self.menu_overlay = None;
+            let trapped = (self.settings_focus.as_ref())
+                .is_some_and(|trap| trap.contains_focused(window, cx));
+            self.pending_focus = trapped.then(|| self.root_focus.clone()).flatten();
+        }
         if self.menu_overlay.is_none() {
             self.apply_pending_focus(window, cx);
         }
+    }
+
+    /// A modal drawn in front of the menu overlays: the modal slot, or the
+    /// Commit Panel's plan confirmation (its own storage).
+    fn modal_in_front(&self, cx: &Context<Self>) -> bool {
+        self.has_active_modal()
+            || (self.ui().commit_panel.as_ref())
+                .is_some_and(|panel| panel.read(cx).state.plan_modal.is_some())
     }
 
     /// Open Settings (toolbar button, menu, palette).
@@ -65,12 +85,13 @@ impl KagiApp {
     /// by pointer shows none; the first Tab enters the panel's first stop.
     /// Closing returns focus as above.
     ///
-    /// Not while a modal is open (#976 review): Settings draws behind the
-    /// modal layer, so taking the focus into it would leave the visible
-    /// modal's field and keys dead. The modal is finished or cancelled
-    /// first, as the one-modal-at-a-time rule has it.
+    /// Not while a modal is in front (#976 review): Settings draws behind
+    /// the modal layer — the modal slot and the Commit Panel's plan alike —
+    /// so taking the focus into it would leave the visible modal's field and
+    /// keys dead. The modal is finished or cancelled first, as the
+    /// one-modal-at-a-time rule has it.
     pub(super) fn open_settings_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.has_active_modal() {
+        if self.modal_in_front(cx) {
             return;
         }
         self.capture_overlay_return_focus(window, cx);

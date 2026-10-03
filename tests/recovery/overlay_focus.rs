@@ -497,6 +497,88 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
         "settings-not-behind-modal: opening Settings moved the modal's focus"
     );
     keys(cx, window, "escape");
+    assert!(cx.read(|cx| app.read(cx).stash_push_modal().is_none()));
+
+    // A modal that arrives while Settings is open (an async plan landing)
+    // is in front: Settings yields, and the focus leaves its trap so the
+    // modal's keys work — Escape closes the modal.
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.handle_menu_command("app.settings", window, cx)
+        })
+    })
+    .unwrap();
+    draw(cx, window);
+    assert_eq!(
+        held(cx, &app, window),
+        Held::Trap,
+        "precondition: Settings open"
+    );
+    app.update(cx, |app, cx| app.open_stash_push_modal(cx));
+    draw(cx, window);
+    assert!(
+        cx.read(|cx| app.read(cx).menu_overlay.is_none()),
+        "settings-yields-to-modal: Settings stayed open behind the arriving modal"
+    );
+    assert!(
+        !matches!(held(cx, &app, window), Held::Trap | Held::InSettings { .. }),
+        "settings-yields-to-modal: the focus stayed in Settings' trap"
+    );
+    keys(cx, window, "escape");
+    assert!(
+        cx.read(|cx| app.read(cx).stash_push_modal().is_none()),
+        "settings-yields-to-modal: Escape must reach the arrived modal"
+    );
+
+    // The Commit Panel's plan confirmation (its own storage) is in front
+    // too: Settings does not open over it.
+    std::fs::write(
+        repo.join("conflict.txt"),
+        "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> other\n",
+    )
+    .unwrap();
+    let added = std::process::Command::new("git")
+        .current_dir(&repo)
+        .args(["add", "conflict.txt"])
+        .status()
+        .unwrap();
+    assert!(added.success());
+    app.update(cx, |app, cx| {
+        kagi::ui::e2e::open_local_panel_no_inputs(app, repo.clone(), cx);
+    });
+    draw(cx, window);
+    app.update(cx, |app, cx| {
+        let owner = app.active_session().expect("owner");
+        let panel = app.ui().commit_panel.clone().expect("Commit Panel");
+        panel.update(cx, |panel, _| panel.state.commit_msg = "probe".into());
+        app.open_commit_plan_modal(owner, cx);
+    });
+    draw(cx, window);
+    let plan_open = |cx: &mut VisualTestAppContext| {
+        cx.read(|cx| {
+            (app.read(cx).ui().commit_panel.as_ref())
+                .is_some_and(|panel| panel.read(cx).state.plan_modal.is_some())
+        })
+    };
+    assert!(
+        plan_open(cx),
+        "precondition: the conflict marker blocks the commit plan"
+    );
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.handle_menu_command("app.settings", window, cx)
+        })
+    })
+    .unwrap();
+    draw(cx, window);
+    assert!(
+        cx.read(|cx| app.read(cx).menu_overlay.is_none()),
+        "settings-not-behind-commit-plan: Settings opened behind the commit plan"
+    );
+    app.update(cx, |app, cx| {
+        let panel = app.ui().commit_panel.clone().expect("Commit Panel");
+        panel.update(cx, |panel, _| panel.state.plan_modal = None);
+    });
 
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS settings_focus_trap");

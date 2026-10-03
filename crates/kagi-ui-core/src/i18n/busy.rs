@@ -223,48 +223,26 @@ fn label_for(op: &str, language: Lang) -> &'static str {
 
 use crate::slow_read::SlowRead;
 
-/// #355: `(reason, subject)` of a slow read, EN and JA. The reason is also the
-/// snackbar label when no write is running.
-fn slow_read_parts(read: SlowRead, language: Lang) -> (&'static str, &'static str) {
+/// #355: the reason of a slow read, EN and JA. It is also the snackbar label
+/// when no write is running.
+fn slow_read_reason(read: SlowRead, language: Lang) -> &'static str {
     match (read, language) {
-        (SlowRead::AheadBehind, Lang::En) => (
-            "Counting ahead/behind…",
-            "counting commits against each upstream",
-        ),
-        (SlowRead::AheadBehind, Lang::Ja) => (
-            "ahead/behind を計算中…",
-            "各ブランチと upstream の差分の計算",
-        ),
-        (SlowRead::Worktrees, Lang::En) => (
-            "Reading worktree status…",
-            "checking every worktree for changes",
-        ),
-        (SlowRead::Worktrees, Lang::Ja) => {
-            ("worktree の状態を読み込み中…", "各 worktree の変更の確認")
-        }
-        (SlowRead::WorktreeSize, Lang::En) => (
-            "Measuring worktree size…",
-            "walking every file in a worktree",
-        ),
-        (SlowRead::WorktreeSize, Lang::Ja) => (
-            "worktree の容量を計測中…",
-            "各 worktree 内の全ファイルの走査",
-        ),
-        (SlowRead::Analyze, Lang::En) => (
-            "Analyzing hotspots…",
-            "reading the commit history and touched files",
-        ),
-        (SlowRead::Analyze, Lang::Ja) => {
-            ("hotspot を解析中…", "commit 履歴と変更ファイルの読み込み")
-        }
-        (SlowRead::Diff, Lang::En) => ("Loading diff…", "reading a large diff"),
-        (SlowRead::Diff, Lang::Ja) => ("diff を読み込み中…", "大きい diff の読み込み"),
+        (SlowRead::AheadBehind, Lang::En) => "Counting ahead/behind…",
+        (SlowRead::AheadBehind, Lang::Ja) => "ahead/behind を計算中…",
+        (SlowRead::Worktrees, Lang::En) => "Reading worktree status…",
+        (SlowRead::Worktrees, Lang::Ja) => "worktree の状態を読み込み中…",
+        (SlowRead::WorktreeSize, Lang::En) => "Measuring worktree size…",
+        (SlowRead::WorktreeSize, Lang::Ja) => "worktree の容量を計測中…",
+        (SlowRead::Analyze, Lang::En) => "Analyzing hotspots…",
+        (SlowRead::Analyze, Lang::Ja) => "hotspot を解析中…",
+        (SlowRead::Diff, Lang::En) => "Loading diff…",
+        (SlowRead::Diff, Lang::Ja) => "diff を読み込み中…",
     }
 }
 
 /// Snackbar label for a slow read (shown when no write owns the snackbar).
 pub fn slow_read_label(read: SlowRead) -> &'static str {
-    slow_read_parts(read, lang()).0
+    slow_read_reason(read, lang())
 }
 
 /// The one-line explanation added to the busy snackbar once a read is slow.
@@ -273,12 +251,10 @@ pub fn slow_read_advice(read: SlowRead) -> String {
 }
 
 fn slow_read_advice_for(read: SlowRead, language: Lang) -> String {
-    let (reason, subject) = slow_read_parts(read, language);
-    let reason = reason.trim_end_matches('…');
-    match language {
-        Lang::En => format!("{reason} ({subject} takes time in large repositories)"),
-        Lang::Ja => format!("{reason}（大きいリポジトリでは{subject}に時間がかかります）"),
-    }
+    // The reason only: no lead-in and no explanatory sentence.
+    slow_read_reason(read, language)
+        .trim_end_matches('…')
+        .to_string()
 }
 
 /// The snackbar's Skip button: stop the read and show its result as unknown.
@@ -322,17 +298,17 @@ mod tests {
         }
     }
 
-    /// #355: every slow read explains itself in both languages with the
-    /// "<reason> (<subject> in large repositories)" shape, with no lead-in.
+    /// #355: a slow read names its reason in both languages, and nothing
+    /// else — no lead-in, no explanatory sentence.
     #[test]
-    fn slow_read_advice_names_reason_and_subject() {
+    fn slow_read_advice_is_the_reason_only() {
         assert_eq!(
             slow_read_advice_for(SlowRead::AheadBehind, Lang::En),
-            "Counting ahead/behind (counting commits against each upstream takes time in large repositories)"
+            "Counting ahead/behind"
         );
         assert_eq!(
             slow_read_advice_for(SlowRead::AheadBehind, Lang::Ja),
-            "ahead/behind を計算中（大きいリポジトリでは各ブランチと upstream の差分の計算に時間がかかります）"
+            "ahead/behind を計算中"
         );
         for read in [
             SlowRead::AheadBehind,
@@ -341,17 +317,16 @@ mod tests {
             SlowRead::Analyze,
             SlowRead::Diff,
         ] {
-            let (en, ja) = (
-                slow_read_parts(read, Lang::En),
-                slow_read_parts(read, Lang::Ja),
+            assert_ne!(
+                slow_read_reason(read, Lang::En),
+                slow_read_reason(read, Lang::Ja),
+                "{read:?} is not translated"
             );
-            assert_ne!(en, ja, "{read:?} is not translated");
             for language in [Lang::En, Lang::Ja] {
                 let advice = slow_read_advice_for(read, language);
-                assert!(
-                    !advice.starts_with("Taking a while")
-                        && !advice.starts_with("時間がかかっています"),
-                    "{advice}"
+                assert_eq!(
+                    advice,
+                    slow_read_reason(read, language).trim_end_matches('…')
                 );
             }
         }

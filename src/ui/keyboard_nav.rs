@@ -414,10 +414,20 @@ impl RowFocus {
         let focused = window.focused(cx);
         let moved = focused != self.seen;
         let rebuild = !Rc::ptr_eq(&keys, &self.keys);
+        // The row holding the focus: the row itself (a row ↓ just focused is
+        // not drawn yet, so match its handle), or a control inside a drawn
+        // row, its Open button (#961 review).
         let focused_row = if moved || rebuild {
-            focused
-                .as_ref()
-                .and_then(|focus| self.handles.iter().position(|handle| handle == focus))
+            focused.as_ref().and_then(|focus| {
+                self.handles
+                    .iter()
+                    .position(|handle| handle == focus)
+                    .or_else(|| {
+                        self.handles
+                            .iter()
+                            .position(|handle| handle.contains_focused(window, cx))
+                    })
+            })
         } else {
             None
         };
@@ -452,15 +462,23 @@ impl RowFocus {
         // The remembered row while it is drawn; else the first row on
         // screen, so Tab always finds a row that exists.
         let top = state.logical_scroll_top().item_ix;
+        let drawn = |at: usize| state.bounds_for_item(self.keys[at].1).is_some();
+        // The focused row scrolled out of the drawn range (the wheel, #961
+        // review) is unmounted: no ↑/↓, no ring. Not on the frame the focus
+        // moved, as ↓ focuses a row the list only draws on the next one.
+        let scrolled_away = !moved
+            && self
+                .current
+                .is_some_and(|at| !drawn(at) && self.handles[at].is_focused(window));
         let stop = self
             .current
-            .filter(|&at| state.bounds_for_item(self.keys[at].1).is_some())
+            .filter(|&at| drawn(at))
             .or_else(|| {
                 let at = self.keys.partition_point(|&(_, ix)| ix < top);
                 (at < self.keys.len()).then_some(at)
             })
             .or((!self.keys.is_empty()).then_some(0));
-        if lost {
+        if lost || scrolled_away {
             match stop {
                 Some(at) => self.handles[at].focus(window, cx),
                 None => {

@@ -104,6 +104,27 @@ pub fn scenario_home_rows(cx: &mut VisualTestAppContext) {
     .unwrap();
     wait_for(cx, &app, "the lists", settled);
     assert!(drawn(cx, window, "home-gh-acme/r00"));
+    // A point over the list, for the wheel.
+    let over_list = kagi::ui::e2e::control_bounds(window.window_id(), "home-gh-acme/r00")
+        .expect("the first row is drawn")
+        .center();
+    let wheel = |cx: &mut VisualTestAppContext, dy: f32| {
+        cx.simulate_event(
+            window,
+            gpui::ScrollWheelEvent {
+                position: over_list,
+                delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(dy))),
+                touch_phase: gpui::TouchPhase::Moved,
+                ..Default::default()
+            },
+        );
+        // The frame that scrolls, then the one that sees what left.
+        for _ in 0..2 {
+            cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+                .unwrap();
+        }
+        cx.run_until_parked();
+    };
 
     // Tab, from the switch, reaches the list at its first row on screen:
     // the list is one Tab stop, not one per row.
@@ -147,13 +168,31 @@ pub fn scenario_home_rows(cx: &mut VisualTestAppContext) {
     keys(cx, window, "shift-tab");
     assert_eq!(row(cx, &app, window).as_deref(), Some("repo:acme/r40"));
 
-    // The ends stop the arrows.
+    // The ends stop the arrows (each end scrolled into view first: a row
+    // the list does not draw does not keep the focus, below).
+    wheel(cx, -5000.);
     focus_row(cx, &app, window, "repo:acme/r59");
     keys(cx, window, "down");
     assert_eq!(row(cx, &app, window).as_deref(), Some("repo:acme/r59"));
+    wheel(cx, 5000.);
     focus_row(cx, &app, window, "repo:acme/r00");
     keys(cx, window, "up");
     assert_eq!(row(cx, &app, window).as_deref(), Some("repo:acme/r00"));
+
+    // The wheel scrolls the focused row out of the list's drawn range (#961
+    // review): it is no longer drawn, so the focus moves to the list's stop,
+    // the first row on screen, where ↑/↓ and the ring still work.
+    assert!(drawn(cx, window, "home-gh-acme/r00"));
+    wheel(cx, -3000.);
+    assert!(
+        !drawn(cx, window, "home-gh-acme/r00"),
+        "precondition: the focused row is scrolled out of view"
+    );
+    let now = row(cx, &app, window).expect("a row keeps the focus");
+    assert_ne!(now, "repo:acme/r00", "the focus left the row scrolled away");
+    let shown = format!("home-gh-{}", now.trim_start_matches("repo:"));
+    assert!(drawn(cx, window, &shown), "{now} is on screen");
+    wheel(cx, 3000.);
 
     // A focused row that leaves the list hands the focus on: to the first
     // row left, or to the window when none is.
@@ -200,6 +239,28 @@ pub fn scenario_home_rows(cx: &mut VisualTestAppContext) {
     focus_row(cx, &app, window, "MyPrs:acme/r00#2");
     keys(cx, window, "down");
     assert_eq!(row(cx, &app, window).as_deref(), Some("MyPrs:acme/r00#1"));
+
+    // The focus on a row's Open button, and the search drops that row (#961
+    // review): the focus goes to the first row left, as from the row itself.
+    keys(cx, window, "tab");
+    let inside = cx
+        .update_window(window, |_, window, cx| {
+            window.draw(cx).clear();
+            app.read(cx).home_row_holds_focus_for_e2e(window, cx)
+        })
+        .unwrap();
+    assert!(
+        inside && row(cx, &app, window).is_none(),
+        "precondition: on #1's Open button"
+    );
+    set_filter(cx, &app, window, "PR 2");
+    assert_eq!(
+        row(cx, &app, window).as_deref(),
+        Some("MyPrs:acme/r00#2"),
+        "the focus goes to the first row left"
+    );
+    set_filter(cx, &app, window, "");
+    focus_row(cx, &app, window, "MyPrs:acme/r00#1");
 
     // ⌘W closes Home with a row focused (#961 review): Home is no longer
     // drawn, so the row hands the focus to the window rather than keep it on
@@ -250,6 +311,41 @@ pub fn scenario_home_rows(cx: &mut VisualTestAppContext) {
     assert!(
         root,
         "closing Home hands the focus of a row's Open button to the window"
+    );
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.open_home_tab(window, cx))
+    })
+    .unwrap();
+    wait_for(cx, &app, "the lists again", settled);
+
+    // And with the focus on a cell of Home's switch (#961 review).
+    cx.update_window(window, |_, window, cx| {
+        window.draw(cx).clear();
+        app.update(cx, |app, cx| app.focus_home_pane_for_e2e(0, window, cx))
+    })
+    .unwrap();
+    assert_eq!(
+        cx.update_window(window, |_, window, cx| app
+            .read(cx)
+            .home_pane_focused_for_e2e(window))
+            .unwrap(),
+        Some(0),
+        "precondition: the switch's first cell"
+    );
+    app.update(cx, |app, cx| app.close_home_tab(cx));
+    cx.run_until_parked();
+    let root = cx
+        .update_window(window, |_, window, cx| {
+            window.draw(cx).clear();
+            app.read(cx)
+                .root_focus
+                .as_ref()
+                .is_some_and(|focus| focus.is_focused(window))
+        })
+        .unwrap();
+    assert!(
+        root,
+        "closing Home hands the focus of its switch to the window"
     );
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| app.open_home_tab(window, cx))

@@ -543,6 +543,11 @@ impl KagiApp {
         self.home_github.work.pane_focus.focus(slot, window, cx);
     }
 
+    /// Which cell of Home's switch holds the focus, if any.
+    pub fn home_pane_focused_for_e2e(&self, window: &Window) -> Option<usize> {
+        self.home_github.work.pane_focus.focused(window)
+    }
+
     /// Focus the workspace-mode cell in `slot` (Graph = 0).
     pub fn focus_mode_nav_for_e2e(&self, slot: usize, window: &mut Window, cx: &mut gpui::App) {
         self.sidebar.mode_focus.focus(slot, window, cx);

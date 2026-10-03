@@ -36,6 +36,38 @@ thread_local! {
     static UNAVAILABLE: std::cell::RefCell<std::collections::HashMap<&'static str, bool>> =
         std::cell::RefCell::new(Default::default());
 }
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    /// The exact string passed to `aria_description` for each drawn button.
+    static DESCRIPTION: std::cell::RefCell<std::collections::HashMap<&'static str, &'static str>> =
+        std::cell::RefCell::new(Default::default());
+    /// A harmless F19 key identifies the toolbar button that actually owns focus.
+    static FOCUS_PROBE: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_description(id: &'static str, reason: &'static str) {
+    DESCRIPTION.with(|map| map.borrow_mut().insert(id, reason));
+}
+
+#[cfg(not(feature = "gui-e2e"))]
+#[inline]
+pub(crate) fn record_description(_id: &'static str, _reason: &'static str) {}
+
+#[cfg(feature = "gui-e2e")]
+pub fn toolbar_description(id: &str) -> Option<&'static str> {
+    DESCRIPTION.with(|map| map.borrow().get(id).copied())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_focus_probe(id: &'static str) {
+    FOCUS_PROBE.with(|focused| focused.set(Some(id)));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_focus_probe() -> Option<&'static str> {
+    FOCUS_PROBE.with(|focused| focused.take())
+}
 
 /// Record the bool `make_btn` feeds to `set_disabled` (E2E oracle).
 #[cfg(feature = "gui-e2e")]
@@ -57,6 +89,7 @@ pub fn toolbar_unavailable(id: &str) -> Option<bool> {
 #[cfg(feature = "gui-e2e")]
 pub fn clear_toolbar_unavailable() {
     UNAVAILABLE.with(|map| map.borrow_mut().clear());
+    DESCRIPTION.with(|map| map.borrow_mut().clear());
 }
 
 #[cfg(test)]

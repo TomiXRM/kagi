@@ -40,7 +40,9 @@ thread_local! {
 }
 /// #354: the toolbar's AccessKit-disabled inputs, for the GUI E2E oracle.
 #[cfg(feature = "gui-e2e")]
-pub use super::render_header::toolbar_a11y::{clear_toolbar_unavailable, toolbar_unavailable};
+pub use super::render_header::toolbar_a11y::{
+    clear_toolbar_unavailable, take_focus_probe, toolbar_description, toolbar_unavailable,
+};
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn record_confirm_bounds(id: gpui::WindowId, bounds: gpui::Bounds<gpui::Pixels>) {
     CONFIRM_BOUNDS.with(|map| map.borrow_mut().insert(id, bounds));

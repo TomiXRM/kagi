@@ -308,6 +308,10 @@ mod worktree_graph;
 mod workspace_mode_toolbar;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/toolbar_keyboard.rs"]
+mod toolbar_keyboard;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/issues_pagination.rs"]
 mod issues_pagination;
 
@@ -1734,6 +1738,10 @@ mod macos {
             (
                 "toolbar_a11y_disabled",
                 Box::new(crate::workspace_mode_toolbar::scenario_toolbar_a11y_disabled),
+            ),
+            (
+                "toolbar_keyboard_reasons",
+                Box::new(crate::toolbar_keyboard::scenario_toolbar_keyboard_reasons),
             ),
             (
                 "issues_pagination",

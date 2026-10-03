@@ -329,10 +329,14 @@ impl KagiApp {
                         if !app.home_in_front() {
                             klog!("home: open issue {}#{} dropped: Home left", key.0, key.1);
                         } else if app.open_repository(path, cx) {
-                            app.show_issues_mode(cx);
-                            // The mode may have been loaded for another
-                            // repository; reads and the Reply go to `id`.
+                            // Reads and the Reply go to `id`, set before the
+                            // mode opens: the mode may have been loaded for
+                            // another repository, or know none yet and start
+                            // its first list read by resolving the default
+                            // repository again, which may have moved since
+                            // `id` was verified (#940 review).
                             app.address_issues_to(&id, cx);
+                            app.show_issues_mode(cx);
                             app.load_github_issue_detail(key.1, window, cx);
                         }
                         return;

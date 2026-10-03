@@ -1,7 +1,7 @@
-//! Remove refuses a linked worktree whose ignored content holds a repository
-//! (#951): a main checkout moved there, an independent clone. The walk does
-//! not follow symlinks, and an ignored directory without `.git` is still
-//! removed.
+//! Remove refuses a linked worktree that holds a repository below its root
+//! (#951): a main checkout moved there, an independent clone, one inside a
+//! directory with tracked files. The walk does not follow symlinks, and
+//! ignored content without `.git` is still removed.
 
 #[path = "../../../tests/support/backend_ops.rs"]
 mod backend_ops;
@@ -192,6 +192,31 @@ fn a_repository_that_appears_after_the_plan_stops_the_removal() {
         ))
     ));
     assert!(target.join("vendor/seed").exists(), "nothing was deleted");
+}
+
+/// #958 review: an ignored `vendor/` that also holds a tracked file is not
+/// reported by Git's status as an ignored directory, and a repository
+/// initialised in it is not reported at all. The whole target is walked, so
+/// it is still found.
+#[test]
+fn a_repository_beside_a_tracked_file_is_refused() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let base = TempDir::new().unwrap();
+    let main = base.path().join("main");
+    std::fs::create_dir(&main).unwrap();
+    let (target, _) = repo_with_linked(&main, base.path());
+    std::fs::create_dir(target.join("vendor")).unwrap();
+    write_file(&target, "vendor/.keep", "");
+    git(&target, &["add", "-f", "vendor/.keep"]);
+    git(&target, &["commit", "-qm", "keep vendor"]);
+    init_repo(&target.join("vendor"), "main");
+    let plan = plan_remove_worktree(&Repository::open(&main).unwrap(), "target", false).unwrap();
+    assert_eq!(
+        repository_blocker(&plan.blockers).map(same_file),
+        Some(same_file(target.join("vendor/.git")))
+    );
 }
 
 /// The walk does not follow symlinks: a link to a repository is not entered

@@ -133,6 +133,9 @@ mod home_list_place;
 #[cfg(target_os = "macos")]
 #[path = "recovery/home_work.rs"]
 mod home_work;
+#[cfg(target_os = "macos")]
+#[path = "recovery/keyboard_nav.rs"]
+mod keyboard_nav;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/conflict_abort_slot.rs"]
@@ -976,6 +979,10 @@ mod macos {
             (
                 "home_work",
                 Box::new(crate::home_work::scenario_home_work),
+            ),
+            (
+                "keyboard_nav",
+                Box::new(crate::keyboard_nav::scenario_keyboard_nav),
             ),
             (
                 "home_list_place",

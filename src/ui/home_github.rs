@@ -59,8 +59,10 @@ pub struct HomeGithub {
     /// read once, not on every frame.
     local_checked: HashSet<PathBuf>,
     pub filter: Option<Entity<InputState>>,
-    /// The clone running now (one per window, ADR-0219 decision 7).
-    pub cloning: Option<CloneRequest>,
+    /// The clone running now (one per window, ADR-0219 decision 7), as its
+    /// card: the card is its progress, and it can be sent to the background
+    /// and brought back.
+    pub cloning: Option<CloneModal>,
     /// Bumped per read, so an older read landing late is dropped.
     pub(super) generation: u64,
     /// The user's own list is on screen and the organizations' are still
@@ -79,6 +81,11 @@ pub struct HomeGithub {
     /// The list's entries as last built for [`Self::list_key`] (#937):
     /// rebuilt only when the key changes, not on every frame.
     pub(super) items: std::rc::Rc<[super::home_github_list::HomeItem]>,
+    /// Each entry's place among the rows (headings and notes are not rows)
+    /// and the number of rows, for assistive technology (#944). Built with
+    /// [`Self::items`], not on every frame.
+    pub(super) places: std::rc::Rc<[Option<usize>]>,
+    pub(super) row_count: usize,
     /// Bumped whenever the listed repositories or the local clones change,
     /// so the entries built from them are built again (#937).
     pub(super) data_version: u64,
@@ -456,8 +463,23 @@ impl KagiApp {
     }
 
     /// A listed repository was clicked: open its local clone, or review a
-    /// clone of it.
+    /// clone of it. While it is being cloned its row brings back the running
+    /// clone's card, not a new one that could not start (#944).
     pub fn home_github_pick(&mut self, listing: RepoListing, cx: &mut Context<Self>) {
+        let running = self
+            .home_github
+            .cloning
+            .clone()
+            .filter(|card| card.listing.clone_source() == listing.clone_source());
+        if let Some(card) = running {
+            if self.clone_modal().is_none() {
+                self.modal_focus = Some(cx.focus_handle());
+                self.set_clone_modal(card);
+                self.tick_clone_card(cx);
+            }
+            cx.notify();
+            return;
+        }
         let local = self.home_github.local.get(&listing.identity()).cloned();
         match local.filter(|p| p.is_dir()) {
             Some(path) => {
@@ -466,6 +488,23 @@ impl KagiApp {
             None => self.open_clone_card(listing, cx),
         }
         cx.notify();
+    }
+
+    /// Where the focus goes after a repository row was pressed, by pointer or
+    /// keyboard (#960 review): into the clone card it opened, else to the
+    /// root (the row opened its clone in a tab). Never left on the row: the
+    /// row stops the Enter it receives and presses itself on the key-up, so
+    /// the card's Enter would never confirm it and would open a fresh card
+    /// in its place.
+    pub(super) fn focus_after_pick(&self, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        let card = self
+            .clone_modal()
+            .is_some()
+            .then(|| self.modal_focus.clone())
+            .flatten();
+        if let Some(focus) = card.or_else(|| self.root_focus.clone()) {
+            window.focus(&focus, cx);
+        }
     }
 
     /// Ask where to clone `listing`: the card opens with no folder chosen.
@@ -556,17 +595,18 @@ impl KagiApp {
         // The card stays up as the clone's progress: pressing Clone must
         // visibly do something at once (user report: a silent 3 s looked like
         // a missed click or a freeze).
-        self.set_clone_modal(CloneModal {
+        let card = CloneModal {
             started: Some(std::time::Instant::now()),
             ..modal
-        });
+        };
+        self.set_clone_modal(card.clone());
         self.tick_clone_card(cx);
         klog!(
             "clone: start {} -> {}",
             request.source,
             request.dest.display()
         );
-        self.home_github.cloning = Some(request.clone());
+        self.home_github.cloning = Some(card);
         let run = request.clone();
         let work = cx.background_spawn(async move { kagi_git::ops::execute_clone(&run, &plan) });
         cx.spawn(async move |app, acx| {

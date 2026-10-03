@@ -663,6 +663,7 @@ pub enum Msg {
     HomeWorkNoIssues,
     HomeWorkNoMatch,
     HomeWorkTruncated,
+    HomeWorkOpenOnGithub,
     HomeWorkLoading,
     /// `{}` = why the list could not be read.
     HomeWorkFailed,
@@ -2637,6 +2638,8 @@ impl Msg {
             (Ja, HomeWorkNoMatch) => "絞り込みに一致するものはありません",
             (En, HomeWorkTruncated) => "More than 100",
             (Ja, HomeWorkTruncated) => "100 件以上",
+            (En, HomeWorkOpenOnGithub) => "Open on GitHub",
+            (Ja, HomeWorkOpenOnGithub) => "GitHub で開く",
             (En, HomeWorkLoading) => "Loading…",
             (Ja, HomeWorkLoading) => "読み込み中…",
             (En, HomeWorkFailed) => "Could not load: {}",

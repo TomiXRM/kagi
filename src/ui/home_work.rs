@@ -188,8 +188,8 @@ impl KagiApp {
     /// A PR or issue row was clicked. With a local clone of its repository
     /// it opens as a tab showing that PR (once `gh pr view` has its refs) or
     /// issue (once the clone is known to address that repository); without
-    /// one the clone card opens. A click on a row still being prepared is
-    /// ignored.
+    /// one it opens on GitHub (#940 review) — the clone card belongs to the
+    /// Repositories tab. A click on a row still being prepared is ignored.
     pub fn home_work_pick(
         &mut self,
         kind: WorkKind,
@@ -208,8 +208,7 @@ impl KagiApp {
             .cloned()
             .filter(|path| path.is_dir());
         let Some(path) = local else {
-            self.open_clone_card(item.repo(), cx);
-            cx.notify();
+            self.open_work_item_url(&item.url, cx);
             return;
         };
         self.home_github.work.opening = Some(key.clone());
@@ -229,6 +228,20 @@ impl KagiApp {
             let _ = app.update(acx, |app, cx| app.finish_opening_pr(key, path, pr, cx));
         })
         .detach();
+    }
+
+    /// Open a PR / issue on GitHub at the URL its search returned, through
+    /// the OS opener (#940 review). The GUI runner records the URL instead,
+    /// so a scenario never launches the user's browser.
+    pub(super) fn open_work_item_url(&mut self, url: &str, cx: &mut Context<Self>) {
+        klog!("home: open on github {}", url);
+        #[cfg(feature = "gui-e2e")]
+        {
+            let _ = cx;
+            super::e2e::record_opened_url(url);
+        }
+        #[cfg(not(feature = "gui-e2e"))]
+        cx.open_url(url);
     }
 
     /// The PR's refs have arrived. Opened only while it is still the PR

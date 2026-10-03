@@ -5,8 +5,9 @@
 //! shown only for the account they were read as; a PR of the local clone
 //! opens there once `gh pr view` has its refs, and clicks meanwhile are
 //! ignored; an issue opens in Issues mode; a row of a repository without a
-//! clone offers the clone card; one failed search keeps the others and says
-//! why, and nothing incomplete is saved.
+//! clone opens on GitHub, and every row's Open button opens it on GitHub
+//! without starting the row's own open; one failed search keeps the others
+//! and says why, and nothing incomplete is saved.
 use std::path::Path;
 
 use gpui::{AnyWindowHandle, VisualTestAppContext};
@@ -228,18 +229,40 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
     wait_for(cx, &app, "the lists again", settled);
     assert!(!drawn(cx, window, "home-work-failed"));
 
-    // A repository without a clone: the clone card.
+    // #940 review: a repository without a clone opens on GitHub, at the URL
+    // the search returned — not the clone card.
+    let _ = e2e::take_opened_urls();
     click(cx, window, "home-work-acme/widgets-3");
     assert_eq!(
-        cx.read(|cx| app.read(cx).clone_modal().map(|m| m.listing.clone_source())),
-        Some("github.com/acme/widgets".to_string()),
-        "a PR of a repository not cloned offers its clone"
+        e2e::take_opened_urls(),
+        vec!["https://github.com/acme/widgets/pull/3".to_string()],
+        "a PR of a repository not cloned opens on GitHub"
     );
-    app.update(cx, |app, cx| {
-        app.cancel_clone();
-        cx.notify();
-    });
-    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).clone_modal().is_none()),
+        "the clone card belongs to the Repositories tab"
+    );
+    // Every row's end is Open (on GitHub), cloned or not, and pressing it
+    // does not also run the row's click: no refs read, no spinner.
+    click(cx, window, "home-work-acme/widgets-3-open");
+    click(cx, window, "home-work-acme/local-7-open");
+    assert_eq!(
+        e2e::take_opened_urls(),
+        vec![
+            "https://github.com/acme/widgets/pull/3".to_string(),
+            "https://github.com/acme/local/pull/7".to_string(),
+        ],
+    );
+    assert_eq!(
+        view_calls(),
+        0,
+        "Open on a cloned PR does not open it locally"
+    );
+    assert!(cx.read(|cx| app.read(cx).home_github.work.opening.is_none()));
+    assert!(
+        cx.read(|cx| app.read(cx).home.is_some()),
+        "Home stays in front"
+    );
 
     // The local clone's PR: a spinner while `gh pr view` runs, a second
     // click meanwhile is ignored, then the PR opens in the clone's tab.
@@ -291,6 +314,13 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
     click_control(cx, window, "tab-add");
     cx.run_until_parked();
     click_control(cx, window, "home-pane-issues");
+    // An issue row's Open is on GitHub too, at the issue's own URL.
+    click(cx, window, "home-work-acme/local-4-open");
+    assert_eq!(
+        e2e::take_opened_urls(),
+        vec!["https://github.com/acme/local/issues/4".to_string()]
+    );
+    assert!(cx.read(|cx| app.read(cx).home.is_some()));
     std::fs::write(
         state.join("default-repo"),
         "https://github.com/acme/upstream",

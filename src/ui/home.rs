@@ -312,13 +312,6 @@ impl KagiApp {
                             .text_color(rgb(theme().text_main))
                             .child(SharedString::from(Msg::HomeTitle.t())),
                     )
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_sm()
-                            .text_color(rgb(theme().text_muted))
-                            .child(SharedString::from(Msg::HomeSubtitle.t())),
-                    )
                     .child(actions.flex_shrink_0())
                     .child(self.render_home_github(cx)),
             )

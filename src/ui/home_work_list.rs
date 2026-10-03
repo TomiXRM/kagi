@@ -1,11 +1,11 @@
 //! Drawing Home's pull request and issue panes (#928): their sections as
 //! entries of the same virtualized list as the repositories, and their rows.
 
-use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::{div, prelude::*, px, rgb, AnyElement, Entity, SharedString};
+use gpui_component::button::Button;
+use gpui_component::Sizable as _;
 use kagi_git::github_repos_cache::{WorkItem, WorkKind};
 use kagi_ui_core::avatar::AvatarImages;
 
@@ -16,12 +16,12 @@ use super::render_helpers::safe_text;
 use super::theme::{self, theme};
 use super::KagiApp;
 
-/// What a click on a row does, shown at its end.
+/// Whether a row is idle or its PR is being opened in a local clone. The
+/// row's end is the same "Open" (on GitHub) button whether or not the
+/// repository is cloned; only the row click differs (`home_work_pick`).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum WorkRowState {
-    Open,
-    Clone,
-    Cloning,
+    Idle,
     /// The PR's refs are being read before it opens; clicks are ignored.
     Opening,
 }
@@ -55,13 +55,7 @@ fn matches(item: &WorkItem, query: &str) -> bool {
 /// rows matching `query`, and a note when it is empty or cut at the search
 /// limit. A list without a match is left out while filtering. Before any
 /// list has been read or loaded from the cache, one spinner row.
-pub(super) fn work_items(
-    work: &HomeWork,
-    pane: HomePane,
-    local: &HashMap<String, PathBuf>,
-    query: &str,
-    cloning: Option<&str>,
-) -> Vec<HomeItem> {
+pub(super) fn work_items(work: &HomeWork, pane: HomePane, query: &str) -> Vec<HomeItem> {
     let Some(lists) = &work.lists else {
         return vec![HomeItem::Loading(
             Msg::HomeWorkLoading.t(),
@@ -81,15 +75,11 @@ pub(super) fn work_items(
             .iter()
             .filter(|item| matches(item, query))
             .map(|item| {
-                let identity = item.identity();
-                let state = if work.opening.as_ref() == Some(&(identity.clone(), item.number)) {
+                let opening = work.opening.as_ref() == Some(&(item.identity(), item.number));
+                let state = if opening {
                     WorkRowState::Opening
-                } else if local.contains_key(&identity) {
-                    WorkRowState::Open
-                } else if cloning == Some(item.repo().clone_source().as_str()) {
-                    WorkRowState::Cloning
                 } else {
-                    WorkRowState::Clone
+                    WorkRowState::Idle
                 };
                 HomeItem::Work(kind, item.clone(), state)
             })
@@ -178,9 +168,23 @@ pub(super) fn work_row(
                 SharedString::from(format!("{key}-opening")),
             ),
         ),
-        WorkRowState::Open => chip(Msg::HomeGithubOpen.t(), theme().color_branch),
-        WorkRowState::Clone => chip(Msg::HomeGithubClone.t(), theme().color_branch),
-        WorkRowState::Cloning => chip(Msg::HomeGithubCloning.t(), theme().color_branch),
+        // Every row's end opens the item on GitHub, cloned or not; its own
+        // click must not also run the row's (#940 review).
+        WorkRowState::Idle => {
+            let app = app.clone();
+            let url = item.url.clone();
+            super::e2e::measure_control(
+                format!("{key}-open"),
+                Button::new(SharedString::from(format!("{key}-open")))
+                    .label(Msg::HomeGithubOpen.t())
+                    .small()
+                    .tooltip(Msg::HomeWorkOpenOnGithub.t())
+                    .on_click(move |_, _, cx| {
+                        cx.stop_propagation();
+                        app.update(cx, |app, cx| app.open_work_item_url(&url, cx));
+                    }),
+            )
+        }
     };
     let app = app.clone();
     let picked = item.clone();

@@ -624,7 +624,6 @@ pub enum Msg {
     IssueCreate,
     HomeTabTitle,
     HomeTitle,
-    HomeSubtitle,
     HomeRecent,
     HomeNoRecent,
     HomeOpenFolder,
@@ -663,6 +662,7 @@ pub enum Msg {
     HomeWorkNoIssues,
     HomeWorkNoMatch,
     HomeWorkTruncated,
+    HomeWorkOpenOnGithub,
     HomeWorkLoading,
     /// `{}` = why the list could not be read.
     HomeWorkFailed,
@@ -2557,12 +2557,6 @@ impl Msg {
             (Ja, HomeTabTitle) => "ホーム",
             (En, HomeTitle) => "Open a repository",
             (Ja, HomeTitle) => "リポジトリを開く",
-            (En, HomeSubtitle) => {
-                "Pick one you opened recently, open a folder, or connect to one over SSH."
-            }
-            (Ja, HomeSubtitle) => {
-                "最近開いたリポジトリを選ぶか、フォルダーを開くか、SSH で接続します。"
-            }
             (En, HomeRecent) => "Recently opened",
             (Ja, HomeRecent) => "最近開いたリポジトリ",
             (En, HomeNoRecent) => "No recently opened repositories.",
@@ -2637,6 +2631,8 @@ impl Msg {
             (Ja, HomeWorkNoMatch) => "絞り込みに一致するものはありません",
             (En, HomeWorkTruncated) => "More than 100",
             (Ja, HomeWorkTruncated) => "100 件以上",
+            (En, HomeWorkOpenOnGithub) => "Open on GitHub",
+            (Ja, HomeWorkOpenOnGithub) => "GitHub で開く",
             (En, HomeWorkLoading) => "Loading…",
             (Ja, HomeWorkLoading) => "読み込み中…",
             (En, HomeWorkFailed) => "Could not load: {}",

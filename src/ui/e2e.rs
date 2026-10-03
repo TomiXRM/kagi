@@ -816,3 +816,21 @@ pub(crate) fn take_squash_scan() -> Option<gpui::Task<SquashScanResult>> {
 pub fn active_ui_writer_available(app: &mut KagiApp) -> bool {
     app.ui_mut().is_some()
 }
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static OPENED_URLS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A URL Kagi asked the OS to open, recorded instead of launching the
+/// user's browser from the GUI runner (#940 review).
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_opened_url(url: &str) {
+    OPENED_URLS.with(|urls| urls.borrow_mut().push(url.to_string()));
+}
+
+/// The URLs opened since the last call, oldest first.
+#[cfg(feature = "gui-e2e")]
+pub fn take_opened_urls() -> Vec<String> {
+    OPENED_URLS.with(|urls| std::mem::take(&mut *urls.borrow_mut()))
+}

@@ -141,9 +141,7 @@ impl KagiApp {
         let home = &self.home_github;
         let (query, cloning) = (key.query.as_str(), key.cloning.as_deref());
         match (key.pane, &home.repos) {
-            (HomePane::Prs | HomePane::Issues, _) => {
-                work_items(&home.work, key.pane, &home.local, query, cloning)
-            }
+            (HomePane::Prs | HomePane::Issues, _) => work_items(&home.work, key.pane, query),
             (
                 HomePane::Repos,
                 GithubRepos::Loaded {

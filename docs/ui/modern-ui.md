@@ -169,12 +169,17 @@ PR block.
 
 ## Known gaps (do not claim these are met)
 
-- Only Home's list has the row keyboard path (one Tab stop, ↑/↓ and
-  Home/End/PageUp/PageDown, with Cmd+↑/↓ for the ends); the PR / Issue
-  navigators and the Graph sidebar do not. The commit graph pages from
+- Home's list and the Graph sidebar's panes have the row keyboard path (one
+  Tab stop, ↑/↓ and Home/End/PageUp/PageDown, with Cmd+↑/↓ for the ends);
+  the PR / Issue navigators do not. The commit graph pages from
   root focus only while Graph is visible and no menu overlay or confirmation
   modal covers it, independently of Home's row focus. Its ↑/↓ keys use
   the same visibility guard.
+- The Graph sidebar (#981): a pane collapses only by the pointer; the
+  keyboard-opened worktree card's Refresh and port link are pointer-only;
+  the branch row's × and the right-click menus have no keyboard path (#985);
+  after a checkout plan opened from a row closes, the focus is on the
+  window, not back on the row.
 - gpui shows `focus_visible` only while the last input was a key: moving the
   mouse hides the ring while the focus stays, so the next Enter / Space
   presses an element with no ring (gpui-wide; #960 review).

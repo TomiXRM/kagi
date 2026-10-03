@@ -587,6 +587,7 @@ pub fn build_sidebar_rows(
                 rows.push(SidebarRow::Stash {
                     index: stash.index,
                     message: stash.message.clone(),
+                    target: stash.target.clone(),
                 });
             }
         }

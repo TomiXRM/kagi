@@ -216,6 +216,9 @@ impl Render for KagiApp {
                 .work
                 .pane_focus
                 .yield_focus(fallback.as_ref(), window, cx);
+        } else {
+            // The same for the Graph sidebar's rows and headers (#981).
+            self.yield_sidebar_focus(window, cx);
         }
         // Before any tab list picks its Tab stop this frame (#968).
         super::keyboard_nav::forget_roving_without_focus(window);
@@ -367,10 +370,12 @@ impl Render for KagiApp {
                 &sidebar_filter_text,
             );
             self.sidebar.pane_ranges = sidebar_panes::pane_ranges(&rows);
+            self.sidebar
+                .focus
+                .set_keys(&rows, &self.sidebar.pane_ranges);
             self.sidebar.rows = rows;
             self.sidebar.rows_fingerprint = sidebar_fingerprint;
         }
-
         let status_footer = self.status_footer.clone();
         // ADR-0118 / T-ENTITY-CONFLICT-001: the conflict body is its own
         // `Entity<ConflictView>`. The entity renders itself (`el.child(entity)`);
@@ -382,6 +387,11 @@ impl Render for KagiApp {
         // resolution body (ADR-0068). Conflict Mode is still active (MERGE_HEAD
         // present) but the editor is hidden behind the commit message panel.
         let conflict_body_visible = self.conflict_body_visible();
+        // Conflict Mode replaces the body, the sidebar's panes with it; the
+        // body's frames sync them as they lay the sidebar out (#981).
+        if conflict_body_visible {
+            self.yield_sidebar_focus(window, cx);
+        }
         let commit_menu_overlay = self
             .commit_menu
             .clone()
@@ -708,6 +718,7 @@ impl Render for KagiApp {
                     commit_panel_open,
                     commit_panel.clone(),
                     wip_diffstat,
+                    window,
                     cx,
                 ))
             })

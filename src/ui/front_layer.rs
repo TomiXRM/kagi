@@ -34,16 +34,16 @@ pub(crate) enum LayerKind {
 
 /// Rendering order (bottom → top). Coauthor lives in the body
 /// (`commit_panel_render.rs:1359`); the other pane and workspace menus,
-/// followed by MenuOverlay, are in `render.rs:714-727`.
+/// followed by MenuOverlay, are in `render.rs:725-738`.
 /// Home draws MenuOverlay then the modal slice (`home.rs:213-231`).
 /// `render_overlay.rs:311-680` iterates that slice; the shell appends the
-/// platform dropdown (`render.rs:742-743`, `mod.rs:3521-3536` on Home).
+/// platform dropdown (`render.rs:753-754`, `mod.rs:3521-3536` on Home).
 pub(crate) const Z_ORDER: [LayerKind; 14] = [
-    LayerKind::ConflictFileMenu,  // render.rs:716
-    LayerKind::EditorTreeMenu,    // render.rs:717
+    LayerKind::ConflictFileMenu,  // render.rs:727
+    LayerKind::EditorTreeMenu,    // render.rs:728
     LayerKind::CoauthorMenu,      // commit_panel_render.rs:1359
-    LayerKind::WorkspaceMenus,    // render.rs:718-725
-    LayerKind::MenuOverlay,       // render.rs:726-727; home.rs:213-221
+    LayerKind::WorkspaceMenus,    // render.rs:729-736
+    LayerKind::MenuOverlay,       // render.rs:737-738; home.rs:213-221
     LayerKind::EarlyModal,        // render_overlay.rs:313-612
     LayerKind::PrMenu,            // render_overlay.rs:613-620
     LayerKind::FilterMenu,        // render_overlay.rs:621-623
@@ -52,7 +52,7 @@ pub(crate) const Z_ORDER: [LayerKind; 14] = [
     LayerKind::CommitPlan,        // render_overlay.rs:643-651
     LayerKind::SmartCommit,       // render_overlay.rs:652-656
     LayerKind::Update,            // render_overlay.rs:657-673
-    LayerKind::PlatformMenu,      // render.rs:742-743; mod.rs:3535
+    LayerKind::PlatformMenu,      // render.rs:753-754; mod.rs:3535
 ];
 
 impl LayerKind {

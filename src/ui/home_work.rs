@@ -608,7 +608,10 @@ impl KagiApp {
     /// The key of Home's list row holding the focus (`repo:<owner>/<name>`,
     /// `<kind>:<owner>/<name>#<number>`), if any.
     pub fn home_row_focused_for_e2e(&self, window: &Window) -> Option<String> {
-        self.home_github.row_focus.focused(window)
+        self.home_github
+            .row_focus
+            .focused(window)
+            .map(str::to_owned)
     }
 
     /// Whether the focus is on one of Home's rows or a control inside one

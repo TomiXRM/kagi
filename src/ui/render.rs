@@ -201,6 +201,22 @@ impl Render for KagiApp {
         self.sync_issue_inputs(window, cx);
         self.sync_list_filter_input(window, cx);
         self.sync_pending_focus(window, cx);
+        // Home's rows and its Repositories / Pull requests / Issues switch
+        // are drawn only with Home in front. Every way off it (⌘W, a
+        // repository tab, a row that opens its clone) leaves a focus on them
+        // with nothing tracking it, out of the window's keys: the focus goes
+        // to the window (#961 review). The row is still remembered for when
+        // Home is back.
+        if !self.home_in_front() {
+            let fallback = self.root_focus.clone();
+            self.home_github
+                .row_focus
+                .yield_focus(fallback.as_ref(), window, cx);
+            self.home_github
+                .work
+                .pane_focus
+                .yield_focus(fallback.as_ref(), window, cx);
+        }
         // Before any tab list picks its Tab stop this frame (#968).
         super::keyboard_nav::forget_roving_without_focus(window);
 
@@ -621,7 +637,7 @@ impl Render for KagiApp {
             // any command whose handler is absent — the ADR-0029 disabled model.
             .map(|el| self.register_menu_actions(el, cx))
             // ── W4-TABS: repository tab strip (above the header toolbar) ──
-            .children(self.render_tab_strip(cx))
+            .children(self.render_tab_strip(window, cx))
             // ── Header slot ──────────────────────────────────
             // ADR-0013: pass HEAD commit summary for Undo label (first row = HEAD).
             .child(self.render_header_slot(toolbar_state, status_summary, cx))

@@ -841,15 +841,80 @@ impl KagiApp {
 
     /// Render the repository tab strip (above the header toolbar).  Returns
     /// `None` when no tabs are open (Welcome screen is shown instead).
-    pub fn render_tab_strip(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+    pub fn render_tab_strip(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        // The strip's cells are keyed by the tab they stand for, not by
+        // slot, so a tab added, closed or moved before a cell leaves its
+        // handle, a focus on it and the arrowed-to mark with it (#961
+        // review). Home is the last cell, under a key no tab has.
+        const HOME_KEY: u64 = u64::MAX;
         if self.tabs.is_empty() {
+            // No strip: every cell is gone, and one that still holds the
+            // focus (the last tab's, Home's) hands it to the window.
+            self.tab_strip_focus.sync(&[], cx);
+            self.tab_strip_focus
+                .release_closed(self.root_focus.as_ref(), window, cx);
             return None;
+        }
+        let mut keys: Vec<u64> = self.tabs.iter().map(|tab| tab.session.tab().0).collect();
+        if self.home.is_some() {
+            keys.push(HOME_KEY);
         }
 
         let active = self.active_tab;
         let tabs: Vec<RepoTab> = self.tabs.clone();
+        // With Home in front no repository tab is the selected one (ADR-0219).
+        let home_front = self.home_in_front();
+        // Keyboard (#959): one Tab stop, ←/→/Home/End between the tabs, and
+        // Enter / Space switch — not the arrows, as switching to a tab reads
+        // its repository again (ADR-0197 S4). Home is the last cell.
+        let repos = tabs.len();
+        let home_slot = self.home.is_some().then_some(repos);
+        let slots = repos + usize::from(home_slot.is_some());
+        let entity = cx.weak_entity();
+        let strip_tabs = super::keyboard_nav::TabList::new(
+            &self.tab_strip_focus,
+            keys,
+            (0..slots).collect(),
+            if home_front { home_slot } else { Some(active) },
+            super::keyboard_nav::Activation::Manual,
+            self.root_focus.clone(),
+            move |slot, window, cx| {
+                let _ = entity.update(cx, |this, cx| {
+                    if slot < repos {
+                        // A repository tab moves Home (if open) to the back;
+                        // on the tab already behind it, `switch_repo` is a
+                        // no-op (#488), so the notify is what brings the
+                        // repository back on screen.
+                        let left = this.send_home_back();
+                        this.return_to_tab(slot, left, cx);
+                        cx.notify();
+                    } else {
+                        // Opening Home puts the focus on the root; a key
+                        // pressed on Home's cell keeps it there, as on a
+                        // repository's cell, so ←/→ go on working (#961
+                        // review). A pointer click hands the focus to the
+                        // root afterwards anyway (`TabList::cell`).
+                        let kept = this.tab_strip_focus.focused_cell(window);
+                        this.open_home_tab(window, cx);
+                        if let Some(cell) = kept {
+                            window.focus(&cell, cx);
+                        }
+                    }
+                });
+            },
+            cx,
+        );
+        // A closed tab's cell that still holds the focus hands it to the
+        // window, not to a cell drawn in its place (#961 review).
+        self.tab_strip_focus
+            .release_closed(self.root_focus.as_ref(), window, cx);
 
-        let mut strip = div()
+        let mut strip = strip_tabs
+            .list(div().id("tab-strip"))
             .flex()
             .flex_row()
             .items_center()
@@ -863,8 +928,7 @@ impl KagiApp {
             // left for the traffic lights drawn over it.
             .window_control_area(gpui::WindowControlArea::Drag)
             .when(cfg!(target_os = "macos"), |s| s.pl(gpui::px(80.)));
-        // With Home in front no repository tab is the selected one (ADR-0219).
-        let home_front = self.home_in_front();
+        let ring = super::keyboard_nav::RING;
 
         for (i, tab) in tabs.into_iter().enumerate() {
             let is_active = i == active && !home_front;
@@ -894,15 +958,7 @@ impl KagiApp {
             } else {
                 tab.name.clone()
             });
-
-            // A repository tab click moves Home (if open) to the back; on the
-            // tab already behind it, `switch_repo` is a no-op (#488), so the
-            // notify is what brings the repository back on screen.
-            let switch = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
-                let left = this.send_home_back();
-                this.return_to_tab(i, left, cx);
-                cx.notify();
-            });
+            let name = tab.name.clone();
             let close = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
                 this.close_tab(i, cx);
             });
@@ -912,13 +968,15 @@ impl KagiApp {
                 .ghost()
                 .xsmall()
                 .ml(theme::scaled_px(4.))
+                // The strip is one Tab stop; ⌘W closes the tab in front.
+                .tab_stop(false)
                 .on_click(close);
 
             // Accent bar colour: worktree lane colour (every worktree tab), else
             // the blue accent on the active main-repo tab; `None` → no bar.
             let accent = wt_color.or_else(|| is_active.then(|| rgb(theme().color_branch).into()));
-            let tab_el = div()
-                .id(("repo-tab", i))
+            let tab_el = strip_tabs
+                .cell(i, &name, div().id(("repo-tab", i)))
                 .relative()
                 .flex()
                 .flex_row()
@@ -926,7 +984,7 @@ impl KagiApp {
                 .h_full()
                 .min_w(theme::scaled_px(TAB_MIN_W))
                 .max_w(theme::scaled_px(TAB_MAX_W))
-                .px_2()
+                .px(super::keyboard_nav::inset(8.))
                 .gap_1()
                 // Worktree tabs are tinted with the SAME lane colour as that
                 // worktree's WIP row (user request), washed when inactive.
@@ -936,21 +994,29 @@ impl KagiApp {
                 })
                 .text_sm()
                 .text_color(rgb(fg))
-                .border_r_1()
-                .border_color(rgb(theme().panel))
+                // The 1px between tabs is the strip showing through (the
+                // tab's own border is the keyboard focus ring).
+                .mr(px(1.))
                 .child(super::e2e::measure_inside(format!("repo-tab-{i}")))
                 // Top accent as an ABSOLUTE overlay bar (not `border_t_2`): no
-                // layout shift on selection, and an even full-width line with no
-                // corner miter against `border_r_1` (cf. `render_helpers.rs`).
+                // layout shift on selection, and an even full-width line. It
+                // covers the ring's top edge, as it did the tab's.
                 .when_some(accent, |el, c| {
-                    el.child(div().absolute().top_0().left_0().right_0().h(px(2.)).bg(c))
+                    el.child(
+                        div()
+                            .absolute()
+                            .top(px(-ring))
+                            .left(px(-ring))
+                            .right(px(-ring))
+                            .h(px(2.))
+                            .bg(c),
+                    )
                 })
                 .cursor(gpui::CursorStyle::PointingHand)
                 .tooltip({
                     let full = full_path.clone();
                     move |window, cx| Tooltip::new(full.clone()).build(window, cx)
                 })
-                .on_click(switch)
                 .child(div().flex_1().truncate().child(label))
                 .child(close_btn);
 
@@ -958,8 +1024,8 @@ impl KagiApp {
         }
 
         // The Home tab (ADR-0219), after the repositories.
-        if let Some(home) = self.home {
-            strip = strip.child(render_home_tab(home.front, cx));
+        if let (Some(home), Some(slot)) = (self.home, home_slot) {
+            strip = strip.child(render_home_tab(&strip_tabs, slot, home.front, cx));
         }
 
         // [+] new-tab button at the right end → the Home tab (#923).
@@ -971,6 +1037,8 @@ impl KagiApp {
             .ghost()
             .small()
             .tooltip(Msg::HomeTabTitle.t())
+            // The strip is one Tab stop (#961 review); ⌘T opens Home.
+            .tab_stop(false)
             .on_click(plus);
 
         strip = strip.child(super::e2e::measure_control("tab-add", plus_btn));
@@ -980,11 +1048,13 @@ impl KagiApp {
 }
 
 /// The Home tab's entry in the strip: shaped like a repository tab, with a
-/// house glyph and its own ×.
-fn render_home_tab(front: bool, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let show = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
-        this.open_home_tab(window, cx);
-    });
+/// house glyph and its own ×. It is cell `slot` of the strip's tab list.
+fn render_home_tab(
+    tabs: &super::keyboard_nav::TabList,
+    slot: usize,
+    front: bool,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
     let close = cx.listener(|this, _: &gpui::ClickEvent, _w, cx| {
         this.close_home_tab(cx);
     });
@@ -993,14 +1063,15 @@ fn render_home_tab(front: bool, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
         .ghost()
         .xsmall()
         .ml(theme::scaled_px(4.))
+        .tab_stop(false)
         .on_click(close);
     let (bg, fg) = if front {
         (theme().selected, theme().text_main)
     } else {
         (theme().surface, theme().text_sub)
     };
-    div()
-        .id("home-tab")
+    let ring = super::keyboard_nav::RING;
+    tabs.cell(slot, Msg::HomeTabTitle.t(), div().id("home-tab"))
         .relative()
         .flex()
         .flex_row()
@@ -1008,27 +1079,25 @@ fn render_home_tab(front: bool, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
         .h_full()
         .min_w(theme::scaled_px(TAB_MIN_W))
         .max_w(theme::scaled_px(TAB_MAX_W))
-        .px_2()
+        .px(super::keyboard_nav::inset(8.))
         .gap_1()
         .bg(rgb(bg))
         .text_sm()
         .text_color(rgb(fg))
-        .border_r_1()
-        .border_color(rgb(theme().panel))
+        .mr(px(1.))
         .child(super::e2e::measure_inside("home-tab"))
         .when(front, |el| {
             el.child(
                 div()
                     .absolute()
-                    .top_0()
-                    .left_0()
-                    .right_0()
+                    .top(px(-ring))
+                    .left(px(-ring))
+                    .right(px(-ring))
                     .h(px(2.))
                     .bg(rgb(theme().color_branch)),
             )
         })
         .cursor(gpui::CursorStyle::PointingHand)
-        .on_click(show)
         .child(div().flex_1().truncate().child(SharedString::from(format!(
             "\u{2302} {}",
             Msg::HomeTabTitle.t()

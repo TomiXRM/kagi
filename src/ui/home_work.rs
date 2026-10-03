@@ -415,7 +415,7 @@ impl KagiApp {
         let app = cx.weak_entity();
         let tabs = super::keyboard_nav::TabList::new(
             &work.pane_focus,
-            PANES.len(),
+            super::keyboard_nav::slot_keys(PANES.len()),
             (0..PANES.len()).collect(),
             PANES.iter().position(|&p| p == active),
             super::keyboard_nav::Activation::Automatic,
@@ -543,6 +543,11 @@ impl KagiApp {
         self.home_github.work.pane_focus.focus(slot, window, cx);
     }
 
+    /// Which cell of Home's switch holds the focus, if any.
+    pub fn home_pane_focused_for_e2e(&self, window: &Window) -> Option<usize> {
+        self.home_github.work.pane_focus.focused(window)
+    }
+
     /// Focus Settings' switch `slot` (in drawing order, #970).
     pub fn focus_settings_switch_for_e2e(
         &self,
@@ -598,6 +603,34 @@ impl KagiApp {
     /// Which workspace-mode cell holds the focus, if any.
     pub fn mode_nav_focused_for_e2e(&self, window: &Window) -> Option<usize> {
         self.sidebar.mode_focus.focused(window)
+    }
+
+    /// The key of Home's list row holding the focus (`repo:<owner>/<name>`,
+    /// `<kind>:<owner>/<name>#<number>`), if any.
+    pub fn home_row_focused_for_e2e(&self, window: &Window) -> Option<String> {
+        self.home_github.row_focus.focused(window)
+    }
+
+    /// Whether the focus is on one of Home's rows or a control inside one
+    /// (its Open button), in the frame on screen.
+    pub fn home_row_holds_focus_for_e2e(&self, window: &Window, cx: &gpui::App) -> bool {
+        self.home_github.row_focus.holds_focus(window, cx)
+    }
+
+    /// Focus Home's list row `key`.
+    pub fn focus_home_row_for_e2e(&self, key: &str, window: &mut Window, cx: &mut gpui::App) {
+        self.home_github.row_focus.focus(key, window, cx);
+    }
+
+    /// Focus the repository tab strip's cell `slot` (Home is after the
+    /// repositories).
+    pub fn focus_tab_strip_for_e2e(&self, slot: usize, window: &mut Window, cx: &mut gpui::App) {
+        self.tab_strip_focus.focus(slot, window, cx);
+    }
+
+    /// Which cell of the repository tab strip holds the focus, if any.
+    pub fn tab_strip_focused_for_e2e(&self, window: &Window) -> Option<usize> {
+        self.tab_strip_focus.focused(window)
     }
 
     /// How many times Home's repository list and its PR / issue lists have

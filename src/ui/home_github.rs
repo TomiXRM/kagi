@@ -85,17 +85,20 @@ pub struct HomeGithub {
     /// The list's entries as last built for [`Self::list_key`] (#937):
     /// rebuilt only when the key changes, not on every frame.
     pub(super) items: std::rc::Rc<[super::home_github_list::HomeItem]>,
-    /// Each entry's place among the rows (headings and notes are not rows)
-    /// and the number of rows, for assistive technology (#944). Built with
-    /// [`Self::items`], not on every frame.
+    /// Each entry's place among the rows (headings and notes are not rows),
+    /// for assistive technology (#944), and each row's key and entry, for
+    /// ↑/↓ and the list's one Tab stop (#959). Built with [`Self::items`],
+    /// not on every frame.
     pub(super) places: std::rc::Rc<[Option<usize>]>,
-    pub(super) row_count: usize,
+    pub(super) row_keys: super::keyboard_nav::RowKeys,
     /// Bumped whenever the listed repositories or the local clones change,
     /// so the entries built from them are built again (#937).
     pub(super) data_version: u64,
     /// The user's open pull requests and issues, and which pane of Home's
     /// switch is showing (#928).
     pub work: super::home_work::HomeWork,
+    /// The list's rows, for the keyboard (#959).
+    pub(crate) row_focus: super::keyboard_nav::RowFocus,
 }
 
 /// The clone card: which repository, and — once the user has chosen a folder —
@@ -684,7 +687,11 @@ impl KagiApp {
     /// The GitHub section of Home's main column: a header and a search field,
     /// then one section per owner (the user first, then each organization)
     /// as a virtualized list filling the rest of the column.
-    pub(crate) fn render_home_github(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_home_github(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let refresh = cx.listener(|app, _: &gpui::ClickEvent, _, cx| {
             app.reload_home_github(cx);
             cx.notify();
@@ -735,9 +742,19 @@ impl KagiApp {
             .as_ref()
             .map(|f| f.read(cx).value().trim().to_lowercase())
             .unwrap_or_default();
+        // Repositories still loading, or failed: the list is not drawn, so a
+        // row that holds the focus hands it to the window (#961 review).
+        if self.home_github.work.pane == super::home_work::HomePane::Repos
+            && !matches!(self.home_github.repos, GithubRepos::Loaded { .. })
+        {
+            let fallback = self.root_focus.clone();
+            self.home_github
+                .row_focus
+                .release(fallback.as_ref(), window, cx);
+        }
         let body = match (&self.home_github.repos, self.home_github.work.pane) {
             (_, super::home_work::HomePane::Prs | super::home_work::HomePane::Issues) => {
-                self.render_github_list(query, cx)
+                self.render_github_list(query, window, cx)
             }
             (GithubRepos::NotLoaded | GithubRepos::Loading, _) => div()
                 .flex()
@@ -765,7 +782,7 @@ impl KagiApp {
                 )
                 .child(muted(Msg::HomeGithubFailedHint.t().to_string()))
                 .into_any_element(),
-            (GithubRepos::Loaded { .. }, _) => self.render_github_list(query, cx),
+            (GithubRepos::Loaded { .. }, _) => self.render_github_list(query, window, cx),
         };
         div()
             .flex()
@@ -781,7 +798,24 @@ impl KagiApp {
                     .as_ref()
                     .map(|f| div().flex_shrink_0().child(search_field(f))),
             )
-            .child(body)
+            // The switch's content, named after the selected pane (#979).
+            .child(
+                super::tab_panel_a11y::tab_panel(
+                    div()
+                        .id("home-pane-panel")
+                        .flex_1()
+                        .min_h(px(0.))
+                        .flex()
+                        .flex_col(),
+                    "home-pane-panel",
+                    match self.home_github.work.pane {
+                        super::home_work::HomePane::Repos => Msg::HomePaneRepos.t(),
+                        super::home_work::HomePane::Prs => Msg::HomePanePrs.t(),
+                        super::home_work::HomePane::Issues => Msg::HomePaneIssues.t(),
+                    },
+                )
+                .child(body),
+            )
             .into_any_element()
     }
 }

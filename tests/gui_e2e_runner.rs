@@ -137,6 +137,9 @@ mod home_list_place;
 #[path = "recovery/home_p2.rs"]
 mod home_p2;
 #[cfg(target_os = "macos")]
+#[path = "recovery/home_rows.rs"]
+mod home_rows;
+#[cfg(target_os = "macos")]
 #[path = "recovery/home_work.rs"]
 mod home_work;
 #[cfg(target_os = "macos")]
@@ -173,6 +176,9 @@ mod overlay_focus;
 #[cfg(target_os = "macos")]
 #[path = "recovery/settings_switches.rs"]
 mod settings_switches;
+#[cfg(target_os = "macos")]
+#[path = "recovery/tab_panels.rs"]
+mod tab_panels;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/pr_fields_focus.rs"]
@@ -975,6 +981,10 @@ mod macos {
                 Box::new(crate::keyboard_nav::scenario_keyboard_nav),
             ),
             (
+                "home_rows",
+                Box::new(crate::home_rows::scenario_home_rows),
+            ),
+            (
                 "home_list_place",
                 Box::new(crate::home_list_place::scenario_home_list_place),
             ),
@@ -1241,6 +1251,10 @@ mod macos {
             (
                 "settings_switches",
                 Box::new(crate::settings_switches::scenario_settings_switches),
+            ),
+            (
+                "tab_panels",
+                Box::new(crate::tab_panels::scenario_tab_panels),
             ),
             (
                 "settings_scroll_stays_in_overlay",

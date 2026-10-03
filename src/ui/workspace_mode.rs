@@ -190,7 +190,7 @@ pub(super) fn render_sidebar_mode_nav(
     let entity = cx.weak_entity();
     let tabs = super::keyboard_nav::TabList::new(
         &app.sidebar.mode_focus,
-        MODES.len(),
+        super::keyboard_nav::slot_keys(MODES.len()),
         shown,
         MODES.iter().position(|&m| m == mode),
         super::keyboard_nav::Activation::Manual,
@@ -338,12 +338,31 @@ pub(super) fn render_sidebar_pages(
 ) -> gpui::AnyElement {
     let offset = app.sidebar.swipe.offset();
     let width = f32::from(theme::scaled_px(app.sidebar.width));
-    let mut viewport = div()
+    let viewport = div()
+        .id("sidebar-mode-panel")
         .relative()
         .flex_1()
         .min_h(px(0.))
         .overflow_hidden()
         .child(sidebar_page(offset).child(page_content(app, mode, cx)));
+    // The page under the workspace-mode nav is the content of its selected
+    // cell (#979); with no cell selected (Editor, a takeover) it is no panel.
+    let mut viewport = match mode {
+        WorkspaceMode::Graph => super::tab_panel_a11y::tab_panel(
+            viewport,
+            "sidebar-mode-panel",
+            Msg::WorkspaceGraph.t(),
+        ),
+        WorkspaceMode::Prs => {
+            super::tab_panel_a11y::tab_panel(viewport, "sidebar-mode-panel", Msg::WorkspacePrs.t())
+        }
+        WorkspaceMode::Issues => super::tab_panel_a11y::tab_panel(
+            viewport,
+            "sidebar-mode-panel",
+            Msg::WorkspaceIssues.t(),
+        ),
+        WorkspaceMode::Editor | WorkspaceMode::Takeover => viewport,
+    };
     if offset != 0.0 {
         // The neighbour follows from the side the current page is uncovering.
         let neighbour_left = offset - width * offset.signum();

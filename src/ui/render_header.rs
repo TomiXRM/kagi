@@ -468,7 +468,7 @@ impl KagiApp {
                     toolbar_a11y::record_focus_probe(id);
                 }
             });
-            keyboard_nav::focusable_row(btn)
+            keyboard_nav::focusable(btn)
         };
 
         // ── Undo / Redo tooltips: previewed operation summary (ADR-0081) ────
@@ -598,7 +598,7 @@ impl KagiApp {
                                 toolbar_a11y::record_focus_probe("tb-refresh");
                             }
                         });
-                        keyboard_nav::focusable_row(refresh).on_click(refresh_click)
+                        keyboard_nav::focusable(refresh).on_click(refresh_click)
                     })
                     // ── repo name (top) + current branch (smaller, below) ──
                     // Stacked vertically so a long branch label never competes
@@ -799,7 +799,7 @@ impl KagiApp {
                             });
                             let chip_text = SharedString::from(format!("\u{2191} Update {}", tag));
                             el.child(
-                                keyboard_nav::focusable_row(
+                                keyboard_nav::focusable(
                                     div()
                                         .id("tb-update")
                                         .role(gpui::Role::Button)

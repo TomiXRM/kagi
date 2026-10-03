@@ -4,8 +4,9 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::rc::Rc;
 
-use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Entity, SharedString};
+use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Entity, SharedString, Window};
 use gpui_component::input::{Input, InputState};
 use gpui_component::{Icon, IconName, Sizable as _};
 use kagi_git::github_repos::{OwnerRepos, RepoListing};
@@ -62,6 +63,7 @@ impl KagiApp {
     pub(super) fn render_github_list(
         &mut self,
         query: String,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let pane = self.home_github.work.pane;
@@ -112,27 +114,43 @@ impl KagiApp {
             }
             // A row's place among the rows (headings and notes are not
             // rows), so assistive technology learns the whole length of a
-            // list it only sees part of (#944). Built with the entries, not
+            // list it only sees part of (#944), and its key, so ↑/↓ step
+            // from one row to the next (#959). Built with the entries, not
             // on every frame (#937).
-            let mut rows = 0;
+            let mut keys = Vec::new();
             let places: Vec<Option<usize>> = items
                 .iter()
-                .map(|item| {
-                    matches!(item, HomeItem::Repo(..) | HomeItem::Work(..)).then(|| {
-                        rows += 1;
-                        rows - 1
-                    })
+                .enumerate()
+                .map(|(ix, item)| {
+                    let key = match item {
+                        HomeItem::Repo(listing, _) => format!("repo:{}", listing.name_with_owner),
+                        HomeItem::Work(kind, work, _) => {
+                            format!("{kind:?}:{}#{}", work.name_with_owner, work.number)
+                        }
+                        _ => return None,
+                    };
+                    keys.push((key, ix));
+                    Some(keys.len() - 1)
                 })
                 .collect();
             self.home_github.items = items.into();
             self.home_github.places = places.into();
-            self.home_github.row_count = rows;
+            self.home_github.row_keys = keys.into();
             self.home_github.list_key = Some(key);
         }
         let items = self.home_github.items.clone();
-        let (positions, rows) = (self.home_github.places.clone(), self.home_github.row_count);
+        let positions = self.home_github.places.clone();
         let app = cx.entity();
         let avatars = self.avatars.images.clone();
+        let fallback = self.root_focus.clone();
+        let rows = Rc::new(self.home_github.row_focus.rows(
+            self.home_github.row_keys.clone(),
+            &state,
+            fallback.as_ref(),
+            window,
+            cx,
+        ));
+        let list_rows = rows.clone();
         let list = gpui::list(state, move |i, _window, _cx| match items.get(i) {
             Some(HomeItem::Heading(title)) => section_heading(title).into_any_element(),
             Some(HomeItem::Note(text)) => muted(text.clone()),
@@ -156,10 +174,15 @@ impl KagiApp {
                     ))
                     .child(muted_inline(text)),
             ),
-            Some(HomeItem::Work(kind, item, state)) => {
-                let place = (positions[i].unwrap_or(0), rows);
-                work_row(*kind, item, *state, place, &avatars, &app)
-            }
+            Some(HomeItem::Work(kind, item, state)) => work_row(
+                *kind,
+                item,
+                *state,
+                &rows,
+                positions[i].unwrap_or(0),
+                &avatars,
+                &app,
+            ),
             Some(HomeItem::WorkFailed(text)) => super::e2e::measure_control(
                 "home-work-failed",
                 div()
@@ -174,7 +197,8 @@ impl KagiApp {
                 github_row(
                     listing.clone(),
                     state,
-                    (positions[i].unwrap_or(0), rows),
+                    &rows,
+                    positions[i].unwrap_or(0),
                     &app,
                 ),
             ),
@@ -187,13 +211,14 @@ impl KagiApp {
             HomePane::Prs => Msg::HomePanePrs.t(),
             HomePane::Issues => Msg::HomePaneIssues.t(),
         };
-        super::list_a11y::plain_list(
-            HOME_LIST,
-            div().id(HOME_LIST).flex().flex_col().flex_1().min_h(px(0.)),
-            name,
-        )
-        .child(list)
-        .into_any_element()
+        list_rows
+            .list(super::list_a11y::plain_list(
+                HOME_LIST,
+                div().id(HOME_LIST).flex().flex_col().flex_1().min_h(px(0.)),
+                name,
+            ))
+            .child(list)
+            .into_any_element()
     }
 
     /// The entries for `key`: the open pane's sections, filtered.
@@ -368,11 +393,13 @@ pub(super) fn muted_inline(text: &str) -> impl IntoElement {
 
 /// One repository: its name over its description on the left; on the right
 /// the last update, private / fork marks and what a click does, as a chip.
-/// It is row `place.0` of the `place.1` in the list, and Tab reaches it.
+/// It is row `at` of `rows`: ↑/↓ move from it, Tab reaches it as the list's
+/// stop.
 fn github_row(
     listing: RepoListing,
     state: &'static str,
-    place: (usize, usize),
+    rows: &super::keyboard_nav::RowList,
+    at: usize,
     app: &Entity<KagiApp>,
 ) -> AnyElement {
     let chip = |text: &str| {
@@ -420,13 +447,10 @@ fn github_row(
     let name = listing.name().to_string();
     let label = format!("{}, {state}", listing.name_with_owner);
     let app = app.clone();
-    super::keyboard_nav::focusable_row(super::list_a11y::list_item(
-        HOME_LIST,
-        div().id(id),
-        place.0,
-        place.1,
-        label,
-    ))
+    rows.row(
+        at,
+        super::list_a11y::list_item(HOME_LIST, div().id(id), at, rows.len(), label),
+    )
     .w_full()
     .flex()
     .flex_row()

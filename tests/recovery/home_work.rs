@@ -141,10 +141,24 @@ fn pick_then_press(
     .unwrap();
 }
 
-/// An Issues list read that names `base_repo` and holds no issues.
-fn issue_list(base_repo: &str) -> kagi_domain::github::IssueListSnapshot {
+/// An Issues list read that names `base_repo` and holds `numbers`.
+fn issue_list(base_repo: &str, numbers: &[u64]) -> kagi_domain::github::IssueListSnapshot {
+    let issue = |number: u64| kagi_domain::github::Issue {
+        number,
+        title: format!("{base_repo} #{number}"),
+        state: kagi_domain::github::IssueState::Open,
+        url: format!("https://{base_repo}/issues/{number}"),
+        author: "octo".into(),
+        assignees: Vec::new(),
+        labels: Vec::new(),
+        body: String::new(),
+        comments: Vec::new(),
+        comment_count: 0,
+        created_at: String::new(),
+        updated_at: String::new(),
+    };
     kagi_domain::github::IssueListSnapshot {
-        issues: Vec::new(),
+        issues: numbers.iter().copied().map(issue).collect(),
         mentioned_numbers: Vec::new(),
         base_repo: base_repo.into(),
         next_cursor: None,
@@ -524,6 +538,7 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
     // acme/upstream's #4.
     KagiApp::queue_issue_list_fetch_for_e2e(gpui::Task::ready(Ok(issue_list(
         "github.com/acme/upstream",
+        &[4],
     ))));
     app.update(cx, |app, cx| {
         assert!(app.open_repository(local_path.clone(), cx));
@@ -533,6 +548,11 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
     assert_eq!(
         cx.read(|cx| app.read(cx).issue_write_repo_for_e2e()),
         Some("github.com/acme/upstream".to_string())
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().github_issues.len()),
+        1,
+        "acme/upstream's #4 is listed"
     );
     // A reply to acme/upstream's #4 is drafted there; it is that issue's.
     app.update(cx, |app, cx| app.seed_issue_reply_for_e2e(4, cx));
@@ -553,9 +573,11 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
     assert_eq!(upstream_reply(), Some("for upstream #4".to_string()));
     click_control(cx, window, "tab-add");
     cx.run_until_parked();
-    KagiApp::queue_issue_list_fetch_for_e2e(gpui::Task::ready(Ok(issue_list(
-        "github.com/acme/local",
-    ))));
+    // #940 review P1: acme/local's list cannot be read. acme/upstream's #4
+    // row is still not offered, as answering it would go to acme/local.
+    KagiApp::queue_issue_list_fetch_for_e2e(gpui::Task::ready(Err(
+        kagi_git::github::PrFetchError::Network("offline".into()),
+    )));
     std::fs::remove_file(state.join("default-repo")).unwrap();
     click(cx, window, "home-work-acme/local-4");
     cx.read(|cx| {
@@ -575,6 +597,11 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
             app.issue_reply_draft_for_e2e(4).body,
             "",
             "acme/upstream's reply is not offered for acme/local's #4"
+        );
+        assert!(
+            app.ui().github_issues.is_empty(),
+            "acme/upstream's rows are dropped when the list is re-addressed: {:?}",
+            app.ui().github_issues
         );
     });
     assert_eq!(

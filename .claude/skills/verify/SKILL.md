@@ -83,6 +83,10 @@ the runner's `macos::open_offscreen` helper, which panics past a budget of 8
 live windows and opens them hidden — set `KAGI_GUI_E2E_VISIBLE=1` to see them
 for triage.
 
+The runner stops at the first failing scenario (exit 101). To collect every failure of a selection in one run, add `KAGI_GUI_E2E_KEEP_GOING=1` (it refuses to start without `KAGI_GUI_E2E_ONLY`): each scenario runs alone in a re-executed runner process with its own process group, one at a time; the whole group is killed after `KAGI_GUI_E2E_TIMEOUT_SECS` (default 600) and whatever it left running is killed when it ends.
+The run ends with `[gui-e2e] KEEP_GOING summary: …` and one `PASS <name>` or `FAIL <name>: <exit status | timeout> — evidence <dir>` line per scenario (the dir also holds `exit.txt`), then exits 1 if any failed.
+`KAGI_GUI_E2E_EXACT=<name>` is the internal seam the parent uses to start each child; do not set it by hand.
+
 A change to how outcomes are presented (footer, toast, notice, modal, Operation
 Log) must run the scenarios that assert that presentation with
 `KAGI_GUI_E2E_ONLY` before merging. Compiling the GUI tests is not enough: #718
@@ -302,6 +306,17 @@ The current suite covers:
   Escape and by ×; the next raw ↓/↑ must step File History. Tier B measured
   on 2026-10-01 that the terminal-focus case is what left Escape unmatched
   (`key: "escape"` printed, modal open) while Enter still reached the slot.
+- Settings' switches (`KAGI_GUI_E2E_ONLY=settings_switches`,
+  `tests/recovery/settings_switches.rs`, #970): every switch is a
+  `keyboard_nav::switch`. The scenario opens Settings through `app.settings`,
+  checks each switch is named by its row (`e2e::recorded_switch`), walks Tab
+  from the root over the six in drawing order
+  (`settings_switch_focused_for_e2e`), presses Space then Enter on each of
+  the five Appearance switches and checks the setting is saved each time and
+  the checked state given to assistive technology follows (Smart Commit's
+  is only reached: turning it on probes for local LLMs), and clicks one with
+  the pointer (one flip). `SavedKeys` puts the five settings back. The ring
+  is not observable in Tier A: Tier B Tabs through Settings and looks.
 - modal input transitions (`KAGI_GUI_E2E_ONLY=remote_browse_escape_focus,pr_fields_escape_focus`,
   `tests/recovery/remote_browse_focus.rs`, `tests/recovery/pr_fields_focus.rs`):
   #755 follow-up. Real InputStates own focus before Remote Browse's

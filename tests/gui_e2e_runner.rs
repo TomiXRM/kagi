@@ -164,6 +164,10 @@ mod overlay_focus;
 mod pr_fields_focus;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_same_number.rs"]
+mod pr_same_number;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_viewed.rs"]
 mod pr_viewed;
 
@@ -1226,6 +1230,10 @@ mod macos {
                 "pr_fields_escape_focus",
                 Box::new(crate::pr_fields_focus::scenario_pr_fields_escape_focus),
             ),
+            (
+                "pr_same_number",
+                Box::new(crate::pr_same_number::scenario_pr_same_number),
+            ),
             ("pr_viewed", Box::new(crate::pr_viewed::scenario_pr_viewed)),
             ("pr_threads", Box::new(crate::pr_threads::scenario_pr_threads)),
             (
@@ -1688,6 +1696,10 @@ mod macos {
             (
                 "oplog_restore_card",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_card),
+            ),
+            (
+                "oplog_restore_tag_preview",
+                Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_tag_preview),
             ),
             (
                 "oplog_restore_preview_review",

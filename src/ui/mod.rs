@@ -1126,8 +1126,8 @@ pub struct KagiApp {
     /// text belongs to the PR being read and is parked in that tab's
     /// `comment_draft` when another PR takes the box over.
     pub pr_comment_input: Option<Entity<InputState>>,
-    /// Which PR the composer currently holds the text of.
-    pub pr_comment_for: Option<u64>,
+    /// Which PR (repository and number) the composer holds the text of.
+    pub pr_comment_for: Option<kagi_domain::github::PrKey>,
     /// Counter behind `PrFieldsModal::generation`.
     pub pr_fields_generation: u64,
     /// The field picker's fuzzy filter box; exists only while the picker is

@@ -83,7 +83,8 @@ pub(crate) struct CommitPanelFailure {
 }
 
 pub(crate) struct GithubMergePresentation {
-    number: u64,
+    /// The merged PR, by repository and number: its tab is the one closed.
+    pr: kagi_domain::github::PrKey,
     detail: String,
 }
 
@@ -96,13 +97,18 @@ pub(crate) struct RunPresentation {
     reload: bool,
     open_operation_log: bool,
     github_merge: Option<GithubMergePresentation>,
-    /// A posted PR comment: clear the composer and re-read the thread.
-    pr_comment: Option<u64>,
+    /// A posted PR comment: clear the composer and re-read the thread of this
+    /// PR (repository and number, #940 review).
+    pr_comment: Option<kagi_domain::github::PrKey>,
     /// A posted Issue write: `(number, storage version, fields sent)`.
     issue_write: Option<(Option<u64>, u64, kagi_domain::github::IssueCreateFields)>,
     /// A confirmed field edit: the tab's own copy of the PR carries these
     /// values now, until the next list fetch confirms them from GitHub.
-    pr_edit: Option<(u64, crate::ui::modals::PrField, Vec<String>)>,
+    pr_edit: Option<(
+        kagi_domain::github::PrKey,
+        crate::ui::modals::PrField,
+        Vec<String>,
+    )>,
     commit_panel_failure: Option<CommitPanelFailure>,
     outcome_notice: Option<String>,
     /// A repository-health fix landed: re-read Analyze's Health axis (#358).
@@ -151,13 +157,13 @@ impl RunPresentation {
         self
     }
 
-    pub(crate) fn github_merge(mut self, number: u64, detail: String) -> Self {
-        self.github_merge = Some(GithubMergePresentation { number, detail });
+    pub(crate) fn github_merge(mut self, pr: kagi_domain::github::PrKey, detail: String) -> Self {
+        self.github_merge = Some(GithubMergePresentation { pr, detail });
         self
     }
 
-    pub(crate) fn pr_comment(mut self, number: u64) -> Self {
-        self.pr_comment = Some(number);
+    pub(crate) fn pr_comment(mut self, pr: kagi_domain::github::PrKey) -> Self {
+        self.pr_comment = Some(pr);
         self
     }
 
@@ -173,11 +179,11 @@ impl RunPresentation {
 
     pub(crate) fn pr_edit(
         mut self,
-        number: u64,
+        pr: kagi_domain::github::PrKey,
         field: crate::ui::modals::PrField,
         selected: Vec<String>,
     ) -> Self {
-        self.pr_edit = Some((number, field, selected));
+        self.pr_edit = Some((pr, field, selected));
         self
     }
     pub(crate) fn update_commit_panel(mut self, failure: CommitPanelFailure) -> Self {
@@ -471,24 +477,24 @@ impl KagiApp {
                     // reader was on another tab left its text in the box, and
                     // coming back and pressing the button sent it twice
                     // (review finding).
-                    if let Some((number, field, selected)) = presentation.pr_edit.take() {
+                    if let Some((pr, field, selected)) = presentation.pr_edit.take() {
                         // The write succeeded, so the owner's copy of the PR
                         // carries the new values; the list ticker is what
                         // confirms them from GitHub afterwards.
                         app.apply_pr_fields(
                             Some(stamp.session),
                             repo_path.clone(),
-                            number,
+                            pr,
                             field,
                             selected,
                             cx,
                         );
                     }
-                    if let Some(number) = presentation.pr_comment.take() {
+                    if let Some(pr) = presentation.pr_comment.take() {
                         // `repo_path` is the one the write was planned against,
                         // frozen at dispatch - not `app.repo_path`, which is
                         // whatever is on screen now (review finding).
-                        app.settle_pr_write(Some(stamp.session), repo_path.clone(), number, cx);
+                        app.settle_pr_write(Some(stamp.session), repo_path.clone(), pr, cx);
                     }
                     if let Some((number, revision, sent)) = presentation.issue_write.take() {
                         app.settle_issue_write(
@@ -644,13 +650,13 @@ impl KagiApp {
             self.push_toast(
                 ToastKind::Info,
                 SharedString::from(if merged.detail.is_empty() {
-                    format!("{} #{}", Msg::PrModeMergeDone.t(), merged.number)
+                    format!("{} #{}", Msg::PrModeMergeDone.t(), merged.pr.number)
                 } else {
                     merged.detail
                 }),
                 cx,
             );
-            self.pr_mode_close_tab_for(merged.number, cx);
+            self.pr_mode_close_tab_for(&merged.pr, cx);
             self.refresh_github_prs(cx);
             self.fetch_async(true, cx);
         }

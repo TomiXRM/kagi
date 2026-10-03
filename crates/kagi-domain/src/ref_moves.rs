@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 /// One ref's change. `None` = the ref did not exist (created / deleted).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefMove {
-    /// `HEAD` (this worktree's) or a branch ref (`refs/heads/main`).
+    /// `HEAD` (this worktree's), a local branch, or a local tag ref.
     pub refname: String,
     pub old: Option<String>,
     pub new: Option<String>,
@@ -18,19 +18,19 @@ pub struct RefMove {
     pub new_symbolic: Option<String>,
 }
 
-/// HEAD and every local branch at one moment.
+/// HEAD and every local branch or tag at one moment.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RefSnapshot {
     /// The commit HEAD resolves to; `None` on an unborn branch.
     pub head_oid: Option<String>,
     /// The branch ref HEAD points at; `None` when detached.
     pub head_symbolic: Option<String>,
-    /// `refs/heads/*` → OID.
-    pub branches: BTreeMap<String, String>,
+    /// `refs/heads/*` and `refs/tags/*` → raw ref OID (annotated tag object, not peeled).
+    pub refs: BTreeMap<String, String>,
 }
 
 /// Every ref that differs between `before` and `after`: HEAD first (when its
-/// target or commit changed), then branches in name order.
+/// target or commit changed), then local branches and tags in name order.
 pub fn diff(before: &RefSnapshot, after: &RefSnapshot) -> Vec<RefMove> {
     let mut moves = Vec::new();
     if (&before.head_oid, &before.head_symbolic) != (&after.head_oid, &after.head_symbolic) {
@@ -42,13 +42,10 @@ pub fn diff(before: &RefSnapshot, after: &RefSnapshot) -> Vec<RefMove> {
             new_symbolic: after.head_symbolic.clone(),
         });
     }
-    let names: std::collections::BTreeSet<&String> = before
-        .branches
-        .keys()
-        .chain(after.branches.keys())
-        .collect();
+    let names: std::collections::BTreeSet<&String> =
+        before.refs.keys().chain(after.refs.keys()).collect();
     for name in names {
-        let (old, new) = (before.branches.get(name), after.branches.get(name));
+        let (old, new) = (before.refs.get(name), after.refs.get(name));
         if old != new {
             moves.push(RefMove {
                 refname: name.clone(),
@@ -66,11 +63,11 @@ pub fn diff(before: &RefSnapshot, after: &RefSnapshot) -> Vec<RefMove> {
 mod tests {
     use super::*;
 
-    fn snap(head: (&str, Option<&str>), branches: &[(&str, &str)]) -> RefSnapshot {
+    fn snap(head: (&str, Option<&str>), refs: &[(&str, &str)]) -> RefSnapshot {
         RefSnapshot {
             head_oid: Some(head.0.into()),
             head_symbolic: head.1.map(Into::into),
-            branches: branches
+            refs: refs
                 .iter()
                 .map(|(n, o)| (n.to_string(), o.to_string()))
                 .collect(),

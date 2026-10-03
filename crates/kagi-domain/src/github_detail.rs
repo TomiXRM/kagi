@@ -73,8 +73,13 @@ pub fn inherit_pr_details(listed: &mut PullRequest, old: &PullRequest) {
     listed.deletions = old.deletions;
 }
 
-pub fn apply_pr_status(pr: &mut PullRequest, detail: &PrStatusDetail) -> bool {
-    if pr.number != detail.number || pr.head_sha != detail.head_sha {
+/// Copy an L2 answer read from `base_repo` onto `pr`, when it is that PR at
+/// that head. The answer carries a number but no repository, so the caller
+/// names the repository it was read from: the same number in another
+/// repository is another PR, and a fork can share the head commit (#940
+/// review).
+pub fn apply_pr_status(pr: &mut PullRequest, base_repo: &str, detail: &PrStatusDetail) -> bool {
+    if pr.number != detail.number || pr.base_repo != base_repo || pr.head_sha != detail.head_sha {
         return false;
     }
     pr.ci = detail.ci;
@@ -83,8 +88,9 @@ pub fn apply_pr_status(pr: &mut PullRequest, detail: &PrStatusDetail) -> bool {
     true
 }
 
-pub fn apply_pr_body(pr: &mut PullRequest, detail: &PrBodyDetail) -> bool {
-    if pr.number != detail.number || pr.head_sha != detail.head_sha {
+/// [`apply_pr_status`] for the L3 body and size.
+pub fn apply_pr_body(pr: &mut PullRequest, base_repo: &str, detail: &PrBodyDetail) -> bool {
+    if pr.number != detail.number || pr.base_repo != base_repo || pr.head_sha != detail.head_sha {
         return false;
     }
     pr.body.clone_from(&detail.body);
@@ -182,8 +188,9 @@ mod tests {
     }
 
     #[test]
-    fn detail_appliers_accept_empty_values_and_reject_wrong_head() {
+    fn detail_appliers_accept_empty_values_and_reject_wrong_head_or_repository() {
         let mut pr = detailed("same");
+        pr.base_repo = "github.com/acme/b".into();
         let status = PrStatusDetail {
             number: 42,
             head_sha: "same".into(),
@@ -191,7 +198,11 @@ mod tests {
             checks: Vec::new(),
             mergeable: Mergeable::Clean,
         };
-        assert!(apply_pr_status(&mut pr, &status));
+        // #940 review: the same number and head read from another repository
+        // (a fork shares the head commit) is another PR's answer.
+        assert!(!apply_pr_status(&mut pr, "github.com/acme/a", &status));
+        assert_eq!(pr.mergeable, detailed("same").mergeable);
+        assert!(apply_pr_status(&mut pr, "github.com/acme/b", &status));
         assert!(pr.checks.is_empty());
         assert_eq!(pr.mergeable, Mergeable::Clean);
 
@@ -204,13 +215,14 @@ mod tests {
             additions: 0,
             deletions: 0,
         };
-        assert!(apply_pr_body(&mut pr, &body));
+        assert!(!apply_pr_body(&mut pr, "github.com/acme/a", &body));
+        assert!(apply_pr_body(&mut pr, "github.com/acme/b", &body));
         assert!(pr.body.is_empty());
         assert_eq!((pr.changed_files, pr.additions, pr.deletions), (0, 0, 0));
         assert_eq!(pr.updated_at, "old-time", "L3 cannot overwrite L1 fields");
 
         let mut wrong = status;
         wrong.head_sha = "moved".into();
-        assert!(!apply_pr_status(&mut pr, &wrong));
+        assert!(!apply_pr_status(&mut pr, "github.com/acme/b", &wrong));
     }
 }

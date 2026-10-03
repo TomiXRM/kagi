@@ -276,10 +276,11 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                             }
                             let start = range.start.saturating_sub(2);
                             let end = (range.end + 2).min(render_rows.len());
-                            let visible: BTreeSet<u64> = render_rows[start..end]
+                            let visible: BTreeSet<kagi_domain::github::PrKey> = render_rows
+                                [start..end]
                                 .iter()
                                 .filter_map(|(index, _, _)| {
-                                    this.ui().pr_list_rows().get(*index).map(|pr| pr.number)
+                                    this.ui().pr_list_rows().get(*index).map(|pr| pr.key())
                                 })
                                 .collect();
                             this.observe_visible_prs(visible, cx);

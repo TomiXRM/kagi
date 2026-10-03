@@ -97,6 +97,7 @@ means no quoting/expansion); quoted-arg support is a `ponytail:` follow-up.
   headless-blocked `command` returns `Err` *before* any destructive step, so the
   worktree survives — matching kagi's preflight ethos and the phantom /
   vscode-extension convergence. There is **no `--force` escape hatch**.
+- **Step source**: `post_create` の copy / symlink は main checkout から読む。`pre_remove` は削除を実行するタブの worktree (`repo.workdir()`) から読む。common repository の `workdir()` は separate-git-dir で main checkout を誤推測するため、削除前入力の根拠にしない(#938)。
 - **Headless never runs a `command`** (asserted). The executor refuses when a
   `KAGI_*` headless marker is set. (`KAGI_LOG_DIR` is excluded from that set: it
   is only store/test isolation, and gating on it would make the trusted-command

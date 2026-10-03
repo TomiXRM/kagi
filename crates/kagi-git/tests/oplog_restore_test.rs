@@ -88,6 +88,222 @@ fn commit(dir: &Path, content: &str) -> u64 {
     )
 }
 
+/// #915: Remove from a surviving managing worktree observes deleted branch
+/// OIDs (or `Some(empty)` when kept), so RestoreToPoint can cross its receipt.
+#[test]
+fn restore_to_point_crosses_remove_from_a_separate_tab() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for delete_branch in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = repo(tmp.path());
+        let linked = tmp.path().join("linked");
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "side",
+                linked.to_str().unwrap(),
+            ],
+        );
+        let side_tip = git_output(&repo, &["rev-parse", "refs/heads/side"]);
+        let point = create(&repo, "point");
+        let remove = Backend::plan_recorded_remove(&repo, "linked", delete_branch).unwrap();
+        assert!(
+            remove.preview.blockers.is_empty(),
+            "{:?}",
+            remove.preview.blockers
+        );
+        let report = Backend::run_recorded_remove(&remove, kagi_git::oplog::Actor::Human, None);
+        assert!(
+            matches!(report.recording.entry().outcome, OpOutcome::Success { .. }),
+            "{:?}",
+            report.recording.entry()
+        );
+        assert!(!linked.exists());
+        let entry = newest(&repo);
+        assert_eq!(entry.op, "remove-worktree");
+        let moves = entry
+            .ref_moves
+            .expect("a separate-tab Remove must record branch observations");
+        if delete_branch {
+            assert_eq!(moves.len(), 1, "{moves:?}");
+            assert_eq!(moves[0].refname, "refs/heads/side");
+            assert_eq!(moves[0].old.as_deref(), Some(side_tip.as_str()));
+            assert_eq!(moves[0].new, None);
+        } else {
+            assert!(moves.is_empty(), "{moves:?}");
+        }
+        create(&repo, "after");
+
+        let op = Operation::RestoreToPoint { entry_id: point };
+        let planned = plan(&repo, &op);
+        assert!(planned.blockers.is_empty(), "{:?}", planned.blockers);
+        backend(&repo).run(&op, &planned).unwrap();
+        assert_eq!(
+            git_output(&repo, &["rev-parse", "refs/heads/side"]),
+            side_tip
+        );
+        assert!(!git_fixture::git_succeeds(
+            &repo,
+            &["show-ref", "--verify", "refs/heads/after"]
+        ));
+    }
+}
+
+/// #938: a bare common dir has no usable Backend, but its branch refs remain
+/// observable before and after Remove through a surviving linked tab.
+#[test]
+fn bare_backed_recorded_remove_crosses_restore_with_branch_tip_preserved() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for delete_branch in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let seed = repo(tmp.path());
+        let bare = tmp.path().join("bare.git");
+        git(
+            &seed,
+            &[
+                "clone",
+                "--bare",
+                "-q",
+                seed.to_str().unwrap(),
+                bare.to_str().unwrap(),
+            ],
+        );
+        let manager = tmp.path().join("manager");
+        let target = tmp.path().join("target");
+        for (name, path) in [("manager", &manager), ("target", &target)] {
+            git(
+                &bare,
+                &["worktree", "add", "-q", "-b", name, path.to_str().unwrap()],
+            );
+        }
+        let target_tip = git_output(&manager, &["rev-parse", "refs/heads/target"]);
+        let point = create(&manager, "point");
+        let removal = Backend::plan_recorded_remove(&manager, "target", delete_branch).unwrap();
+        assert!(removal.preview.blockers.is_empty());
+        let report = Backend::run_recorded_remove(&removal, kagi_git::oplog::Actor::Human, None);
+        assert!(
+            matches!(report.recording.entry().outcome, OpOutcome::Success { .. }),
+            "{:?}",
+            report.recording.entry()
+        );
+        assert!(!target.exists());
+        assert!(bare.join("HEAD").exists());
+        let moves = report
+            .recording
+            .entry()
+            .ref_moves
+            .as_ref()
+            .expect("bare common dir must record its branch snapshot");
+        if delete_branch {
+            assert_eq!(moves.len(), 1, "{moves:?}");
+            assert_eq!(moves[0].refname, "refs/heads/target");
+            assert_eq!(moves[0].old.as_deref(), Some(target_tip.as_str()));
+            assert_eq!(moves[0].new, None);
+        } else {
+            assert!(moves.is_empty(), "{moves:?}");
+        }
+        create(&manager, "after");
+        let op = Operation::RestoreToPoint { entry_id: point };
+        let planned = plan(&manager, &op);
+        assert!(planned.blockers.is_empty(), "{:?}", planned.blockers);
+        backend(&manager).run(&op, &planned).unwrap();
+        assert_eq!(
+            git_output(&manager, &["rev-parse", "refs/heads/target"]),
+            target_tip
+        );
+        assert!(!git_fixture::git_succeeds(
+            &manager,
+            &["show-ref", "--verify", "refs/heads/after"]
+        ));
+    }
+}
+
+/// #938 review: a linked manager survives removal of another linked worktree.
+/// A trusted pre_remove checkout in the manager must be recorded as a HEAD
+/// switch; otherwise restoring across this receipt can delete a later branch
+/// while incorrectly claiming the earlier checkout has been restored.
+#[test]
+fn remove_from_surviving_manager_records_pre_remove_checkout_and_blocks_restore() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let manager = tmp.path().join("manager");
+    let target = tmp.path().join("target");
+    std::fs::create_dir(repo.join(".kagi")).unwrap();
+    write_file(
+        &repo,
+        ".kagi/worktree.toml",
+        &format!(
+            "[[pre_remove]]\ntype = \"command\"\nrun = \"git -C {} checkout -q other\"\n",
+            manager.display()
+        ),
+    );
+    git(&repo, &["add", ".kagi/worktree.toml"]);
+    git(&repo, &["commit", "-qm", "trusted remove step"]);
+    git(&repo, &["branch", "other"]);
+    for (name, path) in [("manager", &manager), ("target", &target)] {
+        git(
+            &repo,
+            &["worktree", "add", "-q", "-b", name, path.to_str().unwrap()],
+        );
+    }
+    let point = create(&manager, "point");
+    let remove = Backend::plan_recorded_remove(&manager, "target", false).unwrap();
+    assert!(
+        remove.preview.blockers.is_empty(),
+        "{:?}",
+        remove.preview.blockers
+    );
+    let report = Backend::run_recorded_remove(&remove, kagi_git::oplog::Actor::Human, None);
+    assert!(
+        matches!(report.recording.entry().outcome, OpOutcome::Success { .. }),
+        "{:?}",
+        report.recording.entry()
+    );
+    assert_eq!(
+        git_output(&manager, &["symbolic-ref", "HEAD"]),
+        "refs/heads/other"
+    );
+    let removed = report.recording.entry();
+    let moves = removed
+        .ref_moves
+        .as_ref()
+        .expect("Remove must observe manager HEAD");
+    assert!(
+        moves.iter().any(|m| {
+            m.refname == "HEAD"
+                && m.old_symbolic.as_deref() == Some("refs/heads/manager")
+                && m.new_symbolic.as_deref() == Some("refs/heads/other")
+        }),
+        "pre_remove checkout must not disappear into common HEAD: {moves:?}"
+    );
+    create(&manager, "late");
+    let restore = plan(&manager, &Operation::RestoreToPoint { entry_id: point });
+    assert!(
+        restore_blockers(&restore).iter().any(|note| matches!(
+            note,
+            OplogRestoreNote::HeadMoved { id, op, .. }
+                if *id == removed.id && op == "remove-worktree"
+        )),
+        "restore across manager checkout must refuse before deleting later refs: {:?}",
+        restore.blockers
+    );
+    assert!(git_fixture::git_succeeds(
+        &manager,
+        &["show-ref", "--verify", "refs/heads/late"]
+    ));
+}
+
 #[test]
 fn restoring_three_operations_back_puts_every_branch_where_it_was() {
     if !test_support::run_isolated() {

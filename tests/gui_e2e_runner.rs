@@ -1927,8 +1927,8 @@ mod macos {
             // earlier run's: a child that dies before `begin` leaves none.
             let evidence = crate::gui_evidence::evidence_dir(name);
             let _ = std::fs::remove_dir_all(&evidence);
-            let outcome = run_child(&runner, name, timeout);
-            let line = match &outcome {
+            let (outcome, left) = run_child(&runner, name, timeout);
+            let ended = match &outcome {
                 ChildOutcome::Passed => None,
                 ChildOutcome::Exited(status) => Some(status.to_string()),
                 ChildOutcome::TimedOut(after) => {
@@ -1937,6 +1937,17 @@ mod macos {
                 ChildOutcome::NotStarted(error) => {
                     Some(format!("the runner did not start: {error}"))
                 }
+            };
+            // A process the scenario started that survived the kill would
+            // run next to the following scenarios: that fails the scenario,
+            // and its pids are named so it can be found.
+            let left = (!left.is_empty()).then(|| {
+                let pids: Vec<String> = left.iter().map(u32::to_string).collect();
+                format!("left running after the kill: pid {}", pids.join(", "))
+            });
+            let line = match (ended, left) {
+                (Some(ended), Some(left)) => Some(format!("{ended}; {left}")),
+                (ended, left) => ended.or(left),
             };
             if let Some(reason) = &line {
                 crate::gui_evidence::exit_record(name, reason);
@@ -1987,13 +1998,18 @@ mod macos {
     /// past `timeout`. Its `TMPDIR` is a directory of its own, removed once it
     /// has ended, so even a killed child leaves no fixture behind.
     ///
-    /// The child leads a process group of its own (#967 review): a scenario's
-    /// terminal shell, stand-in `ssh` or `git` belongs to it, so ending the
-    /// group — after a timeout, and after any end, for whatever the scenario
-    /// left running — leaves nothing of that scenario alive next to the next
-    /// one. (A group of its own also means the terminal's Ctrl+C reaches only
-    /// this parent; a child it leaves behind ends at its timeout.)
-    fn run_child(runner: &Path, name: &str, timeout: Duration) -> ChildOutcome {
+    /// Nothing the scenario started may outlive it next to the next one
+    /// (#967 review). The child leads a process group of its own, but the
+    /// product puts some of what it starts outside that group: the terminal's
+    /// PTY shell runs `setsid`, and `kagi_git::proc` gives every `git` / `ssh`
+    /// a group of its own. So while the child runs, every process descended
+    /// from it is recorded (pid and start time, re-read every
+    /// [`TREE_POLL`]); when it ends — by itself or killed at the timeout —
+    /// its group and each recorded process still running with the same start
+    /// time are killed. (A group of its own also means the terminal's Ctrl+C
+    /// reaches only this parent; a child it leaves behind ends at its
+    /// timeout.)
+    fn run_child(runner: &Path, name: &str, timeout: Duration) -> (ChildOutcome, Vec<u32>) {
         use std::os::unix::process::CommandExt as _;
 
         let tmp = match tempfile::Builder::new()
@@ -2001,7 +2017,7 @@ mod macos {
             .tempdir()
         {
             Ok(tmp) => tmp,
-            Err(error) => return ChildOutcome::NotStarted(error),
+            Err(error) => return (ChildOutcome::NotStarted(error), Vec::new()),
         };
         let mut child = match std::process::Command::new(runner)
             .env("KAGI_GUI_E2E_EXACT", name)
@@ -2011,31 +2027,106 @@ mod macos {
             .spawn()
         {
             Ok(child) => child,
-            Err(error) => return ChildOutcome::NotStarted(error),
+            Err(error) => return (ChildOutcome::NotStarted(error), Vec::new()),
         };
-        let group = child.id();
+        let root = child.id();
         let started = Instant::now();
+        let mut seen = std::collections::HashMap::new();
+        let mut polled = started;
         let outcome = loop {
+            if polled.elapsed() >= TREE_POLL {
+                seen.extend(descendants(root));
+                polled = Instant::now();
+            }
             match child.try_wait() {
                 Ok(Some(status)) if status.success() => break ChildOutcome::Passed,
                 Ok(Some(status)) => break ChildOutcome::Exited(status),
                 Ok(None) if started.elapsed() >= timeout => {
-                    kill_group(group);
+                    // The tree is read while the runner is alive: once it is
+                    // killed its children move to launchd and cannot be
+                    // traced back. Descendants first, then the runner.
+                    seen.extend(descendants(root));
+                    kill_recorded(&seen);
+                    kill_group(root);
                     let _ = child.wait();
                     break ChildOutcome::TimedOut(timeout);
                 }
                 Ok(None) => std::thread::sleep(Duration::from_millis(100)),
                 Err(error) => {
-                    kill_group(group);
+                    seen.extend(descendants(root));
+                    kill_recorded(&seen);
+                    kill_group(root);
                     let _ = child.wait();
                     break ChildOutcome::NotStarted(error);
                 }
             }
         };
-        // The runner itself is reaped; what it started and left in its group
-        // (now orphans, reaped by launchd once killed) ends here.
-        kill_group(group);
-        outcome
+        // The runner itself is reaped; what it left running (now orphans,
+        // reaped by launchd once killed) ends here.
+        kill_group(root);
+        kill_recorded(&seen);
+        (outcome, still_running(&seen))
+    }
+
+    /// How often `run_child` re-reads the process tree under a scenario.
+    const TREE_POLL: Duration = Duration::from_millis(250);
+
+    /// Every process `(pid, start time)` and its parent, from one `ps`.
+    fn process_table() -> Vec<(u32, u32, String)> {
+        let Ok(out) = Command::new("/bin/ps")
+            .args(["-axo", "pid=,ppid=,lstart="])
+            .output()
+        else {
+            return Vec::new();
+        };
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|line| {
+                let mut fields = line.split_whitespace();
+                let pid = fields.next()?.parse().ok()?;
+                let ppid = fields.next()?.parse().ok()?;
+                Some((pid, ppid, fields.collect::<Vec<_>>().join(" ")))
+            })
+            .collect()
+    }
+
+    /// The processes descended from `root` (not `root` itself), whatever
+    /// group or session they are in, keyed by pid with their start time.
+    fn descendants(root: u32) -> std::collections::HashMap<u32, String> {
+        let table = process_table();
+        let mut found = std::collections::HashMap::new();
+        let mut frontier = vec![root];
+        while let Some(parent) = frontier.pop() {
+            for (pid, ppid, start) in &table {
+                if *ppid == parent && found.insert(*pid, start.clone()).is_none() {
+                    frontier.push(*pid);
+                }
+            }
+        }
+        found
+    }
+
+    /// The recorded processes that are still the same process (same pid and
+    /// start time, so a reused pid is left alone).
+    fn still_running(seen: &std::collections::HashMap<u32, String>) -> Vec<u32> {
+        process_table()
+            .into_iter()
+            .filter(|(pid, _, start)| seen.get(pid) == Some(start))
+            .map(|(pid, _, _)| pid)
+            .collect()
+    }
+
+    /// SIGKILL each recorded process that is still running.
+    fn kill_recorded(seen: &std::collections::HashMap<u32, String>) {
+        let alive: Vec<String> = still_running(seen).iter().map(u32::to_string).collect();
+        if alive.is_empty() {
+            return;
+        }
+        let _ = Command::new("/bin/kill")
+            .arg("-KILL")
+            .args(&alive)
+            .stderr(std::process::Stdio::null())
+            .status();
     }
 
     /// SIGKILL every process in the group `group` leads. A group that is

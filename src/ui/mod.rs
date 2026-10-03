@@ -47,6 +47,7 @@ mod external_editor;
 pub mod file_history;
 pub mod file_menu;
 mod fonts;
+mod front_layer;
 mod github;
 mod github_issue_state;
 mod github_issues;
@@ -3109,13 +3110,7 @@ impl KagiApp {
 
     fn commit_list_has_focus(&self, window: &Window, cx: &Context<Self>) -> bool {
         self.root_has_focus(window)
-            && self.menu_overlay.is_none()
-            && !self.has_active_modal()
-            && self
-                .ui()
-                .commit_panel
-                .as_ref()
-                .is_none_or(|panel| panel.read(cx).state.plan_modal.is_none())
+            && self.front_layer(cx) == front_layer::FrontLayer::None
             && !self.conflict_body_visible()
             && !self.home_in_front()
             && workspace::resolve_workspace(&self.workspace_inputs(false, false, false)).center

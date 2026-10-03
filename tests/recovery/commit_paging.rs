@@ -101,6 +101,42 @@ pub fn scenario_commit_paging(cx: &mut VisualTestAppContext) {
     assert_at(cx, 0);
     keys(cx, window, "cmd-down");
     assert_at(cx, LAST);
+    // The context menu is separate from menu_overlay and must block navigation
+    // even when the root still owns keyboard focus.
+    keys(cx, window, "home");
+    assert_at(cx, 0);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.open_commit_menu(0, viewport.center());
+            cx.notify();
+        });
+        window.draw(cx).clear();
+        let root = app.read(cx).root_focus.clone().expect("root focus");
+        root.focus(window, cx);
+        assert!(
+            root.is_focused(window),
+            "root must own focus behind commit menu"
+        );
+        assert!(
+            app.read(cx).commit_menu.is_some(),
+            "commit menu must be open"
+        );
+    })
+    .unwrap();
+    keys(cx, window, "end");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().selected),
+        Some(0),
+        "End behind commit menu must not move the hidden selection"
+    );
+    keys(cx, window, "down");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().selected),
+        Some(0),
+        "Down behind commit menu must not move the hidden selection"
+    );
+    keys(cx, window, "escape");
+    assert!(cx.read(|cx| app.read(cx).commit_menu.is_none()));
     // An overlay covers Graph even if focus is put back on the root.
     keys(cx, window, "home");
     assert_at(cx, 0);

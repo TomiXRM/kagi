@@ -778,9 +778,12 @@ The current suite covers:
   checks selection (page step = floor(viewport height / uniform row height)
   minus one, minimum one) and checks the selected row against the measured
   `commit-list-viewport`. Wheel-scroll the selected first row out of view;
-  Home reveals it without toggling selection. End on Home, Branch Cleanup,
-  and the Conflict Mode body must leave the covered commit selection unchanged;
-  the conflict leg uses `app_conflict::content_fixture` and a real detector pass.
+  Home reveals it without toggling selection. With root focus retained, End
+  and Down behind the open commit context menu leave selection unchanged;
+  replacing the shared front-layer guard with a menu_overlay-only guard fails
+  the End assertion. End on Home, Branch Cleanup, and the Conflict Mode body
+  must also leave the covered commit selection unchanged; the conflict leg
+  uses `app_conflict::content_fixture` and a real detector pass.
 - Toolbar unavailable reasons (`KAGI_GUI_E2E_ONLY=toolbar_keyboard_reasons`,
   `tests/recovery/toolbar_keyboard.rs`, #972): starting at the root, GPUI's
   `focus_next` visits the rendered toolbar in visual order; an F19 key-down

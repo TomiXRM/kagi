@@ -122,6 +122,26 @@ impl KagiApp {
             || self.coauthor_menu_visible(cx)
     }
 
+    /// The Commit Panel's plan confirmation, only where it is drawn: not with
+    /// Home in front, and only while the panel is open.
+    pub(crate) fn commit_plan_visible(&self, cx: &App) -> bool {
+        !self.home_in_front()
+            && self.ui().commit_panel_open
+            && self
+                .ui()
+                .commit_panel
+                .as_ref()
+                .is_some_and(|panel| panel.read(cx).state.plan_modal.is_some())
+    }
+
+    /// A modal in the slot or a drawn commit plan, whatever is drawn above
+    /// it (#976 review). Settings opens behind the modal layer, so it must
+    /// not open — and must yield — while either exists, even when a platform
+    /// menu dropdown over them is the front layer.
+    pub(crate) fn has_modal_or_visible_plan(&self, cx: &App) -> bool {
+        self.has_active_modal() || self.commit_plan_visible(cx)
+    }
+
     /// A retained plan behind Home is not an overlay. The workspace renders
     /// menus then menu_overlay; Home renders menu_overlay and the same modal
     /// layer. Platform dropdowns render last in the window shell.
@@ -137,14 +157,7 @@ impl KagiApp {
         if self.has_active_modal() {
             return FrontLayer::Modal;
         }
-        if !self.home_in_front()
-            && self.ui().commit_panel_open
-            && self
-                .ui()
-                .commit_panel
-                .as_ref()
-                .is_some_and(|panel| panel.read(cx).state.plan_modal.is_some())
-        {
+        if self.commit_plan_visible(cx) {
             return FrontLayer::CommitPlan;
         }
         if matches!(self.menu_overlay, Some(MenuOverlay::Settings)) {

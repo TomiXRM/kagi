@@ -218,3 +218,50 @@ pub fn scenario_platform_menu_over_modal(cx: &mut VisualTestAppContext) {
     unmount(cx, app, win);
     eprintln!("[gui-e2e] PASS platform_menu_over_modal");
 }
+
+/// #976 review: with a platform menu dropdown open over a modal, the
+/// dropdown is the front layer, but Settings — drawn behind the modal layer
+/// — must still refuse to open (Ctrl+, / the menu's own Settings command).
+pub fn scenario_platform_menu_modal_settings(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    std::fs::write(repo.join("README.md"), "dirty for the stash modal\n").unwrap();
+    let (app, win) = mount_short(cx, &repo);
+
+    app.update(cx, |app, cx| app.open_stash_push_modal(cx));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        assert!(app.open_platform_menu_for_e2e("View", cx), "View section");
+    });
+    cx.run_until_parked();
+    assert!(
+        cx.read(
+            |cx| e2e::menu_is_front(app.read(cx), cx) && app.read(cx).stash_push_modal().is_some()
+        ),
+        "precondition: the dropdown is open over the Stash confirmation"
+    );
+    // Admission is checked before any frame runs: the render pass's yield
+    // would also close a Settings that slipped in, and must not be what
+    // keeps this green.
+    let refused = cx
+        .update_window(win, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                app.handle_menu_command("app.settings", window, cx);
+                app.menu_overlay.is_none()
+            })
+        })
+        .unwrap();
+    assert!(
+        refused,
+        "platform-menu-modal-settings: Settings opened behind the modal under the dropdown"
+    );
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).menu_overlay.is_none()));
+    assert!(cx.read(|cx| app.read(cx).stash_push_modal().is_some()));
+    app.update(cx, |app, cx| {
+        app.platform_menu_open = None;
+        cx.notify();
+    });
+    unmount(cx, app, win);
+    eprintln!("[gui-e2e] PASS platform_menu_modal_settings");
+}

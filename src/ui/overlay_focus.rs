@@ -126,10 +126,7 @@ impl KagiApp {
             }
         }
         if matches!(self.menu_overlay, Some(MenuOverlay::Settings))
-            && matches!(
-                self.front_layer(cx),
-                FrontLayer::Modal | FrontLayer::CommitPlan
-            )
+            && self.has_modal_or_visible_plan(cx)
         {
             self.menu_overlay = None;
             self.pending_focus = (!self.active_modal_input_focused(window, cx))
@@ -198,13 +195,11 @@ impl KagiApp {
     /// by pointer shows none; the first Tab enters the panel's first stop.
     /// Closing returns focus as above.
     ///
-    /// A visible modal owns the keys first; an undrawn plan behind Home
-    /// cannot prevent Settings from opening.
+    /// A modal or a drawn commit plan blocks it — also when a platform menu
+    /// dropdown over them is the front layer (#976 review); an undrawn plan
+    /// behind Home does not.
     pub(super) fn open_settings_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if matches!(
-            self.front_layer(cx),
-            FrontLayer::Modal | FrontLayer::CommitPlan
-        ) {
+        if self.has_modal_or_visible_plan(cx) {
             return;
         }
         self.capture_overlay_return_focus(window, cx);

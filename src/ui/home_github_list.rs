@@ -437,8 +437,11 @@ fn github_row(
     .rounded_lg()
     .cursor(gpui::CursorStyle::PointingHand)
     .hover(|s| s.bg(rgb(theme().surface)))
-    .on_click(move |_, _, cx| {
-        app.update(cx, |app, cx| app.home_github_pick(listing.clone(), cx));
+    .on_click(move |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.home_github_pick(listing.clone(), cx);
+            app.focus_after_pick(window, cx);
+        });
     })
     .child(
         div()

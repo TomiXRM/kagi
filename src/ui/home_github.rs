@@ -490,6 +490,23 @@ impl KagiApp {
         cx.notify();
     }
 
+    /// Where the focus goes after a repository row was pressed, by pointer or
+    /// keyboard (#960 review): into the clone card it opened, else to the
+    /// root (the row opened its clone in a tab). Never left on the row: the
+    /// row stops the Enter it receives and presses itself on the key-up, so
+    /// the card's Enter would never confirm it and would open a fresh card
+    /// in its place.
+    pub(super) fn focus_after_pick(&self, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        let card = self
+            .clone_modal()
+            .is_some()
+            .then(|| self.modal_focus.clone())
+            .flatten();
+        if let Some(focus) = card.or_else(|| self.root_focus.clone()) {
+            window.focus(&focus, cx);
+        }
+    }
+
     /// Ask where to clone `listing`: the card opens with no folder chosen.
     pub fn open_clone_card(&mut self, listing: RepoListing, cx: &mut Context<Self>) {
         self.modal_focus = Some(cx.focus_handle());

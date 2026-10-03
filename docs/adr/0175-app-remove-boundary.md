@@ -42,7 +42,7 @@ survive GC and are retained with their oplog entries.
   side effects and immediately after each backup. Verification is explicit.
 - #915 / #938: 安全性に対して複雑すぎる main の場所の証明・削除後の surviving common dir 観測を廃止し、削除対象の worktree を開いている管理タブからの Remove は計画・preflight で短い EN/JA 理由を示して拒否する。別タブからの Remove は維持する。
 - #938: 削除境界は実行元 `repo.workdir()`、common dir、`Repository::open(repo.commondir()).workdir()` がある場合はその main workdir を保護する。対象内の別の登録済み worktree も計画・preflight・削除直前で拒否する。non-bare でも `--separate-git-dir` の common dir が対象内にあれば拒否する。common dir から推測される main の場所が不確かな場合も削除側に倒さない。
-- #938: 別タブからの recorded Remove は前後とも存続する実行元の HEAD と共有 ref を読む。削除前 copy / symlink ステップの source は main workdir が無い bare-backed repo では実行元 linked worktree を使う。実行元の checkout が変われば HEAD 移動を記録し RestoreToPoint を拒否する。
+- #938: 別タブからの recorded Remove は前後とも存続する実行元の HEAD と共有 ref を読む。削除前 copy / symlink ステップの source は常に実行元 `repo.workdir()` とし、`--separate-git-dir` で common repository から推測した main workdir は使わない。実行元の checkout が変われば HEAD 移動を記録し RestoreToPoint を拒否する。
 - `Unknown { after, evidence }` is additive. Evidence is a human-readable
   string carrying stage, verification, termination and step observations.
   Partial/Unknown after contains full blob and branch OIDs. Existing variants

@@ -372,15 +372,12 @@ pub(crate) fn execute_remove_worktree_progress(
     }
     preflight_check(repo, plan)?;
 
-    // Pre-remove steps read from the main worktree when there is one; a bare
-    // common repository has no workdir, so use the managing linked checkout.
-    let main_repo = Repository::open(repo.commondir())
-        .map_err(|e| GitError::Other(format!("cannot open common repository: {e}")))?;
-    let step_source = main_repo
+    // Pre-remove copy/symlink steps read from the checkout managing this
+    // removal. A separate common dir may infer a nonexistent main workdir;
+    // that guess must never become the source of user-controlled files.
+    let step_source = repo
         .workdir()
-        .or_else(|| repo.workdir())
-        .ok_or_else(|| GitError::Other("no worktree for pre-remove steps".to_string()))?
-        .to_path_buf();
+        .ok_or_else(|| GitError::Other("no managing worktree for pre-remove steps".to_string()))?;
 
     let wt = repo
         .find_worktree(name)
@@ -436,7 +433,7 @@ pub(crate) fn execute_remove_worktree_progress(
         }
         let trusted = is_worktree_config_trusted(&cfg);
         let env = StepEnv {
-            main_root: step_source.clone(),
+            main_root: step_source.to_path_buf(),
             worktree: wt_path.clone(),
         };
         super::worktree_steps::run_pre_remove_progress(

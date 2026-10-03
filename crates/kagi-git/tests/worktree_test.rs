@@ -1113,6 +1113,100 @@ fn remove_main_worktree_is_always_refused() {
     }
 }
 
+/// A separate common dir without core.worktree does not identify the main
+/// checkout. A pre_remove copy must read from the surviving managing tab,
+/// not from the path git2 infers for the common repository.
+#[test]
+fn remove_pre_remove_reads_from_managing_worktree_with_separate_git_dir() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let base = TempDir::new().unwrap();
+    let main = base.path().join("main");
+    let common = base.path().join("separate.git");
+    let manager = base.path().join("manager");
+    let target = base.path().join("target");
+    git(
+        base.path(),
+        &[
+            "init",
+            "-q",
+            "-b",
+            "main",
+            "--separate-git-dir",
+            common.to_str().unwrap(),
+            main.to_str().unwrap(),
+        ],
+    );
+    write_file(&main, "README.md", "# test\n");
+    std::fs::create_dir(main.join(".kagi")).unwrap();
+    write_file(
+        &main,
+        ".kagi/worktree.toml",
+        "[[pre_remove]]\ntype='copy'\nfrom='source.txt'\nto='copied.txt'\n",
+    );
+    git(&main, &["add", "."]);
+    git(&main, &["commit", "-qm", "pre-remove copy"]);
+    for (branch, path) in [("manager", &manager), ("target", &target)] {
+        git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                branch,
+                path.to_str().unwrap(),
+            ],
+        );
+    }
+    assert!(!git_fixture::git_succeeds(
+        &main,
+        &["config", "--local", "--get", "core.worktree"]
+    ));
+    let guessed = Repository::open(&common).unwrap();
+    assert_ne!(
+        guessed.workdir().unwrap().canonicalize().unwrap(),
+        manager.canonicalize().unwrap(),
+        "the common repository does not identify the managing checkout"
+    );
+    let source = b"only the managing checkout contains these bytes\n";
+    std::fs::write(manager.join("source.txt"), source).unwrap();
+    let plan = kagi_git::Backend::plan_recorded_remove(&manager, "target", false).unwrap();
+    assert!(
+        plan.preview.blockers.is_empty(),
+        "{:?}",
+        plan.preview.blockers
+    );
+    let report = kagi_git::Backend::run_recorded_remove(&plan, kagi_git::oplog::Actor::Human, None);
+    assert!(
+        matches!(
+            report.recording.entry().outcome,
+            kagi_git::oplog::OpOutcome::Success { .. }
+        ),
+        "{:?}",
+        report.recording.entry()
+    );
+    assert!(!target.exists());
+    let copied = report
+        .recording
+        .entry()
+        .recovery
+        .iter()
+        .find(|handle| {
+            handle.kind == kagi_git::oplog::recovery::FILE_BACKUP
+                && handle.path.as_deref() == Some("copied.txt")
+        })
+        .expect("copied bytes must be recoverable after Remove");
+    let repo = Repository::open(&manager).unwrap();
+    let blob = repo
+        .find_blob(git2::Oid::from_str(&copied.oid).unwrap())
+        .unwrap();
+    assert_eq!(blob.content(), source);
+    assert!(common.join("objects").exists());
+    assert!(main.join("README.md").exists());
+}
+
 /// Bare repositories have no main workdir. A linked tab must still be able
 /// to remove another linked worktree without deleting the shared common dir.
 #[test]

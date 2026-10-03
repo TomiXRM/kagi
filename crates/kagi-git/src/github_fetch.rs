@@ -359,6 +359,42 @@ pub fn pr_body_detail(
     )
 }
 
+/// The fields of one [`PR_LIST_QUERY`] node, as `gh pr view --json` names
+/// them: what opening a PR in PR mode needs (head / base refs and SHA).
+const PR_OPEN_FIELDS: &str = "number,title,url,state,isDraft,isCrossRepository,createdAt,\
+    updatedAt,headRefName,headRefOid,baseRefName,reviewDecision,author,assignees,labels,\
+    reviewRequests";
+
+/// One PR's list row, read by itself so it can be opened (#928). Home's
+/// cross-repository search returns no head / base refs, and the
+/// repository's own list is one 100-PR page that may not contain it.
+/// `base_repo` is `host/owner/repo`.
+pub fn pr_for_open(
+    workdir: &Path,
+    base_repo: &str,
+    number: u64,
+) -> Result<PullRequest, PrFetchError> {
+    let number = number.to_string();
+    fetch_json(
+        workdir,
+        &[
+            "pr",
+            "view",
+            "-R",
+            base_repo,
+            &number,
+            "--json",
+            PR_OPEN_FIELDS,
+        ],
+        |json| {
+            parse_pr_list(&format!("[{json}]"))?
+                .into_iter()
+                .next()
+                .ok_or_else(|| crate::GitError::Other("gh pr view: no pull request".into()))
+        },
+    )
+}
+
 /// Recently **merged** PRs, keyed by their head branch by the caller.
 ///
 /// A separate, deliberately cheaper call than [`list_prs`]: Branch Cleanup
@@ -488,11 +524,37 @@ pub fn repository_identity(workdir: &Path) -> Result<String, PrFetchError> {
 }
 
 /// Full read-only data for one selected issue, including body and comments.
-pub fn issue_detail(workdir: &Path, number: u64) -> Result<Issue, PrFetchError> {
+///
+/// Read from `frozen_base_repo` — the repository the Issues list and the
+/// Reply address — with `-R` (#940 review P1). Without it `gh issue view`
+/// reads the working directory's current default repository, which may
+/// have changed since the list was read, and the same number there is
+/// another issue. Only when no repository is known yet is it resolved the
+/// same way as [`list_issues`].
+pub fn issue_detail(
+    workdir: &Path,
+    frozen_base_repo: Option<&str>,
+    number: u64,
+) -> Result<Issue, PrFetchError> {
+    let base_repo = match frozen_base_repo
+        .map(str::trim)
+        .filter(|repo| !repo.is_empty())
+    {
+        Some(repo) => repo.to_string(),
+        None => repository_identity(workdir)?,
+    };
     let number = number.to_string();
     fetch_json(
         workdir,
-        &["issue", "view", &number, "--json", ISSUE_DETAIL_FIELDS],
+        &[
+            "issue",
+            "view",
+            &number,
+            "-R",
+            &base_repo,
+            "--json",
+            ISSUE_DETAIL_FIELDS,
+        ],
         parse_issue_detail,
     )
 }

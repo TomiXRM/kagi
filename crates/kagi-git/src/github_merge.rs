@@ -101,21 +101,25 @@ query($owner:String!, $name:String!, $number:Int!) {
 /// (same auth as everything else here). Read-only. A `gh` that does not answer
 /// (non-zero exit), a GraphQL `errors` answer and an unparsable one are all
 /// errors carrying the reason, never an empty status.
-pub fn pr_merge_status(workdir: &Path, number: u64) -> Result<PrMergeStatus, GitError> {
-    let (owner, name) = repo_owner_name(workdir)?;
+///
+/// Addressed to `base_repo` and its host (#940 review P1), not to whatever
+/// `gh repo view` names for the working directory: that is its default
+/// repository, and the same number there is a different PR.
+pub fn pr_merge_status(
+    workdir: &Path,
+    base_repo: &str,
+    number: u64,
+) -> Result<PrMergeStatus, GitError> {
+    let repo = resolve_base_repo(workdir, base_repo)?;
+    let mut args = vec![
+        "api".to_string(),
+        "graphql".to_string(),
+        "-f".to_string(),
+        format!("query={MERGE_STATUS_QUERY}"),
+    ];
+    args.extend(graphql_repo_args(&repo, number)?);
     let out = crate::cli::gh_command()
-        .args([
-            "api",
-            "graphql",
-            "-f",
-            &format!("query={MERGE_STATUS_QUERY}"),
-            "-F",
-            &format!("owner={owner}"),
-            "-F",
-            &format!("name={name}"),
-            "-F",
-            &format!("number={number}"),
-        ])
+        .args(args)
         .current_dir(workdir)
         .output()
         .map_err(|e| GitError::Other(format!("gh: {}", e)))?;
@@ -187,6 +191,33 @@ pub(crate) fn resolve_base_repo(workdir: &Path, base_repo: &str) -> Result<Strin
             "gh could not name the repository to write to".to_string(),
         )),
     }
+}
+
+/// The variables (and `--hostname`) that point a PR `gh api graphql` read at
+/// `repo`, a `<host>/<owner>/<repo>` or `owner/repo` identity (#940 review
+/// P1). An API call drops the host, so without `--hostname` an Enterprise
+/// repository would be asked of github.com. `owner` / `name` go as raw
+/// strings (`-f`): `-F` would turn a repository named `true` or `123` into a
+/// non-string and GitHub would reject the query. Pure; unit-tested.
+pub(crate) fn graphql_repo_args(repo: &str, number: u64) -> Result<Vec<String>, GitError> {
+    let path = crate::github_edit::owner_repo(repo)
+        .ok_or_else(|| GitError::Other(format!("'{repo}' is not an <owner>/<repo> identity")))?;
+    let (owner, name) = path
+        .split_once('/')
+        .ok_or_else(|| GitError::Other(format!("'{repo}' is not an <owner>/<repo> identity")))?;
+    let mut args = Vec::with_capacity(8);
+    if let Some(host) = crate::github_edit::repo_host(repo) {
+        args.extend(["--hostname".to_string(), host.to_string()]);
+    }
+    args.extend([
+        "-f".to_string(),
+        format!("owner={owner}"),
+        "-f".to_string(),
+        format!("name={name}"),
+        "-F".to_string(),
+        format!("number={number}"),
+    ]);
+    Ok(args)
 }
 
 /// Parse the `gh api graphql` merge-status response. Pure; unit-tested. A

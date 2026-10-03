@@ -43,7 +43,7 @@ pub fn note_ja(note: &OplogRestoreNote) -> String {
                 .map(|p| format!("{p} の worktree で"))
                 .unwrap_or_default();
             format!(
-                "操作 #{id}({op})で{place} HEAD が {} から {} に切り替わっているので、この範囲は restore できません。restore は branch だけを動かし、HEAD は動かしません(作業ツリーが変わるため)。{place} {} を自分で checkout してから、#{id} 以降の時点へ restore してください。それより複雑な場合(複数回の切り替え、その操作が作成・削除した branch など)は手で戻してください。",
+                "操作 #{id}({op})で{place} HEAD が {} から {} に切り替わっているので、この範囲は restore できません。restore は local branch と tag だけを動かし、HEAD は動かしません(作業ツリーが変わるため)。{place} {} を自分で checkout してから、#{id} 以降の時点へ restore してください。それより複雑な場合(複数回の切り替え、その操作が作成・削除した branch など)は手で戻してください。",
                 head_ja(from),
                 head_ja(to),
                 head_ja(from)
@@ -52,7 +52,7 @@ pub fn note_ja(note: &OplogRestoreNote) -> String {
         OplogRestoreNote::LaterEntryMoved { refname, id, op } => format!(
             "{refname} は後の操作 #{id}({op})でも動いています。先にそちらを取り消すか、時点への復元を使ってください。"
         ),
-        OplogRestoreNote::NothingToRestore => "動かす branch がありません。".to_string(),
+        OplogRestoreNote::NothingToRestore => "動かす local branch / tag がありません。".to_string(),
         OplogRestoreNote::RefMovedSince {
             refname,
             expected,
@@ -94,7 +94,7 @@ pub fn note_ja(note: &OplogRestoreNote) -> String {
         OplogRestoreNote::MovesCheckedOutBranch { branch, path } => format!(
             "`{branch}` は {path} で checkout 中です。動くのは branch だけで、その worktree の index とファイルはそのままです。"
         ),
-        OplogRestoreNote::RefsOnly => "動くのは branch だけです。作業ツリー・index・untracked ファイル・stash・tag・remote branch は戻りません。動かす branch の現在の先端はすべて refs/kagi/backups/ に保持します。".to_string(),
+        OplogRestoreNote::RefsOnly => "変更なし: 作業ツリー・index・untracked・stash・remote branch・Kagi 外での tag の変更".to_string(),
     }
 }
 
@@ -103,7 +103,7 @@ pub fn title_ja(title: &OplogRestoreTitle) -> String {
     match title {
         OplogRestoreTitle::Revert { id, op } => format!("操作 #{id}({op})を取り消す"),
         OplogRestoreTitle::RestoreTo { id, op } => {
-            format!("branch を操作 #{id}({op})の直後に戻す")
+            format!("local ref を操作 #{id}({op})の直後に戻す")
         }
     }
 }
@@ -111,7 +111,7 @@ pub fn title_ja(title: &OplogRestoreTitle) -> String {
 /// Japanese rendering of one recovery block.
 pub fn recovery_ja(recovery: &OplogRestoreRecovery) -> String {
     match recovery {
-        OplogRestoreRecovery::Restore => "この操作も ref の移動つきで記録されます。Operation Log から取り消すか、git update-ref <ref> <backup-ref> で branch を戻せます(backup は entry に記載)。".to_string(),
+        OplogRestoreRecovery::Restore => "この操作も ref の移動つきで記録されます。Operation Log から取り消すか、git update-ref <ref> <backup-ref> で local ref を戻せます(backup は entry に記載)。".to_string(),
     }
 }
 

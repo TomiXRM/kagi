@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::oplog_panel::{entry_worktree, ReflogDetail};
-use kagi::ui::{e2e, KagiApp};
+use kagi::ui::{e2e, i18n, KagiApp};
 use kagi_domain::oplog_reflog::Attribution;
 use kagi_domain::ref_moves::RefMove;
 use kagi_git::oplog::{append_oplog, read_oplog_tail, Actor, OpLogEntry, OpOutcome};
@@ -355,6 +355,8 @@ fn confirm_twice(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: A
 /// preview is unavailable when the target is not loaded.
 pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
     use kagi_domain::plan_note::{OplogRestoreNote, PlanNote};
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_language = i18n::lang();
 
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
@@ -536,8 +538,31 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
             oid: main_after.clone(),
         })
     );
-    paint(cx, window);
-    assert!(painted(window, "restore-preview-unavailable"));
+    for (language, status) in [
+        (
+            i18n::Lang::En,
+            "No preview: target commit is outside loaded history",
+        ),
+        (
+            i18n::Lang::Ja,
+            "プレビューなし: 戻し先の commit は読み込み済みの履歴外",
+        ),
+    ] {
+        i18n::set_lang(language);
+        paint(cx, window);
+        assert!(painted(window, "restore-preview-unavailable"));
+        assert!(!painted(window, "plan-recovery-scroll"));
+        click_probe(cx, window, "plan-card-copy");
+        let copied = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .unwrap();
+        assert!(copied.contains(status), "{copied}");
+        assert_eq!(copied.matches(status).count(), 1, "{copied}");
+        assert!(!copied.contains("This is itself recorded"), "{copied}");
+        assert!(!copied.contains("これ自体"), "{copied}");
+    }
+    i18n::set_lang(original_language);
     confirm_twice(cx, &app, window);
     assert_eq!(branch_names(&repo), all_branches, "the restore is undone");
     assert_eq!(git_output(&repo, &["rev-parse", "main"]), main_after);
@@ -545,6 +570,113 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
 
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS oplog_restore_card: unrecorded row disabled; card lists reverse actions, what stays and the graph after (main's target row, 1 commit off every branch = git's count); two confirms restore; the revert card says its preview is unavailable; the restore is reverted from its own row");
+}
+
+/// #887: a tag ref is restorable even though its raw OID is not necessarily
+/// a commit. The card must avoid predicting disappearing graph rows.
+pub fn scenario_oplog_restore_tag_preview(cx: &mut VisualTestAppContext) {
+    use kagi_domain::plan_note::{OplogRestoreNote, PlanNote};
+    use kagi_domain::restore_preview::RestorePreview;
+
+    let fixture = build_fixture();
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_language = i18n::lang();
+    let repo = fixture.path().canonicalize().unwrap();
+    let head = CommitId(git_output(&repo, &["rev-parse", "HEAD"]));
+    let mut backend = Backend::open(&repo).unwrap();
+    run(
+        &mut backend,
+        Actor::Human,
+        Operation::CreateBranch {
+            name: "point".into(),
+            at: head.clone(),
+        },
+    );
+    let point_id = read_oplog_tail(1).pop().unwrap().id;
+    run(
+        &mut backend,
+        Actor::Human,
+        Operation::CreateTag {
+            name: "release".into(),
+            at: head,
+        },
+    );
+
+    // This tag is outside Kagi's record, and ordinary repositories do not
+    // keep tag reflogs. It must survive the restore with an honest warning.
+    git(
+        &repo,
+        &["-c", "core.logAllRefUpdates=false", "tag", "outside"],
+    );
+    assert!(!repo.join(".git/logs/refs/tags/outside").exists());
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| {
+        app.bottom_panel_open = true;
+        app.bottom_tab = kagi::ui::BottomTab::OperationLog;
+        app.bottom_panel_height = 600.;
+        cx.notify();
+    });
+    paint(cx, window);
+    let rows = rows_of(cx, &app, &repo);
+    assert_eq!(rows.len(), 2);
+    click_row(cx, &app, window, rows[1]);
+    click_probe(cx, window, &format!("oplog-restore-{}-enabled", rows[1]));
+    let card = restore_card(cx, &app);
+    assert_eq!(card.op, Operation::RestoreToPoint { entry_id: point_id });
+    assert!(card.plan.blockers.is_empty(), "{:?}", card.plan.blockers);
+    assert!(card.plan.warnings.iter().any(|warning| matches!(
+        warning,
+        PlanNote::OplogRestore(OplogRestoreNote::Moves { refname, to: None, .. })
+            if refname == "refs/tags/release"
+    )));
+    assert_eq!(card.preview.unwrap().graph, RestorePreview::TagChange);
+    for (language, status, unchanged) in [
+        (
+            i18n::Lang::En,
+            "No preview: local tags change",
+            "tags changed outside Kagi",
+        ),
+        (
+            i18n::Lang::Ja,
+            "プレビューなし: local tag が変更されます",
+            "Kagi 外での tag の変更",
+        ),
+    ] {
+        i18n::set_lang(language);
+        paint(cx, window);
+        assert!(painted(window, "restore-preview-unavailable"));
+        assert!(!painted(window, "plan-recovery-scroll"));
+        click_probe(cx, window, "plan-card-copy");
+        let copied = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .unwrap();
+        assert_eq!(copied.matches("\nwarning:").count(), 2, "{copied}");
+        assert!(copied.contains("refs/tags/release"), "{copied}");
+        assert!(copied.contains(status), "{copied}");
+        assert!(copied.contains(unchanged), "{copied}");
+        assert_eq!(copied.matches(status).count(), 1, "{copied}");
+        assert!(!copied.contains("This is itself recorded"), "{copied}");
+        assert!(!copied.contains("これ自体"), "{copied}");
+    }
+    assert!(restore_card(cx, &app)
+        .plan
+        .equivalent_command
+        .as_deref()
+        .is_some_and(|command| command.starts_with("git update-ref --stdin")));
+    i18n::set_lang(original_language);
+    confirm_twice(cx, &app, window);
+    assert!(!git_fixture::git_succeeds(
+        &repo,
+        &["show-ref", "--verify", "refs/tags/release"]
+    ));
+    assert!(git_fixture::git_succeeds(
+        &repo,
+        &["show-ref", "--verify", "refs/tags/outside"]
+    ));
+    assert_eq!(read_oplog_tail(1).pop().unwrap().op, "restore-to-point");
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS oplog_restore_tag_preview: EN/JA card warns about unrecorded tag changes; confirming removes recorded tag and leaves external tag untouched");
 }
 
 /// #883 review: a long preview, with branch Solo on and a fetched PR head.

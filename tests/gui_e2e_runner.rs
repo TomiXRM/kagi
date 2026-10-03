@@ -127,6 +127,12 @@ mod home_tab;
 #[cfg(target_os = "macos")]
 #[path = "recovery/home_github.rs"]
 mod home_github;
+#[cfg(target_os = "macos")]
+#[path = "recovery/home_list_place.rs"]
+mod home_list_place;
+#[cfg(target_os = "macos")]
+#[path = "recovery/home_work.rs"]
+mod home_work;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/conflict_abort_slot.rs"]
@@ -159,6 +165,10 @@ mod overlay_focus;
 #[cfg(target_os = "macos")]
 #[path = "recovery/pr_fields_focus.rs"]
 mod pr_fields_focus;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/pr_same_number.rs"]
+mod pr_same_number;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/pr_viewed.rs"]
@@ -964,6 +974,14 @@ mod macos {
                 Box::new(crate::home_github::scenario_home_github),
             ),
             (
+                "home_work",
+                Box::new(crate::home_work::scenario_home_work),
+            ),
+            (
+                "home_list_place",
+                Box::new(crate::home_list_place::scenario_home_list_place),
+            ),
+            (
                 "smart_commit_generation_owner",
                 Box::new(crate::recovery_operations::scenario_smart_commit_generation_owner),
             ),
@@ -1218,6 +1236,10 @@ mod macos {
             (
                 "pr_fields_escape_focus",
                 Box::new(crate::pr_fields_focus::scenario_pr_fields_escape_focus),
+            ),
+            (
+                "pr_same_number",
+                Box::new(crate::pr_same_number::scenario_pr_same_number),
             ),
             ("pr_viewed", Box::new(crate::pr_viewed::scenario_pr_viewed)),
             ("pr_threads", Box::new(crate::pr_threads::scenario_pr_threads)),
@@ -1689,6 +1711,10 @@ mod macos {
             (
                 "oplog_restore_card",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_card),
+            ),
+            (
+                "oplog_restore_tag_preview",
+                Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_tag_preview),
             ),
             (
                 "oplog_restore_preview_review",

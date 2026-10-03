@@ -3,8 +3,9 @@
 //! REST `pulls/{n}/comments` list lacks — the anchor side, whether the thread
 //! is outdated or resolved, and whether the viewer could resolve it. It
 //! replaces that REST call, so opening a PR still makes the same number of
-//! `gh` calls. The repository is the one `gh` resolves from the working
-//! directory (`{owner}` / `{repo}` placeholders), as before.
+//! `gh` calls. The repository is the PR's own `base_repo`, on its host
+//! (#940 review P1) — not the working directory's `gh` default, which can be
+//! a different repository with a different PR under the same number.
 
 use std::path::Path;
 
@@ -33,25 +34,25 @@ query($owner:String!, $name:String!, $number:Int!, $endCursor:String) {
   }
 }";
 
-/// Every review thread of PR `number`, comments oldest first. A `gh` that
-/// does not answer (not installed, no GitHub remote, offline, a rejected
-/// query) is an error carrying gh's own message, so the caller can say why
-/// the list is empty instead of showing an empty list.
-pub fn pr_review_threads(workdir: &Path, number: u64) -> Result<Vec<ReviewThread>, GitError> {
+/// Every review thread of PR `number` in `base_repo`, comments oldest first.
+/// A `gh` that does not answer (not installed, no GitHub remote, offline, a
+/// rejected query) is an error carrying gh's own message, so the caller can
+/// say why the list is empty instead of showing an empty list.
+pub fn pr_review_threads(
+    workdir: &Path,
+    base_repo: &str,
+    number: u64,
+) -> Result<Vec<ReviewThread>, GitError> {
+    let repo = crate::github_merge::resolve_base_repo(workdir, base_repo)?;
+    let mut args = vec![
+        "api".to_string(),
+        "graphql".to_string(),
+        "--paginate".to_string(),
+    ];
+    args.extend(crate::github_merge::graphql_repo_args(&repo, number)?);
+    args.extend(["-f".to_string(), format!("query={REVIEW_THREADS_QUERY}")]);
     let out = crate::cli::gh_command()
-        .args([
-            "api",
-            "graphql",
-            "--paginate",
-            "-F",
-            "owner={owner}",
-            "-F",
-            "name={repo}",
-            "-F",
-            &format!("number={number}"),
-            "-f",
-            &format!("query={REVIEW_THREADS_QUERY}"),
-        ])
+        .args(args)
         .current_dir(workdir)
         .output()
         .map_err(|e| GitError::Other(format!("gh: {}", e)))?;

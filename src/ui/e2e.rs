@@ -66,6 +66,16 @@ pub(crate) fn note_workspace_scroll() {
 pub fn workspace_scrolls() -> usize {
     WORKSPACE_SCROLLS.load(std::sync::atomic::Ordering::Relaxed)
 }
+/// Times Home's GitHub list entries were built (#937): once per change of
+/// what they are built from, not per frame.
+static HOME_ITEM_BUILDS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub(crate) fn note_home_items_built() {
+    HOME_ITEM_BUILDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+#[cfg(feature = "gui-e2e")]
+pub fn home_item_builds() -> usize {
+    HOME_ITEM_BUILDS.load(std::sync::atomic::Ordering::Relaxed)
+}
 #[cfg(feature = "gui-e2e")]
 pub fn control_bounds(id: gpui::WindowId, name: &str) -> Option<gpui::Bounds<gpui::Pixels>> {
     CONTROL_BOUNDS.with(|map| map.borrow().get(&(id, name.to_string())).copied())
@@ -809,8 +819,22 @@ pub fn active_ui_writer_available(app: &mut KagiApp) -> bool {
 
 #[cfg(feature = "gui-e2e")]
 thread_local! {
+    static OPENED_URLS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static PANEL_MOTION_CLOCK: std::cell::Cell<Option<std::time::Instant>> =
         const { std::cell::Cell::new(None) };
+}
+
+/// A URL Kagi asked the OS to open, recorded instead of launching the
+/// user's browser from the GUI runner (#940 review).
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_opened_url(url: &str) {
+    OPENED_URLS.with(|urls| urls.borrow_mut().push(url.to_string()));
+}
+
+/// The URLs opened since the last call, oldest first.
+#[cfg(feature = "gui-e2e")]
+pub fn take_opened_urls() -> Vec<String> {
+    OPENED_URLS.with(|urls| std::mem::take(&mut *urls.borrow_mut()))
 }
 
 /// Drive the bottom panel's motion from a stand-in clock (#950); `None`

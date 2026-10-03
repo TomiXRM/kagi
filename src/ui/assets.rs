@@ -13,7 +13,9 @@
 //! `review-request-changes`, drawn here in the same 24px / stroke-2 idiom for
 //! the PR page's composer (ADR-0200), and `history`, `columns-2`,
 //! `square-menu` and `route`, lucide.dev (ISC) shapes gpui-component does not
-//! ship, for the icon-only diff / File History header buttons (#809).
+//! ship, for the icon-only diff / File History header buttons (#809), and
+//! `git-pull-request-draft` and `circle-dot`, lucide.dev (ISC), for Home's
+//! draft PR and issue rows (#928).
 
 use std::borrow::Cow;
 
@@ -63,6 +65,14 @@ const ASSETS: &[(&str, &[u8])] = &[
     (
         "icons/git-pull-request.svg",
         include_bytes!("../../assets/icons/git-pull-request.svg"),
+    ),
+    (
+        "icons/git-pull-request-draft.svg",
+        include_bytes!("../../assets/icons/git-pull-request-draft.svg"),
+    ),
+    (
+        "icons/circle-dot.svg",
+        include_bytes!("../../assets/icons/circle-dot.svg"),
     ),
     (
         "icons/sparkles.svg",

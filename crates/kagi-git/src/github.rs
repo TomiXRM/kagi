@@ -293,18 +293,19 @@ pub(crate) fn mergeable_at(v: &serde_json::Value) -> Mergeable {
 
 /// Reviews + issue comments for one PR — the "review chat". One `gh pr view`
 /// call, made when a PR tab opens (not per list refresh).
+///
+/// Addressed with `-R <base_repo>` (#940 review P1): without it `gh` reads the
+/// working directory's default repository (`gh repo set-default`), which need
+/// not be the one the PR lives in, and the same number there is a different
+/// PR — its conversation would sit under this PR's body.
 pub fn pr_conversation(
     workdir: &Path,
+    base_repo: &str,
     number: u64,
 ) -> Result<(Vec<Review>, Vec<Comment>), GitError> {
+    let repo = crate::github_merge::resolve_base_repo(workdir, base_repo)?;
     let out = crate::cli::gh_command()
-        .args([
-            "pr",
-            "view",
-            &number.to_string(),
-            "--json",
-            "reviews,comments",
-        ])
+        .args(conversation_args(&repo, number))
         .current_dir(workdir)
         .output()
         .map_err(|e| GitError::Other(format!("gh: {}", e)))?;
@@ -312,6 +313,19 @@ pub fn pr_conversation(
         return Ok((Vec::new(), Vec::new()));
     }
     parse_conversation(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// `gh pr view <number> -R <repo> --json reviews,comments`. Pure.
+fn conversation_args(repo: &str, number: u64) -> Vec<String> {
+    vec![
+        "pr".to_string(),
+        "view".to_string(),
+        number.to_string(),
+        "-R".to_string(),
+        repo.to_string(),
+        "--json".to_string(),
+        "reviews,comments".to_string(),
+    ]
 }
 
 /// Parse `gh pr view --json reviews,comments`. Pure; unit-tested below.
@@ -507,7 +521,7 @@ pub(crate) fn plan_pr_merge(
 // `kagi_git::github::*`.
 pub use crate::github_fetch::{
     apply_pr_fetch, classify_gh_failure, issue_detail, list_issues, list_merged_prs, list_prs,
-    pr_body_detail, pr_status_detail, PrFetchError, PrFetchOutcome,
+    pr_body_detail, pr_for_open, pr_status_detail, PrFetchError, PrFetchOutcome,
 };
 // The pull-request list shapes (the L1 GraphQL page and gh's flat `--json`
 // array) are parsed in `github_pr_list`, re-exported for the same reason.

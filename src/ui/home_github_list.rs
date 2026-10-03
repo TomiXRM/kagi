@@ -9,71 +9,80 @@ use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Entity, SharedString};
 use gpui_component::input::{Input, InputState};
 use gpui_component::{Icon, IconName, Sizable as _};
 use kagi_git::github_repos::{OwnerRepos, RepoListing};
+use kagi_git::github_repos_cache::{WorkItem, WorkKind};
 
 use super::home_github::GithubRepos;
+use super::home_work::HomePane;
+use super::home_work_list::{work_items, work_row, WorkRowState};
 use super::i18n::Msg;
 use super::render_helpers::safe_text;
 use super::theme::{self, theme};
 use super::KagiApp;
 
-/// What the list's rows depend on besides the data itself.
+/// Everything the list's entries are built from (#937): the filter, the
+/// pane and what that pane shows — the repositories / local clones, the clone
+/// running and whether organizations are still being read for Repositories;
+/// the pull request / issue lists for the other two — and the language their
+/// text is in. The entries are built again only when it changes. The panes
+/// not on screen are not part of it: a read landing for one of them must not
+/// rebuild (and so scroll back to the top) the list being read (#942 review).
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct ListKey {
     query: String,
-    generation: u64,
+    pane: HomePane,
+    lang: super::i18n::Lang,
+    /// `data_version` for Repositories, the work lists' `version` otherwise.
+    version: u64,
     cloning: Option<String>,
-    local: usize,
-    sections: usize,
     orgs_loading: bool,
 }
 
 /// One entry of the virtualized list.
 #[derive(Clone)]
-enum HomeItem {
+pub(super) enum HomeItem {
     Heading(String),
     Note(String),
     Repo(RepoListing, &'static str),
-    /// The organizations are still being read: a spinner row at the end.
-    Loading,
+    /// Something is still being read: a spinner row with its label and the
+    /// spinner's id.
+    Loading(&'static str, &'static str),
     /// The organizations could not be listed at all, and why.
     OrgsFailed(String),
+    /// A pull request or issue (#928), and what a click on it does.
+    Work(WorkKind, WorkItem, WorkRowState),
+    /// A pull request / issue list could not be read, and why.
+    WorkFailed(String),
 }
 
 impl KagiApp {
-    /// The rows, built once per change of the data or the filter and drawn
-    /// through `gpui::list`, which lays out only what is on screen.
+    /// The rows, built once per change of the data or the filter (not per
+    /// frame — a spinner animating or a key typed redraws without them)
+    /// and drawn through `gpui::list`, which lays out only what is on
+    /// screen.
     pub(super) fn render_github_list(
         &mut self,
         query: String,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let GithubRepos::Loaded {
-            sections,
-            orgs_error,
-        } = &self.home_github.repos
-        else {
+        let pane = self.home_github.work.pane;
+        if pane == HomePane::Repos && !matches!(self.home_github.repos, GithubRepos::Loaded { .. })
+        {
             return div().into_any_element();
-        };
-        let local = &self.home_github.local;
-        let cloning = self.home_github.cloning.as_ref().map(|r| r.source.clone());
-        let mut items = github_items(
-            sections,
-            orgs_error.as_deref(),
-            local,
-            &query,
-            cloning.as_deref(),
-        );
-        let orgs_loading = self.home_github.orgs_loading;
-        if orgs_loading {
-            items.push(HomeItem::Loading);
         }
+        let repos = pane == HomePane::Repos;
         let key = ListKey {
             query,
-            generation: self.home_github.generation,
-            cloning,
-            local: local.len(),
-            sections: sections.len(),
-            orgs_loading,
+            pane,
+            lang: super::i18n::lang(),
+            version: if repos {
+                self.home_github.data_version
+            } else {
+                self.home_github.work.version
+            },
+            cloning: repos
+                .then(|| self.home_github.cloning.as_ref().map(|r| r.source.clone()))
+                .flatten(),
+            orgs_loading: repos && self.home_github.orgs_loading,
         };
         let state = self
             .home_github
@@ -82,32 +91,61 @@ impl KagiApp {
                 gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(600.))
             })
             .clone();
-        if self.home_github.list_key.as_ref() != Some(&key) || state.item_count() != items.len() {
+        if self.home_github.list_key.as_ref() != Some(&key) {
+            // The same list read again (a refresh landing, another language)
+            // keeps its place; another pane or filter starts at the top.
+            let same_view = self
+                .home_github
+                .list_key
+                .as_ref()
+                .is_some_and(|old| old.pane == key.pane && old.query == key.query);
+            let top = state.logical_scroll_top();
+            let items = self.build_home_items(&key);
             state.reset(items.len());
+            if same_view && top.item_ix < items.len() {
+                state.scroll_to(top);
+            }
+            self.home_github.items = items.into();
             self.home_github.list_key = Some(key);
         }
+        let items = self.home_github.items.clone();
         let app = cx.entity();
+        let avatars = self.avatars.images.clone();
         gpui::list(state, move |i, _window, _cx| match items.get(i) {
             Some(HomeItem::Heading(title)) => section_heading(title).into_any_element(),
             Some(HomeItem::Note(text)) => muted(text.clone()),
             Some(HomeItem::OrgsFailed(text)) => {
                 super::e2e::measure_control("home-github-orgs-failed", muted(text.clone()))
             }
-            Some(HomeItem::Loading) => div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .px_3()
-                .pt_4()
-                .pb_2()
-                .child(super::render_overlay::sync_spinner(
-                    14.,
-                    theme().text_muted,
-                    "home-github-orgs-loading",
-                ))
-                .child(muted_inline(Msg::HomeGithubOrgsLoading.t()))
-                .into_any_element(),
+            Some(HomeItem::Loading(text, spinner)) => super::e2e::measure_control(
+                *spinner,
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .px_3()
+                    .pt_4()
+                    .pb_2()
+                    .child(super::render_overlay::sync_spinner(
+                        14.,
+                        theme().text_muted,
+                        *spinner,
+                    ))
+                    .child(muted_inline(text)),
+            ),
+            Some(HomeItem::Work(kind, item, state)) => {
+                work_row(*kind, item, *state, &avatars, &app)
+            }
+            Some(HomeItem::WorkFailed(text)) => super::e2e::measure_control(
+                "home-work-failed",
+                div()
+                    .px_3()
+                    .py_1()
+                    .text_sm()
+                    .text_color(rgb(theme().color_blocker))
+                    .child(safe_text(text)),
+            ),
             Some(HomeItem::Repo(listing, state)) => super::e2e::measure_control(
                 format!("home-gh-{}", listing.name_with_owner),
                 github_row(listing.clone(), state, &app),
@@ -117,6 +155,34 @@ impl KagiApp {
         .flex_1()
         .min_h(px(0.))
         .into_any_element()
+    }
+
+    /// The entries for `key`: the open pane's sections, filtered.
+    fn build_home_items(&self, key: &ListKey) -> Vec<HomeItem> {
+        super::e2e::note_home_items_built();
+        let home = &self.home_github;
+        let (query, cloning) = (key.query.as_str(), key.cloning.as_deref());
+        match (key.pane, &home.repos) {
+            (HomePane::Prs | HomePane::Issues, _) => work_items(&home.work, key.pane, query),
+            (
+                HomePane::Repos,
+                GithubRepos::Loaded {
+                    sections,
+                    orgs_error,
+                },
+            ) => {
+                let mut items =
+                    github_items(sections, orgs_error.as_deref(), &home.local, query, cloning);
+                if key.orgs_loading {
+                    items.push(HomeItem::Loading(
+                        Msg::HomeGithubOrgsLoading.t(),
+                        "home-github-orgs-loading",
+                    ));
+                }
+                items
+            }
+            (HomePane::Repos, _) => Vec::new(),
+        }
     }
 }
 
@@ -291,7 +357,10 @@ fn github_row(listing: RepoListing, state: &'static str, app: &Entity<KagiApp>) 
     if listing.is_fork {
         meta = meta.child(chip(Msg::HomeGithubFork.t()));
     }
-    meta = meta.child(chip(state).text_color(rgb(theme().color_branch)));
+    meta = meta.child(super::e2e::measure_control(
+        format!("home-gh-{}:{state}", listing.name_with_owner),
+        chip(state).text_color(rgb(theme().color_branch)),
+    ));
     let description = (!listing.description.is_empty()).then(|| {
         div()
             .text_sm()
@@ -334,4 +403,31 @@ fn github_row(listing: RepoListing, state: &'static str, app: &Entity<KagiApp>) 
         )
         .child(meta)
         .into_any_element()
+}
+
+/// Tier A hooks for the list's place (#942 review).
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    /// Scroll Home's list so entry `ix` is at its top.
+    pub fn scroll_home_list_for_e2e(&self, ix: usize) {
+        if let Some(state) = &self.home_github.list {
+            state.scroll_to(gpui::ListOffset {
+                item_ix: ix,
+                offset_in_item: px(0.),
+            });
+        }
+    }
+
+    /// The entry at the top of Home's list.
+    pub fn home_list_top_for_e2e(&self) -> Option<usize> {
+        self.home_github
+            .list
+            .as_ref()
+            .map(|state| state.logical_scroll_top().item_ix)
+    }
+
+    /// Read only the pull request / issue lists again, as a Refresh does.
+    pub fn reload_home_work_for_e2e(&mut self, cx: &mut Context<Self>) {
+        self.reload_home_work(cx);
+    }
 }

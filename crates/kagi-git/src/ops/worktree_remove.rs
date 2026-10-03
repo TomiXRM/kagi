@@ -55,6 +55,7 @@ pub fn plan_remove_worktree(
     if let Some(blocker) = nested_registered_worktree(repo, name, &path)? {
         blockers.push(blocker);
     }
+    blockers.extend(super::worktree_nested_repo::nested_repository_blocker(&wt)?);
     if has_submodule_content(&wt)? {
         blockers.push(PlanNote::Worktree(WorktreeNote::RemoveContainsSubmodules));
     }
@@ -406,6 +407,7 @@ pub(crate) fn execute_remove_worktree_progress(
     }
     preflight_remove_submodules(repo, name)?;
     preflight_remove_nested_worktrees(repo, name)?;
+    preflight_remove_nested_repositories(repo, name)?;
 
     // Capture the ref before any pre-remove hook. The hook is allowed to take
     // time, so deleting whichever commit the branch points at afterwards would
@@ -477,6 +479,7 @@ pub(crate) fn execute_remove_worktree_progress(
     ensure_ignored_content_not_increased(&wt, plan)?;
     preflight_remove_submodules(repo, name)?;
     preflight_remove_nested_worktrees(repo, name)?;
+    preflight_remove_nested_repositories(repo, name)?;
 
     // Containment-checked recursive delete (the ONLY sanctioned one).
     let main_repo = Repository::open(repo.commondir())

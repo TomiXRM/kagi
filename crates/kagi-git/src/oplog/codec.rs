@@ -4,7 +4,7 @@
 //! reconstruction, and retention continue to own their existing policies.
 
 use super::{
-    recovery, Actor, FailureCode, OpLogEntry, OpOutcome, RecordedIdentity, RepoIdentity,
+    recovery, Actor, FailureCode, OpLogEntry, OpOutcome, RecordedIdentity, RefScope, RepoIdentity,
     StateSummary,
 };
 use kagi_domain::github::IssueCreateFields;
@@ -102,6 +102,10 @@ struct EntryRef<'a> {
     // a record, not the absence of one.
     #[serde(skip_serializing_if = "Option::is_none")]
     ref_moves: Option<Vec<RefMoveRef<'a>>>,
+    /// A missing or unknown scope must not make a legacy branch-only
+    /// `ref_moves: []` sufficient to restore local tags.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ref_scope: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     repo_identity: Option<RepoIdentityRef<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -213,6 +217,8 @@ struct EntryRecord {
     failure_code: Option<FailureCode>,
     #[serde(default, deserialize_with = "ref_moves")]
     ref_moves: Option<Vec<RefMove>>,
+    #[serde(default, deserialize_with = "ref_scope")]
+    ref_scope: RefScope,
     // Additive: a line without the field is `Absent` (attributed as before by
     // opening its worktree). A field that is there but unreadable is
     // `Invalid` — never `Absent`, whose path fallback could take another
@@ -249,6 +255,8 @@ pub(super) fn to_json(entry: &OpLogEntry) -> String {
                 })
                 .collect()
         }),
+        ref_scope: (entry.ref_scope == RefScope::HeadsAndTags && entry.ref_moves.is_some())
+            .then_some("heads-and-tags"),
         repo_identity: match &entry.repo_identity {
             RecordedIdentity::Known(id) => Some(RepoIdentityRef {
                 common_dir: &id.common_dir,
@@ -290,6 +298,7 @@ pub(super) fn from_value(value: Value) -> Option<OpLogEntry> {
         recovery: record.recovery,
         failure_code: record.failure_code,
         ref_moves: record.ref_moves,
+        ref_scope: record.ref_scope,
         repo_identity: record.repo_identity,
         issue_fields: record.issue_fields,
     })
@@ -382,6 +391,15 @@ fn ref_moves<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<RefMove>>, D:
             })
             .collect()
     }))
+}
+
+fn ref_scope<'de, D: Deserializer<'de>>(d: D) -> Result<RefScope, D::Error> {
+    let value = Value::deserialize(d)?;
+    Ok(if value.as_str() == Some("heads-and-tags") {
+        RefScope::HeadsAndTags
+    } else {
+        RefScope::LegacyOrUnknown
+    })
 }
 
 /// Only called when the key is present (a missing one is `Default`, i.e.

@@ -48,6 +48,7 @@ fn gh_script(bare: &Path, state: &Path) -> String {
          cat <<'JSON'\n{REPO_LIST}\nJSON\n;;\n\
          'repo list acme-org') cat <<'JSON'\n{ORG_LIST}\nJSON\n;;\n\
          'repo list locked-org') echo 'Resource protected by organization SAML enforcement' >&2; exit 1 ;;\n\
+         'search '*) echo '[]' ;;\n\
          'repo clone '*) [ -e '{state}/fail-clone' ] && {{ echo 'HTTP 502: Bad Gateway' >&2; exit 1; }}\n\
          git clone -q '{bare}' \"$4\" && \
          git -C \"$4\" remote set-url origin https://github.com/acme/widgets.git ;;\n\
@@ -58,11 +59,11 @@ fn gh_script(bare: &Path, state: &Path) -> String {
 }
 
 /// The read is over: nothing is loading, refreshing or appending.
-fn settled(app: &KagiApp) -> bool {
+pub(crate) fn settled(app: &KagiApp) -> bool {
     !app.home_github_reading()
 }
 
-fn wait_for(
+pub(crate) fn wait_for(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     what: &str,
@@ -87,7 +88,7 @@ fn active_path(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> std::pat
 }
 
 /// Draw, then say whether `name` was laid out in this frame.
-fn drawn(cx: &mut VisualTestAppContext, window: AnyWindowHandle, name: &str) -> bool {
+pub(crate) fn drawn(cx: &mut VisualTestAppContext, window: AnyWindowHandle, name: &str) -> bool {
     e2e::clear_control_bounds(window.window_id(), name);
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
@@ -273,6 +274,19 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
         );
     });
 
+    // The entries are built once per change of what they are built from,
+    // not on every frame (#937).
+    assert!(drawn(cx, window, "home-gh-acme/widgets"));
+    let builds = e2e::home_item_builds();
+    for _ in 0..3 {
+        assert!(drawn(cx, window, "home-gh-acme/widgets"));
+    }
+    assert_eq!(
+        e2e::home_item_builds(),
+        builds,
+        "redrawing does not build the entries again"
+    );
+
     // The filter spans every owner and drops what does not match.
     let set_filter = |cx: &mut VisualTestAppContext, text: &'static str| {
         cx.update_window(window, |_, window, cx| {
@@ -288,6 +302,10 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
         cx.run_until_parked();
     };
     set_filter(cx, "TOOL");
+    assert!(
+        e2e::home_item_builds() > builds,
+        "a new filter builds them again"
+    );
     assert!(
         drawn(cx, window, "home-gh-acme-org/tool"),
         "matches across owners, any case"
@@ -480,6 +498,10 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
         Some(dest.clone()),
         "an open tab is matched with the list"
     );
+    assert!(
+        drawn(cx, window, "home-gh-acme/widgets:Open"),
+        "its row says Open once matched"
+    );
 
     unmount(cx, app, window);
 }
@@ -492,10 +514,10 @@ fn choose_folder(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, parent: &
 }
 
 /// Environment variables removed for the scenario and put back after it.
-struct EnvCleared(Vec<(&'static str, Option<std::ffi::OsString>)>);
+pub(crate) struct EnvCleared(Vec<(&'static str, Option<std::ffi::OsString>)>);
 
 impl EnvCleared {
-    fn new(keys: &[&'static str]) -> Self {
+    pub(crate) fn new(keys: &[&'static str]) -> Self {
         Self(
             keys.iter()
                 .map(|key| {

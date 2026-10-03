@@ -224,6 +224,7 @@ impl Backend {
                     note,
                     PlanNote::Worktree(
                         kagi_domain::plan_note::WorktreeNote::RemoveContainsWorktree { .. }
+                            | kagi_domain::plan_note::WorktreeNote::RemoveContainsRepository { .. }
                             | kagi_domain::plan_note::WorktreeNote::RemoveOpenInTab
                     )
                 )

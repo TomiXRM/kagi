@@ -59,6 +59,7 @@ pub mod github_pr_list;
 pub mod github_repos;
 pub mod github_repos_cache;
 pub mod github_review;
+pub mod github_search;
 mod github_status_batch;
 pub mod github_threads;
 pub mod hotspot;

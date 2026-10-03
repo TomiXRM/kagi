@@ -12,6 +12,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 - 初期化済み、または未初期化でも gitlink のパスにローカルファイルがある worktree は Remove の計画時・実行前に削除を拒否します。空・不在の gitlink は削除可能なままとし、削除前ステップ後の拒否も EN/JA の短い toast に理由だけを表示します。(#934)
 - New Issue の本文エディタが Tab を字下げとして取り込み、キーボードだけでは下のラベル・担当者・Create へ進めなかった問題を修正しました。Issue の本文エディタ(新規・返信)でも Tab / Shift+Tab でフォーカスが移動し、字下げは Cmd+] / Cmd+[(Linux / Windows は Ctrl+] / Ctrl+[)で行えます。(#909)
 - Linux / FreeBSD の View メニューで、テーマ一覧がウィンドウの下へはみ出し、後半のテーマや言語の項目を選べなかった問題を修正しました。メニューの高さをウィンドウ内に収め、入りきらない項目はメニューの中でスクロールして選べます。(#935)
+- Operation Log で行を開いたときの詳細が「before: branch: maindirty: cleanafter: …」のように 1 行につながって表示されていた問題を修正しました。before / dirty / after などを 1 項目ずつ改行して表示します。(#908)
+- Operation Log の操作者の表示を、日本語表示でも「人」ではなく「Human」にしました(CLI / MCP と同じく英語の表記)。(#908)
 
 ### Changed
 

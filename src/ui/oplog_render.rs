@@ -252,13 +252,18 @@ fn render_row(
 /// The expanded detail block: every line of the entry, soft-wrapped (never
 /// truncated — the row is variable-height now) and drag-selectable.
 ///
-/// ponytail: the leading/aligned spaces of `detail_lines` may collapse in the
-/// HTML text run; the clipboard copy keeps the exact alignment. Give the block
-/// its own escaper only if the column alignment turns out to matter on screen.
+/// Each line is its own paragraph, with no gap between them: the pinned
+/// `TextView` drops a `<br>` inside a paragraph, which ran the lines into one
+/// ("before: branch: maindirty: clean…", #908 Tier B). Leading / aligned
+/// spaces still collapse on screen; the clipboard copy keeps the alignment.
 fn render_detail(i: usize, entry: &OpLogEntry) -> gpui::AnyElement {
-    let text = oplog_panel::detail_lines(entry).join("\n");
+    let text = oplog_panel::detail_lines(entry).join("\n\n");
     let selectable = text.len() <= SELECTABLE_DETAIL_MAX;
     let html = SharedString::from(kagi_domain::message::message_to_html(&text));
+    let style = gpui_component::text::TextViewStyle {
+        paragraph_gap: gpui::rems(0.),
+        ..Default::default()
+    };
     div()
         .id(("oplog-row-detail", i))
         .flex()
@@ -288,6 +293,7 @@ fn render_detail(i: usize, entry: &OpLogEntry) -> gpui::AnyElement {
                 SharedString::from(format!("oplog-detail-{}-{}", entry.id, i)),
                 html,
             )
+            .style(style)
             .selectable(selectable),
         )
         .into_any_element()

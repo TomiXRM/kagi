@@ -39,7 +39,7 @@ impl OplogPanelMsg {
         use OplogPanelMsg::*;
         match (language, self) {
             (Lang::En, ActorHuman) => "Human",
-            (Lang::Ja, ActorHuman) => "人",
+            (Lang::Ja, ActorHuman) => "Human",
             (Lang::En, RecordedHeading) => "Recorded — refs this operation moved",
             (Lang::Ja, RecordedHeading) => "記録 — この操作が動かした ref",
             (Lang::En, RecordedNone) => "No ref moved",

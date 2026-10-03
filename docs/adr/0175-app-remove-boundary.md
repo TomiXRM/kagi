@@ -231,7 +231,8 @@ need a capacity scan just to populate a hidden row.
 
 - #938: Remove の削除対象内に**別の登録済み worktree**（main を含む）
   がある場合、実行元の worktree に関係なく typed EN/JA blocker で拒否する。
-  対象自身の登録だけは除くため、対象自身のタブからの Remove は許可する。
+  この判定では対象自身の登録だけを除く。対象自身のタブからの Remove は、
+  別の blocker(`RemoveOpenInTab`)で plan と preflight の両方で拒否する。
   Git の登録パスを列挙・正規化して確認し、読み取りに失敗した場合は削除しない。
   同じ判定を plan、承認後の preflight、`pre_remove` とバックアップを
   終えた recursive delete の直前に行う。ignored フォルダーが既にある場合、

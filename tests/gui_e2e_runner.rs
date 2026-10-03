@@ -57,6 +57,9 @@ mod gui_evidence;
 #[path = "support/gui_isolation.rs"]
 mod gui_isolation;
 #[cfg(target_os = "macos")]
+#[path = "support/proc_identity.rs"]
+mod proc_identity;
+#[cfg(target_os = "macos")]
 #[path = "recovery/theme_custom.rs"]
 mod theme_custom;
 
@@ -324,6 +327,8 @@ mod macos {
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::time::{Duration, Instant};
+
+    use crate::proc_identity;
 
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -2003,18 +2008,8 @@ mod macos {
             // A process the scenario started that survived the kill would
             // run next to the following scenarios: that fails the scenario,
             // and its pids are named so it can be found. So does a cleanup
-            // that could not read the process table: it cannot tell.
-            let left = match cleanup {
-                Ok(left) if left.is_empty() => None,
-                Ok(left) => {
-                    let pids: Vec<String> = left.iter().map(u32::to_string).collect();
-                    Some(format!(
-                        "left running after the kill: pid {}",
-                        pids.join(", ")
-                    ))
-                }
-                Err(unavailable) => Some(unavailable),
-            };
+            // that cannot tell what is left (see `Tracked::settled`).
+            let left = (!cleanup.is_empty()).then(|| cleanup.join("; "));
             let line = match (ended, left) {
                 (Some(ended), Some(left)) => Some(format!("{ended}; {left}")),
                 (ended, left) => ended.or(left),
@@ -2095,11 +2090,7 @@ mod macos {
     /// someone else (the rule in `kagi_git::proc::group`). (A group of its
     /// own also means the terminal's Ctrl+C reaches only this parent, which
     /// then stops the child as at a timeout: see [`catch_interrupts`].)
-    fn run_child(
-        runner: &Path,
-        name: &str,
-        timeout: Duration,
-    ) -> (ChildOutcome, Result<Vec<u32>, String>) {
+    fn run_child(runner: &Path, name: &str, timeout: Duration) -> (ChildOutcome, Vec<String>) {
         use std::os::unix::process::CommandExt as _;
 
         let tmp = match tempfile::Builder::new()
@@ -2107,7 +2098,7 @@ mod macos {
             .tempdir()
         {
             Ok(tmp) => tmp,
-            Err(error) => return (ChildOutcome::NotStarted(error), Ok(Vec::new())),
+            Err(error) => return (ChildOutcome::NotStarted(error), Vec::new()),
         };
         let mut child = match std::process::Command::new(runner)
             .env("KAGI_GUI_E2E_EXACT", name)
@@ -2117,7 +2108,7 @@ mod macos {
             .spawn()
         {
             Ok(child) => child,
-            Err(error) => return (ChildOutcome::NotStarted(error), Ok(Vec::new())),
+            Err(error) => return (ChildOutcome::NotStarted(error), Vec::new()),
         };
         let root = child.id();
         let started = Instant::now();
@@ -2132,13 +2123,7 @@ mod macos {
                 Ok(Some(status)) if status.success() => break ChildOutcome::Passed,
                 Ok(Some(status)) => break ChildOutcome::Exited(status),
                 Ok(None) if started.elapsed() >= timeout || interrupted() => {
-                    // The tree is read while the runner is alive: once it is
-                    // killed its children move to launchd and cannot be
-                    // traced back. Descendants first, then the runner.
-                    tree.record(root);
-                    tree.kill();
-                    kill_group(root);
-                    let _ = child.wait();
+                    tree.stop(&mut child);
                     if interrupted() {
                         break ChildOutcome::Interrupted;
                     }
@@ -2146,10 +2131,7 @@ mod macos {
                 }
                 Ok(None) => std::thread::sleep(TREE_POLL),
                 Err(error) => {
-                    tree.record(root);
-                    tree.kill();
-                    kill_group(root);
-                    let _ = child.wait();
+                    tree.stop(&mut child);
                     break ChildOutcome::NotStarted(error);
                 }
             }
@@ -2160,108 +2142,137 @@ mod macos {
         (outcome, tree.settled())
     }
 
-    /// The processes a scenario's runner started, as far as `ps` showed
-    /// them. A `ps` that keeps failing is not an empty tree (#967 review):
-    /// the failure is remembered, the cleanup falls back to the last tree it
-    /// did read, and the scenario fails as "process table unavailable"
-    /// rather than reporting that nothing is left.
+    /// The processes a scenario's runner started: each pid with the
+    /// microsecond it started ([`proc_identity`]), so a pid the OS has
+    /// handed to someone else is never signalled. `ps` finds the tree; the
+    /// kernel says who each pid is. What could not be read is remembered and
+    /// fails the scenario rather than reporting that nothing is left
+    /// (#967 review).
     #[derive(Default)]
     struct Tracked {
-        /// Every process ever recorded: pid → start time.
-        seen: std::collections::HashMap<u32, String>,
-        /// The descendants at the last successful read.
-        last: Vec<u32>,
-        /// Pids killed from `last` without their identity checked.
-        blind: Vec<u32>,
-        error: Option<String>,
+        seen: std::collections::HashMap<u32, proc_identity::Started>,
+        /// Pids in the tree whose identity the kernel would not give, at
+        /// recording or at kill time: never signalled.
+        unknown: std::collections::BTreeSet<u32>,
+        /// The first failure to read the process table.
+        table: Option<String>,
+        /// Signals that could not be sent.
+        failed: Vec<String>,
     }
 
     impl Tracked {
-        fn note(&mut self, error: String) {
-            self.error.get_or_insert(error);
-        }
-
         /// Record every process now descended from `root`.
         fn record(&mut self, root: u32) {
             match descendants(root) {
                 Ok(found) => {
-                    self.last = found.keys().copied().collect();
-                    self.seen.extend(found);
+                    for pid in found {
+                        match proc_identity::started(pid) {
+                            // A pid seen before under another start time was
+                            // reused: the earlier process is gone.
+                            Ok(Some(at)) => {
+                                self.seen.insert(pid, at);
+                            }
+                            // Gone between `ps` and the kernel read.
+                            Ok(None) => {}
+                            Err(_) => {
+                                self.unknown.insert(pid);
+                            }
+                        }
+                    }
                 }
-                Err(error) => self.note(error),
-            }
-        }
-
-        /// The recorded processes still running: same pid, same start time,
-        /// so a reused pid is left alone.
-        fn still_running(&self) -> Result<Vec<u32>, String> {
-            Ok(process_table()?
-                .into_iter()
-                .filter(|(pid, _, start)| self.seen.get(pid) == Some(start))
-                .map(|(pid, _, _)| pid)
-                .collect())
-        }
-
-        /// SIGKILL each recorded process still running. When the table
-        /// cannot be read, the pids of the last read are killed as they
-        /// were read: a pid reused since then could be hit, which beats
-        /// leaving the scenario's processes running next to the next one.
-        fn kill(&mut self) {
-            let targets = match self.still_running() {
-                Ok(alive) => alive,
                 Err(error) => {
-                    self.note(error);
-                    let blind: Vec<u32> = (self.last.iter())
-                        .filter(|pid| !self.blind.contains(pid))
-                        .copied()
-                        .collect();
-                    self.blind.extend(&blind);
-                    blind
+                    self.table.get_or_insert(error);
                 }
-            };
-            if targets.is_empty() {
-                return;
-            }
-            if let Err(error) = Command::new("/bin/kill")
-                .arg("-KILL")
-                .args(targets.iter().map(u32::to_string))
-                .stderr(std::process::Stdio::null())
-                .status()
-            {
-                self.note(format!("kill did not run: {error}"));
             }
         }
 
-        /// The recorded processes still running once a just-killed process
-        /// has had a bounded moment to go (2 s): a process in its exit path
-        /// or a zombie launchd has not reaped yet is not "left running". A
-        /// table that could not be read at any point makes what is left
-        /// unknown: that is the error, never an empty list.
-        fn settled(self) -> Result<Vec<u32>, String> {
-            let unavailable = |error: &str, blind: &[u32]| {
-                let mut line =
-                    format!("process table unavailable ({error}); what is left is unknown");
-                if !blind.is_empty() {
-                    let pids: Vec<String> = blind.iter().map(u32::to_string).collect();
-                    line += &format!(
-                        "; killed the last read's pid {} unverified",
-                        pids.join(", ")
-                    );
+        /// The recorded processes that are still the same process. Asks the
+        /// kernel per pid, not `ps`, so it works when nothing can be spawned.
+        fn still_running(&mut self) -> Vec<u32> {
+            let mut alive = Vec::new();
+            for (&pid, &at) in &self.seen {
+                match proc_identity::identity(pid, at) {
+                    proc_identity::Identity::Same => alive.push(pid),
+                    proc_identity::Identity::Gone => {}
+                    proc_identity::Identity::Unknown(_) => {
+                        self.unknown.insert(pid);
+                    }
                 }
-                line
-            };
-            if let Some(error) = &self.error {
-                return Err(unavailable(error, &self.blind));
             }
+            alive
+        }
+
+        /// SIGKILL each recorded process still running.
+        fn kill(&mut self) {
+            for pid in self.still_running() {
+                if let Err(error) = proc_identity::sigkill(pid as i32) {
+                    self.failed.push(error);
+                }
+            }
+        }
+
+        /// Stop a runner still running at its timeout or an interrupt: read
+        /// the tree while it is alive (once killed, its children move to
+        /// launchd and cannot be traced back), kill the descendants, then
+        /// the runner's group while its leader is unreaped. The reap waits
+        /// only for a runner a signal reached.
+        fn stop(&mut self, child: &mut std::process::Child) {
+            self.record(child.id());
+            self.kill();
+            let group = proc_identity::sigkill(-(child.id() as i32));
+            let reached = match group {
+                Ok(()) => true,
+                Err(error) => {
+                    self.failed.push(error);
+                    proc_identity::sigkill(child.id() as i32)
+                        .map_err(|error| self.failed.push(error))
+                        .is_ok()
+                }
+            };
+            if reached {
+                let _ = child.wait();
+            } else {
+                self.failed
+                    .push(format!("runner pid {} not stopped", child.id()));
+            }
+        }
+
+        /// What is wrong after the cleanup, once a just-killed process has
+        /// had a bounded moment to go (2 s; a process in its exit path is
+        /// not "left running"). Empty: the scenario left nothing behind.
+        fn settled(mut self) -> Vec<String> {
             let mut left = self.still_running();
             for _ in 0..40 {
-                if !matches!(&left, Ok(pids) if !pids.is_empty()) {
+                if left.is_empty() {
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(50));
                 left = self.still_running();
             }
-            left.map_err(|error| unavailable(&error, &self.blind))
+            let pids = |pids: &mut dyn Iterator<Item = &u32>| {
+                pids.map(u32::to_string).collect::<Vec<_>>().join(", ")
+            };
+            let mut problems = Vec::new();
+            if !left.is_empty() {
+                left.sort_unstable();
+                problems.push(format!(
+                    "left running after the kill: pid {}",
+                    pids(&mut left.iter())
+                ));
+            }
+            if let Some(error) = &self.table {
+                problems.push(format!(
+                    "process table unavailable ({error}); what is left is unknown"
+                ));
+            }
+            if !self.unknown.is_empty() {
+                problems.push(format!(
+                    "identity unknown, not killed: pid {}",
+                    pids(&mut self.unknown.iter())
+                ));
+            }
+            problems.extend(self.failed);
+            problems
         }
     }
 
@@ -2277,10 +2288,10 @@ mod macos {
     /// has no such window.
     const TREE_POLL: Duration = Duration::from_millis(50);
 
-    /// Every live process `(pid, parent, start time)`. A `ps` that fails
-    /// (it may not start when the scenario has used up the process or FD
-    /// limit) is tried 3 times, 50 ms apart, before it is an error.
-    fn process_table() -> Result<Vec<(u32, u32, String)>, String> {
+    /// Every live process `(pid, parent)`. A `ps` that fails (it may not
+    /// start when the scenario has used up the process or FD limit) is tried
+    /// 3 times, 50 ms apart, before it is an error.
+    fn process_table() -> Result<Vec<(u32, u32)>, String> {
         let mut result = read_process_table();
         for _ in 0..2 {
             if result.is_ok() {
@@ -2296,9 +2307,9 @@ mod macos {
     /// wait to be reaped. A `ps` that cannot start, fails, prints a line it
     /// cannot parse or prints no process at all (it always lists itself) is
     /// an error, never an empty table.
-    fn read_process_table() -> Result<Vec<(u32, u32, String)>, String> {
+    fn read_process_table() -> Result<Vec<(u32, u32)>, String> {
         let out = Command::new("/bin/ps")
-            .args(["-axo", "pid=,ppid=,stat=,lstart="])
+            .args(["-axo", "pid=,ppid=,stat="])
             .output()
             .map_err(|error| format!("ps did not run: {error}"))?;
         if !out.status.success() {
@@ -2312,15 +2323,15 @@ mod macos {
         let mut listed = false;
         for line in String::from_utf8_lossy(&out.stdout).lines() {
             let fields: Vec<&str> = line.split_whitespace().collect();
-            let [pid, ppid, stat, start @ ..] = fields.as_slice() else {
+            let [pid, ppid, stat] = fields.as_slice() else {
                 return Err(format!("ps printed a line it should not: {line:?}"));
             };
-            let (Ok(pid), Ok(ppid), false) = (pid.parse(), ppid.parse(), start.is_empty()) else {
+            let (Ok(pid), Ok(ppid)) = (pid.parse(), ppid.parse()) else {
                 return Err(format!("ps printed a line it should not: {line:?}"));
             };
             listed = true;
             if !stat.starts_with('Z') {
-                table.push((pid, ppid, start.join(" ")));
+                table.push((pid, ppid));
             }
         }
         if !listed {
@@ -2330,29 +2341,19 @@ mod macos {
     }
 
     /// The processes descended from `root` (not `root` itself), whatever
-    /// group or session they are in, keyed by pid with their start time.
-    fn descendants(root: u32) -> Result<std::collections::HashMap<u32, String>, String> {
+    /// group or session they are in.
+    fn descendants(root: u32) -> Result<std::collections::BTreeSet<u32>, String> {
         let table = process_table()?;
-        let mut found = std::collections::HashMap::new();
+        let mut found = std::collections::BTreeSet::new();
         let mut frontier = vec![root];
         while let Some(parent) = frontier.pop() {
-            for (pid, ppid, start) in &table {
-                if *ppid == parent && found.insert(*pid, start.clone()).is_none() {
-                    frontier.push(*pid);
+            for &(pid, ppid) in &table {
+                if ppid == parent && found.insert(pid) {
+                    frontier.push(pid);
                 }
             }
         }
         Ok(found)
-    }
-
-    /// SIGKILL every process in the group `group` leads. Only while the
-    /// leader is unreaped (see [`run_child`]). A group that is already empty
-    /// is not an error.
-    fn kill_group(group: u32) {
-        let _ = Command::new("/bin/kill")
-            .args(["-KILL", "--", &format!("-{group}")])
-            .stderr(std::process::Stdio::null())
-            .status();
     }
 
     fn assert_center_bottom_panel(window: AnyWindowHandle) -> Bounds<Pixels> {

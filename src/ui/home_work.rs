@@ -216,6 +216,12 @@ impl KagiApp {
         };
         self.home_github.work.opening = Some(key.clone());
         self.home_github.work.version += 1;
+        // The row that was pressed goes with Home once the clone's tab opens
+        // (#960 review): a focus left on it would take the next Tab / key
+        // nowhere. The root outlives the switch, as for a repository row.
+        if let Some(root) = self.root_focus.clone() {
+            window.focus(&root, cx);
+        }
         cx.notify();
         if !kind.is_pr() {
             self.open_issue_when_addressed(key, path, window, cx);

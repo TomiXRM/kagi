@@ -222,7 +222,7 @@ impl KagiApp {
         let Some(lists) = self.home_github.work.lists.as_ref() else {
             return;
         };
-        let requests = super::home_work_list::review_avatar_requests(&lists.review_requests.items);
+        let requests = lists.review_requests.authors_by_host();
         for (host, logins) in requests {
             self.ensure_github_login_avatars(logins, Some(host), "home", cx);
         }

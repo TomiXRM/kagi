@@ -26,22 +26,6 @@ pub(super) enum WorkRowState {
     Opening,
 }
 
-/// The review-request authors whose avatars Home shows, per host they are
-/// fetched from (#944): an Enterprise login goes to its own server, where
-/// it names its user, never to github.com.
-pub(super) fn review_avatar_requests(
-    items: &[WorkItem],
-) -> std::collections::BTreeMap<String, Vec<String>> {
-    let mut requests = std::collections::BTreeMap::<String, Vec<String>>::new();
-    for item in items.iter().filter(|item| !item.author.is_empty()) {
-        let logins = requests.entry(item.host.to_ascii_lowercase()).or_default();
-        if !logins.contains(&item.author) {
-            logins.push(item.author.clone());
-        }
-    }
-    requests
-}
-
 const AVATAR: f32 = 20.;
 
 fn heading(kind: WorkKind) -> &'static str {
@@ -267,45 +251,4 @@ fn chip(text: &str, color: u32) -> AnyElement {
         .text_color(rgb(color))
         .child(SharedString::from(text.to_string()))
         .into_any_element()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn review(host: &str, author: &str) -> WorkItem {
-        WorkItem {
-            host: host.into(),
-            name_with_owner: "acme/widgets".into(),
-            number: 1,
-            title: String::new(),
-            url: String::new(),
-            is_draft: false,
-            author: author.into(),
-            updated_at: String::new(),
-        }
-    }
-
-    /// An Enterprise reviewer's avatar is asked of its own server, under the
-    /// same login as a github.com user it must not be confused with.
-    #[test]
-    fn review_avatars_are_requested_from_each_items_host() {
-        let requests = review_avatar_requests(&[
-            review("github.com", "octo"),
-            review("GHE.example.com", "octo"),
-            review("ghe.example.com", "hubot"),
-            review("github.com", "octo"),
-            review("github.com", ""),
-        ]);
-        assert_eq!(
-            requests.into_iter().collect::<Vec<_>>(),
-            vec![
-                (
-                    "ghe.example.com".to_string(),
-                    vec!["octo".into(), "hubot".into()]
-                ),
-                ("github.com".to_string(), vec!["octo".to_string()]),
-            ]
-        );
-    }
 }

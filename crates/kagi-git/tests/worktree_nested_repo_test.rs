@@ -137,6 +137,33 @@ fn an_independent_repository_inside_ignored_content_is_refused() {
     );
 }
 
+/// On a case-insensitive filesystem (macOS, Windows) Git opens `.GIT` as the
+/// repository's `.git`; the name is matched in any ASCII case, on every OS.
+#[test]
+fn a_repository_whose_git_dir_is_named_in_another_case_is_refused() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let base = TempDir::new().unwrap();
+    let main = base.path().join("main");
+    std::fs::create_dir(&main).unwrap();
+    let (target, _) = repo_with_linked(&main, base.path());
+    let lib = target.join("vendor/lib");
+    std::fs::create_dir_all(&lib).unwrap();
+    init_repo(&lib, "main");
+    std::fs::rename(lib.join(".git"), lib.join(".GIT")).unwrap();
+    let plan = plan_remove_worktree(&Repository::open(&main).unwrap(), "target", false).unwrap();
+    let found = repository_blocker(&plan.blockers).map(Path::new);
+    assert_eq!(
+        found.and_then(Path::file_name),
+        Some(std::ffi::OsStr::new(".GIT"))
+    );
+    assert_eq!(
+        found.and_then(Path::parent).map(same_file),
+        Some(same_file(&lib))
+    );
+}
+
 /// A repository that appears after confirmation stops the recorded run before
 /// anything is deleted.
 #[test]

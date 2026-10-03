@@ -11,7 +11,9 @@
 //! repository (untracked content, gitlinks) already blocks the removal as dirt
 //! or as submodule content. The walk never follows a symlink (a symlink named
 //! `.git` counts as found; a symlinked directory is not entered) and stops at
-//! the first `.git` it finds.
+//! the first `.git` it finds. The name is matched without regard to ASCII
+//! case on every OS: on a case-insensitive filesystem (macOS, Windows) Git
+//! opens `.GIT` as `.git`; elsewhere refusing it as well errs on the safe side.
 use super::*;
 use kagi_domain::plan_note::WorktreeNote;
 use std::path::{Path, PathBuf};
@@ -61,13 +63,14 @@ fn relative_path(bytes: &[u8]) -> Result<PathBuf, String> {
         .map_err(|_| "a path that is not UTF-8".to_string())
 }
 
-/// Depth-first, without following symlinks; the first `.git` entry wins.
+/// Depth-first, without following symlinks; the first `.git` entry (in any
+/// ASCII case) wins.
 fn first_dot_git(root: &Path) -> std::io::Result<Option<PathBuf>> {
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
         for entry in std::fs::read_dir(&dir)? {
             let entry = entry?;
-            if entry.file_name() == ".git" {
+            if entry.file_name().eq_ignore_ascii_case(".git") {
                 return Ok(Some(entry.path()));
             }
             // DirEntry::file_type does not follow a symlink.

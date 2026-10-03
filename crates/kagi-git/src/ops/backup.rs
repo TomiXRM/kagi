@@ -39,7 +39,7 @@ pub(crate) fn write_blob(
     })
 }
 
-/// Pin a blob or commit before mutation; the receipt owns its retention.
+/// Pin a blob, tree, commit or tag object before mutation; the receipt owns its retention.
 pub(crate) fn retain_object(
     repo: &Repository,
     operation_id: &str,

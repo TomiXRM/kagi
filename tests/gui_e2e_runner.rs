@@ -1268,6 +1268,10 @@ mod macos {
                 Box::new(crate::sidebar_rows::scenario_sidebar_rows_scroll),
             ),
             (
+                "sidebar_rows_keys",
+                Box::new(crate::sidebar_rows::scenario_sidebar_rows_keys),
+            ),
+            (
                 "repo_tab_panels",
                 Box::new(crate::tab_panels::scenario_repo_tab_panels),
             ),

@@ -140,10 +140,80 @@ pub fn scenario_sidebar_rows_scroll(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
 }
 
+/// The message of the stash row keyed `key` in STASHES, as the sidebar has
+/// its rows now.
+fn stash_message(app: &KagiApp, key: &str) -> Option<String> {
+    let keys = app.sidebar_row_keys_for_e2e(STASHES);
+    let item = keys.iter().position(|k| k == key)?;
+    let start = app.sidebar.pane_ranges[STASHES].start + 1;
+    match app.sidebar.rows.get(start + item)? {
+        SidebarRow::Stash { message, .. } => Some(message.clone()),
+        _ => None,
+    }
+}
+
+/// Two #987 review cases. A focused stash row keeps the focus on its stash
+/// when a new stash pushes it down (the key is the stash commit, not its
+/// index). A pane header focused while the pane had no row hands the focus
+/// to the row that appears (a refresh lands one).
+pub fn scenario_sidebar_rows_keys(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    std::fs::write(repo.join("s.txt"), "base\n").unwrap();
+    git(repo, &["add", "s.txt"]);
+    git(repo, &["commit", "-qm", "s"]);
+    std::fs::write(repo.join("s.txt"), "one\n").unwrap();
+    git(repo, &["stash", "push", "-qm", "first"]);
+    let (app, window) = mount(cx, repo);
+    let draw = |cx: &mut VisualTestAppContext| {
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+    };
+    let refresh = |cx: &mut VisualTestAppContext| {
+        app.update(cx, |app, cx| app.reload(cx));
+        cx.run_until_parked();
+        draw(cx);
+        draw(cx);
+    };
+
+    // The stash row focused, then another stash pushed in front of it.
+    let key = app.read_with(cx, |app, _| app.sidebar_row_keys_for_e2e(STASHES))[0].clone();
+    cx.update_window(window, |_, window, cx| {
+        window.draw(cx).clear();
+        app.update(cx, |app, cx| {
+            app.focus_sidebar_row_for_e2e(STASHES, &key, window, cx)
+        });
+    })
+    .unwrap();
+    assert_eq!(focused(cx, &app, window), Some((STASHES, key.clone())));
+    std::fs::write(repo.join("s.txt"), "two\n").unwrap();
+    git(repo, &["stash", "push", "-qm", "second"]);
+    refresh(cx);
+    let (pane, now) = focused(cx, &app, window).expect("a stash row keeps the focus");
+    assert_eq!(pane, STASHES);
+    let message = app.read_with(cx, |app, _| stash_message(app, &now));
+    assert!(
+        message.as_deref().is_some_and(|m| m.ends_with("first")),
+        "the focus stays on the stash it was on ({message:?})"
+    );
+
+    // REMOTE empty, its header focused; a refresh brings a remote branch.
+    assert_eq!(tab_to_header(cx, &app, window, REMOTE), Some(REMOTE));
+    git(repo, &["update-ref", "refs/remotes/origin/feature", "HEAD"]);
+    refresh(cx);
+    assert_eq!(
+        focused(cx, &app, window).map(|(pane, _)| pane),
+        Some(REMOTE),
+        "the header's focus moved to the row that appeared"
+    );
+    unmount(cx, app, window);
+}
+
 const LOCAL: usize = 0;
 const REMOTE: usize = 1;
 const WORKTREES: usize = 2;
 const TAGS: usize = 3;
+const STASHES: usize = 4;
 
 /// The sidebar row holding the focus, as of a fresh frame.
 fn focused(

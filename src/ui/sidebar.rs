@@ -252,8 +252,13 @@ pub enum SidebarRow {
         /// `localhost:<port>` (#855). `None` when it has none.
         port: Option<u16>,
     },
-    /// A stash leaf.
-    Stash { index: usize, message: String },
+    /// A stash leaf. `target` is the stash commit, which names the entry
+    /// while its index shifts (a new stash pushes the others down).
+    Stash {
+        index: usize,
+        message: String,
+        target: CommitId,
+    },
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -328,7 +333,7 @@ pub(super) fn build_sidebar_row(
             this,
             cx,
         ),
-        SidebarRow::Stash { index, message } => build_stash_row(*index, message, cx),
+        SidebarRow::Stash { index, message, .. } => build_stash_row(*index, message, cx),
     }
 }
 

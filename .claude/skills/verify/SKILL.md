@@ -353,7 +353,10 @@ The current suite covers:
   `sidebar_rows_scroll` (40 branches): with b00 remembered, LOCAL scrolled
   to its end inside the one drawn frame still offers a drawn row to Tab (not
   b00); a focused b00 scrolled out has its focus on a drawn LOCAL row after
-  the next frame. The ring is not observable in Tier A.
+  the next frame. `sidebar_rows_keys`: a focused stash keeps the focus on
+  its entry when a new stash pushes it down (keys are the stash commit), and
+  a focused header of the empty REMOTE pane hands its focus to the row a
+  refresh brings. The ring is not observable in Tier A.
 - modal input transitions (`KAGI_GUI_E2E_ONLY=remote_browse_escape_focus,pr_fields_escape_focus`,
   `tests/recovery/remote_browse_focus.rs`, `tests/recovery/pr_fields_focus.rs`):
   #755 follow-up. Real InputStates own focus before Remote Browse's

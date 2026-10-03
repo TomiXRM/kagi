@@ -707,6 +707,13 @@ impl RowList {
         self.stop.is_some()
     }
 
+    /// Focus the list's Tab stop, if it has one.
+    pub(crate) fn focus_stop(&self, window: &mut Window, cx: &mut App) {
+        if let Some(at) = self.stop {
+            self.handles[at].focus(window, cx);
+        }
+    }
+
     /// This list as a `uniform_list` draws it this frame, `visible` being
     /// the items its processor was asked for: those are on screen now, so the
     /// stop moves to the first of them when the one picked from last frame's

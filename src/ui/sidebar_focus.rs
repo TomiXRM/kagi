@@ -75,7 +75,9 @@ fn row_key(row: &SidebarRow) -> Option<String> {
         SidebarRow::RemoteLeaf { display, .. } => format!("remote:{display}"),
         SidebarRow::Tag { name, .. } => format!("tag:{name}"),
         SidebarRow::Worktree { path, .. } => worktree_key(path),
-        SidebarRow::Stash { index, .. } => format!("stash:{index}"),
+        // The stash commit, not `stash@{N}`: a new stash shifts every index,
+        // and the focus must stay on its entry (#987 review).
+        SidebarRow::Stash { target, .. } => format!("stash:{target}"),
     })
 }
 
@@ -108,10 +110,20 @@ impl SidebarFocus {
     pub(super) fn set_keys(&mut self, rows: &[SidebarRow], ranges: &[Range<usize>; PANES]) {
         for (pane, range) in ranges.iter().enumerate() {
             let body = rows.get(range.start + 1..range.end).unwrap_or_default();
+            // A key seen twice in a pane (one commit stored as two stashes)
+            // gets its place appended, so every row keeps its own handle.
+            let mut seen = std::collections::HashSet::new();
             self.keys[pane] = body
                 .iter()
                 .enumerate()
                 .filter_map(|(item, row)| row_key(row).map(|key| (key, item)))
+                .map(|(key, item)| {
+                    if seen.insert(key.clone()) {
+                        (key, item)
+                    } else {
+                        (format!("{key}#{item}"), item)
+                    }
+                })
                 .collect();
         }
     }
@@ -151,6 +163,12 @@ impl KagiApp {
                 focus.rows[pane].rows(focus.keys[pane].clone(), &scroll, Some(&header), window, cx);
             if std::mem::take(&mut focus.open_first[pane]) {
                 focus.rows[pane].focus_first(&scroll, window, cx);
+            } else if header.is_focused(window) && list.has_stop() {
+                // The header stood in while the pane had no drawn row; now
+                // one is drawn (a filter cleared, a refresh, a resize) the
+                // header is no Tab stop, and its focus moves to the row that
+                // is (#987 review).
+                list.focus_stop(window, cx);
             }
             focus.lists[pane] = Some(Rc::new(list));
         }
@@ -376,6 +394,14 @@ impl KagiApp {
     /// Which pane header holds the focus, if any.
     pub fn sidebar_header_focused_for_e2e(&self, window: &Window) -> Option<usize> {
         self.sidebar.focus.headers.focused(window)
+    }
+
+    /// `pane`'s row keys, in drawing order.
+    pub fn sidebar_row_keys_for_e2e(&self, pane: usize) -> Vec<String> {
+        self.sidebar.focus.keys[pane]
+            .iter()
+            .map(|(key, _)| key.clone())
+            .collect()
     }
 
     /// The worktree whose inspection card the keyboard opened.

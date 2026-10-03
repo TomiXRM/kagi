@@ -129,6 +129,7 @@ mod overlay_focus;
 mod settings_theme_folder;
 pub mod settings_view;
 pub mod sidebar;
+mod sidebar_focus;
 mod sidebar_panes;
 mod sidebar_rows;
 mod sidebar_worktree_row;

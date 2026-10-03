@@ -4,12 +4,14 @@
 //! bottom-left, with the focus on the first enabled item; ↑/↓/Home/End move
 //! among the enabled items only (the menu's last item, Reset, is always
 //! disabled); Enter presses the focused item; Escape closes the menu, and
-//! either way the focus goes back to the window it came from.
+//! either way the focus goes back to the window it came from. On a focused
+//! sidebar row the key opens that row's menu below it, and Escape gives the
+//! focus back to the row.
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::{e2e, KagiApp};
 
 use crate::keyboard_nav::keys;
-use crate::macos::{build_fixture, mount, unmount};
+use crate::macos::{build_fixture, git, mount, unmount};
 
 /// The open menu's focused item and enabled items (slots), as of a fresh
 /// frame.
@@ -128,6 +130,64 @@ pub fn scenario_context_menu_keys(cx: &mut VisualTestAppContext) {
     assert!(
         root_focused(cx, &app, window),
         "Escape gives the focus back"
+    );
+    unmount(cx, app, window);
+}
+
+/// The sidebar's LOCAL pane.
+const LOCAL: usize = 0;
+
+/// Shift+F10 on a focused sidebar branch row opens that branch's menu at
+/// the row's bottom-left, its first enabled item focused; Escape closes it
+/// and the row has the focus again.
+pub fn scenario_context_menu_keys_sidebar(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    git(fixture.path(), &["branch", "feature"]);
+    let (app, window) = mount(cx, fixture.path());
+    let row_focused = |cx: &mut VisualTestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            window.draw(cx).clear();
+            app.read(cx).sidebar_row_focused_for_e2e(window)
+        })
+        .unwrap()
+    };
+    cx.update_window(window, |_, window, cx| {
+        window.draw(cx).clear();
+        app.update(cx, |app, cx| {
+            app.focus_sidebar_row_for_e2e(LOCAL, "branch:feature", window, cx)
+        });
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    assert_eq!(row_focused(cx), Some((LOCAL, "branch:feature".into())));
+    let anchor = cx
+        .read(|cx| app.read(cx).sidebar_row_anchor_for_e2e())
+        .expect("the focused row records where it is drawn");
+    let row = e2e::control_bounds(window.window_id(), "sidebar-local-feature")
+        .expect("feature row drawn");
+    assert!(
+        (f32::from(anchor.y) - f32::from(row.bottom())).abs() <= 2.0,
+        "the anchor is the row's bottom ({anchor:?} vs {row:?})"
+    );
+
+    keys(cx, window, "shift-f10");
+    let state = cx.read(|cx| app.read(cx).branch_menu.clone());
+    let state = state.expect("Shift+F10 opens the row's branch menu");
+    assert_eq!(state.name, "feature");
+    assert_eq!(state.position, anchor, "the menu opens below the row");
+    let (focused, enabled) = menu(cx, &app, window);
+    assert_eq!(
+        focused,
+        enabled.first().copied(),
+        "the first enabled item has the focus"
+    );
+
+    keys(cx, window, "escape");
+    assert!(cx.read(|cx| app.read(cx).branch_menu.is_none()));
+    assert_eq!(
+        row_focused(cx),
+        Some((LOCAL, "branch:feature".into())),
+        "Escape gives the focus back to the row"
     );
     unmount(cx, app, window);
 }

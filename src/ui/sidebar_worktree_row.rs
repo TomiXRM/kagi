@@ -358,6 +358,39 @@ impl gpui::Render for WorktreeHoverCard {
     }
 }
 
+/// The inspection card the keyboard opened on a WORKTREES row (#981): the
+/// hover card's contents, drawn by the row instead of a tooltip (a tooltip
+/// opens only on hover). Pressing inside it keeps the focus on the row, so
+/// its pointer controls still work.
+pub(super) fn keyboard_card(
+    app: &KagiApp,
+    path: PathBuf,
+    name: &str,
+    branch: Option<&str>,
+    port: Option<u16>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let card = WorktreeHoverCard {
+        app: cx.weak_entity(),
+        path,
+        name: SharedString::from(
+            kagi_domain::text_safety::sanitize_control_bytes(name).to_string(),
+        ),
+        branch: branch
+            .map(kagi_domain::text_safety::sanitize_control_bytes)
+            .map(|branch| SharedString::from(branch.to_string())),
+        port,
+        _app_changed: None,
+    };
+    div()
+        .id("sidebar-worktree-keyboard-card")
+        .relative()
+        .occlude()
+        .child(super::e2e::measure_inside("sidebar-worktree-keyboard-card"))
+        .child(inspection_card(app, &card, theme::scaled_px(CARD_H)))
+        .into_any_element()
+}
+
 fn state_chip(label: &'static str, color: u32) -> gpui::Div {
     div()
         .h(theme::scaled_px(20.))

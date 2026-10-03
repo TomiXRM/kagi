@@ -92,6 +92,7 @@ impl KagiApp {
         // `entity.clone()` as a child.
         commit_panel: Option<Entity<commit_panel::CommitPanelView>>,
         wip_diffstat: Option<WipDiffStat>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         // Build divider 1: sidebar | main.
@@ -554,6 +555,17 @@ impl KagiApp {
         }
         let sidebar_fraction = self.panel_motion.sidebar.visible(motion_now);
         let right_fraction = self.panel_motion.right.visible(motion_now);
+        // The Graph page's panes are drawn this frame only while the sidebar
+        // is (or is still closing) and shows that page — the PRs and Issues
+        // pages are lists of their own. Their keyboard state follows this
+        // frame, not the last (#981 review).
+        let mode = self.workspace_mode();
+        let panes_front = sidebar_fraction > 0.
+            && !matches!(
+                mode,
+                workspace_mode::WorkspaceMode::Prs | workspace_mode::WorkspaceMode::Issues
+            );
+        self.sync_sidebar_focus(panes_front, window, cx);
 
         let mut body_row = div()
             .id("repo-tab-panel")
@@ -567,7 +579,7 @@ impl KagiApp {
         // Drawn while it is shown or still closing; the divider travels with
         // the sidebar's edge inside the clip, which hangs it from the right.
         if sidebar_fraction > 0. {
-            let mode = self.workspace_mode();
+            // `mode` is this frame's, read above.
             let sidebar = div()
                 .flex()
                 .flex_row()

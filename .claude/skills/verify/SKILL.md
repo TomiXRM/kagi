@@ -331,6 +331,40 @@ The current suite covers:
   `home-tab-panel` is named Home and no `repo-tab-panel` is drawn.
   `gh` is a failing stand-in. What VoiceOver speaks is not observable by an
   agent (the #972 probe found the native AX tree exposes no GPUI content).
+- Sidebar rows from the keyboard (`KAGI_GUI_E2E_ONLY=sidebar_rows`,
+  `tests/recovery/sidebar_rows.rs`, #981): a fixture with branches alpha /
+  beta / gamma, tags v1 / v2 and a linked worktree. ↓ from LOCAL's first row
+  moves to the next and stops at LOCAL's last row (never into REMOTE or
+  WORKTREES), ↑ stops at its first; TAGS collapsed by a click on its header,
+  Tab from the window reaches that header (`sidebar_header_focused_for_e2e`)
+  and Enter opens TAGS onto `tag:v1`; Enter on the worktree row opens the
+  keyboard's inspection card (`sidebar-worktree-keyboard-card`), Escape
+  closes it and the row keeps the focus. Rows are read and focused through
+  `sidebar_row_focused_for_e2e` / `focus_sidebar_row_for_e2e` (keys
+  `branch:` / `group:` / `remote:` / `tag:` / `worktree:<path>` /
+  `stash:<n>`). From the #987 review: `view.toggleSidebar` with a row
+  focused leaves no row focused and the root focused on that one drawn
+  frame (no pump: a later frame would hide the bug), and Tab from the
+  window reaches the open-but-empty REMOTE pane's header. Back from Issues
+  to Graph in one update with one drawn frame, Tab (no frame between)
+  still reaches a LOCAL row: what the panes drew when last shown is kept
+  while they are away. `sidebar_rows_short` mounts a 300px-high window,
+  where LOCAL has rows but draws none: Tab reaches LOCAL's header.
+  `sidebar_rows_scroll` (40 branches): with b00 remembered, LOCAL scrolled
+  to its end inside the one drawn frame still offers a drawn row to Tab (not
+  b00); a focused b00 scrolled out has its focus on a drawn LOCAL row after
+  the next frame. `sidebar_rows_keys`: a focused stash keeps the focus on
+  its entry when a new stash pushes it down (keys are the stash commit), and
+  a focused header of the empty REMOTE pane hands its focus to the row a
+  refresh brings. `sidebar_rows_open_short`: with LOCAL's pane weight too
+  small for a row (a short window; Tier A cannot resize), Enter on its
+  collapsed header opens it and on no frame does an undrawn row take the
+  focus — the header keeps it until the weight is restored, then the first
+  row has it. `sidebar_rows_right_click`: a right-click on a focused row
+  opens its menu and gives the window the focus, and the menu's first item
+  takes it (#985), so Enter is the menu's, not the row's; Escape gives the
+  focus back to the window, not to the row (dropping the right-click's move
+  to the window fails it there). The ring is not observable in Tier A.
 - modal input transitions (`KAGI_GUI_E2E_ONLY=remote_browse_escape_focus,pr_fields_escape_focus`,
   `tests/recovery/remote_browse_focus.rs`, `tests/recovery/pr_fields_focus.rs`):
   #755 follow-up. Real InputStates own focus before Remote Browse's
@@ -795,6 +829,12 @@ The current suite covers:
   closes it with root focused. Mutations that fail it: ↓ not skipping
   disabled items, focus not given back on close, the anchor ignored, keyboard
   clicks ignored on items. The focus highlight is Tier B (focus_visible).
+  `context_menu_keys_sidebar` (same file): a focused LOCAL `branch:feature`
+  row records its bottom-left (within 2px of the measured
+  `sidebar-local-feature` bottom); Shift+F10 opens `branch_menu` for
+  `feature` there with the first enabled item focused, and Escape closes it
+  with the row focused again. Mutations that fail it: the row's action doing
+  nothing, focus returned to the window instead of where it was.
 - Toolbar unavailable reasons (`KAGI_GUI_E2E_ONLY=toolbar_keyboard_reasons`,
   `tests/recovery/toolbar_keyboard.rs`, #972): starting at the root, GPUI's
   `focus_next` visits the rendered toolbar in visual order; an F19 key-down

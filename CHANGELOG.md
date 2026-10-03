@@ -7,7 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
-- commit / branch / remote branch / tag / stash / worktree の右クリックメニューをキーボードで操作できるようにしました。開くと最初の有効な項目に focus が移り、↑/↓(端で折り返し)と Home/End で無効な項目を飛ばして移動し、Enter / Space で実行、Escape で閉じます。閉じると focus は開く前の場所へ戻ります(項目が確認 modal を開いた場合は window へ)。Graph では Shift+F10(Windows キーボードの Menu キー)で選択中の commit のメニューを行の左下に開きます。項目は `Role::MenuItem`、無効な項目は AX の disabled 状態を持ちます。(#985)
+- commit / branch / remote branch / tag / stash / worktree の右クリックメニューをキーボードで操作できるようにしました。開くと最初の有効な項目に focus が移り、↑/↓(端で折り返し)と Home/End で無効な項目を飛ばして移動し、Enter / Space で実行、Escape で閉じます。閉じると focus は開く前の場所へ戻ります(項目が確認 modal を開いた場合は window へ)。Shift+F10(Windows キーボードの Menu キー)で、Graph では選択中の commit のメニューを、サイドバーでは focus のある行(branch / remote branch / tag / stash / worktree)のメニューを、その行の左下に開きます。項目は `Role::MenuItem`、無効な項目は AX の disabled 状態を持ちます。(#985)
 
 - Home の行一覧と Graph の commit 一覧を Home / End / PageUp / PageDown で移動できるようにしました。Cmd+↑/↓ でも先頭・末尾へ移動します。ページ移動は表示中の行数を基準にし、移動先が画面に収まるようスクロールします。(#980)
 
@@ -61,6 +61,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
+- Graph のサイドバー(ローカル / リモートの branch・worktree・tag・stash)の行にキーボードで移動できるようにしました。各ペインが Tab で 1 か所ずつ止まり、↑/↓ でそのペインの中の行を移動します(ほかのペインには移りません)。Enter / Space で、branch は checkout の確認(現在の branch はグラフ上の位置へ移動)、worktree はクリックしなくても点検カードの表示 / 非表示(Esc でも閉じます)、グループは開閉、リモートの branch と tag はそのコミットへの移動、stash は中身の表示です。折りたたんだペインは見出しに止まり、Enter / Space で開いて最初の行へ移ります。キーボードで focus したときだけ枠が出ます。マウスで行をクリックしたときの動作はこれまでどおりです。(#981)
 - リポジトリのタブ帯で選んだタブの中身(サイドバー・中央・右ペインの本体)と Home の本体を、支援技術に「選択中のタブの中身(tab panel)」として伝えるようにしました。名前はそのタブの名前です。toolbar とステータスバーは中身に含めません。Conflict Mode の画面はまだ tab panel ではありません。見た目は変わりません。(#983)
 - Home の「リポジトリ / Pull Request / Issue」の切り替えの下の一覧と、サイドバー上部の Graph / PRs / Issues の下のページを、支援技術に「選択中のタブの中身(tab panel)」として伝えるようにしました。名前は選択中のタブの名前(件数なし)です。Branch Cleanup などタブが選ばれていない間のページは tab panel にしません。見た目は変わりません。(#979)
 - Settings のスイッチ(Graph の表示 2 つ・自動 fetch・動きを減らす・terminal の自動ロック・Smart Commit)をキーボードと支援技術から操作できるようにしました。Tab で 1 つずつ移動し、Space / Enter で切り替えます。読み上げでは行の見出しを名前とするスイッチとして、オン / オフの状態とともに伝わります。キーボードで focus したときだけ枠が出ます。見た目とマウス操作はこれまでどおりです。(#970)

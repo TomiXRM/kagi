@@ -207,13 +207,58 @@ impl KagiApp {
         let Some(row) = self.ui().selected else {
             return;
         };
-        let at = self.context_anchor.bottom_left().unwrap_or_else(|| {
-            let size = window.viewport_size();
-            Point::new(size.width / 2., size.height / 3.)
-        });
+        let at = menu_point(&self.context_anchor, window);
         self.open_commit_menu(row, at);
         cx.notify();
     }
+
+    /// The context-menu key on a focused sidebar row: that row's menu (as
+    /// its right-click opens), below it. A row without a menu (a group
+    /// heading) does nothing, as does a key pressed while a modal or another
+    /// menu is up.
+    pub(super) fn open_sidebar_row_menu(
+        &mut self,
+        row: &super::sidebar::SidebarRow,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        use super::sidebar::SidebarRow;
+        if self.active_modal.is_some() || self.any_context_menu_open() {
+            return;
+        }
+        let at = menu_point(&self.sidebar.focus.row_anchor, window);
+        match row {
+            SidebarRow::LocalBranchLeaf { name, .. } => {
+                self.open_local_branch_menu(name.clone(), at)
+            }
+            SidebarRow::RemoteLeaf {
+                display, target, ..
+            } => self.open_remote_branch_menu(display.clone(), target.clone(), at),
+            SidebarRow::Tag { name, .. } => self.open_tag_menu(name.clone(), at),
+            SidebarRow::Stash { index, message, .. } => {
+                self.open_stash_menu(*index, message.clone(), at)
+            }
+            // Sidebar worktree rows are linked worktrees (#733), as their
+            // right-click says.
+            SidebarRow::Worktree {
+                name, locked, path, ..
+            } => self.open_worktree_menu(name.clone(), *locked, false, Some(path.clone()), at),
+            SidebarRow::SectionHeader { .. }
+            | SidebarRow::LocalGroupHeader { .. }
+            | SidebarRow::RemoteHeader { .. }
+            | SidebarRow::RemoteSubGroup { .. } => return,
+        }
+        cx.notify();
+    }
+}
+
+/// Where the key opens a menu: below the row `anchor` recorded, or — the row
+/// not drawn last frame — at a fixed point of the window.
+fn menu_point(anchor: &RowAnchor, window: &Window) -> Point<Pixels> {
+    anchor.bottom_left().unwrap_or_else(|| {
+        let size = window.viewport_size();
+        Point::new(size.width / 2., size.height / 3.)
+    })
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -226,5 +271,10 @@ impl KagiApp {
     /// Where the selected commit row was last drawn, if it was.
     pub fn context_anchor_for_e2e(&self) -> Option<Point<Pixels>> {
         self.context_anchor.bottom_left()
+    }
+
+    /// Where the focused sidebar row was last drawn, if it was.
+    pub fn sidebar_row_anchor_for_e2e(&self) -> Option<Point<Pixels>> {
+        self.sidebar.focus.row_anchor.bottom_left()
     }
 }

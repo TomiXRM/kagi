@@ -424,10 +424,20 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
         }),
         "the card shows the running clone"
     );
+    // ⌘Q / window close wait for the clone: what both adapters ask
+    // (`hold_host_close`) refuses while `gh` may still be writing.
+    assert!(
+        !cx.read(|cx| app.read(cx).may_close_host()),
+        "closing is held while the clone runs"
+    );
     wait_for(cx, &app, "the clone", |app| {
         app.home_github.cloning.is_none() && app.clone_modal().is_none()
     });
     cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).may_close_host()),
+        "closing is allowed once the clone is recorded"
+    );
     assert_eq!(active_path(cx, &app), dest, "the clone opened as a tab");
     assert_eq!(cx.read(|cx| app.read(cx).home), None, "in place of Home");
     let receipts = read_oplog_tail_for_repo(&dest, 5);

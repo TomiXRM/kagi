@@ -591,7 +591,9 @@ The current suite covers:
   `replan_clone` — what the native dialog's callback calls; a folder whose
   `widgets` is occupied is refused (the file in it untouched), and once free
   Clone clones, writes one `clone` Success receipt keyed by the destination
-  and opens the clone in place of Home. Before that a clone into another
+  and opens the clone in place of Home; while it runs `may_close_host()` is
+  false (⌘Q / window close are held) and true again once it is recorded.
+  Before that a clone into another
   folder fails (`fail-clone`): Home stays in front with a `clone: failed`
   toast drawn there (`toast-stack`). Back on Home, the clone's tab is matched
   into `home_github.local` though it was opened after the list was read.

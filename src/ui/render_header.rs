@@ -126,48 +126,51 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         // ── Click handlers ──────────────────────────────────────────────────
-        // Pull — disabled when behind=0 or no upstream (ADR-0013).
-        let pull_on = toolbar.pull_on;
-        let pull_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
-            if pull_on {
-                this.open_pull_modal(cx);
+        // Pull — the same reason feeds the button's AX description and its
+        // pointer/keyboard click; resolve it only when the action is unavailable.
+        let pull_reason = (!toolbar.pull_on).then(|| {
+            if self.op_latched() {
+                Msg::PullBusy.t()
+            } else if self.view().status_summary.is_detached {
+                Msg::PullDetached.t()
+            } else if self.view().status_summary.is_unborn {
+                Msg::PullUnborn.t()
+            } else if self.view().status_summary.no_upstream {
+                Msg::PullNoUpstream.t()
             } else {
-                let reason = if this.op_latched() {
-                    Msg::PullBusy.t()
-                } else if this.view().status_summary.is_detached {
-                    Msg::PullDetached.t()
-                } else if this.view().status_summary.is_unborn {
-                    Msg::PullUnborn.t()
-                } else if this.view().status_summary.no_upstream {
-                    Msg::PullNoUpstream.t()
-                } else {
-                    Msg::PullNothing.t()
-                };
+                Msg::PullNothing.t()
+            }
+        });
+        let pull_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+            if let Some(reason) = pull_reason {
                 this.status_footer = FooterStatus::Idle(SharedString::from(reason));
+            } else {
+                this.open_pull_modal(cx);
             }
             cx.notify();
         });
 
         // Push (T-HT-004).
-        let push_on = toolbar.push_on;
-        let push_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
-            if push_on {
-                this.open_push_modal(cx);
+        let push_reason = (!toolbar.push_on).then(|| {
+            if self.op_latched() {
+                Msg::PushBusy.t()
+            } else if self.view().status_summary.is_detached {
+                Msg::PushDetached.t()
+            } else if self.view().status_summary.is_unborn {
+                Msg::PushUnborn.t()
+            } else if self.view().status_summary.no_upstream
+                && !self.view().status_summary.has_remote
+            {
+                Msg::PushNoRemote.t()
             } else {
-                let reason = if this.op_latched() {
-                    Msg::PushBusy.t()
-                } else if this.view().status_summary.is_detached {
-                    Msg::PushDetached.t()
-                } else if this.view().status_summary.is_unborn {
-                    Msg::PushUnborn.t()
-                } else if this.view().status_summary.no_upstream
-                    && !this.view().status_summary.has_remote
-                {
-                    Msg::PushNoRemote.t()
-                } else {
-                    Msg::PushNothing.t()
-                };
+                Msg::PushNothing.t()
+            }
+        });
+        let push_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+            if let Some(reason) = push_reason {
                 this.status_footer = FooterStatus::Idle(SharedString::from(reason));
+            } else {
+                this.open_push_modal(cx);
             }
             cx.notify();
         });
@@ -175,19 +178,30 @@ impl KagiApp {
         // Ecosystem (ADR-0119) — read-only hot-spot analysis; open the
         // full-screen view. Disabled when no repo is open.
         let ecosystem_on = self.repo_path.is_some();
-        let ecosystem_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
-            this.open_ecosystem_view(cx);
+        let no_repo_reason = (!ecosystem_on).then(|| Msg::NoRepoOpen.t());
+        let ecosystem_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+            if this.repo_path.is_some() {
+                this.open_ecosystem_view(cx);
+            } else {
+                this.status_footer = FooterStatus::Idle(SharedString::from(
+                    no_repo_reason.unwrap_or_else(|| Msg::NoRepoOpen.t()),
+                ));
+                cx.notify();
+            }
         });
 
         // Editor Workspace toggle (T-WS-EDITOR-004 / ADR-0120 §4) — placed
-        // just left of Analyze. Routes through the exact same
-        // `handle_menu_command` path as the View menu item / secondary-shift-e
-        // shortcut, so behaviour (open/close + the `[kagi] menu:
-        // editor_workspace=…` log line, T-WS-EDITOR-005 #11) stays
-        // byte-identical.
+        // just left of Analyze. Available clicks keep the View menu's exact
+        // command path and `[kagi] menu:` log line.
         let editor_ws_on = self.repo_path.is_some();
-        let editor_ws_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
-            this.handle_menu_command("view.toggleEditorWorkspace", window, cx);
+        let editor_ws_click = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+            if this.repo_path.is_some() {
+                this.handle_menu_command("view.toggleEditorWorkspace", window, cx);
+            } else {
+                this.status_footer = FooterStatus::Idle(SharedString::from(
+                    no_repo_reason.unwrap_or_else(|| Msg::NoRepoOpen.t()),
+                ));
+            }
             cx.notify();
         });
         // ── Workspace mode switcher: Graph | PRs | Editor ──────────────
@@ -228,25 +242,39 @@ impl KagiApp {
             cx.notify();
         });
 
-        // Stash — enabled only when dirty.
-        let stash_on = toolbar.stash_on;
-        let stash_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
-            if stash_on {
-                this.open_stash_push_modal(cx);
+        // Stash — enabled only when dirty, and not while another operation
+        // runs (`render` turns it off then): say which (#975 review).
+        let stash_reason = (!toolbar.stash_on).then(|| {
+            if self.op_latched() {
+                Msg::StashBusy.t()
             } else {
-                this.status_footer = FooterStatus::Idle(SharedString::from(Msg::StashClean.t()));
+                Msg::StashClean.t()
+            }
+        });
+        let stash_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
+            if let Some(reason) = stash_reason {
+                this.status_footer = FooterStatus::Idle(SharedString::from(reason));
+            } else {
+                this.open_stash_push_modal(cx);
             }
             cx.notify();
         });
 
-        // Pop — enabled only when stash exists.
-        let pop_on = toolbar.pop_on;
+        // Pop — enabled only when a stash exists, and not while another
+        // operation runs.
+        let pop_reason = (!toolbar.pop_on).then(|| {
+            if self.op_latched() {
+                Msg::PopBusy.t()
+            } else {
+                Msg::PopEmpty.t()
+            }
+        });
         let pop_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
-            if pop_on {
+            if let Some(reason) = pop_reason {
+                this.status_footer = FooterStatus::Idle(SharedString::from(reason));
+            } else {
                 // Pop the newest stash (index 0) — plan with conflict prediction.
                 this.open_pop_modal(0, cx);
-            } else {
-                this.status_footer = FooterStatus::Idle(SharedString::from(Msg::PopEmpty.t()));
             }
             cx.notify();
         });
@@ -255,6 +283,7 @@ impl KagiApp {
         // the in-session history cursor (can_undo). Click opens the undo plan
         // modal (preview → confirm runs the safe ref move).
         let undo_on = self.ui().operation_history.can_undo();
+        let undo_reason = (!undo_on).then(|| Msg::NothingToUndo.t());
         let undo_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
             if this.ui().operation_history.can_undo() {
                 if !this.reject_if_busy(cx) {
@@ -268,6 +297,7 @@ impl KagiApp {
 
         // Redo — operation-history redo. Enabled per can_redo().
         let redo_on = self.ui().operation_history.can_redo();
+        let redo_reason = (!redo_on).then(|| Msg::NothingToRedo.t());
         let redo_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
             if this.ui().operation_history.can_redo() {
                 if !this.reject_if_busy(cx) {
@@ -331,6 +361,7 @@ impl KagiApp {
                         label: &'static str,
                         icon: gpui_component::Icon,
                         state: ButtonState,
+                        reason: Option<&'static str>,
                         count: usize| {
             // Both variants carry the same "renders bright" bool as the old
             // `enabled` argument, so the palette is unchanged.
@@ -388,12 +419,16 @@ impl KagiApp {
                 );
             }
 
-            div()
+            let btn = div()
                 .id(id)
                 // Bare string captions have no AX node;
                 // share the visible label explicitly.
                 .role(gpui::Role::Button)
                 .aria_label(label)
+                .when_some(reason, |el, reason| {
+                    toolbar_a11y::record_description(id, reason);
+                    el.aria_description(reason)
+                })
                 .when(unavailable, |el| {
                     // gpui has no aria_disabled setter. `parent_node()` is this
                     // element's own AccessKit node — it needs the id and role
@@ -408,8 +443,11 @@ impl KagiApp {
                 .justify_center()
                 .gap(theme::scaled_px(1.0))
                 .min_w(theme::scaled_px(52.0))
-                .px_1()
-                .py(theme::scaled_px(2.0))
+                .px(keyboard_nav::inset(4.0))
+                // At 0.7× the old 2px zoomed padding is smaller than the
+                // fixed 2px ring. The centred row keeps its icon/text in
+                // place while the extra fraction belongs to the ring.
+                .py(px((f32::from(theme::scaled_px(2.0)) - 2.0).max(0.0)))
                 .rounded_md()
                 .hover(|style| style.bg(rgb(theme().selected)))
                 .cursor(if enabled {
@@ -423,7 +461,14 @@ impl KagiApp {
                         .text_xs()
                         .text_color(rgb(text_color))
                         .child(SharedString::from(label)),
-                )
+                );
+            #[cfg(feature = "gui-e2e")]
+            let btn = btn.on_key_down(move |event, _, _| {
+                if event.keystroke.key == "f19" {
+                    toolbar_a11y::record_focus_probe(id);
+                }
+            });
+            keyboard_nav::focusable_row(btn)
         };
 
         // ── Undo / Redo tooltips: previewed operation summary (ADR-0081) ────
@@ -535,7 +580,7 @@ impl KagiApp {
                         } else {
                             icon.into_any_element()
                         };
-                        div()
+                        let refresh = div()
                             .id("tb-refresh")
                             .role(gpui::Role::Button)
                             .when_some(commands::command("file.refresh"), |el, command| {
@@ -543,11 +588,17 @@ impl KagiApp {
                             })
                             .flex_shrink_0()
                             .mr_2()
-                            .p_1()
+                            .p(keyboard_nav::inset(4.0))
                             .rounded_md()
                             .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
-                            .on_click(refresh_click)
-                            .child(icon)
+                            .child(icon);
+                        #[cfg(feature = "gui-e2e")]
+                        let refresh = refresh.on_key_down(|event, _, _| {
+                            if event.keystroke.key == "f19" {
+                                toolbar_a11y::record_focus_probe("tb-refresh");
+                            }
+                        });
+                        keyboard_nav::focusable_row(refresh).on_click(refresh_click)
                     })
                     // ── repo name (top) + current branch (smaller, below) ──
                     // Stacked vertically so a long branch label never competes
@@ -611,6 +662,7 @@ impl KagiApp {
                                             gpui_component::IconName::ArrowDown,
                                         ),
                                         ButtonState::Availability(toolbar.pull_on),
+                                        pull_reason,
                                         toolbar.behind,
                                     )
                                     .on_click(pull_click),
@@ -625,6 +677,7 @@ impl KagiApp {
                                             gpui_component::IconName::ArrowUp,
                                         ),
                                         ButtonState::Availability(toolbar.push_on),
+                                        push_reason,
                                         toolbar.ahead,
                                     )
                                     .on_click(push_click),
@@ -637,6 +690,7 @@ impl KagiApp {
                                         "Branch",
                                         gpui_component::Icon::new(gpui_component::IconName::Plus),
                                         ButtonState::Availability(true),
+                                        None,
                                         0,
                                     )
                                     .on_click(branch_click),
@@ -649,6 +703,7 @@ impl KagiApp {
                                         "Stash",
                                         gpui_component::Icon::new(gpui_component::IconName::Inbox),
                                         ButtonState::Availability(toolbar.stash_on),
+                                        stash_reason,
                                         0,
                                     )
                                     .on_click(stash_click),
@@ -663,6 +718,7 @@ impl KagiApp {
                                             gpui_component::IconName::FolderOpen,
                                         ),
                                         ButtonState::Availability(toolbar.pop_on),
+                                        pop_reason,
                                         0,
                                     )
                                     .on_click(pop_click),
@@ -676,6 +732,7 @@ impl KagiApp {
                                         Msg::Undo.t(),
                                         gpui_component::Icon::new(gpui_component::IconName::Undo2),
                                         ButtonState::Availability(undo_on),
+                                        undo_reason,
                                         0,
                                     )
                                     .when_some(undo_tooltip_text, |btn, text| {
@@ -692,6 +749,7 @@ impl KagiApp {
                                         Msg::Redo.t(),
                                         gpui_component::Icon::new(gpui_component::IconName::Redo2),
                                         ButtonState::Availability(redo_on),
+                                        redo_reason,
                                         0,
                                     )
                                     .when_some(redo_tooltip_text, |btn, text| {
@@ -711,6 +769,7 @@ impl KagiApp {
                                             gpui_component::IconName::SquareTerminal,
                                         ),
                                         ButtonState::Selection(terminal_on),
+                                        None,
                                         0,
                                     )
                                     .on_click(terminal_click),
@@ -740,27 +799,29 @@ impl KagiApp {
                             });
                             let chip_text = SharedString::from(format!("\u{2191} Update {}", tag));
                             el.child(
-                                div()
-                                    .id("tb-update")
-                                    .role(gpui::Role::Button)
-                                    .aria_label(chip_text.clone())
-                                    .flex()
-                                    .items_center()
-                                    .px(theme::scaled_px(8.0))
-                                    .py(theme::scaled_px(4.0))
-                                    .mr(theme::scaled_px(8.0))
-                                    .rounded_md()
-                                    .bg(rgb(theme().color_branch))
-                                    .cursor(gpui::CursorStyle::PointingHand)
-                                    .hover(|s| s.bg(rgb(theme().color_remote)))
-                                    .child(
-                                        div()
-                                            .text_color(rgb(theme().bg_base))
-                                            .text_xs()
-                                            .font_weight(gpui::FontWeight::BOLD)
-                                            .child(chip_text),
-                                    )
-                                    .on_click(open),
+                                keyboard_nav::focusable_row(
+                                    div()
+                                        .id("tb-update")
+                                        .role(gpui::Role::Button)
+                                        .aria_label(chip_text.clone())
+                                        .flex()
+                                        .items_center()
+                                        .px(keyboard_nav::inset(8.0))
+                                        .py(keyboard_nav::inset(4.0))
+                                        .mr(theme::scaled_px(8.0))
+                                        .rounded_md()
+                                        .bg(rgb(theme().color_branch))
+                                        .cursor(gpui::CursorStyle::PointingHand)
+                                        .hover(|s| s.bg(rgb(theme().color_remote)))
+                                        .child(
+                                            div()
+                                                .text_color(rgb(theme().bg_base))
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::BOLD)
+                                                .child(chip_text),
+                                        ),
+                                )
+                                .on_click(open),
                             )
                         },
                     )
@@ -771,6 +832,7 @@ impl KagiApp {
                             "Graph",
                             gpui_component::Icon::default().path("icons/waypoints.svg"),
                             ButtonState::Availability(true),
+                            None,
                             0,
                         )
                         .when(mode == WorkspaceMode::Graph, mode_on)
@@ -785,6 +847,7 @@ impl KagiApp {
                                 "PRs",
                                 gpui_component::Icon::default().path("icons/git-pull-request.svg"),
                                 ButtonState::Availability(true),
+                                None,
                                 0,
                             )
                             .when(mode == WorkspaceMode::Prs, mode_on)
@@ -799,6 +862,7 @@ impl KagiApp {
                             "Editor",
                             gpui_component::Icon::default().path("icons/square-pen.svg"),
                             ButtonState::Availability(editor_ws_on),
+                            no_repo_reason,
                             0,
                         )
                         .when(mode == WorkspaceMode::Editor, mode_on)
@@ -813,6 +877,7 @@ impl KagiApp {
                             "Analyze",
                             gpui_component::Icon::new(gpui_component::IconName::ChartPie),
                             ButtonState::Availability(ecosystem_on),
+                            no_repo_reason,
                             0,
                         )
                         .on_click(ecosystem_click),
@@ -828,6 +893,7 @@ impl KagiApp {
                             "Settings",
                             gpui_component::Icon::new(gpui_component::IconName::Settings),
                             ButtonState::Availability(true),
+                            None,
                             0,
                         )
                         .on_click(settings_click)

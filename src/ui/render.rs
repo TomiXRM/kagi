@@ -212,6 +212,8 @@ impl Render for KagiApp {
                 .row_focus
                 .yield_focus(fallback.as_ref(), window, cx);
         }
+        // Before any tab list picks its Tab stop this frame (#968).
+        super::keyboard_nav::forget_roving_without_focus(window);
 
         if std::env::var("KAGI_DEBUG_RENDER").as_deref() == Ok("1") {
             use std::sync::atomic::{AtomicU64, Ordering as O};

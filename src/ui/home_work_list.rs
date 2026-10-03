@@ -145,7 +145,7 @@ pub(super) fn work_row(
         detail = detail
             .child(kagi_ui_core::commit_header::avatar_circle_with_initials(
                 AVATAR,
-                &kagi_ui_core::avatar::login_key(Some(&item.host), &item.author),
+                &review_avatar_key(item),
                 &item.author,
                 avatars,
             ))
@@ -239,6 +239,12 @@ pub(super) fn work_row(
         )
         .child(end);
     super::e2e::measure_control(key, row)
+}
+
+/// The avatar a review-request row looks up: its author's login on the
+/// item's host (#906), as [`KagiApp::ensure_home_avatars`] stores it.
+pub(crate) fn review_avatar_key(item: &WorkItem) -> std::borrow::Cow<'_, str> {
+    kagi_ui_core::avatar::login_key(Some(&item.host), &item.author)
 }
 
 fn chip(text: &str, color: u32) -> AnyElement {

@@ -91,29 +91,65 @@ pub(crate) fn bind_keys(cx: &mut App) {
     cx.intercept_keystrokes(|event, _, _| {
         if event.keystroke.key == "tab" {
             ROVING.with(|lists| {
-                lists.borrow_mut().retain(|roving| match roving.upgrade() {
-                    Some(roving) => {
-                        roving.set(None);
-                        true
-                    }
-                    None => false,
-                })
+                lists
+                    .borrow_mut()
+                    .retain(|list| match list.roving.upgrade() {
+                        Some(roving) => {
+                            roving.set(None);
+                            true
+                        }
+                        None => false,
+                    })
             });
         }
     })
     .detach();
 }
 
+/// One tab list as [`ROVING`] sees it.
+struct Watched {
+    roving: Weak<Cell<Option<usize>>>,
+    handles: Weak<RefCell<Vec<FocusHandle>>>,
+}
+
 thread_local! {
-    /// Every tab list's arrowed-to cell, for the Tab watch above.
-    static ROVING: RefCell<Vec<Weak<Cell<Option<usize>>>>> = const { RefCell::new(Vec::new()) };
+    /// Every tab list's arrowed-to cell, for the Tab watch above and
+    /// [`forget_roving_without_focus`].
+    static ROVING: RefCell<Vec<Watched>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A list's arrowed-to cell is its Tab stop only while that cell holds the
+/// focus. Focus that left another way than Tab — a pointer click on another
+/// control — would otherwise bring the next Tab back to a cell the user
+/// never selected (#968), so the stop goes back to the selected cell. Called
+/// at the top of every frame; it reads only lists with an arrowed-to cell.
+pub(crate) fn forget_roving_without_focus(window: &Window) {
+    ROVING.with(|lists| {
+        for list in lists.borrow().iter() {
+            let Some(roving) = list.roving.upgrade() else {
+                continue;
+            };
+            let Some(at) = roving.get() else {
+                continue;
+            };
+            let focused = list.handles.upgrade().is_some_and(|handles| {
+                handles
+                    .borrow()
+                    .get(at)
+                    .is_some_and(|handle| handle.is_focused(window))
+            });
+            if !focused {
+                roving.set(None);
+            }
+        }
+    });
 }
 
 /// The focus handles of one tab list's cells, one per slot, made as slots
-/// appear and kept across frames; and the cell the arrows moved to, until
-/// Tab leaves the list or a cell is clicked.
+/// appear and kept across frames; and the cell the arrows moved to, while
+/// it holds the focus.
 pub(crate) struct TabFocus {
-    handles: RefCell<Vec<FocusHandle>>,
+    handles: Rc<RefCell<Vec<FocusHandle>>>,
     roving: Rc<Cell<Option<usize>>>,
     /// Handles of cells closed since the last frame (see [`Self::closing`]).
     closed: RefCell<Vec<FocusHandle>>,
@@ -122,9 +158,15 @@ pub(crate) struct TabFocus {
 impl Default for TabFocus {
     fn default() -> Self {
         let roving = Rc::new(Cell::new(None));
-        ROVING.with(|lists| lists.borrow_mut().push(Rc::downgrade(&roving)));
+        let handles = Rc::new(RefCell::new(Vec::new()));
+        ROVING.with(|lists| {
+            lists.borrow_mut().push(Watched {
+                roving: Rc::downgrade(&roving),
+                handles: Rc::downgrade(&handles),
+            })
+        });
         Self {
-            handles: RefCell::default(),
+            handles,
             roving,
             closed: RefCell::default(),
         }

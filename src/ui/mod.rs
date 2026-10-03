@@ -3102,8 +3102,14 @@ impl KagiApp {
         }
     }
 
+    /// Conflict Mode replaces the normal body before workspace slots are resolved.
+    fn conflict_body_visible(&self) -> bool {
+        self.ui().conflict.is_some() && !self.ui().conflict_merge_pending
+    }
+
     fn commit_list_has_focus(&self, window: &Window) -> bool {
         self.root_has_focus(window)
+            && !self.conflict_body_visible()
             && !self.home_in_front()
             && workspace::resolve_workspace(&self.workspace_inputs(false, false, false)).center
                 == workspace::CenterPane::CommitList

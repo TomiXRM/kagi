@@ -381,7 +381,7 @@ impl Render for KagiApp {
         // message, show the normal body (commit panel) instead of the conflict
         // resolution body (ADR-0068). Conflict Mode is still active (MERGE_HEAD
         // present) but the editor is hidden behind the commit message panel.
-        let conflict_merge_pending = self.ui().conflict_merge_pending;
+        let conflict_body_visible = self.conflict_body_visible();
         let commit_menu_overlay = self
             .commit_menu
             .clone()
@@ -672,7 +672,7 @@ impl Render for KagiApp {
             //    toolbar is redundant there; its Abort dispatches this strip's
             //    action. Admission is the read model either way — only the
             //    control's placement depends on the entity. ──
-            .when(conflict_entity.is_none() || conflict_merge_pending, |el| {
+            .when(!conflict_body_visible, |el| {
                 el.children(self.render_operation_strip(cx))
             })
             // ── Body slot: in Conflict Mode the conflict resolution pane
@@ -680,14 +680,14 @@ impl Render for KagiApp {
             //    the A/B hunk editor + Result Preview; the right is always the
             //    Conflict Dashboard (GitKraken-style — see render_body). The
             //    `ConflictView` entity renders its own body.
-            .when(conflict_entity.is_some() && !conflict_merge_pending, |el| {
+            .when(conflict_body_visible, |el| {
                 if let Some(entity) = conflict_entity.clone() {
                     el.child(entity)
                 } else {
                     el
                 }
             })
-            .when(conflict_entity.is_none() || conflict_merge_pending, |el| {
+            .when(!conflict_body_visible, |el| {
                 el.child(self.render_body(
                     row_count,
                     has_more_commits,

@@ -1,7 +1,8 @@
-//! #980 — raw Home/End/Page keys page the graph only while its root owns focus.
+//! #980 — raw Home/End/Page keys page the graph only when it is visible and its root owns focus.
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::{e2e, KagiApp};
 
+use crate::app_conflict::content_fixture;
 use crate::keyboard_nav::keys;
 use crate::macos::{build_fixture, git, mount, unmount};
 
@@ -124,6 +125,40 @@ pub fn scenario_commit_paging(cx: &mut VisualTestAppContext) {
         cx.read(|cx| app.read(cx).ui().selected),
         Some(0),
         "End in Branch Cleanup must not change the hidden commit selection"
+    );
+    unmount(cx, app, window);
+
+    // Conflict Mode replaces the entire body outside resolve_workspace. End
+    // must not move the commit selected underneath that replacement.
+    let fixture = content_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    cx.update_window(window, |_, window, cx| {
+        window.draw(cx).clear();
+        let root = app.read(cx).root_focus.clone().expect("root focus");
+        root.focus(window, cx);
+    })
+    .unwrap();
+    keys(cx, window, "home");
+    assert_eq!(cx.read(|cx| app.read(cx).ui().selected), Some(0));
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        window.draw(cx).clear();
+        let app_ref = app.read(cx);
+        assert!(
+            app_ref.ui().conflict.is_some(),
+            "conflict body must be shown"
+        );
+        assert!(!app_ref.ui().conflict_merge_pending);
+        let root = app_ref.root_focus.clone().expect("root focus");
+        root.focus(window, cx);
+    })
+    .unwrap();
+    keys(cx, window, "end");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().selected),
+        Some(0),
+        "End in Conflict Mode must not change the hidden commit selection"
     );
     unmount(cx, app, window);
 }

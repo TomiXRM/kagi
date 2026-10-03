@@ -317,6 +317,7 @@ mod perf_inspector_derived;
 mod macos {
     use std::path::{Path, PathBuf};
     use std::process::Command;
+    use std::time::{Duration, Instant};
 
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -805,48 +806,8 @@ mod macos {
             return 0;
         }
         let filters = scenario_filters();
-
-        // #516: one directory owns everything the run writes. `TMPDIR` points
-        // into it for the whole run (`tempfile`, git and shells use it), so
-        // whatever a scenario leaves behind there is the scenario's own — not
-        // another process's on a shared machine.
-        let run_root = tempfile::Builder::new()
-            .prefix("kagi-gui-e2e-")
-            .tempdir()
-            .expect("runner root");
-        let run_tmp = run_root.path().join("tmp");
-        std::fs::create_dir(&run_tmp).expect("runner TMPDIR");
-        std::env::set_var("TMPDIR", &run_tmp);
-        // Redirect settings.json to a throwaway dir so scenarios that touch
-        // settings (graph_copy_target, theme via set_active) never read or clobber
-        // the developer's real `~/.kagi/settings.json` (ADR-0091 flat-string file).
-        let log_dir = run_root.path().join("log");
-        std::fs::create_dir(&log_dir).expect("settings dir");
-        std::env::set_var("KAGI_LOG_DIR", &log_dir);
-        // #516: and `HOME`. The product (the editor's trash, `gh`'s working
-        // directory, terminal fonts), the `git` and `gh` it runs and the shells it starts all
-        // read the developer's dotfiles under it: identity, aliases, hooks,
-        // credential helpers, rc files, history. Here they find an empty home
-        // with only a fixed identity, the fixtures' own.
-        let home = run_root.path().join("home");
-        std::fs::create_dir(&home).expect("runner HOME");
-        std::fs::write(
-            home.join(".gitconfig"),
-            "[user]\n\tname = poc\n\temail = poc@example.com\n",
-        )
-        .expect("runner git identity");
-        std::env::set_var("HOME", &home);
-        std::env::set_var("XDG_CONFIG_HOME", home.join(".config"));
-        // #516: a failing scenario leaves evidence in target/gui-e2e/<name>/.
-        crate::gui_evidence::install();
-
-        // Shared context: real Mac platform + bundled assets, one-time app init
-        // (fonts, gpui_component, theme sync, the cmd-j / cmd-c bindings).
-        theme::init_active();
-        let mut cx = VisualTestAppContext::with_asset_source(e2e::platform(), e2e::asset_source());
-        let native_pool = NativeAutoreleasePool::new();
-        cx.update(e2e::init_app);
-        let mut scenarios: Vec<(&str, Box<dyn FnMut(&mut VisualTestAppContext)>)> = vec![
+        let exact = std::env::var("KAGI_GUI_E2E_EXACT").ok();
+        let mut scenarios: Vec<Scenario> = vec![
             (
                 "stash_drop_persists",
                 Box::new(crate::recovery_operations::scenario_stash_drop_persists),
@@ -1770,12 +1731,41 @@ mod macos {
                 ),
             ),
         ];
+        // #516: KAGI_GUI_E2E_KEEP_GOING=1 re-runs this runner once per
+        // scenario instead (`keep_going`), before anything here is set up.
+        if exact.is_none() && std::env::var("KAGI_GUI_E2E_KEEP_GOING").as_deref() == Ok("1") {
+            return keep_going(&scenarios, filters.as_deref());
+        }
+
+        // #516: one directory owns everything the run writes. `TMPDIR` points
+        // into it for the whole run (`tempfile`, git and shells use it), so
+        // whatever a scenario leaves behind there is the scenario's own — not
+        // another process's on a shared machine.
+        let run_root = tempfile::Builder::new()
+            .prefix("kagi-gui-e2e-")
+            .tempdir()
+            .expect("runner root");
+        let run_tmp = run_root.path().join("tmp");
+        std::fs::create_dir(&run_tmp).expect("runner TMPDIR");
+        std::env::set_var("TMPDIR", &run_tmp);
+        // Redirect settings.json to a throwaway dir so scenarios that touch
+        // settings (graph_copy_target, theme via set_active) never read or clobber
+        // the developer's real `~/.kagi/settings.json` (ADR-0091 flat-string file).
+        let log_dir = run_root.path().join("log");
+        std::fs::create_dir(&log_dir).expect("settings dir");
+        std::env::set_var("KAGI_LOG_DIR", &log_dir);
+        // #516: a failing scenario leaves evidence in target/gui-e2e/<name>/.
+        crate::gui_evidence::install();
+
+        // Shared context: real Mac platform + bundled assets, one-time app init
+        // (fonts, gpui_component, theme sync, the cmd-j / cmd-c bindings).
+        theme::init_active();
+        let mut cx = VisualTestAppContext::with_asset_source(e2e::platform(), e2e::asset_source());
+        let native_pool = NativeAutoreleasePool::new();
+        cx.update(e2e::init_app);
         let mut executed = 0;
         for (name, scenario) in &mut scenarios {
-            if filters
-                .as_ref()
-                .is_none_or(|filters| filters.iter().any(|filter| name.contains(filter)))
-            {
+            if selected(name, filters.as_deref(), exact.as_deref()) {
                 set_current_scenario(name);
                 crate::gui_evidence::begin(name);
                 // #516 slice 3: shared state is compared inside the same
@@ -1793,7 +1783,7 @@ mod macos {
                     }
                 }
                 executed += 1;
-            } else {
+            } else if exact.is_none() {
                 eprintln!("[gui-e2e] SKIP {} (filtered)", name);
             }
         }
@@ -1809,12 +1799,168 @@ mod macos {
         cx.update(|_| {});
         cx.run_until_parked();
 
+        if exact.is_some() {
+            // A re-executed child: the KEEP_GOING parent reports the run.
+        } else if filters.is_none() {
+            eprintln!("[gui-e2e] PASS all scenarios");
+        } else {
+            eprintln!("[gui-e2e] PASS filtered scenarios");
+        }
+        0
+    }
+
+    type Scenario = (&'static str, Box<dyn FnMut(&mut VisualTestAppContext)>);
+
+    /// Whether `name` runs: only the one a re-executed child was given
+    /// (`KAGI_GUI_E2E_EXACT`), else every match of `KAGI_GUI_E2E_ONLY`.
+    fn selected(name: &str, filters: Option<&[String]>, exact: Option<&str>) -> bool {
+        match exact {
+            Some(exact) => name == exact,
+            None => {
+                filters.is_none_or(|filters| filters.iter().any(|filter| name.contains(filter)))
+            }
+        }
+    }
+
+    /// How long one re-executed scenario may run before `keep_going` kills it
+    /// (`KAGI_GUI_E2E_TIMEOUT_SECS` overrides it), so a hung scenario fails
+    /// on its own instead of stopping the run.
+    const SCENARIO_TIMEOUT: Duration = Duration::from_secs(600);
+
+    /// How one re-executed scenario ended.
+    enum ChildOutcome {
+        Passed,
+        Exited(std::process::ExitStatus),
+        TimedOut(Duration),
+        NotStarted(std::io::Error),
+    }
+
+    /// `KAGI_GUI_E2E_KEEP_GOING=1` (#516): run each selected scenario in its
+    /// own re-executed runner (`KAGI_GUI_E2E_EXACT=<name>`, one at a time), so
+    /// a failure — a panic, a crash that takes the process down, or a hang
+    /// past the timeout — fails that scenario and the rest still run. A
+    /// panicked GPUI context is never reused. Each child sets up its own run
+    /// directory, `HOME`, settings and evidence, exactly as a single filtered
+    /// run does, under a `TMPDIR` this process removes after it. Prints one
+    /// PASS / FAIL line per scenario; returns 1 if any failed.
+    fn keep_going(scenarios: &[Scenario], filters: Option<&[String]>) -> i32 {
+        let names: Vec<&str> = scenarios
+            .iter()
+            .map(|(name, _)| *name)
+            .filter(|name| selected(name, filters, None))
+            .collect();
+        if names.is_empty() {
+            eprintln!(
+                "[gui-e2e] ERROR: KAGI_GUI_E2E_ONLY={filters:?} matched no enabled scenarios"
+            );
+            return 1;
+        }
+        let timeout = std::env::var("KAGI_GUI_E2E_TIMEOUT_SECS")
+            .ok()
+            .and_then(|secs| secs.parse().ok())
+            .map_or(SCENARIO_TIMEOUT, Duration::from_secs);
+        let runner = std::env::current_exe().expect("the runner's own executable");
+        let mut results = Vec::with_capacity(names.len());
+        for (at, name) in names.iter().enumerate() {
+            eprintln!("[gui-e2e] KEEP_GOING {}/{} {name}", at + 1, names.len());
+            // A directory that exists afterwards is this child's, not an
+            // earlier run's: a child that dies before `begin` leaves none.
+            let evidence = crate::gui_evidence::evidence_dir(name);
+            let _ = std::fs::remove_dir_all(&evidence);
+            let outcome = run_child(&runner, name, timeout);
+            let line = match &outcome {
+                ChildOutcome::Passed => None,
+                ChildOutcome::Exited(status) => Some(status.to_string()),
+                ChildOutcome::TimedOut(after) => {
+                    Some(format!("timeout after {}s (killed)", after.as_secs()))
+                }
+                ChildOutcome::NotStarted(error) => {
+                    Some(format!("the runner did not start: {error}"))
+                }
+            };
+            if let Some(reason) = &line {
+                crate::gui_evidence::exit_record(name, reason);
+            }
+            results.push((*name, line, evidence));
+        }
+        let failed: Vec<&str> = results
+            .iter()
+            .filter(|(_, line, _)| line.is_some())
+            .map(|(name, _, _)| *name)
+            .collect();
+        eprintln!(
+            "[gui-e2e] KEEP_GOING summary: {} passed, {} failed of {}",
+            names.len() - failed.len(),
+            failed.len(),
+            names.len()
+        );
+        for (name, line, evidence) in &results {
+            match line {
+                None => eprintln!("[gui-e2e]   PASS {name}"),
+                Some(reason) => {
+                    let shown = std::path::absolute(evidence).unwrap_or(evidence.clone());
+                    eprintln!(
+                        "[gui-e2e]   FAIL {name}: {reason} — evidence {}",
+                        shown.display()
+                    );
+                }
+            }
+        }
+        if !failed.is_empty() {
+            eprintln!(
+                "[gui-e2e] FAIL {} of {} scenarios: {}",
+                failed.len(),
+                names.len(),
+                failed.join(", ")
+            );
+            return 1;
+        }
         if filters.is_none() {
             eprintln!("[gui-e2e] PASS all scenarios");
         } else {
             eprintln!("[gui-e2e] PASS filtered scenarios");
         }
         0
+    }
+
+    /// Run `name` alone in a fresh runner process and wait for it, killing it
+    /// past `timeout`. Its `TMPDIR` is a directory of its own, removed once it
+    /// has ended, so even a killed child leaves no fixture behind.
+    fn run_child(runner: &Path, name: &str, timeout: Duration) -> ChildOutcome {
+        let tmp = match tempfile::Builder::new()
+            .prefix("kagi-gui-e2e-child-")
+            .tempdir()
+        {
+            Ok(tmp) => tmp,
+            Err(error) => return ChildOutcome::NotStarted(error),
+        };
+        let mut child = match std::process::Command::new(runner)
+            .env("KAGI_GUI_E2E_EXACT", name)
+            .env_remove("KAGI_GUI_E2E_KEEP_GOING")
+            .env("TMPDIR", tmp.path())
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(error) => return ChildOutcome::NotStarted(error),
+        };
+        let started = Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) if status.success() => return ChildOutcome::Passed,
+                Ok(Some(status)) => return ChildOutcome::Exited(status),
+                Ok(None) if started.elapsed() >= timeout => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return ChildOutcome::TimedOut(timeout);
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return ChildOutcome::NotStarted(error);
+                }
+            }
+        }
     }
 
     fn assert_center_bottom_panel(window: AnyWindowHandle) -> Bounds<Pixels> {

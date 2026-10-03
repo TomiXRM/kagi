@@ -117,6 +117,11 @@ What is compared:
 - `operations.jsonl`: the bytes already there must stay the same, and every
   appended entry's repo must be under the run's temporary directory or remote.
 - Direct entries of the run's own `TMPDIR`: none may be added.
+- The user's own shell: no terminal may resolve `$SHELL` (the seam unset).
+
+The run also owns `HOME` (and `XDG_CONFIG_HOME`): an empty directory under the
+run root whose `.gitconfig` holds only the fixtures' identity (`poc`). `git`,
+`gh`, the editor's trash and the terminal never read the developer's dotfiles.
 
 Restoring state:
 
@@ -124,7 +129,11 @@ Restoring state:
   `set_terminal_auto_lock` save their key as well. A scenario that uses them
   holds `gui_isolation::SavedKeys::keep(&[...])`, which puts the saved keys back
   when it is dropped.
-- A scenario that starts a terminal holds `gui_isolation::PortStore::keep()`.
+- A scenario that starts a terminal holds `gui_isolation::PortStore::keep()`,
+  and `gui_isolation::StandInShell::install()` unless it sets its own seam shell
+  (`KagiApp::set_terminal_shell_for_e2e`). The stand-in is a `/bin/sh` script
+  that reads lines until `exit` or EOF; its PID and cwd are real, so the
+  auto-lock cwd probe and exit delivery behave as with a login shell.
 
 For history bisection, strip repository-location variables exported by
 `git bisect run` before launching a Git fixture. Otherwise a fixture's `git init`

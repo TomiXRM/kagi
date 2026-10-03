@@ -20,6 +20,12 @@
 //! - The runner's temporary directory (`TMPDIR` points there for the whole
 //!   run, so `tempfile` and child processes use it): no new direct entry may
 //!   remain.
+//! - The user's own shell: no terminal may start it. A scenario that starts
+//!   a terminal holds [`StandInShell`] (or sets its own seam shell).
+//!
+//! `HOME` is the runner's own too (an empty directory with a fixed git
+//! identity, set in the runner), so `git`, `gh` and the product never read
+//! the developer's dotfiles.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -82,6 +88,39 @@ impl Drop for SavedKeys {
     }
 }
 
+/// A stand-in for the user's `$SHELL` while held (#516). A scenario that
+/// starts a terminal for the session it owns — not to watch what the shell is
+/// handed — runs this instead of the login shell, which would source the
+/// user's rc files and write history. Like a shell, it ends on a line `exit`
+/// or when the PTY closes. Its PID and working directory are the real
+/// process's, so the cwd probe and exit delivery see what they would.
+pub(crate) struct StandInShell {
+    _dir: tempfile::TempDir,
+}
+
+impl StandInShell {
+    pub(crate) fn install() -> Self {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().expect("stand-in shell directory");
+        let script = dir.path().join("shell.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nwhile IFS= read -r line; do\n  [ \"$line\" = exit ] && exit 0\ndone\n",
+        )
+        .expect("write the stand-in shell");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .expect("make the stand-in shell executable");
+        kagi::ui::KagiApp::set_terminal_shell_for_e2e(Some(script.display().to_string()));
+        Self { _dir: dir }
+    }
+}
+
+impl Drop for StandInShell {
+    fn drop(&mut self) {
+        kagi::ui::KagiApp::set_terminal_shell_for_e2e(None);
+    }
+}
+
 /// The shared state before a scenario.
 pub(crate) struct Before {
     settings: Settings,
@@ -89,6 +128,7 @@ pub(crate) struct Before {
     oplog: Option<Vec<u8>>,
     tmp: BTreeSet<String>,
     quarantined: BTreeSet<String>,
+    user_shells: usize,
 }
 
 /// `settings.json` as it reads: its keys (absent counts as no keys: the store
@@ -188,6 +228,7 @@ pub(crate) fn snapshot() -> Before {
         oplog: read_shared(&log_dir().join("operations.jsonl")),
         tmp: tmp_entries(),
         quarantined: quarantined(),
+        user_shells: kagi::ui::KagiApp::user_shell_starts_for_e2e(),
     }
 }
 
@@ -377,6 +418,13 @@ pub(crate) fn check(scenario: &str, before: &Before) {
             report,
             "- temporary directory `{}`: new entry `{added}` remains",
             std::env::temp_dir().display()
+        );
+    }
+    let user_shells = kagi::ui::KagiApp::user_shell_starts_for_e2e() - before.user_shells;
+    if user_shells > 0 {
+        let _ = writeln!(
+            report,
+            "- started the user's own shell {user_shells} time(s): a terminal sources the developer's rc files and history; hold `StandInShell`"
         );
     }
     assert!(

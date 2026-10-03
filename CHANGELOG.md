@@ -50,6 +50,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Modern UI の PM 基準案を Kagi と固定版 gpui-component の寸法・操作状態・高密度画面・安全確認に照らして批判した資料を追加しました（#931、実装・外観の変更はありません）。
 - UI 実装ガイドの統合版を実コードと固定版部品に再照合し、PR/Issue 行・タブ・Switch・モーダルの誤認を訂正して、第 2 ラウンドの批判と検証手順の不足を記録しました（#931、UI 動作の変更はありません）。
 
+### Internal
+
+- GUI E2E runner(Tier A)が開発者の環境を読まないようにしました。`HOME` は run 専用の空の directory(fixture と同じ git の identity だけを置く)にします。terminal を起動する scenario は、login shell ではなく行を読むだけの代わりの shell を使います。terminal が利用者の `$SHELL` を起動した scenario は失敗します。Smart Commit の生成を差し込む scenario は、差し込んだ生成が使われたことを確かめます。(#516)
+
 ## [0.41.0] - 2026-10-02
 
 ### Changed

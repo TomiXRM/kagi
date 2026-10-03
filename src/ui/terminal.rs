@@ -563,8 +563,11 @@ fn pick_font_family_uncached() -> String {
 /// Windows: `%ComSpec%` (the command processor), falling back to `cmd.exe`.
 pub fn resolve_shell() -> String {
     #[cfg(feature = "gui-e2e")]
-    if let Some(shell) = E2E_SHELL.with(|slot| slot.borrow().clone()) {
-        return shell;
+    {
+        if let Some(shell) = E2E_SHELL.with(|slot| slot.borrow().clone()) {
+            return shell;
+        }
+        USER_SHELL_STARTS.with(|starts| starts.set(starts.get() + 1));
     }
     #[cfg(windows)]
     {
@@ -579,6 +582,7 @@ pub fn resolve_shell() -> String {
 #[cfg(feature = "gui-e2e")]
 thread_local! {
     static E2E_SHELL: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    static USER_SHELL_STARTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -589,6 +593,13 @@ impl crate::ui::KagiApp {
     /// unit test cannot.
     pub fn set_terminal_shell_for_e2e(shell: Option<String>) {
         E2E_SHELL.with(|slot| *slot.borrow_mut() = shell);
+    }
+
+    /// How many terminals have resolved the user's own shell (no seam set)
+    /// on this thread. The runner fails a scenario that raises it (#516):
+    /// the login shell sources the developer's rc files and writes history.
+    pub fn user_shell_starts_for_e2e() -> usize {
+        USER_SHELL_STARTS.with(std::cell::Cell::get)
     }
 }
 

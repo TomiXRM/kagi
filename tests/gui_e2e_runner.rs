@@ -823,6 +823,20 @@ mod macos {
         let log_dir = run_root.path().join("log");
         std::fs::create_dir(&log_dir).expect("settings dir");
         std::env::set_var("KAGI_LOG_DIR", &log_dir);
+        // #516: and `HOME`. The product (the editor's trash, `gh`'s working
+        // directory, terminal fonts), the `git` and `gh` it runs and the shells it starts all
+        // read the developer's dotfiles under it: identity, aliases, hooks,
+        // credential helpers, rc files, history. Here they find an empty home
+        // with only a fixed identity, the fixtures' own.
+        let home = run_root.path().join("home");
+        std::fs::create_dir(&home).expect("runner HOME");
+        std::fs::write(
+            home.join(".gitconfig"),
+            "[user]\n\tname = poc\n\temail = poc@example.com\n",
+        )
+        .expect("runner git identity");
+        std::env::set_var("HOME", &home);
+        std::env::set_var("XDG_CONFIG_HOME", home.join(".config"));
         // #516: a failing scenario leaves evidence in target/gui-e2e/<name>/.
         crate::gui_evidence::install();
 

@@ -642,6 +642,12 @@ pub fn queue_smart_generation(task: SmartGenerationTask) {
 pub(crate) fn take_smart_generation() -> Option<SmartGenerationTask> {
     SMART_GENERATION.with(|slot| slot.borrow_mut().take())
 }
+/// Whether a queued generation is still waiting: a scenario asserts its
+/// generation consumed it (left queued, the real provider CLI ran instead).
+#[cfg(feature = "gui-e2e")]
+pub fn smart_generation_queued() -> bool {
+    SMART_GENERATION.with(|slot| slot.borrow().is_some())
+}
 
 #[cfg(feature = "gui-e2e")]
 pub fn ensure_smart_commit_detection(app: &mut KagiApp, cx: &mut gpui::Context<KagiApp>) {

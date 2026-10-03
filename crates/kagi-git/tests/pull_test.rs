@@ -144,6 +144,33 @@ fn test_pull_fast_forward() {
     assert!(!st.is_dirty(), "WT must be clean after FF");
 }
 
+/// Only the clean, fetched fast-forward plan can truthfully present the
+/// board's `git pull --ff-only` as a copyable equivalent.
+#[test]
+fn test_plan_pull_equivalent_only_for_clean_known_fast_forward() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    remote_commit(&r, "remote.txt", "from remote\n", "remote work");
+    git(&r.local, &["fetch", "-q", "origin"]);
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_pull(&repo).expect("clean fast-forward plan");
+    assert_eq!(
+        plan.equivalent_command.as_deref(),
+        Some("git pull --ff-only origin main")
+    );
+
+    write_file(&r.local, "local.txt", "from local\n");
+    git(&r.local, &["add", "-A"]);
+    git(&r.local, &["commit", "-qm", "local work"]);
+    let diverged = plan_pull(&Repository::open(&r.local).unwrap()).expect("diverged plan");
+    assert!(
+        diverged.equivalent_command.is_none(),
+        "diverging branches may merge instead of fast-forwarding"
+    );
+}
+
 #[test]
 fn test_pull_merge_clean() {
     if !crate::test_support::run_isolated() {
@@ -280,6 +307,10 @@ fn test_plan_pull_dirty_warning_no_blocker() {
         plan.blockers.is_empty(),
         "dirty WT alone must not be a blocker, got: {:?}",
         plan.blockers
+    );
+    assert!(
+        plan.equivalent_command.is_none(),
+        "the dirty pull may auto-stash, so --ff-only is not equivalent"
     );
     assert!(
         plan.warnings

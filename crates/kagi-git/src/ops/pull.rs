@@ -256,6 +256,52 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         kind: RecoveryKind::Pull(PullRecovery::Pull),
         commands: vec!["git revert -m 1 HEAD".to_string(), "git reflog".to_string()],
     };
+    // A clean, already-fetched fast-forward has a faithful CLI equivalent.
+    // Pull can also merge or guard a dirty tree with an auto-stash; describing
+    // either as `--ff-only` would make the plan's copyable command misleading.
+    let equivalent_command = if blockers.is_empty() && !status.is_dirty() && behind_count > 0 {
+        let expected_upstream = format!("{remote_name}/{branch_name}");
+        let known_fast_forward = repo
+            .find_branch(&branch_name, BranchType::Local)
+            .ok()
+            .and_then(|branch| branch.upstream().ok())
+            .and_then(|upstream| {
+                (upstream.name().ok().flatten() == Some(expected_upstream.as_str()))
+                    .then(|| upstream.get().target())
+                    .flatten()
+            })
+            .zip(match &head {
+                Head::Attached { target, .. } => git2::Oid::from_str(target).ok(),
+                _ => None,
+            })
+            .is_some_and(|(upstream, local)| {
+                repo.graph_descendant_of(upstream, local).unwrap_or(false)
+            });
+        if known_fast_forward
+            && check_operand("remote", &remote_name).is_ok()
+            && check_operand("branch", &branch_name).is_ok()
+        {
+            let operand = |value: &str| {
+                if value
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._/-".contains(&b))
+                {
+                    value.to_string()
+                } else {
+                    kagi_domain::remote::shell_quote(value)
+                }
+            };
+            Some(format!(
+                "git pull --ff-only {} {}",
+                operand(&remote_name),
+                operand(&branch_name)
+            ))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     Ok(OperationPlan {
         // ADR-0129 F-1: the UI's pull no-op detection keyed on the title text
@@ -290,7 +336,7 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
-        equivalent_command: None,
+        equivalent_command,
     })
 }
 

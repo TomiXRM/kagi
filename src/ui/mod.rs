@@ -91,6 +91,7 @@ pub mod list_a11y;
 pub mod main_diff_pane;
 pub mod menu_overlay;
 /// #454: shared modal chrome (card shell + collapsible sections).
+mod modal_command;
 mod modal_copy;
 mod modal_key_routing;
 pub mod modal_plan;
@@ -1645,13 +1646,14 @@ impl KagiApp {
     }
 
     /// Present (and, when `persist`, append) one outcome: footer, toast and
-    /// panel. `refusal` is the user-facing text for a typed refusal (#353).
+    /// panel. A caller with typed refusal text or a bounded failed-plan reason
+    /// may override only the human-facing preview; the receipt keeps detail.
     pub(in crate::ui) fn record_op_impl(
         &mut self,
         entry: OpLogEntry,
         cx: &mut Context<Self>,
         persist: bool,
-        refusal: Option<String>,
+        display_override: Option<String>,
     ) {
         let op = entry.op.as_str();
         let before = &entry.before;
@@ -1678,7 +1680,8 @@ impl KagiApp {
             ),
         };
 
-        let display_footer_msg = Self::display_footer_message(op, outcome, &footer_msg, refusal);
+        let display_footer_msg =
+            Self::display_footer_message(op, outcome, &footer_msg, display_override);
 
         // W3-NOTIFY: snackbar mirror of the footer message — every plan-pipeline
         // outcome (Success / Failed / Refused) becomes a toast.

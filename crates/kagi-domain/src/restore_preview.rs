@@ -1,10 +1,7 @@
-//! The graph after an op-revert / restore-to-point, before it runs (#334
-//! slice 2c, ADR-0214 §6). Pure: computed from the commits already loaded for
-//! the tab and the plan's restores, laid out by the one [`crate::graph::layout`].
-//! Display only — nothing here is part of the plan or its checks.
+//! Pure reachability projection over the tab's already laid-out commit rows.
+//! Ref movements change badges and reachability, not the original graph rails.
 
-use crate::commit::{Commit, CommitId, Signature};
-use crate::graph::{layout, GraphRow};
+use crate::commit::CommitId;
 use crate::ref_restore::RefRestore;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -30,8 +27,8 @@ pub struct FixedRoots(pub Vec<CommitId>);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreviewRow {
     pub id: CommitId,
-    /// Lane, colour and edges from the after-restore layout.
-    pub graph: GraphRow,
+    /// True when the restore takes a formerly reachable commit off every ref.
+    pub off_branch: bool,
     /// Local branches (short names) at this commit after the restore that the
     /// restore did not move.
     pub branches: Vec<String>,
@@ -41,19 +38,14 @@ pub struct PreviewRow {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RestorePreview {
-    /// A branch would go back to a commit the tab has not loaded (a deleted
-    /// branch's history, or older than the loaded page): no guess is drawn.
+    /// A branch would go back to a commit the tab has not loaded.
     NotLoaded { refname: String, oid: String },
-    /// A local tag changes; its raw ref may point at an annotated tag object.
-    /// Do not draw a branch-only projection or claim commits disappear.
+    /// An annotated tag can point at a tag object, not a graph commit.
     TagChange,
     Graph {
         rows: Vec<PreviewRow>,
-        lane_count: usize,
-        /// Loaded commits no ref reaches after the restore (all of them, not
-        /// only the drawn window).
+        /// Loaded commits losing all refs, including those outside the window.
         removed: usize,
-        /// Rows of the after-restore graph outside the drawn window.
         hidden_above: usize,
         hidden_below: usize,
     },
@@ -86,11 +78,8 @@ fn reachable(
     seen
 }
 
-/// The after-restore graph around the rows that change.
-///
-/// `branches`: every local branch now (`refs/heads/x` → commit). A loaded
-/// commit disappears when the moved branches were the only refs reaching it;
-/// a commit no ref reached before stays where it is (nothing changes for it).
+/// Project ref changes onto the current commit order without re-layout.
+/// Rows that leave every branch remain visible as context ghosts.
 pub fn preview(
     commits: &[LoadedCommit],
     branches: &BTreeMap<String, CommitId>,
@@ -130,64 +119,37 @@ pub fn preview(
     };
     let before = reachable(&index, commits, &roots(branches));
     let kept_reach = reachable(&index, commits, &roots(&after));
-    // Kept: still reached, or never reached (untouched by any ref move).
-    let kept: Vec<bool> = (0..commits.len())
-        .map(|i| kept_reach[i] || !before[i])
+    // Never claim that a commit unreachable even before the restore was lost.
+    let off_branch: Vec<bool> = (0..commits.len())
+        .map(|i| before[i] && !kept_reach[i])
         .collect();
-    let removed = kept.iter().filter(|k| !**k).count();
-
-    let kept_commits: Vec<Commit> = commits
-        .iter()
-        .zip(&kept)
-        .filter(|(_, k)| **k)
-        .map(|(c, _)| Commit {
-            id: c.id.clone(),
-            parents: c.parents.clone(),
-            author: Signature {
-                name: String::new(),
-                email: String::new(),
-                time: 0,
-            },
-            committer: Signature {
-                name: String::new(),
-                email: String::new(),
-                time: 0,
-            },
-            summary: String::new(),
-            message: String::new(),
-        })
-        .collect();
-    let graph = layout(&kept_commits);
-
-    // Where the change shows: each restored branch's new commit, and the kept
-    // row right below every run of removed rows (where they hung).
-    let mut kept_pos = vec![None; commits.len()];
-    let mut n = 0;
-    for (i, k) in kept.iter().enumerate() {
-        if *k {
-            kept_pos[i] = Some(n);
-            n += 1;
-        }
-    }
-    let mut focus: Vec<usize> = restores
+    let removed = off_branch.iter().filter(|lost| **lost).count();
+    let targets: Vec<usize> = restores
         .iter()
         .filter_map(|r| r.restore_to.as_ref())
-        .filter_map(|to| index.get(&CommitId(to.clone())).and_then(|i| kept_pos[*i]))
+        .filter_map(|to| index.get(&CommitId(to.clone())).copied())
         .collect();
-    let mut next_kept = None;
-    for i in (0..commits.len()).rev() {
-        match kept_pos[i] {
-            Some(p) => next_kept = Some(p),
-            None => focus.extend(next_kept.or(n.checked_sub(1))),
-        }
-    }
+    let mut focus = targets.clone();
+    focus.extend(
+        off_branch
+            .iter()
+            .enumerate()
+            .filter_map(|(i, lost)| lost.then_some(i)),
+    );
     let (lo, hi) = match (focus.iter().min(), focus.iter().max()) {
         (Some(lo), Some(hi)) => (*lo, *hi),
         _ => (0, 0),
     };
-    let start = lo.saturating_sub(PREVIEW_CONTEXT);
+    // When a long off-branch stretch exceeds the window, keep the restored
+    // branch target in view rather than showing forty ghosts and no destination.
+    let anchor = if hi - lo >= PREVIEW_MAX_ROWS {
+        targets.iter().copied().min().unwrap_or(lo)
+    } else {
+        lo
+    };
+    let start = anchor.saturating_sub(PREVIEW_CONTEXT);
     let end = (hi + PREVIEW_CONTEXT + 1)
-        .min(n)
+        .min(commits.len())
         .min(start + PREVIEW_MAX_ROWS);
 
     let moved: HashSet<&str> = restores.iter().map(|r| r.refname.as_str()).collect();
@@ -200,13 +162,14 @@ pub fn preview(
             slot.0.push(short(name));
         }
     }
-    let rows = graph.rows[start..end]
+    let rows = commits[start..end]
         .iter()
-        .map(|g| {
-            let (branches, moved_here) = at.get(&g.commit).cloned().unwrap_or_default();
+        .enumerate()
+        .map(|(offset, commit)| {
+            let (branches, moved_here) = at.get(&commit.id).cloned().unwrap_or_default();
             PreviewRow {
-                id: g.commit.clone(),
-                graph: g.clone(),
+                id: commit.id.clone(),
+                off_branch: off_branch[start + offset],
                 branches,
                 moved_here,
             }
@@ -214,10 +177,9 @@ pub fn preview(
         .collect();
     RestorePreview::Graph {
         rows,
-        lane_count: graph.lane_count,
         removed,
         hidden_above: start,
-        hidden_below: n - end,
+        hidden_below: commits.len() - end,
     }
 }
 
@@ -272,7 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn deleting_a_branch_removes_only_its_own_commits() {
+    fn deleting_a_branch_ghosts_only_its_own_commits() {
         let (rows, removed, ..) = graph(preview(
             &fork(),
             &branches(&[("main", "m"), ("feat", "f2")]),
@@ -280,8 +242,16 @@ mod tests {
             &[restore("feat", None, Some("f2"))],
         ));
         assert_eq!(removed, 2);
-        let ids: Vec<&str> = rows.iter().map(|r| r.id.0.as_str()).collect();
-        assert_eq!(ids, vec!["m", "b"]);
+        let ghosts: Vec<&str> = rows
+            .iter()
+            .filter(|r| r.off_branch)
+            .map(|r| r.id.0.as_str())
+            .collect();
+        assert_eq!(ghosts, ["f2", "f1"]);
+        assert!(rows
+            .iter()
+            .find(|r| r.id.0 == "m")
+            .is_some_and(|r| !r.off_branch));
     }
 
     #[test]
@@ -304,6 +274,7 @@ mod tests {
             &[restore("feat", Some("f1"), Some("f2"))],
         ));
         assert_eq!(removed, 1);
+        assert!(rows.iter().find(|r| r.id.0 == "f2").unwrap().off_branch);
         let f1 = rows.iter().find(|r| r.id.0 == "f1").unwrap();
         assert_eq!(f1.moved_here, vec!["feat"]);
         let m = rows.iter().find(|r| r.id.0 == "m").unwrap();
@@ -381,8 +352,9 @@ mod tests {
             2 * PREVIEW_CONTEXT + 1,
             "the hang point ± context"
         );
-        assert_eq!(above + rows.len() + below, 100);
+        assert_eq!(above + rows.len() + below, loaded.len());
         assert!(rows.iter().any(|r| r.id.0 == "m50"), "where x hung");
+        assert!(rows.iter().find(|r| r.id.0 == "x").unwrap().off_branch);
 
         // Two changes far apart are capped.
         let (rows, ..) = graph(preview(
@@ -395,5 +367,29 @@ mod tests {
             ],
         ));
         assert!(rows.len() <= PREVIEW_MAX_ROWS, "{}", rows.len());
+    }
+
+    #[test]
+    fn distant_restored_tip_stays_in_window_when_ghost_span_is_long() {
+        let loaded: Vec<LoadedCommit> = (0..80)
+            .map(|i| LoadedCommit {
+                id: id(&format!("c{i}")),
+                parents: (i < 79)
+                    .then(|| id(&format!("c{}", i + 1)))
+                    .into_iter()
+                    .collect(),
+            })
+            .collect();
+        let (rows, removed, ..) = graph(preview(
+            &loaded,
+            &branches(&[("main", "c0")]),
+            &FixedRoots::default(),
+            &[restore("main", Some("c70"), Some("c0"))],
+        ));
+        assert_eq!(removed, 70);
+        assert!(rows.len() <= PREVIEW_MAX_ROWS);
+        assert!(rows
+            .iter()
+            .any(|row| row.id.0 == "c70" && row.moved_here == ["main"]));
     }
 }

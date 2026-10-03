@@ -577,6 +577,13 @@ The current suite covers:
   no longer loaded, so it paints `restore-preview-unavailable`. Domain rules:
   `kagi-domain` `restore_preview`. Tier B: read the graph after on the card
   (EN/JA) before confirming.
+  #988 extends the existing scenario: a ref-only blocked plan has no
+  Confirm button or accessibility Confirm action; REFS rows and the
+  CURRENT-to-AFTER graph stay visible without re-laying the original rails.
+  The checked-out branch's warning and six unchanged-state chips remain
+  outside the graph; Copy all includes the ref transaction and preview.
+  At the first confirmation no ref moves; at the second the existing
+  `run_recorded` pipeline performs the write.
 - Operation Log local-tag restore (`KAGI_GUI_E2E_ONLY=oplog_restore_tag_preview`,
   `tests/recovery/oplog_panel.rs`): #887. A recorded branch point followed by
   a recorded local tag opens Restore to this point. The card lists the tag
@@ -587,6 +594,14 @@ The current suite covers:
   `crates/kagi-git/tests/oplog_restore_test.rs`. Tier B: create a local tag
   after an earlier recorded operation, inspect the card and its neutral
   preview, then confirm and check that only the local tag disappeared.
+  #988 adds a malformed canonical plan-row admission leg to the same
+  scenario: no card opens or ref moves, the full error persists in one
+  Failed receipt, and the footer/toast carry only a bounded preview.
+  `oplog_restore_preview_review` uses a long recorded branch history with
+  Solo enabled and a fetched PR head as a fixed root. The ghost count omits
+  commits that PR ref retains; the six-row AFTER window scrolls to the last
+  loaded row, and Copy all contains its projection. Scope it explicitly with
+  `KAGI_GUI_E2E_ONLY=oplog_restore_preview_review`.
 - Operation Log restore across a resolved merge
   (`KAGI_GUI_E2E_ONLY=oplog_restore_across_merge`, `tests/recovery/oplog_panel.rs`):
   #884 / ADR-0214 §4. `create-branch mark` → `merge-into-conflict side` → the

@@ -114,6 +114,20 @@ pub(crate) fn plan_clipboard_text(plan: &OperationPlan, rows: &[String]) -> Stri
             }
         }
     }
+    if let Some(cmd) = plan.equivalent_command.as_deref() {
+        // A recovery command already appears in the structured block above.
+        // Don't repeat it merely because the plan also describes it as an
+        // equivalent CLI command.
+        let in_recovery = plan
+            .recovery
+            .as_ref()
+            .is_some_and(|rec| rec.commands.iter().any(|recovery| recovery == cmd));
+        if !in_recovery {
+            out.push_str("\nequivalent command:\n");
+            out.push_str(cmd);
+            out.push('\n');
+        }
+    }
     out
 }
 
@@ -131,7 +145,7 @@ mod tests {
         use kagi_domain::plan_note::{PlanDisposition, PlanRecovery, PlanTitle, RecoveryKind};
 
         let deep = "crates/kagi-git/src/ops/very/deeply/nested/file.rs".to_string();
-        let plan = OperationPlan {
+        let mut plan = OperationPlan {
             title: PlanTitle::Discard {
                 single: None,
                 count: 2,
@@ -185,5 +199,18 @@ mod tests {
                 "row {row} must appear verbatim:\n{text}"
             );
         }
+        plan.equivalent_command = Some("git checkout -- main".into());
+        let text = plan_clipboard_text(&plan, &[]);
+        assert!(
+            text.contains("\nequivalent command:\ngit checkout -- main\n"),
+            "Copy all must preserve a distinct equivalent command verbatim: {text}"
+        );
+
+        plan.equivalent_command = Some("git cat-file -p <blob-sha>".into());
+        let text = plan_clipboard_text(&plan, &[]);
+        assert!(
+            !text.contains("\nequivalent command:\n"),
+            "a recovery command must not acquire a duplicate equivalent block: {text}"
+        );
     }
 }

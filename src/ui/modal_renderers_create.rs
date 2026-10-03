@@ -187,12 +187,13 @@ pub(crate) fn render_create_branch_modal(
         .flex_row()
         .gap_2()
         .justify_end()
-        .child(
+        .child(crate::ui::e2e::measure_control(
+            "create-branch-cancel",
             Button::new("create-branch-cancel")
                 .label(Msg::PlanCancel.t())
                 .ghost()
                 .on_click(cancel_handler),
-        )
+        ))
         .child(crate::ui::e2e::measure_confirm(render_input_modal_action(
             || {
                 KagiButton::accent(

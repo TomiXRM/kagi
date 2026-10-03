@@ -41,6 +41,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Changed
 
+- 計画確認カードの CURRENT → PREDICTED を同じ幅の 2 列と中央の矢印に整理し、状態チップは行内でスクロールできるようにしました。相当する Git コマンドがある計画は折りたたんでコピーできます（Pull は clean な fast-forward に限ります）。Operation Log の ref 復元は REFS の移動と削除、変えない対象、既存の線を保った復元後のグラフを先に示し、確認を 2 回必要とする安全境界は維持します。不正な ref 行の計画は開かず、詳細を Operation Log に記録して短いエラーを表示します。(#988)
+
 - Create Branch / Create Tag / Stash / Add Worktree / Rename Branch / Set Upstream の入力確認カードを、基本 32px の入力欄・確認ボタン、入力欄の直下に出る検証理由、常に見える無効な確認ボタンに統一し、見出しの従来の操作別アイコンは残しました。Stash 以外の CURRENT → PREDICTED は横 1 行にし、Stash は 38px のメッセージ欄の下に現在と実行後の状態を上下に並べ、暗い背景・小さい状態チップと簡潔な警告にしました。Stash のキャンセル・確認ボタンだけ従来の角丸のまま高さを 24px に縮めます。branch / HEAD と staged・modified・untracked などの状態は状態名・件数付きで表示し、警告の全文は Tooltip / 支援技術向けラベルに残します。空欄や実行不能な計画では復旧行を出さず、入力済みの実行可能な計画では Git コマンドだけ表示します（Create Branch はカード内に復旧行なし、Set Upstream は復旧コマンドなし）。完全な復旧説明は Operation Log に残します。IME 変換中の Enter は 6 種類すべてで Git 操作を確定しません。(#956)
 - Graph の「Avatar commit nodes」(commit の点を作者のアバターにする表示)を既定で ON にしました。設定で一度 OFF にしている場合はそのまま OFF です。
 - Worktree 行とホバーカードをアイコン・短い状態表示中心に整理し、再計測はアイコンのみ（支援技術向けの名前は維持）にしました。ignored file の注意はホバーから外し、削除時の確認計画で対象のファイル数とフォルダー数を示します。(#934)

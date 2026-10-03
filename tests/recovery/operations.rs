@@ -2079,6 +2079,47 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
         f32::from(current.center().y - predicted.center().y).abs() <= 2.,
         "shared state panes must align vertically: {current:?}, {predicted:?}"
     );
+    assert!(
+        f32::from(current.size.width - predicted.size.width).abs() <= 2.,
+        "CURRENT and PREDICTED must own equal-width columns: {current:?}, {predicted:?}"
+    );
+    assert!(
+        (f32::from(arrow.center().x - current.center().x)
+            - f32::from(predicted.center().x - arrow.center().x))
+        .abs()
+            <= 2.,
+        "the transition arrow must stay centered between both columns: {current:?}, {arrow:?}, {predicted:?}"
+    );
+    for side in ["current", "predicted"] {
+        let label =
+            kagi::ui::e2e::control_bounds(window.window_id(), &format!("plan-state-{side}-label"))
+                .expect("shared comparison renders its column label");
+        let chips =
+            kagi::ui::e2e::control_bounds(window.window_id(), &format!("plan-state-{side}-chips"))
+                .expect("shared comparison renders its column chip row");
+        assert!(
+            label.bottom() <= chips.top() + gpui::px(1.),
+            "{side} label must be above the nonwrapping chip row: {label:?}, {chips:?}"
+        );
+    }
+    let card = kagi::ui::e2e::control_bounds(window.window_id(), "modal-card")
+        .expect("shared plan card measured");
+    let cancel = kagi::ui::e2e::control_bounds(window.window_id(), "create-branch-cancel")
+        .expect("Create Branch Cancel remains available");
+    let confirm =
+        kagi::ui::e2e::confirm_bounds(window.window_id()).expect("Create remains available");
+    for (label, button) in [("Cancel", cancel), ("Create", confirm)] {
+        assert!(
+            button.top() >= card.top() && button.bottom() <= card.bottom(),
+            "{label} must remain inside the fixed card footer: {card:?}, {button:?}"
+        );
+    }
+    assert!(
+        current.bottom() < cancel.top()
+            && predicted.bottom() < confirm.top()
+            && f32::from(cancel.center().y - confirm.center().y).abs() <= 2.,
+        "comparison stays above aligned, fixed footer actions: {current:?}, {predicted:?}, {cancel:?}, {confirm:?}"
+    );
 
     cx.update_window(window, |_, window, cx| {
         input.update(cx, |state, cx| {
@@ -2551,6 +2592,69 @@ pub fn scenario_unmerged_branch_delete_armed(cx: &mut VisualTestAppContext) {
             app.open_delete_branch_modal("merged-delete", cx)
         });
         wait_idle(cx, &app);
+        if input == "button" {
+            let command = cx.read(|cx| {
+                app.read(cx)
+                    .delete_branch_modal()
+                    .unwrap()
+                    .plan
+                    .equivalent_command
+                    .clone()
+                    .expect("merged delete has an equivalent CLI command")
+            });
+            kagi::ui::e2e::clear_control_bounds(window.window_id(), "plan-equivalent-command-body");
+            paint(cx, window);
+            assert!(
+                kagi::ui::e2e::control_bounds(window.window_id(), "plan-equivalent-command-body")
+                    .is_none(),
+                "the full command must start collapsed"
+            );
+            let disclosure =
+                kagi::ui::e2e::control_bounds(window.window_id(), "plan-equivalent-command")
+                    .expect("plan offers command disclosure");
+            let copy =
+                kagi::ui::e2e::control_bounds(window.window_id(), "plan-equivalent-command-copy")
+                    .expect("the command has its own copy button");
+            assert!(
+                disclosure.size.height < gpui::px(40.)
+                    && disclosure.right() <= copy.left() + gpui::px(1.),
+                "closed command is a single row with a separate copy action: {disclosure:?}, {copy:?}"
+            );
+            cx.simulate_click(window, copy.center(), gpui::Modifiers::none());
+            cx.run_until_parked();
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|item| item.text()),
+                Some(command.clone()),
+                "command copy keeps the unshortened CLI text"
+            );
+            paint(cx, window);
+            assert!(
+                kagi::ui::e2e::control_bounds(window.window_id(), "plan-equivalent-command-body")
+                    .is_none(),
+                "copying the command must not expand the disclosure"
+            );
+            let all = kagi::ui::e2e::control_bounds(window.window_id(), "plan-card-copy")
+                .expect("Copy all remains available");
+            cx.simulate_click(window, all.center(), gpui::Modifiers::none());
+            cx.run_until_parked();
+            let copied = cx
+                .read_from_clipboard()
+                .and_then(|item| item.text())
+                .expect("whole plan copied");
+            assert_eq!(
+                copied.matches(&command).count(),
+                1,
+                "Copy all includes the faithful command only once: {copied}"
+            );
+            cx.simulate_click(window, disclosure.center(), gpui::Modifiers::none());
+            cx.run_until_parked();
+            paint(cx, window);
+            assert!(
+                kagi::ui::e2e::control_bounds(window.window_id(), "plan-equivalent-command-body")
+                    .is_some(),
+                "the full command is readable when expanded"
+            );
+        }
         confirm_branch_delete(cx, &app, window, input);
         wait_idle(cx, &app);
         assert!(cx.read(|cx| app.read(cx).delete_branch_modal().is_none()));

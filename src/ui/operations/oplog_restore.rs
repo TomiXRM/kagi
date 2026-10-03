@@ -1,19 +1,12 @@
-//! Operation Log op-revert / restore-to-point (#334 slice 2b-2, ADR-0214 §5).
-//!
-//! The selected Operation Log row's two buttons only *plan*: the card lists
-//! the reverse action for every branch (the plan's `Moves` warnings) and what
-//! is not brought back (`RefsOnly`). The plan is destructive — it moves
-//! branches — so the first confirm arms the card and the second runs it,
-//! through `Backend::run_recorded` like every other write: the restore lands
-//! in the oplog with its own ref moves and backups, and can be reverted too.
+//! Operation Log restore plans and two-stage execution through run_recorded.
 
 use super::RunPresentation;
 use crate::ui::blocking_ops::open_backend;
-use crate::ui::modal_renderers::render_plan_modal_wrapper_extra;
 use crate::ui::modals::oplog_restore::OplogRestoreModal;
 use crate::ui::*;
-use gpui_component::IconName;
+use kagi_domain::ref_restore;
 use kagi_git::backend::recording::RunReport;
+use kagi_git::oplog::{OpLogEntry, OpOutcome};
 use kagi_git::Operation;
 
 fn oplog_restore_blocking(
@@ -68,31 +61,84 @@ impl KagiApp {
             return;
         };
         match session.backend().plan(&op) {
-            Ok(plan) => {
-                klog!(
-                    "plan: {} blockers={} warnings={}",
-                    op.oplog_name(),
-                    plan.blockers.len(),
-                    plan.warnings.len()
-                );
-                let preview = super::oplog_restore_preview::build(self.view(), &plan);
-                self.set_oplog_restore_modal(OplogRestoreModal {
-                    op,
-                    plan: std::sync::Arc::new(plan),
-                    error: None,
-                    confirm_armed: false,
-                    preview,
-                });
-                // The card has no text field: Enter / Escape reach it through
-                // the root, so take focus from the terminal or an input (#878).
-                self.focus_root_for_modal();
-                cx.notify();
-            }
+            Ok(plan) => self.admit_oplog_restore_plan(op, plan, cx),
             Err(e) => {
                 self.status_footer =
                     FooterStatus::Failed(SharedString::from(i18n::op_plan_failed(i18n_op, e)));
             }
         }
+    }
+    /// Admission boundary shared by the real backend plan and the malformed
+    /// canonical-row regression scenario. No restore runs while opening it.
+    fn admit_oplog_restore_plan(
+        &mut self,
+        op: Operation,
+        plan: kagi_git::OperationPlan,
+        cx: &mut Context<Self>,
+    ) {
+        klog!(
+            "plan: {} blockers={} warnings={}",
+            op.oplog_name(),
+            plan.blockers.len(),
+            plan.warnings.len()
+        );
+        let restores = match ref_restore::from_lines(&plan.preview_commits) {
+            Ok(restores) => restores,
+            Err(error) => {
+                let reason = format!("Restore plan ref rows could not be decoded: {error}");
+                if let Some(path) = self.repo_path.clone() {
+                    let entry = OpLogEntry::new(
+                        op.oplog_name(),
+                        path.display().to_string(),
+                        plan.current.clone(),
+                        OpOutcome::Failed { error: reason },
+                    )
+                    .with_nothing_moved();
+                    self.record_op_impl(
+                        entry,
+                        cx,
+                        true,
+                        Some("Restore plan ref rows are invalid; see the Operation Log".into()),
+                    );
+                } else {
+                    self.push_toast(
+                        ToastKind::Error,
+                        "Restore plan ref rows are invalid; no repository is open",
+                        cx,
+                    );
+                }
+                return;
+            }
+        };
+        // A blocked restore cannot be run; keep the safety reasons ahead of
+        // speculative graph context in a height-capped confirmation card.
+        let preview = plan
+            .blockers
+            .is_empty()
+            .then(|| {
+                super::oplog_restore_preview::build(self.view(), &restores, &plan.head_at_plan)
+            })
+            .flatten();
+        self.set_oplog_restore_modal(OplogRestoreModal {
+            op,
+            plan: std::sync::Arc::new(plan),
+            restores,
+            error: None,
+            confirm_armed: false,
+            preview,
+        });
+        self.focus_root_for_modal();
+        cx.notify();
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn admit_oplog_restore_plan_for_test(
+        &mut self,
+        op: Operation,
+        plan: kagi_git::OperationPlan,
+        cx: &mut Context<Self>,
+    ) {
+        self.admit_oplog_restore_plan(op, plan, cx);
     }
 
     pub fn cancel_oplog_restore_modal(&mut self) {
@@ -113,7 +159,7 @@ impl KagiApp {
             return;
         };
         let name = modal.op.oplog_name();
-        if !modal.plan.blockers.is_empty() {
+        if !modal.plan.blockers.is_empty() || modal.restores.is_empty() {
             klog!("refused: {} plan has blockers, not executing", name);
             self.record_refused(
                 name,
@@ -126,7 +172,7 @@ impl KagiApp {
             cx.notify();
             return;
         }
-        if modal.plan.destructive && !modal.confirm_armed {
+        if !modal.confirm_armed {
             self.set_oplog_restore_modal(OplogRestoreModal {
                 confirm_armed: true,
                 ..modal
@@ -158,28 +204,11 @@ impl KagiApp {
     }
 }
 
-/// The shared plan card: per-branch reverse actions and what stays as it is
-/// (both warnings), blockers hide the confirm.
+/// REFS-first restore card; render from canonical typed ref moves.
 pub(crate) fn render_oplog_restore_modal(
     modal: OplogRestoreModal,
     overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let extra = modal
-        .preview
-        .as_deref()
-        .map(super::oplog_restore_preview::card_extra);
-    render_plan_modal_wrapper_extra(
-        modal.display_plan(),
-        modal.error.clone(),
-        modal.confirm_label(),
-        None,
-        Some((IconName::Undo2.into(), theme::theme().color_blocker)),
-        modal.confirm_stage(),
-        extra,
-        |this, _cx| this.cancel_oplog_restore_modal(),
-        |this, cx| this.start_oplog_restore(cx),
-        overrides,
-        cx,
-    )
+    super::oplog_restore_card::render(modal, overrides, cx)
 }

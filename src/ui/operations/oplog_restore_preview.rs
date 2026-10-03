@@ -1,43 +1,43 @@
-//! The restore card's "graph after" (#334 slice 2c, ADR-0214 §6): built once
-//! when the card opens from the tab's loaded commits and the plan's restores
-//! (`kagi_domain::restore_preview`), drawn with the commit graph's own row
-//! painter. Display only — nothing is read from or written to the repository.
+//! Restore's after-view uses the already loaded commit graph and pure reachability.
 
 use crate::ui::graph_view;
-use crate::ui::modal_renderers::PlanCardExtra;
+use crate::ui::graph_window::{self, Rail};
 use crate::ui::modals::oplog_restore::RestoreGraphPreview;
 use crate::ui::tab_view::TabViewState;
 use crate::ui::theme::{self, theme};
-use gpui::prelude::FluentBuilder as _;
-use gpui::{
-    div, px, rgb, InteractiveElement, IntoElement, ParentElement, SharedString,
-    StatefulInteractiveElement as _, Styled,
-};
+use gpui::prelude::*;
+use gpui::{div, px, rgb, SharedString};
+use kagi_domain::graph::GraphRow;
+use kagi_domain::head::Head;
+use kagi_domain::ref_restore::RefRestore;
 use kagi_domain::restore_preview::{self, FixedRoots, LoadedCommit, RestorePreview};
-use kagi_git::OperationPlan;
 use kagi_ui_core::i18n::{self, oplog_panel::OplogPanelMsg, Msg};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// Lanes drawn before the rail is clipped (wider graphs keep their layout).
-const MAX_LANES: usize = 8;
-
-/// `None` when the plan moves nothing (a blocked plan carries no restores).
-pub(crate) fn build(view: &TabViewState, plan: &OperationPlan) -> Option<Arc<RestoreGraphPreview>> {
-    let restores = kagi_domain::ref_restore::from_lines(&plan.preview_commits).ok()?;
+/// The canonical rows have already been parsed by the modal opener.
+pub(crate) fn build(
+    view: &TabViewState,
+    restores: &[RefRestore],
+    head: &Head,
+) -> Option<Arc<RestoreGraphPreview>> {
     if restores.is_empty() {
         return None;
     }
-    // Tags can point to annotated tag objects, not graph commit IDs. Do not
-    // compute a branch-only graph or count disappearing commits for tag moves.
+    let head_branch = match head {
+        Head::Attached { branch, .. } => Some(branch.clone()),
+        _ => None,
+    };
     if restores.iter().any(|r| r.refname.starts_with("refs/tags/")) {
         return Some(Arc::new(RestoreGraphPreview {
             graph: RestorePreview::TagChange,
             summaries: Vec::new(),
+            rails: Vec::new(),
+            merges: Vec::new(),
+            head_branch,
         }));
     }
-    // Branch Solo only filters what the graph shows; the full loaded rows are
-    // kept aside while it is on (#883 review).
+    // Solo filters the on-screen list, not the repository's loaded history.
     let (rows, row_index) = match &view.branch_solo {
         Some(solo) => (&solo.saved_rows, &solo.saved_row_index),
         None => (&view.rows, &view.commit_row_index),
@@ -54,9 +54,7 @@ pub(crate) fn build(view: &TabViewState, plan: &OperationPlan) -> Option<Arc<Res
         .iter()
         .map(|(name, oid)| (format!("refs/heads/{name}"), oid.clone()))
         .collect();
-    // Branch-only restore: remote branches, tags, fetched PR heads (graph
-    // roots no branch names, #883 review), detached worktree HEADs (an
-    // attached one follows its branch), and stashes keep their commits.
+    // Other roots retain commits even when local branches move.
     let fixed = FixedRoots(
         view.remote_branches
             .iter()
@@ -72,25 +70,35 @@ pub(crate) fn build(view: &TabViewState, plan: &OperationPlan) -> Option<Arc<Res
             .chain(view.stashes.iter().filter_map(|s| s.base.clone()))
             .collect(),
     );
-    let graph = restore_preview::preview(&commits, &branches, &fixed, &restores);
-    let summaries = match &graph {
-        RestorePreview::Graph { rows: drawn, .. } => drawn
-            .iter()
-            .map(|row| {
-                row_index
-                    .get(&row.id)
-                    .and_then(|i| rows.get(*i))
-                    .map(|r| r.summary.clone())
-                    .unwrap_or_default()
-            })
-            .collect(),
-        RestorePreview::NotLoaded { .. } | RestorePreview::TagChange => Vec::new(),
-    };
-    Some(Arc::new(RestoreGraphPreview { graph, summaries }))
+    let graph = restore_preview::preview(&commits, &branches, &fixed, restores);
+    let mut summaries = Vec::new();
+    let mut rails = Vec::new();
+    let mut merges = Vec::new();
+    if let RestorePreview::Graph { rows: drawn, .. } = &graph {
+        for row in drawn {
+            let source = row_index
+                .get(&row.id)
+                .and_then(|i| rows.get(*i))
+                .expect("preview rows come from loaded commits");
+            summaries.push(source.summary.clone());
+            rails.push(GraphRow {
+                commit: source.id.clone(),
+                lane: source.lane,
+                color: source.node_color,
+                edges: source.edges.clone(),
+            });
+            merges.push(source.is_merge);
+        }
+    }
+    Some(Arc::new(RestoreGraphPreview {
+        graph,
+        summaries,
+        rails,
+        merges,
+        head_branch,
+    }))
 }
 
-/// The section heading. A preview that could not be drawn claims nothing
-/// about disappearing commits (#883 review).
 pub(crate) fn heading_text(graph: &RestorePreview) -> String {
     match graph {
         RestorePreview::Graph { removed, .. } => i18n::oplog_panel::preview_heading(*removed),
@@ -102,20 +110,13 @@ pub(crate) fn heading_text(graph: &RestorePreview) -> String {
     }
 }
 
-/// The preview as text, for the card's `Copy all` (#883 review): heading,
-/// then each drawn row (short id, branches moving there, branches staying,
-/// summary), or the reason no graph is drawn.
+/// Copy the projection (or its honest unavailability), not old prose warnings.
 pub(crate) fn clipboard_text(preview: &RestoreGraphPreview) -> String {
     let mut out = format!("{}\n", heading_text(&preview.graph));
     match &preview.graph {
-        RestorePreview::NotLoaded { .. } => {
-            out.push_str(&format!("  {}\n", i18n::oplog_panel::preview_not_loaded()));
-        }
+        RestorePreview::NotLoaded { .. } => out.push_str(i18n::oplog_panel::preview_not_loaded()),
         RestorePreview::TagChange => {
-            out.push_str(&format!(
-                "  {}\n",
-                Msg::OplogPanel(OplogPanelMsg::PreviewTagChange).t()
-            ));
+            out.push_str(Msg::OplogPanel(OplogPanelMsg::PreviewTagChange).t())
         }
         RestorePreview::Graph {
             rows,
@@ -133,13 +134,14 @@ pub(crate) fn clipboard_text(preview: &RestoreGraphPreview) -> String {
                 let mut refs: Vec<String> =
                     row.moved_here.iter().map(|b| format!("{b} ←")).collect();
                 refs.extend(row.branches.iter().cloned());
-                let refs = if refs.is_empty() {
+                let label = if refs.is_empty() {
                     String::new()
                 } else {
                     format!(" [{}]", refs.join(", "))
                 };
+                let ghost = if row.off_branch { " (off branch)" } else { "" };
                 let summary = preview.summaries.get(n).map(|s| s.as_ref()).unwrap_or("");
-                out.push_str(&format!("  {}{refs} {summary}\n", row.id.short()));
+                out.push_str(&format!("  {}{label}{ghost} {summary}\n", row.id.short()));
             }
             if *hidden_below > 0 {
                 out.push_str(&format!(
@@ -164,15 +166,7 @@ fn chip(label: String, color: u32) -> gpui::AnyElement {
         .into_any_element()
 }
 
-/// The card section after the warnings, with its `Copy all` text.
-pub(crate) fn card_extra(preview: &RestoreGraphPreview) -> PlanCardExtra {
-    PlanCardExtra {
-        element: render(preview),
-        clipboard: clipboard_text(preview),
-    }
-}
-
-fn render(preview: &RestoreGraphPreview) -> gpui::AnyElement {
+pub(crate) fn render(preview: &RestoreGraphPreview) -> gpui::AnyElement {
     let muted = |text: String| {
         div()
             .text_xs()
@@ -186,9 +180,8 @@ fn render(preview: &RestoreGraphPreview) -> gpui::AnyElement {
         .flex_col()
         .gap_1()
         .text_xs()
-        .child(muted(heading_text(&preview.graph)))
         .child(crate::ui::e2e::measure_inside("restore-preview"));
-    let (rows, lane_count, removed, above, below) = match &preview.graph {
+    let (rows, removed, above, below) = match &preview.graph {
         RestorePreview::NotLoaded { .. } => {
             return section
                 .child(
@@ -200,7 +193,7 @@ fn render(preview: &RestoreGraphPreview) -> gpui::AnyElement {
                             "restore-preview-unavailable",
                         )),
                 )
-                .into_any_element();
+                .into_any_element()
         }
         RestorePreview::TagChange => {
             return section
@@ -213,34 +206,61 @@ fn render(preview: &RestoreGraphPreview) -> gpui::AnyElement {
                             "restore-preview-unavailable",
                         )),
                 )
-                .into_any_element();
+                .into_any_element()
         }
         RestorePreview::Graph {
             rows,
-            lane_count,
             removed,
             hidden_above,
             hidden_below,
-        } => (rows, *lane_count, *removed, *hidden_above, *hidden_below),
+        } => (rows, *removed, *hidden_above, *hidden_below),
     };
-    let rail_w = graph_view::lane_w() * lane_count.clamp(1, MAX_LANES) as f32 + 4.;
-    let more = |n: usize| (n > 0).then(|| muted(i18n::oplog_panel::preview_more(n)));
-    // Up to 40 rows of 29px do not fit a card on an ordinary window, and the
-    // card body does not scroll: the rows scroll in their own capped box
-    // (the modal list rule, #883 review).
+    let columns = graph_window::lane_columns(preview.rails.iter().flat_map(|graph| {
+        std::iter::once(graph.lane).chain(
+            graph
+                .edges
+                .iter()
+                .flat_map(|edge| [edge.from_lane, edge.to_lane]),
+        )
+    }));
+    let width = graph_window::gutter_width(columns.len());
+    let focus_lane = rows
+        .iter()
+        .position(|row| {
+            preview
+                .head_branch
+                .as_deref()
+                .is_some_and(|head| row.moved_here.iter().any(|b| b == head))
+        })
+        .or_else(|| rows.iter().position(|row| !row.moved_here.is_empty()))
+        .and_then(|n| preview.rails.get(n))
+        .map(|graph| graph_window::column_of(&columns, graph.lane))
+        .unwrap_or(0);
+    let scroll = graph_window::follow_scroll(focus_lane, width)
+        .min(graph_window::max_scroll(columns.len(), width));
+    let rail = Rail {
+        width,
+        scroll,
+        columns: &columns,
+        avatars: None,
+    };
     let list = div()
         .id("restore-preview-rows")
         .relative()
         .flex()
         .flex_col()
         .min_h(px(0.))
-        .max_h(crate::ui::modal_shell::modal_list_max_h(
-            restore_preview::PREVIEW_MAX_ROWS,
-        ))
+        // Six-row fixed viewport: short previews retain the same card geometry.
+        .h(theme::scaled_px(6. * graph_view::ROW_H))
         .overflow_y_scroll()
         .child(crate::ui::e2e::measure_inside("restore-preview-rows"))
         .children(rows.iter().enumerate().map(|(n, row)| {
-            let summary = preview.summaries.get(n).cloned().unwrap_or_default();
+            let graph = &preview.rails[n];
+            let is_head = preview.head_branch.as_deref().is_some_and(|head| {
+                !row.off_branch
+                    && (row.moved_here.iter().any(|branch| branch == head)
+                        || row.branches.iter().any(|branch| branch == head))
+            });
             div()
                 .relative()
                 .flex_shrink_0()
@@ -249,34 +269,31 @@ fn render(preview: &RestoreGraphPreview) -> gpui::AnyElement {
                 .flex_row()
                 .items_center()
                 .gap_2()
-                .child(
-                    div()
-                        .w(px(rail_w))
-                        .h_full()
-                        .flex_shrink_0()
-                        .overflow_hidden()
-                        .child(
-                            graph_view::graph_canvas(
-                                row.graph.lane,
-                                row.graph.color,
-                                row.graph.edges.clone(),
-                                graph_view::GraphNode::Commit {
-                                    is_head: false,
-                                    is_merge: false,
-                                },
-                                false,
-                                0.,
-                                0.,
-                                Vec::new(),
-                            )
-                            .size_full(),
-                        ),
-                )
-                .children(
-                    row.moved_here
-                        .iter()
-                        .map(|b| chip(format!("{b} ←"), theme().color_warning)),
-                )
+                .when(row.off_branch, |el| {
+                    el.opacity(graph_window::CONTEXT_OPACITY)
+                })
+                .child(graph_window::render_rail(
+                    graph.lane,
+                    graph.color,
+                    &graph.edges,
+                    graph_view::GraphNode::Commit {
+                        is_head,
+                        is_merge: preview.merges[n],
+                    },
+                    None,
+                    graph_view::ROW_H,
+                    &rail,
+                ))
+                .children(row.moved_here.iter().map(|b| {
+                    chip(
+                        format!("{b} ←"),
+                        if preview.head_branch.as_deref() == Some(b.as_str()) {
+                            theme().color_head
+                        } else {
+                            theme().color_warning
+                        },
+                    )
+                }))
                 .children(
                     row.branches
                         .iter()
@@ -288,12 +305,19 @@ fn render(preview: &RestoreGraphPreview) -> gpui::AnyElement {
                         .min_w(px(0.))
                         .truncate()
                         .text_color(rgb(theme().text_sub))
-                        .child(summary),
+                        .child(preview.summaries[n].clone()),
                 )
+                .child(muted(row.id.short().to_string()))
                 .when(!row.moved_here.is_empty(), |d| {
                     d.child(crate::ui::e2e::measure_inside(format!(
                         "restore-preview-moved-{}-{}",
                         row.moved_here.join(","),
+                        row.id.short()
+                    )))
+                })
+                .when(row.off_branch, |d| {
+                    d.child(crate::ui::e2e::measure_inside(format!(
+                        "restore-preview-ghost-{}",
                         row.id.short()
                     )))
                 })
@@ -302,75 +326,26 @@ fn render(preview: &RestoreGraphPreview) -> gpui::AnyElement {
                 )))
         }));
     section
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(Msg::OplogPanel(OplogPanelMsg::RestoreAfter).t())
+                .child(chip(
+                    i18n::oplog_panel::preview_heading(removed),
+                    theme().color_blocker,
+                )),
+        )
         .child(crate::ui::e2e::measure_inside(format!(
             "restore-preview-removed-{removed}"
         )))
-        .children(more(above))
+        .when(above > 0, |d| {
+            d.child(muted(i18n::oplog_panel::preview_more(above)))
+        })
         .child(list)
-        .children(more(below))
+        .when(below > 0, |d| {
+            d.child(muted(i18n::oplog_panel::preview_more(below)))
+        })
         .into_any_element()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use kagi_domain::graph::GraphRow;
-    use kagi_domain::restore_preview::PreviewRow;
-    use kagi_git::CommitId;
-
-    fn row(id: &str, moved: &[&str], stay: &[&str]) -> PreviewRow {
-        PreviewRow {
-            id: CommitId(id.into()),
-            graph: GraphRow {
-                commit: CommitId(id.into()),
-                lane: 0,
-                color: 0,
-                edges: Vec::new(),
-            },
-            branches: stay.iter().map(|s| s.to_string()).collect(),
-            moved_here: moved.iter().map(|s| s.to_string()).collect(),
-        }
-    }
-
-    #[test]
-    fn an_undrawn_preview_claims_no_disappearing_count() {
-        let unavailable = RestorePreview::NotLoaded {
-            refname: "refs/heads/main".into(),
-            oid: "a".repeat(40),
-        };
-        assert_ne!(
-            heading_text(&unavailable),
-            i18n::oplog_panel::preview_heading(0),
-            "\"no commit disappears\" would be a guess"
-        );
-        assert_eq!(
-            heading_text(&unavailable),
-            Msg::OplogPanel(OplogPanelMsg::PreviewUnavailableHeading).t()
-        );
-    }
-
-    #[test]
-    fn copy_all_carries_the_count_the_moves_and_the_hidden_rows() {
-        let preview = RestoreGraphPreview {
-            graph: RestorePreview::Graph {
-                rows: vec![
-                    row(&"1".repeat(40), &["main"], &[]),
-                    row(&"2".repeat(40), &[], &["keep"]),
-                ],
-                lane_count: 1,
-                removed: 3,
-                hidden_above: 0,
-                hidden_below: 5,
-            },
-            summaries: vec!["second".into(), "first".into()],
-        };
-        let text = clipboard_text(&preview);
-        assert!(
-            text.starts_with(&i18n::oplog_panel::preview_heading(3)),
-            "{text}"
-        );
-        assert!(text.contains("  11111111 [main ←] second\n"), "{text}");
-        assert!(text.contains("  22222222 [keep] first\n"), "{text}");
-        assert!(text.contains(&i18n::oplog_panel::preview_more(5)), "{text}");
-    }
 }

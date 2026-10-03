@@ -148,3 +148,73 @@ pub fn scenario_platform_menu_scroll(cx: &mut VisualTestAppContext) {
         "[gui-e2e] PASS platform_menu_scroll: the View menu fits a 480px window at 1.0x and 1.5x and scrolls to its last row"
     );
 }
+
+/// #976 review P1: the Linux / FreeBSD in-app menu dropdown is drawn after
+/// the modal layer and opens from the titlebar even over a confirmation
+/// modal. It is then the front layer: Enter must not confirm the modal behind
+/// it (a Git write), and Escape closes the dropdown first.
+pub fn scenario_platform_menu_over_modal(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    std::fs::write(repo.join("README.md"), "dirty for the stash modal\n").unwrap();
+    let (app, win) = mount_short(cx, &repo);
+    let before = repo_fingerprint(&repo);
+    let key = |cx: &mut VisualTestAppContext, keys: &str| {
+        cx.update_window(win, |_, window, cx| {
+            window.refresh();
+            window.draw(cx).clear();
+        })
+        .unwrap();
+        cx.simulate_keystrokes(win, keys);
+        cx.run_until_parked();
+    };
+
+    app.update(cx, |app, cx| app.open_stash_push_modal(cx));
+    cx.run_until_parked();
+    cx.update_window(win, |_, window, cx| {
+        let root = app.read(cx).root_focus.clone().expect("root focus");
+        window.focus(&root, cx);
+    })
+    .unwrap();
+    assert!(
+        cx.read(|cx| app.read(cx).stash_push_modal().is_some()),
+        "precondition: the Stash confirmation is open"
+    );
+    app.update(cx, |app, cx| {
+        assert!(app.open_platform_menu_for_e2e("View", cx), "View section");
+    });
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| e2e::menu_is_front(app.read(cx), cx)),
+        "platform-menu-over-modal-front: the dropdown drawn over the modal must be the front layer"
+    );
+
+    key(cx, "enter");
+    assert!(
+        cx.read(|cx| app.read(cx).stash_push_modal().is_some()),
+        "platform-menu-over-modal-enter: Enter confirmed the modal behind the dropdown"
+    );
+    assert_eq!(
+        repo_fingerprint(&repo),
+        before,
+        "platform-menu-over-modal-enter: Enter behind the dropdown wrote the repository"
+    );
+
+    key(cx, "escape");
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.platform_menu_open.is_none(),
+            "Escape closes the dropdown first"
+        );
+        assert!(
+            app.stash_push_modal().is_some(),
+            "and leaves the modal open"
+        );
+    });
+    key(cx, "escape");
+    assert!(cx.read(|cx| app.read(cx).stash_push_modal().is_none()));
+    assert_eq!(repo_fingerprint(&repo), before, "nothing was written");
+    unmount(cx, app, win);
+    eprintln!("[gui-e2e] PASS platform_menu_over_modal");
+}

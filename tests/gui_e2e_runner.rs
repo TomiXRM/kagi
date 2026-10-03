@@ -1700,6 +1700,10 @@ mod macos {
                 Box::new(crate::platform_menu_scroll::scenario_platform_menu_scroll),
             ),
             (
+                "platform_menu_over_modal",
+                Box::new(crate::platform_menu_scroll::scenario_platform_menu_over_modal),
+            ),
+            (
                 "field_picker_owner",
                 Box::new(crate::field_picker_owner::scenario_field_picker_owner),
             ),

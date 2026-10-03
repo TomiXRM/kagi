@@ -126,6 +126,14 @@ impl KagiApp {
     /// menus then menu_overlay; Home renders menu_overlay and the same modal
     /// layer. Platform dropdowns render last in the window shell.
     pub(crate) fn front_layer(&self, cx: &App) -> FrontLayer {
+        // The Linux / FreeBSD in-app menu dropdown is drawn after the modal
+        // layer (`render.rs`, `render_platform_menu_dropdown` is the last
+        // child), and the titlebar opens it even over a modal: it is the
+        // front layer, so Enter must not confirm the modal behind it
+        // (#976 review P1).
+        if self.visible_platform_menu_section().is_some() {
+            return FrontLayer::Menu;
+        }
         if self.has_active_modal() {
             return FrontLayer::Modal;
         }
@@ -142,10 +150,7 @@ impl KagiApp {
         if matches!(self.menu_overlay, Some(MenuOverlay::Settings)) {
             return FrontLayer::Settings;
         }
-        if self.visible_platform_menu_section().is_some()
-            || self.menu_overlay.is_some()
-            || self.workspace_menu_visible(cx)
-        {
+        if self.menu_overlay.is_some() || self.workspace_menu_visible(cx) {
             return FrontLayer::Menu;
         }
         FrontLayer::None

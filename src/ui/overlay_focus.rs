@@ -63,8 +63,25 @@ impl KagiApp {
                 .is_some_and(|trap| trap.contains_focused(window, cx));
             self.pending_focus = trapped.then(|| self.root_focus.clone()).flatten();
         }
-        if self.menu_overlay.is_none() {
+        // The menu overlays that hold no focus of their own (Info, the
+        // branch picker) route their keys through the root, so a pending
+        // focus lands while they are open too.
+        if !matches!(
+            self.menu_overlay,
+            Some(MenuOverlay::Settings | MenuOverlay::CommandPalette)
+        ) {
             self.apply_pending_focus(window, cx);
+        }
+    }
+
+    /// Another menu overlay replaces Settings (About / Keyboard Shortcuts /
+    /// the branch picker from the native menu, #976 review): the trap is
+    /// unmounted with it, so the focus must not stay there. Those overlays
+    /// own Escape through the root, so the focus goes to the root on the
+    /// next render pass ([`Self::sync_pending_focus`]).
+    pub(super) fn leave_settings_for_overlay(&mut self) {
+        if matches!(self.menu_overlay, Some(MenuOverlay::Settings)) {
+            self.pending_focus = self.root_focus.clone();
         }
     }
 

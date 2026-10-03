@@ -629,6 +629,38 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
         );
     }
     app.update(cx, |app, cx| app.close_home_tab(cx));
+    draw(cx, window);
+
+    // About (or Keyboard Shortcuts) from the native menu replaces Settings:
+    // the focus leaves the unmounted trap for the root — not for Settings'
+    // return target, the terminal, where Escape (bound `!Terminal`) would
+    // not reach the overlay — so Escape closes it.
+    for (command, what) in [
+        ("app.about", "About"),
+        ("help.shortcuts", "Keyboard Shortcuts"),
+    ] {
+        start_terminal(cx);
+        open_settings(cx);
+        assert_eq!(
+            held(cx, &app, window),
+            Held::Trap,
+            "precondition: Settings open"
+        );
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| app.handle_menu_command(command, window, cx))
+        })
+        .unwrap();
+        draw(cx, window);
+        assert!(
+            cx.read(|cx| app.read(cx).menu_overlay.is_some()),
+            "{what} replaces Settings"
+        );
+        keys(cx, window, "escape");
+        assert!(
+            cx.read(|cx| app.read(cx).menu_overlay.is_none()),
+            "settings-replaced-overlay-escape: Escape must close {what} opened over Settings"
+        );
+    }
 
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS settings_focus_trap");

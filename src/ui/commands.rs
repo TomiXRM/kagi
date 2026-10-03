@@ -2073,11 +2073,13 @@ impl KagiApp {
             mode,
             branches.len()
         );
+        self.leave_settings_for_overlay();
         self.menu_overlay = Some(MenuOverlay::BranchPicker { mode, branches });
     }
 
     /// Build the About info overlay.
     fn open_about_overlay(&mut self) {
+        self.leave_settings_for_overlay();
         self.menu_overlay = Some(MenuOverlay::Info {
             title: SharedString::from("About kagi"),
             lines: vec![
@@ -2090,6 +2092,7 @@ impl KagiApp {
 
     /// Build the Keyboard Shortcuts overlay from the registry (auto-generated).
     fn open_shortcuts_overlay(&mut self) {
+        self.leave_settings_for_overlay();
         let mut lines: Vec<SharedString> = shortcut_listing()
             .into_iter()
             .map(|(label, key)| SharedString::from(format!("{key}    {label}")))

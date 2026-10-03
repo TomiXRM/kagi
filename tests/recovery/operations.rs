@@ -2003,6 +2003,391 @@ fn wait_painted(
     }
 }
 
+/// #956: a visible disabled Create remains inert with an empty field. Enter
+/// while the real input owns marked IME text must accept composition, not run
+/// the ready branch plan; ordinary Enter after unmarking still confirms.
+pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let head = CommitId(output(&repo, &["rev-parse", "HEAD"]));
+    let (app, window) = mount(cx, &repo);
+
+    app.update(cx, |app, cx| app.open_create_branch_modal(head, cx));
+    paint(cx, window);
+    wait_painted(cx, &app, window, |app| {
+        app.create_branch_modal()
+            .and_then(|modal| modal.plan.plan())
+            .is_some_and(|plan| !plan.blockers.is_empty())
+    });
+    kagi::ui::e2e::clear_control_bounds(window.window_id(), "input-recovery");
+    paint(cx, window);
+    assert!(
+        kagi::ui::e2e::control_bounds(window.window_id(), "input-recovery").is_none(),
+        "empty branch name must not render a recovery line"
+    );
+    let disabled = kagi::ui::e2e::confirm_bounds(window.window_id())
+        .expect("empty branch name still shows a disabled Create");
+    assert!(
+        disabled.size.width >= gpui::px(40.) && disabled.size.height >= gpui::px(24.),
+        "blocked Create must occupy button space, not a blank wrapper: {disabled:?}"
+    );
+    cx.simulate_mouse_move(window, disabled.center(), None, gpui::Modifiers::none());
+    cx.run_until_parked();
+    cx.simulate_click(window, disabled.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).create_branch_modal().is_some()),
+        "clicking disabled Create keeps the form open"
+    );
+
+    let input = cx
+        .read(|cx| {
+            app.read(cx)
+                .create_branch_modal()
+                .and_then(|modal| modal.input_state.clone())
+        })
+        .expect("first paint creates branch-name input");
+    cx.update_window(window, |_, window, cx| {
+        window.focus(&input.read(cx).focus_handle(cx), cx);
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.simulate_keystrokes(window, "f e a t");
+    wait_painted(cx, &app, window, |app| {
+        app.create_branch_modal()
+            .and_then(|modal| modal.plan.plan())
+            .is_some_and(|plan| plan.blockers.is_empty())
+    });
+    kagi::ui::e2e::clear_control_bounds(window.window_id(), "input-recovery");
+    paint(cx, window);
+    assert!(
+        kagi::ui::e2e::control_bounds(window.window_id(), "input-recovery").is_none(),
+        "Create Branch omits recovery even after the plan is ready"
+    );
+    let current = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-current")
+        .expect("shared pane renders CURRENT");
+    let arrow = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-arrow")
+        .expect("shared pane renders transition arrow");
+    let predicted = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-predicted")
+        .expect("shared pane renders PREDICTED");
+    assert!(
+        current.right() <= arrow.left() + gpui::px(1.)
+            && arrow.right() <= predicted.left() + gpui::px(1.),
+        "shared state pane must put CURRENT → PREDICTED in one row: {current:?}, {arrow:?}, {predicted:?}"
+    );
+    assert!(
+        f32::from(current.center().y - predicted.center().y).abs() <= 2.,
+        "shared state panes must align vertically: {current:?}, {predicted:?}"
+    );
+
+    cx.update_window(window, |_, window, cx| {
+        input.update(cx, |state, cx| {
+            gpui::EntityInputHandler::replace_and_mark_text_in_range(
+                state,
+                Some(0..4),
+                "feat",
+                Some(4..4),
+                window,
+                cx,
+            );
+        });
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.simulate_keystrokes(window, "enter");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).create_branch_modal().is_some()),
+        "composition Enter must not close the form"
+    );
+    assert!(
+        output(&repo, &["branch", "--list", "feat"]).is_empty(),
+        "composition Enter must not create a Git ref"
+    );
+
+    cx.update_window(window, |_, window, cx| {
+        input.update(cx, |state, cx| {
+            gpui::EntityInputHandler::unmark_text(state, window, cx);
+        });
+    })
+    .unwrap();
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    assert!(
+        !output(&repo, &["branch", "--list", "feat"]).is_empty(),
+        "ordinary Enter after composition still creates the branch"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS create_branch_input_confirm_ime");
+}
+
+/// #956: Stash shows its actual before/after state in two stacked regions.
+/// A dirty, untracked-inclusive fixture proves the preview without executing
+/// the Git write; the shared Create Branch preview remains horizontal.
+pub fn scenario_stash_push_stacked_preview(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    std::fs::write(repo.join("README.md"), "modified before stash\n").unwrap();
+    std::fs::write(repo.join("not-tracked.txt"), "untracked before stash\n").unwrap();
+    let before = repo_fingerprint(&repo);
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.open_stash_push_modal(cx));
+    wait_painted(cx, &app, window, |app| {
+        app.stash_push_modal()
+            .and_then(|modal| modal.plan.as_ref())
+            .is_some_and(|plan| plan.blockers.is_empty())
+    });
+    cx.read(|cx| {
+        let modal = app.read(cx).stash_push_modal().unwrap();
+        let plan = modal.plan.as_ref().unwrap();
+        assert!(plan.current.dirty.contains("1 modified"));
+        assert!(plan.current.dirty.contains("1 untracked"));
+        assert_eq!(plan.predicted.dirty, "clean");
+        assert!(
+            !plan.warnings.is_empty(),
+            "including untracked needs warning"
+        );
+    });
+    for name in ["plan-state-current", "plan-state-predicted"] {
+        kagi::ui::e2e::clear_control_bounds(window.window_id(), name);
+    }
+    paint(cx, window);
+    let current = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-current")
+        .expect("current state is visible");
+    let after = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-predicted")
+        .expect("after state is visible");
+    assert!(
+        current.bottom() <= after.top() + gpui::px(1.)
+            && f32::from(current.left() - after.left()).abs() <= 2.,
+        "Stash current and after must stack and align: {current:?}, {after:?}"
+    );
+    let action = kagi::ui::e2e::confirm_bounds(window.window_id())
+        .expect("Stash confirm action remains visible");
+    assert!(
+        action.size.height <= gpui::px(24.),
+        "Stash action must use compact 24px control rather than the oversized 32px default: {action:?}"
+    );
+    assert_eq!(
+        before,
+        repo_fingerprint(&repo),
+        "Stash planning is read-only"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS stash_push_stacked_preview");
+}
+
+/// #956: each input-confirm renderer must expose an unavailable primary
+/// action rather than remove it when its plan cannot run. A real click at the
+/// measured button must leave the modal and repository untouched.
+pub fn scenario_input_confirm_disabled_cards(cx: &mut VisualTestAppContext) {
+    for case in ["tag", "worktree", "stash", "rename", "upstream"] {
+        let fixture = build_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        let before = repo_fingerprint(&repo);
+        let head = CommitId(output(&repo, &["rev-parse", "HEAD"]));
+        let (app, window) = mount(cx, &repo);
+        app.update(cx, |app, cx| match case {
+            "tag" => app.open_create_tag_modal(head, cx),
+            "worktree" => app.open_create_worktree_modal(head, cx),
+            "stash" => app.open_stash_push_modal(cx),
+            "rename" => app.open_rename_branch_modal("main".into()),
+            "upstream" => app.open_set_upstream_modal("main".into()),
+            _ => unreachable!(),
+        });
+        paint(cx, window);
+        if case == "upstream" {
+            let input = cx
+                .read(|cx| {
+                    app.read(cx)
+                        .set_upstream_modal()
+                        .and_then(|m| m.input_state.clone())
+                })
+                .expect("the first paint creates the upstream input");
+            cx.update_window(window, |_, window, cx| {
+                input.update(cx, |state, cx| state.set_value("", window, cx));
+            })
+            .unwrap();
+            wait_painted(cx, &app, window, |app| {
+                app.set_upstream_modal()
+                    .and_then(|m| m.plan.plan())
+                    .is_some_and(|plan| !plan.blockers.is_empty())
+            });
+        }
+        if case == "tag" {
+            wait_painted(cx, &app, window, |app| {
+                app.create_tag_modal()
+                    .and_then(|m| m.plan.plan())
+                    .is_some_and(|plan| !plan.blockers.is_empty())
+            });
+        } else if case == "worktree" {
+            wait_painted(cx, &app, window, |app| {
+                app.create_worktree_modal()
+                    .and_then(|m| m.plan.plan())
+                    .is_some_and(|plan| !plan.blockers.is_empty())
+            });
+        } else if case == "rename" {
+            wait_painted(cx, &app, window, |app| {
+                app.rename_branch_modal()
+                    .and_then(|m| m.plan.plan())
+                    .is_some_and(|plan| !plan.blockers.is_empty())
+            });
+        }
+        kagi::ui::e2e::clear_control_bounds(window.window_id(), "input-recovery");
+        if case == "upstream" {
+            kagi::ui::e2e::clear_control_bounds(window.window_id(), "input-field-error");
+            kagi::ui::e2e::clear_control_bounds(window.window_id(), "input-plan-blockers");
+        }
+        paint(cx, window);
+        assert!(
+            kagi::ui::e2e::control_bounds(window.window_id(), "input-recovery").is_none(),
+            "{case}: empty or blocked input must not render a recovery line"
+        );
+        if case == "upstream" {
+            assert!(
+                kagi::ui::e2e::control_bounds(window.window_id(), "input-field-error").is_some(),
+                "invalid upstream must explain its format error beneath the input"
+            );
+            assert!(
+                kagi::ui::e2e::control_bounds(window.window_id(), "input-plan-blockers").is_none(),
+                "the same upstream format blocker must not also be listed in the plan"
+            );
+        }
+        let button = kagi::ui::e2e::confirm_bounds(window.window_id())
+            .unwrap_or_else(|| panic!("{case}: blocked form still shows its primary action"));
+        assert!(
+            button.size.width >= gpui::px(40.) && button.size.height >= gpui::px(24.),
+            "{case}: the primary action must occupy visible button space, not a blank wrapper: {button:?}"
+        );
+        if case == "stash" {
+            assert_eq!(
+                button.size.height,
+                gpui::px(24.),
+                "the blocked Stash action keeps the same compact size as the ready action"
+            );
+        }
+        cx.simulate_mouse_move(window, button.center(), None, gpui::Modifiers::none());
+        cx.run_until_parked();
+        cx.simulate_click(window, button.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let app = app.read(cx);
+            let still_open = match case {
+                "tag" => app.create_tag_modal().is_some(),
+                "worktree" => app.create_worktree_modal().is_some(),
+                "stash" => app.stash_push_modal().is_some(),
+                "rename" => app.rename_branch_modal().is_some(),
+                "upstream" => app.set_upstream_modal().is_some(),
+                _ => unreachable!(),
+            };
+            assert!(
+                still_open,
+                "{case}: disabled primary click keeps the card open"
+            );
+        });
+        assert_eq!(
+            repo_fingerprint(&repo),
+            before,
+            "{case}: disabled primary click cannot change repository state"
+        );
+        if case == "tag" {
+            let input = cx
+                .read(|cx| {
+                    app.read(cx)
+                        .create_tag_modal()
+                        .and_then(|m| m.input_state.clone())
+                })
+                .expect("tag input remains available");
+            cx.update_window(window, |_, window, cx| {
+                input.update(cx, |state, cx| state.set_value("v-ui", window, cx));
+            })
+            .unwrap();
+            wait_painted(cx, &app, window, |app| {
+                app.create_tag_modal()
+                    .and_then(|m| m.plan.plan())
+                    .is_some_and(|plan| plan.blockers.is_empty())
+            });
+            kagi::ui::e2e::clear_control_bounds(window.window_id(), "input-recovery");
+            paint(cx, window);
+            assert!(
+                kagi::ui::e2e::control_bounds(window.window_id(), "input-recovery").is_some(),
+                "ready tag plan must show its command-only recovery row"
+            );
+            assert_eq!(
+                repo_fingerprint(&repo),
+                before,
+                "planning never writes a tag"
+            );
+        }
+        if case == "rename" || case == "upstream" {
+            let input = cx
+                .read(|cx| {
+                    let app = app.read(cx);
+                    match case {
+                        "rename" => app
+                            .rename_branch_modal()
+                            .and_then(|m| m.input_state.clone()),
+                        _ => app.set_upstream_modal().and_then(|m| m.input_state.clone()),
+                    }
+                })
+                .expect("ready input card retains its text field");
+            let value = if case == "rename" {
+                "renamed-956"
+            } else {
+                "origin/main"
+            };
+            cx.update_window(window, |_, window, cx| {
+                input.update(cx, |state, cx| state.set_value(value, window, cx));
+                window.focus(&input.read(cx).focus_handle(cx), cx);
+                window.draw(cx).clear();
+            })
+            .unwrap();
+            wait_painted(cx, &app, window, |app| {
+                let plan = if case == "rename" {
+                    app.rename_branch_modal().and_then(|m| m.plan.plan())
+                } else {
+                    app.set_upstream_modal().and_then(|m| m.plan.plan())
+                };
+                plan.is_some_and(|plan| plan.blockers.is_empty())
+            });
+            cx.update_window(window, |_, window, cx| {
+                input.update(cx, |state, cx| {
+                    gpui::EntityInputHandler::replace_and_mark_text_in_range(
+                        state,
+                        Some(0..value.len()),
+                        value,
+                        Some(value.len()..value.len()),
+                        window,
+                        cx,
+                    );
+                });
+                window.draw(cx).clear();
+            })
+            .unwrap();
+            cx.simulate_keystrokes(window, "enter");
+            cx.run_until_parked();
+            let remains_open = cx.read(|cx| {
+                let app = app.read(cx);
+                if case == "rename" {
+                    app.rename_branch_modal().is_some()
+                } else {
+                    app.set_upstream_modal().is_some()
+                }
+            });
+            assert!(
+                remains_open,
+                "{case}: IME Enter must keep the ready form open"
+            );
+            assert_eq!(
+                repo_fingerprint(&repo),
+                before,
+                "{case}: accepting IME candidates must not write Git state"
+            );
+        }
+        unmount(cx, app, window);
+    }
+    eprintln!("[gui-e2e] PASS input_confirm_disabled_cards");
+}
+
 /// #510: a replan that fails becomes an explicit failure state instead of
 /// leaving the plan it was recomputing behind.
 ///

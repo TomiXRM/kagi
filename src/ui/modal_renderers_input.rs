@@ -6,18 +6,151 @@
 
 use super::i18n::Msg;
 use super::modal_renderers::{
-    modal_overlay, render_current_predicted, render_modal_title_row, PlanCardAccent,
+    modal_overlay, render_current_predicted, render_modal_title_row, ModalIcon, PlanCardAccent,
 };
+use super::modal_renderers_plan::render_input_recovery_commands;
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_MD};
 use super::theme::theme as current_theme;
 use gpui::{
-    div, prelude::*, rgb, Context, Entity, FocusHandle, KeyDownEvent, SharedString, Window,
+    div, prelude::*, rgb, Context, Entity, FocusHandle, Hsla, KeyDownEvent, Role, SharedString,
+    Window,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
-use gpui_component::Sizable as _;
+use gpui_component::tooltip::Tooltip;
+use gpui_component::{ActiveTheme as _, Sizable as _};
+use kagi_domain::plan_note::{PlanNote, PushNote};
 use kagi_git::{BranchRenameValidation, OperationPlan};
 use kagi_ui_core::i18n::plan_note_text;
+
+/// The input-confirm cards share form density, but keep their own plan and
+/// confirmation handlers. A field error is one line here; the full reason
+/// remains available to pointer and assistive-technology users.
+pub(crate) fn render_input_modal_field(
+    label: &'static str,
+    state: Option<&Entity<InputState>>,
+    reason: Option<SharedString>,
+) -> gpui::Div {
+    let field = div()
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .text_sm()
+                .text_color(rgb(current_theme().text_label))
+                .child(SharedString::from(label)),
+        )
+        .children(state.map(Input::new));
+    match reason {
+        Some(reason) => field.child(crate::ui::e2e::measure_control(
+            "input-field-error",
+            div()
+                .id(label)
+                .role(Role::Alert)
+                .aria_label(reason.clone())
+                .text_sm()
+                .text_color(rgb(current_theme().color_blocker))
+                .truncate()
+                .tooltip({
+                    let reason = reason.clone();
+                    move |window, cx| Tooltip::new(reason.clone()).build(window, cx)
+                })
+                .child(reason),
+        )),
+        None => field,
+    }
+}
+
+pub(crate) fn render_input_modal_heading(
+    title: impl Into<SharedString>,
+    target: Option<(&str, &str)>,
+    icon: ModalIcon,
+    color: u32,
+) -> gpui::Div {
+    let heading = div()
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(render_modal_title_row(title.into(), Some((icon, color))));
+    match target {
+        Some((short_sha, summary)) => {
+            let target = SharedString::from(format!("{short_sha}  {summary}"));
+            heading.child(
+                div()
+                    .id("input-modal-target")
+                    .text_sm()
+                    .text_color(rgb(current_theme().text_sub))
+                    .truncate()
+                    .aria_label(target.clone())
+                    .tooltip({
+                        let target = target.clone();
+                        move |window, cx| Tooltip::new(target.clone()).build(window, cx)
+                    })
+                    .child(target),
+            )
+        }
+        None => heading,
+    }
+}
+
+/// Size of the shared action, including its inert disabled representation.
+#[derive(Clone, Copy)]
+pub(crate) enum InputActionSize {
+    Regular,
+    Small,
+}
+
+/// gpui-component's disabled Button suppresses clicks and focus but exposes an
+/// enabled AX node. Draw the unavailable state as an inert, reason-bearing AX
+/// Button instead. Ready actions keep the actual gpui-component Button.
+pub(crate) fn render_input_modal_action(
+    button: impl FnOnce() -> Button,
+    label: &'static str,
+    accent: u32,
+    reason: Option<SharedString>,
+    cx: &gpui::App,
+) -> gpui::AnyElement {
+    render_input_modal_action_with_size(button, label, accent, reason, InputActionSize::Regular, cx)
+}
+
+pub(crate) fn render_input_modal_action_with_size(
+    button: impl FnOnce() -> Button,
+    label: &'static str,
+    accent: u32,
+    reason: Option<SharedString>,
+    size: InputActionSize,
+    cx: &gpui::App,
+) -> gpui::AnyElement {
+    match reason {
+        Some(reason) => div()
+            .id(label)
+            .role(Role::Button)
+            .aria_label(SharedString::from(label))
+            .aria_description(reason.clone())
+            .a11y_synthetic_children(|builder: &mut gpui::A11ySubtreeBuilder| {
+                builder.parent_node().set_disabled();
+            })
+            .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx))
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .justify_center()
+            .h_8()
+            .px_4()
+            .when(matches!(size, InputActionSize::Small), |button| {
+                button.h_6().px_3().text_xs()
+            })
+            .rounded(cx.theme().radius)
+            .bg(Hsla::from(rgb(accent)).opacity(0.15))
+            .text_color(cx.theme().muted_foreground.opacity(0.5))
+            .child(label)
+            .into_any_element(),
+        None => button().into_any_element(),
+    }
+}
 
 pub(crate) fn render_input_plan_modal(
     title: String,
@@ -27,55 +160,53 @@ pub(crate) fn render_input_plan_modal(
     validation: Option<BranchRenameValidation>,
     error: Option<SharedString>,
     confirm_label: &'static str,
-    accent: Option<PlanCardAccent>,
+    accent: PlanCardAccent,
     cancel_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     confirm_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    cx: &gpui::App,
 ) -> gpui::AnyElement {
-    let has_blockers = plan
-        .as_ref()
-        .map(|p| !p.blockers.is_empty())
-        .unwrap_or(true);
+    let field_reason = match validation.as_ref() {
+        Some(BranchRenameValidation::Invalid(reason)) => Some(SharedString::from(
+            crate::ui::i18n::branch_name_error(reason),
+        )),
+        _ => plan.as_ref().and_then(|p| {
+            p.blockers
+                .iter()
+                .find(|note| matches!(note, PlanNote::Push(PushNote::UpstreamFormatInvalid)))
+                .map(|note| SharedString::from(plan_note_text(note)))
+        }),
+    };
+    let has_blockers =
+        field_reason.is_some() || plan.as_ref().is_none_or(|p| !p.blockers.is_empty());
+    let disabled_reason = if has_blockers {
+        error.clone().or_else(|| field_reason.clone()).or_else(|| {
+            plan.as_ref()
+                .and_then(|p| p.blockers.first())
+                .map(|b| SharedString::from(plan_note_text(b)))
+                .or_else(|| Some(Msg::InputPlanPending.t().into()))
+        })
+    } else {
+        None
+    };
     // #454 layer 4: adopt the shared shell — fixed title, scrolling middle,
     // fixed button row. Plan notes are unbounded (a rename can carry many
     // warnings/blockers), so the body is this card's single scroll region.
-    let card = modal_card(MODAL_W_MD).child(div().flex_shrink_0().child(render_modal_title_row(
-        SharedString::from(title),
-        accent.clone(),
-    )));
-    let mut body = modal_scroll_body().child(
-        div()
-            .flex_shrink_0()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(current_theme().text_label))
-                    .child(SharedString::from(label)),
-            )
-            .children(input_state.as_ref().map(|st| Input::new(st).small())),
-    );
+    let (icon, color) = accent.clone();
+    let card = modal_card(MODAL_W_MD).child(render_input_modal_heading(title, None, icon, color));
+    let mut body = modal_scroll_body().child(render_input_modal_field(
+        label,
+        input_state.as_ref(),
+        field_reason,
+    ));
 
-    if let Some(BranchRenameValidation::Invalid(reason)) = validation {
-        // W29-I18N-WAVE2: localize the keyed branch-name reason.
-        body = body.child(
-            div()
-                .flex_shrink_0()
-                .text_sm()
-                .text_color(rgb(current_theme().color_blocker))
-                .overflow_hidden()
-                .child(SharedString::from(crate::ui::i18n::branch_name_error(
-                    &reason,
-                ))),
-        );
-    }
-
+    let input_valid = input_state
+        .as_ref()
+        .is_some_and(|state| !state.read(cx).value().trim().is_empty());
     if let Some(plan) = plan {
         body = body.child(
             div()
                 .flex_shrink_0()
-                .child(render_current_predicted(&plan, accent.clone())),
+                .child(render_current_predicted(&plan, Some(accent.clone()))),
         );
 
         if !plan.warnings.is_empty() {
@@ -96,7 +227,13 @@ pub(crate) fn render_input_plan_modal(
         }
         if !plan.blockers.is_empty() {
             let mut block_col = div().flex().flex_col().gap_1();
+            let mut displayed = false;
             for blocker in &plan.blockers {
+                // The upstream format blocker is already the field's error.
+                if matches!(blocker, PlanNote::Push(PushNote::UpstreamFormatInvalid)) {
+                    continue;
+                }
+                displayed = true;
                 block_col = block_col.child(
                     div()
                         .text_sm()
@@ -108,7 +245,21 @@ pub(crate) fn render_input_plan_modal(
                         ))),
                 );
             }
-            body = body.child(block_col.flex_shrink_0());
+            if displayed {
+                body = body.child(crate::ui::e2e::measure_control(
+                    "input-plan-blockers",
+                    block_col.flex_shrink_0(),
+                ));
+            }
+        }
+        if input_valid && !has_blockers {
+            if let Some(recovery) = plan.recovery.as_ref().filter(|r| !r.commands.is_empty()) {
+                body = body.child(
+                    div()
+                        .flex_shrink_0()
+                        .child(render_input_recovery_commands(&recovery.commands, color)),
+                );
+            }
         }
     }
 
@@ -123,22 +274,29 @@ pub(crate) fn render_input_plan_modal(
         );
     }
 
-    let mut buttons = div().flex().flex_row().gap_2().justify_end().child(
-        Button::new("branch-input-cancel")
-            .label(Msg::PlanCancel.t())
-            .ghost()
-            .small()
-            .on_click(cancel_handler),
-    );
-    if !has_blockers {
-        buttons = buttons.child(
-            Button::new("branch-input-confirm")
-                .label(SharedString::from(confirm_label))
-                .primary()
-                .small()
-                .on_click(confirm_handler),
-        );
-    }
+    let buttons = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        .child(
+            Button::new("branch-input-cancel")
+                .label(Msg::PlanCancel.t())
+                .ghost()
+                .on_click(cancel_handler),
+        )
+        .child(crate::ui::e2e::measure_confirm(render_input_modal_action(
+            || {
+                Button::new("branch-input-confirm")
+                    .label(SharedString::from(confirm_label))
+                    .primary()
+                    .on_click(confirm_handler)
+            },
+            confirm_label,
+            current_theme().color_branch,
+            disabled_reason,
+            cx,
+        )));
     let card = card.child(body).child(div().flex_shrink_0().child(buttons));
 
     modal_overlay(card).into_any_element()

@@ -520,6 +520,23 @@ impl Render for KagiApp {
         });
 
         // ── Normal state: header + body + bottom panel slot + status bar ─────
+        // Outer layers are composed here rather than in attach_modal_overlays:
+        // their pane/body and window-shell parents cannot be attached by the
+        // shared modal collector. Keep that boundary pinned to Z_ORDER.
+        debug_assert_eq!(
+            &super::front_layer::Z_ORDER[..5],
+            &[
+                super::front_layer::LayerKind::ConflictFileMenu,
+                super::front_layer::LayerKind::EditorTreeMenu,
+                super::front_layer::LayerKind::CoauthorMenu,
+                super::front_layer::LayerKind::WorkspaceMenus,
+                super::front_layer::LayerKind::MenuOverlay,
+            ]
+        );
+        debug_assert_eq!(
+            super::front_layer::Z_ORDER.last(),
+            Some(&super::front_layer::LayerKind::PlatformMenu)
+        );
         let root = div()
             .flex()
             .flex_col()
@@ -694,6 +711,10 @@ impl Render for KagiApp {
                     cx,
                 ))
             })
+            // The body owns the Commit Panel coauthor popover. Keep these
+            // two root-level pane popovers below workspace menus as in Z_ORDER.
+            .children(conflict_file_menu_overlay)
+            .children(editor_tree_menu_overlay)
             // ── Commit context menu overlay (below modals) ─────
             .children(commit_menu_overlay)
             // ── Branch context menu overlay (below modals) ─────
@@ -702,10 +723,6 @@ impl Render for KagiApp {
             .children(stash_menu_overlay)
             .children(tag_menu_overlay)
             .children(worktree_menu_overlay)
-            // ── Conflict per-file "…" overflow menu overlay ────
-            .children(conflict_file_menu_overlay)
-            // ── Editor Workspace tree right-click context menu overlay ──
-            .children(editor_tree_menu_overlay)
             // ── W5-MENU: menu-driven overlay (branch picker / About / shortcuts) ──
             .children(self.render_menu_overlay(window, cx));
 

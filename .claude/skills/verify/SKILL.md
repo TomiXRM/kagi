@@ -332,6 +332,13 @@ The current suite covers:
     may receive keys after its pane disappears, even in the same session.
     Disabling either the return-time membership check or the per-frame
     `restored_focus` check must fail.
+- Overlay z-order (`KAGI_GUI_E2E_ONLY=filter_menu_over_modal`,
+  `tests/recovery/platform_menu_scroll.rs`, #976 review): open the Issues
+  filter chip, then deliver the early Stash Push slot on a dirty tree. With
+  root focused, Enter leaves the modal and repository fingerprint unchanged;
+  Escape closes the filter first and retains the modal. `front_layer::Z_ORDER`
+  drives both modal rendering and key ownership. Moving overlay menus below
+  early modals must fail the front-menu assertion.
 - overlay focus return (`KAGI_GUI_E2E_ONLY=palette_push_modal_keys,settings_close_returns_focus`,
   `tests/recovery/overlay_focus.rs`): #817 / #812. Every key is raw, with no
   test-side refocusing. The palette scenario first starts the bottom-panel

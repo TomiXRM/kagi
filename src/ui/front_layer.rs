@@ -1,4 +1,4 @@
-//! The visible keyboard owner, in the same order as the root's overlay renderers.
+//! Keyboard ownership follows the render order of overlays, bottom to top.
 
 use gpui::App;
 
@@ -7,16 +7,167 @@ use super::KagiApp;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FrontLayer {
-    /// A window-global modal in the shared slot (`render_overlay.rs:308-605,647-665`).
     Modal,
-    /// The Commit Panel confirmation, only on a drawn workspace panel (`render_overlay.rs:639-646`).
     CommitPlan,
-    /// The Settings trap (`render.rs:693-698`, `home.rs:202-221`).
     Settings,
-    /// A menu or other popover (`render.rs:681-694`, `render_overlay.rs:607-638`).
     Menu,
-    /// No overlay intercepts the workspace or Home.
     None,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LayerKind {
+    ConflictFileMenu,
+    EditorTreeMenu,
+    CoauthorMenu,
+    WorkspaceMenus,
+    MenuOverlay,
+    EarlyModal,
+    PrMenu,
+    FilterMenu,
+    InspectorFileMenu,
+    FileMenu,
+    CommitPlan,
+    SmartCommit,
+    Update,
+    PlatformMenu,
+}
+
+/// Rendering order (bottom → top). Coauthor lives in the body
+/// (`commit_panel_render.rs:1359`); the other pane and workspace menus,
+/// followed by MenuOverlay, are in `render.rs:714-727`.
+/// Home draws MenuOverlay then the modal slice (`home.rs:213-231`).
+/// `render_overlay.rs:311-680` iterates that slice; the shell appends the
+/// platform dropdown (`render.rs:742-743`, `mod.rs:3521-3536` on Home).
+pub(crate) const Z_ORDER: [LayerKind; 14] = [
+    LayerKind::ConflictFileMenu,  // render.rs:716
+    LayerKind::EditorTreeMenu,    // render.rs:717
+    LayerKind::CoauthorMenu,      // commit_panel_render.rs:1359
+    LayerKind::WorkspaceMenus,    // render.rs:718-725
+    LayerKind::MenuOverlay,       // render.rs:726-727; home.rs:213-221
+    LayerKind::EarlyModal,        // render_overlay.rs:313-612
+    LayerKind::PrMenu,            // render_overlay.rs:613-620
+    LayerKind::FilterMenu,        // render_overlay.rs:621-623
+    LayerKind::InspectorFileMenu, // render_overlay.rs:624-637
+    LayerKind::FileMenu,          // render_overlay.rs:638-642
+    LayerKind::CommitPlan,        // render_overlay.rs:643-651
+    LayerKind::SmartCommit,       // render_overlay.rs:652-656
+    LayerKind::Update,            // render_overlay.rs:657-673
+    LayerKind::PlatformMenu,      // render.rs:742-743; mod.rs:3535
+];
+
+impl LayerKind {
+    pub(crate) const fn in_modal_layer(self) -> bool {
+        matches!(
+            self,
+            Self::EarlyModal
+                | Self::PrMenu
+                | Self::FilterMenu
+                | Self::InspectorFileMenu
+                | Self::FileMenu
+                | Self::CommitPlan
+                | Self::SmartCommit
+                | Self::Update
+        )
+    }
+
+    fn visible(self, app: &KagiApp, cx: &App) -> bool {
+        match self {
+            Self::ConflictFileMenu => app.conflict_file_menu_visible(cx),
+            Self::EditorTreeMenu => app.editor_tree_menu_visible(cx),
+            Self::CoauthorMenu => app.coauthor_menu_visible(cx),
+            Self::WorkspaceMenus => {
+                app.commit_menu_visible()
+                    || app.branch_menu_visible()
+                    || app.stash_menu_visible()
+                    || app.tag_menu_visible()
+                    || app.worktree_menu_visible()
+            }
+            Self::MenuOverlay => app.menu_overlay.is_some(),
+            Self::EarlyModal => app.early_modal_visible(),
+            Self::PrMenu => app.pr_menu_visible(),
+            Self::FilterMenu => app.filter_menu_visible(),
+            Self::InspectorFileMenu => app.inspector_file_menu_visible(),
+            Self::FileMenu => app.file_menu_visible(cx),
+            Self::CommitPlan => app.commit_plan_visible(cx),
+            Self::SmartCommit => app.smart_commit_modal().is_some(),
+            Self::Update => app.update_modal().is_some(),
+            Self::PlatformMenu => app.visible_platform_menu_section().is_some(),
+        }
+    }
+
+    fn front_layer(self, app: &KagiApp) -> FrontLayer {
+        match self {
+            Self::MenuOverlay if matches!(app.menu_overlay, Some(MenuOverlay::Settings)) => {
+                FrontLayer::Settings
+            }
+            Self::EarlyModal | Self::SmartCommit | Self::Update => FrontLayer::Modal,
+            Self::CommitPlan => FrontLayer::CommitPlan,
+            Self::ConflictFileMenu
+            | Self::EditorTreeMenu
+            | Self::CoauthorMenu
+            | Self::WorkspaceMenus
+            | Self::MenuOverlay
+            | Self::PrMenu
+            | Self::FilterMenu
+            | Self::InspectorFileMenu
+            | Self::FileMenu
+            | Self::PlatformMenu => FrontLayer::Menu,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LayerKind as L, Z_ORDER};
+
+    #[test]
+    fn every_layer_occurs_exactly_once() {
+        // Exhaustive list: a new enum variant must also be classified here.
+        let all = [
+            L::ConflictFileMenu,
+            L::EditorTreeMenu,
+            L::CoauthorMenu,
+            L::WorkspaceMenus,
+            L::MenuOverlay,
+            L::EarlyModal,
+            L::PrMenu,
+            L::FilterMenu,
+            L::InspectorFileMenu,
+            L::FileMenu,
+            L::CommitPlan,
+            L::SmartCommit,
+            L::Update,
+            L::PlatformMenu,
+        ];
+        for kind in all {
+            let _: () = match kind {
+                L::ConflictFileMenu
+                | L::EditorTreeMenu
+                | L::CoauthorMenu
+                | L::WorkspaceMenus
+                | L::MenuOverlay
+                | L::EarlyModal
+                | L::PrMenu
+                | L::FilterMenu
+                | L::InspectorFileMenu
+                | L::FileMenu
+                | L::CommitPlan
+                | L::SmartCommit
+                | L::Update
+                | L::PlatformMenu => (),
+            };
+            assert_eq!(
+                Z_ORDER.iter().filter(|&&entry| entry == kind).count(),
+                1,
+                "{kind:?}"
+            );
+        }
+        assert_eq!(Z_ORDER.len(), all.len());
+        assert_eq!(Z_ORDER.iter().position(|k| *k == L::MenuOverlay), Some(4));
+        assert_eq!(Z_ORDER.iter().position(|k| *k == L::PlatformMenu), Some(13));
+        let modal = Z_ORDER.iter().filter(|k| k.in_modal_layer()).count();
+        assert_eq!(modal, 8);
+    }
 }
 
 impl KagiApp {
@@ -106,22 +257,6 @@ impl KagiApp {
         let ix = self.platform_menu_open?;
         Some((ix, super::commands::linux_menu_sections().nth(ix)?))
     }
-    /// Rendered in the workspace, never on Home.
-    pub(crate) fn workspace_menu_visible(&self, cx: &App) -> bool {
-        self.commit_menu_visible()
-            || self.branch_menu_visible()
-            || self.stash_menu_visible()
-            || self.tag_menu_visible()
-            || self.worktree_menu_visible()
-            || self.file_menu_visible(cx)
-            || self.inspector_file_menu_visible()
-            || self.pr_menu_visible()
-            || self.filter_menu_visible()
-            || self.conflict_file_menu_visible(cx)
-            || self.editor_tree_menu_visible(cx)
-            || self.coauthor_menu_visible(cx)
-    }
-
     /// The Commit Panel's plan confirmation, only where it is drawn: not with
     /// Home in front, and only while the panel is open.
     pub(crate) fn commit_plan_visible(&self, cx: &App) -> bool {
@@ -142,31 +277,13 @@ impl KagiApp {
         self.has_active_modal() || self.commit_plan_visible(cx)
     }
 
-    /// A retained plan behind Home is not an overlay. The workspace renders
-    /// menus then menu_overlay; Home renders menu_overlay and the same modal
-    /// layer. Platform dropdowns render last in the window shell.
+    /// Scan the same bottom-to-top sequence used by the modal renderer.
     pub(crate) fn front_layer(&self, cx: &App) -> FrontLayer {
-        // The Linux / FreeBSD in-app menu dropdown is drawn after the modal
-        // layer (`render.rs`, `render_platform_menu_dropdown` is the last
-        // child), and the titlebar opens it even over a modal: it is the
-        // front layer, so Enter must not confirm the modal behind it
-        // (#976 review P1).
-        if self.visible_platform_menu_section().is_some() {
-            return FrontLayer::Menu;
-        }
-        if self.has_active_modal() {
-            return FrontLayer::Modal;
-        }
-        if self.commit_plan_visible(cx) {
-            return FrontLayer::CommitPlan;
-        }
-        if matches!(self.menu_overlay, Some(MenuOverlay::Settings)) {
-            return FrontLayer::Settings;
-        }
-        if self.menu_overlay.is_some() || self.workspace_menu_visible(cx) {
-            return FrontLayer::Menu;
-        }
-        FrontLayer::None
+        Z_ORDER
+            .iter()
+            .rev()
+            .find(|kind| kind.visible(self, cx))
+            .map_or(FrontLayer::None, |kind| kind.front_layer(self))
     }
 
     /// Clear every menu, including a stale invisible one retained on this tab.

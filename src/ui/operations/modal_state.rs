@@ -45,6 +45,65 @@ impl KagiApp {
         self.active_modal.is_some()
     }
 
+    /// Slot variants drawn after the repo popovers and Commit Panel plan.
+    /// This exhaustive split keeps key ownership aligned with rendering.
+    pub(crate) fn early_modal_visible(&self) -> bool {
+        use ActiveModal as M;
+        match self.active_modal.as_ref() {
+            None | Some(M::SmartCommit(_) | M::Update(_)) => false,
+            Some(
+                M::RemoteBrowse(_)
+                | M::Clone(_)
+                | M::AppNotice(_)
+                | M::Checkout(_)
+                | M::Pull(_)
+                | M::Amend(_)
+                | M::Pop(_)
+                | M::StashDrop(_)
+                | M::PushTag(_)
+                | M::PrMerge(_)
+                | M::PrFields(_)
+                | M::Push(_)
+                | M::BranchPlan(_)
+                | M::SetUpstream(_)
+                | M::RenameBranch(_)
+                | M::Merge(_)
+                | M::TrackingCheckout(_)
+                | M::SwitchToLatest(_)
+                | M::CreateBranch(_)
+                | M::CreateTag(_)
+                | M::CreateWorktree(_)
+                | M::UnlockWorktree(_)
+                | M::RemoveWorktree(_)
+                | M::WorktreeLockReason(_)
+                | M::LockWorktree(_)
+                | M::PruneWorktrees(_)
+                | M::RepairWorktrees(_)
+                | M::RepoHealth(_)
+                | M::ApplySuggestion(_)
+                | M::OplogRestore(_)
+                | M::StashPush(_)
+                | M::StashApply(_)
+                | M::CherryPick(_)
+                | M::Revert(_)
+                | M::History(_)
+                | M::DeleteBranch(_)
+                | M::DeleteRemoteBranch(_)
+                | M::ResetCurrent(_)
+                | M::ForceLeasePush(_)
+                | M::RebaseCurrentOnto(_)
+                | M::BranchCleanup(_)
+                | M::Discard(_)
+                | M::ConflictContinue(_)
+                | M::ConflictAbort(_)
+                | M::EditorDirtyGuard(_)
+                | M::EditorFsPrompt(_)
+                | M::EditorDeleteConfirm(_)
+                | M::TrustRepo(_),
+            ) => true,
+        }
+    }
+
     /// Settings yields to an arriving modal only after deciding whether the
     /// modal already owns keyboard focus. Match every variant so new modals
     /// cannot silently inherit the fieldless behavior.

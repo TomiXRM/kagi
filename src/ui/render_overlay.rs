@@ -259,44 +259,44 @@ impl KagiApp {
     fn attach_modal_overlays(
         &self,
         el: gpui::Div,
-        plan_modal: Option<CheckoutPlanModal>,
-        pull_modal: Option<PullPlanModal>,
-        history_modal: Option<HistoryPlanModal>,
-        conflict_continue_modal: Option<ConflictContinuePlanModal>,
-        amend_modal: Option<AmendPlanModal>,
-        pop_modal: Option<PopPlanModal>,
-        stash_drop_modal: Option<StashDropModal>,
-        push_modal: Option<PushPlanModal>,
-        branch_plan_modal: Option<BranchPlanModal>,
-        set_upstream_modal: Option<SetUpstreamModal>,
-        rename_branch_modal: Option<RenameBranchModal>,
-        merge_modal: Option<MergePlanModal>,
-        tracking_checkout_modal: Option<TrackingCheckoutPlanModal>,
-        switch_to_latest_modal: Option<SwitchToLatestPlanModal>,
-        create_branch_modal: Option<CreateBranchModal>,
-        create_tag_modal: Option<CreateTagModal>,
-        create_worktree_modal: Option<CreateWorktreeModal>,
-        unlock_worktree_modal: Option<UnlockWorktreeModal>,
-        remote_browse: Option<RemoteBrowseModal>,
-        update_modal: Option<UpdateModal>,
-        stash_push_modal: Option<StashPushModal>,
-        stash_apply_modal: Option<StashApplyModal>,
-        cherry_pick_modal: Option<CherryPickModal>,
-        revert_modal: Option<RevertModal>,
-        delete_branch_modal: Option<DeleteBranchModal>,
-        delete_remote_branch_modal: Option<DeleteRemoteBranchModal>,
-        reset_current_modal: Option<ResetCurrentModal>,
-        force_lease_push_modal: Option<ForceLeasePushModal>,
-        push_tag_modal: Option<PushTagModal>,
-        rebase_current_onto_modal: Option<RebaseCurrentOntoModal>,
-        branch_cleanup_modal: Option<BranchCleanupModal>,
-        discard_modal: Option<DiscardModal>,
-        editor_dirty_guard_modal: Option<EditorDirtyGuardModal>,
-        editor_fs_prompt_modal: Option<EditorFsPromptModal>,
-        editor_delete_confirm_modal: Option<EditorDeleteConfirmModal>,
-        file_menu: Option<file_menu::FileMenu>,
+        mut plan_modal: Option<CheckoutPlanModal>,
+        mut pull_modal: Option<PullPlanModal>,
+        mut history_modal: Option<HistoryPlanModal>,
+        mut conflict_continue_modal: Option<ConflictContinuePlanModal>,
+        mut amend_modal: Option<AmendPlanModal>,
+        mut pop_modal: Option<PopPlanModal>,
+        mut stash_drop_modal: Option<StashDropModal>,
+        mut push_modal: Option<PushPlanModal>,
+        mut branch_plan_modal: Option<BranchPlanModal>,
+        mut set_upstream_modal: Option<SetUpstreamModal>,
+        mut rename_branch_modal: Option<RenameBranchModal>,
+        mut merge_modal: Option<MergePlanModal>,
+        mut tracking_checkout_modal: Option<TrackingCheckoutPlanModal>,
+        mut switch_to_latest_modal: Option<SwitchToLatestPlanModal>,
+        mut create_branch_modal: Option<CreateBranchModal>,
+        mut create_tag_modal: Option<CreateTagModal>,
+        mut create_worktree_modal: Option<CreateWorktreeModal>,
+        mut unlock_worktree_modal: Option<UnlockWorktreeModal>,
+        mut remote_browse: Option<RemoteBrowseModal>,
+        mut update_modal: Option<UpdateModal>,
+        mut stash_push_modal: Option<StashPushModal>,
+        mut stash_apply_modal: Option<StashApplyModal>,
+        mut cherry_pick_modal: Option<CherryPickModal>,
+        mut revert_modal: Option<RevertModal>,
+        mut delete_branch_modal: Option<DeleteBranchModal>,
+        mut delete_remote_branch_modal: Option<DeleteRemoteBranchModal>,
+        mut reset_current_modal: Option<ResetCurrentModal>,
+        mut force_lease_push_modal: Option<ForceLeasePushModal>,
+        mut push_tag_modal: Option<PushTagModal>,
+        mut rebase_current_onto_modal: Option<RebaseCurrentOntoModal>,
+        mut branch_cleanup_modal: Option<BranchCleanupModal>,
+        mut discard_modal: Option<DiscardModal>,
+        mut editor_dirty_guard_modal: Option<EditorDirtyGuardModal>,
+        mut editor_fs_prompt_modal: Option<EditorFsPromptModal>,
+        mut editor_delete_confirm_modal: Option<EditorDeleteConfirmModal>,
+        mut file_menu: Option<file_menu::FileMenu>,
         modal_focus: Option<FocusHandle>,
-        stash_push_focus: Option<FocusHandle>,
+        mut stash_push_focus: Option<FocusHandle>,
         commit_panel_open: bool,
         commit_panel: Option<Entity<commit_panel::CommitPanelView>>,
         window: &mut Window,
@@ -306,358 +306,380 @@ impl KagiApp {
         let commit_plan_modal = commit_panel
             .as_ref()
             .and_then(|e| e.read(cx).state.plan_modal.clone());
-        el.when_some(plan_modal, |el, modal| {
-            el.child(render_plan_modal(modal, &self.modal_section_overrides, cx))
-        })
-        // ── Pull plan modal overlay (T-HT-003) ──────────
-        .when_some(pull_modal, |el, modal| {
-            el.child(render_pull_modal(modal, &self.modal_section_overrides, cx))
-        })
-        // ── Undo / Pop plan modal overlays ───────────────
-        // ── Operation Undo / Redo modal (T-UNDOREDO-001) ──
-        .when_some(history_modal, |el, modal| {
-            el.child(render_history_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        // ── Sequencer conflict-continue confirmation (ADR-0068) ──
-        .when_some(conflict_continue_modal, |el, modal| {
-            el.child(render_conflict_continue_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        // ── Abort confirmation (#704) — read from `self`, not passed in: the
-        //    operation strip can open it with no conflict view in existence. ──
-        .when_some(self.conflict_abort_modal().cloned(), |el, modal| {
-            el.child(super::conflict_abort::render_conflict_abort_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        .when_some(amend_modal, |el, modal| {
-            el.child(render_amend_modal(
-                modal,
-                &self.modal_section_overrides,
-                self.modal_list_scroll.clone(),
-                // #476 slice 3: read live, from the same panel the op resolves.
-                self.panel_worktree_label(cx),
-                cx,
-            ))
-        })
-        .when_some(pop_modal, |el, modal| {
-            el.child(render_pop_modal(modal, &self.modal_section_overrides, cx))
-        })
-        // ── Stash drop modal overlay (ADR-0087) ─────────
-        .when_some(self.pr_merge_modal().cloned(), |el, modal| {
-            el.child(render_pr_merge_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        .when_some(self.pr_fields_modal().cloned(), |el, modal| {
-            el.child(super::pr_fields::render_pr_fields_modal(self, modal, cx))
-        })
-        .when_some(stash_drop_modal, |el, modal| {
-            el.child(render_stash_drop_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        // ── Repository owner-trust prompt (ADR-0160 / #310) ──
-        .when_some(self.trust_repo_modal().cloned(), |el, modal| {
-            el.child(super::trust_prompt::render_trust_repo_modal(modal, cx))
-        })
-        // ── Unlock-worktree confirmation ─────────────────
-        .when_some(unlock_worktree_modal, |el, modal| {
-            el.child(render_unlock_worktree_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        // ── App notice (#792: the shared card, not a bespoke rectangle) ──
-        .when_some(self.app_notice().cloned(), |el, notice| {
-            el.child(render_app_notice_modal(notice, cx))
-        })
-        // ── Worktree lifecycle confirmations (issue #340) ──
-        .when_some(self.remove_worktree_modal().cloned(), |el, modal| {
-            el.child(render_remove_worktree_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        .when_some(self.worktree_lock_reason_modal().cloned(), |el, modal| {
-            el.child(
-                super::modal_renderers_input::render_worktree_lock_reason_modal(
-                    modal,
-                    modal_focus.clone(),
-                    cx,
-                ),
-            )
-        })
-        .when_some(self.lock_worktree_modal().cloned(), |el, modal| {
-            el.child(render_lock_worktree_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        .when_some(self.prune_worktrees_modal().cloned(), |el, modal| {
-            el.child(render_prune_worktrees_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        .when_some(self.repair_worktrees_modal().cloned(), |el, modal| {
-            el.child(render_repair_worktrees_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        .when_some(self.repo_health_modal().cloned(), |el, modal| {
-            el.child(super::operations::repo_health::render_repo_health_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        .when_some(self.apply_suggestion_modal().cloned(), |el, modal| {
-            el.child(
-                super::operations::apply_suggestion::render_apply_suggestion_modal(
-                    modal,
-                    &self.modal_section_overrides,
-                    cx,
-                ),
-            )
-        })
-        .when_some(self.oplog_restore_modal().cloned(), |el, modal| {
-            el.child(
-                super::operations::oplog_restore::render_oplog_restore_modal(
-                    modal,
-                    &self.modal_section_overrides,
-                    cx,
-                ),
-            )
-        })
-        // ── Push plan modal overlay (T-HT-004) ──────────
-        .when_some(push_modal, |el, modal| {
-            el.child(render_push_modal(modal, &self.modal_section_overrides, cx))
-        })
-        .when_some(branch_plan_modal, |el, modal| {
-            el.child(render_branch_plan_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        .when_some(set_upstream_modal, |el, modal| {
-            el.child(render_set_upstream_modal(modal, cx))
-        })
-        .when_some(rename_branch_modal, |el, modal| {
-            el.child(render_rename_branch_modal(modal, cx))
-        })
-        .when_some(merge_modal, |el, modal| {
-            el.child(render_merge_modal(modal, &self.modal_section_overrides, cx))
-        })
-        .when_some(tracking_checkout_modal, |el, modal| {
-            el.child(render_tracking_checkout_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        .when_some(switch_to_latest_modal, |el, modal| {
-            el.child(render_switch_to_latest_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        // ── Create-branch modal overlay (above everything) ──
-        .when_some(create_branch_modal, |el, modal| {
-            el.child(render_create_branch_modal(modal, modal_focus.clone(), cx))
-        })
-        // ── Create-tag modal overlay ─────────────────────
-        .when_some(create_tag_modal, |el, modal| {
-            el.child(render_create_tag_modal(modal, modal_focus.clone(), cx))
-        })
-        // ── Create-worktree modal overlay ───────────────
-        .when_some(create_worktree_modal, |el, modal| {
-            el.child(render_create_worktree_modal(modal, modal_focus.clone(), cx))
-        })
-        // ── Remote SSH browse modal overlay (ADR-0089) ───
-        .when_some(remote_browse, |el, modal| {
-            el.child(render_remote_browse(modal, modal_focus.clone(), cx))
-        })
-        // ── Clone card (opened from Home, #923) ──────────
-        .when_some(self.clone_modal().cloned(), |el, modal| {
-            el.child(super::home_clone_card::render_clone_modal(
-                modal,
-                modal_focus.clone(),
-                cx,
-            ))
-        })
-        // ── Stash push modal overlay ─────────────────────
-        .when_some(stash_push_modal, |el, modal| {
-            el.child(render_stash_push_modal(modal, stash_push_focus, cx))
-        })
-        // ── Stash apply modal overlay ────────────────────
-        .when_some(stash_apply_modal, |el, modal| {
-            el.child(render_stash_apply_modal(modal, cx))
-        })
-        // ── Cherry-pick modal overlay (T016) ────────────
-        .when_some(cherry_pick_modal, |el, modal| {
-            el.child(render_cherry_pick_modal(modal, cx))
-        })
-        // ── Revert modal overlay (T-CM-034) ──────────────
-        .when_some(revert_modal, |el, modal| {
-            el.child(render_revert_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        // ── Delete-branch modal overlay (W2-DELETE) ──────
-        .when_some(delete_branch_modal, |el, modal| {
-            el.child(render_delete_branch_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        .when_some(delete_remote_branch_modal, |el, modal| {
-            el.child(render_delete_remote_branch_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        .when_some(reset_current_modal, |el, modal| {
-            el.child(render_reset_current_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        .when_some(force_lease_push_modal, |el, modal| {
-            el.child(render_force_lease_push_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        .when_some(push_tag_modal, |el, modal| {
-            el.child(render_push_tag_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        .when_some(rebase_current_onto_modal, |el, modal| {
-            el.child(render_rebase_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        // ── Branch-cleanup modal overlay (ADR-0128) ──────
-        .when_some(branch_cleanup_modal, |el, modal| {
-            el.child(render_branch_cleanup_modal(
-                modal,
-                &self.modal_section_overrides,
-                cx,
-            ))
-        })
-        // ── Discard danger modal overlay (W17-DISCARD) ───
-        .when_some(discard_modal, |el, modal| {
-            el.child(render_discard_modal(
-                modal,
-                &self.modal_section_overrides,
-                self.modal_list_scroll.clone(),
-                // #476 slice 3: read live, from the same panel the op resolves.
-                self.panel_worktree_label(cx),
-                cx,
-            ))
-        })
-        // ── Editor Workspace unsaved-changes modal (T-WS-EDITOR-002) ──
-        .when_some(editor_dirty_guard_modal, |el, modal| {
-            el.child(render_editor_dirty_guard_modal(modal, cx))
-        })
-        // ── Editor Workspace tree fs-prompt (Rename/New File/New Folder) ──
-        .when_some(editor_fs_prompt_modal, |el, modal| {
-            el.child(render_editor_fs_prompt_modal(
-                modal,
-                modal_focus.clone(),
-                cx,
-            ))
-        })
-        // ── Editor Workspace tree Delete (Trash) confirm ─────────
-        .when_some(editor_delete_confirm_modal, |el, modal| {
-            el.child(render_editor_delete_confirm_modal(modal, cx))
-        })
-        // ── PRs tab context menu ──
-        .when_some(
-            self.ui().pr_menu.clone().filter(|_| self.pr_menu_visible()),
-            |el, (pr, pos)| el.child(render_pr_menu_overlay(pr, pos, window.viewport_size(), cx)),
-        )
-        .when(self.filter_menu_visible(), |el| {
-            el.children(super::list_filter_strip::render_menu(self, window, cx))
-        })
-        // ── Inspector/Compare file context menu (History/Edit/Copy) ──
-        .when_some(
-            self.inspector_file_menu
-                .filter(|_| self.inspector_file_menu_visible()),
-            |el, (fi, pos)| {
-                el.child(render_inspector_file_menu_overlay(
-                    fi,
-                    pos,
-                    window.viewport_size(),
-                    cx,
-                ))
-            },
-        )
-        // ── Unstaged file context menu (right-click → Discard) ──
-        .when_some(file_menu, |el, menu| {
-            el.child(render_file_menu_overlay(menu, window.viewport_size(), cx))
-        })
-        // ── Commit plan modal overlay (T025) ─────────────
-        .when(commit_panel_open && commit_plan_modal.is_some(), |el| {
-            if let Some(plan_modal) = commit_plan_modal.clone() {
-                el.child(render_commit_plan_modal(plan_modal, cx))
-            } else {
-                el
-            }
-        })
-        // ── Smart Commit modal overlay (single ActiveModal slot) ────
-        .when_some(self.smart_commit_modal().cloned(), |el, modal| {
-            el.child(render_smart_commit_modal(modal, cx))
-        })
-        // ── Auto-update modal overlay (ADR-0082) ──────────
-        .when_some(update_modal, |el, _modal| {
-            let Some((plan, _)) = self.update_available.as_ref() else {
-                return el;
+        use super::front_layer::{LayerKind, Z_ORDER};
+        let mut el = el;
+        for kind in Z_ORDER.iter().copied().filter(|kind| kind.in_modal_layer()) {
+            el = match kind {
+                LayerKind::EarlyModal => el
+                    .when_some(plan_modal.take(), |el, modal| {
+                        el.child(render_plan_modal(modal, &self.modal_section_overrides, cx))
+                    })
+                    // ── Pull plan modal overlay (T-HT-003) ──────────
+                    .when_some(pull_modal.take(), |el, modal| {
+                        el.child(render_pull_modal(modal, &self.modal_section_overrides, cx))
+                    })
+                    // ── Undo / Pop plan modal overlays ───────────────
+                    // ── Operation Undo / Redo modal (T-UNDOREDO-001) ──
+                    .when_some(history_modal.take(), |el, modal| {
+                        el.child(render_history_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    // ── Sequencer conflict-continue confirmation (ADR-0068) ──
+                    .when_some(conflict_continue_modal.take(), |el, modal| {
+                        el.child(render_conflict_continue_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    // ── Abort confirmation (#704) — read from `self`, not passed in: the
+                    //    operation strip can open it with no conflict view in existence. ──
+                    .when_some(self.conflict_abort_modal().cloned(), |el, modal| {
+                        el.child(super::conflict_abort::render_conflict_abort_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    .when_some(amend_modal.take(), |el, modal| {
+                        el.child(render_amend_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            self.modal_list_scroll.clone(),
+                            // #476 slice 3: read live, from the same panel the op resolves.
+                            self.panel_worktree_label(cx),
+                            cx,
+                        ))
+                    })
+                    .when_some(pop_modal.take(), |el, modal| {
+                        el.child(render_pop_modal(modal, &self.modal_section_overrides, cx))
+                    })
+                    // ── Stash drop modal overlay (ADR-0087) ─────────
+                    .when_some(self.pr_merge_modal().cloned(), |el, modal| {
+                        el.child(render_pr_merge_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    .when_some(self.pr_fields_modal().cloned(), |el, modal| {
+                        el.child(super::pr_fields::render_pr_fields_modal(self, modal, cx))
+                    })
+                    .when_some(stash_drop_modal.take(), |el, modal| {
+                        el.child(render_stash_drop_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    // ── Repository owner-trust prompt (ADR-0160 / #310) ──
+                    .when_some(self.trust_repo_modal().cloned(), |el, modal| {
+                        el.child(super::trust_prompt::render_trust_repo_modal(modal, cx))
+                    })
+                    // ── Unlock-worktree confirmation ─────────────────
+                    .when_some(unlock_worktree_modal.take(), |el, modal| {
+                        el.child(render_unlock_worktree_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    // ── App notice (#792: the shared card, not a bespoke rectangle) ──
+                    .when_some(self.app_notice().cloned(), |el, notice| {
+                        el.child(render_app_notice_modal(notice, cx))
+                    })
+                    // ── Worktree lifecycle confirmations (issue #340) ──
+                    .when_some(self.remove_worktree_modal().cloned(), |el, modal| {
+                        el.child(render_remove_worktree_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    .when_some(self.worktree_lock_reason_modal().cloned(), |el, modal| {
+                        el.child(
+                            super::modal_renderers_input::render_worktree_lock_reason_modal(
+                                modal,
+                                modal_focus.clone(),
+                                cx,
+                            ),
+                        )
+                    })
+                    .when_some(self.lock_worktree_modal().cloned(), |el, modal| {
+                        el.child(render_lock_worktree_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    .when_some(self.prune_worktrees_modal().cloned(), |el, modal| {
+                        el.child(render_prune_worktrees_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    .when_some(self.repair_worktrees_modal().cloned(), |el, modal| {
+                        el.child(render_repair_worktrees_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    .when_some(self.repo_health_modal().cloned(), |el, modal| {
+                        el.child(super::operations::repo_health::render_repo_health_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    .when_some(self.apply_suggestion_modal().cloned(), |el, modal| {
+                        el.child(
+                            super::operations::apply_suggestion::render_apply_suggestion_modal(
+                                modal,
+                                &self.modal_section_overrides,
+                                cx,
+                            ),
+                        )
+                    })
+                    .when_some(self.oplog_restore_modal().cloned(), |el, modal| {
+                        el.child(
+                            super::operations::oplog_restore::render_oplog_restore_modal(
+                                modal,
+                                &self.modal_section_overrides,
+                                cx,
+                            ),
+                        )
+                    })
+                    // ── Push plan modal overlay (T-HT-004) ──────────
+                    .when_some(push_modal.take(), |el, modal| {
+                        el.child(render_push_modal(modal, &self.modal_section_overrides, cx))
+                    })
+                    .when_some(branch_plan_modal.take(), |el, modal| {
+                        el.child(render_branch_plan_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    .when_some(set_upstream_modal.take(), |el, modal| {
+                        el.child(render_set_upstream_modal(modal, cx))
+                    })
+                    .when_some(rename_branch_modal.take(), |el, modal| {
+                        el.child(render_rename_branch_modal(modal, cx))
+                    })
+                    .when_some(merge_modal.take(), |el, modal| {
+                        el.child(render_merge_modal(modal, &self.modal_section_overrides, cx))
+                    })
+                    .when_some(tracking_checkout_modal.take(), |el, modal| {
+                        el.child(render_tracking_checkout_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    .when_some(switch_to_latest_modal.take(), |el, modal| {
+                        el.child(render_switch_to_latest_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    // ── Create-branch modal overlay (above everything) ──
+                    .when_some(create_branch_modal.take(), |el, modal| {
+                        el.child(render_create_branch_modal(modal, modal_focus.clone(), cx))
+                    })
+                    // ── Create-tag modal overlay ─────────────────────
+                    .when_some(create_tag_modal.take(), |el, modal| {
+                        el.child(render_create_tag_modal(modal, modal_focus.clone(), cx))
+                    })
+                    // ── Create-worktree modal overlay ───────────────
+                    .when_some(create_worktree_modal.take(), |el, modal| {
+                        el.child(render_create_worktree_modal(modal, modal_focus.clone(), cx))
+                    })
+                    // ── Remote SSH browse modal overlay (ADR-0089) ───
+                    .when_some(remote_browse.take(), |el, modal| {
+                        el.child(render_remote_browse(modal, modal_focus.clone(), cx))
+                    })
+                    // ── Clone card (opened from Home, #923) ──────────
+                    .when_some(self.clone_modal().cloned(), |el, modal| {
+                        el.child(super::home_clone_card::render_clone_modal(
+                            modal,
+                            modal_focus.clone(),
+                            cx,
+                        ))
+                    })
+                    // ── Stash push modal overlay ─────────────────────
+                    .when_some(stash_push_modal.take(), |el, modal| {
+                        el.child(render_stash_push_modal(modal, stash_push_focus.take(), cx))
+                    })
+                    // ── Stash apply modal overlay ────────────────────
+                    .when_some(stash_apply_modal.take(), |el, modal| {
+                        el.child(render_stash_apply_modal(modal, cx))
+                    })
+                    // ── Cherry-pick modal overlay (T016) ────────────
+                    .when_some(cherry_pick_modal.take(), |el, modal| {
+                        el.child(render_cherry_pick_modal(modal, cx))
+                    })
+                    // ── Revert modal overlay (T-CM-034) ──────────────
+                    .when_some(revert_modal.take(), |el, modal| {
+                        el.child(render_revert_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    // ── Delete-branch modal overlay (W2-DELETE) ──────
+                    .when_some(delete_branch_modal.take(), |el, modal| {
+                        el.child(render_delete_branch_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    .when_some(delete_remote_branch_modal.take(), |el, modal| {
+                        el.child(render_delete_remote_branch_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    .when_some(reset_current_modal.take(), |el, modal| {
+                        el.child(render_reset_current_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    .when_some(force_lease_push_modal.take(), |el, modal| {
+                        el.child(render_force_lease_push_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    .when_some(push_tag_modal.take(), |el, modal| {
+                        el.child(render_push_tag_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    .when_some(rebase_current_onto_modal.take(), |el, modal| {
+                        el.child(render_rebase_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    // ── Branch-cleanup modal overlay (ADR-0128) ──────
+                    .when_some(branch_cleanup_modal.take(), |el, modal| {
+                        el.child(render_branch_cleanup_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
+                    })
+                    // ── Discard danger modal overlay (W17-DISCARD) ───
+                    .when_some(discard_modal.take(), |el, modal| {
+                        el.child(render_discard_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            self.modal_list_scroll.clone(),
+                            // #476 slice 3: read live, from the same panel the op resolves.
+                            self.panel_worktree_label(cx),
+                            cx,
+                        ))
+                    })
+                    // ── Editor Workspace unsaved-changes modal (T-WS-EDITOR-002) ──
+                    .when_some(editor_dirty_guard_modal.take(), |el, modal| {
+                        el.child(render_editor_dirty_guard_modal(modal, cx))
+                    })
+                    // ── Editor Workspace tree fs-prompt (Rename/New File/New Folder) ──
+                    .when_some(editor_fs_prompt_modal.take(), |el, modal| {
+                        el.child(render_editor_fs_prompt_modal(
+                            modal,
+                            modal_focus.clone(),
+                            cx,
+                        ))
+                    })
+                    // ── Editor Workspace tree Delete (Trash) confirm ─────────
+                    .when_some(editor_delete_confirm_modal.take(), |el, modal| {
+                        el.child(render_editor_delete_confirm_modal(modal, cx))
+                    }),
+                LayerKind::PrMenu => el
+                    // ── PRs tab context menu ──
+                    .when_some(
+                        self.ui().pr_menu.clone().filter(|_| self.pr_menu_visible()),
+                        |el, (pr, pos)| {
+                            el.child(render_pr_menu_overlay(pr, pos, window.viewport_size(), cx))
+                        },
+                    ),
+                LayerKind::FilterMenu => el.when(self.filter_menu_visible(), |el| {
+                    el.children(super::list_filter_strip::render_menu(self, window, cx))
+                }),
+                LayerKind::InspectorFileMenu => el
+                    // ── Inspector/Compare file context menu (History/Edit/Copy) ──
+                    .when_some(
+                        self.inspector_file_menu
+                            .filter(|_| self.inspector_file_menu_visible()),
+                        |el, (fi, pos)| {
+                            el.child(render_inspector_file_menu_overlay(
+                                fi,
+                                pos,
+                                window.viewport_size(),
+                                cx,
+                            ))
+                        },
+                    ),
+                LayerKind::FileMenu => el
+                    // ── Unstaged file context menu (right-click → Discard) ──
+                    .when_some(file_menu.take(), |el, menu| {
+                        el.child(render_file_menu_overlay(menu, window.viewport_size(), cx))
+                    }),
+                LayerKind::CommitPlan => el
+                    // ── Commit plan modal overlay (T025) ─────────────
+                    .when(commit_panel_open && commit_plan_modal.is_some(), |el| {
+                        if let Some(plan_modal) = commit_plan_modal.clone() {
+                            el.child(render_commit_plan_modal(plan_modal, cx))
+                        } else {
+                            el
+                        }
+                    }),
+                LayerKind::SmartCommit => el
+                    // ── Smart Commit modal overlay (single ActiveModal slot) ────
+                    .when_some(self.smart_commit_modal().cloned(), |el, modal| {
+                        el.child(render_smart_commit_modal(modal, cx))
+                    }),
+                LayerKind::Update => el
+                    // ── Auto-update modal overlay (ADR-0082) ──────────
+                    .when_some(update_modal.take(), |el, _modal| {
+                        let Some((plan, _)) = self.update_available.as_ref() else {
+                            return el;
+                        };
+                        el.child(super::e2e::measure_control(
+                            "active-modal/update",
+                            render_update_modal(
+                                plan.clone(),
+                                self.update_installing,
+                                self.update_status.clone(),
+                                window,
+                                cx,
+                            ),
+                        ))
+                    }),
+                LayerKind::ConflictFileMenu
+                | LayerKind::EditorTreeMenu
+                | LayerKind::CoauthorMenu
+                | LayerKind::WorkspaceMenus
+                | LayerKind::MenuOverlay
+                | LayerKind::PlatformMenu => unreachable!("outer render layer"),
             };
-            el.child(super::e2e::measure_control(
-                "active-modal/update",
-                render_update_modal(
-                    plan.clone(),
-                    self.update_installing,
-                    self.update_status.clone(),
-                    window,
-                    cx,
-                ),
-            ))
-        })
+        }
+        el
     }
 }
 

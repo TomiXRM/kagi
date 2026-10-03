@@ -1704,6 +1704,10 @@ mod macos {
                 Box::new(crate::platform_menu_scroll::scenario_platform_menu_over_modal),
             ),
             (
+                "filter_menu_over_modal",
+                Box::new(crate::platform_menu_scroll::scenario_filter_menu_over_modal),
+            ),
+            (
                 "platform_menu_modal_settings",
                 Box::new(crate::platform_menu_scroll::scenario_platform_menu_modal_settings),
             ),

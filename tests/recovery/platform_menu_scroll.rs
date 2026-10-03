@@ -219,6 +219,72 @@ pub fn scenario_platform_menu_over_modal(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS platform_menu_over_modal");
 }
 
+/// The filter popover is drawn *after* an early slot modal. An arriving
+/// confirmation must not accept Enter while the filter menu covers it.
+pub fn scenario_filter_menu_over_modal(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    std::fs::write(repo.join("README.md"), "dirty for the stash modal\n").unwrap();
+    let (app, win) = mount_short(cx, &repo);
+    app.update(cx, |app, cx| app.show_issues_mode(cx));
+    cx.run_until_parked();
+    let bounds =
+        measure(cx, win, &["list-filter-state"])[0].expect("Issues filter State chip is visible");
+    cx.simulate_click(win, bounds.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    let before = repo_fingerprint(&repo);
+    assert!(
+        cx.read(|cx| e2e::menu_is_front(app.read(cx), cx)),
+        "filter menu is open"
+    );
+
+    app.update(cx, |app, cx| app.open_stash_push_modal(cx));
+    cx.run_until_parked();
+    cx.update_window(win, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+        let root = app.read(cx).root_focus.clone().expect("root focus");
+        window.focus(&root, cx);
+    })
+    .unwrap();
+    assert!(
+        cx.read(|cx| app.read(cx).stash_push_modal().is_some()),
+        "Stash modal arrived"
+    );
+    assert!(
+        cx.read(|cx| e2e::menu_is_front(app.read(cx), cx)),
+        "filter-menu-over-modal-front: filter must be above the early Stash modal"
+    );
+
+    cx.simulate_keystrokes(win, "enter");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).stash_push_modal().is_some()),
+        "filter-menu-over-modal-enter: Enter confirmed the modal behind the filter"
+    );
+    assert_eq!(
+        repo_fingerprint(&repo),
+        before,
+        "filter-menu-over-modal-enter: Enter behind the filter wrote the repository"
+    );
+    cx.simulate_keystrokes(win, "escape");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).stash_push_modal().is_some()),
+        "filter-menu-over-modal-escape: Escape closed the modal before the filter"
+    );
+    assert!(
+        !cx.read(|cx| e2e::menu_is_front(app.read(cx), cx)),
+        "filter-menu-over-modal-escape: Escape did not close the filter"
+    );
+    cx.simulate_keystrokes(win, "escape");
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).stash_push_modal().is_none()));
+    assert_eq!(repo_fingerprint(&repo), before, "nothing was written");
+    unmount(cx, app, win);
+    eprintln!("[gui-e2e] PASS filter_menu_over_modal");
+}
+
 /// #976 review: with a platform menu dropdown open over a modal, the
 /// dropdown is the front layer, but Settings — drawn behind the modal layer
 /// — must still refuse to open (Ctrl+, / the menu's own Settings command).

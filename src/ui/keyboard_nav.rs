@@ -343,6 +343,8 @@ pub(crate) struct RowFocus {
     seen: Option<FocusHandle>,
     /// The row last focused, as its place among `keys`.
     current: Option<usize>,
+    /// The list was not drawn last frame (see [`Self::yield_focus`]).
+    away: bool,
 }
 
 impl RowFocus {
@@ -357,6 +359,7 @@ impl RowFocus {
         window: &mut Window,
         cx: &mut App,
     ) -> RowList {
+        self.away = false;
         let focused = window.focused(cx);
         let moved = focused != self.seen;
         let rebuild = !Rc::ptr_eq(&keys, &self.keys);
@@ -442,21 +445,39 @@ impl RowFocus {
         *self = Self::default();
     }
 
-    /// The list is not on screen for now (Home is not in front): a focused
-    /// row hands the focus to `fallback`, and the rows and the remembered
-    /// row stay for when the list is drawn again. No allocation: it runs on
-    /// every frame Home is away.
+    /// The list is not on screen for now (Home is not in front). On the
+    /// first frame away the frame on screen is still the list's, so a focus
+    /// on a row or on a control inside one (a row's Open button, #961
+    /// review) is found there and handed to `fallback`. The rows and the
+    /// remembered row stay for when the list is drawn again. Later frames
+    /// away do nothing: no row is drawn for the focus to reach.
     pub(crate) fn yield_focus(
-        &self,
+        &mut self,
         fallback: Option<&FocusHandle>,
         window: &mut Window,
         cx: &mut App,
     ) {
-        if self.handles.iter().any(|handle| handle.is_focused(window)) {
+        if std::mem::replace(&mut self.away, true) {
+            return;
+        }
+        if self
+            .handles
+            .iter()
+            .any(|handle| handle.contains_focused(window, cx))
+        {
             if let Some(fallback) = fallback {
                 fallback.focus(window, cx);
             }
         }
+    }
+
+    /// Whether the focus is on a row or a control inside one, in the frame
+    /// on screen.
+    #[cfg(feature = "gui-e2e")]
+    pub(crate) fn holds_focus(&self, window: &Window, cx: &App) -> bool {
+        self.handles
+            .iter()
+            .any(|handle| handle.contains_focused(window, cx))
     }
 
     /// The key of the row holding the focus, if any.

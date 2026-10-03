@@ -559,6 +559,12 @@ impl KagiApp {
         self.home_github.row_focus.focused(window)
     }
 
+    /// Whether the focus is on one of Home's rows or a control inside one
+    /// (its Open button), in the frame on screen.
+    pub fn home_row_holds_focus_for_e2e(&self, window: &Window, cx: &gpui::App) -> bool {
+        self.home_github.row_focus.holds_focus(window, cx)
+    }
+
     /// Focus Home's list row `key`.
     pub fn focus_home_row_for_e2e(&self, key: &str, window: &mut Window, cx: &mut gpui::App) {
         self.home_github.row_focus.focus(key, window, cx);

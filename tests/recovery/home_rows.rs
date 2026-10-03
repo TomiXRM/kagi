@@ -224,6 +224,39 @@ pub fn scenario_home_rows(cx: &mut VisualTestAppContext) {
     .unwrap();
     wait_for(cx, &app, "the lists again", settled);
 
+    // The same with the focus on a row's Open button, a control with its own
+    // focus handle inside the row (#961 review): Tab from the row reaches it.
+    focus_row(cx, &app, window, "MyPrs:acme/r00#1");
+    keys(cx, window, "tab");
+    assert_eq!(row(cx, &app, window), None, "no longer the row itself");
+    let inside = cx
+        .update_window(window, |_, window, cx| {
+            window.draw(cx).clear();
+            app.read(cx).home_row_holds_focus_for_e2e(window, cx)
+        })
+        .unwrap();
+    assert!(inside, "precondition: the focus is on a control in the row");
+    app.update(cx, |app, cx| app.close_home_tab(cx));
+    cx.run_until_parked();
+    let root = cx
+        .update_window(window, |_, window, cx| {
+            window.draw(cx).clear();
+            app.read(cx)
+                .root_focus
+                .as_ref()
+                .is_some_and(|focus| focus.is_focused(window))
+        })
+        .unwrap();
+    assert!(
+        root,
+        "closing Home hands the focus of a row's Open button to the window"
+    );
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.open_home_tab(window, cx))
+    })
+    .unwrap();
+    wait_for(cx, &app, "the lists again", settled);
+
     // Another account's read replaces the list on screen with Loading, and
     // the read fails (#961 review): no row is drawn any more, so a focused
     // row hands the focus to the window rather than keep it out of sight.

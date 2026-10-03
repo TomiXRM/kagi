@@ -64,7 +64,15 @@ impl KagiApp {
     /// Settings. The container is no Tab stop and draws no ring, so opening
     /// by pointer shows none; the first Tab enters the panel's first stop.
     /// Closing returns focus as above.
+    ///
+    /// Not while a modal is open (#976 review): Settings draws behind the
+    /// modal layer, so taking the focus into it would leave the visible
+    /// modal's field and keys dead. The modal is finished or cancelled
+    /// first, as the one-modal-at-a-time rule has it.
     pub(super) fn open_settings_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.has_active_modal() {
+            return;
+        }
         self.capture_overlay_return_focus(window, cx);
         self.menu_overlay = Some(MenuOverlay::Settings);
         let trap = self

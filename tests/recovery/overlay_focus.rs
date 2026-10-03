@@ -465,6 +465,39 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
         "settings-pointer-close: Escape returns the focus out of Settings"
     );
 
+    // #976 review: with a modal open (Stash, which has a message field),
+    // Settings — drawn behind the modal layer — must not open and take the
+    // focus from the modal in front.
+    std::fs::write(repo.join("README.md"), "dirty for the stash modal\n").unwrap();
+    app.update(cx, |app, cx| app.open_stash_push_modal(cx));
+    draw(cx, window);
+    assert!(
+        cx.read(|cx| app.read(cx).stash_push_modal().is_some()),
+        "precondition: the Stash modal is open"
+    );
+    let focused = |cx: &mut VisualTestAppContext| {
+        cx.update_window(window, |_, window, cx| window.focused(cx))
+            .unwrap()
+    };
+    let before = focused(cx);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.handle_menu_command("app.settings", window, cx)
+        })
+    })
+    .unwrap();
+    draw(cx, window);
+    assert!(
+        cx.read(|cx| app.read(cx).menu_overlay.is_none()),
+        "settings-not-behind-modal: Settings opened behind the open modal"
+    );
+    assert_eq!(
+        focused(cx),
+        before,
+        "settings-not-behind-modal: opening Settings moved the modal's focus"
+    );
+    keys(cx, window, "escape");
+
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS settings_focus_trap");
 }

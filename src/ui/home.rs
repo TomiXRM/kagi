@@ -191,11 +191,14 @@ impl KagiApp {
                 .children(menu_overlay),
             cx,
         );
-        // Toasts above everything, as in the workspace: an operation that
-        // ends while Home is in front (a failed clone) says so here, with
-        // its details in Operation Log.
+        // The same modal layer as the workspace: every modal the shared key
+        // routing below can confirm is drawn — a guard or plan for the tab
+        // behind Home included (#930 review). The tab's own popovers are
+        // not: Home covers that tab. Toasts above everything, as in the
+        // workspace: an operation that ends while Home is in front (a failed
+        // clone) says so here, with its details in Operation Log.
         let content = self
-            .attach_welcome_window_modals(home, window, cx)
+            .attach_modal_layer(home, false, window, cx)
             .children(self.render_toasts(cx))
             .into_any();
         self.attach_active_modal_key_routing(content, false, cx)

@@ -176,53 +176,85 @@ impl gpui::Render for toast_stack::ToastStack {
 // `gpui::list` + a selectable detail block, and this file keeps the toasts.
 
 impl KagiApp {
-    /// The Welcome screen (now Home) returns before the normal overlay
-    /// compositor, so window-global modals need the same single-slot rendering
-    /// here — the AppNotice among them: Home's key routing delivers Enter and
-    /// Esc to it, so it must be on screen to be read first (#927 review).
-    pub(super) fn attach_welcome_window_modals(
+    /// The modal layer, read from `self`: every `active_modal` variant plus
+    /// the popovers above the body. The workspace and Home both draw it, so
+    /// whatever the shared key routing (`attach_active_modal_key_routing`)
+    /// can confirm with Enter is on screen first — on Home too, where a
+    /// guard or plan for the tab behind it (an Editor dirty guard, a parked
+    /// Pull confirm) used to be confirmable unseen (#927 / #930 review).
+    ///
+    /// `repo_popovers` adds what belongs to the tab on screen rather than to
+    /// the modal slot: the PR and file context menus, the list filter menu
+    /// and the commit panel's own plan. Home covers that tab, so it passes
+    /// `false`.
+    pub(super) fn attach_modal_layer(
         &self,
         el: gpui::Div,
+        repo_popovers: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        let modal_focus = self.modal_focus.clone();
-        el.when_some(self.remote_browse().cloned(), |el, modal| {
-            el.child(render_remote_browse(modal, modal_focus, cx))
-        })
-        .when_some(self.clone_modal().cloned(), |el, modal| {
-            el.child(super::home_clone_card::render_clone_modal(
-                modal,
-                self.modal_focus.clone(),
-                cx,
-            ))
-        })
-        .when_some(self.update_modal(), |el, _modal| {
-            let Some((plan, _)) = self.update_available.as_ref() else {
-                return el;
-            };
-            el.child(super::e2e::measure_control(
-                "active-modal/update",
-                render_update_modal(
-                    plan.clone(),
-                    self.update_installing,
-                    self.update_status.clone(),
-                    window,
-                    cx,
-                ),
-            ))
-        })
-        .when_some(self.app_notice().cloned(), |el, notice| {
-            el.child(render_app_notice_modal(notice, cx))
-        })
+        let (commit_panel_open, commit_panel, file_menu) = if repo_popovers {
+            (
+                self.ui().commit_panel_open,
+                self.ui().commit_panel.clone(),
+                self.file_menu.clone(),
+            )
+        } else {
+            (false, None, None)
+        };
+        self.attach_modal_overlays(
+            el,
+            self.plan_modal().cloned(),
+            self.pull_modal().cloned(),
+            self.history_modal().cloned(),
+            self.conflict_continue_modal().cloned(),
+            self.amend_modal().cloned(),
+            self.pop_modal().cloned(),
+            self.stash_drop_modal().cloned(),
+            self.push_modal().cloned(),
+            self.branch_plan_modal().cloned(),
+            self.set_upstream_modal().cloned(),
+            self.rename_branch_modal().cloned(),
+            self.merge_modal().cloned(),
+            self.tracking_checkout_modal().cloned(),
+            self.switch_to_latest_modal().cloned(),
+            self.create_branch_modal().cloned(),
+            self.create_tag_modal().cloned(),
+            self.create_worktree_modal().cloned(),
+            self.unlock_worktree_modal().cloned(),
+            self.remote_browse().cloned(),
+            self.update_modal().cloned(),
+            self.stash_push_modal().cloned(),
+            self.stash_apply_modal().cloned(),
+            self.cherry_pick_modal().cloned(),
+            self.revert_modal().cloned(),
+            self.delete_branch_modal().cloned(),
+            self.delete_remote_branch_modal().cloned(),
+            self.reset_current_modal().cloned(),
+            self.force_lease_push_modal().cloned(),
+            self.push_tag_modal().cloned(),
+            self.rebase_current_onto_modal().cloned(),
+            self.branch_cleanup_modal().cloned(),
+            self.discard_modal().cloned(),
+            self.editor_dirty_guard_modal().cloned(),
+            self.editor_fs_prompt_modal().cloned(),
+            self.editor_delete_confirm_modal().cloned(),
+            file_menu,
+            self.modal_focus.clone(),
+            self.stash_push_focus.clone(),
+            commit_panel_open,
+            commit_panel,
+            repo_popovers,
+            window,
+            cx,
+        )
     }
 
-    /// Modal / popover overlay layer (above the body, below the status bar).
-    /// Extracted verbatim from `render` (T-SPLIT-RENDER-001 / ADR-0116 Wave 3)
-    /// so the entry `render` reads as composition. The pre-cloned modal state is
-    /// passed in (cloned at the same point in the frame as before), so the
-    /// element tree / evaluation order is unchanged.
-    pub(super) fn attach_modal_overlays(
+    /// Modal / popover overlay layer (above the body, below the status bar),
+    /// drawn through [`KagiApp::attach_modal_layer`].
+    #[allow(clippy::too_many_arguments)]
+    fn attach_modal_overlays(
         &self,
         el: gpui::Div,
         plan_modal: Option<CheckoutPlanModal>,
@@ -265,6 +297,7 @@ impl KagiApp {
         stash_push_focus: Option<FocusHandle>,
         commit_panel_open: bool,
         commit_panel: Option<Entity<commit_panel::CommitPanelView>>,
+        repo_popovers: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
@@ -572,19 +605,25 @@ impl KagiApp {
             el.child(render_editor_delete_confirm_modal(modal, cx))
         })
         // ── PRs tab context menu ──
-        .when_some(self.ui().pr_menu.clone(), |el, (pr, pos)| {
-            el.child(render_pr_menu_overlay(pr, pos, window.viewport_size(), cx))
+        .when_some(
+            self.ui().pr_menu.clone().filter(|_| repo_popovers),
+            |el, (pr, pos)| el.child(render_pr_menu_overlay(pr, pos, window.viewport_size(), cx)),
+        )
+        .when(repo_popovers, |el| {
+            el.children(super::list_filter_strip::render_menu(self, window, cx))
         })
-        .children(super::list_filter_strip::render_menu(self, window, cx))
         // ── Inspector/Compare file context menu (History/Edit/Copy) ──
-        .when_some(self.inspector_file_menu, |el, (fi, pos)| {
-            el.child(render_inspector_file_menu_overlay(
-                fi,
-                pos,
-                window.viewport_size(),
-                cx,
-            ))
-        })
+        .when_some(
+            self.inspector_file_menu.filter(|_| repo_popovers),
+            |el, (fi, pos)| {
+                el.child(render_inspector_file_menu_overlay(
+                    fi,
+                    pos,
+                    window.viewport_size(),
+                    cx,
+                ))
+            },
+        )
         // ── Unstaged file context menu (right-click → Discard) ──
         .when_some(
             file_menu.filter(|menu| {

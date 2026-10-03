@@ -567,9 +567,12 @@ The current suite covers:
   back; "Connect to SSH remote…" opens Remote Browse over Home; with no tab Home
   is the whole window. Home ends the covered tab's visit: a merge plan started
   just before ⌘T is dropped (no modal), and closing Home re-enters that tab
-  (`panes_revalidating`). An AppNotice (`active-modal/app-notice`) and Settings
-  (`settings-theme-select`) are drawn over Home. `recent_repos` is restored by
-  `SavedKeys`. For Tier B
+  (`panes_revalidating`). Home draws the workspace's modal layer: an AppNotice
+  (`active-modal/app-notice`), a Pull confirmation (`plan-cancel`) and the
+  Editor unsaved-changes guard raised by closing the dirty tab behind Home
+  (`active-modal/editor-dirty-guard`; Esc keeps the tab) are on screen, as is
+  Settings (`settings-theme-select`). Closing the covered tab does not enter
+  its neighbour behind Home. `recent_repos` is restored by `SavedKeys`. For Tier B
   press ⌘T (no foreground needed) or click `+` (needs a key window — ask first);
   "Open Folder…" opens the native dialog, which Tier A does not click.
 - Home's GitHub list and clone (`KAGI_GUI_E2E_ONLY=home_github`,

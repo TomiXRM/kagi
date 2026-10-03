@@ -221,6 +221,50 @@ pub fn scenario_home_tab(cx: &mut VisualTestAppContext) {
     assert!(cx.read(|cx| app.read(cx).remote_browse().is_none()));
     assert_eq!(home(cx, &app), Some(true));
 
+    // Home draws the same modal layer as the workspace: whatever its key
+    // routing can confirm is on screen — a Pull confirmation, and the
+    // Editor's unsaved-changes guard raised by closing the tab behind Home
+    // (#930 review: both used to be confirmable with Enter unseen).
+    let plan = kagi_git::Backend::open(&first_path)
+        .unwrap()
+        .plan_pull()
+        .unwrap();
+    app.update(cx, |app, _| {
+        app.set_pull_modal(kagi::ui::PullPlanModal {
+            plan: std::sync::Arc::new(plan),
+            auto_stash: false,
+            error: None,
+            dirty_digest: None,
+        })
+    });
+    assert!(
+        drawn(cx, window, "plan-cancel"),
+        "a Pull confirmation is drawn over Home"
+    );
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).pull_modal().is_none()));
+    app.update(cx, |app, cx| app.close_home_tab(cx));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.open_editor_workspace(cx));
+    cx.run_until_parked();
+    let editor = cx.read(|cx| app.read(cx).ui().editor_workspace.clone().expect("editor"));
+    editor.update(cx, |editor, _| editor.dirty = true);
+    click_control(cx, window, "tab-add");
+    cx.run_until_parked();
+    let covered = cx.read(|cx| app.read(cx).active_tab);
+    app.update(cx, |app, cx| app.close_tab(covered, cx));
+    assert!(cx.read(|cx| app.read(cx).editor_dirty_guard_modal().is_some()));
+    assert!(
+        drawn(cx, window, "active-modal/editor-dirty-guard"),
+        "the unsaved-changes guard is drawn over Home"
+    );
+    press_key(cx, &app, window, "escape");
+    cx.run_until_parked();
+    assert_eq!(tab_count(cx, &app), 2, "Esc keeps the tab and its edits");
+    editor.update(cx, |editor, _| editor.dirty = false);
+    assert_eq!(home(cx, &app), Some(true));
+
     // Closing the tab Home covers does not enter its neighbour behind Home
     // (a visit nobody sees could fill the modal slot Enter confirms); the
     // neighbour is only where Home returns to (#930 review).

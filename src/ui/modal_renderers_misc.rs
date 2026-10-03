@@ -429,7 +429,11 @@ pub(crate) fn render_editor_dirty_guard_modal(
             ),
         );
 
-    modal_overlay(card).into_any_element()
+    modal_overlay(card)
+        .child(super::e2e::measure_inside(
+            "active-modal/editor-dirty-guard",
+        ))
+        .into_any_element()
 }
 
 /// AppNotice uses the shared card; its untyped message gets a neutral title.

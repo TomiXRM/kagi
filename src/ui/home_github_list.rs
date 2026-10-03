@@ -145,7 +145,7 @@ impl KagiApp {
         let fallback = self.root_focus.clone();
         let rows = Rc::new(self.home_github.row_focus.rows(
             self.home_github.row_keys.clone(),
-            &state,
+            &super::keyboard_nav::RowScroll::List(state.clone()),
             fallback.as_ref(),
             window,
             cx,

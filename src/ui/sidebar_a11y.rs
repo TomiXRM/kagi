@@ -217,6 +217,7 @@ mod tests {
             SidebarRow::Stash {
                 index: 0,
                 message: evil.into(),
+                target: kagi_git::CommitId("0".repeat(40)),
             },
         ];
         for row in &rows {

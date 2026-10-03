@@ -438,6 +438,29 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
         root_focused(cx, &app, window),
         "the closed Home tab's focus goes to the window"
     );
+    // The same for a tab that is not the last: its cell is drawn again, for
+    // the tab after it, so the focus must not pass to that tab (#961 review).
+    assert!(repos >= 2, "two repository tabs");
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(0, window, cx))
+    })
+    .unwrap();
+    assert_eq!(
+        strip_focus(cx),
+        Some(0),
+        "precondition: the first tab's cell"
+    );
+    app.update(cx, |app, cx| app.close_tab(0, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        strip_focus(cx),
+        None,
+        "the tab that moved into the closed tab's cell does not get its focus"
+    );
+    assert!(
+        root_focused(cx, &app, window),
+        "the closed first tab's focus goes to the window"
+    );
 
     unmount(cx, app, window);
 }

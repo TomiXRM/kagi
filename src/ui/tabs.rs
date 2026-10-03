@@ -564,6 +564,9 @@ impl KagiApp {
             self.open_editor_dirty_guard(EditorPendingIntent::CloseRepoTab(closing_session), cx);
             return;
         }
+        // Its strip cell goes with it (#961 review): a focus on it must go to
+        // the window, not to the tab that moves into its slot.
+        self.tab_strip_focus.closing(index);
         let closed = self.tabs.remove(index);
         self.release_session(closed.session);
 

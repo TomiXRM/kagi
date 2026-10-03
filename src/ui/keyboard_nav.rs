@@ -115,6 +115,8 @@ thread_local! {
 pub(crate) struct TabFocus {
     handles: RefCell<Vec<FocusHandle>>,
     roving: Rc<Cell<Option<usize>>>,
+    /// Handles of cells closed since the last frame (see [`Self::closing`]).
+    closed: RefCell<Vec<FocusHandle>>,
 }
 
 impl Default for TabFocus {
@@ -124,6 +126,7 @@ impl Default for TabFocus {
         Self {
             handles: RefCell::default(),
             roving,
+            closed: RefCell::default(),
         }
     }
 }
@@ -137,10 +140,21 @@ impl TabFocus {
         handles[..slots].to_vec()
     }
 
+    /// The cell in `slot` is about to be closed. The cells after it move up
+    /// a slot, so its handle is drawn again for the next cell: kept here, it
+    /// lets [`Self::release_from`] tell a focus left on the closed cell from
+    /// one on the cell that took its place (#961 review).
+    pub(crate) fn closing(&self, slot: usize) {
+        if let Some(handle) = self.handles.borrow().get(slot) {
+            self.closed.borrow_mut().push(handle.clone());
+        }
+    }
+
     /// Only the first `slots` cells are drawn now (a tab closed, or the list
-    /// is gone): a later cell holding the focus would keep it with nothing
-    /// on screen tracking it, out of reach of the window's keys, so the focus
-    /// goes to `fallback`.
+    /// is gone), and the cells marked [`Self::closing`] are gone: one of them
+    /// holding the focus would keep it with nothing on screen tracking it,
+    /// out of reach of the window's keys, or pass it to the next cell, so
+    /// the focus goes to `fallback`.
     pub(crate) fn release_from(
         &self,
         slots: usize,
@@ -148,12 +162,19 @@ impl TabFocus {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let lost = self
-            .handles
-            .borrow()
-            .iter()
-            .skip(slots)
-            .any(|handle| handle.is_focused(window));
+        let closed_focused = {
+            let mut closed = self.closed.borrow_mut();
+            let focused = closed.iter().any(|handle| handle.is_focused(window));
+            closed.clear();
+            focused
+        };
+        let lost = closed_focused
+            || self
+                .handles
+                .borrow()
+                .iter()
+                .skip(slots)
+                .any(|handle| handle.is_focused(window));
         if let Some(fallback) = fallback.filter(|_| lost) {
             fallback.focus(window, cx);
         }
@@ -419,6 +440,23 @@ impl RowFocus {
             }
         }
         *self = Self::default();
+    }
+
+    /// The list is not on screen for now (Home is not in front): a focused
+    /// row hands the focus to `fallback`, and the rows and the remembered
+    /// row stay for when the list is drawn again. No allocation: it runs on
+    /// every frame Home is away.
+    pub(crate) fn yield_focus(
+        &self,
+        fallback: Option<&FocusHandle>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if self.handles.iter().any(|handle| handle.is_focused(window)) {
+            if let Some(fallback) = fallback {
+                fallback.focus(window, cx);
+            }
+        }
     }
 
     /// The key of the row holding the focus, if any.

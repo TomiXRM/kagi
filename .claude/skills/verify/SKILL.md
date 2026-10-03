@@ -625,9 +625,12 @@ The current suite covers:
   shown; after the account switch that account's saved lists are, and stay
   when its searches fail. Rows are `home-work-<owner>/<repo>-<N>`. A failed search draws
   `home-work-failed` above the list read before and saves nothing; the
-  non-local row opens the clone card; the local PR row draws its
-  `-opening` spinner while `pr view` runs, ignores a second click (one
-  `view-calls`), then opens PR #7 in the clone's tab; with `state/default-repo`
+  non-local row opens on GitHub (the URL is recorded, `e2e::take_opened_urls`)
+  and every row's `-open` end opens on GitHub without the row's click; the
+  local PR row draws its `-opening` spinner while `pr view` runs, ignores a
+  second click (one `view-calls`), then opens PR #7 in the clone's tab. A
+  non-local row picked while that local PR is still opening wins: it opens on
+  GitHub, and Home stays in front when the dropped PR's refs arrive. With `state/default-repo`
   naming `acme/upstream` (`gh repo set-default` elsewhere) the issue row
   stays on Home with a toast naming that repository, and without it opens
   the clone in Issues mode with #4 selected. For Tier B use a real `gh`

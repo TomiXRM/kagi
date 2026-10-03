@@ -189,7 +189,8 @@ impl KagiApp {
     /// it opens as a tab showing that PR (once `gh pr view` has its refs) or
     /// issue (once the clone is known to address that repository); without
     /// one it opens on GitHub (#940 review) — the clone card belongs to the
-    /// Repositories tab. A click on a row still being prepared is ignored.
+    /// Repositories tab. A click on a row still being prepared is ignored; a
+    /// click on any other row wins over it.
     pub fn home_work_pick(
         &mut self,
         kind: WorkKind,
@@ -208,6 +209,13 @@ impl KagiApp {
             .cloned()
             .filter(|path| path.is_dir());
         let Some(path) = local else {
+            // The later pick wins: an open still waiting for `gh` would
+            // otherwise move the user to its repository after this row
+            // opened on GitHub (#940 review).
+            if self.home_github.work.opening.take().is_some() {
+                self.home_github.work.version += 1;
+                cx.notify();
+            }
             self.open_work_item_url(&item.url, cx);
             return;
         };

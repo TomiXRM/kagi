@@ -989,22 +989,26 @@ pub fn scenario_settings_hidden_return_target(cx: &mut VisualTestAppContext) {
         sidebar_focus,
         "mid-close: Settings restores the still-drawn sidebar control"
     );
+    // The frame that finishes the animation still sees the old dispatch
+    // tree, so it keeps tracking the restored control; the frame after the
+    // unmount must come by itself (requested while tracking), not from a
+    // second draw issued here or from the next key press (#976 review).
     e2e::set_panel_motion_clock(Some(t0 + Duration::from_millis(300)));
     draw(cx, window);
-    draw(cx, window);
+    cx.run_until_parked();
     assert!(
         !in_workspace(cx, &sidebar_focus),
         "precondition: the sidebar control unmounts when the animation ends"
+    );
+    assert!(
+        root_focused(cx),
+        "mid-close: focus recovers to the drawn root without another input"
     );
     keys(cx, window, "down");
     assert_eq!(
         selected(cx),
         Some(1),
         "mid-close: raw Down reaches Graph after the restored control unmounts"
-    );
-    assert!(
-        root_focused(cx),
-        "mid-close: focus recovers to the drawn root"
     );
 
     // Reopen the sidebar so the second leg can focus an inspector control.

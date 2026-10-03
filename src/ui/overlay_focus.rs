@@ -112,18 +112,16 @@ impl KagiApp {
         // A restored control may remain drawn during its close animation and
         // unmount later. Only rescue that exact focus; user-directed focus
         // changes must never be stolen by an old restore target.
-        if let Some(restored) = self.restored_focus.take() {
-            if window.focused(cx).as_ref() == Some(&restored) {
-                if self
-                    .root_focus
-                    .as_ref()
-                    .is_some_and(|root| root.contains(&restored, window))
-                {
-                    self.restored_focus = Some(restored);
-                } else if let Some(root) = &self.root_focus {
-                    window.focus(root, cx);
-                }
-            }
+        if self.check_restored_focus(window, cx) {
+            // This render still sees the previous frame's dispatch tree: the
+            // control may unmount in the very frame being drawn (the last
+            // frame of its close animation), after which no frame is due.
+            // Check again once this frame has been drawn, against its tree,
+            // so the rescue needs neither another frame nor an input
+            // (#976 review).
+            cx.defer_in(window, |this, window, cx| {
+                this.check_restored_focus(window, cx);
+            });
         }
         if matches!(self.menu_overlay, Some(MenuOverlay::Settings))
             && self.has_modal_or_visible_plan(cx)
@@ -155,6 +153,29 @@ impl KagiApp {
         ) {
             self.apply_pending_focus(window, cx);
         }
+    }
+
+    /// The restored-focus check, against the frame drawn last. Returns
+    /// whether the restored control is still being tracked.
+    fn check_restored_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(restored) = self.restored_focus.take() else {
+            return false;
+        };
+        if window.focused(cx).as_ref() != Some(&restored) {
+            return false;
+        }
+        if self
+            .root_focus
+            .as_ref()
+            .is_some_and(|root| root.contains(&restored, window))
+        {
+            self.restored_focus = Some(restored);
+            return true;
+        }
+        if let Some(root) = &self.root_focus {
+            window.focus(root, cx);
+        }
+        false
     }
 
     /// A command acting on panes behind Settings closes it and discards its

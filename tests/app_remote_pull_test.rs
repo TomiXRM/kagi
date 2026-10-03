@@ -4,9 +4,8 @@ use kagi::remote::{RemoteError, RemotePullReport};
 use kagi_domain::remote::{RemoteConnectionId, RemoteHost, RemoteRepoId};
 use kagi_git::oplog::{OpLogEntry, OpOutcome};
 use kagi_git::StateSummary;
-use parking_lot::Mutex;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -95,7 +94,9 @@ fn report(outcome: OpOutcome) -> RemotePullReport {
 
 #[test]
 fn remote_pull_terminal_matrix_and_unobservable_release() {
-    let _lock = ENV_LOCK.lock();
+    let _lock = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let log = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", log.path());
     let after = StateSummary {
@@ -171,7 +172,9 @@ fn remote_pull_terminal_matrix_and_unobservable_release() {
 
 #[test]
 fn dropped_remote_pull_job_parks_unknown_instead_of_unlocking() {
-    let _lock = ENV_LOCK.lock();
+    let _lock = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let log = tempfile::tempdir().unwrap();
     std::env::set_var("KAGI_LOG_DIR", log.path());
     let mut sessions = Sessions::new();

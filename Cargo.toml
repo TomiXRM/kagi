@@ -84,7 +84,6 @@ winresource = "0.1"
 # that would compile it even when the visual runner skips at runtime.
 # `image` matches gpui's transitive version for screenshot encoding.
 [dev-dependencies]
-parking_lot = "0.12"
 image = "0.25"
 # #509: the CLI/MCP shared-contract test drives both agent entry points in one
 # process to prove they emit the same plan JSON. Workspace path dep — no download.

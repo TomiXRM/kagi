@@ -60,6 +60,22 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
     let (app, window) = mount(cx, fixture.path());
     cx.run_until_parked();
 
+    // Tab, from the window, reaches the nav's selected cell: it is a Tab
+    // stop (moving focus as Tab does, which Tier A cannot press). The
+    // window's other stops come first, so look a few presses ahead.
+    let reached = cx
+        .update_window(window, |_, window, cx| {
+            let root = app.read(cx).root_focus.clone().unwrap();
+            root.focus(window, cx);
+            (0..40).find_map(|_| {
+                window.focus_next(cx);
+                window.draw(cx).clear();
+                app.read(cx).mode_nav_focused_for_e2e(window)
+            })
+        })
+        .unwrap();
+    assert_eq!(reached, Some(0), "Tab reaches the selected mode cell");
+
     // The workspace-mode nav: the arrows only move, as entering PRs or
     // Issues starts a read; Enter enters. Enter on a cell is the cell's: a
     // commit selected behind it is not checked out.

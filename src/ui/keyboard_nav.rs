@@ -70,6 +70,15 @@ impl TabFocus {
             handle.focus(window, cx);
         }
     }
+
+    /// The slot whose cell holds the focus, if any.
+    #[cfg(feature = "gui-e2e")]
+    pub(crate) fn focused(&self, window: &Window) -> Option<usize> {
+        self.0
+            .get()?
+            .iter()
+            .position(|handle| handle.is_focused(window))
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

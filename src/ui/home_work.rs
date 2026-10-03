@@ -530,6 +530,11 @@ impl KagiApp {
         self.sidebar.mode_focus.focus(slot, window, cx);
     }
 
+    /// Which workspace-mode cell holds the focus, if any.
+    pub fn mode_nav_focused_for_e2e(&self, window: &Window) -> Option<usize> {
+        self.sidebar.mode_focus.focused(window)
+    }
+
     /// How many times Home's repository list and its PR / issue lists have
     /// been read.
     pub fn home_reads_for_e2e(&self) -> (u64, u64) {

@@ -259,6 +259,40 @@ pub fn scenario_home_rows(cx: &mut VisualTestAppContext) {
     assert!(root, "with no row left, the window has the focus");
     set_filter(cx, &app, window, "");
 
+    // The remembered row far down (r40), then a search that keeps it but
+    // starts the list again at the top (#961 review): r40 is not drawn
+    // there, so the list's Tab stop is a drawn row, and Tab from the search
+    // field lands on r00 instead of passing the list by.
+    focus_row(cx, &app, window, "repo:acme/r00");
+    for _ in 0..40 {
+        keys(cx, window, "down");
+    }
+    assert_eq!(row(cx, &app, window).as_deref(), Some("repo:acme/r40"));
+    cx.update_window(window, |_, window, cx| {
+        let input = app.read(cx).home_github.filter.clone().unwrap();
+        input.update(cx, |input, cx| input.focus(window, cx));
+    })
+    .unwrap();
+    set_filter(cx, &app, window, "acme");
+    assert!(
+        !drawn(cx, window, "home-gh-acme/r40"),
+        "precondition: the search starts the list at the top"
+    );
+    let mut reached = None;
+    for _ in 0..4 {
+        keys(cx, window, "tab");
+        reached = row(cx, &app, window);
+        if reached.is_some() {
+            break;
+        }
+    }
+    assert_eq!(
+        reached.as_deref(),
+        Some("repo:acme/r00"),
+        "Tab from the search reaches the list at a drawn row"
+    );
+    set_filter(cx, &app, window, "");
+
     // ↑/↓ typed into the search field stay the field's.
     focus_row(cx, &app, window, "repo:acme/r00");
     cx.update_window(window, |_, window, cx| {

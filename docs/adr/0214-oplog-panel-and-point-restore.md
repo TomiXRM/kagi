@@ -27,7 +27,8 @@ Kagi の操作はすべて oplog を通るが、UI では bottom panel の Opera
   | preview | 実行前に結果のグラフを描く | in-memory でグラフを再計算し、現在のグラフと並べる |
 
 - **confirm の内容**: 実行後グラフのプレビュー(正しく投影できる場合)、逆操作の一覧、「できないこと」(untracked の削除は戻らない等)の明示。
-- **#887: 未決を解消**。作業ツリー / index / untracked は戻さず、checkout や `--keep` 相当の自動調整はしない。未コミット変更の保全や競合判定を ref の一括更新と混ぜないため。stash は push / pop / drop の原状復元を対象外とし、既存の stash-drop recovery を利用する。**local tag は戻す**: `refs/tags/*` の raw ref OID を記録する。lightweight tag は commit に加えて tree object も直接指せる。annotated tag は peeled commit ではなく tag object を指す。いずれも CAS 付きで戻す。remote-tracking branch は fetch で再度上書きされるため対象外。`RefsOnly` は戻さない作業ツリー・index・untracked・stash・remote branch だけを短く列挙する。既存の Refused / Failed / Partial の扱いは記録どおり(何も動いていなければ `Some(空)`、Partial は実際に動いた分)。`Unknown` は記録しないのでまたげない(`docs/decisions.md`)。
+- **#887: 未決を解消**。作業ツリー / index / untracked は戻さず、checkout や `--keep` 相当の自動調整はしない。未コミット変更の保全や競合判定を ref の一括更新と混ぜないため。stash は push / pop / drop の原状復元を対象外とし、既存の stash-drop recovery を利用する。**local tag は戻す**: `refs/tags/*` の raw ref OID を記録する。lightweight tag は commit に加えて tree object も直接指せる。annotated tag は peeled commit ではなく tag object を指す。いずれも CAS 付きで戻す。remote-tracking branch は fetch で再度上書きされるため対象外。`RefsOnly` は戻さない作業ツリー・index・untracked・stash・remote branch と、Kagi 外で変更された tag の扱いを短く列挙する。既存の Refused / Failed / Partial の扱いは記録どおり(何も動いていなければ `Some(空)`、Partial は実際に動いた分)。`Unknown` は記録しないのでまたげない(`docs/decisions.md`)。
+- **記録外の tag の限界(#953 Codex P1)**: Kagi が記録していない tag の変更は、Git にその tag の reflog が無い場合には検出も復元もしない。通常の repository には tag の reflog が無い。無いだけで全ての restore を拒否すると実用できないため、計画の「変更なし」行に「Kagi 外での tag の変更」を示して実行可能にする。存在する reflog に target 時点以降の変更があれば branch と同じ blocker。ref の削除に伴い reflog 自体が消えた場合、または同一秒の変更も証明できない。
 
 ### 2. slice 1 の範囲: 読むだけ
 
@@ -151,8 +152,8 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - HEAD の切替・detached を含む entry は blocker(HeadMoved)。戻すには checkout(作業ツリーに触れる)が要るため、対象外とする(§7 で確定)。
 - **その他の blocker**
   - 範囲の記録が触れた local branch / tag ref が期待値に無い(RefMovedSince。記録外での移動)。動いて元に戻ったため戻さない ref も、今その値にあることを確かめる。
-  - restore to point: 対象 entry の記録時刻より後に reflog の更新がある local branch のうち、範囲の記録が一度も動かしていないもの(RefChangedOutsideRecord。terminal での `git branch` など)。戻しても残るので、「その時点の branch 状態」にならない。
-    - 限界: reflog を書かない設定(`core.logAllRefUpdates=false`)や、記録外で削除された branch(reflog ごと消える)は検出できない。対象 entry と同じ秒の記録外の変更も検出できない。tag reflog は通常無いため、**その範囲で記録されていない tag** の記録外作成・変更・削除はこの判定では検出できない。記録に現れた tag には raw OID の期待値照合を行い、plan→execute 間の変更も preflight で拒否する。
+  - restore to point: 対象 entry の記録時刻より後に reflog の更新がある local branch / tag のうち、範囲の記録が一度も動かしていないもの(RefChangedOutsideRecord。terminal での `git branch` / reflog 有効の `git tag` など)。戻しても残るので、「その時点の ref 状態」にならない。
+    - 限界: reflog を書かない設定(`core.logAllRefUpdates=false`)や、記録外で削除された branch(reflog ごと消える)は検出できない。対象 entry と同じ秒の記録外の変更も検出できない。tag は `core.logAllRefUpdates=always` などで reflog が残っている既存の local tag なら、その範囲の記録に無い時点以降の変更を RefChangedOutsideRecord で拒否する(#953)。通常は tag の reflog が無いため、**その範囲で記録されていない tag** の記録外作成・変更・削除は検出・復元できず、card の「変更なし」行で明示する(§1)。記録に現れた tag には raw OID の期待値照合を行い、plan→execute 間の変更も preflight で拒否する。
   - 戻し先の object(commit / tag / tree など)が既に無い(TargetGone)。
   - merge / rebase などが**いずれかの worktree で**進行中(OperationInProgress、path 付き)。その worktree が checkout している branch を動かすと、進行中の操作の前提の HEAD が変わる。
   - checkout 中の branch を削除することになる(DeletesCheckedOutBranch)。
@@ -300,5 +301,6 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
     - 実際の `Copy all`(`plan-card-copy` の probe)で、見出しと `main ←` が clipboard に入る。
   - unit: NotLoaded の見出しは「消える数」を言わない、Copy all の graph 行(見出し・移動・窓外の行数)、Operation Log の entry コピーに記録された ref 移動(OID 全桁、`none moved`、記録なしは行なし)。NotLoaded の短い状態と recovery 段落の非表示は Tier A で EN/JA を確認する(#953)。
   - #953 Codex P1: 実 tag 作成と、旧 wire の `ref_moves: []`(scope なし)を同じ repository に置き、OpRevert と RestoreToPoint の両方が `NotRecorded` で止まる。新 entry は `HeadsAndTags` を round-trip し、tag の往復は維持する。未知の scope も `LegacyOrUnknown` として読む。さらに tag 削除の確認後、実行前にその receipt の scope を失わせた場合は preflight が拒否し、tag は残る。
+  - #953 外部 tag: `core.logAllRefUpdates=always` の実 tag reflog を対象時点より後に移動し、記録外なら RefChangedOutsideRecord で拒否する。tag reflog が無い fixture では card の EN/JA「変更なし」行に Kagi 外の tag 変更を出し、branch の復元は実行可能で、外部 tag の OID はそのまま残る。tag reflog の走査を branch のみへ戻す変異で前者が落ち、警告文を戻す変異で後者が落ちる。
   - kagi-git integration: absorb は作業 branch の移動を、merged branch の一括削除は削除(new = 無し)を `ref_moves` に記録する。
 - 変異確認: Solo の全行を使わない → 消える数 0、PR head を根にしない → 3、上限を外す → 箱が 957px、Copy all の clipboard を空にする → Tier A が落ちる。NotLoaded の見出しを `preview_heading(0)` に戻す・entry コピーから移動を外す → unit、absorb / 一括削除の記録を `None` にする → integration が落ちる。focus の変更は現状の入口では観測できないためテストなし(実ボタンのクリックで root が focus を得ることを確認した)。

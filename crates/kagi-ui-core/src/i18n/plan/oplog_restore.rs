@@ -94,7 +94,7 @@ pub fn note_ja(note: &OplogRestoreNote) -> String {
         OplogRestoreNote::MovesCheckedOutBranch { branch, path } => format!(
             "`{branch}` は {path} で checkout 中です。動くのは branch だけで、その worktree の index とファイルはそのままです。"
         ),
-        OplogRestoreNote::RefsOnly => "変更なし: 作業ツリー・index・untracked・stash・remote branch".to_string(),
+        OplogRestoreNote::RefsOnly => "変更なし: 作業ツリー・index・untracked・stash・remote branch・Kagi 外での tag の変更".to_string(),
     }
 }
 

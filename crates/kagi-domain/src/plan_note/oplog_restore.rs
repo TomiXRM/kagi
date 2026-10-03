@@ -99,8 +99,9 @@ pub enum OplogRestoreNote {
     /// blocker (restore-to-point) — an entry in the range ran in a worktree
     /// that can no longer be opened, so it may have been this repository's.
     UnknownRepository { id: u64, op: String, path: String },
-    /// blocker (restore-to-point) — a branch changed after the target
-    /// outside recorded operations; restoring would leave it unchanged.
+    /// blocker (restore-to-point) — a branch or tag with an available
+    /// reflog changed after the target outside recorded operations;
+    /// restoring would leave it unchanged.
     RefChangedOutsideRecord { refname: String },
     /// warning — a branch to move is checked out in a worktree with changes:
     /// they stay (only the ref moves) and mix with the diff to the new tip.
@@ -120,7 +121,8 @@ pub enum OplogRestoreNote {
     /// warning — the branch is checked out: only its ref moves, so that
     /// worktree's index and files stay and its diff against HEAD changes.
     MovesCheckedOutBranch { branch: String, path: String },
-    /// warning — what this does not bring back.
+    /// warning — what this does not bring back, including external tag
+    /// changes for which Git has no reflog.
     RefsOnly,
 }
 
@@ -196,7 +198,7 @@ impl OplogRestoreNote {
             OplogRestoreNote::MovesCheckedOutBranch { branch, path } => format!(
                 "'{branch}' is checked out in {path}: only the branch moves; that worktree's index and files stay as they are."
             ),
-            OplogRestoreNote::RefsOnly => "Unchanged: working tree · index · untracked · stash · remote branches".to_string(),
+            OplogRestoreNote::RefsOnly => "Unchanged: working tree · index · untracked · stash · remote branches · tags changed outside Kagi".to_string(),
         }
     }
 }

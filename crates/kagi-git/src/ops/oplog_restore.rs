@@ -146,26 +146,29 @@ fn older_and_mine(repo: &Repository, id: u64) -> bool {
     classify_entry(&entry, &mine, my_identity.as_ref(), &mut HashMap::new()) == EntryRepo::Mine
 }
 
-/// Local branches whose reflog records an update after `after` (unix
-/// seconds): created or moved since the target entry was recorded. Which of
-/// them the record explains is the planner's decision.
-fn branches_changed_after(repo: &Repository, after: i64) -> Result<BTreeSet<String>, GitError> {
+/// Local branches and tags whose available reflog records an update after
+/// `after` (unix seconds). The planner decides which updates its recorded
+/// entries explain. Tags normally have no reflog; absence is not evidence
+/// they stayed put, so the confirmation card warns about that limitation.
+fn local_refs_changed_after(repo: &Repository, after: i64) -> Result<BTreeSet<String>, GitError> {
     let mut changed = BTreeSet::new();
-    let refs = repo
-        .references_glob("refs/heads/*")
-        .map_err(|e| GitError::Other(e.message().to_string()))?;
-    for reference in refs.flatten() {
-        let Ok(name) = reference.name() else {
-            continue;
-        };
-        let Ok(log) = repo.reflog(name) else {
-            continue;
-        };
-        if log
-            .iter()
-            .any(|line| line.committer().when().seconds() > after)
-        {
-            changed.insert(name.to_string());
+    for glob in ["refs/heads/*", "refs/tags/*"] {
+        let refs = repo
+            .references_glob(glob)
+            .map_err(|e| GitError::Other(e.message().to_string()))?;
+        for reference in refs.flatten() {
+            let Ok(name) = reference.name() else {
+                continue;
+            };
+            let Ok(log) = repo.reflog(name) else {
+                continue;
+            };
+            if log
+                .iter()
+                .any(|line| line.committer().when().seconds() > after)
+            {
+                changed.insert(name.to_string());
+            }
         }
     }
     Ok(changed)
@@ -195,7 +198,7 @@ fn plan_oplog_restore(
     let op = target.map(|e| e.op.clone()).unwrap_or_default();
     let observed = match target {
         Some(t) if mode == RestoreMode::RestoreTo => Observed {
-            changed_after_target: branches_changed_after(repo, t.timestamp)?,
+            changed_after_target: local_refs_changed_after(repo, t.timestamp)?,
         },
         _ => Observed::default(),
     };

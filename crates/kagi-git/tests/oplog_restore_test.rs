@@ -1396,6 +1396,94 @@ fn a_branch_created_after_the_point_outside_the_record_blocks() {
     );
 }
 
+#[test]
+fn a_tag_moved_outside_the_record_with_a_reflog_blocks_restore_to_point() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let first = git_output(&repo, &["rev-parse", "HEAD"]);
+    commit(&repo, "later\n");
+    let second = git_output(&repo, &["rev-parse", "HEAD"]);
+    git(&repo, &["config", "core.logAllRefUpdates", "always"]);
+    git(&repo, &["tag", "release", &first]);
+    let point = create(&repo, "point");
+    create(&repo, "later");
+    let restore = Operation::RestoreToPoint { entry_id: point };
+    let approved = plan(&repo, &restore);
+    assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
+    next_second();
+    git(&repo, &["update-ref", "refs/tags/release", &second, &first]);
+    assert!(
+        repo.join(".git/logs/refs/tags/release").exists(),
+        "the external move needs an actual tag reflog"
+    );
+
+    let p = plan(&repo, &restore);
+    assert_eq!(
+        restore_blockers(&p),
+        vec![OplogRestoreNote::RefChangedOutsideRecord {
+            refname: "refs/tags/release".into()
+        }],
+        "no recorded operation explains the later tag move"
+    );
+    assert!(
+        backend(&repo).run(&restore, &approved).is_err(),
+        "preflight must see the later tag reflog update too"
+    );
+    assert!(git_fixture::git_succeeds(
+        &repo,
+        &["show-ref", "--verify", "refs/heads/later"]
+    ));
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/tags/release"]),
+        second
+    );
+}
+
+#[test]
+fn a_tag_without_a_reflog_stays_unchanged_with_an_explicit_restore_warning() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let first = git_output(&repo, &["rev-parse", "HEAD"]);
+    commit(&repo, "later\n");
+    let second = git_output(&repo, &["rev-parse", "HEAD"]);
+    git(&repo, &["config", "core.logAllRefUpdates", "false"]);
+    git(&repo, &["tag", "release", &first]);
+    let point = create(&repo, "point");
+    create(&repo, "later");
+    next_second();
+    git(&repo, &["update-ref", "refs/tags/release", &second, &first]);
+    assert!(
+        !repo.join(".git/logs/refs/tags/release").exists(),
+        "the target state cannot be proved without a tag reflog"
+    );
+
+    let op = Operation::RestoreToPoint { entry_id: point };
+    let p = plan(&repo, &op);
+    assert!(p.blockers.is_empty(), "{:?}", p.blockers);
+    assert!(
+        p.warnings
+            .iter()
+            .any(|w| w.to_string().contains("tags changed outside Kagi")),
+        "the unchanged row must name the unsupported external tag history: {:?}",
+        p.warnings
+    );
+    backend(&repo).run(&op, &p).unwrap();
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/tags/release"]),
+        second
+    );
+    assert!(!git_fixture::git_succeeds(
+        &repo,
+        &["show-ref", "--verify", "refs/heads/later"]
+    ));
+}
+
 /// The fetch receipt as the UI writes it (#885, `fetch_async_for`): the
 /// fetch observed by `observe_ref_moves`, recorded through `with_ref_moves`.
 fn failed_fetch(dir: &Path, outcome: impl FnOnce(String) -> OpOutcome) -> u64 {

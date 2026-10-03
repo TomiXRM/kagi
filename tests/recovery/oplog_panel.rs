@@ -602,6 +602,13 @@ pub fn scenario_oplog_restore_tag_preview(cx: &mut VisualTestAppContext) {
         },
     );
 
+    // This tag is outside Kagi's record, and ordinary repositories do not
+    // keep tag reflogs. It must survive the restore with an honest warning.
+    git(
+        &repo,
+        &["-c", "core.logAllRefUpdates=false", "tag", "outside"],
+    );
+    assert!(!repo.join(".git/logs/refs/tags/outside").exists());
     let (app, window) = mount(cx, &repo);
     app.update(cx, |app, cx| {
         app.bottom_panel_open = true;
@@ -623,9 +630,17 @@ pub fn scenario_oplog_restore_tag_preview(cx: &mut VisualTestAppContext) {
             if refname == "refs/tags/release"
     )));
     assert_eq!(card.preview.unwrap().graph, RestorePreview::TagChange);
-    for (language, status) in [
-        (i18n::Lang::En, "No preview: local tags change"),
-        (i18n::Lang::Ja, "プレビューなし: local tag が変更されます"),
+    for (language, status, unchanged) in [
+        (
+            i18n::Lang::En,
+            "No preview: local tags change",
+            "tags changed outside Kagi",
+        ),
+        (
+            i18n::Lang::Ja,
+            "プレビューなし: local tag が変更されます",
+            "Kagi 外での tag の変更",
+        ),
     ] {
         i18n::set_lang(language);
         paint(cx, window);
@@ -639,6 +654,7 @@ pub fn scenario_oplog_restore_tag_preview(cx: &mut VisualTestAppContext) {
         assert_eq!(copied.matches("\nwarning:").count(), 2, "{copied}");
         assert!(copied.contains("refs/tags/release"), "{copied}");
         assert!(copied.contains(status), "{copied}");
+        assert!(copied.contains(unchanged), "{copied}");
         assert_eq!(copied.matches(status).count(), 1, "{copied}");
         assert!(!copied.contains("This is itself recorded"), "{copied}");
         assert!(!copied.contains("これ自体"), "{copied}");
@@ -654,9 +670,13 @@ pub fn scenario_oplog_restore_tag_preview(cx: &mut VisualTestAppContext) {
         &repo,
         &["show-ref", "--verify", "refs/tags/release"]
     ));
+    assert!(git_fixture::git_succeeds(
+        &repo,
+        &["show-ref", "--verify", "refs/tags/outside"]
+    ));
     assert_eq!(read_oplog_tail(1).pop().unwrap().op, "restore-to-point");
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS oplog_restore_tag_preview: the card shows a tag move and a neutral preview; confirming removes the local tag");
+    eprintln!("[gui-e2e] PASS oplog_restore_tag_preview: EN/JA card warns about unrecorded tag changes; confirming removes recorded tag and leaves external tag untouched");
 }
 
 /// #883 review: a long preview, with branch Solo on and a fetched PR head.

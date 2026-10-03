@@ -147,11 +147,11 @@ the row says a Kagi geometry is kept on purpose.
 | Text input (forms, settings, composer) | gpui-component `Input` M = 32 high, radius 6 (`Theme.radius`), 1px border that takes the ring colour on focus | Small (24) in toolbars and filter strips. The placeholder must render. #930 (unmerged) found it missing in one place and overlaid a hint; find the cause and its conditions (same InputState, IME, zoom) before adding any shared wrapper that could change existing filters. |
 | Search — inline filter | `Input` S = 24, leading search icon, clear (×) when non-empty | Command palette keeps Cmd/Ctrl+P, subsequence fuzzy match and single-Esc close. |
 | Search — hero (Home) | larger box, leading icon, no heavy border, results grouped by heading | Only where search is the screen's main action. |
-| Button | gpui-component `Button` / `KagiButton`: S = 24 in toolbars, M = 32 in forms and dialogs, radius 6 | Toolbar buttons that are unavailable stay clickable to show the reason (render_header); do not convert them to `.disabled(true)`. |
+| Button | gpui-component `Button` / `KagiButton`: S = 24 in toolbars, M = 32 in forms and dialogs, radius 6 | The vertical `render_header` toolbar is a Kagi geometry exception: each button (including unavailable) is one Tab stop with a `keyboard_nav::with_ring` focus-visible border. An unavailable action keeps its click handler (never `.disabled(true)`), exposes its existing footer reason via `aria_description` alongside the visible AX name and AccessKit disabled state, and Enter / Space show that same reason in the footer. |
 | List row (dense) | keep: sidebar 20, worktree 24, graph commit row 29 (synced with the lane canvas), modal target 18 | Hover is a full-width wash; selection keeps Kagi's colour meanings (branch/ref/status). Changing a row height needs the visible-row count, virtual list height and a11y positions shown together. |
 | List row (open: Home, PR/Issue lists) | Height follows the actual content and surface, not one open-row size: the PR dashboard row settles near 65px around a 40px avatar; the Issue row has a 104px minimum for its title and metadata ([`pr_dashboard.rs`](../../src/ui/pr_dashboard.rs#L341-L344), [`issues_mode.rs`](../../src/ui/issues_mode.rs#L486-L515)). | 32–40px is only a candidate for a single-line result without those contents, not a PR/Issue list target. Keep the identifying part of long names; the full value must be reachable by keyboard/AX, not only a tooltip. |
 | Menu / context menu | Kagi `menu_overlay` (keeps disabled-reason tooltips and danger rows); pinned PopupMenu rows are 26 fixed | Adopt PopupMenu only where those contracts are not needed. |
-| Modal / confirmation | Kagi `modal_shell` (target list not hideable behind disclosure; long lists scroll inside their panel; fixed action row; existing widths 504/576/648) | The target rows are not all simultaneously on-screen when the list is long ([`modal_shell.rs`](../../src/ui/modal_shell.rs#L440-L461)). Do not replace with gpui-component Dialog (448 fixed, different focus/Esc). Borrow its look, not its behaviour. |
+| Modal / confirmation | Kagi `modal_shell` (target list not hideable behind disclosure; long lists scroll inside their panel; fixed action row; existing widths 504/576/648). Six input + confirm cards (#956: Create Branch/Tag, Stash, Add Worktree, Rename Branch, Set Upstream) use a heading with inline operation icon, form `Input`/confirm M = 32 as the base, errors immediately below the field, a visible disabled confirm when invalid/blocked, and only a Git command for recovery when the plan is Ready. | The target rows are not all simultaneously on-screen when the list is long ([`modal_shell.rs`](../../src/ui/modal_shell.rs#L440-L461)). Do not replace with gpui-component Dialog (448 fixed, different focus/Esc). Stash keeps its 38px message field and 24px action buttons; Create Branch has no recovery row, Set Upstream no recovery command. Borrow Dialog's look, not its behaviour. |
 | Toast | Kagi `toast_stack` (bounded preview, max 4, info 4 s / error 8 s); the Operation Log owns detail | Not gpui-component Notification. |
 | Tabs / segmented | Kagi's `keyboard_nav::TabList` ([`keyboard_nav.rs`](../../src/ui/keyboard_nav.rs)): `Role::Tab`/`TabList`, one Tab stop (the cell the arrows moved to while the focus is in the list, else the selected cell — Tab / Shift+Tab leave in one press, coming back in lands on the selected cell), ←/→/Home/End between cells, Enter/Space select, a `focus_visible` ring in the Input ring colour, focus handed back after a pointer click. Automatic activation where selecting starts nothing (Home's switch); manual where it starts a read (the workspace-mode nav). The selected label uses `accent_text_on(surface)` (at least 4.5:1). The content the list switches goes through `tab_panel_a11y::tab_panel` ([`tab_panel_a11y.rs`](../../src/ui/tab_panel_a11y.rs), #979): `Role::TabPanel`, named after the selected tab without its count (Home's body under the switch; the sidebar page under the workspace-mode nav, only while Graph / PRs / Issues is selected). | The repo tab strip has no `Role::Tab` or focus/key handling yet ([`tabs.rs`](../../src/ui/tabs.rs#L885-L919), #959). Pinned Tab/TabBar has no keyboard focus either. Rows of a virtualized list are Tab stops (`keyboard_nav::focusable_row`) but have no ↑/↓ (#959). Pinned gpui has no `aria-labelledby` / `aria-controls`, so a panel repeats its tab's name as its own label; no panel is tied to its tab by a relation. |
 | Toggle / checkbox / radio | gpui-component `Checkbox` for selection, `RadioGroup` for a mutually exclusive choice; `Switch` for immediately applied *app preferences*, always through Kagi's `keyboard_nav::switch` ([`keyboard_nav.rs`](../../src/ui/keyboard_nav.rs), #970): the Switch draws it and keeps its pointer handling; around it one Tab stop per toggle with `Role::Switch`, the row's title as its name and `aria_toggled` checked / unchecked, Enter and Space flip it (gpui's keyboard click, the key-down stopped), and the `focus_visible` ring sits in a negative margin, so the control keeps its size. | Pinned `Switch` alone has no focus/key path or AX role/name/checked state ([`switch.rs`](https://github.com/longbridge/gpui-component/blob/b004e595cf5de98a73b6b561394a559a94ae1e2a/crates/ui/src/switch.rs#L142-L225)): never use it bare. A toggle that changes the repository still needs the Git write pipeline. |
@@ -173,16 +173,22 @@ PR block.
 - gpui shows `focus_visible` only while the last input was a key: moving the
   mouse hides the ring while the focus stays, so the next Enter / Space
   presses an element with no ring (gpui-wide; #960 review).
-- Toolbar buttons expose AX disabled, but their reason reaches only a mouse
-  click (footer); keyboard/AX users do not get it.
 - Library transitions (Switch 150 ms, Tab 200 ms, Dialog 250 ms) do not follow
   `reduce_motion`.
 
+## Resolved: dated text boxes in input + confirm cards (#956)
+
+The Create Branch pilot found a 40px circular badge and long title that
+made the header top-heavy; explanatory text crowded a 24px form `Input`.
+Errors sat away from the field, and invalid/blocked plans hid confirm.
+Six cards now use shorter titles with inline icons and base M = 32 form
+`Input`/confirm, with errors immediately below the field. Invalid or
+blocked plans keep a visible disabled confirm; recovery, when present, is
+only a Git command for Ready plans (detail remains in Operation Log).
+Shared `Theme.radius`/font/input padding and `modal_shell`/plan/IME stay unchanged; values align by role.
+
 ## Open questions (to settle with evidence)
 
-- What actually makes the text boxes look dated — measure on one screen
-  (#931 pilot) before changing `Theme.radius`, font size or input padding
-  globally.
 - Whether to own a small `kagi-ui-core` input/button wrapper that fixes the
   placeholder and focus treatment once.
 - Which hand-made controls (research: 176 builders) are worth migrating —

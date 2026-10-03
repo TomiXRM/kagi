@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- ツールバーで使えない Pull / Push / Stash / Pop / Undo / Redo も Tab で選べるようにしました。キーボードで選ぶと枠が表示され、Enter / Space はクリックと同じ理由を下部に示します。AX のボタン名は維持し、使えない理由を `aria_description` に設定します。(#972)
 - Home のレビュー依頼の行で、GitHub Enterprise の host が大文字を含むとき(`GHE.example.com` など)、取得済みのアバターではなくイニシャルが表示される問題を修正しました。(#968)
 - 実行中の clone の card を閉じて 1 秒以内に開き直すと、card の再描画が二重に動き続ける問題を修正しました。(#968)
 - Graph / PRs / Issues の切り替えで ←/→ で移動したあと、Tab 以外の方法(マウスで別の操作部品を押すなど)で focus が外れると、次の Tab が選択中のタブではなく矢印で移動したタブに着く問題を修正しました。Home の「リポジトリ / Pull Request / Issue」とリポジトリのタブ帯も同じです。(#968)
@@ -63,6 +64,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Internal
 
+- #956 の入力確認カードで古く見えた要因と、6 カードの役割別の Input・エラー・確認ボタン・復旧表示を `docs/ui/modern-ui.md` に記録し、未解決の「テキストボックスの原因」から切り分けました。(#956)
 - GUI E2E runner(Tier A)が開発者の環境を読まないようにしました。`HOME` は run 専用の空の directory(fixture と同じ git の identity だけを置く)にし、継承した `GIT_*`・`GH_*`(と `GITHUB_TOKEN` / `GITHUB_ENTERPRISE_TOKEN`)の環境変数は起動時にすべて除去します(`gh` も開発者の設定と認証情報を使いません)。terminal を起動する scenario は、login shell ではなく行を読むだけの代わりの shell を使います。代わりの shell が無いまま terminal を起動しようとすると、利用者の `$SHELL` を起動する前にその scenario が失敗します。Smart Commit の生成を差し込む scenario は、差し込んだ生成が使われたことを確かめます。(#516)
 - Web(Playwright)の harness は、`crates/kagi-web/dist` が無いと設定の読み込み時に止まり、足りないファイルと実行すべき `scripts/build-web.sh` を示すようにしました。これまでは 60 秒後に webServer のタイムアウトとして失敗し、実行時のハングと区別がつきませんでした。(#516)
 - GUI E2E runner に `KAGI_GUI_E2E_KEEP_GOING=1` を追加しました。選んだ scenario を 1 つずつ別の runner process で実行するので、1 つが失敗(panic・crash・既定 600 秒の timeout)しても残りを実行し、最後に scenario ごとの PASS / FAIL と失敗の証跡の場所を一覧にします。1 つでも失敗すれば終了コードは 1 です。既定は従来どおり最初の失敗で止まります。(#516)

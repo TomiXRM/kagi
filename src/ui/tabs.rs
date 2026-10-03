@@ -564,9 +564,6 @@ impl KagiApp {
             self.open_editor_dirty_guard(EditorPendingIntent::CloseRepoTab(closing_session), cx);
             return;
         }
-        // Its strip cell goes with it (#961 review): a focus on it must go to
-        // the window, not to the tab that moves into its slot.
-        self.tab_strip_focus.closing(index);
         let closed = self.tabs.remove(index);
         self.release_session(closed.session);
 
@@ -849,17 +846,22 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
-        // A closed tab's cell (Home's, the last repository's) that still
-        // holds the focus hands it to the window (#961 review).
-        let drawn = if self.tabs.is_empty() {
-            0
-        } else {
-            self.tabs.len() + usize::from(self.home.is_some())
-        };
-        self.tab_strip_focus
-            .release_from(drawn, self.root_focus.as_ref(), window, cx);
+        // The strip's cells are keyed by the tab they stand for, not by
+        // slot, so a tab added, closed or moved before a cell leaves its
+        // handle, a focus on it and the arrowed-to mark with it (#961
+        // review). Home is the last cell, under a key no tab has.
+        const HOME_KEY: u64 = u64::MAX;
         if self.tabs.is_empty() {
+            // No strip: every cell is gone, and one that still holds the
+            // focus (the last tab's, Home's) hands it to the window.
+            self.tab_strip_focus.sync(&[], cx);
+            self.tab_strip_focus
+                .release_closed(self.root_focus.as_ref(), window, cx);
             return None;
+        }
+        let mut keys: Vec<u64> = self.tabs.iter().map(|tab| tab.session.tab().0).collect();
+        if self.home.is_some() {
+            keys.push(HOME_KEY);
         }
 
         let active = self.active_tab;
@@ -875,7 +877,7 @@ impl KagiApp {
         let entity = cx.weak_entity();
         let strip_tabs = super::keyboard_nav::TabList::new(
             &self.tab_strip_focus,
-            slots,
+            keys,
             (0..slots).collect(),
             if home_front { home_slot } else { Some(active) },
             super::keyboard_nav::Activation::Manual,
@@ -897,6 +899,10 @@ impl KagiApp {
             },
             cx,
         );
+        // A closed tab's cell that still holds the focus hands it to the
+        // window, not to a cell drawn in its place (#961 review).
+        self.tab_strip_focus
+            .release_closed(self.root_focus.as_ref(), window, cx);
 
         let mut strip = strip_tabs
             .list(div().id("tab-strip"))

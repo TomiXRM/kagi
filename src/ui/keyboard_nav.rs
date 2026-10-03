@@ -108,8 +108,8 @@ pub(crate) fn bind_keys(cx: &mut App) {
 
 /// One tab list as [`ROVING`] sees it.
 struct Watched {
-    roving: Weak<Cell<Option<usize>>>,
-    handles: Weak<RefCell<Vec<FocusHandle>>>,
+    roving: Weak<Cell<Option<u64>>>,
+    cells: Weak<RefCell<Vec<(u64, FocusHandle)>>>,
 }
 
 thread_local! {
@@ -129,14 +129,14 @@ pub(crate) fn forget_roving_without_focus(window: &Window) {
             let Some(roving) = list.roving.upgrade() else {
                 continue;
             };
-            let Some(at) = roving.get() else {
+            let Some(key) = roving.get() else {
                 continue;
             };
-            let focused = list.handles.upgrade().is_some_and(|handles| {
-                handles
+            let focused = list.cells.upgrade().is_some_and(|cells| {
+                cells
                     .borrow()
-                    .get(at)
-                    .is_some_and(|handle| handle.is_focused(window))
+                    .iter()
+                    .any(|(k, handle)| *k == key && handle.is_focused(window))
             });
             if !focused {
                 roving.set(None);
@@ -145,28 +145,33 @@ pub(crate) fn forget_roving_without_focus(window: &Window) {
     });
 }
 
-/// The focus handles of one tab list's cells, one per slot, made as slots
-/// appear and kept across frames; and the cell the arrows moved to, while
-/// it holds the focus.
+/// The focus handles of one tab list's cells, each kept with its cell's
+/// identity across frames — a slot number for a list of fixed cells, the
+/// tab's own identity for the repository strip — and the identity of the
+/// cell the arrows moved to, while it holds the focus. A cell that moves to
+/// another slot (a tab added before it, or closed before it) keeps its
+/// handle, a focus on it and the arrowed-to mark, with nothing to adjust
+/// (#961 review). A cell that goes away keeps its handle until
+/// [`Self::release_closed`], which hands a focus left on it to the window.
 pub(crate) struct TabFocus {
-    handles: Rc<RefCell<Vec<FocusHandle>>>,
-    roving: Rc<Cell<Option<usize>>>,
-    /// Handles of cells closed since the last frame (see [`Self::closing`]).
+    cells: Rc<RefCell<Vec<(u64, FocusHandle)>>>,
+    roving: Rc<Cell<Option<u64>>>,
+    /// Handles of cells gone since the last frame.
     closed: RefCell<Vec<FocusHandle>>,
 }
 
 impl Default for TabFocus {
     fn default() -> Self {
         let roving = Rc::new(Cell::new(None));
-        let handles = Rc::new(RefCell::new(Vec::new()));
+        let cells = Rc::new(RefCell::new(Vec::new()));
         ROVING.with(|lists| {
             lists.borrow_mut().push(Watched {
                 roving: Rc::downgrade(&roving),
-                handles: Rc::downgrade(&handles),
+                cells: Rc::downgrade(&cells),
             })
         });
         Self {
-            handles,
+            cells,
             roving,
             closed: RefCell::default(),
         }
@@ -174,79 +179,87 @@ impl Default for TabFocus {
 }
 
 impl TabFocus {
-    fn handles(&self, slots: usize, cx: &App) -> Vec<FocusHandle> {
-        let mut handles = self.handles.borrow_mut();
-        while handles.len() < slots {
-            handles.push(cx.focus_handle());
+    /// The handles of the cells `keys` names, in that order: a known cell
+    /// keeps its handle, a new one gets one, and a cell no longer named
+    /// leaves (its handle kept for [`Self::release_closed`]).
+    pub(crate) fn sync(&self, keys: &[u64], cx: &App) -> Vec<FocusHandle> {
+        let mut cells = self.cells.borrow_mut();
+        let same =
+            cells.len() == keys.len() && cells.iter().zip(keys).all(|((k, _), key)| k == key);
+        if !same {
+            let mut old = std::mem::take(&mut *cells);
+            for &key in keys {
+                let handle = match old.iter().position(|(k, _)| *k == key) {
+                    Some(at) => old.swap_remove(at).1,
+                    None => cx.focus_handle(),
+                };
+                cells.push((key, handle));
+            }
+            self.closed
+                .borrow_mut()
+                .extend(old.into_iter().map(|(_, handle)| handle));
+            if self.roving.get().is_some_and(|key| !keys.contains(&key)) {
+                self.roving.set(None);
+            }
         }
-        handles[..slots].to_vec()
+        cells.iter().map(|(_, handle)| handle.clone()).collect()
     }
 
-    /// The cell in `slot` is about to be closed and the cells after it move up
-    /// a slot (#961 review). Its handle leaves the list, so every later cell
-    /// keeps its own handle — and a focus on it — in its new slot, and the
-    /// arrowed-to cell follows its cell too. The closed handle is kept until
-    /// the next frame, where [`Self::release_from`] hands a focus left on it
-    /// to the window.
-    pub(crate) fn closing(&self, slot: usize) {
-        let mut handles = self.handles.borrow_mut();
-        if slot >= handles.len() {
-            return;
-        }
-        self.closed.borrow_mut().push(handles.remove(slot));
-        self.roving.set(match self.roving.get() {
-            Some(at) if at == slot => None,
-            Some(at) if at > slot => Some(at - 1),
-            other => other,
-        });
-    }
-
-    /// Only the first `slots` cells are drawn now (a tab closed, or the list
-    /// is gone), and the cells marked [`Self::closing`] are gone: one of them
-    /// holding the focus would keep it with nothing on screen tracking it,
-    /// out of reach of the window's keys, or pass it to the next cell, so
-    /// the focus goes to `fallback`.
-    pub(crate) fn release_from(
+    /// A focus left on a cell that went away since the last frame (a tab
+    /// closed, or the list gone) would stay with nothing on screen tracking
+    /// it, out of reach of the window's keys: it goes to `fallback`.
+    pub(crate) fn release_closed(
         &self,
-        slots: usize,
         fallback: Option<&FocusHandle>,
         window: &mut Window,
         cx: &mut App,
     ) {
-        let closed_focused = {
+        let lost = {
             let mut closed = self.closed.borrow_mut();
-            let focused = closed.iter().any(|handle| handle.is_focused(window));
+            let lost = closed.iter().any(|handle| handle.is_focused(window));
             closed.clear();
-            focused
+            lost
         };
-        let lost = closed_focused
-            || self
-                .handles
-                .borrow()
-                .iter()
-                .skip(slots)
-                .any(|handle| handle.is_focused(window));
         if let Some(fallback) = fallback.filter(|_| lost) {
             fallback.focus(window, cx);
         }
     }
 
-    /// Focus the cell in `slot` (GUI E2E: Tier A cannot press Tab).
+    /// The list is not drawn for now (Home is not in front): a focus on any
+    /// of its cells goes to `fallback`.
+    pub(crate) fn yield_focus(
+        &self,
+        fallback: Option<&FocusHandle>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let held = self
+            .cells
+            .borrow()
+            .iter()
+            .any(|(_, handle)| handle.is_focused(window));
+        if let Some(fallback) = fallback.filter(|_| held) {
+            fallback.focus(window, cx);
+        }
+    }
+
+    /// Focus the cell in `slot` as last drawn (GUI E2E: Tier A cannot press
+    /// Tab).
     #[cfg(feature = "gui-e2e")]
     pub(crate) fn focus(&self, slot: usize, window: &mut Window, cx: &mut App) {
-        let handle = self.handles.borrow().get(slot).cloned();
+        let handle = self.cells.borrow().get(slot).map(|(_, h)| h.clone());
         if let Some(handle) = handle {
             handle.focus(window, cx);
         }
     }
 
-    /// The slot whose cell holds the focus, if any.
+    /// The slot, as last drawn, whose cell holds the focus, if any.
     #[cfg(feature = "gui-e2e")]
     pub(crate) fn focused(&self, window: &Window) -> Option<usize> {
-        self.handles
+        self.cells
             .borrow()
             .iter()
-            .position(|handle| handle.is_focused(window))
+            .position(|(_, handle)| handle.is_focused(window))
     }
 }
 
@@ -258,6 +271,11 @@ pub(crate) enum Activation {
     Manual,
 }
 
+/// The identities of `n` cells that never move: their slot numbers.
+pub(crate) fn slot_keys(n: usize) -> Vec<u64> {
+    (0..n as u64).collect()
+}
+
 type Select = Rc<dyn Fn(usize, &mut Window, &mut App)>;
 
 /// One tab list being drawn: the slots on screen in order, the selected one
@@ -265,12 +283,14 @@ type Select = Rc<dyn Fn(usize, &mut Window, &mut App)>;
 /// slot does.
 pub(crate) struct TabList {
     handles: Vec<FocusHandle>,
+    /// Each slot's cell identity (see [`TabFocus`]).
+    keys: Rc<Vec<u64>>,
     shown: Rc<Vec<usize>>,
     selected: Option<usize>,
     /// The list's one Tab stop: the cell the arrows moved to, else the
     /// selected cell, else the first.
     stop: Option<usize>,
-    roving: Rc<Cell<Option<usize>>>,
+    roving: Rc<Cell<Option<u64>>>,
     activation: Activation,
     select: Select,
     /// Where focus goes back to after a pointer click: the cell must not keep
@@ -279,12 +299,13 @@ pub(crate) struct TabList {
 }
 
 impl TabList {
-    /// `slots` handles are kept in `focus`; `shown` lists the slots drawn,
-    /// in order.
+    /// One cell per entry of `keys`, its identity (a slot number when the
+    /// cells never move: [`slot_keys`]); their handles are kept in `focus`.
+    /// `shown` lists the slots drawn, in order.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         focus: &TabFocus,
-        slots: usize,
+        keys: Vec<u64>,
         shown: Vec<usize>,
         selected: Option<usize>,
         activation: Activation,
@@ -292,13 +313,19 @@ impl TabList {
         select: impl Fn(usize, &mut Window, &mut App) + 'static,
         cx: &App,
     ) -> Self {
-        let stop = [focus.roving.get(), selected]
+        let handles = focus.sync(&keys, cx);
+        let roving = focus
+            .roving
+            .get()
+            .and_then(|key| keys.iter().position(|&k| k == key));
+        let stop = [roving, selected]
             .into_iter()
             .flatten()
             .find(|slot| shown.contains(slot))
             .or_else(|| shown.first().copied());
         Self {
-            handles: focus.handles(slots, cx),
+            handles,
+            keys: Rc::new(keys),
             shown: Rc::new(shown),
             selected,
             stop,
@@ -322,9 +349,10 @@ impl TabList {
             .tab_index(0)
             .tab_stop(self.stop == Some(slot));
         let go = |target: fn(&[usize], usize) -> Option<usize>| {
-            let (shown, handles, select) = (
+            let (shown, handles, keys, select) = (
                 self.shown.clone(),
                 self.handles.clone(),
+                self.keys.clone(),
                 self.select.clone(),
             );
             let roving = self.roving.clone();
@@ -334,7 +362,7 @@ impl TabList {
                     return;
                 };
                 handles[next].focus(window, cx);
-                roving.set(Some(next));
+                roving.set(Some(keys[next]));
                 if automatic {
                     select(next, window, cx);
                 }
@@ -394,6 +422,9 @@ pub(crate) struct RowFocus {
     seen: Option<FocusHandle>,
     /// The row last focused, as its place among `keys`.
     current: Option<usize>,
+    /// The focus is in [`Self::current`] — on the row or on a control inside
+    /// it — as of the last time the focus moved.
+    holds: bool,
     /// The list was not drawn last frame (see [`Self::yield_focus`]).
     away: bool,
 }
@@ -435,6 +466,7 @@ impl RowFocus {
             if focused_row.is_some() {
                 self.current = focused_row;
             }
+            self.holds = focused_row.is_some();
             self.seen = focused;
         }
         let mut lost = false;
@@ -460,24 +492,20 @@ impl RowFocus {
             (self.keys, self.handles, self.current) = (keys, handles, current);
         }
         // The remembered row while it is drawn; else the first row on
-        // screen, so Tab always finds a row that exists.
+        // screen, so Tab always finds a row that exists. None when no row is
+        // on screen (only headings or notes after the rows, #961 review):
+        // an undrawn row is no Tab stop.
         let top = state.logical_scroll_top().item_ix;
         let drawn = |at: usize| state.bounds_for_item(self.keys[at].1).is_some();
-        // The focused row scrolled out of the drawn range (the wheel, #961
-        // review) is unmounted: no ↑/↓, no ring. Not on the frame the focus
+        // The row holding the focus — itself or a control inside it, its
+        // Open button (#961 review) — scrolled out of the drawn range by the
+        // wheel is unmounted: no ↑/↓, no ring. Not on the frame the focus
         // moved, as ↓ focuses a row the list only draws on the next one.
-        let scrolled_away = !moved
-            && self
-                .current
-                .is_some_and(|at| !drawn(at) && self.handles[at].is_focused(window));
-        let stop = self
-            .current
-            .filter(|&at| drawn(at))
-            .or_else(|| {
-                let at = self.keys.partition_point(|&(_, ix)| ix < top);
-                (at < self.keys.len()).then_some(at)
-            })
-            .or((!self.keys.is_empty()).then_some(0));
+        let scrolled_away = !moved && self.holds && self.current.is_some_and(|at| !drawn(at));
+        let stop = self.current.filter(|&at| drawn(at)).or_else(|| {
+            let at = self.keys.partition_point(|&(_, ix)| ix < top);
+            (at < self.keys.len()).then_some(at)
+        });
         if lost || scrolled_away {
             match stop {
                 Some(at) => self.handles[at].focus(window, cx),

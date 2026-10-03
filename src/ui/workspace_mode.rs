@@ -190,7 +190,7 @@ pub(super) fn render_sidebar_mode_nav(
     let entity = cx.weak_entity();
     let tabs = super::keyboard_nav::TabList::new(
         &app.sidebar.mode_focus,
-        MODES.len(),
+        super::keyboard_nav::slot_keys(MODES.len()),
         shown,
         MODES.iter().position(|&m| m == mode),
         super::keyboard_nav::Activation::Manual,

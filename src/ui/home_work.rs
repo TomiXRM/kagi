@@ -415,7 +415,7 @@ impl KagiApp {
         let app = cx.weak_entity();
         let tabs = super::keyboard_nav::TabList::new(
             &work.pane_focus,
-            PANES.len(),
+            super::keyboard_nav::slot_keys(PANES.len()),
             (0..PANES.len()).collect(),
             PANES.iter().position(|&p| p == active),
             super::keyboard_nav::Activation::Automatic,

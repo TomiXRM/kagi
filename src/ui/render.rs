@@ -215,7 +215,7 @@ impl Render for KagiApp {
             self.home_github
                 .work
                 .pane_focus
-                .release_from(0, fallback.as_ref(), window, cx);
+                .yield_focus(fallback.as_ref(), window, cx);
         }
         // Before any tab list picks its Tab stop this frame (#968).
         super::keyboard_nav::forget_roving_without_focus(window);

@@ -26,16 +26,53 @@ fn gh_script() -> String {
             r#"{{"number":{n},"title":"PR {n}","url":"https://github.com/acme/r00/pull/{n}","isDraft":false,"author":{{"login":"acme"}},"updatedAt":"2026-10-0{n}T00:00:00Z","repository":{{"name":"r00","nameWithOwner":"acme/r00"}}}}"#
         )
     };
+    // Enough review requests to scroll the user's own PRs out of view. No
+    // author, so no avatar is fetched (Tier A has no network).
+    let reviews = (100..140)
+        .map(|n| {
+            format!(
+                r#"{{"number":{n},"title":"Review {n}","url":"https://github.com/acme/r01/pull/{n}","isDraft":false,"author":{{"login":""}},"updatedAt":"2026-09-01T00:00:00Z","repository":{{"name":"r01","nameWithOwner":"acme/r01"}}}}"#
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     format!(
         "#!/bin/sh\ncase \"$1 $2 $3\" in\n\
          'config get user') echo acme ;;\n\
          'api user/orgs '*) ;;\n\
          'repo list --limit') cat <<'JSON'\n[{repos}]\nJSON\n;;\n\
          'search prs --author=@me') cat <<'JSON'\n[{p2},{p1}]\nJSON\n;;\n\
+         'search prs --review-requested=@me') cat <<'JSON'\n[{reviews}]\nJSON\n;;\n\
          'search '*) echo '[]' ;;\n\
          *) echo \"unexpected gh $*\" >&2; exit 1 ;;\nesac\n",
         p1 = pr(1),
         p2 = pr(2),
+    )
+}
+
+/// A stand-in `gh` listing three repositories and thirty organizations that
+/// cannot be read: their headings and notes follow the rows, more than a
+/// screen of them.
+fn orgs_script() -> String {
+    let repos = (0..3)
+        .map(|i| {
+            format!(
+                r#"{{"nameWithOwner":"acme/r{i:02}","url":"https://github.com/acme/r{i:02}","isFork":false,"isPrivate":false,"description":"","updatedAt":"2026-10-01T00:00:00Z"}}"#
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let orgs = (0..30)
+        .map(|i| format!("org{i:02}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "#!/bin/sh\ncase \"$1 $2 $3\" in\n\
+         'config get user') echo acme ;;\n\
+         'api user/orgs '*) cat <<'EOF'\n{orgs}\nEOF\n;;\n\
+         'repo list --limit') cat <<'JSON'\n[{repos}]\nJSON\n;;\n\
+         'search '*) echo '[]' ;;\n\
+         *) echo \"gh: $*: HTTP 403\" >&2; exit 1 ;;\nesac\n"
     )
 }
 
@@ -262,6 +299,33 @@ pub fn scenario_home_rows(cx: &mut VisualTestAppContext) {
     set_filter(cx, &app, window, "");
     focus_row(cx, &app, window, "MyPrs:acme/r00#1");
 
+    // The focus on #1's Open button, and the wheel scrolls #1 out of the
+    // drawn range (#961 review): the button is unmounted with its row, so
+    // the focus moves to a row on screen, a review request.
+    keys(cx, window, "tab");
+    let inside = cx
+        .update_window(window, |_, window, cx| {
+            window.draw(cx).clear();
+            app.read(cx).home_row_holds_focus_for_e2e(window, cx)
+        })
+        .unwrap();
+    assert!(inside, "precondition: on #1's Open button");
+    wheel(cx, -3000.);
+    assert!(
+        !drawn(cx, window, "home-work-acme/r00-1"),
+        "precondition: #1 is scrolled out of view"
+    );
+    let now = row(cx, &app, window).expect("a drawn row has the focus");
+    let number = now
+        .strip_prefix("ReviewRequests:acme/r01#")
+        .expect("a review request row");
+    assert!(
+        drawn(cx, window, &format!("home-work-acme/r01-{number}")),
+        "{now} is on screen"
+    );
+    wheel(cx, 5000.);
+    focus_row(cx, &app, window, "MyPrs:acme/r00#1");
+
     // ⌘W closes Home with a row focused (#961 review): Home is no longer
     // drawn, so the row hands the focus to the window rather than keep it on
     // a handle nothing tracks.
@@ -352,6 +416,38 @@ pub fn scenario_home_rows(cx: &mut VisualTestAppContext) {
     })
     .unwrap();
     wait_for(cx, &app, "the lists again", settled);
+
+    // Rows followed by more than a screen of headings and notes (thirty
+    // organizations that cannot be read), scrolled to the end with a row
+    // focused (#961 review): no row is on screen, so there is no Tab stop
+    // in the list, and the focus goes to the window, not to row 0.
+    {
+        let _orgs = OfflineGh::with_script(&orgs_script());
+        app.update(cx, |app, cx| app.set_home_pane(HomePane::Repos, cx));
+        app.update(cx, |app, cx| app.reload_home_github(cx));
+        wait_for(cx, &app, "the organizations' read", settled);
+        assert!(drawn(cx, window, "home-gh-acme/r02"));
+        focus_row(cx, &app, window, "repo:acme/r02");
+        wheel(cx, -20000.);
+        for repo in ["r00", "r01", "r02"] {
+            assert!(
+                !drawn(cx, window, &format!("home-gh-acme/{repo}")),
+                "precondition: no row on screen ({repo} is drawn)"
+            );
+        }
+        assert_eq!(row(cx, &app, window), None, "no row keeps the focus");
+        let root = cx
+            .update_window(window, |_, window, cx| {
+                window.draw(cx).clear();
+                app.read(cx)
+                    .root_focus
+                    .as_ref()
+                    .is_some_and(|focus| focus.is_focused(window))
+            })
+            .unwrap();
+        assert!(root, "with no row on screen, the window has the focus");
+        wheel(cx, 20000.);
+    }
 
     // Another account's read replaces the list on screen with Loading, and
     // the read fails (#961 review): no row is drawn any more, so a focused

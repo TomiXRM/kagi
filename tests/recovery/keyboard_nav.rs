@@ -538,5 +538,48 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
         "the closed first tab's focus goes to the window"
     );
 
+    // A repository opened while the focus is on Home's cell (Home behind)
+    // is added before Home: Home's cell, its handle and the focus move to
+    // the next slot with it, and Enter brings Home forward, not the new tab
+    // (#961 review: the strip's cells are keyed by tab, not by slot).
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.open_home_tab(window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(0, window, cx))
+    })
+    .unwrap();
+    keys(cx, window, "enter");
+    assert!(
+        cx.read(|cx| app.read(cx).home.is_some_and(|home| !home.front)),
+        "precondition: Home behind the repository"
+    );
+    let before = cx.read(|cx| app.read(cx).tabs.len());
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.focus_tab_strip_for_e2e(before, window, cx)
+        })
+    })
+    .unwrap();
+    assert_eq!(strip_focus(cx), Some(before), "precondition: Home's cell");
+    let fourth = build_fixture();
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(fourth.path().to_path_buf(), cx));
+    });
+    cx.run_until_parked();
+    assert_eq!(cx.read(|cx| app.read(cx).tabs.len()), before + 1);
+    assert_eq!(
+        strip_focus(cx),
+        Some(before + 1),
+        "the focus stays on Home's cell, now after the new tab"
+    );
+    keys(cx, window, "enter");
+    assert!(
+        cx.read(|cx| app.read(cx).home.is_some_and(|home| home.front)),
+        "Enter on the focused cell brings Home forward, not the new tab"
+    );
+
     unmount(cx, app, window);
 }

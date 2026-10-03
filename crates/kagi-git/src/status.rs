@@ -52,6 +52,45 @@ pub fn working_tree_status(repo: &Repository) -> Result<WorkingTreeStatus, GitEr
     build_working_tree_status(repo, collect_statuses(repo, false)?)
 }
 
+/// Remove Worktree checks gitlink directories separately, including their
+/// otherwise invisible local contents. An absent gitlink path alone is not
+/// user content to preserve, but a staged gitlink update or any other dirty
+/// entry still blocks removal. Do not change the shared status read used by
+/// the commit panel and other operation plans.
+pub(crate) fn working_tree_status_for_remove(
+    repo: &Repository,
+) -> Result<WorkingTreeStatus, GitError> {
+    let statuses = collect_statuses(repo, false)?;
+    if !statuses.is_empty()
+        && statuses
+            .iter()
+            .all(|entry| entry.status() == git2::Status::WT_DELETED)
+    {
+        let submodules = repo
+            .submodules()
+            .map_err(|e| GitError::Other(format!("cannot inspect worktree submodules: {e}")))?;
+        let workdir = repo
+            .workdir()
+            .ok_or_else(|| GitError::Other("worktree has no working directory".into()))?;
+        if statuses.iter().all(|entry| {
+            let Some(delta) = entry.index_to_workdir() else {
+                return false;
+            };
+            let Some(path) = delta.old_file().path() else {
+                return false;
+            };
+            submodules.iter().any(|sub| sub.path() == path)
+                && matches!(
+                    std::fs::symlink_metadata(workdir.join(path)),
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound
+                )
+        }) {
+            return Ok(WorkingTreeStatus::default());
+        }
+    }
+    build_working_tree_status(repo, statuses)
+}
+
 /// Index paths Git has marked `skip-worktree`.
 ///
 /// Sparse-checkout works by setting this bit and removing the file from the

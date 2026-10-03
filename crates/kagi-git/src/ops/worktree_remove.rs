@@ -52,7 +52,7 @@ pub fn plan_remove_worktree(
     let (branch, dirt) = worktree_branch_and_dirt(&wt);
 
     let mut blockers = Vec::new();
-    if has_initialized_submodule(&wt)? {
+    if has_submodule_content(&wt)? {
         blockers.push(PlanNote::Worktree(WorktreeNote::RemoveContainsSubmodules));
     }
     if let Some(summary) = dirt {
@@ -99,12 +99,11 @@ pub fn plan_remove_worktree(
     admin_plan(repo, title, warnings, blockers, recovery, true)
 }
 
-/// Git refuses to remove worktrees with checked-out submodules without force.
-/// An uninitialized gitlink has no `.git` entry in its worktree directory.
-/// Inspect that entry without following symlinks; an unreadable path cannot be
-/// treated as safe. The tracked submodule paths come from libgit2, not a
-/// recursive walk through ignored contents.
-fn has_initialized_submodule(wt: &git2::Worktree) -> Result<bool, GitError> {
+/// A populated gitlink path is not safe to remove, even when the submodule is
+/// uninitialized: Git status and ignored scans omit files inside that path.
+/// Check only direct entries, without walking the submodule or following a
+/// symlink at the path. A missing or empty directory remains removable.
+fn has_submodule_content(wt: &git2::Worktree) -> Result<bool, GitError> {
     let wt_repo = Repository::open_from_worktree(wt)
         .map_err(|e| GitError::Other(format!("cannot inspect worktree submodules: {e}")))?;
     let workdir = wt_repo
@@ -114,27 +113,35 @@ fn has_initialized_submodule(wt: &git2::Worktree) -> Result<bool, GitError> {
         .submodules()
         .map_err(|e| GitError::Other(format!("cannot inspect worktree submodules: {e}")))?
     {
-        let marker = workdir.join(submodule.path()).join(".git");
-        match std::fs::symlink_metadata(&marker) {
-            Ok(_) => return Ok(true),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        let path = workdir.join(submodule.path());
+        match std::fs::symlink_metadata(&path) {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
             Err(err) => {
                 return Err(GitError::Other(format!(
                     "cannot inspect worktree submodule: {err}"
                 )));
             }
+            Ok(metadata) if !metadata.is_dir() => return Ok(true),
+            Ok(_) => {}
+        }
+        let mut entries = std::fs::read_dir(&path)
+            .map_err(|e| GitError::Other(format!("cannot inspect worktree submodule: {e}")))?;
+        if let Some(entry) = entries.next() {
+            entry
+                .map_err(|e| GitError::Other(format!("cannot inspect worktree submodule: {e}")))?;
+            return Ok(true);
         }
     }
     Ok(false)
 }
 
-/// A linked worktree can acquire an initialized submodule after confirmation
-/// or during a pre-remove step. Refuse it through the same typed plan blocker.
+/// A linked worktree can acquire submodule content after confirmation or during
+/// a pre-remove step. Refuse it through the same typed plan blocker.
 pub(crate) fn preflight_remove_submodules(repo: &Repository, name: &str) -> Result<(), GitError> {
     let wt = repo
         .find_worktree(name)
         .map_err(|e| GitError::Other(format!("cannot inspect worktree submodules: {e}")))?;
-    if has_initialized_submodule(&wt)? {
+    if has_submodule_content(&wt)? {
         return Err(GitError::Blocked(Box::new(PlanNote::Worktree(
             WorktreeNote::RemoveContainsSubmodules,
         ))));
@@ -331,7 +338,7 @@ pub(crate) fn execute_remove_worktree_progress(
             fault,
         )?;
     }
-    // A pre_remove step can initialize a gitlink. Detect it before trying to
+    // A pre_remove step can populate a gitlink. Detect it before trying to
     // back up this worktree's files, as well as at the deletion boundary.
     preflight_remove_submodules(repo, name)?;
 

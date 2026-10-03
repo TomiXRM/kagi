@@ -207,15 +207,24 @@ need a capacity scan just to populate a hidden row.
   ignored folder: that folder is deliberately treated as one entry. No-force
   and lock semantics stay unchanged. SSH worktree paths never enter this
   local observer.
-- A linked worktree with an initialized submodule is blocked from Remove,
-  matching `git worktree remove` without force. Only tracked submodule paths
-  whose checkout has a `.git` entry count as initialized; an uninitialized
-  gitlink is not a blocker. Planning reads the target worktree's submodule
-  entries without recursively scanning their ignored contents. Preflight
-  repeats the check before trust or steps; execution repeats it after
-  `pre_remove` and immediately before directory deletion. An unreadable
-  submodule observation fails closed. The typed EN/JA blocker is short, with
-  no procedure text; the worktree, submodule files and branch remain untouched.
+- A linked worktree with a populated gitlink path is blocked from Remove.
+  This includes initialized submodules and **uninitialized** submodules whose
+  directory contains even one local entry: Git status excludes those bytes,
+  and the non-force checked deletion would otherwise erase them. Planning
+  inspects only tracked gitlinks and their immediate directory entries,
+  without recursively scanning or following a symlink at the gitlink path.
+  An empty directory or absent gitlink path is allowed; Remove's linked-worktree
+  dirt check exempts only an absent gitlink's worktree deletion status when
+  there are no other changes. Staged gitlink updates, other worktree dirt and
+  all shared status reads remain blocking/unchanged. A non-directory occupant
+  blocks rather than being followed.
+  Preflight repeats the check before trust or steps; execution repeats it after
+  `pre_remove` and immediately before directory deletion. Unreadable
+  submodule entries fail closed. The typed EN/JA blocker is short, with
+  no procedure text. A post-step Partial receipt retains complete stage
+  evidence in the oplog, while its toast shows only the localized blocker.
+  Refusal does not delete the worktree, submodule files or branch; an approved
+  `pre_remove` step may already have changed files when the refusal occurs.
 
 Pure verdict tests and filesystem/Git fixtures cover evidence precedence,
 hardlinks, symlinks, ignored allocation and cancellation. The focused native

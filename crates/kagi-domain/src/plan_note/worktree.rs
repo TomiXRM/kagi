@@ -107,8 +107,8 @@ pub enum WorktreeNote {
     /// blocker — ignored content increased after the Remove confirmation;
     /// deletion must wait for a new plan and explicit confirmation.
     RemoveIgnoredContentChanged,
-    /// blocker — an initialized submodule is present in the target worktree.
-    /// Git also refuses to remove that worktree without force.
+    /// blocker — a tracked gitlink has a populated checkout or local content.
+    /// Even uninitialized submodules can contain files Git status omits.
     RemoveContainsSubmodules,
     /// warning (`plan_lock_worktree`) — describes the lock about to be placed.
     LocksWorktree {

@@ -419,13 +419,16 @@ impl KagiApp {
                         format!("remove-worktree: result unknown — {}", evidence)
                     }
                 };
-                let growth_note = report.blocker.as_ref().filter(|note| {
-                    matches!(
-                        note,
-                        PlanNote::Worktree(WorktreeNote::RemoveIgnoredContentChanged)
-                    )
+                // A typed post-step blocker is the entire toast reason; the
+                // Partial receipt and footer retain the full stage evidence.
+                let concise_note = report.blocker.as_ref().filter(|note| {
+                    matches!(entry.outcome, OpOutcome::Partial { .. })
+                        || matches!(
+                            note,
+                            PlanNote::Worktree(WorktreeNote::RemoveIgnoredContentChanged)
+                        )
                 });
-                let text = if let Some(note) = growth_note {
+                let text = if let Some(note) = concise_note {
                     i18n::plan_note_text(note)
                 } else if matches!(entry.outcome, OpOutcome::Refused { .. }) {
                     report.blocker.as_ref().map_or_else(
@@ -455,7 +458,7 @@ impl KagiApp {
                         cx.notify();
                     });
                 }
-                if growth_note.is_none()
+                if concise_note.is_none()
                     && report.blocker.is_some()
                     && matches!(report.recording.entry().outcome, OpOutcome::Refused { .. })
                 {

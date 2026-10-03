@@ -951,6 +951,61 @@ complete `id -> window-relative bounds` failure diagnostic needs a public GPUI
 API or a deliberately maintained dependency fork; until then, use Tier A's
 state assertions and Tier B's live-window inspection together.
 
+### What reaches a real `InputState` and what goes around it (#516)
+
+A scenario that passes says nothing about text entry unless the text went
+through a real gpui-component `InputState`. Read the scenario's row here before
+citing it as evidence for typing, pasting or a field's value. None of these
+cover IME composition or AppKit's input method: Tier A delivers keystrokes and
+paste actions, not marked text (use Tier B for IME).
+
+| How text reaches the field | Scenarios (`KAGI_GUI_E2E_ONLY` names) | What it proves |
+|---|---|---|
+| Typed keystrokes into the focused real `InputState` (`simulate_keystrokes` with characters) | `conflict_save_boundary`, `editor_save_admission`, `editor_save_buffer_identity`, `editor_external_change_banner`, `editor_banner_rename_and_save`, `remote_connect_keeps_dirty_editor`, `cross_worktree_merge` (Editor buffer); `create_branch_presents_backend_receipt`, `create_branch_replan_error` (branch name); `issues_pagination` (list filter); `palette_push_modal_keys` (command palette); `workspace_mode_toolbar` (Issue title) | The key path: focus, the input's key handling, its change event and the product's sync from it. |
+| Paste into the focused real `InputState` (`write_to_clipboard`, then `cmd-v` or `input::Paste`) | `remote_browse_escape_focus` (host), `worktree_lock_reason` (lock reason, after `cmd-a backspace`), `pr_fields_escape_focus` (picker filter), `workspace_mode_toolbar` (Issue title / body) | The paste path into the field the product focused, and the sync from it. |
+| `InputState::set_value` on the real input (no key or paste event) | `conflict_continue_cache` (Result pane), `home_github` (Home search), `theme_custom` (palette query) | The input's change event and the product's handling of the value; not focus or key handling. |
+| `InputState::replace` / `replace_all` on the real input (no key or paste event) | `issue_create_fields` (Issue body, via `insert_issue_body_for_e2e` / `replace_issue_body_for_e2e`), `home_work` (Reply body, via `insert_issue_reply_body_for_e2e`), `pr_same_number`, `workspace_mode_toolbar` (PR composer; Issue body via `insert_issue_body_for_e2e` / `replace_issue_body_for_e2e`; Reply body via `insert_issue_reply_body_for_e2e`) | The input's change event and the product's handling of the replaced text (the Composer / Reply draft subscription included); not focus, key or paste handling. |
+| `e2e::set_remote_browse_host_input`: `set_value` on the host input **and** a direct write of `host_input` | `merge_plan_latch`, `delete_branch_plan_latch`, `remote_browse_modal_routing`, `push_failure_keeps_modal` | Remote Browse holding its slot and input; not the form's own sync from the field (that is `remote_browse_escape_focus`). |
+| No `InputState` at all: `e2e::open_local_panel_no_inputs` / `open_worktree_panel_no_inputs`, message from the `commit_msg` fallback (`e2e::set_commit_message`, as headless `KAGI_COMMIT_MSG`) | `wip_diff_survives_reload`, `commit_panel_survives_reload`, `worktree_wip_inline`, `worktree_panel_commit`, `worktree_panel_amend_discard`, `worktree_panel_discard_recording_failure`, `diff_highlight_once`, `diff_highlight_stale`, `file_menu_freezes_path`, `file_menu_rejects_stale_owner`, `file_tree_roles`, `hunk_staging`, `modal_compact`, `smart_commit_generation_owner`, `smart_commit_modal_and_probe`, `stage_failure_notice`, `dialog_a11y_roles`, `commit_stage_deferred_owner`, `commit_panel_revalidates_on_activation`, `smart_generation_close_drops_panel`, `commit_panel_refuses_during_activation`, `commit_close_drops_panel`, `manual_reload_releases_revalidation`, `commit_row_layout_wip` | The commit panel's ownership, staging and write paths. Nothing about the message or description inputs: these were built without them because each `InputState` registers an App-level observer that keeps it alive past its window (see `open_worktree_panel_no_inputs`). |
+
+Not input, but also a stand-in: the `e2e::queue_*` seams (`queue_remote_refresh`,
+`queue_remote_open`, `queue_smart_generation`, `queue_github_pr_fetch`,
+`queue_github_pr_conversation`, `queue_cleanup_scan`, `queue_squash_scan`,
+`queue_ecosystem_mine`) hand the next background read a task the scenario
+controls instead of running `git`, `gh` or the LLM. They prove what the app does
+with a result that lands late, for another owner or out of order — not that the
+real read produces it. Used by `remote_refresh_departed_owner`,
+`remote_refresh_newest_request`, `remote_browse_modal_routing`,
+`smart_commit_generation_owner`, `smart_generation_close_drops_panel`,
+`pr_list_roles`, `pr_suggestion_apply`, `pr_threads`, `pr_viewed`,
+`pr_fields_escape_focus`, `field_picker_owner`, `ghe_viewer_login`,
+`ghe_viewer_login_closed_only`, `github_evidence_restores`,
+`github_evidence_background_owner`, `github_evidence_detached_owner`,
+`cleanup_evidence_background_owner`, `cleanup_evidence_superseded`,
+`cleanup_evidence_read_revision`, `cleanup_evidence_publish_generation`,
+`squash_evidence_read_revision`, `squash_evidence_publish_generation`,
+`ecosystem_evidence_background_owner`, `ecosystem_evidence_superseded`,
+`ecosystem_evidence_detached_samepath` and `workspace_mode_toolbar`.
+
+The same kind of stand-in, outside `e2e::queue_*`:
+
+- `KagiApp::queue_issue_list_fetch_for_e2e` (the next Issues list read, in
+  place of `gh issue list`): `issues_pagination`, `home_work`.
+- `remote_browse::e2e_transport::queue_remote_connect` (the next Remote Browse connection,
+  in place of `ssh`): `remote_browse_escape_focus`.
+- `e2e::worktree_inspection::queue` (the next worktree inspection, in place of
+  the size and removal-condition read): `worktree_inspection`.
+
+gpui's end-of-run leak detector stays on. `gui-e2e` enables `gpui/test-support`,
+which enables gpui's `leak-detection`. The detector runs when the runner's App
+is dropped, after the last scenario has passed, and a leaked entity fails the
+whole run (`Leaked handle for entity …`, exit non-zero). That is why the commit
+panel rows above use the no-inputs seam instead of keeping an `InputState`
+alive. Do not get a scenario through by switching the detector off, keeping the
+App alive, or forgetting a handle (`mem::forget`, `ManuallyDrop`, `Box::leak`).
+If a real input cannot be torn down, use a seam and add the scenario to the
+table.
+
 ## Tier B — real GUI driver
 
 Build `scripts/pidclick.swift` and, into the same directory, `scripts/pidcursor.swift`

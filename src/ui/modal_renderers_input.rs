@@ -6,8 +6,9 @@
 
 use super::i18n::Msg;
 use super::modal_renderers::{
-    modal_overlay, render_current_predicted, render_modal_title_row, PlanCardAccent,
+    modal_overlay, render_current_predicted, render_modal_title_row, ModalIcon, PlanCardAccent,
 };
+use super::modal_renderers_plan::render_input_recovery_commands;
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_MD};
 use super::theme::theme as current_theme;
 use gpui::{
@@ -62,16 +63,17 @@ pub(crate) fn render_input_modal_field(
 }
 
 pub(crate) fn render_input_modal_heading(
-    title: &'static str,
+    title: impl Into<SharedString>,
     target: Option<(&str, &str)>,
+    icon: ModalIcon,
+    color: u32,
 ) -> gpui::Div {
-    let heading = div().flex_shrink_0().flex().flex_col().gap_1().child(
-        div()
-            .text_lg()
-            .font_weight(gpui::FontWeight::SEMIBOLD)
-            .text_color(rgb(current_theme().text_main))
-            .child(SharedString::from(title)),
-    );
+    let heading = div()
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(render_modal_title_row(title.into(), Some((icon, color))));
     match target {
         Some((short_sha, summary)) => {
             let target = SharedString::from(format!("{short_sha}  {summary}"));
@@ -136,7 +138,7 @@ pub(crate) fn render_input_plan_modal(
     validation: Option<BranchRenameValidation>,
     error: Option<SharedString>,
     confirm_label: &'static str,
-    accent: Option<PlanCardAccent>,
+    accent: PlanCardAccent,
     cancel_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     confirm_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     cx: &gpui::App,
@@ -167,21 +169,22 @@ pub(crate) fn render_input_plan_modal(
     // #454 layer 4: adopt the shared shell — fixed title, scrolling middle,
     // fixed button row. Plan notes are unbounded (a rename can carry many
     // warnings/blockers), so the body is this card's single scroll region.
-    let card = modal_card(MODAL_W_MD).child(div().flex_shrink_0().child(render_modal_title_row(
-        SharedString::from(title),
-        accent.clone(),
-    )));
+    let (icon, color) = accent.clone();
+    let card = modal_card(MODAL_W_MD).child(render_input_modal_heading(title, None, icon, color));
     let mut body = modal_scroll_body().child(render_input_modal_field(
         label,
         input_state.as_ref(),
         field_reason,
     ));
 
+    let input_valid = input_state
+        .as_ref()
+        .is_some_and(|state| !state.read(cx).value().trim().is_empty());
     if let Some(plan) = plan {
         body = body.child(
             div()
                 .flex_shrink_0()
-                .child(render_current_predicted(&plan, accent.clone())),
+                .child(render_current_predicted(&plan, Some(accent.clone()))),
         );
 
         if !plan.warnings.is_empty() {
@@ -215,6 +218,15 @@ pub(crate) fn render_input_plan_modal(
                 );
             }
             body = body.child(block_col.flex_shrink_0());
+        }
+        if input_valid && !has_blockers {
+            if let Some(recovery) = plan.recovery.as_ref().filter(|r| !r.commands.is_empty()) {
+                body = body.child(
+                    div()
+                        .flex_shrink_0()
+                        .child(render_input_recovery_commands(&recovery.commands, color)),
+                );
+            }
         }
     }
 

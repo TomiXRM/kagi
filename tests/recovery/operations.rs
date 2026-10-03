@@ -2006,6 +2006,17 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
 
     app.update(cx, |app, cx| app.open_create_branch_modal(head, cx));
     paint(cx, window);
+    wait_painted(cx, &app, window, |app| {
+        app.create_branch_modal()
+            .and_then(|modal| modal.plan.plan())
+            .is_some_and(|plan| !plan.blockers.is_empty())
+    });
+    kagi::ui::e2e::clear_control_bounds(window.window_id(), "input-recovery");
+    paint(cx, window);
+    assert!(
+        kagi::ui::e2e::control_bounds(window.window_id(), "input-recovery").is_none(),
+        "empty branch name must not render a recovery line"
+    );
     let disabled = kagi::ui::e2e::confirm_bounds(window.window_id())
         .expect("empty branch name still shows a disabled Create");
     assert!(
@@ -2039,6 +2050,27 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
             .and_then(|modal| modal.plan.plan())
             .is_some_and(|plan| plan.blockers.is_empty())
     });
+    kagi::ui::e2e::clear_control_bounds(window.window_id(), "input-recovery");
+    paint(cx, window);
+    assert!(
+        kagi::ui::e2e::control_bounds(window.window_id(), "input-recovery").is_none(),
+        "Create Branch omits recovery even after the plan is ready"
+    );
+    let current = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-current")
+        .expect("shared pane renders CURRENT");
+    let arrow = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-arrow")
+        .expect("shared pane renders transition arrow");
+    let predicted = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-predicted")
+        .expect("shared pane renders PREDICTED");
+    assert!(
+        current.right() <= arrow.left() + gpui::px(1.)
+            && arrow.right() <= predicted.left() + gpui::px(1.),
+        "shared state pane must put CURRENT → PREDICTED in one row: {current:?}, {arrow:?}, {predicted:?}"
+    );
+    assert!(
+        f32::from(current.center().y - predicted.center().y).abs() <= 2.,
+        "shared state panes must align vertically: {current:?}, {predicted:?}"
+    );
 
     cx.update_window(window, |_, window, cx| {
         input.update(cx, |state, cx| {
@@ -2118,6 +2150,31 @@ pub fn scenario_input_confirm_disabled_cards(cx: &mut VisualTestAppContext) {
                     .is_some_and(|plan| !plan.blockers.is_empty())
             });
         }
+        if case == "tag" {
+            wait_painted(cx, &app, window, |app| {
+                app.create_tag_modal()
+                    .and_then(|m| m.plan.plan())
+                    .is_some_and(|plan| !plan.blockers.is_empty())
+            });
+        } else if case == "worktree" {
+            wait_painted(cx, &app, window, |app| {
+                app.create_worktree_modal()
+                    .and_then(|m| m.plan.plan())
+                    .is_some_and(|plan| !plan.blockers.is_empty())
+            });
+        } else if case == "rename" {
+            wait_painted(cx, &app, window, |app| {
+                app.rename_branch_modal()
+                    .and_then(|m| m.plan.plan())
+                    .is_some_and(|plan| !plan.blockers.is_empty())
+            });
+        }
+        kagi::ui::e2e::clear_control_bounds(window.window_id(), "input-recovery");
+        paint(cx, window);
+        assert!(
+            kagi::ui::e2e::control_bounds(window.window_id(), "input-recovery").is_none(),
+            "{case}: empty or blocked input must not render a recovery line"
+        );
         let button = kagi::ui::e2e::confirm_bounds(window.window_id())
             .unwrap_or_else(|| panic!("{case}: blocked form still shows its primary action"));
         assert!(
@@ -2148,6 +2205,100 @@ pub fn scenario_input_confirm_disabled_cards(cx: &mut VisualTestAppContext) {
             before,
             "{case}: disabled primary click cannot change repository state"
         );
+        if case == "tag" {
+            let input = cx
+                .read(|cx| {
+                    app.read(cx)
+                        .create_tag_modal()
+                        .and_then(|m| m.input_state.clone())
+                })
+                .expect("tag input remains available");
+            cx.update_window(window, |_, window, cx| {
+                input.update(cx, |state, cx| state.set_value("v-ui", window, cx));
+            })
+            .unwrap();
+            wait_painted(cx, &app, window, |app| {
+                app.create_tag_modal()
+                    .and_then(|m| m.plan.plan())
+                    .is_some_and(|plan| plan.blockers.is_empty())
+            });
+            kagi::ui::e2e::clear_control_bounds(window.window_id(), "input-recovery");
+            paint(cx, window);
+            assert!(
+                kagi::ui::e2e::control_bounds(window.window_id(), "input-recovery").is_some(),
+                "ready tag plan must show its command-only recovery row"
+            );
+            assert_eq!(
+                repo_fingerprint(&repo),
+                before,
+                "planning never writes a tag"
+            );
+        }
+        if case == "rename" || case == "upstream" {
+            let input = cx
+                .read(|cx| {
+                    let app = app.read(cx);
+                    match case {
+                        "rename" => app
+                            .rename_branch_modal()
+                            .and_then(|m| m.input_state.clone()),
+                        _ => app.set_upstream_modal().and_then(|m| m.input_state.clone()),
+                    }
+                })
+                .expect("ready input card retains its text field");
+            let value = if case == "rename" {
+                "renamed-956"
+            } else {
+                "origin/main"
+            };
+            cx.update_window(window, |_, window, cx| {
+                input.update(cx, |state, cx| state.set_value(value, window, cx));
+                window.focus(&input.read(cx).focus_handle(cx), cx);
+                window.draw(cx).clear();
+            })
+            .unwrap();
+            wait_painted(cx, &app, window, |app| {
+                let plan = if case == "rename" {
+                    app.rename_branch_modal().and_then(|m| m.plan.plan())
+                } else {
+                    app.set_upstream_modal().and_then(|m| m.plan.plan())
+                };
+                plan.is_some_and(|plan| plan.blockers.is_empty())
+            });
+            cx.update_window(window, |_, window, cx| {
+                input.update(cx, |state, cx| {
+                    gpui::EntityInputHandler::replace_and_mark_text_in_range(
+                        state,
+                        Some(0..value.len()),
+                        value,
+                        Some(value.len()..value.len()),
+                        window,
+                        cx,
+                    );
+                });
+                window.draw(cx).clear();
+            })
+            .unwrap();
+            cx.simulate_keystrokes(window, "enter");
+            cx.run_until_parked();
+            let remains_open = cx.read(|cx| {
+                let app = app.read(cx);
+                if case == "rename" {
+                    app.rename_branch_modal().is_some()
+                } else {
+                    app.set_upstream_modal().is_some()
+                }
+            });
+            assert!(
+                remains_open,
+                "{case}: IME Enter must keep the ready form open"
+            );
+            assert_eq!(
+                repo_fingerprint(&repo),
+                before,
+                "{case}: accepting IME candidates must not write Git state"
+            );
+        }
         unmount(cx, app, window);
     }
     eprintln!("[gui-e2e] PASS input_confirm_disabled_cards");

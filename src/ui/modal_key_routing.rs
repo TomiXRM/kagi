@@ -70,7 +70,7 @@ impl KagiApp {
     }
 
     /// An IME's Enter accepts the marked text; it must not also confirm a Git
-    /// write. The four input-confirm cards keep InputState as their only text
+    /// write. All six input-confirm cards keep InputState as their only text
     /// owner, so query that state rather than keeping a second composition flag.
     fn input_modal_is_composing(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         use modals::ActiveModal as M;
@@ -88,6 +88,8 @@ impl KagiApp {
                 marked(modal.branch_state.as_ref()) || marked(modal.path_state.as_ref())
             }
             Some(M::StashPush(modal)) => marked(modal.input_state.as_ref()),
+            Some(M::RenameBranch(modal)) => marked(modal.input_state.as_ref()),
+            Some(M::SetUpstream(modal)) => marked(modal.input_state.as_ref()),
             _ => false,
         }
     }

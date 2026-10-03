@@ -12,6 +12,7 @@ use super::modal_renderers::{
 use super::modal_renderers_input::{
     render_input_modal_action, render_input_modal_field, render_input_modal_heading,
 };
+use super::modal_renderers_plan::render_input_recovery_commands;
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_MD};
 use super::modals::*;
 use super::theme::theme as current_theme;
@@ -67,8 +68,12 @@ pub(crate) fn render_stash_push_modal(
 
     // The message is optional. Its label and M-sized input still form one
     // field, without a validation row for the empty value.
-    let card =
-        modal_card(MODAL_W_MD).child(render_input_modal_heading(Msg::InputStashTitle.t(), None));
+    let card = modal_card(MODAL_W_MD).child(render_input_modal_heading(
+        Msg::InputStashTitle.t(),
+        None,
+        IconName::Inbox.into(),
+        current_theme().color_warning,
+    ));
     let mut body = modal_scroll_body().child(render_input_modal_field(
         Msg::InputStashMessage.t(),
         modal.input_state.as_ref(),
@@ -118,13 +123,19 @@ pub(crate) fn render_stash_push_modal(
             body = body.child(block_col.flex_shrink_0());
         }
 
-        // ── Recovery ──────────────────────────────────────
-        let recovery_text = plan_recovery_text(p.recovery.as_ref());
-        if !recovery_text.is_empty() {
-            body = body.child(div().flex_shrink_0().child(render_recovery_box(
-                &recovery_text,
-                current_theme().color_warning,
-            )));
+        // A blank message is valid for the operation, but has no recovery
+        // preview. Keep guidance command-only when a message and plan are ready.
+        let message_filled = modal
+            .input_state
+            .as_ref()
+            .is_some_and(|state| !state.read(cx).value().trim().is_empty());
+        if message_filled && !has_blockers {
+            if let Some(recovery) = p.recovery.as_ref().filter(|r| !r.commands.is_empty()) {
+                body = body.child(div().flex_shrink_0().child(render_input_recovery_commands(
+                    &recovery.commands,
+                    current_theme().color_warning,
+                )));
+            }
         }
     }
 

@@ -378,7 +378,7 @@ pub(crate) fn render_set_upstream_modal(
         None,
         plan_or_exec_error(&modal.plan, modal.error),
         Msg::InputSetUpstream.t(),
-        Some((IconName::ExternalLink.into(), theme().color_branch)),
+        (IconName::ExternalLink.into(), theme().color_branch),
         cancel_handler,
         confirm_handler,
         cx,
@@ -413,10 +413,10 @@ pub(crate) fn render_rename_branch_modal(
         Some(modal.validation),
         plan_or_exec_error(&modal.plan, modal.error),
         Msg::InputRename.t(),
-        Some((
+        (
             ModalIcon::Path("icons/square-pen.svg"),
             theme().color_branch,
-        )),
+        ),
         cancel_handler,
         confirm_handler,
         cx,
@@ -736,12 +736,28 @@ pub(crate) fn render_recovery_box(text: &str, color: u32) -> gpui::AnyElement {
         .gap(theme_mod::scaled_px(10.));
     for (group_index, (is_command, lines)) in groups.into_iter().enumerate() {
         col = col.child(if is_command {
-            render_recovery_commands(&lines, rule_color, group_index)
+            render_recovery_commands(lines.iter().copied(), rule_color, group_index)
         } else {
             render_recovery_prose(&lines)
         });
     }
     col.into_any_element()
+}
+
+/// Input cards show only the structured, copyable commands once their input
+/// and plan are ready. Unlike the general recovery box, this never renders
+/// localized explanatory prose or infers commands from display text.
+pub(crate) fn render_input_recovery_commands(commands: &[String], color: u32) -> gpui::AnyElement {
+    let (_, rule_color, _) = theme_mod::badge_style(color);
+    let lines = commands.iter().map(String::as_str);
+    crate::ui::e2e::measure_control(
+        "input-recovery",
+        div()
+            .w_full()
+            .pt(theme_mod::scaled_px(6.))
+            .child(render_recovery_commands(lines, rule_color, 0)),
+    )
+    .into_any_element()
 }
 
 /// A consecutive run of non-command recovery lines: small, proportional, and
@@ -774,8 +790,8 @@ fn render_recovery_prose(lines: &[&str]) -> gpui::AnyElement {
 /// A consecutive run of `git ...` command lines: monospace, set off from the
 /// prose by a single hairline accent rule — no fill, no border-all-round, so
 /// it can't be mistaken for a button.
-fn render_recovery_commands(
-    lines: &[&str],
+fn render_recovery_commands<'a>(
+    lines: impl IntoIterator<Item = &'a str>,
     rule_color: u32,
     group_index: usize,
 ) -> gpui::AnyElement {
@@ -784,7 +800,7 @@ fn render_recovery_commands(
         .flex()
         .flex_col()
         .gap(theme_mod::scaled_px(2.));
-    for (line_index, line) in lines.iter().enumerate() {
+    for (line_index, line) in lines.into_iter().enumerate() {
         block = block.child(
             // Preserve the exact command when a branch name has no wrap
             // opportunity. Its intrinsic-width child can scroll inside the

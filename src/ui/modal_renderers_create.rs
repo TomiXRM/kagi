@@ -7,10 +7,11 @@
 
 use super::button_style::KagiButton;
 use super::i18n::Msg;
-use super::modal_renderers::{modal_overlay, render_current_predicted, render_recovery_box};
+use super::modal_renderers::{modal_overlay, render_current_predicted, ModalIcon};
 use super::modal_renderers_input::{
     render_input_modal_action, render_input_modal_field, render_input_modal_heading,
 };
+use super::modal_renderers_plan::render_input_recovery_commands;
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_LG, MODAL_W_MD};
 use super::modals::worktree::CreateWorktreeModal;
 use super::modals::*;
@@ -21,7 +22,7 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::IconName;
 use kagi_domain::plan_note::{CommonNote, PlanNote, TagNote};
-use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text};
+use kagi_ui_core::i18n::plan_note_text;
 
 // ──────────────────────────────────────────────────────────────
 // Create-branch modal renderer (T014)
@@ -89,12 +90,13 @@ pub(crate) fn render_create_branch_modal(
     };
 
     // ── Build modal card ────────────────────────────────────
-    // The plan block below (blockers + recovery prose) is unbounded and the
-    // card holds no inner scroller, so the body is this card's single scroll
-    // region; title and buttons stay pinned outside it.
+    // The card's scrollable body holds the plan details; title and buttons
+    // remain pinned outside it.
     let card = modal_card(MODAL_W_MD).child(render_input_modal_heading(
         Msg::InputBranchTitle.t(),
         Some((modal.at.short(), &modal.start_title)),
+        IconName::Plus.into(),
+        current_theme().color_success,
     ));
     let mut body = modal_scroll_body()
         // ── Name input ────────────────────────────────────
@@ -154,15 +156,8 @@ pub(crate) fn render_create_branch_modal(
             body = body.child(block_col.flex_shrink_0());
         }
 
-        // Keep the full localized recovery explanation and commands, including
-        // while a field is blocked: it remains part of the plan's safety preview.
-        let recovery_text = plan_recovery_text(p.recovery.as_ref());
-        if !recovery_text.is_empty() {
-            body = body.child(div().flex_shrink_0().child(render_recovery_box(
-                &recovery_text,
-                current_theme().color_success,
-            )));
-        }
+        // Creating a branch never needs recovery in this card: the complete
+        // guidance remains available in the operation log.
     }
     // ── Error message (preflight / execute failure) ───────
     if let Some(ref err) = error {
@@ -276,6 +271,8 @@ pub(crate) fn render_create_worktree_modal(
     let card = modal_card(MODAL_W_LG).child(render_input_modal_heading(
         Msg::InputWorktreeTitle.t(),
         Some((modal.at.short(), &modal.start_title)),
+        IconName::FolderOpen.into(),
+        current_theme().color_success,
     ));
     let mut body = modal_scroll_body()
         .child(render_input_modal_field(
@@ -357,12 +354,21 @@ pub(crate) fn render_create_worktree_modal(
         if nonfield_blocker {
             body = body.child(block_col.flex_shrink_0());
         }
-        let recovery_text = plan_recovery_text(p.recovery.as_ref());
-        if !recovery_text.is_empty() {
-            body = body.child(div().flex_shrink_0().child(render_recovery_box(
-                &recovery_text,
-                current_theme().color_success,
-            )));
+        let fields_filled = modal
+            .branch_state
+            .as_ref()
+            .is_some_and(|state| !state.read(cx).value().trim().is_empty())
+            && modal
+                .path_state
+                .as_ref()
+                .is_some_and(|state| !state.read(cx).value().trim().is_empty());
+        if fields_filled && !has_blockers {
+            if let Some(recovery) = p.recovery.as_ref().filter(|r| !r.commands.is_empty()) {
+                body = body.child(div().flex_shrink_0().child(render_input_recovery_commands(
+                    &recovery.commands,
+                    current_theme().color_success,
+                )));
+            }
         }
     }
     if let Some(ref err) = error {
@@ -480,6 +486,8 @@ pub(crate) fn render_create_tag_modal(
     let card = modal_card(MODAL_W_MD).child(render_input_modal_heading(
         Msg::InputTagTitle.t(),
         Some((modal.at.short(), &modal.start_title)),
+        ModalIcon::Path("icons/tag.svg"),
+        current_theme().color_tag,
     ));
     let mut body = modal_scroll_body().child(render_input_modal_field(
         Msg::InputTagName.t(),
@@ -521,12 +529,17 @@ pub(crate) fn render_create_tag_modal(
         if nonfield_blocker {
             body = body.child(block_col.flex_shrink_0());
         }
-        let recovery_text = plan_recovery_text(p.recovery.as_ref());
-        if !recovery_text.is_empty() {
-            body = body.child(div().flex_shrink_0().child(render_recovery_box(
-                &recovery_text,
-                current_theme().color_tag,
-            )));
+        let input_filled = modal
+            .input_state
+            .as_ref()
+            .is_some_and(|state| !state.read(cx).value().trim().is_empty());
+        if input_filled && !has_blockers {
+            if let Some(recovery) = p.recovery.as_ref().filter(|r| !r.commands.is_empty()) {
+                body = body.child(div().flex_shrink_0().child(render_input_recovery_commands(
+                    &recovery.commands,
+                    current_theme().color_tag,
+                )));
+            }
         }
     }
 

@@ -568,7 +568,7 @@ impl Render for KagiApp {
                     this.step_editor_ws_selection(-1, window, cx);
                 } else if this.ui().main_diff.is_some() {
                     this.main_diff_step(-1, cx);
-                } else {
+                } else if this.commit_list_has_focus(window, cx) {
                     this.step_commit_selection(-1);
                 }
                 cx.notify();
@@ -585,31 +585,31 @@ impl Render for KagiApp {
                     this.step_editor_ws_selection(1, window, cx);
                 } else if this.ui().main_diff.is_some() {
                     this.main_diff_step(1, cx);
-                } else {
+                } else if this.commit_list_has_focus(window, cx) {
                     this.step_commit_selection(1);
                 }
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &CommitFirst, window, cx| {
-                if this.commit_list_has_focus(window) {
+                if this.commit_list_has_focus(window, cx) {
                     this.jump_commit_selection(false);
                     cx.notify();
                 }
             }))
             .on_action(cx.listener(|this, _: &CommitLast, window, cx| {
-                if this.commit_list_has_focus(window) {
+                if this.commit_list_has_focus(window, cx) {
                     this.jump_commit_selection(true);
                     cx.notify();
                 }
             }))
             .on_action(cx.listener(|this, _: &CommitPageUp, window, cx| {
-                if this.commit_list_has_focus(window) {
+                if this.commit_list_has_focus(window, cx) {
                     this.step_commit_selection(-this.commit_page_size());
                     cx.notify();
                 }
             }))
             .on_action(cx.listener(|this, _: &CommitPageDown, window, cx| {
-                if this.commit_list_has_focus(window) {
+                if this.commit_list_has_focus(window, cx) {
                     this.step_commit_selection(this.commit_page_size());
                     cx.notify();
                 }

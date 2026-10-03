@@ -101,6 +101,44 @@ pub fn scenario_commit_paging(cx: &mut VisualTestAppContext) {
     assert_at(cx, 0);
     keys(cx, window, "cmd-down");
     assert_at(cx, LAST);
+    // An overlay covers Graph even if focus is put back on the root.
+    keys(cx, window, "home");
+    assert_at(cx, 0);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.handle_menu_command("app.settings", window, cx)
+        });
+        window.draw(cx).clear();
+        let root = app.read(cx).root_focus.clone().expect("root focus");
+        root.focus(window, cx);
+        assert!(
+            root.is_focused(window),
+            "root must own focus behind Settings"
+        );
+    })
+    .unwrap();
+    assert!(
+        cx.read(|cx| app.read(cx).menu_overlay.is_some()),
+        "Settings must cover Graph"
+    );
+    keys(cx, window, "end");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().selected),
+        Some(0),
+        "End behind Settings must not change the hidden commit selection"
+    );
+    keys(cx, window, "down");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().selected),
+        Some(0),
+        "Down behind Settings must not change the hidden commit selection"
+    );
+    keys(cx, window, "escape");
+    assert!(cx.read(|cx| app.read(cx).menu_overlay.is_none()));
+    keys(cx, window, "down");
+    assert_at(cx, 1);
+    keys(cx, window, "up");
+    assert_at(cx, 0);
     // Home and other center takeovers leave the covered commit untouched.
     keys(cx, window, "home");
     assert_at(cx, 0);

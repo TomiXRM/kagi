@@ -3107,8 +3107,15 @@ impl KagiApp {
         self.ui().conflict.is_some() && !self.ui().conflict_merge_pending
     }
 
-    fn commit_list_has_focus(&self, window: &Window) -> bool {
+    fn commit_list_has_focus(&self, window: &Window, cx: &Context<Self>) -> bool {
         self.root_has_focus(window)
+            && self.menu_overlay.is_none()
+            && !self.has_active_modal()
+            && self
+                .ui()
+                .commit_panel
+                .as_ref()
+                .is_none_or(|panel| panel.read(cx).state.plan_modal.is_none())
             && !self.conflict_body_visible()
             && !self.home_in_front()
             && workspace::resolve_workspace(&self.workspace_inputs(false, false, false)).center

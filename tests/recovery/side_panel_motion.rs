@@ -11,9 +11,30 @@
 
 use std::time::{Duration, Instant};
 
-use gpui::{AnyWindowHandle, Bounds, Entity, Pixels, VisualTestAppContext};
+use gpui::{
+    point, px, AnyWindowHandle, Bounds, Entity, Modifiers, MouseButton, Pixels,
+    VisualTestAppContext,
+};
 use kagi::ui::commands::{ToggleCommitDetails, ToggleSidebar};
 use kagi::ui::{e2e, theme, KagiApp};
+
+/// Press on the sidebar's divider (the last pixels of its clip) and drag it
+/// 40px to the left, drawing each step at clock time `at`.
+fn drag_sidebar_divider(cx: &mut VisualTestAppContext, window: AnyWindowHandle, at: Instant) {
+    let clip = bounds(window, "sidebar-clip").expect("the sidebar is drawn");
+    let start = point(clip.origin.x + clip.size.width - px(2.), clip.center().y);
+    cx.simulate_mouse_move(window, start, None, Modifiers::none());
+    cx.simulate_mouse_down(window, start, MouseButton::Left, Modifiers::none());
+    let mut pointer = start;
+    for step in [5., 20., 40.] {
+        pointer = point(start.x - px(step), start.y);
+        cx.simulate_mouse_move(window, pointer, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+        frame(cx, window, at);
+    }
+    cx.simulate_mouse_up(window, pointer, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+}
 
 use crate::macos::{build_fixture, git, mount, unmount};
 
@@ -221,11 +242,42 @@ pub fn scenario_side_panel_motion(cx: &mut VisualTestAppContext) {
     );
     theme::set_reduce_motion(false);
 
+    // ── #957 review: a divider drag in mid-slide writes no width ──
+    // The divider sits at the clip's moving edge, not at the saved width;
+    // the drag is ignored until the pane settles.
+    let t6 = tr + Duration::from_millis(1000);
+    frame(cx, window, t6);
+    let saved_width = cx.read(|cx| app.read(cx).sidebar.width);
+    cx.dispatch_action(window, ToggleSidebar);
+    let t_drag = t6 + Duration::from_millis(60);
+    frame(cx, window, t_drag);
+    drag_sidebar_divider(cx, window, t_drag);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).sidebar.width),
+        saved_width,
+        "a drag while the sidebar slides does not rewrite its width"
+    );
+    // At rest the same drag resizes it, so the check above is not vacuous.
+    cx.dispatch_action(window, ToggleSidebar);
+    let t7 = t_drag + Duration::from_millis(1000);
+    frame(cx, window, t7);
+    assert_eq!(width(window, "sidebar-clip"), Some(sidebar_full));
+    drag_sidebar_divider(cx, window, t7);
+    assert_ne!(
+        cx.read(|cx| app.read(cx).sidebar.width),
+        saved_width,
+        "at rest the divider drag resizes the sidebar"
+    );
+    app.update(cx, |app, cx| {
+        app.sidebar.width = saved_width;
+        cx.notify();
+    });
+
     // ── Inspector → Commit Panel in the same slot: no motion ──
     std::fs::write(repo.join("README.md"), "# changed by the scenario\n").unwrap();
     app.update(cx, |app, cx| app.reload(cx));
     crate::recovery_operations::wait_idle(cx, &app);
-    let t4 = tr + Duration::from_millis(1000);
+    let t4 = t7 + Duration::from_millis(1000);
     frame(cx, window, t4);
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| app.open_commit_panel(window, cx));

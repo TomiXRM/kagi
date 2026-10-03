@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- Home の行一覧と Graph の commit 一覧を Home / End / PageUp / PageDown で移動できるようにしました。Cmd+↑/↓ でも先頭・末尾へ移動します。ページ移動は表示中の行数を基準にし、移動先が画面に収まるようスクロールします。(#980)
+
 ### Fixed
 
 - ツールバーで使えない Pull / Push / Stash / Pop / Undo / Redo も Tab で選べるようにしました。キーボードで選ぶと枠が表示され、Enter / Space はクリックと同じ理由を下部に示します。AX のボタン名は維持し、使えない理由を `aria_description` に設定します。(#972)

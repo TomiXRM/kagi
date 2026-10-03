@@ -767,6 +767,16 @@ The current suite covers:
   are focused through `focus_home_row_for_e2e` and read through
   `home_row_focused_for_e2e` (keys `repo:<owner>/<name>`,
   `<kind>:<owner>/<name>#<n>`).
+- Home row paging (`KAGI_GUI_E2E_ONLY=home_row_paging`,
+  `tests/recovery/home_rows.rs`, #980): 60 repository rows, raw Home / End /
+  PageUp / PageDown and Cmd+↑/↓ move row focus; the expected step is the
+  number of rows intersecting the list viewport minus one (minimum one).
+  After each jump, the focused row's bounds fit inside that viewport.
+- Commit graph paging (`KAGI_GUI_E2E_ONLY=commit_paging`,
+  `tests/recovery/commit_paging.rs`, #980): a 200-commit fixture with root
+  focus presses the same raw keys, checks selection (page step =
+  floor(viewport height / uniform row height) minus one, minimum one) and
+  checks the selected row against the measured `commit-list-viewport`.
 - Toolbar unavailable reasons (`KAGI_GUI_E2E_ONLY=toolbar_keyboard_reasons`,
   `tests/recovery/toolbar_keyboard.rs`, #972): starting at the root, GPUI's
   `focus_next` visits the rendered toolbar in visual order; an F19 key-down

@@ -590,6 +590,30 @@ impl Render for KagiApp {
                 }
                 cx.notify();
             }))
+            .on_action(cx.listener(|this, _: &CommitFirst, window, cx| {
+                if this.commit_list_has_focus(window) {
+                    this.jump_commit_selection(false);
+                    cx.notify();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CommitLast, window, cx| {
+                if this.commit_list_has_focus(window) {
+                    this.jump_commit_selection(true);
+                    cx.notify();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CommitPageUp, window, cx| {
+                if this.commit_list_has_focus(window) {
+                    this.step_commit_selection(-this.commit_page_size());
+                    cx.notify();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CommitPageDown, window, cx| {
+                if this.commit_list_has_focus(window) {
+                    this.step_commit_selection(this.commit_page_size());
+                    cx.notify();
+                }
+            }))
             .on_action(cx.listener(|this, _: &PrModePrevPane, window, cx| {
                 if this.root_has_focus(window) && this.pr_mode().is_some() {
                     this.pr_mode_cycle_focus(-1, cx);

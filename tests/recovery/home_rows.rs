@@ -616,3 +616,102 @@ pub fn scenario_home_rows(cx: &mut VisualTestAppContext) {
 
     unmount(cx, app, window);
 }
+
+pub fn scenario_home_row_paging(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["recent_repos"]);
+    let start = build_fixture();
+    let _gh = OfflineGh::with_script(&gh_script());
+    let mut cleared = kagi_git::github_repos::TOKEN_OVERRIDES.to_vec();
+    cleared.push("GH_HOST");
+    let _env = EnvCleared::new(&cleared);
+    let dir = kagi::ui::settings::settings_path()
+        .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
+        .expect("the runner sets KAGI_LOG_DIR");
+    let _ = std::fs::remove_file(kagi_git::github_repos_cache::cache_path(&dir));
+    let _ = std::fs::remove_file(kagi_git::github_repos_cache::work_cache_path(&dir));
+    let (app, window) = mount(cx, start.path());
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.open_home_tab(window, cx))
+    })
+    .unwrap();
+    wait_for(cx, &app, "the lists", settled);
+    assert!(drawn(cx, window, "home-gh-acme/r00"));
+    focus_row(cx, &app, window, "repo:acme/r00");
+    let visible_page = |cx: &mut VisualTestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            window.draw(cx).clear();
+            app.read(cx)
+                .home_row_viewport_for_e2e(window)
+                .0
+                .len()
+                .saturating_sub(1)
+                .max(1)
+        })
+        .unwrap()
+    };
+    let page = visible_page(cx);
+    assert!(
+        page > 1 && page < 59,
+        "fixture needs multiple visible rows: {page}"
+    );
+
+    let assert_at = |cx: &mut VisualTestAppContext, ix: usize| {
+        let focused = row(cx, &app, window);
+        assert_eq!(focused, Some(format!("repo:acme/r{ix:02}")));
+        let (_, inside) = cx
+            .update_window(window, |_, window, cx| {
+                window.draw(cx).clear();
+                app.read(cx).home_row_viewport_for_e2e(window)
+            })
+            .unwrap();
+        assert!(
+            inside,
+            "focused Home row r{ix:02} must be inside the viewport"
+        );
+    };
+    keys(cx, window, "pagedown");
+    assert_at(cx, page);
+    keys(cx, window, "pageup");
+    assert_at(cx, 0);
+    keys(cx, window, "end");
+    assert_at(cx, 59);
+    let end_page = visible_page(cx);
+    keys(cx, window, "pageup");
+    let from_end = 59 - end_page;
+    assert_at(cx, from_end);
+    let return_page = visible_page(cx);
+    keys(cx, window, "pagedown");
+    assert_at(cx, from_end.saturating_add(return_page).min(59));
+    keys(cx, window, "home");
+    assert_at(cx, 0);
+    keys(cx, window, "cmd-down");
+    assert_at(cx, 59);
+    keys(cx, window, "cmd-up");
+    assert_at(cx, 0);
+
+    cx.update_window(window, |_, window, cx| {
+        let input = app
+            .read(cx)
+            .home_github
+            .filter
+            .clone()
+            .expect("Home search");
+        input.update(cx, |state, cx| state.focus(window, cx));
+    })
+    .unwrap();
+    keys(cx, window, "home end pageup pagedown cmd-up cmd-down");
+    assert_eq!(
+        row(cx, &app, window),
+        None,
+        "a focused Input keeps paging keys"
+    );
+    let input_focused = cx
+        .update_window(window, |_, window, cx| {
+            let input = app.read(cx).home_github.filter.clone().unwrap();
+            input.read(cx).focus_handle(cx).is_focused(window)
+        })
+        .unwrap();
+    assert!(input_focused, "Home search retained keyboard focus");
+
+    unmount(cx, app, window);
+}

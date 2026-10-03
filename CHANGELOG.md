@@ -22,6 +22,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Operation Log の操作者の表示を、日本語表示でも「人」ではなく「Human」にしました(CLI / MCP と同じく英語の表記)。(#908)
 - Inspector の commit 本文で、箇条書きなど改行で区切られた行が「- bump the version- tag the release」のように 1 行につながって表示されていた問題を修正しました。本文の改行どおりに 1 行ずつ表示します。(#946)
 - Issues の下書き(新しい Issue と返信)を、clone ごと・番号ごとに加えて書き込み先の repository ごとに保存するようにしました。`gh repo set-default` で別の repository に切り替えた後、同じ番号の別 Issue の欄に前の repository 宛ての下書きが出て、そのまま投稿されることはありません(前の下書きは消さずに残ります)。以前の版で保存した下書きは、clone の remote が指す repository が 1 つだけのときにその repository へ 1 回だけ引き継ぎ、複数あるときは引き継がずに元の場所に残します。(#940 review)
+- PR を開いたときの会話・レビュースレッド・merge 状態を、その PR の repository から読むようにしました。これまでは clone の `gh repo set-default` が指す repository から読んでいたため、Home から別の repository を指す clone で PR を開くと、同じ番号の別 PR の会話が本文の下に並ぶことがありました。(#940 review)
 
 ### Changed
 
@@ -32,6 +33,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Home の一覧(リポジトリ / PR / Issue)の項目を、描画のたびではなく、データ・絞り込み・切り替え先・手元の clone・clone 中のものが変わったときだけ作り直すようにしました。spinner やカーソルの点滅による再描画で、全件の小文字化と複製を毎フレーム行わなくなります。(#937)
 - Home の見出しの下にあった説明文(「最近開いたリポジトリを選ぶか、フォルダーを開くか、SSH で接続します。」)を削除しました。見出しとボタンはそのままです。
 - Cmd+J の下部パネル(Terminal / Operation Log / Activity)を、高さのアニメーションで出し入れするようにしました(開く 180ms ease-out、閉じる 150ms ease-in)。途中でもう一度押すと、その位置から逆向きに戻ります。動く間も Terminal の行数・桁数は変わりません。「動きを減らす」が有効なら即座に切り替わります。(#950)
+- 左のサイドバー(View → Toggle Sidebar)と右の Inspector / Commit Panel(View → Toggle Commit Details)の表示・非表示も、下部パネルと同じ時間と動き(開く 180ms ease-out、閉じる 150ms ease-in)で、幅だけを動かして出し入れするようにしました。途中でもう一度押すとその位置から逆向きに戻り、Graph の行・選択・位置は動きません。Inspector と Commit Panel の切り替えや、モードの切り替えでの表示・非表示はこれまでどおり即座です。「動きを減らす」が有効なら即座に切り替わります。(#955)
 
 ### Added
 

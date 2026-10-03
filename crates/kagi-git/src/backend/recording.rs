@@ -209,13 +209,18 @@ pub fn recovery_handles(result: &Result<OperationOutcome, GitError>) -> Vec<Reco
             .iter()
             .map(|b| RecoveryHandle::oid(recovery::BRANCH_TIP, &b.old).with_reference(&b.backup))
             .collect(),
-        // #334 slice 2b: every branch an op-revert / restore moved keeps its
-        // pre-restore tip (a recreated branch had none to keep).
+        // #334 / #887: every changed branch or tag keeps its raw pre-restore
+        // ref OID. Annotated tags point at tag objects, not peeled commits.
         OperationOutcome::OplogRestore { restored } => restored
             .iter()
             .filter_map(|r| {
                 let (from, backup) = (r.from.as_ref()?, r.backup.as_ref()?);
-                Some(RecoveryHandle::oid(recovery::BRANCH_TIP, from).with_reference(backup))
+                let kind = if r.refname.starts_with("refs/tags/") {
+                    recovery::TAG_REF
+                } else {
+                    recovery::BRANCH_TIP
+                };
+                Some(RecoveryHandle::oid(kind, from).with_reference(backup))
             })
             .collect(),
         // Partial discards land here too: `is_partial` keeps the outcome `Ok`

@@ -1698,6 +1698,10 @@ mod macos {
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_card),
             ),
             (
+                "oplog_restore_tag_preview",
+                Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_tag_preview),
+            ),
+            (
                 "oplog_restore_preview_review",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_preview_review),
             ),

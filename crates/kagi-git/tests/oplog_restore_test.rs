@@ -9,7 +9,9 @@ use git_fixture::{commit_all, git, git_output, init_repo, write_file};
 mod test_support;
 
 use kagi_domain::plan_note::{HeadAt, OplogRestoreNote, PlanNote};
-use kagi_git::oplog::{append_oplog, read_oplog_tail_for_repo, OpLogEntry, OpOutcome};
+use kagi_git::oplog::{
+    append_oplog, entry_to_json, read_oplog_tail_for_repo, OpLogEntry, OpOutcome, RefScope,
+};
 use kagi_git::{Backend, CommitId, GitError, Operation, OperationPlan, StateSummary};
 use std::path::{Path, PathBuf};
 
@@ -86,6 +88,465 @@ fn commit(dir: &Path, content: &str) -> u64 {
             message: content.trim().into(),
         },
     )
+}
+
+/// Record a real local ref write with the same observer and oplog builder used
+/// for writes whose ref names are not known until execution.
+fn observed_ref_write(dir: &Path, op: &str, args: &[&str]) -> u64 {
+    let (result, moves) = backend(dir).observe_ref_moves(|_| {
+        git(dir, args);
+        Ok::<(), GitError>(())
+    });
+    result.unwrap();
+    let state = StateSummary {
+        head: "branch: main".into(),
+        dirty: "clean".into(),
+    };
+    let entry = OpLogEntry::new(
+        op,
+        dir.display().to_string(),
+        state.clone(),
+        OpOutcome::Success { after: state },
+    )
+    .with_worktree(Some(dir.display().to_string()))
+    .with_ref_moves(moves);
+    append_oplog(&entry).unwrap();
+    newest(dir).id
+}
+
+#[test]
+fn recorded_lightweight_tag_creation_can_be_reverted_and_recreated() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let tip = git_output(&repo, &["rev-parse", "HEAD"]);
+    let created = run(
+        &repo,
+        Operation::CreateTag {
+            name: "light".into(),
+            at: CommitId(tip.clone()),
+        },
+    );
+    assert_eq!(newest(&repo).ref_scope, RefScope::HeadsAndTags);
+    assert_eq!(
+        newest(&repo)
+            .ref_moves
+            .as_ref()
+            .and_then(|moves| moves.iter().find(|m| m.refname == "refs/tags/light"))
+            .and_then(|m| m.new.as_deref()),
+        Some(tip.as_str()),
+        "record the local tag at its raw ref OID"
+    );
+    let revert = Operation::OpRevert { entry_id: created };
+    let approved = plan(&repo, &revert);
+    assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
+    backend(&repo).run(&revert, &approved).unwrap();
+    assert!(!git_fixture::git_succeeds(
+        &repo,
+        &["show-ref", "--verify", "refs/tags/light"]
+    ));
+    let undone = newest(&repo).id;
+    let recreate = Operation::OpRevert { entry_id: undone };
+    let approved = plan(&repo, &recreate);
+    assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
+    backend(&repo).run(&recreate, &approved).unwrap();
+    assert_eq!(git_output(&repo, &["rev-parse", "refs/tags/light"]), tip);
+}
+
+#[test]
+fn legacy_branch_only_tag_entry_blocks_revert_and_restore_to_point() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let point = create(&repo, "point");
+    // The pre-tag observer recorded branch moves only: CreateTag succeeded,
+    // but its receipt said `ref_moves: []`. Reproduce the old wire row, not
+    // a new receipt with tag-inclusive observation scope.
+    git(&repo, &["tag", "legacy"]);
+    let state = StateSummary {
+        head: "branch: main".into(),
+        dirty: "clean".into(),
+    };
+    let mut entry = OpLogEntry::new(
+        "create-tag",
+        repo.display().to_string(),
+        state.clone(),
+        OpOutcome::Success { after: state },
+    )
+    .with_worktree(Some(repo.display().to_string()))
+    .with_ref_moves(Some(Vec::new()));
+    entry.id = point + 1;
+    entry.parent = Some(point);
+    let mut old_wire: serde_json::Value = serde_json::from_str(&entry_to_json(&entry)).unwrap();
+    old_wire.as_object_mut().unwrap().remove("ref_scope");
+    let log = PathBuf::from(std::env::var("KAGI_LOG_DIR").unwrap()).join("operations.jsonl");
+    use std::io::Write;
+    writeln!(
+        std::fs::OpenOptions::new().append(true).open(log).unwrap(),
+        "{old_wire}"
+    )
+    .unwrap();
+    let legacy_id = newest(&repo).id;
+    assert_eq!(legacy_id, entry.id);
+    assert_eq!(newest(&repo).ref_moves, Some(Vec::new()));
+    assert_eq!(newest(&repo).ref_scope, RefScope::LegacyOrUnknown);
+
+    for (op, expected) in [
+        (
+            Operation::OpRevert {
+                entry_id: legacy_id,
+            },
+            legacy_id,
+        ),
+        (Operation::RestoreToPoint { entry_id: point }, legacy_id),
+    ] {
+        assert!(
+            restore_blockers(&plan(&repo, &op)).contains(&OplogRestoreNote::NotRecorded {
+                id: expected,
+                op: "create-tag".into(),
+            }),
+            "{op:?} must not treat a branch-only observation as tag-complete"
+        );
+    }
+    assert!(git_fixture::git_succeeds(
+        &repo,
+        &["show-ref", "--verify", "refs/tags/legacy"]
+    ));
+}
+
+#[test]
+fn a_tag_receipt_losing_its_observation_scope_after_confirmation_refuses_preflight() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let tip = git_output(&repo, &["rev-parse", "HEAD"]);
+    let created = run(
+        &repo,
+        Operation::CreateTag {
+            name: "release".into(),
+            at: CommitId(tip.clone()),
+        },
+    );
+    let revert = Operation::OpRevert { entry_id: created };
+    let approved = plan(&repo, &revert);
+    assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
+
+    // A changed/older receipt is no longer the tag-complete observation the
+    // user approved. Preflight must re-read it before moving any ref.
+    let log = PathBuf::from(std::env::var("KAGI_LOG_DIR").unwrap()).join("operations.jsonl");
+    let lines: Vec<String> = std::fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .map(|line| {
+            let mut value: serde_json::Value = serde_json::from_str(line).unwrap();
+            if value["id"] == created {
+                value.as_object_mut().unwrap().remove("ref_scope");
+            }
+            format!("{value}\n")
+        })
+        .collect();
+    std::fs::write(&log, lines.concat()).unwrap();
+
+    assert!(backend(&repo).run(&revert, &approved).is_err());
+    assert_eq!(git_output(&repo, &["rev-parse", "refs/tags/release"]), tip);
+}
+
+#[test]
+fn annotated_tag_delete_and_lightweight_tag_move_round_trip_to_point() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let first = git_output(&repo, &["rev-parse", "HEAD"]);
+    run(
+        &repo,
+        Operation::CreateTag {
+            name: "light".into(),
+            at: CommitId(first.clone()),
+        },
+    );
+    observed_ref_write(
+        &repo,
+        "create-annotated-tag",
+        &["tag", "-a", "annotated", "-m", "note"],
+    );
+    let tag_object = git_output(&repo, &["rev-parse", "refs/tags/annotated"]);
+    assert_ne!(
+        tag_object, first,
+        "annotated tag retains its own object OID"
+    );
+    let point = create(&repo, "point");
+    commit(&repo, "later\n");
+    let second = git_output(&repo, &["rev-parse", "HEAD"]);
+    observed_ref_write(
+        &repo,
+        "move-tag",
+        &["update-ref", "refs/tags/light", &second, &first],
+    );
+    observed_ref_write(
+        &repo,
+        "delete-tag",
+        &["update-ref", "-d", "refs/tags/annotated", &tag_object],
+    );
+    assert!(!git_fixture::git_succeeds(
+        &repo,
+        &["show-ref", "--verify", "refs/tags/annotated"]
+    ));
+
+    let restore = Operation::RestoreToPoint { entry_id: point };
+    let approved = plan(&repo, &restore);
+    assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
+    backend(&repo).run(&restore, &approved).unwrap();
+    assert_eq!(git_output(&repo, &["rev-parse", "refs/tags/light"]), first);
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/tags/annotated"]),
+        tag_object,
+        "restore the tag object, not the peeled commit"
+    );
+    let receipt = newest(&repo);
+    assert!(
+        receipt
+            .backup_refs
+            .iter()
+            .any(|backup| { git_output(&repo, &["rev-parse", backup]) == second }),
+        "moved tag tip must have a durable backup"
+    );
+    let revert = Operation::OpRevert {
+        entry_id: receipt.id,
+    };
+    let approved = plan(&repo, &revert);
+    assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
+    backend(&repo).run(&revert, &approved).unwrap();
+    assert_eq!(git_output(&repo, &["rev-parse", "refs/tags/light"]), second);
+    assert!(!git_fixture::git_succeeds(
+        &repo,
+        &["show-ref", "--verify", "refs/tags/annotated"]
+    ));
+}
+
+#[test]
+fn moved_annotated_tag_retains_its_raw_object_and_leaves_index_tree_and_remote_alone() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    observed_ref_write(
+        &repo,
+        "create-annotated-tag",
+        &["tag", "-a", "release", "-m", "first"],
+    );
+    let first_tag = git_output(&repo, &["rev-parse", "refs/tags/release"]);
+    let point = create(&repo, "point");
+    observed_ref_write(
+        &repo,
+        "move-annotated-tag",
+        &["tag", "-fa", "release", "-m", "second"],
+    );
+    let second_tag = git_output(&repo, &["rev-parse", "refs/tags/release"]);
+    assert_ne!(first_tag, second_tag);
+    git(
+        &repo,
+        &[
+            "update-ref",
+            "refs/remotes/origin/main",
+            &git_output(&repo, &["rev-parse", "HEAD"]),
+        ],
+    );
+    write_file(&repo, "a.txt", "staged\n");
+    git(&repo, &["add", "a.txt"]);
+    write_file(&repo, "a.txt", "unstaged\n");
+    let index = git_output(&repo, &["ls-files", "-s", "--", "a.txt"]);
+    let tree = std::fs::read_to_string(repo.join("a.txt")).unwrap();
+    let remote = git_output(&repo, &["rev-parse", "refs/remotes/origin/main"]);
+
+    let restore = Operation::RestoreToPoint { entry_id: point };
+    let approved = plan(&repo, &restore);
+    assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
+    let report = backend(&repo).run_recorded(&restore, &approved);
+    assert!(report.result.is_ok(), "{:?}", report.result);
+    assert!(
+        matches!(
+            report.recording,
+            kagi_git::backend::recording::Recording::Appended { .. }
+        ),
+        "restore must persist its durable recovery receipt: {:?}",
+        report.recording
+    );
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/tags/release"]),
+        first_tag
+    );
+    let receipt = newest(&repo);
+    let backups: Vec<_> = receipt
+        .backup_refs
+        .iter()
+        .map(|backup| {
+            (
+                backup.clone(),
+                git_output(&repo, &["rev-parse", backup]),
+                git_output(&repo, &["cat-file", "-t", backup]),
+            )
+        })
+        .collect();
+    assert!(
+        backups
+            .iter()
+            .any(|(_, oid, kind)| oid == &second_tag && kind == "tag"),
+        "the moved annotated tag object {second_tag} needs a durable backup: {backups:?}"
+    );
+    assert!(receipt.recovery.iter().any(|handle| {
+        handle.kind == kagi_git::oplog::recovery::TAG_REF
+            && handle.oid == second_tag
+            && handle
+                .reference
+                .as_ref()
+                .is_some_and(|reference| receipt.backup_refs.contains(reference))
+    }));
+    assert_eq!(git_output(&repo, &["ls-files", "-s", "--", "a.txt"]), index);
+    assert_eq!(std::fs::read_to_string(repo.join("a.txt")).unwrap(), tree);
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/remotes/origin/main"]),
+        remote
+    );
+
+    let revert = Operation::OpRevert {
+        entry_id: receipt.id,
+    };
+    let approved = plan(&repo, &revert);
+    assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
+    backend(&repo).run(&revert, &approved).unwrap();
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/tags/release"]),
+        second_tag
+    );
+    assert_eq!(git_output(&repo, &["ls-files", "-s", "--", "a.txt"]), index);
+    assert_eq!(std::fs::read_to_string(repo.join("a.txt")).unwrap(), tree);
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/remotes/origin/main"]),
+        remote
+    );
+    // Explicit retirement must accept a raw tag-object recovery root; its
+    // lifetime ends with the receipt, without touching the restored tag.
+    let backend = backend(&repo);
+    let forget = backend.plan_forget_oplog_entry(&receipt).unwrap();
+    assert_eq!(
+        forget.backup_refs().collect::<Vec<_>>(),
+        receipt
+            .backup_refs
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+    );
+    backend.execute_forget_oplog_entry(&forget).result.unwrap();
+    assert!(receipt.backup_refs.iter().all(|reference| {
+        !git_fixture::git_succeeds(&repo, &["show-ref", "--verify", reference])
+    }));
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/tags/release"]),
+        second_tag
+    );
+}
+
+#[test]
+fn tree_tag_restore_records_its_backup_and_can_retire_the_receipt() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let first_tree = git_output(&repo, &["rev-parse", "HEAD^{tree}"]);
+    observed_ref_write(&repo, "create-tree-tag", &["tag", "release", &first_tree]);
+    let point = create(&repo, "point");
+    commit(&repo, "later\n");
+    let second_tree = git_output(&repo, &["rev-parse", "HEAD^{tree}"]);
+    assert_ne!(first_tree, second_tree);
+    observed_ref_write(
+        &repo,
+        "move-tree-tag",
+        &["update-ref", "refs/tags/release", &second_tree, &first_tree],
+    );
+
+    let restore = Operation::RestoreToPoint { entry_id: point };
+    let approved = plan(&repo, &restore);
+    assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
+    let report = backend(&repo).run_recorded(&restore, &approved);
+    assert!(report.result.is_ok(), "{:?}", report.result);
+    assert!(
+        matches!(
+            report.recording,
+            kagi_git::backend::recording::Recording::Appended { .. }
+        ),
+        "tree-tag restore must record its ref update: {:?}",
+        report.recording
+    );
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/tags/release"]),
+        first_tree
+    );
+    let receipt = newest(&repo);
+    assert_eq!(receipt.op, "restore-to-point");
+    let backup = receipt
+        .backup_refs
+        .iter()
+        .find(|reference| git_output(&repo, &["rev-parse", reference]) == second_tree)
+        .expect("the moved tree tag needs a retained backup");
+    assert_eq!(git_output(&repo, &["cat-file", "-t", backup]), "tree");
+    assert!(receipt.recovery.iter().any(|handle| {
+        handle.kind == kagi_git::oplog::recovery::TAG_REF
+            && handle.oid == second_tree
+            && handle.reference.as_deref() == Some(backup)
+    }));
+    let backend = backend(&repo);
+    let forget = backend.plan_forget_oplog_entry(&receipt).unwrap();
+    backend.execute_forget_oplog_entry(&forget).result.unwrap();
+    assert!(!git_fixture::git_succeeds(
+        &repo,
+        &["show-ref", "--verify", backup]
+    ));
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/tags/release"]),
+        first_tree
+    );
+}
+
+#[test]
+fn local_tag_drift_after_confirmation_refuses_without_writing() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let first = git_output(&repo, &["rev-parse", "HEAD"]);
+    let created = run(
+        &repo,
+        Operation::CreateTag {
+            name: "release".into(),
+            at: CommitId(first.clone()),
+        },
+    );
+    commit(&repo, "later\n");
+    let drifted = git_output(&repo, &["rev-parse", "HEAD"]);
+    let revert = Operation::OpRevert { entry_id: created };
+    let approved = plan(&repo, &revert);
+    assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
+    git(
+        &repo,
+        &["update-ref", "refs/tags/release", &drifted, &first],
+    );
+    let err = backend(&repo).run(&revert, &approved).unwrap_err();
+    assert!(err.to_string().contains("refs/tags/release"), "{err}");
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/tags/release"]),
+        drifted
+    );
 }
 
 /// #915: Remove from a surviving managing worktree observes deleted branch
@@ -933,6 +1394,160 @@ fn a_branch_created_after_the_point_outside_the_record_blocks() {
         }],
         "b is explained by its entry; outside by nothing"
     );
+}
+
+#[test]
+fn a_tag_moved_outside_the_record_with_a_reflog_blocks_restore_to_point() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let first = git_output(&repo, &["rev-parse", "HEAD"]);
+    commit(&repo, "later\n");
+    let second = git_output(&repo, &["rev-parse", "HEAD"]);
+    git(&repo, &["config", "core.logAllRefUpdates", "always"]);
+    git(&repo, &["tag", "release", &first]);
+    let point = create(&repo, "point");
+    create(&repo, "later");
+    let restore = Operation::RestoreToPoint { entry_id: point };
+    let approved = plan(&repo, &restore);
+    assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
+    next_second();
+    git(&repo, &["update-ref", "refs/tags/release", &second, &first]);
+    assert!(
+        repo.join(".git/logs/refs/tags/release").exists(),
+        "the external move needs an actual tag reflog"
+    );
+
+    let p = plan(&repo, &restore);
+    assert_eq!(
+        restore_blockers(&p),
+        vec![OplogRestoreNote::RefChangedOutsideRecord {
+            refname: "refs/tags/release".into()
+        }],
+        "no recorded operation explains the later tag move"
+    );
+    assert!(
+        backend(&repo).run(&restore, &approved).is_err(),
+        "preflight must see the later tag reflog update too"
+    );
+    assert!(git_fixture::git_succeeds(
+        &repo,
+        &["show-ref", "--verify", "refs/heads/later"]
+    ));
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/tags/release"]),
+        second
+    );
+}
+
+#[test]
+fn a_tag_without_a_reflog_stays_unchanged_with_an_explicit_restore_warning() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let first = git_output(&repo, &["rev-parse", "HEAD"]);
+    commit(&repo, "later\n");
+    let second = git_output(&repo, &["rev-parse", "HEAD"]);
+    git(&repo, &["config", "core.logAllRefUpdates", "false"]);
+    git(&repo, &["tag", "release", &first]);
+    let point = create(&repo, "point");
+    create(&repo, "later");
+    next_second();
+    git(&repo, &["update-ref", "refs/tags/release", &second, &first]);
+    assert!(
+        !repo.join(".git/logs/refs/tags/release").exists(),
+        "the target state cannot be proved without a tag reflog"
+    );
+
+    let op = Operation::RestoreToPoint { entry_id: point };
+    let p = plan(&repo, &op);
+    assert!(p.blockers.is_empty(), "{:?}", p.blockers);
+    assert!(
+        p.warnings
+            .iter()
+            .any(|w| w.to_string().contains("tags changed outside Kagi")),
+        "the unchanged row must name the unsupported external tag history: {:?}",
+        p.warnings
+    );
+    backend(&repo).run(&op, &p).unwrap();
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/tags/release"]),
+        second
+    );
+    assert!(!git_fixture::git_succeeds(
+        &repo,
+        &["show-ref", "--verify", "refs/heads/later"]
+    ));
+}
+
+fn interleaved_external_ref_move_blocks_restore(refname: &str) {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let first = git_output(&repo, &["rev-parse", "HEAD"]);
+    commit(&repo, "second\n");
+    let second = git_output(&repo, &["rev-parse", "HEAD"]);
+    commit(&repo, "third\n");
+    let third = git_output(&repo, &["rev-parse", "HEAD"]);
+    git(&repo, &["config", "core.logAllRefUpdates", "always"]);
+    git(&repo, &["update-ref", refname, &first]);
+    let point = create(&repo, "point");
+
+    next_second();
+    git(&repo, &["update-ref", refname, &second, &first]);
+    observed_ref_write(
+        &repo,
+        "recorded-ref-move",
+        &["update-ref", refname, &third, &second],
+    );
+    let receipt = newest(&repo);
+    assert_eq!(
+        receipt
+            .ref_moves
+            .as_ref()
+            .and_then(|moves| moves.iter().find(|m| m.refname == refname))
+            .map(|m| (m.old.as_deref(), m.new.as_deref())),
+        Some((Some(second.as_str()), Some(third.as_str()))),
+        "the later Kagi receipt explains B→C, not the external A→B"
+    );
+    assert!(
+        repo.join(".git/logs").join(refname).exists(),
+        "the ref must have a real reflog"
+    );
+
+    let restore = Operation::RestoreToPoint { entry_id: point };
+    let planned = plan(&repo, &restore);
+    assert!(
+        restore_blockers(&planned).contains(&OplogRestoreNote::RefChangedOutsideRecord {
+            refname: refname.into(),
+        }),
+        "an external A→B cannot be explained by recorded B→C: {:?}",
+        planned.blockers
+    );
+    assert!(
+        backend(&repo).run(&restore, &planned).is_err(),
+        "preflight must refuse the unexplained reflog transition"
+    );
+    assert_eq!(git_output(&repo, &["rev-parse", refname]), third);
+}
+
+#[test]
+fn external_tag_move_before_a_recorded_move_still_blocks_restore_to_point() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    interleaved_external_ref_move_blocks_restore("refs/tags/release");
+}
+
+#[test]
+fn external_branch_move_before_a_recorded_move_still_blocks_restore_to_point() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    interleaved_external_ref_move_blocks_restore("refs/heads/side");
 }
 
 /// The fetch receipt as the UI writes it (#885, `fetch_async_for`): the

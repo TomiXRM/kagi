@@ -176,6 +176,9 @@ mod overlay_focus;
 #[cfg(target_os = "macos")]
 #[path = "recovery/settings_switches.rs"]
 mod settings_switches;
+#[cfg(target_os = "macos")]
+#[path = "recovery/tab_panels.rs"]
+mod tab_panels;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/pr_fields_focus.rs"]
@@ -1244,6 +1247,10 @@ mod macos {
             (
                 "settings_switches",
                 Box::new(crate::settings_switches::scenario_settings_switches),
+            ),
+            (
+                "tab_panels",
+                Box::new(crate::tab_panels::scenario_tab_panels),
             ),
             (
                 "settings_scroll_stays_in_overlay",

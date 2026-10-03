@@ -133,6 +133,7 @@ mod sidebar_worktree_row;
 mod slow_reads;
 pub mod smart_commit;
 pub mod stash_menu;
+pub mod tab_panel_a11y;
 mod tab_ui_state_ops;
 mod tab_view;
 pub mod tabs;

@@ -317,6 +317,16 @@ The current suite covers:
   is only reached: turning it on probes for local LLMs), and clicks one with
   the pointer (one flip). `SavedKeys` puts the five settings back. The ring
   is not observable in Tier A: Tier B Tabs through Settings and looks.
+- Tab panels (`KAGI_GUI_E2E_ONLY=tab_panels`, `tests/recovery/tab_panels.rs`,
+  #979): the content a tab list switches goes through
+  `tab_panel_a11y::tab_panel`, which records the role and label it set
+  (`tab_panel_a11y::recorded_tab_panel`; cleared before each frame, so a
+  frame that draws no panel reads `None`). Each workspace-mode nav mode
+  (PRs, Issues, Graph) names `sidebar-mode-panel` a `TabPanel` after the
+  mode; Branch Cleanup (a takeover, sidebar still drawn) gives it no panel;
+  each Home pane names `home-pane-panel` after the pane, without the count.
+  `gh` is a failing stand-in. What VoiceOver speaks is not observable by an
+  agent (the #972 probe found the native AX tree exposes no GPUI content).
 - modal input transitions (`KAGI_GUI_E2E_ONLY=remote_browse_escape_focus,pr_fields_escape_focus`,
   `tests/recovery/remote_browse_focus.rs`, `tests/recovery/pr_fields_focus.rs`):
   #755 follow-up. Real InputStates own focus before Remote Browse's

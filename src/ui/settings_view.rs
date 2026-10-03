@@ -31,7 +31,7 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::radio::RadioGroup;
 use gpui_component::select::{Select, SelectItem, SelectState};
-use gpui_component::{IndexPath, Sizable as _};
+use gpui_component::{FocusTrapElement as _, IndexPath, Sizable as _};
 
 use super::i18n::{self, Lang, Msg};
 use super::theme::{self, theme};
@@ -109,6 +109,9 @@ pub fn current_theme_index() -> IndexPath {
 }
 
 /// Build the centred Settings overlay (panel over a click-to-dismiss scrim).
+// Each piece of state is passed in because this renders during KagiApp's own
+// update and must not `app.read(cx)` (see the parameter comments).
+#[allow(clippy::too_many_arguments)]
 pub fn render_settings_overlay(
     app: Entity<KagiApp>,
     // The appearance-section theme picker's SelectState entity, passed in by the
@@ -118,6 +121,9 @@ pub fn render_settings_overlay(
     theme_select: Option<Entity<ThemeSelectState>>,
     // The switches' focus handles, for the same reason.
     switches: super::keyboard_nav::FocusSlots,
+    // The panel's focus-trap handle (#974), for the same reason. `None` only
+    // when Settings is drawn without having been opened (no trap then).
+    trap: Option<gpui::FocusHandle>,
     // Smart Commit state (detected models + current selection), passed in for the
     // same reason — never `app.read(cx)` during this render.
     smart: super::smart_commit::SmartCommitState,
@@ -229,7 +235,12 @@ pub fn render_settings_overlay(
                 .occlude()
                 .on_mouse_down(MouseButton::Left, dismiss),
         )
-        .child(panel)
+        .child(match trap {
+            // gpui-component's Root keeps Tab / Shift+Tab inside a trap while
+            // the focus is in it; `open_settings_overlay` puts it there.
+            Some(trap) => panel.focus_trap("settings-trap", &trap).into_any_element(),
+            None => panel.into_any_element(),
+        })
         .into_any_element()
 }
 

@@ -458,15 +458,23 @@ fn candidates(app: &KagiApp, kind: ListKind, field: Field) -> BTreeSet<&str> {
     values
 }
 
+pub(super) fn menu_visible(app: &KagiApp) -> bool {
+    app.ui()
+        .filter_controls
+        .menu
+        .as_ref()
+        .is_some_and(|menu| ListKind::current(app) == Some(menu.kind))
+}
+
 pub(super) fn render_menu(
     app: &KagiApp,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> Option<AnyElement> {
-    let menu = app.ui().filter_controls.menu.as_ref()?;
-    if ListKind::current(app) != Some(menu.kind) {
+    if !app.filter_menu_visible() {
         return None;
     }
+    let menu = app.ui().filter_controls.menu.as_ref()?;
     let kind = menu.kind;
     let owner = app.active_session();
     let filter = common(app, kind);

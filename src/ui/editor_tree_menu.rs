@@ -268,6 +268,11 @@ fn build_editor_tree_menu(
 /// doc). Returns `None` when `target` no longer resolves (e.g. a stale `Dir`
 /// index after the tree reloaded mid-click) — the caller just shows nothing
 /// that frame rather than a menu for a target that no longer exists.
+pub(super) fn menu_visible(view: &EditorWorkspaceView) -> bool {
+    view.tree_menu
+        .is_some_and(|(target, _)| resolve_target(view, target).is_some())
+}
+
 pub fn render_editor_tree_menu(
     entity: &Entity<EditorWorkspaceView>,
     target: TreeMenuTarget,

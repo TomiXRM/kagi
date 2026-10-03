@@ -8,30 +8,7 @@ use super::*;
 
 impl KagiApp {
     fn cancel_workspace_key_target(&mut self, cx: &mut Context<Self>) {
-        if self.ui().filter_controls.menu.is_some() {
-            self.with_ui(|ui| ui.filter_controls.menu = None);
-            cx.notify();
-            return;
-        }
         if diff_selection::clear() {
-            cx.notify();
-            return;
-        }
-        if self.close_coauthor_menu(cx) {
-            return;
-        }
-        if self.inspector_file_menu.is_some() {
-            self.inspector_file_menu = None;
-            cx.notify();
-            return;
-        }
-        if self.ui().pr_menu.is_some() {
-            self.with_ui(|ui| ui.pr_menu = None);
-            cx.notify();
-            return;
-        }
-        if self.tag_menu.is_some() {
-            self.tag_menu = None;
             cx.notify();
             return;
         }
@@ -43,19 +20,7 @@ impl KagiApp {
             }
             return;
         }
-        if self.commit_menu.is_some() {
-            self.commit_menu = None;
-            cx.notify();
-        } else if self.branch_menu.is_some() {
-            self.branch_menu = None;
-            cx.notify();
-        } else if self.stash_menu.is_some() {
-            self.stash_menu = None;
-            cx.notify();
-        } else if self.worktree_menu.is_some() {
-            self.worktree_menu = None;
-            cx.notify();
-        } else if self.ui().main_diff.is_some() {
+        if self.ui().main_diff.is_some() {
             self.close_main_diff();
             cx.notify();
         } else if self.workspace_mode() == super::workspace_mode::WorkspaceMode::Graph {

@@ -14,6 +14,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 - SSH 経由の remote pull を write lease に載せ、実行中は終了操作とほかの書き込みを保留するようにしました。結果が Unknown・Partial の場合は reconcile 通知から明示的な確認と監査記録を経て lease を解放します。ssh-agent だけの接続でも計画・実行できます。(#989)
 
 - Home や Branch Cleanup が Graph を隠している間、または Settings・確認 modal・メニュー(menu overlay、commit / branch / stash / tag / worktree の右クリック、Linux / FreeBSD の platform menu など)が Graph に重なる間、End / Home / PageUp / PageDown と ↑/↓ で背面の commit 選択が変わる問題を修正しました。選択中の先頭行をホイールで画面外へスクロールした後も、Home で再表示できます。(#980)
+- filter menu が開いている間に Stash などの確認 modal が届くと、背面の確認を Enter で確定できてしまう問題を修正しました。重なり順を `Z_ORDER` に一元化し、描画とキーの前面判定を同じ順序で行います。(#976 review)
+- repo A の file context menu を開いたまま repo B を開くと、描かれなくなった A の menu が Enter を消費し続ける問題を修正しました。描画とキー操作は同じ可視判定を使い、Escape は前面の menu をまとめて閉じます。(#974、#976 review)
 
 - ツールバーで使えない Pull / Push / Stash / Pop / Undo / Redo も Tab で選べるようにしました。キーボードで選ぶと枠が表示され、Enter / Space はクリックと同じ理由を下部に示します。AX のボタン名は維持し、使えない理由を `aria_description` に設定します。(#972)
 - Home のレビュー依頼の行で、GitHub Enterprise の host が大文字を含むとき(`GHE.example.com` など)、取得済みのアバターではなくイニシャルが表示される問題を修正しました。(#968)
@@ -21,6 +23,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Graph / PRs / Issues の切り替えで ←/→ で移動したあと、Tab 以外の方法(マウスで別の操作部品を押すなど)で focus が外れると、次の Tab が選択中のタブではなく矢印で移動したタブに着く問題を修正しました。Home の「リポジトリ / Pull Request / Issue」とリポジトリのタブ帯も同じです。(#968)
 - Operation Log の RestoreToPoint 確認カードから重複する説明文を外し、グラフを表示できないときは EN/JA とも短い状態だけを表示します。ref の移動と戻さない対象の警告、および Git の相当コマンドはそのまま表示します。旧ログの branch だけを観測した記録は tag を含む復元の根拠にせず、安全のため実行前に拒否します。Kagi 外で動いた tag は reflog が残る場合だけ検出し、同じ tag / branch をその後で Kagi が動かしても、記録外の遷移が一つでもあれば拒否します。reflog の無い tag は戻せない限界を「変更なし」行で明示します。(#953)
 - Settings を開いたままスクロールすると、背面の画面(Graph・PRs・Issues・Editor)も一緒にスクロールする問題を修正しました。Settings の背景が、背面へのマウス操作をスクロールも含めて遮るようにしました。
+- Terminal に focus がある状態で Settings を開くと、Settings の中で押した Tab が Terminal の shell に届き、Esc でも Settings が閉じない問題を修正しました。Settings を開くと focus が Settings に移り、Tab / Shift+Tab は Settings の中だけを循環します。閉じると、開く前の場所(Terminal など)に focus が戻ります。ただし開いている間に別タブへ切り替わった場合は古い Terminal ではなく新しい画面へ戻し、テーマの選択 popup を開いたまま modal が届いた場合はその modal の入力欄以外の focus をウィンドウへ移して Esc を届かせます。(#974)
+- Settings を開いたまま Cmd+J または View → Toggle Terminal で下部パネルを閉じると、Esc の後に非表示の Terminal へ focus が戻り、画面のキー操作が効かなくなる問題を修正しました。開閉どちらでも Settings を閉じ、表示中の画面に focus を戻します。(#974、#976 review)
 - Worktree 削除の確認後や削除前ステップ後に ignored ファイル・フォルダーが増えた場合、削除前に中止し、計画の再確認を促すようにしました。(#934)
 - 初期化済み、または未初期化でも gitlink のパスにローカルファイルがある worktree は Remove の計画時・実行前に削除を拒否します。空・不在の gitlink は削除可能なままとし、削除前ステップ後の拒否も EN/JA の短い toast に理由だけを表示します。(#934)
 - Remove は削除対象の worktree を開いているタブからは計画・実行前に拒否し、EN/JA の短い理由を示すようにしました。自己削除に必要だった main worktree の場所の証明と削除後の観測は、安全性に対して複雑すぎるため廃止しました。main worktree の削除も、main / linked のどちらのタブからも拒否します。(#915、#938)

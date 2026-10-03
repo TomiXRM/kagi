@@ -563,6 +563,38 @@ impl KagiApp {
         self.settings_switches.focused(window)
     }
 
+    /// Is the focus inside Settings' focus trap (#974) — its container or a
+    /// control in it?
+    pub fn settings_trap_contains_focus_for_e2e(&self, window: &Window, cx: &gpui::App) -> bool {
+        self.settings_focus
+            .as_ref()
+            .is_some_and(|trap| trap.contains_focused(window, cx))
+    }
+
+    /// Is the focus on Settings' trap container itself (no control, so no
+    /// focus ring)?
+    pub fn settings_trap_focused_for_e2e(&self, window: &Window) -> bool {
+        self.settings_focus
+            .as_ref()
+            .is_some_and(|trap| trap.is_focused(window))
+    }
+
+    /// Put the focus back on Settings' trap container.
+    pub fn focus_settings_trap_for_e2e(&self, window: &mut Window, cx: &mut gpui::App) {
+        if let Some(trap) = &self.settings_focus {
+            trap.focus(window, cx);
+        }
+    }
+
+    /// Does the active tab's terminal hold the focus?
+    pub fn terminal_focused_for_e2e(&self, window: &Window, cx: &gpui::App) -> bool {
+        self.ui()
+            .terminal_session
+            .as_ref()
+            .and_then(|session| session.view.as_ref())
+            .is_some_and(|view| view.read(cx).focus_handle().is_focused(window))
+    }
+
     /// Focus the workspace-mode cell in `slot` (Graph = 0).
     pub fn focus_mode_nav_for_e2e(&self, slot: usize, window: &mut Window, cx: &mut gpui::App) {
         self.sidebar.mode_focus.focus(slot, window, cx);

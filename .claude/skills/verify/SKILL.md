@@ -858,7 +858,9 @@ USER="$VERIFY_USER" KAGI_NO_ACTIVATE=1 KAGI_NO_RESTORE=1 \
   2>"$VERIFY_LOG_DIR/kagi.stderr" &
 PID=$!
 /tmp/pidclick windows --pid "$PID"
-# Select Kagi's layer-0 application window from this listing, then set its ID:
+# Select Kagi's main window: the LARGEST layer-0 window of this PID, not the
+# first one listed — Kagi also owns small layer-0 windows (title-bar strips,
+# helpers), which pidclick refuses or the coordinates fall outside of. Set its ID:
 WID=12345 # Replace with the selected window ID from the listing.
 ```
 
@@ -921,11 +923,6 @@ the event. When there is no cursor — `pidcursor` not built, or a daemon that
 could not start (its stderr is kept as `<PID>.log` beside the socket, e.g. a
 full disk) — pidclick prints one `pidclick: no cursor: …` line with the reason
 and posts the event anyway. `key` and `type` do not move it.
-
-Pick the window by size, not by order: Kagi also owns small layer-0 windows
-(title-bar strips, helpers), and the first one `windows --pid` lists is not
-necessarily the main window — `pidclick` then refuses it or the coordinates
-fall outside it. Take the largest layer-0 window for the PID.
 
 - **It never takes the foreground.** The daemon is an accessory app that never
   activates, with one click-through, non-activating panel the size of the

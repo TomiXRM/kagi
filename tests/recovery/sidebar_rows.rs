@@ -69,6 +69,106 @@ pub fn scenario_sidebar_rows_short(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
 }
 
+/// A collapsed pane opened by Enter on its header while it has no room to
+/// draw a row (#987 review): the header keeps the focus — not an undrawn
+/// row — and once the pane has room its first row takes it. LOCAL's pane
+/// weight stands in for a short window (Tier A cannot resize one), as a
+/// divider drag would leave it.
+pub fn scenario_sidebar_rows_open_short(cx: &mut VisualTestAppContext) {
+    use kagi::ui::sidebar::SECTION_LOCAL;
+    // Opening a pane is saved.
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["sidebar_panes"]);
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    let frames = |cx: &mut VisualTestAppContext| {
+        cx.run_until_parked();
+        for _ in 0..3 {
+            cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+                .unwrap();
+        }
+    };
+    let weights = app.read_with(cx, |app, _| app.sidebar.pane_weights);
+    app.update(cx, |app, cx| {
+        app.sidebar.collapsed.insert(SECTION_LOCAL);
+        app.sidebar.pane_weights = [1, 10_000, 10_000, 10_000, 10_000];
+        cx.notify();
+    });
+    frames(cx);
+    assert_eq!(tab_to_header(cx, &app, window, LOCAL), Some(LOCAL));
+    keys(cx, window, "enter");
+    // On no frame — the rebuild frame included — does an undrawn row hold
+    // the focus (the window would show no focus at all).
+    for frame in 0..4 {
+        assert_eq!(
+            focused(cx, &app, window),
+            None,
+            "no undrawn row takes the focus (frame {frame})"
+        );
+    }
+    assert!(
+        app.read_with(cx, |app, _| !app.sidebar.collapsed.contains(SECTION_LOCAL)),
+        "Enter opened LOCAL"
+    );
+    assert!(
+        !drawn(cx, window, "sidebar-local-main"),
+        "precondition: LOCAL has no room for a row"
+    );
+    let header = cx
+        .update_window(window, |_, window, cx| {
+            app.read(cx).sidebar_header_focused_for_e2e(window)
+        })
+        .unwrap();
+    assert_eq!(header, Some(LOCAL), "LOCAL's header keeps the focus");
+
+    // Room for LOCAL's rows: its first row takes the focus.
+    app.update(cx, |app, cx| {
+        app.sidebar.pane_weights = weights;
+        cx.notify();
+    });
+    frames(cx);
+    let first = app.read_with(cx, |app, _| app.sidebar_row_keys_for_e2e(LOCAL))[0].clone();
+    assert_eq!(focused(cx, &app, window), Some((LOCAL, first)));
+    unmount(cx, app, window);
+}
+
+/// A right-click on a focused row gives the window the focus, as a left
+/// press does (#987 review): Enter behind the row's menu does not press the
+/// row (no checkout plan opens).
+pub fn scenario_sidebar_rows_right_click(cx: &mut VisualTestAppContext) {
+    use gpui::{Modifiers, MouseButton};
+    let fixture = build_fixture();
+    git(fixture.path(), &["branch", "feature"]);
+    let (app, window) = mount(cx, fixture.path());
+    cx.update_window(window, |_, window, cx| {
+        window.draw(cx).clear();
+        app.update(cx, |app, cx| {
+            app.focus_sidebar_row_for_e2e(LOCAL, "branch:feature", window, cx)
+        });
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    assert_eq!(
+        focused(cx, &app, window),
+        Some((LOCAL, "branch:feature".into()))
+    );
+    let row = e2e::control_bounds(window.window_id(), "sidebar-local-feature")
+        .expect("feature row drawn");
+    cx.simulate_mouse_down(window, row.center(), MouseButton::Right, Modifiers::none());
+    cx.simulate_mouse_up(window, row.center(), MouseButton::Right, Modifiers::none());
+    cx.run_until_parked();
+    assert!(
+        app.read_with(cx, |app, _| app.branch_menu.is_some()),
+        "the right-click opened the row's menu"
+    );
+    assert_eq!(focused(cx, &app, window), None, "the row gave up the focus");
+    keys(cx, window, "enter");
+    assert!(
+        app.read_with(cx, |app, _| app.active_modal.is_none()),
+        "Enter behind the menu pressed no row"
+    );
+    unmount(cx, app, window);
+}
+
 /// LOCAL scrolled after its Tab stop was picked (#987 review: a wheel, a
 /// divider drag or a resize changes what the list draws). On that very frame
 /// a row it draws is the stop — not the remembered row, scrolled out — and a

@@ -161,8 +161,17 @@ impl KagiApp {
             let focus = &mut self.sidebar.focus;
             let list =
                 focus.rows[pane].rows(focus.keys[pane].clone(), &scroll, Some(&header), window, cx);
-            if std::mem::take(&mut focus.open_first[pane]) {
-                focus.rows[pane].focus_first(&scroll, window, cx);
+            if focus.open_first[pane] {
+                // A pane opened from its header: its first row takes the
+                // focus once a row is drawn. Until then (the rebuild frame,
+                // or a pane too short to draw one) the header keeps it
+                // (#987 review); moving the focus off the header drops it.
+                if !header.is_focused(window) {
+                    focus.open_first[pane] = false;
+                } else if list.has_stop() {
+                    focus.open_first[pane] = false;
+                    focus.rows[pane].focus_first(&scroll, window, cx);
+                }
             } else if header.is_focused(window) && list.has_stop() {
                 // The header stood in while the pane had no drawn row; now
                 // one is drawn (a filter cleared, a refresh, a resize) the
@@ -356,15 +365,25 @@ pub(super) fn row(
 
 /// What a ringed slot draws: pulled out under the ring by its width, so the
 /// row looks as it did before it had one (the ring paints over its edge).
-/// A pointer press gives the window the focus, as before, not the slot.
+/// A pointer press — left or right — gives the window the focus, as before,
+/// not the slot: a right-click's menu does not leave Enter / Space to the
+/// row behind it (#987 review). The right press is taken on the way down,
+/// as the row's own right-click (its menu) stops it on the way up.
 fn under_ring(el: AnyElement, root: Option<FocusHandle>) -> Div {
+    let to_root = move |window: &mut Window, cx: &mut gpui::App| {
+        if let Some(root) = &root {
+            window.focus(root, cx);
+        }
+        window.prevent_default();
+    };
+    let right = to_root.clone();
     div()
         .m(-px(RING))
-        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-            if let Some(root) = &root {
-                window.focus(root, cx);
+        .on_mouse_down(MouseButton::Left, move |_, window, cx| to_root(window, cx))
+        .capture_any_mouse_down(move |event, window, cx| {
+            if event.button == MouseButton::Right {
+                right(window, cx);
             }
-            window.prevent_default();
         })
         .child(el)
 }

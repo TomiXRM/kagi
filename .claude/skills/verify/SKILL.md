@@ -356,7 +356,13 @@ The current suite covers:
   the next frame. `sidebar_rows_keys`: a focused stash keeps the focus on
   its entry when a new stash pushes it down (keys are the stash commit), and
   a focused header of the empty REMOTE pane hands its focus to the row a
-  refresh brings. The ring is not observable in Tier A.
+  refresh brings. `sidebar_rows_open_short`: with LOCAL's pane weight too
+  small for a row (a short window; Tier A cannot resize), Enter on its
+  collapsed header opens it and on no frame does an undrawn row take the
+  focus — the header keeps it until the weight is restored, then the first
+  row has it. `sidebar_rows_right_click`: a right-click on a focused row
+  opens its menu and gives the window the focus; Enter then opens no
+  checkout plan. The ring is not observable in Tier A.
 - modal input transitions (`KAGI_GUI_E2E_ONLY=remote_browse_escape_focus,pr_fields_escape_focus`,
   `tests/recovery/remote_browse_focus.rs`, `tests/recovery/pr_fields_focus.rs`):
   #755 follow-up. Real InputStates own focus before Remote Browse's

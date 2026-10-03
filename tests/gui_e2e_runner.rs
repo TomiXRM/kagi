@@ -1275,6 +1275,14 @@ mod macos {
                 Box::new(crate::sidebar_rows::scenario_sidebar_rows_short),
             ),
             (
+                "sidebar_rows_open_short",
+                Box::new(crate::sidebar_rows::scenario_sidebar_rows_open_short),
+            ),
+            (
+                "sidebar_rows_right_click",
+                Box::new(crate::sidebar_rows::scenario_sidebar_rows_right_click),
+            ),
+            (
                 "sidebar_rows_scroll",
                 Box::new(crate::sidebar_rows::scenario_sidebar_rows_scroll),
             ),

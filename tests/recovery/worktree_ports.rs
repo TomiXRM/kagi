@@ -168,10 +168,10 @@ pub fn scenario_worktree_port_env(cx: &mut VisualTestAppContext) {
         "a worktree with no stored block shows no link"
     );
 
-    // A narrow sidebar never squeezes the name (#858 Tier B: at the default
-    // ~220px the row read `✓… localhost:3000`). The path gives way first; a
-    // link that still does not fit leaves the row whole (wrapped onto the
-    // clipped second line), never cut down to part of its text.
+    // A narrow sidebar never squeezes the name. The port action keeps its
+    // complete icon + short number; if it cannot fit, it moves wholly to the
+    // clipped line. Unlike the old "localhost:<port>" label, the compact link
+    // may still fit at the minimum sidebar width.
     let layout = |cx: &mut VisualTestAppContext, sidebar: f32| {
         app.update(cx, |app, cx| {
             app.sidebar.width = sidebar;
@@ -201,11 +201,8 @@ pub fn scenario_worktree_port_env(cx: &mut VisualTestAppContext) {
             "{sidebar}px: the link is whole or gone, never cut"
         );
     }
-    let (_, _, shown_narrow) = layout(cx, 140.);
-    assert!(
-        !shown_narrow,
-        "140px: with no room left, the link leaves the row"
-    );
+    let (_, _, shown_default) = layout(cx, 220.);
+    assert!(shown_default, "220px: the compact port remains clickable");
 
     KagiApp::set_terminal_shell_for_e2e(None);
     unmount(cx, app, window);

@@ -230,6 +230,7 @@ mod tests {
 
         let worktree = tree_item(&SidebarRow::Worktree {
             name: "wt\u{1b}]0;".into(),
+            branch: None,
             path: "/tmp/wt".into(),
             path_label: "/tmp/\u{7f}wt".into(),
             is_current: false,
@@ -246,6 +247,7 @@ mod tests {
     fn placeholders_inside_names_are_not_filled() {
         let label = tree_item(&SidebarRow::Worktree {
             name: "a{}b".into(),
+            branch: None,
             path: "/p/{}".into(),
             path_label: "/p/{}".into(),
             is_current: false,

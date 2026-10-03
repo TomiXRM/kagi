@@ -539,6 +539,7 @@ pub fn build_sidebar_rows(
             }) {
                 rows.push(SidebarRow::Worktree {
                     name: wt.name.clone(),
+                    branch: wt.branch.clone(),
                     path: wt.path.clone(),
                     path_label: wt.path.display().to_string(),
                     is_current: wt.is_current,

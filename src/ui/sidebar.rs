@@ -233,6 +233,8 @@ pub enum SidebarRow {
     /// A worktree leaf.
     Worktree {
         name: String,
+        /// Checked-out local branch, or `None` for a detached worktree.
+        branch: Option<String>,
         /// The working-tree path itself. `path_label` is display text — lossy
         /// for non-UTF-8 paths and control-byte sanitized before rendering — so
         /// the menu's path actions use this instead of parsing the label back.
@@ -301,6 +303,7 @@ pub(super) fn build_sidebar_row(
         SidebarRow::Tag { name, target } => build_tag_row(this, name, target.clone(), cx),
         SidebarRow::Worktree {
             name,
+            branch,
             path,
             path_label,
             is_current,
@@ -309,6 +312,7 @@ pub(super) fn build_sidebar_row(
         } => super::sidebar_worktree_row::build_worktree_row(
             super::sidebar_worktree_row::WorktreeRowFacts {
                 name,
+                branch: branch.as_deref(),
                 path,
                 path_label,
                 is_current: *is_current,

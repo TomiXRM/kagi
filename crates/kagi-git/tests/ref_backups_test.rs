@@ -1,4 +1,5 @@
 //! #523: actual Git GC, persisted receipts and explicit recovery retirement.
+use kagi_domain::plan_note::{PlanNote, WorktreeNote};
 use kagi_domain::remove::RemoveFaultPoint;
 use kagi_git::backend::{recording::Recording, Backend};
 use kagi_git::oplog::{
@@ -243,6 +244,476 @@ fn remove_success_partial_and_unknown_keep_persisted_refs_after_gc() {
             bytes
         );
     }
+}
+
+fn linked_with_submodule(f: &Fixture) -> PathBuf {
+    let source = f.repo.parent().unwrap().join("source");
+    std::fs::create_dir(&source).unwrap();
+    git(&source, &["init", "-q", "-b", "main"]);
+    std::fs::write(source.join(".gitignore"), b"secret\n").unwrap();
+    std::fs::write(source.join("tracked"), b"committed\n").unwrap();
+    git(&source, &["add", "."]);
+    git(&source, &["commit", "-qm", "submodule source"]);
+    git(
+        &f.repo,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            source.to_str().unwrap(),
+            "sub",
+        ],
+    );
+    git(&f.repo, &["commit", "-qm", "add submodule"]);
+    let linked = f.repo.parent().unwrap().join("linked");
+    git(
+        &f.repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            linked.to_str().unwrap(),
+        ],
+    );
+    linked
+}
+
+#[test]
+fn remove_blocks_initialized_submodule_with_ignored_content() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new();
+    let linked = linked_with_submodule(&f);
+    git(
+        &linked,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "--init",
+            "-q",
+        ],
+    );
+    std::fs::write(linked.join("sub/secret"), b"local ignored bytes").unwrap();
+    assert!(git(&linked, &["status", "--porcelain"]).is_empty());
+
+    let plan = Backend::plan_recorded_remove(&f.repo, "linked", true).unwrap();
+    assert!(
+        plan.preview
+            .blockers
+            .contains(&PlanNote::Worktree(WorktreeNote::RemoveContainsSubmodules)),
+        "initialized submodule must block Remove: {:?}",
+        plan.preview.blockers
+    );
+    let report = Backend::run_recorded_remove(&plan, Actor::Human, None);
+    let OpOutcome::Refused { blockers } = &report.recording.entry().outcome else {
+        panic!(
+            "blocked plan must record a refusal: {:?}",
+            report.recording.entry()
+        );
+    };
+    assert!(blockers
+        .iter()
+        .any(|reason| reason == "Contains submodules"));
+    assert_eq!(
+        std::fs::read(linked.join("sub/secret")).unwrap(),
+        b"local ignored bytes"
+    );
+    assert!(git2::Repository::open(&f.repo)
+        .unwrap()
+        .find_branch("linked", git2::BranchType::Local)
+        .is_ok());
+}
+
+#[test]
+fn remove_allows_uninitialized_submodule_and_blocks_late_initialization() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new();
+    let linked = linked_with_submodule(&f);
+    assert!(!linked.join("sub/.git").exists());
+    let plan = Backend::plan_recorded_remove(&f.repo, "linked", false).unwrap();
+    assert!(
+        plan.preview.blockers.is_empty(),
+        "{:?}",
+        plan.preview.blockers
+    );
+
+    git(
+        &linked,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "--init",
+            "-q",
+        ],
+    );
+    std::fs::write(linked.join("sub/secret"), b"created after plan").unwrap();
+    let report = Backend::run_recorded_remove(&plan, Actor::Human, None);
+    let OpOutcome::Refused { blockers } = &report.recording.entry().outcome else {
+        panic!(
+            "late initialization must refuse: {:?}",
+            report.recording.entry()
+        );
+    };
+    assert!(blockers
+        .iter()
+        .any(|reason| reason == "Contains submodules"));
+    assert_eq!(
+        std::fs::read(linked.join("sub/secret")).unwrap(),
+        b"created after plan"
+    );
+    assert!(linked.join("sub/.git").exists());
+}
+
+#[test]
+fn remove_uninitialized_submodule_succeeds_without_force() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new();
+    let linked = linked_with_submodule(&f);
+    assert!(
+        linked.join("sub").read_dir().unwrap().next().is_none(),
+        "uninitialized submodule must be an empty directory"
+    );
+    let plan = Backend::plan_recorded_remove(&f.repo, "linked", false).unwrap();
+    assert!(
+        plan.preview.blockers.is_empty(),
+        "{:?}",
+        plan.preview.blockers
+    );
+    let report = Backend::run_recorded_remove(&plan, Actor::Human, None);
+    assert!(
+        matches!(report.recording.entry().outcome, OpOutcome::Success { .. }),
+        "uninitialized submodule must not block: {:?}",
+        report.recording.entry()
+    );
+    assert!(!linked.exists());
+}
+
+#[test]
+fn remove_allows_absent_uninitialized_submodule_path() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new();
+    let linked = linked_with_submodule(&f);
+    std::fs::remove_dir(linked.join("sub")).unwrap();
+    let plan = Backend::plan_recorded_remove(&f.repo, "linked", false).unwrap();
+    assert!(
+        plan.preview.blockers.is_empty(),
+        "{:?}",
+        plan.preview.blockers
+    );
+    let report = Backend::run_recorded_remove(&plan, Actor::Human, None);
+    assert!(
+        matches!(report.recording.entry().outcome, OpOutcome::Success { .. }),
+        "absent gitlink path is safe to remove: {:?}",
+        report.recording.entry()
+    );
+    assert!(!linked.exists());
+}
+
+#[test]
+fn remove_missing_gitlink_does_not_hide_other_worktree_dirt() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new();
+    let linked = linked_with_submodule(&f);
+    std::fs::remove_dir(linked.join("sub")).unwrap();
+    std::fs::write(linked.join("local.txt"), b"untracked user bytes").unwrap();
+    let plan = Backend::plan_recorded_remove(&f.repo, "linked", false).unwrap();
+    assert!(plan
+        .preview
+        .blockers
+        .iter()
+        .any(|note| matches!(note, PlanNote::Worktree(WorktreeNote::RemoveDirty { .. }))));
+    let report = Backend::run_recorded_remove(&plan, Actor::Human, None);
+    assert!(matches!(
+        report.recording.entry().outcome,
+        OpOutcome::Refused { .. }
+    ));
+    assert_eq!(
+        std::fs::read(linked.join("local.txt")).unwrap(),
+        b"untracked user bytes"
+    );
+}
+
+#[test]
+fn remove_missing_gitlink_does_not_hide_staged_gitlink_update() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new();
+    let linked = linked_with_submodule(&f);
+    std::fs::remove_dir(linked.join("sub")).unwrap();
+    let source = f.repo.parent().unwrap().join("source");
+    git(
+        &source,
+        &["commit", "--allow-empty", "-qm", "new submodule tip"],
+    );
+    let new_oid = git2::Repository::open(&source)
+        .unwrap()
+        .head()
+        .unwrap()
+        .target()
+        .unwrap();
+    let repo = git2::Repository::open(&linked).unwrap();
+    let mut index = repo.index().unwrap();
+    let mut gitlink = index.get_path(std::path::Path::new("sub"), 0).unwrap();
+    gitlink.id = new_oid;
+    index.add(&gitlink).unwrap();
+    index.write().unwrap();
+
+    let plan = Backend::plan_recorded_remove(&f.repo, "linked", false).unwrap();
+    assert!(plan
+        .preview
+        .blockers
+        .iter()
+        .any(|note| matches!(note, PlanNote::Worktree(WorktreeNote::RemoveDirty { .. }))));
+    let report = Backend::run_recorded_remove(&plan, Actor::Human, None);
+    assert!(matches!(
+        report.recording.entry().outcome,
+        OpOutcome::Refused { .. }
+    ));
+    assert!(linked.exists());
+}
+
+#[test]
+fn remove_blocks_uninitialized_gitlink_with_local_files() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new();
+    let linked = linked_with_submodule(&f);
+    assert!(!linked.join("sub/.git").exists());
+    std::fs::write(linked.join("sub/secret"), b"untracked local bytes").unwrap();
+    assert!(git(&linked, &["status", "--porcelain"]).is_empty());
+
+    let plan = Backend::plan_recorded_remove(&f.repo, "linked", true).unwrap();
+    assert!(
+        plan.preview
+            .blockers
+            .contains(&PlanNote::Worktree(WorktreeNote::RemoveContainsSubmodules)),
+        "occupied uninitialized gitlink must block: {:?}",
+        plan.preview.blockers
+    );
+    let report = Backend::run_recorded_remove(&plan, Actor::Human, None);
+    assert!(matches!(
+        report.recording.entry().outcome,
+        OpOutcome::Refused { .. }
+    ));
+    assert_eq!(
+        std::fs::read(linked.join("sub/secret")).unwrap(),
+        b"untracked local bytes"
+    );
+    assert!(git2::Repository::open(&f.repo)
+        .unwrap()
+        .find_branch("linked", git2::BranchType::Local)
+        .is_ok());
+}
+
+#[test]
+fn remove_refuses_uninitialized_gitlink_populated_after_plan() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new();
+    let linked = linked_with_submodule(&f);
+    let plan = Backend::plan_recorded_remove(&f.repo, "linked", false).unwrap();
+    assert!(
+        plan.preview.blockers.is_empty(),
+        "{:?}",
+        plan.preview.blockers
+    );
+    std::fs::write(linked.join("sub/secret"), b"added after confirmation").unwrap();
+    let report = Backend::run_recorded_remove(&plan, Actor::Human, None);
+    let OpOutcome::Refused { blockers } = &report.recording.entry().outcome else {
+        panic!(
+            "populated gitlink must refuse: {:?}",
+            report.recording.entry()
+        );
+    };
+    assert!(blockers.iter().any(|text| text == "Contains submodules"));
+    assert_eq!(
+        std::fs::read(linked.join("sub/secret")).unwrap(),
+        b"added after confirmation"
+    );
+}
+
+#[test]
+fn remove_refuses_ignored_content_added_after_confirmation() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new();
+    std::fs::write(f.repo.join(".gitignore"), b"secret*\n").unwrap();
+    git(&f.repo, &["add", ".gitignore"]);
+    git(&f.repo, &["commit", "-qm", "ignore removal contents"]);
+    let linked = f.repo.parent().unwrap().join("linked");
+    git(
+        &f.repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            linked.to_str().unwrap(),
+        ],
+    );
+    std::fs::write(linked.join("secret-first"), b"reviewed").unwrap();
+    let plan = Backend::plan_recorded_remove(&f.repo, "linked", true).unwrap();
+    assert!(plan.preview.blockers.is_empty());
+    std::fs::write(linked.join("secret-second"), b"added after confirmation").unwrap();
+
+    let report = Backend::run_recorded_remove(&plan, Actor::Human, None);
+    let OpOutcome::Refused { blockers } = &report.recording.entry().outcome else {
+        panic!(
+            "new ignored file must refuse removal: {:?}",
+            report.recording.entry()
+        );
+    };
+    assert!(
+        blockers
+            .iter()
+            .any(|reason| reason.contains("confirm again")),
+        "refusal must request a new confirmation: {blockers:?}"
+    );
+    assert!(report.blocker.is_some(), "UI needs the short typed refusal");
+    assert!(linked.join("secret-first").exists());
+    assert_eq!(
+        std::fs::read(linked.join("secret-second")).unwrap(),
+        b"added after confirmation"
+    );
+    let persisted = read_oplog_tail(1).pop().expect("durable refusal");
+    let OpOutcome::Refused { blockers } = &persisted.outcome else {
+        panic!("the oplog must record the refusal: {persisted:?}");
+    };
+    assert!(blockers
+        .iter()
+        .any(|reason| reason.contains("confirm again")));
+    assert!(git2::Repository::open(&f.repo)
+        .unwrap()
+        .find_branch("linked", git2::BranchType::Local)
+        .is_ok());
+}
+
+#[test]
+fn remove_refuses_new_ignored_folder_even_when_total_count_is_unchanged() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new();
+    std::fs::write(f.repo.join(".gitignore"), b"secret*\ntarget/\ncache/\n").unwrap();
+    git(&f.repo, &["add", ".gitignore"]);
+    git(&f.repo, &["commit", "-qm", "ignore directories"]);
+    let linked = f.repo.parent().unwrap().join("linked");
+    git(
+        &f.repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            linked.to_str().unwrap(),
+        ],
+    );
+    std::fs::write(linked.join("secret-first"), b"reviewed").unwrap();
+    std::fs::create_dir(linked.join("target")).unwrap();
+    std::fs::write(linked.join("target/one"), b"reviewed").unwrap();
+    let plan = Backend::plan_recorded_remove(&f.repo, "linked", false).unwrap();
+    assert!(plan.preview.warnings.iter().any(|note| matches!(
+        note,
+        PlanNote::Worktree(WorktreeNote::RemoveIgnoredFiles {
+            files: 1,
+            folders: 1,
+            ..
+        })
+    )));
+
+    std::fs::remove_file(linked.join("secret-first")).unwrap();
+    std::fs::create_dir(linked.join("cache")).unwrap();
+    std::fs::write(linked.join("cache/new"), b"unreviewed").unwrap();
+    let report = Backend::run_recorded_remove(&plan, Actor::Human, None);
+    assert!(
+        matches!(report.recording.entry().outcome, OpOutcome::Refused { .. }),
+        "new folder must be refused even with the same total count: {:?}",
+        report.recording.entry()
+    );
+    assert_eq!(
+        std::fs::read(linked.join("cache/new")).unwrap(),
+        b"unreviewed"
+    );
+    assert!(linked.join("target/one").exists());
+}
+
+#[test]
+fn remove_refuses_ignored_content_created_by_pre_remove_step() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let f = Fixture::new();
+    std::fs::create_dir(f.repo.join(".kagi")).unwrap();
+    std::fs::write(
+        f.repo.join(".kagi/worktree.toml"),
+        "[[pre_remove]]\ntype='copy'\nfrom='secret'\nto='secret'\n",
+    )
+    .unwrap();
+    git(&f.repo, &["add", ".kagi"]);
+    git(
+        &f.repo,
+        &["commit", "-qm", "pre remove creates ignored file"],
+    );
+    std::fs::write(f.repo.join("secret"), b"new ignored bytes").unwrap();
+    let linked = f.repo.parent().unwrap().join("linked");
+    git(
+        &f.repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            linked.to_str().unwrap(),
+        ],
+    );
+    let plan = Backend::plan_recorded_remove(&f.repo, "linked", true).unwrap();
+    assert!(plan.preview.blockers.is_empty());
+
+    let report = Backend::run_recorded_remove(&plan, Actor::Human, None);
+    let OpOutcome::Partial { error, .. } = &report.recording.entry().outcome else {
+        panic!(
+            "pre-remove change must stop before deletion: {:?}",
+            report.recording.entry()
+        );
+    };
+    assert!(error.contains("confirm again"), "{error}");
+    assert!(report.blocker.is_some(), "UI needs the short typed refusal");
+    assert_eq!(
+        std::fs::read(linked.join("secret")).unwrap(),
+        b"new ignored bytes"
+    );
+    let persisted = read_oplog_tail(1).pop().expect("durable partial receipt");
+    let OpOutcome::Partial { error, .. } = &persisted.outcome else {
+        panic!("the oplog must record the post-step refusal: {persisted:?}");
+    };
+    assert!(error.contains("confirm again"), "{error}");
+    assert!(git2::Repository::open(&f.repo)
+        .unwrap()
+        .find_branch("linked", git2::BranchType::Local)
+        .is_ok());
 }
 
 #[test]

@@ -8,10 +8,13 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Settings を開いたままスクロールすると、背面の画面(Graph・PRs・Issues・Editor)も一緒にスクロールする問題を修正しました。Settings の背景が、背面へのマウス操作をスクロールも含めて遮るようにしました。
+- Worktree 削除の確認後や削除前ステップ後に ignored ファイル・フォルダーが増えた場合、削除前に中止し、計画の再確認を促すようにしました。(#934)
+- 初期化済み、または未初期化でも gitlink のパスにローカルファイルがある worktree は Remove の計画時・実行前に削除を拒否します。空・不在の gitlink は削除可能なままとし、削除前ステップ後の拒否も EN/JA の短い toast に理由だけを表示します。(#934)
 
 ### Changed
 
 - Graph の「Avatar commit nodes」(commit の点を作者のアバターにする表示)を既定で ON にしました。設定で一度 OFF にしている場合はそのまま OFF です。
+- Worktree 行とホバーカードをアイコン・短い状態表示中心に整理し、再計測はアイコンのみ（支援技術向けの名前は維持）にしました。ignored file の注意はホバーから外し、削除時の確認計画で対象のファイル数とフォルダー数を示します。(#934)
 - Graph で行を選択しているとき、Esc で選択を解除できるようにしました(右側の commit 詳細も閉じます)。メニューや diff、確認画面が開いている場合は、従来どおりそちらが先に閉じます。
 - Terminal / Operation Log / Activity の下部パネルをウィンドウ全幅から main pane の下部へ移しました。開くと main の内容だけが縮み、サイドバーと右側の Inspector / Commit Panel に加え Editor の file tree / hunks と PR / Issues の navigator（PR の swimlane も）はステータスバーまで表示されます。従来の高さ変更、Cmd-J、タブ切替、Conflict 画面での非表示は維持します。（ADR-0007）
 

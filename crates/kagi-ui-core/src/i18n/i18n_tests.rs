@@ -241,3 +241,32 @@ fn stash_identity_advice_preserves_git_braces_and_identifier_data() {
         assert!(text.contains(expected), "{language:?}: {text}");
     }
 }
+
+/// #934: both ignored-content shapes fill every JA slot (a slot mismatch
+/// panics in `advice_text`) and keep the counts and path the user confirms.
+#[test]
+fn ignored_files_remove_warning_renders_counts_in_japanese() {
+    use kagi_domain::plan_note::{PlanNote, WorktreeNote};
+
+    let _guard = LOCK.lock();
+    set_lang_no_persist(Lang::Ja);
+    let files_only = plan_note_text(&PlanNote::Worktree(WorktreeNote::RemoveIgnoredFiles {
+        path: "/wt/a".into(),
+        files: 4,
+        folders: 0,
+    }));
+    assert_eq!(
+        files_only,
+        "Git が追跡しない ignored ファイルが 4 件あります。削除すると完全に消えます。\nworktree `/wt/a`"
+    );
+    let with_folders = plan_note_text(&PlanNote::Worktree(WorktreeNote::RemoveIgnoredFiles {
+        path: "/wt/a".into(),
+        files: 2,
+        folders: 1,
+    }));
+    assert_eq!(
+        with_folders,
+        "Git が追跡しない ignored ファイル 2 件と ignored フォルダ 1 件(中身は数えていません)があります。削除すると完全に消えます。\nworktree `/wt/a`"
+    );
+    set_lang_no_persist(Lang::En);
+}

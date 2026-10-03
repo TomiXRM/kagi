@@ -36,6 +36,10 @@ pub fn save(path: &Path, account: &str, sections: &[OwnerRepos]) -> std::io::Res
         "account": account,
         "sections": sections.iter().map(section_json).collect::<Vec<_>>(),
     });
+    // The settings folder may not exist yet on a first launch.
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let tmp = path.with_extension("json.tmp");
     match std::fs::remove_file(&tmp) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
@@ -155,6 +159,16 @@ mod tests {
     fn a_saved_list_reads_back_unchanged() {
         let dir = tempfile::tempdir().unwrap();
         let path = cache_path(dir.path());
+        save(&path, ME, &sections()).unwrap();
+        assert_eq!(load(&path, ME), Some(sections()));
+    }
+
+    /// On a first launch the settings folder may not exist yet: the first
+    /// read is still saved (#930 review).
+    #[test]
+    fn a_save_creates_the_settings_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = cache_path(&dir.path().join(".kagi"));
         save(&path, ME, &sections()).unwrap();
         assert_eq!(load(&path, ME), Some(sections()));
     }

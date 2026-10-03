@@ -1,41 +1,85 @@
-//! The last GitHub repository list Home read (#930): saved after every full
-//! read and shown at once the next time Home opens, while a fresh read runs.
+//! The last GitHub lists Home read (#930, #928): the repository list and the
+//! user's open pull requests and issues, each saved after a full read and
+//! shown at once the next time Home opens, while a fresh read runs.
 //!
 //! A cache, not state: it is derived from `gh` and replaced wholesale by the
 //! next read, so a file that does not parse is simply ignored and later
 //! overwritten. The write is a temp file in the same folder renamed into
 //! place, so a reader never sees half a file.
 //!
-//! The list is bound to the account it was read as (`<host>/<login>`, from
+//! Each list is bound to the account it was read as (`<host>/<login>`, from
 //! [`crate::github_repos::active_account`]) and only read back for that
 //! account: after `gh auth switch`, another account's private repository
-//! names are not shown (#930 review).
+//! names are not shown (#930 review). Both files go through the one writer
+//! and reader below, so they share that binding and the owner-only mode.
 
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-pub use kagi_domain::github_repos::{OwnerRepos, RepoList, RepoListing};
+pub use kagi_domain::github_repos::{
+    OwnerRepos, RepoList, RepoListing, WorkItem, WorkKind, WorkList, WorkLists,
+};
 
-/// The cache file next to `settings.json`.
+/// The repository list's cache file next to `settings.json`.
 pub fn cache_path(settings_dir: &Path) -> PathBuf {
     settings_dir.join("github_repos_cache.json")
 }
 
-/// Save `sections`, read as `account`, to `path`. Best effort: an error is
-/// returned for the caller to log, and the next read tries again.
+/// The pull request / issue lists' cache file next to `settings.json`.
+pub fn work_cache_path(settings_dir: &Path) -> PathBuf {
+    settings_dir.join("github_work_cache.json")
+}
+
+/// Save the repository list `sections`, read as `account`, to `path`.
+pub fn save(path: &Path, account: &str, sections: &[OwnerRepos]) -> std::io::Result<()> {
+    let sections: Vec<Value> = sections.iter().map(section_json).collect();
+    write_for_account(path, account, "sections", json!(sections))
+}
+
+/// The repository list saved for `account`, or `None` when there is none,
+/// it was read as another account, or it does not parse.
+pub fn load(path: &Path, account: &str) -> Option<Vec<OwnerRepos>> {
+    read_for_account(path, account, "sections")?
+        .as_array()?
+        .iter()
+        .map(section_from)
+        .collect()
+}
+
+/// Save the three pull request / issue lists, read as `account`, to `path`.
+pub fn save_work(path: &Path, account: &str, lists: &WorkLists) -> std::io::Result<()> {
+    let work: serde_json::Map<String, Value> = WorkKind::ALL
+        .iter()
+        .map(|&kind| (work_key(kind).to_string(), work_list_json(lists.get(kind))))
+        .collect();
+    write_for_account(path, account, "work", Value::Object(work))
+}
+
+/// The pull request / issue lists saved for `account`, or `None` when there
+/// are none, they were read as another account, or they do not parse.
+pub fn load_work(path: &Path, account: &str) -> Option<WorkLists> {
+    let work = read_for_account(path, account, "work")?;
+    let mut lists = WorkLists::default();
+    for kind in WorkKind::ALL {
+        *lists.get_mut(kind) = work_list_from(work.get(work_key(kind))?)?;
+    }
+    Some(lists)
+}
+
+/// Write `{"account": …, <key>: payload}` to `path`. Best effort: an error
+/// is returned for the caller to log, and the next read tries again.
 ///
 /// On unix the file is readable by its owner only (`0600`), from its first
 /// write on: it names private repositories. The temp file is created fresh
 /// with that mode — `mode` applies only to a file being created, so one
 /// left by an earlier interrupted save is removed first — and the rename
 /// carries it over the old file.
-pub fn save(path: &Path, account: &str, sections: &[OwnerRepos]) -> std::io::Result<()> {
+fn write_for_account(path: &Path, account: &str, key: &str, payload: Value) -> std::io::Result<()> {
     use std::io::Write as _;
-    let value = json!({
-        "account": account,
-        "sections": sections.iter().map(section_json).collect::<Vec<_>>(),
-    });
+    let mut value = serde_json::Map::new();
+    value.insert("account".into(), json!(account));
+    value.insert(key.into(), payload);
     // The settings folder may not exist yet on a first launch.
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -50,26 +94,70 @@ pub fn save(path: &Path, account: &str, sections: &[OwnerRepos]) -> std::io::Res
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
     let mut file = options.open(&tmp)?;
-    file.write_all(&serde_json::to_vec(&value)?)?;
+    file.write_all(&serde_json::to_vec(&Value::Object(value))?)?;
     file.sync_all()?;
     drop(file);
     std::fs::rename(&tmp, path)
 }
 
-/// The list saved for `account`, or `None` when there is none, it was read
-/// as another account, or it does not parse.
-pub fn load(path: &Path, account: &str) -> Option<Vec<OwnerRepos>> {
+/// The `key` payload saved at `path` for `account`; `None` for no file,
+/// another account's, or one that does not parse.
+fn read_for_account(path: &Path, account: &str, key: &str) -> Option<Value> {
     let bytes = std::fs::read(path).ok()?;
-    let value: Value = serde_json::from_slice(&bytes).ok()?;
+    let mut value: Value = serde_json::from_slice(&bytes).ok()?;
     if value.get("account")?.as_str()? != account {
         return None;
     }
-    value
-        .get("sections")?
+    value.get_mut(key).map(Value::take)
+}
+
+fn work_key(kind: WorkKind) -> &'static str {
+    match kind {
+        WorkKind::MyPrs => "myPrs",
+        WorkKind::ReviewRequests => "reviewRequests",
+        WorkKind::AssignedIssues => "assignedIssues",
+    }
+}
+
+fn work_list_json(list: &WorkList) -> Value {
+    json!({
+        "truncated": list.truncated,
+        "items": list.items.iter().map(|i| json!({
+            "host": i.host,
+            "nameWithOwner": i.name_with_owner,
+            "number": i.number,
+            "title": i.title,
+            "url": i.url,
+            "isDraft": i.is_draft,
+            "author": i.author,
+            "updatedAt": i.updated_at,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn work_list_from(value: &Value) -> Option<WorkList> {
+    let items = value
+        .get("items")?
         .as_array()?
         .iter()
-        .map(section_from)
-        .collect()
+        .map(|item| {
+            let text = |key: &str| item.get(key)?.as_str().map(str::to_string);
+            Some(WorkItem {
+                host: text("host")?,
+                name_with_owner: text("nameWithOwner")?,
+                number: item.get("number")?.as_u64()?,
+                title: text("title")?,
+                url: text("url")?,
+                is_draft: item.get("isDraft")?.as_bool()?,
+                author: text("author")?,
+                updated_at: text("updatedAt")?,
+            })
+        })
+        .collect::<Option<_>>()?;
+    Some(WorkList {
+        items,
+        truncated: value.get("truncated")?.as_bool()?,
+    })
 }
 
 fn section_json(section: &OwnerRepos) -> Value {
@@ -202,6 +290,40 @@ mod tests {
         save(&path, ME, &sections()).unwrap();
         assert_eq!(mode(&path), 0o600, "update over a stale temp file");
         assert_eq!(load(&path, ME), Some(sections()));
+    }
+
+    /// The pull request / issue lists use the same mechanism: read back
+    /// unchanged for the account that saved them, for no other, and
+    /// owner-only on disk (#928).
+    #[test]
+    fn the_work_lists_share_the_account_binding_and_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = work_cache_path(dir.path());
+        let lists = WorkLists {
+            review_requests: WorkList {
+                items: vec![WorkItem {
+                    host: "github.com".into(),
+                    name_with_owner: "Acme/Widgets".into(),
+                    number: 7,
+                    title: "Fix".into(),
+                    url: "https://github.com/Acme/Widgets/pull/7".into(),
+                    is_draft: true,
+                    author: "octo".into(),
+                    updated_at: "2026-10-01T00:00:00Z".into(),
+                }],
+                truncated: true,
+            },
+            ..WorkLists::default()
+        };
+        save_work(&path, ME, &lists).unwrap();
+        assert_eq!(load_work(&path, ME), Some(lists));
+        assert_eq!(load_work(&path, "github.com/someone-else"), None);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
     }
 
     /// A damaged or foreign file is no cache: nothing is shown from it.

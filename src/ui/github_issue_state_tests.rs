@@ -756,3 +756,61 @@ fn returning_home_invalidates_detail_without_dropping_cache_or_reply() {
     assert!(!state.finish_github_issue_detail_request(generation, 7, Ok(issue(7, "late"))));
     assert_eq!(state.selected_github_issue, None);
 }
+
+/// #940 review P1: `gh repo set-default` moved from A to B and Home opened
+/// one of B's issues. A's rows, cursor and selection go at once — not when
+/// B's list lands — so an old row is never selectable with B as its Reply
+/// destination, even when B's list cannot be read. Reads still in flight
+/// for A are refused.
+#[test]
+fn retargeting_drops_the_previous_repositorys_list_until_the_new_one_lands() {
+    let mut state = with_first_page("github.com/acme/a", Some("cursor-a"));
+    let page = state
+        .begin_github_issues_page_request()
+        .expect("a page of A");
+    let detail = state.begin_github_issue_detail_request(2);
+    let a_refresh = state.github_issues_gen;
+
+    state.retarget_github_issues("github.com/acme/b");
+    assert!(numbers(&state).is_empty(), "A's rows are gone");
+    assert!(state.github_issue_mentions.is_empty());
+    assert_eq!(state.github_issues_cursor, None);
+    assert!(!state.github_issues_loaded && !state.github_issues_loading_more);
+    assert_eq!(state.selected_github_issue, None);
+    assert_eq!(
+        state.issue_composer.base_repo.as_deref(),
+        Some("github.com/acme/b")
+    );
+    let late_a = |n| {
+        Ok(snapshot(
+            vec![issue(n, "A")],
+            vec![],
+            "github.com/acme/a",
+            None,
+        ))
+    };
+    assert!(!state.finish_github_issues_request(a_refresh, late_a(3)));
+    assert!(!state.finish_github_issues_page_request(page.0, &page.1, late_a(4)));
+    assert!(!state.finish_github_issue_detail_request(detail, 2, Ok(issue(2, "A"))));
+    assert!(numbers(&state).is_empty() && state.github_issue_details.is_empty());
+
+    // B cannot be read: the failure keeps the last accepted list, which is
+    // now nothing, so there is still no row to answer.
+    let b = state.begin_github_issues_request();
+    assert!(state.finish_github_issues_request(b, Err(PrFetchError::Network("offline".into()))));
+    assert!(numbers(&state).is_empty());
+    assert!(state.begin_github_issues_page_request().is_none());
+
+    let b = state.begin_github_issues_request();
+    assert!(state.finish_github_issues_request(
+        b,
+        Ok(snapshot(
+            vec![issue(2, "B")],
+            vec![],
+            "github.com/acme/b",
+            None
+        )),
+    ));
+    assert_eq!(numbers(&state), [2]);
+    assert_eq!(state.github_issues[0].title, "B");
+}

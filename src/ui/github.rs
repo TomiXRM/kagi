@@ -400,6 +400,7 @@ impl KagiApp {
         let bg_pr = pr.clone();
         let number = pr.number;
         let head_sha = pr.head_sha.clone();
+        let base_repo = pr.base_repo.clone();
         let task = cx.background_spawn(async move {
             // Reopening through the frozen attachment is what refuses a plan
             // whose worktree identity moved — the same identity
@@ -422,6 +423,7 @@ impl KagiApp {
                         plan: std::sync::Arc::new(plan),
                         error: None,
                         number,
+                        base_repo,
                         head_sha,
                         method,
                         delete_branch,
@@ -478,6 +480,10 @@ impl KagiApp {
             return;
         }
         let (number, method, delete_branch) = (modal.number, modal.method, modal.delete_branch);
+        let merged_pr = kagi_domain::github::PrKey {
+            base_repo: modal.base_repo.clone(),
+            number,
+        };
         let head_sha = modal.head_sha.clone();
         // ADR-0196 Wave 3: a PR merge is a write, so it rides the run family
         // like every migrated one — `finish_run` admits it (lease + owner
@@ -518,7 +524,7 @@ impl KagiApp {
                 }) => {
                     klog!("executed: pr-merge #{}", number);
                     if *confirmed {
-                        RunPresentation::none().github_merge(number, detail.clone())
+                        RunPresentation::none().github_merge(merged_pr.clone(), detail.clone())
                     } else {
                         RunPresentation::none()
                     }
@@ -597,6 +603,7 @@ impl KagiApp {
         // `gh repo view` is a network round trip, and commenting failed with
         // "not a GitHub repo" whenever GitHub was unreachable (user report).
         let base_repo = pr.base_repo.clone();
+        let posted = pr.key();
         let dispatched = self.finish_run(
             cx,
             "pr-comment",
@@ -612,7 +619,7 @@ impl KagiApp {
             move |done| match done {
                 Ok(kagi_git::OperationOutcome::PrComment { .. }) => {
                     klog!("executed: pr-comment #{}", number);
-                    RunPresentation::none().pr_comment(number)
+                    RunPresentation::none().pr_comment(posted.clone())
                 }
                 Ok(_) => RunPresentation::none(),
                 Err(failure) => {
@@ -679,6 +686,7 @@ impl KagiApp {
         let bg_plan = plan.clone();
         let bg_body = body.clone();
         let base_repo = pr.base_repo.clone();
+        let posted = pr.key();
         let dispatched = self.finish_run(
             cx,
             "pr-review",
@@ -696,7 +704,7 @@ impl KagiApp {
                     klog!("executed: pr-review #{}", number);
                     // A review carries the same text the composer held, so it
                     // clears and the thread re-reads exactly like a comment.
-                    RunPresentation::none().pr_comment(number)
+                    RunPresentation::none().pr_comment(posted.clone())
                 }
                 Ok(_) => RunPresentation::none(),
                 Err(failure) => {
@@ -738,7 +746,7 @@ impl KagiApp {
                     .map(|t| t.pr.clone())
             })
             .flatten()
-            .filter(|pr| pr.number == number);
+            .filter(|pr| pr.number == number && pr.base_repo == modal.base_repo);
         let (Some(pr), Some(repo_path)) = (pr, self.repo_path.clone()) else {
             self.clear_pr_fields_modal();
             cx.notify();
@@ -786,6 +794,10 @@ impl KagiApp {
         let bg_plan = plan.clone();
         let bg_edit = edit.clone();
         let base_repo = modal.base_repo.clone();
+        let edited = kagi_domain::github::PrKey {
+            base_repo: base_repo.clone(),
+            number,
+        };
         let field = modal.field;
         let selected = modal.selected.clone();
         let dispatched = self.finish_run(
@@ -803,7 +815,7 @@ impl KagiApp {
             move |done| match done {
                 Ok(kagi_git::OperationOutcome::PrEdit { .. }) => {
                     klog!("executed: pr-edit #{}", number);
-                    RunPresentation::none().pr_edit(number, field, selected.clone())
+                    RunPresentation::none().pr_edit(edited.clone(), field, selected.clone())
                 }
                 Ok(_) => RunPresentation::none(),
                 Err(failure) => {

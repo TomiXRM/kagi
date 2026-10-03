@@ -2,7 +2,7 @@
 
 - Status: **Accepted**
 - Date: 2026-10-02
-- Related: #923、#924(organization のリポジトリ)、ADR-0028(ディレクトリ選択と Welcome)、ADR-0188(subprocess runner)、ADR-0177(Unknown の扱い)。
+- Related: #923、#924(organization のリポジトリ)、#928(自分の PR / Issue)、ADR-0028(ディレクトリ選択と Welcome)、ADR-0188(subprocess runner)、ADR-0177(Unknown の扱い)。
 
 ## 文脈
 
@@ -22,6 +22,11 @@
 5. **上書きしない、消さない。** clone 先が既にあり空のフォルダーでなければ(ファイル・symlink・中身のあるフォルダー)拒否する。clone 先のパスが UTF-8 でなければ plan で拒否する(以降、card・command・receipt・plan の照合に出る文字列とパスが一対一になる)。clone が失敗・中断して何かが残っても Kagi は消さず、そのパスを card と receipt に出す。消すかどうかはユーザーが決める。
 6. **期限は 30 分、止めるのは自分の起動した clone だけ。** 通常の 60 秒では大きなリポジトリの clone が途中で切れる。期限を過ぎたら `run_child` が、この clone のために Kagi が起動したプロセスグループ(`gh` とそれが起動した `git`)だけを止め、outcome は Unknown にする。ユーザーが起動したプロセスや他のプロセスには触れないので、「ユーザーのプロセスには触れない」方針と矛盾しない。`gh` が exit 0 でも、そのプロセスグループが空だと確認できなければ(hook などが clone 先へ書き続けている可能性)Success にせず Unknown にし、verify も行わない。v1 にキャンセルは無い(途中まで書かれたフォルダーの扱いと合わせて別 issue)。
 7. **admission は共通の write latch。clone 先はユーザーが選ぶ。** clone にはタブの session もリポジトリも無いが、開いている worktree の配下に書くこともあるので、repository の write と同じ latch(`op_latched`)に参加する。write や plan が実行中なら clone を始めず、clone の実行中は repository タブに戻っても write を始められない。同時に動く clone は 1 件だけ。成功したら新しいタブで開き、recent に加える。clone 先は Kagi が決めない(当初案の「前回の親フォルダー → 最近開いたリポジトリの親 → HOME」という既定はユーザー確認で却下):card は保存先が空の状態で開き、「選択…」(システムのフォルダー選択)で選んだフォルダーの中の `<repo>` を plan する。選ぶまで clone ボタンは無効。clone の実行中は、その window の close と ⌘Q を他の書き込みと同じ close guard(`hold_host_close`、「処理中」の通知)で保留し、結果が確定して verify と oplog が済んでから閉じられるようにする。途中で閉じると `gh` / `git` が clone 先へ書き続けたまま、verify も receipt も残らないため(#930 review)。
+8. **自分の PR / Issue は Home の切り替えで見る(#928)。** Home の見出しに「リポジトリ / Pull Request / Issue」の切り替え(GitHub の Dashboard と同じく件数付き)を置き、Pull Request には自分が作った open な PR と自分にレビュー依頼された open な PR、Issue には自分に assign された open な Issue を出す。どれも全リポジトリ横断で `gh search prs --author=@me` / `--review-requested=@me`、`gh search issues --assignee=@me`(`--state=open --limit 100`)で読む(読み取りのみ)。検索は件数の上限で黙って止まるので、上限に達した一覧には「100 件以上」を出す。件数はまだ読んでいない間は 0 ではなく spinner にする。絞り込みは表示中の切り替え先に効く。
+   3 つの検索はリポジトリ一覧と同じ Refresh で同時に読み、同じ合流・アカウントの扱い・保存方式(`github_work_cache.json`、`0600`、読んだ `<host>/<login>` と一致するときだけ表示、token の環境変数が上書き中は保存も表示もしない)に従う。1 つの検索が失敗したら、その一覧の上に理由を出して前回の一覧を残し、他の一覧は差し替える。欠けた組は保存しない。レビュー依頼の行だけに依頼者の avatar を出す(既存の login 単位の avatar cache)。avatar cache は github.com から取得するので、github.com の項目に限る(Enterprise の login を github.com に送らない、同名の別人を出さない。#940 review)。
+   行をクリックすると、手元に clone があるリポジトリならそのタブで開く。PR は `gh search` が head / base の ref を返さず、リポジトリの PR 一覧(1 ページ 100 件)に入っているとも限らないので、`gh pr view -R <host>/<owner>/<repo> <N>` で読んでから PR モードで開く。読んでいる間はその行に spinner を出し、同じ行のクリックは無視する。読み終えたときに Home が前面に無ければ開かない(別のタブへ移ったユーザーを引き戻さない)。Issue は Issues モードで選択して開く。ただし Issues モードは clone について `gh` が解決する repository(`gh repo set-default`、無ければ `origin`)を読み書きするので、それが Issue の repository と一致するときだけ開き、違えば理由を toast で出して開かない(同じ番号の別 Issue を表示し、返信をそこへ書き込まないため。#940 review)。手元に clone が無ければ、`gh search` が返した URL を OS の opener で開き、GitHub で見る(clone の card はリポジトリ一覧のもの。#940 review)。行の右端のボタンは clone の有無にかかわらずどの行も「Open」で、押すと同じ URL を GitHub で開く(行のクリックとは別で、手元の clone では開かない)。
+   一致して開くとき、その clone の Issues モードがすでに別の repository(以前の `gh repo set-default`)で読み込まれていれば、一覧と Composer の宛先を検証した repository に切り替えて読み直してから選択する(古い宛先のまま、別 repository の同じ番号の Issue へ返信しないため。#940 review)。開いている途中の PR / Issue は、後からの選択(GitHub で開く行のクリック、Open ボタン、切り替え先の変更)で取り消し、後から届いた結果でユーザーをその repository へ移さない(#940 review)。
+   Issue の下書き(新しい Issue と返信)は、clone・番号に加えて書き込み先の repository(`<host>/<owner>/<repo>`)ごとに保存する。宛先を切り替えると Composer を作り直し、新しい宛先の下書きを読む。前の宛先の下書きは消さずにその宛先のキーに残る。投稿は、Composer の宛先が Issues モードの宛先と一致するときだけ行う(前の宛先の下書きを、同じ番号の別 Issue へ投稿しないため。#940 review)。宛先を持たない以前の版の下書きは、clone の remote がすべて同じ 1 つの repository を指していて(`gh repo set-default` は remote の中から選ぶ)、それが宛先と一致するときだけ、その宛先へ 1 回だけ引き継ぐ。それ以外は引き継がず、元のキーのまま残して `[kagi] issues: draft … kept` を 1 行出す(宛先が確かでない下書きを投稿しないことを、表示されなくなることより優先する)。
 
 ## 結果
 

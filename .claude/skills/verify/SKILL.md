@@ -620,6 +620,36 @@ The current suite covers:
   Home is drawn centred over it (`remote-browse-card`). For Tier B use a real
   `gh` login, choose a temporary folder with "Choose…" (the native dialog)
   and check `[kagi] clone: done … ok=true` and the receipt.
+- Home's pull requests and issues (`KAGI_GUI_E2E_ONLY=home_work`,
+  `tests/recovery/home_work.rs`, #928 / ADR-0219 decision 8): an offline
+  `gh` answers the three `gh search`es (a PR and an issue of a repository
+  cloned locally, a draft PR of one that is not, a review request) and
+  `pr view -R`; marker files fail every search (`fail-search`) or the review
+  search (`fail-review`), and `state/user` switches the `gh` account. The
+  test dispatcher runs `gh` inside its pump, so Home is opened and drawn
+  before the pump: the switch draws `home-pane-prs-spinner` (never a count of
+  0) and the pane `home-work-loading`. Lists saved as another account are not
+  shown; after the account switch that account's saved lists are, and stay
+  when its searches fail. Rows are `home-work-<owner>/<repo>-<N>`. A failed search draws
+  `home-work-failed` above the list read before and saves nothing; the
+  non-local row opens on GitHub (the URL is recorded, `e2e::take_opened_urls`)
+  and every row's `-open` end opens on GitHub without the row's click; the
+  local PR row draws its `-opening` spinner while `pr view` runs, ignores a
+  second click (one `view-calls`), then opens PR #7 in the clone's tab. A
+  non-local row picked while that local PR is still opening wins: it opens on
+  GitHub, and Home stays in front when the dropped PR's refs arrive; so do a
+  row's Open button and a pane switch pressed then (the pick and the press go
+  in without the pump between them). With `state/default-repo`
+  naming `acme/upstream` (`gh repo set-default` elsewhere) the issue row
+  stays on Home with a toast naming that repository; the clone's Issues mode
+  is then loaded as acme/upstream (a queued list read), and once `gh`
+  resolves the clone to acme/local the issue row opens it in Issues mode with
+  #4 selected and the list and Reply re-addressed to acme/local
+  (`issue_write_repo_for_e2e`); a reply drafted to acme/upstream's #4 before
+  that is not in acme/local's #4 Reply and stays stored for acme/upstream
+  (drafts are keyed by the repository written to; `drafts_test` covers the
+  hand-over of pre-#940 drafts). For Tier B use a real `gh`
+  login, click each switch cell and one PR / issue row of a local clone.
 - modal-slot arbitration (`KAGI_GUI_E2E_ONLY=push_failure_keeps_modal,merge_plan_latch,delete_branch_plan_latch,remote_browse_modal_routing`): a push failure lands behind Remote Browse without losing its input and reaches the Failed footer, an Error toast and one durable receipt — no dismiss-only AppNotice, queued or shown after Remote Browse closes (the #747 contract; #824 bisected the stale notice expectation to `e5644c6f`). Delayed Merge/Delete Branch plans wait behind Remote Browse without losing its input, stale plan state, latches, footers, or notices; a reopened Remote Browse rejects an older in-place completion by generation;
 - unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.
 - toolbar centre actions (Pull…Terminal) drawn only in Graph, not PRs/Editor/Analyze

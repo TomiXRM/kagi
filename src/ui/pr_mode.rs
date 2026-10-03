@@ -21,7 +21,9 @@
 use gpui::{
     div, prelude::*, px, relative, rgb, Context, ListState, SharedString, UniformListScrollHandle,
 };
-use kagi_domain::github::{Comment, Mergeable, PullRequest, Review, ReviewComment, ReviewState};
+use kagi_domain::github::{
+    Comment, Mergeable, PrKey, PullRequest, Review, ReviewComment, ReviewState,
+};
 use kagi_domain::pr_list::PrSection;
 use kagi_git::{Commit, CommitId, FileStatus, PrConflictFile};
 use kagi_ui_core::file_tree::status_badge;
@@ -187,18 +189,20 @@ impl Default for PrModeState {
 }
 
 impl PrModeState {
-    /// A write for `number` settled: its text is on the server, so the tab's
+    /// A write for `pr` settled: its text is on the server, so the tab's
     /// copy goes. The one preview flag belongs to the one composer, which
     /// shows the open tab — so it is reset only when the settled tab is that
     /// tab: a completion for PR A must not flip the box the reader is writing
     /// PR B in, and leaving it on after the open tab's own post shows an
-    /// empty markdown area with no placeholder (#750 review).
-    pub(crate) fn settle_composer_for(&mut self, number: u64) {
+    /// empty markdown area with no placeholder (#750 review). Matched by
+    /// repository and number: another repository's PR with the same number
+    /// keeps its draft (#940 review).
+    pub(crate) fn settle_composer_for(&mut self, pr: &PrKey) {
         let settled_tab_is_open = self
             .active
             .and_then(|ix| self.tabs.get(ix))
-            .is_some_and(|tab| tab.pr.number == number);
-        if let Some(tab) = self.tabs.iter_mut().find(|t| t.pr.number == number) {
+            .is_some_and(|tab| tab.pr.is(pr));
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.pr.is(pr)) {
             tab.comment_draft.clear();
         }
         if settled_tab_is_open {
@@ -253,7 +257,7 @@ impl KagiApp {
                 reset_view_if_not_conflicting(m, pr);
             }
             cx.notify();
-            self.prioritize_pr_details(pr.number, cx);
+            self.prioritize_pr_details(pr.key(), cx);
             if !local_ready {
                 self.fetch_pr_for_open(pr.clone(), cx);
             } else if let Some((true, conflicts_missing, preview_missing)) =
@@ -312,21 +316,21 @@ impl KagiApp {
         m.active = Some(m.tabs.len() - 1);
         reset_view_if_not_conflicting(m, pr);
         cx.notify();
-        self.prioritize_pr_details(pr.number, cx);
-        self.pr_mode_load_conversation(pr.number, cx);
+        self.prioritize_pr_details(pr.key(), cx);
+        self.pr_mode_load_conversation(pr, cx);
         self.fetch_pr_for_open(pr.clone(), cx);
     }
 
-    /// Fetch reviews + comments, and separately the merge status, for `number`
+    /// Fetch reviews + comments, and separately the merge status, for `pr`
     /// in the background and drop them on the matching tab. Once per tab open
     /// (never per list refresh — the list ticker must stay one call). The two
     /// run side by side so each tab's loader ends on its own data.
-    pub(super) fn pr_mode_load_conversation(&mut self, number: u64, cx: &mut Context<Self>) {
+    pub(super) fn pr_mode_load_conversation(&mut self, pr: &PullRequest, cx: &mut Context<Self>) {
         let owner = self.active_session();
         let Some(repo) = self.repo_path.clone() else {
             return;
         };
-        self.pr_mode_load_conversation_for(owner, repo, number, cx);
+        self.pr_mode_load_conversation_for(owner, repo, pr.key(), cx);
     }
 
     /// The same load, for a named owner and the repository the read belongs to
@@ -338,26 +342,42 @@ impl KagiApp {
     /// here would run `gh` against whichever repository is active - or not at
     /// all, on Welcome or a remote view - and file the answer on the original
     /// PR (review findings, `w5:p19`).
+    ///
+    /// `repo` is only the working directory `gh` runs in; every read names
+    /// `base_repo`, the repository the PR lives in (#940 review P1). The
+    /// directory's `gh` default can be another repository — a clone opened
+    /// from Home whose `gh repo set-default` points elsewhere — and the same
+    /// number there is another PR, whose conversation would sit under this
+    /// PR's body and invite a reply grounded in it.
     fn pr_mode_load_conversation_for(
         &mut self,
         owner: Option<crate::app::SessionId>,
         repo: std::path::PathBuf,
-        number: u64,
+        pr: PrKey,
         cx: &mut Context<Self>,
     ) {
+        let number = pr.number;
         let repo2 = repo.clone();
+        let base_repo = pr.base_repo.clone();
+        let base_repo2 = pr.base_repo.clone();
+        // Both answers land on the tab of this repository's PR: a session can
+        // hold A#7 and B#7 at once, and the first tab numbered 7 may be the
+        // other one (#940 review).
+        let merge_pr = pr.clone();
         cx.spawn(async move |this, acx| {
             // #347: mergeStateStatus + merge-queue position. A failure
             // (non-GitHub host, old gh, no MQ) is not fatal — the card just
             // does not appear — but it says why (#843).
             let merge_status = acx
                 .background_executor()
-                .spawn(async move { kagi_git::github::pr_merge_status(&repo2, number) })
+                .spawn(
+                    async move { kagi_git::github::pr_merge_status(&repo2, &base_repo2, number) },
+                )
                 .await;
             let _ = this.update(acx, |app, cx| {
                 let Some(t) = app
                     .pr_mode_of(owner)
-                    .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.number == number))
+                    .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.is(&merge_pr)))
                 else {
                     return;
                 };
@@ -395,8 +415,10 @@ impl KagiApp {
                             // Two calls: `gh pr view` for the verdicts + issue
                             // comments, `gh api graphql` for the review threads
                             // (line comments with their anchor side and state).
-                            let convo = kagi_git::github::pr_conversation(&repo, number);
-                            let lines = kagi_git::github::pr_review_threads(&repo, number);
+                            let convo =
+                                kagi_git::github::pr_conversation(&repo, &base_repo, number);
+                            let lines =
+                                kagi_git::github::pr_review_threads(&repo, &base_repo, number);
                             (convo, lines)
                         })
                         .await
@@ -405,7 +427,7 @@ impl KagiApp {
             let _ = this.update(acx, |app, cx| {
                 let Some(t) = app
                     .pr_mode_of(owner)
-                    .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.number == number))
+                    .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.is(&pr)))
                 else {
                     return;
                 };
@@ -565,10 +587,10 @@ impl KagiApp {
     }
 
     /// Close the tab for `number`, if open (after a merge).
-    pub fn pr_mode_close_tab_for(&mut self, number: u64, cx: &mut Context<Self>) {
+    pub fn pr_mode_close_tab_for(&mut self, pr: &PrKey, cx: &mut Context<Self>) {
         let ix = self
             .pr_mode()
-            .and_then(|m| m.tabs.iter().position(|t| t.pr.number == number));
+            .and_then(|m| m.tabs.iter().position(|t| t.pr.is(pr)));
         if let Some(ix) = ix {
             self.pr_mode_close_tab(ix, cx);
         }
@@ -604,10 +626,10 @@ impl KagiApp {
     /// not the active one — activating its tab first is what makes the click
     /// land on the commit the user actually pointed at, rather than on an
     /// index into someone else's range.
-    pub(super) fn pr_lane_select(&mut self, pr: u64, commit: &CommitId, cx: &mut Context<Self>) {
+    pub(super) fn pr_lane_select(&mut self, pr: &PrKey, commit: &CommitId, cx: &mut Context<Self>) {
         let Some(ix) = self
             .pr_mode()
-            .and_then(|m| m.tabs.iter().position(|t| t.pr.number == pr))
+            .and_then(|m| m.tabs.iter().position(|t| t.pr.is(pr)))
         else {
             return;
         };
@@ -716,10 +738,13 @@ impl KagiApp {
                 if order.is_empty() {
                     return;
                 }
-                let cur = m
-                    .active
-                    .and_then(|i| m.tabs.get(i))
-                    .and_then(|t| order.iter().position(|p| p.number == t.pr.number));
+                // The open PR's row is the one of its repository: the list may
+                // hold another repository's PR under the same number.
+                let cur = m.active.and_then(|i| m.tabs.get(i)).and_then(|t| {
+                    order
+                        .iter()
+                        .position(|p| p.number == t.pr.number && p.base_repo == t.pr.base_repo)
+                });
                 let next = match cur {
                     Some(i) => (i as i32 + delta).clamp(0, order.len() as i32 - 1) as usize,
                     None => 0,
@@ -773,14 +798,14 @@ impl KagiApp {
         &mut self,
         owner: Option<crate::app::SessionId>,
         repo: std::path::PathBuf,
-        number: u64,
+        pr: PrKey,
         field: super::modals::PrField,
         selected: Vec<String>,
         cx: &mut Context<Self>,
     ) {
         if let Some(tab) = self
             .pr_mode_of(owner)
-            .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.number == number))
+            .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.is(&pr)))
         {
             match field {
                 super::modals::PrField::Reviewers => tab.pr.reviewers = selected,
@@ -827,26 +852,34 @@ impl KagiApp {
         &mut self,
         owner: Option<crate::app::SessionId>,
         repo: std::path::PathBuf,
-        number: u64,
+        pr: PrKey,
         cx: &mut Context<Self>,
     ) {
-        self.clear_pr_comment_draft_for(owner, number, cx);
-        self.pr_mode_load_conversation_for(owner, repo, number, cx);
+        self.clear_pr_comment_draft_for(owner, &pr, cx);
+        // The thread is re-read from the repository the PR lives in; with no
+        // tab for it there is nothing to land the read on.
+        if !self
+            .pr_mode_of(owner)
+            .is_some_and(|m| m.tabs.iter().any(|t| t.pr.is(&pr)))
+        {
+            return;
+        }
+        self.pr_mode_load_conversation_for(owner, repo, pr, cx);
     }
 
-    /// Empty the composer for `number` in `owner`'s tabs - the text is on the
+    /// Empty the composer for `pr` in `owner`'s tabs - the text is on the
     /// server now. The shared input is only reset when it is actually holding
     /// that PR's text, so a draft parked for another PR survives.
     pub(crate) fn clear_pr_comment_draft_for(
         &mut self,
         owner: Option<crate::app::SessionId>,
-        number: u64,
+        pr: &PrKey,
         cx: &mut Context<Self>,
     ) {
         if let Some(mode) = self.pr_mode_of(owner) {
-            mode.settle_composer_for(number);
+            mode.settle_composer_for(pr);
         }
-        if self.pr_comment_for == Some(number) {
+        if self.pr_comment_for.as_ref() == Some(pr) {
             // `InputState::set_value` needs a `&mut Window`, which a completion
             // callback has none of. Dropping the entity is what the next
             // window-bearing frame rebuilds from the (now empty) draft.
@@ -869,11 +902,14 @@ impl KagiApp {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        let open = self
+        // The composer follows the PR by repository and number: two tabs
+        // numbered 7 from two repositories are two drafts (#940 review).
+        // Compared in place every frame; the key is cloned only on a switch.
+        let Some(same_pr) = self
             .pr_mode()
             .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
-            .map(|t| t.pr.number);
-        let Some(number) = open else {
+            .map(|t| self.pr_comment_for.as_ref().is_some_and(|k| t.pr.is(k)))
+        else {
             return;
         };
         if self.pr_comment_input.is_none() {
@@ -888,7 +924,7 @@ impl KagiApp {
         let Some(input) = self.pr_comment_input.clone() else {
             return;
         };
-        if self.pr_comment_for == Some(number) {
+        if same_pr {
             // Same PR: the box is the truth, the tab keeps the copy.
             let text = input.read(cx).value().to_string();
             if let Some(tab) = self
@@ -911,18 +947,20 @@ impl KagiApp {
         if let Some(previous) = self.pr_comment_for.take() {
             if let Some(tab) = self
                 .pr_mode_mut()
-                .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.number == previous))
+                .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.is(&previous)))
             {
                 tab.comment_draft = parked;
             }
         }
-        let draft = self
+        let Some((open, draft)) = self
             .pr_mode()
-            .and_then(|m| m.tabs.iter().find(|t| t.pr.number == number))
-            .map(|t| t.comment_draft.clone())
-            .unwrap_or_default();
+            .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
+            .map(|t| (t.pr.key(), t.comment_draft.clone()))
+        else {
+            return;
+        };
         input.update(cx, |state, cx| state.set_value(draft, window, cx));
-        self.pr_comment_for = Some(number);
+        self.pr_comment_for = Some(open);
     }
 
     pub(super) fn pr_mode_focus(&mut self, f: PrFocus, cx: &mut Context<Self>) {

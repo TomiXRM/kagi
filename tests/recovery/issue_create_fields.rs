@@ -346,7 +346,9 @@ pub fn scenario_issue_create_fields(cx: &mut VisualTestAppContext) {
     );
     // #903: the picks are saved with the draft, so a restart restores them.
     assert_eq!(
-        kagi_git::drafts::load_issue_draft(&repo, None).map(|draft| draft.fields),
+        kagi_git::drafts::load_issue_draft(&repo, "example/fixture", None)
+            .record
+            .map(|draft| draft.fields),
         Some(kagi_domain::github::IssueCreateFields {
             labels: vec!["bug".into(), "gone".into()],
             assignees: vec!["hubot".into()],
@@ -511,7 +513,9 @@ pub fn scenario_issue_create_fields(cx: &mut VisualTestAppContext) {
         "a created issue leaves an empty composer"
     );
     assert!(
-        kagi_git::drafts::load_issue_draft(&repo, None).is_none(),
+        kagi_git::drafts::load_issue_draft(&repo, "example/fixture", None)
+            .record
+            .is_none(),
         "a created issue clears its draft, picks included"
     );
 
@@ -567,7 +571,8 @@ pub fn scenario_issue_create_fields(cx: &mut VisualTestAppContext) {
         "the saved picks survive an edit made during the load"
     );
     assert_eq!(
-        kagi_git::drafts::load_issue_draft(&repo, None)
+        kagi_git::drafts::load_issue_draft(&repo, "example/fixture", None)
+            .record
             .map(|draft| (draft.body, draft.fields.labels)),
         Some(("typed while loading\n".to_string(), vec!["bug".to_string()])),
         "both are saved together"

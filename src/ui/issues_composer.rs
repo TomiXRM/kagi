@@ -27,6 +27,9 @@ pub(super) struct IssuesComposerState {
 pub(super) struct IssueEditor {
     pub draft: IssueDraft,
     pub repo: Option<std::path::PathBuf>,
+    /// The repository this draft is stored for and posts to (#940 review);
+    /// the editor is dropped when the Issues mode addresses another one.
+    pub base_repo: Option<String>,
     pub storage_version: u64,
     pub body_input: Option<Entity<InputState>>,
     pub title_input: Option<Entity<InputState>>,

@@ -32,9 +32,15 @@
 //! - [`clear_draft`] — delete the draft for a branch (e.g. after a commit)
 //! - [`queue_issue_draft`] / [`flush_issue_draft_if_version`] — keyed Issue autosave
 //! - [`flush_issue_drafts`] — best-effort flush of every pending Issue draft
-//! - [`load_issue_draft`] — read the latest pending or saved Issue draft as an
-//!   [`IssueDraftRecord`] (text plus a New Issue's picked labels / assignees)
+//! - [`load_issue_draft`] — read the latest pending or saved Issue draft, an
+//!   [`IssueDraftRecord`] (text plus a New Issue's picked labels / assignees),
+//!   as an [`IssueDraftLoad`]
 //! - [`issue_draft_version`] / [`clear_issue_draft_if_version`] — completion guards
+//!
+//! An Issue draft is stored per clone, per repository it is written to (the
+//! `<host>/<owner>/<repo>` the Issues mode posts to) and per Issue: the clone
+//! can address another repository after `gh repo set-default`, where the same
+//! number is another Issue (#940 review).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -217,18 +223,43 @@ struct IssueDraftKey {
     path: Option<PathBuf>,
     repo: PathBuf,
     branch: String,
+    number: Option<u64>,
 }
 
 impl IssueDraftKey {
-    fn new(repo: &Path, number: Option<u64>) -> Self {
-        let branch = match number {
-            Some(number) => format!(":issue:{number}"),
-            None => ":issue:new".to_owned(),
-        };
+    /// The draft for Issue `number` (`None`: a new Issue) of `base_repo`,
+    /// written from the clone at `repo`.
+    fn new(repo: &Path, base_repo: &str, number: Option<u64>) -> Self {
+        let base_repo = base_repo.to_ascii_lowercase();
+        Self::at(
+            repo,
+            number,
+            match number {
+                Some(number) => format!(":issue:{base_repo}:{number}"),
+                None => format!(":issue:{base_repo}:new"),
+            },
+        )
+    }
+
+    /// Where builds before #940 kept the draft: per clone only, without the
+    /// repository it was written to.
+    fn unaddressed(repo: &Path, number: Option<u64>) -> Self {
+        Self::at(
+            repo,
+            number,
+            match number {
+                Some(number) => format!(":issue:{number}"),
+                None => ":issue:new".to_owned(),
+            },
+        )
+    }
+
+    fn at(repo: &Path, number: Option<u64>, branch: String) -> Self {
         Self {
             path: draft_file_path(repo, &branch),
             repo: repo.to_path_buf(),
             branch,
+            number,
         }
     }
 }
@@ -260,20 +291,21 @@ fn issue_drafts() -> &'static Mutex<IssueDraftQueue> {
 
 /// Replace the latest pending Issue draft in memory, without filesystem I/O.
 ///
-/// `None` is the new-Issue Composer; `Some(number)` is that Issue's Reply.
-/// Queue empty text to clear; picks without text are cleared with it. The
-/// caller schedules a background flush through [`flush_issue_draft_if_version`]
-/// after its debounce; application shutdown calls [`flush_issue_drafts`] for
-/// anything still pending. Returns the new token to capture when dispatching
-/// an Issue write.
+/// `None` is the new-Issue Composer; `Some(number)` is that Issue's Reply,
+/// both written to `base_repo`. Queue empty text to clear; picks without text
+/// are cleared with it. The caller schedules a background flush through
+/// [`flush_issue_draft_if_version`] after its debounce; application shutdown
+/// calls [`flush_issue_drafts`] for anything still pending. Returns the new
+/// token to capture when dispatching an Issue write.
 pub fn queue_issue_draft(
     repo: &Path,
+    base_repo: &str,
     number: Option<u64>,
     title: &str,
     body: &str,
     fields: &IssueCreateFields,
 ) -> u64 {
-    let key = IssueDraftKey::new(repo, number);
+    let key = IssueDraftKey::new(repo, base_repo, number);
     let mut queue = issue_drafts()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -294,8 +326,8 @@ pub fn queue_issue_draft(
 
 /// Read (or allocate) the process-lifetime version of this storage key, without
 /// filesystem I/O. Capture before loading and check again before applying it.
-pub fn issue_draft_version(repo: &Path, number: Option<u64>) -> u64 {
-    let key = IssueDraftKey::new(repo, number);
+pub fn issue_draft_version(repo: &Path, base_repo: &str, number: Option<u64>) -> u64 {
+    let key = IssueDraftKey::new(repo, base_repo, number);
     let mut queue = issue_drafts()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -305,25 +337,22 @@ pub fn issue_draft_version(repo: &Path, number: Option<u64>) -> u64 {
     }
 }
 
-/// Consume the posted version only if it is still current, queuing a clear.
-/// No tab needs to remain alive and no disk I/O occurs here. Globally unique
-/// tokens locate their original storage key even if KAGI_LOG_DIR has changed;
-/// repo and Issue identity must still match. A repeated completion is a no-op.
-pub fn clear_issue_draft_if_version(repo: &Path, number: Option<u64>, version: u64) -> bool {
-    let requested = IssueDraftKey::new(repo, number);
+/// Consume the posted version only if it is still current, queuing a clear,
+/// and return the key's next version. No tab needs to remain alive and no
+/// disk I/O occurs here. Globally unique tokens locate their original storage
+/// key — repository written to included — even if KAGI_LOG_DIR has changed;
+/// clone and Issue identity must still match. A repeated completion is a
+/// no-op (`None`).
+pub fn clear_issue_draft_if_version(repo: &Path, number: Option<u64>, version: u64) -> Option<u64> {
     let mut queue = issue_drafts()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let key = queue.versions.iter().find_map(|(key, current)| {
-        (*current == version && key.repo == requested.repo && key.branch == requested.branch)
-            .then(|| key.clone())
-    });
-    let Some(key) = key else {
-        return false;
-    };
-    queue.advance(&key);
+        (*current == version && key.repo == repo && key.number == number).then(|| key.clone())
+    })?;
+    let next = queue.advance(&key);
     queue.pending.insert(key, IssueDraftRecord::default());
-    true
+    Some(next)
 }
 
 /// Persist one pending Issue draft only while `version` still identifies its
@@ -338,13 +367,11 @@ pub fn flush_issue_draft_if_version(
     number: Option<u64>,
     version: u64,
 ) -> Result<bool, GitError> {
-    let requested = IssueDraftKey::new(repo, number);
     let mut queue = issue_drafts()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let key = queue.versions.iter().find_map(|(key, current)| {
-        (*current == version && key.repo == requested.repo && key.branch == requested.branch)
-            .then(|| key.clone())
+        (*current == version && key.repo == repo && key.number == number).then(|| key.clone())
     });
     let Some(key) = key else {
         return Ok(false);
@@ -499,23 +526,92 @@ pub fn flush_issue_drafts() -> Result<(), GitError> {
     first_error.map_or(Ok(()), Err)
 }
 
-/// Load the most recent Issue draft, including an update not yet flushed.
-/// A pending clear takes precedence over an older file. Missing/corrupt or
-/// unrelated-mode files follow the existing lenient load contract; a file
-/// written before #903 (`[title, body]`) loads with no picks.
-pub fn load_issue_draft(repo: &Path, number: Option<u64>) -> Option<IssueDraftRecord> {
-    let key = IssueDraftKey::new(repo, number);
-    let queue = issue_drafts()
+/// What [`load_issue_draft`] found.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IssueDraftLoad {
+    /// The draft to show, if any.
+    pub record: Option<IssueDraftRecord>,
+    /// A draft saved before #940 is there but was not handed to this
+    /// repository, as it may have been written to another one.
+    pub kept_unaddressed: bool,
+}
+
+/// Load the most recent Issue draft written to `base_repo`, including an
+/// update not yet flushed. A pending clear takes precedence over an older
+/// file. Missing/corrupt or unrelated-mode files follow the existing lenient
+/// load contract; a file written before #903 (`[title, body]`) loads with no
+/// picks.
+///
+/// A draft saved before #940 does not say which repository it was written
+/// to. It is handed to `base_repo` only when that is the one repository the
+/// clone's remotes name ([`sole_remote_identity`]; `gh repo set-default`
+/// picks among them): it moves to `base_repo`'s key (pending, flushed with
+/// the rest) and its old file is cleared, so it is offered once. Otherwise it
+/// stays where it is, untouched, and `kept_unaddressed` says so — a draft is
+/// never posted to a repository it may not have been written for.
+///
+/// [`sole_remote_identity`]: crate::github_repos::sole_remote_identity
+pub fn load_issue_draft(repo: &Path, base_repo: &str, number: Option<u64>) -> IssueDraftLoad {
+    let found = |record: Option<IssueDraftRecord>| IssueDraftLoad {
+        record: record.filter(|record| !record.is_empty()),
+        kept_unaddressed: false,
+    };
+    let key = IssueDraftKey::new(repo, base_repo, number);
+    let unaddressed = IssueDraftKey::unaddressed(repo, number);
+    let legacy = {
+        let queue = issue_drafts()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(record) = queue.pending.get(&key) {
+            return found(Some(record.clone()));
+        }
+        if let Some(draft) = key.path.as_deref().and_then(load_draft_at) {
+            return found(
+                (draft.mode == "issue-composer")
+                    .then(|| parse_issue_message(&draft.message))
+                    .flatten(),
+            );
+        }
+        if queue.pending.contains_key(&unaddressed) {
+            return found(None);
+        }
+        let Some(legacy) = unaddressed
+            .path
+            .as_deref()
+            .and_then(load_draft_at)
+            .filter(|draft| draft.mode == "issue-composer")
+            .and_then(|draft| parse_issue_message(&draft.message))
+            .filter(|record| !record.is_empty())
+        else {
+            return found(None);
+        };
+        legacy
+    };
+    // Off the lock: reading the remotes may run `ssh -G`, and the UI thread
+    // queues drafts through the same lock.
+    let certain = crate::github_repos::sole_remote_identity(repo)
+        .is_some_and(|identity| identity.eq_ignore_ascii_case(base_repo));
+    if !certain {
+        return IssueDraftLoad {
+            record: None,
+            kept_unaddressed: true,
+        };
+    }
+    let mut queue = issue_drafts()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some(record) = queue.pending.get(&key) {
-        return (!record.is_empty()).then(|| record.clone());
+        // Typed (or loaded) meanwhile: that is the draft now.
+        return found(Some(record.clone()));
     }
-    let draft = load_draft_at(key.path.as_deref()?)?;
-    if draft.mode != "issue-composer" {
-        return None;
+    if queue.pending.contains_key(&unaddressed) {
+        return found(None);
     }
-    parse_issue_message(&draft.message).filter(|record| !record.is_empty())
+    queue
+        .pending
+        .insert(unaddressed, IssueDraftRecord::default());
+    queue.pending.insert(key, legacy.clone());
+    found(Some(legacy))
 }
 
 // ────────────────────────────────────────────────────────────

@@ -647,6 +647,27 @@ echo 'GraphQL: Could not resolve to an Issue with the number of 404.' >&2
 exit 1
 "#;
     let (_root, workdir, _restore) = fixture(script);
-    let error = issue_detail(&workdir, 404).expect_err("missing issue");
+    let error = issue_detail(&workdir, Some("github.com/o/r"), 404).expect_err("missing issue");
     assert!(matches!(error, PrFetchError::NotFound(_)), "{error:?}");
+}
+
+/// #940 review P1: the detail of an issue is read from the repository the
+/// list froze, even when `gh`'s default repository for the clone is another
+/// one with an issue under the same number.
+#[test]
+fn issue_detail_reads_the_frozen_repository_not_the_default() {
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let script = r#"
+case "$*" in
+  "repo view --json url") echo '{"url":"https://github.com/acme/upstream"}' ;;
+  "issue view 4 -R github.com/acme/local --json"*)
+    echo '{"number":4,"title":"local four","state":"OPEN","url":"https://github.com/acme/local/issues/4","author":{"login":"a"},"assignees":[],"labels":[],"body":"","comments":[]}' ;;
+  "issue view 4"*)
+    echo '{"number":4,"title":"upstream four","state":"OPEN","url":"https://github.com/acme/upstream/issues/4","author":{"login":"a"},"assignees":[],"labels":[],"body":"","comments":[]}' ;;
+  *) echo "unexpected gh $*" >&2; exit 1 ;;
+esac
+"#;
+    let (_root, workdir, _restore) = fixture(script);
+    let issue = issue_detail(&workdir, Some("github.com/acme/local"), 4).expect("issue #4");
+    assert_eq!(issue.title, "local four");
 }

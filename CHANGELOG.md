@@ -23,6 +23,11 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Operation Log で行を開いたときの詳細が「before: branch: maindirty: cleanafter: …」のように 1 行につながって表示されていた問題を修正しました。before / dirty / after などを 1 項目ずつ改行して表示します。(#908)
 - Operation Log の操作者の表示を、日本語表示でも「人」ではなく「Human」にしました(CLI / MCP と同じく英語の表記)。(#908)
 - Inspector の commit 本文で、箇条書きなど改行で区切られた行が「- bump the version- tag the release」のように 1 行につながって表示されていた問題を修正しました。本文の改行どおりに 1 行ずつ表示します。(#946)
+- Issues の下書き(新しい Issue と返信)を、clone ごと・番号ごとに加えて書き込み先の repository ごとに保存するようにしました。`gh repo set-default` で別の repository に切り替えた後、同じ番号の別 Issue の欄に前の repository 宛ての下書きが出て、そのまま投稿されることはありません(前の下書きは消さずに残ります)。以前の版で保存した下書きは、clone の remote が指す repository が 1 つだけのときにその repository へ 1 回だけ引き継ぎ、複数あるときは引き継がずに元の場所に残します。(#940 review)
+- PR を開いたときの会話・レビュースレッド・merge 状態を、その PR の repository から読むようにしました。これまでは clone の `gh repo set-default` が指す repository から読んでいたため、Home から別の repository を指す clone で PR を開くと、同じ番号の別 PR の会話が本文の下に並ぶことがありました。(#940 review)
+- `gh repo set-default` を別の repository に切り替えた後に Home からその repository の Issue を開くと、前の repository の Issue 一覧が残り、その行を選ぶと新しい repository の同じ番号の Issue に返信できてしまう問題を修正しました。宛先が変わった時点で前の一覧・選択・続きの読み込み位置を消し、新しい repository の一覧が読めるまで行は表示しません。(#940 review)
+- 同じタブに別の repository の同じ番号の PR(A の #7 と B の #7)を開いていると、B の会話・レビュースレッド・merge 状態が A の PR 画面に入ることがあった問題を修正しました。PR の画面・詳細の読み込み・会話・merge 状態・コメント欄の下書きを、番号だけでなく repository と番号の組で対応づけます。Home から開いた PR の詳細も、PR 一覧にある別の repository の同じ番号の PR ではなく、開いた PR のものを読みます。(#940 review)
+- Home から Issue を開くとき、そのタブの Issues をまだ一度も開いていなかった場合にも、確かめた repository に一覧と Reply の宛先を固定するようにしました。Issue の本文の読み込みも `-R` でその repository から読みます。これまでは確かめた直後に `gh repo set-default` が変わると、別の repository の同じ番号の Issue が表示され、それに返信できました。(#940 review)
 
 ### Changed
 
@@ -30,11 +35,13 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Worktree 行とホバーカードをアイコン・短い状態表示中心に整理し、再計測はアイコンのみ（支援技術向けの名前は維持）にしました。ignored file の注意はホバーから外し、削除時の確認計画で対象のファイル数とフォルダー数を示します。(#934)
 - Graph で行を選択しているとき、Esc で選択を解除できるようにしました(右側の commit 詳細も閉じます)。メニューや diff、確認画面が開いている場合は、従来どおりそちらが先に閉じます。
 - Terminal / Operation Log / Activity の下部パネルをウィンドウ全幅から main pane の下部へ移しました。開くと main の内容だけが縮み、サイドバーと右側の Inspector / Commit Panel に加え Editor の file tree / hunks と PR / Issues の navigator（PR の swimlane も）はステータスバーまで表示されます。従来の高さ変更、Cmd-J、タブ切替、Conflict 画面での非表示は維持します。（ADR-0007）
+- Home の見出しの下にあった説明文(「最近開いたリポジトリを選ぶか、フォルダーを開くか、SSH で接続します。」)を削除しました。見出しとボタンはそのままです。
 - Cmd+J の下部パネル(Terminal / Operation Log / Activity)を、高さのアニメーションで出し入れするようにしました(開く 180ms ease-out、閉じる 150ms ease-in)。途中でもう一度押すと、その位置から逆向きに戻ります。動く間も Terminal の行数・桁数は変わりません。「動きを減らす」が有効なら即座に切り替わります。(#950)
 - 左のサイドバー(View → Toggle Sidebar)と右の Inspector / Commit Panel(View → Toggle Commit Details)の表示・非表示も、下部パネルと同じ時間と動き(開く 180ms ease-out、閉じる 150ms ease-in)で、幅だけを動かして出し入れするようにしました。途中でもう一度押すとその位置から逆向きに戻り、Graph の行・選択・位置は動きません。Inspector と Commit Panel の切り替えや、モードの切り替えでの表示・非表示はこれまでどおり即座です。「動きを減らす」が有効なら即座に切り替わります。(#955)
 
 ### Added
 
+- Home に「リポジトリ / Pull Request / Issue」の切り替え(件数付き)を追加し、全リポジトリ横断で自分が作った open な PR、自分にレビュー依頼された open な PR(依頼者のアバター付き)、自分に assign された open な Issue を一覧できるようにしました(`gh search`、各最大 100 件、それ以上あれば表示)。行をクリックすると手元の clone のタブでその PR / Issue を開き、手元に無ければ GitHub で開きます。行の右の「Open」はどの行でも GitHub で開きます。読み込み中の件数は 0 ではなく spinner で示し、一覧はリポジトリ一覧と同じくアカウントごとに保存して次回すぐに表示します。(#928、ADR-0219)
 - Operation Log の「この操作を取り消す」「この時点まで戻す」で local tag の作成・削除・移動も戻せるようにしました。lightweight tag と annotated tag の raw object OID を前後で記録し、確認後に tag が変われば拒否します。復元前の OID は backup ref に保持し、作業ツリー・index・untracked・stash・remote branch は変更しません。tag を動かす計画では不正確なグラフ予測を出さず、短い状態だけを card に示します。(#887)
 - タブ帯の「+」と New Tab(⌘T)で「Home」タブ(ダッシュボード)を開けるようにしました。最近開いたリポジトリ、フォルダーを開く、SSH リモートへの接続に加え、自分と所属 organization の GitHub リポジトリ一覧(owner ごとの見出し付き、`gh repo list` で各最大 1000 件、それ以上あれば表示。読めない organization はその理由を表示し、organization の一覧自体を読めないときもその旨を一覧に表示)を検索欄で絞り込み、手元にあるものは開き、無いものは clone できます。手元の clone は最近開いたリポジトリと開いているタブの `origin` で照合し、`~/.ssh/config` の別名(`git@work-github:…`)も実際の host に解決します。一覧は前回読んだものを読んだ GitHub アカウントと一緒に `settings.json` と同じフォルダーの `github_repos_cache.json` に保存し、同じアカウントのときだけ Home を開いた瞬間に表示し、自分と organization の一覧を並列に読み直して差し替えます(読み直しに失敗したときは前回の一覧を残して toast で知らせます。`gh auth switch` で別アカウントに切り替えた後は前の一覧を出しません。読み込み中の Refresh は押せません)。clone ではまず保存先のフォルダーを選びます(Kagi が勝手に決めることはなく、選ぶまで clone ボタンは押せません)。選んだフォルダーの中にリポジトリ名のフォルダーを作り、既に何かがあるときは clone しません。失敗・中断して残ったものは削除せずに場所を Operation Log に記録し、Home にも toast で知らせます。clone は 30 分で打ち切り、Kagi が起動したプロセスだけを止めます。成功すると Home がそのリポジトリのタブになります。タブが無いときの Welcome 画面は Home に置き換わりました。(Closes #923、Closes #924、ADR-0219)
 - `~/.kagi/themes/*.json` (または `KAGI_LOG_DIR/themes/*.json`) から自作テーマを読み込み、組み込みテーマの色を部分上書きして Settings / メニュー / command palette から選べるようにしました。Settings ではフォルダーのパス表示・作成して開く操作(Windows では Explorer で開きます)・画面を止めないバックグラウンド再読み込みもできます。再読み込みの連打では最後の結果だけ反映します。フォルダーを列挙できないとき(権限など)は読み込み済みのテーマを残し、理由を toast で知らせます。形式と各色の用途は [テーマガイド](docs/themes.md) に記載しています。(#922、ADR-0220)

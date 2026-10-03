@@ -9,8 +9,11 @@ use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Entity, SharedString};
 use gpui_component::input::{Input, InputState};
 use gpui_component::{Icon, IconName, Sizable as _};
 use kagi_git::github_repos::{OwnerRepos, RepoListing};
+use kagi_git::github_repos_cache::{WorkItem, WorkKind};
 
 use super::home_github::GithubRepos;
+use super::home_work::HomePane;
+use super::home_work_list::{work_items, work_row, WorkRowState};
 use super::i18n::Msg;
 use super::render_helpers::safe_text;
 use super::theme::{self, theme};
@@ -20,7 +23,9 @@ use super::KagiApp;
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct ListKey {
     query: String,
+    pane: HomePane,
     generation: u64,
+    work_version: u64,
     cloning: Option<String>,
     local: usize,
     sections: usize,
@@ -29,14 +34,19 @@ pub(super) struct ListKey {
 
 /// One entry of the virtualized list.
 #[derive(Clone)]
-enum HomeItem {
+pub(super) enum HomeItem {
     Heading(String),
     Note(String),
     Repo(RepoListing, &'static str),
-    /// The organizations are still being read: a spinner row at the end.
-    Loading,
+    /// Something is still being read: a spinner row with its label and the
+    /// spinner's id.
+    Loading(&'static str, &'static str),
     /// The organizations could not be listed at all, and why.
     OrgsFailed(String),
+    /// A pull request or issue (#928), and what a click on it does.
+    Work(WorkKind, WorkItem, WorkRowState),
+    /// A pull request / issue list could not be read, and why.
+    WorkFailed(String),
 }
 
 impl KagiApp {
@@ -47,32 +57,46 @@ impl KagiApp {
         query: String,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let GithubRepos::Loaded {
-            sections,
-            orgs_error,
-        } = &self.home_github.repos
-        else {
-            return div().into_any_element();
-        };
+        let pane = self.home_github.work.pane;
         let local = &self.home_github.local;
         let cloning = self.home_github.cloning.as_ref().map(|r| r.source.clone());
-        let mut items = github_items(
-            sections,
-            orgs_error.as_deref(),
-            local,
-            &query,
-            cloning.as_deref(),
-        );
-        let orgs_loading = self.home_github.orgs_loading;
-        if orgs_loading {
-            items.push(HomeItem::Loading);
-        }
+        let (items, sections, orgs_loading) = match (pane, &self.home_github.repos) {
+            (HomePane::Prs | HomePane::Issues, _) => {
+                (work_items(&self.home_github.work, pane, &query), 0, false)
+            }
+            (
+                HomePane::Repos,
+                GithubRepos::Loaded {
+                    sections,
+                    orgs_error,
+                },
+            ) => {
+                let mut items = github_items(
+                    sections,
+                    orgs_error.as_deref(),
+                    local,
+                    &query,
+                    cloning.as_deref(),
+                );
+                let orgs_loading = self.home_github.orgs_loading;
+                if orgs_loading {
+                    items.push(HomeItem::Loading(
+                        Msg::HomeGithubOrgsLoading.t(),
+                        "home-github-orgs-loading",
+                    ));
+                }
+                (items, sections.len(), orgs_loading)
+            }
+            (HomePane::Repos, _) => return div().into_any_element(),
+        };
         let key = ListKey {
             query,
+            pane,
             generation: self.home_github.generation,
+            work_version: self.home_github.work.version,
             cloning,
             local: local.len(),
-            sections: sections.len(),
+            sections,
             orgs_loading,
         };
         let state = self
@@ -87,27 +111,42 @@ impl KagiApp {
             self.home_github.list_key = Some(key);
         }
         let app = cx.entity();
+        let avatars = self.avatars.images.clone();
         gpui::list(state, move |i, _window, _cx| match items.get(i) {
             Some(HomeItem::Heading(title)) => section_heading(title).into_any_element(),
             Some(HomeItem::Note(text)) => muted(text.clone()),
             Some(HomeItem::OrgsFailed(text)) => {
                 super::e2e::measure_control("home-github-orgs-failed", muted(text.clone()))
             }
-            Some(HomeItem::Loading) => div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .px_3()
-                .pt_4()
-                .pb_2()
-                .child(super::render_overlay::sync_spinner(
-                    14.,
-                    theme().text_muted,
-                    "home-github-orgs-loading",
-                ))
-                .child(muted_inline(Msg::HomeGithubOrgsLoading.t()))
-                .into_any_element(),
+            Some(HomeItem::Loading(text, spinner)) => super::e2e::measure_control(
+                *spinner,
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .px_3()
+                    .pt_4()
+                    .pb_2()
+                    .child(super::render_overlay::sync_spinner(
+                        14.,
+                        theme().text_muted,
+                        *spinner,
+                    ))
+                    .child(muted_inline(text)),
+            ),
+            Some(HomeItem::Work(kind, item, state)) => {
+                work_row(*kind, item, *state, &avatars, &app)
+            }
+            Some(HomeItem::WorkFailed(text)) => super::e2e::measure_control(
+                "home-work-failed",
+                div()
+                    .px_3()
+                    .py_1()
+                    .text_sm()
+                    .text_color(rgb(theme().color_blocker))
+                    .child(safe_text(text)),
+            ),
             Some(HomeItem::Repo(listing, state)) => super::e2e::measure_control(
                 format!("home-gh-{}", listing.name_with_owner),
                 github_row(listing.clone(), state, &app),

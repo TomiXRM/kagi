@@ -27,6 +27,12 @@ impl KagiApp {
         ISSUE_LIST_FETCH.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
     }
 
+    /// The repository the active session's Issues list is read from and its
+    /// Composer writes to.
+    pub fn issue_write_repo_for_e2e(&self) -> Option<String> {
+        self.ui().issue_composer.base_repo.clone()
+    }
+
     pub fn issue_view_recomputations_for_e2e() -> usize {
         super::issues_mode::issue_view_recomputations()
     }
@@ -112,15 +118,17 @@ impl KagiApp {
     /// requiring a real GitHub repository lookup for editor-only GUI coverage.
     pub fn seed_issue_composer_for_e2e(&mut self, cx: &mut Context<Self>) {
         let repo = self.repo_path.clone().expect("fixture repository");
-        let storage_version = kagi_git::drafts::issue_draft_version(&repo, None);
+        let base_repo = "example/fixture".to_string();
+        let storage_version = kagi_git::drafts::issue_draft_version(&repo, &base_repo, None);
         let state = &mut self.ui_mut().expect("fixture session").issue_composer;
-        state.base_repo = Some("example/fixture".into());
+        state.base_repo = Some(base_repo.clone());
         state.repo_error = None;
         state.editors.insert(
             None,
             IssueEditor {
                 loaded: true,
                 repo: Some(repo),
+                base_repo: Some(base_repo),
                 storage_version,
                 ..Default::default()
             },
@@ -130,16 +138,24 @@ impl KagiApp {
 
     /// Add a selected Issue and its Reply editor without performing a GitHub
     /// read. The production render path still creates the actual InputState.
+    /// The reply is written to the repository the Issues mode addresses.
     pub fn seed_issue_reply_for_e2e(&mut self, number: u64, cx: &mut Context<Self>) {
         let repo = self.repo_path.clone().expect("fixture repository");
-        let storage_version = kagi_git::drafts::issue_draft_version(&repo, Some(number));
         let ui = self.ui_mut().expect("fixture session");
+        let base_repo = ui
+            .issue_composer
+            .base_repo
+            .clone()
+            .expect("a reply is seeded once the Issues mode has its repository");
+        let storage_version =
+            kagi_git::drafts::issue_draft_version(&repo, &base_repo, Some(number));
         ui.selected_github_issue = Some(number);
         ui.issue_composer.editors.insert(
             Some(number),
             IssueEditor {
                 loaded: true,
                 repo: Some(repo),
+                base_repo: Some(base_repo),
                 storage_version,
                 ..Default::default()
             },

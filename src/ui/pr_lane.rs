@@ -44,6 +44,9 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
     let mode = app.pr_mode()?;
     let tab = mode.active.and_then(|ix| mode.tabs.get(ix))?;
     let number = tab.pr.number;
+    // One shared key for every row's click: a number alone could name the
+    // same-numbered PR of another repository open in this session.
+    let key = std::rc::Rc::new(tab.pr.key());
     let local_refs_loading = tab.local_refs_loading;
     let view = app.view();
 
@@ -118,7 +121,7 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
             body = body.child(render_lane_row(
                 ix,
                 row,
-                number,
+                &key,
                 mine.contains(&row.id),
                 &Rail {
                     width: rail,
@@ -136,7 +139,7 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
                     .child(render_lane_row(
                         root_ix,
                         row,
-                        number,
+                        &key,
                         false,
                         &Rail {
                             width: rail,
@@ -372,7 +375,7 @@ fn render_elision_row(skipped: usize, rail: f32) -> gpui::AnyElement {
 fn render_lane_row(
     ix: usize,
     row: &super::commit_list::CommitRow,
-    number: u64,
+    pr: &std::rc::Rc<kagi_domain::github::PrKey>,
     is_mine: bool,
     rail: &Rail<'_>,
     cx: &mut Context<KagiApp>,
@@ -380,8 +383,9 @@ fn render_lane_row(
     let scroll = rail.scroll;
     let avatars = rail.avatars;
     let commit = row.id.clone();
+    let pr = pr.clone();
     let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        this.pr_lane_select(number, &commit, cx);
+        this.pr_lane_select(&pr, &commit, cx);
     });
     div()
         .id(("pr-lane-row", ix))

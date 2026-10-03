@@ -13,7 +13,7 @@ use super::pr_mode::PrTab;
 use super::{KagiApp, TabUiState};
 use gpui::Context;
 use kagi_domain::github::{
-    IssueState, PrBodyDetail, PrDetailAvailability, PrStatusDetail, PullRequest,
+    IssueState, PrBodyDetail, PrDetailAvailability, PrKey, PrStatusDetail, PullRequest,
 };
 use kagi_git::{Commit, CommitId, FileStatus};
 
@@ -41,8 +41,7 @@ impl PrDetailStage {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct DetailKey {
-    base_repo: String,
-    number: u64,
+    pr: PrKey,
     stage: PrDetailStage,
 }
 
@@ -50,7 +49,6 @@ struct DetailKey {
 struct QueuedDetail {
     key: DetailKey,
     repo_path: PathBuf,
-    base_repo: String,
     head_sha: String,
     priority: bool,
 }
@@ -75,8 +73,8 @@ struct DetailSlot {
 /// Scheduling and freshness state for one repository tab.
 #[derive(Debug, Default)]
 pub(super) struct PrDetailController {
-    visible: BTreeSet<u64>,
-    opened: BTreeSet<u64>,
+    visible: BTreeSet<PrKey>,
+    opened: BTreeSet<PrKey>,
     visible_generation: u64,
     visible_epoch: u64,
     visible_burst_started: Option<Instant>,
@@ -88,19 +86,16 @@ pub(super) struct PrDetailController {
 impl PrDetailController {
     pub(super) fn availability(
         &self,
-        number: u64,
-        base_repo: &str,
+        pr: &PullRequest,
         stage: PrDetailStage,
-        head_sha: &str,
     ) -> PrDetailAvailability {
         let Some(slot) = self.slots.get(&DetailKey {
-            base_repo: base_repo.to_string(),
-            number,
+            pr: pr.key(),
             stage,
         }) else {
             return PrDetailAvailability::Missing;
         };
-        if slot.head_sha != head_sha {
+        if slot.head_sha != pr.head_sha {
             return PrDetailAvailability::Missing;
         }
         if slot.availability == PrDetailAvailability::Fresh
@@ -115,8 +110,8 @@ impl PrDetailController {
 
     fn observe_visible(
         &mut self,
-        visible: BTreeSet<u64>,
-        opened: BTreeSet<u64>,
+        visible: BTreeSet<PrKey>,
+        opened: BTreeSet<PrKey>,
         epoch: u64,
         now: Instant,
     ) -> Option<(u64, Duration)> {
@@ -128,9 +123,9 @@ impl PrDetailController {
         self.visible_epoch = epoch;
         self.pending.retain(|request| {
             request.priority
-                || self.opened.contains(&request.key.number)
+                || self.opened.contains(&request.key.pr)
                 || (request.key.stage == PrDetailStage::Status
-                    && self.visible.contains(&request.key.number))
+                    && self.visible.contains(&request.key.pr))
         });
         self.visible_generation = self.visible_generation.wrapping_add(1);
         let started = *self.visible_burst_started.get_or_insert(now);
@@ -138,7 +133,7 @@ impl PrDetailController {
         Some((self.visible_generation, VISIBLE_DEBOUNCE.min(remaining)))
     }
 
-    fn finish_visible_debounce(&mut self, generation: u64, epoch: u64) -> Option<BTreeSet<u64>> {
+    fn finish_visible_debounce(&mut self, generation: u64, epoch: u64) -> Option<BTreeSet<PrKey>> {
         if generation != self.visible_generation || epoch != self.visible_epoch {
             return None;
         }
@@ -146,13 +141,13 @@ impl PrDetailController {
         Some(self.visible.clone())
     }
 
-    fn leave_home(&mut self, opened: BTreeSet<u64>) {
+    fn leave_home(&mut self, opened: BTreeSet<PrKey>) {
         self.opened = opened;
         self.visible.clear();
         self.visible_generation = self.visible_generation.wrapping_add(1);
         self.visible_burst_started = None;
         self.pending
-            .retain(|request| request.priority || self.opened.contains(&request.key.number));
+            .retain(|request| request.priority || self.opened.contains(&request.key.pr));
     }
 
     fn enqueue(
@@ -167,14 +162,10 @@ impl PrDetailController {
             return;
         }
         let key = DetailKey {
-            base_repo: pr.base_repo.clone(),
-            number: pr.number,
+            pr: pr.key(),
             stage,
         };
-        if !force
-            && self.availability(pr.number, &pr.base_repo, stage, &pr.head_sha)
-                == PrDetailAvailability::Fresh
-        {
+        if !force && self.availability(pr, stage) == PrDetailAvailability::Fresh {
             return;
         }
         if let Some(index) = self.pending.iter().position(|request| request.key == key) {
@@ -183,7 +174,6 @@ impl PrDetailController {
                 .remove(index)
                 .expect("position came from queue");
             existing.repo_path = repo_path;
-            existing.base_repo.clone_from(&pr.base_repo);
             existing.head_sha.clone_from(&pr.head_sha);
             existing.priority |= priority;
             if existing.priority {
@@ -220,7 +210,6 @@ impl PrDetailController {
         let request = QueuedDetail {
             key,
             repo_path,
-            base_repo: pr.base_repo.clone(),
             head_sha: pr.head_sha.clone(),
             priority,
         };
@@ -271,7 +260,7 @@ impl PrDetailController {
         }
         let payload_matches = result.as_ref().is_ok_and(|detail| {
             detail.matches(
-                started.request.key.number,
+                started.request.key.pr.number,
                 &started.request.head_sha,
                 started.request.key.stage,
             )
@@ -306,20 +295,19 @@ impl PrDetailController {
     }
 
     fn reconcile_heads(&mut self, prs: &[PullRequest]) {
-        let listed: HashMap<u64, bool> = prs
+        let listed: HashMap<PrKey, bool> = prs
             .iter()
-            .map(|pr| (pr.number, pr.state == IssueState::Closed))
+            .map(|pr| (pr.key(), pr.state == IssueState::Closed))
             .collect();
         self.pending
-            .retain(|request| match listed.get(&request.key.number) {
+            .retain(|request| match listed.get(&request.key.pr) {
                 Some(closed) => !closed || request.key.stage != PrDetailStage::Status,
-                None => self.opened.contains(&request.key.number),
+                None => self.opened.contains(&request.key.pr),
             });
         for pr in prs {
             for stage in [PrDetailStage::Status, PrDetailStage::Body] {
                 let key = DetailKey {
-                    base_repo: pr.base_repo.clone(),
-                    number: pr.number,
+                    pr: pr.key(),
                     stage,
                 };
                 let Some(slot) = self.slots.get_mut(&key) else {
@@ -337,7 +325,7 @@ impl PrDetailController {
         }
     }
 
-    fn targets(&self) -> (BTreeSet<u64>, BTreeSet<u64>) {
+    fn targets(&self) -> (BTreeSet<PrKey>, BTreeSet<PrKey>) {
         (self.visible.clone(), self.opened.clone())
     }
 }
@@ -406,7 +394,8 @@ pub(super) fn install_local_pr_head(
 
 /// Keep every open copy on the latest L1 identity. A moved head invalidates
 /// locally derived commit/diff/conflict state until the tab is reopened from
-/// fetched refs; conversation data belongs to the PR number and is retained.
+/// fetched refs; conversation data belongs to the PR (repository and number)
+/// and is retained.
 pub(super) fn sync_open_pr_tabs(ui: &mut TabUiState) -> Vec<PullRequest> {
     let Some(mode) = ui.pr_mode.as_mut() else {
         return Vec::new();
@@ -431,29 +420,43 @@ pub(super) fn sync_open_pr_tabs(ui: &mut TabUiState) -> Vec<PullRequest> {
     moved
 }
 
+/// Copy an L2 answer read from `base_repo` onto every copy of that PR — the
+/// list's and the open tabs' — and no other (#940 review).
 fn apply_status_copies<'a>(
     list: &mut [PullRequest],
     opened: impl IntoIterator<Item = &'a mut PullRequest>,
+    base_repo: &str,
     detail: &PrStatusDetail,
 ) {
     for pr in list.iter_mut() {
-        kagi_domain::github::apply_pr_status(pr, detail);
+        kagi_domain::github::apply_pr_status(pr, base_repo, detail);
     }
     for pr in opened {
-        kagi_domain::github::apply_pr_status(pr, detail);
+        kagi_domain::github::apply_pr_status(pr, base_repo, detail);
     }
 }
 
 fn apply_body_copies<'a>(
     list: &mut [PullRequest],
     opened: impl IntoIterator<Item = &'a mut PullRequest>,
+    base_repo: &str,
     detail: &PrBodyDetail,
 ) {
     for pr in list.iter_mut() {
-        kagi_domain::github::apply_pr_body(pr, detail);
+        kagi_domain::github::apply_pr_body(pr, base_repo, detail);
     }
     for pr in opened {
-        kagi_domain::github::apply_pr_body(pr, detail);
+        kagi_domain::github::apply_pr_body(pr, base_repo, detail);
+    }
+}
+
+impl TabUiState {
+    /// The PRs open as tabs in this session, by repository and number.
+    pub(super) fn opened_pr_keys(&self) -> BTreeSet<PrKey> {
+        self.pr_mode
+            .as_ref()
+            .map(|mode| mode.tabs.iter().map(|tab| tab.pr.key()).collect())
+            .unwrap_or_default()
     }
 }
 
@@ -472,32 +475,22 @@ impl KagiApp {
     }
 
     pub(super) fn pr_status_availability(&self, pr: &PullRequest) -> PrDetailAvailability {
-        self.ui().pr_details.availability(
-            pr.number,
-            &pr.base_repo,
-            PrDetailStage::Status,
-            &pr.head_sha,
-        )
+        self.ui().pr_details.availability(pr, PrDetailStage::Status)
     }
 
     /// Called by the dashboard `uniform_list` processor after layout identifies
-    /// the visible range. Repeated frames with the same PR number set are free.
-    pub(super) fn observe_visible_prs(&mut self, numbers: BTreeSet<u64>, cx: &mut Context<Self>) {
+    /// the visible range. Repeated frames with the same PR set are free.
+    pub(super) fn observe_visible_prs(&mut self, visible: BTreeSet<PrKey>, cx: &mut Context<Self>) {
         let (Some(owner), Some(repo_path)) = (self.active_session(), self.repo_path.clone()) else {
             return;
         };
-        let opened: BTreeSet<u64> = self
-            .ui()
-            .pr_mode
-            .as_ref()
-            .map(|mode| mode.tabs.iter().map(|tab| tab.pr.number).collect())
-            .unwrap_or_default();
+        let opened = self.ui().opened_pr_keys();
         let (timer, epoch) = match self.ui.get_mut(&owner) {
             Some(ui) => {
                 let epoch = ui.github_prs_epoch;
                 (
                     ui.pr_details
-                        .observe_visible(numbers, opened, epoch, Instant::now()),
+                        .observe_visible(visible, opened, epoch, Instant::now()),
                     epoch,
                 )
             }
@@ -526,20 +519,18 @@ impl KagiApp {
     }
 
     /// An opened PR bypasses the visible-row debounce and requests both levels.
-    pub(super) fn prioritize_pr_details(&mut self, number: u64, cx: &mut Context<Self>) {
+    /// It is named by repository and number: the session's list may hold
+    /// another repository's PR under the same number (#940 review).
+    pub(super) fn prioritize_pr_details(&mut self, pr: PrKey, cx: &mut Context<Self>) {
         let (Some(owner), Some(repo_path)) = (self.active_session(), self.repo_path.clone()) else {
             return;
         };
         if let Some(ui) = self.ui.get_mut(&owner) {
-            let opened = ui
-                .pr_mode
-                .as_ref()
-                .map(|mode| mode.tabs.iter().map(|tab| tab.pr.number).collect())
-                .unwrap_or_default();
+            let opened = ui.opened_pr_keys();
             ui.pr_details.leave_home(opened);
         }
-        let numbers = BTreeSet::from([number]);
-        self.enqueue_pr_details(owner, repo_path, &numbers, true, false, cx);
+        let keys = BTreeSet::from([pr]);
+        self.enqueue_pr_details(owner, repo_path, &keys, true, false, cx);
     }
 
     /// Re-arm the currently relevant reads after an L1 answer. L2 is volatile,
@@ -554,11 +545,7 @@ impl KagiApp {
             let Some(ui) = self.ui.get_mut(&owner) else {
                 return;
             };
-            let opened: BTreeSet<u64> = ui
-                .pr_mode
-                .as_ref()
-                .map(|mode| mode.tabs.iter().map(|tab| tab.pr.number).collect())
-                .unwrap_or_default();
+            let opened = ui.opened_pr_keys();
             ui.pr_details.opened = opened;
             ui.pr_details.reconcile_heads(
                 ui.github_prs_strip
@@ -576,7 +563,7 @@ impl KagiApp {
         &mut self,
         owner: crate::app::SessionId,
         repo_path: PathBuf,
-        numbers: &BTreeSet<u64>,
+        keys: &BTreeSet<PrKey>,
         include_body: bool,
         force: bool,
         cx: &mut Context<Self>,
@@ -584,21 +571,21 @@ impl KagiApp {
         let Some(ui) = self.ui.get_mut(&owner) else {
             return;
         };
-        let prs: Vec<PullRequest> = numbers
+        let prs: Vec<PullRequest> = keys
             .iter()
-            .filter_map(|number| {
+            .filter_map(|key| {
                 ui.github_prs_strip
                     .rows
                     .iter()
                     .flatten()
                     .chain(ui.github_prs.iter())
-                    .find(|pr| pr.number == *number)
+                    .find(|pr| pr.is(key))
                     .cloned()
                     .or_else(|| {
                         ui.pr_mode.as_ref().and_then(|mode| {
                             mode.tabs
                                 .iter()
-                                .find(|tab| tab.pr.number == *number)
+                                .find(|tab| tab.pr.is(key))
                                 .map(|tab| tab.pr.clone())
                         })
                     })
@@ -630,8 +617,8 @@ impl KagiApp {
             cx.spawn(async move |this, acx| {
                 let request = started.request.clone();
                 let workdir = request.repo_path.clone();
-                let base_repo = request.base_repo.clone();
-                let number = request.key.number;
+                let base_repo = request.key.pr.base_repo.clone();
+                let number = request.key.pr.number;
                 let result = acx
                     .background_executor()
                     .spawn(async move {
@@ -674,6 +661,7 @@ impl KagiApp {
             let Ok(detail) = result else {
                 unreachable!("only a matching success can be applied")
             };
+            let base_repo = started.request.key.pr.base_repo.as_str();
             match detail {
                 DetailResult::Status(detail) => {
                     let opened = ui
@@ -681,7 +669,7 @@ impl KagiApp {
                         .iter_mut()
                         .flat_map(|mode| mode.tabs.iter_mut().map(|tab| &mut tab.pr))
                         .chain(ui.github_prs_strip.rows.iter_mut().flatten());
-                    apply_status_copies(&mut ui.github_prs, opened, &detail);
+                    apply_status_copies(&mut ui.github_prs, opened, base_repo, &detail);
                 }
                 DetailResult::Body(detail) => {
                     let opened = ui
@@ -689,7 +677,7 @@ impl KagiApp {
                         .iter_mut()
                         .flat_map(|mode| mode.tabs.iter_mut().map(|tab| &mut tab.pr))
                         .chain(ui.github_prs_strip.rows.iter_mut().flatten());
-                    apply_body_copies(&mut ui.github_prs, opened, &detail);
+                    apply_body_copies(&mut ui.github_prs, opened, base_repo, &detail);
                 }
             }
             ui.github_prs_epoch = ui.github_prs_epoch.wrapping_add(1);

@@ -148,7 +148,7 @@ pub(super) fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::
     let active_pr = app
         .pr_mode()
         .and_then(|m| m.active.and_then(|i| m.tabs.get(i)))
-        .map(|t| t.pr.number);
+        .map(|t| t.pr.key());
 
     let mut body = div()
         .id("pr-mode-list-body")
@@ -182,7 +182,7 @@ pub(super) fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::
                 &row.pr,
                 row.attention,
                 stacked,
-                active_pr,
+                active_pr.as_ref(),
                 cx,
             ));
         }
@@ -228,10 +228,10 @@ fn render_pr_card(
     pr: &PullRequest,
     bucket: PrAttention,
     stacked: bool,
-    active_pr: Option<u64>,
+    active_pr: Option<&kagi_domain::github::PrKey>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let is_active = active_pr == Some(pr.number);
+    let is_active = active_pr.is_some_and(|key| pr.is(key));
     let accent = attention_color(bucket);
     let pr_click = pr.clone();
     let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {

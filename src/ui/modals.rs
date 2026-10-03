@@ -124,6 +124,10 @@ pub struct PrMergeModal {
     pub plan: std::sync::Arc<OperationPlan>,
     pub error: Option<SharedString>,
     pub number: u64,
+    /// The repository the PR targets. With `number` it names the PR whose tab
+    /// the merge closes: one session can hold another repository's tab with
+    /// the same number (#940 review).
+    pub base_repo: String,
     /// Head SHA captured when the plan was shown; passed to `gh pr merge` as
     /// `--match-head-commit` so the merge is refused if the head branch moved
     /// meanwhile (#347).

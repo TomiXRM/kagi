@@ -105,9 +105,14 @@ fn offscreen_pending_rows_are_removed_but_opened_rows_stay() {
     let mut controller = PrDetailController::default();
     controller.enqueue(path(), &pr(1, "a"), PrDetailStage::Status, false, false);
     controller.enqueue(path(), &pr(2, "b"), PrDetailStage::Status, true, false);
-    controller.observe_visible(BTreeSet::new(), BTreeSet::from([2]), 1, Instant::now());
+    controller.observe_visible(
+        BTreeSet::new(),
+        BTreeSet::from([pr(2, "b").key()]),
+        1,
+        Instant::now(),
+    );
     assert_eq!(controller.pending.len(), 1);
-    assert_eq!(controller.pending[0].key.number, 2);
+    assert_eq!(controller.pending[0].key.pr.number, 2);
 }
 
 #[test]
@@ -132,13 +137,13 @@ fn a_failed_refresh_keeps_success_as_stale_and_delays_retry() {
         Some(false)
     );
     assert_eq!(
-        controller.availability(1, "github.com/acme/widgets", PrDetailStage::Status, "a"),
+        controller.availability(&pr, PrDetailStage::Status),
         PrDetailAvailability::Stale
     );
     controller.enqueue(path(), &pr, PrDetailStage::Status, false, true);
     assert!(controller.take_next(Instant::now()).is_none());
     assert_eq!(
-        controller.availability(1, "github.com/acme/widgets", PrDetailStage::Status, "a"),
+        controller.availability(&pr, PrDetailStage::Status),
         PrDetailAvailability::Stale,
         "retry backoff must not disguise stale data as an active load"
     );
@@ -159,7 +164,7 @@ fn changed_head_invalidates_old_completion() {
     }));
     assert_eq!(controller.settle(&old, &result, Instant::now()), None);
     assert_eq!(
-        controller.availability(1, "github.com/acme/widgets", PrDetailStage::Status, "new"),
+        controller.availability(&pr(1, "new"), PrDetailStage::Status),
         PrDetailAvailability::Loading
     );
     assert!(controller.take_next(Instant::now()).is_some());
@@ -182,7 +187,7 @@ fn response_for_a_different_head_never_marks_the_slot_fresh() {
         Some(false)
     );
     assert_eq!(
-        controller.availability(1, "github.com/acme/widgets", PrDetailStage::Status, "old"),
+        controller.availability(&pr(1, "old"), PrDetailStage::Status),
         PrDetailAvailability::Missing
     );
 }
@@ -231,9 +236,11 @@ fn list_head_change_invalidates_then_local_reload_restores_the_open_tab() {
 }
 
 #[test]
-fn one_apply_function_updates_list_and_open_copies_only_for_the_same_head() {
+fn one_apply_function_updates_list_and_open_copies_only_for_the_same_pr_and_head() {
     let mut list = vec![pr(1, "same"), pr(2, "other")];
-    let mut opened = vec![pr(1, "same"), pr(1, "moved")];
+    let mut fork = pr(1, "same");
+    fork.base_repo = "github.com/other/widgets".into();
+    let mut opened = vec![pr(1, "same"), pr(1, "moved"), fork];
     let detail = PrStatusDetail {
         number: 1,
         head_sha: "same".into(),
@@ -241,11 +248,21 @@ fn one_apply_function_updates_list_and_open_copies_only_for_the_same_head() {
         checks: Vec::new(),
         mergeable: kagi_domain::github::Mergeable::Clean,
     };
-    apply_status_copies(&mut list, opened.iter_mut(), &detail);
+    apply_status_copies(
+        &mut list,
+        opened.iter_mut(),
+        "github.com/acme/widgets",
+        &detail,
+    );
     assert_eq!(list[0].ci, kagi_domain::github::CiState::Success);
     assert_eq!(opened[0].ci, kagi_domain::github::CiState::Success);
     assert_eq!(list[1].ci, kagi_domain::github::CiState::None);
     assert_eq!(opened[1].ci, kagi_domain::github::CiState::None);
+    assert_eq!(
+        opened[2].ci,
+        kagi_domain::github::CiState::None,
+        "#940 review: another repository's #1 at the same head is another PR"
+    );
 }
 
 /// The composer's preview is one flag for the one composer the mode draws, so
@@ -266,7 +283,7 @@ fn mode_with(active: usize, numbers: [u64; 2]) -> crate::ui::pr_mode::PrModeStat
 #[test]
 fn settling_the_open_tab_empties_its_draft_and_returns_the_box() {
     let mut mode = mode_with(0, [7, 8]);
-    mode.settle_composer_for(7);
+    mode.settle_composer_for(&pr(7, "head").key());
     assert!(mode.tabs[0].comment_draft.is_empty());
     assert!(
         !mode.comment_preview,
@@ -277,7 +294,7 @@ fn settling_the_open_tab_empties_its_draft_and_returns_the_box() {
 #[test]
 fn settling_a_background_tab_leaves_the_open_tab_composing() {
     let mut mode = mode_with(1, [7, 8]);
-    mode.settle_composer_for(7);
+    mode.settle_composer_for(&pr(7, "head").key());
     assert!(mode.tabs[0].comment_draft.is_empty(), "#7's text is posted");
     assert_eq!(
         mode.tabs[1].comment_draft, "draft for #8",
@@ -286,5 +303,21 @@ fn settling_a_background_tab_leaves_the_open_tab_composing() {
     assert!(
         mode.comment_preview,
         "a completion for another PR must not flip the box the reader is in"
+    );
+}
+
+/// #940 review: one session holds A#7 and B#7. A post to B#7 empties B's
+/// draft only; A's tab keeps its own.
+#[test]
+fn settling_a_pr_leaves_another_repositorys_same_number_alone() {
+    let mut mode = mode_with(0, [7, 7]);
+    mode.tabs[1].pr.base_repo = "github.com/other/widgets".into();
+    mode.tabs[1].comment_draft = "draft for other #7".into();
+    mode.settle_composer_for(&mode.tabs[1].pr.key());
+    assert_eq!(mode.tabs[0].comment_draft, "draft for #7");
+    assert!(mode.tabs[1].comment_draft.is_empty());
+    assert!(
+        mode.comment_preview,
+        "the open tab is A#7, which did not settle"
     );
 }

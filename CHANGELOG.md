@@ -24,6 +24,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Issues の下書き(新しい Issue と返信)を、clone ごと・番号ごとに加えて書き込み先の repository ごとに保存するようにしました。`gh repo set-default` で別の repository に切り替えた後、同じ番号の別 Issue の欄に前の repository 宛ての下書きが出て、そのまま投稿されることはありません(前の下書きは消さずに残ります)。以前の版で保存した下書きは、clone の remote が指す repository が 1 つだけのときにその repository へ 1 回だけ引き継ぎ、複数あるときは引き継がずに元の場所に残します。(#940 review)
 - PR を開いたときの会話・レビュースレッド・merge 状態を、その PR の repository から読むようにしました。これまでは clone の `gh repo set-default` が指す repository から読んでいたため、Home から別の repository を指す clone で PR を開くと、同じ番号の別 PR の会話が本文の下に並ぶことがありました。(#940 review)
 - `gh repo set-default` を別の repository に切り替えた後に Home からその repository の Issue を開くと、前の repository の Issue 一覧が残り、その行を選ぶと新しい repository の同じ番号の Issue に返信できてしまう問題を修正しました。宛先が変わった時点で前の一覧・選択・続きの読み込み位置を消し、新しい repository の一覧が読めるまで行は表示しません。(#940 review)
+- 同じタブに別の repository の同じ番号の PR(A の #7 と B の #7)を開いていると、B の会話・レビュースレッド・merge 状態が A の PR 画面に入ることがあった問題を修正しました。PR の画面・詳細の読み込み・会話・merge 状態・コメント欄の下書きを、番号だけでなく repository と番号の組で対応づけます。Home から開いた PR の詳細も、PR 一覧にある別の repository の同じ番号の PR ではなく、開いた PR のものを読みます。(#940 review)
 
 ### Changed
 

@@ -295,6 +295,50 @@ The current suite covers:
   Escape prints nothing. That is exactly what the accepted run recorded —
   no key line, modal closed. A printed `escape` with the modal still open is
   the interesting failure: the key arrived and no binding matched.
+- Settings focus trap (`KAGI_GUI_E2E_ONLY=settings_focus_trap`,
+  `tests/recovery/overlay_focus.rs`, #974):
+  - Setup: a stand-in shell runs in the bottom-panel terminal, which holds
+    the focus. Settings is then opened with `app.settings`, and the focus
+    must be on the trap container.
+  - Raw Tab: every press stays inside Settings. It walks into the
+    Analyze-ignore editor and out again to Save without editing the text,
+    and returns to the editor after one full turn. Shift+Tab also leaves
+    the editor (#977).
+  - Wrapping: from the container, Shift+Tab, Tab and Shift+Tab wrap around
+    both ends while staying inside.
+  - Close: Escape closes Settings and gives the focus back to the terminal.
+  - Pointer open: a click on `tb-settings` lands the focus on the ring-less
+    container. Escape then takes it out of Settings, back to the clicked
+    button.
+  - Toggle: from a focused terminal, Settings → raw Cmd+J closes both
+    Settings and the bottom panel; Escape and several frames later focus
+    remains on the visible root, not the hidden terminal. Repeat with the
+    panel initially closed to verify the opening direction and with the
+    command-id route used by the platform menu / palette. Removing the
+    Settings-close helper from the shared toggle fails
+    `settings-toggle-terminal: Cmd+J must close Settings`.
+  - Checked mutations: without `.focus_trap` the wrap leaves Settings;
+    without the focus on open, the focus stays on the terminal; without the
+    return-focus capture, Escape does not return to the terminal; with the
+    editor made an indenting multi-line input, Tab stays in it.
+  - Unmounted return targets (`KAGI_GUI_E2E_ONLY=settings_hidden_return_target`):
+    focus a sidebar mode-nav cell, open Settings through `app.settings`,
+    press raw Cmd+B, then Escape *during* the 150 ms close animation,
+    when the restored handle still belongs to the drawn root. Advance the
+    stand-in clock past close; raw Down must reach Graph because
+    `restored_focus` moves to root after unmount. Repeat with the inspector's
+    selectable commit message focused and raw Cmd+Option+B hiding commit
+    details, finishing the animation before Escape. Neither retained handle
+    may receive keys after its pane disappears, even in the same session.
+    Disabling either the return-time membership check or the per-frame
+    `restored_focus` check must fail.
+- Overlay z-order (`KAGI_GUI_E2E_ONLY=filter_menu_over_modal`,
+  `tests/recovery/platform_menu_scroll.rs`, #976 review): open the Issues
+  filter chip, then deliver the early Stash Push slot on a dirty tree. With
+  root focused, Enter leaves the modal and repository fingerprint unchanged;
+  Escape closes the filter first and retains the modal. `front_layer::Z_ORDER`
+  drives both modal rendering and key ownership. Moving overlay menus below
+  early modals must fail the front-menu assertion.
 - overlay focus return (`KAGI_GUI_E2E_ONLY=palette_push_modal_keys,settings_close_returns_focus`,
   `tests/recovery/overlay_focus.rs`): #817 / #812. Every key is raw, with no
   test-side refocusing. The palette scenario first starts the bottom-panel
@@ -978,13 +1022,17 @@ The current suite covers:
   `remote_refresh_departed_owner`, `remote_refresh_newest_request`,
   `fetch_same_owner_piggybacks`, `fetch_different_owner_does_not_piggyback`,
   `fetch_owner_display_isolated`, `fetch_detach_retains_flight_and_isolates_reopen`,
-  `file_menu_freezes_path`, and `file_menu_rejects_stale_owner`.
+  `file_menu_freezes_path`, `file_menu_rejects_stale_owner`, and
+  `file_menu_focus_after_open_repository`.
   Use `KAGI_GUI_E2E_ONLY=remote_refresh_,fetch_same_owner,fetch_different_owner,fetch_owner_display,fetch_detach,file_menu_`.
   Remote tests queue a yielding transport task through `ui::e2e`, then exercise
   the real refresh launch and completion; no SSH process blocks the dispatcher.
   Fetch tests launch a real local fetch and switch/close before draining.
   File-menu tests defer the real panel callback, renumber rows, click the measured
-  Discard control, and deliver a retained action after changing owners.
+  Discard control, deliver a retained action after changing owners, and assert
+  that an invisible A menu cannot consume B's keyboard after `open_repository`.
+  The focus scenario checks raw Enter opens B's Graph checkout plan and Escape
+  closes a visible menu without clearing Graph selection.
   The existing `unmerged_branch_delete_armed` scenario also rejects delayed
   plans after departure and revisit while releasing the planning latch.
 - session-owned positioning and Smart Commit state

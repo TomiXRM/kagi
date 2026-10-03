@@ -187,6 +187,10 @@ PR block.
   presses an element with no ring (gpui-wide; #960 review).
 - Library transitions (Switch 150 ms, Tab 200 ms, Dialog 250 ms) do not follow
   `reduce_motion`.
+- Settings' focus trap is gpui-component Root's: when Tab steps out of the
+  panel, it searches for the way back with at most 100 focus moves over the
+  window's Tab stops. A window with more stops than that would let the wrap
+  leave Settings (#974).
 
 ## Resolved: dated text boxes in input + confirm cards (#956)
 

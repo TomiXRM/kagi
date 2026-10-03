@@ -118,13 +118,26 @@ What is compared:
   appended entry's repo must be under the run's temporary directory or remote.
 - Direct entries of the run's own `TMPDIR`: none may be added.
 
+The run also owns `HOME` (and `XDG_CONFIG_HOME`): an empty directory under the
+run root whose `.gitconfig` holds only the fixtures' identity (`poc`). Every
+inherited `GIT_*` and `GH_*` (and `GITHUB_TOKEN` / `GITHUB_ENTERPRISE_TOKEN`)
+is dropped at startup; then `GIT_CONFIG_GLOBAL` names that `.gitconfig`, there
+is no system config, and `GIT_TERMINAL_PROMPT=0`. `git`, `gh` (config and
+credentials), the editor's trash and the terminal never read the developer's
+dotfiles or config. A terminal never starts the user's `$SHELL`: with no seam
+shell set it panics before the spawn, failing the scenario.
+
 Restoring state:
 
 - `set_lang`, `set_theme`, `set_zoom`, `set_diff_split` and
   `set_terminal_auto_lock` save their key as well. A scenario that uses them
   holds `gui_isolation::SavedKeys::keep(&[...])`, which puts the saved keys back
   when it is dropped.
-- A scenario that starts a terminal holds `gui_isolation::PortStore::keep()`.
+- A scenario that starts a terminal holds `gui_isolation::PortStore::keep()`,
+  and `gui_isolation::StandInShell::install()` unless it sets its own seam shell
+  (`KagiApp::set_terminal_shell_for_e2e`). The stand-in is a `/bin/sh` script
+  that reads lines until `exit` or EOF; its PID and cwd are real, so the
+  auto-lock cwd probe and exit delivery behave as with a login shell.
 
 For history bisection, strip repository-location variables exported by
 `git bisect run` before launching a Git fixture. Otherwise a fixture's `git init`
@@ -1166,6 +1179,14 @@ native app's backend flow:
 bash scripts/build-web.sh
 cd e2e && npm install && npx playwright install chromium && npx playwright test
 ```
+
+Without the build the run stops at once, before any server starts:
+`kagi-web harness not built: <files> missing in …/crates/kagi-web/dist`, with
+`scripts/build-web.sh` to run (`e2e/harness.ts`, #516). It used to surface as
+`Timed out waiting 60000ms from config.webServer`, which read like a runtime
+hang. The check runs while `playwright.config.ts` loads: Playwright waits for
+the `webServer` before it runs a `globalSetup`, so a check there would sit
+behind the same timeout (measured: 61 s).
 
 ## Maintenance
 

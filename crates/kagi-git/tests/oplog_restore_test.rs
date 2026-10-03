@@ -219,6 +219,45 @@ fn legacy_branch_only_tag_entry_blocks_revert_and_restore_to_point() {
 }
 
 #[test]
+fn a_tag_receipt_losing_its_observation_scope_after_confirmation_refuses_preflight() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let tip = git_output(&repo, &["rev-parse", "HEAD"]);
+    let created = run(
+        &repo,
+        Operation::CreateTag {
+            name: "release".into(),
+            at: CommitId(tip.clone()),
+        },
+    );
+    let revert = Operation::OpRevert { entry_id: created };
+    let approved = plan(&repo, &revert);
+    assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
+
+    // A changed/older receipt is no longer the tag-complete observation the
+    // user approved. Preflight must re-read it before moving any ref.
+    let log = PathBuf::from(std::env::var("KAGI_LOG_DIR").unwrap()).join("operations.jsonl");
+    let lines: Vec<String> = std::fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .map(|line| {
+            let mut value: serde_json::Value = serde_json::from_str(line).unwrap();
+            if value["id"] == created {
+                value.as_object_mut().unwrap().remove("ref_scope");
+            }
+            format!("{value}\n")
+        })
+        .collect();
+    std::fs::write(&log, lines.concat()).unwrap();
+
+    assert!(backend(&repo).run(&revert, &approved).is_err());
+    assert_eq!(git_output(&repo, &["rev-parse", "refs/tags/release"]), tip);
+}
+
+#[test]
 fn annotated_tag_delete_and_lightweight_tag_move_round_trip_to_point() {
     if !test_support::run_isolated() {
         return;

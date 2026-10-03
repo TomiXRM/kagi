@@ -299,6 +299,6 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
     - 行の箱が上限で止まり(33 行でも箱は行の合計より低い)、wheel で最後の行が箱の中に入る。
     - 実際の `Copy all`(`plan-card-copy` の probe)で、見出しと `main ←` が clipboard に入る。
   - unit: NotLoaded の見出しは「消える数」を言わない、Copy all の graph 行(見出し・移動・窓外の行数)、Operation Log の entry コピーに記録された ref 移動(OID 全桁、`none moved`、記録なしは行なし)。NotLoaded の短い状態と recovery 段落の非表示は Tier A で EN/JA を確認する(#953)。
-  - #953 Codex P1: 実 tag 作成と、旧 wire の `ref_moves: []`(scope なし)を同じ repository に置き、OpRevert と RestoreToPoint の両方が `NotRecorded` で止まる。新 entry は `HeadsAndTags` を round-trip し、tag の往復は維持する。未知の scope も `LegacyOrUnknown` として読む。
+  - #953 Codex P1: 実 tag 作成と、旧 wire の `ref_moves: []`(scope なし)を同じ repository に置き、OpRevert と RestoreToPoint の両方が `NotRecorded` で止まる。新 entry は `HeadsAndTags` を round-trip し、tag の往復は維持する。未知の scope も `LegacyOrUnknown` として読む。さらに tag 削除の確認後、実行前にその receipt の scope を失わせた場合は preflight が拒否し、tag は残る。
   - kagi-git integration: absorb は作業 branch の移動を、merged branch の一括削除は削除(new = 無し)を `ref_moves` に記録する。
 - 変異確認: Solo の全行を使わない → 消える数 0、PR head を根にしない → 3、上限を外す → 箱が 957px、Copy all の clipboard を空にする → Tier A が落ちる。NotLoaded の見出しを `preview_heading(0)` に戻す・entry コピーから移動を外す → unit、absorb / 一括削除の記録を `None` にする → integration が落ちる。focus の変更は現状の入口では観測できないためテストなし(実ボタンのクリックで root が focus を得ることを確認した)。

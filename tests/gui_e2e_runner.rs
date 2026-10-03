@@ -1903,7 +1903,41 @@ mod macos {
         Passed,
         Exited(std::process::ExitStatus),
         TimedOut(Duration),
+        /// The parent got SIGINT / SIGTERM; the child was stopped like a
+        /// timed-out one.
+        Interrupted,
         NotStarted(std::io::Error),
+    }
+
+    /// Set by [`on_interrupt`] when this KEEP_GOING parent gets SIGINT or
+    /// SIGTERM.
+    static INTERRUPTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    extern "C" fn on_interrupt(_signal: std::ffi::c_int) {
+        // Async-signal-safe: one atomic store, nothing else.
+        INTERRUPTED.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    extern "C" {
+        fn signal(signum: std::ffi::c_int, handler: extern "C" fn(std::ffi::c_int)) -> usize;
+    }
+
+    /// Each child runner leads a process group of its own, so the terminal's
+    /// Ctrl+C reaches only this parent (#967 review). Catch it — and SIGTERM —
+    /// so the running child, its group and its recorded descendants are
+    /// stopped and reaped, and its `TMPDIR` removed, before the run ends.
+    fn catch_interrupts() {
+        const SIGINT: std::ffi::c_int = 2;
+        const SIGTERM: std::ffi::c_int = 15;
+        // SAFETY: installs a handler that only stores to an atomic.
+        unsafe {
+            signal(SIGINT, on_interrupt);
+            signal(SIGTERM, on_interrupt);
+        }
+    }
+
+    fn interrupted() -> bool {
+        INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// `KAGI_GUI_E2E_KEEP_GOING=1` (#516): run each selected scenario in its
@@ -1931,8 +1965,12 @@ mod macos {
             .and_then(|secs| secs.parse().ok())
             .map_or(SCENARIO_TIMEOUT, Duration::from_secs);
         let runner = std::env::current_exe().expect("the runner's own executable");
+        catch_interrupts();
         let mut results = Vec::with_capacity(names.len());
         for (at, name) in names.iter().enumerate() {
+            if interrupted() {
+                break;
+            }
             eprintln!("[gui-e2e] KEEP_GOING {}/{} {name}", at + 1, names.len());
             // A directory that exists afterwards is this child's, not an
             // earlier run's: a child that dies before `begin` leaves none.
@@ -1945,6 +1983,7 @@ mod macos {
                 ChildOutcome::TimedOut(after) => {
                     Some(format!("timeout after {}s (killed)", after.as_secs()))
                 }
+                ChildOutcome::Interrupted => Some("interrupted (killed)".to_string()),
                 ChildOutcome::NotStarted(error) => {
                     Some(format!("the runner did not start: {error}"))
                 }
@@ -1970,12 +2009,23 @@ mod macos {
             .filter(|(_, line, _)| line.is_some())
             .map(|(name, _, _)| *name)
             .collect();
+        let passed = results.len() - failed.len();
         eprintln!(
-            "[gui-e2e] KEEP_GOING summary: {} passed, {} failed of {}",
-            names.len() - failed.len(),
+            "[gui-e2e] KEEP_GOING summary: {passed} passed, {} failed of {}",
             failed.len(),
             names.len()
         );
+        if interrupted() {
+            let not_run = &names[results.len()..];
+            eprintln!(
+                "[gui-e2e] KEEP_GOING interrupted; not run: {}",
+                if not_run.is_empty() {
+                    "none".to_string()
+                } else {
+                    not_run.join(", ")
+                }
+            );
+        }
         for (name, line, evidence) in &results {
             match line {
                 None => eprintln!("[gui-e2e]   PASS {name}"),
@@ -1987,6 +2037,9 @@ mod macos {
                     );
                 }
             }
+        }
+        if interrupted() {
+            return 130;
         }
         if !failed.is_empty() {
             eprintln!(
@@ -2054,7 +2107,7 @@ mod macos {
             match child.try_wait() {
                 Ok(Some(status)) if status.success() => break ChildOutcome::Passed,
                 Ok(Some(status)) => break ChildOutcome::Exited(status),
-                Ok(None) if started.elapsed() >= timeout => {
+                Ok(None) if started.elapsed() >= timeout || interrupted() => {
                     // The tree is read while the runner is alive: once it is
                     // killed its children move to launchd and cannot be
                     // traced back. Descendants first, then the runner.
@@ -2062,9 +2115,12 @@ mod macos {
                     kill_recorded(&seen);
                     kill_group(root);
                     let _ = child.wait();
+                    if interrupted() {
+                        break ChildOutcome::Interrupted;
+                    }
                     break ChildOutcome::TimedOut(timeout);
                 }
-                Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+                Ok(None) => std::thread::sleep(TREE_POLL),
                 Err(error) => {
                     seen.extend(descendants(root));
                     kill_recorded(&seen);
@@ -2096,7 +2152,15 @@ mod macos {
     }
 
     /// How often `run_child` re-reads the process tree under a scenario.
-    const TREE_POLL: Duration = Duration::from_millis(250);
+    ///
+    /// The known limit (#967 review): a process started — and moved to a
+    /// session of its own — after the last read and before the runner ends
+    /// by itself is not recorded, and survives. macOS has no supported way
+    /// to follow every fork (`NOTE_TRACK` for `EVFILT_PROC` is "no longer
+    /// supported as of 10.5", `sys/event.h`), so the window is narrowed to one poll interval rather than
+    /// closed; see `docs/decisions.md`. A timeout reads the tree once more
+    /// before it kills, so a hung scenario has no such window.
+    const TREE_POLL: Duration = Duration::from_millis(50);
 
     /// Every live process `(pid, parent, start time)`, from one `ps`. Zombies
     /// (state `Z`) are not live: they have exited and only wait to be reaped.

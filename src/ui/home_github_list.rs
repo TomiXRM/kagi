@@ -386,7 +386,6 @@ fn github_row(
     let name = listing.name().to_string();
     let label = format!("{}, {state}", listing.name_with_owner);
     let app = app.clone();
-    let ring = super::keyboard_nav::RING;
     super::keyboard_nav::focusable_row(super::list_a11y::list_item(
         HOME_LIST,
         div().id(id),
@@ -399,8 +398,8 @@ fn github_row(
     .flex_row()
     .items_center()
     .gap_4()
-    .px(theme::scaled_px(12. - ring))
-    .py(theme::scaled_px(8. - ring))
+    .px(super::keyboard_nav::inset(12.))
+    .py(super::keyboard_nav::inset(8.))
     .rounded_lg()
     .cursor(gpui::CursorStyle::PointingHand)
     .hover(|s| s.bg(rgb(theme().surface)))

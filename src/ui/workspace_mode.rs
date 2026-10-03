@@ -37,7 +37,7 @@ fn sidebar_mode_nav_cell(
 ) -> gpui::AnyElement {
     tabs.cell(slot, label, div().id(id))
         .flex_1()
-        .py(theme::scaled_px(4. - super::keyboard_nav::RING))
+        .py(super::keyboard_nav::inset(4.))
         .flex()
         .justify_center()
         .text_xs()
@@ -49,7 +49,16 @@ fn sidebar_mode_nav_cell(
                 .font_weight(gpui::FontWeight::MEDIUM)
         })
         .when(!active, |el| el.text_color(rgb(theme::theme().text_muted)))
-        .child(SharedString::from(label))
+        // Measured (GUI E2E) so a scenario can check the padding the ring
+        // leaves at every zoom (#960 review).
+        .child(super::e2e::measure_control(
+            match id {
+                "sidebar-mode-prs" => "sidebar-mode-prs-label",
+                "sidebar-mode-issues" => "sidebar-mode-issues-label",
+                _ => "sidebar-mode-graph-label",
+            },
+            SharedString::from(label),
+        ))
         .into_any_element()
 }
 

@@ -7,7 +7,7 @@
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::home_work::HomePane;
 use kagi::ui::workspace_mode::WorkspaceMode;
-use kagi::ui::{e2e, KagiApp};
+use kagi::ui::{e2e, theme, KagiApp};
 
 use crate::app_conflict::click_control;
 use crate::macos::{build_fixture, mount, unmount};
@@ -93,6 +93,73 @@ pub(crate) fn keys(cx: &mut VisualTestAppContext, window: AnyWindowHandle, keys:
     }
 }
 
+/// Which edge of a cell [`ring_keeps_geometry`] measures from.
+#[derive(Clone, Copy)]
+enum Edge {
+    Top,
+    Left,
+}
+
+/// #960 review: the ring is a fixed 2px taken out of the *zoomed* padding,
+/// so at every zoom the label sits `offset × zoom` from the measured outer
+/// edge, where the cell's padding put it before the ring (within the half
+/// pixel gpui's layout rounds positions to); and keyboard focus, which only
+/// colours the ring, moves and resizes nothing. Subtracting the ring before
+/// scaling put the label `2 − 2·zoom` px off per padded edge: 1px at 1.5×,
+/// past the rounding.
+fn ring_keeps_geometry(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    (outer, label, edge, offset): (&str, &str, Edge, f32),
+    focus: impl Fn(&mut VisualTestAppContext),
+) {
+    let _restore = crate::recovery_layout::GlobalSettings::capture();
+    let measure = |cx: &mut VisualTestAppContext| {
+        // The zoom reaches the layout through the rem size set at the top of
+        // the render, so draw twice before measuring.
+        for _ in 0..2 {
+            cx.update_window(window, |_, window, cx| {
+                window.refresh();
+                window.draw(cx).clear();
+            })
+            .unwrap();
+        }
+        let at = |name: &str| {
+            e2e::control_bounds(window.window_id(), name)
+                .unwrap_or_else(|| panic!("{name} is drawn"))
+        };
+        (at(outer), at(label))
+    };
+    for zoom in [1.0, 0.7, 1.5] {
+        theme::set_zoom(zoom);
+        cx.update_window(window, |_, window, cx| {
+            let root = app.read(cx).root_focus.clone().unwrap();
+            root.focus(window, cx);
+        })
+        .unwrap();
+        let (cell, text) = measure(cx);
+        let inset = f32::from(match edge {
+            Edge::Top => text.origin.y - cell.origin.y,
+            Edge::Left => text.origin.x - cell.origin.x,
+        });
+        assert!(
+            (inset - offset * zoom).abs() <= 0.5,
+            "{label} at {zoom}×: {inset}px from {outer}'s edge, {offset} × {zoom} = {}px expected",
+            offset * zoom
+        );
+        focus(cx);
+        // A key with no binding makes the last input a key, so the ring is
+        // drawn (`focus_visible`) when the cell is measured again.
+        cx.simulate_keystrokes(window, "f19");
+        assert_eq!(
+            measure(cx),
+            (cell, text),
+            "{outer} at {zoom}×: taking focus moves or resizes nothing"
+        );
+    }
+}
+
 pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
     // Home's reads must not reach GitHub; every one of them fails here.
     let _gh = OfflineGh::with_script("#!/bin/sh\necho offline >&2\nexit 1\n");
@@ -116,6 +183,19 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
         })
         .unwrap();
     assert_eq!(reached, Some(0), "Tab reaches the selected mode cell");
+    // The nav's top margin (`mt_1`) and the cell's padding, 4 + 4 at 1.0.
+    let nav = (
+        "sidebar-mode-nav",
+        "sidebar-mode-graph-label",
+        Edge::Top,
+        8.,
+    );
+    ring_keeps_geometry(cx, &app, window, nav, |cx| {
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| app.focus_mode_nav_for_e2e(0, window, cx))
+        })
+        .unwrap();
+    });
 
     // The workspace-mode nav: the arrows only move, as entering PRs or
     // Issues starts a read; Enter / Space enter. Its PRs / Issues cells are
@@ -229,6 +309,13 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
         reads,
         "switching panes from the keyboard reads nothing"
     );
+    let switch = ("home-pane-repos", "home-pane-repos-label", Edge::Left, 12.);
+    ring_keeps_geometry(cx, &app, window, switch, |cx| {
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| app.focus_home_pane_for_e2e(0, window, cx))
+        })
+        .unwrap();
+    });
 
     // Keys typed into a field are the field's: with Home's search focused the
     // switch is not on the focus path, so the arrows (and Enter, an IME's

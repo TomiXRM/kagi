@@ -201,7 +201,6 @@ pub(super) fn work_row(
     let app = app.clone();
     let picked = item.clone();
     let label = format!("{}, {} #{}", item.title, item.name_with_owner, item.number);
-    let ring = super::keyboard_nav::RING;
     let row = super::keyboard_nav::focusable_row(super::list_a11y::list_item(
         super::home_github_list::HOME_LIST,
         div().id(SharedString::from(key.clone())),
@@ -214,8 +213,8 @@ pub(super) fn work_row(
     .flex_row()
     .items_center()
     .gap_3()
-    .px(theme::scaled_px(12. - ring))
-    .py(theme::scaled_px(8. - ring))
+    .px(super::keyboard_nav::inset(12.))
+    .py(super::keyboard_nav::inset(8.))
     .rounded_lg()
     .when(state != WorkRowState::Opening, |el| {
         el.cursor(gpui::CursorStyle::PointingHand)

@@ -20,7 +20,8 @@
 //! The focus ring is the one `Input` draws (`sync_gpui_component_theme` maps
 //! gpui-component's `ring` to `color_branch`), shown only for keyboard focus
 //! (`focus_visible`). It is a border kept transparent at rest, so taking focus
-//! does not move anything; callers take its width out of their padding.
+//! does not move anything; callers pad with [`inset`], which takes its width
+//! out of their zoomed padding.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -39,9 +40,20 @@ actions!(
 
 const CONTEXT: &str = "KagiTabList";
 
-/// The ring's width in px (`border_2`), taken out of the padding of every
-/// element that has it.
-pub(crate) const RING: f32 = 2.;
+/// The ring's width in px (`border_2`). Not scaled with the UI zoom: a fixed
+/// 2px ring stays crisp and visible at 0.7×, where a scaled one would be a
+/// blurred 1.4px.
+const RING: f32 = 2.;
+
+/// Padding of `n` (px at zoom 1.0) for an element that carries the ring: the
+/// zoomed padding minus the ring's fixed width, so the element's outer size is
+/// the one `scaled_px(n)` padding gave before the ring, at every zoom (#960
+/// review). Subtracting the ring before scaling made a cell 2 − 2·zoom px off:
+/// smaller at 1.5×, larger at 0.7×. The smallest inset in use is
+/// `inset(4.)` at 0.7×, 0.8px.
+pub(crate) fn inset(n: f32) -> gpui::Pixels {
+    super::theme::scaled_px(n) - gpui::px(RING)
+}
 
 /// ←/→/Home/End inside a tab list. The list's context is deeper than the
 /// app-wide `!Terminal && !Input` arrows (PR mode's pane cycling), so these

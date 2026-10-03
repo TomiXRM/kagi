@@ -654,6 +654,13 @@ pub fn ensure_smart_commit_detection(app: &mut KagiApp, cx: &mut gpui::Context<K
     app.ensure_smart_commit_detection(cx);
 }
 
+/// What the last drawn frame named the switch `id` (`keyboard_nav::switch`)
+/// and the checked state it gave assistive technology (#970).
+#[cfg(feature = "gui-e2e")]
+pub fn recorded_switch(id: &str) -> Option<(String, bool)> {
+    super::keyboard_nav::recorded_switch(id)
+}
+
 /// Fetch the avatars of Home's review-request authors now, as a landed read
 /// does (#968).
 #[cfg(feature = "gui-e2e")]

@@ -31,7 +31,6 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::radio::RadioGroup;
 use gpui_component::select::{Select, SelectItem, SelectState};
-use gpui_component::switch::Switch;
 use gpui_component::{IndexPath, Sizable as _};
 
 use super::i18n::{self, Lang, Msg};
@@ -117,6 +116,8 @@ pub fn render_settings_overlay(
     // renders *during* KagiApp's own update, which would panic ("cannot read …
     // while it is already being updated").
     theme_select: Option<Entity<ThemeSelectState>>,
+    // The switches' focus handles, for the same reason.
+    switches: super::keyboard_nav::FocusSlots,
     // Smart Commit state (detected models + current selection), passed in for the
     // same reason — never `app.read(cx)` during this render.
     smart: super::smart_commit::SmartCommitState,
@@ -198,9 +199,9 @@ pub fn render_settings_overlay(
                 .flex()
                 .flex_col()
                 .gap_6()
-                .child(appearance_section(&app, theme_select))
+                .child(appearance_section(&app, theme_select, &switches, cx))
                 .child(language_section(&app))
-                .child(smart_commit_section(&app, &smart))
+                .child(smart_commit_section(&app, &smart, &switches, cx))
                 .child(analyze_ignore_section(&app, analyze_ignore_input)),
         );
 
@@ -291,6 +292,8 @@ fn setting_row(
 fn appearance_section(
     app: &Entity<KagiApp>,
     theme_select: Option<Entity<ThemeSelectState>>,
+    switches: &super::keyboard_nav::FocusSlots,
+    cx: &gpui::App,
 ) -> impl IntoElement {
     // ── Theme picker (gpui-component Select) ──
     // The SelectState entity is built in the window context and held on KagiApp;
@@ -343,86 +346,91 @@ fn appearance_section(
         .child(stepper_btn("zoom-inc", "+", inc))
         .into_any_element();
 
+    // The five switches reach the keyboard and assistive technology through
+    // `keyboard_nav::switch` (#970), one Tab stop each, in drawing order.
+    use super::keyboard_nav::switch;
+    let title = |msg: Msg| SharedString::from(msg.t());
+
     // ── Compact graph toggle ──
-    let compact = theme::compact_graph();
     let app_c = app.clone();
-    let toggle = move |checked: &bool, _w: &mut gpui::Window, cx: &mut gpui::App| {
-        let on = *checked;
-        app_c.update(cx, |app, cx| {
-            app.graph_compact = on;
-            theme::set_compact_graph(on);
-            cx.notify();
-        });
-    };
-    let compact_ctl = Switch::new("compact-toggle")
-        .checked(compact)
-        .on_click(toggle)
-        .into_any_element();
+    let compact_ctl = switch(
+        "compact-toggle",
+        switches.get(0, cx),
+        title(Msg::SettingsCompact),
+        theme::compact_graph(),
+        move |on, _w, cx| {
+            app_c.update(cx, |app, cx| {
+                app.graph_compact = on;
+                theme::set_compact_graph(on);
+                cx.notify();
+            });
+        },
+    );
 
     // ── Swimlane-visuals toggle ──
     // Flips the swimlane visuals (avatar commit nodes, lane tint band, lane
     // padding). The lane *layout* is always `Stable` (ADR-0122) and does not
     // depend on this flag; `reload()` re-snapshots so rebuilt rows pick the
     // visual change up immediately.
-    let lane_compact = theme::graph_lane_compact();
     let app_lc = app.clone();
-    let toggle_lane = move |checked: &bool, _w: &mut gpui::Window, cx: &mut gpui::App| {
-        let on = *checked;
-        app_lc.update(cx, |app, cx| {
-            theme::set_graph_lane_compact(on);
-            app.reload(cx);
-            cx.notify();
-        });
-    };
-    let lane_compact_ctl = Switch::new("lane-compact-toggle")
-        .checked(lane_compact)
-        .on_click(toggle_lane)
-        .into_any_element();
+    let lane_compact_ctl = switch(
+        "lane-compact-toggle",
+        switches.get(1, cx),
+        title(Msg::SettingsLaneCompact),
+        theme::graph_lane_compact(),
+        move |on, _w, cx| {
+            app_lc.update(cx, |app, cx| {
+                theme::set_graph_lane_compact(on);
+                app.reload(cx);
+                cx.notify();
+            });
+        },
+    );
 
     // ── Auto-fetch toggle ──
-    let auto_fetch = theme::auto_fetch();
     let app_f = app.clone();
-    let toggle_fetch = move |checked: &bool, _w: &mut gpui::Window, cx: &mut gpui::App| {
-        let on = *checked;
-        app_f.update(cx, |_app, cx| {
-            theme::set_auto_fetch(on);
-            cx.notify();
-        });
-    };
-    let auto_fetch_ctl = Switch::new("auto-fetch-toggle")
-        .checked(auto_fetch)
-        .on_click(toggle_fetch)
-        .into_any_element();
+    let auto_fetch_ctl = switch(
+        "auto-fetch-toggle",
+        switches.get(2, cx),
+        title(Msg::SettingsAutoFetch),
+        theme::auto_fetch(),
+        move |on, _w, cx| {
+            app_f.update(cx, |_app, cx| {
+                theme::set_auto_fetch(on);
+                cx.notify();
+            });
+        },
+    );
 
     // ── Reduce-motion toggle (issue #354 / ADR-0173) ──
-    let reduce_motion = theme::reduce_motion();
     let app_rm = app.clone();
-    let toggle_rm = move |checked: &bool, _w: &mut gpui::Window, cx: &mut gpui::App| {
-        let on = *checked;
-        app_rm.update(cx, |_app, cx| {
-            theme::set_reduce_motion(on);
-            cx.notify();
-        });
-    };
-    let reduce_motion_ctl = Switch::new("reduce-motion-toggle")
-        .checked(reduce_motion)
-        .on_click(toggle_rm)
-        .into_any_element();
+    let reduce_motion_ctl = switch(
+        "reduce-motion-toggle",
+        switches.get(3, cx),
+        title(Msg::SettingsReduceMotion),
+        theme::reduce_motion(),
+        move |on, _w, cx| {
+            app_rm.update(cx, |_app, cx| {
+                theme::set_reduce_motion(on);
+                cx.notify();
+            });
+        },
+    );
 
     // ── Terminal auto-lock toggle (#772 / ADR-0208, default off) ──
-    let auto_lock = crate::ui::settings::terminal_auto_lock();
     let app_al = app.clone();
-    let toggle_al = move |checked: &bool, _w: &mut gpui::Window, cx: &mut gpui::App| {
-        let on = *checked;
-        app_al.update(cx, |_app, cx| {
-            crate::ui::settings::set_terminal_auto_lock(on);
-            cx.notify();
-        });
-    };
-    let auto_lock_ctl = Switch::new("terminal-auto-lock-toggle")
-        .checked(auto_lock)
-        .on_click(toggle_al)
-        .into_any_element();
+    let auto_lock_ctl = switch(
+        "terminal-auto-lock-toggle",
+        switches.get(4, cx),
+        title(Msg::SettingsTerminalAutoLock),
+        crate::ui::settings::terminal_auto_lock(),
+        move |on, _w, cx| {
+            app_al.update(cx, |_app, cx| {
+                crate::ui::settings::set_terminal_auto_lock(on);
+                cx.notify();
+            });
+        },
+    );
 
     // ── Graph Cmd+C copy target (ADR-0170) ──
     // Two-way segmented choice → hash (default) or the row's local branch.
@@ -550,6 +558,8 @@ fn language_section(app: &Entity<KagiApp>) -> impl IntoElement {
 fn smart_commit_section(
     app: &Entity<KagiApp>,
     smart: &super::smart_commit::SmartCommitState,
+    switches: &super::keyboard_nav::FocusSlots,
+    cx: &gpui::App,
 ) -> impl IntoElement {
     let current = smart.model.clone();
     let models = smart.detected_models.clone();
@@ -557,23 +567,24 @@ fn smart_commit_section(
     // ── Enable Smart Commit (LLM) toggle ──
     // Wired to SmartCommitState::set_enabled (persists `smart_commit_llm_enabled`).
     // Turning it on also re-probes Ollama so the model picker below populates
-    // without needing to open the commit panel first.
-    let enabled = smart.llm_enabled;
+    // without needing to open the commit panel first. The sixth switch of
+    // Settings, after Appearance's five (#970).
     let app_en = app.clone();
-    let toggle_enabled = move |checked: &bool, _w: &mut gpui::Window, cx: &mut gpui::App| {
-        let on = *checked;
-        app_en.update(cx, |app, cx| {
-            app.smart_commit.set_enabled(on);
-            if on {
-                app.refresh_smart_commit_detection(cx);
-            }
-            cx.notify();
-        });
-    };
-    let enabled_ctl = Switch::new("smart-commit-enabled")
-        .checked(enabled)
-        .on_click(toggle_enabled)
-        .into_any_element();
+    let enabled_ctl = super::keyboard_nav::switch(
+        "smart-commit-enabled",
+        switches.get(5, cx),
+        SharedString::from(Msg::SettingsSmartEnable.t()),
+        smart.llm_enabled,
+        move |on, _w, cx| {
+            app_en.update(cx, |app, cx| {
+                app.smart_commit.set_enabled(on);
+                if on {
+                    app.refresh_smart_commit_detection(cx);
+                }
+                cx.notify();
+            });
+        },
+    );
 
     // ── Provider selector (ADR-0099): Ollama / Claude Code / Codex ──
     // Chips mirror the model-picker styling below. CLI providers are only

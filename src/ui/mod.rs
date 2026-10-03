@@ -1116,6 +1116,9 @@ pub struct KagiApp {
     /// until then / in headless paths; a `SelectEvent::Confirm` subscription
     /// applies the chosen theme via `set_theme`.
     pub theme_select: Option<Entity<settings_view::ThemeSelectState>>,
+    /// Focus handles of Settings' switches, one per toggle in drawing order
+    /// (#970), handed to the overlay's renderer.
+    pub(crate) settings_switches: keyboard_nav::FocusSlots,
     /// ADR-0119: multi-line editor backing the Settings → "Analyze ignore"
     /// section (the gitignore-format exclude file). Lazily created when Settings
     /// opens (needs a `Window`).
@@ -1396,6 +1399,7 @@ impl KagiApp {
             file_history_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             graph_compact: theme::compact_graph(),
             theme_select: None,
+            settings_switches: Default::default(),
             analyze_ignore_input: None,
             command_palette_input: None,
             pr_comment_input: None,

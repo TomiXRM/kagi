@@ -100,6 +100,35 @@ pub fn scenario_toolbar_keyboard_reasons(cx: &mut VisualTestAppContext) {
         before,
         "disabled key press mutated repository"
     );
+
+    // #975 review: while another operation holds the latch, `render` turns
+    // Stash and Pop off whatever the tree and the stash list say, so their
+    // reason is the busy one — never "clean" / "empty" for a dirty tree or
+    // an existing stash.
+    app.update(cx, |app, cx| {
+        app.planning = Some("toolbar-busy-probe");
+        cx.notify();
+    });
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    assert!(
+        cx.read(|cx| e2e::op_latched(app.read(cx))),
+        "precondition: latched"
+    );
+    for (id, reason) in [
+        ("tb-stash", Msg::StashBusy.t()),
+        ("tb-pop", Msg::PopBusy.t()),
+    ] {
+        assert_eq!(
+            e2e::toolbar_description(id),
+            Some(reason),
+            "toolbar-busy-reason: {id} must give the busy reason while latched"
+        );
+    }
+    app.update(cx, |app, _| app.planning = None);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS toolbar_keyboard_reasons");
 }

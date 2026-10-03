@@ -242,8 +242,15 @@ impl KagiApp {
             cx.notify();
         });
 
-        // Stash — enabled only when dirty.
-        let stash_reason = (!toolbar.stash_on).then(|| Msg::StashClean.t());
+        // Stash — enabled only when dirty, and not while another operation
+        // runs (`render` turns it off then): say which (#975 review).
+        let stash_reason = (!toolbar.stash_on).then(|| {
+            if self.op_latched() {
+                Msg::StashBusy.t()
+            } else {
+                Msg::StashClean.t()
+            }
+        });
         let stash_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
             if let Some(reason) = stash_reason {
                 this.status_footer = FooterStatus::Idle(SharedString::from(reason));
@@ -253,8 +260,15 @@ impl KagiApp {
             cx.notify();
         });
 
-        // Pop — enabled only when stash exists.
-        let pop_reason = (!toolbar.pop_on).then(|| Msg::PopEmpty.t());
+        // Pop — enabled only when a stash exists, and not while another
+        // operation runs.
+        let pop_reason = (!toolbar.pop_on).then(|| {
+            if self.op_latched() {
+                Msg::PopBusy.t()
+            } else {
+                Msg::PopEmpty.t()
+            }
+        });
         let pop_click = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
             if let Some(reason) = pop_reason {
                 this.status_footer = FooterStatus::Idle(SharedString::from(reason));

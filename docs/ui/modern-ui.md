@@ -172,11 +172,14 @@ PR block.
 - Only Home's list has the row keyboard path (one Tab stop, ↑/↓); the PR /
   Issue navigators and the Graph sidebar do not. Within it, only ↑/↓ move:
   there is no Home / End / Page Up / Page Down between rows.
-- gpui shows `focus_visible` only while the last input was a key: moving the
-  mouse hides the ring while the focus stays, so the next Enter / Space
-  presses an element with no ring (gpui-wide; #960 review).
+- GPUI shows `focus_visible` only while the last input was a key: `MouseMove`
+  hides the ring without moving focus, but Enter / Space still activates the
+  focused control. A GPUI/Kagi fix is deferred (#354 gap 1).
 - Tabs have no `Role::TabPanel` (or another link from a tab to the content it
   controls).
+- Actual VoiceOver readout of unavailable toolbar reasons is not verified.
+  Keyboard access and `aria_description` are wired (#975), but a direct
+  `AXUIElement` probe does not activate GPUI's accessibility tree (#354).
 - Library transitions (Switch 150 ms, Tab 200 ms, Dialog 250 ms) do not follow
   `reduce_motion`.
 

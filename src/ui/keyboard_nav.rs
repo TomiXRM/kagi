@@ -436,6 +436,9 @@ pub(crate) struct RowFocus {
     holds: bool,
     /// The list was not drawn last frame (see [`Self::yield_focus`]).
     away: bool,
+    /// A focused row left the list on a rebuild frame; the next frame, which
+    /// has bounds, hands the focus on (see [`Self::rows`]).
+    pending: bool,
 }
 
 impl RowFocus {
@@ -509,18 +512,16 @@ impl RowFocus {
         let top = state.logical_scroll_top().item_ix;
         let first = self.keys.partition_point(|&(_, ix)| ix < top);
         // On the frame the rows were rebuilt the list has no bounds yet (it
-        // was reset and lays the rows out in this frame). The one row known
-        // to be drawn is the first at the new top; the remembered row may be
-        // far below it (a filter that keeps it resets to the top, #961
-        // review), so it is the stop only if it is that row. The next frame
-        // has bounds and puts the stop back on the remembered row if drawn.
-        let drawn = |at: usize| {
-            if rebuild {
-                at == first
-            } else {
-                state.bounds_for_item(self.keys[at].1).is_some()
-            }
-        };
+        // was reset or put back at its scroll top, and lays the rows out in
+        // this frame), so no row is known to be drawn: the list has no stop
+        // and nothing moves (#961 review — the top may hold only headings and
+        // notes). The next frame, asked for here, has bounds and reconciles:
+        // the stop is the remembered row if drawn, else the first drawn row,
+        // and a focus whose row left the list moves there (or to the window).
+        if rebuild {
+            window.request_animation_frame();
+        }
+        let drawn = |at: usize| !rebuild && state.bounds_for_item(self.keys[at].1).is_some();
         // The row holding the focus — itself or a control inside it, its
         // Open button (#961 review) — scrolled out of the drawn range by the
         // wheel is unmounted: no ↑/↓, no ring. Not on the frame the focus
@@ -532,7 +533,9 @@ impl RowFocus {
             .current
             .filter(|&at| drawn(at))
             .or_else(|| (first < self.keys.len() && drawn(first)).then_some(first));
-        if lost || scrolled_away {
+        if rebuild {
+            self.pending |= lost;
+        } else if std::mem::take(&mut self.pending) || scrolled_away {
             match stop {
                 Some(at) => self.handles[at].focus(window, cx),
                 None => {

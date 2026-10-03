@@ -50,11 +50,11 @@ fn gh_script() -> String {
     )
 }
 
-/// A stand-in `gh` listing three repositories, then organizations: thirty
-/// that cannot be read, `org30` with three repositories, and thirty more that
-/// cannot be read. Each unreadable one is a heading and a note, so each run
-/// of them is more than a screen of entries with no row.
-fn orgs_script() -> String {
+/// A stand-in `gh` listing three repositories, then sixty-one organizations
+/// of which only `readable` (e.g. `org30`) can be read, with three
+/// repositories. Each unreadable one is a heading and a note, so a run of
+/// them is more than a screen of entries with no row.
+fn orgs_script(readable: &str) -> String {
     let repos = |owner: &str| {
         (0..3)
             .map(|i| {
@@ -74,11 +74,11 @@ fn orgs_script() -> String {
          'config get user') echo acme ;;\n\
          'api user/orgs '*) cat <<'EOF'\n{orgs}\nEOF\n;;\n\
          'repo list --limit') cat <<'JSON'\n[{mine}]\nJSON\n;;\n\
-         'repo list org30') cat <<'JSON'\n[{org30}]\nJSON\n;;\n\
+         'repo list {readable}') cat <<'JSON'\n[{theirs}]\nJSON\n;;\n\
          'search '*) echo '[]' ;;\n\
          *) echo \"gh: $*: HTTP 403\" >&2; exit 1 ;;\nesac\n",
         mine = repos("acme"),
-        org30 = repos("org30"),
+        theirs = repos(readable),
     )
 }
 
@@ -260,17 +260,16 @@ pub fn scenario_home_rows(cx: &mut VisualTestAppContext) {
     set_filter(cx, &app, window, "");
 
     // The remembered row far down (r40), then a search that keeps it but
-    // starts the list again at the top (#961 review): r40 is not drawn
-    // there, so the frame that rebuilds the rows must give the Tab stop to
-    // a drawn row. Tab is moved over that very frame (no frame between, as
-    // when the user types and tabs at once): it lands on r00 instead of
-    // passing the list by.
+    // starts the list again at the top (#961 review). The frame that
+    // rebuilds the rows cannot tell which rows it draws, so it makes no row
+    // the Tab stop: Tab moved over that very frame does not go to the
+    // undrawn r40. The next frame has bounds, and Tab reaches r00 there.
     focus_row(cx, &app, window, "repo:acme/r00");
     for _ in 0..40 {
         keys(cx, window, "down");
     }
     assert_eq!(row(cx, &app, window).as_deref(), Some("repo:acme/r40"));
-    let reached = cx
+    let over_rebuild = cx
         .update_window(window, |_, window, cx| {
             let input = app.read(cx).home_github.filter.clone().unwrap();
             input.update(cx, |input, cx| {
@@ -284,14 +283,30 @@ pub fn scenario_home_rows(cx: &mut VisualTestAppContext) {
             })
         })
         .unwrap();
-    assert_eq!(
-        reached.as_deref(),
-        Some("repo:acme/r00"),
-        "Tab over the rebuilding frame reaches the list at a drawn row"
+    assert_ne!(
+        over_rebuild.as_deref(),
+        Some("repo:acme/r40"),
+        "no Tab stop on a row the rebuilding frame may not draw"
     );
     assert!(
         !drawn(cx, window, "home-gh-acme/r40"),
         "the search started the list at the top"
+    );
+    let reached = cx
+        .update_window(window, |_, window, cx| {
+            let input = app.read(cx).home_github.filter.clone().unwrap();
+            input.update(cx, |input, cx| input.focus(window, cx));
+            window.draw(cx).clear();
+            (0..4).find_map(|_| {
+                window.focus_next(cx);
+                app.read(cx).home_row_focused_for_e2e(window)
+            })
+        })
+        .unwrap();
+    assert_eq!(
+        reached.as_deref(),
+        Some("repo:acme/r00"),
+        "after the rebuild, Tab reaches the list at a drawn row"
     );
     set_filter(cx, &app, window, "");
 
@@ -465,7 +480,7 @@ pub fn scenario_home_rows(cx: &mut VisualTestAppContext) {
     // goes to the window — neither to a row below the screen (org30's,
     // after the first run) nor to row 0 (after the last run).
     {
-        let _orgs = OfflineGh::with_script(&orgs_script());
+        let orgs = OfflineGh::with_script(&orgs_script("org30"));
         app.update(cx, |app, cx| app.set_home_pane(HomePane::Repos, cx));
         app.update(cx, |app, cx| app.reload_home_github(cx));
         wait_for(cx, &app, "the organizations' read", settled);
@@ -503,7 +518,63 @@ pub fn scenario_home_rows(cx: &mut VisualTestAppContext) {
                 "with no row on screen ({place}), the window has the focus"
             );
         }
+        // org30's rows on screen, one focused; a refresh then finds org30
+        // unreadable (its rows become a heading and a note) and org60
+        // readable, far below (#961 review). The rows are rebuilt at the same
+        // scroll top, where only headings and notes are now: the rebuilding
+        // frame cannot prove any row drawn, so the focus does not move to
+        // org60's row out of sight; the next frame, with bounds, hands it to
+        // the window.
         wheel(cx, 50000.);
+        for _ in 0..200 {
+            if drawn(cx, window, "home-gh-org30/r01") {
+                break;
+            }
+            wheel(cx, -150.);
+        }
+        assert!(drawn(cx, window, "home-gh-org30/r01"));
+        focus_row(cx, &app, window, "repo:org30/r01");
+        assert_eq!(row(cx, &app, window).as_deref(), Some("repo:org30/r01"));
+        drop(orgs);
+        let _orgs = OfflineGh::with_script(&orgs_script("org60"));
+        app.update(cx, |app, cx| app.reload_home_github(cx));
+        wait_for(cx, &app, "the refresh", settled);
+        let (on_rebuild, tabbed) = cx
+            .update_window(window, |_, window, cx| {
+                window.draw(cx).clear();
+                let on_rebuild = app.read(cx).home_row_focused_for_e2e(window);
+                // Tab over that very frame: no row is its stop.
+                let root = app.read(cx).root_focus.clone().unwrap();
+                root.focus(window, cx);
+                let tabbed = (0..60).find_map(|_| {
+                    window.focus_next(cx);
+                    app.read(cx).home_row_focused_for_e2e(window)
+                });
+                root.focus(window, cx);
+                (on_rebuild, tabbed)
+            })
+            .unwrap();
+        assert_eq!(
+            on_rebuild, None,
+            "the rebuilding frame moves no focus to a row it cannot prove drawn"
+        );
+        assert_eq!(
+            tabbed, None,
+            "Tab over the rebuilding frame reaches no row off screen"
+        );
+        assert!(
+            !drawn(cx, window, "home-gh-org60/r00"),
+            "precondition: org60's rows are below the screen"
+        );
+        assert!(
+            root_has_focus(cx),
+            "the next frame hands the lost row's focus to the window"
+        );
+        // Back to the top (the rebuilt list measures its rows as it scrolls,
+        // so one wheel may stop short).
+        for _ in 0..4 {
+            wheel(cx, 50000.);
+        }
     }
 
     // Another account's read replaces the list on screen with Loading, and
@@ -511,6 +582,10 @@ pub fn scenario_home_rows(cx: &mut VisualTestAppContext) {
     // row hands the focus to the window rather than keep it out of sight.
     app.update(cx, |app, cx| app.set_home_pane(HomePane::Repos, cx));
     cx.run_until_parked();
+    assert!(
+        drawn(cx, window, "home-gh-acme/r00"),
+        "precondition: r00 on screen"
+    );
     focus_row(cx, &app, window, "repo:acme/r00");
     assert_eq!(row(cx, &app, window).as_deref(), Some("repo:acme/r00"));
     let _other = OfflineGh::with_script(

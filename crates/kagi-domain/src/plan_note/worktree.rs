@@ -115,6 +115,10 @@ pub enum WorktreeNote {
     /// blocker (#938): a different registered worktree is inside the target
     /// directory; recursive removal would delete its unbacked-up content.
     RemoveContainsWorktree { path: String },
+    /// blocker (#951): a repository (`.git`) is inside the target's ignored
+    /// content — a moved main checkout, an independent clone or a
+    /// submodule's checkout. Removal never deletes a repository silently.
+    RemoveContainsRepository { path: String },
     /// warning (`plan_lock_worktree`) — describes the lock about to be placed.
     LocksWorktree {
         path: String,
@@ -316,6 +320,9 @@ impl WorktreeNote {
             WorktreeNote::RemoveContainsSubmodules => "Contains submodules".to_string(),
             WorktreeNote::RemoveContainsWorktree { path } => {
                 format!("Registered worktree at '{path}' is inside the removal target.")
+            }
+            WorktreeNote::RemoveContainsRepository { path } => {
+                format!("Repository at '{path}' is inside the removal target.")
             }
             WorktreeNote::RemovesWorktree {
                 path,

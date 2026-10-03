@@ -52,7 +52,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Internal
 
-- GUI E2E runner(Tier A)が開発者の環境を読まないようにしました。`HOME` は run 専用の空の directory(fixture と同じ git の identity だけを置く)にします。terminal を起動する scenario は、login shell ではなく行を読むだけの代わりの shell を使います。terminal が利用者の `$SHELL` を起動した scenario は失敗します。Smart Commit の生成を差し込む scenario は、差し込んだ生成が使われたことを確かめます。(#516)
+- GUI E2E runner(Tier A)が開発者の環境を読まないようにしました。`HOME` は run 専用の空の directory(fixture と同じ git の identity だけを置く)にし、継承した `GIT_*` の環境変数は起動時にすべて除去します。terminal を起動する scenario は、login shell ではなく行を読むだけの代わりの shell を使います。代わりの shell が無いまま terminal を起動しようとすると、利用者の `$SHELL` を起動する前にその scenario が失敗します。Smart Commit の生成を差し込む scenario は、差し込んだ生成が使われたことを確かめます。(#516)
 - Web(Playwright)の harness は、`crates/kagi-web/dist` が無いと設定の読み込み時に止まり、足りないファイルと実行すべき `scripts/build-web.sh` を示すようにしました。これまでは 60 秒後に webServer のタイムアウトとして失敗し、実行時のハングと区別がつきませんでした。(#516)
 
 ## [0.41.0] - 2026-10-02

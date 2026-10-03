@@ -561,19 +561,28 @@ fn pick_font_family_uncached() -> String {
 ///
 /// Unix: `$SHELL`, falling back to `/bin/zsh`.
 /// Windows: `%ComSpec%` (the command processor), falling back to `cmd.exe`.
+/// The GUI runner (`gui-e2e`) never starts the user's shell: a terminal there
+/// runs the shell a scenario set, and panics before any spawn when none is
+/// set (#516). The login shell would source the developer's rc files and
+/// write history before any check after the scenario could object.
 pub fn resolve_shell() -> String {
     #[cfg(feature = "gui-e2e")]
     {
-        if let Some(shell) = E2E_SHELL.with(|slot| slot.borrow().clone()) {
-            return shell;
-        }
-        USER_SHELL_STARTS.with(|starts| starts.set(starts.get() + 1));
+        E2E_SHELL
+            .with(|slot| slot.borrow().clone())
+            .unwrap_or_else(|| {
+                panic!(
+                    "a terminal started with no seam shell, so it would run the user's \
+                     $SHELL (-l -i); hold gui_isolation::StandInShell or set \
+                     KagiApp::set_terminal_shell_for_e2e (#516)"
+                )
+            })
     }
-    #[cfg(windows)]
+    #[cfg(all(not(feature = "gui-e2e"), windows))]
     {
         std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string())
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(feature = "gui-e2e"), not(windows)))]
     {
         std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
     }
@@ -582,24 +591,16 @@ pub fn resolve_shell() -> String {
 #[cfg(feature = "gui-e2e")]
 thread_local! {
     static E2E_SHELL: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
-    static USER_SHELL_STARTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(feature = "gui-e2e")]
 impl crate::ui::KagiApp {
-    /// Spawn `shell` instead of `$SHELL` for terminals started from now on
-    /// (`None` restores `$SHELL`). Tier A only (#855): lets a scenario observe
-    /// the environment the real PTY spawn hands its shell, which a payload
-    /// unit test cannot.
+    /// Spawn `shell` for terminals started from now on (`None` clears it, and
+    /// a terminal started then panics: the runner never runs `$SHELL`).
+    /// Tier A only (#855, #516): lets a scenario observe the environment the
+    /// real PTY spawn hands its shell, which a payload unit test cannot.
     pub fn set_terminal_shell_for_e2e(shell: Option<String>) {
         E2E_SHELL.with(|slot| *slot.borrow_mut() = shell);
-    }
-
-    /// How many terminals have resolved the user's own shell (no seam set)
-    /// on this thread. The runner fails a scenario that raises it (#516):
-    /// the login shell sources the developer's rc files and writes history.
-    pub fn user_shell_starts_for_e2e() -> usize {
-        USER_SHELL_STARTS.with(std::cell::Cell::get)
     }
 }
 

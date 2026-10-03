@@ -837,6 +837,25 @@ mod macos {
         .expect("runner git identity");
         std::env::set_var("HOME", &home);
         std::env::set_var("XDG_CONFIG_HOME", home.join(".config"));
+        // #963 review: `HOME` alone is not enough. An inherited `GIT_*`
+        // still reaches every `git` the product runs: `GIT_CONFIG_GLOBAL` /
+        // `GIT_CONFIG_SYSTEM` naming the developer's config by absolute path,
+        // `GIT_CONFIG_COUNT` / `GIT_CONFIG_PARAMETERS` injecting keys,
+        // `GIT_DIR` / `GIT_WORK_TREE` from a hook or `git bisect run`. Drop
+        // them all, as `support/git_fixture.rs` does for fixture commands, then
+        // pin only what the run needs: the global config is the run's own
+        // `.gitconfig`, there is no system config, and nothing prompts.
+        let inherited: Vec<_> = std::env::vars_os()
+            .map(|(key, _)| key)
+            .filter(|key| key.to_string_lossy().starts_with("GIT_"))
+            .collect();
+        for key in inherited {
+            std::env::remove_var(key);
+        }
+        std::env::set_var("GIT_CONFIG_GLOBAL", home.join(".gitconfig"));
+        std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
+        std::env::set_var("GIT_CONFIG_SYSTEM", "/dev/null");
+        std::env::set_var("GIT_TERMINAL_PROMPT", "0");
         // #516: a failing scenario leaves evidence in target/gui-e2e/<name>/.
         crate::gui_evidence::install();
 

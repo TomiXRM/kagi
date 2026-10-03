@@ -20,12 +20,15 @@
 //! - The runner's temporary directory (`TMPDIR` points there for the whole
 //!   run, so `tempfile` and child processes use it): no new direct entry may
 //!   remain.
-//! - The user's own shell: no terminal may start it. A scenario that starts
-//!   a terminal holds [`StandInShell`] (or sets its own seam shell).
 //!
-//! `HOME` is the runner's own too (an empty directory with a fixed git
-//! identity, set in the runner), so `git`, `gh` and the product never read
-//! the developer's dotfiles.
+//! Two things are not compared because they cannot be left to the end:
+//!
+//! - `HOME` and `GIT_*` belong to the runner (an empty home with a fixed git
+//!   identity, inherited `GIT_*` dropped, set in the runner), so `git`, `gh`
+//!   and the product never read the developer's dotfiles or config.
+//! - The user's own shell never starts: a terminal with no seam shell panics
+//!   before the spawn (`resolve_shell`). A scenario that starts a terminal
+//!   holds [`StandInShell`] or sets its own seam shell.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -128,7 +131,6 @@ pub(crate) struct Before {
     oplog: Option<Vec<u8>>,
     tmp: BTreeSet<String>,
     quarantined: BTreeSet<String>,
-    user_shells: usize,
 }
 
 /// `settings.json` as it reads: its keys (absent counts as no keys: the store
@@ -228,7 +230,6 @@ pub(crate) fn snapshot() -> Before {
         oplog: read_shared(&log_dir().join("operations.jsonl")),
         tmp: tmp_entries(),
         quarantined: quarantined(),
-        user_shells: kagi::ui::KagiApp::user_shell_starts_for_e2e(),
     }
 }
 
@@ -418,13 +419,6 @@ pub(crate) fn check(scenario: &str, before: &Before) {
             report,
             "- temporary directory `{}`: new entry `{added}` remains",
             std::env::temp_dir().display()
-        );
-    }
-    let user_shells = kagi::ui::KagiApp::user_shell_starts_for_e2e() - before.user_shells;
-    if user_shells > 0 {
-        let _ = writeln!(
-            report,
-            "- started the user's own shell {user_shells} time(s): a terminal sources the developer's rc files and history; hold `StandInShell`"
         );
     }
     assert!(

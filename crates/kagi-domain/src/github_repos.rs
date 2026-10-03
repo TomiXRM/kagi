@@ -110,6 +110,23 @@ pub struct WorkList {
     pub truncated: bool,
 }
 
+impl WorkList {
+    /// The items' authors, per host their logins belong to (lower-cased),
+    /// each login once, in list order (#944). Home fetches review-request
+    /// avatars this way: an Enterprise login goes to its own server, where
+    /// it names its user, never to github.com.
+    pub fn authors_by_host(&self) -> std::collections::BTreeMap<String, Vec<String>> {
+        let mut authors = std::collections::BTreeMap::<String, Vec<String>>::new();
+        for item in self.items.iter().filter(|item| !item.author.is_empty()) {
+            let logins = authors.entry(item.host.to_ascii_lowercase()).or_default();
+            if !logins.contains(&item.author) {
+                logins.push(item.author.clone());
+            }
+        }
+        authors
+    }
+}
+
 /// Which `gh search` a [`WorkList`] answers (#928).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WorkKind {
@@ -177,5 +194,44 @@ mod tests {
         assert_eq!(repo.clone_source(), "github.com/Acme/Widgets");
         assert_eq!(repo.identity(), "github.com/acme/widgets");
         assert_eq!(repo.name(), "Widgets");
+    }
+
+    fn work(host: &str, author: &str) -> WorkItem {
+        WorkItem {
+            host: host.into(),
+            name_with_owner: "acme/widgets".into(),
+            number: 1,
+            title: String::new(),
+            url: String::new(),
+            is_draft: false,
+            author: author.into(),
+            updated_at: String::new(),
+        }
+    }
+
+    /// An Enterprise author is grouped under its own server, apart from a
+    /// github.com user of the same login it must not be confused with.
+    #[test]
+    fn authors_are_grouped_by_their_host() {
+        let list = WorkList {
+            items: vec![
+                work("github.com", "octo"),
+                work("GHE.example.com", "octo"),
+                work("ghe.example.com", "hubot"),
+                work("github.com", "octo"),
+                work("github.com", ""),
+            ],
+            truncated: false,
+        };
+        assert_eq!(
+            list.authors_by_host().into_iter().collect::<Vec<_>>(),
+            vec![
+                (
+                    "ghe.example.com".to_string(),
+                    vec!["octo".into(), "hubot".into()]
+                ),
+                ("github.com".to_string(), vec!["octo".to_string()]),
+            ]
+        );
     }
 }

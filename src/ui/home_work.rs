@@ -49,6 +49,8 @@ pub struct HomeWork {
     /// Bumped whenever what the panes show changes (lists, errors, the PR
     /// being opened), so the virtualized list knows to lay out again.
     pub(super) version: u64,
+    /// The switch's cells, for the keyboard (#944).
+    pub(crate) pane_focus: super::keyboard_nav::TabFocus,
 }
 
 /// Where the last read is saved: next to `settings.json`.
@@ -214,6 +216,12 @@ impl KagiApp {
         };
         self.home_github.work.opening = Some(key.clone());
         self.home_github.work.version += 1;
+        // The row that was pressed goes with Home once the clone's tab opens
+        // (#960 review): a focus left on it would take the next Tab / key
+        // nowhere. The root outlives the switch, as for a repository row.
+        if let Some(root) = self.root_focus.clone() {
+            window.focus(&root, cx);
+        }
         cx.notify();
         if !kind.is_pr() {
             self.open_issue_when_addressed(key, path, window, cx);
@@ -402,9 +410,23 @@ impl KagiApp {
             ),
         ];
         let active = work.pane;
-        let mut row = div()
-            .id("home-panes")
-            .role(gpui::Role::TabList)
+        // #944: a pane switch only shows lists already read, so the arrows
+        // select as they move (automatic activation).
+        let app = cx.weak_entity();
+        let tabs = super::keyboard_nav::TabList::new(
+            &work.pane_focus,
+            PANES.len(),
+            (0..PANES.len()).collect(),
+            PANES.iter().position(|&p| p == active),
+            super::keyboard_nav::Activation::Automatic,
+            self.root_focus.clone(),
+            move |slot, _, cx| {
+                let _ = app.update(cx, |app, cx| app.set_home_pane(PANES[slot], cx));
+            },
+            cx,
+        );
+        let mut row = tabs
+            .list(div().id("home-panes"))
             .flex()
             .flex_row()
             .items_center()
@@ -412,22 +434,34 @@ impl KagiApp {
             .p(theme::scaled_px(3.))
             .rounded_lg()
             .bg(rgb(theme().panel));
-        for (pane, label, count, loading) in cells {
-            row = row.child(pane_cell(pane, label, count, loading, pane == active, cx));
+        for (slot, (pane, label, count, loading)) in cells.into_iter().enumerate() {
+            row = row.child(pane_cell(
+                &tabs,
+                slot,
+                pane,
+                label,
+                count,
+                loading,
+                pane == active,
+            ));
         }
         row.into_any_element()
     }
 }
 
+/// The switch's panes, in order: a pane's slot in the tab list.
+const PANES: [HomePane; 3] = [HomePane::Repos, HomePane::Prs, HomePane::Issues];
+
 /// One cell of the switch: label and count (or a spinner while the count is
 /// not known), the selected one raised like the workspace-mode switch.
 fn pane_cell(
+    tabs: &super::keyboard_nav::TabList,
+    slot: usize,
     pane: HomePane,
     label: &'static str,
     count: Option<usize>,
     loading: bool,
     active: bool,
-    cx: &mut Context<KagiApp>,
 ) -> AnyElement {
     let id = match pane {
         HomePane::Repos => "home-pane-repos",
@@ -468,17 +502,14 @@ fn pane_cell(
         )),
         None => None,
     };
-    let cell = div()
-        .id(id)
-        .role(gpui::Role::Tab)
-        .aria_label(SharedString::from(name))
-        .aria_selected(active)
+    let cell = tabs
+        .cell(slot, &name, div().id(id))
         .flex()
         .flex_row()
         .items_center()
         .gap_2()
-        .px_3()
-        .py(theme::scaled_px(5.))
+        .px(super::keyboard_nav::inset(12.))
+        .py(super::keyboard_nav::inset(5.))
         .rounded_md()
         .cursor_pointer()
         .text_sm()
@@ -488,11 +519,46 @@ fn pane_cell(
                 .font_weight(gpui::FontWeight::MEDIUM)
         })
         .when(!active, |el| el.hover(|s| s.bg(rgb(theme().surface))))
-        .on_click(cx.listener(move |app, _: &gpui::ClickEvent, _, cx| {
-            app.set_home_pane(pane, cx);
-        }))
-        .child(SharedString::from(label))
+        // Measured (GUI E2E) so a scenario can check the padding the ring
+        // leaves at every zoom (#960 review).
+        .child(super::e2e::measure_control(
+            match pane {
+                HomePane::Repos => "home-pane-repos-label",
+                HomePane::Prs => "home-pane-prs-label",
+                HomePane::Issues => "home-pane-issues-label",
+            },
+            SharedString::from(label),
+        ))
         .children(badge)
         .min_w(px(0.));
     super::e2e::measure_control(id, cell)
+}
+
+/// Tier A hooks for the keyboard paths (#944): the test dispatcher cannot
+/// press Tab, so a scenario puts the focus on a cell directly.
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    /// Focus the cell of Home's switch in `slot` (Repositories = 0).
+    pub fn focus_home_pane_for_e2e(&self, slot: usize, window: &mut Window, cx: &mut gpui::App) {
+        self.home_github.work.pane_focus.focus(slot, window, cx);
+    }
+
+    /// Focus the workspace-mode cell in `slot` (Graph = 0).
+    pub fn focus_mode_nav_for_e2e(&self, slot: usize, window: &mut Window, cx: &mut gpui::App) {
+        self.sidebar.mode_focus.focus(slot, window, cx);
+    }
+
+    /// Which workspace-mode cell holds the focus, if any.
+    pub fn mode_nav_focused_for_e2e(&self, window: &Window) -> Option<usize> {
+        self.sidebar.mode_focus.focused(window)
+    }
+
+    /// How many times Home's repository list and its PR / issue lists have
+    /// been read.
+    pub fn home_reads_for_e2e(&self) -> (u64, u64) {
+        (
+            self.home_github.generation,
+            self.home_github.work.generation,
+        )
+    }
 }

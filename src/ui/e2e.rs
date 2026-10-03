@@ -642,10 +642,54 @@ pub fn queue_smart_generation(task: SmartGenerationTask) {
 pub(crate) fn take_smart_generation() -> Option<SmartGenerationTask> {
     SMART_GENERATION.with(|slot| slot.borrow_mut().take())
 }
+/// Whether a queued generation is still waiting: a scenario asserts its
+/// generation consumed it (left queued, the real provider CLI ran instead).
+#[cfg(feature = "gui-e2e")]
+pub fn smart_generation_queued() -> bool {
+    SMART_GENERATION.with(|slot| slot.borrow().is_some())
+}
 
 #[cfg(feature = "gui-e2e")]
 pub fn ensure_smart_commit_detection(app: &mut KagiApp, cx: &mut gpui::Context<KagiApp>) {
     app.ensure_smart_commit_detection(cx);
+}
+
+/// Fetch the avatars of Home's review-request authors now, as a landed read
+/// does (#968).
+#[cfg(feature = "gui-e2e")]
+pub fn ensure_home_avatars(app: &mut KagiApp, cx: &mut gpui::Context<KagiApp>) {
+    app.ensure_home_avatars(cx);
+}
+
+/// Whether the review-request row for `item` finds its author's avatar
+/// image (else it draws the initials circle).
+#[cfg(feature = "gui-e2e")]
+pub fn home_review_avatar_shown(
+    app: &KagiApp,
+    item: &kagi_git::github_repos_cache::WorkItem,
+) -> bool {
+    app.avatars
+        .images
+        .contains_key(super::home_work_list::review_avatar_key(item).as_ref())
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static CLONE_TICKERS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The clone card's redraw tickers running now (#968).
+#[cfg(feature = "gui-e2e")]
+pub fn clone_tickers() -> usize {
+    CLONE_TICKERS.with(std::cell::Cell::get)
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn clone_ticker_started() {
+    CLONE_TICKERS.with(|n| n.set(n.get() + 1));
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn clone_ticker_ended() {
+    CLONE_TICKERS.with(|n| n.set(n.get() - 1));
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -822,6 +866,7 @@ thread_local! {
     static OPENED_URLS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static PANEL_MOTION_CLOCK: std::cell::Cell<Option<std::time::Instant>> =
         const { std::cell::Cell::new(None) };
+    static GITHUB_NAV: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// A URL Kagi asked the OS to open, recorded instead of launching the
@@ -847,4 +892,17 @@ pub fn set_panel_motion_clock(now: Option<std::time::Instant>) {
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn panel_motion_clock() -> Option<std::time::Instant> {
     PANEL_MOTION_CLOCK.with(|clock| clock.get())
+}
+
+/// Draw the PRs / Issues cells of the workspace-mode nav whether or not this
+/// machine has a `gh` (#960 review): a scenario on them must not pass by
+/// skipping them.
+#[cfg(feature = "gui-e2e")]
+pub fn set_github_nav(shown: bool) {
+    GITHUB_NAV.with(|nav| nav.set(shown));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn github_nav_forced() -> bool {
+    GITHUB_NAV.with(|nav| nav.get())
 }

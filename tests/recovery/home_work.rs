@@ -325,6 +325,16 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
         cx.read(|cx| app.read(cx).clone_modal().is_none()),
         "the clone card belongs to the Repositories tab"
     );
+    // #944: the click left the row focused; Enter and Space press it again,
+    // as gpui's keyboard click on the row's own handler.
+    for key in ["enter", "space"] {
+        crate::keyboard_nav::keys(cx, window, key);
+        assert_eq!(
+            e2e::take_opened_urls(),
+            vec!["https://github.com/acme/widgets/pull/3".to_string()],
+            "{key} presses the focused row"
+        );
+    }
     // Every row's end is Open (on GitHub), cloned or not, and pressing it
     // does not also run the row's click: no refs read, no spinner.
     click(cx, window, "home-work-acme/widgets-3-open");
@@ -370,7 +380,43 @@ pub fn scenario_home_work(cx: &mut VisualTestAppContext) {
         "https://github.com/acme/upstream",
     )
     .unwrap();
-    pick(cx);
+    // #960 review: pressing the row focuses it (a click as here; Enter /
+    // Space reach the same `on_click`), and the row goes with Home once the
+    // clone's tab opens. The focus moves to the root as the open starts.
+    // One window update with no pump, so `gh pr view` is still running for
+    // the spinner check below.
+    assert!(drawn(cx, window, "home-work-acme/local-7"));
+    let row = e2e::control_bounds(window.window_id(), "home-work-acme/local-7")
+        .unwrap()
+        .center();
+    let root_focused = cx
+        .update_window(window, |_, window, cx| {
+            let modifiers = gpui::Modifiers::none();
+            for input in [
+                gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                    position: row,
+                    modifiers,
+                    button: gpui::MouseButton::Left,
+                    click_count: 1,
+                    first_mouse: false,
+                }),
+                gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
+                    position: row,
+                    modifiers,
+                    button: gpui::MouseButton::Left,
+                    click_count: 1,
+                }),
+            ] {
+                window.dispatch_event(input, cx);
+            }
+            let root = app.read(cx).root_focus.clone().expect("root focus");
+            root.is_focused(window)
+        })
+        .unwrap();
+    assert!(
+        root_focused,
+        "opening a local PR moves the focus off its Home row, to the root"
+    );
     assert_eq!(
         cx.read(|cx| app.read(cx).home_github.work.opening.clone()),
         Some(("github.com/acme/local".to_string(), 7))

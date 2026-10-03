@@ -398,7 +398,21 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
     click_control(cx, window, "home-gh-acme/widgets");
     cx.run_until_parked();
     choose_folder(cx, &app, &elsewhere);
-    app.update(cx, |app, cx| app.start_clone(cx));
+    // #960 review: the row hands the focus to the card it opened, so the
+    // card's Enter is the card's: it confirms. Left on the row, the Enter
+    // stopped there and pressed the row again on its key-up, opening a fresh
+    // card with no folder, and no clone started.
+    assert!(
+        cx.update_window(window, |_, window, cx| {
+            app.read(cx)
+                .modal_focus
+                .as_ref()
+                .is_some_and(|focus| focus.is_focused(window))
+        })
+        .unwrap(),
+        "the clone card holds the focus, not the row"
+    );
+    crate::keyboard_nav::keys(cx, window, "enter");
     wait_for(cx, &app, "the failed clone", |app| {
         app.home_github.cloning.is_none()
     });
@@ -465,6 +479,20 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
         cx.read(|cx| kagi::ui::e2e::op_latched(app.read(cx))),
         "a running clone holds the write latch"
     );
+    // The card sent to the background comes back when the row, now
+    // "Cloning…", is clicked: still the running clone, not a new card that
+    // could not start and would outlive the clone (#944). Called directly,
+    // as above, so the clone is still running.
+    app.update(cx, |app, cx| {
+        let listing = app.clone_modal().unwrap().listing.clone();
+        app.cancel_clone();
+        assert!(app.clone_modal().is_none());
+        app.home_github_pick(listing, cx);
+        assert!(
+            app.clone_modal().is_some_and(|m| m.started.is_some()),
+            "the running clone's card is back"
+        );
+    });
     wait_for(cx, &app, "the clone", |app| {
         app.home_github.cloning.is_none() && app.clone_modal().is_none()
     });

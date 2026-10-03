@@ -22,6 +22,7 @@ fn build_fixture(root: &Path, name: &str) -> PathBuf {
 
 pub fn scenario_retained_pane_resources(cx: &mut VisualTestAppContext) {
     let _ports = crate::gui_isolation::PortStore::keep();
+    let _shell = crate::gui_isolation::StandInShell::install();
     let root_dir = tempfile::tempdir().expect("tempdir");
     let root = root_dir.path().canonicalize().unwrap();
     let repo_a = build_fixture(&root, "pane-a");

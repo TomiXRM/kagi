@@ -131,8 +131,14 @@ mod home_github;
 #[path = "recovery/home_list_place.rs"]
 mod home_list_place;
 #[cfg(target_os = "macos")]
+#[path = "recovery/home_p2.rs"]
+mod home_p2;
+#[cfg(target_os = "macos")]
 #[path = "recovery/home_work.rs"]
 mod home_work;
+#[cfg(target_os = "macos")]
+#[path = "recovery/keyboard_nav.rs"]
+mod keyboard_nav;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/conflict_abort_slot.rs"]
@@ -823,6 +829,50 @@ mod macos {
         let log_dir = run_root.path().join("log");
         std::fs::create_dir(&log_dir).expect("settings dir");
         std::env::set_var("KAGI_LOG_DIR", &log_dir);
+        // #516: and `HOME`. The product (the editor's trash, `gh`'s working
+        // directory, terminal fonts), the `git` and `gh` it runs and the shells it starts all
+        // read the developer's dotfiles under it: identity, aliases, hooks,
+        // credential helpers, rc files, history. Here they find an empty home
+        // with only a fixed identity, the fixtures' own.
+        let home = run_root.path().join("home");
+        std::fs::create_dir(&home).expect("runner HOME");
+        std::fs::write(
+            home.join(".gitconfig"),
+            "[user]\n\tname = poc\n\temail = poc@example.com\n",
+        )
+        .expect("runner git identity");
+        std::env::set_var("HOME", &home);
+        std::env::set_var("XDG_CONFIG_HOME", home.join(".config"));
+        // #963 review: `HOME` alone is not enough. An inherited `GIT_*`
+        // still reaches every `git` the product runs: `GIT_CONFIG_GLOBAL` /
+        // `GIT_CONFIG_SYSTEM` naming the developer's config by absolute path,
+        // `GIT_CONFIG_COUNT` / `GIT_CONFIG_PARAMETERS` injecting keys,
+        // `GIT_DIR` / `GIT_WORK_TREE` from a hook or `git bisect run`. Drop
+        // them all, as `support/git_fixture.rs` does for fixture commands, then
+        // pin only what the run needs: the global config is the run's own
+        // `.gitconfig`, there is no system config, and nothing prompts.
+        // The same for `gh`: `GH_CONFIG_DIR` outranks `$XDG_CONFIG_HOME/gh`,
+        // and `GH_TOKEN` / `GITHUB_TOKEN` (and their Enterprise forms)
+        // outrank its stored login, so a scenario whose seam missed would
+        // talk to GitHub as the developer (`gh help environment`). With them
+        // gone, `gh` reads the run's empty home.
+        let inherited: Vec<_> = std::env::vars_os()
+            .map(|(key, _)| key)
+            .filter(|key| {
+                let key = key.to_string_lossy();
+                key.starts_with("GIT_")
+                    || key.starts_with("GH_")
+                    || key == "GITHUB_TOKEN"
+                    || key == "GITHUB_ENTERPRISE_TOKEN"
+            })
+            .collect();
+        for key in inherited {
+            std::env::remove_var(key);
+        }
+        std::env::set_var("GIT_CONFIG_GLOBAL", home.join(".gitconfig"));
+        std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
+        std::env::set_var("GIT_CONFIG_SYSTEM", "/dev/null");
+        std::env::set_var("GIT_TERMINAL_PROMPT", "0");
         // #516: a failing scenario leaves evidence in target/gui-e2e/<name>/.
         crate::gui_evidence::install();
 
@@ -978,8 +1028,20 @@ mod macos {
                 Box::new(crate::home_work::scenario_home_work),
             ),
             (
+                "keyboard_nav",
+                Box::new(crate::keyboard_nav::scenario_keyboard_nav),
+            ),
+            (
                 "home_list_place",
                 Box::new(crate::home_list_place::scenario_home_list_place),
+            ),
+            (
+                "home_review_avatar_host",
+                Box::new(crate::home_p2::scenario_home_review_avatar_host),
+            ),
+            (
+                "clone_card_ticker",
+                Box::new(crate::home_p2::scenario_clone_card_ticker),
             ),
             (
                 "smart_commit_generation_owner",

@@ -20,6 +20,15 @@
 //! - The runner's temporary directory (`TMPDIR` points there for the whole
 //!   run, so `tempfile` and child processes use it): no new direct entry may
 //!   remain.
+//!
+//! Two things are not compared because they cannot be left to the end:
+//!
+//! - `HOME` and `GIT_*` belong to the runner (an empty home with a fixed git
+//!   identity, inherited `GIT_*` dropped, set in the runner), so `git`, `gh`
+//!   and the product never read the developer's dotfiles or config.
+//! - The user's own shell never starts: a terminal with no seam shell panics
+//!   before the spawn (`resolve_shell`). A scenario that starts a terminal
+//!   holds [`StandInShell`] or sets its own seam shell.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -79,6 +88,39 @@ impl Drop for SavedKeys {
         for (key, value) in &self.0 {
             kagi::ui::settings::write_setting(key, value.as_deref());
         }
+    }
+}
+
+/// A stand-in for the user's `$SHELL` while held (#516). A scenario that
+/// starts a terminal for the session it owns — not to watch what the shell is
+/// handed — runs this instead of the login shell, which would source the
+/// user's rc files and write history. Like a shell, it ends on a line `exit`
+/// or when the PTY closes. Its PID and working directory are the real
+/// process's, so the cwd probe and exit delivery see what they would.
+pub(crate) struct StandInShell {
+    _dir: tempfile::TempDir,
+}
+
+impl StandInShell {
+    pub(crate) fn install() -> Self {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().expect("stand-in shell directory");
+        let script = dir.path().join("shell.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nwhile IFS= read -r line; do\n  [ \"$line\" = exit ] && exit 0\ndone\n",
+        )
+        .expect("write the stand-in shell");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .expect("make the stand-in shell executable");
+        kagi::ui::KagiApp::set_terminal_shell_for_e2e(Some(script.display().to_string()));
+        Self { _dir: dir }
+    }
+}
+
+impl Drop for StandInShell {
+    fn drop(&mut self) {
+        kagi::ui::KagiApp::set_terminal_shell_for_e2e(None);
     }
 }
 

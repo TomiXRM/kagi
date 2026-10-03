@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Home のレビュー依頼の行で、GitHub Enterprise の host が大文字を含むとき(`GHE.example.com` など)、取得済みのアバターではなくイニシャルが表示される問題を修正しました。(#968)
+- 実行中の clone の card を閉じて 1 秒以内に開き直すと、card の再描画が二重に動き続ける問題を修正しました。(#968)
+- Graph / PRs / Issues の切り替えで ←/→ で移動したあと、Tab 以外の方法(マウスで別の操作部品を押すなど)で focus が外れると、次の Tab が選択中のタブではなく矢印で移動したタブに着く問題を修正しました。Home の「リポジトリ / Pull Request / Issue」とリポジトリのタブ帯も同じです。(#968)
 - Operation Log の RestoreToPoint 確認カードから重複する説明文を外し、グラフを表示できないときは EN/JA とも短い状態だけを表示します。ref の移動と戻さない対象の警告、および Git の相当コマンドはそのまま表示します。旧ログの branch だけを観測した記録は tag を含む復元の根拠にせず、安全のため実行前に拒否します。Kagi 外で動いた tag は reflog が残る場合だけ検出し、同じ tag / branch をその後で Kagi が動かしても、記録外の遷移が一つでもあれば拒否します。reflog の無い tag は戻せない限界を「変更なし」行で明示します。(#953)
 - Settings を開いたままスクロールすると、背面の画面(Graph・PRs・Issues・Editor)も一緒にスクロールする問題を修正しました。Settings の背景が、背面へのマウス操作をスクロールも含めて遮るようにしました。
 - Worktree 削除の確認後や削除前ステップ後に ignored ファイル・フォルダーが増えた場合、削除前に中止し、計画の再確認を促すようにしました。(#934)
@@ -24,6 +27,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Operation Log の操作者の表示を、日本語表示でも「人」ではなく「Human」にしました(CLI / MCP と同じく英語の表記)。(#908)
 - Inspector の commit 本文で、箇条書きなど改行で区切られた行が「- bump the version- tag the release」のように 1 行につながって表示されていた問題を修正しました。本文の改行どおりに 1 行ずつ表示します。(#946)
 - Issues の下書き(新しい Issue と返信)を、clone ごと・番号ごとに加えて書き込み先の repository ごとに保存するようにしました。`gh repo set-default` で別の repository に切り替えた後、同じ番号の別 Issue の欄に前の repository 宛ての下書きが出て、そのまま投稿されることはありません(前の下書きは消さずに残ります)。以前の版で保存した下書きは、clone の remote が指す repository が 1 つだけのときにその repository へ 1 回だけ引き継ぎ、複数あるときは引き継がずに元の場所に残します。(#940 review)
+- Home の「リポジトリ / Pull Request / Issue」の切り替えと、左上の Graph / PRs / Issues の切り替えを、キーボードで操作できるようにしました。Tab で選択中のタブに移動し、←/→ で隣へ、Home / End で端へ移動します。Home の切り替えは移動と同時に表示が切り替わり、Graph / PRs / Issues は移動のあと Enter / Space で切り替わります(PRs / Issues は開くと一覧を読み込むため)。Home のリポジトリ行と PR / Issue 行も Tab で移動でき、Enter / Space でクリックと同じ動作をします。キーボードで移動したときだけ、入力欄と同じ色の枠を表示します。行どうしの ↑/↓ と、タブ帯のキーボード操作は #959 で対応します。(#944)
+- clone 中のリポジトリ行(「Cloning…」)をクリックすると、開始前の新しい clone card が開き、clone が終わっても残っていた問題を修正しました。実行中の clone の card を前面に戻します。(#944)
+- Home のレビュー依頼の行で、GitHub Enterprise のユーザーのアバターを表示するようにしました。github.com の同名ユーザーではなく、その Enterprise のサーバーから取得します。(#944)
 - PR を開いたときの会話・レビュースレッド・merge 状態を、その PR の repository から読むようにしました。これまでは clone の `gh repo set-default` が指す repository から読んでいたため、Home から別の repository を指す clone で PR を開くと、同じ番号の別 PR の会話が本文の下に並ぶことがありました。(#940 review)
 - `gh repo set-default` を別の repository に切り替えた後に Home からその repository の Issue を開くと、前の repository の Issue 一覧が残り、その行を選ぶと新しい repository の同じ番号の Issue に返信できてしまう問題を修正しました。宛先が変わった時点で前の一覧・選択・続きの読み込み位置を消し、新しい repository の一覧が読めるまで行は表示しません。(#940 review)
 - 同じタブに別の repository の同じ番号の PR(A の #7 と B の #7)を開いていると、B の会話・レビュースレッド・merge 状態が A の PR 画面に入ることがあった問題を修正しました。PR の画面・詳細の読み込み・会話・merge 状態・コメント欄の下書きを、番号だけでなく repository と番号の組で対応づけます。Home から開いた PR の詳細も、PR 一覧にある別の repository の同じ番号の PR ではなく、開いた PR のものを読みます。(#940 review)
@@ -54,7 +60,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Internal
 
+- GUI E2E runner(Tier A)が開発者の環境を読まないようにしました。`HOME` は run 専用の空の directory(fixture と同じ git の identity だけを置く)にし、継承した `GIT_*`・`GH_*`(と `GITHUB_TOKEN` / `GITHUB_ENTERPRISE_TOKEN`)の環境変数は起動時にすべて除去します(`gh` も開発者の設定と認証情報を使いません)。terminal を起動する scenario は、login shell ではなく行を読むだけの代わりの shell を使います。代わりの shell が無いまま terminal を起動しようとすると、利用者の `$SHELL` を起動する前にその scenario が失敗します。Smart Commit の生成を差し込む scenario は、差し込んだ生成が使われたことを確かめます。(#516)
 - Web(Playwright)の harness は、`crates/kagi-web/dist` が無いと設定の読み込み時に止まり、足りないファイルと実行すべき `scripts/build-web.sh` を示すようにしました。これまでは 60 秒後に webServer のタイムアウトとして失敗し、実行時のハングと区別がつきませんでした。(#516)
+- 検証手順(`.claude/skills/verify/SKILL.md`)の Tier A に、GUI E2E の各 scenario で文字が本物の `InputState` にどう入るか(キー入力・貼り付け・`set_value`)と、`InputState` を使わない代わりの経路(commit panel の `commit_msg` fallback、Remote Browse の host 入力、`queue_*` の読み込み差し替え)の表を追加しました。GPUI の終了時の leak 検出を無効にしている scenario が無いことも確認して記録しました。製品の動作は変更していません。(#516)
 
 ## [0.41.0] - 2026-10-02
 

@@ -1255,6 +1255,10 @@ pub fn scenario_smart_commit_generation_owner(cx: &mut VisualTestAppContext) {
     })
     .expect("start A generation");
     assert!(
+        !kagi::ui::e2e::smart_generation_queued(),
+        "smart-owner-seam-consumed: A's generation must run the queued task, not the provider CLI"
+    );
+    assert!(
         cx.read(|cx| app.read(cx).ui().smart_commit_generating),
         "smart-owner-starts-on-a: the initiating session must own the spinner"
     );
@@ -1302,6 +1306,10 @@ pub fn scenario_smart_commit_generation_owner(cx: &mut VisualTestAppContext) {
         app.update(cx, |app, cx| app.smart_generate(session_a, window, cx));
     })
     .expect("start detached generation");
+    assert!(
+        !kagi::ui::e2e::smart_generation_queued(),
+        "smart-detached-seam-consumed: the detached generation must run the queued task, not the provider CLI"
+    );
     app.update(cx, |app, cx| {
         let index = app
             .tabs

@@ -1227,6 +1227,11 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
         KeyBinding::new("left", PrModePrevPane, Some("!Terminal && !Input")),
         KeyBinding::new("right", PrModeNextPane, Some("!Terminal && !Input")),
     ]);
+    // #944: ←/→/Home/End inside Kagi's tab lists (Home's switch, the
+    // workspace-mode nav). `!Terminal && !Input` above matches at every
+    // depth, so these scoped bindings must register after it to outrank it —
+    // only while a cell, inside the list's context, holds the focus.
+    super::keyboard_nav::bind_keys(cx);
     // T-WS-EDITOR-002: Cmd-S saves the Editor Workspace's dirty buffer.
     // No context predicate — gpui-component 0.5.1's "Input" context binds
     // no `secondary-s` (verified: no cmd-s/ctrl-s/secondary-s binding in

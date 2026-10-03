@@ -18,6 +18,7 @@
 //! A pointer click does not put the focus on a row: the window takes it, as
 //! before, so ↑/↓ after clicking a branch still step the graph.
 
+use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -110,23 +111,29 @@ impl SidebarFocus {
     pub(super) fn set_keys(&mut self, rows: &[SidebarRow], ranges: &[Range<usize>; PANES]) {
         for (pane, range) in ranges.iter().enumerate() {
             let body = rows.get(range.start + 1..range.end).unwrap_or_default();
-            // A key seen twice in a pane (one commit stored as two stashes)
-            // gets its place appended, so every row keeps its own handle.
-            let mut seen = std::collections::HashSet::new();
-            self.keys[pane] = body
-                .iter()
-                .enumerate()
-                .filter_map(|(item, row)| row_key(row).map(|key| (key, item)))
-                .map(|(key, item)| {
-                    if seen.insert(key.clone()) {
-                        (key, item)
-                    } else {
-                        (format!("{key}#{item}"), item)
-                    }
-                })
-                .collect();
+            self.keys[pane] = pane_keys(body);
         }
     }
+}
+
+/// A pane's rows, keyed, as the item they are in its list. A key seen again
+/// in the pane (one commit stored as two stashes) gets its rank among the
+/// rows with that key appended — not its place, which a row added above
+/// would shift (#987 review) — so every row keeps its own handle.
+fn pane_keys(body: &[SidebarRow]) -> RowKeys {
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    body.iter()
+        .enumerate()
+        .filter_map(|(item, row)| row_key(row).map(|key| (key, item)))
+        .map(|(key, item)| {
+            let rank = seen.entry(key.clone()).or_default();
+            *rank += 1;
+            match *rank {
+                1 => (key, item),
+                rank => (format!("{key}#{rank}"), item),
+            }
+        })
+        .collect()
 }
 
 impl KagiApp {
@@ -435,7 +442,8 @@ mod tests {
     use std::os::unix::ffi::OsStrExt;
     use std::path::Path;
 
-    use super::{is_worktree_key, worktree_key};
+    use super::{is_worktree_key, pane_keys, worktree_key};
+    use crate::ui::sidebar::SidebarRow;
 
     /// Two worktree paths that `Path::display` prints alike (each invalid
     /// byte becomes U+FFFD) keep their own row keys, so their rows keep their
@@ -451,5 +459,24 @@ mod tests {
         let utf8 = Path::new("/wt/one");
         assert_eq!(worktree_key(utf8), "worktree:/wt/one");
         assert!(is_worktree_key("worktree:/wt/one", utf8));
+    }
+
+    /// One commit stored as two stashes keeps a key per row, and a stash
+    /// pushed above them changes neither key (#987 review: the suffix is the
+    /// rank among the rows with that key, not the row's place).
+    #[test]
+    fn duplicate_stash_keys_survive_a_stash_pushed_above() {
+        let stash = |index: usize, target: &str| SidebarRow::Stash {
+            index,
+            message: format!("s{index}"),
+            target: kagi_git::CommitId(target.repeat(40)),
+        };
+        let keys = |rows: &[SidebarRow]| -> Vec<String> {
+            pane_keys(rows).iter().map(|(key, _)| key.clone()).collect()
+        };
+        let before = keys(&[stash(0, "a"), stash(1, "a")]);
+        assert_ne!(before[0], before[1], "each duplicate has its own key");
+        let after = keys(&[stash(0, "b"), stash(1, "a"), stash(2, "a")]);
+        assert_eq!(after[1..], before[..], "the duplicates' keys are unchanged");
     }
 }

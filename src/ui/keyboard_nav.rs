@@ -1,6 +1,9 @@
 //! Keyboard paths for Kagi's hand-made tab lists and rows (#944).
 //!
-//! A tab list is one Tab stop — its selected cell (roving tabindex) — and the
+//! A tab list is one Tab stop (roving tabindex): the cell the arrows last
+//! moved to while the focus is in the list, else the selected cell — so Tab
+//! and Shift+Tab leave the list in one press from wherever the arrows put the
+//! focus, and coming back in lands on the selected cell (#960 review). The
 //! arrows move between its cells: ←/→ to the neighbour, Home/End to the
 //! ends. With [`Activation::Automatic`] moving also selects; with
 //! [`Activation::Manual`] it only moves focus and Enter/Space select, for a
@@ -19,7 +22,8 @@
 //! (`focus_visible`). It is a border kept transparent at rest, so taking focus
 //! does not move anything; callers take its width out of their padding.
 
-use std::rc::Rc;
+use std::cell::{Cell, RefCell};
+use std::rc::{Rc, Weak};
 
 use gpui::{
     actions, prelude::*, rgb, transparent_black, App, ClickEvent, Div, FocusHandle, KeyBinding,
@@ -42,6 +46,11 @@ pub(crate) const RING: f32 = 2.;
 /// ←/→/Home/End inside a tab list. The list's context is deeper than the
 /// app-wide `!Terminal && !Input` arrows (PR mode's pane cycling), so these
 /// win only while a cell holds the focus.
+///
+/// Tab and Shift+Tab leave a tab list from wherever the arrows put the focus
+/// (that cell is the Tab stop of the frame on screen), so the next frame's
+/// stop goes back to the selected cell: they are watched before any binding
+/// runs, and every list forgets its arrowed-to cell.
 pub(crate) fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("left", TabListPrev, Some(CONTEXT)),
@@ -49,24 +58,60 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new("home", TabListFirst, Some(CONTEXT)),
         KeyBinding::new("end", TabListLast, Some(CONTEXT)),
     ]);
+    cx.intercept_keystrokes(|event, _, _| {
+        if event.keystroke.key == "tab" {
+            ROVING.with(|lists| {
+                lists.borrow_mut().retain(|roving| match roving.upgrade() {
+                    Some(roving) => {
+                        roving.set(None);
+                        true
+                    }
+                    None => false,
+                })
+            });
+        }
+    })
+    .detach();
 }
 
-/// The focus handles of one tab list's cells, one per slot, made on first
-/// draw and kept across frames.
-#[derive(Default)]
-pub(crate) struct TabFocus(std::cell::OnceCell<Vec<FocusHandle>>);
+thread_local! {
+    /// Every tab list's arrowed-to cell, for the Tab watch above.
+    static ROVING: RefCell<Vec<Weak<Cell<Option<usize>>>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The focus handles of one tab list's cells, one per slot, made as slots
+/// appear and kept across frames; and the cell the arrows moved to, until
+/// Tab leaves the list or a cell is clicked.
+pub(crate) struct TabFocus {
+    handles: RefCell<Vec<FocusHandle>>,
+    roving: Rc<Cell<Option<usize>>>,
+}
+
+impl Default for TabFocus {
+    fn default() -> Self {
+        let roving = Rc::new(Cell::new(None));
+        ROVING.with(|lists| lists.borrow_mut().push(Rc::downgrade(&roving)));
+        Self {
+            handles: RefCell::default(),
+            roving,
+        }
+    }
+}
 
 impl TabFocus {
     fn handles(&self, slots: usize, cx: &App) -> Vec<FocusHandle> {
-        self.0
-            .get_or_init(|| (0..slots).map(|_| cx.focus_handle()).collect())
-            .clone()
+        let mut handles = self.handles.borrow_mut();
+        while handles.len() < slots {
+            handles.push(cx.focus_handle());
+        }
+        handles[..slots].to_vec()
     }
 
     /// Focus the cell in `slot` (GUI E2E: Tier A cannot press Tab).
     #[cfg(feature = "gui-e2e")]
     pub(crate) fn focus(&self, slot: usize, window: &mut Window, cx: &mut App) {
-        if let Some(handle) = self.0.get().and_then(|handles| handles.get(slot)) {
+        let handle = self.handles.borrow().get(slot).cloned();
+        if let Some(handle) = handle {
             handle.focus(window, cx);
         }
     }
@@ -74,8 +119,8 @@ impl TabFocus {
     /// The slot whose cell holds the focus, if any.
     #[cfg(feature = "gui-e2e")]
     pub(crate) fn focused(&self, window: &Window) -> Option<usize> {
-        self.0
-            .get()?
+        self.handles
+            .borrow()
             .iter()
             .position(|handle| handle.is_focused(window))
     }
@@ -98,8 +143,10 @@ pub(crate) struct TabList {
     handles: Vec<FocusHandle>,
     shown: Rc<Vec<usize>>,
     selected: Option<usize>,
-    /// The list's one Tab stop: the selected cell, else the first.
+    /// The list's one Tab stop: the cell the arrows moved to, else the
+    /// selected cell, else the first.
     stop: Option<usize>,
+    roving: Rc<Cell<Option<usize>>>,
     activation: Activation,
     select: Select,
     /// Where focus goes back to after a pointer click: the cell must not keep
@@ -121,14 +168,17 @@ impl TabList {
         select: impl Fn(usize, &mut Window, &mut App) + 'static,
         cx: &App,
     ) -> Self {
-        let stop = selected
-            .filter(|slot| shown.contains(slot))
+        let stop = [focus.roving.get(), selected]
+            .into_iter()
+            .flatten()
+            .find(|slot| shown.contains(slot))
             .or_else(|| shown.first().copied());
         Self {
             handles: focus.handles(slots, cx),
             shown: Rc::new(shown),
             selected,
             stop,
+            roving: focus.roving.clone(),
             activation,
             select: Rc::new(select),
             pointer_focus,
@@ -153,12 +203,14 @@ impl TabList {
                 self.handles.clone(),
                 self.select.clone(),
             );
+            let roving = self.roving.clone();
             let automatic = self.activation == Activation::Automatic;
             move |window: &mut Window, cx: &mut App| {
                 let Some(next) = target(&shown, slot) else {
                     return;
                 };
                 handles[next].focus(window, cx);
+                roving.set(Some(next));
                 if automatic {
                     select(next, window, cx);
                 }
@@ -177,6 +229,7 @@ impl TabList {
             go(|shown, _| shown.last().copied()),
         );
         let (select, pointer_focus) = (self.select.clone(), self.pointer_focus.clone());
+        let roving = self.roving.clone();
         with_ring(
             el.role(Role::Tab)
                 .aria_label(SharedString::from(label.to_string()))
@@ -186,6 +239,7 @@ impl TabList {
         .on_click(move |event: &ClickEvent, window, cx| {
             select(slot, window, cx);
             if !event.is_keyboard() {
+                roving.set(None);
                 if let Some(focus) = &pointer_focus {
                     focus.focus(window, cx);
                 }

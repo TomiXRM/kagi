@@ -812,6 +812,7 @@ thread_local! {
     static OPENED_URLS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static PANEL_MOTION_CLOCK: std::cell::Cell<Option<std::time::Instant>> =
         const { std::cell::Cell::new(None) };
+    static GITHUB_NAV: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// A URL Kagi asked the OS to open, recorded instead of launching the
@@ -837,4 +838,17 @@ pub fn set_panel_motion_clock(now: Option<std::time::Instant>) {
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn panel_motion_clock() -> Option<std::time::Instant> {
     PANEL_MOTION_CLOCK.with(|clock| clock.get())
+}
+
+/// Draw the PRs / Issues cells of the workspace-mode nav whether or not this
+/// machine has a `gh` (#960 review): a scenario on them must not pass by
+/// skipping them.
+#[cfg(feature = "gui-e2e")]
+pub fn set_github_nav(shown: bool) {
+    GITHUB_NAV.with(|nav| nav.set(shown));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn github_nav_forced() -> bool {
+    GITHUB_NAV.with(|nav| nav.get())
 }

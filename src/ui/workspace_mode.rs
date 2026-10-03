@@ -166,6 +166,8 @@ pub(super) fn render_sidebar_mode_nav(
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let prs_available = kagi_git::github::gh_available();
+    #[cfg(feature = "gui-e2e")]
+    let prs_available = prs_available || super::e2e::github_nav_forced();
     const MODES: [WorkspaceMode; 3] = [
         WorkspaceMode::Graph,
         WorkspaceMode::Prs,

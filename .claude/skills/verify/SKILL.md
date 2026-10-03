@@ -655,16 +655,21 @@ The current suite covers:
   hand-over of pre-#940 drafts). For Tier B use a real `gh`
   login, click each switch cell and one PR / issue row of a local clone.
 - Keyboard paths of Kagi's tab lists (`KAGI_GUI_E2E_ONLY=keyboard_nav`,
-  `tests/recovery/keyboard_nav.rs`, #944): Tier A cannot press Tab, so a cell
-  is focused through `focus_mode_nav_for_e2e` / `focus_home_pane_for_e2e`.
-  The workspace-mode nav: Enter on the Graph cell opens no checkout; with `gh`
-  an arrow only moves (the mode stays) and Enter / Space enter the mode; a
-  pointer click on a cell gives the focus back to the root. Home's switch:
-  ←/→/Home/End select as they move, without wrapping, and read nothing
-  (`home_reads_for_e2e`); with Home's search focused the arrows do not reach
-  the switch (Enter is not pressed into the single-line field: the harness
-  types its "\n"). For Tier B: Tab to each list, check the ring appears only
-  for keyboard focus, and read the roles in Accessibility Inspector.
+  `tests/recovery/keyboard_nav.rs`, #944): a cell is focused through
+  `focus_mode_nav_for_e2e` / `focus_home_pane_for_e2e`; Tab / Shift+Tab are
+  pressed as keystrokes (gpui-component's Root moves the focus).
+  `e2e::set_github_nav(true)` draws the nav's PRs / Issues cells whether or
+  not the machine has a `gh`. The workspace-mode nav: Tab reaches its
+  selected cell; an arrow only moves (the mode stays) and Enter / Space
+  enter the mode; after →→ one Tab or Shift+Tab leaves the list and the
+  other comes back in on the selected cell (#960 review); with a notice up,
+  Enter on a cell does not confirm it; a pointer click on a cell gives the
+  focus back to the root. Home's switch: ←/→/Home/End select as they move,
+  without wrapping, and read nothing (`home_reads_for_e2e`); with Home's
+  search focused the arrows do not reach the switch (Enter is not pressed
+  into the single-line field: the harness types its "\n"). For Tier B: Tab
+  to each list, check the ring appears only for keyboard focus, and read the
+  roles in Accessibility Inspector.
 - modal-slot arbitration (`KAGI_GUI_E2E_ONLY=push_failure_keeps_modal,merge_plan_latch,delete_branch_plan_latch,remote_browse_modal_routing`): a push failure lands behind Remote Browse without losing its input and reaches the Failed footer, an Error toast and one durable receipt — no dismiss-only AppNotice, queued or shown after Remote Browse closes (the #747 contract; #824 bisected the stale notice expectation to `e5644c6f`). Delayed Merge/Delete Branch plans wait behind Remote Browse without losing its input, stale plan state, latches, footers, or notices; a reopened Remote Browse rejects an older in-place completion by generation;
 - unmerged branch deletion with two confirmations, retained tips, and one-stage merged deletion.
 - toolbar centre actions (Pull…Terminal) drawn only in Graph, not PRs/Editor/Analyze

@@ -1010,6 +1010,14 @@ mod macos {
                 Box::new(crate::context_menu_keys::scenario_context_menu_keys_sidebar),
             ),
             (
+                "context_menu_keys_home",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_home),
+            ),
+            (
+                "context_menu_keys_short",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_short),
+            ),
+            (
                 "home_list_place",
                 Box::new(crate::home_list_place::scenario_home_list_place),
             ),

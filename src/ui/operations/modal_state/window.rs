@@ -16,10 +16,14 @@ impl KagiApp {
     ///   must not stay confirmable once B is on screen.
     /// - A repo-scoped confirmation in `active_modal` carries no owner; parking
     ///   it would let a confirmation planned in A be applied to B (#492).
+    /// - The workspace's context menus belong to the repository on screen; a
+    ///   menu left open behind Home or another tab would come back holding
+    ///   neither its focus nor its target (#991 review).
     pub(crate) fn close_window_slots_of_departing_tab(&mut self) {
         self.sidebar.swipe.cancel();
         self.app_sessions.invalidate_plan();
         self.drop_repo_scoped_modal();
+        self.close_context_menus();
     }
 
     #[inline]

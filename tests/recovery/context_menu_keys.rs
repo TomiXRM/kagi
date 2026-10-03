@@ -7,11 +7,14 @@
 //! either way the focus goes back to the window it came from. On a focused
 //! sidebar row the key opens that row's menu below it, and Escape gives the
 //! focus back to the row.
-use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use gpui::{px, size, AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::{e2e, KagiApp};
 
 use crate::keyboard_nav::keys;
-use crate::macos::{build_fixture, git, mount, unmount};
+use crate::macos::{build_fixture, git, mount, open_offscreen, unmount};
 
 /// The open menu's focused item and enabled items (slots), as of a fresh
 /// frame.
@@ -188,6 +191,126 @@ pub fn scenario_context_menu_keys_sidebar(cx: &mut VisualTestAppContext) {
         row_focused(cx),
         Some((LOCAL, "branch:feature".into())),
         "Escape gives the focus back to the row"
+    );
+    unmount(cx, app, window);
+}
+
+/// Focus the window and select the first commit, as of a fresh frame.
+fn select_head(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+    cx.update_window(window, |_, window, cx| {
+        window.draw(cx).clear();
+        app.update(cx, |app, cx| {
+            app.select(0);
+            cx.notify();
+        });
+        let root = app.read(cx).root_focus.clone().expect("root focus");
+        root.focus(window, cx);
+        window.draw(cx).clear();
+    })
+    .unwrap();
+}
+
+/// A commit menu left open while Home comes to the front is closed with the
+/// tab it belonged to (#991 review): back on the tab no menu is up and ↓
+/// moves the Graph's selection, not a hidden menu's focus.
+pub fn scenario_context_menu_keys_home(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    git(
+        fixture.path(),
+        &["commit", "-q", "--allow-empty", "-m", "two"],
+    );
+    let (app, window) = mount(cx, fixture.path());
+    select_head(cx, &app, window);
+    keys(cx, window, "shift-f10");
+    assert!(cx.read(|cx| app.read(cx).commit_menu.is_some()));
+    assert!(
+        menu(cx, &app, window).0.is_some(),
+        "the menu holds the focus"
+    );
+
+    // ⌘T then ⌘W (their app-menu entries' methods: Tier A sends no
+    // platform-menu keystroke).
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.open_home_tab(window, cx));
+    })
+    .unwrap();
+    // Checked before anything is parked: the tab's re-read on return also
+    // drops the menus, but only once it lands, and until then a menu left up
+    // would take Enter on the root (#991 review).
+    assert!(
+        cx.read(|cx| app.read(cx).commit_menu.is_none()),
+        "leaving the tab closed its menu"
+    );
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).home_in_front()));
+    app.update(cx, |app, cx| app.close_home_tab(cx));
+    assert!(
+        cx.read(|cx| app.read(cx).commit_menu.is_none()),
+        "no menu is up on the tab Home gave back"
+    );
+    cx.run_until_parked();
+    // Coming back re-reads the tab, which resets its selection once the
+    // read lands: select again until the selection holds.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        select_head(cx, &app, window);
+        cx.run_until_parked();
+        if cx.read(|cx| app.read(cx).ui().selected) == Some(0) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "the tab settles");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    keys(cx, window, "down");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().selected),
+        Some(1),
+        "↓ reaches the Graph"
+    );
+    unmount(cx, app, window);
+}
+
+/// A commit menu taller than a short window scrolls: End focuses the last
+/// enabled item and scrolls it into the window (#991 review), so Enter can
+/// never press an item the user cannot see.
+pub fn scenario_context_menu_keys_short(cx: &mut VisualTestAppContext) {
+    const HEIGHT: f32 = 420.;
+    // "Show changed files", the last enabled item (Reset below it is
+    // always disabled).
+    const LAST: &str = "commit-menu-item-4-2";
+    let fixture = build_fixture();
+    crate::gui_evidence::fixture(fixture.path());
+    let state = e2e::app_state(fixture.path()).expect("fixture app state");
+    let captured: Rc<RefCell<Option<Entity<KagiApp>>>> = Rc::default();
+    let output = captured.clone();
+    let window = open_offscreen(cx, size(px(1440.), px(HEIGHT)), move |window, cx| {
+        e2e::mount_root(state, window, cx, &output)
+    });
+    let app = captured.borrow().clone().expect("mounted KagiApp");
+    let window: AnyWindowHandle = window.into();
+    cx.run_until_parked();
+    select_head(cx, &app, window);
+    keys(cx, window, "shift-f10");
+    assert!(cx.read(|cx| app.read(cx).commit_menu.is_some()));
+    let window_id = window.window_id();
+    let bottom = |cx: &mut VisualTestAppContext| {
+        e2e::clear_control_bounds(window_id, LAST);
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        let item = e2e::control_bounds(window_id, LAST).expect("last item laid out");
+        f32::from(item.bottom())
+    };
+    assert!(
+        bottom(cx) > HEIGHT,
+        "precondition: the menu is taller than the window"
+    );
+    keys(cx, window, "end");
+    let (focused, enabled) = menu(cx, &app, window);
+    assert_eq!(focused, enabled.last().copied());
+    let after = bottom(cx);
+    assert!(
+        after <= HEIGHT,
+        "End scrolled the focused item into the window (bottom {after} > {HEIGHT})"
     );
     unmount(cx, app, window);
 }

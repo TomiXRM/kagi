@@ -68,6 +68,12 @@ struct Inner {
     return_to: RefCell<Option<FocusHandle>>,
     /// The open menu's enabled items, as slots in drawing order.
     enabled: RefCell<Vec<usize>>,
+    /// Each drawn item's place among the item list's children (separators
+    /// and group titles are children too), by slot.
+    children: RefCell<Vec<usize>>,
+    /// The item list's scroll: a menu taller than the window scrolls, and
+    /// the item the keys move to is scrolled into view (#991 review).
+    scroll: gpui::ScrollHandle,
 }
 
 impl MenuKeys {
@@ -76,13 +82,26 @@ impl MenuKeys {
         self.0.items.get(slot, cx)
     }
 
-    /// The menu was drawn with `enabled` as its enabled items' slots. True
-    /// once when it has just opened: its first enabled item takes the focus.
+    /// The item list's scroll handle.
+    pub(crate) fn scroll(&self) -> &gpui::ScrollHandle {
+        &self.0.scroll
+    }
+
+    /// The menu is being drawn with `enabled` as its enabled items' slots
+    /// (each item's place in the list comes after, through [`Self::place`]).
+    /// True once when it has just opened: its first enabled item takes the
+    /// focus.
     pub(crate) fn drawn(&self, enabled: impl Iterator<Item = usize>) -> bool {
         let mut slots = self.0.enabled.borrow_mut();
         slots.clear();
         slots.extend(enabled);
+        self.0.children.borrow_mut().clear();
         self.0.focus_first.take()
+    }
+
+    /// The next drawn item (slot order) is child `child` of the item list.
+    pub(crate) fn place(&self, child: usize) {
+        self.0.children.borrow_mut().push(child);
     }
 
     /// The drawn item holding the focus, if any.
@@ -110,6 +129,9 @@ impl MenuKeys {
             }
         };
         self.0.items.get(to, cx).focus(window, cx);
+        if let Some(&child) = self.0.children.borrow().get(to) {
+            self.0.scroll.scroll_to_item(child);
+        }
     }
 
     /// The item holding the focus and the enabled items, as slots.
@@ -166,6 +188,22 @@ impl KagiApp {
             || self.stash_menu.is_some()
             || self.tag_menu.is_some()
             || self.worktree_menu.is_some()
+    }
+
+    /// Close every workspace context menu and forget the keyboard's hold on
+    /// it: the repository on screen is being left (Home in front, another
+    /// tab). Whoever leaves places the focus; a menu closed here returns it
+    /// nowhere (#991 review).
+    pub(crate) fn close_context_menus(&mut self) {
+        self.commit_menu = None;
+        self.branch_menu = None;
+        self.stash_menu = None;
+        self.tag_menu = None;
+        self.worktree_menu = None;
+        let keys = &self.menu_keys.0;
+        keys.open.set(false);
+        keys.focus_first.set(false);
+        keys.return_to.borrow_mut().take();
     }
 
     /// Each frame before the menus are drawn: a menu that just opened takes

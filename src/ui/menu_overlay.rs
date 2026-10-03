@@ -111,6 +111,8 @@ where
         .left(px(x))
         .w(theme::scaled_px(menu_w))
         .max_h(px((viewport_h - MENU_MARGIN * 2.0).max(120.0)))
+        .flex()
+        .flex_col()
         .overflow_hidden()
         .rounded(theme::scaled_px(6.))
         .border_1()
@@ -120,6 +122,7 @@ where
         .child(
             div()
                 .h(theme::scaled_px(MENU_HEADER_H))
+                .flex_shrink_0()
                 .px_3()
                 .flex()
                 .flex_row()
@@ -135,8 +138,8 @@ where
         .aria_label(header);
     // #985: the menu's keyboard (see `menu_keys`). The enabled items' slots
     // count the drawn (not hidden) items in drawing order.
-    if let Some(keys) = keys {
-        let opened = keys.drawn(
+    let opened = keys.is_some_and(|keys| {
+        keys.drawn(
             groups
                 .iter()
                 .flat_map(|group| group.items.iter())
@@ -144,10 +147,22 @@ where
                 .enumerate()
                 .filter(|(_, item)| item.state == ItemState::Enabled)
                 .map(|(slot, _)| slot),
-        );
-        menu = with_menu_keys(menu.key_context(MENU_CONTEXT), keys, opened, window, cx);
-    }
+        )
+    });
 
+    // The items scroll under the header when the menu is taller than the
+    // window (#991 review: a key must not focus an item out of sight).
+    let mut list = div()
+        .id("menu-items")
+        .flex()
+        .flex_col()
+        .flex_shrink(1.)
+        .min_h(px(0.))
+        .overflow_y_scroll();
+    if let Some(keys) = keys {
+        list = list.track_scroll(keys.scroll());
+    }
+    let mut child = 0_usize;
     let mut slot = 0_usize;
     let mut previous_group = false;
     for (group_ix, group) in groups.into_iter().enumerate() {
@@ -159,7 +174,7 @@ where
             continue;
         }
         if previous_group {
-            menu = menu.child(
+            list = list.child(
                 div()
                     .h(theme::scaled_px(MENU_SEPARATOR_H))
                     .flex_shrink_0()
@@ -173,6 +188,7 @@ where
                             .bg(rgb(theme().selected)),
                     ),
             );
+            child += 1;
         }
         previous_group = true;
         if let Some(title) = group.title {
@@ -181,21 +197,26 @@ where
             } else {
                 theme().text_muted
             };
-            menu = menu.child(
+            list = list.child(
                 div()
                     .h(theme::scaled_px(MENU_GROUP_H))
+                    .flex_shrink_0()
                     .px_3()
                     .pt_1()
                     .text_xs()
                     .text_color(rgb(title_color))
                     .child(SharedString::from(title)),
             );
+            child += 1;
         }
         for (item_ix, item) in group.items.into_iter().enumerate() {
             if item.state == ItemState::Hidden {
                 continue;
             }
-            menu = menu.child(render_menu_item(
+            if let Some(keys) = keys {
+                keys.place(child);
+            }
+            list = list.child(render_menu_item(
                 item_id_prefix,
                 group_ix,
                 item_ix,
@@ -204,8 +225,13 @@ where
                 keys.map(|keys| keys.item(slot, cx)),
                 cx,
             ));
+            child += 1;
             slot += 1;
         }
+    }
+    menu = menu.child(list);
+    if let Some(keys) = keys {
+        menu = with_menu_keys(menu.key_context(MENU_CONTEXT), keys, opened, window, cx);
     }
 
     div()
@@ -298,6 +324,7 @@ where
         .role(Role::MenuItem)
         .aria_label(item.label.clone())
         .h(theme::scaled_px(MENU_ROW_H))
+        .flex_shrink_0()
         .px_3()
         .flex()
         .flex_row()

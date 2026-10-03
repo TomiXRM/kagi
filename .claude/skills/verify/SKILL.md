@@ -835,6 +835,17 @@ The current suite covers:
   `feature` there with the first enabled item focused, and Escape closes it
   with the row focused again. Mutations that fail it: the row's action doing
   nothing, focus returned to the window instead of where it was.
+  `context_menu_keys_home` (#991 review): a commit menu opened with
+  Shift+F10, then `open_home_tab` / `close_home_tab` (⌘T / ⌘W's methods; Tier
+  A sends no platform-menu keystroke): the menu is closed right after leaving
+  the tab — checked before parking, since the tab's re-read on return also
+  drops menus once it lands — and after the selection settles ↓ moves the
+  Graph to row 1. Mutation: the departing tab not closing its menus fails
+  "leaving the tab closed its menu". `context_menu_keys_short`: a 420px
+  window, where the HEAD commit's menu (~535px) is taller than the window;
+  End focuses the last enabled item (`commit-menu-item-4-2`) and scrolls it
+  inside the window (its measured bottom ≤ 420). Mutation: no scroll on a
+  key move fails with the item at 453.
 - Toolbar unavailable reasons (`KAGI_GUI_E2E_ONLY=toolbar_keyboard_reasons`,
   `tests/recovery/toolbar_keyboard.rs`, #972): starting at the root, GPUI's
   `focus_next` visits the rendered toolbar in visual order; an F19 key-down

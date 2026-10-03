@@ -781,7 +781,24 @@ impl KagiApp {
                     .as_ref()
                     .map(|f| div().flex_shrink_0().child(search_field(f))),
             )
-            .child(body)
+            // The switch's content, named after the selected pane (#979).
+            .child(
+                super::tab_panel_a11y::tab_panel(
+                    div()
+                        .id("home-pane-panel")
+                        .flex_1()
+                        .min_h(px(0.))
+                        .flex()
+                        .flex_col(),
+                    "home-pane-panel",
+                    match self.home_github.work.pane {
+                        super::home_work::HomePane::Repos => Msg::HomePaneRepos.t(),
+                        super::home_work::HomePane::Prs => Msg::HomePanePrs.t(),
+                        super::home_work::HomePane::Issues => Msg::HomePaneIssues.t(),
+                    },
+                )
+                .child(body),
+            )
             .into_any_element()
     }
 }

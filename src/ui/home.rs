@@ -156,12 +156,20 @@ impl KagiApp {
     pub fn render_home(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         self.ensure_home_github(window, cx);
         let body = div()
+            .id("home-tab-panel")
             .flex()
             .flex_row()
             .flex_1()
             .min_h(px(0.))
             .child(self.render_home_sidebar(cx))
             .child(self.render_home_main(window, cx));
+        // Home's content is the Home cell's panel while the strip is drawn
+        // (#983); with no tab there is no strip, so no tab list.
+        let body = if self.tabs.is_empty() {
+            body
+        } else {
+            super::tab_panel_a11y::tab_panel(body, "home-tab-panel", Msg::HomeTabTitle.t())
+        };
         let home = div()
             .id("home")
             .flex()

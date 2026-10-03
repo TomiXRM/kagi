@@ -11,13 +11,121 @@ use super::modal_renderers::{
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_MD};
 use super::theme::theme as current_theme;
 use gpui::{
-    div, prelude::*, rgb, Context, Entity, FocusHandle, KeyDownEvent, SharedString, Window,
+    div, prelude::*, rgb, Context, Entity, FocusHandle, Hsla, KeyDownEvent, Role, SharedString,
+    Window,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
-use gpui_component::Sizable as _;
+use gpui_component::tooltip::Tooltip;
+use gpui_component::{ActiveTheme as _, Sizable as _};
 use kagi_git::{BranchRenameValidation, OperationPlan};
 use kagi_ui_core::i18n::plan_note_text;
+
+/// The input-confirm cards share form density, but keep their own plan and
+/// confirmation handlers. A field error is one line here; the full reason
+/// remains available to pointer and assistive-technology users.
+pub(crate) fn render_input_modal_field(
+    label: &'static str,
+    state: Option<&Entity<InputState>>,
+    reason: Option<SharedString>,
+) -> gpui::Div {
+    let field = div()
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .text_sm()
+                .text_color(rgb(current_theme().text_label))
+                .child(SharedString::from(label)),
+        )
+        .children(state.map(Input::new));
+    match reason {
+        Some(reason) => field.child(
+            div()
+                .id(label)
+                .role(Role::Alert)
+                .aria_label(reason.clone())
+                .text_sm()
+                .text_color(rgb(current_theme().color_blocker))
+                .truncate()
+                .tooltip({
+                    let reason = reason.clone();
+                    move |window, cx| Tooltip::new(reason.clone()).build(window, cx)
+                })
+                .child(reason),
+        ),
+        None => field,
+    }
+}
+
+pub(crate) fn render_input_modal_heading(
+    title: &'static str,
+    target: Option<(&str, &str)>,
+) -> gpui::Div {
+    let heading = div().flex_shrink_0().flex().flex_col().gap_1().child(
+        div()
+            .text_lg()
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(rgb(current_theme().text_main))
+            .child(SharedString::from(title)),
+    );
+    match target {
+        Some((short_sha, summary)) => {
+            let target = SharedString::from(format!("{short_sha}  {summary}"));
+            heading.child(
+                div()
+                    .id("input-modal-target")
+                    .text_sm()
+                    .text_color(rgb(current_theme().text_sub))
+                    .truncate()
+                    .aria_label(target.clone())
+                    .tooltip({
+                        let target = target.clone();
+                        move |window, cx| Tooltip::new(target.clone()).build(window, cx)
+                    })
+                    .child(target),
+            )
+        }
+        None => heading,
+    }
+}
+
+/// gpui-component's disabled Button suppresses clicks and focus but exposes an
+/// enabled AX node. Draw the unavailable state as an inert, reason-bearing AX
+/// Button instead. Ready actions keep the actual gpui-component Button.
+pub(crate) fn render_input_modal_action(
+    button: impl FnOnce() -> Button,
+    label: &'static str,
+    accent: u32,
+    reason: Option<SharedString>,
+    cx: &gpui::App,
+) -> gpui::AnyElement {
+    match reason {
+        Some(reason) => div()
+            .id(label)
+            .role(Role::Button)
+            .aria_label(SharedString::from(label))
+            .aria_description(reason.clone())
+            .a11y_synthetic_children(|builder: &mut gpui::A11ySubtreeBuilder| {
+                builder.parent_node().set_disabled();
+            })
+            .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx))
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .justify_center()
+            .h_8()
+            .px_4()
+            .rounded(cx.theme().radius)
+            .bg(Hsla::from(rgb(accent)).opacity(0.15))
+            .text_color(cx.theme().muted_foreground.opacity(0.5))
+            .child(label)
+            .into_any_element(),
+        None => button().into_any_element(),
+    }
+}
 
 pub(crate) fn render_input_plan_modal(
     title: String,

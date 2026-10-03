@@ -732,9 +732,9 @@ pub(crate) fn render_recovery_box(text: &str, color: u32) -> gpui::AnyElement {
         .flex_col()
         .pt(theme_mod::scaled_px(6.))
         .gap(theme_mod::scaled_px(10.));
-    for (is_command, lines) in groups {
+    for (group_index, (is_command, lines)) in groups.into_iter().enumerate() {
         col = col.child(if is_command {
-            render_recovery_commands(&lines, rule_color)
+            render_recovery_commands(&lines, rule_color, group_index)
         } else {
             render_recovery_prose(&lines)
         });
@@ -772,22 +772,37 @@ fn render_recovery_prose(lines: &[&str]) -> gpui::AnyElement {
 /// A consecutive run of `git ...` command lines: monospace, set off from the
 /// prose by a single hairline accent rule — no fill, no border-all-round, so
 /// it can't be mistaken for a button.
-fn render_recovery_commands(lines: &[&str], rule_color: u32) -> gpui::AnyElement {
+fn render_recovery_commands(
+    lines: &[&str],
+    rule_color: u32,
+    group_index: usize,
+) -> gpui::AnyElement {
     let mut block = div()
         .w_full()
         .flex()
         .flex_col()
         .gap(theme_mod::scaled_px(2.));
-    for line in lines {
+    for (line_index, line) in lines.iter().enumerate() {
         block = block.child(
-            // Same `w_full` rule as the prose: a long `git ...` line wraps
-            // inside the accent rule instead of escaping the card.
+            // Preserve the exact command when a branch name has no wrap
+            // opportunity. Its intrinsic-width child can scroll inside the
+            // clipped modal instead of silently losing the branch suffix.
             div()
+                .id(format!(
+                    "modal-recovery-command-scroll-{group_index}-{line_index}"
+                ))
                 .w_full()
-                .font_family(MONO_FONT)
-                .text_xs()
-                .text_color(rgb(theme().text_sub))
-                .child(SharedString::from(line.to_string())),
+                .flex()
+                .overflow_x_scroll()
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .whitespace_nowrap()
+                        .font_family(MONO_FONT)
+                        .text_xs()
+                        .text_color(rgb(theme().text_sub))
+                        .child(SharedString::from(line.to_string())),
+                ),
         );
     }
     div()

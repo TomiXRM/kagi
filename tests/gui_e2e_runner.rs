@@ -1292,6 +1292,14 @@ mod macos {
                 Box::new(crate::app_stash::scenario_stash_replan_error),
             ),
             (
+                "create_branch_input_confirm_ime",
+                Box::new(crate::recovery_operations::scenario_create_branch_input_confirm_ime),
+            ),
+            (
+                "input_confirm_disabled_cards",
+                Box::new(crate::recovery_operations::scenario_input_confirm_disabled_cards),
+            ),
+            (
                 "create_branch_replan_error",
                 Box::new(crate::recovery_operations::scenario_create_branch_replan_error),
             ),

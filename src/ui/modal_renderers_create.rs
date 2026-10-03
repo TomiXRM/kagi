@@ -7,8 +7,9 @@
 
 use super::button_style::KagiButton;
 use super::i18n::Msg;
-use super::modal_renderers::{
-    modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box,
+use super::modal_renderers::{modal_overlay, render_current_predicted, render_recovery_box};
+use super::modal_renderers_input::{
+    render_input_modal_action, render_input_modal_field, render_input_modal_heading,
 };
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_LG, MODAL_W_MD};
 use super::modals::worktree::CreateWorktreeModal;
@@ -18,8 +19,8 @@ use super::KagiApp;
 use gpui::{div, prelude::*, rgb, App, Context, FocusHandle, KeyDownEvent, SharedString, Window};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::checkbox::Checkbox;
-use gpui_component::input::Input;
-use gpui_component::{IconName, Sizable as _};
+use gpui_component::IconName;
+use kagi_domain::plan_note::{CommonNote, PlanNote, TagNote};
 use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text};
 
 // ──────────────────────────────────────────────────────────────
@@ -31,19 +32,18 @@ use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text};
 /// Layout (absolute, full-screen):
 /// - Semi-transparent dark backdrop
 /// - Centred modal card:
-///   - Title
-///   - Branch name text input (live KeyDown handler)
-///   - Live plan: Current → Predicted state
-///   - Blockers (red) if any
+///   - Short title and selected commit on a second line
+///   - Branch name input, with its own validation reason
+///   - Live plan: Current → Predicted state and non-field blockers
 ///   - Error message (if preflight/execute failed)
-///   - `[Cancel]` always; `[Create]` only when no blockers and name is non-empty
+///   - `[Cancel]` and an always-visible, disabled-until-ready `[Create]`
 pub(crate) fn render_create_branch_modal(
     modal: CreateBranchModal,
     focus_handle: Option<FocusHandle>,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
-    // #510: the slot yields a plan only in `Ready`, so a pending or failed
-    // replan renders no confirm button at all.
+    // A pending or failed plan cannot confirm; the action remains visible so
+    // its disabled reason is reachable by pointer and assistive technology.
     let plan = modal.plan.plan().cloned();
     let has_blockers = plan
         .as_ref()
@@ -92,42 +92,27 @@ pub(crate) fn render_create_branch_modal(
     // The plan block below (blockers + recovery prose) is unbounded and the
     // card holds no inner scroller, so the body is this card's single scroll
     // region; title and buttons stay pinned outside it.
-    let card = modal_card(MODAL_W_MD).child(
-        div()
-            .flex_shrink_0()
-            // ── Title (icon-badge header, matching Pull/Push's richer card —
-            // user request 2026-07-23; `Plus` mirrors the toolbar "Branch"
-            // button's own icon, `color_success` matches this modal's own
-            // Create button accent below) ──────────────────────────
-            .child(render_modal_title_row(
-                SharedString::from(format!(
-                    "Create branch @ {}  {}",
-                    modal.at.short(),
-                    modal.start_title
-                )),
-                Some((IconName::Plus.into(), current_theme().color_success)),
-            )),
-    );
+    let card = modal_card(MODAL_W_MD).child(render_input_modal_heading(
+        Msg::InputBranchTitle.t(),
+        Some((modal.at.short(), &modal.start_title)),
+    ));
     let mut body = modal_scroll_body()
         // ── Name input ────────────────────────────────────
-        .child(
-            div()
-                .flex_shrink_0()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("Branch name")),
-                )
-                .children(modal.input_state.as_ref().map(|st| Input::new(st).small())),
-        )
+        .child(render_input_modal_field(
+            Msg::InputBranchName.t(),
+            modal.input_state.as_ref(),
+            plan.as_ref()
+                .and_then(|p| {
+                    p.blockers.iter().find(|b| {
+                        matches!(b, PlanNote::Common(CommonNote::BranchNameErrorKeyed(_)))
+                    })
+                })
+                .map(|b| SharedString::from(plan_note_text(b))),
+        ))
         .child(
             div().flex_shrink_0().px_2().py_1().child(
                 Checkbox::new("create-branch-checkout-after")
-                    .label("Checkout after create")
+                    .label(Msg::InputCheckoutAfterCreate.t())
                     .checked(modal.checkout_after)
                     .on_click(toggle_checkout),
             ),
@@ -144,28 +129,33 @@ pub(crate) fn render_create_branch_modal(
             Some((IconName::Plus.into(), current_theme().color_success)),
         )));
 
-        // ── Blockers (localized) ──────────────────────────
-        if !p.blockers.is_empty() {
-            let lines: Vec<SharedString> = p
-                .blockers
-                .iter()
-                .map(|b| SharedString::from(plan_note_text(b)))
-                .collect();
-            let mut block_col = div().flex().flex_col().gap_1();
-            for b in lines {
-                block_col = block_col.child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().color_blocker))
-                        .overflow_hidden()
-                        .child(SharedString::from(format!("\u{2717} {}", b))),
-                );
-            }
+        // Field validation belongs beside the input; every other safety
+        // blocker remains in the plan area and still blocks confirmation.
+        let mut block_col = div().flex().flex_col().gap_1();
+        let mut nonfield_blocker = false;
+        for b in p
+            .blockers
+            .iter()
+            .filter(|b| !matches!(b, PlanNote::Common(CommonNote::BranchNameErrorKeyed(_))))
+        {
+            nonfield_blocker = true;
+            block_col = block_col.child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(current_theme().color_blocker))
+                    .overflow_hidden()
+                    .child(SharedString::from(format!(
+                        "\u{2717} {}",
+                        plan_note_text(b)
+                    ))),
+            );
+        }
+        if nonfield_blocker {
             body = body.child(block_col.flex_shrink_0());
         }
 
-        // ── Recovery (same grouped/monospace treatment as Pull/Push —
-        // user request 2026-07-23) ─────────────────────────
+        // Keep the full localized recovery explanation and commands, including
+        // while a field is blocked: it remains part of the plan's safety preview.
         let recovery_text = plan_recovery_text(p.recovery.as_ref());
         if !recovery_text.is_empty() {
             body = body.child(div().flex_shrink_0().child(render_recovery_box(
@@ -174,7 +164,6 @@ pub(crate) fn render_create_branch_modal(
             )));
         }
     }
-
     // ── Error message (preflight / execute failure) ───────
     if let Some(ref err) = error {
         body = body.child(
@@ -187,29 +176,43 @@ pub(crate) fn render_create_branch_modal(
         );
     }
 
-    // ── Buttons ───────────────────────────────────────────
-    let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
-        Button::new("create-branch-cancel")
-            .label(Msg::PlanCancel.t())
-            .ghost()
-            .small()
-            .on_click(cancel_handler),
-    );
-
-    // Create button: only shown when there are no blockers — and a plan slot
-    // that is pending or failed counts as blocked (#510).
-    if !has_blockers {
-        button_row = button_row.child(crate::ui::e2e::measure_confirm(
-            KagiButton::accent(
-                "create-branch-confirm",
-                "Create",
-                current_theme().color_success,
-                cx,
-            )
-            .small()
-            .on_click(confirm_handler),
-        ));
-    }
+    // Keep the primary in place while validation or planning blocks it.
+    let disabled_reason = if has_blockers {
+        error.clone().or_else(|| {
+            plan.as_ref()
+                .and_then(|p| p.blockers.first())
+                .map(|b| SharedString::from(plan_note_text(b)))
+                .or_else(|| Some(Msg::InputPlanPending.t().into()))
+        })
+    } else {
+        None
+    };
+    let button_row = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        .child(
+            Button::new("create-branch-cancel")
+                .label(Msg::PlanCancel.t())
+                .ghost()
+                .on_click(cancel_handler),
+        )
+        .child(crate::ui::e2e::measure_confirm(render_input_modal_action(
+            || {
+                KagiButton::accent(
+                    "create-branch-confirm",
+                    Msg::InputCreate.t(),
+                    current_theme().color_success,
+                    cx,
+                )
+                .on_click(confirm_handler)
+            },
+            Msg::InputCreate.t(),
+            current_theme().color_success,
+            disabled_reason,
+            cx,
+        )));
 
     let card = card
         .child(body)
@@ -245,8 +248,7 @@ pub(crate) fn render_create_worktree_modal(
     focus_handle: Option<FocusHandle>,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
-    // #510: the slot yields a plan only in `Ready`, so a pending or failed
-    // replan renders no confirm button at all.
+    // Pending/failed plans retain a visible, disabled primary action.
     let plan = modal.plan.plan().cloned();
     let has_blockers = plan
         .as_ref()
@@ -269,45 +271,41 @@ pub(crate) fn render_create_worktree_modal(
         cx.notify();
     });
 
-    // Warnings, blockers and recovery prose below are unbounded and there is
-    // no inner scroller, so the body carries this card's single scroll region.
-    let card = modal_card(MODAL_W_LG).child(div().flex_shrink_0().child(render_modal_title_row(
-        SharedString::from(format!(
-            "Create worktree @ {}  {}",
-            modal.at.short(),
-            modal.start_title
-        )),
-        Some((IconName::Plus.into(), current_theme().color_success)),
-    )));
+    // Keep the two fields together above the safety preview. Only keyed
+    // validation for a field moves out of the blocker area.
+    let card = modal_card(MODAL_W_LG).child(render_input_modal_heading(
+        Msg::InputWorktreeTitle.t(),
+        Some((modal.at.short(), &modal.start_title)),
+    ));
     let mut body = modal_scroll_body()
-        .child(
-            div()
-                .flex_shrink_0()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("Branch name")),
-                )
-                .children(modal.branch_state.as_ref().map(|st| Input::new(st).small())),
-        )
-        .child(
-            div()
-                .flex_shrink_0()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("Path")),
-                )
-                .children(modal.path_state.as_ref().map(|st| Input::new(st).small())),
-        );
+        .child(render_input_modal_field(
+            Msg::InputBranchName.t(),
+            modal.branch_state.as_ref(),
+            plan.as_ref()
+                .and_then(|p| {
+                    p.blockers.iter().find(|b| {
+                        matches!(b, PlanNote::Common(CommonNote::BranchNameErrorKeyed(_)))
+                    })
+                })
+                .map(|b| SharedString::from(plan_note_text(b))),
+        ))
+        .child(render_input_modal_field(
+            Msg::InputWorktreePath.t(),
+            modal.path_state.as_ref(),
+            plan.as_ref()
+                .and_then(|p| {
+                    p.blockers.iter().find(|b| {
+                        matches!(
+                            b,
+                            PlanNote::Common(
+                                CommonNote::WorktreePathErrorKeyed(_)
+                                    | CommonNote::GitErrorPassthrough { .. }
+                            )
+                        )
+                    })
+                })
+                .map(|b| SharedString::from(plan_note_text(b))),
+        ));
 
     if let Some(ref p) = plan {
         // Same boxed current/predicted treatment as Pull/Push/Create-Branch
@@ -332,26 +330,33 @@ pub(crate) fn render_create_worktree_modal(
             body = body.child(warn_col.flex_shrink_0());
         }
 
-        // ── Blockers (localized) ──────────────────────────
-        if !p.blockers.is_empty() {
-            let lines: Vec<SharedString> = p
-                .blockers
-                .iter()
-                .map(|b| SharedString::from(plan_note_text(b)))
-                .collect();
-            let mut block_col = div().flex().flex_col().gap_1();
-            for b in lines {
-                block_col = block_col.child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().color_blocker))
-                        .overflow_hidden()
-                        .child(SharedString::from(format!("\u{2717} {}", b))),
-                );
-            }
+        let mut block_col = div().flex().flex_col().gap_1();
+        let mut nonfield_blocker = false;
+        for b in p.blockers.iter().filter(|b| {
+            !matches!(
+                b,
+                PlanNote::Common(
+                    CommonNote::BranchNameErrorKeyed(_)
+                        | CommonNote::WorktreePathErrorKeyed(_)
+                        | CommonNote::GitErrorPassthrough { .. }
+                )
+            )
+        }) {
+            nonfield_blocker = true;
+            block_col = block_col.child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(current_theme().color_blocker))
+                    .overflow_hidden()
+                    .child(SharedString::from(format!(
+                        "\u{2717} {}",
+                        plan_note_text(b)
+                    ))),
+            );
+        }
+        if nonfield_blocker {
             body = body.child(block_col.flex_shrink_0());
         }
-
         let recovery_text = plan_recovery_text(p.recovery.as_ref());
         if !recovery_text.is_empty() {
             body = body.child(div().flex_shrink_0().child(render_recovery_box(
@@ -360,7 +365,6 @@ pub(crate) fn render_create_worktree_modal(
             )));
         }
     }
-
     if let Some(ref err) = error {
         body = body.child(
             div()
@@ -372,25 +376,42 @@ pub(crate) fn render_create_worktree_modal(
         );
     }
 
-    let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
-        Button::new("create-worktree-cancel")
-            .label(Msg::PlanCancel.t())
-            .ghost()
-            .small()
-            .on_click(cancel_handler),
-    );
-    if !has_blockers {
-        button_row = button_row.child(
-            KagiButton::accent(
-                "create-worktree-confirm",
-                "Create",
-                current_theme().color_success,
-                cx,
-            )
-            .small()
-            .on_click(confirm_handler),
-        );
-    }
+    let disabled_reason = if has_blockers {
+        error.clone().or_else(|| {
+            plan.as_ref()
+                .and_then(|p| p.blockers.first())
+                .map(|b| SharedString::from(plan_note_text(b)))
+                .or_else(|| Some(Msg::InputPlanPending.t().into()))
+        })
+    } else {
+        None
+    };
+    let button_row = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        .child(
+            Button::new("create-worktree-cancel")
+                .label(Msg::PlanCancel.t())
+                .ghost()
+                .on_click(cancel_handler),
+        )
+        .child(crate::ui::e2e::measure_confirm(render_input_modal_action(
+            || {
+                KagiButton::accent(
+                    "create-worktree-confirm",
+                    Msg::InputCreate.t(),
+                    current_theme().color_success,
+                    cx,
+                )
+                .on_click(confirm_handler)
+            },
+            Msg::InputCreate.t(),
+            current_theme().color_success,
+            disabled_reason,
+            cx,
+        )));
     let card = card
         .child(body)
         .child(div().flex_shrink_0().child(button_row));
@@ -430,8 +451,8 @@ pub(crate) fn render_create_tag_modal(
     focus_handle: Option<FocusHandle>,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
-    // #510: the slot yields a plan only in `Ready`, so a pending or failed
-    // replan renders no confirm button at all.
+    // A pending or failed plan cannot confirm, but the disabled Create action
+    // remains visible with a reason.
     let plan = modal.plan.plan().cloned();
     let has_blockers = plan
         .as_ref()
@@ -455,38 +476,22 @@ pub(crate) fn render_create_tag_modal(
         cx.notify();
     });
 
-    // Blockers and recovery prose are unbounded and the card holds no inner
-    // scroller, so the body is this card's single scroll region.
-    let card = modal_card(MODAL_W_MD).child(
-        div()
-            .flex_shrink_0()
-            // Icon-badge header + boxed CURRENT→PREDICTED + monospace recovery,
-            // same richer treatment as every other plan-confirmation modal (user
-            // request 2026-07-23). `color_tag` matches the tag ref-badge colour
-            // used elsewhere in the app.
-            .child(render_modal_title_row(
-                SharedString::from(format!(
-                    "Create tag @ {}  {}",
-                    modal.at.short(),
-                    modal.start_title
-                )),
-                Some((IconName::Plus.into(), current_theme().color_tag)),
-            )),
-    );
-    let mut body = modal_scroll_body().child(
-        div()
-            .flex_shrink_0()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(current_theme().text_label))
-                    .child(SharedString::from("Tag name")),
-            )
-            .children(modal.input_state.as_ref().map(|st| Input::new(st).small())),
-    );
+    // Keep the title concise; the commit remains visible but secondary.
+    let card = modal_card(MODAL_W_MD).child(render_input_modal_heading(
+        Msg::InputTagTitle.t(),
+        Some((modal.at.short(), &modal.start_title)),
+    ));
+    let mut body = modal_scroll_body().child(render_input_modal_field(
+        Msg::InputTagName.t(),
+        modal.input_state.as_ref(),
+        plan.as_ref()
+            .and_then(|p| {
+                p.blockers
+                    .iter()
+                    .find(|b| matches!(b, PlanNote::Tag(TagNote::NameError(_))))
+            })
+            .map(|b| SharedString::from(plan_note_text(b))),
+    ));
 
     if let Some(ref p) = plan {
         body = body.child(div().flex_shrink_0().child(render_current_predicted(
@@ -494,25 +499,28 @@ pub(crate) fn render_create_tag_modal(
             Some((IconName::Plus.into(), current_theme().color_tag)),
         )));
 
-        if !p.blockers.is_empty() {
-            let lines: Vec<SharedString> = p
-                .blockers
-                .iter()
-                .map(|b| SharedString::from(plan_note_text(b)))
-                .collect();
-            let mut block_col = div().flex().flex_col().gap_1();
-            for b in lines {
-                block_col = block_col.child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().color_blocker))
-                        .overflow_hidden()
-                        .child(SharedString::from(format!("\u{2717} {}", b))),
-                );
-            }
+        let mut block_col = div().flex().flex_col().gap_1();
+        let mut nonfield_blocker = false;
+        for b in p
+            .blockers
+            .iter()
+            .filter(|b| !matches!(b, PlanNote::Tag(TagNote::NameError(_))))
+        {
+            nonfield_blocker = true;
+            block_col = block_col.child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(current_theme().color_blocker))
+                    .overflow_hidden()
+                    .child(SharedString::from(format!(
+                        "\u{2717} {}",
+                        plan_note_text(b)
+                    ))),
+            );
+        }
+        if nonfield_blocker {
             body = body.child(block_col.flex_shrink_0());
         }
-
         let recovery_text = plan_recovery_text(p.recovery.as_ref());
         if !recovery_text.is_empty() {
             body = body.child(div().flex_shrink_0().child(render_recovery_box(
@@ -533,26 +541,42 @@ pub(crate) fn render_create_tag_modal(
         );
     }
 
-    let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
-        Button::new("create-tag-cancel")
-            .label(Msg::PlanCancel.t())
-            .ghost()
-            .small()
-            .on_click(cancel_handler),
-    );
-
-    if !has_blockers {
-        button_row = button_row.child(
-            KagiButton::accent(
-                "create-tag-confirm",
-                "Create",
-                current_theme().color_success,
-                cx,
-            )
-            .small()
-            .on_click(confirm_handler),
-        );
-    }
+    let disabled_reason = if has_blockers {
+        error.clone().or_else(|| {
+            plan.as_ref()
+                .and_then(|p| p.blockers.first())
+                .map(|b| SharedString::from(plan_note_text(b)))
+                .or_else(|| Some(Msg::InputPlanPending.t().into()))
+        })
+    } else {
+        None
+    };
+    let button_row = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        .child(
+            Button::new("create-tag-cancel")
+                .label(Msg::PlanCancel.t())
+                .ghost()
+                .on_click(cancel_handler),
+        )
+        .child(crate::ui::e2e::measure_confirm(render_input_modal_action(
+            || {
+                KagiButton::accent(
+                    "create-tag-confirm",
+                    Msg::InputCreate.t(),
+                    current_theme().color_success,
+                    cx,
+                )
+                .on_click(confirm_handler)
+            },
+            Msg::InputCreate.t(),
+            current_theme().color_success,
+            disabled_reason,
+            cx,
+        )));
 
     let card = card
         .child(body)

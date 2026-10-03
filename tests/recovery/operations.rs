@@ -1995,6 +1995,134 @@ fn wait_painted(
     }
 }
 
+/// #956: a visible disabled Create remains inert with an empty field. Enter
+/// while the real input owns marked IME text must accept composition, not run
+/// the ready branch plan; ordinary Enter after unmarking still confirms.
+pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let head = CommitId(output(&repo, &["rev-parse", "HEAD"]));
+    let (app, window) = mount(cx, &repo);
+
+    app.update(cx, |app, cx| app.open_create_branch_modal(head, cx));
+    paint(cx, window);
+    let disabled = kagi::ui::e2e::confirm_bounds(window.window_id())
+        .expect("empty branch name still shows a disabled Create");
+    cx.simulate_mouse_move(window, disabled.center(), None, gpui::Modifiers::none());
+    cx.run_until_parked();
+    cx.simulate_click(window, disabled.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).create_branch_modal().is_some()),
+        "clicking disabled Create keeps the form open"
+    );
+
+    let input = cx
+        .read(|cx| {
+            app.read(cx)
+                .create_branch_modal()
+                .and_then(|modal| modal.input_state.clone())
+        })
+        .expect("first paint creates branch-name input");
+    cx.update_window(window, |_, window, cx| {
+        window.focus(&input.read(cx).focus_handle(cx), cx);
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.simulate_keystrokes(window, "f e a t");
+    wait_painted(cx, &app, window, |app| {
+        app.create_branch_modal()
+            .and_then(|modal| modal.plan.plan())
+            .is_some_and(|plan| plan.blockers.is_empty())
+    });
+
+    cx.update_window(window, |_, window, cx| {
+        input.update(cx, |state, cx| {
+            gpui::EntityInputHandler::replace_and_mark_text_in_range(
+                state,
+                Some(0..4),
+                "feat",
+                Some(4..4),
+                window,
+                cx,
+            );
+        });
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.simulate_keystrokes(window, "enter");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).create_branch_modal().is_some()),
+        "composition Enter must not close the form"
+    );
+    assert!(
+        output(&repo, &["branch", "--list", "feat"]).is_empty(),
+        "composition Enter must not create a Git ref"
+    );
+
+    cx.update_window(window, |_, window, cx| {
+        input.update(cx, |state, cx| {
+            gpui::EntityInputHandler::unmark_text(state, window, cx);
+        });
+    })
+    .unwrap();
+    press_enter(cx, &app, window);
+    cx.run_until_parked();
+    assert!(
+        !output(&repo, &["branch", "--list", "feat"]).is_empty(),
+        "ordinary Enter after composition still creates the branch"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS create_branch_input_confirm_ime");
+}
+
+/// #956: each of the other input-confirm renderers must expose an unavailable
+/// primary action rather than remove it when its plan cannot run. A real click
+/// at the measured button must leave the modal and repository untouched.
+pub fn scenario_input_confirm_disabled_cards(cx: &mut VisualTestAppContext) {
+    for case in ["tag", "worktree", "stash"] {
+        let fixture = build_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        let before = repo_fingerprint(&repo);
+        let head = CommitId(output(&repo, &["rev-parse", "HEAD"]));
+        let (app, window) = mount(cx, &repo);
+        app.update(cx, |app, cx| match case {
+            "tag" => app.open_create_tag_modal(head, cx),
+            "worktree" => app.open_create_worktree_modal(head, cx),
+            "stash" => app.open_stash_push_modal(cx),
+            _ => unreachable!(),
+        });
+        paint(cx, window);
+        let button = kagi::ui::e2e::confirm_bounds(window.window_id())
+            .unwrap_or_else(|| panic!("{case}: blocked form still shows its primary action"));
+        cx.simulate_mouse_move(window, button.center(), None, gpui::Modifiers::none());
+        cx.run_until_parked();
+        cx.simulate_click(window, button.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let app = app.read(cx);
+            let still_open = match case {
+                "tag" => app.create_tag_modal().is_some(),
+                "worktree" => app.create_worktree_modal().is_some(),
+                "stash" => app.stash_push_modal().is_some(),
+                _ => unreachable!(),
+            };
+            assert!(
+                still_open,
+                "{case}: disabled primary click keeps the card open"
+            );
+        });
+        assert_eq!(
+            repo_fingerprint(&repo),
+            before,
+            "{case}: disabled primary click cannot change repository state"
+        );
+        unmount(cx, app, window);
+    }
+    eprintln!("[gui-e2e] PASS input_confirm_disabled_cards");
+}
+
 /// #510: a replan that fails becomes an explicit failure state instead of
 /// leaving the plan it was recomputing behind.
 ///

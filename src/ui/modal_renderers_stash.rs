@@ -9,13 +9,15 @@ use super::i18n::Msg;
 use super::modal_renderers::{
     modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box,
 };
+use super::modal_renderers_input::{
+    render_input_modal_action, render_input_modal_field, render_input_modal_heading,
+};
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_MD};
 use super::modals::*;
 use super::theme::theme as current_theme;
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, FocusHandle, KeyDownEvent, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::input::Input;
 use gpui_component::{IconName, Sizable as _};
 use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
 
@@ -34,7 +36,7 @@ use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
 ///   - Warnings (yellow) if any
 ///   - Blockers (red) if any
 ///   - Error message (if execute failed)
-///   - `[Cancel]` always; `[Stash]` only when no blockers
+///   - `[Cancel]` and an always-visible, disabled-until-ready `[Stash]`
 pub(crate) fn render_stash_push_modal(
     modal: StashPushModal,
     focus_handle: Option<FocusHandle>,
@@ -63,29 +65,15 @@ pub(crate) fn render_stash_push_modal(
         cx.notify();
     });
 
-    // #454: the plan's notes/warnings and the recovery prose grow with the
-    // plan and there is no inner scroller here, so the body is this card's
-    // single scroll region.
-    let card = modal_card(MODAL_W_MD).child(div().flex_shrink_0().child(render_modal_title_row(
-        SharedString::from("Stash push — save local modifications"),
-        Some((IconName::Inbox.into(), current_theme().color_warning)),
-    )));
-    let mut body = modal_scroll_body()
-        // ── Message input ──────────────────────────────────
-        .child(
-            div()
-                .flex_shrink_0()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from("Message (optional)")),
-                )
-                .children(modal.input_state.as_ref().map(|st| Input::new(st).small())),
-        );
+    // The message is optional. Its label and M-sized input still form one
+    // field, without a validation row for the empty value.
+    let card =
+        modal_card(MODAL_W_MD).child(render_input_modal_heading(Msg::InputStashTitle.t(), None));
+    let mut body = modal_scroll_body().child(render_input_modal_field(
+        Msg::InputStashMessage.t(),
+        modal.input_state.as_ref(),
+        None,
+    ));
 
     // ── Plan state (current → predicted) ─────────────────
     if let Some(ref p) = plan {
@@ -152,27 +140,42 @@ pub(crate) fn render_stash_push_modal(
         );
     }
 
-    // ── Buttons ───────────────────────────────────────────
-    let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
-        Button::new("stash-push-cancel")
-            .label(Msg::PlanCancel.t())
-            .ghost()
-            .small()
-            .on_click(cancel_handler),
-    );
-
-    if !has_blockers {
-        button_row = button_row.child(crate::ui::e2e::measure_confirm(
-            KagiButton::accent(
-                "stash-push-confirm",
-                "Stash",
-                current_theme().color_warning,
-                cx,
-            )
-            .small()
-            .on_click(confirm_handler),
-        ));
-    }
+    let disabled_reason = if has_blockers {
+        modal.error.clone().or_else(|| {
+            plan.as_ref()
+                .and_then(|p| p.blockers.first())
+                .map(|b| SharedString::from(plan_note_text(b)))
+                .or_else(|| Some(Msg::InputPlanPending.t().into()))
+        })
+    } else {
+        None
+    };
+    let button_row = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        .child(
+            Button::new("stash-push-cancel")
+                .label(Msg::PlanCancel.t())
+                .ghost()
+                .on_click(cancel_handler),
+        )
+        .child(crate::ui::e2e::measure_confirm(render_input_modal_action(
+            || {
+                KagiButton::accent(
+                    "stash-push-confirm",
+                    Msg::InputStash.t(),
+                    current_theme().color_warning,
+                    cx,
+                )
+                .on_click(confirm_handler)
+            },
+            Msg::InputStash.t(),
+            current_theme().color_warning,
+            disabled_reason,
+            cx,
+        )));
 
     let card = card
         .child(body)

@@ -24,6 +24,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Changed
 
+- Create Branch / Create Tag / Stash / Add Worktree の入力確認カードを、32px の入力欄・主要ボタン、入力欄の直下に出る検証理由、常に見える無効な Create / Stash ボタンに統一しました。対象 commit と復旧手順は残し、長い branch 名の復旧コマンドは横スクロールで全文を確認できるようにしました。IME 変換中の Enter は Git 操作を確定しません。(#956)
 - Graph の「Avatar commit nodes」(commit の点を作者のアバターにする表示)を既定で ON にしました。設定で一度 OFF にしている場合はそのまま OFF です。
 - Worktree 行とホバーカードをアイコン・短い状態表示中心に整理し、再計測はアイコンのみ（支援技術向けの名前は維持）にしました。ignored file の注意はホバーから外し、削除時の確認計画で対象のファイル数とフォルダー数を示します。(#934)
 - Graph で行を選択しているとき、Esc で選択を解除できるようにしました(右側の commit 詳細も閉じます)。メニューや diff、確認画面が開いている場合は、従来どおりそちらが先に閉じます。

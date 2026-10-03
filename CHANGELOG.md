@@ -11,6 +11,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Worktree 削除の確認後や削除前ステップ後に ignored ファイル・フォルダーが増えた場合、削除前に中止し、計画の再確認を促すようにしました。(#934)
 - 初期化済み、または未初期化でも gitlink のパスにローカルファイルがある worktree は Remove の計画時・実行前に削除を拒否します。空・不在の gitlink は削除可能なままとし、削除前ステップ後の拒否も EN/JA の短い toast に理由だけを表示します。(#934)
 - GitHub Enterprise の repository で、Issues の「Assigned to me / Created by me」と PR の Mine などの判定に github.com のアカウントを使っていた問題を修正しました。repository のサーバーでのアカウントで判定し、それがまだ分からない間は件数を「—」にして、空だとは表示しません。Enterprise のユーザーのアバターも、github.com の同名ユーザーではなく、そのサーバーから取得します。(#906)
+- Linux / FreeBSD の View メニューで、テーマ一覧がウィンドウの下へはみ出し、後半のテーマや言語の項目を選べなかった問題を修正しました。メニューの高さをウィンドウ内に収め、入りきらない項目はメニューの中でスクロールして選べます。(#935)
 
 ### Changed
 

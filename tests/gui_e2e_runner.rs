@@ -232,6 +232,10 @@ mod issue_write_owner;
 mod ghe_viewer_login;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/platform_menu_scroll.rs"]
+mod platform_menu_scroll;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/field_picker_owner.rs"]
 mod field_picker_owner;
 
@@ -1598,6 +1602,10 @@ mod macos {
                 Box::new(
                     crate::issue_write_owner::scenario_issue_failure_notice_survives_tab_switch,
                 ),
+            ),
+            (
+                "platform_menu_scroll",
+                Box::new(crate::platform_menu_scroll::scenario_platform_menu_scroll),
             ),
             (
                 "field_picker_owner",

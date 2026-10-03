@@ -1243,9 +1243,8 @@ pub struct KagiApp {
     /// Focus the next render applies (#812 / #817, `overlay_focus.rs`).
     pending_focus: Option<gpui::FocusHandle>,
     /// Linux/FreeBSD client-side menu dropdown currently open from the in-app
-    /// menu bar. Native macOS menus are provided by `cx.set_menus`, so this is
-    /// only read on Linux/FreeBSD (dead on other targets).
-    #[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
+    /// menu bar. Native macOS menus are provided by `cx.set_menus`, so only the
+    /// Linux/FreeBSD titlebar sets this.
     pub platform_menu_open: Option<usize>,
     // ── W11-AVATAR: GitHub avatar images (ADR-0037) ──────────────
     /// Resolved-avatar cache (memory images + per-repo fetch guard), grouped

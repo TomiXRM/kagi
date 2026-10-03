@@ -294,18 +294,29 @@ pub fn scenario_home_tab(cx: &mut VisualTestAppContext) {
     click_control(cx, window, "tab-add");
     cx.run_until_parked();
 
-    // With no repository tab, Home is the whole window and opens a tab.
+    // With no repository tab, Home is the whole window and opens a tab —
+    // also when it waited in the strip as the last tab closed: it is then
+    // in front, and the repository opened from it replaces it (#930 review).
+    click_control(cx, window, "repo-tab-0");
+    cx.run_until_parked();
+    assert_eq!(home(cx, &app), Some(false), "Home waits in the strip");
     app.update(cx, |app, cx| {
         app.close_tab(1, cx);
         app.close_tab(0, cx);
     });
     cx.run_until_parked();
     assert!(cx.read(|cx| app.read(cx).tabs.is_empty() && app.read(cx).home_in_front()));
+    assert_eq!(
+        home(cx, &app),
+        Some(true),
+        "the last close puts Home in front"
+    );
     forget(window, "home-recent-0");
     click_control(cx, window, "home-recent-0");
     cx.run_until_parked();
     assert_eq!(tab_count(cx, &app), 1);
     assert_eq!(active_path(cx, &app), second_path);
+    assert_eq!(home(cx, &app), None, "Home became that repository's tab");
     assert!(cx.read(|cx| !app.read(cx).home_in_front()));
 
     unmount(cx, app, window);

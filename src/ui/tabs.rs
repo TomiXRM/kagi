@@ -577,6 +577,7 @@ impl KagiApp {
                 // remote_view none) actually shows the Welcome screen (ADR-0089).
                 self.remote_view = None;
                 self.show_welcome();
+                self.home_takes_window();
                 self.save_session();
                 self.log_tabs();
                 // Bump generation so the old watcher loop terminates; no new arm.

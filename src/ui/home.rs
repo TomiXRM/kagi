@@ -102,6 +102,16 @@ impl KagiApp {
         }
     }
 
+    /// The last repository tab was closed: an open Home is now the whole
+    /// window, so it is in front — opening a repository then turns it into
+    /// that tab instead of leaving it in the strip (#930 review).
+    pub(crate) fn home_takes_window(&mut self) {
+        if let Some(home) = self.home.as_mut() {
+            home.front = true;
+            home.left = None;
+        }
+    }
+
     /// A repository tab was clicked: Home (if open) waits in the strip.
     /// Returns the tab it had left, for [`KagiApp::return_to_tab`].
     pub(crate) fn send_home_back(&mut self) -> Option<crate::app::SessionId> {

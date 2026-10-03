@@ -69,6 +69,7 @@ impl KagiApp {
             let Some(session) = self.active_session() else {
                 return;
             };
+            let visit = self.app_sessions.visit(session);
             let owner = crate::remote::stash::RemoteAttachment {
                 session,
                 host: rv.host,
@@ -89,21 +90,29 @@ impl KagiApp {
                         view.host == owner.host
                             && view.root == owner.root
                             && app.active_session() == Some(owner.session)
+                            && app.app_sessions.visit(session) == visit
                     });
                     let current_completion = completion.is_current(&app.app_sessions);
-                    if current {
+                    if current && !app.has_active_modal() {
                         if app::apply_plan(&mut app.app_sessions, completion) {
                             match app.app_sessions.plan_state() {
                                 PlanState::Ready {
                                     prepared: Planned::RemotePull { plan, .. },
                                     ..
                                 } => {
-                                    app.set_pull_modal(PullPlanModal {
-                                        plan: plan.preview.clone(),
-                                        auto_stash: false,
-                                        error: None,
-                                        dirty_digest: None,
-                                    });
+                                    let preview = plan.preview.clone();
+                                    app.offer_plan_from_async(
+                                        AsyncPlanOffer::new(
+                                            i18n::Op::Pull,
+                                            ActiveModal::Pull(PullPlanModal {
+                                                plan: preview,
+                                                auto_stash: false,
+                                                error: None,
+                                                dirty_digest: None,
+                                            }),
+                                        )
+                                        .with_session_token(),
+                                    );
                                 }
                                 PlanState::Error { error, .. } => {
                                     let message = SharedString::from(error.clone());
@@ -406,6 +415,15 @@ impl KagiApp {
     /// Close the pull modal without executing.
     pub fn cancel_pull_modal(&mut self) {
         self.clear_pull_modal();
+        if matches!(
+            self.app_sessions.plan_state(),
+            PlanState::Ready {
+                prepared: Planned::RemotePull { .. },
+                ..
+            }
+        ) {
+            self.app_sessions.invalidate_plan();
+        }
     }
 
     /// W3-NOTIFY: UI-path pull — runs `pull_blocking` on a background thread

@@ -98,7 +98,7 @@ impl UnobservableReleaseReport {
 }
 
 /// Derived from the parked requirement rather than a caller-supplied read.
-fn eligible_remote_write(
+fn eligible_unobservable_release(
     entry: &ReconcileEntry,
 ) -> Option<(&'static str, String, kagi_git::StateSummary)> {
     let ReconcileTarget::Planned(plan) = &entry.target else {
@@ -137,7 +137,7 @@ pub fn prepare_unobservable_release(
     let Some(reason) = read.unobservable_reason() else {
         return Err(AdmissionError::NeedsReconcile);
     };
-    let Some((op, repo, before)) = eligible_remote_write(entry) else {
+    let Some((op, repo, before)) = eligible_unobservable_release(entry) else {
         return Err(AdmissionError::NeedsReconcile);
     };
     Ok(UnobservableReleaseJob {
@@ -172,7 +172,7 @@ pub fn acknowledge_unobserved(
     if !entry.stopped && !report.stop_proven {
         return Err("the writer is not proven stopped, so the scope stays reserved".to_string());
     }
-    if eligible_remote_write(entry).is_none() {
+    if eligible_unobservable_release(entry).is_none() {
         return Err(
             "this operation is not one of the remote-writing families kagi can \
              release without an observation"

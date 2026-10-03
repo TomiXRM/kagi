@@ -340,16 +340,12 @@ refusal は core が `Refused` の no-execute step として記録し、UI は e
 `write_lease`（`reserve_write`）／run family へ。(c) merge-plan / delete-branch-plan は
 書き込みではなく planning の UI latch なので `planning` フラグへ分離。その結果:
 
-- gate は `KagiApp::op_latched()` 一本 = `has_leases() || remote_write.is_some() ||
-  planning.is_some()`。3 項の役割は固定で、混ぜてはならない:
-  - **`has_leases()`** — lease を取れる全 write の真実。
-  - **`remote_write`** — lease を取れない唯一の write（remote pull over SSH）の
-    排他 latch。所有者はその operation だけ（下記「唯一の例外」）。
+- gate は `KagiApp::op_latched()` 一本 = `has_leases() || planning.is_some()`（加えて
+  repository session を持たない clone の実行中も拒否する）。
+  - **`has_leases()`** — remote pull を含む全 write の真実。
   - **`planning`** — 書き込まないが modal slot を占める plan task。
-  - **`write_busy_op` は gate が読まない**。これは lease の *presentation mirror*
-    （snackbar のラベル用）に過ぎず、`refresh_write_busy` が lease 消滅で retire
-    する。gate に足すと lease を二度読むだけで何も足さず、lease-less writer の
-    latch として流用すると refresh に消される（#708 review P1 がこれ）。
+  - **`write_busy_op` は gate が読まない**。lease の *presentation mirror*
+    （snackbar のラベル用）であり、`refresh_write_busy` が lease 消滅で retire する。
 - `LegacyBusy` を全 admission signature から削除。`begin_write` / `write_lease` /
   `prepare_*` は lease と reconcile だけを根拠に `AdmissionError::Busy` を返す。
   planning 中の write 拒否は UI 側の `op_latched()` が担う（`reserve_write` /
@@ -384,31 +380,15 @@ refusal は core が `Refused` の no-execute step として記録し、UI は e
 `operations/modal_state*` の storage helper に限定し、`modal-slot-storage` gate は
 その module boundary を補助する。
 
-**唯一の例外 — lease を取れない write（remote pull over SSH）**:
-`src/ui/operations/pull_push.rs`。`WriteScope::Remote(RemoteRepoId)` を作るには
-`freeze_connection` + `probe_common_dir` の 2 往復が要る。remote stash family は
-これを background の plan job で済ませてから `prepare_stash` で lease を取るが、
-remote pull の plan は cached ahead/behind から**ローカルに合成**されるので相当する
-job が無く、spawn 前の UI thread で probe するしかない = network I/O で UI を止める。
-よって lease は取らず、専用 latch **`KagiApp::remote_write`** を持つ。
 
-規約（#708 review P1、破ると排他が消える）:
-
-- `remote_write` は **lease mirror ではない**。`refresh_write_busy` /
-  `settle_write_busy` に渡してはならない。lease 数から retire すると、`render` →
-  `poll_app_jobs` と全 admission preamble が呼ぶ次の refresh で消え、走行中の
-  `git pull` に 2 本目の write（stage / fetch / conflict abort / 同じ remote への
-  2 本目の pull）が admit されうる。
-- 解放するのは remote pull 自身の terminal callback（success / failure / task
-  panic）**のみ**。op 名の文字列判定はしない — field の所有者が 1 か所だから。
-- `op_latched()` = `has_leases() || remote_write.is_some() || planning.is_some()`。
-  `write_busy_op` は snackbar 用の lease mirror なので gate は読まない。
-- 回帰テストは gui-e2e `remote_pull_latch`（停止可能な fake `ssh` を PATH に置き、
-  `run_ssh` を実際に通す）。
-
-残る差: `may_close_host()` は lease を読むので remote pull は quit を保留**しない**。
-これは本 slice 以前からの状態で、write family 化（#703 と同じ後続 slice）で lease に
-載せれば同時に解消する。
+**remote pull（#989）**: cached ahead/behind から preview を合成し、background plan job
+で通常の SSH options による `ssh -G` と common-dir probe を行う。
+`Planned::RemotePull` は `begin_write` で `WriteScope::Remote(RemoteRepoId)` を取り、
+`OperationId` / `OwnerStamp` によって配送される。Success / Failed は通常解放し、
+Unknown / Partial / job abandonment は停止済みの reconcile requirement と lease を保持する。
+remote の結果を観測できないため、確認後の明示的な unobservable-release audit によってのみ解放する。
+**Limitation:** ssh-agent-only 接続では connection identity の identity files が空で、
+identity-file 接続より reconcile の再現可能性が弱い。remote stash の凍結接続 policy は変更しない。
 
 **SubAgent 規律**: family / module / report は単独 owner。shared schema・router・ADR・
 migration summary は integration owner 専有。子 agent は evidence packet（revision、

@@ -1062,8 +1062,12 @@ mod macos {
                 Box::new(crate::recovery_pull::scenario_pull_auto_stash_overlap_preview),
             ),
             (
-                "remote_pull_latch",
-                Box::new(crate::recovery_pull::scenario_remote_pull_holds_its_latch),
+                "remote_pull_lease",
+                Box::new(crate::recovery_pull::scenario_remote_pull_lease),
+            ),
+            (
+                "remote_pull_unknown_release",
+                Box::new(crate::recovery_pull::scenario_remote_pull_unknown_release),
             ),
             (
                 "pull_confirm_parks_for_its_tab",

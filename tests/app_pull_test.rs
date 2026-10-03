@@ -600,7 +600,7 @@ fn an_abandoned_pull_task_settles_as_unknown_and_is_reconcilable() {
 /// retried, which is the thing ADR-0177 exists to prevent. The read asks the
 /// remote, and only a remote that already carries the local tip is confirmed.
 #[test]
-fn a_remote_write_is_resolved_only_by_the_remote() {
+fn a_remote_push_is_resolved_only_by_the_remote() {
     let f = Fixture::new();
     let mut s = Sessions::new();
     let session = s.attach(f.repo.clone());

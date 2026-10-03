@@ -126,13 +126,8 @@ fn wait_for(
     }
 }
 
-/// A stoppable stand-in for the `ssh` binary `run_ssh` spawns through `PATH`.
-///
-/// Every invocation is logged with its argv. A `git … pull` blocks until
-/// `release` appears, so the pull can be held genuinely in flight — the state
-/// the latch exists for — while the remote view's own reads still answer, as a
-/// real host would. No canned-report seam: this goes through `run_ssh`.
-fn blocking_fake_ssh(bin: &Path, release: &Path, calls: &Path) {
+/// Stand-in for the host's ordinary SSH options, scope probe and pull.
+fn blocking_fake_ssh(bin: &Path, release: &Path, calls: &Path, fail: &Path) {
     std::fs::create_dir_all(bin).expect("shim dir");
     let path = bin.join("ssh");
     std::fs::write(
@@ -140,10 +135,16 @@ fn blocking_fake_ssh(bin: &Path, release: &Path, calls: &Path) {
         format!(
             "#!/bin/sh\n\
              echo \"$*\" >> {calls:?}\n\
+             if [ \"$1\" = '-G' ]; then\n\
+               printf 'hostname e2e.invalid\\nuser kagi-e2e\\nport 22\\nidentityfile none\\nuserknownhostsfile none\\nglobalknownhostsfile none\\n'\n\
+               exit 0\n\
+             fi\n\
              case \"$*\" in\n\
-             *pull*) while [ ! -f {release:?} ]; do sleep 0.05; done\n\
-             echo 'Already up to date.' ;;\n\
-             *) echo '' ;;\n\
+               *KAGI-COMMON-DIR*) printf 'KAGI-COMMON-DIR\\0/srv/repo/.git\\0KAGI-END\\n' ;;\n\
+               *pull*) while [ ! -f {release:?} ]; do sleep 0.05; done\n\
+                       if [ -f {fail:?} ]; then echo 'unexpected remote reply' >&2; exit 42; fi\n\
+                       echo 'Already up to date.' ;;\n\
+               *) echo '' ;;\n\
              esac\n",
         ),
     )
@@ -155,28 +156,26 @@ fn blocking_fake_ssh(bin: &Path, release: &Path, calls: &Path) {
     }
 }
 
-/// How many `git … pull` transports the fake host has been asked to run.
 fn ssh_pulls(calls: &Path) -> usize {
     std::fs::read_to_string(calls)
         .map(|text| text.lines().filter(|line| line.contains("pull")).count())
         .unwrap_or(0)
 }
 
-/// #708 review P1: the lease-less remote pull's latch must actually hold.
-///
-/// A remote pull over SSH takes no lease — its `RemoteRepoId` needs network
-/// probes that cannot run on the UI thread before the spawn — so it owns
-/// `remote_write` outright. The bug this pins: while that latch was the
-/// lease-derived `write_busy_op`, `refresh_write_busy()` erased it on the very
-/// next `render` → `poll_app_jobs`, and on every admission preamble, so a
-/// second write (a stage, a fetch, a conflict abort, another pull to the same
-/// remote) could be admitted straight into a running `git pull`.
-pub fn scenario_remote_pull_holds_its_latch(cx: &mut VisualTestAppContext) {
+pub fn scenario_remote_pull_lease(cx: &mut VisualTestAppContext) {
+    remote_pull_lease(cx, false);
+}
+
+pub fn scenario_remote_pull_unknown_release(cx: &mut VisualTestAppContext) {
+    remote_pull_lease(cx, true);
+}
+
+fn remote_pull_lease(cx: &mut VisualTestAppContext, unknown: bool) {
+    use gpui::Modifiers;
     use kagi::ui::e2e;
 
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().expect("fixture path");
-    // A real behind-by-one, so the remote view plans a pull from its snapshot.
     let remote_root = tempfile::tempdir().expect("remote root");
     let bare = remote_root.path().join("origin.git");
     let other = remote_root.path().join("other");
@@ -193,19 +192,16 @@ pub fn scenario_remote_pull_holds_its_latch(cx: &mut VisualTestAppContext) {
 
     let shim = tempfile::tempdir().expect("shim root");
     let release = shim.path().join("release");
+    let fail = shim.path().join("fail");
     let calls = shim.path().join("calls");
-    blocking_fake_ssh(shim.path(), &release, &calls);
+    blocking_fake_ssh(shim.path(), &release, &calls, &fail);
     let original_path = std::env::var_os("PATH");
     std::env::set_var(
         "PATH",
         format!(
             "{}:{}",
             shim.path().display(),
-            original_path
-                .clone()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .as_ref()
+            original_path.clone().unwrap_or_default().to_string_lossy()
         ),
     );
 
@@ -217,82 +213,160 @@ pub fn scenario_remote_pull_holds_its_latch(cx: &mut VisualTestAppContext) {
         user: Some("kagi-e2e".into()),
         host: "e2e.invalid".into(),
         port: None,
-        identity_file: None,
+        identity_file: None, // ssh-agent-only must pass identity resolution.
     };
     let (app, window) = mount(cx, &repo);
     app.update(cx, |app, cx| {
         app.enter_remote_view(host, "/srv/repo".into(), snap, cx);
         app.open_pull_modal(cx);
-        assert!(
-            app.pull_modal().is_some(),
-            "the remote view is behind by one, so Pull plans"
-        );
-        app.start_pull(cx);
-        assert_eq!(app.remote_write, Some("pull"), "the pull latches itself");
-        assert!(e2e::op_latched(app), "and the gate reads that latch");
-        assert!(
-            !app.app_sessions.has_leases(),
-            "with no lease at all — this is the lease-less writer"
-        );
+        assert!(matches!(
+            app.app_sessions.plan_state(),
+            kagi::app::PlanState::Planning { .. }
+        ));
+        if !unknown {
+            // An async identity result must not replace a newer user modal.
+            app.set_pop_modal(kagi::ui::modals::PopPlanModal {
+                stash_index: 0,
+                plan: None,
+                error: None,
+            });
+        }
     });
-    // Everything below runs between the dispatch and the completion, so it
-    // cannot use `run_until_parked`: the test executor is deterministic, and
-    // pumping it here would wait out the very transport this is about (the
-    // fake `ssh` blocks). `poll_app_jobs` is what a frame runs, and its first
-    // act is the `refresh_write_busy()` that used to erase the latch.
+    if !unknown {
+        wait_for(cx, |cx| {
+            cx.read(|cx| {
+                let state = app.read(cx);
+                matches!(state.app_sessions.plan_state(), kagi::app::PlanState::Draft)
+                    && state.pop_modal().is_some()
+            })
+        });
+        app.update(cx, |app, cx| {
+            assert!(app.pull_modal().is_none(), "stale plan replaced user modal");
+            app.cancel_pop_modal();
+            e2e::present_app_notice(app);
+            assert!(
+                app.app_notice().is_some(),
+                "contended plan must offer a retry notice"
+            );
+            app.confirm_app_notice(cx);
+            app.open_pull_modal(cx);
+        });
+    }
+    wait_for(cx, |cx| cx.read(|cx| app.read(cx).pull_modal().is_some()));
     app.update(cx, |app, cx| {
-        e2e::poll_app_jobs(app, cx);
-        assert_eq!(
-            app.remote_write,
-            Some("pull"),
-            "a lease-derived retire must not reach the remote latch (#708 P1)"
+        app.start_pull(cx);
+        assert!(
+            app.app_sessions.has_leases(),
+            "pull must hold the remote write lease"
         );
-        assert!(e2e::op_latched(app), "so the gate is still latched");
-        // Refused on the silent path, which consults the gate directly…
+        assert!(
+            !app.app_sessions.may_close_host(),
+            "quit must wait for remote pull"
+        );
+        assert!(e2e::op_latched(app), "the gate must read the lease");
+        assert_eq!(app.write_busy_op, Some("pull"));
+        assert_eq!(
+            e2e::busy_snackbar_label(app),
+            Some(kagi::ui::i18n::busy_label("pull"))
+        );
+        e2e::poll_app_jobs(app, cx);
+        assert!(
+            app.app_sessions.has_leases(),
+            "poll must not retire a live lease"
+        );
         assert!(
             !app.fetch_async_for(true, None, cx),
-            "no second write may start while the remote pull runs"
+            "silent fetch cannot overlap"
         );
-        // …and on the admission preamble, which calls `refresh_write_busy()`
-        // immediately before asking `op_latched()`.
         assert!(
             !app.fetch_async_for(false, None, cx),
-            "not through the admission preamble either"
+            "visible fetch cannot overlap"
         );
         app.open_pull_modal(cx);
-        assert!(
-            app.pull_modal().is_none(),
-            "and not a second pull to the same remote"
-        );
+        assert!(app.pull_modal().is_none(), "second pull must be refused");
     });
 
-    // Only the terminal completion releases it. The transport runs — and
-    // blocks — inside this pump, so the release goes in first.
+    if unknown {
+        std::fs::write(&fail, b"non-zero unrecognized output").unwrap();
+    }
     std::fs::write(&release, b"go").expect("release the transport");
-    wait_for(cx, |cx| cx.read(|cx| app.read(cx).remote_write.is_none()));
-    cx.read(|cx| {
-        let state = app.read(cx);
-        assert!(
-            !e2e::op_latched(state),
-            "the gate opens with the completion"
-        );
-        assert!(state.app_sessions.may_close_host());
+    wait_for(cx, |cx| {
+        cx.read(|cx| {
+            let state = app.read(cx);
+            if unknown {
+                !state.app_sessions.reconcile_ids().is_empty()
+            } else {
+                !state.app_sessions.has_leases()
+            }
+        })
     });
-    // Which makes every refusal above provable: had any of them been admitted,
-    // the host would have been asked to pull a second time.
     assert_eq!(
         ssh_pulls(&calls),
         1,
-        "exactly one pull transport ever reached the host"
+        "exactly one SSH pull reached the host"
     );
-
+    if unknown {
+        let id = cx.read(|cx| {
+            let state = app.read(cx);
+            assert!(
+                state.app_sessions.has_leases(),
+                "Unknown must retain admission"
+            );
+            assert!(!state.app_sessions.may_close_host());
+            assert!(
+                e2e::app_notice_message(state).is_some(),
+                "reconcile notice is required"
+            );
+            state.app_sessions.reconcile_ids()[0]
+        });
+        let entries = kagi_git::oplog::read_oplog_tail(100);
+        assert!(entries
+            .iter()
+            .any(|entry| entry.op == "pull" && matches!(entry.outcome, OpOutcome::Unknown { .. })));
+        // Inspect the notice, arm the unobservable release, then confirm it.
+        for _ in 0..3 {
+            cx.run_until_parked();
+            e2e::clear_control_bounds(window.window_id(), "app-notice-confirm");
+            cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+                .unwrap();
+            let bounds = e2e::control_bounds(window.window_id(), "app-notice-confirm")
+                .expect("reconcile confirmation must be drawn");
+            cx.simulate_click(window, bounds.center(), Modifiers::none());
+        }
+        wait_for(cx, |cx| {
+            cx.read(|cx| !app.read(cx).app_sessions.needs_reconcile(id))
+        });
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert!(
+                !state.app_sessions.has_leases(),
+                "audited release must unlock"
+            );
+            assert!(state.app_sessions.may_close_host());
+        });
+        assert_eq!(
+            kagi_git::oplog::read_oplog_tail(100)
+                .iter()
+                .filter(|entry| entry.op == "reconcile-release-unobservable")
+                .count(),
+            1,
+            "one audited release row must precede lease release"
+        );
+    } else {
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert!(!e2e::op_latched(state));
+            assert!(state.app_sessions.may_close_host());
+        });
+    }
     match original_path {
         Some(path) => std::env::set_var("PATH", path),
         None => std::env::remove_var("PATH"),
     }
     unmount(cx, app, window);
     eprintln!(
-        "[gui-e2e] PASS remote_pull_latch: the lease-less pull's latch survives refresh and only its completion clears it"
+        "[gui-e2e] PASS remote_pull_{}",
+        if unknown { "unknown_release" } else { "lease" }
     );
 }
 

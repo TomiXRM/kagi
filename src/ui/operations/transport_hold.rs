@@ -2,6 +2,7 @@
 //! Holds survive tab switches and notice dismissal; a snapshot alone does not
 //! prove that a remote process stopped. Retained for this application lifetime.
 use crate::ui::KagiApp;
+#[cfg(test)]
 use kagi_git::oplog::OpOutcome;
 use std::{
     collections::HashSet,

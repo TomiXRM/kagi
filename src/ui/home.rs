@@ -72,6 +72,8 @@ impl KagiApp {
             }
         };
         self.home = Some(HomeTab { front: true, left });
+        // Settings belongs to the screen being left (#976 review).
+        self.close_settings_for_command(window, cx);
         if let Some(root) = self.root_focus.clone() {
             window.focus(&root, cx);
         }
@@ -198,6 +200,16 @@ impl KagiApp {
         // The menu-driven overlays (Settings, About, Shortcuts, the command
         // palette) are window-global and stay enabled on Home, so they are
         // drawn here too, below the modals as in the workspace (#927 review).
+        // Home has no workspace/pane menus; its outer shell retains the
+        // MenuOverlay → modal slice → platform dropdown order in Z_ORDER.
+        debug_assert_eq!(
+            super::front_layer::Z_ORDER[4],
+            super::front_layer::LayerKind::MenuOverlay
+        );
+        debug_assert_eq!(
+            super::front_layer::Z_ORDER.last(),
+            Some(&super::front_layer::LayerKind::PlatformMenu)
+        );
         let menu_overlay = self.render_menu_overlay(window, cx);
         let home = self.register_menu_actions(
             div()

@@ -148,3 +148,284 @@ pub fn scenario_platform_menu_scroll(cx: &mut VisualTestAppContext) {
         "[gui-e2e] PASS platform_menu_scroll: the View menu fits a 480px window at 1.0x and 1.5x and scrolls to its last row"
     );
 }
+
+/// #976 review P1: the Linux / FreeBSD in-app menu dropdown is drawn after
+/// the modal layer and opens from the titlebar even over a confirmation
+/// modal. It is then the front layer: Enter must not confirm the modal behind
+/// it (a Git write), and Escape closes the dropdown first.
+pub fn scenario_platform_menu_over_modal(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    std::fs::write(repo.join("README.md"), "dirty for the stash modal\n").unwrap();
+    let (app, win) = mount_short(cx, &repo);
+    let before = repo_fingerprint(&repo);
+    let key = |cx: &mut VisualTestAppContext, keys: &str| {
+        cx.update_window(win, |_, window, cx| {
+            window.refresh();
+            window.draw(cx).clear();
+        })
+        .unwrap();
+        cx.simulate_keystrokes(win, keys);
+        cx.run_until_parked();
+    };
+
+    app.update(cx, |app, cx| app.open_stash_push_modal(cx));
+    cx.run_until_parked();
+    cx.update_window(win, |_, window, cx| {
+        let root = app.read(cx).root_focus.clone().expect("root focus");
+        window.focus(&root, cx);
+    })
+    .unwrap();
+    assert!(
+        cx.read(|cx| app.read(cx).stash_push_modal().is_some()),
+        "precondition: the Stash confirmation is open"
+    );
+    app.update(cx, |app, cx| {
+        assert!(app.open_platform_menu_for_e2e("View", cx), "View section");
+    });
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| e2e::menu_is_front(app.read(cx), cx)),
+        "platform-menu-over-modal-front: the dropdown drawn over the modal must be the front layer"
+    );
+
+    key(cx, "enter");
+    assert!(
+        cx.read(|cx| app.read(cx).stash_push_modal().is_some()),
+        "platform-menu-over-modal-enter: Enter confirmed the modal behind the dropdown"
+    );
+    assert_eq!(
+        repo_fingerprint(&repo),
+        before,
+        "platform-menu-over-modal-enter: Enter behind the dropdown wrote the repository"
+    );
+
+    key(cx, "escape");
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.platform_menu_open.is_none(),
+            "Escape closes the dropdown first"
+        );
+        assert!(
+            app.stash_push_modal().is_some(),
+            "and leaves the modal open"
+        );
+    });
+    key(cx, "escape");
+    assert!(cx.read(|cx| app.read(cx).stash_push_modal().is_none()));
+    assert_eq!(repo_fingerprint(&repo), before, "nothing was written");
+    unmount(cx, app, win);
+    eprintln!("[gui-e2e] PASS platform_menu_over_modal");
+}
+
+/// The filter popover is drawn *after* an early slot modal. An arriving
+/// confirmation must not accept Enter while the filter menu covers it.
+pub fn scenario_filter_menu_over_modal(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    std::fs::write(repo.join("README.md"), "dirty for the stash modal\n").unwrap();
+    let (app, win) = mount_short(cx, &repo);
+    app.update(cx, |app, cx| app.show_issues_mode(cx));
+    cx.run_until_parked();
+    let bounds =
+        measure(cx, win, &["list-filter-state"])[0].expect("Issues filter State chip is visible");
+    cx.simulate_click(win, bounds.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    let before = repo_fingerprint(&repo);
+    assert!(
+        cx.read(|cx| e2e::menu_is_front(app.read(cx), cx)),
+        "filter menu is open"
+    );
+
+    app.update(cx, |app, cx| app.open_stash_push_modal(cx));
+    cx.run_until_parked();
+    cx.update_window(win, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+        let root = app.read(cx).root_focus.clone().expect("root focus");
+        window.focus(&root, cx);
+    })
+    .unwrap();
+    assert!(
+        cx.read(|cx| app.read(cx).stash_push_modal().is_some()),
+        "Stash modal arrived"
+    );
+    assert!(
+        cx.read(|cx| e2e::menu_is_front(app.read(cx), cx)),
+        "filter-menu-over-modal-front: filter must be above the early Stash modal"
+    );
+
+    cx.simulate_keystrokes(win, "enter");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).stash_push_modal().is_some()),
+        "filter-menu-over-modal-enter: Enter confirmed the modal behind the filter"
+    );
+    assert_eq!(
+        repo_fingerprint(&repo),
+        before,
+        "filter-menu-over-modal-enter: Enter behind the filter wrote the repository"
+    );
+    cx.simulate_keystrokes(win, "escape");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).stash_push_modal().is_some()),
+        "filter-menu-over-modal-escape: Escape closed the modal before the filter"
+    );
+    assert!(
+        !cx.read(|cx| e2e::menu_is_front(app.read(cx), cx)),
+        "filter-menu-over-modal-escape: Escape did not close the filter"
+    );
+    cx.simulate_keystrokes(win, "escape");
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).stash_push_modal().is_none()));
+    assert_eq!(repo_fingerprint(&repo), before, "nothing was written");
+    unmount(cx, app, win);
+    eprintln!("[gui-e2e] PASS filter_menu_over_modal");
+}
+
+/// #976 review: with a platform menu dropdown open over a modal, the
+/// dropdown is the front layer, but Settings — drawn behind the modal layer
+/// — must still refuse to open (Ctrl+, / the menu's own Settings command).
+pub fn scenario_platform_menu_modal_settings(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    std::fs::write(repo.join("README.md"), "dirty for the stash modal\n").unwrap();
+    let (app, win) = mount_short(cx, &repo);
+
+    app.update(cx, |app, cx| app.open_stash_push_modal(cx));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        assert!(app.open_platform_menu_for_e2e("View", cx), "View section");
+    });
+    cx.run_until_parked();
+    assert!(
+        cx.read(
+            |cx| e2e::menu_is_front(app.read(cx), cx) && app.read(cx).stash_push_modal().is_some()
+        ),
+        "precondition: the dropdown is open over the Stash confirmation"
+    );
+    // Admission is checked before any frame runs: the render pass's yield
+    // would also close a Settings that slipped in, and must not be what
+    // keeps this green.
+    let refused = cx
+        .update_window(win, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                app.handle_menu_command("app.settings", window, cx);
+                app.menu_overlay.is_none()
+            })
+        })
+        .unwrap();
+    assert!(
+        refused,
+        "platform-menu-modal-settings: Settings opened behind the modal under the dropdown"
+    );
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).menu_overlay.is_none()));
+    assert!(cx.read(|cx| app.read(cx).stash_push_modal().is_some()));
+    app.update(cx, |app, cx| {
+        app.platform_menu_open = None;
+        cx.notify();
+    });
+    unmount(cx, app, win);
+    eprintln!("[gui-e2e] PASS platform_menu_modal_settings");
+}
+
+/// #976 review: opening Settings while a menu drawn above its layer is open
+/// (the filter popover) closes that menu first, so Settings is the front
+/// layer and Tab cycles where the user can see it.
+pub fn scenario_filter_menu_then_settings(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, win) = mount_short(cx, &repo);
+    app.update(cx, |app, cx| app.show_issues_mode(cx));
+    cx.run_until_parked();
+    let bounds =
+        measure(cx, win, &["list-filter-state"])[0].expect("Issues filter State chip is visible");
+    cx.simulate_click(win, bounds.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| e2e::menu_is_front(app.read(cx), cx)),
+        "precondition: the filter menu is open"
+    );
+
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.handle_menu_command("app.settings", window, cx)
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.menu_overlay.is_some() && !e2e::menu_is_front(app, cx),
+            "filter-menu-then-settings: Settings opened under the filter menu"
+        );
+    });
+    for step in 1..=3 {
+        cx.update_window(win, |_, window, cx| {
+            window.refresh();
+            window.draw(cx).clear();
+        })
+        .unwrap();
+        cx.simulate_keystrokes(win, "tab");
+        cx.run_until_parked();
+        assert!(
+            cx.update_window(win, |_, window, cx| {
+                app.read(cx)
+                    .settings_trap_contains_focus_for_e2e(window, cx)
+            })
+            .unwrap(),
+            "filter-menu-then-settings: Tab #{step} left the visible Settings"
+        );
+    }
+    unmount(cx, app, win);
+    eprintln!("[gui-e2e] PASS filter_menu_then_settings");
+}
+
+/// #976 review: the co-author picker lives in the workspace body. When an
+/// asynchronous conflict detection replaces that body with Conflict Mode,
+/// the picker is no longer drawn and must not stay the front layer, or
+/// Enter / Escape would be consumed by a menu the user cannot see.
+pub fn scenario_coauthor_menu_under_conflict(cx: &mut VisualTestAppContext) {
+    let fixture = crate::app_conflict::content_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, win) = crate::macos::mount(cx, &repo);
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        e2e::open_local_panel_no_inputs(app, repo.clone(), cx);
+    });
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        let panel = app.ui().commit_panel.clone().expect("Commit Panel");
+        panel.update(cx, |panel, cx| panel.toggle_coauthor_menu(cx));
+    });
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| e2e::menu_is_front(app.read(cx), cx)),
+        "precondition: the co-author picker is the front layer"
+    );
+
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    cx.update_window(win, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.ui().conflict.is_some() && !app.ui().conflict_merge_pending,
+            "precondition: Conflict Mode replaced the body"
+        );
+        assert!(
+            !e2e::menu_is_front(app, cx),
+            "coauthor-under-conflict: an undrawn co-author picker kept the keyboard"
+        );
+    });
+    unmount(cx, app, win);
+    eprintln!("[gui-e2e] PASS coauthor_menu_under_conflict");
+}

@@ -1129,6 +1129,11 @@ pub struct KagiApp {
     /// Focus handles of Settings' switches, one per toggle in drawing order
     /// (#970), handed to the overlay's renderer.
     pub(crate) settings_switches: keyboard_nav::FocusSlots,
+    /// Settings' focus trap (#974): the panel tracks this handle, and
+    /// opening Settings focuses it, so Tab / Shift+Tab cycle inside the
+    /// panel (gpui-component's Root) instead of reaching the terminal or the
+    /// workspace underneath. Built on the first open.
+    pub(crate) settings_focus: Option<gpui::FocusHandle>,
     /// ADR-0119: multi-line editor backing the Settings → "Analyze ignore"
     /// section (the gitignore-format exclude file). Lazily created when Settings
     /// opens (needs a `Window`).
@@ -1260,8 +1265,11 @@ pub struct KagiApp {
     /// Transient overlay opened from the menu bar (branch picker / About /
     /// Keyboard Shortcuts).  `None` when no menu overlay is visible.
     pub menu_overlay: Option<commands::MenuOverlay>,
-    /// Focus the next render applies (#812 / #817, `overlay_focus.rs`).
-    pending_focus: Option<gpui::FocusHandle>,
+    /// Focus and screen identity captured before an overlay opened (#812 / #976).
+    pending_focus: Option<overlay_focus::PendingFocus>,
+    /// A focus returned while a pane still animates closed; checked for
+    /// membership again on later frames when its control may have unmounted.
+    restored_focus: Option<gpui::FocusHandle>,
     /// Linux/FreeBSD client-side menu dropdown currently open from the in-app
     /// menu bar. Native macOS menus are provided by `cx.set_menus`, so only the
     /// Linux/FreeBSD titlebar sets this.
@@ -1411,6 +1419,7 @@ impl KagiApp {
             graph_compact: theme::compact_graph(),
             theme_select: None,
             settings_switches: Default::default(),
+            settings_focus: None,
             analyze_ignore_input: None,
             command_palette_input: None,
             pr_comment_input: None,
@@ -1448,6 +1457,7 @@ impl KagiApp {
             inspector_visible: true,
             menu_overlay: None,
             pending_focus: None,
+            restored_focus: None,
             platform_menu_open: None,
             // W11-AVATAR
             avatars: avatar::AvatarStore::default(),
@@ -2875,30 +2885,23 @@ impl KagiApp {
     /// rebase-onto), and Enter over those modals checked out the commit
     /// selected behind them.
     fn confirm_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.active_modal.is_some() {
-            self.confirm_open_modal(cx);
-            cx.notify();
-            if let Some(owner) = self.active_session() {
-                self.offer_auto_release(owner, cx);
+        match self.front_layer(cx) {
+            front_layer::FrontLayer::Modal => {
+                self.confirm_open_modal(cx);
+                cx.notify();
+                if let Some(owner) = self.active_session() {
+                    self.offer_auto_release(owner, cx);
+                }
+                true
             }
-            return true;
+            front_layer::FrontLayer::CommitPlan => {
+                self.start_commit(cx);
+                cx.notify();
+                true
+            }
+            front_layer::FrontLayer::Settings | front_layer::FrontLayer::Menu => true,
+            front_layer::FrontLayer::None => false,
         }
-        if self
-            .ui()
-            .commit_panel
-            .as_ref()
-            .is_some_and(|e| e.read(cx).state.plan_modal.is_some())
-        {
-            self.start_commit(cx);
-        } else if self.menu_overlay.is_some() {
-            // Open but no single confirm action — consume Enter (don't check out
-            // a commit), but take no action.
-            return true;
-        } else {
-            return false;
-        }
-        cx.notify();
-        true
     }
 
     /// Confirm whichever [`ActiveModal`] owns the slot. Split out of
@@ -2972,25 +2975,17 @@ impl KagiApp {
     /// Esc while a modal is open: cancel/close the active modal. Returns `true`
     /// if a modal was open.
     fn cancel_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.active_modal.is_some() {
-            self.cancel_open_modal();
-            if let Some(owner) = self.active_session() {
-                self.offer_auto_release(owner, cx);
+        match self.front_layer(cx) {
+            front_layer::FrontLayer::Modal => {
+                self.cancel_open_modal();
+                if let Some(owner) = self.active_session() {
+                    self.offer_auto_release(owner, cx);
+                }
             }
-            cx.notify();
-            return true;
-        }
-        if self
-            .ui()
-            .commit_panel
-            .as_ref()
-            .is_some_and(|e| e.read(cx).state.plan_modal.is_some())
-        {
-            self.cancel_commit_plan_modal(cx);
-        } else if self.menu_overlay.is_some() {
-            self.menu_overlay = None;
-        } else {
-            return false;
+            front_layer::FrontLayer::CommitPlan => self.cancel_commit_plan_modal(cx),
+            front_layer::FrontLayer::Settings => self.menu_overlay = None,
+            front_layer::FrontLayer::Menu => self.close_front_menu(cx),
+            front_layer::FrontLayer::None => return false,
         }
         cx.notify();
         true
@@ -3105,7 +3100,7 @@ impl KagiApp {
     }
 
     /// Conflict Mode replaces the normal body before workspace slots are resolved.
-    fn conflict_body_visible(&self) -> bool {
+    pub(crate) fn conflict_body_visible(&self) -> bool {
         self.ui().conflict.is_some() && !self.ui().conflict_merge_pending
     }
 

@@ -609,6 +609,10 @@ impl CommitPanelView {
         cx.notify();
     }
 
+    pub(crate) fn coauthor_menu_visible(&self) -> bool {
+        self.coauthor_menu.is_some()
+    }
+
     /// Open or close the co-author picker.
     ///
     /// Candidates are walked on open, not per frame — the walk touches recent

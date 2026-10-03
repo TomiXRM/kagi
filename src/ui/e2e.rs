@@ -22,6 +22,11 @@ pub use super::operations::conflict_detect::detect_payload_for_test;
 /// `ui::operations` is private, so the seam is here with the rest.
 pub use super::operations::conflict_detect::ConflictDetectOutcome;
 
+#[cfg(feature = "gui-e2e")]
+pub fn menu_is_front(app: &KagiApp, cx: &gpui::App) -> bool {
+    app.front_layer(cx) == super::front_layer::FrontLayer::Menu
+}
+
 /// Put the active tab's pane pass in the state where it waits on a conflict
 /// detection against the accepted read (#722).
 pub fn await_conflict_revalidation(app: &mut KagiApp) {

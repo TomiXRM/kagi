@@ -1263,6 +1263,14 @@ mod macos {
                 Box::new(crate::overlay_focus::scenario_settings_close_returns_focus),
             ),
             (
+                "settings_focus_trap",
+                Box::new(crate::overlay_focus::scenario_settings_focus_trap),
+            ),
+            (
+                "settings_hidden_return_target",
+                Box::new(crate::overlay_focus::scenario_settings_hidden_return_target),
+            ),
+            (
                 "settings_switches",
                 Box::new(crate::settings_switches::scenario_settings_switches),
             ),
@@ -1637,6 +1645,10 @@ mod macos {
                 Box::new(crate::file_menu_owner::scenario_file_menu_rejects_stale_owner),
             ),
             (
+                "file_menu_focus_after_open_repository",
+                Box::new(crate::file_menu_owner::scenario_file_menu_focus_after_open_repository),
+            ),
+            (
                 "github_evidence_restores",
                 Box::new(crate::github_evidence_owner::scenario_github_evidence_restores),
             ),
@@ -1717,6 +1729,26 @@ mod macos {
             (
                 "platform_menu_scroll",
                 Box::new(crate::platform_menu_scroll::scenario_platform_menu_scroll),
+            ),
+            (
+                "platform_menu_over_modal",
+                Box::new(crate::platform_menu_scroll::scenario_platform_menu_over_modal),
+            ),
+            (
+                "filter_menu_over_modal",
+                Box::new(crate::platform_menu_scroll::scenario_filter_menu_over_modal),
+            ),
+            (
+                "filter_menu_then_settings",
+                Box::new(crate::platform_menu_scroll::scenario_filter_menu_then_settings),
+            ),
+            (
+                "coauthor_menu_under_conflict",
+                Box::new(crate::platform_menu_scroll::scenario_coauthor_menu_under_conflict),
+            ),
+            (
+                "platform_menu_modal_settings",
+                Box::new(crate::platform_menu_scroll::scenario_platform_menu_modal_settings),
             ),
             (
                 "field_picker_owner",

@@ -96,3 +96,57 @@ pub fn scenario_tab_panels(cx: &mut VisualTestAppContext) {
 
     unmount(cx, app, window);
 }
+
+/// The repository tab strip (#983): the workspace body is the active tab's
+/// panel, named after it, and follows a switch; with Home in front, Home's
+/// body is the Home cell's panel and the workspace body is not drawn.
+pub fn scenario_repo_tab_panels(cx: &mut VisualTestAppContext) {
+    let _gh = OfflineGh::with_script("#!/bin/sh\necho 'gh: offline' >&2\nexit 1\n");
+    let first = build_fixture();
+    let second = build_fixture();
+    let (app, window) = mount(cx, first.path());
+    let name = |cx: &mut VisualTestAppContext, i: usize| {
+        app.read_with(cx, |app, _| app.tabs[i].name.clone())
+    };
+    assert_eq!(
+        panel(cx, window, "repo-tab-panel"),
+        Some(name(cx, 0)),
+        "the body is the first tab's panel"
+    );
+
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(second.path().to_path_buf(), cx))
+    });
+    cx.run_until_parked();
+    assert_ne!(name(cx, 0), name(cx, 1), "precondition: two names");
+    assert_eq!(
+        panel(cx, window, "repo-tab-panel"),
+        Some(name(cx, 1)),
+        "the body follows to the opened tab"
+    );
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        panel(cx, window, "repo-tab-panel"),
+        Some(name(cx, 0)),
+        "the body follows the switch back"
+    );
+
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.open_home_tab(window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        panel(cx, window, "home-tab-panel").as_deref(),
+        Some(Msg::HomeTabTitle.t()),
+        "Home's body is the Home cell's panel"
+    );
+    assert_eq!(
+        panel(cx, window, "repo-tab-panel"),
+        None,
+        "no repository panel while Home is in front"
+    );
+
+    unmount(cx, app, window);
+}

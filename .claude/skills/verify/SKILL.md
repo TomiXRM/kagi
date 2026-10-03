@@ -675,6 +675,14 @@ The current suite covers:
   (drafts are keyed by the repository written to; `drafts_test` covers the
   hand-over of pre-#940 drafts). For Tier B use a real `gh`
   login, click each switch cell and one PR / issue row of a local clone.
+- Home's display leftovers of #960 (`KAGI_GUI_E2E_ONLY=home_review_avatar_host,clone_card_ticker`,
+  `tests/recovery/home_p2.rs`, #968): a review request whose Enterprise host
+  is spelt `GHE.example.com` gets its author's avatar from the fetcher's disk
+  cache (`avatar_fetch::cache_path_for_url`, no network) and its row finds it
+  (`e2e::home_review_avatar_shown`). The running clone's card closed and
+  brought back from its row within a second leaves two redraw tickers
+  (`e2e::clone_tickers`) until the older one wakes; after 1.6 s on the test
+  dispatcher's clock (`advance_clock`) one is left.
 - Keyboard paths of Kagi's tab lists (`KAGI_GUI_E2E_ONLY=keyboard_nav`,
   `tests/recovery/keyboard_nav.rs`, #944): a cell is focused through
   `focus_mode_nav_for_e2e` / `focus_home_pane_for_e2e`; Tab / Shift+Tab are
@@ -685,7 +693,9 @@ The current suite covers:
   enter the mode; after →→ one Tab or Shift+Tab leaves the list and the
   other comes back in on the selected cell (#960 review); with a notice up,
   Enter on a cell does not confirm it; a pointer click on a cell gives the
-  focus back to the root. Home's switch: ←/→/Home/End select as they move,
+  focus back to the root; after → the focus taken away another way than Tab
+  (here the root's own focus) leaves the selected cell as the next Tab's
+  stop, not the arrowed-to one (#968). Home's switch: ←/→/Home/End select as they move,
   without wrapping, and read nothing (`home_reads_for_e2e`); with Home's
   search focused the arrows do not reach the switch (Enter is not pressed
   into the single-line field: the harness types its "\n"). For Tier B: Tab

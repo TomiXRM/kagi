@@ -893,7 +893,16 @@ impl KagiApp {
                         this.return_to_tab(slot, left, cx);
                         cx.notify();
                     } else {
+                        // Opening Home puts the focus on the root; a key
+                        // pressed on Home's cell keeps it there, as on a
+                        // repository's cell, so ←/→ go on working (#961
+                        // review). A pointer click hands the focus to the
+                        // root afterwards anyway (`TabList::cell`).
+                        let kept = this.tab_strip_focus.focused_cell(window);
                         this.open_home_tab(window, cx);
+                        if let Some(cell) = kept {
+                            window.focus(&cell, cx);
+                        }
                     }
                 });
             },

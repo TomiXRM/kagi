@@ -225,6 +225,15 @@ impl TabFocus {
         }
     }
 
+    /// The cell's handle holding the focus, if any.
+    pub(crate) fn focused_cell(&self, window: &Window) -> Option<FocusHandle> {
+        self.cells
+            .borrow()
+            .iter()
+            .find(|(_, handle)| handle.is_focused(window))
+            .map(|(_, handle)| handle.clone())
+    }
+
     /// The list is not drawn for now (Home is not in front): a focus on any
     /// of its cells goes to `fallback`.
     pub(crate) fn yield_focus(

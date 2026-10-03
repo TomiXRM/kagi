@@ -427,6 +427,19 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
         cx.read(|cx| app.read(cx).home.is_some_and(|home| home.front)),
         "Space brings Home to the front"
     );
+    // The key pressed on Home's cell leaves the focus there, as Enter on a
+    // repository's cell does, so ← goes on working (#961 review).
+    assert_eq!(
+        strip_focus(cx),
+        Some(repos),
+        "the focus stays on Home's cell after Space"
+    );
+    keys(cx, window, "left");
+    assert_eq!(
+        strip_focus(cx),
+        Some(repos - 1),
+        "← moves to the last repository"
+    );
 
     // With a repository in front and Home behind it, the + after the tabs
     // would bring Home forward when pressed: the Tab that leaves the strip

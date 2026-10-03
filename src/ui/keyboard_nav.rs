@@ -140,14 +140,23 @@ impl TabFocus {
         handles[..slots].to_vec()
     }
 
-    /// The cell in `slot` is about to be closed. The cells after it move up
-    /// a slot, so its handle is drawn again for the next cell: kept here, it
-    /// lets [`Self::release_from`] tell a focus left on the closed cell from
-    /// one on the cell that took its place (#961 review).
+    /// The cell in `slot` is about to be closed and the cells after it move up
+    /// a slot (#961 review). Its handle leaves the list, so every later cell
+    /// keeps its own handle — and a focus on it — in its new slot, and the
+    /// arrowed-to cell follows its cell too. The closed handle is kept until
+    /// the next frame, where [`Self::release_from`] hands a focus left on it
+    /// to the window.
     pub(crate) fn closing(&self, slot: usize) {
-        if let Some(handle) = self.handles.borrow().get(slot) {
-            self.closed.borrow_mut().push(handle.clone());
+        let mut handles = self.handles.borrow_mut();
+        if slot >= handles.len() {
+            return;
         }
+        self.closed.borrow_mut().push(handles.remove(slot));
+        self.roving.set(match self.roving.get() {
+            Some(at) if at == slot => None,
+            Some(at) if at > slot => Some(at - 1),
+            other => other,
+        });
     }
 
     /// Only the first `slots` cells are drawn now (a tab closed, or the list

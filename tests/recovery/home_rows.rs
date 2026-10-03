@@ -261,35 +261,37 @@ pub fn scenario_home_rows(cx: &mut VisualTestAppContext) {
 
     // The remembered row far down (r40), then a search that keeps it but
     // starts the list again at the top (#961 review): r40 is not drawn
-    // there, so the list's Tab stop is a drawn row, and Tab from the search
-    // field lands on r00 instead of passing the list by.
+    // there, so the frame that rebuilds the rows must give the Tab stop to
+    // a drawn row. Tab is moved over that very frame (no frame between, as
+    // when the user types and tabs at once): it lands on r00 instead of
+    // passing the list by.
     focus_row(cx, &app, window, "repo:acme/r00");
     for _ in 0..40 {
         keys(cx, window, "down");
     }
     assert_eq!(row(cx, &app, window).as_deref(), Some("repo:acme/r40"));
-    cx.update_window(window, |_, window, cx| {
-        let input = app.read(cx).home_github.filter.clone().unwrap();
-        input.update(cx, |input, cx| input.focus(window, cx));
-    })
-    .unwrap();
-    set_filter(cx, &app, window, "acme");
-    assert!(
-        !drawn(cx, window, "home-gh-acme/r40"),
-        "precondition: the search starts the list at the top"
-    );
-    let mut reached = None;
-    for _ in 0..4 {
-        keys(cx, window, "tab");
-        reached = row(cx, &app, window);
-        if reached.is_some() {
-            break;
-        }
-    }
+    let reached = cx
+        .update_window(window, |_, window, cx| {
+            let input = app.read(cx).home_github.filter.clone().unwrap();
+            input.update(cx, |input, cx| {
+                input.focus(window, cx);
+                input.set_value("acme", window, cx);
+            });
+            window.draw(cx).clear();
+            (0..4).find_map(|_| {
+                window.focus_next(cx);
+                app.read(cx).home_row_focused_for_e2e(window)
+            })
+        })
+        .unwrap();
     assert_eq!(
         reached.as_deref(),
         Some("repo:acme/r00"),
-        "Tab from the search reaches the list at a drawn row"
+        "Tab over the rebuilding frame reaches the list at a drawn row"
+    );
+    assert!(
+        !drawn(cx, window, "home-gh-acme/r40"),
+        "the search started the list at the top"
     );
     set_filter(cx, &app, window, "");
 

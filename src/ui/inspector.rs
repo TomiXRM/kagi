@@ -912,7 +912,10 @@ pub(super) fn render_inspector(
         .size_full()
         .min_h(px(0.))
         .overflow_y_scroll()
-        .child(message_inner);
+        .child(message_inner)
+        .when(cfg!(feature = "gui-e2e"), |scroll| {
+            scroll.child(super::e2e::measure_inside("inspector-message-scroll"))
+        });
     let message_box = div()
         .flex()
         .flex_col()

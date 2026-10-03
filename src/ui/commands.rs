@@ -1632,7 +1632,7 @@ impl KagiApp {
                 klog!("menu: sidebar_visible={}", self.sidebar.visible);
             }
             "view.toggleTerminal" => {
-                self.bottom_panel_open = !self.bottom_panel_open;
+                self.toggle_bottom_panel(window, cx);
                 klog!("menu: bottom_panel_open={}", self.bottom_panel_open);
                 if self.bottom_panel_open {
                     self.bottom_tab = BottomTab::Terminal;
@@ -1810,9 +1810,19 @@ impl KagiApp {
         self.dispatch_commit_action(action, target, window, cx);
     }
 
+    /// Toggle the panel from either the native View action / Cmd+J or the
+    /// command palette / platform menu. The menu route additionally starts
+    /// the terminal when opening; both routes share this focus transition.
+    pub(super) fn toggle_bottom_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_settings_for_command(window, cx);
+        self.bottom_panel_open = !self.bottom_panel_open;
+        cx.notify();
+    }
+
     /// Open the bottom Terminal panel for the current repo (Repository / File →
-    /// Open in Terminal).  Reuses the existing terminal-session plumbing.
+    /// Open in Terminal). Reuses the existing terminal-session plumbing.
     fn menu_open_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_settings_for_command(window, cx);
         self.bottom_panel_open = true;
         self.bottom_tab = BottomTab::Terminal;
         self.ensure_terminal(window, cx);
@@ -2080,11 +2090,13 @@ impl KagiApp {
             mode,
             branches.len()
         );
+        self.leave_settings_for_overlay();
         self.menu_overlay = Some(MenuOverlay::BranchPicker { mode, branches });
     }
 
     /// Build the About info overlay.
     fn open_about_overlay(&mut self) {
+        self.leave_settings_for_overlay();
         self.menu_overlay = Some(MenuOverlay::Info {
             title: SharedString::from("About kagi"),
             lines: vec![
@@ -2097,6 +2109,7 @@ impl KagiApp {
 
     /// Build the Keyboard Shortcuts overlay from the registry (auto-generated).
     fn open_shortcuts_overlay(&mut self) {
+        self.leave_settings_for_overlay();
         let mut lines: Vec<SharedString> = shortcut_listing()
             .into_iter()
             .map(|(label, key)| SharedString::from(format!("{key}    {label}")))
@@ -2130,6 +2143,7 @@ impl KagiApp {
                 cx.entity(),
                 self.theme_select.clone(),
                 self.settings_switches.clone(),
+                self.settings_focus.clone(),
                 self.smart_commit.clone(),
                 self.analyze_ignore_input.clone(),
                 window,

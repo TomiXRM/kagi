@@ -381,7 +381,7 @@ impl Render for KagiApp {
         // message, show the normal body (commit panel) instead of the conflict
         // resolution body (ADR-0068). Conflict Mode is still active (MERGE_HEAD
         // present) but the editor is hidden behind the commit message panel.
-        let conflict_merge_pending = self.ui().conflict_merge_pending;
+        let conflict_body_visible = self.conflict_body_visible();
         let commit_menu_overlay = self
             .commit_menu
             .clone()
@@ -568,7 +568,7 @@ impl Render for KagiApp {
                     this.step_editor_ws_selection(-1, window, cx);
                 } else if this.ui().main_diff.is_some() {
                     this.main_diff_step(-1, cx);
-                } else {
+                } else if this.commit_list_has_focus(window, cx) {
                     this.step_commit_selection(-1);
                 }
                 cx.notify();
@@ -585,10 +585,34 @@ impl Render for KagiApp {
                     this.step_editor_ws_selection(1, window, cx);
                 } else if this.ui().main_diff.is_some() {
                     this.main_diff_step(1, cx);
-                } else {
+                } else if this.commit_list_has_focus(window, cx) {
                     this.step_commit_selection(1);
                 }
                 cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &CommitFirst, window, cx| {
+                if this.commit_list_has_focus(window, cx) {
+                    this.jump_commit_selection(false);
+                    cx.notify();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CommitLast, window, cx| {
+                if this.commit_list_has_focus(window, cx) {
+                    this.jump_commit_selection(true);
+                    cx.notify();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CommitPageUp, window, cx| {
+                if this.commit_list_has_focus(window, cx) {
+                    this.step_commit_selection(-this.commit_page_size());
+                    cx.notify();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CommitPageDown, window, cx| {
+                if this.commit_list_has_focus(window, cx) {
+                    this.step_commit_selection(this.commit_page_size());
+                    cx.notify();
+                }
             }))
             .on_action(cx.listener(|this, _: &PrModePrevPane, window, cx| {
                 if this.root_has_focus(window) && this.pr_mode().is_some() {
@@ -648,7 +672,7 @@ impl Render for KagiApp {
             //    toolbar is redundant there; its Abort dispatches this strip's
             //    action. Admission is the read model either way — only the
             //    control's placement depends on the entity. ──
-            .when(conflict_entity.is_none() || conflict_merge_pending, |el| {
+            .when(!conflict_body_visible, |el| {
                 el.children(self.render_operation_strip(cx))
             })
             // ── Body slot: in Conflict Mode the conflict resolution pane
@@ -656,14 +680,14 @@ impl Render for KagiApp {
             //    the A/B hunk editor + Result Preview; the right is always the
             //    Conflict Dashboard (GitKraken-style — see render_body). The
             //    `ConflictView` entity renders its own body.
-            .when(conflict_entity.is_some() && !conflict_merge_pending, |el| {
+            .when(conflict_body_visible, |el| {
                 if let Some(entity) = conflict_entity.clone() {
                     el.child(entity)
                 } else {
                     el
                 }
             })
-            .when(conflict_entity.is_none() || conflict_merge_pending, |el| {
+            .when(!conflict_body_visible, |el| {
                 el.child(self.render_body(
                     row_count,
                     has_more_commits,

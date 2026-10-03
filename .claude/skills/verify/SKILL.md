@@ -325,6 +325,10 @@ The current suite covers:
   (PRs, Issues, Graph) names `sidebar-mode-panel` a `TabPanel` after the
   mode; Branch Cleanup (a takeover, sidebar still drawn) gives it no panel;
   each Home pane names `home-pane-panel` after the pane, without the count.
+  `repo_tab_panels` (#983, same file): with two repository tabs the
+  workspace body (`repo-tab-panel`) is named after the tab in front, after
+  opening the second and after switching back; with Home in front
+  `home-tab-panel` is named Home and no `repo-tab-panel` is drawn.
   `gh` is a failing stand-in. What VoiceOver speaks is not observable by an
   agent (the #972 probe found the native AX tree exposes no GPUI content).
 - modal input transitions (`KAGI_GUI_E2E_ONLY=remote_browse_escape_focus,pr_fields_escape_focus`,

@@ -88,6 +88,280 @@ fn commit(dir: &Path, content: &str) -> u64 {
     )
 }
 
+/// Record a real local tag write with the same observer and oplog builder used
+/// for writes whose ref names are not known until execution.
+fn observed_tag_write(dir: &Path, op: &str, args: &[&str]) -> u64 {
+    let (result, moves) = backend(dir).observe_ref_moves(|_| {
+        git(dir, args);
+        Ok::<(), GitError>(())
+    });
+    result.unwrap();
+    let state = StateSummary {
+        head: "branch: main".into(),
+        dirty: "clean".into(),
+    };
+    let entry = OpLogEntry::new(
+        op,
+        dir.display().to_string(),
+        state.clone(),
+        OpOutcome::Success { after: state },
+    )
+    .with_worktree(Some(dir.display().to_string()))
+    .with_ref_moves(moves);
+    append_oplog(&entry).unwrap();
+    newest(dir).id
+}
+
+#[test]
+fn recorded_lightweight_tag_creation_can_be_reverted_and_recreated() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let tip = git_output(&repo, &["rev-parse", "HEAD"]);
+    let created = run(
+        &repo,
+        Operation::CreateTag {
+            name: "light".into(),
+            at: CommitId(tip.clone()),
+        },
+    );
+    assert_eq!(
+        newest(&repo)
+            .ref_moves
+            .as_ref()
+            .and_then(|moves| moves.iter().find(|m| m.refname == "refs/tags/light"))
+            .and_then(|m| m.new.as_deref()),
+        Some(tip.as_str()),
+        "record the local tag at its raw ref OID"
+    );
+    let revert = Operation::OpRevert { entry_id: created };
+    let approved = plan(&repo, &revert);
+    assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
+    backend(&repo).run(&revert, &approved).unwrap();
+    assert!(!git_fixture::git_succeeds(
+        &repo,
+        &["show-ref", "--verify", "refs/tags/light"]
+    ));
+    let undone = newest(&repo).id;
+    let recreate = Operation::OpRevert { entry_id: undone };
+    let approved = plan(&repo, &recreate);
+    assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
+    backend(&repo).run(&recreate, &approved).unwrap();
+    assert_eq!(git_output(&repo, &["rev-parse", "refs/tags/light"]), tip);
+}
+
+#[test]
+fn annotated_tag_delete_and_lightweight_tag_move_round_trip_to_point() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let first = git_output(&repo, &["rev-parse", "HEAD"]);
+    run(
+        &repo,
+        Operation::CreateTag {
+            name: "light".into(),
+            at: CommitId(first.clone()),
+        },
+    );
+    observed_tag_write(
+        &repo,
+        "create-annotated-tag",
+        &["tag", "-a", "annotated", "-m", "note"],
+    );
+    let tag_object = git_output(&repo, &["rev-parse", "refs/tags/annotated"]);
+    assert_ne!(
+        tag_object, first,
+        "annotated tag retains its own object OID"
+    );
+    let point = create(&repo, "point");
+    commit(&repo, "later\n");
+    let second = git_output(&repo, &["rev-parse", "HEAD"]);
+    observed_tag_write(
+        &repo,
+        "move-tag",
+        &["update-ref", "refs/tags/light", &second, &first],
+    );
+    observed_tag_write(
+        &repo,
+        "delete-tag",
+        &["update-ref", "-d", "refs/tags/annotated", &tag_object],
+    );
+    assert!(!git_fixture::git_succeeds(
+        &repo,
+        &["show-ref", "--verify", "refs/tags/annotated"]
+    ));
+
+    let restore = Operation::RestoreToPoint { entry_id: point };
+    let approved = plan(&repo, &restore);
+    assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
+    backend(&repo).run(&restore, &approved).unwrap();
+    assert_eq!(git_output(&repo, &["rev-parse", "refs/tags/light"]), first);
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/tags/annotated"]),
+        tag_object,
+        "restore the tag object, not the peeled commit"
+    );
+    let receipt = newest(&repo);
+    assert!(
+        receipt
+            .backup_refs
+            .iter()
+            .any(|backup| { git_output(&repo, &["rev-parse", backup]) == second }),
+        "moved tag tip must have a durable backup"
+    );
+    let revert = Operation::OpRevert {
+        entry_id: receipt.id,
+    };
+    let approved = plan(&repo, &revert);
+    assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
+    backend(&repo).run(&revert, &approved).unwrap();
+    assert_eq!(git_output(&repo, &["rev-parse", "refs/tags/light"]), second);
+    assert!(!git_fixture::git_succeeds(
+        &repo,
+        &["show-ref", "--verify", "refs/tags/annotated"]
+    ));
+}
+
+#[test]
+fn moved_annotated_tag_retains_its_raw_object_and_leaves_index_tree_and_remote_alone() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    observed_tag_write(
+        &repo,
+        "create-annotated-tag",
+        &["tag", "-a", "release", "-m", "first"],
+    );
+    let first_tag = git_output(&repo, &["rev-parse", "refs/tags/release"]);
+    let point = create(&repo, "point");
+    observed_tag_write(
+        &repo,
+        "move-annotated-tag",
+        &["tag", "-fa", "release", "-m", "second"],
+    );
+    let second_tag = git_output(&repo, &["rev-parse", "refs/tags/release"]);
+    assert_ne!(first_tag, second_tag);
+    git(
+        &repo,
+        &[
+            "update-ref",
+            "refs/remotes/origin/main",
+            &git_output(&repo, &["rev-parse", "HEAD"]),
+        ],
+    );
+    write_file(&repo, "a.txt", "staged\n");
+    git(&repo, &["add", "a.txt"]);
+    write_file(&repo, "a.txt", "unstaged\n");
+    let index = git_output(&repo, &["ls-files", "-s", "--", "a.txt"]);
+    let tree = std::fs::read_to_string(repo.join("a.txt")).unwrap();
+    let remote = git_output(&repo, &["rev-parse", "refs/remotes/origin/main"]);
+
+    let restore = Operation::RestoreToPoint { entry_id: point };
+    let approved = plan(&repo, &restore);
+    assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
+    let report = backend(&repo).run_recorded(&restore, &approved);
+    assert!(report.result.is_ok(), "{:?}", report.result);
+    assert!(
+        matches!(
+            report.recording,
+            kagi_git::backend::recording::Recording::Appended { .. }
+        ),
+        "restore must persist its durable recovery receipt: {:?}",
+        report.recording
+    );
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/tags/release"]),
+        first_tag
+    );
+    let receipt = newest(&repo);
+    let backups: Vec<_> = receipt
+        .backup_refs
+        .iter()
+        .map(|backup| {
+            (
+                backup.clone(),
+                git_output(&repo, &["rev-parse", backup]),
+                git_output(&repo, &["cat-file", "-t", backup]),
+            )
+        })
+        .collect();
+    assert!(
+        backups
+            .iter()
+            .any(|(_, oid, kind)| oid == &second_tag && kind == "tag"),
+        "the moved annotated tag object {second_tag} needs a durable backup: {backups:?}"
+    );
+    assert!(receipt.recovery.iter().any(|handle| {
+        handle.kind == kagi_git::oplog::recovery::TAG_REF
+            && handle.oid == second_tag
+            && handle
+                .reference
+                .as_ref()
+                .is_some_and(|reference| receipt.backup_refs.contains(reference))
+    }));
+    assert_eq!(git_output(&repo, &["ls-files", "-s", "--", "a.txt"]), index);
+    assert_eq!(std::fs::read_to_string(repo.join("a.txt")).unwrap(), tree);
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/remotes/origin/main"]),
+        remote
+    );
+
+    let revert = Operation::OpRevert {
+        entry_id: receipt.id,
+    };
+    let approved = plan(&repo, &revert);
+    assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
+    backend(&repo).run(&revert, &approved).unwrap();
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/tags/release"]),
+        second_tag
+    );
+    assert_eq!(git_output(&repo, &["ls-files", "-s", "--", "a.txt"]), index);
+    assert_eq!(std::fs::read_to_string(repo.join("a.txt")).unwrap(), tree);
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/remotes/origin/main"]),
+        remote
+    );
+}
+
+#[test]
+fn local_tag_drift_after_confirmation_refuses_without_writing() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let first = git_output(&repo, &["rev-parse", "HEAD"]);
+    let created = run(
+        &repo,
+        Operation::CreateTag {
+            name: "release".into(),
+            at: CommitId(first.clone()),
+        },
+    );
+    commit(&repo, "later\n");
+    let drifted = git_output(&repo, &["rev-parse", "HEAD"]);
+    let revert = Operation::OpRevert { entry_id: created };
+    let approved = plan(&repo, &revert);
+    assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
+    git(
+        &repo,
+        &["update-ref", "refs/tags/release", &drifted, &first],
+    );
+    let err = backend(&repo).run(&revert, &approved).unwrap_err();
+    assert!(err.to_string().contains("refs/tags/release"), "{err}");
+    assert_eq!(
+        git_output(&repo, &["rev-parse", "refs/tags/release"]),
+        drifted
+    );
+}
+
 #[test]
 fn restoring_three_operations_back_puts_every_branch_where_it_was() {
     if !test_support::run_isolated() {

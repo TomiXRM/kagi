@@ -325,10 +325,10 @@ pub struct OpLogEntry {
     /// that used to be readable only out of the `after.dirty` sentence (#500).
     /// Additive: an entry written before this field reads back as empty.
     pub recovery: Vec<RecoveryHandle>,
-    /// The refs this operation moved, by OID (#334 slice 2a, ADR-0214 §4):
-    /// HEAD of the worktree it ran in, and every `refs/heads/*`. `None` = not
-    /// recorded (written before the field, or by a path that does not record
-    /// moves); `Some(empty)` = recorded, nothing moved.
+    /// The refs this operation moved, by raw OID (#334 / #887, ADR-0214 §4):
+    /// HEAD of the worktree it ran in, `refs/heads/*`, and `refs/tags/*`.
+    /// `None` = not recorded (older entry or a path without ref observation);
+    /// `Some(empty)` = recorded, nothing moved.
     pub ref_moves: Option<Vec<kagi_domain::ref_moves::RefMove>>,
     /// The repository the entry was recorded in (#894).
     pub repo_identity: RecordedIdentity,

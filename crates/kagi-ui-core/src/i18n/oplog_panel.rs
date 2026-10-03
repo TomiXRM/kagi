@@ -23,7 +23,7 @@ pub enum OplogPanelMsg {
     ReflogAmbiguous,
     /// The selected row's "undo this one operation" button (#334 slice 2b).
     RevertButton,
-    /// The selected row's "put branches back to here" button.
+    /// The selected row's "put local refs back to here" button.
     RestoreButton,
     /// Why both buttons are disabled for an entry without recorded ref moves.
     RestoreUnavailable,
@@ -32,6 +32,9 @@ pub enum OplogPanelMsg {
     /// Heading of the card's after-restore graph when it cannot be drawn: no
     /// count of disappearing commits is claimed (#883 review).
     PreviewUnavailableHeading,
+    /// A local tag move may point at a tag object, so branch graph projection
+    /// is not shown. The restore itself is still planned and verified.
+    PreviewTagChange,
 }
 
 impl OplogPanelMsg {
@@ -62,10 +65,16 @@ impl OplogPanelMsg {
             (Lang::Ja, RestoreUnavailable) => {
                 "この操作には ref の移動の記録が無いため、正確に戻せません。"
             }
-            (Lang::En, RestoreArmed) => "Really move the branches back",
-            (Lang::Ja, RestoreArmed) => "本当に branch を戻しますか",
+            (Lang::En, RestoreArmed) => "Really move these local refs back",
+            (Lang::Ja, RestoreArmed) => "本当に local ref を戻しますか",
             (Lang::En, PreviewUnavailableHeading) => "Graph after",
             (Lang::Ja, PreviewUnavailableHeading) => "戻した後のグラフ",
+            (Lang::En, PreviewTagChange) => {
+                "Preview unavailable: local tags change; annotated tags may point to tag objects instead of commits. The restore itself is unaffected."
+            }
+            (Lang::Ja, PreviewTagChange) => {
+                "プレビューできません: local tag が変わります。annotated tag は commit ではなく tag object を指す場合があります。復元そのものには影響しません。"
+            }
         }
     }
 }

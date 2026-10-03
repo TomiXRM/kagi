@@ -1,7 +1,7 @@
 //! Op-revert / restore-to-point planning (#334 slice 2b, ADR-0214 §5): which
-//! branches to put back, from the **recorded** ref moves of Operation Log
-//! entries alone. Pure — the backend supplies the entries and current refs,
-//! applies the result as one `git update-ref --stdin` transaction.
+//! local branches and tags to put back, from the **recorded** ref moves of
+//! Operation Log entries alone. Pure — the backend supplies the entries and
+//! current refs, and applies the result in one `git update-ref --stdin` transaction.
 
 use crate::plan_note::{HeadAt, OplogRestoreNote};
 use crate::ref_moves::{RefMove, RefSnapshot};
@@ -86,8 +86,10 @@ fn switches_head(m: &RefMove) -> bool {
     m.refname == "HEAD" && !(m.old_symbolic.is_some() && m.old_symbolic == m.new_symbolic)
 }
 
-fn branch_moves(moves: &[RefMove]) -> impl Iterator<Item = &RefMove> {
-    moves.iter().filter(|m| m.refname != "HEAD")
+fn restorable_moves(moves: &[RefMove]) -> impl Iterator<Item = &RefMove> {
+    moves
+        .iter()
+        .filter(|m| m.refname.starts_with("refs/heads/") || m.refname.starts_with("refs/tags/"))
 }
 
 /// `entries` = the whole log, oldest first (by id). `current` = the refs now.
@@ -162,12 +164,7 @@ pub fn plan(
         }
     }
     if mode == RestoreMode::Revert {
-        for m in entries[pos]
-            .ref_moves
-            .iter()
-            .flatten()
-            .filter(|m| m.refname != "HEAD")
-        {
+        for m in restorable_moves(entries[pos].ref_moves.as_deref().unwrap_or_default()) {
             let later = entries[pos + 1..].iter().find(|later| {
                 later
                     .ref_moves
@@ -187,7 +184,7 @@ pub fn plan(
     // refname → (restore_to = oldest `old` in the range, expect = newest `new`).
     let mut table: BTreeMap<&str, (Option<String>, Option<String>)> = BTreeMap::new();
     for e in range {
-        for m in branch_moves(e.ref_moves.as_deref().unwrap_or_default()) {
+        for m in restorable_moves(e.ref_moves.as_deref().unwrap_or_default()) {
             table
                 .entry(m.refname.as_str())
                 .and_modify(|(_, expect)| *expect = m.new.clone())
@@ -209,7 +206,7 @@ pub fn plan(
     // Every ref the range recorded — including one that moved and came back,
     // which is left alone only if it is still where the record left it.
     for (refname, (_, expect)) in &table {
-        let now = current.branches.get(*refname).cloned();
+        let now = current.refs.get(*refname).cloned();
         if now != *expect {
             blockers.push(OplogRestoreNote::RefMovedSince {
                 refname: refname.to_string(),
@@ -257,7 +254,9 @@ pub fn from_lines(lines: &[String]) -> Result<Vec<RefRestore>, String> {
         .iter()
         .map(
             |line| match line.split(' ').collect::<Vec<_>>().as_slice() {
-                ["restore", refname, to, expect] if refname.starts_with("refs/heads/") => {
+                ["restore", refname, to, expect]
+                    if refname.starts_with("refs/heads/") || refname.starts_with("refs/tags/") =>
+                {
                     Ok(RefRestore {
                         refname: refname.to_string(),
                         expect: side(expect),
@@ -333,11 +332,11 @@ mod tests {
         super::plan(entries, target, mode, current, &Observed::default())
     }
 
-    fn refs(branches: &[(&str, &str)]) -> RefSnapshot {
+    fn refs(entries: &[(&str, &str)]) -> RefSnapshot {
         RefSnapshot {
             head_oid: None,
             head_symbolic: None,
-            branches: branches
+            refs: entries
                 .iter()
                 .map(|(n, o)| (n.to_string(), o.to_string()))
                 .collect(),

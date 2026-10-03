@@ -1,6 +1,6 @@
 //! OplogRestoreNote — op-revert / restore-to-point (#334 slice 2b, ADR-0214
-//! §5): put branches back where an Operation Log entry recorded them, by ref
-//! update only, built on recorded moves alone (never the time-window estimate).
+//! §5): put recorded local branch and tag refs back by ref update only (never
+//! the time-window estimate).
 
 fn short(oid: &Option<String>) -> String {
     match oid {
@@ -58,8 +58,8 @@ pub enum OplogRestoreNote {
     /// were recorded, or by a path that does not record them).
     NotRecorded { id: u64, op: String },
     /// blocker — the entry switched or detached HEAD (`from` → `to`):
-    /// undoing that is a checkout, which touches the working tree, and a
-    /// restore moves branches only (#886, ADR-0214 §7). One guidance for
+    /// undoing that is a checkout, which touches the working tree; ref-only
+    /// restore does not move HEAD (#886, ADR-0214 §7). One guidance for
     /// every case; anything more involved is done by hand (#912 review).
     /// `worktree` = where the switch ran, when that is not the worktree the
     /// restore is planned from: the checkout belongs there, not here.
@@ -99,16 +99,16 @@ pub enum OplogRestoreNote {
     /// blocker (restore-to-point) — an entry in the range ran in a worktree
     /// that can no longer be opened, so it may have been this repository's.
     UnknownRepository { id: u64, op: String, path: String },
-    /// blocker (restore-to-point) — the branch was created or moved after the
-    /// target by something no recorded entry covers; restoring would leave it.
+    /// blocker (restore-to-point) — a branch changed after the target
+    /// outside recorded operations; restoring would leave it unchanged.
     RefChangedOutsideRecord { refname: String },
     /// warning — a branch to move is checked out in a worktree with changes:
     /// they stay (only the ref moves) and mix with the diff to the new tip.
     CheckedOutDirty { branch: String, path: String },
     /// blocker — a branch to delete is checked out in a worktree.
     DeletesCheckedOutBranch { branch: String, path: String },
-    /// blocker — the commit a branch would go back to is no longer in the
-    /// object store (pruned after its reflog expired).
+    /// blocker — the object a branch or tag would go back to is no longer in
+    /// the object store (pruned after its reflog or backup expired).
     TargetGone { refname: String, oid: String },
     /// warning — one reverse action (`from` = now, `to` = restored; `None` =
     /// the ref is absent on that side).
@@ -144,7 +144,7 @@ impl OplogRestoreNote {
                 to,
                 worktree,
             } => format!(
-                "Operation #{id} ({op}) switched HEAD{} from {} to {}, so the range cannot be restored: a restore moves branches only, never HEAD, because that would change the working tree. Check out {}{} yourself, then restore to #{id} or a later point. Anything more involved (several switches, branches it created or deleted) has to be done by hand.",
+                "Operation #{id} ({op}) switched HEAD{} from {} to {}, so the range cannot be restored: a restore moves local branches and tags only, never HEAD, because that would change the working tree. Check out {}{} yourself, then restore to #{id} or a later point. Anything more involved (several switches, branches it created or deleted) has to be done by hand.",
                 worktree.as_ref().map(|p| format!(" in the worktree {p}")).unwrap_or_default(),
                 from.label_en(),
                 to.label_en(),
@@ -154,7 +154,7 @@ impl OplogRestoreNote {
             OplogRestoreNote::LaterEntryMoved { refname, id, op } => format!(
                 "{refname} was moved again by the later operation #{id} ({op}). Revert that one first, or restore to a point."
             ),
-            OplogRestoreNote::NothingToRestore => "No branch would move.".to_string(),
+            OplogRestoreNote::NothingToRestore => "No local branch or tag would move.".to_string(),
             OplogRestoreNote::RefMovedSince {
                 refname,
                 expected,
@@ -196,7 +196,7 @@ impl OplogRestoreNote {
             OplogRestoreNote::MovesCheckedOutBranch { branch, path } => format!(
                 "'{branch}' is checked out in {path}: only the branch moves; that worktree's index and files stay as they are."
             ),
-            OplogRestoreNote::RefsOnly => "Only branches move. The working tree, the index, untracked files, stashes, tags and remote branches are not restored. Every moved branch keeps its current tip under refs/kagi/backups/.".to_string(),
+            OplogRestoreNote::RefsOnly => "Unchanged: working tree · index · untracked · stash · remote branches".to_string(),
         }
     }
 }
@@ -214,7 +214,7 @@ impl OplogRestoreTitle {
         match self {
             OplogRestoreTitle::Revert { id, op } => format!("Revert operation #{id} ({op})"),
             OplogRestoreTitle::RestoreTo { id, op } => {
-                format!("Restore branches to after operation #{id} ({op})")
+                format!("Restore local refs to after operation #{id} ({op})")
             }
         }
     }
@@ -230,7 +230,7 @@ impl OplogRestoreRecovery {
     /// Sole English renderer.
     pub fn message_en(&self) -> String {
         match self {
-            OplogRestoreRecovery::Restore => "This is itself recorded with its ref moves: revert it from the Operation Log, or put a branch back with git update-ref <ref> <backup-ref> (the backups are listed in the entry).".to_string(),
+            OplogRestoreRecovery::Restore => "This is itself recorded with its ref moves: revert it from the Operation Log, or put a local ref back with git update-ref <ref> <backup-ref> (the backups are listed in the entry).".to_string(),
         }
     }
 }

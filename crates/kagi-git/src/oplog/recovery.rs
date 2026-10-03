@@ -22,6 +22,9 @@ pub const STASH: &str = "stash";
 pub const FILE_BACKUP: &str = "file-backup";
 /// Tip of a branch that was deleted or is about to disappear with a worktree.
 pub const BRANCH_TIP: &str = "branch-tip";
+/// Raw local tag ref OID held before a restore, whether lightweight (commit)
+/// or annotated (tag object).
+pub const TAG_REF: &str = "tag-ref";
 /// A stash-shaped commit of index + working tree (`git stash apply --index`
 /// restores it), #536.
 pub const WORK_STASH: &str = "work-stash";
@@ -35,7 +38,7 @@ pub const HISTORY_TO: &str = "history-to";
 pub struct RecoveryHandle {
     /// What the OID is — one of the `kind` constants in this module.
     pub kind: String,
-    /// Full (40-hex) blob or commit OID.
+    /// Full (40-hex) blob, commit or annotated tag-object OID.
     pub oid: String,
     /// Repo-relative path this OID holds the content of, for per-file handles.
     pub path: Option<String>,
@@ -44,7 +47,7 @@ pub struct RecoveryHandle {
 }
 
 impl RecoveryHandle {
-    /// A whole-repository handle (savepoint, stash, branch tip).
+    /// A whole-repository handle (savepoint, stash, branch tip, tag ref).
     pub fn oid(kind: &str, oid: impl Into<String>) -> Self {
         RecoveryHandle {
             kind: kind.to_string(),

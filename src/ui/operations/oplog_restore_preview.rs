@@ -28,6 +28,14 @@ pub(crate) fn build(view: &TabViewState, plan: &OperationPlan) -> Option<Arc<Res
     if restores.is_empty() {
         return None;
     }
+    // Tags can point to annotated tag objects, not graph commit IDs. Do not
+    // compute a branch-only graph or count disappearing commits for tag moves.
+    if restores.iter().any(|r| r.refname.starts_with("refs/tags/")) {
+        return Some(Arc::new(RestoreGraphPreview {
+            graph: RestorePreview::TagChange,
+            summaries: Vec::new(),
+        }));
+    }
     // Branch Solo only filters what the graph shows; the full loaded rows are
     // kept aside while it is on (#883 review).
     let (rows, row_index) = match &view.branch_solo {
@@ -46,9 +54,9 @@ pub(crate) fn build(view: &TabViewState, plan: &OperationPlan) -> Option<Arc<Res
         .iter()
         .map(|(name, oid)| (format!("refs/heads/{name}"), oid.clone()))
         .collect();
-    // What the restore never moves keeps its commits: remote branches, tags,
-    // fetched PR heads (graph roots no branch names, #883 review), detached
-    // worktree HEADs (an attached one follows its branch), stashes.
+    // Branch-only restore: remote branches, tags, fetched PR heads (graph
+    // roots no branch names, #883 review), detached worktree HEADs (an
+    // attached one follows its branch), and stashes keep their commits.
     let fixed = FixedRoots(
         view.remote_branches
             .iter()
@@ -76,7 +84,7 @@ pub(crate) fn build(view: &TabViewState, plan: &OperationPlan) -> Option<Arc<Res
                     .unwrap_or_default()
             })
             .collect(),
-        RestorePreview::NotLoaded { .. } => Vec::new(),
+        RestorePreview::NotLoaded { .. } | RestorePreview::TagChange => Vec::new(),
     };
     Some(Arc::new(RestoreGraphPreview { graph, summaries }))
 }
@@ -86,7 +94,7 @@ pub(crate) fn build(view: &TabViewState, plan: &OperationPlan) -> Option<Arc<Res
 pub(crate) fn heading_text(graph: &RestorePreview) -> String {
     match graph {
         RestorePreview::Graph { removed, .. } => i18n::oplog_panel::preview_heading(*removed),
-        RestorePreview::NotLoaded { .. } => {
+        RestorePreview::NotLoaded { .. } | RestorePreview::TagChange => {
             Msg::OplogPanel(OplogPanelMsg::PreviewUnavailableHeading)
                 .t()
                 .to_string()
@@ -109,6 +117,12 @@ pub(crate) fn clipboard_text(preview: &RestoreGraphPreview) -> String {
     match &preview.graph {
         RestorePreview::NotLoaded { refname, oid } => {
             out.push_str(&format!("  {}\n", not_loaded_text(refname, oid)));
+        }
+        RestorePreview::TagChange => {
+            out.push_str(&format!(
+                "  {}\n",
+                Msg::OplogPanel(OplogPanelMsg::PreviewTagChange).t()
+            ));
         }
         RestorePreview::Graph {
             rows,
@@ -189,6 +203,19 @@ fn render(preview: &RestoreGraphPreview) -> gpui::AnyElement {
                         .relative()
                         .text_color(rgb(theme().color_warning))
                         .child(SharedString::from(not_loaded_text(refname, oid)))
+                        .child(crate::ui::e2e::measure_inside(
+                            "restore-preview-unavailable",
+                        )),
+                )
+                .into_any_element();
+        }
+        RestorePreview::TagChange => {
+            return section
+                .child(
+                    div()
+                        .relative()
+                        .text_color(rgb(theme().color_warning))
+                        .child(Msg::OplogPanel(OplogPanelMsg::PreviewTagChange).t())
                         .child(crate::ui::e2e::measure_inside(
                             "restore-preview-unavailable",
                         )),

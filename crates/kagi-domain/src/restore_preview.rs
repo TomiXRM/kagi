@@ -20,9 +20,10 @@ pub struct LoadedCommit {
     pub parents: Vec<CommitId>,
 }
 
-/// What still points at commits after the restore, besides local branches:
-/// remote-tracking branches, tags, detached worktree HEADs, stash bases.
-/// These never move, so whatever they reach stays.
+/// What still points at commits after a branch-only restore, besides local
+/// branches: remote-tracking branches, tags, detached worktree HEADs, stash
+/// bases. Tag changes are not graph-projected: their raw ref OIDs can point
+/// at tag objects rather than commits.
 #[derive(Debug, Clone, Default)]
 pub struct FixedRoots(pub Vec<CommitId>);
 
@@ -43,6 +44,9 @@ pub enum RestorePreview {
     /// A branch would go back to a commit the tab has not loaded (a deleted
     /// branch's history, or older than the loaded page): no guess is drawn.
     NotLoaded { refname: String, oid: String },
+    /// A local tag changes; its raw ref may point at an annotated tag object.
+    /// Do not draw a branch-only projection or claim commits disappear.
+    TagChange,
     Graph {
         rows: Vec<PreviewRow>,
         lane_count: usize,
@@ -93,6 +97,9 @@ pub fn preview(
     fixed: &FixedRoots,
     restores: &[RefRestore],
 ) -> RestorePreview {
+    if restores.iter().any(|r| r.refname.starts_with("refs/tags/")) {
+        return RestorePreview::TagChange;
+    }
     let index: HashMap<&CommitId, usize> = commits
         .iter()
         .enumerate()
@@ -319,6 +326,24 @@ mod tests {
                 refname: "refs/heads/gone".into(),
                 oid: "zz".into()
             }
+        );
+    }
+
+    #[test]
+    fn annotated_tag_object_is_not_mistaken_for_unloaded_commit_or_fixed_root() {
+        let tag = RefRestore {
+            refname: "refs/tags/release".into(),
+            restore_to: Some("raw-annotated-tag-object".into()),
+            expect: None,
+        };
+        assert_eq!(
+            preview(
+                &fork(),
+                &branches(&[("main", "m"), ("feat", "f2")]),
+                &FixedRoots(vec![id("f2")]),
+                &[restore("feat", None, Some("f2")), tag],
+            ),
+            RestorePreview::TagChange,
         );
     }
 

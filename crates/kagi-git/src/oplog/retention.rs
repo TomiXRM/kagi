@@ -101,9 +101,9 @@ pub(crate) fn plan(repo: &Repository, entry: &OpLogEntry) -> Result<ForgetOplogP
         let object = repo.find_object(oid, None).map_err(io)?;
         if !matches!(
             object.kind(),
-            Some(git2::ObjectType::Blob | git2::ObjectType::Commit)
+            Some(git2::ObjectType::Blob | git2::ObjectType::Commit | git2::ObjectType::Tag)
         ) {
-            return Err(io("backup is neither a blob nor a commit"));
+            return Err(io("backup is neither a blob, commit nor tag object"));
         }
         refs.push((name.clone(), oid));
     }
@@ -227,9 +227,9 @@ pub(super) fn validate_append_roots(entry: &OpLogEntry) -> Result<(), GitError> 
         let object = repo.find_object(oid, None).map_err(io)?;
         if !matches!(
             object.kind(),
-            Some(git2::ObjectType::Blob | git2::ObjectType::Commit)
+            Some(git2::ObjectType::Blob | git2::ObjectType::Commit | git2::ObjectType::Tag)
         ) {
-            return Err(io("backup is neither a blob nor a commit"));
+            return Err(io("backup is neither a blob, commit nor tag object"));
         }
     }
     Ok(())

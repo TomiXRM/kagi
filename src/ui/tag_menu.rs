@@ -65,6 +65,7 @@ pub fn render_tag_menu_overlay(
     state: TagMenuState,
     header: SharedString,
     groups: Vec<MenuGroup<TagAction>>,
+    keys: &super::menu_keys::MenuKeys,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -89,6 +90,7 @@ pub fn render_tag_menu_overlay(
         groups,
         on_dismiss,
         on_select,
+        Some(keys),
         window,
         cx,
     )

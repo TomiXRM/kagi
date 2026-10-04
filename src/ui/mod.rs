@@ -90,6 +90,7 @@ mod inspector_model;
 pub(crate) mod keyboard_nav;
 pub mod list_a11y;
 pub mod main_diff_pane;
+mod menu_keys;
 pub mod menu_overlay;
 /// #454: shared modal chrome (card shell + collapsible sections).
 mod modal_command;
@@ -1253,6 +1254,11 @@ pub struct KagiApp {
     /// ADR-0140: open tag context menu (right-click on a sidebar tag row).
     pub tag_menu: Option<tag_menu::TagMenuState>,
     pub worktree_menu: Option<worktree_menu::WorktreeMenuState>,
+    /// The context menus' keyboard (#985).
+    pub(crate) menu_keys: menu_keys::MenuKeys,
+    /// The selected commit row's bounds as last drawn: where the
+    /// context-menu key opens its menu (#985).
+    pub(crate) context_anchor: menu_keys::RowAnchor,
     /// Owner-stamped file menu; its path survives row renumbering (#286).
     pub file_menu: Option<file_menu::FileMenu>,
     /// Right-click context menu on an Inspector / Compare changed-file row
@@ -1453,6 +1459,8 @@ impl KagiApp {
             stash_menu: None,
             tag_menu: None,
             worktree_menu: None,
+            menu_keys: Default::default(),
+            context_anchor: Default::default(),
             file_menu: None,
             inspector_file_menu: None,
             // W5-MENU

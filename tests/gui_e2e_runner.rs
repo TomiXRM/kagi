@@ -131,6 +131,9 @@ mod home_tab;
 #[path = "recovery/commit_paging.rs"]
 mod commit_paging;
 #[cfg(target_os = "macos")]
+#[path = "recovery/context_menu_keys.rs"]
+mod context_menu_keys;
+#[cfg(target_os = "macos")]
 #[path = "recovery/home_github.rs"]
 mod home_github;
 #[cfg(target_os = "macos")]
@@ -997,6 +1000,50 @@ mod macos {
             (
                 "commit_paging",
                 Box::new(crate::commit_paging::scenario_commit_paging),
+            ),
+            (
+                "context_menu_keys",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys),
+            ),
+            (
+                "context_menu_keys_sidebar",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_sidebar),
+            ),
+            (
+                "context_menu_keys_home",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_home),
+            ),
+            (
+                "context_menu_keys_short",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_short),
+            ),
+            (
+                "context_menu_keys_reload",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_reload),
+            ),
+            (
+                "context_menu_keys_tab",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_tab),
+            ),
+            (
+                "context_menu_keys_covered",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_covered),
+            ),
+            (
+                "context_menu_keys_a11y",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_a11y),
+            ),
+            (
+                "context_menu_keys_covered_row",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_covered_row),
+            ),
+            (
+                "context_menu_keys_disabled_live",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_disabled_live),
+            ),
+            (
+                "context_menu_keys_item_appears",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_item_appears),
             ),
             (
                 "home_list_place",

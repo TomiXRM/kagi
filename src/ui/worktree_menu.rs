@@ -176,6 +176,7 @@ pub fn render_worktree_menu_overlay(
     state: WorktreeMenuState,
     header: SharedString,
     groups: Vec<MenuGroup<WorktreeAction>>,
+    keys: &super::menu_keys::MenuKeys,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -200,6 +201,7 @@ pub fn render_worktree_menu_overlay(
         groups,
         on_dismiss,
         on_select,
+        Some(keys),
         window,
         cx,
     )

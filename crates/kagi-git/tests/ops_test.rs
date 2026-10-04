@@ -82,6 +82,34 @@ fn test_plan_clean_repo_no_blockers() {
     );
 }
 
+#[cfg(not(windows))]
+#[test]
+fn checkout_equivalent_command_quotes_shell_metacharacters() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let (repo_dir, repo) = build_two_branch_repo(&tmp);
+    // Git refs forbid spaces, but allow command substitution syntax and quotes.
+    // Keep spaces covered by the shared shell_quote unit test.
+    let branch = "topic$(id)'branch";
+    git(&repo_dir, &["branch", branch]);
+
+    let plan = plan_checkout(&repo, branch).expect("plan_checkout failed");
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    assert_eq!(
+        plan.equivalent_command.as_deref(),
+        Some("git checkout 'topic$(id)'\\''branch'")
+    );
+    let output = std::process::Command::new("sh")
+        .args(["-c", plan.equivalent_command.as_deref().unwrap()])
+        .current_dir(&repo_dir)
+        .output()
+        .expect("execute copied POSIX command");
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(git_output(&repo_dir, &["branch", "--show-current"]), branch);
+}
+
 #[test]
 fn test_execute_clean_repo_moves_head() {
     if !crate::test_support::run_isolated() {

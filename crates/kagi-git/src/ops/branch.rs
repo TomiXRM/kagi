@@ -1,5 +1,6 @@
 use super::*;
 use kagi_domain::plan_note::{BranchNote, BranchRecovery, BranchTitle, CommonNote};
+use kagi_domain::remote::shell_quote;
 
 // ────────────────────────────────────────────────────────────
 // plan_create_branch
@@ -719,7 +720,7 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
         destructive: false,
         // The unmerged route additionally requires mandatory recovery retention.
         equivalent_command: if is_merged {
-            Some(format!("git branch -d {}", name))
+            Some(format!("git branch -d {}", shell_quote(name)))
         } else {
             None
         },

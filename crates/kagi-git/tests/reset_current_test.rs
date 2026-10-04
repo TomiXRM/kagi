@@ -89,7 +89,7 @@ fn test_equivalent_command_is_faithful_soft_reset() {
 
     assert_eq!(
         plan.equivalent_command,
-        Some(format!("git reset --soft {}", commits[0])),
+        Some(format!("git reset --soft '{}'", commits[0])),
         "reset plan must carry the faithful soft-reset equivalent"
     );
     // Never the forbidden --hard form.

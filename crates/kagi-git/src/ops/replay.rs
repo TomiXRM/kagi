@@ -19,6 +19,7 @@ use super::*;
 use crate::cli::GitFeatures;
 use kagi_domain::plan_note::{RebaseNote, RebaseRecovery, RebaseTitle};
 use kagi_domain::ref_update::{parse_update_ref_lines, RefScript, RefVerify};
+use kagi_domain::remote::shell_quote;
 
 /// How many moved refs the plan lists before folding the rest.
 const UPDATE_SAMPLE: usize = 5;
@@ -96,7 +97,9 @@ pub fn plan_replay_onto(
             // ADR-0023: rewriting history is destructive (two-stage confirm).
             destructive: true,
             equivalent_command: Some(format!(
-                "git replay --onto {onto} {onto}..{branch} | git update-ref --stdin"
+                "git replay --onto {} {} | git update-ref --stdin",
+                shell_quote(onto),
+                shell_quote(&format!("{onto}..{branch}"))
             )),
         })
     };

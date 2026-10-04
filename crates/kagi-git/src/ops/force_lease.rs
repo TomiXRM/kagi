@@ -12,6 +12,7 @@
 use super::remote_common::{local_branch_oid, resolve_upstream_info, resolve_upstream_oid};
 use super::*;
 use kagi_domain::plan_note::{ForceLeaseNote, ForceLeaseRecovery, ForceLeaseTitle, PlanOp};
+use kagi_domain::remote::shell_quote;
 
 // ────────────────────────────────────────────────────────────
 // plan_force_with_lease_push
@@ -104,8 +105,10 @@ pub fn plan_force_with_lease_push(repo: &Repository) -> Result<OperationPlan, Gi
                         // (`lease`) and pushes the local tip. Faithful to what
                         // libgit2 does — same lease, same refspec.
                         equivalent_command = Some(format!(
-                            "git push --force-with-lease={}:{} {} {}",
-                            branch, lease, remote, branch
+                            "git push {} {} {}",
+                            shell_quote(&format!("--force-with-lease={branch}:{lease}")),
+                            shell_quote(&remote),
+                            shell_quote(branch)
                         ));
                     }
                     _ => {

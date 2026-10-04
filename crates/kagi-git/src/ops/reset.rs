@@ -8,6 +8,7 @@
 
 use super::*;
 use kagi_domain::plan_note::{ResetNote, ResetRecovery, ResetTitle};
+use kagi_domain::remote::shell_quote;
 
 // ────────────────────────────────────────────────────────────
 // plan_reset_current_to_head
@@ -138,7 +139,7 @@ pub fn plan_reset_current_to_head(
         // #353: kagi moves only the branch ref (soft-reset semantics; the
         // index and working tree are never touched — no `reset --hard`), so the
         // faithful equivalent is `git reset --soft <target>`.
-        equivalent_command: Some(format!("git reset --soft {}", target.0)),
+        equivalent_command: Some(format!("git reset --soft {}", shell_quote(&target.0))),
     })
 }
 

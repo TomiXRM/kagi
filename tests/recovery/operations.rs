@@ -823,7 +823,7 @@ pub fn scenario_blocked_plan_command(cx: &mut VisualTestAppContext) {
         );
         assert_eq!(
             plan.equivalent_command.as_deref(),
-            Some(format!("git reset --soft {}", target.0).as_str()),
+            Some(format!("git reset --soft '{}'", target.0).as_str()),
             "the backend still supplies the command on blocked plans"
         );
     });

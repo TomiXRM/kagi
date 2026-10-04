@@ -7,6 +7,7 @@ use kagi_domain::plan_note::{
     CheckoutNote, CheckoutRecovery, CheckoutTitle, CommonNote, DirtyParts, OpPhrase, UntrackedCtx,
     WorktreeNote,
 };
+use kagi_domain::remote::shell_quote;
 
 // ────────────────────────────────────────────────────────────
 // plan_checkout
@@ -181,7 +182,7 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
         preview_commits: Vec::new(),
         destructive: false,
         // #353: faithful equivalent — `git checkout <branch>`.
-        equivalent_command: Some(format!("git checkout {}", branch)),
+        equivalent_command: Some(format!("git checkout {}", shell_quote(branch))),
     })
 }
 

@@ -177,10 +177,10 @@ fn parse_port(s: &str) -> Option<u16> {
 // Shell quoting for the remote command
 // ────────────────────────────────────────────────────────────
 
-/// POSIX single-quote a string so the *remote* shell receives it as one literal
-/// argument. `ssh host cmd` joins the command words with spaces and hands the
-/// result to the remote login shell, so every token Kagi sends must be quoted
-/// to survive paths with spaces, `$`, `;`, `*`, etc.
+/// POSIX single-quote one shell argument. Used both for remote commands and
+/// equivalent CLI commands shown/copyable from local operation plans. `ssh
+/// host cmd` joins words before passing them to the remote login shell, so
+/// remote tokens also need this quoting for paths with spaces, `$`, `;`, `*`.
 ///
 /// Wraps in single quotes and renders embedded single quotes as `'\''`. Empty
 /// input becomes `''`.
@@ -462,6 +462,10 @@ mod tests {
         assert_eq!(shell_quote("a b"), "'a b'");
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
         assert_eq!(shell_quote("$(rm -rf /)"), "'$(rm -rf /)'");
+        assert_eq!(
+            shell_quote("topic$(id) name'branch"),
+            "'topic$(id) name'\\''branch'"
+        );
     }
 
     #[test]

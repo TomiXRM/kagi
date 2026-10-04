@@ -159,6 +159,14 @@ Sizes remain logical px at the pinned gpui-component scale; Kagi's new 100% base
 | Motion | instant or ≤ 150 ms for hover/press; Kagi-owned animations honour `reduce_motion` | A library transition that cannot be turned off is listed as an exception in the PR. |
 | Pane open / close | Kagi `panel_motion` ([`panel_motion.rs`](../../src/ui/panel_motion.rs)), shared by the bottom panel, the left sidebar and the right pane: open 180 ms ease-out, close 150 ms ease-in; a change in mid-flight turns around from the current width/height, its time scaled by the distance left. Only the outer box's size moves; the content keeps its size and is clipped (`panel_motion::clip`), so the Terminal's grid and the panes' layouts never change while they slide. The bottom and left panes follow their toggles; the right pane follows visibility of its resolved slot, including Graph commit selection / Esc (#1001). Inspector / Compare / Commit Panel swaps while the slot remains shown do not move. While a pane slides, drags of its own divider are ignored (left sidebar, right pane, bottom panel — [`render_divider.rs`](../../src/ui/render_divider.rs), #957). Graph's badge and graph-column dividers instead use the painted left edge of their header columns: they track the pointer with the sidebar shown, hidden, or sliding (#1011). | Whole-workspace changes (Home, tab switch, Conflict, Editor or another mode) are instant, as is `reduce_motion`. Use the existing pane motion rather than a second timing. |
 
+#1016 PR B extends the same dialog-button contract to Clone, Remote Browse,
+Smart Commit, Update, App Notice, Trust Repo, PR field editing, and Editor
+filesystem/dirty-buffer confirmations without resizing those cards. A name
+validation failure keeps the Editor confirm visible and disabled with its
+specific EN/JA reason; destructive confirms use the blocker colour. AFTER
+chips for Stash, history, switch, PR review/merge and maintenance show a short
+localized state, while AX and Copy all retain the complete backend prediction.
+
 ## In an issue for UI work
 
 Add three lines instead of a style table: **role(s)**, **reference state**

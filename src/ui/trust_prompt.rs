@@ -11,10 +11,8 @@
 //! `confirm_active_modal` / `cancel_active_modal` plumbing.
 
 use gpui::{div, prelude::*, rgb, Context, SharedString};
-use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::Sizable as _;
 
-use super::button_style::KagiButton;
+use super::button_style::{modal_button, ModalButtonKind};
 use super::i18n::Msg;
 use super::modal_renderers::{modal_overlay, render_modal_title_row, ModalIcon};
 use super::modals::TrustRepoModal;
@@ -122,23 +120,28 @@ pub(crate) fn render_trust_repo_modal(
                 .flex_row()
                 .gap_2()
                 .justify_end()
-                .child(
-                    Button::new("trust-repo-cancel")
-                        .label(Msg::PlanCancel.t())
-                        .ghost()
-                        .small()
-                        .on_click(cancel),
-                )
-                .child(
-                    KagiButton::accent(
+                .child(super::e2e::measure_control(
+                    "trust-repo-cancel",
+                    modal_button(
+                        "trust-repo-cancel",
+                        Msg::PlanCancel.t(),
+                        ModalButtonKind::Cancel,
+                        None,
+                        cancel,
+                        cx,
+                    ),
+                ))
+                .child(super::e2e::measure_control(
+                    "trust-repo-confirm",
+                    modal_button(
                         "trust-repo-confirm",
                         Msg::TrustRepoConfirm.t(),
-                        current_theme().color_success,
+                        ModalButtonKind::Primary,
+                        None,
+                        confirm,
                         cx,
-                    )
-                    .small()
-                    .on_click(confirm),
-                ),
+                    ),
+                )),
         );
 
     modal_overlay(card).into_any_element()

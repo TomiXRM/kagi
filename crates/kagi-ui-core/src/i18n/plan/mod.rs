@@ -42,6 +42,36 @@ use kagi_domain::plan_note::{
 };
 
 use super::{lang, op::Op, Lang, Msg};
+/// The AFTER chip is a state, not the backend's durable prediction sentence.
+/// Match the typed operation, not English producer text (which the oplog keeps).
+pub fn after_state_label(title: &PlanTitle) -> Option<&'static str> {
+    match title {
+        PlanTitle::Maintenance(title) => Some(maintenance::after_state_label(title)),
+        PlanTitle::Stash(StashTitle::Drop { .. }) => Some(Msg::AfterStashDrop.t()),
+        PlanTitle::Stash(StashTitle::Pop { .. }) => Some(Msg::AfterStashPop.t()),
+        PlanTitle::History(HistoryTitle::UndoCommit { .. }) => Some(Msg::AfterHistoryUndo.t()),
+        PlanTitle::History(HistoryTitle::Amend { .. }) => Some(Msg::AfterHistoryAmend.t()),
+        PlanTitle::History(HistoryTitle::HistoryMove { .. }) => Some(Msg::AfterHistoryMove.t()),
+        PlanTitle::Switch(SwitchTitle::SwitchToLatest { .. }) => Some(Msg::AfterSwitchLatest.t()),
+        PlanTitle::Github(GithubTitle::ReviewPr { verdict, .. }) => Some(match verdict.as_str() {
+            "approve" => Msg::AfterReviewApproved.t(),
+            "comment" => Msg::AfterReviewCommented.t(),
+            "request-changes" => Msg::AfterReviewChanges.t(),
+            _ => return None,
+        }),
+        PlanTitle::Github(GithubTitle::MergePr { .. }) => Some(Msg::AfterPrMerged.t()),
+        _ => None,
+    }
+}
+
+/// Keep the complete backend prediction in the AX row and Copy all. Maintenance
+/// already has a localized explanation because its producer text is English.
+pub fn after_state_detail<'a>(title: &PlanTitle, predicted: &'a str) -> &'a str {
+    match title {
+        PlanTitle::Maintenance(title) => maintenance::after_state_detail(title),
+        _ => predicted,
+    }
+}
 
 /// Interpolate the JA catalog once; inserted branch names are never templates.
 pub(super) fn advice_text(msg: Msg, args: &[&dyn std::fmt::Display]) -> String {
@@ -386,7 +416,9 @@ pub fn plan_heading_text(
         Github(GithubTitle::MergePr { number, method }) => (
             Op::Merge,
             Some(std::borrow::Cow::Owned(format!("#{number}"))),
-            Some(std::borrow::Cow::Borrowed(method.as_str())),
+            Some(std::borrow::Cow::Borrowed(github::merge_method_label(
+                method,
+            ))),
         ),
         Github(GithubTitle::ApplySuggestion { path }) => (
             Op::ApplySuggestion,

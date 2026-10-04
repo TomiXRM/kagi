@@ -75,6 +75,38 @@ fn create_worktree_success_creates_branch_and_linked_repo() {
     assert_eq!(linked.head().unwrap().shorthand().ok(), Some("wt-feature"));
 }
 
+#[cfg(not(windows))]
+#[test]
+fn worktree_recovery_command_removes_path_with_quotes_and_shell_metacharacters() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let repo_tmp = TempDir::new().unwrap();
+    let worktrees_tmp = TempDir::new().unwrap();
+    let repo = build_repo(&repo_tmp);
+    let at = head_commit_id(&repo);
+    let branch = "wt$(id)'branch";
+    let path = worktrees_tmp.path().join("worktree $(id) ' spaced");
+
+    let plan = plan_create_worktree(&repo, branch, &path, &at).unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    let recovery = plan.recovery.as_ref().expect("worktree recovery");
+    execute_create_worktree(&repo, branch, &path, &at).unwrap();
+    let result = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&recovery.commands[0])
+        .current_dir(repo_tmp.path())
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "recovery worktree removal failed: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(!path.exists());
+    assert!(repo.find_branch(branch, git2::BranchType::Local).is_ok());
+}
+
 #[test]
 fn create_worktree_path_collision_is_blocker() {
     if !crate::test_support::run_isolated() {

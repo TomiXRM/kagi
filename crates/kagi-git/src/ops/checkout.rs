@@ -7,6 +7,7 @@ use kagi_domain::plan_note::{
     CheckoutNote, CheckoutRecovery, CheckoutTitle, CommonNote, DirtyParts, OpPhrase, UntrackedCtx,
     WorktreeNote,
 };
+use kagi_domain::remote::shell_quote;
 
 // ────────────────────────────────────────────────────────────
 // plan_checkout
@@ -158,7 +159,7 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
             previous: current_branch_name.clone(),
         }),
         commands: vec![
-            format!("git checkout {}", current_branch_name),
+            format!("git checkout {}", shell_quote(&current_branch_name)),
             "git reflog".to_string(),
         ],
     };
@@ -377,7 +378,7 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
             previous: current_ref.clone(),
         }),
         commands: vec![
-            format!("git checkout {}", current_ref),
+            format!("git checkout {}", shell_quote(&current_ref)),
             "git switch -c <name>".to_string(),
             "git reflog".to_string(),
         ],

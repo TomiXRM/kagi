@@ -234,11 +234,11 @@ fn syncs_and_restores_everything_from_the_two_backups() {
     // The recovery commands from the plan are the real ones.
     assert_eq!(
         recovery.commands[0],
-        format!("git update-ref refs/heads/main {tip_backup}")
+        format!("git update-ref 'refs/heads/main' '{tip_backup}'")
     );
     assert_eq!(
         recovery.commands[1],
-        format!("git stash apply --index {}", work.reference)
+        format!("git stash apply --index '{}'", work.reference)
     );
 
     // Restore, exactly as the receipt says, with plain git.

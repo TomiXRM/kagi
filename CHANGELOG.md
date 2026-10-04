@@ -13,6 +13,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- 確認カードと Operation Log からコピーできる復旧コマンドの branch・ref・remote・stash message・worktree path などの実値を POSIX shell で安全に引用するようにしました。`$()` やシングルクォートを含む名前／パスも 1 引数として扱い、手順用の `<branch>` などのプレースホルダーは変更しません。(#1004)
 - SSH 経由の remote pull を write lease に載せ、実行中は終了操作とほかの書き込みを保留するようにしました。計画時と実行前に remote の staged index・作業ツリー状態を照合し、変化や再読込失敗があれば pull せず Refused を記録します。結果が Unknown・Partial の場合は reconcile 通知から明示的な確認と監査記録を経て lease を解放します。ssh-agent だけの接続でも計画・実行できます。(#989、#997)
 - SSH remote pull はホスト側の `pull.rebase`・`branch.*.rebase`・`pull.ff=only`・`branch.*.mergeOptions` によらず確認どおり merge (可能なら fast-forward) します。`merge.autoStash` と `submodule.recurse` による予告外の stash・submodule 更新も明示的に無効化します。(#997)
 - SSH の remote pull で選択したパスが symlink の場合、確認中に別の linked worktree へ付け替えられても誤った worktree に pull しないよう、計画時の物理パスを保持し、実行前に照合してからそのパスで実行するようにしました。異なる場合は実行せず Refused を記録します。(#997)

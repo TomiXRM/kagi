@@ -9,6 +9,7 @@ use kagi_domain::plan_note::stash::StashDirtyOp;
 use kagi_domain::plan_note::{
     CommonNote, DirtyParts, OpPhrase, PlanNote, StashNote, StashRecovery, StashTitle,
 };
+use kagi_domain::remote::shell_quote;
 
 // ────────────────────────────────────────────────────────────
 // plan_stash_apply
@@ -588,7 +589,11 @@ pub fn plan_stash_drop(repo: &mut Repository, index: usize) -> Result<OperationP
         }),
         commands: match stash_oid {
             Some(oid) => vec![
-                format!("git stash store -m \"{}\" {}", stash_message, oid),
+                format!(
+                    "git stash store -m {} {}",
+                    shell_quote(&stash_message),
+                    shell_quote(&oid.to_string())
+                ),
                 "git stash list".to_string(),
             ],
             None => Vec::new(),

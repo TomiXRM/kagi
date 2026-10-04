@@ -18,6 +18,7 @@ use super::remote_common::{
 use super::*;
 use kagi_domain::plan_note::{CommonNote, DirtyParts, OpPhrase, PlanOp, UntrackedCtx};
 use kagi_domain::plan_note::{PullNote, PullRecovery, PullTitle};
+use kagi_domain::remote::shell_quote;
 
 /// Build the confirm plan for pulling a **remote** branch over SSH (ADR-0089
 /// Phase 3 / ADR-0097). There is no local `Repository`, so this synthesises the
@@ -630,7 +631,10 @@ pub fn plan_pull_branch_ff(
             kind: RecoveryKind::Pull(PullRecovery::PullBranchFf {
                 branch: branch_name.to_string(),
             }),
-            commands: vec![format!("git branch -f {} <old-sha>", branch_name)],
+            commands: vec![format!(
+                "git branch -f {} <old-sha>",
+                shell_quote(branch_name)
+            )],
         }),
         head_at_plan: head,
         stash_count_at_plan: 0,

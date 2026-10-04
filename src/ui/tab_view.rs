@@ -379,6 +379,8 @@ pub struct TabUiState {
     pub(super) slow_reads: super::slow_reads::SlowReads,
     /// Aggregated staged + unstaged additions/deletions for the synthetic WIP row.
     pub wip_diffstat: Option<super::WipDiffStat>,
+    /// Latest requested WIP scan for this session, including scans in one cache epoch.
+    pub wip_diffstat_request: u64,
     /// Watcher baseline; absent until this activation observes the worktree.
     pub last_working_status: Option<kagi_git::WorkingTreeStatus>,
     /// Session-local undo/redo cursor. Backend plan and preflight reject moved refs.
@@ -524,6 +526,7 @@ impl Default for TabUiState {
             worktree_inspections: Default::default(),
             slow_reads: Default::default(),
             wip_diffstat: None,
+            wip_diffstat_request: 0,
             last_working_status: None,
             operation_history: kagi_git::OperationHistory::new(),
             history_seed_attempted: false,

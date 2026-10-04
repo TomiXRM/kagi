@@ -1864,6 +1864,10 @@ mod macos {
                 Box::new(crate::hunk_staging::scenario_hunk_staging),
             ),
             (
+                "wip_diffstat_stage_order",
+                Box::new(crate::hunk_staging::scenario_wip_diffstat_stage_order),
+            ),
+            (
                 "issue_failure_notice_survives_tab_switch",
                 Box::new(
                     crate::issue_write_owner::scenario_issue_failure_notice_survives_tab_switch,

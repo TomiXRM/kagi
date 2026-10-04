@@ -1727,6 +1727,16 @@ index unchanged). M: open a two-hunk file from the Commit Panel, Stage hunk /
 Unstage hunk in unified and split view (EN/JA labels), and check the panel and
 diff update.
 
+### WIP diffstat after staging (#996)
+
+Tier A: `KAGI_GUI_E2E_ONLY=wip_diffstat_stage_order` in
+`tests/recovery/hunk_staging.rs`. Hold the first scan after its background
+diffs, stage again within the same cache epoch, and assert that the panel and
+index already reflect staging while the first read is held. The second scan
+publishes the final badge; releasing the first cannot roll it back. Mutation:
+remove the `wip_diffstat_request` completion check in
+`start_wip_diffstat_scan` and this scenario fails on the final badge.
+
 ### Busy snackbar labels (#607)
 
 G covers EN/JA labels, unknown-tag fallback, and lease-mirror settlement without

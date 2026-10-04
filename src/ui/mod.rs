@@ -1360,6 +1360,20 @@ pub struct WipDiffStat {
     pub deletions: usize,
 }
 
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static WIP_DIFFSTAT_HOLD: std::cell::RefCell<Option<gpui::Task<()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    /// Hold the next scan after it computes its result, before it can publish.
+    pub fn hold_next_wip_diffstat_scan_for_e2e(hold: gpui::Task<()>) {
+        WIP_DIFFSTAT_HOLD.with(|slot| assert!(slot.borrow_mut().replace(hold).is_none()));
+    }
+}
+
 impl KagiApp {
     /// The single place a `KagiApp` is constructed: every field default lives
     /// here exactly once, so adding a field means touching one place.  The two
@@ -2271,16 +2285,6 @@ impl KagiApp {
         out
     }
 
-    pub fn refresh_wip_diffstat(&mut self) {
-        // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let stat = self
-            .ui()
-            .repo_session
-            .as_ref()
-            .map(|session| Self::wip_diffstat_from_backend(session.backend()));
-        self.with_ui(|ui| ui.wip_diffstat = stat);
-    }
-
     /// Same value, computed off the UI thread.
     ///
     /// It is two full tree diffs for a "+N −M" badge — measured at 157ms on a
@@ -2293,22 +2297,35 @@ impl KagiApp {
         let Some(session) = self.active_session() else {
             return;
         };
-        let cache_epoch = self.ui().cache_epoch;
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
+        let ui = self
+            .ui
+            .get_mut(&session)
+            .expect("active session has UI state");
+        ui.wip_diffstat_request = ui.wip_diffstat_request.wrapping_add(1);
+        let (cache_epoch, request) = (ui.cache_epoch, ui.wip_diffstat_request);
         let task = cx.background_spawn(async move {
             kagi_git::Backend::open(&repo_path)
                 .ok()
                 .map(|b| Self::wip_diffstat_from_backend(&b))
         });
+        // The E2E hold is after the read: the test can stage again while the
+        // first result is waiting to land, then release it out of order.
+        #[cfg(feature = "gui-e2e")]
+        let hold = WIP_DIFFSTAT_HOLD.with(|slot| slot.borrow_mut().take());
         cx.spawn(async move |app, acx| {
             let stat = task.await;
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
             let _ = app.update(acx, |app, cx| {
                 let Some(ui) = app.ui.get_mut(&session) else {
                     return;
                 };
-                if ui.cache_epoch != cache_epoch {
+                if ui.cache_epoch != cache_epoch || ui.wip_diffstat_request != request {
                     return;
                 }
                 if ui.wip_diffstat != stat {

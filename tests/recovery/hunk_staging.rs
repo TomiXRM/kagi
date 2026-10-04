@@ -13,9 +13,10 @@ use std::path::Path;
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::commit_panel::CommitPanelFileRef;
 use kagi::ui::diff_view::DiffRow;
-use kagi::ui::{e2e, theme, FooterStatus, KagiApp};
+use kagi::ui::{e2e, theme, FooterStatus, KagiApp, WipDiffStat};
 
-use crate::macos::{git, mount, unmount};
+use crate::evidence_support::deferred;
+use crate::macos::{build_fixture, git, mount, unmount};
 use crate::recovery_operations::{press_enter, wait_idle};
 
 fn text(edit: impl Fn(usize) -> Option<&'static str>) -> String {
@@ -179,4 +180,103 @@ pub fn scenario_hunk_staging(cx: &mut VisualTestAppContext) {
     }
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS hunk_staging");
+}
+
+/// A completed but held first diffstat read must not overwrite the badge from
+/// a second stage in the same cache epoch. The panel and index update while
+/// the first read is still held: staging never waits for the badge's two diffs.
+pub fn scenario_wip_diffstat_stage_order(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    std::fs::write(repo.join("README.md"), "# fixture\nsecond line\nfirst\n").unwrap();
+    let (app, window) = mount(cx, &repo);
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        e2e::open_local_panel_no_inputs(app, repo.clone(), cx)
+    });
+    cx.run_until_parked();
+    let owner = cx.read(|cx| app.read(cx).active_session().expect("stage owner"));
+    let epoch = cx.read(|cx| app.read(cx).ui().cache_epoch);
+    let before = cx.read(|cx| app.read(cx).ui().wip_diffstat);
+    assert_eq!(
+        before,
+        Some(WipDiffStat {
+            additions: 1,
+            deletions: 0
+        }),
+        "initial badge reflects the unstaged edit"
+    );
+
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_wip_diffstat_scan_for_e2e(hold);
+    app.update(cx, |app, cx| {
+        app.do_stage_file_by_path(owner, "README.md".into(), cx);
+        assert!(app.write_busy_op.is_none(), "stage did not return");
+        assert_eq!(app.ui().wip_diffstat, before);
+        let panel = app.ui().commit_panel.as_ref().expect("panel");
+        assert_eq!(
+            panel.read(cx).state.staged.len(),
+            1,
+            "panel updated before scan"
+        );
+    });
+    cx.run_until_parked(); // First result is computed, but held before publishing.
+    assert_eq!(
+        index_text_readme(&repo),
+        "# fixture\nsecond line\nfirst\n",
+        "first stage completed while its scan is held"
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().wip_diffstat),
+        before,
+        "held scan changed the badge"
+    );
+
+    std::fs::write(
+        repo.join("README.md"),
+        "# fixture\nsecond line\nfirst\nsecond\nthird\n",
+    )
+    .unwrap();
+    app.update(cx, |app, cx| {
+        app.do_stage_file_by_path(owner, "README.md".into(), cx);
+        assert!(app.write_busy_op.is_none(), "second stage did not return");
+        assert_eq!(
+            app.ui().cache_epoch,
+            epoch,
+            "the ordering is within one epoch"
+        );
+    });
+    cx.run_until_parked();
+    let final_stat = WipDiffStat {
+        additions: 3,
+        deletions: 0,
+    };
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().wip_diffstat),
+        Some(final_stat)
+    );
+    assert_eq!(
+        index_text_readme(&repo),
+        "# fixture\nsecond line\nfirst\nsecond\nthird\n"
+    );
+
+    release.send(());
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().wip_diffstat),
+        Some(final_stat),
+        "the older request overwrote the second stage's badge"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS wip_diffstat_stage_order");
+}
+
+fn index_text_readme(repo: &Path) -> String {
+    let out = std::process::Command::new("git")
+        .args(["show", ":README.md"])
+        .current_dir(repo)
+        .output()
+        .expect("git show");
+    assert!(out.status.success());
+    String::from_utf8(out.stdout).expect("index UTF-8")
 }

@@ -678,10 +678,25 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
             prior_pulls + 1,
             "preflight must write one durable receipt"
         );
+        let expected_reason = match case {
+            PullLeaseCase::IdentityChanged => "repository changed",
+            PullLeaseCase::ProxyRouteChanged => {
+                "remote SSH connection changed after pull confirmation"
+            }
+            PullLeaseCase::ToplevelChanged => "physical worktree changed",
+            PullLeaseCase::BranchChanged => "branch changed",
+            PullLeaseCase::OidChanged => "HEAD changed",
+            PullLeaseCase::UpstreamChanged => "upstream changed",
+            PullLeaseCase::HeadReadFailure => "cannot read HEAD",
+            PullLeaseCase::RemoteUrlChanged => "remote URL changed",
+            PullLeaseCase::DirtyChanged => "worktree status changed",
+            _ => unreachable!("only a pre-execution refusal reaches this assertion"),
+        };
         assert!(
             matches!(&pulls[0].outcome, OpOutcome::Refused { blockers }
-                if blockers.iter().any(|reason| !reason.trim().is_empty())),
-            "the receipt must retain a nonempty preflight reason"
+                if blockers.iter().any(|reason| reason == expected_reason)),
+            "the {expected_reason} refusal must be durable: {:?}",
+            pulls[0].outcome
         );
     } else {
         cx.read(|cx| {

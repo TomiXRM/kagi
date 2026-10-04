@@ -32,11 +32,28 @@ impl Drop for Environment {
 
 /// The ssh stand-in: ssh hands its last argument to the remote login shell, and
 /// so does this — against ONLY the throwaway repository the caller just built.
+/// Emulate RequestTTY=force merging write stderr into stdout unless -T disables
+/// the terminal, which would otherwise hide the pre-execution refusal marker.
 fn fake_ssh(bin: &Path) {
     let ssh = bin.join("ssh");
     std::fs::write(
         &ssh,
-        "#!/bin/sh\nif [ \"$1\" = -G ]; then\n  printf 'hostname fixture.invalid\\nuser alice\\nport 22\\nidentityfile none\\nuserknownhostsfile none\\nglobalknownhostsfile none\\nproxyjump none\\n'\n  exit 0\nfi\nfor argument do command=$argument; done\nexec /bin/sh -c \"$command\"\n",
+        r#"#!/bin/sh
+if [ "$1" = -G ]; then
+  printf 'hostname fixture.invalid\nuser alice\nport 22\nidentityfile none\nuserknownhostsfile none\nglobalknownhostsfile none\nproxyjump none\nrequesttty force\n'
+  exit 0
+fi
+no_tty=false
+for argument do
+  [ "$argument" = -T ] && no_tty=true
+  command=$argument
+done
+case "$command" in
+  *KAGI-PULL-CHECKED*)
+    if [ "$no_tty" = false ]; then exec /bin/sh -c "$command" 2>&1; fi ;;
+esac
+exec /bin/sh -c "$command"
+"#,
     )
     .unwrap();
     std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -134,6 +151,22 @@ fn pull_probe_and_single_session_preflight_bind_the_approved_worktree() {
         config.fetch_refspecs,
         ["+refs/heads/*:refs/remotes/origin/*"]
     );
+    git(&repo, &["branch", "--unset-upstream", "main"]);
+    let missing_upstream =
+        kagi::remote::resolve_pull_identity(&host, alias.to_str().unwrap()).unwrap_err();
+    assert_eq!(missing_upstream.to_string(), "cannot read upstream");
+    git(&repo, &["branch", "--set-upstream-to=origin/main", "main"]);
+    let missing_root = root.path().join("missing");
+    let invalid_path =
+        kagi::remote::resolve_pull_identity(&host, missing_root.to_str().unwrap()).unwrap_err();
+    assert_eq!(
+        invalid_path.to_string(),
+        "cannot change to approved worktree"
+    );
+    assert!(
+        !pull_attempts.exists(),
+        "planning errors must not execute git pull"
+    );
     let before = kagi_git::StateSummary {
         head: planned.head.oid.clone(),
         dirty: "clean".into(),
@@ -176,6 +209,90 @@ fn pull_probe_and_single_session_preflight_bind_the_approved_worktree() {
         status.stdout.is_empty(),
         "preflight must not dirty the worktree"
     );
+    let expect_no_pull = |frozen: &kagi::remote::PullRepoIdentity, reason: &str| {
+        let refusal = kagi::remote::remote_pull(&host, alias.to_str().unwrap(), frozen, &before);
+        let outcome = &refusal.recording.entry().outcome;
+        assert!(
+            matches!(outcome, kagi_git::oplog::OpOutcome::Refused { blockers }
+                if blockers.iter().any(|blocker| blocker == reason)),
+            "{reason}: {outcome:?}"
+        );
+        assert!(!pull_attempts.exists(), "{reason} must not reach git pull");
+    };
+
+    // An empty commit changes only HEAD: index/status and approved config stay
+    // byte-identical, so removing the script's HEAD comparison must fail here.
+    git(
+        &repo,
+        &["commit", "--allow-empty", "-qm", "unapproved HEAD"],
+    );
+    let advanced = kagi::remote::resolve_pull_identity(&host, alias.to_str().unwrap()).unwrap();
+    assert_ne!(planned.head.oid, advanced.head.oid);
+    assert_eq!(planned.fingerprint, advanced.fingerprint);
+    assert_eq!(planned.config, advanced.config);
+    expect_no_pull(&planned, "HEAD changed");
+    git(&repo, &["update-ref", "refs/heads/main", &planned.head.oid]);
+
+    git(&repo, &["update-ref", "refs/remotes/origin/other", "HEAD"]);
+    git(&repo, &["branch", "--set-upstream-to=origin/other", "main"]);
+    let upstream = kagi::remote::resolve_pull_identity(&host, alias.to_str().unwrap()).unwrap();
+    assert_eq!(planned.head.oid, upstream.head.oid);
+    assert_eq!(planned.fingerprint, upstream.fingerprint);
+    assert_eq!(upstream.head.upstream.as_deref(), Some("origin/other"));
+    expect_no_pull(&planned, "upstream changed");
+    git(&repo, &["branch", "--set-upstream-to=origin/main", "main"]);
+
+    // Git uses the first merge ref for @{u}, while `git config --get` returns
+    // the last. Freeze both so this changes the pull setting, not the upstream.
+    git(
+        &repo,
+        &["config", "--add", "branch.main.merge", "refs/heads/other"],
+    );
+    let changed_merge =
+        kagi::remote::resolve_pull_identity(&host, alias.to_str().unwrap()).unwrap();
+    assert_eq!(planned.head, changed_merge.head);
+    assert_eq!(planned.fingerprint, changed_merge.fingerprint);
+    assert_ne!(planned.config, changed_merge.config);
+    expect_no_pull(&planned, "merge ref changed");
+    git(
+        &repo,
+        &[
+            "config",
+            "--replace-all",
+            "branch.main.merge",
+            "refs/heads/main",
+        ],
+    );
+
+    // Reattach the same branch and HEAD to another worktree of the *same*
+    // repository; only the approved physical destination should differ.
+    let linked = root.path().join("linked");
+    git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            linked.to_str().unwrap(),
+            "HEAD",
+        ],
+    );
+    git(&repo, &["switch", "--detach"]);
+    git(&linked, &["switch", "main"]);
+    std::fs::remove_file(&alias).unwrap();
+    std::os::unix::fs::symlink(&linked, &alias).unwrap();
+    let moved = kagi::remote::resolve_pull_identity(&host, alias.to_str().unwrap()).unwrap();
+    assert_eq!(planned.repo_id, moved.repo_id);
+    assert_eq!(planned.head, moved.head);
+    assert_eq!(planned.config, moved.config);
+    assert_eq!(planned.fingerprint, moved.fingerprint);
+    assert_ne!(planned.physical_toplevel, moved.physical_toplevel);
+    expect_no_pull(&planned, "physical worktree changed");
+    git(&linked, &["switch", "--detach"]);
+    git(&repo, &["switch", "main"]);
+    std::fs::remove_file(&alias).unwrap();
+    std::os::unix::fs::symlink(&repo, &alias).unwrap();
     std::fs::write(repo.join("file"), "unstaged change\n").unwrap();
     let dirty = kagi::remote::resolve_pull_identity(&host, alias.to_str().unwrap()).unwrap();
     assert_eq!(planned.head, dirty.head);
@@ -285,10 +402,10 @@ fn pull_probe_and_single_session_preflight_bind_the_approved_worktree() {
         kagi_git::oplog::OpOutcome::Refused { ref blockers }
             if blockers.iter().any(|reason| reason.contains("SSH connection changed"))
     ));
-    let entries = kagi_git::oplog::read_oplog_tail(10);
+    let entries = kagi_git::oplog::read_oplog_tail(20);
     assert_eq!(
         entries.len(),
-        9,
+        13,
         "each host-side refusal has one durable receipt"
     );
     assert!(entries
@@ -926,9 +1043,9 @@ fn remote_pull_does_not_recurse_into_host_submodule_worktrees() {
     );
 }
 
-/// Run a remote pull against an `ssh` stand-in that just prints `stderr_line`
-/// and exits non-zero, and return the single entry it recorded.
-fn pull_outcome_for_ssh_output(stderr_line: &str) -> kagi_git::oplog::OpOutcome {
+/// Run a remote pull against an `ssh` stand-in that prints `stderr_output`
+/// and exits with `exit_code`, then return its single durable entry.
+fn pull_outcome_for_ssh_output(stderr_output: &str, exit_code: i32) -> kagi_git::oplog::OpOutcome {
     let root = tempfile::tempdir().unwrap();
     let bin = root.path().join("bin");
     let logs = root.path().join("logs");
@@ -942,8 +1059,8 @@ fn pull_outcome_for_ssh_output(stderr_line: &str) -> kagi_git::oplog::OpOutcome 
              printf 'hostname fixture.invalid\\nuser alice\\nport 22\\nidentityfile none\\nuserknownhostsfile none\\nglobalknownhostsfile none\\nproxyjump none\\n'\n\
              exit 0\n\
              fi\n\
-             echo '{stderr_line}' >&2\n\
-             exit 255\n"
+             echo '{stderr_output}' >&2\n\
+             exit {exit_code}\n"
         ),
     )
     .unwrap();
@@ -1025,7 +1142,7 @@ fn a_non_zero_remote_pull_is_unknown_unless_the_refusal_is_recognized() {
         // Nothing in the allow-list: the default must still be Unknown.
         "remote: something nobody has taught kagi to read",
     ] {
-        let outcome = pull_outcome_for_ssh_output(banner);
+        let outcome = pull_outcome_for_ssh_output(banner, 255);
         let kagi_git::oplog::OpOutcome::Unknown { evidence, .. } = &outcome else {
             panic!("{banner:?} must be Unknown, got {outcome:?}");
         };
@@ -1033,7 +1150,7 @@ fn a_non_zero_remote_pull_is_unknown_unless_the_refusal_is_recognized() {
     }
 
     // Only a recognized refusal proves nothing ran.
-    let outcome = pull_outcome_for_ssh_output("Permission denied (publickey).");
+    let outcome = pull_outcome_for_ssh_output("Permission denied (publickey).", 255);
     let kagi_git::oplog::OpOutcome::Failed { error } = outcome else {
         panic!("a recognized auth refusal must stay Failed, got {outcome:?}");
     };
@@ -1041,6 +1158,16 @@ fn a_non_zero_remote_pull_is_unknown_unless_the_refusal_is_recognized() {
         error.contains("Permission denied (publickey)"),
         "the durable oplog must explain missing agent credentials: {error}"
     );
+
+    // A checked marker means execution was reached. Even if the transport
+    // later reports a syntactically valid refusal and exit 90, nothing proves
+    // that git pull did not run: admission must remain held for reconciliation.
+    let outcome =
+        pull_outcome_for_ssh_output("KAGI-PULL-CHECKED\nKAGI-PULL-REFUSED: a late refusal", 90);
+    let kagi_git::oplog::OpOutcome::Unknown { evidence, .. } = outcome else {
+        panic!("a refusal after the execution marker must be Unknown, got {outcome:?}");
+    };
+    assert!(evidence.contains("do not retry"), "{evidence}");
 }
 
 #[path = "support/isolated.rs"]

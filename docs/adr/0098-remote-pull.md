@@ -58,6 +58,12 @@ index and porcelain-v2 worktree status. The approved job carries those values
 unchanged; execution checks `ssh -G` locally without opening a remote session,
 then opens **one** remote SSH session for both preflight and pull.
 
+Planning renders a script refusal as its reason alone, without exposing its
+internal exit code 90 or `KAGI-PULL-REFUSED:` framing. The approved write uses
+`ssh -T` so `RequestTTY force` in the user's SSH config cannot merge its
+pre-exec refusal marker from stderr into stdout; the route probe still uses
+`ssh -G` and ordinary remote reads retain their existing invocation.
+
 Inside its remote POSIX `sh` script, Kagi sets `GIT_OPTIONAL_LOCKS=0`,
 re-resolves the physical worktree and Git common directory, reads HEAD /
 upstream / pull configuration, and compares all frozen values. It resolves the
@@ -75,8 +81,10 @@ Mismatch, unreadable state, or an unsafe scratch location produces a reasoned
 pre-exec `Refused` oplog entry and never invokes pull. Known SSH authentication
 failure remains `Failed`; a lost session or unclassified output that cannot
 prove the pull never started remains `Unknown` (with the existing lease /
-reconcile requirement), and a merge stopped mid-way remains `Partial`. There
-is no fallback to a second SSH connection. Windows clients also invoke the
+reconcile requirement), and a merge stopped mid-way remains `Partial`. An
+exit 90 with a refusal marker **after** the checked marker remains `Unknown`:
+Git may already have run, so the marker cannot prove a pre-exec refusal.
+There is no fallback to a second SSH connection. Windows clients also invoke the
 system `ssh`; the script runs in the **remote** POSIX shell, so no Kagi-owned
 local Unix ControlMaster socket is needed. This closes the gap between two
 SSH connections, not concurrent mutation by another process on the host

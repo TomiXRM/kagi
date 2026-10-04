@@ -221,6 +221,9 @@ pub fn resolve_pull_identity(
     let script = format!("{PULL_STATE_SCRIPT}\n{PULL_PLAN_SCRIPT}");
     let output = run_ssh_raw(host, &["sh", "-c", &script, "--", root])?;
     if output.code != 0 {
+        if let Some(reason) = pull_refusal_reason(output.code, &output.stderr) {
+            return Err(RemoteError::Refused(reason.into()));
+        }
         return Err(RemoteError::NonZero {
             code: output.code,
             stderr: output.stderr,
@@ -349,6 +352,7 @@ fn run_ssh(host: &RemoteHost, remote_tokens: &[&str]) -> Result<SshOutput, Remot
         host,
         remote_tokens,
         Duration::from_secs(SSH_COMMAND_TIMEOUT_SECS),
+        false,
     )
 }
 
@@ -356,8 +360,9 @@ fn run_ssh_with_timeout(
     host: &RemoteHost,
     remote_tokens: &[&str],
     timeout: Duration,
+    no_tty: bool,
 ) -> Result<SshOutput, RemoteError> {
-    let raw = run_ssh_raw_with_timeout(host, remote_tokens, timeout)?;
+    let raw = run_ssh_raw_with_timeout(host, remote_tokens, timeout, no_tty)?;
     Ok(SshOutput {
         code: raw.code,
         stdout: String::from_utf8(raw.stdout)
@@ -371,6 +376,7 @@ fn run_ssh_raw(host: &RemoteHost, remote_tokens: &[&str]) -> Result<SshRawOutput
         host,
         remote_tokens,
         Duration::from_secs(SSH_COMMAND_TIMEOUT_SECS),
+        false,
     )
 }
 
@@ -378,10 +384,14 @@ fn run_ssh_raw_with_timeout(
     host: &RemoteHost,
     remote_tokens: &[&str],
     timeout: Duration,
+    no_tty: bool,
 ) -> Result<SshRawOutput, RemoteError> {
     let args = host.ssh_invocation(remote_tokens);
 
     let mut cmd = Command::new("ssh");
+    if no_tty {
+        cmd.arg("-T");
+    }
     cmd.args(&args).env("LC_ALL", "C");
 
     let run = kagi_git::run_child(&mut cmd, timeout, None)
@@ -826,6 +836,17 @@ fn fingerprint_hex(bytes: &[u8; 32]) -> String {
     text
 }
 
+/// Only the host script's exit-90 marker proves an early refusal; other SSH
+/// errors retain their code and stderr for the caller to classify.
+fn pull_refusal_reason(code: i32, stderr: &str) -> Option<&str> {
+    if code != 90 {
+        return None;
+    }
+    stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("KAGI-PULL-REFUSED: "))
+}
+
 fn run_approved_pull(
     host: &RemoteHost,
     root: &str,
@@ -874,17 +895,14 @@ fn run_approved_pull(
         host,
         &args,
         Duration::from_secs(SSH_COMMAND_TIMEOUT_SECS * 2),
+        true, // Keep stderr separate even when the user's SSH config forces a TTY.
     )?;
     // Only the script's own pre-exec exit code and refusal marker prove that
     // no pull ran. A Git failure after the checked marker is never a refusal.
     let checked_marker = "KAGI-PULL-CHECKED\n";
     let checked_at = output.stderr.find(checked_marker);
-    if output.code == 90 && checked_at.is_none() {
-        if let Some(reason) = output
-            .stderr
-            .lines()
-            .find_map(|line| line.strip_prefix("KAGI-PULL-REFUSED: "))
-        {
+    if checked_at.is_none() {
+        if let Some(reason) = pull_refusal_reason(output.code, &output.stderr) {
             return Err(RemoteError::Refused(reason.into()));
         }
     }

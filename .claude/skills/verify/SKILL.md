@@ -1066,7 +1066,10 @@ The current suite covers:
   `tests/recovery/guard_writer_panic.rs`):
   `KAGI_GUI_E2E_ONLY=fetch_panicked_worker_reconciles,fetch_previous_visit_is_not_presented,fetch_old_visit_drops_pull_waiter,fetch_new_visit_waiter_sees_old_flight_failure,remote_branch_fetch_panic,remote_branch_fetch_failed_after_departure,remote_branch_fetch_success_after_departure,pr_ref_fetch_restarts_after_revisit,pr_ref_fetch_panic,editor_save_panic,pull_confirm_departure_discards_old_visit`
   exercises the admitted background work's panic, Unknown receipt and reconcile
-  notice, acknowledgement and fresh admission. Departing and returning drops
+  notice, acknowledgement and fresh admission. `editor_save_panic_after_close`
+  closes the pane before the panicked worker settles and requires one durable
+  receipt, one live Operation Log row and exactly one toast; the open-pane
+  `editor_save_panic` also requires one row and one toast. Departing and returning drops
   the old Pull waiter; a new visit's Pull joined to the old fetch gets its
   failure footer and toast, with one receipt and no old-visit confirmation.
   Failed fetches (including an old-visit fetch and a departed remote branch

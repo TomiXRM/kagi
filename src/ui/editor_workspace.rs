@@ -190,10 +190,11 @@ impl KagiApp {
                 };
                 let record_path = repo_path.clone();
                 let saved_path = request.path().to_path_buf();
+                let host = cx.entity().downgrade();
                 view.update(cx, |view, cx| {
                     view.save_reserved(
                         request.clone(),
-                        Box::new(move |completed| {
+                        Box::new(move |completed, acx| {
                             if completed {
                                 guard.complete();
                                 return None;
@@ -216,12 +217,44 @@ impl KagiApp {
                                     evidence: error.to_string(),
                                 },
                             );
-                            match kagi_git::backend::recording::finalize(entry) {
+                            let recording = kagi_git::backend::recording::finalize(entry);
+                            let recording_error = match &recording {
                                 kagi_git::backend::recording::Recording::Failed {
                                     error, ..
                                 } => Some(format!("recording failed: {error}")),
                                 _ => None,
-                            }
+                            };
+                            let _ = host.update(acx, |app, cx| {
+                                let entry =
+                                    super::oplog_panel::OpLogPanel::entry_for_recording(&recording);
+                                if let Some(panel) = app.op_log.clone() {
+                                    panel.update(cx, |panel, cx| {
+                                        panel.push(entry);
+                                        panel.collapse();
+                                        cx.notify();
+                                    });
+                                }
+                                app.poll_app_jobs(cx);
+                                if let kagi_git::backend::recording::Recording::Failed {
+                                    error,
+                                    ..
+                                } = &recording
+                                {
+                                    app.app_notices
+                                        .push_back(i18n::oplog_write_failed(error).into());
+                                }
+                                app.present_app_notice();
+                                let detail = if recording_error.is_some() {
+                                    "save task unwound; recording failed — inspect the operation notice"
+                                } else {
+                                    "save task unwound; outcome unknown — inspect the operation notice"
+                                };
+                                let msg = i18n::op_failed(i18n::Op::Save, detail);
+                                app.push_toast(ToastKind::Error, msg.clone(), cx);
+                                app.status_footer = FooterStatus::Failed(SharedString::from(msg));
+                                cx.notify();
+                            });
+                            recording_error
                         }),
                         {
                             #[cfg(feature = "gui-e2e")]

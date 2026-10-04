@@ -461,6 +461,36 @@ pub fn scenario_editor_save_panic(cx: &mut VisualTestAppContext) {
             .any(|r| r.op == "editor-save" && matches!(r.outcome, OpOutcome::Unknown { .. })),
         "panicked editor save needs a durable Unknown receipt"
     );
+    cx.read(|cx| {
+        let state = app.read(cx);
+        let panel = state.op_log.as_ref().unwrap().read(cx);
+        let receipt = receipts
+            .iter()
+            .find(|r| r.op == "editor-save" && matches!(r.outcome, OpOutcome::Unknown { .. }))
+            .unwrap();
+        assert_eq!(
+            panel
+                .entries()
+                .iter()
+                .filter(|entry| entry.id == receipt.id && entry.op == "editor-save")
+                .count(),
+            1,
+            "live editor panic receipt must reach the Operation Log exactly once"
+        );
+        assert_eq!(
+            state
+                .toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .iter()
+                .filter(|toast| toast.message.as_ref().contains("save task unwound"))
+                .count(),
+            1,
+            "live editor panic must show one toast"
+        );
+    });
     acknowledge_panicked_writer(&app, cx);
     app.update(cx, |app, cx| app.save_editor_file(cx));
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -475,4 +505,90 @@ pub fn scenario_editor_save_panic(cx: &mut VisualTestAppContext) {
     drop(editor);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS editor_save_panic");
+}
+
+/// The completion belongs to the host, not to the pane that initiated the save.
+pub fn scenario_editor_save_panic_after_close(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let before = std::fs::read(repo.join("README.md")).unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.open_editor_workspace(cx));
+    let editor = cx
+        .read(|cx| app.read(cx).ui().editor_workspace.clone())
+        .unwrap();
+    editor.update(cx, |view, cx| view.open_tab("README.md".into(), cx));
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        cx.run_until_parked();
+        if cx.read(|cx| editor.read(cx).editor.is_some() && editor.read(cx).content.is_some()) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "editor did not load");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    cx.update_window(window, |_, window, cx| {
+        let input = editor.read(cx).editor.clone().unwrap();
+        window.focus(&input.read(cx).focus_handle(cx), cx);
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.simulate_keystrokes(window, "x");
+    cx.run_until_parked();
+    assert!(cx.read(|cx| editor.read(cx).dirty));
+
+    KagiApp::panic_next_editor_save_for_e2e();
+    app.update(cx, |app, cx| app.save_editor_file(cx));
+    assert!(
+        cx.read(|cx| app.read(cx).app_sessions.has_leases()),
+        "save must be admitted before closing its pane"
+    );
+    app.update(cx, |app, _| app.close_editor_workspace());
+    drop(editor);
+    assert!(cx.read(|cx| app.read(cx).ui().editor_workspace.is_none()));
+    cx.run_until_parked();
+
+    assert_eq!(std::fs::read(repo.join("README.md")).unwrap(), before);
+    assert!(cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+    let receipts: Vec<_> = read_oplog_tail_for_repo(&repo, 20)
+        .into_iter()
+        .filter(|entry| entry.op == "editor-save")
+        .collect();
+    assert_eq!(
+        receipts.len(),
+        1,
+        "panicked save must have exactly one durable receipt"
+    );
+    assert!(matches!(receipts[0].outcome, OpOutcome::Unknown { .. }));
+    cx.read(|cx| {
+        let state = app.read(cx);
+        let panel = state.op_log.as_ref().unwrap().read(cx);
+        assert_eq!(
+            panel
+                .entries()
+                .iter()
+                .filter(|entry| entry.id == receipts[0].id
+                    && entry.op == "editor-save"
+                    && entry.repo == repo.display().to_string())
+                .count(),
+            1,
+            "closed editor panic receipt was not pushed to the live Operation Log"
+        );
+        assert_eq!(
+            state
+                .toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .iter()
+                .filter(|toast| toast.message.as_ref().contains("save task unwound"))
+                .count(),
+            1,
+            "closed editor panic must show exactly one toast"
+        );
+    });
+    acknowledge_panicked_writer(&app, cx);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS editor_save_panic_after_close");
 }

@@ -1732,6 +1732,10 @@ mod macos {
                 Box::new(crate::guard_writer_panic::scenario_editor_save_panic),
             ),
             (
+                "editor_save_panic_after_close",
+                Box::new(crate::guard_writer_panic::scenario_editor_save_panic_after_close),
+            ),
+            (
                 "file_menu_freezes_path",
                 Box::new(crate::file_menu_owner::scenario_file_menu_freezes_path),
             ),

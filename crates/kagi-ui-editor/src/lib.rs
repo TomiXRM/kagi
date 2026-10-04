@@ -277,6 +277,10 @@ impl EditorSaveRequest {
     }
 }
 
+/// Host settlement on the foreground executor, independent of pane lifetime.
+/// The optional string is a recording error for the existing save-failure log.
+pub type SaveCompletion = Box<dyn FnOnce(bool, &mut gpui::AsyncApp) -> Option<String> + Send>;
+
 /// `Conflict` preserves disk bytes until the user decides via the banner.
 enum SaveOutcome {
     Saved(String),
@@ -1666,7 +1670,7 @@ impl EditorWorkspaceView {
     pub fn save_reserved(
         &mut self,
         request: EditorSaveRequest,
-        complete: Box<dyn FnOnce(bool) -> Option<String> + Send>,
+        complete: SaveCompletion,
         panic_for_e2e: bool,
         cx: &mut Context<Self>,
     ) {
@@ -1710,7 +1714,8 @@ impl EditorWorkspaceView {
         });
         cx.spawn(async move |view, acx| {
             let outcome = task.fallible().await.flatten();
-            let record_error = complete(outcome.is_some());
+            let unwound = outcome.is_none();
+            let record_error = complete(!unwound, acx);
             let result = outcome.unwrap_or_else(|| {
                 SaveOutcome::Failed(match record_error {
                     Some(error) => format!("save task unwound; {error}"),
@@ -1751,13 +1756,14 @@ impl EditorWorkspaceView {
                 }
                 SaveOutcome::Failed(e) => {
                     klog!("editor-ws: save failed: {}", e);
-                    // Non-git file error: the host surfaces it via toast +
-                    // footer (the established precedent for a background op
-                    // outside the plan pipeline), not a git plan modal.
-                    cx.emit(EditorWorkspaceEvent::SaveFailed {
-                        path: path.clone(),
-                        error: e,
-                    });
+                    // The host already presented an unwound task, even if
+                    // this pane was dropped before the completion arrived.
+                    if !unwound {
+                        cx.emit(EditorWorkspaceEvent::SaveFailed {
+                            path: path.clone(),
+                            error: e,
+                        });
+                    }
                     cx.notify();
                 }
             });

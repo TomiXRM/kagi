@@ -72,6 +72,8 @@ impl KagiApp {
         };
         self.mark_write_busy("pull", cx);
         let stamp = job.stamp();
+        // Pull has a remote effect and no verify path: untracked (ADR-0204 決定 4).
+        self.queue_untracked_write(Some(stamp.session), cx);
         // #289: gpui does not propagate a background panic, so the task can end
         // without a completion. That is not evidence of termination — the write
         // may have happened — so it settles as `Unknown` through the same path

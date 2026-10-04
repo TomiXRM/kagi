@@ -134,6 +134,8 @@ impl KagiApp {
         match app::admit(&mut self.reads, admitted) {
             Ok(guard) => {
                 self.mark_write_busy(action.name(), cx);
+                let owner = self.active_session();
+                self.queue_untracked_write(owner, cx);
                 Some(guard)
             }
             Err(error) => {

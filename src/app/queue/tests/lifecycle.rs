@@ -29,7 +29,7 @@ fn a_settled_write_whose_lease_outlives_it_never_anchors_a_new_chain() {
     );
     q.apply(QueueEvent::ReconcileAcknowledged(session(1)));
     assert_eq!(
-        q.apply(QueueEvent::LeaseReleased(w)),
+        q.apply(QueueEvent::LeaseReleased(Some(w))),
         vec![QueueEffect::StartPlan(x)]
     );
 }
@@ -119,7 +119,7 @@ fn detach_during_admission_keeps_a_late_write_tracked() {
                 false,
             );
             assert_eq!(
-                q.apply(QueueEvent::LeaseReleased(w)),
+                q.apply(QueueEvent::LeaseReleased(Some(w))),
                 vec![QueueEffect::StartPlan(x)]
             );
         } else {

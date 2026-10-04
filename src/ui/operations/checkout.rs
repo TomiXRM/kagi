@@ -51,6 +51,7 @@ impl KagiApp {
                     target: CheckoutPlanTarget::Branch(branch.clone()),
                     plan: std::sync::Arc::new(plan),
                     error: None,
+                    queued: None,
                 });
             }
             Err(e) => {
@@ -124,6 +125,7 @@ impl KagiApp {
                     target: CheckoutPlanTarget::Commit(commit_id),
                     plan: std::sync::Arc::new(plan),
                     error: None,
+                    queued: None,
                 });
             }
             Err(e) => {
@@ -211,12 +213,30 @@ impl KagiApp {
     /// thread so a large `checkout_tree` write never freezes the window.
     /// #493: the single checkout entry — the modal button and the root Enter
     /// dispatch both land here.
+    ///
+    /// #355 stage 3: while another operation runs, or while this tab already
+    /// has queued intents, the checkout is queued instead of refused. The plan
+    /// is dropped; the queue replans when its turn comes (ADR-0204 決定 4).
     pub fn start_checkout(&mut self, cx: &mut Context<Self>) {
         let modal = match self.plan_modal().cloned() {
             Some(m) => m,
             None => return,
         };
-        if self.op_latched() {
+        if let Some(id) = modal.queued {
+            self.confirm_queued_checkout(id, modal, cx);
+            return;
+        }
+        if self.op_latched() || self.active_tab_has_queue() {
+            // A dirty-tree Enter stashes first: two writes the queue cannot
+            // carry as one intent, so it keeps the old refusal. So does a
+            // plan with blockers: the user confirmed something they cannot run.
+            if !modal.stash_first
+                && modal.plan.blockers.is_empty()
+                && self.enqueue_checkout(&modal.target, cx)
+            {
+                self.clear_plan_modal();
+                return;
+            }
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
@@ -229,6 +249,17 @@ impl KagiApp {
         {
             return;
         }
+        self.run_checkout(modal, None, cx);
+    }
+
+    /// Execute an approved checkout plan. `intent` is the queued intent it
+    /// answers, if any; admission reports to the queue either way.
+    pub(crate) fn run_checkout(
+        &mut self,
+        modal: CheckoutPlanModal,
+        intent: Option<crate::app::IntentId>,
+        cx: &mut Context<Self>,
+    ) {
         // Defence in depth: never execute a blocked plan.
         if !modal.plan.blockers.is_empty() {
             klog!("refused: plan has blockers, not executing");
@@ -261,6 +292,7 @@ impl KagiApp {
         let plan = modal.plan.clone();
         let target = modal.target.clone();
         let (bg_path, bg_plan, bg_target) = (repo_path.clone(), plan.clone(), target.clone());
+        let verified = self.prepare_queue_run(intent);
         // ADR-0196 Wave 3: admitted through the application layer; the
         // `Invalidate` delivery reloads the tab, the receipt is the record.
         self.finish_run(
@@ -269,7 +301,7 @@ impl KagiApp {
             i18n::Op::Checkout,
             plan.clone(),
             repo_path,
-            move || checkout_blocking(&bg_path, &bg_plan, &bg_target),
+            move || checkout_blocking(&bg_path, &bg_plan, &bg_target, &verified),
             |_| None,
             |_| RunPresentation::none(),
         );
@@ -285,7 +317,9 @@ impl KagiApp {
         if !self.root_has_focus(window) {
             return;
         }
-        if self.op_latched() || self.repo_path.is_none() {
+        // Busy is not a reason to ignore Enter any more: its confirmation
+        // queues the checkout behind the running operation (#355 stage 3a).
+        if self.repo_path.is_none() {
             return;
         }
         // Ignore Enter while any overlay / panel / text input is active.

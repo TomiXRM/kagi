@@ -14,9 +14,16 @@ pub struct IntentId(pub u64);
 /// Only frozen user inputs, never an approved plan, resolved HEAD, or prediction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IntentRequest {
-    Checkout { target: String },
+    Checkout { target: CheckoutIntent },
     Commit { message: String },
     Merge { source: String, into: String },
+}
+
+/// The checkout target the user picked: a branch name or a commit OID.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CheckoutIntent {
+    Branch(String),
+    Commit(kagi_git::CommitId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -149,14 +156,24 @@ pub enum QueueEvent<'a> {
         receipt: Settlement<'a>,
     },
     IdentityChanged(IntentId),
+    /// A run-family write whose receipt the chain can judge (it has a
+    /// verify path), started outside the queue.
     WriteStarted(OwnerStamp),
-    /// An auto-fetch holds a lease but cannot be a chain predecessor.
-    AutoFetchStarted,
-    LeaseReleased(OwnerStamp),
+    /// A write with no judgeable receipt: a guard writer, a run-family write
+    /// without a verify path, or a clone. `owner: None` is window-level
+    /// background work (auto-fetch, clone) that is no one's predecessor.
+    UntrackedWriteStarted {
+        owner: Option<SessionId>,
+    },
+    /// The lease (or untracked latch) is gone. `Some` names the tracked write.
+    LeaseReleased(Option<OwnerStamp>),
     /// A plan job outside the queue took the plan slot.
     PlanSlotTaken,
     /// `Some(id)` identifies a queue plan job; `None` is an unrelated plan slot.
     PlanSlotFreed(Option<IntentId>),
+    /// The head's confirmation went away unanswered (a repository reload
+    /// invalidated the plan, or another modal replaced it). Not a decision.
+    ConfirmWithdrawn(IntentId),
     OwnerDeparted(SessionId),
     OwnerReturned(SessionId),
     OwnerDetached(SessionId),
@@ -177,6 +194,8 @@ pub enum EnqueueError {
     CapacityRejected,
     RemoteLatched,
     IdentityChanged,
+    /// The owner's own write has no judgeable receipt, so `&&` cannot hold.
+    UntrackedWrite,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueueEffect {
@@ -200,6 +219,7 @@ pub struct IntentQueue {
     active: Option<SessionId>,
     write: Option<OwnerStamp>,
     write_busy: bool,
+    untracked_owner: Option<SessionId>,
     plan_slot_busy: bool,
     planning_job: Option<IntentId>,
     modal_busy: bool,
@@ -262,6 +282,34 @@ impl IntentQueue {
             })
             .count()
     }
+    /// Every session that owns queued or cancelled intents.
+    pub fn sessions(&self) -> Vec<SessionId> {
+        let mut sessions: Vec<_> = self
+            .per_session
+            .keys()
+            .chain(self.cancelled.keys())
+            .copied()
+            .collect();
+        sessions.sort_unstable_by_key(|s| (s.tab.0, s.incarnation));
+        sessions.dedup();
+        sessions
+    }
+    /// A live (not settled, not cancelled) intent.
+    pub fn intent(&self, id: IntentId) -> Option<&QueuedIntent> {
+        self.per_session
+            .values()
+            .flat_map(|q| q.iter())
+            .find(|intent| intent.id == id)
+    }
+    pub fn is_empty(&self) -> bool {
+        self.per_session.values().all(VecDeque::is_empty)
+    }
+    /// Sessions waiting on a reconcile acknowledgement, in a stable order.
+    pub fn reconciling_sessions(&self) -> Vec<SessionId> {
+        let mut sessions: Vec<_> = self.reconciling.iter().copied().collect();
+        sessions.sort_unstable_by_key(|s| (s.tab.0, s.incarnation));
+        sessions
+    }
     pub fn apply(&mut self, event: QueueEvent<'_>) -> Vec<QueueEffect> {
         use QueueEvent as E;
         let mut effects = Vec::new();
@@ -270,6 +318,8 @@ impl IntentQueue {
                 let session = owner.session;
                 if self.remote_latched == Some(session) {
                     effects.push(QueueEffect::Rejected(EnqueueError::RemoteLatched));
+                } else if self.untracked_owner == Some(session) {
+                    effects.push(QueueEffect::Rejected(EnqueueError::UntrackedWrite));
                 } else if owner.worktree.is_none() {
                     effects.push(QueueEffect::Rejected(EnqueueError::IdentityChanged));
                 } else if self.queued_count(session) >= MAX_QUEUED_INTENTS {
@@ -365,8 +415,11 @@ impl IntentQueue {
                         )
                     })
                 {
+                    // Closes its own confirmation and leaves the latch to
+                    // the plan job's terminal callback (決定 3).
                     self.cancel_head(session, CancelReason::UserRemoved, &mut effects);
-                } else if let Some(mut queue) = self.per_session.remove(&session) {
+                }
+                if let Some(mut queue) = self.per_session.remove(&session) {
                     while let Some(item) = queue.pop_front() {
                         // Decision 3: cancel-all takes waiting intents and a head
                         // being planned or confirmed, never an admission in flight
@@ -544,12 +597,16 @@ impl IntentQueue {
                 }
             }
             E::WriteStarted(stamp) => self.write = Some(stamp),
-            E::AutoFetchStarted => self.write_busy = true,
+            E::UntrackedWriteStarted { owner } => {
+                self.write_busy = true;
+                self.untracked_owner = owner;
+            }
             E::LeaseReleased(stamp) => {
-                if self.write == Some(stamp) {
+                if stamp.is_some() && self.write == stamp {
                     self.write = None;
                 }
                 self.write_busy = false;
+                self.untracked_owner = None;
             }
             E::PlanSlotTaken => {
                 if self.planning_job.is_none() {
@@ -560,6 +617,21 @@ impl IntentQueue {
                 if self.planning_job == owner {
                     self.plan_slot_busy = false;
                     self.planning_job = None;
+                }
+            }
+            E::ConfirmWithdrawn(id) => {
+                if let Some(session) = self.head(id) {
+                    let head = self
+                        .per_session
+                        .get_mut(&session)
+                        .and_then(VecDeque::front_mut)
+                        .expect("head");
+                    // Whatever took the slot (or nothing) is reported by
+                    // ModalSlotBusy / ModalSlotFree, never assumed here.
+                    if head.state == IntentState::AwaitingConfirm {
+                        head.state = IntentState::Queued;
+                        effects.push(QueueEffect::InvalidatePlan(id));
+                    }
                 }
             }
             E::OwnerDeparted(session) => {

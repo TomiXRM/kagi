@@ -536,16 +536,18 @@ pub fn scenario_context_menu_keys_covered_row(cx: &mut VisualTestAppContext) {
 }
 
 /// The focused item turns disabled while the menu stays open (a write is
-/// admitted, so Checkout is no longer offered): the focus stays inside the
-/// menu and ↓ still moves it onto an enabled item (#991 review).
+/// admitted, so opening a worktree is no longer offered): the focus stays
+/// inside the menu and ↓ still moves it onto an enabled item (#991 review).
+/// The first item, Checkout, stays enabled while busy since #355 queues it.
 pub fn scenario_context_menu_keys_disabled_live(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     git(fixture.path(), &["branch", "feature"]);
     let (app, window) = mount(cx, fixture.path());
     open_row_menu(cx, &app, window);
+    keys(cx, window, "down");
     let (before, enabled) = menu(cx, &app, window);
     let before = before.expect("an item has the focus");
-    assert_eq!(Some(&before), enabled.first());
+    assert_eq!(Some(&before), enabled.get(1));
     // Any latched operation disables the branch menu's write items.
     app.update(cx, |app, cx| {
         app.planning = Some("e2e");

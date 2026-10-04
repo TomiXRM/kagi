@@ -207,7 +207,22 @@ impl KagiApp {
         path: &std::path::Path,
         cx: &mut Context<Self>,
     ) -> Option<app::WriteGuard> {
+        let owner = self.active_session();
+        self.reserve_write_for(name, path, owner, cx)
+    }
+
+    /// [`Self::reserve_write`] for a writer the operation queue must not
+    /// treat as the tab's own predecessor: `owner: None` is background work
+    /// (auto-fetch), which only blocks every tab's queue until it ends.
+    pub(crate) fn reserve_write_for(
+        &mut self,
+        name: &'static str,
+        path: &std::path::Path,
+        owner: Option<app::SessionId>,
+        cx: &mut Context<Self>,
+    ) -> Option<app::WriteGuard> {
         self.refresh_write_busy();
+        self.sync_queue_before_admission(cx);
         // The lease answers for every other writer; the UI latch is what a
         // planning task in flight is refused by (ADR-0196 Wave 3).
         let admitted = if self.op_latched() {
@@ -218,6 +233,8 @@ impl KagiApp {
         match app::admit(&mut self.reads, admitted) {
             Ok(guard) => {
                 self.mark_write_busy(name, cx);
+                // A guard writer has no receipt the `&&` chain can judge.
+                self.queue_untracked_write(owner, cx);
                 // #702: the guard names its op, so a retained lease parks an
                 // entry that can say which write it is holding for.
                 Some(guard.for_op(name))
@@ -286,6 +303,10 @@ impl KagiApp {
             }
         };
         self.mark_write_busy(name, cx);
+        // Stash / remove / conflict jobs have no verify path the `&&` chain
+        // could judge (ADR-0204 決定 4): untracked.
+        let owner = self.active_session();
+        self.queue_untracked_write(owner, cx);
         if name.starts_with("conflict-") {
             if let Some(conflict) = self.ui().conflict.clone() {
                 conflict.update(cx, |view, cx| {

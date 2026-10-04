@@ -336,6 +336,9 @@ impl KagiApp {
     {
         use crate::app::{self, Delivery, FamilyEvidence};
         self.refresh_write_busy();
+        // A writer that ended while the queue was idle must be released in
+        // the queue before this one is admitted (#1018 review).
+        self.sync_queue_before_admission(cx);
         // The lease answers for every other writer; the UI latch is what a
         // planning task in flight is refused by (ADR-0196 Wave 3).
         let latched = self.op_latched();
@@ -375,12 +378,14 @@ impl KagiApp {
         let job = match app::admit(&mut self.reads, admitted) {
             Ok(job) => job,
             Err(error) => {
+                self.queue_admission_refused(&error, cx);
                 self.report_admission_refusal(error, cx);
                 return false;
             }
         };
         self.mark_write_busy(op_name, cx);
         let stamp = job.stamp();
+        self.queue_write_admitted(stamp, cx);
         // #289: gpui does not propagate a background panic, so the task can end
         // without a completion. That is not evidence of termination — the write
         // may have happened — so it settles as `Unknown` through the same
@@ -388,9 +393,27 @@ impl KagiApp {
         // the reconcile entry. Clearing the busy mirror here instead would
         // leave `has_leases()` true with `op_latched()` false.
         let abandonment = job.abandonment();
-        let task = cx.background_spawn(async move { job.run() });
+        #[cfg(feature = "gui-e2e")]
+        let (hold, panic) = (
+            crate::ui::op_queue::take_run_hold(),
+            crate::ui::op_queue::take_run_panic(),
+        );
+        let task = cx.background_spawn(async move {
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
+            // An injected worker death: the job is dropped unrun, as an
+            // executor unwind would leave it (the abandonment settles it).
+            #[cfg(feature = "gui-e2e")]
+            if panic {
+                drop(job);
+                return None;
+            }
+            Some(job.run())
+        });
         cx.spawn(async move |this, acx| {
-            let completion = task.fallible().await;
+            let completion = task.fallible().await.flatten();
             let _ = this.update(acx, move |app, cx| {
                 let completion = match completion {
                     Some(completion) => completion,
@@ -425,6 +448,8 @@ impl KagiApp {
                     // `Partial` transport hold `settle_run_receipt` registers.
                     app.settle_run_receipt(op_name, &report, &repo_path);
                     app.notice_reconcile_required(id, op_name, &repo_path);
+                    // The chain judges the receipt, never the presentation.
+                    app.queue_write_settled(stamp, id, &report, cx);
                     let current = app.active_session() == Some(stamp.session)
                         && app.app_sessions.visit(stamp.session) == Some(stamp.visit);
                     let (mut presentation, failure_message, finished) = match &report.result {
@@ -544,6 +569,9 @@ impl KagiApp {
                     }
                 }
                 app.present_app_notice();
+                // Reports the lease release after the reload above has marked
+                // the owner's read stale, so a successor waits for that read.
+                app.sync_queue(cx);
                 cx.notify();
             });
         })

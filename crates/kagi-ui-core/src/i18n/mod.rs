@@ -1123,6 +1123,8 @@ pub enum Msg {
     AmendFoldedFiles,
     /// #454: tooltip on a popup's copy button (copies the whole dialog).
     ModalCopyAll,
+    /// Header of the distinct equivalent CLI command in Copy all.
+    ModalEquivalentCommand,
     /// #454: tooltip on a list panel's copy button (copies every row).
     ModalCopyList,
     /// #454: toast after a popup copy.
@@ -3065,6 +3067,8 @@ impl Msg {
             (Ja, AmendFoldedFiles) => "この commit に取り込む staged 変更",
             (En, ModalCopyAll) => "Copy this dialog as text",
             (Ja, ModalCopyAll) => "この内容をテキストでコピー",
+            (En, ModalEquivalentCommand) => "equivalent command:",
+            (Ja, ModalEquivalentCommand) => "相当するコマンド:",
             (En, ModalCopyList) => "Copy every row",
             (Ja, ModalCopyList) => "一覧をすべてコピー",
             (En, ModalCopied) => "Copied to clipboard",

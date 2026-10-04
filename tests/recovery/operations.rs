@@ -2581,6 +2581,9 @@ pub fn scenario_create_branch_replan_error(cx: &mut VisualTestAppContext) {
 
 /// #584: both real confirm inputs share the unmerged arm transition.
 pub fn scenario_unmerged_branch_delete_armed(cx: &mut VisualTestAppContext) {
+    use kagi::ui::i18n::{self, Lang};
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_language = i18n::lang();
     delayed_delete_plan_stays_with_its_owner(cx);
     delete_recording_failure_does_not_offer_retry(cx);
     for input in ["enter", "button"] {
@@ -2688,19 +2691,28 @@ pub fn scenario_unmerged_branch_delete_armed(cx: &mut VisualTestAppContext) {
                     .is_none(),
                 "copying the command must not expand the disclosure"
             );
-            let all = kagi::ui::e2e::control_bounds(window.window_id(), "plan-card-copy")
-                .expect("Copy all remains available");
-            cx.simulate_click(window, all.center(), gpui::Modifiers::none());
-            cx.run_until_parked();
-            let copied = cx
-                .read_from_clipboard()
-                .and_then(|item| item.text())
-                .expect("whole plan copied");
-            assert_eq!(
-                copied.matches(&command).count(),
-                1,
-                "Copy all includes the faithful command only once: {copied}"
-            );
+            for (language, heading) in [
+                (Lang::En, "\nequivalent command:\n"),
+                (Lang::Ja, "\n相当するコマンド:\n"),
+            ] {
+                i18n::set_lang(language);
+                paint(cx, window);
+                let all = kagi::ui::e2e::control_bounds(window.window_id(), "plan-card-copy")
+                    .expect("Copy all remains available");
+                cx.simulate_click(window, all.center(), gpui::Modifiers::none());
+                cx.run_until_parked();
+                let copied = cx
+                    .read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .expect("whole plan copied");
+                assert!(copied.contains(heading), "{language:?}: {copied}");
+                assert_eq!(
+                    copied.matches(&command).count(),
+                    1,
+                    "Copy all includes the faithful command only once: {copied}"
+                );
+            }
+            i18n::set_lang(original_language);
             cx.simulate_click(window, disclosure.center(), gpui::Modifiers::none());
             cx.run_until_parked();
             paint(cx, window);

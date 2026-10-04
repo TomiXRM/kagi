@@ -116,6 +116,16 @@ fn test_plan_normal_no_blockers_after_amend() {
         "expected a rewrites-history warning, got: {:?}",
         plan.warnings
     );
+    if cfg!(windows) {
+        assert!(plan.equivalent_command.is_none());
+    } else {
+        let command = plan.equivalent_command.as_deref().expect("POSIX command");
+        assert!(
+            command.starts_with("git push '--force-with-lease="),
+            "{command}"
+        );
+        assert!(command.contains(" -- 'origin' 'main'"), "{command}");
+    }
 }
 
 #[test]

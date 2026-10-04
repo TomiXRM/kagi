@@ -305,13 +305,15 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
         preview_files: Vec::new(),
         preview_commits,
         destructive: false,
-        // #353: faithful equivalent — `git push [-u] <remote> <branch>`.
-        equivalent_command: Some(format!(
-            "git push{} {} {}",
-            if is_set_upstream_flow { " -u" } else { "" },
-            shell_quote(&remote_name),
-            shell_quote(&branch_name)
-        )),
+        // #353: faithful equivalent — `git push [-u] -- <remote> <branch>`.
+        equivalent_command: (!cfg!(windows)).then(|| {
+            format!(
+                "git push{} -- {} {}",
+                if is_set_upstream_flow { " -u" } else { "" },
+                shell_quote(&remote_name),
+                shell_quote(&branch_name)
+            )
+        }),
     })
 }
 

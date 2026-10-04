@@ -16,6 +16,18 @@ fn slug_roundtrip() {
 }
 
 #[test]
+fn copy_all_equivalent_command_heading_is_localized() {
+    assert_eq!(
+        Msg::ModalEquivalentCommand.t_for(Lang::En),
+        "equivalent command:"
+    );
+    assert_eq!(
+        Msg::ModalEquivalentCommand.t_for(Lang::Ja),
+        "相当するコマンド:"
+    );
+}
+
+#[test]
 fn t_switches_with_set_lang() {
     let _g = LOCK.lock();
     set_lang_no_persist(Lang::En);

@@ -89,14 +89,14 @@ fn test_equivalent_command_is_faithful_soft_reset() {
 
     assert_eq!(
         plan.equivalent_command,
-        Some(format!("git reset --soft '{}'", commits[0])),
-        "reset plan must carry the faithful soft-reset equivalent"
+        (!cfg!(windows)).then(|| format!("git reset --soft '{}'", commits[0])),
+        "POSIX reset equivalent must be faithful, but hidden on Windows"
     );
     // Never the forbidden --hard form.
     assert!(!plan
         .equivalent_command
         .as_deref()
-        .unwrap()
+        .unwrap_or("")
         .contains("--hard"));
 }
 

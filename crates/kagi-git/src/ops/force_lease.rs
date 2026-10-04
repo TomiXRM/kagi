@@ -104,12 +104,14 @@ pub fn plan_force_with_lease_push(repo: &Repository) -> Result<OperationPlan, Gi
                         // #353: the forward equivalent guards the remote tip
                         // (`lease`) and pushes the local tip. Faithful to what
                         // libgit2 does — same lease, same refspec.
-                        equivalent_command = Some(format!(
-                            "git push {} {} {}",
-                            shell_quote(&format!("--force-with-lease={branch}:{lease}")),
-                            shell_quote(&remote),
-                            shell_quote(branch)
-                        ));
+                        if !cfg!(windows) {
+                            equivalent_command = Some(format!(
+                                "git push {} -- {} {}",
+                                shell_quote(&format!("--force-with-lease={branch}:{lease}")),
+                                shell_quote(&remote),
+                                shell_quote(branch)
+                            ));
+                        }
                     }
                     _ => {
                         blockers.push(PlanNote::Common(CommonNote::GitErrorPassthrough {

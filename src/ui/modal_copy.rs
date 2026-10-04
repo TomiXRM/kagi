@@ -128,7 +128,9 @@ pub(crate) fn plan_clipboard_text(plan: &OperationPlan, rows: &[String]) -> Stri
             .as_ref()
             .is_some_and(|rec| rec.commands.iter().any(|recovery| recovery == cmd));
         if !in_recovery {
-            out.push_str("\nequivalent command:\n");
+            out.push('\n');
+            out.push_str(Msg::ModalEquivalentCommand.t());
+            out.push('\n');
             out.push_str(cmd);
             out.push('\n');
         }

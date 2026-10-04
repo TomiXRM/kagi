@@ -2300,10 +2300,9 @@ impl KagiApp {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
-        let ui = self
-            .ui
-            .get_mut(&session)
-            .expect("active session has UI state");
+        let Some(ui) = self.ui.get_mut(&session) else {
+            return;
+        };
         ui.wip_diffstat_request = ui.wip_diffstat_request.wrapping_add(1);
         let (cache_epoch, request) = (ui.cache_epoch, ui.wip_diffstat_request);
         let task = cx.background_spawn(async move {

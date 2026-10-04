@@ -178,17 +178,32 @@ PR block.
 
 `src/ui/front_layer.rs::Z_ORDER` is the sole bottom-to-top ordering definition:
 the Linux / FreeBSD platform dropdown sits above confirmation modals and
-Settings. The dropdown has pointer commands rather than Tab stops, so it holds
-focus at the window root; Tab / Shift+Tab do not cycle controls hidden behind
-it. Focus return reuses `pending_focus` and the `restored_focus` drawn-tree
-membership check (#976), not a second handle.
+Settings. The dropdown has pointer commands rather than Tab stops, so Tab /
+Shift+Tab are intercepted before gpui-component Root's keybinding; the app
+root's capture handler handles unbound key-down events. Neither path can cycle
+controls hidden behind it. Focus return reuses `pending_focus` and the
+`restored_focus` drawn-tree membership check (#976), not a second handle.
 
 | Combination | Key owner | Escape order | Focus after close |
 |---|---|---|---|
-| Dropdown × Settings | Dropdown: Enter cannot act behind it; Tab stays on the root, not the hidden Settings trap. | Dropdown, then Settings. Unlike other menus, the dropdown alone closes first via `close_layers_above` / `Z_ORDER`; bulk menu close must not discard Settings. | Closing dropdown resumes the Settings trap; closing Settings restores its opener on the same screen, or the root if the opener is gone. |
-| Dropdown × modal × Settings | Dropdown, then modal. Settings never coexists with a visible modal/commit plan: opening is refused, or a later modal makes Settings yield. | Dropdown, then modal; no third Settings dismissal. | Modal input or root after the dropdown; root after the modal. Never restore a discarded Settings trap. |
-| Command selected through dropdown over an overlay | Dropdown until the selected enabled command runs. A background Enter never confirms a modal. | Without selection, dropdown then the next `Z_ORDER` layer. On selection, close dropdown before dispatching the command. | A pure View toggle leaves Settings open and restores its trap. A pane-focus-changing command closes Settings via `close_settings_for_command` and focuses the root; a new modal makes Settings yield. |
-| Dropdown open during tab switch / repository open | Dropdown before navigation; new screen afterward. | Navigation dismisses dropdown without a further Escape. Repository picker commands dismiss it before opening the picker. | Root of the newly displayed screen; never a retained control or Settings trap from the previous session. |
+| Dropdown × Settings | Dropdown: Enter cannot act behind it; Tab stays on the root, not the hidden Settings trap. | Dropdown, then Settings. Only `PlatformMenu` closes; bulk menu close must not discard Settings. | Closing dropdown resumes the Settings trap; closing Settings restores its opener on the same screen, or the root if the opener is gone. |
+| Dropdown × modal × Settings | Dropdown, then modal. Settings never coexists with a visible modal/commit plan: opening is refused, or a later modal makes Settings yield. | Dropdown, then modal; no third Settings dismissal. | The modal's already-created input resumes after the dropdown (root for inputless modals); root after modal dismissal. Never restore a discarded Settings trap. |
+| Command selected through dropdown over an overlay | Dropdown until the selected enabled command runs. A background Enter never confirms a modal. | Without selection, dropdown then the next `Z_ORDER` layer. On selection, close dropdown before dispatching the command. | A pure View toggle leaves Settings open and restores its trap. A pane-focus-changing command closes Settings via `close_settings_for_command` and focuses the root; a new Settings command focuses its own trap. |
+| Dropdown open during tab switch / repository open | Dropdown before navigation; new screen afterward. | Navigation dismisses dropdown without a further Escape, even if a command closed the dropdown before dispatch. | The departing screen closes Settings and the dropdown and replaces its pending focus with the root; the new screen never inherits the prior session's trap. |
+
+**Reachability (structural, not Linux Tier B):** In the workspace,
+`render.rs` places the Linux / FreeBSD titlebar inside the full-size root,
+before the Settings / palette / modal overlays. Their absolute, full-size
+scrims cover its heads; Settings consumes the first mouse-down, so a head
+click cannot open a dropdown above an already open workspace overlay.
+Home differs: `platform_window_shell` places the titlebar outside the Home
+content and its scrims, so a head click remains possible there. There is
+currently no Alt/keyboard binding that opens a platform head. The four native
+Tier A rows set the same menu state as a head click via
+`open_platform_menu_for_e2e` and exercise focus/key behavior *once layered*;
+they do not prove the workspace overlap is pointer-reachable. A future
+Alt/keyboard opener would make these transitions reachable without a head
+click. This corrects the unrestricted titlebar-click assumption in #976.
 
 ## Known gaps (do not claim these are met)
 

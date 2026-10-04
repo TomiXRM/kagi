@@ -299,6 +299,10 @@ mod ghe_viewer_login;
 mod platform_menu_scroll;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/platform_menu_focus.rs"]
+mod platform_menu_focus;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/field_picker_owner.rs"]
 mod field_picker_owner;
 
@@ -2177,25 +2181,35 @@ mod macos {
             ),
             (
                 "platform_menu_settings_focus",
-                Box::new(crate::platform_menu_scroll::scenario_platform_menu_settings_focus),
+                Box::new(crate::platform_menu_focus::scenario_platform_menu_settings_focus),
             ),
             (
                 "platform_menu_modal_settings_order",
                 Box::new(
-                    crate::platform_menu_scroll::scenario_platform_menu_modal_settings_order,
+                    crate::platform_menu_focus::scenario_platform_menu_modal_settings_order,
                 ),
             ),
             (
                 "platform_menu_settings_command_order",
                 Box::new(
-                    crate::platform_menu_scroll::scenario_platform_menu_settings_command_order,
+                    crate::platform_menu_focus::scenario_platform_menu_settings_command_order,
                 ),
             ),
             (
                 "platform_menu_repository_navigation",
                 Box::new(
-                    crate::platform_menu_scroll::scenario_platform_menu_repository_navigation,
+                    crate::platform_menu_focus::scenario_platform_menu_repository_navigation,
                 ),
+            ),
+            (
+                "platform_menu_close_tab_command_navigation",
+                Box::new(
+                    crate::platform_menu_focus::scenario_platform_menu_close_tab_command_navigation,
+                ),
+            ),
+            (
+                "platform_menu_palette_focus_return",
+                Box::new(crate::platform_menu_focus::scenario_platform_menu_palette_focus_return),
             ),
             (
                 "field_picker_owner",

@@ -173,10 +173,21 @@ fn blocking_fake_ssh(
                      printf '100644 %s 0\\tfile\\0KAGI-INDEX-END\\0KAGI-WORKTREE-BEGIN\\0' \"$oid\"\n\
                      if [ -f {dirty_change:?} ]; then printf '? new-file\\0'; fi\n\
                      printf 'KAGI-WORKTREE-END\\0KAGI-END\\n' ;;\n\
-               *pull*) while [ ! -f {release:?} ]; do sleep 0.05; done\n\
-                       if [ -f {fail:?} ]; then echo 'unexpected remote reply' >&2; exit 42; fi\n\
-                       echo 'Already up to date.' ;;\n\
-               *) echo '' ;;\n\
+               *KAGI-PULL-CHECKED*)
+                       if [ -f {identity_change:?} ]; then echo 'KAGI-PULL-REFUSED: repository changed' >&2; exit 90; fi
+                       if [ -f {toplevel_change:?} ]; then echo 'KAGI-PULL-REFUSED: physical worktree changed' >&2; exit 90; fi
+                       if [ -f {branch_change:?} ]; then echo 'KAGI-PULL-REFUSED: branch changed' >&2; exit 90; fi
+                       if [ -f {oid_change:?} ]; then echo 'KAGI-PULL-REFUSED: HEAD changed' >&2; exit 90; fi
+                       if [ -f {upstream_change:?} ]; then echo 'KAGI-PULL-REFUSED: upstream changed' >&2; exit 90; fi
+                       if [ -f {head_read_failure:?} ]; then echo 'KAGI-PULL-REFUSED: cannot read HEAD' >&2; exit 90; fi
+                       if [ -f {remote_url_change:?} ]; then echo 'KAGI-PULL-REFUSED: remote URL changed' >&2; exit 90; fi
+                       if [ -f {dirty_change:?} ]; then echo 'KAGI-PULL-REFUSED: worktree status changed' >&2; exit 90; fi
+                       echo 'KAGI-EXEC-GIT-PULL' >> {calls:?}
+                       while [ ! -f {release:?} ]; do sleep 0.05; done
+                       echo 'KAGI-PULL-CHECKED' >&2
+                       if [ -f {fail:?} ]; then echo 'unexpected remote reply' >&2; exit 42; fi
+                       echo 'Already up to date.' ;;
+               *) echo '' ;;
              esac\n",
         ),
     )
@@ -190,7 +201,11 @@ fn blocking_fake_ssh(
 
 fn ssh_pulls(calls: &Path) -> usize {
     std::fs::read_to_string(calls)
-        .map(|text| text.lines().filter(|line| line.contains("pull")).count())
+        .map(|text| {
+            text.lines()
+                .filter(|line| *line == "KAGI-EXEC-GIT-PULL")
+                .count()
+        })
         .unwrap_or(0)
 }
 fn ssh_probes(calls: &Path) -> usize {
@@ -268,6 +283,15 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
     use gpui::Modifiers;
     use kagi::ui::e2e;
 
+    let prior_entries = kagi_git::oplog::read_oplog_tail(100);
+    let prior_pulls = prior_entries
+        .iter()
+        .filter(|entry| entry.op == "pull")
+        .count();
+    let prior_releases = prior_entries
+        .iter()
+        .filter(|entry| entry.op == "reconcile-release-unobservable")
+        .count();
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().expect("fixture path");
     let remote_root = tempfile::tempdir().expect("remote root");
@@ -580,25 +604,7 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
         assert_eq!(
             ssh_probes(&calls),
             2,
-            "plan and preflight each read the URL"
-        );
-    }
-    if !refused {
-        let calls = std::fs::read_to_string(&calls).unwrap();
-        let command = calls.lines().find(|line| line.contains("pull")).unwrap();
-        assert!(
-            command.contains("/srv/real-worktree") && !command.contains("/srv/repo"),
-            "git pull must target the frozen physical worktree, not the selected symlink: {command}"
-        );
-        assert!(
-            command.contains("--no-rebase") && command.contains("--ff"),
-            "the executed merge pull must override remote rebase and ff-only config: {command}"
-        );
-        assert!(
-            command.contains("branch.main.mergeOptions=")
-                && command.contains("--no-autostash")
-                && command.contains("--no-recurse-submodules"),
-            "the executed pull must pin all host-configurable write behavior: {command}"
+            "planning and execution each inspect the local SSH route"
         );
     }
     if matches!(case, PullLeaseCase::Success) {
@@ -653,7 +659,7 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
                 .iter()
                 .filter(|entry| entry.op == "reconcile-release-unobservable")
                 .count(),
-            1,
+            prior_releases + 1,
             "one audited release row must precede lease release"
         );
     } else if refused {
@@ -667,16 +673,30 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
             .into_iter()
             .filter(|entry| entry.op == "pull")
             .collect::<Vec<_>>();
-        assert_eq!(pulls.len(), 1, "preflight must write one durable receipt");
-        let expected = if matches!(case, PullLeaseCase::HeadReadFailure) {
-            "preflight could not confirm identity"
-        } else {
-            "identity changed"
+        assert_eq!(
+            pulls.len(),
+            prior_pulls + 1,
+            "preflight must write one durable receipt"
+        );
+        let expected_reason = match case {
+            PullLeaseCase::IdentityChanged => "repository changed",
+            PullLeaseCase::ProxyRouteChanged => {
+                "remote SSH connection changed after pull confirmation"
+            }
+            PullLeaseCase::ToplevelChanged => "physical worktree changed",
+            PullLeaseCase::BranchChanged => "branch changed",
+            PullLeaseCase::OidChanged => "HEAD changed",
+            PullLeaseCase::UpstreamChanged => "upstream changed",
+            PullLeaseCase::HeadReadFailure => "cannot read HEAD",
+            PullLeaseCase::RemoteUrlChanged => "remote URL changed",
+            PullLeaseCase::DirtyChanged => "worktree status changed",
+            _ => unreachable!("only a pre-execution refusal reaches this assertion"),
         };
         assert!(
             matches!(&pulls[0].outcome, OpOutcome::Refused { blockers }
-                if blockers.iter().any(|reason| reason.contains(expected))),
-            "the receipt must explain why the preflight refused"
+                if blockers.iter().any(|reason| reason == expected_reason)),
+            "the {expected_reason} refusal must be durable: {:?}",
+            pulls[0].outcome
         );
     } else {
         cx.read(|cx| {

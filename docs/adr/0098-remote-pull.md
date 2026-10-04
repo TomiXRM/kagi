@@ -46,3 +46,46 @@ system-ssh transport, instead of reproducing the fetch+merge logic locally.
 - Verified live: a behind-by-N remote clone (over SSH) pulled to up-to-date via
   the Pull button → confirm modal → fast-forward on the host → view refreshed
   (↓3 → ↓0). IO and plan have unit tests; the FF path was exercised end-to-end.
+
+## Amendment: #1014 single-session approved pull
+
+The layering and safety sections above describe the original Phase 3 slice.
+The current pull is owned by `src/remote/mod.rs` and
+`src/app/remote_pull.rs`: planning freezes the SSH route, repository common
+directory, physical worktree, branch, HEAD, upstream, branch remote / merge
+configuration, remote URL, fetch refspecs, and SHA-256 hashes of the staged
+index and porcelain-v2 worktree status. The approved job carries those values
+unchanged; execution checks `ssh -G` locally without opening a remote session,
+then opens **one** remote SSH session for both preflight and pull.
+
+Planning renders a script refusal as its reason alone, without exposing its
+internal exit code 90 or `KAGI-PULL-REFUSED:` framing. The approved write uses
+`ssh -T` so `RequestTTY force` in the user's SSH config cannot merge its
+pre-exec refusal marker from stderr into stdout; the route probe still uses
+`ssh -G` and ordinary remote reads retain their existing invocation.
+
+Inside its remote POSIX `sh` script, Kagi sets `GIT_OPTIONAL_LOCKS=0`,
+re-resolves the physical worktree and Git common directory, reads HEAD /
+upstream / pull configuration, and compares all frozen values. It resolves the
+scratch directory physically and **refuses before creating a file** if it is
+inside the worktree or Git common directory. Otherwise a temporary file
+outside the repository holds binary fetch / index / status data for exact
+comparison; the file is removed before clearing `GIT_OPTIONAL_LOCKS` and
+emitting the checked marker. Only then does the same shell
+`exec git -c "branch.$branch.mergeOptions=" -C "$top" pull --no-rebase --ff --no-autostash --no-recurse-submodules`.
+Before that `exec`, the repository has only been read; no local repository
+write or host repository write is initiated. The outside-repository scratch
+file is ephemeral, not a claim of zero host filesystem I/O.
+
+Mismatch, unreadable state, or an unsafe scratch location produces a reasoned
+pre-exec `Refused` oplog entry and never invokes pull. Known SSH authentication
+failure remains `Failed`; a lost session or unclassified output that cannot
+prove the pull never started remains `Unknown` (with the existing lease /
+reconcile requirement), and a merge stopped mid-way remains `Partial`. An
+exit 90 with a refusal marker **after** the checked marker remains `Unknown`:
+Git may already have run, so the marker cannot prove a pre-exec refusal.
+There is no fallback to a second SSH connection. Windows clients also invoke the
+system `ssh`; the script runs in the **remote** POSIX shell, so no Kagi-owned
+local Unix ControlMaster socket is needed. This closes the gap between two
+SSH connections, not concurrent mutation by another process on the host
+after the last check and before `exec`.

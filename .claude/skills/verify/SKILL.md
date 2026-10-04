@@ -1815,9 +1815,9 @@ changes only `ssh -G` ProxyJump; the frozen route identity must refuse before
 ProxyJump/ProxyCommand/ControlMaster/ControlPath and disabled normalization.
 `remote_pull_toplevel_refusal` keeps the repository common dir but changes the
 physical linked-worktree toplevel after confirmation; no pull runs, Refused is
-recorded, and the lease releases. `remote_pull_lease` verifies that execution
-uses the frozen physical toplevel instead of the selected symlink while the
-oplog scope remains the selected root.
+recorded, and the lease releases. The real Git fixture binds the execution to
+the frozen physical toplevel instead of the selected symlink, while the oplog
+scope retains the selected root.
 `remote_pull_branch_refusal`, `remote_pull_head_oid_refusal`, and
 `remote_pull_upstream_refusal` change only the checked-out branch, HEAD OID,
 or resolved upstream after confirmation. All must refuse without running
@@ -1828,8 +1828,10 @@ URL after confirmation; the preflight must record Refused, release the lease,
 and run no pull. Skipping the config comparison fails the zero-pull assertion.
 Domain `pull_common_dir_requires_complete_physical_paths_head_and_git_config`
 rejects missing/malformed Git configuration and preserves all fetch refspecs;
-`remote_oplog_test::pull_probe_binds_symlink_to_real_worktree_and_live_head`
-exercises the actual Git commands against a throwaway repository.
+`remote_oplog_test::pull_probe_and_single_session_preflight_bind_the_approved_worktree`
+exercises real Git against a throwaway repository: status, index, branch, URL,
+fetch refspec, symlink-target and SSH-route drift each record one Refused
+receipt without invoking pull.
 `remote_pull_dirty_refusal` changes only the host's untracked worktree status
 between the plan and preflight probe: it must record Refused, release the lease,
 and run zero pulls; skipping the fingerprint comparison fails that assertion.
@@ -1849,19 +1851,37 @@ overlaps dirty local content with an incoming tracked edit under
 receipt; removing `--no-autostash` returns Ok despite a conflict.
 `remote_pull_does_not_recurse_into_host_submodule_worktrees` proves that
 `submodule.recurse=true` cannot move an initialized submodule's checkout;
-removing `--no-recurse-submodules` moves it. `remote_pull_lease` checks the
-executed fake-SSH argv has all four pull flags and the empty branch override.
+removing `--no-recurse-submodules` moves it. The real-Git tests, not fake SSH
+argv text, check the confirmed physical target and all pinned pull behavior.
 The real-Git probe wraps `git status` and refuses unless
 `GIT_OPTIONAL_LOCKS=0`; removing the export fails before confirmation.
+The same fixture sets `TMPDIR` first to the approved worktree and then to
+its Git common dir. Both must refuse before invoking `mktemp` or `git pull`;
+the worktree must remain clean. Scratch outside the repository is removed
+before the approved write begins.
 `remote_pull_cached_preview_stale` changes branch before the live probe and
 requires no modal/lease/pull plus localized refresh. G:
 `cargo test -p kagi --test app_remote_pull_test` additionally checks cached
-HEAD OID and dirty mismatch at plan time, and status fingerprint/config/repo
-drift at preflight: durable Refused, lease released, zero ssh pull calls.
-Mutating the corresponding comparison makes each named assertion fail.
-Success/Failed release; Unknown/Partial/abandonment retain reconcile.
-Remote stash's frozen-identity policy is unchanged. #1014 tracks the separate
-SSH sessions' remaining race.
+HEAD OID and dirty mismatch at plan time; Refused/Success/Failed release the
+lease, while Unknown/Partial/abandonment retain reconcile. The prior injected
+preflight test was removed: it could pass without exercising the remote script.
+`remote_oplog_test::remote_pull_cannot_switch_origin_between_preflight_and_pull_connections`
+uses two real bare Git remotes and redirects origin before a third remote
+connection. Before #1014 the confirmed operation fetched and moved HEAD to
+the unapproved remote; afterward planning opens one SSH and execution opens
+one, so the redirect never occurs. `remote_oplog_test::a_non_zero_remote_pull_is_unknown_unless_the_refusal_is_recognized`
+checks that an ssh-agent/publickey refusal records Failed with the reason,
+while a disconnect or unrecognized response records Unknown. No managed
+ControlMaster/socket or second-connection fallback is used, including on
+Windows clients (system ssh to a remote POSIX shell); remote stash's
+frozen-identity policy is unchanged.
+For a real authenticated SSH fast-forward, the opt-in
+`remote_ssh_live_test::live_remote_pull_fast_forwards` requires
+`KAGI_REMOTE_TEST_HOST`, `KAGI_REMOTE_TEST_PORT`,
+`KAGI_REMOTE_TEST_PULL_REPO` (a disposable checkout already behind its
+upstream), and `KAGI_REMOTE_TEST_PULL_EXPECTED_HEAD` (the upstream's full
+commit OID). Only set both pull-specific variables for a repository where
+the test is allowed to write; the ordinary live read test stays read-only.
 
 Continue の post-read (#569 (2)) は
 `cargo test -p kagi --test app_writer_admission_test continue_` で確認する。

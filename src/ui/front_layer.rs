@@ -253,9 +253,10 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// Close just the platform dropdown; Update is its predecessor in Z_ORDER.
+    /// Close only the platform dropdown, regardless of its Z_ORDER predecessor.
     pub(crate) fn close_platform_menu(&mut self, cx: &mut gpui::Context<Self>) {
-        self.close_layers_above(LayerKind::Update, cx);
+        self.close_menu_layer(LayerKind::PlatformMenu, cx);
+        cx.notify();
     }
 
     /// Close every menu drawn above `kind` in [`Z_ORDER`], so a layer that is

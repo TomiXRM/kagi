@@ -984,7 +984,11 @@ impl CommitPanelView {
         let panel = &self.state;
         let title_input = self.title_input.clone();
         let body_input = self.body_input.clone();
-        let coauthor_menu = self.coauthor_menu.clone();
+        let coauthor_menu = if self.coauthor_menu_visible() {
+            self.coauthor_menu.clone()
+        } else {
+            None
+        };
         let smart = self.smart_snapshot.clone();
         let smart_ui = (self.smart_generating, self.smart_status.clone());
         let unstaged_scroll_handle = self.unstaged_scroll_handle.clone();

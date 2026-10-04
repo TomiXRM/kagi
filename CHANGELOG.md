@@ -5,7 +5,16 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- Home の行一覧と Graph の commit 一覧を Home / End / PageUp / PageDown で移動できるようにしました。Cmd+↑/↓ でも先頭・末尾へ移動します。ページ移動は表示中の行数を基準にし、移動先が画面に収まるようスクロールします。(#980)
+
 ### Fixed
+
+- UI ガイドの Known gaps から解消済みの Settings focus trap、重なり順、Home / Graph の行キー操作を外し、Linux / FreeBSD の platform menu と overlay の組み合わせ、および UI thread で同期実行する書き込みと WIP diffstat の未解決項目を明示しました。(#974、#976、#980、#986、#981、#987、#990、#996)
+- Home や Branch Cleanup が Graph を隠している間、または Settings・確認 modal・メニュー(menu overlay、commit / branch / stash / tag / worktree の右クリック、Linux / FreeBSD の platform menu など)が Graph に重なる間、End / Home / PageUp / PageDown と ↑/↓ で背面の commit 選択が変わる問題を修正しました。選択中の先頭行をホイールで画面外へスクロールした後も、Home で再表示できます。(#980)
+- filter menu が開いている間に Stash などの確認 modal が届くと、背面の確認を Enter で確定できてしまう問題を修正しました。重なり順を `Z_ORDER` に一元化し、描画とキーの前面判定を同じ順序で行います。(#976 review)
+- repo A の file context menu を開いたまま repo B を開くと、描かれなくなった A の menu が Enter を消費し続ける問題を修正しました。描画とキー操作は同じ可視判定を使い、Escape は前面の menu をまとめて閉じます。(#974、#976 review)
 
 - ツールバーで使えない Pull / Push / Stash / Pop / Undo / Redo も Tab で選べるようにしました。キーボードで選ぶと枠が表示され、Enter / Space はクリックと同じ理由を下部に示します。AX のボタン名は維持し、使えない理由を `aria_description` に設定します。(#972)
 - Home のレビュー依頼の行で、GitHub Enterprise の host が大文字を含むとき(`GHE.example.com` など)、取得済みのアバターではなくイニシャルが表示される問題を修正しました。(#968)
@@ -13,6 +22,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Graph / PRs / Issues の切り替えで ←/→ で移動したあと、Tab 以外の方法(マウスで別の操作部品を押すなど)で focus が外れると、次の Tab が選択中のタブではなく矢印で移動したタブに着く問題を修正しました。Home の「リポジトリ / Pull Request / Issue」とリポジトリのタブ帯も同じです。(#968)
 - Operation Log の RestoreToPoint 確認カードから重複する説明文を外し、グラフを表示できないときは EN/JA とも短い状態だけを表示します。ref の移動と戻さない対象の警告、および Git の相当コマンドはそのまま表示します。旧ログの branch だけを観測した記録は tag を含む復元の根拠にせず、安全のため実行前に拒否します。Kagi 外で動いた tag は reflog が残る場合だけ検出し、同じ tag / branch をその後で Kagi が動かしても、記録外の遷移が一つでもあれば拒否します。reflog の無い tag は戻せない限界を「変更なし」行で明示します。(#953)
 - Settings を開いたままスクロールすると、背面の画面(Graph・PRs・Issues・Editor)も一緒にスクロールする問題を修正しました。Settings の背景が、背面へのマウス操作をスクロールも含めて遮るようにしました。
+- Terminal に focus がある状態で Settings を開くと、Settings の中で押した Tab が Terminal の shell に届き、Esc でも Settings が閉じない問題を修正しました。Settings を開くと focus が Settings に移り、Tab / Shift+Tab は Settings の中だけを循環します。閉じると、開く前の場所(Terminal など)に focus が戻ります。ただし開いている間に別タブへ切り替わった場合は古い Terminal ではなく新しい画面へ戻し、テーマの選択 popup を開いたまま modal が届いた場合はその modal の入力欄以外の focus をウィンドウへ移して Esc を届かせます。(#974)
+- Settings を開いたまま Cmd+J または View → Toggle Terminal で下部パネルを閉じると、Esc の後に非表示の Terminal へ focus が戻り、画面のキー操作が効かなくなる問題を修正しました。開閉どちらでも Settings を閉じ、表示中の画面に focus を戻します。(#974、#976 review)
 - Worktree 削除の確認後や削除前ステップ後に ignored ファイル・フォルダーが増えた場合、削除前に中止し、計画の再確認を促すようにしました。(#934)
 - 初期化済み、または未初期化でも gitlink のパスにローカルファイルがある worktree は Remove の計画時・実行前に削除を拒否します。空・不在の gitlink は削除可能なままとし、削除前ステップ後の拒否も EN/JA の短い toast に理由だけを表示します。(#934)
 - Remove は削除対象の worktree を開いているタブからは計画・実行前に拒否し、EN/JA の短い理由を示すようにしました。自己削除に必要だった main worktree の場所の証明と削除後の観測は、安全性に対して複雑すぎるため廃止しました。main worktree の削除も、main / linked のどちらのタブからも拒否します。(#915、#938)
@@ -53,6 +64,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
+- Graph のサイドバー(ローカル / リモートの branch・worktree・tag・stash)の行にキーボードで移動できるようにしました。各ペインが Tab で 1 か所ずつ止まり、↑/↓ でそのペインの中の行を移動します(ほかのペインには移りません)。Enter / Space で、branch は checkout の確認(現在の branch はグラフ上の位置へ移動)、worktree はクリックしなくても点検カードの表示 / 非表示(Esc でも閉じます)、グループは開閉、リモートの branch と tag はそのコミットへの移動、stash は中身の表示です。折りたたんだペインは見出しに止まり、Enter / Space で開いて最初の行へ移ります。キーボードで focus したときだけ枠が出ます。マウスで行をクリックしたときの動作はこれまでどおりです。(#981)
+- リポジトリのタブ帯で選んだタブの中身(サイドバー・中央・右ペインの本体)と Home の本体を、支援技術に「選択中のタブの中身(tab panel)」として伝えるようにしました。名前はそのタブの名前です。toolbar とステータスバーは中身に含めません。Conflict Mode の画面はまだ tab panel ではありません。見た目は変わりません。(#983)
+- Home の「リポジトリ / Pull Request / Issue」の切り替えの下の一覧と、サイドバー上部の Graph / PRs / Issues の下のページを、支援技術に「選択中のタブの中身(tab panel)」として伝えるようにしました。名前は選択中のタブの名前(件数なし)です。Branch Cleanup などタブが選ばれていない間のページは tab panel にしません。見た目は変わりません。(#979)
 - Settings のスイッチ(Graph の表示 2 つ・自動 fetch・動きを減らす・terminal の自動ロック・Smart Commit)をキーボードと支援技術から操作できるようにしました。Tab で 1 つずつ移動し、Space / Enter で切り替えます。読み上げでは行の見出しを名前とするスイッチとして、オン / オフの状態とともに伝わります。キーボードで focus したときだけ枠が出ます。見た目とマウス操作はこれまでどおりです。(#970)
 - Home に「リポジトリ / Pull Request / Issue」の切り替え(件数付き)を追加し、全リポジトリ横断で自分が作った open な PR、自分にレビュー依頼された open な PR(依頼者のアバター付き)、自分に assign された open な Issue を一覧できるようにしました(`gh search`、各最大 100 件、それ以上あれば表示)。行をクリックすると手元の clone のタブでその PR / Issue を開き、手元に無ければ GitHub で開きます。行の右の「Open」はどの行でも GitHub で開きます。読み込み中の件数は 0 ではなく spinner で示し、一覧はリポジトリ一覧と同じくアカウントごとに保存して次回すぐに表示します。(#928、ADR-0219)
 - Operation Log の「この操作を取り消す」「この時点まで戻す」で local tag の作成・削除・移動も戻せるようにしました。lightweight tag と annotated tag の raw object OID を前後で記録し、確認後に tag が変われば拒否します。復元前の OID は backup ref に保持し、作業ツリー・index・untracked・stash・remote branch は変更しません。tag を動かす計画では不正確なグラフ予測を出さず、短い状態だけを card に示します。(#887)

@@ -72,6 +72,8 @@ impl KagiApp {
             }
         };
         self.home = Some(HomeTab { front: true, left });
+        // Settings belongs to the screen being left (#976 review).
+        self.close_settings_for_command(window, cx);
         if let Some(root) = self.root_focus.clone() {
             window.focus(&root, cx);
         }
@@ -154,12 +156,20 @@ impl KagiApp {
     pub fn render_home(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         self.ensure_home_github(window, cx);
         let body = div()
+            .id("home-tab-panel")
             .flex()
             .flex_row()
             .flex_1()
             .min_h(px(0.))
             .child(self.render_home_sidebar(cx))
             .child(self.render_home_main(window, cx));
+        // Home's content is the Home cell's panel while the strip is drawn
+        // (#983); with no tab there is no strip, so no tab list.
+        let body = if self.tabs.is_empty() {
+            body
+        } else {
+            super::tab_panel_a11y::tab_panel(body, "home-tab-panel", Msg::HomeTabTitle.t())
+        };
         let home = div()
             .id("home")
             .flex()
@@ -190,6 +200,16 @@ impl KagiApp {
         // The menu-driven overlays (Settings, About, Shortcuts, the command
         // palette) are window-global and stay enabled on Home, so they are
         // drawn here too, below the modals as in the workspace (#927 review).
+        // Home has no workspace/pane menus; its outer shell retains the
+        // MenuOverlay → modal slice → platform dropdown order in Z_ORDER.
+        debug_assert_eq!(
+            super::front_layer::Z_ORDER[4],
+            super::front_layer::LayerKind::MenuOverlay
+        );
+        debug_assert_eq!(
+            super::front_layer::Z_ORDER.last(),
+            Some(&super::front_layer::LayerKind::PlatformMenu)
+        );
         let menu_overlay = self.render_menu_overlay(window, cx);
         let home = self.register_menu_actions(
             div()

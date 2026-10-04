@@ -47,6 +47,7 @@ mod external_editor;
 pub mod file_history;
 pub mod file_menu;
 mod fonts;
+mod front_layer;
 mod github;
 mod github_issue_state;
 mod github_issues;
@@ -127,12 +128,14 @@ mod overlay_focus;
 mod settings_theme_folder;
 pub mod settings_view;
 pub mod sidebar;
+mod sidebar_focus;
 mod sidebar_panes;
 mod sidebar_rows;
 mod sidebar_worktree_row;
 mod slow_reads;
 pub mod smart_commit;
 pub mod stash_menu;
+pub mod tab_panel_a11y;
 mod tab_ui_state_ops;
 mod tab_view;
 pub mod tabs;
@@ -193,6 +196,10 @@ actions!(
         CloseMainDiff,
         CopyDiffSelection,
         DiffPrevFile,
+        CommitFirst,
+        CommitLast,
+        CommitPageUp,
+        CommitPageDown,
         PrModePrevPane,
         PrModeNextPane,
         DiffNextFile,
@@ -456,7 +463,7 @@ use graph_view::graph_canvas;
 use kagi_git::{
     oplog::{read_oplog_tail, OpLogEntry, OpOutcome},
     ops::{default_tracking_branch_name, validate_branch_rename, AmendMode, StateSummary},
-    CommitId, FileDiffStat, FileStatus, RepoSnapshot, SkipProgress,
+    CommitId, RepoSnapshot, SkipProgress,
 };
 
 // ──────────────────────────────────────────────────────────────
@@ -1122,6 +1129,11 @@ pub struct KagiApp {
     /// Focus handles of Settings' switches, one per toggle in drawing order
     /// (#970), handed to the overlay's renderer.
     pub(crate) settings_switches: keyboard_nav::FocusSlots,
+    /// Settings' focus trap (#974): the panel tracks this handle, and
+    /// opening Settings focuses it, so Tab / Shift+Tab cycle inside the
+    /// panel (gpui-component's Root) instead of reaching the terminal or the
+    /// workspace underneath. Built on the first open.
+    pub(crate) settings_focus: Option<gpui::FocusHandle>,
     /// ADR-0119: multi-line editor backing the Settings → "Analyze ignore"
     /// section (the gitignore-format exclude file). Lazily created when Settings
     /// opens (needs a `Window`).
@@ -1253,8 +1265,11 @@ pub struct KagiApp {
     /// Transient overlay opened from the menu bar (branch picker / About /
     /// Keyboard Shortcuts).  `None` when no menu overlay is visible.
     pub menu_overlay: Option<commands::MenuOverlay>,
-    /// Focus the next render applies (#812 / #817, `overlay_focus.rs`).
-    pending_focus: Option<gpui::FocusHandle>,
+    /// Focus and screen identity captured before an overlay opened (#812 / #976).
+    pending_focus: Option<overlay_focus::PendingFocus>,
+    /// A focus returned while a pane still animates closed; checked for
+    /// membership again on later frames when its control may have unmounted.
+    restored_focus: Option<gpui::FocusHandle>,
     /// Linux/FreeBSD client-side menu dropdown currently open from the in-app
     /// menu bar. Native macOS menus are provided by `cx.set_menus`, so only the
     /// Linux/FreeBSD titlebar sets this.
@@ -1404,6 +1419,7 @@ impl KagiApp {
             graph_compact: theme::compact_graph(),
             theme_select: None,
             settings_switches: Default::default(),
+            settings_focus: None,
             analyze_ignore_input: None,
             command_palette_input: None,
             pr_comment_input: None,
@@ -1441,6 +1457,7 @@ impl KagiApp {
             inspector_visible: true,
             menu_overlay: None,
             pending_focus: None,
+            restored_focus: None,
             platform_menu_open: None,
             // W11-AVATAR
             avatars: avatar::AvatarStore::default(),
@@ -2868,30 +2885,23 @@ impl KagiApp {
     /// rebase-onto), and Enter over those modals checked out the commit
     /// selected behind them.
     fn confirm_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.active_modal.is_some() {
-            self.confirm_open_modal(cx);
-            cx.notify();
-            if let Some(owner) = self.active_session() {
-                self.offer_auto_release(owner, cx);
+        match self.front_layer(cx) {
+            front_layer::FrontLayer::Modal => {
+                self.confirm_open_modal(cx);
+                cx.notify();
+                if let Some(owner) = self.active_session() {
+                    self.offer_auto_release(owner, cx);
+                }
+                true
             }
-            return true;
+            front_layer::FrontLayer::CommitPlan => {
+                self.start_commit(cx);
+                cx.notify();
+                true
+            }
+            front_layer::FrontLayer::Settings | front_layer::FrontLayer::Menu => true,
+            front_layer::FrontLayer::None => false,
         }
-        if self
-            .ui()
-            .commit_panel
-            .as_ref()
-            .is_some_and(|e| e.read(cx).state.plan_modal.is_some())
-        {
-            self.start_commit(cx);
-        } else if self.menu_overlay.is_some() {
-            // Open but no single confirm action — consume Enter (don't check out
-            // a commit), but take no action.
-            return true;
-        } else {
-            return false;
-        }
-        cx.notify();
-        true
     }
 
     /// Confirm whichever [`ActiveModal`] owns the slot. Split out of
@@ -2965,25 +2975,17 @@ impl KagiApp {
     /// Esc while a modal is open: cancel/close the active modal. Returns `true`
     /// if a modal was open.
     fn cancel_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.active_modal.is_some() {
-            self.cancel_open_modal();
-            if let Some(owner) = self.active_session() {
-                self.offer_auto_release(owner, cx);
+        match self.front_layer(cx) {
+            front_layer::FrontLayer::Modal => {
+                self.cancel_open_modal();
+                if let Some(owner) = self.active_session() {
+                    self.offer_auto_release(owner, cx);
+                }
             }
-            cx.notify();
-            return true;
-        }
-        if self
-            .ui()
-            .commit_panel
-            .as_ref()
-            .is_some_and(|e| e.read(cx).state.plan_modal.is_some())
-        {
-            self.cancel_commit_plan_modal(cx);
-        } else if self.menu_overlay.is_some() {
-            self.menu_overlay = None;
-        } else {
-            return false;
+            front_layer::FrontLayer::CommitPlan => self.cancel_commit_plan_modal(cx),
+            front_layer::FrontLayer::Settings => self.menu_overlay = None,
+            front_layer::FrontLayer::Menu => self.close_front_menu(cx),
+            front_layer::FrontLayer::None => return false,
         }
         cx.notify();
         true
@@ -3051,26 +3053,74 @@ impl KagiApp {
         }
     }
 
-    /// Move the commit selection up/down by `delta` rows (arrow keys).
-    /// No selection yet → selects the first row. Idempotent at the ends.
+    /// Move the commit selection by `delta` rows; arrows and paging share
+    /// the same clamping, selection and centered reveal.
     pub fn step_commit_selection(&mut self, delta: i64) {
         if self.view().rows.is_empty() {
             return;
         }
         let next = match self.ui().selected {
             None => 0,
-            Some(cur) => {
-                let n = cur as i64 + delta;
-                n.clamp(0, self.view().rows.len() as i64 - 1) as usize
-            }
+            Some(cur) => (cur as i64)
+                .saturating_add(delta)
+                .clamp(0, self.view().rows.len() as i64 - 1) as usize,
         };
+        self.select_commit_index(next);
+    }
+
+    fn select_commit_index(&mut self, next: usize) {
+        self.ui()
+            .commit_scroll_handle
+            .scroll_to_item(self.commit_list_index(next), ScrollStrategy::Center);
+        // `select` toggles on a repeated index; guard selection, not reveal.
         if self.ui().selected != Some(next) {
-            self.ui()
-                .commit_scroll_handle
-                .scroll_to_item(self.commit_list_index(next), ScrollStrategy::Center);
-            // `select` toggles on a repeated index; guarded above.
             self.select(next);
         }
+    }
+
+    fn commit_page_size(&self) -> i64 {
+        let height = self
+            .ui()
+            .commit_scroll_handle
+            .0
+            .borrow()
+            .base_handle
+            .bounds()
+            .size
+            .height;
+        ((f32::from(height) / row_height(self.graph_compact)).floor() as usize)
+            .saturating_sub(1)
+            .max(1) as i64
+    }
+
+    fn jump_commit_selection(&mut self, last: bool) {
+        if !self.view().rows.is_empty() {
+            self.select_commit_index(if last { self.view().rows.len() - 1 } else { 0 });
+        }
+    }
+
+    /// Conflict Mode replaces the normal body before workspace slots are resolved.
+    pub(crate) fn conflict_body_visible(&self) -> bool {
+        self.ui().conflict.is_some() && !self.ui().conflict_merge_pending
+    }
+
+    fn commit_list_has_focus(&self, window: &Window, cx: &Context<Self>) -> bool {
+        self.root_has_focus(window)
+            && self.front_layer(cx) == front_layer::FrontLayer::None
+            && !self.conflict_body_visible()
+            && !self.home_in_front()
+            && workspace::resolve_workspace(&self.workspace_inputs(false, false, false)).center
+                == workspace::CenterPane::CommitList
+    }
+
+    /// Commit list coordinates and rendered row height for the GUI viewport
+    /// assertion (the shared list may include WIP and stash rows before commits).
+    #[cfg(feature = "gui-e2e")]
+    pub fn commit_row_geometry_for_e2e(&self, index: usize) -> (usize, f32) {
+        (
+            self.commit_list_index(index),
+            row_height(self.graph_compact),
+        )
     }
 
     /// W2-SIDEBAR: Lazily create the sidebar filter InputState (requires &mut Window).

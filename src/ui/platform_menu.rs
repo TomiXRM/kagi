@@ -16,11 +16,9 @@ impl KagiApp {
         &self,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
-        let ix = self.platform_menu_open?;
-        // ADR-0085: index into the *filtered* sections (same iterator the heads
-        // use), so the open panel matches the head it was launched from and the
-        // left offset (computed from `ix`) lines up.
-        let section = commands::linux_menu_sections().nth(ix)?;
+        // Use the same filtered section as the visibility/keyboard gate; the
+        // titlebar and dropdown must agree on index and available rows.
+        let (ix, section) = self.visible_platform_menu_section()?;
         let dismiss = cx.listener(|this, _: &gpui::MouseDownEvent, _window, cx| {
             this.platform_menu_open = None;
             cx.stop_propagation();

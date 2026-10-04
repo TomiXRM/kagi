@@ -152,6 +152,13 @@ impl KagiApp {
     pub(crate) fn depart_active_tab(&mut self) {
         if let Some(session) = self.active_session() {
             self.app_sessions.depart(session);
+            if self
+                .file_menu
+                .as_ref()
+                .is_some_and(|menu| menu.owner == session)
+            {
+                self.file_menu = None;
+            }
             if let Some(ui) = self.ui.get_mut(&session) {
                 ui.worktree_inspections.cancel();
             }

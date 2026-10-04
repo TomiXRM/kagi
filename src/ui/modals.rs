@@ -275,6 +275,8 @@ pub struct MergePlanModal {
     /// confirm label already reads `Merge <target> into <into_branch>`.
     pub off_branch: bool,
     pub error: Option<SharedString>,
+    /// Queue-owned confirmation; absent for a direct merge.
+    pub queued: Option<crate::app::IntentId>,
 }
 
 /// State for creating a local tracking branch from a remote branch and checking

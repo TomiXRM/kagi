@@ -547,9 +547,9 @@ fn create_tag_state(ctx: &BranchMenuContext) -> ItemState {
 }
 
 fn merge_state(ctx: &BranchMenuContext) -> ItemState {
-    if ctx.busy {
-        disabled(Msg::BcmBusy.t())
-    } else if ctx.detached_head {
+    // A branch-backed merge can freeze its destination while a write runs.
+    // The enqueue path rechecks the live HEAD and refuses if it detached.
+    if ctx.detached_head {
         disabled(Msg::BcmDetachedHead.t())
     } else if matches!(ctx.conflict_mode, BranchConflictMode::Conflicted) {
         disabled(Msg::BcmConflictMode.t())
@@ -926,13 +926,14 @@ mod tests {
     }
 
     #[test]
-    fn busy_disables_mutating_items() {
+    fn busy_keeps_queueable_actions_enabled() {
         let mut c = ctx();
         c.busy = true;
         let groups = branch_context_menu_items(&c);
 
-        // A local checkout is queued behind the running operation (#355).
+        // Local checkout and merge freeze their targets for the queue (#355).
         assert_enabled(&groups, BranchAction::Checkout);
+        assert_enabled(&groups, BranchAction::MergeIntoCurrent);
         assert_disabled_contains(&groups, BranchAction::CreateBranchFromHere, "operation");
         assert_disabled_contains(&groups, BranchAction::Pull, "operation");
         assert_disabled_contains(&groups, BranchAction::Push, "operation");

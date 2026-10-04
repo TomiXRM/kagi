@@ -1,6 +1,7 @@
 use super::*;
 use kagi_domain::plan_note::tag::TagNameError;
 use kagi_domain::plan_note::{TagNote, TagRecovery, TagTitle};
+use kagi_domain::remote::shell_quote;
 
 /// The remote a tag push targets. `origin` when it exists, else the first
 /// configured remote — the same rule `plan_push` uses, so the two agree.
@@ -104,7 +105,7 @@ pub fn plan_create_tag(
         kind: RecoveryKind::Tag(TagRecovery::CreateTag {
             name: name.to_string(),
         }),
-        commands: vec![format!("git tag -d {}", name)],
+        commands: vec![format!("git tag -d {}", shell_quote(name))],
     };
 
     Ok(OperationPlan {
@@ -223,7 +224,11 @@ pub fn plan_push_tag(repo: &Repository, name: &str) -> Result<OperationPlan, Git
             name: name.to_string(),
             remote: r.clone(),
         }),
-        commands: vec![format!("git push {} --delete {}", r, name)],
+        commands: vec![format!(
+            "git push --delete -- {} {}",
+            shell_quote(r),
+            shell_quote(name)
+        )],
     });
 
     Ok(OperationPlan {

@@ -97,8 +97,10 @@ pub fn plan_force_with_lease_push(repo: &Repository) -> Result<OperationPlan, Gi
                                 new_sha: local.to_string(),
                             }),
                             commands: vec![format!(
-                                "git push --force-with-lease={}:{} {} {}:refs/heads/{}",
-                                branch, local, remote, lease, branch
+                                "git push {} -- {} {}",
+                                shell_quote(&format!("--force-with-lease={branch}:{local}")),
+                                shell_quote(&remote),
+                                shell_quote(&format!("{lease}:refs/heads/{branch}"))
                             )],
                         });
                         // #353: the forward equivalent guards the remote tip

@@ -86,7 +86,11 @@ pub fn plan_replay_onto(
                     branch: branch.to_string(),
                     from: from.clone(),
                 }),
-                commands: vec![format!("git update-ref refs/heads/{branch} {from}")],
+                commands: vec![format!(
+                    "git update-ref {} {}",
+                    shell_quote(&format!("refs/heads/{branch}")),
+                    shell_quote(&from)
+                )],
             }),
             head_at_plan: head.clone(),
             stash_count_at_plan: 0,

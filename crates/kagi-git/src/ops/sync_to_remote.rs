@@ -15,6 +15,7 @@
 use super::*;
 use kagi_domain::operation::SyncWorkBackup;
 use kagi_domain::plan_note::{SyncNote, SyncRecovery, SyncTitle};
+use kagi_domain::remote::shell_quote;
 
 /// What the plan resolved; carried through preflight/execute via the plan's
 /// title (names) and recovery (OIDs + backup ref names).
@@ -172,9 +173,13 @@ fn finish(
 ) -> OperationPlan {
     let is_head = matches!(&head, Head::Attached { branch: b, .. } if b == branch);
     let recovery = tip_backup.map(|tip_backup| {
-        let mut commands = vec![format!("git update-ref refs/heads/{branch} {tip_backup}")];
+        let mut commands = vec![format!(
+            "git update-ref {} {}",
+            shell_quote(&format!("refs/heads/{branch}")),
+            shell_quote(&tip_backup)
+        )];
         if let Some(work) = &work_backup {
-            commands.push(format!("git stash apply --index {work}"));
+            commands.push(format!("git stash apply --index {}", shell_quote(work)));
         }
         PlanRecovery {
             kind: RecoveryKind::Sync(SyncRecovery::SyncToRemote {

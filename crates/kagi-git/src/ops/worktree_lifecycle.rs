@@ -10,6 +10,7 @@
 use super::*;
 use git2::WorktreeLockStatus;
 use kagi_domain::plan_note::{WorktreeNote, WorktreeRecovery, WorktreeTitle};
+use kagi_domain::remote::shell_quote;
 use kagi_domain::remove::{RepoId, WorktreeId};
 use kagi_domain::worktree_autolock::{
     classify_auto_unlock, AutoLockToken, AutoUnlockRace, AutoUnlockTarget, LOCK_ASIDE_PREFIX,
@@ -246,7 +247,10 @@ pub fn plan_lock_worktree(
         kind: RecoveryKind::Worktree(WorktreeRecovery::LockWorktree {
             name: name.to_string(),
         }),
-        commands: vec![format!("git worktree unlock <path-of-{}>", name)],
+        commands: vec![format!(
+            "git worktree unlock <path-of-{}>",
+            shell_quote(name)
+        )],
     });
     admin_plan(repo, title, warnings, blockers, recovery, false)
 }
@@ -400,9 +404,9 @@ pub fn plan_auto_unlock_worktree(
             name: name.to_string(),
         }),
         commands: vec![format!(
-            "git worktree lock --reason \"{}\" <path-of-{}>",
-            target.token.reason(),
-            name
+            "git worktree lock --reason {} <path-of-{}>",
+            shell_quote(&target.token.reason()),
+            shell_quote(name)
         )],
     });
     admin_plan(repo, title, warnings, blockers, recovery, false)

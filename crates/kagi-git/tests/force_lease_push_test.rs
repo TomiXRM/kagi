@@ -126,6 +126,12 @@ fn test_plan_normal_no_blockers_after_amend() {
         );
         assert!(command.contains(" -- 'origin' 'main'"), "{command}");
     }
+    let recovery = plan.recovery.as_ref().expect("force-lease recovery");
+    assert!(
+        recovery.commands[0].contains(" -- 'origin' "),
+        "remote remains positional: {:?}",
+        recovery.commands
+    );
 }
 
 #[test]

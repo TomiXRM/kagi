@@ -5,6 +5,7 @@
 
 use super::*;
 use kagi_domain::plan_note::{RemoteBranchNote, RemoteBranchRecovery, RemoteBranchTitle};
+use kagi_domain::remote::shell_quote;
 
 /// Split `"origin/feature/x"` into `("origin", "feature/x")`.
 fn split_remote_branch(remote_branch: &str) -> Option<(&str, &str)> {
@@ -100,7 +101,11 @@ pub fn plan_delete_remote_branch(
             branch: branch.to_string(),
             sha: sha.clone(),
         }),
-        commands: vec![format!("git push {} {}:refs/heads/{}", remote, sha, branch)],
+        commands: vec![format!(
+            "git push -- {} {}",
+            shell_quote(remote),
+            shell_quote(&format!("{sha}:refs/heads/{branch}"))
+        )],
     };
 
     Ok(OperationPlan {

@@ -114,7 +114,11 @@ pub fn plan_reset_current_to_head(
                     branch: branch.clone(),
                     from: from_oid.to_string(),
                 }),
-                commands: vec![format!("git update-ref refs/heads/{} {}", branch, from_oid)],
+                commands: vec![format!(
+                    "git update-ref {} {}",
+                    shell_quote(&format!("refs/heads/{branch}")),
+                    shell_quote(&from_oid.to_string())
+                )],
             })
     });
 

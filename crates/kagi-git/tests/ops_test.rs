@@ -141,6 +141,35 @@ fn test_execute_clean_repo_moves_head() {
     );
 }
 
+#[cfg(not(windows))]
+#[test]
+fn checkout_recovery_command_round_trips_shell_metacharacters() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let (repo_dir, _repo) = build_two_branch_repo(&tmp);
+    let original = "topic$(id)'branch";
+    git(&repo_dir, &["checkout", "-qb", original]);
+    let repo = Repository::open(&repo_dir).unwrap();
+
+    let plan = plan_checkout(&repo, "feature/one").unwrap();
+    let recovery = plan.recovery.as_ref().expect("checkout recovery");
+    git(&repo_dir, &["checkout", "-q", "feature/one"]);
+    let result = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&recovery.commands[0])
+        .current_dir(&repo_dir)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "recovery checkout failed: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(repo.head().unwrap().shorthand().unwrap(), original);
+}
+
 // ────────────────────────────────────────────────────────────
 // Test 2: dirty repo — non-overlapping changes carry over (no blocker);
 //         only changes that collide with the checkout block.

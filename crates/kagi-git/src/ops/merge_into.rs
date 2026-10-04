@@ -16,6 +16,7 @@
 use super::*;
 
 use kagi_domain::plan_note::{CommonNote, MergeNote, MergeRecovery, MergeTitle};
+use kagi_domain::remote::shell_quote;
 
 /// What [`execute_merge_into_branch`] will do, decided at plan time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,7 +161,11 @@ pub fn plan_merge_into_branch(
             target: target.to_string(),
             previous_sha: previous_sha.clone(),
         }),
-        commands: vec![format!("git branch -f {target} {previous_sha}")],
+        commands: vec![format!(
+            "git branch -f {} {}",
+            shell_quote(target),
+            shell_quote(&previous_sha)
+        )],
     };
 
     let blocked = |blockers: Vec<PlanNote>, warnings: Vec<PlanNote>| OperationPlan {

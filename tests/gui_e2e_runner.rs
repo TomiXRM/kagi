@@ -1253,6 +1253,10 @@ mod macos {
                 Box::new(crate::op_queue::scenario_queue_rejects_during_untracked_write),
             ),
             (
+                "worktree_size_not_explained",
+                Box::new(crate::slow_read::scenario_worktree_size_not_explained),
+            ),
+            (
                 "fetch_failure_oplog",
                 Box::new(crate::busy_label::scenario_fetch_failure_reaches_the_oplog),
             ),

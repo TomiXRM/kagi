@@ -1436,6 +1436,14 @@ mod macos {
                 Box::new(crate::op_queue::scenario_queue_checkout_linked_worktree_refuses),
             ),
             (
+                "queue_commit_checkout_busy_replans",
+                Box::new(crate::op_queue::scenario_queue_commit_checkout_busy_replans),
+            ),
+            (
+                "queue_dirty_commit_enter_refuses",
+                Box::new(crate::op_queue::scenario_queue_dirty_commit_enter_refuses),
+            ),
+            (
                 "queue_refuses_a_blocked_checkout",
                 Box::new(crate::op_queue::scenario_queue_refuses_a_blocked_checkout),
             ),

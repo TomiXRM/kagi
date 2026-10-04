@@ -25,7 +25,6 @@ impl KagiApp {
         }
     }
 
-
     /// An admitted lease is the sole timer owner. No separate write clock
     /// survives settlement, cancellation, or a newer admission.
     fn tick_busy_write(&mut self, id: crate::app::OperationId, cx: &mut Context<Self>) {

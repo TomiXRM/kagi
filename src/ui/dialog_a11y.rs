@@ -181,6 +181,15 @@ pub(crate) fn apply_note(
         .aria_label(SharedString::from(text.to_string()))
 }
 
+/// Record and expose the localized name of a plan-state group.
+pub(crate) fn apply_group(
+    id: &'static str,
+    el: Stateful<Div>,
+    label: SharedString,
+) -> Stateful<Div> {
+    record_note(id, Role::Group, label.as_ref());
+    el.role(Role::Group).aria_label(label)
+}
 // ── Tier A recorder (gui-e2e only) ─────────────────────────────────────────
 
 #[cfg(feature = "gui-e2e")]

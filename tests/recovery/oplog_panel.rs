@@ -603,7 +603,7 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
     ));
     assert!(painted(window, "restore-ref-0") && painted(window, "restore-ref-1"));
     assert!(!painted(window, "plan-state-current"));
-    assert!(!painted(window, "plan-state-predicted"));
+    assert!(!painted(window, "plan-state-after"));
     // A compact native window must still show destructive targets and Confirm.
     let small_state = e2e::app_state(&repo).expect("compact app state");
     let captured: Rc<RefCell<Option<Entity<KagiApp>>>> = Rc::default();

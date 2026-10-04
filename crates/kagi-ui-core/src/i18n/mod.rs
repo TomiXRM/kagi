@@ -1245,6 +1245,8 @@ pub enum Msg {
     InputStashMessage,
     InputStashCurrent,
     InputStashAfter,
+    /// The status chip of a plan state with no working-tree changes.
+    PlanStateClean,
     InputStashUntrackedWarning,
     InputUpstream,
     InputCheckoutAfterCreate,
@@ -3273,6 +3275,8 @@ impl Msg {
             (Ja, InputStashCurrent) => "現在",
             (En, InputStashAfter) => "AFTER",
             (Ja, InputStashAfter) => "実行後",
+            (En, PlanStateClean) => "clean",
+            (Ja, PlanStateClean) => "変更なし",
             (En, InputStashUntrackedWarning) => "{} untracked file(s) will be included in the stash",
             (Ja, InputStashUntrackedWarning) => "未追跡ファイル {} 件も退避に含まれます",
             (En, InputUpstream) => "Upstream",

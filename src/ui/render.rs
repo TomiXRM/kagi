@@ -311,6 +311,7 @@ impl Render for KagiApp {
         // when none is open. A remote read-only view (ADR-0089 Phase 2b) has no
         // local tab but still renders the workspace from its applied snapshot.
         if self.home_in_front() {
+            self.panel_motion.reset_right();
             let home = self.render_home(window, cx);
             return self.platform_window_shell(home, cx);
         }
@@ -416,6 +417,7 @@ impl Render for KagiApp {
         // Conflict Mode replaces the body, the sidebar's panes with it; the
         // body's frames sync them as they lay the sidebar out (#981).
         if conflict_body_visible {
+            self.panel_motion.reset_right();
             self.yield_sidebar_focus(window, cx);
         }
         // #985: a menu that just opened takes the focus; one that closed

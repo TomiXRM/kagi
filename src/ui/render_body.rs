@@ -525,10 +525,8 @@ impl KagiApp {
             detail.is_some(),
         ));
 
-        // #955: the side panes slide toward what the layout shows, but only
-        // when their own toggle moved them; a layout change jumps. Switching
-        // between Inspector, Compare and Commit Panel keeps the slot shown,
-        // so it is no motion at all.
+        // The sidebar follows its toggle (#955); the right slot follows
+        // resolved visibility (#1001). Whole-workspace takeovers stay instant.
         let motion_now = super::panel_motion::now();
         let motion_instant = super::panel_motion::instant();
         let sidebar_shown = layout.left == workspace::LeftPane::Navigator;
@@ -544,22 +542,25 @@ impl KagiApp {
                 | workspace::RightPane::Compare
                 | workspace::RightPane::CommitPanel
         );
+        let mode = self.workspace_mode();
+        let graph_body = mode == workspace_mode::WorkspaceMode::Graph
+            && matches!(
+                layout.center,
+                workspace::CenterPane::CommitList | workspace::CenterPane::Diff
+            );
         self.panel_motion.sync_right(
-            right_shown,
-            self.inspector_visible,
+            layout.right,
+            selected,
+            graph_body,
             motion_now,
             motion_instant,
         );
-        if right_shown {
-            self.panel_motion.right_pane = Some(layout.right);
-        }
         let sidebar_fraction = self.panel_motion.sidebar.visible(motion_now);
         let right_fraction = self.panel_motion.right.visible(motion_now);
         // The Graph page's panes are drawn this frame only while the sidebar
         // is (or is still closing) and shows that page — the PRs and Issues
         // pages are lists of their own. Their keyboard state follows this
         // frame, not the last (#981 review).
-        let mode = self.workspace_mode();
         let panes_front = sidebar_fraction > 0.
             && !matches!(
                 mode,
@@ -709,10 +710,17 @@ impl KagiApp {
         } else {
             self.panel_motion.right_pane.filter(|_| right_fraction > 0.)
         };
-        if let Some(el) = right_pane
-            .and_then(workspace::right_item)
-            .and_then(|item| item.render(self, &layout, None, cx))
-        {
+        let right_element = if !right_shown && right_pane == Some(workspace::RightPane::Inspector) {
+            self.panel_motion.inspector_row.and_then(|row| {
+                self.ui_mut()?.sync_inspector_commit_files(row);
+                workspace::render_inspector_body(self, Some(row), None, cx)
+            })
+        } else {
+            right_pane
+                .and_then(workspace::right_item)
+                .and_then(|item| item.render(self, &layout, None, cx))
+        };
+        if let Some(el) = right_element {
             let pane = div()
                 .flex()
                 .flex_row()

@@ -60,10 +60,8 @@ pub(crate) fn clip(
     outer.child(inner.child(child))
 }
 
-/// The three panes' motions, plus the toggle each side pane last followed:
-/// a side pane that appears or disappears while its toggle stayed the same
-/// did so because the layout changed (a takeover, Conflict, Editor…), and
-/// jumps instead of sliding.
+/// The bottom and left panes follow their toggles; the right pane follows
+/// its resolved slot's visibility. Its last Inspector row is exit-only content.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PanelMotions {
     pub bottom: PanelMotion,
@@ -72,8 +70,9 @@ pub(crate) struct PanelMotions {
     /// The right pane last drawn, so it can still be drawn while it closes
     /// after the layout has already moved on to `Hidden`.
     pub right_pane: Option<super::workspace::RightPane>,
+    /// Last Inspector row, retained only while its clip retracts after Esc.
+    pub inspector_row: Option<usize>,
     sidebar_toggle: Option<bool>,
-    right_toggle: Option<bool>,
 }
 
 impl PanelMotions {
@@ -90,18 +89,42 @@ impl PanelMotions {
         );
     }
 
-    /// Follow the right pane (Inspector, Compare or Commit Panel — one slot,
-    /// so switching between them is no motion at all): `shown` is whether
-    /// the layout draws any of them, `toggle` the Inspector toggle.
-    pub(crate) fn sync_right(&mut self, shown: bool, toggle: bool, now: Instant, instant: bool) {
-        follow(
-            &mut self.right,
-            &mut self.right_toggle,
-            shown,
-            toggle,
-            now,
-            instant,
+    /// Home, tab changes and Conflict replace the entire workspace surface.
+    pub(crate) fn reset_right(&mut self) {
+        self.right = PanelMotion::default();
+        self.right_pane = None;
+        self.inspector_row = None;
+    }
+
+    /// One right slot for Inspector, Compare and Commit Panel. Every change
+    /// between shown and hidden slides while the Graph is on screen; whole
+    /// workspace transitions jump, and swapping shown content does not move.
+    pub(crate) fn sync_right(
+        &mut self,
+        pane: super::workspace::RightPane,
+        selected: Option<usize>,
+        graph_body: bool,
+        now: Instant,
+        instant: bool,
+    ) {
+        // A different center owns the whole surface. Do not seed a hidden
+        // target here: re-entering the Graph must be a first (instant) frame.
+        if !graph_body {
+            self.reset_right();
+            return;
+        }
+        use super::workspace::RightPane;
+        let shown = matches!(
+            pane,
+            RightPane::Inspector | RightPane::Compare | RightPane::CommitPanel
         );
+        self.right.sync(shown, now, instant);
+        if shown {
+            self.right_pane = Some(pane);
+            if pane == RightPane::Inspector {
+                self.inspector_row = selected;
+            }
+        }
     }
 
     /// Whether any pane still moves and needs another frame.

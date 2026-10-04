@@ -72,6 +72,7 @@ impl KagiApp {
             }
         };
         self.home = Some(HomeTab { front: true, left });
+        self.panel_motion.reset_right();
         // Settings belongs to the screen being left (#976 review).
         self.close_settings_for_command(window, cx);
         if let Some(root) = self.root_focus.clone() {

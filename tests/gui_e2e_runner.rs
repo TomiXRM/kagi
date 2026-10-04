@@ -1432,6 +1432,10 @@ mod macos {
                 Box::new(crate::op_queue::scenario_queue_checkout_missing_ref_refuses),
             ),
             (
+                "queue_checkout_linked_worktree_refuses",
+                Box::new(crate::op_queue::scenario_queue_checkout_linked_worktree_refuses),
+            ),
+            (
                 "queue_refuses_a_blocked_checkout",
                 Box::new(crate::op_queue::scenario_queue_refuses_a_blocked_checkout),
             ),

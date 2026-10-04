@@ -2038,7 +2038,10 @@ checkout, the held predecessor commits it, then the fresh clean checkout runs),
 `queue_busy_checkout_replans_warning` (idle opens the modal normally; busy
 shows the strip at once, then asks about the fresh carry-over warning) and
 `queue_checkout_missing_ref_refuses` (a missing ref is statically rejected with
-the localized reason in footer and toast). Stage 3b-1 adds:
+the localized footer/toast and a durable refusal receipt), and
+`queue_checkout_linked_worktree_refuses` (a branch checked out in another
+worktree cannot enter the busy queue; its typed blocker reaches the oplog).
+Stage 3b-1 adds:
 `queue_commit_runs_after_checkout` (held checkout, staged change, queued commit
 strip row and toast, then HEAD advances on the new branch with the frozen
 message and no modal),

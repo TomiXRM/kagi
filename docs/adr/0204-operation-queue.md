@@ -285,11 +285,15 @@ pub enum IntentRequest {                // 段階 2 で受け付ける最初の 
   commit しない。さらに admission 直前まで merge 状態を live に検査し、外部で始まった merge
   は専用の取消理由を残して通常 commit に渡さない（#355 段階 3b-1）。
   busy 中の checkout は plan を投入時に読まない。参照が存在しない・別 worktree が所有する
-  branch など、先行 write では変わらない拒否理由だけを軽量な read で確認し、現在の
+  branch など、先行 write では**通常は**変わらない拒否理由だけを軽量な read で確認し、現在の
   dirty / carry-over / 既に取り込み済みなど後続 write で変わる条件は凍結 target を
-  intent として即時に受け付ける。静的に拒否した場合は footer と toast に理由を示し、
-  承認済み扱いにはしない。先頭に来てから通常の checkout plan を作り直し、その時点の
-  blocker / warning と admission 前 preflight で判断する。
+  intent として即時に受け付ける。branch 所有権は最後の read snapshot 由来であり、
+  先行 write が branch を作成・linked worktree を解放した場合は誤拒否もあり得るが、
+  write 完了後の再試行で済む。静的拒否は oplog に記録し footer と toast に理由を示す。
+  先頭に来てから通常の checkout plan を作り直し、その時点の blocker / warning と
+  admission 前 preflight で判断する。
+  commit への Enter が dirty + busy の場合、stash + checkout は 2 write なので
+  単一 checkout intent としては受け付けず、既存の busy 拒否を維持する。
   queued merge は常に通常の merge modal で確認する。投入時の `into` は HEAD の branch 名
   （drag で明示された場合はその destination 名）として凍結し、先頭時点の HEAD が異なれば
   その凍結 destination への merge-into として live replan する。予測済み plan は保存しない。
@@ -432,7 +436,7 @@ SSH remote pull の旧 latch による排他の穴は #989 の write lease 移�
   dirty blocker が先行 write の結果を予測できないまま後続を拒否していたため、投入時は
   ref 存在と linked worktree の branch 所有権だけを確認する。進行中の書き込みが
   dirty / HEAD を変える可能性があるため、plan はキューの先頭で初めて評価する。
-  静的拒否は理由を表示し、head replan の blocker / warning は従来どおり扱う。
+  静的拒否は理由を表示・記録し、head replan の blocker / warning は従来どおり扱う。
 
 - **2026-10-04 段階 3b-2（#355）** — merge の busy 入口（通常・drag・非 HEAD destination）を
   intent queue に配線した。`into` を branch 名で凍結し、head が変わればその branch に merge-into

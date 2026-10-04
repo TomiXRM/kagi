@@ -182,9 +182,24 @@ impl KagiApp {
             CheckoutPlanTarget::Commit(_) => None,
         };
         if let Some(blocker) = blocker {
-            let reason = i18n::plan_note_text(&blocker);
-            self.status_footer = FooterStatus::Idle(reason.clone().into());
-            self.push_toast(ToastKind::Error, reason, cx);
+            if let CheckoutPlanTarget::Branch(branch) = target {
+                klog!(
+                    "queue: refused checkout {} (static: {})",
+                    branch,
+                    blocker.message_en()
+                );
+            }
+            if let Some(repo_path) = self.repo_path.clone() {
+                let before = StateSummary {
+                    head: format!("branch: {}", self.view().status_summary.branch),
+                    dirty: "not inspected at admission".into(),
+                };
+                self.record_refused("checkout", before, &[blocker], &repo_path, cx);
+            } else {
+                let reason = i18n::plan_note_text(&blocker);
+                self.status_footer = FooterStatus::Idle(reason.clone().into());
+                self.push_toast(ToastKind::Error, reason, cx);
+            }
             cx.notify();
             return false;
         }

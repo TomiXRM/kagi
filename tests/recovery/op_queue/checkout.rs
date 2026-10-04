@@ -1,4 +1,5 @@
 use super::*;
+use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
 /// A blocker derived from the tree during another checkout is not an
 /// enqueue-time veto. The fresh head plan still refuses it before any write.
 pub fn scenario_queue_refuses_a_blocked_checkout(cx: &mut VisualTestAppContext) {
@@ -164,7 +165,7 @@ pub fn scenario_queue_checkout_missing_ref_refuses(cx: &mut VisualTestAppContext
         let state = app.read(cx);
         assert!(matches!(
             &state.status_footer,
-            kagi::ui::FooterStatus::Idle(text) if text.as_ref() == expected
+            kagi::ui::FooterStatus::Failed(text) if text.contains(&expected)
         ));
         assert!(state
             .toast_stack
@@ -173,10 +174,95 @@ pub fn scenario_queue_checkout_missing_ref_refuses(cx: &mut VisualTestAppContext
             .read(cx)
             .toasts()
             .iter()
-            .any(|toast| toast.message.as_ref() == expected));
+            .any(|toast| toast.message.contains(&expected)));
     });
+    let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+        .into_iter()
+        .filter(|entry| entry.op == "checkout")
+        .collect();
+    assert_eq!(entries.len(), 1);
+    assert!(matches!(
+        &entries[0].outcome,
+        OpOutcome::Refused { blockers } if blockers.len() == 1
+            && blockers[0].contains("missing")
+    ));
+    assert!(kagi_ui_core::klog::tail()
+        .iter()
+        .any(|line| { line.starts_with("[kagi] queue: refused checkout missing (static: ") }));
     release.send(());
     cx.run_until_parked();
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS queue_checkout_missing_ref_refuses");
+}
+
+/// A branch owned by a linked worktree is refused before entering the queue,
+/// with the typed refusal durably recorded even while another write is held.
+pub fn scenario_queue_checkout_linked_worktree_refuses(cx: &mut VisualTestAppContext) {
+    let fixture = branches_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let linked_root = tempfile::tempdir().unwrap();
+    let linked = linked_root.path().join("linked");
+    git(
+        &repo,
+        &["worktree", "add", "-q", linked.to_str().unwrap(), "b"],
+    );
+    let linked = linked.canonicalize().unwrap();
+    let blocker = kagi_domain::plan_note::PlanNote::Worktree(
+        kagi_domain::plan_note::WorktreeNote::BranchInOtherWorktree {
+            branch: "b".into(),
+            path: linked.display().to_string(),
+        },
+    );
+    let (app, window) = mount(cx, &repo);
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app
+        .read(cx)
+        .view()
+        .worktrees
+        .iter()
+        .any(|worktree| { worktree.branch.as_deref() == Some("b") && !worktree.is_current })));
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+
+    app.update(cx, |app, cx| app.open_plan_modal("b", cx));
+    assert!(
+        strip(cx, &app).is_none(),
+        "linked branch must not enter the queue"
+    );
+    let expected = kagi::ui::i18n::plan_note_text(&blocker);
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(matches!(
+            &state.status_footer,
+            kagi::ui::FooterStatus::Failed(text) if text.contains(&expected)
+        ));
+        assert!(state
+            .toast_stack
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .toasts()
+            .iter()
+            .any(|toast| toast.message.contains(&expected)));
+    });
+    let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+        .into_iter()
+        .filter(|entry| entry.op == "checkout")
+        .collect();
+    assert_eq!(entries.len(), 1);
+    assert!(matches!(
+        &entries[0].outcome,
+        OpOutcome::Refused { blockers } if blockers.as_slice() == [blocker.message_en()]
+    ));
+    assert!(kagi_ui_core::klog::tail()
+        .iter()
+        .any(|line| { line.starts_with("[kagi] queue: refused checkout b (static: ") }));
+    release.send(());
+    cx.run_until_parked();
+    assert_eq!(head(&repo), "a");
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS queue_checkout_linked_worktree_refuses");
 }

@@ -609,6 +609,17 @@ impl Render for KagiApp {
             // Key events only dispatch along the focus path, so the root must
             // own (and initially hold) focus for window-wide actions to work.
             .when_some(self.root_focus.clone(), |el, fh| el.track_focus(&fh))
+            // Block Tab in the menu's focus subtree if no binding handled it.
+            // gpui-component's Root binds Tab before capture, so the matching
+            // early interceptor in keyboard_nav handles that normal route.
+            .capture_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                if event.keystroke.key == "tab" && this.visible_platform_menu_section().is_some() {
+                    if let Some(root) = &this.root_focus {
+                        window.focus(root, cx);
+                    }
+                    cx.stop_propagation();
+                }
+            }))
             // T023: capture drag-move for both dividers on the root element.
             .on_drag_move::<DividerDrag>(divider_drag_move)
             // T-BP-002: cmd-j toggle action (window-wide via on_action on root div).

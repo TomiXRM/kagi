@@ -150,6 +150,7 @@ impl KagiApp {
     /// proposal is discarded and a completion landing afterwards cannot create a
     /// new one. Returning re-observes the real conflict state instead.
     pub(crate) fn depart_active_tab(&mut self) {
+        self.close_departing_screen_overlays();
         if let Some(session) = self.active_session() {
             self.app_sessions.depart(session);
             if self
@@ -578,6 +579,7 @@ impl KagiApp {
             crate::app::TabClose::Nothing => unreachable!("filtered above"),
             crate::app::TabClose::Welcome => {
                 // Last tab closed → Welcome screen.
+                self.close_departing_screen_overlays();
                 self.active_tab = 0;
                 self.repo_path = None;
                 // Clear any remote view so the Welcome gate (tabs empty &&

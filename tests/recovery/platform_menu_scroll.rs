@@ -25,7 +25,7 @@ const PANEL: &str = "platform-menu-panel";
 const FIRST: &str = "platform-menu-cmd-view.zoomIn";
 const LAST: &str = "platform-menu-cmd-lang.japanese";
 
-fn mount_short(
+pub(crate) fn mount_short(
     cx: &mut VisualTestAppContext,
     repo: &std::path::Path,
 ) -> (Entity<KagiApp>, AnyWindowHandle) {

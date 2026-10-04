@@ -77,7 +77,7 @@ impl KagiApp {
                 .unwrap_or_default();
             let invoke = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
                 if commands::is_enabled(this, id) {
-                    this.platform_menu_open = None;
+                    this.close_platform_menu(cx);
                     this.handle_menu_command(id, window, cx);
                     cx.notify();
                 }

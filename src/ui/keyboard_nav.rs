@@ -106,7 +106,7 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-up", RowListFirst, Some(ROW_CONTEXT)),
         KeyBinding::new("cmd-down", RowListLast, Some(ROW_CONTEXT)),
     ]);
-    cx.intercept_keystrokes(|event, _, _| {
+    cx.intercept_keystrokes(|event, window, cx| {
         if event.keystroke.key == "tab" {
             ROVING.with(|lists| {
                 lists
@@ -119,6 +119,30 @@ pub(crate) fn bind_keys(cx: &mut App) {
                         None => false,
                     })
             });
+            // Root's Tab binding runs before a div's capture_key_down.
+            // Stop it at the window boundary while the dropdown owns keys;
+            // otherwise it moves into the Settings trap before render repairs
+            // the focus. Read the current window owner, not a retained tab.
+            let app = window
+                .root::<gpui_component::Root>()
+                .flatten()
+                .and_then(|root| {
+                    root.read(cx)
+                        .view()
+                        .clone()
+                        .downcast::<super::KagiApp>()
+                        .ok()
+                });
+            if let Some(app) = app {
+                app.update(cx, |app, cx| {
+                    if app.visible_platform_menu_section().is_some() {
+                        if let Some(root) = &app.root_focus {
+                            window.focus(root, cx);
+                        }
+                        cx.stop_propagation();
+                    }
+                });
+            }
         }
     })
     .detach();

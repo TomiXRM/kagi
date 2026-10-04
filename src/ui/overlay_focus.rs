@@ -80,6 +80,20 @@ impl KagiApp {
         self.pending_focus = self.pending_root_focus();
     }
 
+    /// A tab/Home/repository departure owns dismissal, even if a menu command
+    /// already closed the dropdown before navigation. Never infer departure
+    /// from a pending focus captured by a previous overlay on the next render.
+    pub(super) fn close_departing_screen_overlays(&mut self) {
+        let settings = matches!(self.menu_overlay, Some(MenuOverlay::Settings));
+        if settings || self.platform_menu_open.is_some() {
+            if settings {
+                self.menu_overlay = None;
+            }
+            self.platform_menu_open = None;
+            self.pending_focus = self.pending_root_focus();
+        }
+    }
+
     /// Apply the pending focus only if its screen and its element still belong
     /// to the most recently drawn workspace. GPUI retains focus handles for
     /// unmounted elements, so a live handle alone is not a valid return target.
@@ -123,6 +137,10 @@ impl KagiApp {
                 this.check_restored_focus(window, cx);
             });
         }
+        let menu_visible = self.visible_platform_menu_section().is_some();
+        if menu_visible {
+            self.capture_overlay_return_focus(window, cx);
+        }
         if matches!(self.menu_overlay, Some(MenuOverlay::Settings))
             && self.has_modal_or_visible_plan(cx)
         {
@@ -130,6 +148,42 @@ impl KagiApp {
             self.pending_focus = (!self.active_modal_input_focused(window, cx))
                 .then(|| self.pending_root_focus())
                 .flatten();
+        }
+        // The menu sits above Settings and input modals. Release their focus
+        // while it is open; when it closes, the existing pending/restored
+        // membership checks return focus to the still-drawn owner.
+        if menu_visible {
+            // An input modal may arrive above Settings while this menu is
+            // open. Its InputState focuses during modal render, after the
+            // Settings yield. Save that live input before moving focus back
+            // to the root; the existing membership check restores it on close.
+            if self.active_modal_input_focused(window, cx) {
+                self.pending_focus = window.focused(cx).map(|focus| PendingFocus {
+                    focus,
+                    screen: self.focus_screen(),
+                });
+            }
+            if let Some(root) = &self.root_focus {
+                if !root.is_focused(window) {
+                    window.focus(root, cx);
+                }
+            }
+        }
+        // The palette keeps its InputState after the dropdown takes the root.
+        // Returning to the palette must focus that same input, not apply the
+        // opener's pending focus (which belongs behind the palette).
+        if !menu_visible
+            && matches!(self.menu_overlay, Some(MenuOverlay::CommandPalette))
+            && self.front_layer(cx) == FrontLayer::Menu
+            && !self.workspace_menus_covered(cx)
+            && self
+                .root_focus
+                .as_ref()
+                .is_some_and(|root| root.is_focused(window))
+        {
+            if let Some(input) = &self.command_palette_input {
+                input.update(cx, |state, cx| state.focus(window, cx));
+            }
         }
         // Backstop (#976 review): only when Settings is the visible front
         // layer does focus belong in its trap. A gpui-component popup drawn
@@ -147,10 +201,12 @@ impl KagiApp {
         // The menu overlays that hold no focus of their own (Info, the
         // branch picker) route their keys through the root, so a pending
         // focus lands while they are open too.
-        if !matches!(
-            self.menu_overlay,
-            Some(MenuOverlay::Settings | MenuOverlay::CommandPalette)
-        ) {
+        if !menu_visible
+            && !matches!(
+                self.menu_overlay,
+                Some(MenuOverlay::Settings | MenuOverlay::CommandPalette)
+            )
+        {
             self.apply_pending_focus(window, cx);
         }
     }

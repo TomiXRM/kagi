@@ -35,9 +35,13 @@ pub mod sync;
 pub mod tag;
 pub mod worktree;
 
-use kagi_domain::plan_note::{PlanNote, PlanRecovery, PlanTitle, RecoveryKind};
+use kagi_domain::plan_note::{
+    BranchTitle, CherryRevertTitle, CommitTitle, ConflictsTitle, GithubTitle, HistoryMoveDir,
+    HistoryTitle, MaintenanceTitle, PlanNote, PlanRecovery, PlanTitle, PullTitle, PushTitle,
+    RebaseTitle, RecoveryKind, StashTitle, SwitchTitle, TagTitle, WorktreeTitle,
+};
 
-use super::{lang, Lang, Msg};
+use super::{lang, op::Op, Lang, Msg};
 
 /// Interpolate the JA catalog once; inserted branch names are never templates.
 pub(super) fn advice_text(msg: Msg, args: &[&dyn std::fmt::Display]) -> String {
@@ -138,6 +142,336 @@ pub fn plan_title_text(title: &PlanTitle) -> String {
             PlanTitle::Discard { .. } => discard::title_ja(title),
         },
     }
+}
+
+/// Short visible heading and up to two typed target chips. The full localized
+/// plan title remains the dialog's accessible name and the first Copy all line.
+pub fn plan_heading_text(
+    title: &PlanTitle,
+) -> (&'static str, [Option<std::borrow::Cow<'_, str>>; 2]) {
+    use PlanTitle::*;
+    let (op, first, second): (
+        Op,
+        Option<std::borrow::Cow<'_, str>>,
+        Option<std::borrow::Cow<'_, str>>,
+    ) = match title {
+        Branch(BranchTitle::CreateBranch { name, at, .. }) => (
+            Op::CreateBranch,
+            Some(std::borrow::Cow::Borrowed(name.as_str())),
+            Some(std::borrow::Cow::Borrowed(at.as_str())),
+        ),
+        Branch(BranchTitle::RenameBranch { old, new }) => (
+            Op::Rename,
+            Some(std::borrow::Cow::Borrowed(old.as_str())),
+            Some(std::borrow::Cow::Borrowed(new.as_str())),
+        ),
+        Branch(BranchTitle::DeleteBranch { name, tip }) => (
+            Op::Delete,
+            Some(std::borrow::Cow::Borrowed(name.as_str())),
+            tip.as_deref().map(std::borrow::Cow::Borrowed),
+        ),
+        Stash(StashTitle::Push { next_count }) => (
+            Op::StashPush,
+            Some(std::borrow::Cow::Owned(
+                Msg::PlanHeadingStashes
+                    .t()
+                    .replace("{}", &next_count.to_string()),
+            )),
+            None,
+        ),
+        Stash(StashTitle::Apply { index }) => (
+            Op::StashApply,
+            Some(std::borrow::Cow::Owned(format!("stash@{{{index}}}"))),
+            None,
+        ),
+        Stash(StashTitle::Pop { index }) => (
+            Op::Pop,
+            Some(std::borrow::Cow::Owned(format!("stash@{{{index}}}"))),
+            None,
+        ),
+        Stash(StashTitle::Drop { index }) => (
+            Op::Drop,
+            Some(std::borrow::Cow::Owned(format!("stash@{{{index}}}"))),
+            None,
+        ),
+        Stash(StashTitle::DropRemote { label }) => (
+            Op::Drop,
+            Some(std::borrow::Cow::Borrowed(label.as_str())),
+            None,
+        ),
+        History(HistoryTitle::UndoCommit { sha, .. }) => (
+            Op::Undo,
+            Some(std::borrow::Cow::Borrowed(sha.as_str())),
+            None,
+        ),
+        History(HistoryTitle::Amend { sha, .. }) => (
+            Op::Amend,
+            Some(std::borrow::Cow::Borrowed(sha.as_str())),
+            None,
+        ),
+        History(HistoryTitle::HistoryMove {
+            label, branch, to, ..
+        }) => (
+            if *label == HistoryMoveDir::Undo {
+                Op::Undo
+            } else {
+                Op::Redo
+            },
+            Some(std::borrow::Cow::Borrowed(branch.as_str())),
+            Some(std::borrow::Cow::Borrowed(to.as_str())),
+        ),
+        Pull(PullTitle::PullRemote { branch, behind, .. }) => (
+            Op::Pull,
+            Some(std::borrow::Cow::Borrowed(branch.as_str())),
+            Some(std::borrow::Cow::Owned(
+                Msg::PlanHeadingBehind
+                    .t()
+                    .replace("{}", &behind.to_string()),
+            )),
+        ),
+        Pull(
+            PullTitle::Pull { branch, remote, .. } | PullTitle::PullBranchFf { branch, remote, .. },
+        ) => (
+            Op::Pull,
+            Some(std::borrow::Cow::Borrowed(branch.as_str())),
+            Some(std::borrow::Cow::Borrowed(remote.as_str())),
+        ),
+        Push(PushTitle::Push {
+            branch,
+            set_upstream: true,
+            ..
+        }) => (
+            Op::Push,
+            Some(std::borrow::Cow::Borrowed(branch.as_str())),
+            Some(std::borrow::Cow::Borrowed(Msg::PlanHeadingSetUpstream.t())),
+        ),
+        Push(
+            PushTitle::Push { branch, remote, .. } | PushTitle::PushBranch { branch, remote, .. },
+        ) => (
+            Op::Push,
+            Some(std::borrow::Cow::Borrowed(branch.as_str())),
+            Some(std::borrow::Cow::Borrowed(remote.as_str())),
+        ),
+        Push(PushTitle::PushBlocked) => (Op::Push, None, None),
+        Push(PushTitle::SetUpstream { branch, upstream }) => (
+            Op::SetUpstream,
+            Some(std::borrow::Cow::Borrowed(branch.as_str())),
+            Some(std::borrow::Cow::Borrowed(upstream.as_str())),
+        ),
+        Switch(SwitchTitle::CheckoutTracking { remote, local }) => (
+            Op::CheckoutTracking,
+            Some(std::borrow::Cow::Borrowed(local.as_str())),
+            Some(std::borrow::Cow::Borrowed(remote.as_str())),
+        ),
+        Switch(SwitchTitle::SwitchToLatest { branch, remote }) => (
+            Op::SwitchToLatest,
+            Some(std::borrow::Cow::Borrowed(branch.as_str())),
+            Some(std::borrow::Cow::Borrowed(remote.as_str())),
+        ),
+        Checkout(kagi_domain::plan_note::CheckoutTitle::Checkout { branch }) => (
+            Op::Checkout,
+            Some(std::borrow::Cow::Borrowed(branch.as_str())),
+            None,
+        ),
+        Checkout(kagi_domain::plan_note::CheckoutTitle::CheckoutCommit { sha, .. }) => (
+            Op::Checkout,
+            Some(std::borrow::Cow::Borrowed(sha.as_str())),
+            None,
+        ),
+        Merge(kagi_domain::plan_note::MergeTitle::Into { target, current }) => (
+            Op::Merge,
+            Some(std::borrow::Cow::Borrowed(target.as_str())),
+            current.as_deref().map(std::borrow::Cow::Borrowed),
+        ),
+        Worktree(WorktreeTitle::CreateBranchCheckout { name, at }) => (
+            Op::CreateBranch,
+            Some(std::borrow::Cow::Borrowed(name.as_str())),
+            Some(std::borrow::Cow::Borrowed(at.as_str())),
+        ),
+        Worktree(WorktreeTitle::CreateWorktree { branch, start }) => (
+            Op::CreateWorktree,
+            Some(std::borrow::Cow::Borrowed(branch.as_str())),
+            Some(std::borrow::Cow::Borrowed(start.as_str())),
+        ),
+        Worktree(WorktreeTitle::UnlockWorktree { name }) => (
+            Op::UnlockWorktree,
+            Some(std::borrow::Cow::Borrowed(name.as_str())),
+            None,
+        ),
+        Worktree(WorktreeTitle::RemoveWorktree { name }) => (
+            Op::RemoveWorktree,
+            Some(std::borrow::Cow::Borrowed(name.as_str())),
+            None,
+        ),
+        Worktree(WorktreeTitle::LockWorktree { name }) => (
+            Op::LockWorktree,
+            Some(std::borrow::Cow::Borrowed(name.as_str())),
+            None,
+        ),
+        Worktree(WorktreeTitle::AutoUnlockWorktree { name }) => (
+            Op::UnlockWorktree,
+            Some(std::borrow::Cow::Borrowed(name.as_str())),
+            None,
+        ),
+        Worktree(WorktreeTitle::PruneWorktrees) => (Op::PruneWorktrees, None, None),
+        Worktree(WorktreeTitle::RepairWorktrees) => (Op::RepairWorktrees, None, None),
+        CherryRevert(CherryRevertTitle::CherryPick { sha, branch, .. }) => (
+            Op::CherryPick,
+            Some(std::borrow::Cow::Borrowed(sha.as_str())),
+            Some(std::borrow::Cow::Borrowed(branch.as_str())),
+        ),
+        CherryRevert(CherryRevertTitle::Revert { sha, branch, .. }) => (
+            Op::Revert,
+            Some(std::borrow::Cow::Borrowed(sha.as_str())),
+            Some(std::borrow::Cow::Borrowed(branch.as_str())),
+        ),
+        Cleanup(kagi_domain::plan_note::CleanupTitle::CleanupDelete { count }) => (
+            Op::Cleanup,
+            Some(std::borrow::Cow::Owned(
+                Msg::PlanHeadingBranches
+                    .t()
+                    .replace("{}", &count.to_string()),
+            )),
+            None,
+        ),
+        Conflicts(ConflictsTitle::Continue { op }) => (
+            Op::Continue,
+            Some(std::borrow::Cow::Borrowed(op.as_str())),
+            None,
+        ),
+        Conflicts(ConflictsTitle::Abort { op }) => (
+            Op::Abort,
+            Some(std::borrow::Cow::Borrowed(op.as_str())),
+            None,
+        ),
+        Conflicts(ConflictsTitle::Skip { op }) => (
+            Op::Skip,
+            Some(std::borrow::Cow::Borrowed(op.as_str())),
+            None,
+        ),
+        Commit(CommitTitle::Commit { summary }) => (
+            Op::Commit,
+            Some(std::borrow::Cow::Borrowed(summary.as_str())),
+            None,
+        ),
+        Commit(CommitTitle::FinalizeMergeCommit) => (Op::MergeCommit, None, None),
+        Tag(TagTitle::CreateTag { name, at }) => (
+            Op::CreateTag,
+            Some(std::borrow::Cow::Borrowed(name.as_str())),
+            Some(std::borrow::Cow::Borrowed(at.as_str())),
+        ),
+        Tag(TagTitle::PushTag { name, remote }) => (
+            Op::PushTag,
+            Some(std::borrow::Cow::Borrowed(name.as_str())),
+            Some(std::borrow::Cow::Borrowed(remote.as_str())),
+        ),
+        RemoteBranch(kagi_domain::plan_note::RemoteBranchTitle::DeleteRemoteBranch {
+            remote,
+            branch,
+        }) => (
+            Op::Delete,
+            Some(std::borrow::Cow::Owned(format!("{remote}/{branch}"))),
+            None,
+        ),
+        Reset(kagi_domain::plan_note::ResetTitle::ResetCurrentToHead { branch, to }) => (
+            Op::Reset,
+            Some(std::borrow::Cow::Borrowed(branch.as_str())),
+            Some(std::borrow::Cow::Borrowed(to.as_str())),
+        ),
+        ForceLease(kagi_domain::plan_note::ForceLeaseTitle::ForceLeasePush { branch, remote }) => (
+            Op::Push,
+            Some(std::borrow::Cow::Borrowed(branch.as_str())),
+            Some(std::borrow::Cow::Borrowed(remote.as_str())),
+        ),
+        Github(GithubTitle::MergePr { number, method }) => (
+            Op::Merge,
+            Some(std::borrow::Cow::Owned(format!("#{number}"))),
+            Some(std::borrow::Cow::Borrowed(method.as_str())),
+        ),
+        Github(GithubTitle::ApplySuggestion { path }) => (
+            Op::ApplySuggestion,
+            Some(std::borrow::Cow::Borrowed(path.as_str())),
+            None,
+        ),
+        Github(GithubTitle::CreateIssue) => (Op::IssueCreate, None, None),
+        Github(GithubTitle::CommentIssue { number }) => (
+            Op::IssueComment,
+            Some(std::borrow::Cow::Owned(format!("#{number}"))),
+            None,
+        ),
+        Github(GithubTitle::CommentPr { number }) => (
+            Op::PrComment,
+            Some(std::borrow::Cow::Owned(format!("#{number}"))),
+            None,
+        ),
+        Github(GithubTitle::ReviewPr { number, verdict }) => (
+            Op::PrReview,
+            Some(std::borrow::Cow::Owned(format!("#{number}"))),
+            Some(std::borrow::Cow::Borrowed(match verdict.as_str() {
+                "approve" => Msg::PlanHeadingApprove.t(),
+                "request-changes" => Msg::PlanHeadingRequestChanges.t(),
+                "comment" => Msg::PlanHeadingComment.t(),
+                _ => verdict.as_str(),
+            })),
+        ),
+        Github(GithubTitle::EditPr { number }) => (
+            Op::PrEdit,
+            Some(std::borrow::Cow::Owned(format!("#{number}"))),
+            None,
+        ),
+        Rebase(RebaseTitle::RebaseCurrentOnto { branch, onto }) => (
+            Op::Rebase,
+            Some(std::borrow::Cow::Borrowed(branch.as_str())),
+            Some(std::borrow::Cow::Borrowed(onto.as_str())),
+        ),
+        Rebase(RebaseTitle::ReplayOnto { branch, onto }) => (
+            Op::Replay,
+            Some(std::borrow::Cow::Borrowed(branch.as_str())),
+            Some(std::borrow::Cow::Borrowed(onto.as_str())),
+        ),
+        Snapshot(kagi_domain::plan_note::SnapshotTitle::Restore { id }) => (
+            Op::RestoreToPoint,
+            Some(std::borrow::Cow::Borrowed(id.as_str())),
+            None,
+        ),
+        Sync(kagi_domain::plan_note::SyncTitle::SyncToRemote { branch, to, .. }) => (
+            Op::SyncToRemote,
+            Some(std::borrow::Cow::Borrowed(branch.as_str())),
+            Some(std::borrow::Cow::Borrowed(to.as_str())),
+        ),
+        Maintenance(MaintenanceTitle::WriteCommitGraph) => (Op::WriteCommitGraph, None, None),
+        Maintenance(MaintenanceTitle::EnableFsmonitor) => (Op::EnableFsmonitor, None, None),
+        OplogRestore(kagi_domain::plan_note::OplogRestoreTitle::Revert { id, op }) => (
+            Op::OpRevert,
+            Some(std::borrow::Cow::Owned(format!("#{id}"))),
+            Some(std::borrow::Cow::Borrowed(op.as_str())),
+        ),
+        OplogRestore(kagi_domain::plan_note::OplogRestoreTitle::RestoreTo { id, op }) => (
+            Op::RestoreToPoint,
+            Some(std::borrow::Cow::Owned(format!("#{id}"))),
+            Some(std::borrow::Cow::Borrowed(op.as_str())),
+        ),
+        Clone(kagi_domain::plan_note::CloneTitle::Clone { source }) => (
+            Op::Clone,
+            Some(std::borrow::Cow::Borrowed(source.as_str())),
+            None,
+        ),
+        Discard { single, count } => (
+            Op::Discard,
+            Some(
+                single
+                    .as_deref()
+                    .map(std::borrow::Cow::Borrowed)
+                    .unwrap_or_else(|| {
+                        std::borrow::Cow::Owned(
+                            Msg::PlanHeadingFiles.t().replace("{}", &count.to_string()),
+                        )
+                    }),
+            ),
+            None,
+        ),
+    };
+    (op.t(), [first, second])
 }
 
 /// Localized text for the recovery block. `None` renders empty (legacy plans

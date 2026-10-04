@@ -14,6 +14,11 @@ use std::path::Path;
 #[cfg(feature = "gui-e2e")]
 pub mod worktree_inspection;
 
+#[cfg(feature = "gui-e2e")]
+pub fn recorded_plan_command_disclosure(id: &str) -> Option<(String, String, bool)> {
+    super::modal_command::recorded_disclosure(id)
+}
+
 /// #707 review: the revision-laundering and cross-session regressions need to
 /// produce a detector payload for one state and land it against another.
 pub use super::operations::conflict_detect::detect_payload_for_test;

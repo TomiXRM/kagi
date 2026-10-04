@@ -69,12 +69,10 @@ pub(crate) fn modal_copy_button(
 
 /// The whole popup as plain text, for [`modal_copy_button`].
 ///
-/// Renders what the card shows, in the card's own order and already localized:
-/// title, current → predicted, warnings, blockers, the row list the caller
-/// passes in, then the recovery text. Plain text, not markdown: it is going
-/// into a terminal or an issue, and the commands must survive verbatim. The
-/// paste-able `commands:` block is only offered to a shell that reads its
-/// quoting (`PlanRecovery::commands_for`, #1007).
+/// Copies the complete plan: full title, state, warnings, blockers, rows and
+/// recovery explanation (which no longer occupies the card body). Ready plans
+/// get a separate localized heading for structured shell commands when this
+/// shell supports their quoting (`PlanRecovery::commands_for`, #1010).
 pub(crate) fn plan_clipboard_text(
     plan: &OperationPlan,
     rows: &[String],
@@ -115,14 +113,18 @@ pub(crate) fn plan_clipboard_text(
     // interleaved, so pasting the whole payload into a shell would try to run
     // sentences. `PlanRecovery::commands` is the structured, paste-able set —
     // repeat it as its own block so a user can grab just those lines.
-    if let Some(rec) = plan.recovery.as_ref() {
-        let commands = rec.commands_for(shell);
-        if !commands.is_empty() {
-            out.push_str("\ncommands:\n");
-            for c in commands {
-                out.push_str("  ");
-                out.push_str(c);
+    if super::modal_command::plan_ready(plan) {
+        if let Some(rec) = plan.recovery.as_ref() {
+            let commands = rec.commands_for(shell);
+            if !commands.is_empty() {
                 out.push('\n');
+                out.push_str(Msg::ModalRecoveryCommands.t());
+                out.push('\n');
+                for c in commands {
+                    out.push_str("  ");
+                    out.push_str(c);
+                    out.push('\n');
+                }
             }
         }
     }
@@ -218,7 +220,7 @@ mod tests {
             );
         }
         assert!(
-            text.contains("\ncommands:\n  git cat-file -p <blob-sha>\n"),
+            text.contains("\nrecovery commands:\n  git cat-file -p <blob-sha>\n"),
             "the paste-able block for a POSIX shell:\n{text}"
         );
 
@@ -231,7 +233,7 @@ mod tests {
             kagi_domain::plan_note::ShellKind::WindowsCmd,
         );
         assert!(
-            !windows.contains("commands:"),
+            !windows.contains("recovery commands:"),
             "no paste-able block for cmd.exe:\n{windows}"
         );
         assert!(
@@ -251,6 +253,86 @@ mod tests {
         assert!(
             !text.contains("\nequivalent command:\n"),
             "a recovery command must not acquire a duplicate equivalent block: {text}"
+        );
+    }
+
+    /// A no-op without blockers must not expose a stale structured command.
+    #[test]
+    fn clipboard_text_offers_recovery_commands_only_for_ready_plans() {
+        use kagi_domain::head::Head;
+        use kagi_domain::plan::{OperationPlan, StateSummary};
+        use kagi_domain::plan_note::{
+            push::PushPunct, NoOpKind, PlanDisposition, PlanNote, PlanRecovery, PlanTitle,
+            PushNote, PushRecovery, PushTitle, RecoveryKind, ShellKind,
+        };
+
+        let command = "git push origin main";
+        let mut plan = OperationPlan {
+            title: PlanTitle::Push(PushTitle::Push {
+                branch: "main".into(),
+                remote: "origin".into(),
+                set_upstream: false,
+            }),
+            current: StateSummary {
+                head: "branch: main".into(),
+                dirty: "1 modified".into(),
+            },
+            predicted: StateSummary {
+                head: "branch: main".into(),
+                dirty: "clean".into(),
+            },
+            warnings: Vec::new(),
+            blockers: Vec::new(),
+            recovery: Some(PlanRecovery {
+                kind: RecoveryKind::Push(PushRecovery::Push),
+                commands: vec![command.into()],
+            }),
+            disposition: PlanDisposition::NoOp(NoOpKind::PushUpToDate),
+            head_at_plan: Head::Attached {
+                branch: "main".into(),
+                target: "0".repeat(40),
+            },
+            stash_count_at_plan: 0,
+            stash_identity: None,
+            worktree_digest: None,
+            preview_files: Vec::new(),
+            preview_commits: Vec::new(),
+            destructive: false,
+            equivalent_command: None,
+        };
+
+        let no_op = plan_clipboard_text(&plan, &[], ShellKind::Posix);
+        assert!(!no_op.contains(command), "NoOp offered a command: {no_op}");
+        assert!(
+            !no_op.contains("recovery commands:"),
+            "NoOp offered a structured recovery block: {no_op}"
+        );
+        assert!(
+            no_op.contains("Push only sends commits to the remote"),
+            "guidance was lost: {no_op}"
+        );
+
+        plan.disposition = PlanDisposition::Ready;
+        plan.blockers
+            .push(PlanNote::Push(PushNote::AlreadyUpToDate {
+                branch: "main".into(),
+                punct: PushPunct::EmDash,
+            }));
+        let blocked = plan_clipboard_text(&plan, &[], ShellKind::Posix);
+        assert!(
+            !blocked.contains(command),
+            "blocked plan offered a command: {blocked}"
+        );
+        assert!(
+            !blocked.contains("recovery commands:"),
+            "blocked plan offered a structured recovery block: {blocked}"
+        );
+
+        plan.blockers.clear();
+        let ready = plan_clipboard_text(&plan, &[], ShellKind::Posix);
+        assert!(
+            ready.contains(&format!("\nrecovery commands:\n  {command}\n")),
+            "Ready plan lost its structured recovery command: {ready}"
         );
     }
 }

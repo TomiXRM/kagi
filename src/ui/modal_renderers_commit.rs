@@ -8,7 +8,7 @@
 use super::commit_panel::{status_badge, CommitPlanModal};
 use super::i18n::Msg;
 use super::modal_renderers::{
-    modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box,
+    modal_overlay, render_current_predicted, render_plan_heading, render_recovery_box,
 };
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_LG, MODAL_W_MD};
 use super::modals::*;
@@ -18,7 +18,7 @@ use gpui::{div, prelude::*, rgb, Context, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{IconName, Sizable as _};
 use kagi_git::ChangeKind;
-use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
+use kagi_ui_core::i18n::{plan::plan_heading_text, plan_note_text, plan_recovery_text};
 
 // ──────────────────────────────────────────────────────────────
 // Cherry-pick modal renderer (T016)
@@ -141,13 +141,16 @@ pub(crate) fn render_cherry_pick_modal(
     let card = modal_card(MODAL_W_LG).child(
         div()
             .flex_shrink_0()
-            // ── Title (icon-badge treatment, same as every other
-            // plan-confirmation modal — user request 2026-07-23; `Copy`
-            // reads as "duplicate this commit elsewhere") ───────────
-            .child(render_modal_title_row(
-                SharedString::from(plan_title_text(&plan.title)),
-                Some((IconName::Copy.into(), current_theme().color_branch)),
-            )),
+            // Keep the copy icon; only the plan heading treatment changes.
+            .child({
+                let (title, chips) = plan_heading_text(&plan.title);
+                render_plan_heading(
+                    title,
+                    chips,
+                    (IconName::Copy.into(), current_theme().color_branch),
+                    None,
+                )
+            }),
     );
 
     // ── Current → Predicted ───────────────────────────────
@@ -379,13 +382,16 @@ pub(crate) fn render_commit_plan_modal(
     let card = modal_card(MODAL_W_MD).child(
         div()
             .flex_shrink_0()
-            // Icon-badge header, same as every other plan-confirmation modal
-            // (user request 2026-07-23). `Plus` matches the "creates
-            // something new" family (a commit is a new object).
-            .child(render_modal_title_row(
-                SharedString::from(plan_title_text(&plan.title)),
-                Some((IconName::Plus.into(), current_theme().color_success)),
-            )),
+            // A commit creates a new object, so retain its Plus icon.
+            .child({
+                let (title, chips) = plan_heading_text(&plan.title);
+                render_plan_heading(
+                    title,
+                    chips,
+                    (IconName::Plus.into(), current_theme().color_success),
+                    None,
+                )
+            }),
     );
 
     // Boxed CURRENT / AFTER, then the preview files.

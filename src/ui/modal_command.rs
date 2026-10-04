@@ -1,5 +1,5 @@
-//! A compact equivalent-CLI disclosure shared by plan and restore cards.
-//! The application performs its own safe operation; this command is reference text.
+//! Collapsed CLI command disclosures shared by plan and restore cards.
+//! Kagi performs its safe operation itself; equivalent commands are reference text.
 
 use super::i18n::Msg;
 use super::modal_copy::modal_copy_button;
@@ -27,17 +27,87 @@ pub(crate) fn equivalent_command(plan: &OperationPlan) -> Option<&str> {
 
 const SECTION_EQUIVALENT_COMMAND: &str = "plan-equivalent-command";
 
+struct CommandDisclosure<'a> {
+    id: &'static str,
+    copy_id: &'static str,
+    body_id: &'static str,
+    summary: SharedString,
+    ax_label: SharedString,
+    text: &'a str,
+}
+
 pub(crate) fn render_equivalent_command(
     cmd: &str,
     lines: Option<usize>,
     overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let open = section_open(overrides, SECTION_EQUIVALENT_COMMAND, false).is_open();
-    let summary = match lines {
-        Some(count) => oplog_panel::restore_command_lines(count),
-        None => Msg::PlanEquivalentTo.t().replace("{}", cmd),
+    render_command_disclosure(
+        CommandDisclosure {
+            id: SECTION_EQUIVALENT_COMMAND,
+            copy_id: "plan-equivalent-command-copy",
+            body_id: "plan-equivalent-command-body",
+            summary: lines
+                .map(oplog_panel::restore_command_lines)
+                .unwrap_or_else(|| cmd.to_owned())
+                .into(),
+            ax_label: format!("{} {cmd}", Msg::ModalEquivalentCommand.t()).into(),
+            text: cmd,
+        },
+        overrides,
+        cx,
+    )
+}
+
+pub(crate) fn render_recovery_commands(
+    commands: &[String],
+    id: &'static str,
+    copy_id: &'static str,
+    body_id: &'static str,
+    overrides: &std::collections::HashMap<&'static str, bool>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let text = commands.join("\n");
+    let summary = if commands.len() == 1 {
+        commands[0].clone()
+    } else {
+        format!("{} · +{}", commands[0], commands.len() - 1)
     };
+    let label = format!("{} {text}", Msg::ModalRecoveryCommands.t());
+    render_command_disclosure(
+        CommandDisclosure {
+            id,
+            copy_id,
+            body_id,
+            summary: summary.into(),
+            ax_label: label.into(),
+            text: &text,
+        },
+        overrides,
+        cx,
+    )
+}
+
+fn render_command_disclosure(
+    spec: CommandDisclosure<'_>,
+    overrides: &std::collections::HashMap<&'static str, bool>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let CommandDisclosure {
+        id,
+        copy_id,
+        body_id,
+        summary,
+        ax_label,
+        text,
+    } = spec;
+    let open = section_open(overrides, id, false).is_open();
+    #[cfg(feature = "gui-e2e")]
+    DISCLOSURES.with(|items| {
+        items
+            .borrow_mut()
+            .insert(id, (summary.to_string(), ax_label.to_string(), open));
+    });
     let header = div()
         .flex()
         .flex_row()
@@ -47,7 +117,7 @@ pub(crate) fn render_equivalent_command(
         .child(
             super::keyboard_nav::focusable(
                 div()
-                    .id(SECTION_EQUIVALENT_COMMAND)
+                    .id(id)
                     .relative()
                     .flex_1()
                     .min_w(gpui::px(0.))
@@ -56,10 +126,10 @@ pub(crate) fn render_equivalent_command(
                     .gap_1()
                     .cursor_pointer()
                     .role(gpui::Role::Button)
-                    .aria_label(SharedString::from(format!("{summary}: {cmd}")))
+                    .aria_label(ax_label)
                     .aria_expanded(open)
                     .on_click(cx.listener(move |this, _ev, _window, cx| {
-                        this.toggle_modal_section(SECTION_EQUIVALENT_COMMAND, open);
+                        this.toggle_modal_section(id, open);
                         cx.notify();
                     })),
             )
@@ -70,14 +140,15 @@ pub(crate) fn render_equivalent_command(
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
-                    .child(SharedString::from(summary)),
+                    .font_family(MONO_FONT)
+                    .child(summary),
             )
-            .child(super::e2e::measure_inside(SECTION_EQUIVALENT_COMMAND)),
+            .child(super::e2e::measure_inside(id)),
         )
         .child(modal_copy_button(
-            "plan-equivalent-command-copy",
+            copy_id,
             Msg::OplogPanel(OplogPanelMsg::CopyCommand).t(),
-            cmd.to_owned(),
+            text.to_owned(),
             cx,
         ));
     div()
@@ -91,7 +162,7 @@ pub(crate) fn render_equivalent_command(
         .when(open, |section| {
             section.child(
                 div()
-                    .id("plan-equivalent-command-body")
+                    .id(body_id)
                     .relative()
                     .max_h(theme::scaled_px(120.))
                     .overflow_y_scroll()
@@ -101,9 +172,21 @@ pub(crate) fn render_equivalent_command(
                     .p_1()
                     .font_family(MONO_FONT)
                     .text_color(rgb(current_theme().text_main))
-                    .child(SharedString::from(cmd.to_owned()))
-                    .child(super::e2e::measure_inside("plan-equivalent-command-body")),
+                    .child(SharedString::from(text.to_owned()))
+                    .child(super::e2e::measure_inside(body_id)),
             )
         })
         .into_any_element()
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static DISCLOSURES: std::cell::RefCell<std::collections::HashMap<&'static str, (String, String, bool)>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Renderer-set visible summary, accessible name and expanded state.
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn recorded_disclosure(id: &str) -> Option<(String, String, bool)> {
+    DISCLOSURES.with(|items| items.borrow().get(id).cloned())
 }

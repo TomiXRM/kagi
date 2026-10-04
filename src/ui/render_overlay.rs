@@ -475,10 +475,18 @@ impl KagiApp {
                         ))
                     })
                     .when_some(set_upstream_modal.take(), |el, modal| {
-                        el.child(render_set_upstream_modal(modal, cx))
+                        el.child(render_set_upstream_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
                     })
                     .when_some(rename_branch_modal.take(), |el, modal| {
-                        el.child(render_rename_branch_modal(modal, cx))
+                        el.child(render_rename_branch_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
                     })
                     .when_some(merge_modal.take(), |el, modal| {
                         el.child(render_merge_modal(modal, &self.modal_section_overrides, cx))

@@ -26,22 +26,16 @@ pub(crate) const MODAL_LIST_ROW_H: f32 = 18.;
 
 /// Fraction of the window height a single modal list may occupy.
 ///
-/// The card keeps a fixed outer gutter; the remaining space must also hold
-/// state, warnings, recovery text and the pinned action row.
+/// The card keeps a fixed outer gutter; the remaining space also holds
+/// state, warnings, command disclosures and the pinned action row.
 const MODAL_LIST_VIEWPORT_FRAC: f32 = 0.4;
-
-/// Fraction of the window height a prose panel (recovery text) may occupy.
-const MODAL_PROSE_VIEWPORT_FRAC: f32 = 0.25;
-/// Two lines of `text_xs` plus its line gap.
-const PROSE_FLOOR_H: f32 = 34.;
 
 /// Row ceiling used only before the first frame publishes a window height
 /// (headless snapshot tests), to keep list heights deterministic there.
 const MODAL_LIST_FALLBACK_ROWS: f32 = 20.;
 
-/// A list is never squeezed below this many rows: on a short window the fixed
-/// prose would otherwise take everything and leave a 0-height list — the
-/// operation's own targets, invisible (observed at 700px, #454).
+/// A list is never squeezed below this many rows: short windows must not
+/// hide the operation's own targets.
 const MODAL_LIST_MIN_ROWS: f32 = 3.;
 
 /// Logical viewport height at or below which supporting detail yields to targets (#462).
@@ -203,44 +197,6 @@ pub(crate) fn modal_body() -> gpui::Div {
     #[cfg(feature = "gui-e2e")]
     let body = body.relative().child(modal_probe("modal-body"));
     body
-}
-
-/// Height cap for a **prose** panel (recovery text, notes) in a card whose
-/// body does not scroll: a quarter of the window, then it scrolls inside its
-/// own panel.
-///
-/// This is a sibling scroll region, not a nested one — the rule
-/// ([`modal_body`]) is that no scroller sits *inside* another, and a card may
-/// have one per panel. Without a cap the recovery text pushes past the card
-/// and gets clipped, which is worse: the recovery instructions are the reason
-/// a destructive operation is allowed at all.
-pub(crate) fn modal_prose_max_h() -> gpui::Pixels {
-    match theme::viewport_h() {
-        Some(h) => gpui::px(h * MODAL_PROSE_VIEWPORT_FRAC),
-        None => theme::scaled_px(MODAL_LIST_FALLBACK_ROWS * MODAL_LIST_ROW_H),
-    }
-}
-
-/// A prose panel body (recovery text, notes): capped by [`modal_prose_max_h`],
-/// scrollable in place, and floored at two lines.
-///
-/// Both bounds are load-bearing. Without the cap the text pushed past the card
-/// and painted over the button row; without the floor the list panel's own
-/// floor squeezed the prose to zero height and the recovery instructions
-/// vanished entirely — measured on a 700px window, both directions.
-pub(crate) fn modal_prose_box(
-    id: &'static str,
-    body: gpui::AnyElement,
-) -> gpui::Stateful<gpui::Div> {
-    let panel = div()
-        .id(id)
-        .min_h(theme::scaled_px(PROSE_FLOOR_H))
-        .max_h(modal_prose_max_h())
-        .overflow_y_scroll()
-        .child(body);
-    #[cfg(feature = "gui-e2e")]
-    let panel = panel.relative().child(modal_probe(id));
-    panel
 }
 
 /// The middle of a [`modal_card`] that scrolls, for cards whose lists are
@@ -415,27 +371,6 @@ pub(crate) fn modal_section_chipped(
         }
     }
     section
-}
-
-/// Recovery keeps both its header and a readable, independently scrollable body.
-pub(crate) fn modal_recovery_section(
-    id: &'static str,
-    open: SectionOpen,
-    body: Option<gpui::AnyElement>,
-    cx: &mut Context<KagiApp>,
-) -> gpui::Div {
-    modal_section_chipped(
-        id,
-        Msg::ModalRecoverySection.t(),
-        Some(format!("{} · 1", Msg::ModalRecoveryChip.t()).into()),
-        open,
-        body,
-        cx,
-    )
-    .when(open.is_open(), |section| {
-        let chrome = if modal_compact() { 42. } else { 50. };
-        section.min_h(theme::scaled_px(PROSE_FLOOR_H + chrome))
-    })
 }
 
 /// A non-collapsible list panel: the mock's `対象ファイル` box — same surface,

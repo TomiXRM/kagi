@@ -352,7 +352,7 @@ pub(crate) fn render_create_worktree_modal(
                 .path_state
                 .as_ref()
                 .is_some_and(|state| !state.read(cx).value().trim().is_empty());
-        if fields_filled && !has_blockers {
+        if fields_filled && super::modal_command::plan_ready(p) {
             if let Some(commands) = offered_recovery_commands(p.recovery.as_ref()) {
                 body = body.child(div().flex_shrink_0().child(render_input_recovery_commands(
                     commands,
@@ -520,7 +520,7 @@ pub(crate) fn render_create_tag_modal(
             .input_state
             .as_ref()
             .is_some_and(|state| !state.read(cx).value().trim().is_empty());
-        if input_filled && !has_blockers {
+        if input_filled && super::modal_command::plan_ready(p) {
             if let Some(commands) = offered_recovery_commands(p.recovery.as_ref()) {
                 body = body.child(div().flex_shrink_0().child(render_input_recovery_commands(
                     commands,

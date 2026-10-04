@@ -1126,3 +1126,61 @@ fn a_panicked_pull_that_auto_stashed_cannot_be_acknowledged_while_the_entry_is_t
     acknowledge(&mut s, read).expect("nothing answers to the auto-stash any more");
     assert!(!s.has_leases(), "and the scope is free again");
 }
+
+/// #992 review (R5 for the pull family): a Pull confirmed while another write
+/// holds the lease is refused as Busy BEFORE it touches the plan slot, so
+/// the ready plan on screen keeps its revision and its one-shot token.
+#[test]
+fn busy_pull_admission_preserves_another_ready_plan() {
+    let f = Fixture::new();
+    let mut s = Sessions::new();
+    let request = f.request(&mut s);
+    let held = admit(
+        &mut s,
+        request.clone(),
+        PullReport::settled(
+            vec![f.success("pull")],
+            PullPresentation::Success {
+                summary: "held".to_string(),
+            },
+            None,
+        ),
+    );
+    assert!(
+        s.has_leases(),
+        "precondition: the first pull holds the lease"
+    );
+
+    std::fs::write(f.repo.join("a.txt"), "changed\n").unwrap();
+    let plan = plan_stash(
+        &mut s,
+        StashRequest {
+            owner: request.owner.clone(),
+            action: StashAction::Push {
+                message: Some("keep this plan".into()),
+                include_untracked: false,
+            },
+        },
+        StashPolicy::default(),
+    );
+    assert!(apply_plan(&mut s, plan.run()));
+    let PlanState::Ready { token, .. } = s.plan_state() else {
+        panic!("expected a ready stash plan, got {:?}", s.plan_state());
+    };
+    let token = token.clone();
+
+    assert_eq!(
+        approve_pull(&mut s, request).err(),
+        Some(AdmissionError::Busy),
+        "busy-pull-keeps-plan: a concurrent pull must refuse"
+    );
+    assert!(
+        matches!(s.plan_state(), PlanState::Ready { .. }),
+        "busy-pull-keeps-plan: Busy replaced the ready plan"
+    );
+
+    apply(&mut s, held.run());
+    let approved = approve(&mut s, token, StashPolicy::default())
+        .expect("busy-pull-keeps-plan: the original plan revision remains current after Busy");
+    begin_write(&mut s, &approved).expect("one write may spend the approval");
+}

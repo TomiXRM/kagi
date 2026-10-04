@@ -217,7 +217,7 @@ impl KagiApp {
         };
         match app::admit(&mut self.reads, admitted) {
             Ok(guard) => {
-                self.mark_write_busy(name);
+                self.mark_write_busy(name, cx);
                 // #702: the guard names its op, so a retained lease parks an
                 // entry that can say which write it is holding for.
                 Some(guard.for_op(name))
@@ -285,7 +285,7 @@ impl KagiApp {
                 return;
             }
         };
-        self.mark_write_busy(name);
+        self.mark_write_busy(name, cx);
         if name.starts_with("conflict-") {
             if let Some(conflict) = self.ui().conflict.clone() {
                 conflict.update(cx, |view, cx| {

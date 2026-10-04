@@ -405,8 +405,10 @@ The current suite covers:
   collapsed header opens it and on no frame does an undrawn row take the
   focus — the header keeps it until the weight is restored, then the first
   row has it. `sidebar_rows_right_click`: a right-click on a focused row
-  opens its menu and gives the window the focus; Enter then opens no
-  checkout plan. The ring is not observable in Tier A.
+  opens its menu and gives the window the focus, and the menu's first item
+  takes it (#985), so Enter is the menu's, not the row's; Escape gives the
+  focus back to the window, not to the row (dropping the right-click's move
+  to the window fails it there). The ring is not observable in Tier A.
 - modal input transitions (`KAGI_GUI_E2E_ONLY=remote_browse_escape_focus,pr_fields_escape_focus`,
   `tests/recovery/remote_browse_focus.rs`, `tests/recovery/pr_fields_focus.rs`):
   #755 follow-up. Real InputStates own focus before Remote Browse's
@@ -860,6 +862,75 @@ The current suite covers:
   the End assertion. End on Home, Branch Cleanup, and the Conflict Mode body
   must also leave the covered commit selection unchanged; the conflict leg
   uses `app_conflict::content_fixture` and a real detector pass.
+- Context-menu keyboard (`KAGI_GUI_E2E_ONLY=context_menu_keys`,
+  `tests/recovery/context_menu_keys.rs`, #985): with the HEAD commit selected
+  and root focus, Shift+F10 opens `commit_menu` at the bottom-left the
+  selected row recorded (`context_anchor_for_e2e`), the first enabled item
+  focused. End lands on the last enabled item (Reset, drawn as
+  `commit-menu-item-5-0`, is always disabled), ↓ wraps past it to the first,
+  ↑ back, Home to the first; ↓ to Copy SHA and Enter closes the menu with the
+  HEAD SHA on the clipboard and root focused; a second Shift+F10 then Escape
+  closes it with root focused. Mutations that fail it: ↓ not skipping
+  disabled items, focus not given back on close, the anchor ignored, keyboard
+  clicks ignored on items. The focus highlight is Tier B (focus_visible).
+  `context_menu_keys_sidebar` (same file): a focused LOCAL `branch:feature`
+  row records its bottom-left (within 2px of the measured
+  `sidebar-local-feature` bottom); Shift+F10 opens `branch_menu` for
+  `feature` there with the first enabled item focused, and Escape closes it
+  with the row focused again. Mutations that fail it: the row's action doing
+  nothing, focus returned to the window instead of where it was.
+  `context_menu_keys_home` (#991 review): a commit menu opened with
+  Shift+F10, then `open_home_tab` / `close_home_tab` (⌘T / ⌘W's methods; Tier
+  A sends no platform-menu keystroke): the menu is closed right after leaving
+  the tab — checked before parking, since the tab's re-read on return also
+  drops menus once it lands — and after the selection settles ↓ moves the
+  Graph to row 1. Mutation: the departing tab not closing its menus fails
+  "leaving the tab closed its menu". `context_menu_keys_short`: a 420px
+  window, where the HEAD commit's menu (~535px) is taller than the window;
+  End focuses the last enabled item (`commit-menu-item-4-2`) and scrolls it
+  inside the window (its measured bottom ≤ 420). Mutation: no scroll on a
+  key move fails with the item at 453. `context_menu_keys_reload`: the
+  `feature` branch menu opened from its sidebar row with Shift+F10, then an
+  external `git checkout feature` and `reload`: the landed reload closes the
+  menu (`apply_reload_data` → `close_context_menus`, branch and tag menus
+  included) and, with nothing refocusing, the focus is back on the
+  `branch:feature` row and ↓ moves on to another LOCAL row. Mutations: the
+  pre-fix clears (commit / stash / worktree only) fail "the reload closed the
+  menu"; the reload using the tab-departure reset (`reset_context_menus`, no
+  focus return) fails "the focus went back to the row". `context_menu_keys_tab`:
+  Tab and Shift+Tab inside a commit menu close it and the window has the
+  focus (dropping the `MenuDismiss` bindings fails "tab closed the menu").
+  `context_menu_keys_covered`: an AppNotice set over an open menu closes it
+  on the next frame (`workspace_menus_covered`) and the focus leaves the
+  hidden item for the window; so does an Info `MenuOverlay` (About / Keyboard
+  Shortcuts take no focus) — only Settings and the command palette, which
+  take the focus, are exempt. Mutations: disabling the check fails "the
+  notice closed the menu"; exempting every `MenuOverlay` fails "the Info
+  panel closed the menu". `context_menu_keys_a11y`: the disabled Reset item
+  is drawn with its reason as `aria_description`
+  (`menu_overlay::recorded_item_description`), an enabled one with none
+  (drawing disabled items without it fails). `context_menu_keys_covered_row`:
+  an Info overlay over a menu opened from the sidebar `branch:feature` row
+  closes it and the window — not the row — gets the focus (returning to the
+  row when covered fails). `context_menu_keys_disabled_live`: with Checkout
+  focused, `planning` set (any latched operation) disables it while the menu
+  stays open; the focus stays on it and ↓ still moves onto an enabled item
+  (tracking focus on enabled items only fails: ↓ never reaches the menu).
+  `context_menu_keys_item_appears`: a keyboard slot is an item's place in
+  the menu's own list, hidden items included. On the `feature` branch (no
+  upstream) the focus is moved to Copy head SHA (`branch-menu-item-4-3`, via
+  `menu_overlay::recorded_slot_control`); setting `planning` makes the hidden
+  Push appear above it, and the focus stays on Copy head SHA, whose Enter
+  copies the SHA. Numbering slots by drawn items only fails with the focus on
+  `branch-menu-item-4-2` (Copy branch name).
+  `context_menu_keys_row_behind_info` (#1000): with an Info `MenuOverlay` up
+  and the sidebar `branch:feature` row (on HEAD~1) focused, Shift+F10 opens
+  no branch menu and the Graph selection stays on row 0 (dropping the
+  `front_layer == None` guard in `open_sidebar_row_menu` fails: the selection
+  jumps behind the panel). `context_menu_keys_last_tab` (#1000): with a
+  commit-menu item focused, `CloseTab` on the last tab leaves no menu and the
+  root focused on Welcome (dropping the window-slot reset / root focus in the
+  `TabClose::Welcome` branch fails).
 - Toolbar unavailable reasons (`KAGI_GUI_E2E_ONLY=toolbar_keyboard_reasons`,
   `tests/recovery/toolbar_keyboard.rs`, #972): starting at the root, GPUI's
   `focus_next` visits the rendered toolbar in visual order; an F19 key-down
@@ -999,6 +1070,28 @@ The current suite covers:
   closes a visible menu without clearing Graph selection.
   The existing `unmerged_branch_delete_armed` scenario also rejects delayed
   plans after departure and revisit while releasing the planning latch.
+- guard writer abandonment (`tests/recovery/fetch_owner.rs`,
+  `tests/recovery/guard_writer_panic.rs`):
+  `KAGI_GUI_E2E_ONLY=fetch_panicked_worker_reconciles,fetch_previous_visit_is_not_presented,fetch_old_visit_drops_pull_waiter,fetch_new_visit_waiter_sees_old_flight_failure,remote_branch_fetch_panic,remote_branch_fetch_failed_after_departure,remote_branch_fetch_success_after_departure,pr_ref_fetch_restarts_after_revisit,pr_ref_fetch_panic,editor_save_panic,pull_confirm_departure_discards_old_visit`
+  exercises the admitted background work's panic, Unknown receipt and reconcile
+  notice, acknowledgement and fresh admission. `editor_save_panic_after_close`
+  closes the pane before the panicked worker settles and requires one durable
+  receipt, one live Operation Log row and exactly one toast; the open-pane
+  `editor_save_panic` also requires one row and one toast. Departing and returning drops
+  the old Pull waiter; a new visit's Pull joined to the old fetch gets its
+  failure footer and toast, with one receipt and no old-visit confirmation.
+  Failed fetches (including an old-visit fetch and a departed remote branch
+  fetch) keep their frozen repository receipt visible in the shared Operation
+  Log panel without changing the current tab's footer/toast or opening the
+  panel. The remote branch success and failure legs inspect `klog::tail()` for
+  the unchanged terminal lines after departure. After PR mode is cleared by
+  activation, reopening that PR admits one current-visit fetch; the old
+  completion cannot clear its loading latch or replace its head/files.
+  `TestDispatcher`
+  propagates an uncaught task panic before `Task::fallible()` can deliver `None`;
+  the GUI-only seam catches the injected panic inside the worker and returns an
+  absent result so the production abandonment branch can be inspected. The
+  non-test path still uses `fallible()` for actual unwinds.
 - session-owned positioning and Smart Commit state
   (`tests/recovery/tab_ui_state.rs`, `tests/recovery/operations.rs`):
   `KAGI_GUI_E2E_ONLY=tab_ui_state_ownership,pr_open_enters_before_ref_fetch,smart_commit_generation_owner,smart_commit_modal_and_probe`.
@@ -1680,3 +1773,23 @@ hides them, the released read lands `counts: None` (status summary unknown, not
 `bash scripts/make_fixture.sh <dir> 10500`, add branches with upstreams, reload
 and read the snackbar and `[kagi] busy: slow <op> after 2s` /
 `[kagi] busy: skip <op>`; after Skip the sidebar shows `—`.
+
+### Slow running writes (#355 stage 1, ADR-0206 amendment)
+
+Tier A: `KAGI_GUI_E2E_ONLY=slow_write_explained,slow_read_explained,fetch_busy_label`
+checks a real local fetch admitted on a lease, with backend dispatch held by
+`KagiApp::hold_next_fetch_for_e2e` (`tests/recovery/slow_read.rs`). The dispatcher
+clock advances in 250 ms ticks: no advice at 1.75 s, a drawn network reason and
+`2 s` at the boundary, updated `4 s`, one
+`[kagi] busy: slow write fetch after 2s`, no Skip or interruption warning, and
+no advice after completion. While the write and snapshot read are both slow,
+the write's explanation wins and the read's Skip remains available. The
+neighbouring read scenario checks Skip alone. `cargo test -p kagi-ui-core
+slow_write_advice` covers EN/JA reason classification and unknown fallback;
+`cargo test -p kagi --test oplog_nonrun_ops_test a_panicked_run_job` and
+`cargo test -p kagi --test app_writer_admission_test dropped_or_panicking_writer`
+cover an abandoned run and a panicked guard losing their running explanation
+without releasing an unconfirmed lease. Tier B: start a slow local fetch in an
+isolated app, compare screenshots before/after 2 s and after completion, and
+inspect klog. Remote SSH pull follows #989's lease migration; clone remains out
+of scope.

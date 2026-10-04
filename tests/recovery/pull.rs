@@ -1183,7 +1183,7 @@ pub fn scenario_pull_completion_drops_when_its_tab_is_left(cx: &mut VisualTestAp
     // Confirm and leave in one synchronous turn, so the job is queued and has
     // not run yet: the executor is driven only after the switch, which makes
     // "the completion arrives while another tab is on screen" the certain order
-    // rather than a hoped-for one (as in `pull_confirm_parks_for_its_tab`).
+    // rather than a hoped-for one (as in `pull_confirm_departure_discards_old_visit`).
     app.update(cx, |app, cx| {
         app.start_pull(cx);
         app.switch_repo(1, cx);
@@ -1613,14 +1613,9 @@ pub fn scenario_pull_auto_stash_overlap_preview(cx: &mut VisualTestAppContext) {
     );
 }
 
-/// #625 P1-a: a Pull confirmation is delivered to the tab that asked for it,
-/// even when that tab is not on screen while the fetch finishes.
-///
-/// Three earlier attempts fixed one branch each and left another: a bare flag
-/// was cleared by a background tab's reload, then consumed only while the tab
-/// was active, so "press Pull, switch tabs, come back" showed nothing at all.
-/// The request now travels inside its own fetch task and parks for its tab.
-pub fn scenario_pull_confirm_parks_for_its_tab(cx: &mut VisualTestAppContext) {
+/// A Pull's pre-confirmation fetch cannot carry the old visit's proposal
+/// across a tab departure. A fresh Pull must be explicitly requested on return.
+pub fn scenario_pull_confirm_departure_discards_old_visit(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path();
     let remote_root = tempfile::tempdir().expect("remote root");
@@ -1635,10 +1630,7 @@ pub fn scenario_pull_confirm_parks_for_its_tab(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, cx| app.switch_repo(0, cx));
     cx.run_until_parked();
 
-    // Tab A presses Pull, then the user leaves for tab B — both synchronous, so
-    // the fetch task is queued and has not run yet. The executor is driven only
-    // after the switch, which is what makes "the fetch finishes while another
-    // tab is on screen" the certain order rather than a hoped-for one.
+    // The fetch runs only after this update, so departure precedes completion.
     app.update(cx, |app, cx| {
         app.open_pull_modal(cx);
         assert!(
@@ -1655,39 +1647,22 @@ pub fn scenario_pull_confirm_parks_for_its_tab(cx: &mut VisualTestAppContext) {
             app.read(cx).pull_modal().is_none(),
             "tab A's confirmation must not open over tab B"
         );
-        assert!(
-            !app.read(cx).pending_pull_confirm.is_empty(),
-            "it must be parked for the tab that asked, not dropped"
-        );
+        assert!(app.read(cx).fetch_in_flight.is_none());
     });
 
-    // Coming back to tab A delivers it.
+    // Coming back does not resurrect an old-visit proposal.
     app.update(cx, |app, cx| app.switch_repo(0, cx));
     cx.advance_clock(Duration::from_secs(1));
     cx.run_until_parked();
     cx.read(|cx| {
-        let modal = app
-            .read(cx)
-            .pull_modal()
-            .expect("returning to tab A must show the confirmation it asked for");
-        let shown: String = modal
-            .plan
-            .warnings
-            .iter()
-            .map(|note| note.message_en())
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(shown.contains("shared.txt"), "{shown}");
         assert!(
-            app.read(cx).pending_pull_confirm.is_empty(),
-            "delivery consumes the parked request"
+            app.read(cx).pull_modal().is_none(),
+            "the old visit's confirmation must not open on return"
         );
     });
 
     unmount(cx, app, window);
-    eprintln!(
-        "[gui-e2e] PASS pull_confirm_parks_for_its_tab: the confirmation waits for the tab that asked"
-    );
+    eprintln!("[gui-e2e] PASS pull_confirm_departure_discards_old_visit");
 }
 
 /// #625 P2: a modal opened while the pre-Pull fetch runs must not be replaced.
@@ -1727,10 +1702,6 @@ pub fn scenario_pull_confirm_yields_to_another_modal(cx: &mut VisualTestAppConte
             app.read(cx).pull_modal().is_none(),
             "the Pull confirmation must not take over the modal slot"
         );
-        assert!(
-            app.read(cx).pending_pull_confirm.is_empty(),
-            "a request for the tab on screen is cancelled, not parked"
-        );
     });
 
     unmount(cx, app, window);
@@ -1762,8 +1733,8 @@ pub fn scenario_pull_failure_notice_waits_for_remote_browse(cx: &mut VisualTestA
     });
 
     // The fetch task has been dispatched but the executor has not run it yet.
-    // Removing the remote makes pull_push::deliver_pull_confirm record its
-    // real fetch-failure path while Remote Browse owns the slot.
+    // Removing the remote makes the fetch itself record its failure while
+    // Remote Browse owns the slot; the Pull waiter adds no second receipt.
     drop(remote_root);
     cx.advance_clock(Duration::from_secs(1));
     cx.run_until_parked();

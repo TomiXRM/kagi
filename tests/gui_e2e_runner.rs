@@ -131,6 +131,9 @@ mod home_tab;
 #[path = "recovery/commit_paging.rs"]
 mod commit_paging;
 #[cfg(target_os = "macos")]
+#[path = "recovery/context_menu_keys.rs"]
+mod context_menu_keys;
+#[cfg(target_os = "macos")]
 #[path = "recovery/home_github.rs"]
 mod home_github;
 #[cfg(target_os = "macos")]
@@ -260,6 +263,10 @@ mod remote_refresh_owner;
 #[cfg(target_os = "macos")]
 #[path = "recovery/fetch_owner.rs"]
 mod fetch_owner;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/guard_writer_panic.rs"]
+mod guard_writer_panic;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/file_menu_owner.rs"]
@@ -999,6 +1006,58 @@ mod macos {
                 Box::new(crate::commit_paging::scenario_commit_paging),
             ),
             (
+                "context_menu_keys",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys),
+            ),
+            (
+                "context_menu_keys_sidebar",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_sidebar),
+            ),
+            (
+                "context_menu_keys_home",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_home),
+            ),
+            (
+                "context_menu_keys_short",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_short),
+            ),
+            (
+                "context_menu_keys_reload",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_reload),
+            ),
+            (
+                "context_menu_keys_tab",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_tab),
+            ),
+            (
+                "context_menu_keys_covered",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_covered),
+            ),
+            (
+                "context_menu_keys_a11y",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_a11y),
+            ),
+            (
+                "context_menu_keys_covered_row",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_covered_row),
+            ),
+            (
+                "context_menu_keys_disabled_live",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_disabled_live),
+            ),
+            (
+                "context_menu_keys_item_appears",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_item_appears),
+            ),
+            (
+                "context_menu_keys_row_behind_info",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_row_behind_info),
+            ),
+            (
+                "context_menu_keys_last_tab",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_last_tab),
+            ),
+            (
                 "home_list_place",
                 Box::new(crate::home_list_place::scenario_home_list_place),
             ),
@@ -1113,8 +1172,8 @@ mod macos {
                 Box::new(crate::recovery_pull::scenario_remote_pull_planning_latch),
             ),
             (
-                "pull_confirm_parks_for_its_tab",
-                Box::new(crate::recovery_pull::scenario_pull_confirm_parks_for_its_tab),
+                "pull_confirm_departure_discards_old_visit",
+                Box::new(crate::recovery_pull::scenario_pull_confirm_departure_discards_old_visit),
             ),
             (
                 "pull_confirm_yields_to_another_modal",
@@ -1201,6 +1260,14 @@ mod macos {
             (
                 "slow_read_explained",
                 Box::new(crate::slow_read::scenario_slow_read_explained),
+            ),
+            (
+                "slow_write_explained",
+                Box::new(crate::slow_read::scenario_slow_write_explained),
+            ),
+            (
+                "slow_write_cleared_after_panic",
+                Box::new(crate::slow_read::scenario_slow_write_cleared_after_panic),
             ),
             (
                 "fetch_failure_oplog",
@@ -1675,6 +1742,58 @@ mod macos {
             (
                 "fetch_owner_display_isolated",
                 Box::new(crate::fetch_owner::scenario_fetch_owner_display_isolated),
+            ),
+            (
+                "fetch_panicked_worker_reconciles",
+                Box::new(crate::fetch_owner::scenario_fetch_panicked_worker_reconciles),
+            ),
+            (
+                "fetch_previous_visit_is_not_presented",
+                Box::new(crate::fetch_owner::scenario_fetch_previous_visit_is_not_presented),
+            ),
+            (
+                "fetch_old_visit_drops_pull_waiter",
+                Box::new(crate::fetch_owner::scenario_fetch_old_visit_drops_pull_waiter),
+            ),
+            (
+                "fetch_new_visit_waiter_sees_old_flight_failure",
+                Box::new(crate::fetch_owner::scenario_fetch_new_visit_waiter_sees_old_flight_failure),
+            ),
+            (
+                "fetch_new_visit_waiter_success_notifies",
+                Box::new(crate::fetch_owner::scenario_fetch_new_visit_waiter_success_notifies),
+            ),
+            (
+                "auto_fetch_old_visit_logs_contract",
+                Box::new(crate::fetch_owner::scenario_auto_fetch_old_visit_logs_contract),
+            ),
+            (
+                "remote_branch_fetch_panic",
+                Box::new(crate::guard_writer_panic::scenario_remote_branch_fetch_panic),
+            ),
+            (
+                "remote_branch_fetch_failed_after_departure",
+                Box::new(crate::guard_writer_panic::scenario_remote_branch_fetch_failed_after_departure),
+            ),
+            (
+                "remote_branch_fetch_success_after_departure",
+                Box::new(crate::guard_writer_panic::scenario_remote_branch_fetch_success_after_departure),
+            ),
+            (
+                "pr_ref_fetch_restarts_after_revisit",
+                Box::new(crate::guard_writer_panic::scenario_pr_ref_fetch_restarts_after_revisit),
+            ),
+            (
+                "pr_ref_fetch_panic",
+                Box::new(crate::guard_writer_panic::scenario_pr_ref_fetch_panic),
+            ),
+            (
+                "editor_save_panic",
+                Box::new(crate::guard_writer_panic::scenario_editor_save_panic),
+            ),
+            (
+                "editor_save_panic_after_close",
+                Box::new(crate::guard_writer_panic::scenario_editor_save_panic_after_close),
             ),
             (
                 "file_menu_freezes_path",

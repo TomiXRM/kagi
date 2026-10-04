@@ -329,6 +329,37 @@ latest 20 run（20 distinct SHA）の Windows job が **20/20 success**（failur
 settle matrix」の実機統合は今回の検証に含まれない。#728 は blocking CI の選択肢で
 完了とする。
 
+**#355 段階 0（2026-10-04）**: 上の「全 family の matrix」のうち、
+background task で動く guard writer（単独 fetch、remote branch fetch、
+PR ref fetch、Editor 保存）の **task unwind → Unknown receipt → reconcile →
+acknowledge → 次の write** を Tier A の実経路で確認した。`WriteGuard` の Drop は
+引き続き解放しない。job 外に保持した abandonment が supervisor の停止証拠と
+`UnaccountedWrite` を届け、停止済みでも結果不明の write は確認前に再実行させない。
+単独 fetch の結果は開始時の `session + visit` 以外へ表示せず、古い visit の
+失敗 receipt は永続記録する。Busy は plan revision を消費しない。remote SSH pull
+の lease 化は #989 の範囲であり、実機 Windows と全 family の matrix は引き続き
+未検証である。
+
+**#992 review（2026-10-04）**: dirty Pull の fetch waiter も要求時の
+`session + visit` を保持し、離脱済み visit への確認提案を破棄する。
+fetch 失敗は waiter ごとに記録せず、fetch 自身が一度だけ永続化する。
+remote branch fetch の通常失敗も、表示中 tab ではなく開始時の frozen repository
+へ必ず永続化する。PR ref fetch の通常失敗は既に同じ境界で記録している。
+ただし旧 visit の fetch に新 visit の dirty Pull が相乗りした場合は、
+新 waiter に結果を配送する。失敗なら新 visit に短い footer/toast のみ表示し、
+fetch 自体の receipt は重複させない（#992 review 4175367910）。
+remote branch fetch の `[kagi] fetch-remote-branch: ok` / `failed` 行は
+表示先の有無に関係なく完了時に出し、footer/toast のみ current visit に限定する
+（#992 review 4175420136）。PR ref fetch は既に早期 return より前に
+terminal klog 行を出している。
+離脱後の fetch / remote branch fetch / PR ref fetch の失敗 receipt は、永続化と
+Operation Log panel への追加を同時に行い、panel の自動表示と footer/toast
+のみ current visit に限定する（#992 review 4175461885）。#643 S6 の
+activation は PR mode を破棄するため、新 visit で同じ PR を開き直すと
+その visit の fetch が始まる。旧 visit の完了は新 fetch の loading latch
+と data を触らず、もし新 visit の fetch が走っておらず head が未読なら
+`fetch_pr_for_open` で一度だけ再開する（#992 review 4175505337）。
+
 **pull（A' 採用 = 上記 (a) の改訂結果）**: `FamilyEvidence::Pull(PullReport)`。
 `PullReport { steps: Vec<RunReport>, terminal }` は実際に走った child の receipt を
 実行順で運び、settle は最後の step ではなく `terminal.decisive`（pull 失敗後に restore

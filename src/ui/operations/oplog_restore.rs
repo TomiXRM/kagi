@@ -56,7 +56,7 @@ impl KagiApp {
         let Some(session) = self.ui().repo_session.as_ref() else {
             self.status_footer = FooterStatus::Failed(SharedString::from(i18n::op_plan_failed(
                 i18n_op,
-                "repo session unavailable",
+                Msg::RestoreRepoSessionUnavailable.t(),
             )));
             return;
         };
@@ -98,12 +98,12 @@ impl KagiApp {
                         entry,
                         cx,
                         true,
-                        Some("Restore plan ref rows are invalid; see the Operation Log".into()),
+                        Some(Msg::RestorePlanRowsInvalidSeeLog.t().into()),
                     );
                 } else {
                     self.push_toast(
                         ToastKind::Error,
-                        "Restore plan ref rows are invalid; no repository is open",
+                        Msg::RestorePlanRowsInvalidNoRepository.t(),
                         cx,
                     );
                 }

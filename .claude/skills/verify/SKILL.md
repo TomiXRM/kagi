@@ -692,8 +692,10 @@ The current suite covers:
   after an earlier recorded operation, inspect the card and its neutral
   preview, then confirm and check that only the local tag disappeared.
   #988 adds a malformed canonical plan-row admission leg to the same
-  scenario: no card opens or ref moves, the full error persists in one
-  Failed receipt, and the footer/toast carry only a bounded preview.
+  scenario: no card opens or ref moves, the full error persists in a Failed
+  receipt, and the footer/toast carry only a bounded EN/JA preview.
+  #993 review also checks the EN/JA missing-session footer and the no-repository
+  toast, without appending another receipt or moving any ref.
   `oplog_restore_preview_review` uses a long recorded branch history with
   Solo enabled and a fetched PR head as a fixed root. The ghost count omits
   commits that PR ref retains; the six-row AFTER window scrolls to the last

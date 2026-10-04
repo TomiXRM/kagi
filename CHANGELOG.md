@@ -20,6 +20,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - UI ガイドの Known gaps を現状に合わせて更新しました。Settings の通常の focus trap と前面判定、Home / Graph の行キー操作は対応済みとし、未解決の 100 Tab stop 超の制限、Linux / FreeBSD の platform menu と overlay の組み合わせ、UI thread の同期書き込みと WIP diffstat を明記しました。(#974、#976、#980、#986、#981、#987、#990、#996)
 
 - Reset Current などの共通確認カードで、blocker がある計画や実行しない計画に相当 Git コマンドが付いていても、折りたたみ行・専用コピー・「Copy all」に表示しないようにしました。Operation Log の復元カードと同じ条件を使います。(#993 review)
+- Operation Log の ref 復元計画で不正な ref 行やリポジトリセッションの欠落を検出したとき、footer と toast の短いエラーを表示言語（英語・日本語）に合わせました。完全な decode エラーは引き続き Operation Log に残します。(#993 review)
 
 - Operation Log の ref 復元プレビューで「Copy all」を使うとき、branch から外れる commit の印を現在の表示言語（英語・日本語）で出すようにしました。(#988)
 

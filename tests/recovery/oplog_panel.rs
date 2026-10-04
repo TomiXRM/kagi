@@ -951,47 +951,106 @@ pub fn scenario_oplog_restore_tag_preview(cx: &mut VisualTestAppContext) {
     ));
     assert_eq!(read_oplog_tail(1).pop().unwrap().op, "restore-to-point");
     // Malformed canonical ref rows fail closed at the real admission seam.
-    // The full reason is persisted, but the visible error stays short.
-    let mut malformed = valid_plan;
+    // The receipt retains the full error; users see localized, bounded text.
     let bad_row = format!("invalid-restore-row-{}", "x".repeat(300));
-    malformed.preview_commits = vec![bad_row.clone()];
     let refs_before = git_output(&repo, &["show-ref"]);
-    let previous_id = read_oplog_tail(1).pop().unwrap().id;
-    app.update(cx, |app, cx| {
-        app.admit_oplog_restore_plan_for_test(
-            Operation::RestoreToPoint { entry_id: point_id },
-            malformed,
-            cx,
-        )
-    });
-    assert!(cx.read(|cx| app.read(cx).oplog_restore_modal().is_none()));
-    assert_eq!(git_output(&repo, &["show-ref"]), refs_before);
-    let receipt = read_oplog_tail(1).pop().expect("failed receipt persisted");
-    assert_ne!(receipt.id, previous_id);
-    let OpOutcome::Failed { error } = &receipt.outcome else {
-        panic!(
-            "malformed plan must have a failed receipt: {:?}",
-            receipt.outcome
-        )
-    };
-    assert!(error.contains(&bad_row), "{error}");
-    cx.read(|cx| {
-        let state = app.read(cx);
-        let kagi::ui::FooterStatus::Failed(footer) = &state.status_footer else {
-            panic!("malformed plan must show failed footer")
+    for (language, invalid, no_repo, missing_session) in [
+        (
+            i18n::Lang::En,
+            "Restore plan ref rows are invalid; see the Operation Log",
+            "Restore plan ref rows are invalid; no repository is open",
+            "repo session unavailable",
+        ),
+        (
+            i18n::Lang::Ja,
+            "復元計画の ref 行が不正です。詳細は Operation Log を確認してください",
+            "復元計画の ref 行が不正です。リポジトリは開かれていません",
+            "リポジトリのセッションを利用できません",
+        ),
+    ] {
+        i18n::set_lang(language);
+        let mut malformed = valid_plan.clone();
+        malformed.preview_commits = vec![bad_row.clone()];
+        let previous_id = read_oplog_tail(1).pop().unwrap().id;
+        app.update(cx, |app, cx| {
+            app.admit_oplog_restore_plan_for_test(
+                Operation::RestoreToPoint { entry_id: point_id },
+                malformed.clone(),
+                cx,
+            )
+        });
+        assert!(cx.read(|cx| app.read(cx).oplog_restore_modal().is_none()));
+        assert_eq!(git_output(&repo, &["show-ref"]), refs_before);
+        let receipt = read_oplog_tail(1).pop().expect("failed receipt persisted");
+        assert_ne!(receipt.id, previous_id);
+        let OpOutcome::Failed { error } = &receipt.outcome else {
+            panic!(
+                "malformed plan must have a failed receipt: {:?}",
+                receipt.outcome
+            )
         };
-        assert!(footer.len() < 120 && !footer.contains(&bad_row), "{footer}");
-        let toast = state
-            .toast_stack
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .toasts()
-            .last()
-            .unwrap();
-        assert_eq!(toast.kind, kagi::ui::ToastKind::Error);
-        assert!(toast.message.len() < 120 && !toast.message.contains(&bad_row));
-    });
+        assert!(error.contains(&bad_row), "{error}");
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let kagi::ui::FooterStatus::Failed(footer) = &state.status_footer else {
+                panic!("malformed plan must show failed footer")
+            };
+            assert_eq!(footer.as_ref(), invalid);
+            let toast = state
+                .toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .last()
+                .unwrap();
+            assert_eq!(toast.kind, kagi::ui::ToastKind::Error);
+            assert_eq!(toast.message.as_ref(), invalid);
+        });
+
+        // A missing session reports a localized plan failure rather than
+        // leaking an English inner reason into the translated footer.
+        app.update(cx, |app, cx| {
+            let session = app.ui_mut().unwrap().repo_session.take().unwrap();
+            app.open_oplog_restore_modal(Operation::RestoreToPoint { entry_id: point_id }, cx);
+            app.ui_mut().unwrap().repo_session = Some(session);
+        });
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let kagi::ui::FooterStatus::Failed(footer) = &state.status_footer else {
+                panic!("missing session must show failed footer")
+            };
+            assert!(footer.ends_with(missing_session), "{footer}");
+        });
+
+        // Without a repository path no receipt can be stored, so the toast
+        // itself must explain the malformed plan in the active language.
+        app.update(cx, |app, cx| {
+            let path = app.repo_path.take().unwrap();
+            app.admit_oplog_restore_plan_for_test(
+                Operation::RestoreToPoint { entry_id: point_id },
+                malformed,
+                cx,
+            );
+            app.repo_path = Some(path);
+        });
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let toast = state
+                .toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .last()
+                .unwrap();
+            assert_eq!(toast.kind, kagi::ui::ToastKind::Error);
+            assert_eq!(toast.message.as_ref(), no_repo);
+        });
+        assert_eq!(read_oplog_tail(1).pop().unwrap().id, receipt.id);
+        assert_eq!(git_output(&repo, &["show-ref"]), refs_before);
+    }
+    i18n::set_lang(original_language);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS oplog_restore_tag_preview: EN/JA card warns about unrecorded tag changes; confirming removes recorded tag and leaves external tag untouched");
 }

@@ -141,6 +141,7 @@ fn blocking_fake_ssh(
     upstream_change: &Path,
     head_read_failure: &Path,
     remote_url_change: &Path,
+    dirty_change: &Path,
 ) {
     std::fs::create_dir_all(bin).expect("shim dir");
     let path = bin.join("ssh");
@@ -167,7 +168,10 @@ fn blocking_fake_ssh(
                      if [ -f {upstream_change:?} ]; then upstream=origin/feature; fi\n\
                      if [ -f {remote_url_change:?} ]; then url=ssh://e2e.invalid/changed; fi\n\
                      if [ -f {head_read_failure:?} ]; then echo 'HEAD query failed' >&2; exit 1; fi\n\
-                     printf 'KAGI-COMMON-DIR\\0%s\\0%s\\0branch\\0%s\\0%s\\0%s\\0origin\\0refs/heads/main\\0%s\\0+refs/heads/*:refs/remotes/origin/*\\0KAGI-END\\n' \"$common\" \"$top\" \"$branch\" \"$oid\" \"$upstream\" \"$url\" ;;\n\
+                     printf 'KAGI-COMMON-DIR\\0%s\\0%s\\0branch\\0%s\\0%s\\0%s\\0origin\\0refs/heads/main\\0%s\\0+refs/heads/*:refs/remotes/origin/*\\0KAGI-FETCH-END\\0KAGI-INDEX-BEGIN\\0' \"$common\" \"$top\" \"$branch\" \"$oid\" \"$upstream\" \"$url\"\n\
+                     printf '100644 %s 0\\tfile\\0KAGI-INDEX-END\\0KAGI-WORKTREE-BEGIN\\0' \"$oid\"\n\
+                     if [ -f {dirty_change:?} ]; then printf '? new-file\\0'; fi\n\
+                     printf 'KAGI-WORKTREE-END\\0KAGI-END\\n' ;;\n\
                *pull*) while [ ! -f {release:?} ]; do sleep 0.05; done\n\
                        if [ -f {fail:?} ]; then echo 'unexpected remote reply' >&2; exit 42; fi\n\
                        echo 'Already up to date.' ;;\n\
@@ -205,6 +209,7 @@ enum PullLeaseCase {
     UpstreamChanged,
     HeadReadFailure,
     RemoteUrlChanged,
+    DirtyChanged,
     CachedPreviewStale,
     PlanningLatch,
 }
@@ -250,6 +255,9 @@ pub fn scenario_remote_pull_cached_preview_stale(cx: &mut VisualTestAppContext) 
 pub fn scenario_remote_pull_url_refusal(cx: &mut VisualTestAppContext) {
     remote_pull_lease(cx, PullLeaseCase::RemoteUrlChanged);
 }
+pub fn scenario_remote_pull_dirty_refusal(cx: &mut VisualTestAppContext) {
+    remote_pull_lease(cx, PullLeaseCase::DirtyChanged);
+}
 
 pub fn scenario_remote_pull_planning_latch(cx: &mut VisualTestAppContext) {
     remote_pull_lease(cx, PullLeaseCase::PlanningLatch);
@@ -288,6 +296,7 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
     let upstream_change = shim.path().join("upstream-change");
     let head_read_failure = shim.path().join("head-read-failure");
     let remote_url_change = shim.path().join("remote-url-change");
+    let dirty_change = shim.path().join("dirty-change");
     blocking_fake_ssh(
         shim.path(),
         &release,
@@ -302,6 +311,7 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
         &upstream_change,
         &head_read_failure,
         &remote_url_change,
+        &dirty_change,
     );
     if !matches!(case, PullLeaseCase::PlanningLatch) {
         std::fs::write(&probe_release, b"go").unwrap();
@@ -496,6 +506,9 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
     if matches!(case, PullLeaseCase::RemoteUrlChanged) {
         std::fs::write(&remote_url_change, b"effective URL changed").unwrap();
     }
+    if matches!(case, PullLeaseCase::DirtyChanged) {
+        std::fs::write(&dirty_change, b"worktree changed").unwrap();
+    }
     let refused = matches!(
         case,
         PullLeaseCase::IdentityChanged
@@ -506,6 +519,7 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
             | PullLeaseCase::UpstreamChanged
             | PullLeaseCase::HeadReadFailure
             | PullLeaseCase::RemoteUrlChanged
+            | PullLeaseCase::DirtyChanged
     );
     app.update(cx, |app, cx| {
         app.start_pull(cx);
@@ -677,6 +691,7 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
             PullLeaseCase::UpstreamChanged => "remote_pull_upstream_refusal",
             PullLeaseCase::HeadReadFailure => "remote_pull_head_read_refusal",
             PullLeaseCase::CachedPreviewStale => "remote_pull_cached_preview_stale",
+            PullLeaseCase::DirtyChanged => "remote_pull_dirty_refusal",
             PullLeaseCase::RemoteUrlChanged => "remote_pull_url_refusal",
         }
     );

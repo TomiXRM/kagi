@@ -1642,6 +1642,13 @@ Domain `pull_common_dir_requires_complete_physical_paths_head_and_git_config`
 rejects missing/malformed Git configuration and preserves all fetch refspecs;
 `remote_oplog_test::pull_probe_binds_symlink_to_real_worktree_and_live_head`
 exercises the actual Git commands against a throwaway repository.
+`remote_pull_dirty_refusal` changes only the host's untracked worktree status
+between the plan and preflight probe: it must record Refused, release the lease,
+and run zero pulls; skipping the fingerprint comparison fails that assertion.
+The same pure frame parser rejects missing staged/status delimiters while
+allowing legitimate empty clean streams and preserving non-UTF-8 filenames.
+The real-Git probe test changes unstaged content and then stages it, proving
+that the two frozen digests change independently without HEAD/config drift.
 `remote_pull_cached_preview_stale` changes the checked-out branch before the
 first live plan probe while cached status still names `main`; the plan must
 reject without a confirmation modal, lease or `git pull` and show a localized

@@ -47,6 +47,22 @@ pub struct RemotePullHead {
     /// The branch's resolved upstream, or None for detached HEAD.
     pub upstream: Option<String>,
 }
+
+/// SHA-256 of the exact NUL-delimited staged-index and worktree-status streams
+/// returned by the host at plan time. Empty streams have the SHA-256 of empty
+/// bytes; an absent or truncated stream is never a valid probe frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemotePullFingerprint {
+    pub staged: [u8; 32],
+    pub worktree: [u8; 32],
+}
+
+/// Borrowed, binary-safe Git streams within a complete SSH probe frame.
+#[derive(Debug, PartialEq, Eq)]
+pub struct RemotePullContent<'a> {
+    pub staged: &'a [u8],
+    pub worktree: &'a [u8],
+}
 /// Pull-relevant Git configuration read from the selected remote worktree.
 /// Unlike the resolved upstream, these raw keys and the expanded URL capture
 /// changes to `branch.*`, `remote.*.fetch`, and URL rewrite rules.
@@ -210,12 +226,22 @@ fn parse_ssh_config(text: &str, pull: bool) -> Result<EffectiveSshConfig, SshCon
     Ok(config)
 }
 
-/// Parse the SSH probe's physical paths, HEAD state, and effective Git remote
-/// configuration. Fetch refspecs are individually NUL-delimited; rejecting
-/// partial or malformed frames prevents an incomplete config from being trusted.
+/// Parse the SSH probe's physical paths, HEAD, remote configuration, staged
+/// index and worktree status. Git streams remain borrowed and binary-safe for
+/// SHA-256 at the transport boundary. Framing proves both Git commands ran to
+/// completion; a clean worktree legitimately yields an empty status stream.
 pub fn parse_pull_common_dir(
     bytes: &[u8],
-) -> Result<(String, String, RemotePullHead, Option<RemotePullConfig>), &'static str> {
+) -> Result<
+    (
+        String,
+        String,
+        RemotePullHead,
+        Option<RemotePullConfig>,
+        RemotePullContent<'_>,
+    ),
+    &'static str,
+> {
     let mut fields = bytes.split(|byte| *byte == 0);
     let (
         Some(magic),
@@ -270,6 +296,34 @@ pub fn parse_pull_common_dir(
         }
         Ok(value.to_string())
     };
+    let mut offset = [
+        magic,
+        common_dir,
+        toplevel,
+        kind,
+        branch,
+        oid.as_bytes(),
+        upstream,
+        remote,
+        merge,
+        url,
+    ]
+    .iter()
+    .map(|field| field.len() + 1)
+    .sum::<usize>();
+    let mut fetch_refspecs = Vec::new();
+    let mut fetch_ended = false;
+    for field in fields.by_ref() {
+        offset += field.len() + 1;
+        if field == b"KAGI-FETCH-END" {
+            fetch_ended = true;
+            break;
+        }
+        fetch_refspecs.push(parse_config(field)?);
+    }
+    if !fetch_ended {
+        return Err("missing pull fetch frame end");
+    }
     let (branch, upstream, config) = match kind {
         b"detached"
             if branch.is_empty()
@@ -277,7 +331,7 @@ pub fn parse_pull_common_dir(
                 && remote.is_empty()
                 && merge.is_empty()
                 && url.is_empty()
-                && fields.next().is_none() =>
+                && fetch_refspecs.is_empty() =>
         {
             (None, None, None)
         }
@@ -292,7 +346,6 @@ pub fn parse_pull_common_dir(
                 }
                 Ok(name.to_string())
             };
-            let fetch_refspecs = fields.map(parse_config).collect::<Result<Vec<_>, _>>()?;
             if fetch_refspecs.is_empty() {
                 return Err("missing pull fetch refspec");
             }
@@ -309,6 +362,41 @@ pub fn parse_pull_common_dir(
         }
         _ => return Err("invalid pull HEAD state"),
     };
+    if fields.next() != Some(b"KAGI-INDEX-BEGIN".as_slice()) {
+        return Err("missing staged-index frame");
+    }
+    offset += b"KAGI-INDEX-BEGIN".len() + 1;
+    let staged_start = offset;
+    let mut index_ended = false;
+    for field in fields.by_ref() {
+        if field == b"KAGI-INDEX-END" {
+            index_ended = true;
+            break;
+        }
+        offset += field.len() + 1;
+    }
+    if !index_ended {
+        return Err("missing staged-index frame end");
+    }
+    let staged = &bytes[staged_start..offset];
+    offset += b"KAGI-INDEX-END".len() + 1;
+    if fields.next() != Some(b"KAGI-WORKTREE-BEGIN".as_slice()) {
+        return Err("missing worktree-status frame");
+    }
+    offset += b"KAGI-WORKTREE-BEGIN".len() + 1;
+    let worktree_start = offset;
+    let mut last = None;
+    for field in fields {
+        last = Some((field, offset));
+        offset += field.len() + 1;
+    }
+    let Some((marker, worktree_end)) = last else {
+        return Err("missing worktree-status frame end");
+    };
+    if marker != b"KAGI-WORKTREE-END" {
+        return Err("missing worktree-status frame end");
+    }
+    let worktree = &bytes[worktree_start..worktree_end];
     Ok((
         parse_path(common_dir, "common-dir is not a physical absolute path")?,
         parse_path(
@@ -321,6 +409,7 @@ pub fn parse_pull_common_dir(
             upstream,
         },
         config,
+        RemotePullContent { staged, worktree },
     ))
 }
 
@@ -826,10 +915,11 @@ mod tests {
                 "\0origin\0refs/heads/main\0ssh://example.invalid/repo\0+refs/heads/*:refs/remotes/origin/*\0".to_string()
             };
             format!(
-                "KAGI-COMMON-DIR\0/srv/repo/.git\0/srv/real-worktree\0{kind}\0{branch}\0{oid}\0{upstream}{config}KAGI-END\n"
+                "KAGI-COMMON-DIR\0/srv/repo/.git\0/srv/real-worktree\0{kind}\0{branch}\0{oid}\0{upstream}{config}KAGI-FETCH-END\0KAGI-INDEX-BEGIN\0100644 {oid} 0\tfile\0KAGI-INDEX-END\0KAGI-WORKTREE-BEGIN\0? new-file\0KAGI-WORKTREE-END\0KAGI-END\n"
             )
         };
         let attached = frame("branch", "main", &oid, "origin/main");
+        let staged = format!("100644 {oid} 0\tfile\0");
         let config = RemotePullConfig {
             remote_name: "origin".into(),
             merge_ref: "refs/heads/main".into(),
@@ -847,6 +937,10 @@ mod tests {
                     upstream: Some("origin/main".into()),
                 },
                 Some(config.clone()),
+                RemotePullContent {
+                    staged: staged.as_bytes(),
+                    worktree: b"? new-file\0",
+                },
             ))
         );
         let two_fetch = attached.replacen(
@@ -862,7 +956,8 @@ mod tests {
                 .fetch_refspecs,
             vec!["+refs/heads/*:refs/remotes/origin/*", "^refs/heads/deleted"],
         );
-        let detached = parse_pull_common_dir(frame("detached", "", &oid, "").as_bytes()).unwrap();
+        let detached_frame = frame("detached", "", &oid, "");
+        let detached = parse_pull_common_dir(detached_frame.as_bytes()).unwrap();
         assert_eq!(
             detached.2,
             RemotePullHead {
@@ -872,6 +967,28 @@ mod tests {
             }
         );
         assert_eq!(detached.3, None);
+        let empty = attached
+            .replacen(&staged, "", 1)
+            .replacen("? new-file\0", "", 1);
+        assert_eq!(
+            parse_pull_common_dir(empty.as_bytes()).unwrap().4,
+            RemotePullContent {
+                staged: b"",
+                worktree: b"",
+            },
+            "an empty repository and clean worktree have valid empty streams"
+        );
+        let mut non_utf8 = attached.clone().into_bytes();
+        let name = non_utf8
+            .windows(b"new-file".len())
+            .position(|window| window == b"new-file")
+            .unwrap();
+        non_utf8[name] = 0xff;
+        assert_eq!(
+            parse_pull_common_dir(&non_utf8).unwrap().4.worktree[2],
+            0xff,
+            "a non-UTF-8 filename must retain its original bytes"
+        );
         for invalid in [
             attached.replacen("/srv/repo/.git", "relative", 1),
             attached.replacen("/srv/real-worktree", "relative", 1),
@@ -887,6 +1004,16 @@ mod tests {
             attached.replacen("\0ssh://example.invalid/repo\0", "\0\0", 1),
             attached.replacen("+refs/heads/*:refs/remotes/origin/*\0", "", 1),
             attached.replacen("\0origin\0", "\0origin\nother\0", 1),
+            attached.replacen("KAGI-FETCH-END\0", "", 1),
+            attached.replacen("KAGI-INDEX-BEGIN\0", "", 1),
+            attached.replacen("KAGI-INDEX-END\0", "", 1),
+            attached.replacen("KAGI-WORKTREE-BEGIN\0", "", 1),
+            attached.replacen("KAGI-WORKTREE-END\0", "", 1),
+            attached
+                .split_once("KAGI-WORKTREE-BEGIN\0")
+                .unwrap()
+                .0
+                .to_string(),
             format!("{attached}extra"),
         ] {
             assert!(

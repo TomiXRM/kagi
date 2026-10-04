@@ -43,6 +43,7 @@ pub struct PullRepoIdentity {
     pub physical_toplevel: String,
     pub head: remote::RemotePullHead,
     pub config: Option<remote::RemotePullConfig>,
+    pub fingerprint: remote::RemotePullFingerprint,
 }
 
 /// Resolve a pull's lease identity, physical worktree toplevel, and checkout
@@ -145,17 +146,25 @@ printf 'KAGI-COMMON-DIR\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' "$common" "$top" 
 if [ "$kind" = branch ]; then
   git config --null --get-all "remote.$remote.fetch"
 fi
-printf 'KAGI-END\n'"#;
-    let output = run_ssh(host, &["sh", "-c", script, "--", root])?;
+printf 'KAGI-FETCH-END\0KAGI-INDEX-BEGIN\0'
+git ls-files -s -z
+printf 'KAGI-INDEX-END\0KAGI-WORKTREE-BEGIN\0'
+git status --porcelain=v2 -z --untracked-files=all
+printf 'KAGI-WORKTREE-END\0KAGI-END\n'"#;
+    let output = run_ssh_raw(host, &["sh", "-c", script, "--", root])?;
     if output.code != 0 {
         return Err(RemoteError::NonZero {
             code: output.code,
             stderr: output.stderr,
         });
     }
-    let (common_dir, physical_toplevel, head, config) =
-        remote::parse_pull_common_dir(output.stdout.as_bytes())
+    let (common_dir, physical_toplevel, head, config, content) =
+        remote::parse_pull_common_dir(&output.stdout)
             .map_err(|e| RemoteError::Incomplete(e.into()))?;
+    let fingerprint = remote::RemotePullFingerprint {
+        staged: Sha256::digest(content.staged).into(),
+        worktree: Sha256::digest(content.worktree).into(),
+    };
     Ok(PullRepoIdentity {
         repo_id: remote::RemoteRepoId {
             connection: Arc::new(connection),
@@ -164,6 +173,7 @@ printf 'KAGI-END\n'"#;
         physical_toplevel,
         head,
         config,
+        fingerprint,
     })
 }
 
@@ -244,6 +254,14 @@ struct SshOutput {
     stderr: String,
 }
 
+/// Binary-safe form of the captured output, required by NUL-delimited Git
+/// index and worktree status (non-UTF-8 filenames must not be replaced).
+struct SshRawOutput {
+    code: i32,
+    stdout: Vec<u8>,
+    stderr: String,
+}
+
 /// Run `remote_tokens` on `host` via the system `ssh` binary and capture output.
 ///
 /// Hardening (parallels `git/cli.rs`):
@@ -258,6 +276,16 @@ struct SshOutput {
 ///   never as an exit code — the local client is gone, the *remote* command is
 ///   not proven stopped.
 fn run_ssh(host: &RemoteHost, remote_tokens: &[&str]) -> Result<SshOutput, RemoteError> {
+    let raw = run_ssh_raw(host, remote_tokens)?;
+    Ok(SshOutput {
+        code: raw.code,
+        stdout: String::from_utf8(raw.stdout)
+            .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned()),
+        stderr: raw.stderr,
+    })
+}
+
+fn run_ssh_raw(host: &RemoteHost, remote_tokens: &[&str]) -> Result<SshRawOutput, RemoteError> {
     let args = host.ssh_invocation(remote_tokens);
 
     let mut cmd = Command::new("ssh");
@@ -278,10 +306,11 @@ fn run_ssh(host: &RemoteHost, remote_tokens: &[&str]) -> Result<SshOutput, Remot
     if let Err(io) = &run.io {
         return Err(RemoteError::Incomplete(io.to_string()));
     }
-    Ok(SshOutput {
+    let stderr = run.stderr_lossy();
+    Ok(SshRawOutput {
         code,
-        stdout: run.stdout_lossy(),
-        stderr: run.stderr_lossy(),
+        stdout: run.stdout,
+        stderr,
     })
 }
 

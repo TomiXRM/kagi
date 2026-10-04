@@ -414,6 +414,10 @@ refusal は core が `Refused` の no-execute step として記録し、UI は e
 
 **remote pull（#989）**: cached ahead/behind から preview を合成し、background plan job
 で通常の SSH options による `ssh -G` と common-dir probe を行う。
+同じ plan-time SSH probe は staged index (`git ls-files -s -z`) と worktree status
+(`git status --porcelain=v2 -z --untracked-files=all`) の binary stream を取得し、
+SHA-256 fingerprint を凍結する。実行前に同じ probe を再読して照合し、
+stream の不一致・読取失敗は pull を実行せず `Refused` として lease を解放する。
 `Planned::RemotePull` は `begin_write` で `WriteScope::Remote(RemoteRepoId)` を取り、
 `OperationId` / `OwnerStamp` によって配送される。Success / Failed は通常解放し、
 Unknown / Partial / job abandonment は停止済みの reconcile requirement と lease を保持する。

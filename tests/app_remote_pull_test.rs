@@ -2,7 +2,8 @@ use kagi::app::{self, AdmissionError, Job, PlanState, Planned, Sessions, WriteSc
 use kagi::remote::stash::RemoteAttachment;
 use kagi::remote::{RemoteError, RemotePullReport};
 use kagi_domain::remote::{
-    RemoteConnectionId, RemoteHost, RemotePullConfig, RemotePullHead, RemoteRepoId,
+    RemoteConnectionId, RemoteHost, RemotePullConfig, RemotePullFingerprint, RemotePullHead,
+    RemoteRepoId,
 };
 use kagi_git::oplog::{OpLogEntry, OpOutcome};
 use kagi_git::StateSummary;
@@ -63,6 +64,10 @@ fn plan(sessions: &mut Sessions) -> (Job, RemoteRepoId) {
         remote_url: "ssh://example.invalid/repo".into(),
         fetch_refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".into()],
     };
+    let fingerprint = RemotePullFingerprint {
+        staged: [1; 32],
+        worktree: [2; 32],
+    };
     let completion = app::plan_remote_pull_for_test(
         sessions,
         request,
@@ -70,6 +75,7 @@ fn plan(sessions: &mut Sessions) -> (Job, RemoteRepoId) {
         "/srv/repo".into(),
         head.clone(),
         config.clone(),
+        fingerprint.clone(),
     )
     .run();
     assert!(matches!(sessions.plan_state(), PlanState::Planning { .. }));
@@ -84,6 +90,7 @@ fn plan(sessions: &mut Sessions) -> (Job, RemoteRepoId) {
     assert_eq!(plan.physical_toplevel, "/srv/repo");
     assert_eq!(plan.head, head);
     assert_eq!(plan.config, config);
+    assert_eq!(plan.fingerprint, fingerprint);
     assert_eq!(prepared.scope(), WriteScope::Remote(repo_id.clone()));
     let approved = app::approve(
         sessions,

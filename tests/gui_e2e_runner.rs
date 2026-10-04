@@ -1168,6 +1168,10 @@ mod macos {
                 Box::new(crate::recovery_pull::scenario_remote_pull_url_refusal),
             ),
             (
+                "remote_pull_dirty_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_dirty_refusal),
+            ),
+            (
                 "remote_pull_planning_latch",
                 Box::new(crate::recovery_pull::scenario_remote_pull_planning_latch),
             ),

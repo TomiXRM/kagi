@@ -2,7 +2,7 @@
 //! transport-owned durable receipt.
 use super::*;
 use kagi_domain::plan_note::{PlanNote, PlanTitle, PullNote, PullTitle};
-use kagi_domain::remote::{RemotePullConfig, RemotePullHead, RemoteRepoId};
+use kagi_domain::remote::{RemotePullConfig, RemotePullFingerprint, RemotePullHead, RemoteRepoId};
 use std::sync::{mpsc::Sender, Arc};
 
 #[derive(Clone, Debug)]
@@ -18,6 +18,7 @@ pub struct RemotePullPlan {
     pub physical_toplevel: String,
     pub head: RemotePullHead,
     pub config: RemotePullConfig,
+    pub fingerprint: RemotePullFingerprint,
 }
 
 pub struct RemotePullPlanJob {
@@ -62,6 +63,7 @@ impl RemotePullPlanJob {
                                 physical_toplevel: identity.physical_toplevel,
                                 head: identity.head,
                                 config: identity.config.expect("matched pull configuration"),
+                                fingerprint: identity.fingerprint,
                             }),
                             request: self.request,
                         },
@@ -104,6 +106,7 @@ pub fn plan_remote_pull_for_test(
     physical_toplevel: String,
     head: RemotePullHead,
     config: RemotePullConfig,
+    fingerprint: RemotePullFingerprint,
 ) -> RemotePullPlanJob {
     let mut job = plan_remote_pull(sessions, request);
     job.fixture = Some(crate::remote::PullRepoIdentity {
@@ -111,6 +114,7 @@ pub fn plan_remote_pull_for_test(
         physical_toplevel,
         head,
         config: Some(config),
+        fingerprint,
     });
     job
 }
@@ -128,6 +132,7 @@ pub struct RemotePullJob {
     physical_toplevel: String,
     head: RemotePullHead,
     config: RemotePullConfig,
+    fingerprint: RemotePullFingerprint,
     abandoned: Sender<Completion>,
     ran: bool,
     fixture: Option<crate::remote::RemotePullReport>,
@@ -152,6 +157,7 @@ impl RemotePullJob {
                     && identity.physical_toplevel == self.physical_toplevel
                     && identity.head == self.head
                     && identity.config.as_ref() == Some(&self.config)
+                    && identity.fingerprint == self.fingerprint
             }) {
                 crate::remote::remote_pull(
                     &owner.host,
@@ -217,6 +223,7 @@ pub fn prepare_remote_pull(
         physical_toplevel: plan.physical_toplevel,
         head: plan.head,
         config: plan.config,
+        fingerprint: plan.fingerprint,
         abandoned: s.abandoned_tx.clone(),
         ran: false,
         fixture: None,

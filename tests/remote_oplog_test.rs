@@ -106,6 +106,18 @@ fn pull_probe_binds_symlink_to_real_worktree_and_live_head() {
         config.fetch_refspecs,
         ["+refs/heads/*:refs/remotes/origin/*"]
     );
+    std::fs::write(repo.join("file"), "unstaged change\n").unwrap();
+    let dirty = kagi::remote::resolve_pull_identity(&host, alias.to_str().unwrap()).unwrap();
+    assert_eq!(planned.head, dirty.head);
+    assert_eq!(planned.config, dirty.config);
+    assert_eq!(planned.fingerprint.staged, dirty.fingerprint.staged);
+    assert_ne!(planned.fingerprint.worktree, dirty.fingerprint.worktree);
+    git(&repo, &["add", "file"]);
+    let staged = kagi::remote::resolve_pull_identity(&host, alias.to_str().unwrap()).unwrap();
+    assert_eq!(planned.head, staged.head);
+    assert_eq!(planned.config, staged.config);
+    assert_ne!(planned.fingerprint.staged, staged.fingerprint.staged);
+    assert_ne!(dirty.fingerprint.worktree, staged.fingerprint.worktree);
     git(&repo, &["checkout", "-qb", "feature"]);
     git(
         &repo,

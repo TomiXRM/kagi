@@ -118,7 +118,7 @@ fn q9_deterministic_event_sequences_never_create_two_pipeline_owners() {
                         true,
                     );
                     if (seed >> 24).is_multiple_of(2) {
-                        q.apply(QueueEvent::LeaseReleased(writer));
+                        q.apply(QueueEvent::LeaseReleased(Some(writer)));
                     }
                 }
             }
@@ -159,7 +159,7 @@ fn q9_deterministic_event_sequences_never_create_two_pipeline_owners() {
                                 true,
                                 false,
                             );
-                            q.apply(QueueEvent::LeaseReleased(writer));
+                            q.apply(QueueEvent::LeaseReleased(Some(writer)));
                         }
                         IntentState::Queued
                         | IntentState::Waiting { .. }

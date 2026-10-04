@@ -34,6 +34,7 @@ pub mod oplog_panel;
 pub mod plan;
 pub mod pr_threads;
 pub mod pr_viewed;
+pub mod queue;
 pub use op::{
     auto_stash_identity_unverified, auto_stash_missing, auto_stash_plan_stale,
     auto_stash_restore_conflicted, auto_stash_restore_failed, op_failed, op_plan_failed,
@@ -42,6 +43,7 @@ pub use op::{
     terminal_nonconcurrent_blocked, terminal_ports_exhausted, Op,
 };
 pub use plan::{plan_note_text, plan_recovery_text, plan_title_text};
+pub use queue::{queue_text, QueueText};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lang {
     En,

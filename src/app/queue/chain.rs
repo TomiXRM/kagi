@@ -69,7 +69,25 @@ impl IntentQueue {
             }
         }
         self.record_cancel(head, reason);
-        self.trip(session, ChainAnchor::QueuedHead(id));
+        if reason == CancelReason::UserRemoved {
+            // The user took this one out (RemoveOne on the head): not a
+            // failure, so the rest move up behind the same anchor (決定 3).
+            if matches!(
+                self.gate(session),
+                ChainGate::Armed { anchor: Some(ChainAnchor::QueuedHead(anchor)) } if anchor == id
+            ) {
+                let next = self
+                    .per_session
+                    .get(&session)
+                    .and_then(VecDeque::front)
+                    .map(|i| ChainAnchor::QueuedHead(i.id));
+                self.gates
+                    .insert(session, ChainGate::Armed { anchor: next });
+            }
+            self.clear_empty(session);
+        } else {
+            self.trip(session, ChainAnchor::QueuedHead(id));
+        }
     }
     pub(super) fn trip(&mut self, session: SessionId, by: ChainAnchor) {
         self.gates.insert(session, ChainGate::Tripped { by });

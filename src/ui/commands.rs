@@ -1999,6 +1999,12 @@ impl KagiApp {
         let Some(owner) = self.active_session() else {
             return false;
         };
+        // ADR-0204 決定 7: a quiet fetch would move remote-tracking refs in
+        // the middle of this tab's queue, changing what the next replan sees.
+        if silent && !self.op_queue.queue.auto_fetch_allowed(owner) {
+            klog!("auto-fetch: skipped while operations are queued");
+            return false;
+        }
         let Some(visit) = self
             .app_sessions
             .attachment(owner)
@@ -2008,7 +2014,9 @@ impl KagiApp {
         };
         // Before admission: e.g. Cmd+R's read, about to be superseded (#851).
         let superseded_read = self.reads.is_loading(owner);
-        let Some(lease) = self.reserve_write("fetch", &repo_path, cx) else {
+        // A quiet fetch is background work, never this tab's `&&` predecessor.
+        let queue_owner = (!silent).then_some(owner);
+        let Some(lease) = self.reserve_write_for("fetch", &repo_path, queue_owner, cx) else {
             return false;
         };
         let before = kagi_git::StateSummary {

@@ -781,6 +781,9 @@ impl Render for KagiApp {
         }
 
         let content = root
+            // ── Operation queue strip (#355) — the front tab's queued
+            //    intents and cancel list, directly above the status bar. ──
+            .children(self.render_queue_strip(cx))
             // ── Status bar slot (T017) — last operation result ─
             .child(self.render_status_bar(status_footer, bottom_panel_open, cx))
             // ── W3-NOTIFY: toast stack (above everything) ──────

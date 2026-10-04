@@ -102,7 +102,7 @@ pub enum WriteScope {
     Remote(RemoteRepoId),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AdmissionError {
     Busy,
     StaleApproval,

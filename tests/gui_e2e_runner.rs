@@ -112,6 +112,9 @@ mod app_stash;
 mod busy_label;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/op_queue.rs"]
+mod op_queue;
+#[cfg(target_os = "macos")]
 #[path = "recovery/slow_read.rs"]
 mod slow_read;
 
@@ -1276,6 +1279,42 @@ mod macos {
             (
                 "slow_write_cleared_after_panic",
                 Box::new(crate::slow_read::scenario_slow_write_cleared_after_panic),
+            ),
+            (
+                "queue_runs_in_order",
+                Box::new(crate::op_queue::scenario_queue_runs_in_order),
+            ),
+            (
+                "queue_trip_lists_cancelled",
+                Box::new(crate::op_queue::scenario_queue_trip_lists_cancelled),
+            ),
+            (
+                "queue_confirms_a_warned_plan",
+                Box::new(crate::op_queue::scenario_queue_confirms_a_warned_plan),
+            ),
+            (
+                "queue_strip_owner_only",
+                Box::new(crate::op_queue::scenario_queue_strip_owner_only),
+            ),
+            (
+                "queue_skips_auto_fetch",
+                Box::new(crate::op_queue::scenario_queue_skips_auto_fetch),
+            ),
+            (
+                "queue_rejects_during_untracked_write",
+                Box::new(crate::op_queue::scenario_queue_rejects_during_untracked_write),
+            ),
+            (
+                "queue_resumes_after_reconcile",
+                Box::new(crate::op_queue::scenario_queue_resumes_after_reconcile),
+            ),
+            (
+                "queue_accepts_after_idle_fetch",
+                Box::new(crate::op_queue::scenario_queue_accepts_after_idle_fetch),
+            ),
+            (
+                "queue_refuses_a_blocked_checkout",
+                Box::new(crate::op_queue::scenario_queue_refuses_a_blocked_checkout),
             ),
             (
                 "slow_write_snapshot",

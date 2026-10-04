@@ -102,10 +102,14 @@ pub(crate) fn verify_after_snapshot(
 /// when the UI must present the *real* outcome instead of re-synthesizing one
 /// from a stringified error (#643 A1/A2). Only a repository that would not open
 /// is an `Err` — nothing ran, so there is nothing to report.
+///
+/// `verified` is set only when the re-snapshot shows HEAD at the target: the
+/// operation queue's `&&` judges a checkout by it (ADR-0204 決定 3).
 pub(crate) fn checkout_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
     target: &CheckoutPlanTarget,
+    verified: &std::sync::atomic::AtomicBool,
 ) -> Result<RunReport, String> {
     let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // ADR-0104 Phase 2: route through the run pipeline so preflight is enforced
@@ -143,11 +147,13 @@ pub(crate) fn checkout_blocking(
                 },
             ) if actual_branch == branch => {
                 klog!("verified: HEAD={}", actual_branch);
+                verified.store(true, std::sync::atomic::Ordering::SeqCst);
             }
             (CheckoutPlanTarget::Commit(commit_id), Head::Detached { target: t })
                 if t == &commit_id.0 =>
             {
                 klog!("verified: detached HEAD={}", commit_id.short());
+                verified.store(true, std::sync::atomic::Ordering::SeqCst);
             }
             other => {
                 eprintln!(

@@ -1916,6 +1916,39 @@ isolated app, compare screenshots before/after 2 s and after completion, and
 inspect klog. Remote SSH pull follows #989's lease migration; clone remains out
 of scope.
 
+### Operation queue (#355 stage 3a, ADR-0204)
+
+G: `cargo test -p kagi --lib app::queue` (the pure reducer: Q1–Q13 rows plus the
+stage 3a events — an untracked write rejecting its owner's enqueue, a plan job
+outside the queue holding the slot, a withdrawn confirmation going back to
+`Queued`, strip removal of the head not tripping its successors).
+Tier A: `KAGI_GUI_E2E_ONLY=queue_` with `KAGI_GUI_E2E_KEEP_GOING=1`
+(`tests/recovery/op_queue.rs`). `KagiApp::hold_next_run_for_e2e` (`gui-e2e`
+only) holds the next admitted run-family write (checkout, commit, …) before
+its backend work, with the lease held. Scenarios drive the product entry
+(`dblclick_checkout_branch` → `start_checkout`) and read the strip through
+`queue_strip_for_e2e(now)`:
+`queue_runs_in_order` (strip row and `Queued: checkout b` toast at once, a real
+click on `queue-strip-remove-<id>`, the queued checkout runs only after the held
+one settles, with no modal on a clean replan, and its row reads `running · 2 s`),
+`queue_trip_lists_cancelled` (the held checkout fails, both successors are
+listed as `previous step failed` until `queue-strip-clear`),
+`queue_confirms_a_warned_plan` (a replan with a warning opens the queued
+modal; confirm runs it, Cancel lists it as `declined`),
+`queue_strip_owner_only` (tab B never draws tab A's strip; A's head waits for A
+to return, and the queue hears of A's held activation read before A itself
+through `sync_queue_for_e2e`), `queue_skips_auto_fetch` (a quiet fetch is
+skipped while the tab has intents), `queue_rejects_during_untracked_write` (a
+checkout behind the tab's own manual fetch keeps the old `OpInProgress`
+refusal), `queue_resumes_after_reconcile` (`KagiApp::panic_next_run_for_e2e`
+kills the held checkout: Unknown, its successor cancelled; once the reconcile
+is acknowledged a later queued checkout runs), `queue_accepts_after_idle_fetch`
+(a fetch that ended while the queue was idle does not refuse the next intent)
+and `queue_refuses_a_blocked_checkout` (confirming a blocked plan while busy is
+refused, not queued). Tier B: queue two checkouts behind a held or slow
+checkout in an isolated app and capture the strip, the cancel list and the
+running row's seconds in EN/JA.
+
 ### Background writer elapsed advice (#996 with #995)
 
 Tier A: `KAGI_GUI_E2E_ONLY=slow_write_snapshot,slow_write_conflict_continue`

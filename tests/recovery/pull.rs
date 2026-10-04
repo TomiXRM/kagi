@@ -129,6 +129,7 @@ fn wait_for(
 /// Stand-in for the host's ordinary SSH options, scope probe and pull.
 fn blocking_fake_ssh(
     bin: &Path,
+    head_oid: &str,
     release: &Path,
     calls: &Path,
     fail: &Path,
@@ -159,7 +160,7 @@ fn blocking_fake_ssh(
              fi\n\
              case \"$*\" in\n\
                *KAGI-COMMON-DIR*) common=/srv/repo/.git; top=/srv/real-worktree\n\
-                     branch=main; oid=$(printf '%040d' 0); upstream=origin/main\n\
+                     branch=main; oid={head_oid:?}; upstream=origin/main\n\
                      url=ssh://e2e.invalid/repo\n\
                      if [ -f {identity_change:?} ]; then common=/srv/other/.git; fi\n\
                      if [ -f {toplevel_change:?} ]; then top=/srv/other-linked-worktree; fi\n\
@@ -297,8 +298,10 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
     let head_read_failure = shim.path().join("head-read-failure");
     let remote_url_change = shim.path().join("remote-url-change");
     let dirty_change = shim.path().join("dirty-change");
+    let cached_head_oid = output(&repo, &["rev-parse", "HEAD"]);
     blocking_fake_ssh(
         shim.path(),
+        &cached_head_oid,
         &release,
         &calls,
         &fail,

@@ -147,14 +147,14 @@ where
         )
         .role(Role::Menu)
         .aria_label(header);
-    // #985: the menu's keyboard (see `menu_keys`). The enabled items' slots
-    // count the drawn (not hidden) items in drawing order.
+    // #985: the menu's keyboard (see `menu_keys`). A slot is an item's place
+    // in the menu's list, hidden items included, so it names the same action
+    // however many items above it are hidden (#991 review).
     let opened = keys.is_some_and(|keys| {
         keys.drawn(
             groups
                 .iter()
                 .flat_map(|group| group.items.iter())
-                .filter(|item| item.state != ItemState::Hidden)
                 .enumerate()
                 .filter(|(_, item)| item.state == ItemState::Enabled)
                 .map(|(slot, _)| slot),
@@ -182,6 +182,7 @@ where
             .iter()
             .any(|item| item.state != ItemState::Hidden)
         {
+            slot += group.items.len();
             continue;
         }
         if previous_group {
@@ -222,10 +223,16 @@ where
         }
         for (item_ix, item) in group.items.into_iter().enumerate() {
             if item.state == ItemState::Hidden {
+                slot += 1;
                 continue;
             }
             if let Some(keys) = keys {
-                keys.place(child);
+                keys.place(slot, child);
+                #[cfg(feature = "gui-e2e")]
+                SLOT_CONTROLS.with(|map| {
+                    map.borrow_mut()
+                        .insert(slot, format!("{item_id_prefix}-{group_ix}-{item_ix}"));
+                });
             }
             list = list.child(render_menu_item(
                 item_id_prefix,
@@ -419,4 +426,16 @@ fn record_description(control: &str, description: Option<SharedString>) {
 #[cfg(feature = "gui-e2e")]
 pub fn recorded_item_description(control: &str) -> Option<Option<SharedString>> {
     DESCRIPTIONS.with(|map| map.borrow().get(control).cloned())
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static SLOT_CONTROLS: std::cell::RefCell<std::collections::HashMap<usize, String>> =
+        std::cell::RefCell::default();
+}
+
+/// The menu item last drawn for keyboard slot `slot` (its control id).
+#[cfg(feature = "gui-e2e")]
+pub fn recorded_slot_control(slot: usize) -> Option<String> {
+    SLOT_CONTROLS.with(|map| map.borrow().get(&slot).cloned())
 }

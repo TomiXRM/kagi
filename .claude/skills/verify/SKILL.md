@@ -916,6 +916,13 @@ The current suite covers:
   focused, `planning` set (any latched operation) disables it while the menu
   stays open; the focus stays on it and ↓ still moves onto an enabled item
   (tracking focus on enabled items only fails: ↓ never reaches the menu).
+  `context_menu_keys_item_appears`: a keyboard slot is an item's place in
+  the menu's own list, hidden items included. On the `feature` branch (no
+  upstream) the focus is moved to Copy head SHA (`branch-menu-item-4-3`, via
+  `menu_overlay::recorded_slot_control`); setting `planning` makes the hidden
+  Push appear above it, and the focus stays on Copy head SHA, whose Enter
+  copies the SHA. Numbering slots by drawn items only fails with the focus on
+  `branch-menu-item-4-2` (Copy branch name).
 - Toolbar unavailable reasons (`KAGI_GUI_E2E_ONLY=toolbar_keyboard_reasons`,
   `tests/recovery/toolbar_keyboard.rs`, #972): starting at the root, GPUI's
   `focus_next` visits the rendered toolbar in visual order; an F19 key-down

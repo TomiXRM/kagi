@@ -78,11 +78,11 @@ struct Inner {
     focus_first: Cell<bool>,
     /// Where the focus was when the menu opened.
     return_to: RefCell<Option<FocusHandle>>,
-    /// The open menu's enabled items, as slots in drawing order.
+    /// The open menu's enabled items, as slots in menu order.
     enabled: RefCell<Vec<usize>>,
     /// Each drawn item's place among the item list's children (separators
-    /// and group titles are children too), by slot.
-    children: RefCell<Vec<usize>>,
+    /// and group titles are children too), by slot; `None` for a hidden one.
+    children: RefCell<Vec<Option<usize>>>,
     /// The item list's scroll: a menu taller than the window scrolls, and
     /// the item the keys move to is scrolled into view (#991 review).
     scroll: gpui::ScrollHandle,
@@ -100,7 +100,10 @@ impl MenuKeys {
     }
 
     /// The menu is being drawn with `enabled` as its enabled items' slots
-    /// (each item's place in the list comes after, through [`Self::place`]).
+    /// (each drawn item's place in the list comes after, through
+    /// [`Self::place`]). A slot is an item's place in the menu's own list,
+    /// hidden items included, so a handle stays with its action when an
+    /// item above it appears or hides while the menu is open (#991 review).
     /// True once when it has just opened: its first enabled item takes the
     /// focus.
     pub(crate) fn drawn(&self, enabled: impl Iterator<Item = usize>) -> bool {
@@ -111,9 +114,13 @@ impl MenuKeys {
         self.0.focus_first.take()
     }
 
-    /// The next drawn item (slot order) is child `child` of the item list.
-    pub(crate) fn place(&self, child: usize) {
-        self.0.children.borrow_mut().push(child);
+    /// Item `slot` is drawn as child `child` of the item list.
+    pub(crate) fn place(&self, slot: usize, child: usize) {
+        let mut children = self.0.children.borrow_mut();
+        if children.len() <= slot {
+            children.resize(slot + 1, None);
+        }
+        children[slot] = Some(child);
     }
 
     /// The drawn item holding the focus, if any.
@@ -141,7 +148,7 @@ impl MenuKeys {
             }
         };
         self.0.items.get(to, cx).focus(window, cx);
-        if let Some(&child) = self.0.children.borrow().get(to) {
+        if let Some(&Some(child)) = self.0.children.borrow().get(to) {
             self.0.scroll.scroll_to_item(child);
         }
     }

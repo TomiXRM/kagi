@@ -569,3 +569,58 @@ pub fn scenario_context_menu_keys_disabled_live(cx: &mut VisualTestAppContext) {
     });
     unmount(cx, app, window);
 }
+
+/// An item above the focused one appears while the menu is open (a branch
+/// with no upstream: Push is hidden until an operation is latched, then shown
+/// disabled above the rest): the focus stays on the same action, so Enter on
+/// "Copy head SHA" still copies the SHA, not the branch name now drawn in
+/// that place (#991 review).
+pub fn scenario_context_menu_keys_item_appears(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    git(fixture.path(), &["branch", "feature"]);
+    let head = std::process::Command::new("git")
+        .args(["rev-parse", "feature"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("git rev-parse");
+    let head = String::from_utf8(head.stdout).unwrap().trim().to_string();
+    let (app, window) = mount(cx, fixture.path());
+    open_row_menu(cx, &app, window);
+    const COPY_SHA: &str = "branch-menu-item-4-3";
+    let control = |cx: &mut VisualTestAppContext| {
+        menu(cx, &app, window)
+            .0
+            .and_then(kagi::ui::menu_overlay::recorded_slot_control)
+    };
+    for _ in 0..40 {
+        if control(cx).as_deref() == Some(COPY_SHA) {
+            break;
+        }
+        keys(cx, window, "down");
+    }
+    assert_eq!(
+        control(cx).as_deref(),
+        Some(COPY_SHA),
+        "focused Copy head SHA"
+    );
+    app.update(cx, |app, cx| {
+        app.planning = Some("e2e");
+        cx.notify();
+    });
+    assert_eq!(
+        control(cx).as_deref(),
+        Some(COPY_SHA),
+        "the focus stayed on Copy head SHA when Push appeared above it"
+    );
+    keys(cx, window, "enter");
+    app.update(cx, |app, cx| {
+        app.planning = None;
+        cx.notify();
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some(head),
+        "Enter ran the action that had the focus (Copy head SHA)"
+    );
+    unmount(cx, app, window);
+}

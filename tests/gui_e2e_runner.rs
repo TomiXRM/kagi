@@ -1042,6 +1042,10 @@ mod macos {
                 Box::new(crate::context_menu_keys::scenario_context_menu_keys_disabled_live),
             ),
             (
+                "context_menu_keys_item_appears",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_item_appears),
+            ),
+            (
                 "home_list_place",
                 Box::new(crate::home_list_place::scenario_home_list_place),
             ),

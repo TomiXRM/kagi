@@ -81,14 +81,12 @@ impl KagiApp {
     }
 
     /// A tab/Home/repository departure owns dismissal, even if a menu command
-    /// already closed the dropdown before navigation. Never infer departure
-    /// from a pending focus captured by a previous overlay on the next render.
+    /// already closed the dropdown before navigation. BranchPicker snapshots
+    /// the old repository's branches; all menu overlays belong to the screen
+    /// that opened them. Never infer departure from a previous pending focus.
     pub(super) fn close_departing_screen_overlays(&mut self) {
-        let settings = matches!(self.menu_overlay, Some(MenuOverlay::Settings));
-        if settings || self.platform_menu_open.is_some() {
-            if settings {
-                self.menu_overlay = None;
-            }
+        if self.menu_overlay.is_some() || self.platform_menu_open.is_some() {
+            self.menu_overlay = None;
             self.platform_menu_open = None;
             self.pending_focus = self.pending_root_focus();
         }

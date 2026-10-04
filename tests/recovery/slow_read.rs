@@ -351,7 +351,17 @@ pub fn scenario_worktree_size_not_explained(cx: &mut VisualTestAppContext) {
     let measuring = |cx: &mut VisualTestAppContext| {
         cx.read(|cx| e2e::worktree_inspection::status(app.read(cx), &linked).0)
     };
-    assert!(measuring(cx), "the sweep is measuring the linked worktree");
+    // A reload publishes the worktree list and starts the automatic sweep.
+    app.update(cx, |app, cx| app.reload_external(cx));
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while !measuring(cx) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the sweep is measuring the linked worktree"
+        );
+        cx.run_until_parked();
+        std::thread::sleep(Duration::from_millis(2));
+    }
 
     advance(cx, TICK * 12);
     assert!(measuring(cx), "still measuring three seconds later");

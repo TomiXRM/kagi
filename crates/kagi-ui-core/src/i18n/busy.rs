@@ -161,54 +161,103 @@ pub fn slow_write_advice(op: &str, seconds: u64) -> String {
     slow_write_advice_for(op, seconds, lang())
 }
 
+/// Every op kind with a classified slow-write reason, taken from what the
+/// operation actually writes. A kind not listed gets the generic reason: the
+/// explanation never guesses (#995 review). `branch-cleanup` stays generic
+/// because a batch may delete remote branches as well as local ones.
+const SLOW_WRITE_KINDS: &[(&str, super::Msg)] = {
+    use super::Msg::*;
+    &[
+        // Waits on a remote or on GitHub.
+        ("fetch", SlowWriteNetwork),
+        ("pull", SlowWriteNetwork),
+        ("push", SlowWriteNetwork),
+        ("branch-pull-ff", SlowWriteNetwork),
+        ("branch-push", SlowWriteNetwork),
+        ("branch-push-set-upstream", SlowWriteNetwork),
+        ("force-with-lease-push", SlowWriteNetwork),
+        ("push-tag", SlowWriteNetwork),
+        ("sync-to-remote", SlowWriteNetwork),
+        ("delete-remote-branch", SlowWriteNetwork),
+        ("remote-stash-drop", SlowWriteNetwork),
+        ("pr-merge", SlowWriteNetwork),
+        ("pr-comment", SlowWriteNetwork),
+        ("pr-review", SlowWriteNetwork),
+        ("pr-edit", SlowWriteNetwork),
+        ("issue-create", SlowWriteNetwork),
+        ("issue-comment", SlowWriteNetwork),
+        // Replays commits.
+        ("rebase", SlowWriteRebase),
+        ("replay-onto", SlowWriteRebase),
+        ("cherry-pick", SlowWriteRebase),
+        ("revert", SlowWriteRebase),
+        // Updates the worktree to another commit.
+        ("checkout", SlowWriteCheckout),
+        ("checkout-commit", SlowWriteCheckout),
+        ("checkout-tracking", SlowWriteCheckout),
+        ("switch", SlowWriteCheckout),
+        ("switch-to-latest", SlowWriteCheckout),
+        // Ref or branch-config only: no commit object, no index, no worktree.
+        ("reset-current", SlowWriteRefs),
+        ("reset", SlowWriteRefs),
+        ("undo", SlowWriteRefs),
+        ("redo", SlowWriteRefs),
+        ("op-revert", SlowWriteRefs),
+        ("restore-to-point", SlowWriteRefs),
+        ("create-branch", SlowWriteRefs),
+        ("delete-branch", SlowWriteRefs),
+        ("rename-branch", SlowWriteRefs),
+        ("set-upstream", SlowWriteRefs),
+        ("create-tag", SlowWriteRefs),
+        // Combines histories.
+        ("merge", SlowWriteMerge),
+        ("merge-into", SlowWriteMerge),
+        ("merge-commit", SlowWriteMerge),
+        // Writes a commit object.
+        ("commit", SlowWriteCommit),
+        ("amend", SlowWriteCommit),
+        // Stash entries.
+        ("stash", SlowWriteStash),
+        ("stash-push", SlowWriteStash),
+        ("stash-apply", SlowWriteStash),
+        ("stash-pop", SlowWriteStash),
+        ("stash-drop", SlowWriteStash),
+        ("snapshot", SlowWriteStash),
+        ("restore-snapshot", SlowWriteStash),
+        // Local files in a worktree.
+        ("create-worktree", SlowWriteWorktree),
+        ("open-worktree", SlowWriteWorktree),
+        ("remove-worktree", SlowWriteWorktree),
+        ("discard", SlowWriteWorktree),
+        ("editor-save", SlowWriteWorktree),
+        ("stage", SlowWriteWorktree),
+        ("unstage", SlowWriteWorktree),
+        ("stage-all", SlowWriteWorktree),
+        ("unstage-all", SlowWriteWorktree),
+        ("apply-suggestion", SlowWriteWorktree),
+        // Conflict resolution.
+        ("conflict-save", SlowWriteConflict),
+        ("conflict-continue", SlowWriteConflict),
+        ("conflict-skip", SlowWriteConflict),
+        ("conflict-abort", SlowWriteConflict),
+        ("conflict-dir-file:keep-directory", SlowWriteConflict),
+        ("conflict-dir-file:keep-file", SlowWriteConflict),
+        // Repository maintenance data.
+        ("write-commit-graph", SlowWriteLocal),
+        ("enable-fsmonitor", SlowWriteLocal),
+    ]
+};
+
+fn slow_write_reason(op: &str) -> super::Msg {
+    SLOW_WRITE_KINDS
+        .iter()
+        .find(|(kind, _)| *kind == op)
+        .map_or(super::Msg::SlowWriteGeneric, |(_, reason)| *reason)
+}
+
 fn slow_write_advice_for(op: &str, seconds: u64, language: Lang) -> String {
-    use super::Msg;
-    let reason = match op {
-        "fetch"
-        | "pull"
-        | "push"
-        | "branch-pull-ff"
-        | "branch-push"
-        | "branch-push-set-upstream"
-        | "force-with-lease-push"
-        | "push-tag"
-        | "sync-to-remote"
-        | "delete-remote-branch"
-        | "remote-stash-drop"
-        | "pr-merge"
-        | "pr-comment"
-        | "pr-review"
-        | "pr-edit"
-        | "issue-create"
-        | "issue-comment" => Msg::SlowWriteNetwork,
-        "rebase" | "replay-onto" | "cherry-pick" | "revert" => Msg::SlowWriteRebase,
-        "checkout" | "checkout-commit" | "checkout-tracking" | "switch" | "switch-to-latest" => {
-            Msg::SlowWriteCheckout
-        }
-        // Reset here is ref-only (`git reset --soft`): it moves the branch
-        // and never touches the index or the worktree (#995 review).
-        "reset-current" | "reset" => Msg::SlowWriteRefs,
-        "merge" | "merge-into" | "merge-commit" => Msg::SlowWriteMerge,
-        "commit" | "amend" | "undo" | "op-revert" | "create-branch" | "delete-branch"
-        | "rename-branch" | "set-upstream" | "create-tag" | "branch-cleanup"
-        | "restore-to-point" => Msg::SlowWriteCommit,
-        "stash" | "stash-push" | "stash-apply" | "stash-pop" | "stash-drop" | "snapshot"
-        | "restore-snapshot" => Msg::SlowWriteStash,
-        "create-worktree" | "open-worktree" | "remove-worktree" | "discard" | "editor-save"
-        | "stage" | "unstage" | "stage-all" | "unstage-all" | "apply-suggestion" => {
-            Msg::SlowWriteWorktree
-        }
-        "conflict-save"
-        | "conflict-continue"
-        | "conflict-skip"
-        | "conflict-abort"
-        | "conflict-dir-file:keep-directory"
-        | "conflict-dir-file:keep-file" => Msg::SlowWriteConflict,
-        "write-commit-graph" | "enable-fsmonitor" => Msg::SlowWriteLocal,
-        _ => Msg::SlowWriteGeneric,
-    };
     // The reason and the elapsed seconds only: no lead-in sentence.
-    format!("{} · {seconds} s", reason.t_for(language))
+    format!("{} · {seconds} s", slow_write_reason(op).t_for(language))
 }
 
 pub fn busy_label(op: &str) -> &'static str {
@@ -359,23 +408,104 @@ mod tests {
         }
     }
 
-    /// #995 review: reset moves only the branch ref, so it is never described
-    /// as updating the worktree.
+    /// #995 review: the whole classification, pinned. Every listed op kind
+    /// maps to the reason for what it actually writes; anything unlisted is
+    /// generic, never a guess. Changing a row means changing this table.
     #[test]
-    fn reset_is_described_as_a_ref_move() {
-        use super::super::Msg;
-        for op in ["reset-current", "reset"] {
-            for language in [Lang::En, Lang::Ja] {
-                assert_eq!(
-                    slow_write_advice_for(op, 3, language),
-                    format!("{} · 3 s", Msg::SlowWriteRefs.t_for(language)),
-                    "{op}"
-                );
-            }
+    fn every_slow_write_kind_is_classified_by_what_it_writes() {
+        use super::super::Msg::*;
+        let expected: &[(&str, super::super::Msg)] = &[
+            ("fetch", SlowWriteNetwork),
+            ("pull", SlowWriteNetwork),
+            ("push", SlowWriteNetwork),
+            ("branch-pull-ff", SlowWriteNetwork),
+            ("branch-push", SlowWriteNetwork),
+            ("branch-push-set-upstream", SlowWriteNetwork),
+            ("force-with-lease-push", SlowWriteNetwork),
+            ("push-tag", SlowWriteNetwork),
+            ("sync-to-remote", SlowWriteNetwork),
+            ("delete-remote-branch", SlowWriteNetwork),
+            ("remote-stash-drop", SlowWriteNetwork),
+            ("pr-merge", SlowWriteNetwork),
+            ("pr-comment", SlowWriteNetwork),
+            ("pr-review", SlowWriteNetwork),
+            ("pr-edit", SlowWriteNetwork),
+            ("issue-create", SlowWriteNetwork),
+            ("issue-comment", SlowWriteNetwork),
+            ("rebase", SlowWriteRebase),
+            ("replay-onto", SlowWriteRebase),
+            ("cherry-pick", SlowWriteRebase),
+            ("revert", SlowWriteRebase),
+            ("checkout", SlowWriteCheckout),
+            ("checkout-commit", SlowWriteCheckout),
+            ("checkout-tracking", SlowWriteCheckout),
+            ("switch", SlowWriteCheckout),
+            ("switch-to-latest", SlowWriteCheckout),
+            ("reset-current", SlowWriteRefs),
+            ("reset", SlowWriteRefs),
+            ("undo", SlowWriteRefs),
+            ("redo", SlowWriteRefs),
+            ("op-revert", SlowWriteRefs),
+            ("restore-to-point", SlowWriteRefs),
+            ("create-branch", SlowWriteRefs),
+            ("delete-branch", SlowWriteRefs),
+            ("rename-branch", SlowWriteRefs),
+            ("set-upstream", SlowWriteRefs),
+            ("create-tag", SlowWriteRefs),
+            ("merge", SlowWriteMerge),
+            ("merge-into", SlowWriteMerge),
+            ("merge-commit", SlowWriteMerge),
+            ("commit", SlowWriteCommit),
+            ("amend", SlowWriteCommit),
+            ("stash", SlowWriteStash),
+            ("stash-push", SlowWriteStash),
+            ("stash-apply", SlowWriteStash),
+            ("stash-pop", SlowWriteStash),
+            ("stash-drop", SlowWriteStash),
+            ("snapshot", SlowWriteStash),
+            ("restore-snapshot", SlowWriteStash),
+            ("create-worktree", SlowWriteWorktree),
+            ("open-worktree", SlowWriteWorktree),
+            ("remove-worktree", SlowWriteWorktree),
+            ("discard", SlowWriteWorktree),
+            ("editor-save", SlowWriteWorktree),
+            ("stage", SlowWriteWorktree),
+            ("unstage", SlowWriteWorktree),
+            ("stage-all", SlowWriteWorktree),
+            ("unstage-all", SlowWriteWorktree),
+            ("apply-suggestion", SlowWriteWorktree),
+            ("conflict-save", SlowWriteConflict),
+            ("conflict-continue", SlowWriteConflict),
+            ("conflict-skip", SlowWriteConflict),
+            ("conflict-abort", SlowWriteConflict),
+            ("conflict-dir-file:keep-directory", SlowWriteConflict),
+            ("conflict-dir-file:keep-file", SlowWriteConflict),
+            ("write-commit-graph", SlowWriteLocal),
+            ("enable-fsmonitor", SlowWriteLocal),
+        ];
+        assert_eq!(
+            SLOW_WRITE_KINDS, expected,
+            "the classification table changed"
+        );
+        for (kind, reason) in expected {
+            assert_eq!(slow_write_reason(kind), *reason, "{kind}");
+        }
+        let mut seen = std::collections::HashSet::new();
+        for (kind, _) in SLOW_WRITE_KINDS {
+            assert!(seen.insert(kind), "duplicate kind: {kind}");
+        }
+        // Unlisted kinds — including branch-cleanup, which may also delete
+        // remote branches — are generic.
+        for kind in ["branch-cleanup", "merge-plan", "unexpected-kind", ""] {
+            assert_eq!(slow_write_reason(kind), SlowWriteGeneric, "{kind}");
         }
         assert_eq!(
-            slow_write_advice_for("reset-current", 3, Lang::En),
-            "refs: moving the branch · 3 s"
+            slow_write_advice_for("delete-branch", 3, Lang::En),
+            "refs: updating branches · 3 s"
+        );
+        assert_eq!(
+            slow_write_advice_for("set-upstream", 3, Lang::Ja),
+            "refs: branch を更新中 · 3 s"
         );
     }
 

@@ -1804,6 +1804,11 @@ hides them, the released read lands `counts: None` (status summary unknown, not
 `bash scripts/make_fixture.sh <dir> 10500`, add branches with upstreams, reload
 and read the snackbar and `[kagi] busy: slow <op> after 2s` /
 `[kagi] busy: skip <op>`; after Skip the sidebar shows `—`.
+`KAGI_GUI_E2E_ONLY=worktree_size_not_explained` (#1012): the automatic worktree
+size sweep, held on `e2e::worktree_inspection::queue`, stays "measuring" for
+3 s with no `slow_read_shown` and no drawn snackbar advice / Skip; the released
+measurement still lands on the row. Re-adding a slow read for the sweep fails
+"a slow size measurement is not explained".
 
 ### Slow running writes (#355 stage 1, ADR-0206 amendment)
 

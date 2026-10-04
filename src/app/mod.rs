@@ -2,6 +2,7 @@
 mod conflict;
 mod flow;
 mod pull;
+mod queue;
 mod read;
 mod reconcile;
 mod remote_pull;
@@ -15,6 +16,7 @@ pub use conflict::*;
 pub use flow::*;
 pub use kagi_domain::remove::{RepoId, WorktreeId};
 pub use pull::*;
+pub use queue::*;
 pub use read::*;
 pub use reconcile::*;
 pub use remote_pull::*;

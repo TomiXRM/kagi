@@ -324,3 +324,143 @@ pub fn scenario_side_panel_motion(cx: &mut VisualTestAppContext) {
         "[gui-e2e] PASS side_panel_motion: sidebar and right pane slide by width with the shared timing, the Graph follows the edge with the same rows and selection, an Inspector/Commit Panel swap does not animate, reduce_motion is instant"
     );
 }
+
+/// #1001: selecting a commit changes the right slot even when the View toggle
+/// stays on. Escape and a second click both reverse from the painted width.
+pub fn scenario_right_selection_motion(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["reduce_motion"]);
+    let reduce_before = theme::reduce_motion();
+    theme::set_reduce_motion(false);
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    let t0 = Instant::now();
+    frame(cx, window, t0);
+    assert_eq!(width(window, "right-pane-clip"), None);
+    let list = list_left(window);
+
+    app.update(cx, |app, cx| {
+        app.select(0);
+        cx.notify();
+    });
+    frame(cx, window, t0);
+    frame(cx, window, t0 + Duration::from_millis(60));
+    let opening = width(window, "right-pane-clip").expect("selection opens Inspector");
+    let full = f32::from(theme::scaled_px(
+        cx.read(|cx| app.read(cx).panel_width + 4.),
+    ));
+    assert!(
+        0. < opening && opening < full,
+        "opening: {opening} of {full}"
+    );
+    assert_eq!(list_left(window), list, "Graph stays at the same edge");
+
+    // Esc while opening: the first closing frame keeps the same painted width,
+    // then retracts. The selection is gone while exit-only content still draws.
+    cx.simulate_keystrokes(window, "escape");
+    cx.run_until_parked();
+    assert_eq!(graph_state(cx, &app).1, None, "Escape clears the selection");
+    frame(cx, window, t0 + Duration::from_millis(60));
+    let turned = width(window, "right-pane-clip").expect("exit clip remains");
+    assert!(
+        (turned - opening).abs() <= 1.,
+        "turn: {turned} vs {opening}"
+    );
+    frame(cx, window, t0 + Duration::from_millis(110));
+    let closing = width(window, "right-pane-clip").expect("closing Inspector still drawn");
+    assert!(
+        0. < closing && closing < turned,
+        "closing: {closing} of {turned}"
+    );
+    frame(cx, window, t0 + Duration::from_millis(310));
+    assert_eq!(width(window, "right-pane-clip"), None);
+
+    // A click on the selected row is another deselection route. Reverse that
+    // closing clip by clicking the row again before it reaches zero.
+    let t1 = t0 + Duration::from_millis(400);
+    app.update(cx, |app, cx| {
+        app.select(0);
+        cx.notify();
+    });
+    frame(cx, window, t1);
+    frame(cx, window, t1 + Duration::from_millis(300));
+    assert_eq!(width(window, "right-pane-clip"), Some(full));
+    app.update(cx, |app, cx| {
+        app.select(0);
+        cx.notify();
+    });
+    frame(cx, window, t1 + Duration::from_millis(360));
+    let mid = width(window, "right-pane-clip").expect("click closes Inspector");
+    assert!(0. < mid && mid < full);
+    app.update(cx, |app, cx| {
+        app.select(0);
+        cx.notify();
+    });
+    frame(cx, window, t1 + Duration::from_millis(360));
+    let reversed = width(window, "right-pane-clip").expect("click reopens Inspector");
+    assert!((reversed - mid).abs() <= 1., "turn: {reversed} vs {mid}");
+    frame(cx, window, t1 + Duration::from_millis(600));
+    assert_eq!(width(window, "right-pane-clip"), Some(full));
+
+    // Reduced motion uses the same selection and Escape paths, without a
+    // single intermediate width.
+    let tr = t1 + Duration::from_millis(700);
+    theme::set_reduce_motion(true);
+    frame(cx, window, tr);
+    cx.simulate_keystrokes(window, "escape");
+    cx.run_until_parked();
+    frame(cx, window, tr);
+    assert_eq!(width(window, "right-pane-clip"), None, "instant close");
+    app.update(cx, |app, cx| {
+        app.select(0);
+        cx.notify();
+    });
+    frame(cx, window, tr);
+    assert_eq!(width(window, "right-pane-clip"), Some(full), "instant open");
+    theme::set_reduce_motion(false);
+
+    // Tab entry is a whole-workspace change. The destination starts with no
+    // Inspector; returning to the selected source shows its full width at once.
+    let other_fixture = build_fixture();
+    let other = other_fixture.path().canonicalize().unwrap();
+    let ts = tr + Duration::from_millis(500);
+    frame(cx, window, ts);
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(other, cx));
+    });
+    frame(cx, window, ts);
+    assert_eq!(
+        width(window, "right-pane-clip"),
+        None,
+        "no old tab exit clip"
+    );
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    frame(cx, window, ts);
+    assert_eq!(
+        width(window, "right-pane-clip"),
+        Some(full),
+        "tab return jumps"
+    );
+
+    // A mode change resets both sides of the boundary: the right pane is
+    // absent in PRs, then the retained Graph selection is full-width on return.
+    app.update(cx, |app, cx| app.show_pr_mode(cx));
+    frame(cx, window, ts);
+    assert_eq!(
+        width(window, "right-pane-clip"),
+        None,
+        "PRs have no Inspector"
+    );
+    app.update(cx, |app, cx| app.show_graph_mode(cx));
+    frame(cx, window, ts);
+    assert_eq!(
+        width(window, "right-pane-clip"),
+        Some(full),
+        "Graph mode return is instant"
+    );
+
+    e2e::set_panel_motion_clock(None);
+    theme::set_reduce_motion(reduce_before);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS right_selection_motion");
+}

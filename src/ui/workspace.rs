@@ -409,13 +409,14 @@ impl WorkspaceItem for CommitPanelItem {
 /// from it. The caller has already synced the files slot to its own source
 /// (issue #512); `compare_title` is the one other input that differs between
 /// the normal and compare modes.
-fn render_inspector_body(
+pub(super) fn render_inspector_body(
     app: &mut KagiApp,
+    selected: Option<usize>,
     compare_title: Option<SharedString>,
     cx: &mut Context<KagiApp>,
 ) -> Option<AnyElement> {
-    // ── Commit metadata ─
-    let selected = app.ui().selected;
+    // During the exit clip `selected` is the last drawn row; the app's active
+    // selection has already been cleared by Escape.
     let d = selected.and_then(|i| app.view().details.get(i)).cloned()?;
     let at = CommitId(d.full_sha.as_ref().to_string());
     let selected_badges: Vec<commit_list::RefBadge> = selected
@@ -505,7 +506,7 @@ impl WorkspaceItem for InspectorItem {
         // miss or an unavailable diff both derive to "(diff unavailable)".
         let selected = app.ui().selected?;
         app.ui_mut()?.sync_inspector_commit_files(selected);
-        render_inspector_body(app, None, cx)
+        render_inspector_body(app, Some(selected), None, cx)
     }
 }
 
@@ -544,7 +545,7 @@ impl WorkspaceItem for CompareItem {
         app.ui_mut()?.inspector_model.sync_files(source, || {
             Some(InspectorFiles::derive(&compare.view().files, None, None))
         });
-        render_inspector_body(app, Some(title), cx)
+        render_inspector_body(app, app.ui().selected, Some(title), cx)
     }
     // Per-repo: the compared base/files belong to the previous repo; drop the
     // entity on repo/tab switch like the other registered panes.

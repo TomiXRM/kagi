@@ -20,6 +20,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Graph で commit を選ぶと Inspector が 180ms で開き、再クリックや Esc で選択を外すと 150ms で閉じるようにしました。途中の反転は現在の幅から続き、`reduce_motion`、タブ切替、Home、Conflict とほかの workspace への移動は即時です。(#1001)
+
 - queued commit の確認中に staged 内容が外部で変わった場合や merge が始まった場合、確認済みの計画を実行せず取り消します。投入時の branch の draft だけを消し、detached HEAD の commit も検証して後続を進めます。入力中の待機理由を明示し、Commit を押した後は入力欄の focus を解放します。(#355、#1020)
 - 入力欄を持つ確認 modal を Escape で閉じた後、表示されていない入力欄の focus が残っても操作キューが待機し続けないようにしました。(#355)
 - 確認カードと Operation Log からコピーできる復旧コマンドの branch・ref・remote・stash message・worktree path などの実値を POSIX shell で安全に引用するようにしました。`$()` やシングルクォートを含む名前／パスも 1 引数として扱い、手順用の `<branch>` などのプレースホルダーは変更しません。(#1004)

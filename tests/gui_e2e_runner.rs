@@ -2101,6 +2101,10 @@ mod macos {
                 "side_panel_motion",
                 Box::new(crate::side_panel_motion::scenario_side_panel_motion),
             ),
+            (
+                "right_selection_motion",
+                Box::new(crate::side_panel_motion::scenario_right_selection_motion),
+            ),
             ("graph_copy", Box::new(scenario_graph_copy)),
             (
                 "diff_survives_reload",

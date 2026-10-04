@@ -440,6 +440,13 @@ The current suite covers:
   Tier B: also inspect the Editor and PR workspaces with the panel open.
   Graph copy, oplog expand/copy, snapshot creation, theme switching,
   agent provenance, and WIP-to-HEAD connectors retain their existing scenarios;
+- right-pane Graph selection motion (`KAGI_GUI_E2E_ONLY=right_selection_motion,side_panel_motion`,
+  `tests/recovery/side_panel_motion.rs`): opening Inspector reaches an intermediate
+  width before its 180 ms endpoint; Esc closes through an intermediate width over
+  150 ms. Deselect/reselect reverses from the current width. Reduced motion,
+  tab switch and workspace-mode changes settle instantly; left/bottom pane
+  contracts retain their existing scenario. Tier B: capture a real Graph window
+  before selection, during the transition, fully open, then during Esc and closed.
 - WIP virtual commit anchors (`KAGI_GUI_E2E_ONLY=commit_row_layout_wip`,
   `tests/recovery/wip_layout.rs`, under the layout suite): actual canvas paints
   must show hollow nodes directly above their own HEADs (columns may repeat),

@@ -1745,7 +1745,7 @@ pub fn scenario_checkout_presents_backend_receipt(cx: &mut VisualTestAppContext)
     let repo = fixture.path();
     git(repo, &["branch", "feature/one", "HEAD~1"]);
     let (app, window) = mount(cx, repo);
-    app.update(cx, |app, _| app.open_plan_modal("feature/one"));
+    app.update(cx, |app, cx| app.open_plan_modal("feature/one", cx));
     cx.run_until_parked();
     assert!(
         cx.read(|cx| app

@@ -1424,6 +1424,22 @@ mod macos {
                 Box::new(crate::op_queue::scenario_queue_accepts_after_idle_fetch),
             ),
             (
+                "queue_checkout_transient_blocker_clears",
+                Box::new(crate::op_queue::scenario_queue_checkout_transient_blocker_clears),
+            ),
+            (
+                "queue_busy_checkout_replans_warning",
+                Box::new(crate::op_queue::scenario_queue_busy_checkout_replans_warning),
+            ),
+            (
+                "queue_checkout_missing_ref_refuses",
+                Box::new(crate::op_queue::scenario_queue_checkout_missing_ref_refuses),
+            ),
+            (
+                "queue_checkout_linked_worktree_refuses",
+                Box::new(crate::op_queue::scenario_queue_checkout_linked_worktree_refuses),
+            ),
+            (
                 "queue_refuses_a_blocked_checkout",
                 Box::new(crate::op_queue::scenario_queue_refuses_a_blocked_checkout),
             ),

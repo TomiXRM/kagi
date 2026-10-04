@@ -1197,7 +1197,7 @@ impl KagiApp {
                 }
             }
             CommitAction::CheckoutCommit => {
-                self.open_checkout_commit_modal(target);
+                self.open_checkout_commit_modal(target, cx);
             }
             CommitAction::CheckoutRef(ref_name) => {
                 if ref_name.is_empty() {
@@ -1208,7 +1208,7 @@ impl KagiApp {
                         target.short()
                     );
                 } else {
-                    self.open_plan_modal(ref_name);
+                    self.open_plan_modal(ref_name, cx);
                 }
             }
             CommitAction::CheckoutTrackingBranch(remote_name) => {

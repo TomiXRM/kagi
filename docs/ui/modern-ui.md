@@ -222,14 +222,15 @@ centered arrow; branch and status chips stay on one scrollable line per column.
 The operation plan remains the source of truth. Show an equivalent CLI command
 only when it faithfully describes the executable plan. Pull has none: its
 execution fetches again and may merge a newly diverged remote even if the
-cached tracking ref indicated a fast-forward at planning time. Where a plan
-does have an equivalent, the collapsed command is a keyboard/screen-reader
-accessible button (Enter/Space) with its own Copy button; Copy all includes
-its full text.
+cached tracking ref indicated a fast-forward at planning time. Where a Ready
+plan with no blockers does have an equivalent, the collapsed command is a
+keyboard/screen-reader accessible button (Enter/Space) with its own Copy
+button; Copy all includes its full text. Blocked and no-op plans omit that
+command from both the card and Copy all, even if the backend supplied one.
 
 Operation Log restore has its own REFS-first card, not a second generic plan
-summary. The equivalent command (including Copy all) is available only when
-the plan is Ready; blockers must not provide an executable bypass. Show each
+summary. It uses the same command-visibility gate as the shared plan card:
+Ready with no blockers. Show each
 planned ref's expected and destination OIDs, including red-tinted deletions.
 Long ref-name chips cap at 45% of their row with ellipsis; their tooltip and
 accessibility name retain the complete canonical ref, while the OIDs remain

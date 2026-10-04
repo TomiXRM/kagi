@@ -662,6 +662,13 @@ The current suite covers:
   outside the graph; Copy all includes the ref transaction and preview.
   At the first confirmation no ref moves; at the second the existing
   `run_recorded` pipeline performs the write.
+- Blocked plan command (`KAGI_GUI_E2E_ONLY=blocked_plan_command`,
+  `tests/recovery/operations.rs`): #993 P2. A real detached-HEAD Reset Current
+  plan has a blocker and still carries `git reset --soft` in the backend.
+  The shared confirmation renders neither the collapsed command nor its Copy
+  button; Copy all keeps blocker details but not the command, and inspecting it
+  leaves the repository unchanged. The shared visibility predicate also gates
+  Operation Log restore; `oplog_restore_guarded_rows` covers that card.
 - Restore card safety and long refs (`KAGI_GUI_E2E_ONLY=oplog_restore_guarded_rows`,
   `tests/recovery/oplog_panel.rs`): #993 review. Reverting a recorded
   `create-branch` whose branch is now checked out yields a real

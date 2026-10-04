@@ -798,6 +798,61 @@ pub fn scenario_modal_no_fallthrough(cx: &mut VisualTestAppContext) {
     );
 }
 
+/// #993 P2: a blocked common plan must not offer a runnable equivalent
+/// command through the disclosure, its dedicated Copy action, or Copy all.
+pub fn scenario_blocked_plan_command(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let target = CommitId(output(repo, &["rev-parse", "HEAD~1"]));
+    git(repo, &["checkout", "-q", "--detach", "HEAD"]);
+    let before = repo_fingerprint(repo);
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| {
+        app.open_reset_current_modal(target.clone(), cx)
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let plan = &app.read(cx).reset_current_modal().expect("Reset card").plan;
+        assert_eq!(
+            plan.disposition,
+            kagi_domain::plan_note::PlanDisposition::Blocked
+        );
+        assert!(
+            !plan.blockers.is_empty(),
+            "detached HEAD blocks Reset Current"
+        );
+        assert_eq!(
+            plan.equivalent_command.as_deref(),
+            Some(format!("git reset --soft {}", target.0).as_str()),
+            "the backend still supplies the command on blocked plans"
+        );
+    });
+    paint(cx, window);
+    for id in ["plan-equivalent-command", "plan-equivalent-command-copy"] {
+        assert!(
+            kagi::ui::e2e::control_bounds(window.window_id(), id).is_none(),
+            "blocked Reset Current must hide {id}"
+        );
+    }
+    let copy = kagi::ui::e2e::control_bounds(window.window_id(), "plan-card-copy")
+        .expect("Copy all remains available for blocker details");
+    cx.simulate_click(window, copy.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    let copied = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .expect("blocked plan details copied");
+    assert!(copied.contains("blocker:"), "{copied}");
+    assert!(
+        !copied.contains(&format!("git reset --soft {}", target.0)),
+        "{copied}"
+    );
+    assert!(!copied.contains("\nequivalent command:\n"), "{copied}");
+    assert_eq!(repo_fingerprint(repo), before);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS blocked_plan_command: detached Reset Current hides equivalent command and both copy routes");
+}
+
 /// Escape with nothing else to close clears the Graph selection, which closes
 /// the commit details pane; a second Escape on no selection does nothing. An
 /// open modal still takes Escape first.

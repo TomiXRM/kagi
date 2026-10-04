@@ -789,7 +789,7 @@ fn render_plan_modal_card_styled(
 
     // Kagi executes the plan through its backend; the CLI spelling is
     // reference text, collapsed by default and separately copyable.
-    if let Some(cmd) = plan.equivalent_command.as_deref() {
+    if let Some(cmd) = super::modal_command::equivalent_command(&plan) {
         body = body.child(render_equivalent_command(cmd, None, overrides, cx));
     }
 

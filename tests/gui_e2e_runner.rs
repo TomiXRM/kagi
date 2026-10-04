@@ -906,6 +906,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_modal_no_fallthrough),
             ),
             (
+                "blocked_plan_command",
+                Box::new(crate::recovery_operations::scenario_blocked_plan_command),
+            ),
+            (
                 "commit_list_roles",
                 Box::new(crate::recovery_operations::scenario_commit_list_roles),
             ),

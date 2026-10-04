@@ -119,7 +119,7 @@ pub(crate) fn plan_clipboard_text(plan: &OperationPlan, rows: &[String]) -> Stri
             }
         }
     }
-    if let Some(cmd) = plan.equivalent_command.as_deref() {
+    if let Some(cmd) = super::modal_command::equivalent_command(plan) {
         // A recovery command already appears in the structured block above.
         // Don't repeat it merely because the plan also describes it as an
         // equivalent CLI command.

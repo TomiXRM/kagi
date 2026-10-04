@@ -3,6 +3,7 @@
 
 use crate::ui::button_style::KagiButton;
 use crate::ui::dialog_a11y::{apply_dialog, dialog_a11y, DialogHandler};
+use crate::ui::modal_command::{equivalent_command, plan_ready};
 use crate::ui::modal_copy::modal_copy_button;
 use crate::ui::modal_renderers::modal_overlay;
 use crate::ui::modal_shell::{modal_body, modal_card, MODAL_W_LG};
@@ -15,9 +16,7 @@ use gpui::{div, prelude::*, rgb, Context, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::Sizable as _;
 use kagi_domain::head::Head;
-use kagi_domain::plan_note::{
-    OplogRestoreNote, OplogRestoreTitle, PlanDisposition, PlanNote, PlanTitle,
-};
+use kagi_domain::plan_note::{OplogRestoreNote, OplogRestoreTitle, PlanNote, PlanTitle};
 use kagi_domain::ref_restore::RefRestore;
 use kagi_ui_core::i18n::{self, oplog_panel::OplogPanelMsg, plan_note_text, Msg};
 use std::collections::HashMap;
@@ -232,9 +231,7 @@ fn checked_out_warning_row(index: usize, reason: &str, path: &str) -> gpui::AnyE
 }
 
 fn ready(modal: &OplogRestoreModal) -> bool {
-    modal.plan.disposition == PlanDisposition::Ready
-        && modal.plan.blockers.is_empty()
-        && !modal.restores.is_empty()
+    plan_ready(&modal.plan) && !modal.restores.is_empty()
 }
 
 fn copy_text(modal: &OplogRestoreModal) -> String {
@@ -289,12 +286,7 @@ fn copy_text(modal: &OplogRestoreModal) -> String {
         out.push_str(&super::oplog_restore_preview::clipboard_text(preview));
         out.push('\n');
     }
-    if let Some(command) = modal
-        .plan
-        .equivalent_command
-        .as_ref()
-        .filter(|_| ready(modal))
-    {
+    if let Some(command) = equivalent_command(&modal.plan) {
         out.push_str(command);
     }
     out
@@ -520,12 +512,7 @@ pub(crate) fn render(
                 .child(super::oplog_restore_preview::render(preview)),
         );
     }
-    if let Some(cmd) = modal
-        .plan
-        .equivalent_command
-        .as_deref()
-        .filter(|_| !blocked)
-    {
+    if let Some(cmd) = equivalent_command(&modal.plan) {
         body = body.child(div().min_h(gpui::px(0.)).overflow_hidden().child(
             crate::ui::modal_command::render_equivalent_command(
                 cmd,

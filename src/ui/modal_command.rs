@@ -7,7 +7,23 @@ use super::modal_shell::section_open;
 use super::theme::{self, theme as current_theme};
 use super::{KagiApp, MONO_FONT};
 use gpui::{div, prelude::*, rgb, Context, SharedString};
+use kagi_domain::plan::OperationPlan;
+use kagi_domain::plan_note::PlanDisposition;
 use kagi_ui_core::i18n::oplog_panel::{self, OplogPanelMsg};
+
+/// A blocked or no-op plan must not offer a command that looks executable.
+/// Both card renderers and Copy all use this same gate.
+pub(crate) fn plan_ready(plan: &OperationPlan) -> bool {
+    plan.disposition == PlanDisposition::Ready && plan.blockers.is_empty()
+}
+
+pub(crate) fn equivalent_command(plan: &OperationPlan) -> Option<&str> {
+    if plan_ready(plan) {
+        plan.equivalent_command.as_deref()
+    } else {
+        None
+    }
+}
 
 const SECTION_EQUIVALENT_COMMAND: &str = "plan-equivalent-command";
 

@@ -447,6 +447,15 @@ The current suite covers:
   tab switch and workspace-mode changes settle instantly; left/bottom pane
   contracts retain their existing scenario. Tier B: capture a real Graph window
   before selection, during the transition, fully open, then during Esc and closed.
+- Graph header column dividers with the sidebar hidden
+  (`KAGI_GUI_E2E_ONLY=graph_column_divider_hidden`,
+  `tests/recovery/graph_column_divider.rs`, #1011): drag each divider 40px
+  with the sidebar hidden and shown; both the saved column width and painted
+  boundary move exactly 40px. Advance the sidebar-closing clock between drag
+  events: after GPUI's drag threshold, each boundary follows the pointer even
+  while the sidebar moves. Restoring the fixed sidebar-width offset must fail
+  the hidden badge-column drag (-90px instead of +40px). Tier B: capture two
+  real Kagi window screenshots, before and after the hidden-sidebar drag.
 - WIP virtual commit anchors (`KAGI_GUI_E2E_ONLY=commit_row_layout_wip`,
   `tests/recovery/wip_layout.rs`, under the layout suite): actual canvas paints
   must show hollow nodes directly above their own HEADs (columns may repeat),

@@ -1,8 +1,8 @@
 //! Body slot (sidebar | commit list | inspector / commit panel) split out of
 //! `render.rs` (T-SPLIT-RENDER-001 / ADR-0116 Wave 3). Child module of
 //! `crate::ui`, so it keeps direct access to `KagiApp`'s private state. The WIP
-//! / stash-graph row builders it consumes live in `render_wip.rs`. Behaviour is
-//! unchanged — a pure physical move.
+//! / stash-graph row builders it consumes live in `render_wip.rs`. The Graph
+//! header records painted column origins for its resize handles (#1011).
 
 #![allow(clippy::too_many_arguments)]
 
@@ -25,6 +25,20 @@ type WipRowParams = (
     WipRowClick,
     bool,
 );
+
+/// Measure a column's painted left edge, independent of its resizable width.
+/// The drag handler can then derive width from an absolute pointer position even
+/// if several mouse moves arrive before the next paint or the sidebar slides.
+fn column_origin_probe(origin: std::rc::Rc<std::cell::Cell<Option<f32>>>) -> impl IntoElement {
+    gpui::canvas(
+        move |bounds, _, _| origin.set(Some(f32::from(bounds.origin.x))),
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
 
 impl KagiApp {
     /// Commit selection stays in commit coordinates; only scrolling includes
@@ -223,6 +237,7 @@ impl KagiApp {
             .child(
                 div()
                     .w(theme::scaled_px(badge_col_w))
+                    .relative()
                     .flex_shrink_0()
                     .overflow_hidden()
                     .flex()
@@ -270,7 +285,8 @@ impl KagiApp {
                                     ),
                             )
                         }
-                    }),
+                    })
+                    .child(column_origin_probe(self.badge_col_origin_x.clone())),
             )
             // Handle between badge and graph columns
             .child(
@@ -279,6 +295,10 @@ impl KagiApp {
                     .w(theme::scaled_px(INNER_DIV_W))
                     .flex_shrink_0()
                     .h_full()
+                    .relative()
+                    .when(cfg!(feature = "gui-e2e"), |divider| {
+                        divider.child(e2e::measure_inside("divider-badge-col"))
+                    })
                     .bg(rgb(theme().panel))
                     // Subtle centre line so the resize boundary is visible
                     // without hovering (user request).
@@ -305,6 +325,7 @@ impl KagiApp {
                 });
                 div()
                     .w(theme::scaled_px(graph_col_w))
+                    .relative()
                     .flex_shrink_0()
                     .overflow_hidden()
                     .flex()
@@ -337,6 +358,7 @@ impl KagiApp {
                             .on_click(compact_click)
                             .child(SharedString::from(if is_compact { "▥" } else { "▤" })),
                     )
+                    .child(column_origin_probe(self.graph_col_origin_x.clone()))
             })
             // Handle between graph and message columns
             .child(
@@ -345,6 +367,10 @@ impl KagiApp {
                     .w(theme::scaled_px(INNER_DIV_W))
                     .flex_shrink_0()
                     .h_full()
+                    .relative()
+                    .when(cfg!(feature = "gui-e2e"), |divider| {
+                        divider.child(e2e::measure_inside("divider-graph-col"))
+                    })
                     .bg(rgb(theme().panel))
                     // Subtle centre line so the resize boundary is visible
                     // without hovering (user request).

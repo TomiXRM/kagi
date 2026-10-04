@@ -923,6 +923,14 @@ The current suite covers:
   Push appear above it, and the focus stays on Copy head SHA, whose Enter
   copies the SHA. Numbering slots by drawn items only fails with the focus on
   `branch-menu-item-4-2` (Copy branch name).
+  `context_menu_keys_row_behind_info` (#1000): with an Info `MenuOverlay` up
+  and the sidebar `branch:feature` row (on HEAD~1) focused, Shift+F10 opens
+  no branch menu and the Graph selection stays on row 0 (dropping the
+  `front_layer == None` guard in `open_sidebar_row_menu` fails: the selection
+  jumps behind the panel). `context_menu_keys_last_tab` (#1000): with a
+  commit-menu item focused, `CloseTab` on the last tab leaves no menu and the
+  root focused on Welcome (dropping the window-slot reset / root focus in the
+  `TabClose::Welcome` branch fails).
 - Toolbar unavailable reasons (`KAGI_GUI_E2E_ONLY=toolbar_keyboard_reasons`,
   `tests/recovery/toolbar_keyboard.rs`, #972): starting at the root, GPUI's
   `focus_next` visits the rendered toolbar in visual order; an F19 key-down
@@ -1062,6 +1070,28 @@ The current suite covers:
   closes a visible menu without clearing Graph selection.
   The existing `unmerged_branch_delete_armed` scenario also rejects delayed
   plans after departure and revisit while releasing the planning latch.
+- guard writer abandonment (`tests/recovery/fetch_owner.rs`,
+  `tests/recovery/guard_writer_panic.rs`):
+  `KAGI_GUI_E2E_ONLY=fetch_panicked_worker_reconciles,fetch_previous_visit_is_not_presented,fetch_old_visit_drops_pull_waiter,fetch_new_visit_waiter_sees_old_flight_failure,remote_branch_fetch_panic,remote_branch_fetch_failed_after_departure,remote_branch_fetch_success_after_departure,pr_ref_fetch_restarts_after_revisit,pr_ref_fetch_panic,editor_save_panic,pull_confirm_departure_discards_old_visit`
+  exercises the admitted background work's panic, Unknown receipt and reconcile
+  notice, acknowledgement and fresh admission. `editor_save_panic_after_close`
+  closes the pane before the panicked worker settles and requires one durable
+  receipt, one live Operation Log row and exactly one toast; the open-pane
+  `editor_save_panic` also requires one row and one toast. Departing and returning drops
+  the old Pull waiter; a new visit's Pull joined to the old fetch gets its
+  failure footer and toast, with one receipt and no old-visit confirmation.
+  Failed fetches (including an old-visit fetch and a departed remote branch
+  fetch) keep their frozen repository receipt visible in the shared Operation
+  Log panel without changing the current tab's footer/toast or opening the
+  panel. The remote branch success and failure legs inspect `klog::tail()` for
+  the unchanged terminal lines after departure. After PR mode is cleared by
+  activation, reopening that PR admits one current-visit fetch; the old
+  completion cannot clear its loading latch or replace its head/files.
+  `TestDispatcher`
+  propagates an uncaught task panic before `Task::fallible()` can deliver `None`;
+  the GUI-only seam catches the injected panic inside the worker and returns an
+  absent result so the production abandonment branch can be inspected. The
+  non-test path still uses `fallible()` for actual unwinds.
 - session-owned positioning and Smart Commit state
   (`tests/recovery/tab_ui_state.rs`, `tests/recovery/operations.rs`):
   `KAGI_GUI_E2E_ONLY=tab_ui_state_ownership,pr_open_enters_before_ref_fetch,smart_commit_generation_owner,smart_commit_modal_and_probe`.

@@ -920,3 +920,21 @@ pub fn set_github_nav(shown: bool) {
 pub(crate) fn github_nav_forced() -> bool {
     GITHUB_NAV.with(|nav| nav.get())
 }
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static FETCH_COMPLETIONS_RETURNED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// #992 review: counts fetch completions whose UI update has fully returned,
+/// so a scenario can tell a notification flushed by the completion itself
+/// from one a later, unrelated task happened to send.
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn mark_fetch_completion_returned() {
+    FETCH_COMPLETIONS_RETURNED.with(|count| count.set(count.get() + 1));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn fetch_completions_returned() -> u64 {
+    FETCH_COMPLETIONS_RETURNED.with(std::cell::Cell::get)
+}

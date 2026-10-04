@@ -25,6 +25,7 @@ use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, KeyDownEvent, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::Sizable as _;
+use kagi_domain::plan_note::ShellKind;
 use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
 use std::rc::Rc;
 
@@ -142,6 +143,7 @@ pub(crate) fn render_amend_modal(
                 .iter()
                 .map(|f| f.path.display().to_string())
                 .collect::<Vec<_>>(),
+            ShellKind::current(),
         ),
         cx,
     ));
@@ -534,7 +536,7 @@ pub(crate) fn render_discard_modal(
     title_row = title_row.child(modal_copy_button(
         "discard-card-copy",
         Msg::ModalCopyAll.t(),
-        plan_clipboard_text(&plan, &modal.paths),
+        plan_clipboard_text(&plan, &modal.paths, ShellKind::current()),
         cx,
     ));
     let spec = dialog_a11y(

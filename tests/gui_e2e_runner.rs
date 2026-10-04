@@ -1226,6 +1226,14 @@ mod macos {
                 Box::new(crate::slow_read::scenario_slow_write_cleared_after_panic),
             ),
             (
+                "slow_write_snapshot",
+                Box::new(crate::slow_read::scenario_slow_write_snapshot),
+            ),
+            (
+                "slow_write_conflict_continue",
+                Box::new(crate::slow_read::scenario_slow_write_conflict_continue),
+            ),
+            (
                 "fetch_failure_oplog",
                 Box::new(crate::busy_label::scenario_fetch_failure_reaches_the_oplog),
             ),

@@ -1785,3 +1785,19 @@ without releasing an unconfirmed lease. Tier B: start a slow local fetch in an
 isolated app, compare screenshots before/after 2 s and after completion, and
 inspect klog. Remote SSH pull follows #989's lease migration; clone remains out
 of scope.
+
+### Background writer elapsed advice (#996 with #995)
+
+Tier A: `KAGI_GUI_E2E_ONLY=slow_write_snapshot,slow_write_conflict_continue`
+in `tests/recovery/slow_read.rs` holds the real snapshot and merge Continue
+background workers before their Git writes. Each checks the admitted lease and
+operation-specific snackbar label, a drawn reason plus `2 s` at the dispatcher
+clock's 2-second boundary, `4 s` while held, and no advice after release.
+Snapshot checks EN/JA and the ref only appears after release; merge Continue
+checks conflict-resolution advice and the commit panel after staging. Their
+`reserve_write` calls already register the kind and lease-start clock through
+`mark_write_busy`, as #992's branch fetch does. Restore-snapshot is classified
+`SlowWriteWorktree` rather than `SlowWriteStash`: restoring checks out the index
+and worktree. Production mutation: subtract one second from the elapsed seconds
+in `KagiApp::slow_write_shown`; `slow_write_snapshot` fails on the 2-second
+drawn advice even though the lease and backend operation still run.

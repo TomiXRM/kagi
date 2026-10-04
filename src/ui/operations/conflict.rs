@@ -31,6 +31,11 @@ static PANIC_NEXT_CONTINUE_STASH: std::sync::atomic::AtomicBool =
 #[cfg(feature = "gui-e2e")]
 static PANIC_NEXT_CONTINUE_CONFIRM: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static CONTINUE_MERGE_HOLD: std::cell::RefCell<Option<gpui::Task<()>>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 #[cfg(feature = "gui-e2e")]
 impl KagiApp {
@@ -42,6 +47,9 @@ impl KagiApp {
     }
     pub fn panic_next_continue_confirm_for_e2e() {
         PANIC_NEXT_CONTINUE_CONFIRM.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    pub fn hold_next_continue_merge_for_e2e(hold: gpui::Task<()>) {
+        CONTINUE_MERGE_HOLD.with(|slot| assert!(slot.borrow_mut().replace(hold).is_none()));
     }
 }
 
@@ -323,8 +331,14 @@ impl KagiApp {
                 let abandonment = guard.abandonment();
                 let supervision = abandonment.supervision();
                 let bg_path = repo_path.clone();
+                #[cfg(feature = "gui-e2e")]
+                let hold = CONTINUE_MERGE_HOLD.with(|slot| slot.borrow_mut().take());
                 let task = cx.background_spawn(async move {
                     let _supervised = kagi_git::proc::supervisor::enter(supervision);
+                    #[cfg(feature = "gui-e2e")]
+                    if let Some(hold) = hold {
+                        hold.await;
+                    }
                     #[cfg(feature = "gui-e2e")]
                     if PANIC_NEXT_CONTINUE_MERGE.swap(false, std::sync::atomic::Ordering::SeqCst) {
                         let _ =

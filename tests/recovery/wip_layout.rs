@@ -370,6 +370,20 @@ pub fn scenario_commit_row_layout_wip(cx: &mut VisualTestAppContext, repo_path: 
 
     let (nodes, dashes) = painted(cx, win, DIMENSIONS);
     let centers = check_anchors(&facts, &nodes, &dashes, "base");
+    for (name, width) in [("graph-commit-author", 96.), ("graph-commit-time", 48.)] {
+        let bounds = e2e::control_bounds(win.window_id(), name)
+            .unwrap_or_else(|| panic!("{name} not drawn in Graph row"));
+        assert!(
+            (f32::from(bounds.size.width) - width).abs() <= PAINT_EPS,
+            "{name} width must be {width}px at 100%: {bounds:?}"
+        );
+    }
+    let row =
+        e2e::control_bounds(win.window_id(), "graph-commit-row").expect("Graph commit row drawn");
+    assert!(
+        (f32::from(row.size.height) - 29.).abs() <= PAINT_EPS,
+        "Graph row height must remain 29px: {row:?}"
+    );
     let radius = nodes
         .iter()
         .find(|n| n.hollow)
@@ -379,6 +393,14 @@ pub fn scenario_commit_row_layout_wip(cx: &mut VisualTestAppContext, repo_path: 
     // ── zoom ────────────────────────────────────────────────────────────────
     theme::set_zoom(1.25);
     let (zoom_nodes, zoom_dashes) = painted(cx, win, DIMENSIONS);
+    for (name, width) in [("graph-commit-author", 120.), ("graph-commit-time", 60.)] {
+        let bounds = e2e::control_bounds(win.window_id(), name)
+            .unwrap_or_else(|| panic!("{name} not drawn after zoom"));
+        assert!(
+            (f32::from(bounds.size.width) - width).abs() <= PAINT_EPS,
+            "{name} width must scale at 125%: {bounds:?}"
+        );
+    }
     let zoom_centers = check_anchors(&facts, &zoom_nodes, &zoom_dashes, "zoom-1.25");
     let zoom_radius = zoom_nodes
         .iter()

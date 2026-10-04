@@ -27,6 +27,7 @@ use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{Icon, IconName, Sizable as _};
+use kagi_domain::plan_note::ShellKind;
 use kagi_git::{CommitId, OperationPlan};
 use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
 
@@ -586,10 +587,10 @@ fn render_plan_modal_card_styled(
                 match &extra {
                     Some(extra) => format!(
                         "{}\n{}",
-                        plan_clipboard_text(&plan, &plan.preview_commits),
+                        plan_clipboard_text(&plan, &plan.preview_commits, ShellKind::current()),
                         extra.clipboard
                     ),
-                    None => plan_clipboard_text(&plan, &plan.preview_commits),
+                    None => plan_clipboard_text(&plan, &plan.preview_commits, ShellKind::current()),
                 },
                 cx,
             )),

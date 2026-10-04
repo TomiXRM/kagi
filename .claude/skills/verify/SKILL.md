@@ -909,7 +909,13 @@ The current suite covers:
   panel closed the menu". `context_menu_keys_a11y`: the disabled Reset item
   is drawn with its reason as `aria_description`
   (`menu_overlay::recorded_item_description`), an enabled one with none
-  (drawing disabled items without it fails).
+  (drawing disabled items without it fails). `context_menu_keys_covered_row`:
+  an Info overlay over a menu opened from the sidebar `branch:feature` row
+  closes it and the window — not the row — gets the focus (returning to the
+  row when covered fails). `context_menu_keys_disabled_live`: with Checkout
+  focused, `planning` set (any latched operation) disables it while the menu
+  stays open; the focus stays on it and ↓ still moves onto an enabled item
+  (tracking focus on enabled items only fails: ↓ never reaches the menu).
 - Toolbar unavailable reasons (`KAGI_GUI_E2E_ONLY=toolbar_keyboard_reasons`,
   `tests/recovery/toolbar_keyboard.rs`, #972): starting at the root, GPUI's
   `focus_next` visits the rendered toolbar in visual order; an F19 key-down

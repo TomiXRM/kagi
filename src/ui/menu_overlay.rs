@@ -348,15 +348,18 @@ where
         .overflow_hidden()
         .child(div().flex_1().truncate().child(text));
 
-    let row = match (enabled, focus) {
-        // #985: the menu's keyboard stops on enabled items only (↑/↓ rove;
-        // Enter / Space press one through gpui's keyboard click on
-        // `on_click`). Keyboard focus shows as the pointer's hover does.
-        (true, Some(focus)) => row
+    // #985: every item tracks its focus handle, so a focused item that turns
+    // disabled while the menu is open (a write starts) stays in the dispatch
+    // tree and ↑/↓ still reach the menu (#991 review); the keys only ever
+    // move onto enabled items, and Enter / Space press one through gpui's
+    // keyboard click on `on_click` (a disabled item has none). Keyboard focus
+    // shows as the pointer's hover does.
+    let row = match focus {
+        Some(focus) => row
             .track_focus(&focus.tab_index(0).tab_stop(false))
             .on_key_down(super::keyboard_nav::stop_activation_keys)
             .focus_visible(|style| style.bg(rgb(theme().selected))),
-        _ => row,
+        None => row,
     };
     let row = if enabled {
         row.on_click(click)

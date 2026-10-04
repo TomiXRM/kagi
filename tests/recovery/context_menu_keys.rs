@@ -491,3 +491,81 @@ pub fn scenario_context_menu_keys_a11y(cx: &mut VisualTestAppContext) {
     );
     unmount(cx, app, window);
 }
+
+/// Open a focused sidebar branch row's menu with Shift+F10.
+fn open_row_menu(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+    cx.update_window(window, |_, window, cx| {
+        window.draw(cx).clear();
+        app.update(cx, |app, cx| {
+            app.focus_sidebar_row_for_e2e(LOCAL, "branch:feature", window, cx)
+        });
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    keys(cx, window, "shift-f10");
+    assert!(cx.read(|cx| app.read(cx).branch_menu.is_some()));
+    assert!(
+        menu(cx, &app, window).0.is_some(),
+        "the menu holds the focus"
+    );
+}
+
+/// An Info panel over a menu opened from a sidebar row closes it, and the
+/// focus goes to the window — not back to the row behind the panel, which
+/// would then take Enter / Space unseen (#991 review).
+pub fn scenario_context_menu_keys_covered_row(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    git(fixture.path(), &["branch", "feature"]);
+    let (app, window) = mount(cx, fixture.path());
+    open_row_menu(cx, &app, window);
+    app.update(cx, |app, cx| {
+        app.menu_overlay = Some(kagi::ui::commands::MenuOverlay::Info {
+            title: "About".into(),
+            lines: vec![],
+        });
+        cx.notify();
+    });
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert!(cx.read(|cx| app.read(cx).branch_menu.is_none()));
+    assert!(
+        root_focused(cx, &app, window),
+        "the focus went to the window, not back to the row"
+    );
+    unmount(cx, app, window);
+}
+
+/// The focused item turns disabled while the menu stays open (a write is
+/// admitted, so Checkout is no longer offered): the focus stays inside the
+/// menu and ↓ still moves it onto an enabled item (#991 review).
+pub fn scenario_context_menu_keys_disabled_live(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    git(fixture.path(), &["branch", "feature"]);
+    let (app, window) = mount(cx, fixture.path());
+    open_row_menu(cx, &app, window);
+    let (before, enabled) = menu(cx, &app, window);
+    let before = before.expect("an item has the focus");
+    assert_eq!(Some(&before), enabled.first());
+    // Any latched operation disables the branch menu's write items.
+    app.update(cx, |app, cx| {
+        app.planning = Some("e2e");
+        cx.notify();
+    });
+    let (focused, enabled) = menu(cx, &app, window);
+    assert_eq!(focused, Some(before), "the focus is still on that item");
+    assert!(
+        !enabled.contains(&before),
+        "precondition: the focused item is now disabled ({enabled:?})"
+    );
+    keys(cx, window, "down");
+    let (after, enabled) = menu(cx, &app, window);
+    assert!(
+        after.is_some_and(|slot| enabled.contains(&slot)),
+        "↓ reached the menu and moved onto an enabled item ({after:?} of {enabled:?})"
+    );
+    app.update(cx, |app, cx| {
+        app.planning = None;
+        cx.notify();
+    });
+    unmount(cx, app, window);
+}

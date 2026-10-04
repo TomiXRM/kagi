@@ -1034,6 +1034,14 @@ mod macos {
                 Box::new(crate::context_menu_keys::scenario_context_menu_keys_a11y),
             ),
             (
+                "context_menu_keys_covered_row",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_covered_row),
+            ),
+            (
+                "context_menu_keys_disabled_live",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_disabled_live),
+            ),
+            (
                 "home_list_place",
                 Box::new(crate::home_list_place::scenario_home_list_place),
             ),

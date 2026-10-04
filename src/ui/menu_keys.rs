@@ -229,10 +229,13 @@ impl KagiApp {
     /// Each frame before the menus are drawn: a menu that just opened takes
     /// the focus (on its first item, in its renderer); one that just closed
     /// gives it back. A layer drawn above the menus that leaves the focus
-    /// where it was (a modal, a notice, a plan) closes them first: the
-    /// focused item would otherwise take Enter unseen (#991 review).
+    /// where it was (a modal, a notice, a plan, an Info panel) closes them
+    /// first: the focused item would otherwise take Enter unseen; the focus
+    /// then goes to the window, never back to the row behind that layer
+    /// (#991 review).
     pub(super) fn sync_menu_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.any_context_menu_open() && self.workspace_menus_covered(cx) {
+        let covered = self.workspace_menus_covered(cx);
+        if self.any_context_menu_open() && covered {
             self.close_context_menus();
         }
         let open = self.any_context_menu_open();
@@ -248,7 +251,7 @@ impl KagiApp {
             // have moved it on itself.
             let held = window.focused(cx).is_none() || keys.items.focused(window).is_some();
             if held {
-                let target = if self.active_modal.is_some() {
+                let target = if self.active_modal.is_some() || covered {
                     self.root_focus.clone()
                 } else {
                     back.or_else(|| self.root_focus.clone())

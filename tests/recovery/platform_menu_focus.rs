@@ -1,9 +1,10 @@
 //! #990: platform dropdown keyboard ownership, modal/input focus, and navigation.
 
 use gpui::{AnyWindowHandle, Entity, Focusable, VisualTestAppContext};
+use kagi::ui::commands::{BranchPickerMode, MenuOverlay};
 use kagi::ui::{e2e, KagiApp};
 
-use crate::macos::{build_fixture, repo_fingerprint, unmount};
+use crate::macos::{build_fixture, git, repo_fingerprint, unmount};
 use crate::platform_menu_scroll::mount_short;
 
 fn overlay_key(cx: &mut VisualTestAppContext, win: AnyWindowHandle, key: &str) {
@@ -403,4 +404,80 @@ pub fn scenario_platform_menu_palette_focus_return(cx: &mut VisualTestAppContext
     assert!(cx.read(|cx| app.read(cx).menu_overlay.is_none()));
     unmount(cx, app, win);
     eprintln!("[gui-e2e] PASS platform_menu_palette_focus_return");
+}
+
+/// #1039: a menu snapshot belongs to the screen that produced it, not the
+/// next repository's command target. Closing applies to the other menu
+/// overlays too, without changing their behavior within one screen.
+pub fn scenario_branch_picker_screen_departure(cx: &mut VisualTestAppContext) {
+    let first = build_fixture();
+    let second = build_fixture();
+    let a = first.path().canonicalize().unwrap();
+    let b = second.path().canonicalize().unwrap();
+    git(&a, &["branch", "a-only"]);
+    git(&b, &["branch", "b-only"]);
+    let (app, win) = mount_short(cx, &a);
+    app.update(cx, |app, cx| assert!(app.open_repository(b.clone(), cx)));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    cx.run_until_parked();
+
+    let invoke = |cx: &mut VisualTestAppContext, id| {
+        cx.update_window(win, |_, window, cx| {
+            app.update(cx, |app, cx| app.handle_menu_command(id, window, cx))
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    invoke(cx, "branch.checkout");
+    assert!(
+        cx.read(|cx| matches!(
+            &app.read(cx).menu_overlay,
+            Some(MenuOverlay::BranchPicker { mode: BranchPickerMode::Checkout, branches })
+                if branches.iter().any(|name| name == "a-only")
+                    && !branches.iter().any(|name| name == "b-only")
+        )),
+        "A's picker snapshots A's local branches"
+    );
+    app.update(cx, |app, cx| app.switch_repo(1, cx));
+    assert!(
+        cx.read(|cx| app.read(cx).menu_overlay.is_none()),
+        "A's BranchPicker must close before B can use a stale branch name"
+    );
+    cx.run_until_parked();
+    invoke(cx, "branch.checkout");
+    assert!(
+        cx.read(|cx| matches!(
+            &app.read(cx).menu_overlay,
+            Some(MenuOverlay::BranchPicker { branches, .. })
+                if branches.iter().any(|name| name == "b-only")
+                    && !branches.iter().any(|name| name == "a-only")
+        )),
+        "B's new picker must contain only B's branches"
+    );
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    assert!(cx.read(|cx| app.read(cx).menu_overlay.is_none()));
+    cx.run_until_parked();
+
+    invoke(cx, "app.about");
+    assert!(cx.read(|cx| matches!(&app.read(cx).menu_overlay, Some(MenuOverlay::Info { .. }))));
+    app.update(cx, |app, cx| app.switch_repo(1, cx));
+    assert!(
+        cx.read(|cx| app.read(cx).menu_overlay.is_none()),
+        "Info closes on departure"
+    );
+    cx.run_until_parked();
+    invoke(cx, "view.commandPalette");
+    assert!(cx.read(|cx| matches!(
+        &app.read(cx).menu_overlay,
+        Some(MenuOverlay::CommandPalette)
+    )));
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    assert!(
+        cx.read(|cx| app.read(cx).menu_overlay.is_none()),
+        "Command Palette closes on departure"
+    );
+    cx.run_until_parked();
+    unmount(cx, app, win);
+    eprintln!("[gui-e2e] PASS branch_picker_screen_departure");
 }

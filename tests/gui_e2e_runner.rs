@@ -2208,6 +2208,10 @@ mod macos {
                 ),
             ),
             (
+                "branch_picker_screen_departure",
+                Box::new(crate::platform_menu_focus::scenario_branch_picker_screen_departure),
+            ),
+            (
                 "platform_menu_palette_focus_return",
                 Box::new(crate::platform_menu_focus::scenario_platform_menu_palette_focus_return),
             ),

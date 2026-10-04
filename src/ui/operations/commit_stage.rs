@@ -55,7 +55,7 @@ impl KagiApp {
                 if let Some(entity) = self.ui().commit_panel.clone() {
                     entity.update(cx, |v, _| v.state.reload_status(&repo_path));
                 }
-                self.refresh_wip_diffstat();
+                self.start_wip_diffstat_scan(cx);
                 self.refresh_worktree_wip_row(&repo_path);
             }
             Err(e) => {
@@ -107,7 +107,7 @@ impl KagiApp {
                 if let Some(entity) = self.ui().commit_panel.clone() {
                     entity.update(cx, |v, _| v.state.reload_status(&repo_path));
                 }
-                self.refresh_wip_diffstat();
+                self.start_wip_diffstat_scan(cx);
                 self.refresh_worktree_wip_row(&repo_path);
             }
             Err(e) => {

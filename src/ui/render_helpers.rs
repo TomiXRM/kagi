@@ -25,6 +25,7 @@ pub(crate) use diff_header::DiffHeader;
 pub(crate) use kagi_ui_core::header_fit::{header_button, HeaderFit};
 
 mod diff_header;
+mod metadata;
 pub(crate) mod row_overlay;
 
 /// issue #414: chokepoint that neutralizes terminal control bytes in remote-origin
@@ -227,6 +228,9 @@ pub(crate) fn render_rows(
                 .child(anchor.probe())
             })
             .h(px(rh))
+            .when(ix == 0 && cfg!(feature = "gui-e2e"), |el| {
+                el.child(super::e2e::measure_inside("graph-commit-row"))
+            })
             .bg(rgb(row_bg))
             .on_click(click_handler)
             .on_mouse_down(MouseButton::Right, context_click_handler)
@@ -435,26 +439,8 @@ pub(crate) fn render_rows(
             .when_some(row.provenance.as_ref(), |el, prov| {
                 el.child(badges::render_provenance_badge(prov, ix))
             })
-            .child(
-                // W28: author/date columns scale so the (rem-scaled) text
-                // fits its box at any zoom.
-                div()
-                    .w(theme::scaled_px(130.))
-                    .flex_shrink_0()
-                    // Gap before the committer name so a long, truncated
-                    // commit summary doesn't visually run straight into it.
-                    .pl(theme::scaled_px(8.))
-                    .text_color(rgb(theme().text_sub))
-                    .truncate()
-                    .child(row.author.clone()),
-            )
-            .child(
-                div()
-                    .w(theme::scaled_px(72.))
-                    .flex_shrink_0()
-                    .text_color(rgb(theme().text_muted))
-                    .child(row.date.clone()),
-            )
+            .child(metadata::author(row, ix))
+            .child(metadata::age(row, ix))
         })
         .collect()
 }

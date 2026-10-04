@@ -660,7 +660,7 @@ mod macos {
 
     /// `git for-each-ref <pattern>` — the ref-existence probe for the snapshot
     /// scenario. Returns the raw stdout (one line per matching ref).
-    fn for_each_ref(dir: &Path, pattern: &str) -> String {
+    pub(super) fn for_each_ref(dir: &Path, pattern: &str) -> String {
         let out = Command::new("git")
             .current_dir(dir)
             .args(["for-each-ref", pattern])
@@ -1230,6 +1230,18 @@ mod macos {
                 Box::new(crate::slow_read::scenario_slow_write_cleared_after_panic),
             ),
             (
+                "slow_write_snapshot",
+                Box::new(crate::slow_read::scenario_slow_write_snapshot),
+            ),
+            (
+                "slow_write_conflict_continue",
+                Box::new(crate::slow_read::scenario_slow_write_conflict_continue),
+            ),
+            (
+                "worktree_size_not_explained",
+                Box::new(crate::slow_read::scenario_worktree_size_not_explained),
+            ),
+            (
                 "fetch_failure_oplog",
                 Box::new(crate::busy_label::scenario_fetch_failure_reaches_the_oplog),
             ),
@@ -1732,6 +1744,46 @@ mod macos {
                 Box::new(crate::guard_writer_panic::scenario_remote_branch_fetch_panic),
             ),
             (
+                "snapshot_write_panic",
+                Box::new(crate::guard_writer_panic::scenario_snapshot_write_panic),
+            ),
+            (
+                "snapshot_write_draws_while_busy",
+                Box::new(crate::guard_writer_panic::scenario_snapshot_write_draws_while_busy),
+            ),
+            (
+                "snapshot_failed_after_departure",
+                Box::new(crate::guard_writer_panic::scenario_snapshot_failed_after_departure),
+            ),
+            (
+                "conflict_merge_continue_panic",
+                Box::new(crate::app_conflict::scenario_conflict_merge_continue_panic),
+            ),
+            (
+                "conflict_confirm_continue_panic",
+                Box::new(crate::app_conflict::scenario_conflict_confirm_continue_panic),
+            ),
+            (
+                "conflict_confirm_dismissed_still_reloads",
+                Box::new(crate::app_conflict::scenario_conflict_confirm_dismissed_still_reloads),
+            ),
+            (
+                "conflict_merge_failure_contract",
+                Box::new(crate::app_conflict::scenario_conflict_merge_failure_contract),
+            ),
+            (
+                "conflict_skip_panic",
+                Box::new(crate::app_conflict::scenario_conflict_skip_panic),
+            ),
+            (
+                "stash_continue_panic",
+                Box::new(crate::app_stash::scenario_stash_continue_panic),
+            ),
+            (
+                "stash_continue_after_tab_switch",
+                Box::new(crate::app_stash::scenario_stash_continue_after_tab_switch),
+            ),
+            (
                 "remote_branch_fetch_failed_after_departure",
                 Box::new(crate::guard_writer_panic::scenario_remote_branch_fetch_failed_after_departure),
             ),
@@ -1838,6 +1890,14 @@ mod macos {
             (
                 "hunk_staging",
                 Box::new(crate::hunk_staging::scenario_hunk_staging),
+            ),
+            (
+                "wip_diffstat_stage_order",
+                Box::new(crate::hunk_staging::scenario_wip_diffstat_stage_order),
+            ),
+            (
+                "wip_diffstat_watcher_order",
+                Box::new(crate::hunk_staging::scenario_wip_diffstat_watcher_order),
             ),
             (
                 "issue_failure_notice_survives_tab_switch",
@@ -3155,6 +3215,7 @@ mod macos {
         );
 
         cx.dispatch_action(win, CreateSnapshot);
+        cx.run_until_parked();
 
         let refs = for_each_ref(&repo_path, "refs/kagi/snapshots/");
         let count = refs.lines().filter(|l| !l.trim().is_empty()).count();

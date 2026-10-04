@@ -3741,7 +3741,7 @@ pub fn scenario_commit_list_roles(cx: &mut VisualTestAppContext) {
     });
     cx.run_until_parked();
     redraw(cx);
-    let (sel_ix, summary, short, tagged) = cx.read(|cx| {
+    let (sel_ix, summary, short, author, date, date_short, tagged) = cx.read(|cx| {
         let app = app.read(cx);
         let ix = app.ui().selected.expect("selected");
         let row = &app.view().rows[ix];
@@ -3749,6 +3749,9 @@ pub fn scenario_commit_list_roles(cx: &mut VisualTestAppContext) {
             ix,
             row.summary.to_string(),
             row.short_id.to_string(),
+            row.author.to_string(),
+            row.date.to_string(),
+            row.date_short.to_string(),
             row.badges.iter().any(|b| b.label.as_ref() == "v-mark"),
         )
     });
@@ -3762,6 +3765,12 @@ pub fn scenario_commit_list_roles(cx: &mut VisualTestAppContext) {
         label.contains(&summary) && label.contains(&short),
         "{label}"
     );
+    assert!(label.contains(&author), "full author missing: {label}");
+    assert_ne!(
+        date, date_short,
+        "the accessible label retains the verbose age"
+    );
+    assert!(label.contains(&date), "verbose author age missing: {label}");
     if tagged {
         assert!(label.contains("v-mark"), "refs named: {label}");
     }

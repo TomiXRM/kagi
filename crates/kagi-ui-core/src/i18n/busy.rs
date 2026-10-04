@@ -224,8 +224,8 @@ const SLOW_WRITE_KINDS: &[(&str, super::Msg)] = {
         ("stash-pop", SlowWriteStash),
         ("stash-drop", SlowWriteStash),
         ("snapshot", SlowWriteStash),
-        ("restore-snapshot", SlowWriteStash),
         // Local files in a worktree.
+        ("restore-snapshot", SlowWriteWorktree),
         ("create-worktree", SlowWriteWorktree),
         ("open-worktree", SlowWriteWorktree),
         ("remove-worktree", SlowWriteWorktree),
@@ -288,8 +288,6 @@ fn slow_read_reason(read: SlowRead, language: Lang) -> &'static str {
         (SlowRead::AheadBehind, Lang::Ja) => "ahead/behind を計算中…",
         (SlowRead::Worktrees, Lang::En) => "Reading worktree status…",
         (SlowRead::Worktrees, Lang::Ja) => "worktree の状態を読み込み中…",
-        (SlowRead::WorktreeSize, Lang::En) => "Measuring worktree size…",
-        (SlowRead::WorktreeSize, Lang::Ja) => "worktree の容量を計測中…",
         (SlowRead::Analyze, Lang::En) => "Analyzing hotspots…",
         (SlowRead::Analyze, Lang::Ja) => "hotspot を解析中…",
         (SlowRead::Diff, Lang::En) => "Loading diff…",
@@ -370,7 +368,6 @@ mod tests {
         for read in [
             SlowRead::AheadBehind,
             SlowRead::Worktrees,
-            SlowRead::WorktreeSize,
             SlowRead::Analyze,
             SlowRead::Diff,
         ] {
@@ -464,7 +461,7 @@ mod tests {
             ("stash-pop", SlowWriteStash),
             ("stash-drop", SlowWriteStash),
             ("snapshot", SlowWriteStash),
-            ("restore-snapshot", SlowWriteStash),
+            ("restore-snapshot", SlowWriteWorktree),
             ("create-worktree", SlowWriteWorktree),
             ("open-worktree", SlowWriteWorktree),
             ("remove-worktree", SlowWriteWorktree),

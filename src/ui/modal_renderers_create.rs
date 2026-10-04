@@ -11,7 +11,7 @@ use super::modal_renderers::{modal_overlay, render_current_predicted, ModalIcon}
 use super::modal_renderers_input::{
     render_input_modal_action, render_input_modal_field, render_input_modal_heading,
 };
-use super::modal_renderers_plan::render_input_recovery_commands;
+use super::modal_renderers_plan::{offered_recovery_commands, render_input_recovery_commands};
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_LG, MODAL_W_MD};
 use super::modals::worktree::CreateWorktreeModal;
 use super::modals::*;
@@ -364,9 +364,9 @@ pub(crate) fn render_create_worktree_modal(
                 .as_ref()
                 .is_some_and(|state| !state.read(cx).value().trim().is_empty());
         if fields_filled && !has_blockers {
-            if let Some(recovery) = p.recovery.as_ref().filter(|r| !r.commands.is_empty()) {
+            if let Some(commands) = offered_recovery_commands(p.recovery.as_ref()) {
                 body = body.child(div().flex_shrink_0().child(render_input_recovery_commands(
-                    &recovery.commands,
+                    commands,
                     current_theme().color_success,
                 )));
             }
@@ -535,9 +535,9 @@ pub(crate) fn render_create_tag_modal(
             .as_ref()
             .is_some_and(|state| !state.read(cx).value().trim().is_empty());
         if input_filled && !has_blockers {
-            if let Some(recovery) = p.recovery.as_ref().filter(|r| !r.commands.is_empty()) {
+            if let Some(commands) = offered_recovery_commands(p.recovery.as_ref()) {
                 body = body.child(div().flex_shrink_0().child(render_input_recovery_commands(
-                    &recovery.commands,
+                    commands,
                     current_theme().color_tag,
                 )));
             }

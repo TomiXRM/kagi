@@ -17,6 +17,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- snapshot の作成と conflict の continue / skip(stash の continue、merge の continue、sequencer の continue 確認を含む)が UI thread を止めていたのを直し、background で実行するようにしました。実行中も画面は描画され、2 秒を超えると busy snackbar に経過秒数が出ます。異常終了しても Operation Log に不明な結果を記録し、reconcile の確認後に次の書き込みを許可します。完了前に別のタブへ移っても記録は元の repository に残り、toast や再読み込みは元のタブにだけ出ます。stage / unstage / hunk の後の WIP の +/− 集計も background で行い、連続して stage しても最後の状態だけを表示します。restore-snapshot の遅延理由は stash ではなく worktree の書き込みとして表示します。stage / unstage / hunk 自体は write queue の導入まで同期のままです。確認 modal が途中で閉じても、現在のタブで完了した sequencer continue の表示は再読み込みされます。別のタブへ移った後の snapshot や conflict の失敗は通知に残り、WIP 集計は watcher の新しい結果を古い scan で上書きしません。(#996、#355 R4)
+- worktree の容量を計測している間、busy snackbar に「worktree の容量を計測中…」と Skip が出ていたのをやめました。計測は background で続き、行の「計測中」表示と結果はこれまでどおりです。(#1012)
+- Windows では、確認カードの Copy all の `commands:` ブロックと、入力カードの折りたたみ行に復旧コマンドを出さないようにしました。コマンドの引数は POSIX shell 向けに quote されていますが、Windows の既定 shell(`cmd.exe`)では single quote が効かず `&` なども区切りとして働くため、貼り付けると意図しないコマンドが動き得ました。説明文はそのまま表示します。(#1007)
 - background の fetch・remote branch fetch・PR ref fetch・Editor 保存が異常終了したとき、write lease と実行中の表示が理由なく残り、以後の書き込みを拒否し続ける問題を修正しました。不明な結果を Operation Log に記録し、reconcile の確認後に次の書き込みを許可します。Editor の保存中にペインを閉じても、不明な結果を実行中の Operation Log に反映し、短いエラー toast を 1 回だけ表示します。fetch の完了が元のタブへ戻った後の新しい滞在に表示される問題と、Busy の拒否で確認済み計画が失効する問題も修正しました。(#355 段階 0)
 - Info パネル(About / Keyboard Shortcuts)や branch picker が前面にある間、サイドバーの行で Shift+F10 を押しても何も起きないようにしました。これまではメニューは次の描画で閉じるものの、その前に Graph の選択とスクロールがパネルの背後で branch の commit へ移っていました。また、メニューの項目に focus がある状態で ⌘W で最後のタブを閉じると、メニューの状態と消えた項目への focus が残り Welcome でキーが効かなかったのを直し、メニューを閉じて focus を window へ移すようにしました。(#1000)
 - UI ガイドの Known gaps を現状に合わせて更新しました。Settings の通常の focus trap と前面判定、Home / Graph の行キー操作は対応済みとし、未解決の 100 Tab stop 超の制限、Linux / FreeBSD の platform menu と overlay の組み合わせ、UI thread の同期書き込みと WIP diffstat を明記しました。(#974、#976、#980、#986、#981、#987、#990、#996)
@@ -28,6 +31,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Operation Log の ref 復元プレビューで「Copy all」を使うとき、branch から外れる commit の印を現在の表示言語（英語・日本語）で出すようにしました。(#988)
 
 - Operation Log の ref 復元計画に blocker がある場合は、実行できない `git update-ref --stdin` をカードと「Copy all」から除きます。長い ref 名は名前欄で省略し、全文は tooltip・読み上げ・コピーに残したまま、移動前後の OID をカード内に表示します。(#988)
+### Internal
+
+- 操作キューの核を副作用のない app reducer として追加しました。session ごとに intent を並べ、成功・検証・記録・reconcile の receipt で後続を判定します。画面への配線は #355 段階 3 で行います。(#355 段階 2)
 
 ## [0.42.0] - 2026-10-04
 
@@ -77,6 +83,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Changed
 
+- Graph の commit 行で author と経過時間を小さい文字にし、名前の列を 96px、時間の列を 48px に縮めました。時間は右寄せの等幅フォントで `36m` などと表示し、名前の全文は tooltip、支援技術向けの経過時間は従来の完全形のまま残します。行高 29px は変更しません。(#1003)
 - Create Branch / Create Tag / Stash / Add Worktree / Rename Branch / Set Upstream の入力確認カードを、基本 32px の入力欄・確認ボタン、入力欄の直下に出る検証理由、常に見える無効な確認ボタンに統一し、見出しの従来の操作別アイコンは残しました。Stash 以外の CURRENT → PREDICTED は横 1 行にし、Stash は 38px のメッセージ欄の下に現在と実行後の状態を上下に並べ、暗い背景・小さい状態チップと簡潔な警告にしました。Stash のキャンセル・確認ボタンだけ従来の角丸のまま高さを 24px に縮めます。branch / HEAD と staged・modified・untracked などの状態は状態名・件数付きで表示し、警告の全文は Tooltip / 支援技術向けラベルに残します。空欄や実行不能な計画では復旧行を出さず、入力済みの実行可能な計画では Git コマンドだけ表示します（Create Branch はカード内に復旧行なし、Set Upstream は復旧コマンドなし）。完全な復旧説明は Operation Log に残します。IME 変換中の Enter は 6 種類すべてで Git 操作を確定しません。(#956)
 - Graph の「Avatar commit nodes」(commit の点を作者のアバターにする表示)を既定で ON にしました。設定で一度 OFF にしている場合はそのまま OFF です。
 - Worktree 行とホバーカードをアイコン・短い状態表示中心に整理し、再計測はアイコンのみ（支援技術向けの名前は維持）にしました。ignored file の注意はホバーから外し、削除時の確認計画で対象のファイル数とフォルダー数を示します。(#934)

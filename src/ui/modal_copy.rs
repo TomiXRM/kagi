@@ -72,8 +72,14 @@ pub(crate) fn modal_copy_button(
 /// Renders what the card shows, in the card's own order and already localized:
 /// title, current → predicted, warnings, blockers, the row list the caller
 /// passes in, then the recovery text. Plain text, not markdown: it is going
-/// into a terminal or an issue, and the commands must survive verbatim.
-pub(crate) fn plan_clipboard_text(plan: &OperationPlan, rows: &[String]) -> String {
+/// into a terminal or an issue, and the commands must survive verbatim. The
+/// paste-able `commands:` block is only offered to a shell that reads its
+/// quoting (`PlanRecovery::commands_for`, #1007).
+pub(crate) fn plan_clipboard_text(
+    plan: &OperationPlan,
+    rows: &[String],
+    shell: kagi_domain::plan_note::ShellKind,
+) -> String {
     let mut out = String::new();
     out.push_str(&plan_title_text(&plan.title));
     out.push('\n');
@@ -110,9 +116,10 @@ pub(crate) fn plan_clipboard_text(plan: &OperationPlan, rows: &[String]) -> Stri
     // sentences. `PlanRecovery::commands` is the structured, paste-able set —
     // repeat it as its own block so a user can grab just those lines.
     if let Some(rec) = plan.recovery.as_ref() {
-        if !rec.commands.is_empty() {
+        let commands = rec.commands_for(shell);
+        if !commands.is_empty() {
             out.push_str("\ncommands:\n");
-            for c in &rec.commands {
+            for c in commands {
                 out.push_str("  ");
                 out.push_str(c);
                 out.push('\n');
@@ -185,7 +192,11 @@ mod tests {
             equivalent_command: None,
         };
 
-        let text = plan_clipboard_text(&plan, &[deep.clone(), "a.txt".into()]);
+        let text = plan_clipboard_text(
+            &plan,
+            &[deep.clone(), "a.txt".into()],
+            kagi_domain::plan_note::ShellKind::Posix,
+        );
         assert!(text.contains(&deep), "full path missing:\n{text}");
         assert!(
             !text.contains('\u{2026}'),
@@ -206,15 +217,37 @@ mod tests {
                 "row {row} must appear verbatim:\n{text}"
             );
         }
+        assert!(
+            text.contains("\ncommands:\n  git cat-file -p <blob-sha>\n"),
+            "the paste-able block for a POSIX shell:\n{text}"
+        );
+
+        // #1007: cmd.exe would run the POSIX-quoted operands with `&` and
+        // single quotes live, so the paste-able block is left out; the
+        // explanation stays.
+        let windows = plan_clipboard_text(
+            &plan,
+            &[deep.clone()],
+            kagi_domain::plan_note::ShellKind::WindowsCmd,
+        );
+        assert!(
+            !windows.contains("commands:"),
+            "no paste-able block for cmd.exe:\n{windows}"
+        );
+        assert!(
+            windows.contains("git cat-file -p <blob-sha>"),
+            "the explanation keeps its text:\n{windows}"
+        );
+
         plan.equivalent_command = Some("git checkout -- main".into());
-        let text = plan_clipboard_text(&plan, &[]);
+        let text = plan_clipboard_text(&plan, &[], kagi_domain::plan_note::ShellKind::Posix);
         assert!(
             text.contains("\nequivalent command:\ngit checkout -- main\n"),
             "Copy all must preserve a distinct equivalent command verbatim: {text}"
         );
 
         plan.equivalent_command = Some("git cat-file -p <blob-sha>".into());
-        let text = plan_clipboard_text(&plan, &[]);
+        let text = plan_clipboard_text(&plan, &[], kagi_domain::plan_note::ShellKind::Posix);
         assert!(
             !text.contains("\nequivalent command:\n"),
             "a recovery command must not acquire a duplicate equivalent block: {text}"

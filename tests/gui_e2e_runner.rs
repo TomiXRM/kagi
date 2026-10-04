@@ -1865,6 +1865,10 @@ mod macos {
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_card),
             ),
             (
+                "oplog_restore_guarded_rows",
+                Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_guarded_rows),
+            ),
+            (
                 "oplog_restore_tag_preview",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_tag_preview),
             ),

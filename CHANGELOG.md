@@ -19,6 +19,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - Operation Log の ref 復元プレビューで「Copy all」を使うとき、branch から外れる commit の印を現在の表示言語（英語・日本語）で出すようにしました。(#988)
 
+- Operation Log の ref 復元計画に blocker がある場合は、実行できない `git update-ref --stdin` をカードと「Copy all」から除きます。長い ref 名は名前欄で省略し、全文は tooltip・読み上げ・コピーに残したまま、移動前後の OID をカード内に表示します。(#988)
+
 ## [0.42.0] - 2026-10-04
 
 ### Added

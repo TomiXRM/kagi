@@ -15,7 +15,9 @@ use gpui::{div, prelude::*, rgb, Context, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::Sizable as _;
 use kagi_domain::head::Head;
-use kagi_domain::plan_note::{OplogRestoreNote, OplogRestoreTitle, PlanNote, PlanTitle};
+use kagi_domain::plan_note::{
+    OplogRestoreNote, OplogRestoreTitle, PlanDisposition, PlanNote, PlanTitle,
+};
 use kagi_domain::ref_restore::RefRestore;
 use kagi_ui_core::i18n::{self, oplog_panel::OplogPanelMsg, plan_note_text, Msg};
 use std::collections::HashMap;
@@ -86,6 +88,31 @@ fn ref_row(row: &RefRestore, head: Option<&str>, index: usize) -> gpui::AnyEleme
             }
         )
     };
+    let tooltip: SharedString = row.refname.clone().into();
+    let (bg, border, foreground) = theme::badge_style(color);
+    let name_id: SharedString = format!("restore-ref-name-{index}").into();
+    let name_chip =
+        crate::ui::dialog_a11y::apply_note(name_id.clone(), div().id(name_id), false, &row.refname)
+            .relative()
+            .max_w(gpui::relative(0.45))
+            .min_w(gpui::px(0.))
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .px_1()
+            .rounded_sm()
+            .border_1()
+            .border_color(gpui::rgba(border))
+            .bg(gpui::rgba(bg))
+            .text_color(rgb(foreground))
+            .text_xs()
+            .tooltip(move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+            })
+            .child(SharedString::from(ref_label))
+            .child(crate::ui::e2e::measure_inside(format!(
+                "restore-ref-name-{index}"
+            )));
     div()
         .id(SharedString::from(format!("restore-ref-{index}")))
         .relative()
@@ -95,23 +122,35 @@ fn ref_row(row: &RefRestore, head: Option<&str>, index: usize) -> gpui::AnyEleme
         .gap_2()
         .px_2()
         .h(theme::scaled_px(31.))
-        .child(chip(ref_label, color))
+        .child(name_chip)
         .child(div().flex_1())
         .child(
             div()
+                .id(format!("restore-ref-expected-{index}"))
+                .relative()
+                .flex_shrink_0()
                 .text_xs()
                 .text_color(rgb(theme().text_main))
                 .child(SharedString::from(
                     ref_short(row.expect.as_deref()).to_string(),
-                )),
+                ))
+                .child(crate::ui::e2e::measure_inside(format!(
+                    "restore-ref-expected-{index}"
+                ))),
         )
         .child(div().text_color(rgb(color)).child("→"))
         .when_some(row.restore_to.as_deref(), |el, to| {
             el.child(
                 div()
+                    .id(format!("restore-ref-destination-{index}"))
+                    .relative()
+                    .flex_shrink_0()
                     .text_xs()
                     .text_color(rgb(theme().text_main))
-                    .child(SharedString::from(ref_short(Some(to)).to_string())),
+                    .child(SharedString::from(ref_short(Some(to)).to_string()))
+                    .child(crate::ui::e2e::measure_inside(format!(
+                        "restore-ref-destination-{index}"
+                    ))),
             )
         })
         .when(row.restore_to.is_none(), |el| {
@@ -192,6 +231,12 @@ fn checked_out_warning_row(index: usize, reason: &str, path: &str) -> gpui::AnyE
         .into_any_element()
 }
 
+fn ready(modal: &OplogRestoreModal) -> bool {
+    modal.plan.disposition == PlanDisposition::Ready
+        && modal.plan.blockers.is_empty()
+        && !modal.restores.is_empty()
+}
+
 fn copy_text(modal: &OplogRestoreModal) -> String {
     let kind = title_chip(&modal.plan.title);
     let mut out = format!(
@@ -244,7 +289,12 @@ fn copy_text(modal: &OplogRestoreModal) -> String {
         out.push_str(&super::oplog_restore_preview::clipboard_text(preview));
         out.push('\n');
     }
-    if let Some(command) = &modal.plan.equivalent_command {
+    if let Some(command) = modal
+        .plan
+        .equivalent_command
+        .as_ref()
+        .filter(|_| ready(modal))
+    {
         out.push_str(command);
     }
     out
@@ -268,7 +318,7 @@ pub(crate) fn render(
 ) -> gpui::AnyElement {
     let op_chip = title_chip(&modal.plan.title);
     let label = modal.confirm_label();
-    let blocked = !modal.plan.blockers.is_empty() || modal.restores.is_empty();
+    let blocked = !ready(&modal);
     let title = modal.i18n_op().t();
     let cancel_listener = cx.listener(|app, _: &(), window, cx| {
         app.cancel_oplog_restore_modal();
@@ -470,7 +520,12 @@ pub(crate) fn render(
                 .child(super::oplog_restore_preview::render(preview)),
         );
     }
-    if let Some(cmd) = modal.plan.equivalent_command.as_deref() {
+    if let Some(cmd) = modal
+        .plan
+        .equivalent_command
+        .as_deref()
+        .filter(|_| !blocked)
+    {
         body = body.child(div().min_h(gpui::px(0.)).overflow_hidden().child(
             crate::ui::modal_command::render_equivalent_command(
                 cmd,

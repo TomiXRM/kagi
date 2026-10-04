@@ -662,6 +662,18 @@ The current suite covers:
   outside the graph; Copy all includes the ref transaction and preview.
   At the first confirmation no ref moves; at the second the existing
   `run_recorded` pipeline performs the write.
+- Restore card safety and long refs (`KAGI_GUI_E2E_ONLY=oplog_restore_guarded_rows`,
+  `tests/recovery/oplog_panel.rs`): #993 review. Reverting a recorded
+  `create-branch` whose branch is now checked out yields a real
+  `DeletesCheckedOutBranch` blocker while the backend still carries an
+  equivalent `git update-ref --stdin` command. The card hides the command
+  disclosure and dedicated Copy button; Copy all retains the ref details but
+  omits the executable command. Enter records a Refused receipt without
+  changing the repository. A second fixture moves a >200-character branch
+  through a recorded commit; restoring to its creation leaves both expected
+  and destination OID bounds inside the row/card, bounds the name chip, and
+  exposes its complete canonical ref in AX and Copy all. Inspection/copy
+  leaves repository fingerprint and oplog unchanged.
 - Operation Log local-tag restore (`KAGI_GUI_E2E_ONLY=oplog_restore_tag_preview`,
   `tests/recovery/oplog_panel.rs`): #887. A recorded branch point followed by
   a recorded local tag opens Restore to this point. The card lists the tag

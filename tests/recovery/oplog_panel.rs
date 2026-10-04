@@ -700,6 +700,162 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS oplog_restore_card: unrecorded row disabled; card lists reverse actions, what stays and the graph after (main's target row, 1 commit off every branch = git's count); two confirms restore; the revert card says its preview is unavailable; the restore is reverted from its own row");
 }
 
+fn check_blocked_restore(cx: &mut VisualTestAppContext) {
+    use kagi_domain::plan_note::{OplogRestoreNote, PlanNote};
+
+    let blocked_fixture = build_fixture();
+    let blocked_repo = blocked_fixture.path().canonicalize().unwrap();
+    let head = CommitId(git_output(&blocked_repo, &["rev-parse", "HEAD"]));
+    let mut backend = Backend::open(&blocked_repo).unwrap();
+    run(
+        &mut backend,
+        Actor::Human,
+        Operation::CreateBranch {
+            name: "checked-out".into(),
+            at: head,
+        },
+    );
+    let create_id = read_oplog_tail(1).pop().unwrap().id;
+    git(&blocked_repo, &["checkout", "-q", "checked-out"]);
+    let before = (repo_fingerprint(&blocked_repo), read_oplog_tail(500).len());
+    let (app, window) = mount(cx, &blocked_repo);
+    app.update(cx, |app, cx| {
+        app.open_oplog_restore_modal(
+            Operation::OpRevert {
+                entry_id: create_id,
+            },
+            cx,
+        )
+    });
+    let blocked = restore_card(cx, &app);
+    assert!(!blocked.restores.is_empty());
+    assert!(blocked.plan.blockers.iter().any(|note| matches!(
+        note,
+        PlanNote::OplogRestore(OplogRestoreNote::DeletesCheckedOutBranch { branch, .. })
+            if branch == "checked-out"
+    )));
+    assert!(
+        blocked.plan.equivalent_command.is_some(),
+        "backend carries a command even for blocked plans"
+    );
+    paint(cx, window);
+    assert!(!painted(window, "plan-confirm"));
+    assert!(!painted(window, "plan-equivalent-command"));
+    assert!(!painted(window, "plan-equivalent-command-copy"));
+    click_probe(cx, window, "plan-card-copy");
+    let copied = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap();
+    assert!(copied.contains("refs/heads/checked-out"), "{copied}");
+    assert!(!copied.contains("git update-ref --stdin"), "{copied}");
+    press_key(cx, &app, window, "enter");
+    assert_eq!(
+        repo_fingerprint(&blocked_repo),
+        before.0,
+        "blocked Enter does not move refs"
+    );
+    assert_eq!(read_oplog_tail(500).len(), before.1 + 1);
+    assert!(
+        matches!(
+            read_oplog_tail(1).pop().unwrap().outcome,
+            OpOutcome::Refused { .. }
+        ),
+        "blocked Enter records a refusal rather than executing the restore"
+    );
+    unmount(cx, app, window);
+}
+
+fn check_long_ref(cx: &mut VisualTestAppContext) {
+    let long_fixture = build_fixture();
+    let long_repo = long_fixture.path().canonicalize().unwrap();
+    let long_name = format!("feature/{}", "very-long-ref-name-".repeat(12));
+    let old_tip = CommitId(git_output(&long_repo, &["rev-parse", "HEAD"]));
+    let mut backend = Backend::open(&long_repo).unwrap();
+    run(
+        &mut backend,
+        Actor::Human,
+        Operation::CreateBranch {
+            name: long_name.clone(),
+            at: old_tip.clone(),
+        },
+    );
+    let point_id = read_oplog_tail(1).pop().unwrap().id;
+    git(&long_repo, &["checkout", "-q", &long_name]);
+    std::fs::write(long_repo.join("README.md"), "# fixture\nlong ref\n").unwrap();
+    git(&long_repo, &["add", "README.md"]);
+    run(
+        &mut backend,
+        Actor::Human,
+        Operation::Commit {
+            message: "move the long ref".into(),
+        },
+    );
+    git(&long_repo, &["checkout", "-q", "main"]);
+    let before = (repo_fingerprint(&long_repo), read_oplog_tail(500).len());
+    let (app, window) = mount(cx, &long_repo);
+    app.update(cx, |app, cx| {
+        app.open_oplog_restore_modal(Operation::RestoreToPoint { entry_id: point_id }, cx)
+    });
+    let card = restore_card(cx, &app);
+    assert!(card.plan.blockers.is_empty(), "{:?}", card.plan.blockers);
+    let (index, row) = card
+        .restores
+        .iter()
+        .enumerate()
+        .find(|(_, row)| row.refname == format!("refs/heads/{long_name}"))
+        .expect("long branch moves back to its initial commit");
+    assert!(row.expect.is_some() && row.restore_to.is_some());
+    assert_eq!(row.restore_to.as_deref(), Some(old_tip.0.as_str()));
+    paint(cx, window);
+    let id = window.window_id();
+    let card_bounds = e2e::control_bounds(id, "modal-card").expect("restore card");
+    let row_bounds =
+        e2e::control_bounds(id, &format!("restore-ref-{index}")).expect("long ref row");
+    let name_bounds =
+        e2e::control_bounds(id, &format!("restore-ref-name-{index}")).expect("bounded ref name");
+    assert!(name_bounds.size.width <= row_bounds.size.width * 0.45 + px(1.));
+    for side in ["expected", "destination"] {
+        let oid = e2e::control_bounds(id, &format!("restore-ref-{side}-{index}"))
+            .unwrap_or_else(|| panic!("{side} OID not painted"));
+        assert!(oid.size.width > px(0.), "{side} OID must be visible");
+        assert!(
+            oid.left() >= row_bounds.left() && oid.right() <= row_bounds.right() + px(1.),
+            "{side} OID outside row: {oid:?} vs {row_bounds:?}"
+        );
+        assert!(
+            oid.right() <= card_bounds.right(),
+            "{side} OID outside card"
+        );
+    }
+    let note = kagi::ui::dialog_a11y::recorded_note(&format!("restore-ref-name-{index}"))
+        .expect("full ref name in accessibility tree");
+    assert_eq!(note.1, format!("refs/heads/{long_name}"));
+    click_probe(cx, window, "plan-card-copy");
+    let copied = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap();
+    assert!(
+        copied.contains(&format!("refs/heads/{long_name}")),
+        "{copied}"
+    );
+    assert_eq!(
+        (repo_fingerprint(&long_repo), read_oplog_tail(500).len()),
+        before,
+        "inspecting and copying a long ref must not mutate the repo"
+    );
+    unmount(cx, app, window);
+}
+
+/// #993 review: a blocked restore must not offer an unguarded CLI escape
+/// hatch, and a long ref must leave both compare OIDs on the card.
+pub fn scenario_oplog_restore_guarded_rows(cx: &mut VisualTestAppContext) {
+    check_blocked_restore(cx);
+    check_long_ref(cx);
+    eprintln!("[gui-e2e] PASS oplog_restore_guarded_rows: blocked command hidden from card and Copy all; long ref keeps both OIDs inside card and full AX name; neither path mutates");
+}
+
 /// #887: a tag ref is restorable even though its raw OID is not necessarily
 /// a commit. The card must avoid predicting disappearing graph rows.
 pub fn scenario_oplog_restore_tag_preview(cx: &mut VisualTestAppContext) {

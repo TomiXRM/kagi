@@ -228,8 +228,12 @@ accessible button (Enter/Space) with its own Copy button; Copy all includes
 its full text.
 
 Operation Log restore has its own REFS-first card, not a second generic plan
-summary. Show each planned ref's expected and destination OIDs, including
-red-tinted deletions, then unchanged worktree/index/untracked/stash/remotes and
+summary. The equivalent command (including Copy all) is available only when
+the plan is Ready; blockers must not provide an executable bypass. Show each
+planned ref's expected and destination OIDs, including red-tinted deletions.
+Long ref-name chips cap at 45% of their row with ellipsis; their tooltip and
+accessibility name retain the complete canonical ref, while the OIDs remain
+visible. Then show unchanged worktree/index/untracked/stash/remotes and
 warnings. The first three ref targets stay visible at compact window sizes;
 the refs list scrolls independently when longer. Draw the AFTER graph from the
 loaded tab's existing commit rails: moved branch badges go to their

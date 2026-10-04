@@ -8,8 +8,8 @@
 
 ## Context
 
-ADR-0086 の busy snackbar は write / plan の latch(`write_busy_op` / `remote_write` / `planning`)だけで
-駆動され、ラベル 1 行しか持たない。大きいリポジトリで時間のかかる **read** — ahead/behind の計算、
+ADR-0086 の busy snackbar は write lease の表示 mirror (`write_busy_op`) と plan の
+`planning` によって駆動され、ラベル 1 行しか持たない。大きいリポジトリで時間のかかる **read** — ahead/behind の計算、
 worktree の状態読み込み、worktree 容量の計測、Analyze の hotspot 走査、大きい diff の読み込み — は
 何も表示されず、無言で待たされる。git 自身は `advice.statusAheadBehind` などで **2 秒**を超えたら
 「時間がかかっています」と理由を出す。

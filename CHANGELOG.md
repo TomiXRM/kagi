@@ -13,6 +13,12 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- SSH 経由の remote pull を write lease に載せ、実行中は終了操作とほかの書き込みを保留するようにしました。計画時と実行前に remote の staged index・作業ツリー状態を照合し、変化や再読込失敗があれば pull せず Refused を記録します。結果が Unknown・Partial の場合は reconcile 通知から明示的な確認と監査記録を経て lease を解放します。ssh-agent だけの接続でも計画・実行できます。(#989、#997)
+- SSH remote pull はホスト側の `pull.rebase`・`branch.*.rebase`・`pull.ff=only`・`branch.*.mergeOptions` によらず確認どおり merge (可能なら fast-forward) します。`merge.autoStash` と `submodule.recurse` による予告外の stash・submodule 更新も明示的に無効化します。(#997)
+- SSH の remote pull で選択したパスが symlink の場合、確認中に別の linked worktree へ付け替えられても誤った worktree に pull しないよう、計画時の物理パスを保持し、実行前に照合してからそのパスで実行するようにしました。異なる場合は実行せず Refused を記録します。(#997)
+- SSH の remote pull で確認中に対象 worktree の branch・HEAD commit・upstream が変わっても別の変更を pull しないよう、計画時の状態を実行前に照合し、異なる場合は実行せず Refused を記録します。(#997)
+- SSH remote pull は確認を開く前にキャッシュ済みの branch・upstream・HEAD commit・作業ツリーの変更状態とホストの現在の値を照合し、ずれている場合は確認 modal を出さず更新を促します。読取 probe は任意の index lock を取りません。(#997)
+- SSH remote pull の計画時に有効な remote URL、fetch refspec、branch の remote / merge 設定を保持し、確認後に設定が変わる・再読込できない場合は pull せず Refused を記録するようにしました。(#997)
 - snapshot の作成と conflict の continue / skip(stash の continue、merge の continue、sequencer の continue 確認を含む)が UI thread を止めていたのを直し、background で実行するようにしました。実行中も画面は描画され、2 秒を超えると busy snackbar に経過秒数が出ます。異常終了しても Operation Log に不明な結果を記録し、reconcile の確認後に次の書き込みを許可します。完了前に別のタブへ移っても記録は元の repository に残り、toast や再読み込みは元のタブにだけ出ます。stage / unstage / hunk の後の WIP の +/− 集計も background で行い、連続して stage しても最後の状態だけを表示します。restore-snapshot の遅延理由は stash ではなく worktree の書き込みとして表示します。stage / unstage / hunk 自体は write queue の導入まで同期のままです。確認 modal が途中で閉じても、現在のタブで完了した sequencer continue の表示は再読み込みされます。別のタブへ移った後の snapshot や conflict の失敗は通知に残り、WIP 集計は watcher の新しい結果を古い scan で上書きしません。(#996、#355 R4)
 - worktree の容量を計測している間、busy snackbar に「worktree の容量を計測中…」と Skip が出ていたのをやめました。計測は background で続き、行の「計測中」表示と結果はこれまでどおりです。(#1012)
 - Windows では、確認カードの Copy all の `commands:` ブロックと、入力カードの折りたたみ行に復旧コマンドを出さないようにしました。コマンドの引数は POSIX shell 向けに quote されていますが、Windows の既定 shell(`cmd.exe`)では single quote が効かず `&` なども区切りとして働くため、貼り付けると意図しないコマンドが動き得ました。説明文はそのまま表示します。(#1007)
@@ -105,7 +111,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Web(Playwright)の harness は、`crates/kagi-web/dist` が無いと設定の読み込み時に止まり、足りないファイルと実行すべき `scripts/build-web.sh` を示すようにしました。これまでは 60 秒後に webServer のタイムアウトとして失敗し、実行時のハングと区別がつきませんでした。(#516)
 - GUI E2E runner に `KAGI_GUI_E2E_KEEP_GOING=1` を追加しました。選んだ scenario を 1 つずつ別の runner process で実行するので、1 つが失敗(panic・crash・既定 600 秒の timeout)しても残りを実行し、最後に scenario ごとの PASS / FAIL と失敗の証跡の場所を一覧にします。1 つでも失敗すれば終了コードは 1 です。既定は従来どおり最初の失敗で止まります。(#516)
 - 検証手順(`.claude/skills/verify/SKILL.md`)の Tier A に、GUI E2E の各 scenario で文字が本物の `InputState` にどう入るか(キー入力・貼り付け・`set_value`)と、`InputState` を使わない代わりの経路(commit panel の `commit_msg` fallback、Remote Browse の host 入力、`queue_*` の読み込み差し替え)の表を追加しました。GPUI の終了時の leak 検出を無効にしている scenario が無いことも確認して記録しました。製品の動作は変更していません。(#516)
-- GUI E2E runner で、bare の `origin` に `main` を push して clone する scenario(`remote_pull_latch` など)が `src refspec main does not match any` で落ちていたのを直しました。新しい repository の既定 branch(`init.defaultBranch = main`)は、これまで Apple Git の vendor 設定から来ていて、#963 で system 設定を読まなくしたときに一緒に消えていました。run の `.gitconfig` と、fixture の `git` が読む command-scope の設定に、この 1 つだけを戻しています。製品の動作は変更していません。(#516)
+- GUI E2E runner で、bare の `origin` に `main` を push して clone する scenario(`remote_pull_lease` など)が `src refspec main does not match any` で落ちていたのを直しました。新しい repository の既定 branch(`init.defaultBranch = main`)は、これまで Apple Git の vendor 設定から来ていて、#963 で system 設定を読まなくしたときに一緒に消えていました。run の `.gitconfig` と、fixture の `git` が読む command-scope の設定に、この 1 つだけを戻しています。製品の動作は変更していません。(#516)
 
 ## [0.41.0] - 2026-10-02
 

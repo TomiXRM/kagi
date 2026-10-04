@@ -182,7 +182,8 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
         preview_commits: Vec::new(),
         destructive: false,
         // #353: faithful equivalent — `git checkout <branch>`.
-        equivalent_command: Some(format!("git checkout {}", branch)),
+        equivalent_command: (!cfg!(windows))
+            .then(|| format!("git checkout {}", shell_quote(branch))),
     })
 }
 

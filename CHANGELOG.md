@@ -13,6 +13,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 - 2 秒を超えた操作と読み込みの説明を、理由(書き込みは経過秒数も)だけにしました。前置きの「時間がかかっています:」と、読み込みの「大きいリポジトリでは〜に時間がかかります」の説明文は表示しません。(#355)
 - commit / branch / remote branch / tag / stash / worktree の右クリックメニューをキーボードで操作できるようにしました。開くと最初の有効な項目に focus が移り、↑/↓(端で折り返し)と Home/End で無効な項目を飛ばして移動し、Enter / Space で実行、Escape で閉じます。閉じると focus は開く前の場所へ戻ります(項目が確認 modal を開いた場合は window へ)。Shift+F10(Windows キーボードの Menu キー)で、Graph では選択中の commit のメニューを、サイドバーでは focus のある行(branch / remote branch / tag / stash / worktree)のメニューを、その行の左下に開きます。ウィンドウより長いメニューは項目の部分がスクロールし、キーで移った項目は常に見える位置まで送られます。Home やほかのタブへ移るとメニューは閉じます。項目は `Role::MenuItem`、無効な項目は AX の disabled 状態を持ちます。(#985)
 
+### Changed
+
+- 計画確認カードの CURRENT → PREDICTED を同じ幅の 2 列と中央の矢印に整理し、状態チップは行内でスクロールできるようにしました。相当する Git コマンドがある計画は折りたたんでコピーでき、見出しは Tab / Enter / Space と読み上げにも対応します（Pull は実行時に再 fetch して merge commit を作る場合があるため、等価コマンドを提示しません）。Operation Log の ref 復元は REFS の移動と削除、変えない対象、既存の線を保った復元後のグラフを先に示し、確認を 2 回必要とする安全境界は維持します。低い窓でも対象 ref の先頭 3 行を優先し、復元後のグラフは 6 行を上限に内容分だけの高さにし、拡大時の横方向の線も見切れないようにします。削除する ref は赤いチップで示します。不正な ref 行の計画は開かず、詳細を Operation Log に記録して短いエラーを表示します。(#988)
+
 ### Fixed
 
 - 入力欄を持つ確認 modal を Escape で閉じた後、表示されていない入力欄の focus が残っても操作キューが待機し続けないようにしました。(#355)
@@ -29,6 +33,14 @@ All notable changes to Kagi are documented here. Format loosely follows
 - background の fetch・remote branch fetch・PR ref fetch・Editor 保存が異常終了したとき、write lease と実行中の表示が理由なく残り、以後の書き込みを拒否し続ける問題を修正しました。不明な結果を Operation Log に記録し、reconcile の確認後に次の書き込みを許可します。Editor の保存中にペインを閉じても、不明な結果を実行中の Operation Log に反映し、短いエラー toast を 1 回だけ表示します。fetch の完了が元のタブへ戻った後の新しい滞在に表示される問題と、Busy の拒否で確認済み計画が失効する問題も修正しました。(#355 段階 0)
 - Info パネル(About / Keyboard Shortcuts)や branch picker が前面にある間、サイドバーの行で Shift+F10 を押しても何も起きないようにしました。これまではメニューは次の描画で閉じるものの、その前に Graph の選択とスクロールがパネルの背後で branch の commit へ移っていました。また、メニューの項目に focus がある状態で ⌘W で最後のタブを閉じると、メニューの状態と消えた項目への focus が残り Welcome でキーが効かなかったのを直し、メニューを閉じて focus を window へ移すようにしました。(#1000)
 - UI ガイドの Known gaps を現状に合わせて更新しました。Settings の通常の focus trap と前面判定、Home / Graph の行キー操作は対応済みとし、未解決の 100 Tab stop 超の制限、Linux / FreeBSD の platform menu と overlay の組み合わせ、UI thread の同期書き込みと WIP diffstat を明記しました。(#974、#976、#980、#986、#981、#987、#990、#996)
+
+- Reset Current などの共通確認カードで、blocker がある計画や実行しない計画に相当 Git コマンドが付いていても、折りたたみ行・専用コピー・「Copy all」に表示しないようにしました。Operation Log の復元カードと同じ条件を使います。(#993 review)
+- Operation Log の ref 復元計画で不正な ref 行やリポジトリセッションの欠落を検出したとき、footer と toast の短いエラーを表示言語（英語・日本語）に合わせました。完全な decode エラーは引き続き Operation Log に残します。(#993 review)
+- 計画確認カードの相当 Git コマンドで、branch・remote・refspec・target OID など動的な引数を POSIX shell 向けに quote します。名前に `$(` や single quote が含まれても、表示・コピーしたコマンドで shell の置換を実行しません。POSIX quote が使えない Windows ではコマンドを隠し、Push は remote 名の前に `--` を付けて option としての解釈を防ぎ、「Copy all」の見出しも EN/JA に合わせます。(#993 review)
+
+- Operation Log の ref 復元プレビューで「Copy all」を使うとき、branch から外れる commit の印を現在の表示言語（英語・日本語）で出すようにしました。(#988)
+
+- Operation Log の ref 復元計画に blocker がある場合は、実行できない `git update-ref --stdin` をカードと「Copy all」から除きます。長い ref 名は名前欄で省略し、全文は tooltip・読み上げ・コピーに残したまま、移動前後の OID をカード内に表示します。(#988)
 
 ### Internal
 

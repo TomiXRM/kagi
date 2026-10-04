@@ -727,8 +727,8 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
         preview_commits: Vec::new(),
         destructive: false,
         // The unmerged route additionally requires mandatory recovery retention.
-        equivalent_command: if is_merged {
-            Some(format!("git branch -d {}", name))
+        equivalent_command: if is_merged && !cfg!(windows) {
+            Some(format!("git branch -d {}", shell_quote(name)))
         } else {
             None
         },

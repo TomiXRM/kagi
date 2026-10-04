@@ -662,6 +662,32 @@ The current suite covers:
   no longer loaded, so it paints `restore-preview-unavailable`. Domain rules:
   `kagi-domain` `restore_preview`. Tier B: read the graph after on the card
   (EN/JA) before confirming.
+  #988 extends the existing scenario: a ref-only blocked plan has no
+  Confirm button or accessibility Confirm action; REFS rows and the
+  CURRENT-to-AFTER graph stay visible without re-laying the original rails.
+  The checked-out branch's warning and six unchanged-state chips remain
+  outside the graph; Copy all includes the ref transaction and preview.
+  At the first confirmation no ref moves; at the second the existing
+  `run_recorded` pipeline performs the write.
+- Blocked plan command (`KAGI_GUI_E2E_ONLY=blocked_plan_command`,
+  `tests/recovery/operations.rs`): #993 P2. A real detached-HEAD Reset Current
+  plan has a blocker and still carries `git reset --soft` in the backend.
+  The shared confirmation renders neither the collapsed command nor its Copy
+  button; Copy all keeps blocker details but not the command, and inspecting it
+  leaves the repository unchanged. The shared visibility predicate also gates
+  Operation Log restore; `oplog_restore_guarded_rows` covers that card.
+- Restore card safety and long refs (`KAGI_GUI_E2E_ONLY=oplog_restore_guarded_rows`,
+  `tests/recovery/oplog_panel.rs`): #993 review. Reverting a recorded
+  `create-branch` whose branch is now checked out yields a real
+  `DeletesCheckedOutBranch` blocker while the backend still carries an
+  equivalent `git update-ref --stdin` command. The card hides the command
+  disclosure and dedicated Copy button; Copy all retains the ref details but
+  omits the executable command. Enter records a Refused receipt without
+  changing the repository. A second fixture moves a >200-character branch
+  through a recorded commit; restoring to its creation leaves both expected
+  and destination OID bounds inside the row/card, bounds the name chip, and
+  exposes its complete canonical ref in AX and Copy all. Inspection/copy
+  leaves repository fingerprint and oplog unchanged.
 - Operation Log local-tag restore (`KAGI_GUI_E2E_ONLY=oplog_restore_tag_preview`,
   `tests/recovery/oplog_panel.rs`): #887. A recorded branch point followed by
   a recorded local tag opens Restore to this point. The card lists the tag
@@ -672,6 +698,16 @@ The current suite covers:
   `crates/kagi-git/tests/oplog_restore_test.rs`. Tier B: create a local tag
   after an earlier recorded operation, inspect the card and its neutral
   preview, then confirm and check that only the local tag disappeared.
+  #988 adds a malformed canonical plan-row admission leg to the same
+  scenario: no card opens or ref moves, the full error persists in a Failed
+  receipt, and the footer/toast carry only a bounded EN/JA preview.
+  #993 review also checks the EN/JA missing-session footer and the no-repository
+  toast, without appending another receipt or moving any ref.
+  `oplog_restore_preview_review` uses a long recorded branch history with
+  Solo enabled and a fetched PR head as a fixed root. The ghost count omits
+  commits that PR ref retains; the six-row AFTER window scrolls to the last
+  loaded row, and Copy all contains its projection. Scope it explicitly with
+  `KAGI_GUI_E2E_ONLY=oplog_restore_preview_review`.
 - Operation Log restore across a resolved merge
   (`KAGI_GUI_E2E_ONLY=oplog_restore_across_merge`, `tests/recovery/oplog_panel.rs`):
   #884 / ADR-0214 §4. `create-branch mark` → `merge-into-conflict side` → the

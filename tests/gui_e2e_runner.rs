@@ -913,6 +913,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_modal_no_fallthrough),
             ),
             (
+                "blocked_plan_command",
+                Box::new(crate::recovery_operations::scenario_blocked_plan_command),
+            ),
+            (
                 "commit_list_roles",
                 Box::new(crate::recovery_operations::scenario_commit_list_roles),
             ),
@@ -2102,6 +2106,10 @@ mod macos {
             (
                 "oplog_restore_card",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_card),
+            ),
+            (
+                "oplog_restore_guarded_rows",
+                Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_guarded_rows),
             ),
             (
                 "oplog_restore_tag_preview",

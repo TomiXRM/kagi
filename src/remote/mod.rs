@@ -1,24 +1,21 @@
-//! Remote-over-SSH I/O (ADR-0089) — the read-only foundational slice.
+//! Remote-over-SSH I/O (ADR-0089) — reads and guarded remote writes.
 //!
 //! The **only** layer that spawns the system `ssh` binary. The pure model
 //! (connection parsing, argv construction, output parsing) lives in
 //! [`kagi_domain::remote`]; callers use *this* module, never `std::process`
-//! directly. This mirrors how `src/git/cli.rs` (network git) pairs the system
-//! `git` binary with pure parsing — same shell-bypass, same whole-command
-//! timeout, same non-interactive hardening (ADR-0009).
+//! directly. This mirrors how `crates/kagi-git/src/cli.rs` pairs the system
+//! `git` binary with pure parsing — shell-bypass, bounded command execution,
+//! and non-interactive hardening (ADR-0009).
 //!
-//! How VS Code's Remote-SSH does it: it bootstraps over the system `ssh`
-//! binary, then *pushes a `vscode-server`* to the host and talks to it over a
-//! multiplexed channel. Kagi's MVP is **agentless** — it deploys nothing and
-//! instead runs short, read-only commands (`true`, `pwd`, `ls`, `git
-//! rev-parse`, `git log`) over `ssh` and parses their output. A resident helper
-//! (the VS Code-server analogue) is a deliberate later step (ADR-0089
-//! "Future"), not part of this slice.
+//! Kagi is agentless: it installs no resident remote helper. Reads use short
+//! commands (`true`, `pwd`, `ls`, `git rev-parse`, `git log`); approved writes
+//! use a single guarded shell invocation. A resident helper is a deliberately
+//! separate decision (ADR-0089 "Future").
 //!
-//! Everything here is **read-only**: it inspects the remote host (reachability,
-//! directory listing, repository detection, HEAD summary). No write/operation
-//! path exists yet — that goes through the `OperationController` pipeline in a
-//! later phase, never directly from here.
+//! Remote reads run short commands over `ssh`; the approved pull verifies its
+//! frozen repository, worktree, HEAD, configuration and status inside one remote
+//! shell before `exec git pull` (#1014). The transport records the outcome
+//! before the UI receives its tab-owned completion (ADR-0177).
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -48,17 +45,10 @@ pub struct PullRepoIdentity {
     pub remote_dirty: bool,
 }
 
-/// Resolve a pull's lease identity, physical worktree toplevel, and checkout
-/// state with the same SSH options as execution. Unlike remote stash this does
-/// not freeze or disable ssh-agent.
-pub fn resolve_pull_identity(
-    host: &RemoteHost,
-    root: &str,
-) -> Result<PullRepoIdentity, RemoteError> {
+/// Inspect the effective local SSH route without opening a remote session.
+/// Planning and execution must compare the same route before any remote write.
+fn pull_connection(host: &RemoteHost) -> Result<remote::RemoteConnectionId, RemoteError> {
     use sha2::{Digest, Sha256};
-    if root.contains(['\n', '\0']) {
-        return Err(RemoteError::Spawn("invalid remote repository root".into()));
-    }
     let mut args = vec!["-G".to_string()];
     args.extend(host.connection_opts());
     args.extend(["--".into(), host.target()]);
@@ -101,7 +91,7 @@ pub fn resolve_pull_identity(
             })
             .collect()
     };
-    let connection = remote::RemoteConnectionId {
+    Ok(remote::RemoteConnectionId {
         hostname: config.hostname,
         user: config.user,
         port: config.port,
@@ -117,35 +107,45 @@ pub fn resolve_pull_identity(
         user_known_hosts: known_hosts(&config.user_known_hosts_files)?,
         global_known_hosts: known_hosts(&config.global_known_hosts_files)?,
         host_key_algorithms: config.host_key_algorithms,
-    };
-    let script = r#"set -eu
+    })
+}
+
+/// Shared, read-only host probe for planning and the confirmed pull. The
+/// execution script appends comparisons and `exec git pull` to this same shell.
+const PULL_STATE_SCRIPT: &str = r#"set -eu
+pull_refuse() {
+  printf 'KAGI-PULL-REFUSED: %s\n' "$1" >&2
+  exit 90
+}
 export GIT_OPTIONAL_LOCKS=0
-cd -P -- "$1"
-test "$(git rev-parse --is-inside-work-tree)" = true
-top=$(git rev-parse --show-toplevel)
-cd -P -- "$top"
-top=$(pwd -P)
-oid=$(git rev-parse --verify HEAD)
+cd -P -- "$1" || pull_refuse 'cannot change to approved worktree'
+inside=$(git rev-parse --is-inside-work-tree) || pull_refuse 'cannot inspect worktree'
+[ "$inside" = true ] || pull_refuse 'not a git worktree'
+top=$(git rev-parse --show-toplevel) || pull_refuse 'cannot resolve worktree'
+cd -P -- "$top" || pull_refuse 'cannot resolve physical worktree'
+top=$(pwd -P) || pull_refuse 'cannot read physical worktree'
+oid=$(git rev-parse --verify HEAD) || pull_refuse 'cannot read HEAD'
 if branch=$(git symbolic-ref -q --short HEAD); then
-  upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}')
+  upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}') || pull_refuse 'cannot read upstream'
   kind=branch
 else
   kind=detached
   branch=
   upstream=
 fi
-common=$(git rev-parse --path-format=absolute --git-common-dir)
-common=$(cd -P -- "$common" && pwd -P)
+common=$(git rev-parse --path-format=absolute --git-common-dir) || pull_refuse 'cannot read common dir'
+common=$(cd -P -- "$common" && pwd -P) || pull_refuse 'cannot resolve common dir'
 if [ "$kind" = branch ]; then
-  remote=$(git config --get "branch.$branch.remote")
-  merge=$(git config --get "branch.$branch.merge")
-  url=$(git ls-remote --get-url "$remote")
+  remote=$(git config --get "branch.$branch.remote") || pull_refuse 'cannot read branch remote'
+  merge=$(git config --get "branch.$branch.merge") || pull_refuse 'cannot read branch merge'
+  url=$(git ls-remote --get-url "$remote") || pull_refuse 'cannot read remote URL'
 else
   remote=
   merge=
   url=
-fi
-printf 'KAGI-COMMON-DIR\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' "$common" "$top" "$kind" "$branch" "$oid" "$upstream" "$remote" "$merge" "$url"
+fi"#;
+
+const PULL_PLAN_SCRIPT: &str = r#"printf 'KAGI-COMMON-DIR\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' "$common" "$top" "$kind" "$branch" "$oid" "$upstream" "$remote" "$merge" "$url"
 if [ "$kind" = branch ]; then
   git config --null --get-all "remote.$remote.fetch"
 fi
@@ -154,8 +154,76 @@ git ls-files -s -z
 printf 'KAGI-INDEX-END\0KAGI-WORKTREE-BEGIN\0'
 git status --porcelain=v2 -z --untracked-files=all
 printf 'KAGI-WORKTREE-END\0KAGI-END\n'"#;
-    let output = run_ssh_raw(host, &["sh", "-c", script, "--", root])?;
+
+/// The approved write has one remote shell process. All checks happen before
+/// the marker and `exec`: a stopped preflight is provably Refused; after the
+/// marker, a lost transport remains Unknown under ADR-0177.
+const PULL_EXEC_SCRIPT: &str = r#"[ "$#" -ge 11 ] || pull_refuse 'incomplete approved pull state'
+[ "$kind" = branch ] || pull_refuse 'checkout is detached'
+[ "$common" = "$2" ] || pull_refuse 'repository changed'
+[ "$top" = "$3" ] || pull_refuse 'physical worktree changed'
+[ "$branch" = "$4" ] || pull_refuse 'branch changed'
+[ "$oid" = "$5" ] || pull_refuse 'HEAD changed'
+[ "$upstream" = "$6" ] || pull_refuse 'upstream changed'
+[ "$remote" = "$7" ] || pull_refuse 'branch remote changed'
+[ "$merge" = "$8" ] || pull_refuse 'merge ref changed'
+[ "$url" = "$9" ] || pull_refuse 'remote URL changed'
+shift 9
+expected_index=$1
+expected_worktree=$2
+shift 2
+scratch_dir=$(cd -P -- "${TMPDIR:-/tmp}" && pwd -P) || pull_refuse 'cannot resolve preflight scratch directory'
+[ "$top" != / ] && [ "$common" != / ] || pull_refuse 'no scratch directory outside repository'
+case "$scratch_dir" in
+  "$top"|"$top"/*|"$common"|"$common"/*)
+    pull_refuse 'preflight scratch directory is inside approved repository' ;;
+esac
+tmp=$(mktemp "$scratch_dir/kagi-pull.XXXXXXXX") || pull_refuse 'cannot prepare preflight scratch'
+trap 'rm -f -- "$tmp"' 0
+git config --null --get-all "remote.$remote.fetch" > "$tmp" || pull_refuse 'cannot read fetch refspecs'
+printf '%s\0' "$@" | cmp -s - "$tmp" || pull_refuse 'fetch refspecs changed'
+hash_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    digest=$(sha256sum "$1") || pull_refuse 'cannot hash preflight state'
+    printf '%s' "${digest%% *}"
+  elif command -v shasum >/dev/null 2>&1; then
+    digest=$(shasum -a 256 "$1") || pull_refuse 'cannot hash preflight state'
+    printf '%s' "${digest%% *}"
+  elif command -v openssl >/dev/null 2>&1; then
+    digest=$(openssl dgst -sha256 "$1") || pull_refuse 'cannot hash preflight state'
+    printf '%s' "${digest##* }"
+  else
+    pull_refuse 'SHA-256 utility unavailable'
+  fi
+}
+git ls-files -s -z > "$tmp" || pull_refuse 'cannot read staged index'
+[ "$(hash_file "$tmp")" = "$expected_index" ] || pull_refuse 'staged index changed'
+git status --porcelain=v2 -z --untracked-files=all > "$tmp" || pull_refuse 'cannot read worktree status'
+[ "$(hash_file "$tmp")" = "$expected_worktree" ] || pull_refuse 'worktree status changed'
+rm -f -- "$tmp" || pull_refuse 'cannot remove preflight scratch'
+trap - 0
+unset GIT_OPTIONAL_LOCKS
+printf 'KAGI-PULL-CHECKED\n' >&2
+exec git -c "branch.$branch.mergeOptions=" -C "$top" pull --no-rebase --ff --no-autostash --no-recurse-submodules"#;
+
+/// Resolve a pull's lease identity, physical worktree toplevel, and checkout
+/// state with the same SSH options as execution. Unlike remote stash this does
+/// not freeze or disable ssh-agent.
+pub fn resolve_pull_identity(
+    host: &RemoteHost,
+    root: &str,
+) -> Result<PullRepoIdentity, RemoteError> {
+    use sha2::{Digest, Sha256};
+    if root.contains(['\n', '\0']) {
+        return Err(RemoteError::Spawn("invalid remote repository root".into()));
+    }
+    let connection = pull_connection(host)?;
+    let script = format!("{PULL_STATE_SCRIPT}\n{PULL_PLAN_SCRIPT}");
+    let output = run_ssh_raw(host, &["sh", "-c", &script, "--", root])?;
     if output.code != 0 {
+        if let Some(reason) = pull_refusal_reason(output.code, &output.stderr) {
+            return Err(RemoteError::Refused(reason.into()));
+        }
         return Err(RemoteError::NonZero {
             code: output.code,
             stderr: output.stderr,
@@ -280,7 +348,21 @@ struct SshRawOutput {
 ///   never as an exit code — the local client is gone, the *remote* command is
 ///   not proven stopped.
 fn run_ssh(host: &RemoteHost, remote_tokens: &[&str]) -> Result<SshOutput, RemoteError> {
-    let raw = run_ssh_raw(host, remote_tokens)?;
+    run_ssh_with_timeout(
+        host,
+        remote_tokens,
+        Duration::from_secs(SSH_COMMAND_TIMEOUT_SECS),
+        false,
+    )
+}
+
+fn run_ssh_with_timeout(
+    host: &RemoteHost,
+    remote_tokens: &[&str],
+    timeout: Duration,
+    no_tty: bool,
+) -> Result<SshOutput, RemoteError> {
+    let raw = run_ssh_raw_with_timeout(host, remote_tokens, timeout, no_tty)?;
     Ok(SshOutput {
         code: raw.code,
         stdout: String::from_utf8(raw.stdout)
@@ -290,17 +372,30 @@ fn run_ssh(host: &RemoteHost, remote_tokens: &[&str]) -> Result<SshOutput, Remot
 }
 
 fn run_ssh_raw(host: &RemoteHost, remote_tokens: &[&str]) -> Result<SshRawOutput, RemoteError> {
+    run_ssh_raw_with_timeout(
+        host,
+        remote_tokens,
+        Duration::from_secs(SSH_COMMAND_TIMEOUT_SECS),
+        false,
+    )
+}
+
+fn run_ssh_raw_with_timeout(
+    host: &RemoteHost,
+    remote_tokens: &[&str],
+    timeout: Duration,
+    no_tty: bool,
+) -> Result<SshRawOutput, RemoteError> {
     let args = host.ssh_invocation(remote_tokens);
 
     let mut cmd = Command::new("ssh");
+    if no_tty {
+        cmd.arg("-T");
+    }
     cmd.args(&args).env("LC_ALL", "C");
 
-    let run = kagi_git::run_child(
-        &mut cmd,
-        Duration::from_secs(SSH_COMMAND_TIMEOUT_SECS),
-        None,
-    )
-    .map_err(|e| RemoteError::Spawn(e.to_string()))?;
+    let run = kagi_git::run_child(&mut cmd, timeout, None)
+        .map_err(|e| RemoteError::Spawn(e.to_string()))?;
 
     let code = match &run.status {
         Ok(code) => *code,
@@ -731,33 +826,101 @@ const REFUSAL_MARKERS: [&str; 8] = [
     "couldn't find remote ref",
 ];
 
+fn fingerprint_hex(bytes: &[u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut text = String::with_capacity(64);
+    for byte in bytes {
+        text.push(HEX[(byte >> 4) as usize] as char);
+        text.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    text
+}
+
+/// Only the host script's exit-90 marker proves an early refusal; other SSH
+/// errors retain their code and stderr for the caller to classify.
+fn pull_refusal_reason(code: i32, stderr: &str) -> Option<&str> {
+    if code != 90 {
+        return None;
+    }
+    stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("KAGI-PULL-REFUSED: "))
+}
+
+fn run_approved_pull(
+    host: &RemoteHost,
+    root: &str,
+    frozen: &PullRepoIdentity,
+) -> Result<SshOutput, RemoteError> {
+    if root.contains(['\n', '\0']) {
+        return Err(RemoteError::Refused(
+            "invalid remote repository root".into(),
+        ));
+    }
+    let current_route = pull_connection(host)
+        .map_err(|error| RemoteError::Refused(format!("cannot confirm SSH route: {error}")))?;
+    if current_route != *frozen.repo_id.connection {
+        return Err(RemoteError::Refused(
+            "remote SSH connection changed after pull confirmation".into(),
+        ));
+    }
+    let config = frozen
+        .config
+        .as_ref()
+        .ok_or_else(|| RemoteError::Refused("approved pull has no upstream".into()))?;
+    let script = format!("{PULL_STATE_SCRIPT}\n{PULL_EXEC_SCRIPT}");
+    let index_hash = fingerprint_hex(&frozen.fingerprint.staged);
+    let worktree_hash = fingerprint_hex(&frozen.fingerprint.worktree);
+    let mut args = vec![
+        "sh",
+        "-c",
+        script.as_str(),
+        "--",
+        root,
+        frozen.repo_id.common_dir.as_str(),
+        frozen.physical_toplevel.as_str(),
+        frozen.head.branch.as_deref().unwrap_or(""),
+        frozen.head.oid.as_str(),
+        frozen.head.upstream.as_deref().unwrap_or(""),
+        config.remote_name.as_str(),
+        config.merge_ref.as_str(),
+        config.remote_url.as_str(),
+        index_hash.as_str(),
+        worktree_hash.as_str(),
+    ];
+    args.extend(config.fetch_refspecs.iter().map(String::as_str));
+    // The one command now includes both previously separate deadline-bound
+    // steps: allow their combined budget without changing other SSH reads.
+    let mut output = run_ssh_with_timeout(
+        host,
+        &args,
+        Duration::from_secs(SSH_COMMAND_TIMEOUT_SECS * 2),
+        true, // Keep stderr separate even when the user's SSH config forces a TTY.
+    )?;
+    // Only the script's own pre-exec exit code and refusal marker prove that
+    // no pull ran. A Git failure after the checked marker is never a refusal.
+    let checked_marker = "KAGI-PULL-CHECKED\n";
+    let checked_at = output.stderr.find(checked_marker);
+    if checked_at.is_none() {
+        if let Some(reason) = pull_refusal_reason(output.code, &output.stderr) {
+            return Err(RemoteError::Refused(reason.into()));
+        }
+    }
+    if let Some(offset) = checked_at {
+        // Protocol framing is not a user-facing Git error or durable reason.
+        output.stderr.drain(offset..offset + checked_marker.len());
+    }
+    Ok(output)
+}
+
 pub fn remote_pull(
     host: &RemoteHost,
     display_root: &str,
-    physical_toplevel: &str,
-    branch: &str,
+    frozen: &PullRepoIdentity,
     before: &kagi_git::StateSummary,
 ) -> RemotePullReport {
     use kagi_git::oplog::OpOutcome;
-    // Pin the confirmed merge policy, disable implicit writes outside the
-    // selected worktree, and clear per-branch merge arguments such as --squash
-    // or -s ours. These host settings must not override the confirmation.
-    let merge_options = format!("branch.{branch}.mergeOptions=");
-    let transport = run_ssh(
-        host,
-        &[
-            "git",
-            "-c",
-            &merge_options,
-            "-C",
-            physical_toplevel,
-            "pull",
-            "--no-rebase",
-            "--ff",
-            "--no-autostash",
-            "--no-recurse-submodules",
-        ],
-    );
+    let transport = run_approved_pull(host, display_root, frozen);
     let after = |dirty: String| kagi_git::StateSummary {
         head: before.head.clone(),
         dirty,
@@ -813,6 +976,12 @@ pub fn remote_pull(
             };
             (Err(error), outcome)
         }
+        Err(RemoteError::Refused(reason)) => (
+            Err(RemoteError::Refused(reason.clone())),
+            OpOutcome::Refused {
+                blockers: vec![reason],
+            },
+        ),
         // The backstop fired, the wait broke, or the output could not be
         // collected in full. In none of those did the remote `git pull` prove
         // anything about itself — the runner reports that as its own shape
@@ -844,31 +1013,6 @@ pub fn remote_pull(
     RemotePullReport {
         result,
         recording: kagi_git::backend::recording::finalize(entry),
-    }
-}
-
-/// Record a plan/execute identity mismatch without starting `git pull`.
-pub fn refused_remote_pull(
-    host: &RemoteHost,
-    repo: &str,
-    before: &kagi_git::StateSummary,
-    reason: String,
-) -> RemotePullReport {
-    let scope = format!("{}:{repo}", host.label());
-    let recording = kagi_git::backend::recording::finalize(
-        kagi_git::oplog::OpLogEntry::new(
-            "pull",
-            scope.clone(),
-            before.clone(),
-            kagi_git::oplog::OpOutcome::Refused {
-                blockers: vec![reason.clone()],
-            },
-        )
-        .with_worktree(Some(scope)),
-    );
-    RemotePullReport {
-        result: Err(RemoteError::Refused(reason)),
-        recording,
     }
 }
 

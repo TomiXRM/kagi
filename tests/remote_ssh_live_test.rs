@@ -11,6 +11,9 @@
 //! - `KAGI_REMOTE_TEST_PORT` — port (e.g. `2222`).
 //! - `KAGI_REMOTE_TEST_REPO` — absolute path to a git repo on the host.
 //! - `KAGI_REMOTE_TEST_DIR`  — absolute path to a NON-repo dir on the host.
+//! - `KAGI_REMOTE_TEST_PULL_REPO` — disposable checkout with a newer upstream
+//!   commit; setting this and the expected HEAD opts into a **real write**.
+//! - `KAGI_REMOTE_TEST_PULL_EXPECTED_HEAD` — expected full HEAD OID after pull.
 //!
 //! Example (loopback sshd on :2222):
 //! ```sh
@@ -142,6 +145,46 @@ fn live_remote_read_path() {
     }
 
     eprintln!("== all live remote checks passed ==");
+}
+
+/// Opt in only with a disposable checkout: unlike the read probe, this writes
+/// the remote repository after the approved preflight succeeds.
+#[test]
+fn live_remote_pull_fast_forwards() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let Some(host) = host_from_env() else {
+        eprintln!("skipping: set KAGI_REMOTE_TEST_HOST to run the live SSH pull");
+        return;
+    };
+    let (Ok(repo_path), Ok(expected_head)) = (
+        std::env::var("KAGI_REMOTE_TEST_PULL_REPO"),
+        std::env::var("KAGI_REMOTE_TEST_PULL_EXPECTED_HEAD"),
+    ) else {
+        eprintln!(
+            "skipping: set KAGI_REMOTE_TEST_PULL_REPO and KAGI_REMOTE_TEST_PULL_EXPECTED_HEAD"
+        );
+        return;
+    };
+    let frozen =
+        remote::resolve_pull_identity(&host, &repo_path).expect("live pull plan should resolve");
+    assert_ne!(frozen.head.oid, expected_head, "fixture must start behind");
+    let before = kagi_git::StateSummary {
+        head: frozen.head.oid.clone(),
+        dirty: "clean".into(),
+    };
+    let report = remote::remote_pull(&host, &repo_path, &frozen, &before);
+    report
+        .result
+        .expect("approved live SSH pull should succeed");
+    let after = remote::resolve_pull_identity(&host, &repo_path)
+        .expect("live pull result should be readable");
+    assert_eq!(
+        after.head.oid, expected_head,
+        "host checkout must fast-forward"
+    );
+    eprintln!("[ok] live remote pull fast-forwarded over system SSH");
 }
 
 #[path = "support/isolated.rs"]

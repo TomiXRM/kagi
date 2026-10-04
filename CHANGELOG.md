@@ -16,6 +16,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - commit / branch / remote branch / tag / stash / worktree の右クリックメニューをキーボードで操作できるようにしました。開くと最初の有効な項目に focus が移り、↑/↓(端で折り返し)と Home/End で無効な項目を飛ばして移動し、Enter / Space で実行、Escape で閉じます。閉じると focus は開く前の場所へ戻ります(項目が確認 modal を開いた場合は window へ)。Shift+F10(Windows キーボードの Menu キー)で、Graph では選択中の commit のメニューを、サイドバーでは focus のある行(branch / remote branch / tag / stash / worktree)のメニューを、その行の左下に開きます。ウィンドウより長いメニューは項目の部分がスクロールし、キーで移った項目は常に見える位置まで送られます。Home やほかのタブへ移るとメニューは閉じます。項目は `Role::MenuItem`、無効な項目は AX の disabled 状態を持ちます。(#985)
 
 ### Changed
+- SSH remote pull の実行前検査と `git pull` を同じ SSH 接続内の 1 本の remote script にまとめました。確認後に host の repository・worktree・HEAD・upstream・pull 設定・staged index・作業ツリーが変われば pull せず理由つき Refused を記録します。計画時の拒否は内部コードを除いた理由だけを示し、実行時は `ssh -T` で stderr の判定を保ちます。SSH 認証失敗や結果不明時も既存の Operation Log と lease / reconcile を維持し、別接続への自動 fallback はしません。(#1014)
 - CherryPick / StashApply の復旧説明をカード本文から外し、実行可能な計画でのみ復旧コマンドを 1 つの閉じた行に表示します。説明文は「Copy all」と読み上げ用 dialog に残し、Windows の cmd ではコピー可能なコマンドを提示しません。(#1023)
 - Clone / Remote Browse / Smart Commit / Update / App Notice / Trust Repo / PR 項目編集 / Editor の名前入力・削除・未保存確認のボタンを 24px に統一しました。無効な確認も消さず、理由を読み上げと tooltip に表示します。削除・破棄の確認は危険色にし、英日両言語の表示と警告アイコンを見直しました。Stash Drop / Pop、履歴操作、Switch to Latest、PR レビュー・merge の実行後 chip は短い状態語とし、完全な予告文は読み上げと Copy all に残します。(#1016 PR B)
 - 計画確認・入力確認と Amend / Discard / CherryPick / Commit Plan / StashApply の操作ボタンを共通の 24px に統一し、実行できない確認操作は理由を読み上げられる無効なボタンとして残します。削除・破棄・復元などの破壊的な確認は 2 段階目も blocker 色にし、maintenance 計画の実行後 chip を短い状態語に、詳細を読み上げと Copy all に分けました。commit-graph の確認は「Write / 書き込む」に修正しました。detached HEAD で Reset Current を開いたときの空の branch chip も表示しません。(#1016 PR A)
@@ -28,7 +29,6 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 - 先行書き込み中に dirty な commit を Enter で checkout しようとしたとき、stash + checkout は 2 回の書き込みなので 1 件のキューとして受け付けられない理由を英日それぞれ footer と toast に表示します。commit checkout の直接入口が対象 OID を固定し、先行操作後の新しい計画と確認・preflight を通ることも native テストで検証しました。(#1032)
 - busy 中の checkout は先行 write の途中で変わり得る dirty 状態で投入を拒否せず、静的に不可能な参照だけを先に拒否して Operation Log に理由を記録します。列には即時表示し、順番が来たときの新しい plan の blocker / warning で安全に確認または拒否します。(#1028)
-
 - Graph で commit を選ぶと Inspector が 180ms で開き、再クリックや Esc で選択を外すと 150ms で閉じるようにしました。途中の反転は現在の幅から続き、`reduce_motion`、タブ切替、Home、Conflict とほかの workspace への移動は即時です。(#1001)
 - サイドバー非表示でも Graph の BRANCH / TAG・GRAPH 列の境界がドラッグした 40px だけ動くように修正し、サイドバーの開閉途中もポインターに追従させました。(#1011)
 

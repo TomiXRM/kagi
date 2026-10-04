@@ -97,17 +97,7 @@ fn plan(sessions: &mut Sessions) -> (Job, PullRepoIdentity) {
     let head = &identity.head;
     let config = identity.config.as_ref().unwrap();
     let fingerprint = &identity.fingerprint;
-    let completion = app::plan_remote_pull_for_test(
-        sessions,
-        request,
-        repo_id.clone(),
-        identity.physical_toplevel.clone(),
-        head.clone(),
-        config.clone(),
-        fingerprint.clone(),
-        false,
-    )
-    .run();
+    let completion = app::plan_remote_pull_for_test(sessions, request, identity.clone()).run();
     assert!(matches!(sessions.plan_state(), PlanState::Planning { .. }));
     assert!(app::apply_plan(sessions, completion));
     let PlanState::Ready { token, prepared } = sessions.plan_state() else {
@@ -274,17 +264,7 @@ fn stale_cached_head_or_dirty_preview_never_opens_a_pull_confirmation() {
             identity.remote_dirty = true;
             identity.fingerprint.worktree = [3; 32];
         }
-        let completion = app::plan_remote_pull_for_test(
-            &mut sessions,
-            request,
-            identity.repo_id,
-            identity.physical_toplevel,
-            identity.head,
-            identity.config.unwrap(),
-            identity.fingerprint,
-            identity.remote_dirty,
-        )
-        .run();
+        let completion = app::plan_remote_pull_for_test(&mut sessions, request, identity).run();
         assert!(app::apply_plan(&mut sessions, completion));
         assert!(
             matches!(

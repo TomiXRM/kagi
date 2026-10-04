@@ -106,22 +106,10 @@ pub fn plan_remote_pull(sessions: &mut Sessions, request: RemotePullRequest) -> 
 pub fn plan_remote_pull_for_test(
     sessions: &mut Sessions,
     request: RemotePullRequest,
-    repo_id: RemoteRepoId,
-    physical_toplevel: String,
-    head: RemotePullHead,
-    config: RemotePullConfig,
-    fingerprint: RemotePullFingerprint,
-    remote_dirty: bool,
+    identity: crate::remote::PullRepoIdentity,
 ) -> RemotePullPlanJob {
     let mut job = plan_remote_pull(sessions, request);
-    job.fixture = Some(crate::remote::PullRepoIdentity {
-        repo_id,
-        physical_toplevel,
-        head,
-        config: Some(config),
-        fingerprint,
-        remote_dirty,
-    });
+    job.fixture = Some(identity);
     job
 }
 

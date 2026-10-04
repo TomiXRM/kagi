@@ -37,7 +37,7 @@ use kagi_git::{FileDiff, Head, RepoSnapshot};
 
 pub mod stash;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PullRepoIdentity {
     pub repo_id: remote::RemoteRepoId,
     pub physical_toplevel: String,

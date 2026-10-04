@@ -1701,14 +1701,14 @@ impl KagiApp {
             // render reads `theme::rem_size_px()` and re-applies it. Persisted
             // to settings.json by `set_zoom`.
             "view.zoomIn" => {
-                let z = theme::set_zoom(theme::zoom() + theme::ZOOM_STEP);
+                let z = theme::set_zoom(theme::step_zoom(theme::zoom(), true));
                 klog!("zoom: {:.2}x", z);
                 // The terminal is a pixel-sized PTY grid, not rem-scaled text,
                 // so it needs the new zoom pushed in explicitly.
                 self.apply_terminal_config(cx);
             }
             "view.zoomOut" => {
-                let z = theme::set_zoom(theme::zoom() - theme::ZOOM_STEP);
+                let z = theme::set_zoom(theme::step_zoom(theme::zoom(), false));
                 klog!("zoom: {:.2}x", z);
                 // The terminal is a pixel-sized PTY grid, not rem-scaled text,
                 // so it needs the new zoom pushed in explicitly.

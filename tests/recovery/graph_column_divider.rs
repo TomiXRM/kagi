@@ -84,9 +84,10 @@ fn drag_40(
         );
     } else {
         let moved = f32::from(bounds(window, name).center().x - before.center().x);
+        let logical_delta = 40.0 / theme::scaled(1.0);
         assert!(
-            (new_width - old_width - 40.).abs() <= 1.,
-            "{name}: width changed by {} instead of 40px",
+            (new_width - old_width - logical_delta).abs() <= 1.,
+            "{name}: stored width changed by {} instead of {logical_delta} logical px for a 40px drag",
             new_width - old_width
         );
         assert!(
@@ -126,8 +127,9 @@ pub fn scenario_graph_column_divider_hidden(cx: &mut VisualTestAppContext) {
         drag_40(cx, window, &app, name, shown, false);
     }
     let shown_widths = cx.read(|cx| (app.read(cx).badge_col_w, app.read(cx).graph_col_w));
-    assert!((shown_widths.0 - hidden_widths.0 - 40.).abs() <= 1.);
-    assert!((shown_widths.1 - hidden_widths.1 - 40.).abs() <= 1.);
+    let logical_delta = 40.0 / theme::scaled(1.0);
+    assert!((shown_widths.0 - hidden_widths.0 - logical_delta).abs() <= 1.);
+    assert!((shown_widths.1 - hidden_widths.1 - logical_delta).abs() <= 1.);
     cx.dispatch_action(window, ToggleSidebar);
     let sliding = shown + Duration::from_millis(40);
     frame(cx, window, sliding);

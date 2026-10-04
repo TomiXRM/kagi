@@ -368,6 +368,14 @@ The current suite covers:
   is only reached: turning it on probes for local LLMs), and clicks one with
   the pointer (one flip). `SavedKeys` puts the five settings back. The ring
   is not observable in Tier A: Tier B Tabs through Settings and looks.
+- Settings zoom bound (`KAGI_GUI_E2E_ONLY=settings_zoom_bound`,
+  `tests/recovery/settings_switches.rs`, #1019 review): open the real Settings
+  view with a legacy 150% value, then step from 156% to 167% and back to
+  160%. The `gui-e2e`-only `e2e::settings_zoom_label` reads the
+  rendered percentage after each frame; persisted `ui_zoom` must match.
+  `GlobalSettings::capture()` restores the original settings. This Tier A
+  probe cannot establish the label's physical appearance; Tier B remains
+  unchanged.
 - Tab panels (`KAGI_GUI_E2E_ONLY=tab_panels`, `tests/recovery/tab_panels.rs`,
   #979): the content a tab list switches goes through
   `tab_panel_a11y::tab_panel`, which records the role and label it set

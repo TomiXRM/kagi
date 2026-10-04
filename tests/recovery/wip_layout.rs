@@ -367,10 +367,10 @@ pub fn scenario_commit_row_layout_wip(cx: &mut VisualTestAppContext, repo_path: 
         3,
         "fixture: the three WIP rows must sit on three different commits, got {heads:?}"
     );
-
+    assert!((theme::rem_size_px() - 14.4).abs() < 0.01);
     let (nodes, dashes) = painted(cx, win, DIMENSIONS);
     let centers = check_anchors(&facts, &nodes, &dashes, "base");
-    for (name, width) in [("graph-commit-author", 96.), ("graph-commit-time", 48.)] {
+    for (name, width) in [("graph-commit-author", 86.4), ("graph-commit-time", 43.2)] {
         let bounds = e2e::control_bounds(win.window_id(), name)
             .unwrap_or_else(|| panic!("{name} not drawn in Graph row"));
         assert!(
@@ -381,8 +381,20 @@ pub fn scenario_commit_row_layout_wip(cx: &mut VisualTestAppContext, repo_path: 
     let row =
         e2e::control_bounds(win.window_id(), "graph-commit-row").expect("Graph commit row drawn");
     assert!(
-        (f32::from(row.size.height) - 29.).abs() <= PAINT_EPS,
-        "Graph row height must remain 29px: {row:?}"
+        (f32::from(row.size.height) - 26.1).abs() <= PAINT_EPS,
+        "Graph row height must match the old 90% at the new 100%: {row:?}"
+    );
+    let mut painted_commits: Vec<_> = nodes.iter().filter(|node| !node.hollow).collect();
+    painted_commits.sort_by(|a, b| {
+        a.center
+            .y
+            .partial_cmp(&b.center.y)
+            .expect("finite canvas Y")
+    });
+    let painted_pitch = f32::from(painted_commits[1].center.y - painted_commits[0].center.y);
+    assert!(
+        (painted_pitch - f32::from(row.size.height)).abs() <= PAINT_EPS,
+        "Graph lane canvas must advance by the measured commit row height: {painted_pitch} vs {row:?}"
     );
     let radius = nodes
         .iter()
@@ -393,7 +405,7 @@ pub fn scenario_commit_row_layout_wip(cx: &mut VisualTestAppContext, repo_path: 
     // ── zoom ────────────────────────────────────────────────────────────────
     theme::set_zoom(1.25);
     let (zoom_nodes, zoom_dashes) = painted(cx, win, DIMENSIONS);
-    for (name, width) in [("graph-commit-author", 120.), ("graph-commit-time", 60.)] {
+    for (name, width) in [("graph-commit-author", 108.), ("graph-commit-time", 54.)] {
         let bounds = e2e::control_bounds(win.window_id(), name)
             .unwrap_or_else(|| panic!("{name} not drawn after zoom"));
         assert!(

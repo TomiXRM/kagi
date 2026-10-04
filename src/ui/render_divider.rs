@@ -18,12 +18,11 @@ impl KagiApp {
     ) {
         let drag = *event.drag(cx);
         let cursor_x = f32::from(event.event.position.x);
-        // W28: sidebar/panel widths are stored UNSCALED (logical px) but
-        // rendered via `scaled_px`, so the divider visually sits at
-        // `width * zoom`.  The cursor is in raw window px, so convert back
-        // to logical space (divide by zoom) before clamping/storing, and
-        // interpret the 4px divider's 2px half-offset in scaled space too.
-        let z = theme::zoom();
+        // W28: pane widths are stored in reference-space logical px but
+        // rendered through `scaled_px`; undo the full physical scale (the
+        // 14.4px rem base and relative zoom) for raw cursor coordinates.
+        // The 4px divider's 2px half-offset follows that same scale.
+        let z = theme::scaled(1.0);
         // #957: sidebar and outer-pane dividers stay put during a slide.
         // Graph column dividers use their painted column origins instead,
         // so they can follow the pointer while the sidebar is moving (#1011).
@@ -39,7 +38,7 @@ impl KagiApp {
         }
         match drag.kind {
             DividerKind::Sidebar | DividerKind::PrModeLeft => {
-                // Divider sits at x = sidebar_width * zoom; centre on cursor.
+                // Divider sits at x = sidebar_width * physical scale.
                 let new_width = ((cursor_x - 2.0 * z) / z).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
                 if (new_width - self.sidebar.width).abs() > 0.5 {
                     self.sidebar.width = new_width;
@@ -56,7 +55,7 @@ impl KagiApp {
                 }
             }
             DividerKind::Panel => {
-                // Divider sits at x = viewport_width - panel_width * zoom.
+                // Divider sits at x = viewport_width - panel_width * physical scale.
                 let viewport_w = f32::from(window.viewport_size().width);
                 let new_width = ((viewport_w - cursor_x - 2.0 * z) / z).clamp(PANEL_MIN, PANEL_MAX);
                 if (new_width - self.panel_width).abs() > 0.5 {
@@ -104,9 +103,8 @@ impl KagiApp {
                 //   height = viewport_h - cursor_y - status_bar_h(22) - 2
                 // W28: the panel is rendered scaled, so the on-screen gap
                 // between the cursor and the window bottom is the *scaled*
-                // height; divide by zoom to recover the unscaled stored
-                // value. The status bar (also scaled) and divider half are
-                // scaled in screen space too.
+                // height; divide by the physical scale to recover its stored
+                // value. The status bar and divider half use the same scale.
                 let viewport_h = f32::from(window.viewport_size().height);
                 let cursor_y = f32::from(event.event.position.y);
                 // max fraction is a screen-space cap → convert to unscaled.
@@ -236,8 +234,7 @@ impl KagiApp {
                 // T-WS-EDITOR-004: the Editor Workspace's left tree pane
                 // occupies the sidebar's slot (LeftPane::FileTree hides the
                 // real sidebar in Editor mode), so its divider sits at
-                // x = tree_w * zoom from the window's left edge — the same
-                // absolute-cursor math as the Sidebar arm above.
+                // x = tree_w * physical scale from the window's left edge.
                 let Some(entity) = self.ui().editor_workspace.clone() else {
                     return;
                 };

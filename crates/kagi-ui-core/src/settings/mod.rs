@@ -53,6 +53,12 @@ fn scalar_to_string(v: &serde_json::Value) -> Option<String> {
     }
 }
 
+/// Parse the legacy scalar zoom representation, shared by typed reads and the
+/// one-time base migration.
+fn parse_ui_zoom(value: &serde_json::Value) -> Option<u32> {
+    scalar_to_string(value)?.trim().parse::<u32>().ok()
+}
+
 /// What Cmd+C copies from the selected Graph row (`graph_copy_target`;
 /// ADR-0170). Default [`CopyTarget::Hash`] — every commit has a hash, but not
 /// every row carries a branch.
@@ -181,7 +187,7 @@ impl Settings {
     /// UI zoom, stored as a permille integer string (`"ui_zoom"`). Returns the
     /// parsed permille; the caller clamps and divides by 1000.
     pub fn ui_zoom_permille(&self) -> Option<u32> {
-        self.get_str("ui_zoom")?.trim().parse::<u32>().ok()
+        self.raw.get("ui_zoom").and_then(parse_ui_zoom)
     }
 
     /// Compact-graph flag (`"graph_compact"`, `"true"`/`"false"`). `None` when
@@ -432,6 +438,13 @@ pub fn read_setting(key: &str) -> Option<String> {
 /// doesn't know about. Best-effort; failures are logged but non-fatal.
 pub fn write_setting(key: &str, value: Option<&str>) {
     store::write(key, value);
+}
+
+/// Migrate saved zoom from the previous 90%-sized UI base to the new base.
+/// Returns the current saved permille when it parses, or `None` when absent
+/// or malformed. The store persists the zoom and version marker atomically.
+pub fn migrate_ui_scale_base() -> Option<u32> {
+    store::migrate_ui_scale_base()
 }
 
 // ──────────────────────────────────────────────────────────────────────────

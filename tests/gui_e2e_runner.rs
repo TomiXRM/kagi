@@ -1564,6 +1564,10 @@ mod macos {
                 Box::new(crate::settings_switches::scenario_settings_switches),
             ),
             (
+                "settings_zoom_bound",
+                Box::new(crate::settings_switches::scenario_settings_zoom_bound),
+            ),
+            (
                 "tab_panels",
                 Box::new(crate::tab_panels::scenario_tab_panels),
             ),

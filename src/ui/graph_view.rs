@@ -85,7 +85,7 @@ pub fn take_paint_trace(window: gpui::WindowId) -> PaintTrace {
 ///
 /// W28: this is the *unscaled* source of truth.  All live geometry and the
 /// column-width <-> lane-count conversions go through [`lane_w`] so lane spacing
-/// tracks `theme::zoom()` uniformly with the row text/height.
+/// tracks the same physical scale as the row text/height.
 pub const LANE_W: f32 = 22.0;
 /// Row height in pixels (must match what uniform_list computes for each row).
 /// T008 rows use `py(px(3.))` (6 px total padding) plus text ≈ 18 px → 24 px.
@@ -97,7 +97,7 @@ const EDGE_W: f32 = 1.5;
 /// Desired corner radius in pixels (T020). Will be clamped per-edge.
 const CORNER_R: f32 = 9.0;
 
-/// W28: zoom-scaled lane width — `LANE_W * zoom()`.
+/// W28: physically scaled lane width (base rem / 16 × relative zoom).
 ///
 /// Every lane-spacing computation (lane x-centres, column<->lane conversions,
 /// horizontal scroll steps) goes through here so the graph's horizontal pitch
@@ -648,7 +648,7 @@ pub fn node_center_y(oy: f32, row_h: f32) -> f32 {
     oy + row_h / 2.0
 }
 
-/// W28: the zoom-scaled node radius (`NODE_R * zoom()`).
+/// W28: physically scaled node radius (base rem / 16 × relative zoom).
 #[inline]
 pub fn node_radius() -> f32 {
     theme::scaled(NODE_R)
@@ -698,67 +698,70 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         std::env::set_var("KAGI_LOG_DIR", tmp.path());
 
-        // ── 1.0× baseline, with a NON-ZERO origin and scroll so both
-        // parameters actually reach the result (expecting a restatement of the
-        // function body would pass even with `ox` / `scroll_x` / `oy` dropped).
+        // ── 1.0× relative zoom uses the old 0.9× physical baseline.
+        // Nonzero origin and scroll ensure both affect the lane centre.
         theme::set_zoom(1.0);
-        assert!(close(lane_w(), LANE_W), "lane_w @1.0 == LANE_W");
-        assert!(close(node_radius(), NODE_R), "node_radius @1.0 == NODE_R");
-        // ox=30, lane 2, scroll_x=12 → 30 + 2*22 + 11 - 12 = 73.
+        assert!(close(theme::rem_size_px(), 14.4));
+        assert!(close(f32::from(theme::scaled_px(ROW_H)), 26.1));
+        assert!(close(lane_w(), 19.8));
+        assert!(close(node_radius(), NODE_R * 0.9));
+        // ox=30, lane 2, scroll_x=12 → 30 + 2*19.8 + 9.9 - 12 = 67.5.
         assert!(
-            close(lane_center_x(30.0, 2, 12.0), 73.0),
-            "lane_center_x must add ox and subtract scroll_x, got {}",
-            lane_center_x(30.0, 2, 12.0)
+            close(lane_center_x(30.0, 2, 12.0), 67.5),
+            "lane centre uses the physically scaled pitch, origin and scroll"
         );
-        // oy=100, ROW_H=29 → 100 + 14.5 = 114.5.
-        assert!(
-            close(node_center_y(100.0, ROW_H), 114.5),
-            "node_center_y must add oy, got {}",
-            node_center_y(100.0, ROW_H)
-        );
+        assert!(close(node_center_y(100.0, 26.1), 113.05));
+
+        // Migrated old 1000 permille keeps its former physical layout.
+        theme::set_zoom(1.111);
+        assert!((theme::rem_size_px() - 16.0).abs() < 0.01);
+        assert!((lane_w() - LANE_W).abs() < 0.01);
+        assert!((f32::from(theme::scaled_px(ROW_H)) - ROW_H).abs() < 0.01);
 
         // ── 0.8× : every dimension shrinks by exactly 0.8 ──────────
         theme::set_zoom(0.8);
         let z = theme::zoom();
         assert!(close(z, 0.8), "zoom set to 0.8");
-        assert!(close(lane_w(), LANE_W * 0.8), "lane pitch shrinks 0.8");
+        assert!(close(lane_w(), LANE_W * 0.9 * 0.8), "lane pitch shrinks");
         assert!(
-            close(node_radius(), NODE_R * 0.8),
-            "node radius shrinks 0.8"
+            close(node_radius(), NODE_R * 0.9 * 0.8),
+            "node radius shrinks"
         );
         assert!(
-            close(theme::scaled(EDGE_W), EDGE_W * 0.8),
-            "edge width shrinks 0.8"
+            close(theme::scaled(EDGE_W), EDGE_W * 0.9 * 0.8),
+            "edge width shrinks"
         );
         assert!(
-            close(theme::scaled(CORNER_R), CORNER_R * 0.8),
-            "corner radius shrinks 0.8"
+            close(theme::scaled(CORNER_R), CORNER_R * 0.9 * 0.8),
+            "corner radius shrinks"
         );
-        // Lane x-centre: lane*pitch + pitch/2, all scaled by 0.8.
-        let lw08 = LANE_W * 0.8;
+        // Lane x-centre: lane*pitch + pitch/2, all scaled by 0.9*0.8.
+        let lw08 = LANE_W * 0.9 * 0.8;
         assert!(close(lane_center_x(0.0, 2, 0.0), 2.0 * lw08 + lw08 / 2.0));
         // The scaled row height is what the canvas measures; ● sits at its
         // midpoint, so node_center_y of a 0.8-scaled row is 0.8 of the 1.0 one.
         let row_h_08 = f32::from(theme::scaled_px(ROW_H));
-        assert!(close(node_center_y(0.0, row_h_08), ROW_H * 0.8 / 2.0));
-        // lanes_for_width must agree with the (shrunk) pitch: a 112px column
-        // fits 112 / (14*0.8) = 10 lanes (vs 8 at 1.0×).
+        assert!(close(node_center_y(0.0, row_h_08), ROW_H * 0.9 * 0.8 / 2.0));
+        // lanes_for_width must agree with the physically scaled pitch.
         assert_eq!(lanes_for_width(112.0), (112.0 / lw08).floor() as usize);
 
         // ── 1.3× : every dimension grows by exactly 1.3 ────────────
         theme::set_zoom(1.3);
         let z = theme::zoom();
         assert!(close(z, 1.3), "zoom set to 1.3");
-        assert!(close(lane_w(), LANE_W * 1.3), "lane pitch grows 1.3");
-        assert!(close(node_radius(), NODE_R * 1.3), "node radius grows 1.3");
+        assert!(close(lane_w(), LANE_W * 0.9 * 1.3), "lane pitch grows");
         assert!(
-            close(theme::scaled(EDGE_W), EDGE_W * 1.3),
-            "edge width grows 1.3"
+            close(node_radius(), NODE_R * 0.9 * 1.3),
+            "node radius grows"
+        );
+        assert!(
+            close(theme::scaled(EDGE_W), EDGE_W * 0.9 * 1.3),
+            "edge width grows"
         );
         let row_h_13 = f32::from(theme::scaled_px(ROW_H));
-        assert!(close(node_center_y(0.0, row_h_13), ROW_H * 1.3 / 2.0));
+        assert!(close(node_center_y(0.0, row_h_13), ROW_H * 0.9 * 1.3 / 2.0));
         // A 112px column now fits fewer (wider) lanes.
-        let lw13 = LANE_W * 1.3;
+        let lw13 = LANE_W * 0.9 * 1.3;
         assert_eq!(lanes_for_width(112.0), (112.0 / lw13).floor() as usize);
 
         // ── Drift check: the node centre x is always at the lane's true

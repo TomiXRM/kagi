@@ -123,6 +123,22 @@ impl KagiApp {
                 this.check_restored_focus(window, cx);
             });
         }
+        if self.platform_menu_open.is_some() {
+            // Keep the existing focus return target while the menu owns keys.
+            // It also identifies the screen on which the dropdown opened.
+            self.capture_overlay_return_focus(window, cx);
+            if self
+                .pending_focus
+                .as_ref()
+                .is_some_and(|pending| pending.screen != self.focus_screen())
+            {
+                self.close_platform_menu(cx);
+                if matches!(self.menu_overlay, Some(MenuOverlay::Settings)) {
+                    self.menu_overlay = None;
+                }
+                self.pending_focus = self.pending_root_focus();
+            }
+        }
         if matches!(self.menu_overlay, Some(MenuOverlay::Settings))
             && self.has_modal_or_visible_plan(cx)
         {
@@ -130,6 +146,16 @@ impl KagiApp {
             self.pending_focus = (!self.active_modal_input_focused(window, cx))
                 .then(|| self.pending_root_focus())
                 .flatten();
+        }
+        // The menu sits above Settings and input modals. Release their focus
+        // while it is open; when it closes, the existing pending/restored
+        // membership checks return focus to the still-drawn owner.
+        if self.platform_menu_open.is_some() {
+            if let Some(root) = &self.root_focus {
+                if !root.is_focused(window) {
+                    window.focus(root, cx);
+                }
+            }
         }
         // Backstop (#976 review): only when Settings is the visible front
         // layer does focus belong in its trap. A gpui-component popup drawn
@@ -147,10 +173,12 @@ impl KagiApp {
         // The menu overlays that hold no focus of their own (Info, the
         // branch picker) route their keys through the root, so a pending
         // focus lands while they are open too.
-        if !matches!(
-            self.menu_overlay,
-            Some(MenuOverlay::Settings | MenuOverlay::CommandPalette)
-        ) {
+        if self.platform_menu_open.is_none()
+            && !matches!(
+                self.menu_overlay,
+                Some(MenuOverlay::Settings | MenuOverlay::CommandPalette)
+            )
+        {
             self.apply_pending_focus(window, cx);
         }
     }

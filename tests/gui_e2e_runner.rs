@@ -2172,6 +2172,28 @@ mod macos {
                 Box::new(crate::platform_menu_scroll::scenario_platform_menu_modal_settings),
             ),
             (
+                "platform_menu_settings_focus",
+                Box::new(crate::platform_menu_scroll::scenario_platform_menu_settings_focus),
+            ),
+            (
+                "platform_menu_modal_settings_order",
+                Box::new(
+                    crate::platform_menu_scroll::scenario_platform_menu_modal_settings_order,
+                ),
+            ),
+            (
+                "platform_menu_settings_command_order",
+                Box::new(
+                    crate::platform_menu_scroll::scenario_platform_menu_settings_command_order,
+                ),
+            ),
+            (
+                "platform_menu_repository_navigation",
+                Box::new(
+                    crate::platform_menu_scroll::scenario_platform_menu_repository_navigation,
+                ),
+            ),
+            (
                 "field_picker_owner",
                 Box::new(crate::field_picker_owner::scenario_field_picker_owner),
             ),

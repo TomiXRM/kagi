@@ -239,14 +239,23 @@ impl KagiApp {
             .map_or(FrontLayer::None, |kind| kind.front_layer(self))
     }
 
-    /// Clear every menu, including a stale invisible one retained on this tab.
-    /// Escape is not an action on a repository, so there is no reason to leave
-    /// a second menu behind the first one.
+    /// A platform dropdown is above Settings in Z_ORDER. Escape dismisses
+    /// only that dropdown, then a second Escape can close Settings.
     pub(crate) fn close_front_menu(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.visible_platform_menu_section().is_some() {
+            self.close_platform_menu(cx);
+            return;
+        }
+        // Other menus still clear together, including stale invisible menus.
         for kind in Z_ORDER {
             self.close_menu_layer(kind, cx);
         }
         cx.notify();
+    }
+
+    /// Close just the platform dropdown; Update is its predecessor in Z_ORDER.
+    pub(crate) fn close_platform_menu(&mut self, cx: &mut gpui::Context<Self>) {
+        self.close_layers_above(LayerKind::Update, cx);
     }
 
     /// Close every menu drawn above `kind` in [`Z_ORDER`], so a layer that is

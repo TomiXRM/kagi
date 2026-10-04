@@ -174,6 +174,22 @@ Add three lines instead of a style table: **role(s)**, **reference state**
 (from the contract). Acceptance includes the before/after comparison and the
 PR block.
 
+## Overlay keyboard and focus order (#990)
+
+`src/ui/front_layer.rs::Z_ORDER` is the sole bottom-to-top ordering definition:
+the Linux / FreeBSD platform dropdown sits above confirmation modals and
+Settings. The dropdown has pointer commands rather than Tab stops, so it holds
+focus at the window root; Tab / Shift+Tab do not cycle controls hidden behind
+it. Focus return reuses `pending_focus` and the `restored_focus` drawn-tree
+membership check (#976), not a second handle.
+
+| Combination | Key owner | Escape order | Focus after close |
+|---|---|---|---|
+| Dropdown × Settings | Dropdown: Enter cannot act behind it; Tab stays on the root, not the hidden Settings trap. | Dropdown, then Settings. Unlike other menus, the dropdown alone closes first via `close_layers_above` / `Z_ORDER`; bulk menu close must not discard Settings. | Closing dropdown resumes the Settings trap; closing Settings restores its opener on the same screen, or the root if the opener is gone. |
+| Dropdown × modal × Settings | Dropdown, then modal. Settings never coexists with a visible modal/commit plan: opening is refused, or a later modal makes Settings yield. | Dropdown, then modal; no third Settings dismissal. | Modal input or root after the dropdown; root after the modal. Never restore a discarded Settings trap. |
+| Command selected through dropdown over an overlay | Dropdown until the selected enabled command runs. A background Enter never confirms a modal. | Without selection, dropdown then the next `Z_ORDER` layer. On selection, close dropdown before dispatching the command. | A pure View toggle leaves Settings open and restores its trap. A pane-focus-changing command closes Settings via `close_settings_for_command` and focuses the root; a new modal makes Settings yield. |
+| Dropdown open during tab switch / repository open | Dropdown before navigation; new screen afterward. | Navigation dismisses dropdown without a further Escape. Repository picker commands dismiss it before opening the picker. | Root of the newly displayed screen; never a retained control or Settings trap from the previous session. |
+
 ## Known gaps (do not claim these are met)
 
 - The PR / Issue navigators still lack a row keyboard path.
@@ -199,11 +215,6 @@ PR block.
   when wrapping Tab / Shift+Tab. If the window has more Tab stops, focus
   may still leave Settings; the original Terminal Tab escape is fixed, but
   this search bound remains (see `docs/decisions.md`, #974).
-- Linux / FreeBSD platform-menu overlays still need keyboard and focus
-  verification when combined with Settings or a confirmation modal: the
-  three-layer Escape order, command-overlay dismissal, and tab / repository
-  switches with a dropdown open remain unverified (#990). The resolved
-  `front_layer` / `Z_ORDER` priority and modal veto are not this gap (#976).
 - UI-thread repository work still blocks interaction for stage / unstage /
   hunk writes, which run synchronously under a lease until the write queue
   lands (#355 stage 3). Snapshot creation and conflict continue / skip run in

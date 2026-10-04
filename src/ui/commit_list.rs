@@ -340,12 +340,13 @@ pub struct CommitRow {
     pub author: SharedString,
     /// Author email — used by the avatar helper to derive a stable colour.
     pub author_email: String,
-    /// Relative date string, e.g. `"3d ago"`, `"2y ago"`.
+    /// Verbose relative author time for the Graph accessibility label.
     pub date: SharedString,
+    /// Compact relative author time for the visible Graph column.
+    pub date_short: SharedString,
     /// Committer time (Unix seconds) of this commit. The sidebar renders a
-    /// ref tip's age from it; `date` above is the **author**-time string the
-    /// graph column shows, and the two clocks differ after a rebase or a
-    /// cherry-pick.
+    /// ref tip's age from it; the Graph's author-time strings above can differ
+    /// from this clock after a rebase or a cherry-pick.
     pub committed_secs: i64,
     /// Ref badges for this commit, if any.
     pub badges: Vec<RefBadge>,
@@ -382,6 +383,7 @@ impl CommitRow {
             author: SharedString::default(),
             author_email: String::new(),
             date: SharedString::default(),
+            date_short: SharedString::default(),
             committed_secs: 0,
             badges: Vec::new(),
             provenance: None,
@@ -608,6 +610,10 @@ fn commit_to_row(
     ));
     let author_email = c.author.email.clone();
     let date = SharedString::from(relative_time(c.author.time, now_secs));
+    let date_short = SharedString::from(kagi_ui_core::time::relative_time_short(
+        c.author.time,
+        now_secs,
+    ));
     let badges = badge_map.get(&c.id).cloned().unwrap_or_default();
 
     // Issue #337: classify agent provenance from trailers + author/committer +
@@ -632,6 +638,7 @@ fn commit_to_row(
         author,
         author_email,
         date,
+        date_short,
         committed_secs: c.committer.time,
         badges,
         provenance,

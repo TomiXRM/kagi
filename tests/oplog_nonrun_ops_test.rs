@@ -929,6 +929,10 @@ fn a_panicked_run_job_settles_as_unknown_and_keeps_its_reconcile_entry() {
     )
     .unwrap();
     let id = job.id();
+    assert!(
+        sessions.running_lease().is_some(),
+        "the job has been admitted"
+    );
     // What the UI holds before the task can end: the completion to settle with
     // if the task never returns one.
     let abandonment = job.abandonment();
@@ -942,6 +946,10 @@ fn a_panicked_run_job_settles_as_unknown_and_keeps_its_reconcile_entry() {
     );
 
     sessions.apply(abandonment.into_completion());
+    assert!(
+        sessions.running_lease().is_none(),
+        "Unknown retains exclusion but cannot leave running-write advice behind"
+    );
 
     assert_eq!(
         sessions.reconcile_ids(),

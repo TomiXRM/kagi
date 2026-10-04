@@ -991,3 +991,300 @@ pub fn scenario_conflict_awaited_detection_stale_settles(cx: &mut VisualTestAppC
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS conflict_awaited_detection_stale_settles");
 }
+
+fn assert_panicked_conflict(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+    repo: &Path,
+    op: &str,
+) {
+    cx.run_until_parked();
+    let receipts: Vec<_> = read_oplog_tail_for_repo(repo, 20)
+        .into_iter()
+        .filter(|entry| entry.op == op)
+        .collect();
+    assert_eq!(receipts.len(), 1, "one durable receipt for {op}");
+    assert!(matches!(receipts[0].outcome, OpOutcome::Unknown { .. }));
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(
+            state.app_sessions.has_leases(),
+            "sequencer lease must be retained"
+        );
+        assert_eq!(state.app_sessions.reconcile_ids().len(), 1);
+        assert!(
+            state.app_notice().is_some()
+                || state
+                    .conflict_continue_modal()
+                    .is_some_and(|modal| modal.error.is_some()),
+            "reconcile notice must be visible or queued behind the confirmation"
+        );
+    });
+}
+
+fn sequencer_fixture() -> tempfile::TempDir {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    git(repo, &["checkout", "-qb", "feature"]);
+    std::fs::write(repo.join("README.md"), "feature\n").unwrap();
+    git(repo, &["commit", "-qam", "feature"]);
+    git(repo, &["checkout", "-q", "main"]);
+    std::fs::write(repo.join("README.md"), "main\n").unwrap();
+    git(repo, &["commit", "-qam", "main"]);
+    assert!(!git_succeeds(repo, &["cherry-pick", "feature"]));
+    fixture
+}
+
+pub fn scenario_conflict_merge_continue_panic(cx: &mut VisualTestAppContext) {
+    let fixture = content_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        app.ui().conflict.as_ref().unwrap().update(cx, |view, _| {
+            view.mode
+                .as_mut()
+                .unwrap()
+                .buffer
+                .apply_choice(Path::new("file.txt"), kagi_git::ResolutionChoice::Incoming)
+                .unwrap();
+        });
+    });
+    kagi::ui::KagiApp::panic_next_continue_merge_for_e2e();
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            let owner = app
+                .app_sessions
+                .attachment(app.active_session().unwrap())
+                .unwrap();
+            app.conflict_continue(owner, window, cx);
+        });
+    })
+    .unwrap();
+    assert_panicked_conflict(cx, &app, &repo, "merge-continue");
+    assert!(!cx.read(|cx| app.read(cx).ui().commit_panel_open));
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS conflict_merge_continue_panic");
+}
+
+pub fn scenario_conflict_confirm_continue_panic(cx: &mut VisualTestAppContext) {
+    let fixture = sequencer_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        app.ui().conflict.as_ref().unwrap().update(cx, |view, _| {
+            view.mode
+                .as_mut()
+                .unwrap()
+                .buffer
+                .apply_choice(Path::new("README.md"), kagi_git::ResolutionChoice::Incoming)
+                .unwrap();
+        });
+    });
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            let owner = app
+                .app_sessions
+                .attachment(app.active_session().unwrap())
+                .unwrap();
+            app.conflict_continue(owner, window, cx);
+        });
+    })
+    .unwrap();
+    assert!(cx.read(|cx| app.read(cx).conflict_continue_modal().is_some()));
+    kagi::ui::KagiApp::panic_next_continue_confirm_for_e2e();
+    app.update(cx, |app, cx| app.confirm_conflict_continue(cx));
+    assert_panicked_conflict(cx, &app, &repo, "cherry-pick-continue");
+    assert!(cx.read(|cx| app
+        .read(cx)
+        .conflict_continue_modal()
+        .unwrap()
+        .error
+        .is_some()));
+    app.update(cx, |app, _| {
+        app.cancel_conflict_continue();
+        e2e::present_app_notice(app);
+        assert!(
+            app.app_notice().is_some(),
+            "reconcile notice must appear after modal closes"
+        );
+    });
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS conflict_confirm_continue_panic");
+}
+
+/// A successful sequencer Continue still refreshes the current owner's view
+/// when its confirmation modal has been dismissed before the worker settles.
+pub fn scenario_conflict_confirm_dismissed_still_reloads(cx: &mut VisualTestAppContext) {
+    let fixture = sequencer_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        app.ui().conflict.as_ref().unwrap().update(cx, |view, _| {
+            view.mode
+                .as_mut()
+                .unwrap()
+                .buffer
+                .apply_choice(Path::new("README.md"), kagi_git::ResolutionChoice::Incoming)
+                .unwrap();
+        });
+    });
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            let owner = app
+                .app_sessions
+                .attachment(app.active_session().unwrap())
+                .unwrap();
+            app.conflict_continue(owner, window, cx);
+        });
+    })
+    .unwrap();
+    assert!(cx.read(|cx| app.read(cx).conflict_continue_modal().is_some()));
+    app.update(cx, |app, cx| {
+        app.confirm_conflict_continue(cx);
+        app.cancel_conflict_continue();
+    });
+    cx.run_until_parked();
+    assert!(
+        !repo.join(".git/CHERRY_PICK_HEAD").exists(),
+        "the sequencer must have continued"
+    );
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert_eq!(
+            app.view().status_summary.conflict_count,
+            0,
+            "current view must be refreshed after a dismissed modal"
+        );
+        assert!(
+            app.ui().conflict.is_none(),
+            "old conflict pane must be cleared by redetection"
+        );
+    });
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS conflict_confirm_dismissed_still_reloads");
+}
+
+/// A failed merge-stage write uses the normal footer/toast contract while its
+/// owner is current, and durable receipt + notice without B's footer on leave.
+pub fn scenario_conflict_merge_failure_contract(cx: &mut VisualTestAppContext) {
+    for departed in [false, true] {
+        let fixture = content_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        let other = build_fixture();
+        let other_repo = other.path().canonicalize().unwrap();
+        let (app, window) = mount(cx, &repo);
+        if departed {
+            app.update(cx, |app, cx| assert!(app.open_repository(other_repo, cx)));
+            cx.run_until_parked();
+            app.update(cx, |app, cx| app.switch_repo(0, cx));
+            cx.run_until_parked();
+        }
+        app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+        cx.run_until_parked();
+        app.update(cx, |app, cx| {
+            app.ui().conflict.as_ref().unwrap().update(cx, |view, _| {
+                view.mode
+                    .as_mut()
+                    .unwrap()
+                    .buffer
+                    .apply_choice(Path::new("file.txt"), kagi_git::ResolutionChoice::Incoming)
+                    .unwrap();
+            });
+        });
+        let before_footer = kagi_ui_core::klog::tail()
+            .iter()
+            .filter(|line| line.starts_with("[kagi] footer: merge-continue: failed — "))
+            .count();
+        let before_panel = kagi_ui_core::klog::tail()
+            .iter()
+            .filter(|line| line.as_str() == "[kagi] bottom-panel: open (Failed auto-open)")
+            .count();
+        let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+        kagi::ui::KagiApp::hold_next_continue_merge_for_e2e(hold);
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                let owner = app
+                    .app_sessions
+                    .attachment(app.active_session().unwrap())
+                    .unwrap();
+                app.conflict_continue(owner, window, cx);
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        if departed {
+            app.update(cx, |app, cx| {
+                app.switch_repo(1, cx);
+                app.status_footer = kagi::ui::FooterStatus::Idle("other tab sentinel".into());
+            });
+        }
+        let panel_before = cx.read(|cx| app.read(cx).bottom_panel_open);
+        std::fs::rename(repo.join(".git"), repo.join(".git-paused")).unwrap();
+        release.send(());
+        cx.run_until_parked();
+        std::fs::rename(repo.join(".git-paused"), repo.join(".git")).unwrap();
+        let receipts: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+            .into_iter()
+            .filter(|entry| entry.op == "merge-continue")
+            .collect();
+        assert_eq!(receipts.len(), 1);
+        assert!(matches!(receipts[0].outcome, OpOutcome::Failed { .. }));
+        assert_eq!(
+            kagi_ui_core::klog::tail()
+                .iter()
+                .filter(|line| line.starts_with("[kagi] footer: merge-continue: failed — "))
+                .count(),
+            before_footer + 1,
+            "missing unchanged failed footer contract for departed={departed}"
+        );
+        cx.read(|cx| {
+            let state = app.read(cx);
+            if departed {
+                assert!(matches!(&state.status_footer, kagi::ui::FooterStatus::Idle(text) if text.as_ref() == "other tab sentinel"));
+                let notice = e2e::app_notice_message(state)
+                    .expect("departed merge failure must reach the host");
+                assert!(notice.contains(repo.to_str().unwrap()), "{notice}");
+                assert_eq!(state.bottom_panel_open, panel_before, "must not change B's panel");
+            } else {
+                assert!(matches!(state.status_footer, kagi::ui::FooterStatus::Failed(_)));
+                assert!(state.bottom_panel_open);
+                assert!(state.toast_stack.as_ref().unwrap().read(cx).toasts()
+                    .iter().any(|toast| toast.message.as_ref().contains("merge-continue")));
+            }
+        });
+        assert_eq!(
+            kagi_ui_core::klog::tail()
+                .iter()
+                .filter(|line| line.as_str() == "[kagi] bottom-panel: open (Failed auto-open)")
+                .count(),
+            before_panel + usize::from(!departed)
+        );
+        unmount(cx, app, window);
+    }
+    eprintln!("[gui-e2e] PASS conflict_merge_failure_contract: current + departed");
+}
+
+pub fn scenario_conflict_skip_panic(cx: &mut VisualTestAppContext) {
+    let fixture = sequencer_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    kagi::ui::KagiApp::panic_next_conflict_skip_for_e2e();
+    app.update(cx, |app, cx| {
+        let owner = app
+            .app_sessions
+            .attachment(app.active_session().unwrap())
+            .unwrap();
+        app.conflict_skip(owner, cx);
+    });
+    assert_panicked_conflict(cx, &app, &repo, "cherry-pick-skip");
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS conflict_skip_panic");
+}

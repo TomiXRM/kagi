@@ -155,6 +155,112 @@ const LABELS: &[(&str, &str, &str)] = &[
     ("conflict-abort", "Aborting operation…", "操作を中止中…"),
 ];
 
+/// A mechanical explanation of the running operation's kind, never an
+/// inferred bottleneck. Unknown kinds have an honest generic description.
+pub fn slow_write_advice(op: &str, seconds: u64) -> String {
+    slow_write_advice_for(op, seconds, lang())
+}
+
+/// Every op kind with a classified slow-write reason, taken from what the
+/// operation actually writes. A kind not listed gets the generic reason: the
+/// explanation never guesses (#995 review). `branch-cleanup` stays generic
+/// because a batch may delete remote branches as well as local ones.
+const SLOW_WRITE_KINDS: &[(&str, super::Msg)] = {
+    use super::Msg::*;
+    &[
+        // Waits on a remote or on GitHub.
+        ("fetch", SlowWriteNetwork),
+        ("pull", SlowWriteNetwork),
+        ("push", SlowWriteNetwork),
+        ("branch-pull-ff", SlowWriteNetwork),
+        ("branch-push", SlowWriteNetwork),
+        ("branch-push-set-upstream", SlowWriteNetwork),
+        ("force-with-lease-push", SlowWriteNetwork),
+        ("push-tag", SlowWriteNetwork),
+        ("sync-to-remote", SlowWriteNetwork),
+        ("delete-remote-branch", SlowWriteNetwork),
+        ("remote-stash-drop", SlowWriteNetwork),
+        ("pr-merge", SlowWriteNetwork),
+        ("pr-comment", SlowWriteNetwork),
+        ("pr-review", SlowWriteNetwork),
+        ("pr-edit", SlowWriteNetwork),
+        ("issue-create", SlowWriteNetwork),
+        ("issue-comment", SlowWriteNetwork),
+        // Replays commits.
+        ("rebase", SlowWriteRebase),
+        ("replay-onto", SlowWriteRebase),
+        ("cherry-pick", SlowWriteRebase),
+        ("revert", SlowWriteRebase),
+        // Updates the worktree to another commit.
+        ("checkout", SlowWriteCheckout),
+        ("checkout-commit", SlowWriteCheckout),
+        ("checkout-tracking", SlowWriteCheckout),
+        ("switch", SlowWriteCheckout),
+        ("switch-to-latest", SlowWriteCheckout),
+        // Ref or branch-config only: no commit object, no index, no worktree.
+        ("reset-current", SlowWriteRefs),
+        ("reset", SlowWriteRefs),
+        ("undo", SlowWriteRefs),
+        ("redo", SlowWriteRefs),
+        ("op-revert", SlowWriteRefs),
+        ("restore-to-point", SlowWriteRefs),
+        ("create-branch", SlowWriteRefs),
+        ("delete-branch", SlowWriteRefs),
+        ("rename-branch", SlowWriteRefs),
+        ("set-upstream", SlowWriteRefs),
+        ("create-tag", SlowWriteRefs),
+        // Combines histories.
+        ("merge", SlowWriteMerge),
+        ("merge-into", SlowWriteMerge),
+        ("merge-commit", SlowWriteMerge),
+        // Writes a commit object.
+        ("commit", SlowWriteCommit),
+        ("amend", SlowWriteCommit),
+        // Stash entries (stash-apply leaves the entry and writes the
+        // worktree, so it is a worktree write).
+        ("stash", SlowWriteStash),
+        ("stash-push", SlowWriteStash),
+        ("stash-apply", SlowWriteWorktree),
+        ("stash-pop", SlowWriteStash),
+        ("stash-drop", SlowWriteStash),
+        ("snapshot", SlowWriteStash),
+        // Local files in a worktree.
+        ("restore-snapshot", SlowWriteWorktree),
+        ("create-worktree", SlowWriteWorktree),
+        ("open-worktree", SlowWriteWorktree),
+        ("remove-worktree", SlowWriteWorktree),
+        ("discard", SlowWriteWorktree),
+        ("editor-save", SlowWriteWorktree),
+        ("stage", SlowWriteWorktree),
+        ("unstage", SlowWriteWorktree),
+        ("stage-all", SlowWriteWorktree),
+        ("unstage-all", SlowWriteWorktree),
+        ("apply-suggestion", SlowWriteWorktree),
+        // Conflict resolution.
+        ("conflict-save", SlowWriteConflict),
+        ("conflict-continue", SlowWriteConflict),
+        ("conflict-skip", SlowWriteConflict),
+        ("conflict-abort", SlowWriteConflict),
+        ("conflict-dir-file:keep-directory", SlowWriteConflict),
+        ("conflict-dir-file:keep-file", SlowWriteConflict),
+        // Repository maintenance data.
+        ("write-commit-graph", SlowWriteLocal),
+        ("enable-fsmonitor", SlowWriteLocal),
+    ]
+};
+
+fn slow_write_reason(op: &str) -> super::Msg {
+    SLOW_WRITE_KINDS
+        .iter()
+        .find(|(kind, _)| *kind == op)
+        .map_or(super::Msg::SlowWriteGeneric, |(_, reason)| *reason)
+}
+
+fn slow_write_advice_for(op: &str, seconds: u64, language: Lang) -> String {
+    // The reason and the elapsed seconds only: no lead-in sentence.
+    format!("{} · {seconds} s", slow_write_reason(op).t_for(language))
+}
+
 pub fn busy_label(op: &str) -> &'static str {
     label_for(op, lang())
 }
@@ -174,48 +280,24 @@ fn label_for(op: &str, language: Lang) -> &'static str {
 
 use crate::slow_read::SlowRead;
 
-/// #355: `(reason, subject)` of a slow read, EN and JA. The reason is also the
-/// snackbar label when no write is running.
-fn slow_read_parts(read: SlowRead, language: Lang) -> (&'static str, &'static str) {
+/// #355: the reason of a slow read, EN and JA. It is also the snackbar label
+/// when no write is running.
+fn slow_read_reason(read: SlowRead, language: Lang) -> &'static str {
     match (read, language) {
-        (SlowRead::AheadBehind, Lang::En) => (
-            "Counting ahead/behind…",
-            "counting commits against each upstream",
-        ),
-        (SlowRead::AheadBehind, Lang::Ja) => (
-            "ahead/behind を計算中…",
-            "各ブランチと upstream の差分の計算",
-        ),
-        (SlowRead::Worktrees, Lang::En) => (
-            "Reading worktree status…",
-            "checking every worktree for changes",
-        ),
-        (SlowRead::Worktrees, Lang::Ja) => {
-            ("worktree の状態を読み込み中…", "各 worktree の変更の確認")
-        }
-        (SlowRead::WorktreeSize, Lang::En) => (
-            "Measuring worktree size…",
-            "walking every file in a worktree",
-        ),
-        (SlowRead::WorktreeSize, Lang::Ja) => (
-            "worktree の容量を計測中…",
-            "各 worktree 内の全ファイルの走査",
-        ),
-        (SlowRead::Analyze, Lang::En) => (
-            "Analyzing hotspots…",
-            "reading the commit history and touched files",
-        ),
-        (SlowRead::Analyze, Lang::Ja) => {
-            ("hotspot を解析中…", "commit 履歴と変更ファイルの読み込み")
-        }
-        (SlowRead::Diff, Lang::En) => ("Loading diff…", "reading a large diff"),
-        (SlowRead::Diff, Lang::Ja) => ("diff を読み込み中…", "大きい diff の読み込み"),
+        (SlowRead::AheadBehind, Lang::En) => "Counting ahead/behind…",
+        (SlowRead::AheadBehind, Lang::Ja) => "ahead/behind を計算中…",
+        (SlowRead::Worktrees, Lang::En) => "Reading worktree status…",
+        (SlowRead::Worktrees, Lang::Ja) => "worktree の状態を読み込み中…",
+        (SlowRead::Analyze, Lang::En) => "Analyzing hotspots…",
+        (SlowRead::Analyze, Lang::Ja) => "hotspot を解析中…",
+        (SlowRead::Diff, Lang::En) => "Loading diff…",
+        (SlowRead::Diff, Lang::Ja) => "diff を読み込み中…",
     }
 }
 
 /// Snackbar label for a slow read (shown when no write owns the snackbar).
 pub fn slow_read_label(read: SlowRead) -> &'static str {
-    slow_read_parts(read, lang()).0
+    slow_read_reason(read, lang())
 }
 
 /// The one-line explanation added to the busy snackbar once a read is slow.
@@ -224,16 +306,10 @@ pub fn slow_read_advice(read: SlowRead) -> String {
 }
 
 fn slow_read_advice_for(read: SlowRead, language: Lang) -> String {
-    let (reason, subject) = slow_read_parts(read, language);
-    let reason = reason.trim_end_matches('…');
-    match language {
-        Lang::En => {
-            format!("Taking a while: {reason} ({subject} takes time in large repositories)")
-        }
-        Lang::Ja => format!(
-            "時間がかかっています: {reason}（大きいリポジトリでは{subject}に時間がかかります）"
-        ),
-    }
+    // The reason only: no lead-in and no explanatory sentence.
+    slow_read_reason(read, language)
+        .trim_end_matches('…')
+        .to_string()
 }
 
 /// The snackbar's Skip button: stop the read and show its result as unknown.
@@ -277,32 +353,177 @@ mod tests {
         }
     }
 
-    /// #355: every slow read explains itself in both languages with the
-    /// "taking a while: <reason> (<subject> in large repositories)" shape.
+    /// #355: a slow read names its reason in both languages, and nothing
+    /// else — no lead-in, no explanatory sentence.
     #[test]
-    fn slow_read_advice_names_reason_and_subject() {
+    fn slow_read_advice_is_the_reason_only() {
         assert_eq!(
             slow_read_advice_for(SlowRead::AheadBehind, Lang::En),
-            "Taking a while: Counting ahead/behind (counting commits against each upstream takes time in large repositories)"
+            "Counting ahead/behind"
         );
         assert_eq!(
             slow_read_advice_for(SlowRead::AheadBehind, Lang::Ja),
-            "時間がかかっています: ahead/behind を計算中（大きいリポジトリでは各ブランチと upstream の差分の計算に時間がかかります）"
+            "ahead/behind を計算中"
         );
         for read in [
             SlowRead::AheadBehind,
             SlowRead::Worktrees,
-            SlowRead::WorktreeSize,
             SlowRead::Analyze,
             SlowRead::Diff,
         ] {
-            let (en, ja) = (
-                slow_read_parts(read, Lang::En),
-                slow_read_parts(read, Lang::Ja),
+            assert_ne!(
+                slow_read_reason(read, Lang::En),
+                slow_read_reason(read, Lang::Ja),
+                "{read:?} is not translated"
             );
-            assert_ne!(en, ja, "{read:?} is not translated");
-            assert!(slow_read_advice_for(read, Lang::En).starts_with("Taking a while: "));
-            assert!(slow_read_advice_for(read, Lang::Ja).starts_with("時間がかかっています: "));
+            for language in [Lang::En, Lang::Ja] {
+                let advice = slow_read_advice_for(read, language);
+                assert_eq!(
+                    advice,
+                    slow_read_reason(read, language).trim_end_matches('…')
+                );
+            }
         }
+    }
+
+    /// #995 review: every GitHub write that holds the lease waits on the
+    /// network, so none of them falls back to the generic reason.
+    #[test]
+    fn github_writes_wait_on_the_network() {
+        let network = format!(
+            "{} · 3 s",
+            super::super::Msg::SlowWriteNetwork.t_for(Lang::En)
+        );
+        for op in [
+            "pr-merge",
+            "pr-comment",
+            "pr-review",
+            "pr-edit",
+            "issue-create",
+            "issue-comment",
+        ] {
+            assert_eq!(slow_write_advice_for(op, 3, Lang::En), network, "{op}");
+        }
+    }
+
+    /// #995 review: the whole classification, pinned. Every listed op kind
+    /// maps to the reason for what it actually writes; anything unlisted is
+    /// generic, never a guess. Changing a row means changing this table.
+    #[test]
+    fn every_slow_write_kind_is_classified_by_what_it_writes() {
+        use super::super::Msg::*;
+        let expected: &[(&str, super::super::Msg)] = &[
+            ("fetch", SlowWriteNetwork),
+            ("pull", SlowWriteNetwork),
+            ("push", SlowWriteNetwork),
+            ("branch-pull-ff", SlowWriteNetwork),
+            ("branch-push", SlowWriteNetwork),
+            ("branch-push-set-upstream", SlowWriteNetwork),
+            ("force-with-lease-push", SlowWriteNetwork),
+            ("push-tag", SlowWriteNetwork),
+            ("sync-to-remote", SlowWriteNetwork),
+            ("delete-remote-branch", SlowWriteNetwork),
+            ("remote-stash-drop", SlowWriteNetwork),
+            ("pr-merge", SlowWriteNetwork),
+            ("pr-comment", SlowWriteNetwork),
+            ("pr-review", SlowWriteNetwork),
+            ("pr-edit", SlowWriteNetwork),
+            ("issue-create", SlowWriteNetwork),
+            ("issue-comment", SlowWriteNetwork),
+            ("rebase", SlowWriteRebase),
+            ("replay-onto", SlowWriteRebase),
+            ("cherry-pick", SlowWriteRebase),
+            ("revert", SlowWriteRebase),
+            ("checkout", SlowWriteCheckout),
+            ("checkout-commit", SlowWriteCheckout),
+            ("checkout-tracking", SlowWriteCheckout),
+            ("switch", SlowWriteCheckout),
+            ("switch-to-latest", SlowWriteCheckout),
+            ("reset-current", SlowWriteRefs),
+            ("reset", SlowWriteRefs),
+            ("undo", SlowWriteRefs),
+            ("redo", SlowWriteRefs),
+            ("op-revert", SlowWriteRefs),
+            ("restore-to-point", SlowWriteRefs),
+            ("create-branch", SlowWriteRefs),
+            ("delete-branch", SlowWriteRefs),
+            ("rename-branch", SlowWriteRefs),
+            ("set-upstream", SlowWriteRefs),
+            ("create-tag", SlowWriteRefs),
+            ("merge", SlowWriteMerge),
+            ("merge-into", SlowWriteMerge),
+            ("merge-commit", SlowWriteMerge),
+            ("commit", SlowWriteCommit),
+            ("amend", SlowWriteCommit),
+            ("stash", SlowWriteStash),
+            ("stash-push", SlowWriteStash),
+            ("stash-apply", SlowWriteWorktree),
+            ("stash-pop", SlowWriteStash),
+            ("stash-drop", SlowWriteStash),
+            ("snapshot", SlowWriteStash),
+            ("restore-snapshot", SlowWriteWorktree),
+            ("create-worktree", SlowWriteWorktree),
+            ("open-worktree", SlowWriteWorktree),
+            ("remove-worktree", SlowWriteWorktree),
+            ("discard", SlowWriteWorktree),
+            ("editor-save", SlowWriteWorktree),
+            ("stage", SlowWriteWorktree),
+            ("unstage", SlowWriteWorktree),
+            ("stage-all", SlowWriteWorktree),
+            ("unstage-all", SlowWriteWorktree),
+            ("apply-suggestion", SlowWriteWorktree),
+            ("conflict-save", SlowWriteConflict),
+            ("conflict-continue", SlowWriteConflict),
+            ("conflict-skip", SlowWriteConflict),
+            ("conflict-abort", SlowWriteConflict),
+            ("conflict-dir-file:keep-directory", SlowWriteConflict),
+            ("conflict-dir-file:keep-file", SlowWriteConflict),
+            ("write-commit-graph", SlowWriteLocal),
+            ("enable-fsmonitor", SlowWriteLocal),
+        ];
+        assert_eq!(
+            SLOW_WRITE_KINDS, expected,
+            "the classification table changed"
+        );
+        for (kind, reason) in expected {
+            assert_eq!(slow_write_reason(kind), *reason, "{kind}");
+        }
+        let mut seen = std::collections::HashSet::new();
+        for (kind, _) in SLOW_WRITE_KINDS {
+            assert!(seen.insert(kind), "duplicate kind: {kind}");
+        }
+        // Unlisted kinds — including branch-cleanup, which may also delete
+        // remote branches — are generic.
+        for kind in ["branch-cleanup", "merge-plan", "unexpected-kind", ""] {
+            assert_eq!(slow_write_reason(kind), SlowWriteGeneric, "{kind}");
+        }
+        assert_eq!(
+            slow_write_advice_for("delete-branch", 3, Lang::En),
+            "refs: updating branches · 3 s"
+        );
+        assert_eq!(
+            slow_write_advice_for("set-upstream", 3, Lang::Ja),
+            "refs: branch を更新中 · 3 s"
+        );
+    }
+
+    #[test]
+    fn slow_write_advice_names_known_kind_and_elapsed_without_guessing() {
+        assert_eq!(
+            slow_write_advice_for("pull", 2, Lang::En),
+            "network: waiting for the remote · 2 s"
+        );
+        assert_eq!(
+            slow_write_advice_for("pull", 4, Lang::Ja),
+            "network: remote の応答を待っています · 4 s"
+        );
+        assert_eq!(
+            slow_write_advice_for("checkout", 4, Lang::En),
+            "checkout: updating the worktree · 4 s"
+        );
+        assert_eq!(
+            slow_write_advice_for("unexpected-kind", 9, Lang::En),
+            "operation in progress · 9 s"
+        );
     }
 }

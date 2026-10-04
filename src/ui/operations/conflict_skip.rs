@@ -1,6 +1,16 @@
 //! Sequencer conflict Skip adapter, split from the conflict editor module.
 
 use crate::{app, ui::*};
+#[cfg(feature = "gui-e2e")]
+static PANIC_NEXT_CONFLICT_SKIP: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    pub fn panic_next_conflict_skip_for_e2e() {
+        PANIC_NEXT_CONFLICT_SKIP.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
 
 /// Classify before settling the guard: `Ok` means the child returned, not that
 /// the sequencer's effect is known. Keep the original outcome for its observed
@@ -68,89 +78,103 @@ impl KagiApp {
             return;
         };
 
-        // #540: repository state, not exit status alone, decides progress.
-        let (result, ref_moves) = self
-            .ui()
-            .repo_session
-            .as_ref()
-            .expect("repo session existed while planning conflict skip")
-            .backend()
-            .observe_ref_moves(|b| b.execute_conflict_skip(&mode.session, &mode.buffer));
-        let settlement = skip_settlement(&result);
-        let unknown = app::settle_conflict_write(guard, &settlement, plan.current.clone());
-        self.refresh_write_busy();
-        let (outcome, failure, ran) = match result {
-            Ok(o) => {
-                // Preserve GitError's display payload (#567 P2).
-                let git_said = o.error.map(|e| format!("{}", e)).unwrap_or_default();
-                let (outcome, failure) = match o.progress {
-                    SkipProgress::Finished | SkipProgress::Advanced => {
-                        let _ = kagi_git::ResolutionBuffer::clear(&repo_path);
-                        (OpOutcome::Success { after: o.after }, None)
-                    }
-                    SkipProgress::NoProgress => (
-                        OpOutcome::Failed {
-                            error: git_said.clone(),
-                        },
-                        Some(git_said),
-                    ),
-                    SkipProgress::Unclear => (
-                        OpOutcome::Unknown {
-                            after: o.after,
-                            evidence: git_said.clone(),
-                        },
-                        Some(git_said),
-                    ),
-                };
-                (outcome, failure, true)
+        let owner = owner.session;
+        let visit = self.app_sessions.visit(owner);
+        let session = mode.session.clone();
+        let buffer = mode.buffer.clone();
+        let before = plan.current.clone();
+        let abandonment = guard.abandonment();
+        let supervision = abandonment.supervision();
+        let bg_path = repo_path.clone();
+        let bg_before = before.clone();
+        let task = cx.background_spawn(async move {
+            let _supervised = kagi_git::proc::supervisor::enter(supervision);
+            #[cfg(feature = "gui-e2e")]
+            if PANIC_NEXT_CONFLICT_SKIP.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                let _ = std::panic::catch_unwind(|| panic!("injected conflict skip panic"));
+                return None;
             }
-            Err(e) => {
-                let err_msg = format!("{}", e);
-                (
-                    unknown.unwrap_or_else(|| OpOutcome::Failed {
-                        error: err_msg.clone(),
-                    }),
-                    Some(err_msg),
-                    matches!(e, kagi_git::GitError::TerminationUnknown(_)),
+            let (result, ref_moves) = match kagi_git::Backend::open(&bg_path) {
+                Ok(backend) => {
+                    backend.observe_ref_moves(|b| b.execute_conflict_skip(&session, &buffer))
+                }
+                Err(error) => (Err(error), None),
+            };
+            let settlement = skip_settlement(&result);
+            let unknown = app::settle_conflict_write(guard, &settlement, bg_before);
+            if result.as_ref().is_ok_and(|outcome| {
+                matches!(
+                    outcome.progress,
+                    SkipProgress::Finished | SkipProgress::Advanced
                 )
+            }) {
+                let _ = kagi_git::ResolutionBuffer::clear(&bg_path);
             }
-        };
-        let termination_unknown_evidence = match &outcome {
-            OpOutcome::Unknown { evidence, .. }
-                if evidence.contains("process termination is unconfirmed") =>
-            {
-                Some(evidence.clone())
-            }
-            _ => None,
-        };
-        let termination_unknown = termination_unknown_evidence.is_some();
-        match &failure {
-            None => klog!("executed: {}", op_name),
-            Some(err_msg) => klog!("{} failed: {}", op_name, err_msg),
-        }
-        self.record_op_persist_moves(
-            &op_name,
-            plan.current.clone(),
-            outcome,
-            ref_moves,
-            &repo_path,
-            cx,
-        );
-        if let Some(evidence) = termination_unknown_evidence {
-            self.report_unknown_notice(&repo_path, evidence);
-        }
-        if ran {
-            // The repository may have moved even without a clean success.
-            self.reload(cx);
-            if let Some(ui) = self.ui_mut() {
-                ui.conflict_detected = false;
-            }
-            self.detect_conflict_mode(cx);
-        }
-        if let Some(err_msg) = failure.filter(|_| !termination_unknown) {
-            self.push_toast(ToastKind::Error, SharedString::from(err_msg), cx);
-        }
-        cx.notify();
+            Some((result, ref_moves, unknown))
+        });
+        cx.spawn(async move |this, acx| {
+            let (result, ref_moves, unknown) = task.fallible().await.flatten().unwrap_or_else(|| {
+                let error = abandonment.into_unknown();
+                let unknown = if let kagi_git::GitError::TerminationUnknown(reason) = &error {
+                    Some(OpOutcome::Unknown {
+                        after: before.clone(),
+                        evidence: format!("{}; process termination is unconfirmed — do not retry this operation", reason),
+                    })
+                } else {
+                    None
+                };
+                (Err(error), None, unknown)
+            });
+            let _ = this.update(acx, |app, cx| {
+                app.refresh_write_busy();
+                let current = app.active_session() == Some(owner) && app.app_sessions.visit(owner) == visit;
+                let (outcome, failure, ran) = match result {
+                    Ok(o) => {
+                        let git_said = o.error.map(|e| format!("{}", e)).unwrap_or_default();
+                        let (outcome, failure) = match o.progress {
+                            SkipProgress::Finished | SkipProgress::Advanced => (OpOutcome::Success { after: o.after }, None),
+                            SkipProgress::NoProgress => (OpOutcome::Failed { error: git_said.clone() }, Some(git_said)),
+                            SkipProgress::Unclear => (OpOutcome::Unknown { after: o.after, evidence: git_said.clone() }, Some(git_said)),
+                        };
+                        (outcome, failure, true)
+                    }
+                    Err(e) => {
+                        let err_msg = format!("{}", e);
+                        (unknown.unwrap_or_else(|| OpOutcome::Failed { error: err_msg.clone() }), Some(err_msg), matches!(e, kagi_git::GitError::TerminationUnknown(_)))
+                    }
+                };
+                let termination_unknown_evidence = match &outcome {
+                    OpOutcome::Unknown { evidence, .. } if evidence.contains("process termination is unconfirmed") => Some(evidence.clone()),
+                    _ => None,
+                };
+                let termination_unknown = termination_unknown_evidence.is_some();
+                match &failure {
+                    None => klog!("executed: {}", op_name),
+                    Some(err_msg) => klog!("{} failed: {}", op_name, err_msg),
+                }
+                app.record_conflict_completion(&op_name, before, outcome, ref_moves, &repo_path, current, cx);
+                if current {
+                    if let Some(evidence) = termination_unknown_evidence {
+                        app.report_unknown_notice(&repo_path, evidence);
+                    }
+                    if ran {
+                        app.reload(cx);
+                        if let Some(ui) = app.ui_mut() {
+                            ui.conflict_detected = false;
+                        }
+                        app.detect_conflict_mode(cx);
+                    }
+                    if let Some(err_msg) = failure.filter(|_| !termination_unknown) {
+                        app.push_toast(ToastKind::Error, SharedString::from(err_msg), cx);
+                    }
+                }
+                for (id, op, path) in app.app_sessions.drain_unaccounted() {
+                    app.notice_reconcile_required(id, op, &path);
+                }
+                app.present_app_notice();
+                cx.notify();
+            });
+        }).detach();
     }
 }
 

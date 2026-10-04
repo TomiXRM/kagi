@@ -44,6 +44,14 @@ const AUTO_FETCH_INTERVAL_SECS: u64 = 180;
 
 #[cfg(feature = "gui-e2e")]
 static PANIC_NEXT_FETCH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(feature = "gui-e2e")]
+static PANIC_NEXT_SNAPSHOT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static SNAPSHOT_WRITE_HOLD: std::cell::RefCell<Option<gpui::Task<()>>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 use super::context_menu::CommitAction;
 use super::i18n::{self, Lang, Msg};
@@ -1541,36 +1549,96 @@ impl KagiApp {
     /// so it needs no plan/confirm — a menu action + toast is the whole flow.
     /// Restore lives in the oplog panel (#334), which consumes the tested
     /// `Backend::plan_restore_snapshot` / `run(Operation::RestoreSnapshot)` path.
+    #[cfg(feature = "gui-e2e")]
+    pub fn panic_next_snapshot_for_e2e() {
+        PANIC_NEXT_SNAPSHOT.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    #[cfg(feature = "gui-e2e")]
+    pub fn hold_next_snapshot_write_for_e2e(hold: gpui::Task<()>) {
+        SNAPSHOT_WRITE_HOLD.with(|slot| assert!(slot.borrow_mut().replace(hold).is_none()));
+    }
+
     fn create_snapshot_now(&mut self, cx: &mut Context<Self>) {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
-        let Some(lease) = self.reserve_write("snapshot", &repo_path, cx) else {
+        let Some(guard) = self.reserve_write("snapshot", &repo_path, cx) else {
             return;
         };
-        let result = lease.run(|| {
-            kagi_git::Backend::open(&repo_path).and_then(|backend| {
+        let owner = self.active_session();
+        let visit = owner.and_then(|id| self.app_sessions.visit(id));
+        let abandonment = guard.abandonment();
+        let supervision = abandonment.supervision();
+        let bg_path = repo_path.clone();
+        #[cfg(feature = "gui-e2e")]
+        let hold = SNAPSHOT_WRITE_HOLD.with(|slot| slot.borrow_mut().take());
+        let task = cx.background_spawn(async move {
+            let _supervised = kagi_git::proc::supervisor::enter(supervision);
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
+            #[cfg(feature = "gui-e2e")]
+            if PANIC_NEXT_SNAPSHOT.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                let _ = std::panic::catch_unwind(|| panic!("injected snapshot task panic"));
+                return None;
+            }
+            let result = kagi_git::Backend::open(&bg_path).and_then(|backend| {
                 let entry = backend.create_snapshot("manual snapshot")?;
                 // Enforce the generation cap so the ODB does not grow unbounded.
                 let _ = backend.prune_snapshots(kagi_git::DEFAULT_SNAPSHOT_CAP);
                 Ok(entry)
-            })
+            });
+            guard.complete_git(&result);
+            Some(result)
         });
-        self.refresh_write_busy();
-        match result {
-            Ok(entry) => {
-                klog!("snapshot: created {}", entry.id);
-                self.push_toast(ToastKind::Success, Msg::SnapshotCreated.t(), cx);
-            }
-            Err(e) => {
-                klog!("snapshot: create failed: {}", e);
-                self.push_toast(
-                    ToastKind::Error,
-                    format!("{}: {e}", Msg::SnapshotFailed.t()),
-                    cx,
-                );
-            }
-        }
+        cx.spawn(async move |this, acx| {
+            let result = task
+                .fallible()
+                .await
+                .flatten()
+                .unwrap_or_else(|| Err(abandonment.into_unknown()));
+            let _ = this.update(acx, |app, cx| {
+                app.refresh_write_busy();
+                match &result {
+                    Ok(entry) => klog!("snapshot: created {}", entry.id),
+                    Err(e) => klog!("snapshot: create failed: {}", e),
+                }
+                let current = owner.is_some_and(|id| {
+                    app.active_session() == Some(id) && app.app_sessions.visit(id) == visit
+                });
+                if !current {
+                    if let Err(e) = &result {
+                        app.app_notices.push_back(
+                            format!("{}: {}: {e}", repo_path.display(), Msg::SnapshotFailed.t())
+                                .into(),
+                        );
+                    }
+                }
+                for (id, op, path) in app.app_sessions.drain_unaccounted() {
+                    app.notice_reconcile_required(id, op, &path);
+                }
+                app.present_app_notice();
+                if !current {
+                    cx.notify();
+                    return;
+                }
+                match result {
+                    Ok(_) => {
+                        app.push_toast(ToastKind::Success, Msg::SnapshotCreated.t(), cx);
+                    }
+                    Err(e) => {
+                        app.push_toast(
+                            ToastKind::Error,
+                            format!("{}: {e}", Msg::SnapshotFailed.t()),
+                            cx,
+                        );
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Route a menu command (by registry id) to its handler.  This is the only
@@ -1964,8 +2032,14 @@ impl KagiApp {
         }
         let abandonment = lease.abandonment();
         let supervision = abandonment.supervision();
+        #[cfg(feature = "gui-e2e")]
+        let hold = super::busy::take_fetch_hold();
         let task = cx.background_spawn(async move {
             let _supervised = kagi_git::proc::supervisor::enter(supervision);
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
             #[cfg(feature = "gui-e2e")]
             if PANIC_NEXT_FETCH.swap(false, std::sync::atomic::Ordering::SeqCst) {
                 // GPUI's test dispatcher propagates uncaught task panics.

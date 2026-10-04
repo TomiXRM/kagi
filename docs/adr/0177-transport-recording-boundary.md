@@ -143,13 +143,14 @@ allow-list に載っていない確定的な拒否は `Unknown` として残り�
 ## Release safety correction (2026-09-07)
 
 `mergedAt` is the supported GitHub CLI field: a string proves merged, null proves
-open, and absent/malformed data remains Unknown. Legacy PR merge and remote pull
-now retain an owner/operation admission hold for Partial and Unknown, settled
-before the stale-tab presentation guard. Notices and cached snapshots cannot
-release it. PR merge controls disappear and both plan/execute entry points refuse
-re-entry; remote pull only restores its plan after Failed. Holds last for this
-application instance: inspect the remote state before restarting Kagi. A durable
-read/ack lifecycle for these legacy transports remains future family work.
+open, and absent/malformed data remains Unknown. PR merge retains an
+owner/operation transport hold for Partial, settled before stale-tab presentation.
+Remote SSH pull (#989) instead goes through `Planned::RemotePull` and
+`begin_write` on `WriteScope::Remote`: Unknown, Partial (including a host left
+mid-merge), and job abandonment retain the lease plus a reconcile requirement.
+The remote outcome cannot be observed locally, so only the audited two-step
+unobservable-release path permits another write. The transport still owns the
+single durable pull receipt; a tab switch or notice dismissal never releases it.
 
 ### Synchronous staging failures (#490)
 

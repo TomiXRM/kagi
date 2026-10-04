@@ -1510,16 +1510,32 @@ G: `transport_recording_test` validates the actual `mergedAt` query with fake gh
 `remote_stash_script_test::drop_forces_c_locale_inside_the_remote_shell` runs the
 real script under a simulated translated Git; `conflicts_test::skip_advancing_to_the_next_conflict_is_not_a_failure`
 checks that the next same-path conflict has no skipped draft. UI `transport_hold`
-unit coverage verifies owner/operation isolation and Partial/Unknown admission.
+unit coverage verifies GitHub PR merge owner/operation isolation and Partial/Unknown admission;
+SSH pull now uses the shared app lease, not this hold.
 Skip の分類順 (#569 (1)) は `cargo test -p kagi --lib conflict_skip::tests`
 で確認する。`tests/recovery/conflict_skip_g.rs` は GUI を起動せず、実 repository と
 `Sessions` で Unclear の lease 保持・writer 拒否・reconcile 登録、typed
 TerminationUnknown の Unknown 維持、既知結果の通常解放を検証する。
 既存 `app_writer_admission_test` と `conflicts_test` の `skip_` も併用する。
-For M, check that notice dismissal/tab switching does not re-enable PR merge or
-remote pull after Unknown/Partial; Failed alone permits retry. Holds persist for
-the app lifetime; inspect remote state before restarting. GUI runner build only
-when execution is reserved for PM.
+For M, PR merge retains its transport hold after Partial; remote pull holds its
+`WriteScope::Remote` lease during execution and retains it with a reconcile
+requirement after Unknown/Partial/abandonment. Dismissing a notice or switching
+tabs does not release either one. Remote pull's unobservable result requires
+Inspect → arm → confirm and an audit row before the lease releases. Failed
+releases normally. `KAGI_GUI_E2E_ONLY=remote_pull` (`tests/recovery/pull.rs`)
+drives real fake-SSH `-G`, common-dir and agent-only planning, the blocked pull
+and fetch, quit admission, Unknown notice and audited two-step release.
+`remote_pull_preflight_refusal` changes the common dir after confirmation: no
+`git pull` runs, Refused is recorded, and the lease releases.
+`remote_pull_proxy_route_refusal` keeps the same hostname and common dir but
+changes only `ssh -G` ProxyJump; the frozen route identity must refuse before
+`git pull`, record Refused, and release the lease. Domain
+`pull_route_changes_connection_identity_but_disabled_options_do_not` verifies
+ProxyJump/ProxyCommand/ControlMaster/ControlPath and disabled normalization.
+`remote_pull_planning_latch` blocks `ssh -G`, clicks Pull twice, and requires
+one probe and a cleared latch when the modal arrives. G:
+`cargo test -p kagi --test app_remote_pull_test` covers Unknown/Partial/abandonment
+plus Success/Failed. Remote stash's frozen-identity policy is unchanged.
 
 Continue の post-read (#569 (2)) は
 `cargo test -p kagi --test app_writer_admission_test continue_` で確認する。

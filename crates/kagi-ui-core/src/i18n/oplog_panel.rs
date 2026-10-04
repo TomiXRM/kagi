@@ -27,14 +27,29 @@ pub enum OplogPanelMsg {
     RestoreButton,
     /// Why both buttons are disabled for an entry without recorded ref moves.
     RestoreUnavailable,
-    /// The second (armed) confirm of an op-revert / restore-to-point.
-    RestoreArmed,
+    /// First confirmation on the restore card.
+    RestoreConfirm,
+    CopyCommand,
+    /// The typed ref list and unchanged-state section.
+    RestoreRefs,
+    RestoreDelete,
+    RestoreUnchanged,
+    RestoreAfter,
+    RestoreWorkingTree,
+    RestoreIndex,
+    RestoreUntracked,
+    RestoreStash,
+    RestoreRemotes,
+    RestoreExternalTags,
+    RestoreCheckedOut,
+    RestoreCheckedOutDirty,
     /// Heading of the card's after-restore graph when it cannot be drawn: no
     /// count of disappearing commits is claimed (#883 review).
     PreviewUnavailableHeading,
-    /// The graph is unavailable for plans that change local tags; the warnings
-    /// and Git command already describe the actual ref changes.
+    /// A changed tag can point at an annotated tag object, not a commit row.
     PreviewTagChange,
+    /// Suffix for a commit no longer reachable from any branch in Copy all.
+    PreviewOffBranch,
 }
 
 impl OplogPanelMsg {
@@ -65,12 +80,40 @@ impl OplogPanelMsg {
             (Lang::Ja, RestoreUnavailable) => {
                 "この操作には ref の移動の記録が無いため、正確に戻せません。"
             }
-            (Lang::En, RestoreArmed) => "Really move these local refs back",
-            (Lang::Ja, RestoreArmed) => "本当に local ref を戻しますか",
+            (Lang::En, RestoreConfirm) => "Restore",
+            (Lang::Ja, RestoreConfirm) => "戻す",
+            (Lang::En, CopyCommand) => "Copy command",
+            (Lang::Ja, CopyCommand) => "コマンドをコピー",
+            (Lang::En, RestoreRefs) => "REFS",
+            (Lang::Ja, RestoreRefs) => "REF",
+            (Lang::En, RestoreDelete) => "delete",
+            (Lang::Ja, RestoreDelete) => "削除",
+            (Lang::En, RestoreUnchanged) => "UNCHANGED",
+            (Lang::Ja, RestoreUnchanged) => "変更なし",
+            (Lang::En, RestoreAfter) => "AFTER",
+            (Lang::Ja, RestoreAfter) => "戻した後",
+            (Lang::En, RestoreWorkingTree) => "working tree",
+            (Lang::Ja, RestoreWorkingTree) => "作業ツリー",
+            (Lang::En, RestoreIndex) => "index",
+            (Lang::Ja, RestoreIndex) => "index",
+            (Lang::En, RestoreUntracked) => "untracked",
+            (Lang::Ja, RestoreUntracked) => "未追跡",
+            (Lang::En, RestoreStash) => "stash",
+            (Lang::Ja, RestoreStash) => "stash",
+            (Lang::En, RestoreRemotes) => "remotes",
+            (Lang::Ja, RestoreRemotes) => "remote",
+            (Lang::En, RestoreExternalTags) => "tags moved outside Kagi",
+            (Lang::Ja, RestoreExternalTags) => "Kagi 外での tag の変更",
+            (Lang::En, RestoreCheckedOut) => "branch moves; files and index stay",
+            (Lang::Ja, RestoreCheckedOut) => "branch のみ移動、ファイルと index はそのまま",
+            (Lang::En, RestoreCheckedOutDirty) => "branch moves; uncommitted changes stay",
+            (Lang::Ja, RestoreCheckedOutDirty) => "branch のみ移動、未 commit の変更はそのまま",
             (Lang::En, PreviewUnavailableHeading) => "Graph after",
             (Lang::Ja, PreviewUnavailableHeading) => "戻した後のグラフ",
             (Lang::En, PreviewTagChange) => "No preview: local tags change",
             (Lang::Ja, PreviewTagChange) => "プレビューなし: local tag が変更されます",
+            (Lang::En, PreviewOffBranch) => " (off branch)",
+            (Lang::Ja, PreviewOffBranch) => "（どの branch からも外れます）",
         }
     }
 }
@@ -99,13 +142,43 @@ pub fn reflog_unavailable(error: &str) -> String {
     }
 }
 
-/// #334 slice 2c: heading of the card's after-restore graph.
+/// Compact count chip: only the loaded commits proved to leave every ref.
 pub fn preview_heading(removed: usize) -> String {
-    match (lang(), removed) {
-        (Lang::En, 0) => "Graph after (no commit disappears)".into(),
-        (Lang::En, n) => format!("Graph after ({n} commit(s) no longer on any branch)"),
-        (Lang::Ja, 0) => "戻した後のグラフ(消える commit はありません)".into(),
-        (Lang::Ja, n) => format!("戻した後のグラフ({n} 個の commit がどの branch からも外れます)"),
+    match lang() {
+        Lang::En => format!(
+            "{removed} commit{} off any branch",
+            if removed == 1 { "" } else { "s" }
+        ),
+        Lang::Ja => format!("{removed} 個の commit がどの branch からも外れます"),
+    }
+}
+
+pub fn restore_confirm(count: usize) -> String {
+    match lang() {
+        Lang::En => format!("Confirm · {count} refs"),
+        Lang::Ja => format!("確認 · {count} refs"),
+    }
+}
+
+pub fn restore_command_lines(count: usize) -> String {
+    match lang() {
+        Lang::En => format!(
+            "git update-ref --stdin · {count} line{}",
+            if count == 1 { "" } else { "s" }
+        ),
+        Lang::Ja => format!("git update-ref --stdin · {count} 行"),
+    }
+}
+
+pub fn restore_checked_out(branch: &str, dirty: bool) -> String {
+    let suffix = if dirty {
+        OplogPanelMsg::RestoreCheckedOutDirty
+    } else {
+        OplogPanelMsg::RestoreCheckedOut
+    };
+    match lang() {
+        Lang::En => format!("{branch} is checked out · {}", suffix.t_for(Lang::En)),
+        Lang::Ja => format!("{branch} はチェックアウト中 · {}", suffix.t_for(Lang::Ja)),
     }
 }
 

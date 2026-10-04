@@ -144,6 +144,27 @@ fn test_pull_fast_forward() {
     assert!(!st.is_dirty(), "WT must be clean after FF");
 }
 
+/// Fetch may change the upstream tip after planning, turning a fast-forward
+/// into a merge; no copyable CLI command describes both outcomes.
+#[test]
+fn test_plan_pull_has_no_equivalent_for_clean_fast_forward_or_diverged() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    remote_commit(&r, "remote.txt", "from remote\n", "remote work");
+    git(&r.local, &["fetch", "-q", "origin"]);
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_pull(&repo).expect("clean fast-forward plan");
+    assert!(plan.equivalent_command.is_none());
+
+    write_file(&r.local, "local.txt", "from local\n");
+    git(&r.local, &["add", "-A"]);
+    git(&r.local, &["commit", "-qm", "local work"]);
+    let diverged = plan_pull(&Repository::open(&r.local).unwrap()).expect("diverged plan");
+    assert!(diverged.equivalent_command.is_none());
+}
+
 #[test]
 fn test_pull_merge_clean() {
     if !crate::test_support::run_isolated() {
@@ -281,6 +302,7 @@ fn test_plan_pull_dirty_warning_no_blocker() {
         "dirty WT alone must not be a blocker, got: {:?}",
         plan.blockers
     );
+    assert!(plan.equivalent_command.is_none());
     assert!(
         plan.warnings
             .iter()

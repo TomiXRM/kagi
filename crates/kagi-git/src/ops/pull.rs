@@ -257,7 +257,6 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         kind: RecoveryKind::Pull(PullRecovery::Pull),
         commands: vec!["git revert -m 1 HEAD".to_string(), "git reflog".to_string()],
     };
-
     Ok(OperationPlan {
         // ADR-0129 F-1: the UI's pull no-op detection keyed on the title text
         // ("up to date (local knowledge…"); the semantic state now travels
@@ -722,6 +721,7 @@ mod remote_pull_tests {
         assert!(!plan.destructive);
         assert!(plan.title.message_en().contains("3 commit"));
         assert!(plan.predicted.dirty.contains("fast-forward"));
+        assert!(plan.equivalent_command.is_none());
     }
 
     #[test]
@@ -739,5 +739,6 @@ mod remote_pull_tests {
             .iter()
             .any(|w| w.message_en().contains("diverged")));
         assert!(plan.predicted.dirty.contains("merge"));
+        assert!(plan.equivalent_command.is_none());
     }
 }

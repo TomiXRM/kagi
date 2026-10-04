@@ -92,23 +92,25 @@ fn log_stash_event(
 mod notices;
 
 impl KagiApp {
-    /// Keep the established `footer: ... partially applied` / `refused (N
-    /// blockers)` klog contract while the human-facing footer and toast make
-    /// an Unknown result explicit and name a refusal's reason (#353):
-    /// `refusal` when the caller had typed blockers, else the first recorded one.
+    /// Preserve the `[kagi] footer:` contract while human-facing text can
+    /// name a typed refusal, distinguish an Unknown outcome, or show a short
+    /// failed-plan preview. The durable Failed receipt retains the full error.
     pub(crate) fn display_footer_message(
         op: &str,
         outcome: &OpOutcome,
         contract: &SharedString,
-        refusal: Option<String>,
+        display_override: Option<String>,
     ) -> SharedString {
         match outcome {
             OpOutcome::Unknown { evidence, .. } => {
                 format!("{}: outcome unknown — {}", op, evidence).into()
             }
-            OpOutcome::Refused { .. } => refusal
+            OpOutcome::Refused { .. } => display_override
                 .or_else(|| super::record::refused_display(op, outcome))
                 .map_or_else(|| contract.clone(), Into::into),
+            OpOutcome::Failed { .. } => {
+                display_override.map_or_else(|| contract.clone(), Into::into)
+            }
             _ => contract.clone(),
         }
     }

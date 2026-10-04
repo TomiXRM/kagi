@@ -100,9 +100,13 @@ pub fn plan_replay_onto(
             preview_commits,
             // ADR-0023: rewriting history is destructive (two-stage confirm).
             destructive: true,
-            equivalent_command: Some(format!(
-                "git replay --onto {onto} {onto}..{branch} | git update-ref --stdin"
-            )),
+            equivalent_command: (!cfg!(windows)).then(|| {
+                format!(
+                    "git replay --onto {} {} | git update-ref --stdin",
+                    shell_quote(onto),
+                    shell_quote(&format!("{onto}..{branch}"))
+                )
+            }),
         })
     };
 

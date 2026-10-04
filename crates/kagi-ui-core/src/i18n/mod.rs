@@ -946,6 +946,10 @@ pub enum Msg {
     AdviceNoForceUsed(kagi_domain::plan_note::push::PushPunct),
     /// The Operation Log panel's fixed strings (#334, keys in `oplog_panel`).
     OplogPanel(oplog_panel::OplogPanelMsg),
+    /// Restore planning and malformed canonical ref-row failures (#993).
+    RestoreRepoSessionUnavailable,
+    RestorePlanRowsInvalidSeeLog,
+    RestorePlanRowsInvalidNoRepository,
     AdviceWillDetachHead,
     AdviceRecommendCreateBranchHereFirst,
     AdviceDirtyStashFirst,
@@ -1133,6 +1137,8 @@ pub enum Msg {
     AmendFoldedFiles,
     /// #454: tooltip on a popup's copy button (copies the whole dialog).
     ModalCopyAll,
+    /// Header of the distinct equivalent CLI command in Copy all.
+    ModalEquivalentCommand,
     /// #454: tooltip on a list panel's copy button (copies every row).
     ModalCopyList,
     /// #454: toast after a popup copy.
@@ -1514,6 +1520,20 @@ impl Msg {
         use Msg::*;
         match (language, self) {
             (language, OplogPanel(key)) => key.t_for(language),
+            (En, RestoreRepoSessionUnavailable) => "repo session unavailable",
+            (Ja, RestoreRepoSessionUnavailable) => "リポジトリのセッションを利用できません",
+            (En, RestorePlanRowsInvalidSeeLog) => {
+                "Restore plan ref rows are invalid; see the Operation Log"
+            }
+            (Ja, RestorePlanRowsInvalidSeeLog) => {
+                "復元計画の ref 行が不正です。詳細は Operation Log を確認してください"
+            }
+            (En, RestorePlanRowsInvalidNoRepository) => {
+                "Restore plan ref rows are invalid; no repository is open"
+            }
+            (Ja, RestorePlanRowsInvalidNoRepository) => {
+                "復元計画の ref 行が不正です。リポジトリは開かれていません"
+            }
             (En, AdviceUntrackedRemain(ctx)) => match ctx {
                 UntrackedCtx::AfterCheckout => advice_en!(UntrackedAfterCheckout),
                 UntrackedCtx::AfterSwitching => advice_en!(UntrackedAfterSwitching),
@@ -3085,6 +3105,8 @@ impl Msg {
             (Ja, AmendFoldedFiles) => "この commit に取り込む staged 変更",
             (En, ModalCopyAll) => "Copy this dialog as text",
             (Ja, ModalCopyAll) => "この内容をテキストでコピー",
+            (En, ModalEquivalentCommand) => "equivalent command:",
+            (Ja, ModalEquivalentCommand) => "相当するコマンド:",
             (En, ModalCopyList) => "Copy every row",
             (Ja, ModalCopyList) => "一覧をすべてコピー",
             (En, ModalCopied) => "Copied to clipboard",

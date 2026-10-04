@@ -24,7 +24,7 @@ Kagi の操作はすべて oplog を通るが、UI では bottom panel の Opera
   |---|---|---|
   | restore to point | その時点の ref 状態へ戻す | checkpoint + イベント列から目標 ref 状態を再構成し、ref 更新の plan を作る |
   | revert one op | 1 操作だけ打ち消す | その操作の before / after 差分だけを逆適用する。後続操作が同じ ref を動かしていれば blocker |
-  | preview | 実行前に結果のグラフを描く | in-memory でグラフを再計算し、現在のグラフと並べる |
+  | preview | 実行前に復元後の見え方を描く | 読み込み済みの graph rail を維持し、ref の移動と到達性だけを投影して AFTER をカードに示す(§6) |
 
 - **confirm の内容**: 実行後グラフのプレビュー(正しく投影できる場合)、逆操作の一覧、「できないこと」(untracked の削除は戻らない等)の明示。
 - **#887: 未決を解消**。作業ツリー / index / untracked は戻さず、checkout や `--keep` 相当の自動調整はしない。未コミット変更の保全や競合判定を ref の一括更新と混ぜないため。stash は push / pop / drop の原状復元を対象外とし、既存の stash-drop recovery を利用する。**local tag は戻す**: `refs/tags/*` の raw ref OID を記録する。lightweight tag は commit に加えて tree object も直接指せる。annotated tag は peeled commit ではなく tag object を指す。いずれも CAS 付きで戻す。remote-tracking branch は fetch で再度上書きされるため対象外。`RefsOnly` は戻さない作業ツリー・index・untracked・stash・remote branch と、Kagi 外で変更された tag の扱いを短く列挙する。既存の Refused / Failed / Partial の扱いは記録どおり(何も動いていなければ `Some(空)`、Partial は実際に動いた分)。`Unknown` は記録しないのでまたげない(`docs/decisions.md`)。
@@ -167,7 +167,7 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
 - **2b-2(UI)**
   - panel の選択行に「この操作を取り消す…」「この時点まで戻す…」を出す。押すと panel が `OpLogPanelEvent::Restore(Operation)` を出し、app が active な repository で plan して card(`ActiveModal::OplogRestore`)を開く。
   - 記録なしの行(`ref_moves = None`)では両方 disabled にし、理由を出す。
-  - card は shared plan card で、warning の Moves(ref ごとの逆操作)と RefsOnly(戻らないもの)を描画する。script 行(`preview_commits`)は commit 一覧として描かない。#953: `display_plan` では同じ説明を繰り返す recovery 段落を非表示にする。実行に使う元の plan の recovery、二段 confirm、warning と `git update-ref --stdin` の相当コマンドは維持する。
+  - card は REFS-first の専用カードで、warning の Moves(ref ごとの逆操作)と RefsOnly(戻らないもの)を描画する。script 行(`preview_commits`)は commit 一覧として描かない。#953: 同じ説明を繰り返す recovery 段落を非表示にする。実行に使う元の plan の recovery、二段 confirm、warning は維持し、`git update-ref --stdin` の相当コマンドは Ready plan のときだけ(専用 Copy / Copy all を含む)表示する。
   - destructive なので、最初の confirm(button / Enter)で arm し、二度目で `run_recorded`。CLI / MCP には出さない(#888 で確定。理由は `docs/decisions.md`)。
   - **記録できなかった receipt は戻す対象にしない**: append に失敗した entry は panel 上で id が placeholder(0)になる。oplog の id は 0 始まりなので、0 は最初の実 entry も指しうる。そこで `entry_for_recording` は `Recording::Failed` の `ref_moves` を落として「記録なし」(推定表示・ボタン disabled)にする。
   - 別 repository の行を選んだ場合、plan は EntryNotLoaded(「この repository の操作にない」)になる。
@@ -176,21 +176,23 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
 
 ### 6. slice 2c: 実行前のグラフプレビュー(表示専用)
 
-- **入力**: tab が読み込み済みの rows(id + parents、topo 順)、`branch_targets`、plan の `restore` 行だけを使う。repository は読まず、plan の一部でもない(書き込みなし、preflight にも関わらない)。
+**#988 改訂(2026-10-04)**: 当初の「残存行だけで `graph::layout()` を再実行」は採らない。現行 graph の文脈を失わず、branch から外れる commit も ghost として示す設計に変更した。
+
+- **入力**: tab が読み込み済みの rows(id・parents・summary と lane / edge / node color)、`branch_targets`、plan の `restore` 行だけを使う。repository は読まず、plan の一部でもない(書き込みなし、preflight にも関わらない)。
   - branch Solo 中は、表示用に絞った `rows` ではなく、退避してある全行(`branch_solo.saved_rows`)を使う。Solo は表示の絞り込みにすぎない(#883 review)。
 - **計算**(pure、`kagi_domain::restore_preview`)
   - 戻した後の local branch の先端と、動かない根(remote branch / tag / Kagi が fetch した PR head `refs/kagi/pr/**` / detached な worktree の HEAD / stash の base)から到達できる commit を求める。attached な HEAD は branch に追従するので根にしない。PR head は snapshot が graph の根として読み込んでいるので、`RepoSnapshot.pr_heads` として read model に渡す(#883 review)。
   - 戻す前にどの根からも到達しなかった行(読み込み範囲の外を指す ref など)は消さない。
-  - 残った行は読み込み順の部分列、すなわち topo 順なので、既存の `graph::layout()` をそのまま使う(新しいレイアウトは書かない)。
-  - 消える行数 = 戻す前は到達し、戻した後は到達しない行。
-- **範囲**: 戻し先の行と、消える行が下がっていた行(その下の最初の残る行)を含む最小区間に、前後 4 行を足す。上限 40 行で、窓の外の行数は「… ほか N 行」と出す。lane は最大 8 本分の幅で切る(既存の graph 列と同じく clip)。
-  - card の body はスクロールしない(modal の規則)ので、行は自分の高さ上限(`modal_list_max_h`)付きのスクロール領域に入れる。40 行 × 29px は通常の窓に収まらない(#883 review)。
+  - 全行の順序と既存の lane / edge / node color は保つ。復元先の commit に移した branch badge を載せ、`before` では到達できたが `after` ではどの根からも到達できない行は**削除せず ghost(薄い表示)**として残す。`graph::layout()` は再実行しない。
+  - 消える行数はこの off-branch 行の総数(表示範囲の外も含む)であり、表示から取り除く行数ではない。
+- **範囲**: 復元先の行と off-branch 行を含む区間に前後 4 行を足し、最大 40 行を元の順序で描く。区間が長い場合は復元先を優先して窓を固定し、窓外の行数を「… ほか N 行」と出す。元の rail の lane / edge が使う列を同じ縮尺で描き、右端の移動先へ横スクロールして見切れを防ぐ(8 lane で切らない)。
+  - card の body はスクロールしない(modal の規則)。プレビュー領域は内容分の高さ(最大 6 行)で、それ以上はその領域だけ縦スクロールする。
 - **推定しない**: 戻し先 commit が読み込み済み rows に無い場合(削除した branch の作り直し、restore で branch から外れた commit への revert など)は `NotLoaded` とする。復元そのものは可能。見出しは消える数を言わない中立な「戻した後のグラフ」にし、カードと Copy all には「戻し先が読み込み済みの履歴外」という短い状態を 1 行で出す(#883、#953)。以前は「消える commit はありません」と出て矛盾していた。
   - **#887 tag の投影を推定しない**: plan に変更する local tag が含まれたら、annotated tag の raw OID は commit ではなく tag object を指す場合があるので branch-only graph を描かない。`TagChange` としてカードと Copy all には「local tag が変更されるためプレビューなし」という短い状態を 1 行で出し、消える commit 数も主張しない(#953)。restore の plan / preflight / 実行には影響しない。tag を動かさない branch-only の計画では従来どおり tag は固定の根。
   - `NotLoaded` は commit 一覧が途中までなら「commit をさらに読み込む」で表示できる場合もあるが、どの branch・tag・remote branch からも届かない commit(削除した branch の先端など)は表示されない(#888)。#953 ではこの長い説明をカードから外し、祖先を card が読み足す案も Tier B(#908)で頻度が分かるまで採らない。
-- **描画**: commit graph と同じ `graph_view::graph_canvas` を行ごとに使う。card への差し込みは `render_plan_modal_wrapper_extra`(`PlanCardExtra { element, clipboard }` を warning の後に描く)。`Copy all` は card のテキストにこの clipboard(見出し・各行・窓外の行数、またはプレビュー不可の短い状態)を足す(#883、#953)。既存の `wrapper_styled` / `wrapper_staged` は `None` で委譲するので、呼び出し元の署名は変えない。この card は #872 の `ConfirmStage`(Unarmed / Armed)にも乗る。
+- **描画**: 専用の REFS-first card(`oplog_restore_card`)から `oplog_restore_preview` を描き、各行の rail は既存の lane / edge を `graph_window::render_rail` に渡す。移動先の badge、残る badge、off-branch の ghost と commit の要約を同じ行に載せる。`Copy all` は見出し・各行・窓外の行数(またはプレビュー不可の短い状態)を足す(#883、#953)。
 - **focus**: card を開くとき root に focus を移す(`focus_root_for_modal`、plan modal の規約)。実ボタンのクリックは root(`track_focus`)が focus を受けるので、現状の入口では Enter / Escape は届いている。キーボードの入口が増えても届くようにするためのもの(#878 review)。
-- **コスト**: card を開くときに 1 回だけ計算して modal に保持する。到達計算は O(rows)、layout は O(rows × lanes)。描画は最大 40 行。
+- **コスト**: card を開くときに 1 回だけ到達性を前後 2 回計算し、modal に保持する。計算は読み込み済み行と親 edge に比例し、元の rail は描く範囲の最大 40 行分だけ参照・保持する。再 layout は行わず、可視領域は最大 6 行。
 
 ### 7. HEAD を含む restore は行わない(#886)
 

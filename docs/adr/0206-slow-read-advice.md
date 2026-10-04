@@ -18,10 +18,12 @@ worktree の状態読み込み、worktree 容量の計測、Analyze の hotspot 
 
 1. **閾値は 2 秒**(`kagi_ui_core::slow_read::SLOW_READ_THRESHOLD`)。定数は 1 つで、settings では
    変えない。計測の起点は **その read の説明対象 phase が始まった時刻**(snapshot は phase ごと)。
-2. **対象は 5 種の read に限る**(`SlowRead`): ahead/behind(snapshot 内の `collect_branches`)、
-   worktree 状態(snapshot 内の `collect_worktrees`)、worktree 容量計測(inspection)、Analyze、
+2. **対象は 4 種の read に限る**(`SlowRead`): ahead/behind(snapshot 内の `collect_branches`)、
+   worktree 状態(snapshot 内の `collect_worktrees`)、Analyze、
    Compare / WIP / File History の off-thread diff read。commit の diff は UI スレッドで同期に読むため
    描画ごと止まり、表示できないので対象外(別 issue)。
+   worktree 容量計測(inspection)は 2026-10-04 に外した(#1012): 行ごとの「計測中」表示が
+   既にあり、snackbar は邪魔というユーザー要望。計測は background のまま続ける。
 3. **表示は既存 busy snackbar への 1 行追記**。write が走っていればラベルは write のまま、無ければ
    read のラベル(例「ahead/behind を計算中…」)を出し、2 行目に
    <理由>だけを EN/JA で出す。前置きの「時間がかかっています:」と「(大きいリポジトリでは <対象> に時間がかかります)」の説明文は出さない(2026-10-04、説明文を置かない方針)。
@@ -32,7 +34,7 @@ worktree の状態読み込み、worktree 容量の計測、Analyze の hotspot 
    - ahead/behind: `SnapshotProbe::skip_ahead_behind` 以降の branch は `UpstreamInfo::counts = None`。
      sidebar と header は「—」、status bar の chip は「—」、toolbar の ↑N/↓N chip は非表示、
      branch menu の Pull / Push は有効のまま(plan が数え直す)。
-   - worktree 容量: 既存の inspection cancel を使い、未計測の worktree は既存の「未計測」表示。
+   - worktree 容量: 対象外になった(決定 2)。行の「計測中」/「未計測」表示はそのまま。
    - worktree 状態・Analyze・diff は説明のみ(worktree の `wip = None` は clean と区別できない)。
    Skip は一時的で、次の read(reload / fetch 後の reload)は通常どおり数える。
 5. **終了は handle の drop で決まる**。read を始めた側が `ReadHandle` を background 作業に渡し、

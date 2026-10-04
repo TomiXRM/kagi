@@ -252,6 +252,34 @@ pub fn scenario_queue_drag_merge_while_busy(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS queue_drag_merge_while_busy");
 }
 
+/// A busy sidebar menu must leave Merge clickable and route it to the queue.
+pub fn scenario_queue_menu_merge_while_busy(cx: &mut VisualTestAppContext) {
+    let fixture = merge_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+
+    app.update(cx, |app, _| {
+        app.open_local_branch_menu("feature".into(), gpui::point(gpui::px(40.), gpui::px(200.)));
+    });
+    click(cx, window, "branch-menu-item-2-0");
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).branch_menu.is_none()));
+    assert_eq!(
+        rows(&strip(cx, &app)),
+        vec![("merge feature → main".into(), "waiting: write".into())]
+    );
+    release.send(());
+    await_merge_modal(cx, &app);
+    click(cx, window, "plan-cancel");
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS queue_menu_merge_while_busy");
+}
+
 fn last_toast(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> Option<String> {
     cx.read(|cx| {
         let stack = app.read(cx).toast_stack.as_ref()?;

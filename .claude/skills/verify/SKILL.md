@@ -2000,7 +2000,10 @@ departure while B's checkout proceeds, then A's intent reopens),
 so the queued checkout is listed `previous step failed`),
 `queue_merge_into_keeps_frozen_target` (checkout moves HEAD to `other`;
 merge still updates the frozen `main` tip), `queue_drag_merge_while_busy`
-(drag enqueue instead of busy refusal), `queue_confirm_blocked_merge_refuses`
+(drag enqueue instead of busy refusal), `queue_menu_merge_while_busy`
+(a measured click on the busy sidebar Merge action queues the frozen merge;
+restoring the busy-disabled menu state makes this scenario fail),
+`queue_confirm_blocked_merge_refuses`
 (Enter on a blocked queued merge records a refusal and lists `plan failed`
 instead of leaving the head `Admitting`), `queue_merge_plan_after_departure`
 (a merge plan held until just after a tab switch the ticker has not yet seen

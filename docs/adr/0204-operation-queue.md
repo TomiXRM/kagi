@@ -431,6 +431,8 @@ SSH remote pull の旧 latch による排他の穴は #989 の write lease 移�
   取り消す（Admitting に残さない。admission 側の同条件は StaleApproval）、owner の離脱・
   close 後に完了した plan は報告も保存もせず破棄する、queue があり write のない状態で
   投入できない merge（detached HEAD など）は理由を toast と footer に出す、を加えた。
+  sidebar の branch menu も busy のとき eligible な merge action を無効化せず、通常入口と
+  同じ queue に送る。detached HEAD / Conflict Mode / 同一 branch の既存ガードは維持する。
 
 - **2026-10-04 #989 後の queue 契約整理** — SSH remote pull は lease を保持するが、queue が成功を verify できないため anchor にはせず、他の追跡不能な write と同じく owner tab での投入を拒否する。旧 remote latch に対応する待機理由と解除事象を削除し、排他の穴が #989 で解消したことを明記した。
 

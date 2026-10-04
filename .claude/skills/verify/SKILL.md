@@ -901,9 +901,12 @@ The current suite covers:
   Tab and Shift+Tab inside a commit menu close it and the window has the
   focus (dropping the `MenuDismiss` bindings fails "tab closed the menu").
   `context_menu_keys_covered`: an AppNotice set over an open menu closes it
-  on the next frame (`workspace_menus_covered`, Settings excluded) and the
-  focus leaves the hidden item for the window (disabling the check fails "the
-  notice closed the menu"). `context_menu_keys_a11y`: the disabled Reset item
+  on the next frame (`workspace_menus_covered`) and the focus leaves the
+  hidden item for the window; so does an Info `MenuOverlay` (About / Keyboard
+  Shortcuts take no focus) — only Settings and the command palette, which
+  take the focus, are exempt. Mutations: disabling the check fails "the
+  notice closed the menu"; exempting every `MenuOverlay` fails "the Info
+  panel closed the menu". `context_menu_keys_a11y`: the disabled Reset item
   is drawn with its reason as `aria_description`
   (`menu_overlay::recorded_item_description`), an enabled one with none
   (drawing disabled items without it fails).

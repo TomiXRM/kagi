@@ -265,8 +265,9 @@ impl KagiApp {
 
     /// Is a layer drawn above the workspace context menus that leaves the
     /// keyboard focus where it was — a modal, a notice, a commit plan,
-    /// another menu? Settings (`MenuOverlay`) is not one: it moves the focus
-    /// into its own trap and gives it back when it closes (#991 review).
+    /// another menu, an Info panel or the branch picker? Settings and the
+    /// command palette are not: they move the focus into themselves (a trap,
+    /// the search input) and give it back when they close (#991 review).
     pub(crate) fn workspace_menus_covered(&self, cx: &App) -> bool {
         let Some(at) = Z_ORDER
             .iter()
@@ -274,9 +275,13 @@ impl KagiApp {
         else {
             return false;
         };
-        Z_ORDER[at + 1..]
-            .iter()
-            .any(|layer| *layer != LayerKind::MenuOverlay && layer.visible(self, cx))
+        let takes_focus = matches!(
+            self.menu_overlay,
+            Some(MenuOverlay::Settings | MenuOverlay::CommandPalette)
+        );
+        Z_ORDER[at + 1..].iter().any(|layer| {
+            layer.visible(self, cx) && !(*layer == LayerKind::MenuOverlay && takes_focus)
+        })
     }
 
     /// The one closer table: how each menu layer is closed. Modal layers

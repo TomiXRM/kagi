@@ -436,6 +436,36 @@ pub fn scenario_context_menu_keys_covered(cx: &mut VisualTestAppContext) {
         root_focused(cx, &app, window),
         "the focus left the hidden item for the window"
     );
+
+    // An Info panel (About / Keyboard Shortcuts) takes no focus of its own:
+    // it covers the menu as the notice did (#991 review). Settings and the
+    // palette, which do take the focus, are the only overlays that do not.
+    app.update(cx, |app, cx| {
+        app.active_modal = None;
+        cx.notify();
+    });
+    keys(cx, window, "shift-f10");
+    assert!(
+        menu(cx, &app, window).0.is_some(),
+        "the menu holds the focus again"
+    );
+    app.update(cx, |app, cx| {
+        app.menu_overlay = Some(kagi::ui::commands::MenuOverlay::Info {
+            title: "About".into(),
+            lines: vec![],
+        });
+        cx.notify();
+    });
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert!(
+        cx.read(|cx| app.read(cx).commit_menu.is_none()),
+        "the Info panel closed the menu"
+    );
+    assert!(
+        root_focused(cx, &app, window),
+        "Info: the focus left the hidden item for the window"
+    );
     unmount(cx, app, window);
 }
 

@@ -1070,6 +1070,10 @@ pub struct KagiApp {
     pub badge_col_w: f32,
     /// T030: Width of the graph column in pixels.
     pub graph_col_w: f32,
+    /// Painted left edges of the two Graph header columns (window pixels).
+    /// Unlike the sidebar width, these follow the actual clipped pane position.
+    badge_col_origin_x: std::rc::Rc<std::cell::Cell<Option<f32>>>,
+    graph_col_origin_x: std::rc::Rc<std::cell::Cell<Option<f32>>>,
     // ── T-BP-002: Bottom Panel ───────────────────────────────────
     /// Whether the bottom panel is currently open.
     pub bottom_panel_open: bool,
@@ -1412,6 +1416,8 @@ impl KagiApp {
             graph_col_w: theme::read_col_width("graph_col_w")
                 .map(|w| w.clamp(GRAPH_COL_MIN, GRAPH_COL_MAX))
                 .unwrap_or(GRAPH_COL_DEFAULT),
+            badge_col_origin_x: Default::default(),
+            graph_col_origin_x: Default::default(),
             bottom_panel_open: true, // user request: terminal visible by default
             bottom_panel_height: BOTTOM_PANEL_H_UNSET,
             panel_motion: Default::default(),

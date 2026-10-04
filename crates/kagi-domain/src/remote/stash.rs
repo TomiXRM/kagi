@@ -38,6 +38,16 @@ pub struct RemoteRepoId {
     pub common_dir: String,
 }
 
+/// The checkout state confirmed for a remote pull, independent of its lease scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemotePullHead {
+    /// None when HEAD is detached.
+    pub branch: Option<String>,
+    pub oid: String,
+    /// The branch's resolved upstream, or None for detached HEAD.
+    pub upstream: Option<String>,
+}
+
 /// Effective SSH values before known-host files have been read and digested.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectiveSshConfig {
@@ -190,17 +200,34 @@ fn parse_ssh_config(text: &str, pull: bool) -> Result<EffectiveSshConfig, SshCon
     Ok(config)
 }
 
-/// The SSH probe must return exactly one absolute physical common directory
-/// and one absolute physical worktree toplevel in a complete frame.
-pub fn parse_pull_common_dir(bytes: &[u8]) -> Result<(String, String), &'static str> {
+/// The SSH probe returns absolute physical common-dir and worktree paths plus
+/// the branch (or detached HEAD), exact HEAD OID, and resolved upstream.
+pub fn parse_pull_common_dir(
+    bytes: &[u8],
+) -> Result<(String, String, RemotePullHead), &'static str> {
     let mut fields = bytes.split(|byte| *byte == 0);
-    let (Some(magic), Some(common_dir), Some(toplevel), Some(end), None) = (
+    let (
+        Some(magic),
+        Some(common_dir),
+        Some(toplevel),
+        Some(kind),
+        Some(branch),
+        Some(oid),
+        Some(upstream),
+        Some(end),
+        None,
+    ) = (
         fields.next(),
         fields.next(),
         fields.next(),
         fields.next(),
         fields.next(),
-    ) else {
+        fields.next(),
+        fields.next(),
+        fields.next(),
+        fields.next(),
+    )
+    else {
         return Err("malformed common-dir frame");
     };
     if magic != b"KAGI-COMMON-DIR" || end != b"KAGI-END\n" {
@@ -213,12 +240,38 @@ pub fn parse_pull_common_dir(bytes: &[u8]) -> Result<(String, String), &'static 
         }
         Ok(path.to_string())
     };
+    let oid = std::str::from_utf8(oid).map_err(|_| "HEAD OID is not UTF-8")?;
+    if !matches!(oid.len(), 40 | 64) || !oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("invalid HEAD OID");
+    }
+    let (branch, upstream) = match kind {
+        b"detached" if branch.is_empty() && upstream.is_empty() => (None, None),
+        b"branch" => {
+            let parse_ref = |bytes: &[u8]| {
+                let name = std::str::from_utf8(bytes).map_err(|_| "invalid pull ref")?;
+                if name.is_empty()
+                    || name.contains('\u{fffd}')
+                    || name.bytes().any(|byte| byte.is_ascii_control())
+                {
+                    return Err("invalid pull ref");
+                }
+                Ok(name.to_string())
+            };
+            (Some(parse_ref(branch)?), Some(parse_ref(upstream)?))
+        }
+        _ => return Err("invalid pull HEAD state"),
+    };
     Ok((
         parse_path(common_dir, "common-dir is not a physical absolute path")?,
         parse_path(
             toplevel,
             "worktree toplevel is not a physical absolute path",
         )?,
+        RemotePullHead {
+            branch,
+            oid: oid.to_string(),
+            upstream,
+        },
     ))
 }
 
@@ -715,31 +768,57 @@ mod tests {
     }
 
     #[test]
-    fn pull_common_dir_requires_exact_frame_and_physical_absolute_paths() {
+    fn pull_common_dir_requires_complete_physical_paths_and_head_state() {
+        let oid = "a".repeat(40);
+        let frame = |kind: &str, branch: &str, oid: &str, upstream: &str| {
+            format!(
+                "KAGI-COMMON-DIR\0/srv/repo/.git\0/srv/real-worktree\0{kind}\0{branch}\0{oid}\0{upstream}\0KAGI-END\n"
+            )
+        };
+        let attached = frame("branch", "main", &oid, "origin/main");
         assert_eq!(
-            parse_pull_common_dir(
-                b"KAGI-COMMON-DIR\0/srv/repo/.git\0/srv/real-worktree\0KAGI-END\n"
-            ),
-            Ok(("/srv/repo/.git".into(), "/srv/real-worktree".into()))
+            parse_pull_common_dir(attached.as_bytes()),
+            Ok((
+                "/srv/repo/.git".into(),
+                "/srv/real-worktree".into(),
+                RemotePullHead {
+                    branch: Some("main".into()),
+                    oid: oid.clone(),
+                    upstream: Some("origin/main".into()),
+                }
+            ))
         );
-        assert!(
-            parse_pull_common_dir(b"KAGI-COMMON-DIR\0relative\0/srv/repo\0KAGI-END\n").is_err()
+        assert_eq!(
+            parse_pull_common_dir(frame("detached", "", &oid, "").as_bytes())
+                .unwrap()
+                .2,
+            RemotePullHead {
+                branch: None,
+                oid: oid.clone(),
+                upstream: None,
+            }
         );
-        assert!(
-            parse_pull_common_dir(b"KAGI-COMMON-DIR\0/srv/repo/.git\0relative\0KAGI-END\n")
-                .is_err()
-        );
-        assert!(parse_pull_common_dir(
-            b"KAGI-COMMON-DIR\0/srv/repo/.git\0/srv/repo\0KAGI-END\nextra"
-        )
-        .is_err());
-        assert!(
-            parse_pull_common_dir(b"KAGI-COMMON-DIR\0/srv/\xff\0/srv/repo\0KAGI-END\n").is_err()
-        );
-        assert!(
-            parse_pull_common_dir(b"KAGI-COMMON-DIR\0/srv/repo/.git\0/srv/\xff\0KAGI-END\n")
-                .is_err()
-        );
+        for invalid in [
+            attached.replacen("/srv/repo/.git", "relative", 1),
+            attached.replacen("/srv/real-worktree", "relative", 1),
+            frame("branch", "", &oid, "origin/main"),
+            frame("branch", "main", &oid, ""),
+            frame("branch", "main", "", "origin/main"),
+            frame("branch", "main", "bad", "origin/main"),
+            frame("detached", "main", &oid, ""),
+            frame("detached", "", &oid, "origin/main"),
+            frame("invalid", "main", &oid, "origin/main"),
+            format!("{attached}extra"),
+        ] {
+            assert!(
+                parse_pull_common_dir(invalid.as_bytes()).is_err(),
+                "{invalid:?}"
+            );
+        }
+        let mut invalid_utf8 = attached.into_bytes();
+        let path_byte = invalid_utf8.iter().position(|byte| *byte == b'a').unwrap();
+        invalid_utf8[path_byte] = 0xff;
+        assert!(parse_pull_common_dir(&invalid_utf8).is_err());
     }
 
     #[test]

@@ -41,11 +41,12 @@ pub mod stash;
 pub struct PullRepoIdentity {
     pub repo_id: remote::RemoteRepoId,
     pub physical_toplevel: String,
+    pub head: remote::RemotePullHead,
 }
 
-/// Resolve a pull's lease identity and physical worktree toplevel at plan time
-/// using the same SSH options as execution. Unlike remote stash this does not
-/// freeze or disable ssh-agent.
+/// Resolve a pull's lease identity, physical worktree toplevel, and checkout
+/// state with the same SSH options as execution. Unlike remote stash this does
+/// not freeze or disable ssh-agent.
 pub fn resolve_pull_identity(
     host: &RemoteHost,
     root: &str,
@@ -119,9 +120,18 @@ test "$(git rev-parse --is-inside-work-tree)" = true
 top=$(git rev-parse --show-toplevel)
 cd -P -- "$top"
 top=$(pwd -P)
+oid=$(git rev-parse --verify HEAD)
+if branch=$(git symbolic-ref -q --short HEAD); then
+  upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}')
+  kind=branch
+else
+  kind=detached
+  branch=
+  upstream=
+fi
 common=$(git rev-parse --path-format=absolute --git-common-dir)
 cd -P -- "$common"
-printf 'KAGI-COMMON-DIR\0%s\0%s\0KAGI-END\n' "$(pwd -P)" "$top""#;
+printf 'KAGI-COMMON-DIR\0%s\0%s\0%s\0%s\0%s\0%s\0KAGI-END\n' "$(pwd -P)" "$top" "$kind" "$branch" "$oid" "$upstream""#;
     let output = run_ssh(host, &["sh", "-c", script, "--", root])?;
     if output.code != 0 {
         return Err(RemoteError::NonZero {
@@ -129,14 +139,16 @@ printf 'KAGI-COMMON-DIR\0%s\0%s\0KAGI-END\n' "$(pwd -P)" "$top""#;
             stderr: output.stderr,
         });
     }
-    let (common_dir, physical_toplevel) = remote::parse_pull_common_dir(output.stdout.as_bytes())
-        .map_err(|e| RemoteError::Incomplete(e.into()))?;
+    let (common_dir, physical_toplevel, head) =
+        remote::parse_pull_common_dir(output.stdout.as_bytes())
+            .map_err(|e| RemoteError::Incomplete(e.into()))?;
     Ok(PullRepoIdentity {
         repo_id: remote::RemoteRepoId {
             connection: Arc::new(connection),
             common_dir,
         },
         physical_toplevel,
+        head,
     })
 }
 

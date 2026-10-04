@@ -136,6 +136,10 @@ fn blocking_fake_ssh(
     identity_change: &Path,
     route_change: &Path,
     toplevel_change: &Path,
+    branch_change: &Path,
+    oid_change: &Path,
+    upstream_change: &Path,
+    head_read_failure: &Path,
 ) {
     std::fs::create_dir_all(bin).expect("shim dir");
     let path = bin.join("ssh");
@@ -152,11 +156,15 @@ fn blocking_fake_ssh(
                exit 0\n\
              fi\n\
              case \"$*\" in\n\
-               *KAGI-COMMON-DIR*) if [ -f {identity_change:?} ]; then\n\
-                       printf 'KAGI-COMMON-DIR\\0/srv/other/.git\\0/srv/real-worktree\\0KAGI-END\\n'\n\
-                     elif [ -f {toplevel_change:?} ]; then\n\
-                       printf 'KAGI-COMMON-DIR\\0/srv/repo/.git\\0/srv/other-linked-worktree\\0KAGI-END\\n'\n\
-                     else printf 'KAGI-COMMON-DIR\\0/srv/repo/.git\\0/srv/real-worktree\\0KAGI-END\\n'; fi ;;\n\
+               *KAGI-COMMON-DIR*) common=/srv/repo/.git; top=/srv/real-worktree\n\
+                     branch=main; oid=$(printf '%040d' 0); upstream=origin/main\n\
+                     if [ -f {identity_change:?} ]; then common=/srv/other/.git; fi\n\
+                     if [ -f {toplevel_change:?} ]; then top=/srv/other-linked-worktree; fi\n\
+                     if [ -f {branch_change:?} ]; then branch=feature; fi\n\
+                     if [ -f {oid_change:?} ]; then oid=$(printf '%040d' 1); fi\n\
+                     if [ -f {upstream_change:?} ]; then upstream=origin/feature; fi\n\
+                     if [ -f {head_read_failure:?} ]; then echo 'HEAD query failed' >&2; exit 1; fi\n\
+                     printf 'KAGI-COMMON-DIR\\0%s\\0%s\\0branch\\0%s\\0%s\\0%s\\0KAGI-END\\n' \"$common\" \"$top\" \"$branch\" \"$oid\" \"$upstream\" ;;\n\
                *pull*) while [ ! -f {release:?} ]; do sleep 0.05; done\n\
                        if [ -f {fail:?} ]; then echo 'unexpected remote reply' >&2; exit 42; fi\n\
                        echo 'Already up to date.' ;;\n\
@@ -189,6 +197,10 @@ enum PullLeaseCase {
     IdentityChanged,
     ProxyRouteChanged,
     ToplevelChanged,
+    BranchChanged,
+    OidChanged,
+    UpstreamChanged,
+    HeadReadFailure,
     PlanningLatch,
 }
 
@@ -210,6 +222,22 @@ pub fn scenario_remote_pull_proxy_route_refusal(cx: &mut VisualTestAppContext) {
 
 pub fn scenario_remote_pull_toplevel_refusal(cx: &mut VisualTestAppContext) {
     remote_pull_lease(cx, PullLeaseCase::ToplevelChanged);
+}
+
+pub fn scenario_remote_pull_branch_refusal(cx: &mut VisualTestAppContext) {
+    remote_pull_lease(cx, PullLeaseCase::BranchChanged);
+}
+
+pub fn scenario_remote_pull_head_oid_refusal(cx: &mut VisualTestAppContext) {
+    remote_pull_lease(cx, PullLeaseCase::OidChanged);
+}
+
+pub fn scenario_remote_pull_upstream_refusal(cx: &mut VisualTestAppContext) {
+    remote_pull_lease(cx, PullLeaseCase::UpstreamChanged);
+}
+
+pub fn scenario_remote_pull_head_read_refusal(cx: &mut VisualTestAppContext) {
+    remote_pull_lease(cx, PullLeaseCase::HeadReadFailure);
 }
 
 pub fn scenario_remote_pull_planning_latch(cx: &mut VisualTestAppContext) {
@@ -244,6 +272,10 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
     let identity_change = shim.path().join("identity-change");
     let route_change = shim.path().join("route-change");
     let toplevel_change = shim.path().join("toplevel-change");
+    let branch_change = shim.path().join("branch-change");
+    let oid_change = shim.path().join("oid-change");
+    let upstream_change = shim.path().join("upstream-change");
+    let head_read_failure = shim.path().join("head-read-failure");
     blocking_fake_ssh(
         shim.path(),
         &release,
@@ -253,6 +285,10 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
         &identity_change,
         &route_change,
         &toplevel_change,
+        &branch_change,
+        &oid_change,
+        &upstream_change,
+        &head_read_failure,
     );
     if !matches!(case, PullLeaseCase::PlanningLatch) {
         std::fs::write(&probe_release, b"go").unwrap();
@@ -378,6 +414,28 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
         )
         .unwrap();
     }
+    if matches!(case, PullLeaseCase::BranchChanged) {
+        std::fs::write(&branch_change, b"branch switched").unwrap();
+    }
+    if matches!(case, PullLeaseCase::OidChanged) {
+        std::fs::write(&oid_change, b"HEAD advanced").unwrap();
+    }
+    if matches!(case, PullLeaseCase::UpstreamChanged) {
+        std::fs::write(&upstream_change, b"upstream switched").unwrap();
+    }
+    if matches!(case, PullLeaseCase::HeadReadFailure) {
+        std::fs::write(&head_read_failure, b"HEAD query failed").unwrap();
+    }
+    let refused = matches!(
+        case,
+        PullLeaseCase::IdentityChanged
+            | PullLeaseCase::ProxyRouteChanged
+            | PullLeaseCase::ToplevelChanged
+            | PullLeaseCase::BranchChanged
+            | PullLeaseCase::OidChanged
+            | PullLeaseCase::UpstreamChanged
+            | PullLeaseCase::HeadReadFailure
+    );
     app.update(cx, |app, cx| {
         app.start_pull(cx);
         assert!(
@@ -427,24 +485,10 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
     });
     assert_eq!(
         ssh_pulls(&calls),
-        if matches!(
-            case,
-            PullLeaseCase::IdentityChanged
-                | PullLeaseCase::ProxyRouteChanged
-                | PullLeaseCase::ToplevelChanged
-        ) {
-            0
-        } else {
-            1
-        },
+        if refused { 0 } else { 1 },
         "a refused identity must never execute git pull"
     );
-    if !matches!(
-        case,
-        PullLeaseCase::IdentityChanged
-            | PullLeaseCase::ProxyRouteChanged
-            | PullLeaseCase::ToplevelChanged
-    ) {
+    if !refused {
         let calls = std::fs::read_to_string(&calls).unwrap();
         let command = calls.lines().find(|line| line.contains("pull")).unwrap();
         assert!(
@@ -507,12 +551,7 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
             1,
             "one audited release row must precede lease release"
         );
-    } else if matches!(
-        case,
-        PullLeaseCase::IdentityChanged
-            | PullLeaseCase::ProxyRouteChanged
-            | PullLeaseCase::ToplevelChanged
-    ) {
+    } else if refused {
         cx.read(|cx| {
             let state = app.read(cx);
             assert!(!state.app_sessions.has_leases());
@@ -524,9 +563,14 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
             .filter(|entry| entry.op == "pull")
             .collect::<Vec<_>>();
         assert_eq!(pulls.len(), 1, "preflight must write one durable receipt");
+        let expected = if matches!(case, PullLeaseCase::HeadReadFailure) {
+            "preflight could not confirm identity"
+        } else {
+            "identity changed"
+        };
         assert!(
             matches!(&pulls[0].outcome, OpOutcome::Refused { blockers }
-                if blockers.iter().any(|reason| reason.contains("identity changed"))),
+                if blockers.iter().any(|reason| reason.contains(expected))),
             "the receipt must explain why the preflight refused"
         );
     } else {
@@ -550,6 +594,10 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
             PullLeaseCase::ProxyRouteChanged => "remote_pull_proxy_route_refusal",
             PullLeaseCase::PlanningLatch => "remote_pull_planning_latch",
             PullLeaseCase::ToplevelChanged => "remote_pull_toplevel_refusal",
+            PullLeaseCase::BranchChanged => "remote_pull_branch_refusal",
+            PullLeaseCase::OidChanged => "remote_pull_head_oid_refusal",
+            PullLeaseCase::UpstreamChanged => "remote_pull_upstream_refusal",
+            PullLeaseCase::HeadReadFailure => "remote_pull_head_read_refusal",
         }
     );
 }

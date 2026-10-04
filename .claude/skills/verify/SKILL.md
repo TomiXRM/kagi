@@ -1537,6 +1537,14 @@ physical linked-worktree toplevel after confirmation; no pull runs, Refused is
 recorded, and the lease releases. `remote_pull_lease` verifies that execution
 uses the frozen physical toplevel instead of the selected symlink while the
 oplog scope remains the selected root.
+`remote_pull_branch_refusal`, `remote_pull_head_oid_refusal`, and
+`remote_pull_upstream_refusal` change only the checked-out branch, HEAD OID,
+or resolved upstream after confirmation. All must refuse without running
+`git pull`, record Refused, and release the lease. The
+`remote_pull_head_read_refusal` case also requires Refused when the preflight
+HEAD read fails. Domain
+`pull_common_dir_requires_complete_physical_paths_and_head_state` rejects
+incomplete or malformed HEAD frames.
 `remote_pull_planning_latch` blocks `ssh -G`, clicks Pull twice, and requires
 one probe and a cleared latch when the modal arrives. G:
 `cargo test -p kagi --test app_remote_pull_test` covers Unknown/Partial/abandonment

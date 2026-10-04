@@ -1,7 +1,7 @@
 //! Remote SSH pull: cached preview, asynchronously resolved lease scope, and one
 //! transport-owned durable receipt.
 use super::*;
-use kagi_domain::remote::RemoteRepoId;
+use kagi_domain::remote::{RemotePullHead, RemoteRepoId};
 use std::sync::{mpsc::Sender, Arc};
 
 #[derive(Clone, Debug)]
@@ -15,6 +15,7 @@ pub struct RemotePullPlan {
     pub preview: Arc<kagi_git::OperationPlan>,
     pub repo_id: RemoteRepoId,
     pub physical_toplevel: String,
+    pub head: RemotePullHead,
 }
 
 pub struct RemotePullPlanJob {
@@ -37,6 +38,7 @@ impl RemotePullPlanJob {
                         preview: self.request.plan.clone(),
                         repo_id: identity.repo_id,
                         physical_toplevel: identity.physical_toplevel,
+                        head: identity.head,
                     }),
                     request: self.request,
                 },
@@ -75,11 +77,13 @@ pub fn plan_remote_pull_for_test(
     request: RemotePullRequest,
     repo_id: RemoteRepoId,
     physical_toplevel: String,
+    head: RemotePullHead,
 ) -> RemotePullPlanJob {
     let mut job = plan_remote_pull(sessions, request);
     job.fixture = Some(crate::remote::PullRepoIdentity {
         repo_id,
         physical_toplevel,
+        head,
     });
     job
 }
@@ -95,6 +99,7 @@ pub struct RemotePullJob {
     request: RemotePullRequest,
     repo_id: RemoteRepoId,
     physical_toplevel: String,
+    head: RemotePullHead,
     abandoned: Sender<Completion>,
     ran: bool,
     fixture: Option<crate::remote::RemotePullReport>,
@@ -117,6 +122,7 @@ impl RemotePullJob {
             if observed.as_ref().is_ok_and(|identity| {
                 identity.repo_id == self.repo_id
                     && identity.physical_toplevel == self.physical_toplevel
+                    && identity.head == self.head
             }) {
                 crate::remote::remote_pull(
                     &owner.host,
@@ -180,6 +186,7 @@ pub fn prepare_remote_pull(
         request,
         repo_id: plan.repo_id,
         physical_toplevel: plan.physical_toplevel,
+        head: plan.head,
         abandoned: s.abandoned_tx.clone(),
         ran: false,
         fixture: None,

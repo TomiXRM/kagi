@@ -1085,6 +1085,22 @@ mod macos {
                 Box::new(crate::recovery_pull::scenario_remote_pull_toplevel_refusal),
             ),
             (
+                "remote_pull_branch_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_branch_refusal),
+            ),
+            (
+                "remote_pull_head_oid_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_head_oid_refusal),
+            ),
+            (
+                "remote_pull_upstream_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_upstream_refusal),
+            ),
+            (
+                "remote_pull_head_read_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_head_read_refusal),
+            ),
+            (
                 "remote_pull_planning_latch",
                 Box::new(crate::recovery_pull::scenario_remote_pull_planning_latch),
             ),

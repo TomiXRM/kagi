@@ -36,10 +36,63 @@ fn fake_ssh(bin: &Path) {
     let ssh = bin.join("ssh");
     std::fs::write(
         &ssh,
-        "#!/bin/sh\nfor argument do command=$argument; done\nexec /bin/sh -c \"$command\"\n",
+        "#!/bin/sh\nif [ \"$1\" = -G ]; then\n  printf 'hostname fixture.invalid\\nuser alice\\nport 22\\nidentityfile none\\nuserknownhostsfile none\\nglobalknownhostsfile none\\nproxyjump none\\n'\n  exit 0\nfi\nfor argument do command=$argument; done\nexec /bin/sh -c \"$command\"\n",
     )
     .unwrap();
     std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+#[test]
+fn pull_probe_binds_symlink_to_real_worktree_and_live_head() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    let alias = root.path().join("selected");
+    let bin = root.path().join("bin");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "user.email", "fixture@example.invalid"]);
+    git(&repo, &["config", "user.name", "fixture"]);
+    std::fs::write(repo.join("file"), "base\n").unwrap();
+    git(&repo, &["add", "file"]);
+    git(&repo, &["commit", "-qm", "base"]);
+    git(&repo, &["branch", "upstream"]);
+    git(&repo, &["branch", "--set-upstream-to=upstream", "main"]);
+    std::os::unix::fs::symlink(&repo, &alias).unwrap();
+    fake_ssh(&bin);
+    let _restore = Environment {
+        path: std::env::var_os("PATH"),
+        log: std::env::var_os("KAGI_LOG_DIR"),
+    };
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(
+        &_restore.path.clone().unwrap_or_default(),
+    ));
+    std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+    let host = kagi_domain::remote::RemoteHost::parse("fixture.invalid").unwrap();
+    let planned = kagi::remote::resolve_pull_identity(&host, alias.to_str().unwrap()).unwrap();
+    assert_eq!(
+        planned.repo_id.common_dir,
+        repo.join(".git").canonicalize().unwrap().to_str().unwrap()
+    );
+    assert_eq!(
+        planned.physical_toplevel,
+        repo.canonicalize().unwrap().to_str().unwrap()
+    );
+    assert_eq!(planned.head.branch.as_deref(), Some("main"));
+    assert_eq!(planned.head.oid, git(&repo, &["rev-parse", "HEAD"]));
+    assert_eq!(planned.head.upstream.as_deref(), Some("upstream"));
+    git(&repo, &["checkout", "-qb", "feature"]);
+    git(&repo, &["branch", "--set-upstream-to=upstream", "feature"]);
+    let observed = kagi::remote::resolve_pull_identity(&host, alias.to_str().unwrap()).unwrap();
+    assert_eq!(planned.repo_id, observed.repo_id);
+    assert_eq!(planned.physical_toplevel, observed.physical_toplevel);
+    assert_ne!(planned.head, observed.head);
+    assert_eq!(observed.head.branch.as_deref(), Some("feature"));
 }
 
 #[test]

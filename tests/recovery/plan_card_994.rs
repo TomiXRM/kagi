@@ -1,6 +1,7 @@
 //! #994: the renderer's headings, collapsed shell commands, and AX recovery.
 use gpui::{AnyWindowHandle, Bounds, Entity, Pixels, VisualTestAppContext};
 use kagi::ui::{dialog_a11y, e2e, KagiApp};
+use kagi_domain::plan::OperationPlan;
 use kagi_domain::plan_note::{
     CleanupTitle, GithubTitle, NoOpKind, PlanDisposition, PlanTitle, PullTitle, PushTitle,
     ShellKind, StashTitle, SyncTitle,
@@ -100,8 +101,7 @@ fn assert_heading(cx: &mut VisualTestAppContext, window: AnyWindowHandle, title:
     );
 }
 
-/// The bespoke cards have no Copy all button/dialog, but share the same
-/// inline icon, localized operation name and typed target chips.
+/// Bespoke cards use the same inline heading, with their own Copy all button.
 fn assert_bespoke_heading(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     let icon = bounds(cx, window, "plan-heading-icon").expect("inline bespoke icon");
     let title = bounds(cx, window, "plan-heading-title").expect("short bespoke title");
@@ -180,6 +180,226 @@ pub fn scenario_bespoke_plan_heading(cx: &mut VisualTestAppContext) {
     assert_bespoke_heading(cx, window);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS bespoke_plan_heading: CherryPick, Commit Plan and StashApply inline icons and target chips");
+}
+
+fn assert_bespoke_recovery(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    plan: &OperationPlan,
+    card_id: &str,
+    copy_id: &str,
+    disclosure_id: &str,
+    command_copy_id: &str,
+    body_id: &str,
+) {
+    let recovery = plan.recovery.as_ref().expect("recovery");
+    let commands = recovery.commands_for(ShellKind::current()).join("\n");
+    let prose = i18n::plan_recovery_text(Some(recovery));
+    assert!(!commands.is_empty() && !prose.is_empty());
+    dialog_a11y::clear_recorded_a11y();
+    let row = bounds(cx, window, disclosure_id).expect("one Ready disclosure");
+    assert!(
+        row.size.height < theme::scaled_px(40.),
+        "collapsed row: {row:?}"
+    );
+    let (_, ax, expanded) = e2e::recorded_plan_command_disclosure(disclosure_id).unwrap();
+    assert!(!expanded && ax.starts_with(Msg::ModalRecoveryCommands.t()));
+    assert!(
+        bounds(cx, window, body_id).is_none(),
+        "commands start closed"
+    );
+    assert!(
+        bounds(cx, window, "modal-recovery-command-scroll-0-0").is_none(),
+        "old inline recovery prose/command box must not appear"
+    );
+    assert_eq!(
+        dialog_a11y::recorded_dialog(card_id)
+            .unwrap()
+            .description
+            .as_deref(),
+        Some(prose.as_str()),
+        "AX description carries the prose after the single-stage instruction"
+    );
+    let copy = bounds(cx, window, command_copy_id).unwrap();
+    cx.simulate_click(window, copy.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some(commands.clone())
+    );
+    let copy = bounds(cx, window, copy_id).unwrap();
+    cx.simulate_click(window, copy.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    let copied = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap();
+    assert!(copied.contains(&prose) && copied.contains(Msg::ModalRecoveryCommands.t()));
+    for command in commands.lines() {
+        assert!(copied.contains(command), "Copy all retains {command}");
+    }
+}
+
+fn assert_bespoke_noop(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    plan: &OperationPlan,
+    card_id: &str,
+    copy_id: &str,
+    disclosure_id: &str,
+) {
+    assert!(plan.blockers.is_empty());
+    assert!(!plan.recovery.as_ref().unwrap().commands.is_empty());
+    assert!(
+        bounds(cx, window, disclosure_id).is_none(),
+        "NoOp hides commands"
+    );
+    let prose = i18n::plan_recovery_text(plan.recovery.as_ref());
+    let description = dialog_a11y::recorded_dialog(card_id)
+        .unwrap()
+        .description
+        .unwrap();
+    assert!(description.ends_with(&prose), "AX retains recovery");
+    let copy = bounds(cx, window, copy_id).unwrap();
+    cx.simulate_click(window, copy.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    let copied = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .unwrap();
+    assert!(copied.contains(&prose));
+    assert!(
+        !copied.contains(Msg::ModalRecoveryCommands.t()),
+        "NoOp Copy all has no commands block"
+    );
+}
+
+pub fn scenario_bespoke_recovery_1023(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_language = i18n::lang();
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    git(repo, &["checkout", "-q", "-b", "side", "HEAD~1"]);
+    std::fs::write(repo.join("side.txt"), "picked\n").unwrap();
+    git(repo, &["add", "side.txt"]);
+    git(repo, &["commit", "-q", "-m", "side commit"]);
+    let pick = git_fixture::git_output(repo, &["rev-parse", "HEAD"]);
+    git(repo, &["checkout", "-q", "main"]);
+    let before = repo_fingerprint(repo);
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, _| app.open_cherry_pick_modal(CommitId(pick)));
+    cx.run_until_parked();
+    for lang in [Lang::En, Lang::Ja] {
+        i18n::set_lang(lang);
+        let plan = cx.read(|cx| (*app.read(cx).cherry_pick_modal().unwrap().plan).clone());
+        assert!(plan.blockers.is_empty());
+        assert_bespoke_recovery(
+            cx,
+            window,
+            &plan,
+            "cherry-pick-card",
+            "cherry-pick-card-copy",
+            "cherry-pick-recovery",
+            "cherry-pick-recovery-copy",
+            "cherry-pick-recovery-body",
+        );
+    }
+    app.update(cx, |app, cx| {
+        let mut modal = app.cherry_pick_modal().unwrap().clone();
+        let mut plan = (*modal.plan).clone();
+        plan.disposition = PlanDisposition::NoOp(NoOpKind::PushUpToDate);
+        modal.plan = std::sync::Arc::new(plan);
+        app.set_cherry_pick_modal(modal);
+        cx.notify();
+    });
+    for id in [
+        "cherry-pick-recovery",
+        "cherry-pick-recovery-copy",
+        "cherry-pick-recovery-body",
+    ] {
+        assert!(bounds(cx, window, id).is_none(), "NoOp must hide {id}");
+    }
+    let plan = cx.read(|cx| (*app.read(cx).cherry_pick_modal().unwrap().plan).clone());
+    assert_bespoke_noop(
+        cx,
+        window,
+        &plan,
+        "cherry-pick-card",
+        "cherry-pick-card-copy",
+        "cherry-pick-recovery",
+    );
+    assert_eq!(repo_fingerprint(repo), before);
+    unmount(cx, app, window);
+
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    std::fs::write(repo.join("README.md"), "stashed for apply\n").unwrap();
+    git(repo, &["stash", "push", "-qm", "recovery probe"]);
+    let before = repo_fingerprint(repo);
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| app.open_stash_apply_modal(0, cx));
+    cx.run_until_parked();
+    for lang in [Lang::En, Lang::Ja] {
+        i18n::set_lang(lang);
+        let plan = cx.read(|cx| {
+            (**app
+                .read(cx)
+                .stash_apply_modal()
+                .unwrap()
+                .plan
+                .as_ref()
+                .unwrap())
+            .clone()
+        });
+        assert!(plan.blockers.is_empty());
+        assert_bespoke_recovery(
+            cx,
+            window,
+            &plan,
+            "stash-apply-card",
+            "stash-apply-card-copy",
+            "stash-apply-recovery",
+            "stash-apply-recovery-copy",
+            "stash-apply-recovery-body",
+        );
+    }
+    app.update(cx, |app, cx| {
+        let mut modal = app.stash_apply_modal().unwrap().clone();
+        let mut plan = (**modal.plan.as_ref().unwrap()).clone();
+        plan.disposition = PlanDisposition::NoOp(NoOpKind::PushUpToDate);
+        modal.plan = Some(std::sync::Arc::new(plan));
+        app.set_stash_apply_modal(modal);
+        cx.notify();
+    });
+    for id in [
+        "stash-apply-recovery",
+        "stash-apply-recovery-copy",
+        "stash-apply-recovery-body",
+    ] {
+        assert!(bounds(cx, window, id).is_none(), "NoOp must hide {id}");
+    }
+    let plan = cx.read(|cx| {
+        (**app
+            .read(cx)
+            .stash_apply_modal()
+            .unwrap()
+            .plan
+            .as_ref()
+            .unwrap())
+        .clone()
+    });
+    assert_bespoke_noop(
+        cx,
+        window,
+        &plan,
+        "stash-apply-card",
+        "stash-apply-card-copy",
+        "stash-apply-recovery",
+    );
+    assert_eq!(repo_fingerprint(repo), before);
+    i18n::set_lang(original_language);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS bespoke_recovery_1023: CherryPick/StashApply Ready commands, Copy all, AX and NoOp in EN/JA");
 }
 
 pub fn scenario_plan_heading_chipless(cx: &mut VisualTestAppContext) {

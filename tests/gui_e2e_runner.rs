@@ -944,6 +944,10 @@ mod macos {
                 Box::new(crate::recovery_plan_card_994::scenario_bespoke_plan_heading),
             ),
             (
+                "bespoke_recovery_1023",
+                Box::new(crate::recovery_plan_card_994::scenario_bespoke_recovery_1023),
+            ),
+            (
                 "plan_recovery_commands",
                 Box::new(crate::recovery_plan_card_994::scenario_plan_recovery_commands),
             ),

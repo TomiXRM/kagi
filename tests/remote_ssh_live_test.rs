@@ -1,49 +1,45 @@
 //! Live SSH integration test for the remote read foundation (ADR-0089).
 //!
-//! Unlike every other test in this directory, this one talks to a **real** SSH
-//! host running the system `ssh` binary — it cannot use a `TempDir`. It is
-//! therefore **opt-in**: it is skipped unless `KAGI_REMOTE_TEST_HOST` is set, so
-//! CI (which has no ssh host) stays green while a developer can point it at a
-//! box and exercise the actual code path.
+//! Unlike the fake-SSH fixtures, these tests use the system SSH client and a
+//! dedicated host. Both tests are `#[ignore]` so the default suite never
+//! connects or silently reports a skipped live check as passed. An explicit
+//! `--ignored` run requires the variables below and fails if they are absent.
 //!
-//! Env (all but HOST optional):
-//! - `KAGI_REMOTE_TEST_HOST` — `[user@]host` (e.g. `localhost`, `root@dev`).
-//! - `KAGI_REMOTE_TEST_PORT` — port (e.g. `2222`).
-//! - `KAGI_REMOTE_TEST_REPO` — absolute path to a git repo on the host.
-//! - `KAGI_REMOTE_TEST_DIR`  — absolute path to a NON-repo dir on the host.
-//! - `KAGI_REMOTE_TEST_PULL_REPO` — disposable checkout with a newer upstream
-//!   commit; setting this and the expected HEAD opts into a **real write**.
-//! - `KAGI_REMOTE_TEST_PULL_EXPECTED_HEAD` — expected full HEAD OID after pull.
+//! - `KAGI_REMOTE_TEST_HOST`: `[user@]host` with working authentication.
+//! - `KAGI_REMOTE_TEST_PORT`: optional SSH port.
+//! - `KAGI_REMOTE_TEST_REPO`: optional Git repository for read coverage.
+//! - `KAGI_REMOTE_TEST_DIR`: optional non-repository directory for read coverage.
+//! - `KAGI_REMOTE_TEST_PULL_REPO`: disposable checkout behind its upstream.
+//! - `KAGI_REMOTE_TEST_PULL_EXPECTED_HEAD`: full upstream HEAD after pull.
 //!
-//! Example (loopback sshd on :2222):
+//! Run only the chosen live check against a disposable host, for example:
 //! ```sh
 //! KAGI_REMOTE_TEST_HOST=localhost KAGI_REMOTE_TEST_PORT=2222 \
-//! KAGI_REMOTE_TEST_REPO=/tmp/remote-demo/proj \
-//! KAGI_REMOTE_TEST_DIR=/tmp/remote-demo/notrepo \
-//!   cargo test --test remote_ssh_live_test -- --nocapture
+//! KAGI_REMOTE_TEST_PULL_REPO=/tmp/remote-demo/clone \
+//! KAGI_REMOTE_TEST_PULL_EXPECTED_HEAD="$(git -C /tmp/remote-demo/seed rev-parse HEAD)" \
+//!   cargo test -p kagi --test remote_ssh_live_test live_remote_pull_fast_forwards -- --ignored --nocapture
 //! ```
 
 use kagi::remote;
 use kagi_domain::remote::RemoteHost;
 
-fn host_from_env() -> Option<RemoteHost> {
-    let spec = std::env::var("KAGI_REMOTE_TEST_HOST").ok()?;
+fn host_from_env() -> RemoteHost {
+    let spec = std::env::var("KAGI_REMOTE_TEST_HOST")
+        .expect("set KAGI_REMOTE_TEST_HOST for the explicitly selected live SSH test");
     let mut host = RemoteHost::parse(&spec).expect("KAGI_REMOTE_TEST_HOST should parse");
     if let Ok(port) = std::env::var("KAGI_REMOTE_TEST_PORT") {
         host.port = Some(port.parse().expect("KAGI_REMOTE_TEST_PORT should be a u16"));
     }
-    Some(host)
+    host
 }
 
 #[test]
+#[ignore = "requires an explicitly configured disposable SSH host"]
 fn live_remote_read_path() {
     if !crate::test_support::run_isolated() {
         return;
     }
-    let Some(host) = host_from_env() else {
-        eprintln!("skipping: set KAGI_REMOTE_TEST_HOST to run the live SSH test");
-        return;
-    };
+    let host = host_from_env();
     eprintln!("== connecting to {} ==", host.label());
 
     // 1) Reachability + auth.
@@ -150,23 +146,16 @@ fn live_remote_read_path() {
 /// Opt in only with a disposable checkout: unlike the read probe, this writes
 /// the remote repository after the approved preflight succeeds.
 #[test]
+#[ignore = "requires a disposable checkout with an approved upstream"]
 fn live_remote_pull_fast_forwards() {
     if !crate::test_support::run_isolated() {
         return;
     }
-    let Some(host) = host_from_env() else {
-        eprintln!("skipping: set KAGI_REMOTE_TEST_HOST to run the live SSH pull");
-        return;
-    };
-    let (Ok(repo_path), Ok(expected_head)) = (
-        std::env::var("KAGI_REMOTE_TEST_PULL_REPO"),
-        std::env::var("KAGI_REMOTE_TEST_PULL_EXPECTED_HEAD"),
-    ) else {
-        eprintln!(
-            "skipping: set KAGI_REMOTE_TEST_PULL_REPO and KAGI_REMOTE_TEST_PULL_EXPECTED_HEAD"
-        );
-        return;
-    };
+    let host = host_from_env();
+    let repo_path = std::env::var("KAGI_REMOTE_TEST_PULL_REPO")
+        .expect("set KAGI_REMOTE_TEST_PULL_REPO for the selected live SSH pull");
+    let expected_head = std::env::var("KAGI_REMOTE_TEST_PULL_EXPECTED_HEAD")
+        .expect("set KAGI_REMOTE_TEST_PULL_EXPECTED_HEAD for the selected live SSH pull");
     let frozen =
         remote::resolve_pull_identity(&host, &repo_path).expect("live pull plan should resolve");
     assert_ne!(frozen.head.oid, expected_head, "fixture must start behind");
@@ -174,6 +163,23 @@ fn live_remote_pull_fast_forwards() {
         head: frozen.head.oid.clone(),
         dirty: "clean".into(),
     };
+    // Even on a real SSH transport, the approved command must refuse before
+    // Git executes if the frozen HEAD is no longer the host's HEAD.
+    let mut stale = frozen.clone();
+    stale.head.oid = "0".repeat(40);
+    let refused = remote::remote_pull(&host, &repo_path, &stale, &before);
+    assert!(matches!(
+        refused.recording.entry().outcome,
+        kagi_git::oplog::OpOutcome::Refused { ref blockers }
+            if blockers.as_slice() == ["HEAD changed"]
+    ));
+    assert_eq!(
+        remote::resolve_pull_identity(&host, &repo_path)
+            .expect("refusal must preserve the live checkout")
+            .head
+            .oid,
+        frozen.head.oid
+    );
     let report = remote::remote_pull(&host, &repo_path, &frozen, &before);
     report
         .result

@@ -312,9 +312,9 @@ pub fn scenario_queue_confirm_blocked_merge_refuses(cx: &mut VisualTestAppContex
     eprintln!("[gui-e2e] PASS queue_confirm_blocked_merge_refuses");
 }
 
-/// Opus review P2: a merge plan that finishes after its owner tab left is
-/// discarded, so its failure is never reported on the tab now on screen;
-/// the owner replans upon return.
+/// Opus review P2: a merge plan that finishes after its owner tab left —
+/// before any tick told the queue — is discarded: nothing of A's opens or is
+/// reported on tab B, and A replans and asks again upon return.
 pub fn scenario_queue_merge_plan_after_departure(cx: &mut VisualTestAppContext) {
     let fixture = merge_fixture();
     let other = branches_fixture();
@@ -332,8 +332,6 @@ pub fn scenario_queue_merge_plan_after_departure(cx: &mut VisualTestAppContext) 
     app.update(cx, |app, cx| {
         app.open_merge_modal("feature".into(), Some("main".into()), cx)
     });
-    // The replan fails: its source is gone.
-    git(&repo, &["branch", "-D", "feature"]);
     let (plan_hold, plan_release) = deferred::<()>(cx);
     KagiApp::hold_next_queued_merge_plan_for_e2e(plan_hold);
     release.send(());
@@ -342,27 +340,23 @@ pub fn scenario_queue_merge_plan_after_departure(cx: &mut VisualTestAppContext) 
             == vec![("merge feature → main".to_string(), "planning".to_string())]
     });
     app.update(cx, |app, cx| app.switch_repo(1, cx));
-    cx.run_until_parked();
     plan_release.send(());
     cx.run_until_parked();
     assert!(klog_index("[kagi] queue: plan discarded merge feature → main").is_some());
     cx.read(|cx| {
         let state = app.read(cx);
-        assert_eq!(e2e::app_notice_message(state), None, "no failure on tab B");
-        assert!(!matches!(
-            state.status_footer,
-            kagi::ui::FooterStatus::Failed(_)
-        ));
+        assert!(state.merge_modal().is_none(), "A's merge opened on tab B");
+        assert_eq!(
+            e2e::app_notice_message(state),
+            None,
+            "nothing reported on B"
+        );
     });
     app.update(cx, |app, cx| app.switch_repo(0, cx));
-    tick_until(cx, &app, "the replan on return", |app| {
-        app.queue_strip_for_e2e(std::time::Instant::now())
-            .is_some_and(|(_, rows, cancelled)| rows.is_empty() && cancelled.len() == 1)
-    });
-    assert_eq!(
-        strip(cx, &app).unwrap().2,
-        vec![("merge feature → main".into(), "plan failed".into())]
-    );
+    await_merge_modal(cx, &app);
+    assert!(strip(cx, &app).unwrap().2.is_empty());
+    click(cx, window, "plan-cancel");
+    cx.run_until_parked();
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS queue_merge_plan_after_departure");
 }

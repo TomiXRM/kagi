@@ -2003,10 +2003,11 @@ merge still updates the frozen `main` tip), `queue_drag_merge_while_busy`
 (drag enqueue instead of busy refusal), `queue_confirm_blocked_merge_refuses`
 (Enter on a blocked queued merge records a refusal and lists `plan failed`
 instead of leaving the head `Admitting`), `queue_merge_plan_after_departure`
-(a merge plan held past its owner's departure is discarded, logged as
-`queue: plan discarded`, reports nothing on tab B and replans on return) and
-`queue_merge_refusal_is_shown` (detached HEAD with a queue but no write:
-toast and footer show the HeadDetached note). The merge modal is always
+(a merge plan held until just after a tab switch the ticker has not yet seen
+is discarded, logged as `queue: plan discarded`, neither opens nor reports on
+tab B, and A asks again on return) and `queue_merge_refusal_is_shown`
+(detached HEAD with a queue but no write: toast and footer show the
+HeadDetached note). The merge modal is always
 required, and merge planning owns the plan slot through its terminal callback.
 Scope the full neighboring GUI coverage to
 `KAGI_GUI_E2E_ONLY='queue_,merge,drag'`; do not launch it without a filter.

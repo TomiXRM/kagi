@@ -19,9 +19,11 @@ impl KagiApp {
             })
         });
         let refusal = match into {
-            None => kagi_ui_core::i18n::plan_note_text(&PlanNote::Common(
-                CommonNote::HeadDetached { op: PlanOp::Merge },
-            )),
+            None => {
+                kagi_ui_core::i18n::plan_note_text(&PlanNote::Common(CommonNote::HeadDetached {
+                    op: PlanOp::Merge,
+                }))
+            }
             Some(into) => match self.enqueue_intent(IntentRequest::Merge { source, into }, cx) {
                 Ok(()) => return true,
                 // `run_queue_effects` already reported the full queue.
@@ -112,14 +114,17 @@ impl KagiApp {
         .detach();
     }
 
-    /// A departed or closed owner already requeued (or dropped) the head and
-    /// invalidated its plan: the result belongs to no one on screen.
+    /// A departed or closed owner requeues (or drops) the head and invalidates
+    /// its plan: the result then belongs to no one on screen.
     fn finish_queued_merge_plan(
         &mut self,
         id: IntentId,
         result: Option<Result<MergePlanModal, String>>,
         cx: &mut Context<Self>,
     ) {
+        // A tab switch or close since the last tick is not yet known to the
+        // queue; without this, the result would open on the tab now on screen.
+        self.sync_queue(cx);
         let current = self.op_queue.queue.intent(id).is_some_and(|intent| {
             intent.state == IntentState::Planning
                 && self.app_sessions.attachment(intent.owner).is_some()

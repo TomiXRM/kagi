@@ -5,12 +5,10 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use super::button_style::KagiButton;
+use super::button_style::{modal_button, ModalButtonKind};
 use super::i18n::Msg;
 use super::modal_renderers::{modal_overlay, render_current_predicted, ModalIcon};
-use super::modal_renderers_input::{
-    render_input_modal_action, render_input_modal_field, render_input_modal_heading,
-};
+use super::modal_renderers_input::{render_input_modal_field, render_input_modal_heading};
 use super::modal_renderers_plan::{offered_recovery_commands, render_input_recovery_commands};
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_LG, MODAL_W_MD};
 use super::modals::worktree::CreateWorktreeModal;
@@ -18,7 +16,6 @@ use super::modals::*;
 use super::theme::theme as current_theme;
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, App, Context, FocusHandle, KeyDownEvent, SharedString, Window};
-use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::IconName;
 use kagi_domain::plan_note::{CommonNote, PlanNote, TagNote};
@@ -183,24 +180,21 @@ pub(crate) fn render_create_branch_modal(
         .justify_end()
         .child(crate::ui::e2e::measure_control(
             "create-branch-cancel",
-            Button::new("create-branch-cancel")
-                .label(Msg::PlanCancel.t())
-                .ghost()
-                .on_click(cancel_handler),
+            modal_button(
+                "create-branch-cancel",
+                Msg::PlanCancel.t(),
+                ModalButtonKind::Cancel,
+                None,
+                cancel_handler,
+                cx,
+            ),
         ))
-        .child(crate::ui::e2e::measure_confirm(render_input_modal_action(
-            || {
-                KagiButton::accent(
-                    "create-branch-confirm",
-                    Msg::InputCreate.t(),
-                    current_theme().color_success,
-                    cx,
-                )
-                .on_click(confirm_handler)
-            },
+        .child(crate::ui::e2e::measure_confirm(modal_button(
+            "create-branch-confirm",
             Msg::InputCreate.t(),
-            current_theme().color_success,
+            ModalButtonKind::Primary,
             disabled_reason,
+            confirm_handler,
             cx,
         )));
 
@@ -387,25 +381,20 @@ pub(crate) fn render_create_worktree_modal(
         .flex_row()
         .gap_2()
         .justify_end()
-        .child(
-            Button::new("create-worktree-cancel")
-                .label(Msg::PlanCancel.t())
-                .ghost()
-                .on_click(cancel_handler),
-        )
-        .child(crate::ui::e2e::measure_confirm(render_input_modal_action(
-            || {
-                KagiButton::accent(
-                    "create-worktree-confirm",
-                    Msg::InputCreate.t(),
-                    current_theme().color_success,
-                    cx,
-                )
-                .on_click(confirm_handler)
-            },
+        .child(modal_button(
+            "create-worktree-cancel",
+            Msg::PlanCancel.t(),
+            ModalButtonKind::Cancel,
+            None,
+            cancel_handler,
+            cx,
+        ))
+        .child(crate::ui::e2e::measure_confirm(modal_button(
+            "create-worktree-confirm",
             Msg::InputCreate.t(),
-            current_theme().color_success,
+            ModalButtonKind::Primary,
             disabled_reason,
+            confirm_handler,
             cx,
         )));
     let card = card
@@ -556,25 +545,20 @@ pub(crate) fn render_create_tag_modal(
         .flex_row()
         .gap_2()
         .justify_end()
-        .child(
-            Button::new("create-tag-cancel")
-                .label(Msg::PlanCancel.t())
-                .ghost()
-                .on_click(cancel_handler),
-        )
-        .child(crate::ui::e2e::measure_confirm(render_input_modal_action(
-            || {
-                KagiButton::accent(
-                    "create-tag-confirm",
-                    Msg::InputCreate.t(),
-                    current_theme().color_success,
-                    cx,
-                )
-                .on_click(confirm_handler)
-            },
+        .child(modal_button(
+            "create-tag-cancel",
+            Msg::PlanCancel.t(),
+            ModalButtonKind::Cancel,
+            None,
+            cancel_handler,
+            cx,
+        ))
+        .child(crate::ui::e2e::measure_confirm(modal_button(
+            "create-tag-confirm",
             Msg::InputCreate.t(),
-            current_theme().color_success,
+            ModalButtonKind::Primary,
             disabled_reason,
+            confirm_handler,
             cx,
         )));
 

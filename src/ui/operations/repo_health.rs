@@ -11,6 +11,7 @@ use crate::ui::modal_renderers::render_plan_modal_wrapper_styled;
 use crate::ui::modals::repo_health::RepoHealthModal;
 use crate::ui::*;
 use gpui_component::IconName;
+use kagi_domain::plan_note::MaintenanceTitle;
 use kagi_domain::repo_health::HealthFix;
 use kagi_git::backend::recording::RunReport;
 use kagi_git::Operation;
@@ -130,10 +131,15 @@ pub(crate) fn render_repo_health_modal(
     overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    let confirm_title = match modal.fix {
+        HealthFix::WriteCommitGraph => MaintenanceTitle::WriteCommitGraph,
+        HealthFix::EnableFsmonitor => MaintenanceTitle::EnableFsmonitor,
+    };
+    let confirm_label = kagi_ui_core::i18n::plan::maintenance::confirm_label(&confirm_title);
     render_plan_modal_wrapper_styled(
         modal.plan,
         modal.error,
-        kagi_ui_core::i18n::plan::maintenance::confirm_label(),
+        confirm_label,
         None,
         Some((IconName::Settings.into(), theme::theme().color_branch)),
         |this, _cx| this.cancel_repo_health_modal(),

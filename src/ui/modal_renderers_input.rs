@@ -4,6 +4,7 @@
 //! this card is the one that pairs a text input with a plan, and it shares
 //! nothing with the plan card except the shell helpers.
 
+use super::button_style::{modal_button, ModalButtonKind};
 use super::i18n::Msg;
 use super::modal_command::{plan_ready, render_recovery_commands};
 use super::modal_renderers::{
@@ -15,13 +16,10 @@ use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_MD};
 use super::theme::theme as current_theme;
 use super::KagiApp;
 use gpui::{
-    div, prelude::*, rgb, Context, Entity, FocusHandle, Hsla, KeyDownEvent, Role, SharedString,
-    Window,
+    div, prelude::*, rgb, Context, Entity, FocusHandle, KeyDownEvent, Role, SharedString, Window,
 };
-use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::tooltip::Tooltip;
-use gpui_component::{ActiveTheme as _, Sizable as _};
 use kagi_domain::plan_note::{PlanNote, PushNote};
 use kagi_git::{BranchRenameValidation, OperationPlan};
 use kagi_ui_core::i18n::{plan::plan_heading_text, plan_note_text};
@@ -99,62 +97,8 @@ pub(crate) fn render_input_modal_heading(
     }
 }
 
-/// Size of the shared action, including its inert disabled representation.
-#[derive(Clone, Copy)]
-pub(crate) enum InputActionSize {
-    Regular,
-    Small,
-}
-
-/// gpui-component's disabled Button suppresses clicks and focus but exposes an
-/// enabled AX node. Draw the unavailable state as an inert, reason-bearing AX
-/// Button instead. Ready actions keep the actual gpui-component Button.
-pub(crate) fn render_input_modal_action(
-    button: impl FnOnce() -> Button,
-    label: &'static str,
-    accent: u32,
-    reason: Option<SharedString>,
-    cx: &gpui::App,
-) -> gpui::AnyElement {
-    render_input_modal_action_with_size(button, label, accent, reason, InputActionSize::Regular, cx)
-}
-
-pub(crate) fn render_input_modal_action_with_size(
-    button: impl FnOnce() -> Button,
-    label: &'static str,
-    accent: u32,
-    reason: Option<SharedString>,
-    size: InputActionSize,
-    cx: &gpui::App,
-) -> gpui::AnyElement {
-    match reason {
-        Some(reason) => div()
-            .id(label)
-            .role(Role::Button)
-            .aria_label(SharedString::from(label))
-            .aria_description(reason.clone())
-            .a11y_synthetic_children(|builder: &mut gpui::A11ySubtreeBuilder| {
-                builder.parent_node().set_disabled();
-            })
-            .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx))
-            .flex()
-            .flex_shrink_0()
-            .items_center()
-            .justify_center()
-            .h_8()
-            .px_4()
-            .when(matches!(size, InputActionSize::Small), |button| {
-                button.h_6().px_3().text_xs()
-            })
-            .rounded(cx.theme().radius)
-            .bg(Hsla::from(rgb(accent)).opacity(0.15))
-            .text_color(cx.theme().muted_foreground.opacity(0.5))
-            .child(label)
-            .into_any_element(),
-        None => button().into_any_element(),
-    }
-}
-
+// Existing input-plan renderer contract shared by Rename and Set Upstream.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn render_input_plan_modal(
     short_title: &'static str,
     heading_target: &str,
@@ -294,22 +238,20 @@ pub(crate) fn render_input_plan_modal(
         .flex_row()
         .gap_2()
         .justify_end()
-        .child(
-            Button::new("branch-input-cancel")
-                .label(Msg::PlanCancel.t())
-                .ghost()
-                .on_click(cancel_handler),
-        )
-        .child(crate::ui::e2e::measure_confirm(render_input_modal_action(
-            || {
-                Button::new("branch-input-confirm")
-                    .label(SharedString::from(confirm_label))
-                    .primary()
-                    .on_click(confirm_handler)
-            },
+        .child(modal_button(
+            "branch-input-cancel",
+            Msg::PlanCancel.t(),
+            ModalButtonKind::Cancel,
+            None,
+            cancel_handler,
+            cx,
+        ))
+        .child(crate::ui::e2e::measure_confirm(modal_button(
+            "branch-input-confirm",
             confirm_label,
-            current_theme().color_branch,
+            ModalButtonKind::Primary,
             disabled_reason,
+            confirm_handler,
             cx,
         )));
     let card = card.child(body).child(div().flex_shrink_0().child(buttons));
@@ -340,13 +282,15 @@ pub(crate) fn render_worktree_lock_reason_modal(
         }
         cx.notify();
     });
-    let mut body =
-        modal_scroll_body()
-            .child(div().flex_shrink_0().child(SharedString::from(modal.name)))
-            .child(div().flex_shrink_0().child(Msg::WorktreeLockReason.t()))
-            .children(modal.input_state.as_ref().map(|input| {
-                measure_control("worktree-lock-reason-input", Input::new(input).small())
-            }));
+    let mut body = modal_scroll_body()
+        .child(div().flex_shrink_0().child(SharedString::from(modal.name)))
+        .child(div().flex_shrink_0().child(Msg::WorktreeLockReason.t()))
+        .children(
+            modal
+                .input_state
+                .as_ref()
+                .map(|input| measure_control("worktree-lock-reason-input", Input::new(input))),
+        );
     if let Some(error) = modal.error {
         body = body.child(
             div()
@@ -362,25 +306,31 @@ pub(crate) fn render_worktree_lock_reason_modal(
         .justify_end()
         .child(measure_control(
             "worktree-lock-reason-cancel",
-            Button::new("worktree-lock-reason-cancel")
-                .label(Msg::PlanCancel.t())
-                .ghost()
-                .small()
-                .on_click(cancel),
+            modal_button(
+                "worktree-lock-reason-cancel",
+                Msg::PlanCancel.t(),
+                ModalButtonKind::Cancel,
+                None,
+                cancel,
+                cx,
+            ),
         ))
         .child(measure_control(
             "worktree-lock-reason-review",
-            Button::new("worktree-lock-reason-review")
-                .label(Msg::WorktreeLockReview.t())
-                .primary()
-                .small()
-                .on_click(review),
+            modal_button(
+                "worktree-lock-reason-review",
+                Msg::WorktreeLockReview.t(),
+                ModalButtonKind::Primary,
+                None,
+                review,
+                cx,
+            ),
         ));
     let card = modal_card(MODAL_W_MD)
         .child(div().flex_shrink_0().child(render_modal_title_row(
             SharedString::from(Msg::MenuLockWorktree.t()),
             Some((
-                gpui_component::IconName::WindowRestore.into(),
+                ModalIcon::Path("icons/lock-keyhole.svg"),
                 current_theme().color_warning,
             )),
         )))

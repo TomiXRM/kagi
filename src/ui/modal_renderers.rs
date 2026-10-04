@@ -13,6 +13,7 @@
 
 #![allow(clippy::too_many_arguments)]
 
+use super::button_style::{modal_button, ModalButtonKind};
 use super::dialog_a11y::{apply_dialog, apply_group, dialog_a11y, ConfirmStage, DialogHandler};
 use super::i18n::Msg;
 use super::modal_command::{render_equivalent_command, render_recovery_commands};
@@ -25,7 +26,6 @@ use super::plan_card_rows::{render_commit_row, render_note_row};
 use super::theme::{self, theme as current_theme};
 use super::{KagiApp, MONO_FONT};
 use gpui::{div, prelude::*, rgb, Context, SharedString};
-use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{Icon, IconName, Sizable as _};
 use kagi_domain::plan_note::ShellKind;
 use kagi_git::{CommitId, OperationPlan};
@@ -128,8 +128,25 @@ pub(crate) fn modal_overlay(card: impl IntoElement) -> gpui::Div {
         )
 }
 
+#[cfg(feature = "gui-e2e")]
+pub mod status_chip_probe {
+    thread_local! {
+        static LAST: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    }
+
+    pub fn record(text: &str) {
+        LAST.with(|last| *last.borrow_mut() = Some(text.to_owned()));
+    }
+
+    pub fn last() -> Option<String> {
+        LAST.with(|last| last.borrow().clone())
+    }
+}
+
 /// The same quiet status pill used by Stash Push and every other plan card.
 fn plan_status_chip(text: &str, kind: &str) -> gpui::AnyElement {
+    #[cfg(feature = "gui-e2e")]
+    status_chip_probe::record(text);
     let t = current_theme();
     let (color, fill_alpha, text_alpha) = match kind {
         "staged" | "clean" => (t.color_success, 0x33, 0xff),
@@ -180,8 +197,12 @@ fn plan_state(
     id: &'static str,
     label_id: &'static str,
     head_id: &'static str,
+    display_dirty: Option<(&str, &str)>,
 ) -> gpui::AnyElement {
-    let full = SharedString::from(format!("{label}: {head} [{dirty}]"));
+    let full = SharedString::from(format!(
+        "{label}: {head} [{}]",
+        display_dirty.map_or(dirty, |(_, detail)| detail)
+    ));
     apply_group(id, div().id(id), full.clone())
         .tooltip(move |window, cx| {
             gpui_component::tooltip::Tooltip::new(full.clone()).build(window, cx)
@@ -236,7 +257,9 @@ fn plan_state(
                         .flex_row()
                         .flex_wrap()
                         .gap(theme::scaled_px(6.))
-                        .children(plan_status_chips(dirty)),
+                        .children(plan_status_chips(
+                            display_dirty.map_or(dirty, |(short, _)| short),
+                        )),
                 ),
         )
         .when(cfg!(feature = "gui-e2e"), |row| {
@@ -265,6 +288,7 @@ pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement
             "plan-state-current",
             "plan-state-current-label",
             "plan-state-current-head",
+            None,
         ))
         .child(
             div()
@@ -277,6 +301,13 @@ pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement
                     "plan-state-after",
                     "plan-state-after-label",
                     "plan-state-after-head",
+                    match &plan.title {
+                        kagi_domain::plan_note::PlanTitle::Maintenance(title) => Some((
+                            kagi_ui_core::i18n::plan::maintenance::after_state_label(title),
+                            kagi_ui_core::i18n::plan::maintenance::after_state_detail(title),
+                        )),
+                        _ => None,
+                    },
                 )),
         )
         .when(cfg!(feature = "gui-e2e"), |panel| {
@@ -541,6 +572,58 @@ pub(crate) fn render_plan_heading(
     row
 }
 
+/// The plan's destructive bit covers history rewrites; the blocker-coloured
+/// badge marks deletion/cleanup plans with a legacy `false` bit. Pruning stale
+/// worktree metadata gets the same visual treatment by explicit title.
+pub(crate) fn plan_confirm_kind(
+    destructive: bool,
+    title: &kagi_domain::plan_note::PlanTitle,
+    blocker_accent: bool,
+) -> ModalButtonKind {
+    if destructive
+        || blocker_accent
+        || matches!(
+            title,
+            kagi_domain::plan_note::PlanTitle::Worktree(
+                kagi_domain::plan_note::WorktreeTitle::PruneWorktrees
+            )
+        )
+    {
+        ModalButtonKind::Destructive
+    } else {
+        ModalButtonKind::Primary
+    }
+}
+
+#[cfg(test)]
+mod modal_button_tests {
+    use super::{plan_confirm_kind, ModalButtonKind};
+    use kagi_domain::plan_note::{PlanTitle, WorktreeTitle};
+
+    #[test]
+    fn destructive_plan_confirm_uses_blocker_variant() {
+        let ordinary = PlanTitle::Worktree(WorktreeTitle::RepairWorktrees);
+        let prune = PlanTitle::Worktree(WorktreeTitle::PruneWorktrees);
+        assert_eq!(
+            plan_confirm_kind(true, &ordinary, false),
+            ModalButtonKind::Destructive
+        );
+        // Branch cleanup still marks its destructive intent through its badge.
+        assert_eq!(
+            plan_confirm_kind(false, &ordinary, true),
+            ModalButtonKind::Destructive
+        );
+        assert_eq!(
+            plan_confirm_kind(false, &prune, false),
+            ModalButtonKind::Destructive
+        );
+        assert_eq!(
+            plan_confirm_kind(false, &ordinary, false),
+            ModalButtonKind::Primary
+        );
+    }
+}
+
 /// Shared plan-card content. Only this renderer's heading uses
 /// `render_plan_heading`; `render_modal_title_row` remains for non-plan cards.
 fn render_plan_modal_card_styled(
@@ -562,6 +645,13 @@ fn render_plan_modal_card_styled(
     // `SharedString` (merge: `Merge <source> into <target>`, T-DNDMERGE-001).
     let confirm_label: SharedString = confirm_label.into();
     let has_blockers = !plan.blockers.is_empty();
+    let confirm_kind = plan_confirm_kind(
+        plan.destructive,
+        &plan.title,
+        accent
+            .as_ref()
+            .is_some_and(|(_, color)| *color == current_theme().color_blocker),
+    );
     let (heading_title, heading_chips) = plan_heading_text(&plan.title);
     // ── Build modal card (#454) ─────────────────────────────
     // Fixed title + scrolling body + fixed button row. The card itself must
@@ -807,11 +897,14 @@ fn render_plan_modal_card_styled(
         // than inferring it from the card.
         .child(super::e2e::measure_control(
             "plan-cancel",
-            Button::new("plan-cancel")
-                .label(Msg::PlanCancel.t())
-                .ghost()
-                .small()
-                .on_click(move |_, w, a| cancel_handler(w, a)),
+            modal_button(
+                "plan-cancel",
+                Msg::PlanCancel.t(),
+                ModalButtonKind::Cancel,
+                None,
+                move |_, w, a| cancel_handler(w, a),
+                cx,
+            ),
         ));
 
     if let Some(commit_id) = create_branch_target {
@@ -823,50 +916,51 @@ fn render_plan_modal_card_styled(
             }
             cx.notify();
         });
-        button_row = button_row.child(
-            Button::new("plan-create-branch")
-                .label("Create branch here...")
-                .small()
-                .on_click(create_handler),
-        );
+        button_row = button_row.child(modal_button(
+            "plan-create-branch",
+            Msg::PlanCreateBranchHere.t(),
+            ModalButtonKind::Secondary,
+            None,
+            create_handler,
+            cx,
+        ));
     }
 
-    // Checkout button: only shown when there are no blockers.
-    if !has_blockers {
-        let button = Button::new("plan-confirm")
-            .label(confirm_label)
-            .primary()
-            .small()
-            .on_click(move |_, w, a| confirm_handler(w, a));
-        #[cfg(feature = "gui-e2e")]
-        let button = {
-            // Keep the measurement layer behind the real button and anchor it
-            // to the wrapper, independent of absolute static-position layout.
-            div()
-                .relative()
-                .child(
-                    gpui::canvas(
-                        move |bounds, window, _| {
-                            crate::ui::e2e::record_confirm_bounds(
-                                window.window_handle().window_id(),
-                                bounds,
-                            );
-                        },
-                        |_, _, _, _| {},
-                    )
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .size_full(),
-                )
-                // #462: the same wrapper carries the named probe, so a
-                // scenario reads this button's real bounds instead of the
-                // window-wide "last confirm drawn" slot above.
-                .child(super::modal_shell::modal_probe("plan-confirm"))
-                .child(button)
-        };
-        button_row = button_row.child(button);
-    }
+    // Keep unavailable confirmation visible with the first blocker as its
+    // accessible reason; dialog Enter remains disabled through apply_dialog.
+    let reason = plan
+        .blockers
+        .first()
+        .map(|blocker| SharedString::from(plan_note_text(blocker)));
+    let button = modal_button(
+        "plan-confirm",
+        confirm_label,
+        confirm_kind,
+        reason,
+        move |_, w, a| confirm_handler(w, a),
+        cx,
+    );
+    #[cfg(feature = "gui-e2e")]
+    let button = div()
+        .relative()
+        .child(
+            gpui::canvas(
+                move |bounds, window, _| {
+                    crate::ui::e2e::record_confirm_bounds(
+                        window.window_handle().window_id(),
+                        bounds,
+                    );
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full(),
+        )
+        .child(super::modal_shell::modal_probe("plan-confirm"))
+        .child(button);
+    button_row = button_row.child(button);
 
     // #462: the footer is the block a compact card must never push off the
     // bottom, so it is measured as a whole. `relative` + an absolute,

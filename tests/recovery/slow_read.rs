@@ -467,3 +467,78 @@ pub fn scenario_slow_write_conflict_continue(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS slow_write_conflict_continue: 2s, 4s, release");
 }
+
+/// #1012: measuring a worktree's size is not explained in the busy snackbar,
+/// however long it takes. The row's own "measuring" state is the indicator;
+/// the measurement still runs in the background and lands on the row.
+pub fn scenario_worktree_size_not_explained(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let linked = repo.with_file_name(format!(
+        "{}-linked",
+        repo.file_name().unwrap().to_string_lossy()
+    ));
+    git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            linked.to_str().unwrap(),
+        ],
+    );
+    // The tab's automatic sweep is held on the production transport seam.
+    let (held, reply) = deferred(cx);
+    e2e::worktree_inspection::queue(held);
+    let (app, window) = mount(cx, &repo);
+    let measuring = |cx: &mut VisualTestAppContext| {
+        cx.read(|cx| e2e::worktree_inspection::status(app.read(cx), &linked).0)
+    };
+    // A reload publishes the worktree list and starts the automatic sweep.
+    app.update(cx, |app, cx| app.reload_external(cx));
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while !measuring(cx) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the sweep is measuring the linked worktree"
+        );
+        cx.run_until_parked();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    advance(cx, TICK * 12);
+    assert!(measuring(cx), "still measuring three seconds later");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).slow_read_shown_for_e2e()),
+        None,
+        "a slow size measurement is not explained"
+    );
+    assert_eq!(
+        drawn(cx, window),
+        (false, false),
+        "no snackbar advice or Skip"
+    );
+
+    let target = cx.read(|cx| {
+        app.read(cx)
+            .view()
+            .worktrees
+            .iter()
+            .find(|worktree| worktree.path == linked)
+            .expect("linked worktree listed")
+            .clone()
+    });
+    reply.send(kagi_git::worktree_inspection::inspect_worktree(
+        &repo,
+        &target,
+        &std::sync::atomic::AtomicBool::new(false),
+    ));
+    cx.run_until_parked();
+    let (still, size, _) = cx.read(|cx| e2e::worktree_inspection::status(app.read(cx), &linked));
+    assert!(!still && size.is_some(), "the measurement lands on the row");
+    unmount(cx, app, window);
+    let _ = std::fs::remove_dir_all(&linked);
+    eprintln!("[gui-e2e] PASS worktree_size_not_explained");
+}

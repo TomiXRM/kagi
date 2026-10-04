@@ -15,16 +15,16 @@ pub fn is_slow(elapsed: Duration) -> bool {
     elapsed >= SLOW_READ_THRESHOLD
 }
 
-/// The reads that explain themselves. Only the first two can be skipped: their
-/// result has an existing "unknown" rendering to fall back to.
+/// The reads that explain themselves. Only the first can be skipped: its
+/// result has an existing "unknown" rendering to fall back to. The worktree
+/// size measurement is not one of them: its rows show their own "measuring"
+/// state (#1012).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SlowRead {
     /// Branch ahead/behind counts against their upstreams (inside the snapshot).
     AheadBehind,
     /// Linked worktrees' working-tree status (inside the snapshot).
     Worktrees,
-    /// The worktree size measurement (#633 inspection).
-    WorktreeSize,
     /// Analyze's hotspot scan.
     Analyze,
     /// A large diff read off the UI thread (#495 text-first pipeline).
@@ -37,18 +37,16 @@ impl SlowRead {
         match self {
             SlowRead::AheadBehind => "ahead-behind",
             SlowRead::Worktrees => "worktrees",
-            SlowRead::WorktreeSize => "worktree-size",
             SlowRead::Analyze => "analyze",
             SlowRead::Diff => "diff",
         }
     }
 
     /// Skip stops the read and shows its result as the existing "unknown":
-    /// ahead/behind as `—`, the worktree size as "not measured". The others
-    /// have no such rendering (a worktree without `wip` reads as clean), so
-    /// they only explain.
+    /// ahead/behind as `—`. The others have no such rendering (a worktree
+    /// without `wip` reads as clean), so they only explain.
     pub fn skippable(self) -> bool {
-        matches!(self, SlowRead::AheadBehind | SlowRead::WorktreeSize)
+        matches!(self, SlowRead::AheadBehind)
     }
 }
 

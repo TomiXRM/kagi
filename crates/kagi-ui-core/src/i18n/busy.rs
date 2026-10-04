@@ -176,6 +176,9 @@ fn slow_write_advice_for(op: &str, seconds: u64, language: Lang) -> String {
         | "delete-remote-branch"
         | "remote-stash-drop"
         | "pr-merge"
+        | "pr-comment"
+        | "pr-review"
+        | "pr-edit"
         | "issue-create"
         | "issue-comment" => Msg::SlowWriteNetwork,
         "rebase" | "replay-onto" | "cherry-pick" | "revert" => Msg::SlowWriteRebase,
@@ -329,6 +332,26 @@ mod tests {
                     slow_read_reason(read, language).trim_end_matches('…')
                 );
             }
+        }
+    }
+
+    /// #995 review: every GitHub write that holds the lease waits on the
+    /// network, so none of them falls back to the generic reason.
+    #[test]
+    fn github_writes_wait_on_the_network() {
+        let network = format!(
+            "{} · 3 s",
+            super::super::Msg::SlowWriteNetwork.t_for(Lang::En)
+        );
+        for op in [
+            "pr-merge",
+            "pr-comment",
+            "pr-review",
+            "pr-edit",
+            "issue-create",
+            "issue-comment",
+        ] {
+            assert_eq!(slow_write_advice_for(op, 3, Lang::En), network, "{op}");
         }
     }
 

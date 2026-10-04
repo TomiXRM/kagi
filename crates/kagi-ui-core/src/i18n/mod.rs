@@ -1135,7 +1135,7 @@ pub enum Msg {
     AmendFoldedFiles,
     /// #454: tooltip on a popup's copy button (copies the whole dialog).
     ModalCopyAll,
-    /// Confirm labels and disabled-state reasons for plan cards.
+    // #1016 modal polish: confirm labels, disabled reasons and maintenance state.
     ModalCherryPickConfirm,
     ModalCommitConfirm,
     ModalNoDiscardTargets,
@@ -1147,6 +1147,8 @@ pub enum Msg {
     MaintenanceFsmonitorDetail,
     MaintenanceWriteCommitGraph,
     MaintenanceEnableFsmonitor,
+    PlanCreateBranchHere,
+    InputApply,
     /// Header of the distinct equivalent CLI command in Copy all.
     ModalEquivalentCommand,
     /// #454: tooltip on a list panel's copy button (copies every row).
@@ -1182,8 +1184,6 @@ pub enum Msg {
     PlanHeadingFiles,
     PlanHeadingStashes,
     PlanHeadingBranches,
-    /// Secondary action from a plan card to create a branch at its target.
-    PlanCreateBranchHere,
     /// Confirm button on the set-upstream modal, `{}` = branch.
     PlanSetUpstreamFor,
     /// Confirm button on the rename-branch modal, `{}` = old name.
@@ -1269,7 +1269,6 @@ pub enum Msg {
     InputCheckoutAfterCreate,
     InputCreate,
     InputStash,
-    InputApply,
     InputSetUpstream,
     InputRename,
     InputPlanPending,
@@ -3125,6 +3124,7 @@ impl Msg {
             (Ja, AmendFoldedFiles) => "この commit に取り込む staged 変更",
             (En, ModalCopyAll) => "Copy this dialog as text",
             (Ja, ModalCopyAll) => "この内容をテキストでコピー",
+            // #1016 modal polish.
             (En, ModalCherryPickConfirm) => "Cherry-pick",
             (Ja, ModalCherryPickConfirm) => "cherry-pick",
             (En, ModalCommitConfirm) => "Commit",
@@ -3153,6 +3153,10 @@ impl Msg {
             (Ja, MaintenanceWriteCommitGraph) => "commit-graph を書き込む",
             (En, MaintenanceEnableFsmonitor) => "Enable fsmonitor",
             (Ja, MaintenanceEnableFsmonitor) => "fsmonitor を有効化",
+            (En, PlanCreateBranchHere) => "Create branch here...",
+            (Ja, PlanCreateBranchHere) => "ここに branch を作成...",
+            (En, InputApply) => "Apply",
+            (Ja, InputApply) => "適用",
             (En, ModalEquivalentCommand) => "equivalent command:",
             (Ja, ModalEquivalentCommand) => "相当するコマンド:",
             (En, ModalCopyList) => "Copy every row",
@@ -3195,8 +3199,6 @@ impl Msg {
             (Ja, PlanHeadingStashes) => "stash {} 件",
             (En, PlanHeadingBranches) => "{} branches",
             (Ja, PlanHeadingBranches) => "{} 件のブランチ",
-            (En, PlanCreateBranchHere) => "Create branch here...",
-            (Ja, PlanCreateBranchHere) => "ここに branch を作成...",
             (En, PlanSetUpstreamFor) => "Set upstream for {}",
             (Ja, PlanSetUpstreamFor) => "{} の upstream を設定",
             (En, PlanRenameBranch) => "Rename {}",
@@ -3347,8 +3349,6 @@ impl Msg {
             (Ja, InputCreate) => "作成",
             (En, InputStash) => "Stash",
             (Ja, InputStash) => "退避する",
-            (En, InputApply) => "Apply",
-            (Ja, InputApply) => "適用",
             (En, InputSetUpstream) => "Set upstream",
             (Ja, InputSetUpstream) => "upstream を設定",
             (En, InputRename) => "Rename",

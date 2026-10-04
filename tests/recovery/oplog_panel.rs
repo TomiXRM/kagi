@@ -218,13 +218,33 @@ pub fn scenario_oplog_recovery_recorded(cx: &mut VisualTestAppContext) {
         });
         assert_eq!(entry.recovery_plan, Some(approved.clone()));
         let details = kagi::ui::oplog_panel::detail_lines(&entry).join("\n");
+        let sentences = i18n::plan::plan_recovery_sentences(Some(&approved));
         assert!(
-            expected.lines().all(|line| details.contains(line)),
+            sentences.iter().all(|sentence| details.contains(sentence)),
             "{details}"
         );
-        for command in approved.commands_for(ShellKind::current()) {
+        let embedded_commands: Vec<_> = expected
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("git "))
+            .collect();
+        assert!(
+            !embedded_commands.is_empty(),
+            "fixture needs a displayed command"
+        );
+        for display_command in &embedded_commands {
             assert!(
-                details.contains(&format!("command: {command}")),
+                !details.lines().any(|line| line.trim() == *display_command),
+                "unquoted display command leaked into Recovery prose: {details}"
+            );
+        }
+        for command in approved.commands_for(ShellKind::current()) {
+            assert_eq!(details.matches(command).count(), 1, "{details}");
+            assert!(
+                details.contains(&format!(
+                    "{} {command}",
+                    i18n::Msg::OpLogRecoveryCommand.t()
+                )),
                 "{details}"
             );
         }
@@ -235,11 +255,24 @@ pub fn scenario_oplog_recovery_recorded(cx: &mut VisualTestAppContext) {
             .and_then(|item| item.text())
             .unwrap();
         assert!(
-            expected.lines().all(|line| copied.contains(line)),
+            sentences.iter().all(|sentence| copied.contains(sentence)),
             "{copied}"
         );
+        for display_command in &embedded_commands {
+            assert!(
+                !copied.lines().any(|line| line.trim() == *display_command),
+                "unquoted display command leaked into Copy: {copied}"
+            );
+        }
         for command in approved.commands_for(ShellKind::current()) {
-            assert!(copied.contains(&format!("command: {command}")), "{copied}");
+            assert_eq!(copied.matches(command).count(), 1, "{copied}");
+            assert!(
+                copied.contains(&format!(
+                    "{} {command}",
+                    i18n::Msg::OpLogRecoveryCommand.t()
+                )),
+                "{copied}"
+            );
         }
     }
     i18n::set_lang(original_language);

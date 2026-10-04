@@ -740,7 +740,7 @@ The current suite covers:
     it (blocked, EN/JA), `exit`, then plan again (warning) and remove.
 - Operation Log の計画復旧説明 (#1025 / ADR-0221):
   `KAGI_GUI_E2E_KEEP_GOING=1 KAGI_GUI_E2E_ONLY='oplog_recovery_,oplog_actor_reflog,oplog_restore_card,oplog_expand_copy'`
-  (`tests/recovery/oplog_panel.rs`)。実 `run_recorded` の Success 行で EN/JA の説明、別行のコマンド、AX Recovery group と Copy を確認する。実行前に HEAD を動かした Failed 行には Recovery 欄を描かず、旧形式の Success 行は「not recorded / 記録されていません」を表示する。
+  (`tests/recovery/oplog_panel.rs`)。実 `run_recorded` の Success 行で EN/JA の説明、重複しない英日別ラベルのコマンド行、AX Recovery group と Copy を確認する。実行前に HEAD を動かした Failed 行には Recovery 欄を描かず、旧形式の Success 行は「not recorded / 記録されていません」を表示する。
   backend は `cargo test -p kagi-git recovery_plan` と `cargo test -p kagi-git --test oplog_serde_compat_test`、保持中の行の byte identity は `retirement_matches_typed_recovery_and_keeps_other_line_bytes`。Tier B は隔離した実アプリで新しい branch を作り、Operation Log の該当行を開いて EN/JA と Copy の説明・コマンドを撮影・確認する。古い行には推測の手順を表示しない。
 - Operation Log badges, recorded ref moves and estimated reflog
   (`KAGI_GUI_E2E_ONLY=oplog_actor_reflog`, `tests/recovery/oplog_panel.rs`):

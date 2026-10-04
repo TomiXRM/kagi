@@ -324,10 +324,7 @@ impl Backend {
             outcome,
         )
         .with_ref_moves(ref_moves);
-        if matches!(
-            entry.outcome,
-            OpOutcome::Success { .. } | OpOutcome::Partial { .. } | OpOutcome::Unknown { .. }
-        ) {
+        if entry.outcome.may_have_changed() {
             entry.recovery_plan = plan.preview.recovery.clone();
         }
         if let Some(identity) = identity_before {

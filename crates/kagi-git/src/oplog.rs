@@ -67,6 +67,17 @@ pub enum OpOutcome {
     },
 }
 
+impl OpOutcome {
+    /// An approved plan may need recovery only if the operation may have
+    /// changed repository state. Refusal and pre-execution failure do not.
+    pub fn may_have_changed(&self) -> bool {
+        matches!(
+            self,
+            Self::Success { .. } | Self::Partial { .. } | Self::Unknown { .. }
+        )
+    }
+}
+
 /// Who initiated an operation (ADR-0149 / #333). Serialized as the lowercase
 /// strings `human` / `mcp` / `cli`. Defaults to [`Actor::Human`] — including
 /// for pre-ADR-0149 log lines that predate the field.

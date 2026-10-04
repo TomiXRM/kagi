@@ -270,13 +270,10 @@ impl Backend {
         }
         entry.backup_refs = receipt.backup_refs;
         entry.recovery = receipt.recovery;
-        entry.recovery_plan = match entry.outcome {
-            crate::oplog::OpOutcome::Success { .. }
-            | crate::oplog::OpOutcome::Partial { .. }
-            | crate::oplog::OpOutcome::Unknown { .. } => receipt.recovery_plan.cloned(),
-            crate::oplog::OpOutcome::Failed { .. } | crate::oplog::OpOutcome::Refused { .. } => {
-                None
-            }
+        entry.recovery_plan = if entry.outcome.may_have_changed() {
+            receipt.recovery_plan.cloned()
+        } else {
+            None
         };
         entry.failure_code = receipt.failure_code;
         finalize(entry)
@@ -506,5 +503,86 @@ mod identity_tests {
             recording.entry().repo_identity,
             crate::oplog::RecordedIdentity::Known(original)
         );
+    }
+
+    /// A failed or refused operation cannot advertise approved-plan recovery.
+    #[test]
+    fn approved_recovery_is_recorded_only_for_changed_or_uncertain_outcomes() {
+        use kagi_domain::plan_note::{PlanRecovery, RecoveryKind};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("repo");
+        git2::Repository::init(&path).unwrap();
+        let backend = Backend::open(&path).unwrap();
+        let state = ops::StateSummary {
+            head: "branch: main".into(),
+            dirty: "clean".into(),
+        };
+        let recovery = PlanRecovery {
+            kind: RecoveryKind::Discard,
+            commands: vec!["git status".into()],
+        };
+        let outcomes = [
+            (
+                crate::oplog::OpOutcome::Success {
+                    after: state.clone(),
+                },
+                true,
+            ),
+            (
+                crate::oplog::OpOutcome::Partial {
+                    after: state.clone(),
+                    error: "partial".into(),
+                },
+                true,
+            ),
+            (
+                crate::oplog::OpOutcome::Unknown {
+                    after: state.clone(),
+                    evidence: "unverified".into(),
+                },
+                true,
+            ),
+            (
+                crate::oplog::OpOutcome::Failed {
+                    error: "preflight".into(),
+                },
+                false,
+            ),
+            (
+                crate::oplog::OpOutcome::Refused {
+                    blockers: vec!["blocked".into()],
+                },
+                false,
+            ),
+        ];
+        for (index, (outcome, expected)) in outcomes.into_iter().enumerate() {
+            let recording = backend.record_receipt(
+                &format!("outcome-{index}"),
+                &state,
+                outcome,
+                Receipt {
+                    backup_refs: Vec::new(),
+                    recovery: Vec::new(),
+                    recovery_plan: Some(&recovery),
+                    failure_code: None,
+                    ref_moves: None,
+                },
+            );
+            assert_eq!(
+                recording.entry().recovery_plan.as_ref(),
+                expected.then_some(&recovery),
+                "outcome-{index}"
+            );
+        }
+        let recorded = crate::oplog::read_oplog_tail_for_repo(&path, 5);
+        assert_eq!(recorded.len(), 5);
+        for (index, entry) in recorded.iter().enumerate() {
+            assert_eq!(
+                entry.recovery_plan.as_ref(),
+                (index >= 2).then_some(&recovery),
+                "durable outcome-{index}"
+            );
+        }
     }
 }

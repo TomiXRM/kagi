@@ -20,7 +20,7 @@ use gpui::AppContext as _;
 use kagi_domain::oplog_reflog::{Attribution, ReflogLine, ReflogWindow};
 use kagi_domain::plan_note::ShellKind;
 use kagi_git::oplog::{OpLogEntry, OpOutcome};
-use kagi_ui_core::i18n::{plan::plan_recovery_text, Msg};
+use kagi_ui_core::i18n::{plan::plan_recovery_sentences, Msg};
 
 /// Maximum entries kept in the in-memory ring buffer.
 const OP_ENTRIES_MAX: usize = 200;
@@ -356,24 +356,21 @@ pub(crate) fn base_detail_lines(entry: &OpLogEntry) -> Vec<String> {
 /// Approved-plan guidance is shown only for outcomes that may have changed
 /// state. Missing guidance is explicitly unknown, never inferred from handles.
 pub fn recovery_lines(entry: &OpLogEntry) -> Option<Vec<String>> {
-    if matches!(
-        entry.outcome,
-        OpOutcome::Failed { .. } | OpOutcome::Refused { .. }
-    ) {
+    if !entry.outcome.may_have_changed() {
         return None;
     }
     let mut lines = vec![format!("  {}:", Msg::OpLogRecovery.t())];
     match &entry.recovery_plan {
         Some(plan) => {
             lines.extend(
-                plan_recovery_text(Some(plan))
-                    .lines()
+                plan_recovery_sentences(Some(plan))
+                    .into_iter()
                     .map(|line| format!("  {line}")),
             );
             lines.extend(
                 plan.commands_for(ShellKind::current())
                     .iter()
-                    .map(|command| format!("  command: {command}")),
+                    .map(|command| format!("  {} {command}", Msg::OpLogRecoveryCommand.t())),
             );
         }
         None => lines.push(format!("  {}", Msg::OpLogRecoveryNotRecorded.t())),
@@ -494,7 +491,10 @@ mod tests {
                 "{section}"
             );
             assert!(
-                section.contains("command: git cat-file -p abc"),
+                section.contains(&format!(
+                    "{} git cat-file -p abc",
+                    Msg::OpLogRecoveryCommand.t()
+                )),
                 "{section}"
             );
         }

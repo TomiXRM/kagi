@@ -391,6 +391,7 @@ pub enum Msg {
     // #1025 — Operation Log plan-recovery section.
     OpLogRecovery,
     OpLogRecoveryNotRecorded,
+    OpLogRecoveryCommand,
 
     // ── Command palette (issue #352) ─────────────────────────────────
     /// Placeholder text in the palette's search box.
@@ -2351,6 +2352,8 @@ impl Msg {
             (Ja, OpLogRecovery) => "復旧",
             (En, OpLogRecoveryNotRecorded) => "not recorded",
             (Ja, OpLogRecoveryNotRecorded) => "記録されていません",
+            (En, OpLogRecoveryCommand) => "command:",
+            (Ja, OpLogRecoveryCommand) => "コマンド:",
 
             // ── Misc footers ────────────────────────────────────────
             (En, Refreshed) => "Refreshed",

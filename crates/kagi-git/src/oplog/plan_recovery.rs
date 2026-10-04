@@ -3,7 +3,7 @@
 //! malformed or future payload is absent, never a reason to discard its row.
 
 use kagi_domain::plan_note::*;
-use serde::{ser::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{de::Error as _, ser::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 
 macro_rules! family {
     ($(#[$attr:meta])* $name:ident, $domain:literal, { $($variants:tt)* }) => {
@@ -90,36 +90,65 @@ family!(SyncRecord, "SyncRecovery", {
 family!(MaintenanceRecord, "MaintenanceRecovery", { WriteCommitGraph, EnableFsmonitor, });
 family!(OplogRestoreRecord, "OplogRestoreRecovery", { Restore, });
 
-#[derive(Serialize)]
-#[serde(remote = "RecoveryKind", tag = "kind", content = "payload")]
-enum KindRecord {
-    Discard,
-    Branch(#[serde(with = "BranchRecord")] BranchRecovery),
-    Stash(#[serde(with = "StashRecord")] StashRecovery),
-    History(#[serde(with = "HistoryRecord")] HistoryRecovery),
-    Pull(#[serde(with = "PullRecord")] PullRecovery),
-    Push(#[serde(with = "PushRecord")] PushRecovery),
-    Switch(#[serde(with = "SwitchRecord")] SwitchRecovery),
-    Checkout(#[serde(with = "CheckoutRecord")] CheckoutRecovery),
-    Merge(#[serde(with = "MergeRecord")] MergeRecovery),
-    Worktree(#[serde(with = "WorktreeRecord")] WorktreeRecovery),
-    CherryRevert(#[serde(with = "CherryRevertRecord")] CherryRevertRecovery),
-    Cleanup(#[serde(with = "CleanupRecord")] CleanupRecovery),
-    Conflicts(#[serde(with = "ConflictsRecord")] ConflictsRecovery),
-    Commit(#[serde(with = "CommitRecord")] CommitRecovery),
-    Tag(#[serde(with = "TagRecord")] TagRecovery),
-    RemoteBranch(#[serde(with = "RemoteBranchRecord")] RemoteBranchRecovery),
-    Reset(#[serde(with = "ResetRecord")] ResetRecovery),
-    ForceLease(#[serde(with = "ForceLeaseRecord")] ForceLeaseRecovery),
-    Github(#[serde(with = "GithubRecord")] GithubRecovery),
-    Rebase(#[serde(with = "RebaseRecord")] RebaseRecovery),
-    Snapshot(#[serde(with = "SnapshotRecord")] SnapshotRecovery),
-    Sync(#[serde(with = "SyncRecord")] SyncRecovery),
-    Maintenance(#[serde(with = "MaintenanceRecord")] MaintenanceRecovery),
-    OplogRestore(#[serde(with = "OplogRestoreRecord")] OplogRestoreRecovery),
+// Serde's remote enum derive cannot deserialize an adjacently tagged tuple
+// payload here: its generated missing-field path requires Deserialize on the
+// dependency-free domain family. Generate the writer and reader tag from one
+// declaration instead, so new RecoveryKind variants cannot drift.
+macro_rules! kind_record {
+    ($($kind:ident => $record:ident ($path:literal): $domain:ty),+ $(,)?) => {
+        #[derive(Serialize)]
+        #[serde(remote = "RecoveryKind", tag = "kind", content = "payload")]
+        enum KindRecord {
+            Discard,
+            $($kind(#[serde(with = $path)] $domain),)+
+        }
+
+        impl KindRecord {
+            fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<RecoveryKind, D::Error> {
+                #[derive(Deserialize)]
+                #[serde(tag = "kind", content = "payload")]
+                enum KindTag {
+                    Discard,
+                    $($kind(serde_json::Value),)+
+                }
+                match KindTag::deserialize(deserializer)? {
+                    KindTag::Discard => Ok(RecoveryKind::Discard),
+                    $(KindTag::$kind(payload) => $record::deserialize(payload)
+                        .map(RecoveryKind::$kind)
+                        .map_err(D::Error::custom),)+
+                }
+            }
+        }
+    };
 }
 
-#[derive(Serialize)]
+kind_record!(
+    Branch => BranchRecord ("BranchRecord"): BranchRecovery,
+    Stash => StashRecord ("StashRecord"): StashRecovery,
+    History => HistoryRecord ("HistoryRecord"): HistoryRecovery,
+    Pull => PullRecord ("PullRecord"): PullRecovery,
+    Push => PushRecord ("PushRecord"): PushRecovery,
+    Switch => SwitchRecord ("SwitchRecord"): SwitchRecovery,
+    Checkout => CheckoutRecord ("CheckoutRecord"): CheckoutRecovery,
+    Merge => MergeRecord ("MergeRecord"): MergeRecovery,
+    Worktree => WorktreeRecord ("WorktreeRecord"): WorktreeRecovery,
+    CherryRevert => CherryRevertRecord ("CherryRevertRecord"): CherryRevertRecovery,
+    Cleanup => CleanupRecord ("CleanupRecord"): CleanupRecovery,
+    Conflicts => ConflictsRecord ("ConflictsRecord"): ConflictsRecovery,
+    Commit => CommitRecord ("CommitRecord"): CommitRecovery,
+    Tag => TagRecord ("TagRecord"): TagRecovery,
+    RemoteBranch => RemoteBranchRecord ("RemoteBranchRecord"): RemoteBranchRecovery,
+    Reset => ResetRecord ("ResetRecord"): ResetRecovery,
+    ForceLease => ForceLeaseRecord ("ForceLeaseRecord"): ForceLeaseRecovery,
+    Github => GithubRecord ("GithubRecord"): GithubRecovery,
+    Rebase => RebaseRecord ("RebaseRecord"): RebaseRecovery,
+    Snapshot => SnapshotRecord ("SnapshotRecord"): SnapshotRecovery,
+    Sync => SyncRecord ("SyncRecord"): SyncRecovery,
+    Maintenance => MaintenanceRecord ("MaintenanceRecord"): MaintenanceRecovery,
+    OplogRestore => OplogRestoreRecord ("OplogRestoreRecord"): OplogRestoreRecovery,
+);
+
+#[derive(Serialize, Deserialize)]
 #[serde(remote = "PlanRecovery")]
 struct PlanRecord {
     #[serde(with = "KindRecord")]
@@ -141,53 +170,96 @@ pub(super) fn deserialize<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<PlanRecovery>, D::Error> {
     let value = serde_json::Value::deserialize(deserializer)?;
-    Ok(decode(value))
+    Ok(PlanRecord::deserialize(value).ok())
 }
 
-fn decode(value: serde_json::Value) -> Option<PlanRecovery> {
-    let serde_json::Value::Object(mut object) = value else {
-        return None;
-    };
-    let commands: Vec<String> = serde_json::from_value(object.remove("commands")?).ok()?;
-    let serde_json::Value::Object(mut kind) = object.remove("kind")? else {
-        return None;
-    };
-    let tag = kind.remove("kind")?;
-    let tag = tag.as_str()?;
-    let payload = kind.remove("payload");
-    macro_rules! decode_kind {
-        ($($name:literal => $record:ident => $variant:ident),* $(,)?) => {
-            match tag {
-                "Discard" if payload.is_none() => Some(RecoveryKind::Discard),
-                $($name => $record::deserialize(payload?).ok().map(RecoveryKind::$variant),)*
-                _ => None,
-            }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::oplog::{entry_to_json, parse_oplog_line, OpLogEntry, OpOutcome};
+    use kagi_domain::plan::StateSummary;
+
+    #[test]
+    fn every_recovery_family_round_trips_its_typed_payload_and_commands() {
+        let kinds = [
+            RecoveryKind::Discard,
+            RecoveryKind::Branch(BranchRecovery::CreateBranch {
+                name: "feature".into(),
+            }),
+            RecoveryKind::Stash(StashRecovery::DropRemote),
+            RecoveryKind::History(HistoryRecovery::Undo {
+                sha: "abc".into(),
+                blocked: false,
+            }),
+            RecoveryKind::Pull(PullRecovery::Pull),
+            RecoveryKind::Push(PushRecovery::Push),
+            RecoveryKind::Switch(SwitchRecovery::CheckoutTracking {
+                local: "feature".into(),
+            }),
+            RecoveryKind::Checkout(CheckoutRecovery::Checkout {
+                previous: "main".into(),
+            }),
+            RecoveryKind::Merge(MergeRecovery::AfterMerge),
+            RecoveryKind::Worktree(WorktreeRecovery::Prune),
+            RecoveryKind::CherryRevert(CherryRevertRecovery::AfterCherryPick),
+            RecoveryKind::Cleanup(CleanupRecovery::CleanupDelete {
+                remote_refs: vec!["origin/feature".into()],
+            }),
+            RecoveryKind::Conflicts(ConflictsRecovery::Continue { op: "merge".into() }),
+            RecoveryKind::Commit(CommitRecovery::AfterCommit {
+                staged_files: vec!["file.txt".into()],
+            }),
+            RecoveryKind::Tag(TagRecovery::CreateTag { name: "v1".into() }),
+            RecoveryKind::RemoteBranch(RemoteBranchRecovery::DeleteRemoteBranch {
+                remote: "origin".into(),
+                branch: "feature".into(),
+                sha: "abc".into(),
+            }),
+            RecoveryKind::Reset(ResetRecovery::ResetCurrentToHead {
+                branch: "main".into(),
+                from: "abc".into(),
+            }),
+            RecoveryKind::ForceLease(ForceLeaseRecovery::ForceLeasePush {
+                branch: "main".into(),
+                remote: "origin".into(),
+                previous_remote_sha: "abc".into(),
+                new_sha: "def".into(),
+            }),
+            RecoveryKind::Github(GithubRecovery::ApplySuggestion),
+            RecoveryKind::Rebase(RebaseRecovery::RebaseCurrentOnto {
+                branch: "main".into(),
+                from: "abc".into(),
+            }),
+            RecoveryKind::Snapshot(SnapshotRecovery::Restore),
+            RecoveryKind::Sync(SyncRecovery::SyncToRemote {
+                branch: "main".into(),
+                from: "abc".into(),
+                tip_backup: "backup".into(),
+                work_backup: Some("work".into()),
+            }),
+            RecoveryKind::Maintenance(MaintenanceRecovery::WriteCommitGraph),
+            RecoveryKind::OplogRestore(OplogRestoreRecovery::Restore),
+        ];
+        let state = StateSummary {
+            head: "main".into(),
+            dirty: "clean".into(),
+        };
+        for kind in kinds {
+            let recovery = PlanRecovery {
+                kind,
+                commands: vec!["git status --short".into()],
+            };
+            let mut entry = OpLogEntry::new(
+                "round-trip",
+                "/tmp/recovery-test",
+                state.clone(),
+                OpOutcome::Success {
+                    after: state.clone(),
+                },
+            );
+            entry.recovery_plan = Some(recovery.clone());
+            let read = parse_oplog_line(&entry_to_json(&entry)).expect("entry remains readable");
+            assert_eq!(read.recovery_plan, Some(recovery));
         }
     }
-    let kind = decode_kind!(
-        "Branch" => BranchRecord => Branch,
-        "Stash" => StashRecord => Stash,
-        "History" => HistoryRecord => History,
-        "Pull" => PullRecord => Pull,
-        "Push" => PushRecord => Push,
-        "Switch" => SwitchRecord => Switch,
-        "Checkout" => CheckoutRecord => Checkout,
-        "Merge" => MergeRecord => Merge,
-        "Worktree" => WorktreeRecord => Worktree,
-        "CherryRevert" => CherryRevertRecord => CherryRevert,
-        "Cleanup" => CleanupRecord => Cleanup,
-        "Conflicts" => ConflictsRecord => Conflicts,
-        "Commit" => CommitRecord => Commit,
-        "Tag" => TagRecord => Tag,
-        "RemoteBranch" => RemoteBranchRecord => RemoteBranch,
-        "Reset" => ResetRecord => Reset,
-        "ForceLease" => ForceLeaseRecord => ForceLease,
-        "Github" => GithubRecord => Github,
-        "Rebase" => RebaseRecord => Rebase,
-        "Snapshot" => SnapshotRecord => Snapshot,
-        "Sync" => SyncRecord => Sync,
-        "Maintenance" => MaintenanceRecord => Maintenance,
-        "OplogRestore" => OplogRestoreRecord => OplogRestore,
-    )?;
-    Some(PlanRecovery { kind, commands })
 }

@@ -585,7 +585,7 @@ fn build_local_branch_leaf(
         let click_handler = cx.listener(
             move |this: &mut KagiApp, event: &gpui::ClickEvent, _window, cx| {
                 if event.click_count() >= 2 {
-                    this.open_plan_modal(branch_for_dbl.clone());
+                    this.open_plan_modal(branch_for_dbl.clone(), cx);
                 } else {
                     this.jump_to_branch(&branch_for_dbl);
                 }

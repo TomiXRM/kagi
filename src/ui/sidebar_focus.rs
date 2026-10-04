@@ -253,7 +253,7 @@ impl KagiApp {
                 ..
             } => self.jump_to_branch(name),
             SidebarRow::LocalBranchLeaf { name, .. } => {
-                self.open_plan_modal(name.clone());
+                self.open_plan_modal(name.clone(), cx);
                 // The plan's Enter / Escape run through the root (#817);
                 // left on the row, Enter would press the row again.
                 if self.active_modal.is_some() {

@@ -161,10 +161,9 @@ pub fn scenario_queue_merge_conflict_trips_successors(cx: &mut VisualTestAppCont
     });
     app.update(cx, |app, cx| app.dblclick_checkout_branch("b", cx));
     assert!(
-        cx.read(|cx| app.read(cx).plan_modal().is_some()),
-        "dirty staged index asks before queuing checkout"
+        cx.read(|cx| app.read(cx).plan_modal().is_none()),
+        "busy checkout queues without planning against the predecessor's staged index"
     );
-    app.update(cx, |app, cx| app.start_checkout(cx));
     assert_eq!(
         rows(&strip(cx, &app)).len(),
         2,

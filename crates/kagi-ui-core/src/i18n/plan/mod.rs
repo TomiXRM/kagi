@@ -471,7 +471,27 @@ pub fn plan_heading_text(
             None,
         ),
     };
-    (op.t(), [first, second])
+    // Detached HEAD has no branch name. Never draw a vacant target chip (also
+    // applies to optional target strings supplied by other plan producers).
+    (
+        op.t(),
+        [
+            first.filter(|chip| !chip.is_empty()),
+            second.filter(|chip| !chip.is_empty()),
+        ],
+    )
+}
+
+#[cfg(test)]
+#[test]
+fn detached_reset_heading_omits_empty_branch_chip() {
+    let title = PlanTitle::Reset(kagi_domain::plan_note::ResetTitle::ResetCurrentToHead {
+        branch: String::new(),
+        to: "41ffc069".into(),
+    });
+    let (_, chips) = plan_heading_text(&title);
+    assert_eq!(chips[0], None);
+    assert_eq!(chips[1].as_deref(), Some("41ffc069"));
 }
 
 /// Localized text for the recovery block. `None` renders empty (legacy plans

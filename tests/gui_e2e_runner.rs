@@ -944,6 +944,10 @@ mod macos {
                 Box::new(crate::recovery_plan_card_994::scenario_bespoke_plan_heading),
             ),
             (
+                "bespoke_recovery_1023",
+                Box::new(crate::recovery_plan_card_994::scenario_bespoke_recovery_1023),
+            ),
+            (
                 "plan_recovery_commands",
                 Box::new(crate::recovery_plan_card_994::scenario_plan_recovery_commands),
             ),
@@ -1438,6 +1442,14 @@ mod macos {
             (
                 "queue_checkout_linked_worktree_refuses",
                 Box::new(crate::op_queue::scenario_queue_checkout_linked_worktree_refuses),
+            ),
+            (
+                "queue_commit_checkout_busy_replans",
+                Box::new(crate::op_queue::scenario_queue_commit_checkout_busy_replans),
+            ),
+            (
+                "queue_dirty_commit_enter_refuses",
+                Box::new(crate::op_queue::scenario_queue_dirty_commit_enter_refuses),
             ),
             (
                 "queue_refuses_a_blocked_checkout",

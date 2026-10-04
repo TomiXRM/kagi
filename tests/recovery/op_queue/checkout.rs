@@ -1,5 +1,5 @@
 use super::*;
-use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
+use kagi_git::oplog::{read_oplog_tail_for_repo, FailureCode, OpOutcome};
 /// A blocker derived from the tree during another checkout is not an
 /// enqueue-time veto. The fresh head plan still refuses it before any write.
 pub fn scenario_queue_refuses_a_blocked_checkout(cx: &mut VisualTestAppContext) {
@@ -265,4 +265,144 @@ pub fn scenario_queue_checkout_linked_worktree_refuses(cx: &mut VisualTestAppCon
     assert_eq!(head(&repo), "a");
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS queue_checkout_linked_worktree_refuses");
+}
+
+/// Direct commit-modal entry while a write is held freezes the OID. The next
+/// plan reads the new HEAD and its approval still has a live preflight.
+pub fn scenario_queue_commit_checkout_busy_replans(cx: &mut VisualTestAppContext) {
+    use kagi::ui::modals::CheckoutPlanTarget;
+
+    let fixture = branches_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let target = kagi_git::CommitId(rev_parse(&repo, &["HEAD~1"]));
+    let (app, window) = mount(cx, &repo);
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+
+    app.update(cx, |app, cx| {
+        app.open_checkout_commit_modal(target.clone(), cx)
+    });
+    assert!(cx.read(|cx| app.read(cx).plan_modal().is_none()));
+    assert_eq!(
+        rows(&strip(cx, &app)),
+        vec![(
+            format!("checkout {}", target.short()),
+            "waiting: write".into()
+        )]
+    );
+    app.update(cx, |app, _| app.select_headless(0));
+    release.send(());
+    tick_until(cx, &app, "fresh detached checkout plan", |app| {
+        app.plan_modal().is_some_and(|modal| modal.queued.is_some())
+    });
+    cx.read(|cx| {
+        let modal = app.read(cx).plan_modal().unwrap();
+        assert!(matches!(
+            &modal.target,
+            CheckoutPlanTarget::Commit(frozen) if frozen == &target
+        ));
+        assert_eq!(modal.plan.current.head, "branch: a");
+        assert!(modal.plan.blockers.is_empty());
+        assert!(
+            !modal.plan.warnings.is_empty(),
+            "detached HEAD requires approval"
+        );
+    });
+    assert_eq!(head(&repo), "a", "confirmation precedes the checkout");
+
+    // Change HEAD after the displayed fresh plan: approval must be refused at
+    // preflight, rather than checking out the frozen commit with a stale plan.
+    git(&repo, &["checkout", "-q", "b"]);
+    click(cx, window, "plan-confirm");
+    tick_until(cx, &app, "stale approval failure", |app| {
+        app.queue_strip_for_e2e(std::time::Instant::now()).is_none()
+            && !app.app_sessions.has_leases()
+    });
+    assert_eq!(head(&repo), "b");
+    let entry = read_oplog_tail_for_repo(&repo, 100)
+        .into_iter()
+        .find(|entry| entry.op == "checkout-commit")
+        .expect("stale approval has a durable checkout-commit receipt");
+    assert_eq!(entry.failure_code, Some(FailureCode::Preflight));
+    assert!(matches!(entry.outcome, OpOutcome::Failed { .. }));
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS queue_commit_checkout_busy_replans");
+}
+
+/// Enter on a dirty selected commit cannot queue the stash + checkout pair
+/// behind a write; the actual native action explains it in both languages.
+pub fn scenario_queue_dirty_commit_enter_refuses(cx: &mut VisualTestAppContext) {
+    use kagi::ui::{FooterStatus, ToastKind};
+    use kagi_ui_core::i18n::{self, Lang, Msg};
+
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_lang = i18n::lang();
+    for language in [Lang::En, Lang::Ja] {
+        i18n::set_lang(language);
+        let fixture = branches_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        let initial_head = rev_parse(&repo, &["HEAD"]);
+        std::fs::write(repo.join("README.md"), "# fixture\nlocal edit\n").unwrap();
+        let (app, window) = mount(cx, &repo);
+        let (hold, release) = deferred::<()>(cx);
+        KagiApp::hold_next_run_for_e2e(hold);
+        app.update(cx, |app, cx| app.open_plan_modal("a", cx));
+        app.update(cx, |app, cx| app.start_checkout(cx));
+        cx.run_until_parked();
+        assert!(cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+        app.update(cx, |app, _| app.select_headless(1));
+        assert_eq!(cx.read(|cx| app.read(cx).ui().selected), Some(1));
+        crate::recovery_operations::press_enter(cx, &app, window);
+        cx.run_until_parked();
+
+        let expected = Msg::CheckoutStashCannotQueue.t();
+        assert_ne!(expected, Msg::OpInProgress.t());
+        assert!(expected.contains("stash + checkout"));
+        assert!(expected.contains(match language {
+            Lang::En => "two writes",
+            Lang::Ja => "2 回",
+        }));
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert!(matches!(
+                &state.status_footer,
+                FooterStatus::Idle(text) if text.as_ref() == expected
+            ));
+            assert!(state
+                .toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .iter()
+                .any(|toast| matches!(toast.kind, ToastKind::Error)
+                    && toast.message.as_ref() == expected));
+            assert!(
+                state.plan_modal().is_none(),
+                "no stash-first plan during a write"
+            );
+        });
+        assert!(
+            strip(cx, &app).is_none(),
+            "two writes cannot enter one queue intent"
+        );
+        assert_eq!(rev_parse(&repo, &["HEAD"]), initial_head);
+        assert_eq!(git_output(&repo, &["stash", "list"]), "");
+        release.send(());
+        tick_until(cx, &app, "preceding checkout to finish", |app| {
+            !app.app_sessions.has_leases()
+        });
+        assert_eq!(head(&repo), "a");
+        assert_eq!(git_output(&repo, &["stash", "list"]), "");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("README.md")).unwrap(),
+            "# fixture\nlocal edit\n"
+        );
+        unmount(cx, app, window);
+    }
+    i18n::set_lang(original_lang);
+    eprintln!("[gui-e2e] PASS queue_dirty_commit_enter_refuses EN/JA");
 }

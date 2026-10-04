@@ -285,6 +285,13 @@ impl KagiApp {
         }
     }
 
+    fn refuse_busy_stash_checkout(&mut self, cx: &mut Context<Self>) {
+        let reason = Msg::CheckoutStashCannotQueue.t();
+        self.status_footer = FooterStatus::Idle(SharedString::from(reason));
+        self.push_toast(ToastKind::Error, reason.to_string(), cx);
+        cx.notify();
+    }
+
     /// W15-ASYNCOPS: UI-path checkout — runs `checkout_blocking` on a background
     /// thread so a large `checkout_tree` write never freezes the window.
     /// #493: the single checkout entry — the modal button and the root Enter
@@ -311,7 +318,7 @@ impl KagiApp {
                 }
                 return;
             }
-            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            self.refuse_busy_stash_checkout(cx);
             return;
         }
         // Enter-checkout on a dirty tree: stash the changes first (synchronous;
@@ -431,7 +438,7 @@ impl KagiApp {
         let dirty = self.view().status_summary.is_dirty;
         if dirty && (self.op_latched() || self.active_tab_has_queue()) {
             // Enter here requests stash then checkout, not a single intent.
-            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            self.refuse_busy_stash_checkout(cx);
             return;
         }
 

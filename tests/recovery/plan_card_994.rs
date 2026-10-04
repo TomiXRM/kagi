@@ -328,7 +328,7 @@ pub fn scenario_plan_card_heading(cx: &mut VisualTestAppContext) {
             cx.read(|cx| i18n::plan_title_text(&app.read(cx).push_modal().unwrap().plan.title));
         assert_heading(cx, window, &push_title);
         app.update(cx, |app, _| app.clear_push_modal());
-        app.update(cx, |app, _| app.open_plan_modal("heading-target"));
+        app.update(cx, |app, cx| app.open_plan_modal("heading-target", cx));
         cx.run_until_parked();
         let checkout_title =
             cx.read(|cx| i18n::plan_title_text(&app.read(cx).plan_modal().unwrap().plan.title));

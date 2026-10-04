@@ -11,11 +11,10 @@ use super::RunPresentation;
 use crate::ui::*;
 
 impl KagiApp {
-    /// Open the checkout plan modal for `branch`.
-    ///
-    /// Plans the checkout using the current repository state and stores the
-    /// result in `self.plan_modal`.  Emits a plan log entry.
-    pub fn open_plan_modal(&mut self, branch: impl Into<String>) {
+    /// Open a checkout plan for `branch`. Busy tabs queue the target without
+    /// reading a working tree that the preceding write is still changing.
+    /// Idle tabs keep the ordinary synchronous plan and confirmation modal.
+    pub fn open_plan_modal(&mut self, branch: impl Into<String>, cx: &mut Context<Self>) {
         let branch = branch.into();
         // #510: a new request supersedes the previous one. Drop the old plan
         // before anything can fail, so a failure can never leave the modal (and
@@ -28,6 +27,10 @@ impl KagiApp {
                 return;
             }
         };
+        if self.op_latched() || self.active_tab_has_queue() {
+            self.enqueue_busy_checkout(&CheckoutPlanTarget::Branch(branch), cx);
+            return;
+        }
 
         let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
@@ -72,7 +75,7 @@ impl KagiApp {
     /// or warnings the modal stays open so the user can review them first.
     pub fn dblclick_checkout_branch(&mut self, branch: impl Into<String>, cx: &mut Context<Self>) {
         let branch = branch.into();
-        self.open_plan_modal(branch.clone());
+        self.open_plan_modal(branch.clone(), cx);
         // `open_plan_modal` clears the slot first and only refills it on a
         // successful plan, so a missing modal (plan error) is "not clean" and
         // nothing switches. #510: the target check makes that explicit — only a
@@ -89,7 +92,7 @@ impl KagiApp {
     }
 
     /// Open the detached checkout plan modal for commit `commit_id`.
-    pub fn open_checkout_commit_modal(&mut self, commit_id: CommitId) {
+    pub fn open_checkout_commit_modal(&mut self, commit_id: CommitId, cx: &mut Context<Self>) {
         // #510: this request supersedes the previous plan (see `open_plan_modal`).
         self.clear_plan_modal();
         let _repo_path = match self.repo_path.clone() {
@@ -99,6 +102,10 @@ impl KagiApp {
                 return;
             }
         };
+        if self.op_latched() || self.active_tab_has_queue() {
+            self.enqueue_busy_checkout(&CheckoutPlanTarget::Commit(commit_id), cx);
+            return;
+        }
 
         let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
@@ -133,6 +140,60 @@ impl KagiApp {
                 self.report_plan_failure(i18n::Op::Checkout, e);
             }
         }
+    }
+
+    /// Admission-time checks only: never use a plan made during a preceding
+    /// write to decide whether the later checkout is safe. A queued intent
+    /// still receives a full fresh plan, confirmation and preflight in order.
+    fn enqueue_busy_checkout(
+        &mut self,
+        target: &CheckoutPlanTarget,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        use kagi_domain::plan_note::{CommonNote, PlanNote, WorktreeNote};
+
+        let blocker = match target {
+            CheckoutPlanTarget::Branch(branch) => {
+                let Some(session) = self.ui().repo_session.as_ref() else {
+                    self.report_plan_failure(i18n::Op::Checkout, SESSION_UNAVAILABLE);
+                    return false;
+                };
+                if !session.backend().local_branch_exists(branch) {
+                    Some(PlanNote::Common(CommonNote::BranchMissing {
+                        name: branch.clone(),
+                        in_repo: true,
+                    }))
+                } else {
+                    self.view()
+                        .worktrees
+                        .iter()
+                        .find(|worktree| {
+                            !worktree.is_current
+                                && worktree.branch.as_deref() == Some(branch.as_str())
+                        })
+                        .map(|worktree| {
+                            PlanNote::Worktree(WorktreeNote::BranchInOtherWorktree {
+                                branch: branch.clone(),
+                                path: worktree.path.display().to_string(),
+                            })
+                        })
+                }
+            }
+            CheckoutPlanTarget::Commit(_) => None,
+        };
+        if let Some(blocker) = blocker {
+            let reason = i18n::plan_note_text(&blocker);
+            self.status_footer = FooterStatus::Idle(reason.clone().into());
+            self.push_toast(ToastKind::Error, reason, cx);
+            cx.notify();
+            return false;
+        }
+        if self.enqueue_checkout(target, cx) {
+            return true;
+        }
+        self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+        cx.notify();
+        false
     }
 
     /// Stash the working tree ahead of an Enter-checkout. Returns `true`
@@ -227,14 +288,12 @@ impl KagiApp {
             return;
         }
         if self.op_latched() || self.active_tab_has_queue() {
-            // A dirty-tree Enter stashes first: two writes the queue cannot
-            // carry as one intent, so it keeps the old refusal. So does a
-            // plan with blockers: the user confirmed something they cannot run.
-            if !modal.stash_first
-                && modal.plan.blockers.is_empty()
-                && self.enqueue_checkout(&modal.target, cx)
-            {
-                self.clear_plan_modal();
+            // Stash-first is two writes, not one queue intent. The plan's
+            // blockers may reflect the preceding writer's unfinished tree.
+            if !modal.stash_first {
+                if self.enqueue_busy_checkout(&modal.target, cx) {
+                    self.clear_plan_modal();
+                }
                 return;
             }
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
@@ -355,6 +414,11 @@ impl KagiApp {
             return;
         };
         let dirty = self.view().status_summary.is_dirty;
+        if dirty && (self.op_latched() || self.active_tab_has_queue()) {
+            // Enter here requests stash then checkout, not a single intent.
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            return;
+        }
 
         // Prefer a local branch pointing at the commit; fall back to a
         // detached commit checkout.
@@ -364,8 +428,8 @@ impl KagiApp {
             .find(|b| matches!(b.kind, BadgeKind::Branch))
             .and_then(context_ref_name);
         match branch {
-            Some(name) => self.open_plan_modal(name),
-            None => self.open_checkout_commit_modal(id),
+            Some(name) => self.open_plan_modal(name, cx),
+            None => self.open_checkout_commit_modal(id, cx),
         }
         if dirty {
             if let Some(m) = self.plan_modal_mut() {

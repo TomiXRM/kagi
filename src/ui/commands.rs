@@ -2380,7 +2380,7 @@ impl KagiApp {
             let click = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
                 this.menu_overlay = None;
                 match mode {
-                    BranchPickerMode::Checkout => this.open_plan_modal(name_for_click.clone()),
+                    BranchPickerMode::Checkout => this.open_plan_modal(name_for_click.clone(), cx),
                     BranchPickerMode::Delete => {
                         this.open_delete_branch_modal(name_for_click.clone(), cx)
                     }

@@ -350,13 +350,13 @@ pub fn scenario_queue_commit_detached_successor(cx: &mut VisualTestAppContext) {
     KagiApp::hold_next_run_for_e2e(hold);
     app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
     cx.run_until_parked();
-    app.update(cx, |app, _| app.open_checkout_commit_modal(target));
+    app.update(cx, |app, cx| app.open_checkout_commit_modal(target, cx));
     app.update(cx, |app, cx| app.start_checkout(cx));
     cx.run_until_parked();
     std::fs::write(repo.join("first.txt"), "detached\n").unwrap();
     git(&repo, &["add", "first.txt"]);
     queue_commit(cx, &app, window, "detached commit", "");
-    app.update(cx, |app, _| app.open_plan_modal("b"));
+    app.update(cx, |app, cx| app.open_plan_modal("b", cx));
     app.update(cx, |app, cx| app.start_checkout(cx));
     cx.run_until_parked();
     release.send(());

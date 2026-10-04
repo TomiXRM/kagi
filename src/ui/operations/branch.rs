@@ -1001,7 +1001,7 @@ impl KagiApp {
             }
             BranchAction::Checkout => {
                 if matches!(state.kind, BranchKind::Local) {
-                    self.open_plan_modal(state.name);
+                    self.open_plan_modal(state.name, cx);
                 } else {
                     self.open_tracking_checkout_modal(state.name);
                 }

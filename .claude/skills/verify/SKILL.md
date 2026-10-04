@@ -2017,8 +2017,14 @@ refusal), `queue_resumes_after_reconcile` (`KagiApp::panic_next_run_for_e2e`
 kills the held checkout: Unknown, its successor cancelled; once the reconcile
 is acknowledged a later queued checkout runs), `queue_accepts_after_idle_fetch`
 (a fetch that ended while the queue was idle does not refuse the next intent)
-and `queue_refuses_a_blocked_checkout` (confirming a blocked plan while busy is
-refused, not queued). Stage 3b-1 adds:
+and `queue_refuses_a_blocked_checkout` (a dirty-tree blocker no longer prevents
+busy enqueue; its fresh head plan refuses without writing), plus #1028's
+`queue_checkout_transient_blocker_clears` (a staged overlap initially blocks
+checkout, the held predecessor commits it, then the fresh clean checkout runs),
+`queue_busy_checkout_replans_warning` (idle opens the modal normally; busy
+shows the strip at once, then asks about the fresh carry-over warning) and
+`queue_checkout_missing_ref_refuses` (a missing ref is statically rejected with
+the localized reason in footer and toast). Stage 3b-1 adds:
 `queue_commit_runs_after_checkout` (held checkout, staged change, queued commit
 strip row and toast, then HEAD advances on the new branch with the frozen
 message and no modal),

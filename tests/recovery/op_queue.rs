@@ -14,11 +14,14 @@ use crate::app_conflict::click_control;
 use crate::evidence_support::deferred;
 use crate::macos::{build_fixture, git, mount, unmount};
 
+#[path = "op_queue/checkout.rs"]
+mod checkout;
 #[path = "op_queue/commit.rs"]
 mod commit;
 #[path = "op_queue/merge.rs"]
 mod merge;
 
+pub use checkout::*;
 use commit::queue_commit;
 pub use commit::*;
 pub use merge::*;
@@ -616,42 +619,4 @@ pub fn scenario_queue_accepts_after_idle_fetch(cx: &mut VisualTestAppContext) {
     assert_eq!(head(&repo), "b");
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS queue_accepts_after_idle_fetch");
-}
-
-/// Confirming a blocked checkout while busy is refused, never queued.
-pub fn scenario_queue_refuses_a_blocked_checkout(cx: &mut VisualTestAppContext) {
-    let fixture = branches_fixture();
-    let repo = fixture.path().canonicalize().unwrap();
-    // `blocked` changes the file the worktree is about to edit locally.
-    git(&repo, &["checkout", "-q", "-b", "blocked"]);
-    std::fs::write(repo.join("README.md"), "# fixture\nfrom blocked\n").unwrap();
-    git(&repo, &["commit", "-q", "-am", "blocked edit"]);
-    git(&repo, &["checkout", "-q", "main"]);
-    std::fs::write(repo.join("README.md"), "# fixture\nlocal edit\n").unwrap();
-    let (app, window) = mount(cx, &repo);
-
-    let (hold, release) = deferred::<()>(cx);
-    KagiApp::hold_next_run_for_e2e(hold);
-    app.update(cx, |app, _| app.open_plan_modal("a"));
-    app.update(cx, |app, cx| app.start_checkout(cx));
-    cx.run_until_parked();
-    assert!(
-        cx.read(|cx| app.read(cx).app_sessions.has_leases()),
-        "a is held"
-    );
-
-    app.update(cx, |app, _| app.open_plan_modal("blocked"));
-    let blockers = cx.read(|cx| app.read(cx).plan_modal().map(|m| m.plan.blockers.len()));
-    assert!(
-        blockers.is_some_and(|n| n > 0),
-        "precondition: a blocked plan"
-    );
-    app.update(cx, |app, cx| app.start_checkout(cx));
-    cx.run_until_parked();
-    assert!(strip(cx, &app).is_none(), "a blocked plan is not queued");
-    assert!(klog_index("[kagi] queue: enqueued checkout blocked").is_none());
-    release.send(());
-    cx.run_until_parked();
-    unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS queue_refuses_a_blocked_checkout");
 }

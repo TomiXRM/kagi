@@ -9,6 +9,7 @@
 
 use gpui::{div, prelude::*, px, rgb, Context, Focusable as _, SharedString};
 
+use super::button_style::{modal_button, ModalButtonKind};
 use super::i18n::Msg;
 use super::modal_shell::{modal_body, modal_card, MODAL_W_SM};
 use super::modals::{FieldTarget, PrField, PrFieldsModal};
@@ -207,7 +208,7 @@ pub(crate) fn render_pr_fields_modal(
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     use gpui_component::button::ButtonVariants as _;
-    use gpui_component::{Disableable as _, Selectable as _};
+    use gpui_component::Selectable as _;
     // What the PR carries always appears, even when it is not in (or ahead of)
     // the repository's list: a value that cannot be seen cannot be removed.
     let mut rows: Vec<String> = modal.current.clone();
@@ -379,16 +380,29 @@ pub(crate) fn render_pr_fields_modal(
                 .gap_2()
                 .child(super::e2e::measure_control(
                     "pr-fields-cancel",
-                    gpui_component::button::Button::new("pr-fields-cancel")
-                        .label(Msg::PlanCancel.t())
-                        .on_click(cancel),
+                    modal_button(
+                        "pr-fields-cancel",
+                        Msg::PlanCancel.t(),
+                        ModalButtonKind::Cancel,
+                        None,
+                        cancel,
+                        cx,
+                    ),
                 ))
                 .child(super::e2e::measure_control(
                     "pr-fields-confirm",
-                    gpui_component::button::Button::new("pr-fields-confirm")
-                        .label(Msg::PrFieldsApply.t())
-                        .disabled(!changed)
-                        .on_click(confirm),
+                    modal_button(
+                        "pr-fields-confirm",
+                        Msg::PrFieldsApply.t(),
+                        ModalButtonKind::Primary,
+                        if loading {
+                            Some(SharedString::from(Msg::EditorWorkspaceLoading.t()))
+                        } else {
+                            (!changed).then(|| SharedString::from(Msg::PrFieldsNoChanges.t()))
+                        },
+                        confirm,
+                        cx,
+                    ),
                 )),
         );
     super::modal_renderers::modal_overlay(card).into_any_element()

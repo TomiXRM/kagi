@@ -384,7 +384,7 @@ impl KagiApp {
             .and_then(|id| self.app_sessions.attachment(id))
             .filter(|owner| owner.worktree.is_some())
         else {
-            self.report_plan_failure(i18n::Op::Merge, "repository session unavailable");
+            self.report_plan_failure(i18n::Op::Merge, Msg::PrMergeSessionUnavailable.t());
             cx.notify();
             return;
         };

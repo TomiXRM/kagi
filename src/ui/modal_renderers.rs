@@ -251,16 +251,25 @@ fn plan_state(
                             head.child(super::e2e::measure_inside(head_id))
                         }),
                 )
-                .child(
+                .child({
+                    let mut chips = Vec::new();
+                    if display_dirty.is_some() {
+                        if let Some(counts) =
+                            dirty.strip_suffix(", staged (undone commit changes restored to index)")
+                        {
+                            chips.extend(plan_status_chips(counts));
+                        }
+                    }
+                    chips.extend(plan_status_chips(
+                        display_dirty.map_or(dirty, |(short, _)| short),
+                    ));
                     div()
                         .flex()
                         .flex_row()
                         .flex_wrap()
                         .gap(theme::scaled_px(6.))
-                        .children(plan_status_chips(
-                            display_dirty.map_or(dirty, |(short, _)| short),
-                        )),
-                ),
+                        .children(chips)
+                }),
         )
         .when(cfg!(feature = "gui-e2e"), |row| {
             row.child(super::e2e::measure_inside(id))
@@ -302,11 +311,23 @@ pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement
                     "plan-state-after-label",
                     "plan-state-after-head",
                     match &plan.title {
-                        kagi_domain::plan_note::PlanTitle::Maintenance(title) => Some((
-                            kagi_ui_core::i18n::plan::maintenance::after_state_label(title),
-                            kagi_ui_core::i18n::plan::maintenance::after_state_detail(title),
-                        )),
-                        _ => None,
+                        kagi_domain::plan_note::PlanTitle::Merge(_) => plan
+                            .predicted
+                            .dirty
+                            .strip_suffix(" file(s) (resolve in Conflict Mode)")
+                            .map(|short| (short, plan.predicted.dirty.as_str())),
+                        // A blocked plan can retain CURRENT as its prediction;
+                        // do not claim an operation happened in that case.
+                        _ if plan.predicted.dirty == plan.current.dirty => None,
+                        title => kagi_ui_core::i18n::plan::after_state_label(title).map(|short| {
+                            (
+                                short,
+                                kagi_ui_core::i18n::plan::after_state_detail(
+                                    title,
+                                    &plan.predicted.dirty,
+                                ),
+                            )
+                        }),
                     },
                 )),
         )

@@ -7,7 +7,7 @@
 //! `KagiApp` entry points that call these) so the validation / collision-suffix
 //! / gitignore logic stays unit-testable without a `Context`.
 
-use crate::ui::i18n;
+use crate::ui::i18n::{self, Msg};
 use std::path::{Path, PathBuf};
 
 /// Validate a bare filename/dirname component typed into the Rename / New
@@ -15,15 +15,15 @@ use std::path::{Path, PathBuf};
 /// Japanese filenames are common in this repo's fixtures) and rejects
 /// anything that could escape the target directory or collide with `.git`.
 /// Pure; unit-tested below.
-pub fn validate_fs_name(name: &str) -> Result<(), &'static str> {
+pub fn validate_fs_name(name: &str) -> Result<(), Msg> {
     if name.trim().is_empty() {
-        return Err("Name cannot be empty");
+        return Err(Msg::EditorFsNameEmpty);
     }
     if name == "." || name == ".." || name == ".git" {
-        return Err("Invalid name");
+        return Err(Msg::EditorFsNameInvalid);
     }
     if name.chars().any(|c| c == '/' || c == '\\') {
-        return Err("Name cannot contain a path separator");
+        return Err(Msg::EditorFsNameSeparator);
     }
     Ok(())
 }
@@ -101,7 +101,7 @@ pub fn trash_collision_name(name: &str, n: usize) -> String {
 /// Where `~/.Trash` is. Errors if `$HOME` isn't set (defensive — always set
 /// in a real macOS user session).
 fn home_trash_dir() -> Result<PathBuf, String> {
-    let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
+    let home = std::env::var_os("HOME").ok_or(Msg::EditorTrashHomeUnset.t())?;
     Ok(PathBuf::from(home).join(".Trash"))
 }
 
@@ -119,26 +119,31 @@ const TRASH_COLLISION_CAP: usize = 1000;
 /// item is hidden anyway (`TRASH_SUPPORTED`).
 pub fn trash_path(full_path: &Path) -> Result<PathBuf, String> {
     if !TRASH_SUPPORTED {
-        return Err("Trash is only supported on macOS".to_string());
+        return Err(Msg::EditorTrashUnsupported.t().to_string());
     }
     let trash_dir = home_trash_dir()?;
-    std::fs::create_dir_all(&trash_dir).map_err(|e| format!("cannot create ~/.Trash: {e}"))?;
+    std::fs::create_dir_all(&trash_dir)
+        .map_err(|e| format!("{}: {e}", Msg::EditorTrashCreateDirFailed.t()))?;
     let name = full_path
         .file_name()
-        .ok_or("path has no file name")?
+        .ok_or(Msg::EditorTrashPathMissingName.t())?
         .to_string_lossy()
         .into_owned();
     let mut candidate = trash_dir.join(&name);
     let mut n = 2usize;
     while candidate.exists() {
         if n > TRASH_COLLISION_CAP {
-            return Err("~/.Trash has too many same-named items".to_string());
+            return Err(Msg::EditorTrashTooManyNames.t().to_string());
         }
         candidate = trash_dir.join(trash_collision_name(&name, n));
         n += 1;
     }
-    std::fs::rename(full_path, &candidate)
-        .map_err(|e| i18n::op_failed(i18n::Op::MoveToTrash, format!("{e} (same-volume only)")))?;
+    std::fs::rename(full_path, &candidate).map_err(|e| {
+        i18n::op_failed(
+            i18n::Op::MoveToTrash,
+            format!("{e} ({})", Msg::EditorTrashSameVolumeOnly.t()),
+        )
+    })?;
     Ok(candidate)
 }
 

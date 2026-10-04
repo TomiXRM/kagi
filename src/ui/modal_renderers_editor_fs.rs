@@ -6,6 +6,8 @@
 //! carries an `OperationPlan` (these are plain `std::fs` ops, not Git
 //! writes, ADR-0120 §4 scoping).
 
+use super::button_style::{modal_button, ModalButtonKind};
+use super::editor_fs_ops;
 use super::i18n::Msg;
 use super::modal_renderers::{modal_overlay, render_modal_title_row, ModalIcon};
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_SM};
@@ -13,9 +15,8 @@ use super::modals::*;
 use super::theme::theme as current_theme;
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, FocusHandle, KeyDownEvent, SharedString};
-use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::Input;
-use gpui_component::{IconName, Sizable as _};
+use gpui_component::IconName;
 
 /// Render the Rename / New File / New Folder name-input prompt.
 pub(crate) fn render_editor_fs_prompt_modal(
@@ -49,7 +50,9 @@ pub(crate) fn render_editor_fs_prompt_modal(
             (IconName::Plus.into(), current_theme().color_success)
         }
     };
-    let name_is_valid = !modal.input.trim().is_empty();
+    let disabled_reason = editor_fs_ops::validate_fs_name(modal.input.trim())
+        .err()
+        .map(|reason| SharedString::from(reason.t()));
 
     let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.cancel_editor_fs_prompt();
@@ -83,7 +86,7 @@ pub(crate) fn render_editor_fs_prompt_modal(
                         .text_color(rgb(current_theme().text_label))
                         .child(SharedString::from(Msg::EditorFsPromptNameLabel.t())),
                 )
-                .children(modal.input_state.as_ref().map(|st| Input::new(st).small())),
+                .children(modal.input_state.as_ref().map(Input::new)),
         );
 
     if let Some(err) = &modal.error {
@@ -97,28 +100,34 @@ pub(crate) fn render_editor_fs_prompt_modal(
         );
     }
 
-    let mut button_row = div()
+    let button_row = div()
         .flex_shrink_0()
         .flex()
         .flex_row()
         .gap_2()
         .justify_end()
-        .child(
-            Button::new("editor-fs-prompt-cancel")
-                .label(Msg::EditorWorkspaceCancel.t())
-                .ghost()
-                .small()
-                .on_click(cancel_handler),
-        );
-    if name_is_valid {
-        button_row = button_row.child(
-            Button::new("editor-fs-prompt-confirm")
-                .label(confirm_label)
-                .primary()
-                .small()
-                .on_click(confirm_handler),
-        );
-    }
+        .child(super::e2e::measure_control(
+            "editor-fs-prompt-cancel",
+            modal_button(
+                "editor-fs-prompt-cancel",
+                Msg::EditorWorkspaceCancel.t(),
+                ModalButtonKind::Cancel,
+                None,
+                cancel_handler,
+                cx,
+            ),
+        ))
+        .child(super::e2e::measure_control(
+            "editor-fs-prompt-confirm",
+            modal_button(
+                "editor-fs-prompt-confirm",
+                confirm_label,
+                ModalButtonKind::Primary,
+                disabled_reason,
+                confirm_handler,
+                cx,
+            ),
+        ));
     card = card.child(button_row);
 
     // Real text input handles its own focus/keys; Escape bubbles up to this
@@ -163,6 +172,13 @@ pub(crate) fn render_editor_delete_confirm_modal(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| modal.path.to_string_lossy().into_owned());
+    let disabled_reason = if editor_fs_ops::path_touches_git_dir(&modal.path) {
+        Some(SharedString::from(Msg::EditorDeleteGitBlocked.t()))
+    } else if !editor_fs_ops::TRASH_SUPPORTED {
+        Some(SharedString::from(Msg::EditorDeleteUnsupported.t()))
+    } else {
+        None
+    };
 
     let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.cancel_editor_delete_confirm();
@@ -255,23 +271,28 @@ pub(crate) fn render_editor_delete_confirm_modal(
         .flex_row()
         .gap_2()
         .justify_end()
-        .child(
-            Button::new("editor-delete-cancel")
-                .label(Msg::EditorWorkspaceCancel.t())
-                .ghost()
-                .small()
-                .on_click(cancel_handler),
-        )
-        .child(
-            crate::ui::button_style::KagiButton::accent(
+        .child(super::e2e::measure_control(
+            "editor-delete-cancel",
+            modal_button(
+                "editor-delete-cancel",
+                Msg::EditorWorkspaceCancel.t(),
+                ModalButtonKind::Cancel,
+                None,
+                cancel_handler,
+                cx,
+            ),
+        ))
+        .child(super::e2e::measure_control(
+            "editor-delete-confirm",
+            modal_button(
                 "editor-delete-confirm",
                 Msg::EditorDeleteConfirmButton.t(),
-                current_theme().color_blocker,
+                ModalButtonKind::Destructive,
+                disabled_reason,
+                confirm_handler,
                 cx,
-            )
-            .small()
-            .on_click(confirm_handler),
-        );
+            ),
+        ));
     let card = card.child(body).child(button_row);
 
     modal_overlay(card.occlude())

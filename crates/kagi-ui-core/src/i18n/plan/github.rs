@@ -179,13 +179,28 @@ pub fn reason_ja(reason: &PrMergeLocalReason) -> String {
     }
 }
 
+/// The backend's merge-method label is durable English; the plan UI owns its
+/// localized presentation in both the title and the heading chip.
+pub fn merge_method_label(method: &str) -> &str {
+    match method {
+        "Merge commit" => Msg::PrMergeMethodCommit.t(),
+        "Squash and merge" => Msg::PrMergeMethodSquash.t(),
+        "Rebase and merge" => Msg::PrMergeMethodRebase.t(),
+        _ => method,
+    }
+}
+
 /// Japanese rendering of one GitHub title.
 pub fn title_ja(title: &GithubTitle) -> String {
     match title {
         GithubTitle::CreateIssue => "Issue を作成".into(),
         GithubTitle::CommentIssue { number } => format!("Issue #{number} に返信"),
         GithubTitle::MergePr { number, method } => {
-            format!("pull request #{} を merge ({})", number, method)
+            format!(
+                "pull request #{} を merge ({})",
+                number,
+                merge_method_label(method)
+            )
         }
         GithubTitle::CommentPr { number } => {
             format!("pull request #{} にコメントを投稿", number)

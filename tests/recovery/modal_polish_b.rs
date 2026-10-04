@@ -3,7 +3,10 @@ use std::path::PathBuf;
 
 use gpui::{AnyWindowHandle, Role, VisualTestAppContext};
 use kagi::ui::modals::{EditorFsPromptKind, TrustRepoModal};
-use kagi_ui_core::i18n::{Lang, Msg};
+use kagi_ui_core::{
+    i18n::{Lang, Msg},
+    theme,
+};
 
 use crate::macos::{build_fixture, git, mount, unmount};
 
@@ -28,7 +31,10 @@ fn button(id: &str, label: &str, description: Option<&str>, disabled: bool) {
 fn height(window: AnyWindowHandle, id: &str) {
     let bounds = kagi::ui::e2e::control_bounds(window.window_id(), id)
         .unwrap_or_else(|| panic!("{id} button is drawn"));
-    assert_eq!(bounds.size.height, gpui::px(24.), "{id} must be 24px");
+    assert!(
+        f32::from(bounds.size.height - theme::scaled_px(24.)).abs() <= 0.5,
+        "{id} must be a scaled 24px control: {bounds:?}"
+    );
 }
 
 pub fn scenario_modal_polish_editor_fs(cx: &mut VisualTestAppContext) {

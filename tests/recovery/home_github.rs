@@ -9,17 +9,17 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use crate::app_conflict::click_control;
+use crate::macos::{build_fixture, git, mount, unmount};
+use crate::pr_fields_focus::OfflineGh;
+use crate::recovery_operations::press_key;
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::home_github::GithubRepos;
 use kagi::ui::{e2e, settings, tabs, KagiApp};
 use kagi_git::github_repos::{OwnerRepos, RepoList, RepoListing};
 use kagi_git::github_repos_cache;
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
-
-use crate::app_conflict::click_control;
-use crate::macos::{build_fixture, git, mount, unmount};
-use crate::pr_fields_focus::OfflineGh;
-use crate::recovery_operations::press_key;
+use kagi_ui_core::theme;
 
 const REPO_LIST: &str = r#"[
  {"nameWithOwner":"acme/local","url":"https://github.com/acme/local","isFork":false,
@@ -358,12 +358,13 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
         }),
         "Clone stays visible and explains the missing folder"
     );
-    assert_eq!(
-        e2e::control_bounds(window.window_id(), "clone-confirm")
-            .expect("Clone is drawn")
-            .size
-            .height,
-        gpui::px(24.),
+    let clone_height = e2e::control_bounds(window.window_id(), "clone-confirm")
+        .expect("Clone is drawn")
+        .size
+        .height;
+    assert!(
+        f32::from(clone_height - theme::scaled_px(24.)).abs() <= 0.5,
+        "Clone must retain its scaled 24px control: {clone_height:?}"
     );
     click_control(cx, window, "clone-confirm");
     cx.run_until_parked();

@@ -1,12 +1,13 @@
 //! Cherry-pick / commit-plan modal renderers split out of `modal_renderers.rs`
 //! (T-SPLIT-MODALS-001 / ADR-0116 Wave 3). Both build a preview file-tree
-//! section via `file_tree::build_file_tree`. Pure physical move — behaviour
-//! unchanged.
+//! section via `file_tree::build_file_tree`.
 
 #![allow(clippy::too_many_arguments)]
 
+use super::button_style::{modal_button, ModalButtonKind};
 use super::commit_panel::{status_badge, CommitPlanModal};
 use super::i18n::Msg;
+use super::modal_command::plan_ready;
 use super::modal_renderers::{
     modal_overlay, render_current_predicted, render_plan_heading, render_recovery_box,
 };
@@ -15,8 +16,7 @@ use super::modals::*;
 use super::theme::{self, theme as current_theme};
 use super::{file_tree, KagiApp};
 use gpui::{div, prelude::*, rgb, Context, SharedString};
-use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::{IconName, Sizable as _};
+use gpui_component::IconName;
 use kagi_git::ChangeKind;
 use kagi_ui_core::i18n::{plan::plan_heading_text, plan_note_text, plan_recovery_text};
 
@@ -35,13 +35,24 @@ use kagi_ui_core::i18n::{plan::plan_heading_text, plan_note_text, plan_recovery_
 ///   - Blockers (red) if any — includes conflict file names
 ///   - Recovery text
 ///   - Error message (if preflight/execute failed)
-///   - `[Cancel]` always; `[Cherry-pick]` only when no blockers
+///   - `[Cancel]` always; `[Cherry-pick]` disabled with a reason when unavailable
 pub(crate) fn render_cherry_pick_modal(
     modal: CherryPickModal,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     let plan = modal.plan.clone();
-    let has_blockers = !plan.blockers.is_empty();
+    let disabled_reason: Option<SharedString> = plan
+        .blockers
+        .first()
+        .map(|blocker| plan_note_text(blocker).into())
+        .or_else(|| {
+            (!plan_ready(&plan)).then(|| {
+                modal
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| Msg::ModalPlanNotReady.t().into())
+            })
+        });
 
     // T-BP-003: return focus to root_focus on cancel/confirm.
     let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
@@ -238,24 +249,28 @@ pub(crate) fn render_cherry_pick_modal(
         );
     }
 
-    // ── Buttons ───────────────────────────────────────────
-    let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
-        Button::new("cherry-pick-cancel")
-            .label(Msg::PlanCancel.t())
-            .ghost()
-            .small()
-            .on_click(cancel_handler),
-    );
-
-    if !has_blockers {
-        button_row = button_row.child(
-            Button::new("cherry-pick-confirm")
-                .label("Cherry-pick")
-                .primary()
-                .small()
-                .on_click(confirm_handler),
-        );
-    }
+    // The confirm stays visible and explains blocked and failed plans.
+    let button_row = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        .child(modal_button(
+            "cherry-pick-cancel",
+            Msg::PlanCancel.t(),
+            ModalButtonKind::Cancel,
+            None,
+            cancel_handler,
+            cx,
+        ))
+        .child(modal_button(
+            "cherry-pick-confirm",
+            Msg::ModalCherryPickConfirm.t(),
+            ModalButtonKind::Primary,
+            disabled_reason,
+            confirm_handler,
+            cx,
+        ));
 
     let card = card
         .child(body)
@@ -278,13 +293,24 @@ pub(crate) fn render_cherry_pick_modal(
 ///   - Preview files (staged files)
 ///   - Warnings (unstaged remain)
 ///   - Error message (if execute failed)
-///   - `[Cancel]` always; `[Commit]` when no blockers
+///   - `[Cancel]` always; `[Commit]` disabled with a reason when unavailable
 pub(crate) fn render_commit_plan_modal(
     modal: CommitPlanModal,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     let plan = modal.plan.clone();
-    let has_blockers = !plan.blockers.is_empty();
+    let disabled_reason: Option<SharedString> = plan
+        .blockers
+        .first()
+        .map(|blocker| plan_note_text(blocker).into())
+        .or_else(|| {
+            (!plan_ready(&plan)).then(|| {
+                modal
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| Msg::ModalPlanNotReady.t().into())
+            })
+        });
 
     // T-BP-003: return focus to root_focus on cancel/confirm.
     let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
@@ -447,23 +473,27 @@ pub(crate) fn render_commit_plan_modal(
         );
     }
 
-    let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
-        Button::new("commit-plan-cancel")
-            .label(Msg::PlanCancel.t())
-            .ghost()
-            .small()
-            .on_click(cancel_handler),
-    );
-
-    if !has_blockers {
-        button_row = button_row.child(
-            Button::new("commit-plan-confirm")
-                .label("Commit")
-                .primary()
-                .small()
-                .on_click(confirm_handler),
-        );
-    }
+    let button_row = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        .child(modal_button(
+            "commit-plan-cancel",
+            Msg::PlanCancel.t(),
+            ModalButtonKind::Cancel,
+            None,
+            cancel_handler,
+            cx,
+        ))
+        .child(modal_button(
+            "commit-plan-confirm",
+            Msg::ModalCommitConfirm.t(),
+            ModalButtonKind::Primary,
+            disabled_reason,
+            confirm_handler,
+            cx,
+        ));
 
     let card = card
         .child(body)

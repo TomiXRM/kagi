@@ -2,11 +2,10 @@
 //! `modal_renderers.rs` (T-SPLIT-MODALS-001 / ADR-0116 Wave 3): amend (two-stage
 //! rewrite-history confirm) and discard (two-stage permanent-discard confirm).
 //! These build bespoke cards rather than delegating to `render_plan_modal_card`.
-//! Pure physical move — behaviour unchanged.
 
 #![allow(clippy::too_many_arguments)]
 
-use super::button_style::KagiButton;
+use super::button_style::{modal_button, ModalButtonKind};
 use super::dialog_a11y::{apply_dialog, apply_note, dialog_a11y, ConfirmStage, DialogHandler};
 use super::i18n::Msg;
 use super::modal_command::{plan_ready, render_recovery_commands};
@@ -24,8 +23,6 @@ use super::theme::{self, theme as current_theme};
 use super::worktree_wip;
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, KeyDownEvent, SharedString};
-use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::Sizable as _;
 use kagi_domain::plan_note::ShellKind;
 use kagi_ui_core::i18n::{
     plan::plan_heading_text, plan_note_text, plan_recovery_text, plan_title_text,
@@ -71,8 +68,20 @@ pub(crate) fn render_amend_modal(
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let armed = modal.confirm_armed;
-    let has_blockers = !modal.plan.blockers.is_empty();
     let plan = modal.plan.clone();
+    let disabled_reason: Option<SharedString> = plan
+        .blockers
+        .first()
+        .map(|blocker| plan_note_text(blocker).into())
+        .or_else(|| {
+            (!plan_ready(&plan)).then(|| {
+                modal
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| Msg::ModalPlanNotReady.t().into())
+            })
+        });
+    let has_blockers = !plan.blockers.is_empty();
     let error = modal.error.clone();
 
     let cancel_handler = cx.listener(|this, _: &(), window, cx| {
@@ -152,7 +161,7 @@ pub(crate) fn render_amend_modal(
     ));
     let spec = dialog_a11y(
         &title,
-        (!has_blockers).then_some(confirm_label),
+        disabled_reason.is_none().then_some(confirm_label),
         plan.destructive,
         ConfirmStage::two_stage(armed),
     )
@@ -161,7 +170,7 @@ pub(crate) fn render_amend_modal(
         "amend-card",
         modal_card(MODAL_W_MD).id("amend-card"),
         spec,
-        (!has_blockers).then(|| confirm.clone()),
+        disabled_reason.is_none().then(|| confirm.clone()),
         cancel.clone(),
     )
     .child(title_row);
@@ -335,34 +344,38 @@ pub(crate) fn render_amend_modal(
         );
     }
 
-    // Buttons.
-    let mut button_row =
-        div()
-            .flex()
-            .flex_row()
-            .gap_2()
-            .justify_end()
-            .child(super::e2e::measure_control(
+    // The first press arms history rewriting; only the second is destructive.
+    let button_row = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        .child(super::e2e::measure_control(
+            "amend-cancel",
+            modal_button(
                 "amend-cancel",
-                Button::new("amend-cancel")
-                    .label(Msg::PlanCancel.t())
-                    .ghost()
-                    .small()
-                    .on_click(move |_, w, a| cancel(w, a)),
-            ));
-
-    if !has_blockers {
-        let label = confirm_label;
-        let button = if armed {
-            KagiButton::accent("amend-confirm", label, current_theme().color_blocker, cx)
-        } else {
-            Button::new("amend-confirm").label(label).primary()
-        };
-        button_row = button_row.child(super::e2e::measure_control(
+                Msg::PlanCancel.t(),
+                ModalButtonKind::Cancel,
+                None,
+                move |_, w, a| cancel(w, a),
+                cx,
+            ),
+        ))
+        .child(super::e2e::measure_control(
             "amend-confirm",
-            button.small().on_click(move |_, w, a| confirm(w, a)),
+            modal_button(
+                "amend-confirm",
+                confirm_label,
+                if armed {
+                    ModalButtonKind::Destructive
+                } else {
+                    ModalButtonKind::Primary
+                },
+                disabled_reason,
+                move |_, w, a| confirm(w, a),
+                cx,
+            ),
         ));
-    }
 
     #[cfg(feature = "gui-e2e")]
     let button_row = button_row
@@ -379,8 +392,8 @@ pub(crate) fn render_amend_modal(
 /// Danger (red) card: target file list (scrollable), any skipped
 /// untracked/conflicted files, recovery note, Cancel + red Discard.
 /// ESC cancels. Both the backdrop AND the card call `.occlude()` to defeat the
-/// known click-through bug. The Discard button is hidden when there are blockers
-/// or zero targets.
+/// known click-through bug. The Discard button remains visible but disabled
+/// with a reason when the plan is blocked or there are no targets.
 pub(crate) fn render_discard_modal(
     modal: DiscardModal,
     // #454: user's section open/closed overrides (`KagiApp` owns them; the
@@ -397,7 +410,20 @@ pub(crate) fn render_discard_modal(
     let plan = modal.plan.clone();
     let has_blockers = !plan.blockers.is_empty();
     let target_count = modal.paths.len();
-    let can_discard = !has_blockers && target_count > 0;
+    let disabled_reason: Option<SharedString> = plan
+        .blockers
+        .first()
+        .map(|blocker| plan_note_text(blocker).into())
+        .or_else(|| (target_count == 0).then(|| Msg::ModalNoDiscardTargets.t().into()))
+        .or_else(|| {
+            (!plan_ready(&plan)).then(|| {
+                modal
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| Msg::ModalPlanNotReady.t().into())
+            })
+        });
+    let can_discard = disabled_reason.is_none();
     // Two-stage confirm (T-REARCH-014): first click arms, second executes.
     let armed = modal.confirm_armed;
 
@@ -726,34 +752,34 @@ pub(crate) fn render_discard_modal(
         body = body.child(notice);
     }
 
-    // ── Buttons ─────────────────────────────────────────────
-    let mut button_row =
-        div()
-            .flex()
-            .flex_row()
-            .gap_2()
-            .justify_end()
-            .child(super::e2e::measure_control(
+    // Both presses discard working-tree content, so both retain danger color.
+    let button_row = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        .child(super::e2e::measure_control(
+            "discard-cancel",
+            modal_button(
                 "discard-cancel",
-                Button::new("discard-cancel")
-                    .label(Msg::PlanCancel.t())
-                    .ghost()
-                    .small()
-                    .on_click(move |_, w, a| cancel(w, a)),
-            ));
-    if can_discard {
-        button_row = button_row.child(super::e2e::measure_control(
+                Msg::PlanCancel.t(),
+                ModalButtonKind::Cancel,
+                None,
+                move |_, w, a| cancel(w, a),
+                cx,
+            ),
+        ))
+        .child(super::e2e::measure_control(
             "discard-confirm",
-            KagiButton::accent(
+            modal_button(
                 "discard-confirm",
                 confirm_label,
-                current_theme().color_blocker,
+                ModalButtonKind::Destructive,
+                disabled_reason,
+                move |_, w, a| confirm(w, a),
                 cx,
-            )
-            .small()
-            .on_click(move |_, w, a| confirm(w, a)),
+            ),
         ));
-    }
     #[cfg(feature = "gui-e2e")]
     let button_row = button_row
         .relative()

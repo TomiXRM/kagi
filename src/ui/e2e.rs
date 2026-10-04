@@ -55,6 +55,10 @@ pub use super::render_header::toolbar_a11y::{
     clear_toolbar_unavailable, take_focus_probe, toolbar_description, toolbar_unavailable,
 };
 #[cfg(feature = "gui-e2e")]
+pub fn last_plan_status_chip() -> Option<String> {
+    super::modal_renderers::status_chip_probe::last()
+}
+#[cfg(feature = "gui-e2e")]
 pub(crate) fn record_confirm_bounds(id: gpui::WindowId, bounds: gpui::Bounds<gpui::Pixels>) {
     CONFIRM_BOUNDS.with(|map| map.borrow_mut().insert(id, bounds));
 }

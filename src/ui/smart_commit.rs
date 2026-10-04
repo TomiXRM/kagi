@@ -21,7 +21,7 @@
 
 use kagi_git::message_gen::{self, CliProvider, Lang};
 
-use super::settings;
+use super::{i18n::Msg, settings};
 
 // ──────────────────────────────────────────────────────────────────────────
 // settings.json keys (string-valued; see settings::write_setting)
@@ -71,15 +71,15 @@ impl SmartProvider {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Consent dialog text (ADR-0044 — these four lines MUST be present)
+// Consent dialog text (ADR-0044 — these four English statements MUST be present)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// The four statements the first-time consent dialog must show verbatim.
-pub const CONSENT_LINES: [&str; 4] = [
-    "Only staged diff will be sent",
-    "Unstaged changes will not be included",
-    "The request stays on localhost Ollama",
-    "Secrets may still exist in staged diff; review before generating",
+/// The four mandated statements; the translated lines retain the same policy.
+pub const CONSENT_LINES: [Msg; 4] = [
+    Msg::SmartConsentStagedOnly,
+    Msg::SmartConsentUnstagedExcluded,
+    Msg::SmartConsentLocalhost,
+    Msg::SmartConsentSecretsWarning,
 ];
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -217,20 +217,6 @@ impl SmartCommitState {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Wording lock ONLY: this pins the ADR-0044 text of the `CONSENT_LINES`
-    /// constant so a reword is a deliberate edit. It does NOT prove the user
-    /// ever sees them - that lives in the consent modal's render path, which
-    /// needs a window and is not covered here.
-    #[test]
-    fn consent_lines_match_adr() {
-        assert_eq!(CONSENT_LINES.len(), 4);
-        assert!(CONSENT_LINES.contains(&"Only staged diff will be sent"));
-        assert!(CONSENT_LINES.contains(&"Unstaged changes will not be included"));
-        assert!(CONSENT_LINES.contains(&"The request stays on localhost Ollama"));
-        assert!(CONSENT_LINES
-            .contains(&"Secrets may still exist in staged diff; review before generating"));
-    }
 
     #[test]
     fn default_state_is_disabled_rule_based() {

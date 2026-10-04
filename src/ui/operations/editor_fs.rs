@@ -69,7 +69,7 @@ impl KagiApp {
         let name = modal.input.trim().to_string();
         if let Err(e) = editor_fs_ops::validate_fs_name(&name) {
             self.set_editor_fs_prompt_modal(EditorFsPromptModal {
-                error: Some(SharedString::from(e)),
+                error: Some(SharedString::from(e.t())),
                 ..modal
             });
             cx.notify();
@@ -86,7 +86,7 @@ impl KagiApp {
                 if editor_fs_ops::path_touches_git_dir(&old_rel)
                     || editor_fs_ops::path_touches_git_dir(&new_rel)
                 {
-                    self.fail_editor_fs_prompt(modal, "Cannot rename inside .git", cx);
+                    self.fail_editor_fs_prompt(modal, Msg::EditorFsRenameGitBlocked.t(), cx);
                     return;
                 }
                 let old_full = repo_path.join(&old_rel);
@@ -95,7 +95,7 @@ impl KagiApp {
                 // (File.txt → file.txt) on a case-insensitive filesystem,
                 // where the new name is the same inode as the old.
                 if new_full.exists() && !editor_fs_ops::same_file(&old_full, &new_full) {
-                    self.fail_editor_fs_prompt(modal, "Already exists", cx);
+                    self.fail_editor_fs_prompt(modal, Msg::EditorFsAlreadyExists.t(), cx);
                     return;
                 }
                 match std::fs::rename(&old_full, &new_full) {
@@ -118,12 +118,12 @@ impl KagiApp {
             EditorFsPromptKind::NewFile => {
                 let rel = modal.base.join(&name);
                 if editor_fs_ops::path_touches_git_dir(&rel) {
-                    self.fail_editor_fs_prompt(modal, "Cannot create inside .git", cx);
+                    self.fail_editor_fs_prompt(modal, Msg::EditorFsCreateGitBlocked.t(), cx);
                     return;
                 }
                 let full = repo_path.join(&rel);
                 if full.exists() {
-                    self.fail_editor_fs_prompt(modal, "Already exists", cx);
+                    self.fail_editor_fs_prompt(modal, Msg::EditorFsAlreadyExists.t(), cx);
                     return;
                 }
                 match std::fs::File::create(&full) {
@@ -142,12 +142,12 @@ impl KagiApp {
             EditorFsPromptKind::NewDir => {
                 let rel = modal.base.join(&name);
                 if editor_fs_ops::path_touches_git_dir(&rel) {
-                    self.fail_editor_fs_prompt(modal, "Cannot create inside .git", cx);
+                    self.fail_editor_fs_prompt(modal, Msg::EditorFsCreateGitBlocked.t(), cx);
                     return;
                 }
                 let full = repo_path.join(&rel);
                 if full.exists() {
-                    self.fail_editor_fs_prompt(modal, "Already exists", cx);
+                    self.fail_editor_fs_prompt(modal, Msg::EditorFsAlreadyExists.t(), cx);
                     return;
                 }
                 match std::fs::create_dir(&full) {
@@ -231,9 +231,7 @@ impl KagiApp {
         };
         if !editor_fs_ops::TRASH_SUPPORTED {
             self.set_editor_delete_confirm_modal(EditorDeleteConfirmModal {
-                error: Some(SharedString::from(
-                    "Delete is only supported on macOS currently",
-                )),
+                error: Some(SharedString::from(Msg::EditorDeleteUnsupported.t())),
                 ..modal
             });
             cx.notify();
@@ -241,7 +239,7 @@ impl KagiApp {
         }
         if editor_fs_ops::path_touches_git_dir(&modal.path) {
             self.set_editor_delete_confirm_modal(EditorDeleteConfirmModal {
-                error: Some(SharedString::from("Cannot delete .git")),
+                error: Some(SharedString::from(Msg::EditorDeleteGitBlocked.t())),
                 ..modal
             });
             cx.notify();

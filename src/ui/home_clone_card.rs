@@ -7,10 +7,9 @@
 use gpui::{
     div, prelude::*, px, rgb, AnyElement, Context, FocusHandle, KeyDownEvent, SharedString,
 };
-use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::Disableable as _;
 use kagi_ui_core::i18n::plan_note_text;
 
+use super::button_style::{modal_button, ModalButtonKind};
 use super::home_github::CloneModal;
 use super::i18n::Msg;
 use super::modal_renderers::modal_overlay;
@@ -28,10 +27,14 @@ pub(crate) fn render_clone_modal(
     focus_handle: Option<FocusHandle>,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
-    let ready = modal
-        .target
-        .as_ref()
-        .is_some_and(|target| target.plan.blockers.is_empty());
+    let disabled_reason = match modal.target.as_ref() {
+        None => Some(SharedString::from(Msg::CloneNoLocation.t())),
+        Some(target) => target
+            .plan
+            .blockers
+            .first()
+            .map(|blocker| SharedString::from(plan_note_text(blocker))),
+    };
     let cancel = cx.listener(|app, _: &gpui::ClickEvent, window, cx| {
         app.cancel_clone();
         if let Some(root) = app.root_focus.clone() {
@@ -55,8 +58,8 @@ pub(crate) fn render_clone_modal(
         .flex_col()
         .gap_5()
         .child(header(&modal))
-        .child(location(&modal, choose))
-        .children(modal.started.map(|started| progress(&modal, started)));
+        .child(location(&modal, choose, cx))
+        .children(modal.started.map(progress));
     if let Some(target) = &modal.target {
         // The shared tinted note rows: warnings read as notes, blockers as
         // alerts to assistive technology (#354).
@@ -89,27 +92,38 @@ pub(crate) fn render_clone_modal(
         // aside; the clone keeps going and its result arrives as usual.
         buttons.child(super::e2e::measure_control(
             "clone-hide",
-            Button::new("clone-hide")
-                .label(Msg::CloneHide.t())
-                .ghost()
-                .on_click(cancel),
+            modal_button(
+                "clone-hide",
+                Msg::CloneHide.t(),
+                ModalButtonKind::Secondary,
+                None,
+                cancel,
+                cx,
+            ),
         ))
     } else {
         buttons
             .child(super::e2e::measure_control(
                 "clone-cancel",
-                Button::new("clone-cancel")
-                    .label(Msg::PlanCancel.t())
-                    .ghost()
-                    .on_click(cancel),
+                modal_button(
+                    "clone-cancel",
+                    Msg::PlanCancel.t(),
+                    ModalButtonKind::Cancel,
+                    None,
+                    cancel,
+                    cx,
+                ),
             ))
             .child(super::e2e::measure_control(
                 "clone-confirm",
-                Button::new("clone-confirm")
-                    .primary()
-                    .label(Msg::CloneConfirm.t())
-                    .disabled(!ready)
-                    .on_click(confirm),
+                modal_button(
+                    "clone-confirm",
+                    Msg::CloneConfirm.t(),
+                    ModalButtonKind::Primary,
+                    disabled_reason,
+                    confirm,
+                    cx,
+                ),
             ))
     };
     let card = div()
@@ -195,6 +209,7 @@ fn header(modal: &CloneModal) -> impl IntoElement {
 fn location(
     modal: &CloneModal,
     choose: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+    cx: &gpui::App,
 ) -> impl IntoElement {
     let chosen = modal.target.as_ref().and_then(|target| {
         target
@@ -252,19 +267,24 @@ fn location(
                 .child(field)
                 .child(super::e2e::measure_control(
                     "clone-change-folder",
-                    Button::new("clone-change-folder")
-                        .outline()
-                        .label(Msg::CloneChooseFolder.t())
-                        .disabled(modal.started.is_some())
-                        .on_click(choose),
+                    modal_button(
+                        "clone-change-folder",
+                        Msg::CloneChooseFolder.t(),
+                        ModalButtonKind::Secondary,
+                        modal
+                            .started
+                            .map(|_| SharedString::from(Msg::CloneChangeFolderWhileRunning.t())),
+                        choose,
+                        cx,
+                    ),
                 )),
         )
         .children(created)
 }
 
-/// The running clone: a spinner with the elapsed time, and where it is
-/// downloading from. Redrawn every second by `tick_clone_card`.
-fn progress(modal: &CloneModal, started: std::time::Instant) -> impl IntoElement {
+/// The running clone: a spinner with elapsed time. Redrawn every second by
+/// `tick_clone_card`.
+fn progress(started: std::time::Instant) -> impl IntoElement {
     let secs = started.elapsed().as_secs();
     let elapsed = format!("{}:{:02}", secs / 60, secs % 60);
     div()
@@ -288,14 +308,6 @@ fn progress(modal: &CloneModal, started: std::time::Instant) -> impl IntoElement
                 ))
                 .child(div().text_sm().text_color(rgb(theme().text_main)).child(
                     SharedString::from(Msg::CloneRunning.t().replace("{}", &elapsed)),
-                )),
-        )
-        .child(
-            div()
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(
-                    Msg::CloneRunningHint.t().replace("{}", &modal.listing.host),
                 )),
         )
 }

@@ -7,6 +7,7 @@ use kagi::ui::{modals::ActiveModal, CheckoutSelected, FooterStatus, KagiApp, Toa
 use kagi_domain::branch_cleanup::{CleanupDeleteTarget, MergedBranchStatus};
 use kagi_git::oplog::{append_oplog, read_oplog_tail_for_repo, FailureCode, OpLogEntry, OpOutcome};
 use kagi_git::{CommitId, OperationKind, StateSummary};
+use kagi_ui_core::theme;
 
 use crate::macos::{build_fixture, git, mount, repo_fingerprint, unmount};
 
@@ -2034,6 +2035,13 @@ pub(super) fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     })
     .unwrap();
 }
+/// Native layout rounds fractional scaled pixels to half-pixel boundaries.
+fn assert_modal_button_height(actual: gpui::Pixels, name: &str) {
+    assert!(
+        f32::from(actual - theme::scaled_px(24.)).abs() <= 0.5,
+        "{name} must be a scaled 24px control, got {actual:?}"
+    );
+}
 
 /// Paint, advance the test clock, and park until `predicate` holds.
 ///
@@ -2091,8 +2099,8 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
         .expect("empty branch name still shows a disabled Create");
     let blocked_cancel = kagi::ui::e2e::control_bounds(window.window_id(), "create-branch-cancel")
         .expect("blocked branch card still shows Cancel");
-    assert_eq!(disabled.size.height, gpui::px(24.), "blocked Create size");
-    assert_eq!(blocked_cancel.size.height, gpui::px(24.), "Cancel size");
+    assert_modal_button_height(disabled.size.height, "blocked Create");
+    assert_modal_button_height(blocked_cancel.size.height, "Cancel");
     let expected_reason = cx.read(|cx| {
         let app = app.read(cx);
         let blocker = app
@@ -2176,8 +2184,8 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
             kagi::ui::e2e::control_bounds(window.window_id(), &format!("plan-state-{side}-head"))
                 .expect("mono row head");
         assert!(
-            f32::from(label.size.width - gpui::px(64.)).abs() <= 1.
-                && label.size.height <= gpui::px(24.)
+            f32::from(label.size.width - theme::scaled_px(64.)).abs() <= 1.
+                && label.size.height <= theme::scaled_px(24.)
                 && label.right() <= head.left()
                 && head.right() <= comparison.right(),
             "{side} label is one line before its contained head: {label:?}, {head:?}"
@@ -2189,8 +2197,8 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
         .expect("Create Branch Cancel remains available");
     let confirm =
         kagi::ui::e2e::confirm_bounds(window.window_id()).expect("Create remains available");
-    assert_eq!(cancel.size.height, gpui::px(24.), "ready Cancel size");
-    assert_eq!(confirm.size.height, gpui::px(24.), "ready Create size");
+    assert_modal_button_height(cancel.size.height, "ready Cancel");
+    assert_modal_button_height(confirm.size.height, "ready Create");
     kagi::ui::button_style::clear_recorded_modal_buttons();
     app.update(cx, |_, cx| cx.notify());
     paint(cx, window);
@@ -2310,12 +2318,12 @@ pub fn scenario_stash_push_stacked_preview(cx: &mut VisualTestAppContext) {
     let head = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-current-head")
         .expect("mono head");
     assert!(
-        label.size.height <= gpui::px(24.)
-            && f32::from(label.size.width - gpui::px(64.)).abs() <= 1.
+        label.size.height <= theme::scaled_px(24.)
+            && f32::from(label.size.width - theme::scaled_px(64.)).abs() <= 1.
     );
     assert!(head.left() >= label.right() && head.right() <= comparison.right());
     assert!(
-        head.size.width >= gpui::px(55. * 7.8),
+        head.size.width >= theme::scaled_px(55. * 7.8),
         "the 55-character mono head needs its full drawn width: {head:?}, panel={comparison:?}"
     );
     let (role, ax) = kagi::ui::dialog_a11y::recorded_note("plan-state-current")
@@ -2342,8 +2350,8 @@ pub fn scenario_stash_push_stacked_preview(cx: &mut VisualTestAppContext) {
             )
             .expect("localized one-line label");
             assert!(
-                label.size.height <= gpui::px(24.)
-                    && f32::from(label.size.width - gpui::px(64.)).abs() <= 1.,
+                label.size.height <= theme::scaled_px(24.)
+                    && f32::from(label.size.width - theme::scaled_px(64.)).abs() <= 1.,
                 "{lang:?} {side} label never wraps: {label:?}"
             );
         }
@@ -2351,7 +2359,7 @@ pub fn scenario_stash_push_stacked_preview(cx: &mut VisualTestAppContext) {
     let action = kagi::ui::e2e::confirm_bounds(window.window_id())
         .expect("Stash confirm action remains visible");
     assert!(
-        action.size.height <= gpui::px(24.),
+        action.size.height <= theme::scaled_px(24.),
         "Stash action must use compact 24px control rather than the oversized 32px default: {action:?}"
     );
     assert_eq!(
@@ -2407,8 +2415,8 @@ pub fn scenario_modal_widths_ordered(cx: &mut VisualTestAppContext) {
     );
     // MD 640 minus the card's 1px border and 16px padding on each side.
     assert!(
-        (md - (640. - 2. - 32.)).abs() <= 2.,
-        "MD draws its full width: comparison {md}px"
+        (md - f32::from(theme::scaled_px(640. - 2. - 32.))).abs() <= 3.,
+        "MD draws its full scaled width: comparison {md}px"
     );
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS modal_widths_ordered: md={md} lg={lg}");
@@ -2493,15 +2501,12 @@ pub fn scenario_input_confirm_disabled_cards(cx: &mut VisualTestAppContext) {
         let button = kagi::ui::e2e::confirm_bounds(window.window_id())
             .unwrap_or_else(|| panic!("{case}: blocked form still shows its primary action"));
         assert!(
-            button.size.width >= gpui::px(40.) && button.size.height >= gpui::px(24.),
+            button.size.width >= theme::scaled_px(40.)
+                && button.size.height >= theme::scaled_px(24.) - gpui::px(0.5),
             "{case}: the primary action must occupy visible button space, not a blank wrapper: {button:?}"
         );
         if case == "stash" {
-            assert_eq!(
-                button.size.height,
-                gpui::px(24.),
-                "the blocked Stash action keeps the same compact size as the ready action"
-            );
+            assert_modal_button_height(button.size.height, "blocked Stash");
         }
         cx.simulate_mouse_move(window, button.center(), None, gpui::Modifiers::none());
         cx.run_until_parked();

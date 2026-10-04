@@ -145,6 +145,31 @@ pub(crate) fn modal_button(
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     cx: &gpui::App,
 ) -> gpui::AnyElement {
+    modal_button_with_tab_stop(id, label, kind, reason, on_click, true, cx)
+}
+
+/// AppNotice keeps window/root focus for its Enter/Escape confirmation
+/// sequence; unlike other dialog actions its button is not a Tab stop.
+pub(crate) fn modal_button_without_tab_stop(
+    id: &'static str,
+    label: impl Into<SharedString>,
+    kind: ModalButtonKind,
+    reason: Option<SharedString>,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    cx: &gpui::App,
+) -> gpui::AnyElement {
+    modal_button_with_tab_stop(id, label, kind, reason, on_click, false, cx)
+}
+
+fn modal_button_with_tab_stop(
+    id: &'static str,
+    label: impl Into<SharedString>,
+    kind: ModalButtonKind,
+    reason: Option<SharedString>,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    tab_stop: bool,
+    cx: &gpui::App,
+) -> gpui::AnyElement {
     let label = label.into();
     record_modal_button(id, &label, reason.as_ref());
     if let Some(reason) = reason {
@@ -181,5 +206,9 @@ pub(crate) fn modal_button(
         ModalButtonKind::Destructive => KagiButton::accent(id, label, theme().color_blocker, cx),
         ModalButtonKind::Secondary => Button::new(id).label(label),
     };
-    button.small().on_click(on_click).into_any_element()
+    button
+        .small()
+        .tab_stop(tab_stop)
+        .on_click(on_click)
+        .into_any_element()
 }

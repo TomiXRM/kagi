@@ -7,7 +7,10 @@ use kagi_domain::plan_note::{
 };
 use kagi_domain::repo_health::HealthFix;
 use kagi_git::CommitId;
-use kagi_ui_core::i18n::{self, Lang, Msg};
+use kagi_ui_core::{
+    i18n::{self, Lang, Msg},
+    theme,
+};
 
 use crate::macos::{build_fixture, git, mount, repo_fingerprint, unmount};
 
@@ -72,11 +75,11 @@ fn assert_heading(cx: &mut VisualTestAppContext, window: AnyWindowHandle, title:
     let copy = bounds(cx, window, "plan-card-copy").expect("Copy all button");
     let card = bounds(cx, window, "modal-card").expect("plan card");
     assert!(
-        icon.size.width <= gpui::px(20.) && icon.size.height <= gpui::px(20.),
+        icon.size.width <= theme::scaled_px(20.) && icon.size.height <= theme::scaled_px(20.),
         "{icon:?}"
     );
     assert!(
-        heading.size.height < gpui::px(32.),
+        heading.size.height < theme::scaled_px(32.),
         "heading stays on one line: {heading:?}"
     );
     for part in [icon, heading, chip, copy] {
@@ -104,8 +107,11 @@ fn assert_bespoke_heading(cx: &mut VisualTestAppContext, window: AnyWindowHandle
     let title = bounds(cx, window, "plan-heading-title").expect("short bespoke title");
     let chip = bounds(cx, window, "plan-heading-chip-0").expect("bespoke target chip");
     let card = bounds(cx, window, "modal-card").expect("bespoke card");
-    assert!(icon.size.width <= gpui::px(20.) && icon.size.height <= gpui::px(20.));
-    assert!(title.size.height < gpui::px(32.), "title stays on one line");
+    assert!(icon.size.width <= theme::scaled_px(20.) && icon.size.height <= theme::scaled_px(20.));
+    assert!(
+        title.size.height < theme::scaled_px(32.),
+        "title stays on one line"
+    );
     for part in [icon, title, chip] {
         assert!(
             part.left() >= card.left() && part.right() <= card.right(),

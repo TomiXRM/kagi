@@ -171,6 +171,10 @@ mod conflict_continue_cache;
 mod repo_health;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/modal_polish_b.rs"]
+mod modal_polish_b;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/refusal_reasons.rs"]
 mod refusal_reasons;
 
@@ -1502,6 +1506,18 @@ mod macos {
             (
                 "conflict_continue_cache",
                 Box::new(crate::conflict_continue_cache::scenario_conflict_continue_cache),
+            ),
+            (
+                "modal_polish_editor_fs",
+                Box::new(crate::modal_polish_b::scenario_modal_polish_editor_fs),
+            ),
+            (
+                "modal_polish_remote",
+                Box::new(crate::modal_polish_b::scenario_modal_polish_remote),
+            ),
+            (
+                "modal_polish_stash_after",
+                Box::new(crate::modal_polish_b::scenario_modal_polish_stash_after),
             ),
             (
                 "repo_health_proposal",

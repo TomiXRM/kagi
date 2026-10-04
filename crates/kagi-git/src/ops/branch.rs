@@ -1,5 +1,6 @@
 use super::*;
 use kagi_domain::plan_note::{BranchNote, BranchRecovery, BranchTitle, CommonNote};
+use kagi_domain::remote::shell_quote;
 
 // ────────────────────────────────────────────────────────────
 // plan_create_branch
@@ -124,7 +125,7 @@ pub fn plan_create_branch(
         kind: RecoveryKind::Branch(BranchRecovery::CreateBranch {
             name: name.to_string(),
         }),
-        commands: vec![format!("git branch -d {}", name)],
+        commands: vec![format!("git branch -d {}", shell_quote(name))],
     };
 
     let mut plan = OperationPlan {
@@ -351,7 +352,11 @@ pub fn plan_rename_branch(
                 old: old_name.to_string(),
                 new: new_name.to_string(),
             }),
-            commands: vec![format!("git branch -m {} {}", new_name, old_name)],
+            commands: vec![format!(
+                "git branch -m {} {}",
+                shell_quote(new_name),
+                shell_quote(old_name)
+            )],
         }),
         head_at_plan: head,
         stash_count_at_plan: 0,
@@ -696,7 +701,11 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
             name: name.to_string(),
             tip: Some(tip_oid.to_string()),
         }),
-        commands: vec![format!("git branch {} {}", name, tip_oid)],
+        commands: vec![format!(
+            "git branch {} {}",
+            shell_quote(name),
+            shell_quote(&tip_oid.to_string())
+        )],
     };
 
     Ok(OperationPlan {

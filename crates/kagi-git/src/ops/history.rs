@@ -3,6 +3,7 @@ use kagi_domain::plan_note::HistoryMoveDir;
 use kagi_domain::plan_note::{
     CommonNote, HistoryNote, HistoryOp, HistoryRecovery, HistoryTitle, OpPhrase, PlanOp,
 };
+use kagi_domain::remote::shell_quote;
 
 /// Analyse whether undoing the current HEAD commit is safe and return an
 /// [`OperationPlan`].
@@ -217,7 +218,7 @@ pub fn plan_undo_commit(repo: &Repository) -> Result<OperationPlan, GitError> {
             Vec::new()
         } else {
             vec![
-                format!("git reset --soft {}", head_short),
+                format!("git reset --soft {}", shell_quote(&head_short)),
                 "git reflog".to_string(),
             ]
         },
@@ -561,7 +562,7 @@ pub fn plan_amend(
             Vec::new()
         } else {
             vec![
-                format!("git reset --soft {}", old_short),
+                format!("git reset --soft {}", shell_quote(&old_short)),
                 "git reflog".to_string(),
             ]
         },
@@ -918,7 +919,11 @@ fn plan_history_move(
         }),
         commands: vec![
             "git reflog".to_string(),
-            format!("git update-ref refs/heads/{} {}", branch, from.0),
+            format!(
+                "git update-ref {} {}",
+                shell_quote(&format!("refs/heads/{branch}")),
+                shell_quote(&from.0)
+            ),
         ],
     };
 

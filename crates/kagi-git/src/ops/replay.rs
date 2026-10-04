@@ -19,6 +19,7 @@ use super::*;
 use crate::cli::GitFeatures;
 use kagi_domain::plan_note::{RebaseNote, RebaseRecovery, RebaseTitle};
 use kagi_domain::ref_update::{parse_update_ref_lines, RefScript, RefVerify};
+use kagi_domain::remote::shell_quote;
 
 /// How many moved refs the plan lists before folding the rest.
 const UPDATE_SAMPLE: usize = 5;
@@ -85,7 +86,11 @@ pub fn plan_replay_onto(
                     branch: branch.to_string(),
                     from: from.clone(),
                 }),
-                commands: vec![format!("git update-ref refs/heads/{branch} {from}")],
+                commands: vec![format!(
+                    "git update-ref {} {}",
+                    shell_quote(&format!("refs/heads/{branch}")),
+                    shell_quote(&from)
+                )],
             }),
             head_at_plan: head.clone(),
             stash_count_at_plan: 0,

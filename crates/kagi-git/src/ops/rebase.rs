@@ -11,6 +11,7 @@
 
 use super::*;
 use kagi_domain::plan_note::{RebaseNote, RebaseRecovery, RebaseTitle};
+use kagi_domain::remote::shell_quote;
 
 // ────────────────────────────────────────────────────────────
 // plan_rebase_current_onto
@@ -86,7 +87,11 @@ pub fn plan_rebase_current_onto(repo: &Repository, onto: &str) -> Result<Operati
                         branch: branch.clone(),
                         from: head_oid.to_string(),
                     }),
-                    commands: vec![format!("git update-ref refs/heads/{} {}", branch, head_oid)],
+                    commands: vec![format!(
+                        "git update-ref {} {}",
+                        shell_quote(&format!("refs/heads/{branch}")),
+                        shell_quote(&head_oid.to_string())
+                    )],
                 });
             }
         }

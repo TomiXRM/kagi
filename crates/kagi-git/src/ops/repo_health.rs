@@ -14,6 +14,7 @@
 
 use super::*;
 use kagi_domain::plan_note::{MaintenanceNote, MaintenanceRecovery, MaintenanceTitle};
+use kagi_domain::remote::shell_quote;
 use kagi_domain::repo_health::HealthFacts;
 use std::path::{Path, PathBuf};
 
@@ -130,8 +131,8 @@ pub fn plan_write_commit_graph(repo: &Repository) -> Result<OperationPlan, GitEr
     let recovery = PlanRecovery {
         kind: RecoveryKind::Maintenance(MaintenanceRecovery::WriteCommitGraph),
         commands: vec![
-            format!("rm -f '{}'", single.display()),
-            format!("rm -rf '{}'", split.display()),
+            format!("rm -f {}", shell_quote(single.to_string_lossy().as_ref())),
+            format!("rm -rf {}", shell_quote(split.to_string_lossy().as_ref())),
         ],
     };
     health_plan(

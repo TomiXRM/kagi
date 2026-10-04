@@ -370,6 +370,12 @@ impl KagiApp {
                                 cx,
                             );
                         }
+                        if result.is_ok() {
+                            eprintln!(
+                                "[kagi] {}: routing to commit message panel (merge)",
+                                op_name
+                            );
+                        }
                         for (id, op, path) in app.app_sessions.drain_unaccounted() {
                             app.notice_reconcile_required(id, op, &path);
                         }
@@ -392,10 +398,6 @@ impl KagiApp {
                             cx.notify();
                             return;
                         }
-                        eprintln!(
-                            "[kagi] {}: routing to commit message panel (merge)",
-                            op_name
-                        );
                         app.open_commit_panel(window, cx);
                         if let Some(entity) = app.ui().commit_panel.clone() {
                             let (title_input, body_input) = {

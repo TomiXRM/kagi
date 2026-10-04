@@ -1099,14 +1099,18 @@ The current suite covers:
   GUI-only seam, requires an Unknown/reconcile exit (and a durable conflict
   receipt), and distinguishes snapshot's GroupOnly scope from retained
   sequencer leases. The snapshot hold scenario draws a frame with its busy
-  label while the write awaits release; the tab-switch scenario requires
-  the departed stash continuation's receipt without a toast or footer on B.
-  Mutations that fail each scenario: disable the corresponding
-  `PANIC_NEXT_SNAPSHOT`, `PANIC_NEXT_CONTINUE_MERGE`,
-  `PANIC_NEXT_CONTINUE_CONFIRM`, `PANIC_NEXT_CONFLICT_SKIP`, or
-  `PANIC_NEXT_CONTINUE_STASH` check; skip the snapshot hold await; or
-  force departed completions through the presenting branch of
-  `record_conflict_completion`, respectively.
+  label while the write awaits release, then switches tabs and requires its
+  unchanged `snapshot: created` contract line without a toast/footer on B.
+  The stash tab-switch scenario requires the departed continuation's receipt
+  without a toast or footer on B. Production mutations that fail each panic
+  scenario: replace that writer's `abandonment.into_unknown()` conversion
+  with an ordinary `GitError::Other` in its `fallible()` absent-completion path
+  (snapshot, merge-stage, stash-continue, sequencer-confirm, and skip each
+  fail individually). Removing `drain_unaccounted` alone is not a useful
+  mutation: shared app-job polling also drains it. Dropping the snapshot hold
+  before awaiting it fails the held-frame scenario; forcing departed
+  completions through the presenting branch of `record_conflict_completion`
+  fails the stash tab-switch scenario.
 - session-owned positioning and Smart Commit state
   (`tests/recovery/tab_ui_state.rs`, `tests/recovery/operations.rs`):
   `KAGI_GUI_E2E_ONLY=tab_ui_state_ownership,pr_open_enters_before_ref_fetch,smart_commit_generation_owner,smart_commit_modal_and_probe`.

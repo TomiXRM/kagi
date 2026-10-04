@@ -1600,6 +1600,10 @@ impl KagiApp {
                 .unwrap_or_else(|| Err(abandonment.into_unknown()));
             let _ = this.update(acx, |app, cx| {
                 app.refresh_write_busy();
+                match &result {
+                    Ok(entry) => klog!("snapshot: created {}", entry.id),
+                    Err(e) => klog!("snapshot: create failed: {}", e),
+                }
                 for (id, op, path) in app.app_sessions.drain_unaccounted() {
                     app.notice_reconcile_required(id, op, &path);
                 }
@@ -1611,12 +1615,10 @@ impl KagiApp {
                     return;
                 }
                 match result {
-                    Ok(entry) => {
-                        klog!("snapshot: created {}", entry.id);
+                    Ok(_) => {
                         app.push_toast(ToastKind::Success, Msg::SnapshotCreated.t(), cx);
                     }
                     Err(e) => {
-                        klog!("snapshot: create failed: {}", e);
                         app.push_toast(
                             ToastKind::Error,
                             format!("{}: {e}", Msg::SnapshotFailed.t()),

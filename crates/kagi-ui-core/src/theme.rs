@@ -522,9 +522,9 @@ pub fn themes_by_name() -> Vec<ThemeHandle> {
 /// Base (1.0×) rem size in pixels; matches the previous 0.9× visual scale.
 pub const BASE_REM_PX: f32 = 14.4;
 
-/// Zoom clamp bounds (inclusive), as documented in the ticket.
+/// Zoom bounds include the converted former 150% setting (`1500 / 0.9 = 1667` permille).
 pub const ZOOM_MIN: f32 = 0.7;
-pub const ZOOM_MAX: f32 = 1.5;
+pub const ZOOM_MAX: f32 = 1.67;
 
 /// One zoom step (cmd-+ / cmd--).
 pub const ZOOM_STEP: f32 = 0.1;
@@ -931,7 +931,7 @@ pub fn clamp_menu_pos(
     viewport: gpui::Size<gpui::Pixels>,
 ) -> gpui::Point<gpui::Pixels> {
     const MARGIN: f32 = 8.0;
-    let z = zoom();
+    let z = scaled(1.0);
     let (w, h) = (menu_w * z, menu_h * z);
     let (vw, vh) = (f32::from(viewport.width), f32::from(viewport.height));
     let (raw_x, raw_y) = (f32::from(pos.x), f32::from(pos.y));
@@ -1551,6 +1551,8 @@ mod tests {
         assert_eq!(clamp_zoom(0.5), ZOOM_MIN);
         assert_eq!(clamp_zoom(2.0), ZOOM_MAX);
         assert_eq!(clamp_zoom(1.0), 1.0);
+        assert_eq!(clamp_zoom(1.556), 1.556, "legacy 140% stays visible");
+        assert_eq!(clamp_zoom(1.667), 1.667, "legacy 150% stays visible");
     }
 
     #[test]
@@ -1561,6 +1563,9 @@ mod tests {
         assert_eq!(step_zoom(1.0, false), 0.9);
         assert_eq!(step_zoom(ZOOM_MIN, false), ZOOM_MIN);
         assert_eq!(step_zoom(ZOOM_MAX, true), ZOOM_MAX);
+        assert_eq!(step_zoom(1.667, false), 1.6);
+        assert_eq!(step_zoom(1.667, true), 1.67);
+        assert_eq!(step_zoom(1.67, false), 1.6);
     }
 
     /// T-SYNTAX-001: every theme must produce a usable highlight theme —

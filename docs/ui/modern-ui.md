@@ -104,7 +104,7 @@ screen with no siblings to copy (#934's worktree row).
    control touches (plan → confirm, one modal slot, oplog-owned errors,
    Esc/Enter routing, IME).
 5. **Build to the role target**, using theme roles and `scaled_px` / rem so
-   zoom (0.7–1.5) scales it. State which owner a value belongs to:
+   zoom (0.7–1.67) scales it. State which owner a value belongs to:
    `sync_gpui_component_theme` (shared — `Theme.radius` changes every
    component that reads it), a Kagi token, or a component's fixed value.
 6. **Verify, then compare.**
@@ -117,7 +117,7 @@ screen with no siblings to copy (#934's worktree row).
      Screenshots of **before** and **after** with the same data, viewport,
      theme, language, zoom and state; the reference sits beside them.
    - **Choose the matrix by risk**, not all combinations: zoom 1.0 plus the
-     end the change can break (0.7 for small text, 1.5 for clipping);
+     end the change can break (0.7 for small text, 1.67 for clipping);
      light and dark when a colour or token changed (and a custom theme when a
      theme role changed); EN and JA with long text when text width matters;
      the narrow widths that apply (600/700/750/900); many rows for lists.

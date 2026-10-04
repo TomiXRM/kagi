@@ -329,6 +329,9 @@ fn appearance_section(
 
     // ── UI Zoom stepper:  [−]  110%  [+] ──
     let zoom = theme::zoom();
+    let zoom_label = format!("{:.0}%", zoom * 100.0);
+    #[cfg(feature = "gui-e2e")]
+    super::e2e::record_settings_zoom_label(&zoom_label);
     let app_minus = app.clone();
     let dec = move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
         theme::set_zoom(theme::step_zoom(theme::zoom(), false));
@@ -356,7 +359,7 @@ fn appearance_section(
                 .min_w(px(56.0))
                 .text_center()
                 .text_color(rgb(theme().text_main))
-                .child(SharedString::from(format!("{:.0}%", zoom * 100.0))),
+                .child(SharedString::from(zoom_label)),
         )
         .child(stepper_btn("zoom-inc", "+", inc))
         .into_any_element();

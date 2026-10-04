@@ -53,6 +53,8 @@ fn scale_migration_preserves_keys_and_runs_only_once() {
         ("900", "1000"),
         ("1000", "1111"),
         ("1001", "1112"),
+        ("1400", "1556"),
+        ("1500", "1667"),
         ("4294967295", "4294967295"),
     ] {
         let tmp = tempfile::tempdir().expect("tempdir");

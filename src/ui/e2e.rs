@@ -48,6 +48,7 @@ thread_local! {
     static CONTROL_BOUNDS: RefCell<std::collections::HashMap<(gpui::WindowId, String), gpui::Bounds<gpui::Pixels>>> = RefCell::new(Default::default());
     static TAB_LOAD_LIMITS: RefCell<std::collections::HashMap<crate::app::SessionId, usize>> = RefCell::new(Default::default());
     static BUSY_ADVICE: RefCell<Option<String>> = const { RefCell::new(None) };
+    static SETTINGS_ZOOM_LABEL: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 /// #354: the toolbar's AccessKit-disabled inputs, for the GUI E2E oracle.
 #[cfg(feature = "gui-e2e")]
@@ -109,6 +110,14 @@ pub(crate) fn record_busy_advice(text: &str) {
 #[cfg(feature = "gui-e2e")]
 pub fn take_busy_advice() -> Option<String> {
     BUSY_ADVICE.with(|slot| slot.borrow_mut().take())
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_settings_zoom_label(label: &str) {
+    SETTINGS_ZOOM_LABEL.with(|slot| *slot.borrow_mut() = Some(label.to_owned()));
+}
+#[cfg(feature = "gui-e2e")]
+pub fn settings_zoom_label() -> Option<String> {
+    SETTINGS_ZOOM_LABEL.with(|slot| slot.borrow().clone())
 }
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn record_tab_load_commit_limit(session: crate::app::SessionId, limit: usize) {

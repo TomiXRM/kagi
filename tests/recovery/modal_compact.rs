@@ -43,12 +43,12 @@ const AHEAD: usize = 27;
 /// because a list squeezed to nothing hides what the operation acts on.
 const LIST_FLOOR: usize = 3;
 
-/// 600/700 are reported short windows; 750 guards the measured breakpoint gap.
-/// 900 retains the normal layout.
+/// At the new 14.4px/rem base the compact breakpoint is 720px:
+/// 600/700 exercise compact; 750/900 exercise the normal layout.
 const SIZES: [(f32, f32, bool); 4] = [
     (1200., 600., true),
     (1200., 700., true),
-    (1200., 750., true),
+    (1200., 750., false),
     (1200., 900., false),
 ];
 
@@ -73,9 +73,8 @@ impl Case {
         }
     }
 
-    /// A zoom that moves this window across the compact threshold, which is
-    /// stated in zoom-normalised logical pixels: the short windows at 0.7x
-    /// normalise above 850px; 900px at 1.5x normalises to 600px.
+    /// A zoom that moves this window across the 720px compact threshold:
+    /// 600/700 become normal at 0.7x; 750/900 become compact at 1.5x.
     fn flip_zoom(&self) -> f32 {
         if self.compact {
             0.7

@@ -2990,8 +2990,8 @@ impl Msg {
             (Ja, SettingsThemesFolderUnavailable) => "テーマフォルダーのパスが見つかりません",
             (En, SettingsZoom) => "UI Zoom",
             (Ja, SettingsZoom) => "UI ズーム",
-            (En, SettingsZoomDesc) => "Scale all text and layout (0.7×–1.5×).",
-            (Ja, SettingsZoomDesc) => "テキストとレイアウト全体を拡大縮小します(0.7×〜1.5×)。",
+            (En, SettingsZoomDesc) => "Scale all text and layout (0.7×–1.67×).",
+            (Ja, SettingsZoomDesc) => "テキストとレイアウト全体を拡大縮小します(0.7×〜1.67×)。",
             // "graph" is a domain word and stays English in both arms (ADR-0048).
             (En, SettingsCompact) => "Compact graph",
             (Ja, SettingsCompact) => "graph をコンパクト表示",

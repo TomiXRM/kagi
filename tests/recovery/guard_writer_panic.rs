@@ -592,3 +592,69 @@ pub fn scenario_editor_save_panic_after_close(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS editor_save_panic_after_close");
 }
+
+pub fn scenario_snapshot_write_panic(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    KagiApp::panic_next_snapshot_for_e2e();
+    cx.dispatch_action(window, kagi::ui::commands::CreateSnapshot);
+    cx.run_until_parked();
+    assert!(
+        crate::macos::for_each_ref(&repo, "refs/kagi/snapshots/")
+            .trim()
+            .is_empty(),
+        "panicked snapshot did not create a ref"
+    );
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert_eq!(state.app_sessions.reconcile_ids().len(), 1);
+        assert!(
+            state.app_notice().is_some(),
+            "Unknown must offer reconciliation"
+        );
+        assert!(
+            state.app_sessions.has_leases(),
+            "unwound snapshot retains its scope until reconciliation"
+        );
+    });
+    acknowledge_panicked_writer(&app, cx);
+    assert!(!cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS snapshot_write_panic");
+}
+
+pub fn scenario_snapshot_write_draws_while_busy(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+    KagiApp::hold_next_snapshot_write_for_e2e(hold);
+    cx.dispatch_action(window, kagi::ui::commands::CreateSnapshot);
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert_eq!(state.write_busy_op, Some("snapshot"));
+        assert!(state.app_sessions.has_leases());
+        assert!(kagi::ui::e2e::busy_snackbar_label(state).is_some());
+    });
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    assert!(
+        crate::macos::for_each_ref(&repo, "refs/kagi/snapshots/")
+            .trim()
+            .is_empty(),
+        "held write must not have run"
+    );
+    release.send(());
+    cx.run_until_parked();
+    assert!(!crate::macos::for_each_ref(&repo, "refs/kagi/snapshots/")
+        .trim()
+        .is_empty());
+    assert!(!cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS snapshot_write_draws_while_busy");
+}

@@ -8,6 +8,42 @@
 #![allow(clippy::too_many_arguments)]
 
 use crate::{app, ui::*};
+fn conflict_unknown(error: &kagi_git::GitError, after: StateSummary) -> Option<OpOutcome> {
+    if let kagi_git::GitError::TerminationUnknown(reason) = error {
+        Some(OpOutcome::Unknown {
+            after,
+            evidence: format!(
+                "{}; process termination is unconfirmed — do not retry this operation",
+                reason
+            ),
+        })
+    } else {
+        None
+    }
+}
+
+#[cfg(feature = "gui-e2e")]
+static PANIC_NEXT_CONTINUE_MERGE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(feature = "gui-e2e")]
+static PANIC_NEXT_CONTINUE_STASH: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(feature = "gui-e2e")]
+static PANIC_NEXT_CONTINUE_CONFIRM: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    pub fn panic_next_continue_merge_for_e2e() {
+        PANIC_NEXT_CONTINUE_MERGE.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    pub fn panic_next_continue_stash_for_e2e() {
+        PANIC_NEXT_CONTINUE_STASH.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    pub fn panic_next_continue_confirm_for_e2e() {
+        PANIC_NEXT_CONTINUE_CONFIRM.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
 
 impl KagiApp {
     /// A deferred conflict action (button → next tick via `spawn_in`) must be
@@ -275,68 +311,113 @@ impl KagiApp {
                 let Some(guard) = self.reserve_write("conflict-continue", &repo_path, cx) else {
                     return;
                 };
-                let result = self
-                    .ui()
-                    .repo_session
-                    .as_ref()
-                    .expect("repo session existed while planning merge continue")
-                    .backend()
-                    .stage_conflict_resolution(&mode.session, &mode.buffer);
-                let unknown = app::settle_conflict_write(
-                    guard,
-                    &result,
-                    StateSummary {
-                        head: format!("op={}", mode.session.op.slug()),
-                        dirty: "resolving".to_string(),
-                    },
-                );
-                self.refresh_write_busy();
-                if let Err(e) = result {
-                    klog!("refused: {} stage failed: {}", op_name, e);
-                    let error = format!("Could not stage resolution: {}", e);
-                    if let Some(outcome) = unknown {
-                        self.record_op_persist(
-                            &op_name,
+                let session = mode.session.clone();
+                let buffer = mode.buffer.clone();
+                let before = StateSummary {
+                    head: format!("op={}", mode.session.op.slug()),
+                    dirty: "resolving".to_string(),
+                };
+                let session_op = mode.session.op.slug().to_string();
+                let owner = owner.session;
+                let visit = self.app_sessions.visit(owner);
+                let abandonment = guard.abandonment();
+                let supervision = abandonment.supervision();
+                let bg_path = repo_path.clone();
+                let task = cx.background_spawn(async move {
+                    let _supervised = kagi_git::proc::supervisor::enter(supervision);
+                    #[cfg(feature = "gui-e2e")]
+                    if PANIC_NEXT_CONTINUE_MERGE.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                        let _ =
+                            std::panic::catch_unwind(|| panic!("injected merge continue panic"));
+                        return None;
+                    }
+                    let result = kagi_git::Backend::open(&bg_path)
+                        .and_then(|backend| backend.stage_conflict_resolution(&session, &buffer));
+                    let unknown = app::settle_conflict_write(guard, &result, before);
+                    Some((result, unknown))
+                });
+                cx.spawn_in(window, async move |this, acx| {
+                    let (result, unknown) = task.fallible().await.flatten().unwrap_or_else(|| {
+                        let error = abandonment.into_unknown();
+                        let unknown = conflict_unknown(
+                            &error,
                             StateSummary {
-                                head: format!("op={}", mode.session.op.slug()),
-                                dirty: "resolving".to_string(),
+                                head: format!("op={}", session_op),
+                                dirty: "resolving".into(),
                             },
-                            outcome,
-                            &repo_path,
-                            cx,
                         );
-                    } else {
-                        self.push_toast(ToastKind::Error, SharedString::from(error), cx);
-                    }
-                    cx.notify();
-                    return;
-                }
-                eprintln!(
-                    "[kagi] {}: routing to commit message panel (merge)",
-                    op_name
-                );
-                self.open_commit_panel(window, cx);
-                // ADR-0118: seed the merge message into the entity's input + state.
-                // `open_commit_panel` runs on the parent (this method is the parent,
-                // deferred from the ConflictView Continue listener — correction #6),
-                // so updating the freshly-created CommitPanelView here is safe.
-                if let Some(entity) = self.ui().commit_panel.clone() {
-                    let (title_input, body_input) = {
-                        let v = entity.read(cx);
-                        (v.title_input.clone(), v.body_input.clone())
-                    };
-                    let (title, body) = kagi_git::split_title_body(&message);
-                    if let Some(input) = title_input {
-                        input.update(cx, |state, cx| state.set_value(title, window, cx));
-                    }
-                    if let Some(input) = body_input {
-                        input.update(cx, |state, cx| state.set_value(body, window, cx));
-                    }
-                    entity.update(cx, |v, _| v.state.commit_msg = message.clone());
-                }
-                if let Some(ui) = self.ui_mut() {
-                    ui.conflict_merge_pending = true;
-                }
+                        (Err(error), unknown)
+                    });
+                    let _ = this.update_in(acx, |app, window, cx| {
+                        app.refresh_write_busy();
+                        let current = app.active_session() == Some(owner)
+                            && app.app_sessions.visit(owner) == visit;
+                        if let Err(e) = &result {
+                            klog!("refused: {} stage failed: {}", op_name, e);
+                            let is_unknown = unknown.is_some();
+                            app.record_conflict_completion(
+                                &op_name,
+                                StateSummary {
+                                    head: format!("op={}", session_op),
+                                    dirty: "resolving".into(),
+                                },
+                                unknown.unwrap_or_else(|| OpOutcome::Failed {
+                                    error: e.to_string(),
+                                }),
+                                None,
+                                &repo_path,
+                                current && is_unknown,
+                                cx,
+                            );
+                        }
+                        for (id, op, path) in app.app_sessions.drain_unaccounted() {
+                            app.notice_reconcile_required(id, op, &path);
+                        }
+                        app.present_app_notice();
+                        if !current {
+                            cx.notify();
+                            return;
+                        }
+                        if let Err(e) = result {
+                            if !matches!(e, kagi_git::GitError::TerminationUnknown(_)) {
+                                app.push_toast(
+                                    ToastKind::Error,
+                                    SharedString::from(format!(
+                                        "Could not stage resolution: {}",
+                                        e
+                                    )),
+                                    cx,
+                                );
+                            }
+                            cx.notify();
+                            return;
+                        }
+                        eprintln!(
+                            "[kagi] {}: routing to commit message panel (merge)",
+                            op_name
+                        );
+                        app.open_commit_panel(window, cx);
+                        if let Some(entity) = app.ui().commit_panel.clone() {
+                            let (title_input, body_input) = {
+                                let v = entity.read(cx);
+                                (v.title_input.clone(), v.body_input.clone())
+                            };
+                            let (title, body) = kagi_git::split_title_body(&message);
+                            if let Some(input) = title_input {
+                                input.update(cx, |state, cx| state.set_value(title, window, cx));
+                            }
+                            if let Some(input) = body_input {
+                                input.update(cx, |state, cx| state.set_value(body, window, cx));
+                            }
+                            entity.update(cx, |v, _| v.state.commit_msg = message.clone());
+                        }
+                        if let Some(ui) = app.ui_mut() {
+                            ui.conflict_merge_pending = true;
+                        }
+                        cx.notify();
+                    });
+                })
+                .detach();
             }
             kagi_git::ContinueRoute::SequencerPlan(plan) => {
                 // Confirmation modal before advancing the sequencer.
@@ -356,72 +437,99 @@ impl KagiApp {
                 let Some(guard) = self.reserve_write("conflict-continue", &repo_path, cx) else {
                     return;
                 };
-                let (result, ref_moves) = self
-                    .ui()
-                    .repo_session
-                    .as_ref()
-                    .expect("repo session existed while planning conflict continue")
-                    .backend()
-                    .observe_ref_moves(|b| {
-                        b.execute_conflict_continue(&mode.session, &mode.buffer)
-                    });
-                let unknown = app::settle_conflict_write(
-                    guard,
-                    &result,
-                    StateSummary {
-                        head: format!("op={}", mode.session.op.slug()),
-                        dirty: "resolving".to_string(),
-                    },
-                );
-                self.refresh_write_busy();
-                match result {
-                    Ok(result) => {
-                        klog!("executed: {}", op_name);
-                        let _ = kagi_git::ResolutionBuffer::clear(&repo_path);
-                        self.record_op_persist_moves(
-                            &op_name,
-                            StateSummary {
-                                head: format!("op={}", mode.session.op.slug()),
-                                dirty: "resolving".to_string(),
-                            },
-                            OpOutcome::Success {
-                                after: result.after.clone(),
-                            },
-                            ref_moves,
-                            &repo_path,
-                            cx,
-                        );
-                        // Consume this owner's proven OID once, after reload's
-                        // modal clear. A fresh unique-OID plan requires new approval.
-                        if let Some(owner) = self.active_session() {
-                            self.app_sessions.continue_stash_conflict(owner);
-                        }
-                        // Conflicts are gone → re-detect clears Conflict Mode.
-                        self.reload(cx);
+                let owner = owner.session;
+                let visit = self.app_sessions.visit(owner);
+                let session = mode.session.clone();
+                let buffer = mode.buffer.clone();
+                let before = StateSummary {
+                    head: format!("op={}", mode.session.op.slug()),
+                    dirty: "resolving".to_string(),
+                };
+                let abandonment = guard.abandonment();
+                let supervision = abandonment.supervision();
+                let bg_path = repo_path.clone();
+                let bg_before = before.clone();
+                let task = cx.background_spawn(async move {
+                    let _supervised = kagi_git::proc::supervisor::enter(supervision);
+                    #[cfg(feature = "gui-e2e")]
+                    if PANIC_NEXT_CONTINUE_STASH.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                        let _ =
+                            std::panic::catch_unwind(|| panic!("injected stash continue panic"));
+                        return None;
                     }
-                    Err(e) => {
-                        let err_msg = format!("{}", e);
-                        let is_unknown = unknown.is_some();
-                        klog!("{} failed: {}", op_name, err_msg);
-                        let outcome = unknown.unwrap_or_else(|| OpOutcome::Failed {
-                            error: err_msg.clone(),
+                    let (result, ref_moves) = match kagi_git::Backend::open(&bg_path) {
+                        Ok(backend) => backend
+                            .observe_ref_moves(|b| b.execute_conflict_continue(&session, &buffer)),
+                        Err(error) => (Err(error), None),
+                    };
+                    let unknown = app::settle_conflict_write(guard, &result, bg_before);
+                    if result.is_ok() {
+                        let _ = kagi_git::ResolutionBuffer::clear(&bg_path);
+                    }
+                    Some((result, ref_moves, unknown))
+                });
+                cx.spawn(async move |this, acx| {
+                    let (result, ref_moves, unknown) =
+                        task.fallible().await.flatten().unwrap_or_else(|| {
+                            let error = abandonment.into_unknown();
+                            let unknown = conflict_unknown(&error, before.clone());
+                            (Err(error), None, unknown)
                         });
-                        self.record_op_persist_moves(
-                            &op_name,
-                            StateSummary {
-                                head: format!("op={}", mode.session.op.slug()),
-                                dirty: "resolving".to_string(),
-                            },
-                            outcome,
-                            ref_moves,
-                            &repo_path,
-                            cx,
-                        );
-                        if !is_unknown {
-                            self.push_toast(ToastKind::Error, SharedString::from(err_msg), cx);
+                    let _ = this.update(acx, |app, cx| {
+                        app.refresh_write_busy();
+                        let current = app.active_session() == Some(owner)
+                            && app.app_sessions.visit(owner) == visit;
+                        match result {
+                            Ok(result) => {
+                                klog!("executed: {}", op_name);
+                                app.record_conflict_completion(
+                                    &op_name,
+                                    before,
+                                    OpOutcome::Success {
+                                        after: result.after.clone(),
+                                    },
+                                    ref_moves,
+                                    &repo_path,
+                                    current,
+                                    cx,
+                                );
+                                if current {
+                                    app.app_sessions.continue_stash_conflict(owner);
+                                    app.reload(cx);
+                                }
+                            }
+                            Err(e) => {
+                                let err_msg = format!("{}", e);
+                                let is_unknown = unknown.is_some();
+                                klog!("{} failed: {}", op_name, err_msg);
+                                app.record_conflict_completion(
+                                    &op_name,
+                                    before,
+                                    unknown.unwrap_or_else(|| OpOutcome::Failed {
+                                        error: err_msg.clone(),
+                                    }),
+                                    ref_moves,
+                                    &repo_path,
+                                    current,
+                                    cx,
+                                );
+                                if current && !is_unknown {
+                                    app.push_toast(
+                                        ToastKind::Error,
+                                        SharedString::from(err_msg),
+                                        cx,
+                                    );
+                                }
+                            }
                         }
-                    }
-                }
+                        for (id, op, path) in app.app_sessions.drain_unaccounted() {
+                            app.notice_reconcile_required(id, op, &path);
+                        }
+                        app.present_app_notice();
+                        cx.notify();
+                    });
+                })
+                .detach();
             }
         }
         cx.notify();
@@ -456,67 +564,112 @@ impl KagiApp {
         let Some(guard) = self.reserve_write("conflict-continue", &repo_path, cx) else {
             return;
         };
-        let (result, ref_moves) = self
-            .ui()
-            .repo_session
-            .as_ref()
-            .expect("repo session existed while planning conflict continue")
-            .backend()
-            .observe_ref_moves(|b| b.execute_conflict_continue(&mode.session, &mode.buffer));
-        let unknown = app::settle_conflict_write(guard, &result, plan.current.clone());
-        self.refresh_write_busy();
-        match result {
-            Ok(result) => {
-                klog!("executed: {}", op_name);
-                let _ = kagi_git::ResolutionBuffer::clear(&repo_path);
-                // #296: record the REAL measured post-continue state, not the
-                // plan's predicted head — a partial / new-conflict continuation
-                // must not be logged as a clean success.
-                let after = result.after.clone();
-                self.record_op_persist_moves(
-                    &op_name,
-                    plan.current.clone(),
-                    OpOutcome::Success { after },
-                    ref_moves,
-                    &repo_path,
-                    cx,
-                );
-                self.clear_conflict_continue_modal();
-                self.reload(cx);
-                if let Some(ui) = self.ui_mut() {
-                    ui.conflict_detected = false;
-                }
-                self.detect_conflict_mode(cx);
+        let owner = self.active_session();
+        let visit = owner.and_then(|id| self.app_sessions.visit(id));
+        let session = mode.session.clone();
+        let buffer = mode.buffer.clone();
+        let before = plan.current.clone();
+        let modal_plan = plan.clone();
+        let abandonment = guard.abandonment();
+        let supervision = abandonment.supervision();
+        let bg_path = repo_path.clone();
+        let bg_before = before.clone();
+        let task = cx.background_spawn(async move {
+            let _supervised = kagi_git::proc::supervisor::enter(supervision);
+            #[cfg(feature = "gui-e2e")]
+            if PANIC_NEXT_CONTINUE_CONFIRM.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                let _ = std::panic::catch_unwind(|| panic!("injected sequencer continue panic"));
+                return None;
             }
-            Err(e) => {
-                let err_msg = format!("{}", e);
-                let unknown_evidence = unknown.as_ref().and_then(|outcome| match outcome {
-                    OpOutcome::Unknown { evidence, .. } => Some(evidence.clone()),
-                    _ => None,
-                });
-                klog!("{} failed: {}", op_name, err_msg);
-                let outcome = unknown.unwrap_or_else(|| OpOutcome::Failed {
-                    error: err_msg.clone(),
-                });
-                self.record_op_persist_moves(
-                    &op_name,
-                    plan.current.clone(),
-                    outcome,
-                    ref_moves,
-                    &repo_path,
-                    cx,
-                );
-                if let Some(modal) = self.conflict_continue_modal_mut() {
-                    modal.error = Some(SharedString::from(
-                        unknown_evidence.clone().unwrap_or(err_msg),
-                    ));
+            let (result, ref_moves) = match kagi_git::Backend::open(&bg_path) {
+                Ok(backend) => {
+                    backend.observe_ref_moves(|b| b.execute_conflict_continue(&session, &buffer))
                 }
-                if let Some(evidence) = unknown_evidence {
-                    self.report_unknown_notice(&repo_path, evidence);
-                }
+                Err(error) => (Err(error), None),
+            };
+            let unknown = app::settle_conflict_write(guard, &result, bg_before);
+            if result.is_ok() {
+                let _ = kagi_git::ResolutionBuffer::clear(&bg_path);
             }
-        }
-        cx.notify();
+            Some((result, ref_moves, unknown))
+        });
+        cx.spawn(async move |this, acx| {
+            let (result, ref_moves, unknown) =
+                task.fallible().await.flatten().unwrap_or_else(|| {
+                    let error = abandonment.into_unknown();
+                    let unknown = conflict_unknown(&error, before.clone());
+                    (Err(error), None, unknown)
+                });
+            let _ = this.update(acx, |app, cx| {
+                app.refresh_write_busy();
+                let current = owner.is_some_and(|id| {
+                    app.active_session() == Some(id) && app.app_sessions.visit(id) == visit
+                });
+                let modal_matches = current
+                    && app
+                        .conflict_continue_modal()
+                        .is_some_and(|modal| std::sync::Arc::ptr_eq(&modal.plan, &modal_plan));
+                match result {
+                    Ok(result) => {
+                        klog!("executed: {}", op_name);
+                        app.record_conflict_completion(
+                            &op_name,
+                            before,
+                            OpOutcome::Success {
+                                after: result.after.clone(),
+                            },
+                            ref_moves,
+                            &repo_path,
+                            current,
+                            cx,
+                        );
+                        if modal_matches {
+                            app.clear_conflict_continue_modal();
+                            app.reload(cx);
+                            if let Some(ui) = app.ui_mut() {
+                                ui.conflict_detected = false;
+                            }
+                            app.detect_conflict_mode(cx);
+                        }
+                    }
+                    Err(e) => {
+                        let err_msg = format!("{}", e);
+                        let unknown_evidence = unknown.as_ref().and_then(|outcome| match outcome {
+                            OpOutcome::Unknown { evidence, .. } => Some(evidence.clone()),
+                            _ => None,
+                        });
+                        klog!("{} failed: {}", op_name, err_msg);
+                        app.record_conflict_completion(
+                            &op_name,
+                            before,
+                            unknown.unwrap_or_else(|| OpOutcome::Failed {
+                                error: err_msg.clone(),
+                            }),
+                            ref_moves,
+                            &repo_path,
+                            current,
+                            cx,
+                        );
+                        if modal_matches {
+                            if let Some(modal) = app.conflict_continue_modal_mut() {
+                                modal.error = Some(SharedString::from(
+                                    unknown_evidence.clone().unwrap_or(err_msg),
+                                ));
+                            }
+                            if let Some(evidence) = unknown_evidence {
+                                app.report_unknown_notice(&repo_path, evidence);
+                            }
+                        }
+                    }
+                }
+                for (id, op, path) in app.app_sessions.drain_unaccounted() {
+                    app.notice_reconcile_required(id, op, &path);
+                }
+                app.present_app_notice();
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Cancel the sequencer continue confirmation modal.

@@ -449,6 +449,7 @@ pub fn scenario_stash_conflict_close_reopen(cx: &mut VisualTestAppContext) {
         });
     })
     .unwrap();
+    cx.run_until_parked();
     // #884: the UI continue records the refs it moved (a stash continue only
     // stages, so: recorded, nothing moved) — not "no record".
     let continued = kagi_git::oplog::read_oplog_tail(1).pop().unwrap();
@@ -623,4 +624,117 @@ pub fn scenario_stash_apply_conflict_preview(cx: &mut VisualTestAppContext) {
     });
 
     unmount(cx, app, window);
+}
+
+pub fn scenario_stash_continue_panic(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    stash_three(&repo);
+    std::fs::write(repo.join("README.md"), "ours\n").unwrap();
+    git(&repo, &["commit", "-qam", "ours"]);
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.open_pop_modal(1, cx));
+    wait(cx, &app, |app| {
+        matches!(app.app_sessions.plan_state(), PlanState::Ready { .. })
+    });
+    confirm(cx, &app, window, false);
+    wait(cx, &app, |app| {
+        app.write_busy_op.is_none() && app.ui().conflict.is_some()
+    });
+    KagiApp::panic_next_continue_stash_for_e2e();
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.ui().conflict.as_ref().unwrap().update(cx, |view, _| {
+                view.mode
+                    .as_mut()
+                    .unwrap()
+                    .buffer
+                    .apply_choice(Path::new("README.md"), kagi_git::ResolutionChoice::Incoming)
+                    .unwrap();
+            });
+            let owner = app
+                .app_sessions
+                .attachment(app.active_session().unwrap())
+                .unwrap();
+            app.conflict_continue(owner, window, cx);
+        });
+    })
+    .unwrap();
+    wait(cx, &app, |app| app.app_sessions.reconcile_ids().len() == 1);
+    let receipts: Vec<_> = read_oplog_tail_for_repo(&repo, 30)
+        .into_iter()
+        .filter(|entry| entry.op == "stash-continue")
+        .collect();
+    assert_eq!(receipts.len(), 1);
+    assert!(matches!(receipts[0].outcome, OpOutcome::Unknown { .. }));
+    assert!(cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+    assert!(cx.read(|cx| app.read(cx).app_notice().is_some()));
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS stash_continue_panic");
+}
+
+pub fn scenario_stash_continue_after_tab_switch(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let other = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let other_repo = other.path().canonicalize().unwrap();
+    stash_three(&repo);
+    std::fs::write(repo.join("README.md"), "ours\n").unwrap();
+    git(&repo, &["commit", "-qam", "ours"]);
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.open_pop_modal(1, cx));
+    wait(cx, &app, |app| {
+        matches!(app.app_sessions.plan_state(), PlanState::Ready { .. })
+    });
+    confirm(cx, &app, window, false);
+    wait(cx, &app, |app| {
+        app.write_busy_op.is_none() && app.ui().conflict.is_some()
+    });
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(other_repo.clone(), cx))
+    });
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    wait(cx, &app, |app| app.ui().conflict.is_some());
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.ui().conflict.as_ref().unwrap().update(cx, |view, _| {
+                view.mode
+                    .as_mut()
+                    .unwrap()
+                    .buffer
+                    .apply_choice(Path::new("README.md"), kagi_git::ResolutionChoice::Incoming)
+                    .unwrap();
+            });
+            let owner = app
+                .app_sessions
+                .attachment(app.active_session().unwrap())
+                .unwrap();
+            app.conflict_continue(owner, window, cx);
+            app.switch_repo(1, cx);
+            app.status_footer = FooterStatus::Idle("other tab sentinel".into());
+        });
+    })
+    .unwrap();
+    wait(cx, &app, |app| app.write_busy_op.is_none());
+    let receipts: Vec<_> = read_oplog_tail_for_repo(&repo, 30)
+        .into_iter()
+        .filter(|entry| entry.op == "stash-continue")
+        .collect();
+    assert_eq!(
+        receipts.len(),
+        1,
+        "departed write must persist exactly once"
+    );
+    assert!(matches!(receipts[0].outcome, OpOutcome::Success { .. }));
+    assert_eq!(receipts[0].ref_moves, Some(Vec::new()));
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(matches!(&state.status_footer, FooterStatus::Idle(text) if text.as_ref() == "other tab sentinel"));
+        assert!(!state.toast_stack.as_ref().unwrap().read(cx).toasts().iter()
+            .any(|toast| toast.message.as_ref().contains("stash-continue")));
+        assert_eq!(state.repo_path.as_ref(), Some(&other_repo));
+    });
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS stash_continue_after_tab_switch");
 }

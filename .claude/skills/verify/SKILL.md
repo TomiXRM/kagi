@@ -1092,6 +1092,21 @@ The current suite covers:
   the GUI-only seam catches the injected panic inside the worker and returns an
   absent result so the production abandonment branch can be inspected. The
   non-test path still uses `fallible()` for actual unwinds.
+- #996 background writers (`tests/recovery/guard_writer_panic.rs`,
+  `tests/recovery/app_conflict.rs`, `tests/recovery/app_stash.rs`):
+  `KAGI_GUI_E2E_ONLY=snapshot_write_panic,snapshot_write_draws_while_busy,conflict_merge_continue_panic,conflict_confirm_continue_panic,conflict_skip_panic,stash_continue_panic,stash_continue_after_tab_switch,create_snapshot,stash_conflict_close_reopen,stash_conflict_followup`.
+  Each panic scenario injects an absent worker completion through its own
+  GUI-only seam, requires an Unknown/reconcile exit (and a durable conflict
+  receipt), and distinguishes snapshot's GroupOnly scope from retained
+  sequencer leases. The snapshot hold scenario draws a frame with its busy
+  label while the write awaits release; the tab-switch scenario requires
+  the departed stash continuation's receipt without a toast or footer on B.
+  Mutations that fail each scenario: disable the corresponding
+  `PANIC_NEXT_SNAPSHOT`, `PANIC_NEXT_CONTINUE_MERGE`,
+  `PANIC_NEXT_CONTINUE_CONFIRM`, `PANIC_NEXT_CONFLICT_SKIP`, or
+  `PANIC_NEXT_CONTINUE_STASH` check; skip the snapshot hold await; or
+  force departed completions through the presenting branch of
+  `record_conflict_completion`, respectively.
 - session-owned positioning and Smart Commit state
   (`tests/recovery/tab_ui_state.rs`, `tests/recovery/operations.rs`):
   `KAGI_GUI_E2E_ONLY=tab_ui_state_ownership,pr_open_enters_before_ref_fetch,smart_commit_generation_owner,smart_commit_modal_and_probe`.

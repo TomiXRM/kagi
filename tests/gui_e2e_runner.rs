@@ -660,7 +660,7 @@ mod macos {
 
     /// `git for-each-ref <pattern>` — the ref-existence probe for the snapshot
     /// scenario. Returns the raw stdout (one line per matching ref).
-    fn for_each_ref(dir: &Path, pattern: &str) -> String {
+    pub(super) fn for_each_ref(dir: &Path, pattern: &str) -> String {
         let out = Command::new("git")
             .current_dir(dir)
             .args(["for-each-ref", pattern])
@@ -1718,6 +1718,34 @@ mod macos {
             (
                 "remote_branch_fetch_panic",
                 Box::new(crate::guard_writer_panic::scenario_remote_branch_fetch_panic),
+            ),
+            (
+                "snapshot_write_panic",
+                Box::new(crate::guard_writer_panic::scenario_snapshot_write_panic),
+            ),
+            (
+                "snapshot_write_draws_while_busy",
+                Box::new(crate::guard_writer_panic::scenario_snapshot_write_draws_while_busy),
+            ),
+            (
+                "conflict_merge_continue_panic",
+                Box::new(crate::app_conflict::scenario_conflict_merge_continue_panic),
+            ),
+            (
+                "conflict_confirm_continue_panic",
+                Box::new(crate::app_conflict::scenario_conflict_confirm_continue_panic),
+            ),
+            (
+                "conflict_skip_panic",
+                Box::new(crate::app_conflict::scenario_conflict_skip_panic),
+            ),
+            (
+                "stash_continue_panic",
+                Box::new(crate::app_stash::scenario_stash_continue_panic),
+            ),
+            (
+                "stash_continue_after_tab_switch",
+                Box::new(crate::app_stash::scenario_stash_continue_after_tab_switch),
             ),
             (
                 "remote_branch_fetch_failed_after_departure",
@@ -3139,6 +3167,7 @@ mod macos {
         );
 
         cx.dispatch_action(win, CreateSnapshot);
+        cx.run_until_parked();
 
         let refs = for_each_ref(&repo_path, "refs/kagi/snapshots/");
         let count = refs.lines().filter(|l| !l.trim().is_empty()).count();

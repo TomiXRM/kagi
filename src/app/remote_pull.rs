@@ -87,6 +87,7 @@ pub struct RemotePullCompletion {
 pub struct RemotePullJob {
     id: OperationId,
     request: RemotePullRequest,
+    repo_id: RemoteRepoId,
     abandoned: Sender<Completion>,
     ran: bool,
     fixture: Option<crate::remote::RemotePullReport>,
@@ -104,11 +105,24 @@ impl RemotePullJob {
 
     pub fn run(mut self) -> RemotePullCompletion {
         let report = self.fixture.take().unwrap_or_else(|| {
-            crate::remote::remote_pull(
-                &self.request.owner.host,
-                &self.request.owner.root,
-                &self.request.plan.current,
-            )
+            let owner = &self.request.owner;
+            let observed = crate::remote::resolve_pull_repo_id(&owner.host, &owner.root);
+            if observed.as_ref() == Ok(&self.repo_id) {
+                crate::remote::remote_pull(&owner.host, &owner.root, &self.request.plan.current)
+            } else {
+                let reason = match observed {
+                    Ok(_) => "remote repository identity changed after pull confirmation".into(),
+                    Err(error) => {
+                        format!("remote pull preflight could not confirm identity: {error}")
+                    }
+                };
+                crate::remote::refused_remote_pull(
+                    &owner.host,
+                    &owner.root,
+                    &self.request.plan.current,
+                    reason,
+                )
+            }
         });
         self.ran = true;
         RemotePullCompletion {
@@ -143,11 +157,12 @@ pub fn prepare_remote_pull(
         return Err(AdmissionError::StaleApproval);
     }
     let running = begin_write(s, &approved)?;
-    let Planned::RemotePull { request, .. } = approved.prepared else {
+    let Planned::RemotePull { request, plan } = approved.prepared else {
         unreachable!()
     };
     Ok(RemotePullJob {
         id: running.operation_id,
+        repo_id: plan.repo_id,
         request,
         abandoned: s.abandoned_tx.clone(),
         ran: false,

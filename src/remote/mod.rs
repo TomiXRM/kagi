@@ -143,6 +143,8 @@ pub enum RemoteError {
     /// message (e.g. "Host key verification failed", "Permission denied",
     /// "No such file or directory").
     NonZero { code: i32, stderr: String },
+    /// A preflight identity mismatch refused the write before `git pull` ran.
+    Refused(String),
 }
 
 impl RemoteError {
@@ -175,6 +177,7 @@ impl std::fmt::Display for RemoteError {
             RemoteError::Incomplete(reason) => {
                 write!(f, "ssh output is not complete: {reason}")
             }
+            RemoteError::Refused(reason) => f.write_str(reason),
             RemoteError::NonZero { code, stderr } => {
                 write!(f, "ssh exited {code}: {}", stderr.trim())
             }
@@ -736,6 +739,31 @@ pub fn remote_pull(
     RemotePullReport {
         result,
         recording: kagi_git::backend::recording::finalize(entry),
+    }
+}
+
+/// Record a plan/execute identity mismatch without starting `git pull`.
+pub fn refused_remote_pull(
+    host: &RemoteHost,
+    repo: &str,
+    before: &kagi_git::StateSummary,
+    reason: String,
+) -> RemotePullReport {
+    let scope = format!("{}:{repo}", host.label());
+    let recording = kagi_git::backend::recording::finalize(
+        kagi_git::oplog::OpLogEntry::new(
+            "pull",
+            scope.clone(),
+            before.clone(),
+            kagi_git::oplog::OpOutcome::Refused {
+                blockers: vec![reason.clone()],
+            },
+        )
+        .with_worktree(Some(scope)),
+    );
+    RemotePullReport {
+        result: Err(RemoteError::Refused(reason)),
+        recording,
     }
 }
 

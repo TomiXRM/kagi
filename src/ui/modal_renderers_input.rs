@@ -8,7 +8,7 @@ use super::i18n::Msg;
 use super::modal_renderers::{
     modal_overlay, render_current_predicted, render_modal_title_row, ModalIcon, PlanCardAccent,
 };
-use super::modal_renderers_plan::render_input_recovery_commands;
+use super::modal_renderers_plan::{offered_recovery_commands, render_input_recovery_commands};
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_MD};
 use super::theme::theme as current_theme;
 use gpui::{
@@ -253,11 +253,11 @@ pub(crate) fn render_input_plan_modal(
             }
         }
         if input_valid && !has_blockers {
-            if let Some(recovery) = plan.recovery.as_ref().filter(|r| !r.commands.is_empty()) {
+            if let Some(commands) = offered_recovery_commands(plan.recovery.as_ref()) {
                 body = body.child(
                     div()
                         .flex_shrink_0()
-                        .child(render_input_recovery_commands(&recovery.commands, color)),
+                        .child(render_input_recovery_commands(commands, color)),
                 );
             }
         }

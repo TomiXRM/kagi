@@ -183,7 +183,9 @@ pub enum QueueEvent<'a> {
     RevalidationStarted(SessionId),
     RevalidationDone(SessionId),
     ReconcileAcknowledged(SessionId),
-    RemoteLatched,
+    /// The lease-less remote pull of this session is running (ADR-0204 決定 3:
+    /// it cannot be that session's `&&` predecessor).
+    RemoteLatched(SessionId),
     RemoteLatchReleased,
     DismissCancelled(SessionId),
 }
@@ -223,7 +225,11 @@ pub struct IntentQueue {
     modal_busy: bool,
     revalidating: HashSet<SessionId>,
     reconciling: HashSet<SessionId>,
-    remote_latched: bool,
+    /// Session whose untrackable remote pull is running.
+    remote_latched: Option<SessionId>,
+    /// Heads removed by detach while their admission was in flight: kept only
+    /// to receive that result (a write admitted after all must stay tracked).
+    orphaned: HashSet<IntentId>,
 }
 impl IntentQueue {
     pub fn new() -> Self {
@@ -304,7 +310,7 @@ impl IntentQueue {
         match event {
             E::Enqueue { owner, request } => {
                 let session = owner.session;
-                if self.remote_latched {
+                if self.remote_latched == Some(session) {
                     effects.push(QueueEffect::Rejected(EnqueueError::RemoteLatched));
                 } else if self.untracked_owner == Some(session) {
                     effects.push(QueueEffect::Rejected(EnqueueError::UntrackedWrite));
@@ -409,7 +415,13 @@ impl IntentQueue {
                 }
                 if let Some(mut queue) = self.per_session.remove(&session) {
                     while let Some(item) = queue.pop_front() {
-                        if matches!(item.state, IntentState::Running { .. }) {
+                        // Decision 3: cancel-all takes waiting intents and a head
+                        // being planned or confirmed, never an admission in flight
+                        // or a running write.
+                        if matches!(
+                            item.state,
+                            IntentState::Running { .. } | IntentState::Admitting
+                        ) {
                             self.per_session.entry(session).or_default().push_back(item);
                         } else {
                             self.record_cancel(item, CancelReason::UserRemoved);
@@ -476,7 +488,36 @@ impl IntentQueue {
                 }
             }
             E::Admission { id, result } => {
-                if let Some(session) = self.head(id) {
+                if self.orphaned.remove(&id) {
+                    if let Some(session) = self.head(id) {
+                        match result {
+                            // Its write was admitted after all: keep tracking it.
+                            Ok(stamp) if stamp.session == session => {
+                                self.per_session
+                                    .get_mut(&session)
+                                    .expect("head")
+                                    .front_mut()
+                                    .expect("head")
+                                    .state = IntentState::Running { stamp };
+                                self.write = Some(stamp);
+                            }
+                            _ => {
+                                self.per_session
+                                    .get_mut(&session)
+                                    .expect("head")
+                                    .pop_front();
+                                if self
+                                    .per_session
+                                    .get(&session)
+                                    .is_some_and(VecDeque::is_empty)
+                                {
+                                    self.per_session.remove(&session);
+                                }
+                                effects.push(QueueEffect::Cancelled(id, CancelReason::OwnerGone));
+                            }
+                        }
+                    }
+                } else if let Some(session) = self.head(id) {
                     if self.per_session[&session].front().expect("head").state
                         == IntentState::Admitting
                     {
@@ -531,9 +572,20 @@ impl IntentQueue {
                             }
                         }
                     }
+                } else if let Ok(stamp) = result {
+                    // No head waits for it, yet a write was admitted: it still
+                    // holds the writer until its lease is released.
+                    self.write = Some(stamp);
                 }
             }
             E::AnchorSettled { stamp, receipt } => {
+                // The receipt is delivered exactly once (ADR-0196 決定 2.5): this
+                // write can no longer anchor anyone, even if its lease outlives
+                // it (Unknown / Unaccounted). It still blocks until released.
+                if self.write == Some(stamp) {
+                    self.write = None;
+                    self.write_busy = true;
+                }
                 if let Some(id) = self.settle(stamp, receipt) {
                     effects.push(QueueEffect::Settled(id));
                 }
@@ -593,8 +645,8 @@ impl IntentQueue {
                         head.state = IntentState::Queued;
                         effects.push(QueueEffect::CloseConfirm(head.id));
                         effects.push(QueueEffect::InvalidatePlan(head.id));
-                        self.modal_busy = false;
                         if !was_planning {
+                            self.modal_busy = false;
                             self.plan_slot_busy = false;
                             self.planning_job = None;
                         }
@@ -621,6 +673,16 @@ impl IntentQueue {
                                 .entry(session)
                                 .or_default()
                                 .push_back(intent);
+                        } else if intent.state == IntentState::Admitting {
+                            // The admission may still succeed: keep the head
+                            // until its result says whether a write runs.
+                            effects.push(QueueEffect::CloseConfirm(intent.id));
+                            self.modal_busy = false;
+                            self.orphaned.insert(intent.id);
+                            self.per_session
+                                .entry(session)
+                                .or_default()
+                                .push_back(intent);
                         } else {
                             if matches!(
                                 intent.state,
@@ -628,8 +690,8 @@ impl IntentQueue {
                             ) {
                                 effects.push(QueueEffect::CloseConfirm(intent.id));
                                 effects.push(QueueEffect::InvalidatePlan(intent.id));
-                                self.modal_busy = false;
                                 if intent.state == IntentState::AwaitingConfirm {
+                                    self.modal_busy = false;
                                     self.plan_slot_busy = false;
                                     self.planning_job = None;
                                 }
@@ -652,8 +714,8 @@ impl IntentQueue {
             E::ReconcileAcknowledged(session) => {
                 self.reconciling.remove(&session);
             }
-            E::RemoteLatched => self.remote_latched = true,
-            E::RemoteLatchReleased => self.remote_latched = false,
+            E::RemoteLatched(session) => self.remote_latched = Some(session),
+            E::RemoteLatchReleased => self.remote_latched = None,
             E::DismissCancelled(session) => {
                 self.cancelled.remove(&session);
                 if matches!(self.gate(session), ChainGate::Tripped { .. }) {

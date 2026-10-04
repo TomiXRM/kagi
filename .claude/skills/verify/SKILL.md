@@ -448,6 +448,13 @@ The current suite covers:
   policy uses the same lane. Node/dash `paint_order` proves that WIP paths are
   behind crossed nodes. The same run covers shared HEAD (stacked rings, one
   trace), detached/unborn state, 1.25× zoom, hover and selection.
+  The same painted frame records `graph-commit-row` (29px at 100%) and
+  `graph-commit-author` / `graph-commit-time` (96px / 48px at 100%,
+  120px / 60px at 125%) using `e2e::measure_inside` on the first row/cells.
+  `KAGI_GUI_E2E_ONLY=commit_list_roles` confirms the Graph AX row still
+  names the full author and verbose age even though the visible time is short.
+  For the compact metadata display (#1003), Tier B compares EN Dark
+  screenshots of the same fixture before/after at 100% zoom and normal density.
   Ring diameter matches the visible HEAD ring (classic) or commit avatar disc
   (swimlane); stroke stays 2px, lane-coloured, without a fill. The trace is
   compile-time `gui-e2e` only and opt-in per window through

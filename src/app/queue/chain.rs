@@ -46,11 +46,13 @@ impl IntentQueue {
                 effects.push(QueueEffect::CloseConfirm(id));
                 effects.push(QueueEffect::InvalidatePlan(id));
                 // Planning's job still owns the latch. Only PlanSlotFreed clears it.
+                // A Planning head has no modal yet: the slot belongs to whoever
+                // holds it, and only the confirmation the queue opened is released.
                 if head.state == IntentState::AwaitingConfirm {
                     self.plan_slot_busy = false;
                     self.planning_job = None;
+                    self.modal_busy = false;
                 }
-                self.modal_busy = false;
             }
             IntentState::Admitting => {
                 effects.push(QueueEffect::CloseConfirm(id));
@@ -176,7 +178,7 @@ impl IntentQueue {
             ) {
                 continue;
             }
-            let reason = if self.remote_latched {
+            let reason = if self.remote_latched.is_some() {
                 Some(WaitReason::RemoteLatched)
             } else if self.write.is_some() || self.write_busy {
                 Some(WaitReason::WriteRunning)

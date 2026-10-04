@@ -36,6 +36,8 @@ pub(crate) struct QueueWiring {
     modal: bool,
     revalidating: Option<SessionId>,
     remote: bool,
+    /// The tab that started the lease-less remote pull (set at its latch).
+    remote_owner: Option<SessionId>,
     planning: bool,
     /// The tracked write the queue was told about, until its release.
     write: Option<OwnerStamp>,
@@ -413,6 +415,12 @@ impl KagiApp {
         }
     }
 
+    /// The lease-less remote pull latched from the tab now on screen: its
+    /// own queue must refuse new intents, others only wait (ADR-0204 決定 3).
+    pub(crate) fn note_remote_write_owner(&mut self) {
+        self.op_queue.remote_owner = self.active_session();
+    }
+
     /// A write the queue cannot judge started. `owner: None` is background
     /// work (auto-fetch) that is no one's predecessor.
     pub(crate) fn queue_untracked_write(
@@ -498,12 +506,18 @@ impl KagiApp {
         let remote = self.remote_write.is_some();
         if remote != self.op_queue.remote {
             self.op_queue.remote = remote;
-            let event = if remote {
-                QueueEvent::RemoteLatched
-            } else {
-                QueueEvent::RemoteLatchReleased
-            };
-            self.drive_queue(event, cx);
+            match (remote, self.op_queue.remote_owner.or(active)) {
+                (true, Some(owner)) => {
+                    self.drive_queue(QueueEvent::RemoteLatched(owner), cx);
+                }
+                // No tab owns the screen: nothing can be queued, and the
+                // latch is observed again once a tab is on screen.
+                (true, None) => self.op_queue.remote = false,
+                (false, _) => {
+                    self.op_queue.remote_owner = None;
+                    self.drive_queue(QueueEvent::RemoteLatchReleased, cx);
+                }
+            }
         }
         let planning = self.planning.is_some();
         if planning != self.op_queue.planning {

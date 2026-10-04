@@ -43,6 +43,7 @@ impl KagiApp {
     /// and is the same follow-up slice as #703.
     pub(crate) fn mark_remote_write(&mut self, name: &'static str) {
         self.remote_write = Some(name);
+        self.note_remote_write_owner();
     }
 
     /// An admitted lease is the sole timer owner. No separate write clock

@@ -263,3 +263,51 @@ pub(super) fn reserve_id(lock: &mut File, floor: u64) -> Result<u64, GitError> {
     lock.sync_all().map_err(io)?;
     Ok(assigned)
 }
+
+#[cfg(test)]
+mod recovery_plan_tests {
+    use super::*;
+    use crate::oplog::parse_oplog_line;
+    use kagi_domain::plan_note::{BranchRecovery, PlanRecovery, RecoveryKind};
+
+    #[test]
+    fn retirement_matches_typed_recovery_and_keeps_other_line_bytes() {
+        let state = crate::ops::StateSummary {
+            head: "main".into(),
+            dirty: "clean".into(),
+        };
+        let mut selected = OpLogEntry::new(
+            "selected",
+            "/tmp/repo",
+            state.clone(),
+            super::super::OpOutcome::Success {
+                after: state.clone(),
+            },
+        );
+        selected.recovery_plan = Some(PlanRecovery {
+            kind: RecoveryKind::Branch(BranchRecovery::CreateBranch {
+                name: "feature".into(),
+            }),
+            commands: vec!["git branch -d feature".into()],
+        });
+        let mut kept = selected.clone();
+        kept.op = "kept".into();
+        kept.id = 9;
+        let selected_line = format!("{}\n", entry_to_json(&selected));
+        // Spaces and unknown fields are not normalized by retention.
+        let kept_line = format!(
+            "{}\n",
+            entry_to_json(&kept).replacen(
+                "\"recovery_plan\":",
+                "\"newer_field\":true, \"recovery_plan\":",
+                1
+            )
+        );
+        let content = format!("{selected_line}{kept_line}");
+        let selected_from_disk = parse_oplog_line(&selected_line).unwrap();
+        assert_eq!(selected_from_disk.recovery_plan, selected.recovery_plan);
+        let (retained, entries) = without_entry(&content, &selected_from_disk).unwrap();
+        assert_eq!(retained, kept_line);
+        assert_eq!(entries[0].recovery_plan, kept.recovery_plan);
+    }
+}

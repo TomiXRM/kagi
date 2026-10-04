@@ -324,6 +324,9 @@ impl Backend {
             outcome,
         )
         .with_ref_moves(ref_moves);
+        if entry.outcome.may_have_changed() {
+            entry.recovery_plan = plan.preview.recovery.clone();
+        }
         if let Some(identity) = identity_before {
             entry.repo_identity = crate::oplog::RecordedIdentity::Known(identity);
         }

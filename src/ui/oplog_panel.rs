@@ -18,7 +18,9 @@ use std::path::PathBuf;
 
 use gpui::AppContext as _;
 use kagi_domain::oplog_reflog::{Attribution, ReflogLine, ReflogWindow};
+use kagi_domain::plan_note::ShellKind;
 use kagi_git::oplog::{OpLogEntry, OpOutcome};
+use kagi_ui_core::i18n::{plan::plan_recovery_sentences, Msg};
 
 /// Maximum entries kept in the in-memory ring buffer.
 const OP_ENTRIES_MAX: usize = 200;
@@ -303,8 +305,17 @@ pub fn outcome_summary(outcome: &OpOutcome) -> String {
     }
 }
 
-/// The expanded-row detail lines (before/after state + error/blockers). Pure.
+/// The expanded-row detail lines (before/after state, error/blockers, recovery).
 pub fn detail_lines(entry: &OpLogEntry) -> Vec<String> {
+    let mut lines = base_detail_lines(entry);
+    if let Some(recovery) = recovery_lines(entry) {
+        lines.extend(recovery);
+    }
+    lines
+}
+
+/// The existing receipt facts; recovery is drawn as its own AX-labelled group.
+pub(crate) fn base_detail_lines(entry: &OpLogEntry) -> Vec<String> {
     let mut lines = vec![
         format!("  before:  {}", entry.before.head),
         format!("  dirty:   {}", entry.before.dirty),
@@ -342,6 +353,30 @@ pub fn detail_lines(entry: &OpLogEntry) -> Vec<String> {
     lines
 }
 
+/// Approved-plan guidance is shown only for outcomes that may have changed
+/// state. Missing guidance is explicitly unknown, never inferred from handles.
+pub fn recovery_lines(entry: &OpLogEntry) -> Option<Vec<String>> {
+    if !entry.outcome.may_have_changed() {
+        return None;
+    }
+    let mut lines = vec![format!("  {}:", Msg::OpLogRecovery.t())];
+    match &entry.recovery_plan {
+        Some(plan) => {
+            lines.extend(
+                plan_recovery_sentences(Some(plan))
+                    .into_iter()
+                    .map(|line| format!("  {line}")),
+            );
+            lines.extend(
+                plan.commands_for(ShellKind::current())
+                    .iter()
+                    .map(|command| format!("  {} {command}", Msg::OpLogRecoveryCommand.t())),
+            );
+        }
+        None => lines.push(format!("  {}", Msg::OpLogRecoveryNotRecorded.t())),
+    }
+    Some(lines)
+}
 /// One recorded ref move as text — the expanded row and the copied entry
 /// share it (#871 review). `full` keeps whole OIDs (the copy, for
 /// investigation); the row shows 8 characters. `absent` names a side where
@@ -422,6 +457,60 @@ mod tests {
                 },
             },
         )
+    }
+
+    #[test]
+    fn recovery_section_follows_changed_outcomes_not_refusals_or_failures() {
+        use kagi_domain::plan_note::{PlanRecovery, RecoveryKind};
+        let state = kagi_git::ops::StateSummary {
+            head: "main".into(),
+            dirty: "clean".into(),
+        };
+        let recovery = PlanRecovery {
+            kind: RecoveryKind::Discard,
+            commands: vec!["git cat-file -p abc".into()],
+        };
+        for outcome in [
+            OpOutcome::Success {
+                after: state.clone(),
+            },
+            OpOutcome::Partial {
+                after: state.clone(),
+                error: "some changes succeeded".into(),
+            },
+            OpOutcome::Unknown {
+                after: state.clone(),
+                evidence: "may have changed".into(),
+            },
+        ] {
+            let mut entry = OpLogEntry::new("op", "repo", state.clone(), outcome);
+            entry.recovery_plan = Some(recovery.clone());
+            let section = recovery_lines(&entry).unwrap().join("\n");
+            assert!(
+                section.contains("This discards your unstaged changes"),
+                "{section}"
+            );
+            assert!(
+                section.contains(&format!(
+                    "{} git cat-file -p abc",
+                    Msg::OpLogRecoveryCommand.t()
+                )),
+                "{section}"
+            );
+        }
+        for outcome in [
+            OpOutcome::Failed {
+                error: "unchanged".into(),
+            },
+            OpOutcome::Refused {
+                blockers: vec!["blocked".into()],
+            },
+        ] {
+            let mut entry = OpLogEntry::new("op", "repo", state.clone(), outcome);
+            entry.recovery_plan = Some(recovery.clone());
+            assert!(recovery_lines(&entry).is_none());
+            assert!(!entry_clipboard_text(&entry).contains("Recovery:"));
+        }
     }
 
     /// #904 review: an issue-create's receipt shows the labels and assignees

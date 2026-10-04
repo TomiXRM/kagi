@@ -1763,6 +1763,7 @@ impl Backend {
             recording::Receipt {
                 backup_refs: Vec::new(),
                 recovery: Vec::new(),
+                recovery_plan: plan.recovery.as_ref(),
                 failure_code,
                 ref_moves,
             },

@@ -575,6 +575,7 @@ impl Backend {
             recording::Receipt {
                 backup_refs: Vec::new(),
                 recovery: Vec::new(),
+                recovery_plan: None,
                 failure_code: None,
                 ref_moves,
             },

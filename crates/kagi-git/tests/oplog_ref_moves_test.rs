@@ -8,6 +8,7 @@ use git_fixture::{commit_all, git, git_output, init_repo, write_file};
 #[path = "../../../tests/support/isolated.rs"]
 mod test_support;
 
+use kagi_domain::plan_note::{BranchRecovery, RecoveryKind};
 use kagi_domain::ref_moves::RefMove;
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpLogEntry, OpOutcome};
 use kagi_git::{Backend, CommitId, Operation};
@@ -35,6 +36,35 @@ fn run(dir: &Path, op: Operation) -> OpLogEntry {
     read_oplog_tail_for_repo(dir, 1)
         .pop()
         .expect("the run was recorded")
+}
+
+#[test]
+fn recorded_create_branch_retains_approved_recovery_kind_and_commands() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let mut backend = Backend::open(&repo).unwrap();
+    backend.set_auto_snapshot(false);
+    let op = Operation::CreateBranch {
+        name: "new-feature".into(),
+        at: CommitId(tip(&repo, "HEAD")),
+    };
+    let plan = backend.plan(&op).unwrap();
+    let approved = plan.recovery.clone().expect("plan has recovery");
+    let report = backend.run_recorded(&op, &plan);
+    assert!(matches!(
+        report.recording.entry().outcome,
+        OpOutcome::Success { .. }
+    ));
+    assert!(matches!(
+        approved.kind,
+        RecoveryKind::Branch(BranchRecovery::CreateBranch { .. })
+    ));
+    assert!(!approved.commands.is_empty(), "command was approved");
+    let recorded = read_oplog_tail_for_repo(&repo, 1).pop().unwrap();
+    assert_eq!(recorded.recovery_plan, Some(approved));
 }
 
 fn moved(refname: &str, old: Option<&str>, new: Option<&str>) -> RefMove {

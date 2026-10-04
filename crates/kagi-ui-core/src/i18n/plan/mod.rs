@@ -562,3 +562,51 @@ pub fn plan_recovery_text(recovery: Option<&PlanRecovery>) -> String {
         },
     }
 }
+
+/// Sentences of the already-localized recovery explanation, for surfaces
+/// that offer the plan's structured commands separately. This preserves the
+/// former plan-card grouping rule (#994): after trimming, a `git `-prefixed
+/// display line is a command line, not prose. It never decides what to run.
+pub fn plan_recovery_sentences(recovery: Option<&PlanRecovery>) -> Vec<String> {
+    recovery_sentences_from_text(&plan_recovery_text(recovery))
+}
+
+fn recovery_sentences_from_text(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("git "))
+        .map(str::to_owned)
+        .collect()
+}
+
+#[cfg(test)]
+#[test]
+fn recovery_sentences_exclude_display_commands_in_both_languages() {
+    use kagi_domain::plan_note::BranchRecovery;
+
+    let branch = BranchRecovery::CreateBranch {
+        name: "demo".into(),
+    };
+    let en = branch.message_en();
+    let ja = branch::recovery_ja(&branch);
+    assert_eq!(
+        recovery_sentences_from_text(&en),
+        ["The new branch 'demo' can be removed without side effects:"]
+    );
+    assert_eq!(
+        recovery_sentences_from_text(&ja),
+        ["副作用なく削除できます:"]
+    );
+
+    let deleted = BranchRecovery::DeleteBranch {
+        name: "demo".into(),
+        tip: Some("abc123".into()),
+    };
+    assert_eq!(
+        recovery_sentences_from_text(&deleted.message_en()),
+        [
+            "To restore the deleted branch:",
+            "The tip 'abc123' will be retained by a backup ref; use the receipt's backup ref to restore after GC.",
+        ]
+    );
+}

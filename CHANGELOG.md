@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
+- Operation Log に承認済み計画の復旧説明と復旧コマンドを追加しました。Success / Partial / Unknown のみ現在の表示言語で表示・コピーし、説明に埋め込まれたコマンドは別行に一度だけ表示します。記録のない旧エントリは「記録されていません」と明示し、Failed / Refused では復旧欄を表示しません。(#1025)
 - merge を操作キューに追加しました。実行中や同じ tab の列の後ろに積み、対象 branch を凍結して順番が来たら計画を作り直します。確認は常に merge modal で行い、競合が起きれば後続は実行しません。(#355 段階 3b-2)
 - commit を操作キューに追加しました。先行する操作の後に実行し、本文や stage 済みの内容が変わっていれば確認します。入力欄に focus がある間は待機します。(#355 段階 3b-1)
 - 別の操作が実行中のとき、checkout(double click・Enter・branch の右クリックメニュー・確認 modal)を断らずに後で実行する列に入れます。入れた瞬間に status bar の上の列(右寄せ)と短い toast(`Queued: checkout b`)に出ます。順番が来たら plan を作り直し、blocker も warning も無ければ modal なしで実行し(実行中の行に 2 秒以降の経過秒)、それ以外は確認 modal を出します。前の操作が成功しなければ後ろの checkout は実行せず、理由つきで取り消し一覧に残します(消去・tab を閉じる・終了まで、32 件)。列の各行は「外す」でいつでも取り出せ、「すべて取り消す」で tab の列を空にできます。列がある tab では背景の fetch を行いません。commit は段階 3b-1 で受付を追加し、merge は未対応です。(#355 段階 3a)

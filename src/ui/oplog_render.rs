@@ -240,6 +240,9 @@ fn render_row(
         )
         .when_some(detail, |row, reflog| {
             let row = row.child(render_detail(i, entry));
+            let row = row.when_some(oplog_panel::recovery_lines(entry), |row, lines| {
+                row.child(render_recovery(i, entry, lines))
+            });
             let row = match &entry.ref_moves {
                 Some(moves) => row.child(render_ref_moves(i, moves)),
                 None => row.child(render_reflog(i, reflog)),
@@ -257,7 +260,7 @@ fn render_row(
 /// 0 so the lines sit together. Leading / aligned spaces still collapse on
 /// screen; the clipboard copy keeps the alignment.
 fn render_detail(i: usize, entry: &OpLogEntry) -> gpui::AnyElement {
-    let text = oplog_panel::detail_lines(entry).join("\n");
+    let text = oplog_panel::base_detail_lines(entry).join("\n");
     let selectable = text.len() <= SELECTABLE_DETAIL_MAX;
     let html = SharedString::from(kagi_domain::message::message_to_html(&text));
     let style = gpui_component::text::TextViewStyle {
@@ -294,6 +297,46 @@ fn render_detail(i: usize, entry: &OpLogEntry) -> gpui::AnyElement {
                 html,
             )
             .style(style)
+            .selectable(selectable),
+        )
+        .into_any_element()
+}
+
+/// Separate plan guidance from execution facts in both the visual hierarchy
+/// and the accessibility tree; its name follows the current language.
+fn render_recovery(i: usize, entry: &OpLogEntry, lines: Vec<String>) -> gpui::AnyElement {
+    let text = lines.join("\n");
+    let selectable = text.len() <= SELECTABLE_DETAIL_MAX;
+    let html = SharedString::from(kagi_domain::message::message_to_html(&text));
+    let group = super::dialog_a11y::apply_group(
+        "oplog-recovery",
+        div()
+            .id(("oplog-recovery", i))
+            .flex()
+            .flex_col()
+            .w_full()
+            .min_w(px(0.))
+            .px_3()
+            .pb_1()
+            .bg(rgb(theme().selected))
+            .text_xs()
+            .text_color(rgb(theme().text_sub))
+            .whitespace_normal()
+            .on_mouse_down(MouseButton::Left, |_e, _w, cx| cx.stop_propagation())
+            .child(super::e2e::measure_inside(format!("oplog-recovery-{i}"))),
+        SharedString::from(Msg::OpLogRecovery.t()),
+    )
+    .aria_description(SharedString::from(text));
+    group
+        .child(
+            gpui_component::text::TextView::html(
+                SharedString::from(format!("oplog-recovery-{}-{i}", entry.id)),
+                html,
+            )
+            .style(gpui_component::text::TextViewStyle {
+                paragraph_gap: gpui::rems(0.),
+                ..Default::default()
+            })
             .selectable(selectable),
         )
         .into_any_element()

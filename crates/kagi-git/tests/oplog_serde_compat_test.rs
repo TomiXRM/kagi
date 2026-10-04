@@ -32,11 +32,13 @@
 //!   a nested decoy object), `backup_refs` of the wrong type, an unknown outcome
 //!   kind, an `Unknown` missing its evidence, `\uXXXX` surrogate pairs and
 //!   control escapes, malformed `recovery` elements, and scalars written as
-//!   strings.
+//!   strings. The final #1025 synthetic line carries a frozen typed recovery
+//!   field with its command, independently of the current serializer.
 //!
 //! `KAGI_LOG_DIR` is process-global, so every test runs in its own child
 //! process with its own log directory (`support/isolated.rs`).
 
+use kagi_domain::plan_note::{BranchRecovery, PlanRecovery, RecoveryKind};
 use kagi_git::oplog::{
     append_oplog_receipt, entry_to_json, read_oplog_tail, recovery, Actor, FailureCode, OpLogEntry,
     OpOutcome, RecoveryHandle,
@@ -505,6 +507,7 @@ fn legacy_and_malformed_lines_keep_their_valid_neighbours() {
             "surrogate-commit",
             "string-scalars-branch",
             "invalid-scalars-discard",
+            "typed-recovery-branch",
         ],
         "garbage, a truncated write, a wrong-typed backup_refs, an unknown \
          outcome kind and an evidence-less Unknown are each dropped alone"
@@ -523,6 +526,7 @@ fn legacy_and_malformed_lines_keep_their_valid_neighbours() {
             (10, Some(9)),
             (12, Some(11)),
             (0, None),
+            (21, Some(12)),
         ]
     );
 
@@ -533,6 +537,7 @@ fn legacy_and_malformed_lines_keep_their_valid_neighbours() {
     assert_eq!(legacy.worktree, None);
     assert!(legacy.recovery.is_empty());
     assert!(legacy.backup_refs.is_empty());
+    assert_eq!(legacy.recovery_plan, None);
     assert_eq!(
         outcome_of(&entries[1]),
         Outcome::Refused {
@@ -592,6 +597,15 @@ fn legacy_and_malformed_lines_keep_their_valid_neighbours() {
         Outcome::Failed {
             error: String::new()
         }
+    );
+    assert_eq!(
+        entries[7].recovery_plan,
+        Some(PlanRecovery {
+            kind: RecoveryKind::Branch(BranchRecovery::CreateBranch {
+                name: "feature".into(),
+            }),
+            commands: vec!["git branch -d feature".into()],
+        })
     );
 }
 

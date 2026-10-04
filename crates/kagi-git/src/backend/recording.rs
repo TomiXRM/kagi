@@ -242,9 +242,10 @@ pub fn recovery_handles(result: &Result<OperationOutcome, GitError>) -> Vec<Reco
 }
 
 /// What a backend attempt leaves on its oplog entry besides the outcome.
-pub(super) struct Receipt {
+pub(super) struct Receipt<'a> {
     pub backup_refs: Vec<String>,
     pub recovery: Vec<RecoveryHandle>,
+    pub recovery_plan: Option<&'a kagi_domain::plan_note::PlanRecovery>,
     pub failure_code: Option<crate::oplog::FailureCode>,
     pub ref_moves: Option<Vec<kagi_domain::ref_moves::RefMove>>,
 }
@@ -255,7 +256,7 @@ impl Backend {
         op: &str,
         before: &ops::StateSummary,
         outcome: crate::oplog::OpOutcome,
-        receipt: Receipt,
+        receipt: Receipt<'_>,
     ) -> Recording {
         let repo = self.path.display().to_string();
         let mut entry = crate::oplog::OpLogEntry::new(op, repo.clone(), before.clone(), outcome)
@@ -269,6 +270,11 @@ impl Backend {
         }
         entry.backup_refs = receipt.backup_refs;
         entry.recovery = receipt.recovery;
+        entry.recovery_plan = if entry.outcome.may_have_changed() {
+            receipt.recovery_plan.cloned()
+        } else {
+            None
+        };
         entry.failure_code = receipt.failure_code;
         finalize(entry)
     }
@@ -379,6 +385,7 @@ impl Backend {
             Receipt {
                 backup_refs: Vec::new(),
                 recovery: handles,
+                recovery_plan: plan.recovery.as_ref(),
                 failure_code,
                 ref_moves,
             },
@@ -487,6 +494,7 @@ mod identity_tests {
             Receipt {
                 backup_refs: Vec::new(),
                 recovery: Vec::new(),
+                recovery_plan: None,
                 failure_code: None,
                 ref_moves: moves,
             },
@@ -495,5 +503,79 @@ mod identity_tests {
             recording.entry().repo_identity,
             crate::oplog::RecordedIdentity::Known(original)
         );
+    }
+
+    /// A failed or refused operation cannot advertise approved-plan recovery.
+    #[test]
+    fn approved_recovery_is_recorded_only_for_changed_or_uncertain_outcomes() {
+        use kagi_domain::plan_note::{PlanRecovery, RecoveryKind};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("repo");
+        git2::Repository::init(&path).unwrap();
+        let backend = Backend::open(&path).unwrap();
+        let state = ops::StateSummary {
+            head: "branch: main".into(),
+            dirty: "clean".into(),
+        };
+        let recovery = PlanRecovery {
+            kind: RecoveryKind::Discard,
+            commands: vec!["git status".into()],
+        };
+        let outcomes = [
+            (
+                crate::oplog::OpOutcome::Success {
+                    after: state.clone(),
+                },
+                true,
+            ),
+            (
+                crate::oplog::OpOutcome::Partial {
+                    after: state.clone(),
+                    error: "partial".into(),
+                },
+                true,
+            ),
+            (
+                crate::oplog::OpOutcome::Unknown {
+                    after: state.clone(),
+                    evidence: "unverified".into(),
+                },
+                true,
+            ),
+            (
+                crate::oplog::OpOutcome::Failed {
+                    error: "preflight".into(),
+                },
+                false,
+            ),
+            (
+                crate::oplog::OpOutcome::Refused {
+                    blockers: vec!["blocked".into()],
+                },
+                false,
+            ),
+        ];
+        // Inspect each invocation's receipt, not the process-global log: other
+        // unit tests change KAGI_LOG_DIR while running in parallel (see absorb.rs).
+        for (index, (outcome, expected)) in outcomes.into_iter().enumerate() {
+            let recording = backend.record_receipt(
+                &format!("outcome-{index}"),
+                &state,
+                outcome,
+                Receipt {
+                    backup_refs: Vec::new(),
+                    recovery: Vec::new(),
+                    recovery_plan: Some(&recovery),
+                    failure_code: None,
+                    ref_moves: None,
+                },
+            );
+            assert_eq!(
+                recording.entry().recovery_plan.as_ref(),
+                expected.then_some(&recovery),
+                "outcome-{index}"
+            );
+        }
     }
 }

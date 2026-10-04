@@ -53,6 +53,7 @@ fn oplog_filter_scopes_to_bound_repo() {
     let mk = |repo: &std::path::Path, op: &str| OpLogEntry {
         backup_refs: Vec::new(),
         recovery: Vec::new(),
+        recovery_plan: None,
         failure_code: None,
         ref_moves: None,
         ref_scope: Default::default(),
@@ -208,6 +209,7 @@ fn synthetic_entry(id: u64, repo: &str) -> OpLogEntry {
         outcome: OpOutcome::Success { after: state },
         backup_refs: Vec::new(),
         recovery: Vec::new(),
+        recovery_plan: None,
         failure_code: None,
         ref_moves: None,
         ref_scope: Default::default(),
@@ -784,5 +786,83 @@ fn issue_fields_round_trip_and_stay_additive() {
         let line = format!(r#"{base},"issue_fields":{value}}}"#);
         let entry = parse_oplog_line(&line).unwrap_or_else(|| panic!("must parse: {line}"));
         assert_eq!(entry.issue_fields, None, "{value}");
+    }
+}
+
+#[test]
+fn recovery_plan_round_trips_typed_kind_and_degrades_without_dropping_entry() {
+    use kagi_domain::plan_note::{
+        BranchRecovery, GithubRecovery, HistoryMoveDir, HistoryRecovery, PlanRecovery, RecoveryKind,
+    };
+    let base = concat!(
+        r#"{"timestamp":1000,"op":"create-branch","repo":"/tmp/repo","#,
+        r#""before":{"head":"main","dirty":"clean"},"#,
+        r#""outcome":{"kind":"Success","after":{"head":"main","dirty":"clean"}}"#,
+    );
+    let legacy = parse_oplog_line(&format!("{base}}}")).unwrap();
+    assert_eq!(legacy.recovery_plan, None);
+    assert!(!entry_to_json(&legacy).contains("recovery_plan"));
+    let expected = PlanRecovery {
+        kind: RecoveryKind::Branch(BranchRecovery::DeleteBranch {
+            name: "feature".into(),
+            tip: Some("abc123".into()),
+        }),
+        commands: vec!["git branch feature abc123".into()],
+    };
+    let mut entry = legacy;
+    entry.recovery_plan = Some(expected.clone());
+    let serialized = entry_to_json(&entry);
+    let restored = parse_oplog_line(&serialized).unwrap();
+    assert_eq!(restored.recovery_plan, Some(expected));
+    for expected in [
+        PlanRecovery {
+            kind: RecoveryKind::Discard,
+            commands: vec![],
+        },
+        PlanRecovery {
+            kind: RecoveryKind::History(HistoryRecovery::HistoryMove {
+                label: HistoryMoveDir::Undo,
+                branch: "main".into(),
+                from_short: "abc".into(),
+                to_short: "def".into(),
+                kind_slug: "commit".into(),
+                from_full: "abcdef".into(),
+            }),
+            commands: vec!["git branch main abcdef".into()],
+        },
+    ] {
+        entry.recovery_plan = Some(expected.clone());
+        let read = parse_oplog_line(&entry_to_json(&entry)).unwrap();
+        assert_eq!(read.recovery_plan, Some(expected));
+    }
+    // PR merge's execution-only local cleanup context is deliberately not a
+    // second durable plan; both language renderers need only the PR number.
+    let github = PlanRecovery {
+        kind: RecoveryKind::Github(GithubRecovery::MergePr {
+            number: 42,
+            base_repo: "host/owner/repo".into(),
+            delete_branch: Some("feature".into()),
+            cross_repository: true,
+            local_branch: None,
+        }),
+        commands: vec!["gh pr view 42".into()],
+    };
+    entry.recovery_plan = Some(github.clone());
+    let read = parse_oplog_line(&entry_to_json(&entry)).unwrap();
+    let github_read = read.recovery_plan.unwrap();
+    assert_eq!(github_read.message_en(), github.message_en());
+    assert_eq!(github_read.commands, github.commands);
+    for value in [
+        "null",
+        r#""text""#,
+        r#"{"kind":{"kind":"NextKind","payload":{}},"commands":[]}"#,
+        r#"{"kind":{"kind":"Branch","payload":{"FutureBranch":{}}},"commands":[]}"#,
+        r#"{"kind":{"kind":"Branch","payload":{"CreateBranch":{"name":4}}},"commands":[]}"#,
+        r#"{"kind":{"kind":"Discard"},"commands":"bad"}"#,
+    ] {
+        let line = format!(r#"{base},"recovery_plan":{value}}}"#);
+        let parsed = parse_oplog_line(&line).unwrap_or_else(|| panic!("entry dropped: {value}"));
+        assert_eq!(parsed.op, "create-branch");
+        assert_eq!(parsed.recovery_plan, None, "{value}");
     }
 }

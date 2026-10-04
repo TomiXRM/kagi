@@ -203,11 +203,7 @@ pub(crate) fn render_input_plan_modal(
         .as_ref()
         .is_some_and(|state| !state.read(cx).value().trim().is_empty());
     if let Some(plan) = plan {
-        body = body.child(
-            div()
-                .flex_shrink_0()
-                .child(render_current_predicted(&plan, Some(accent.clone()))),
-        );
+        body = body.child(div().flex_shrink_0().child(render_current_predicted(&plan)));
 
         if !plan.warnings.is_empty() {
             let mut warn_col = div().flex().flex_col().gap_1();

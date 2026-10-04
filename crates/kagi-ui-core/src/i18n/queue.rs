@@ -8,6 +8,13 @@ use super::{lang, Lang};
 pub enum QueueText {
     /// Prefix of the toast for an accepted intent.
     Queued,
+    /// Label above the frozen subject and body in a queued commit confirmation.
+    FrozenMessage,
+    /// Why a queued commit asks again instead of running without a prompt.
+    DraftChanged,
+    StagedChanged,
+    PlanBlockers,
+    PlanWarnings,
     /// `queued: N` — intents whose write has not started (決定 2).
     Count,
     Running,
@@ -18,7 +25,7 @@ pub enum QueueText {
     WaitPlan,
     WaitConfirm,
     WaitReconcile,
-    WaitPull,
+    WaitTyping,
     /// The cancel list heading.
     Cancelled,
     CancelAll,
@@ -32,6 +39,7 @@ pub enum QueueText {
     ReasonOwnerGone,
     ReasonIdentity,
     ReasonStale,
+    ReasonMergeStarted,
 }
 
 pub fn queue_text(key: QueueText) -> &'static str {
@@ -39,6 +47,16 @@ pub fn queue_text(key: QueueText) -> &'static str {
     match (lang(), key) {
         (Lang::En, Queued) => "Queued",
         (Lang::Ja, Queued) => "キューに追加",
+        (Lang::En, FrozenMessage) => "Queued message",
+        (Lang::Ja, FrozenMessage) => "キューに追加したメッセージ",
+        (Lang::En, DraftChanged) => "Draft changed",
+        (Lang::Ja, DraftChanged) => "下書きの変更",
+        (Lang::En, StagedChanged) => "Staged files changed",
+        (Lang::Ja, StagedChanged) => "ステージ済みの変更",
+        (Lang::En, PlanBlockers) => "Plan blockers",
+        (Lang::Ja, PlanBlockers) => "plan の問題",
+        (Lang::En, PlanWarnings) => "Plan warnings",
+        (Lang::Ja, PlanWarnings) => "plan の注意",
         (Lang::En, Count) => "queued",
         (Lang::Ja, Count) => "待ち",
         (Lang::En, Running) => "running",
@@ -57,8 +75,8 @@ pub fn queue_text(key: QueueText) -> &'static str {
         (Lang::Ja, WaitConfirm) => "待機: 確認",
         (Lang::En, WaitReconcile) => "waiting: reconcile",
         (Lang::Ja, WaitReconcile) => "待機: reconcile",
-        (Lang::En, WaitPull) => "waiting: pull",
-        (Lang::Ja, WaitPull) => "待機: pull",
+        (Lang::En, WaitTyping) => "waiting: typing",
+        (Lang::Ja, WaitTyping) => "待機: 入力中",
         (Lang::En, Cancelled) => "cancelled",
         (Lang::Ja, Cancelled) => "取り消し",
         (Lang::En, CancelAll) => "Cancel all",
@@ -83,5 +101,7 @@ pub fn queue_text(key: QueueText) -> &'static str {
         (Lang::Ja, ReasonIdentity) => "worktree が変わった",
         (Lang::En, ReasonStale) => "plan outdated",
         (Lang::Ja, ReasonStale) => "plan が古い",
+        (Lang::En, ReasonMergeStarted) => "merge started",
+        (Lang::Ja, ReasonMergeStarted) => "merge 開始",
     }
 }

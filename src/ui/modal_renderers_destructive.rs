@@ -161,10 +161,7 @@ pub(crate) fn render_amend_modal(
         cancel.clone(),
     )
     .child(title_row);
-    let mut body = modal_body().child(render_current_predicted(
-        &plan,
-        Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
-    ));
+    let mut body = modal_body().child(render_current_predicted(&plan));
 
     // #454 Phase 2: the staged files this amend folds in were cut to the first
     // 10 rows with no "+N more" and no scroll — with 487 staged files the other

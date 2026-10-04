@@ -93,7 +93,7 @@ pub(crate) struct GithubMergePresentation {
 pub(crate) struct RunPresentation {
     status: Option<FooterStatus>,
     history: Option<RunHistory>,
-    consume_commit_message: Option<PathBuf>,
+    consume_commit_message: Option<(PathBuf, Option<(String, String)>)>,
     refresh_worktree_wip: Option<PathBuf>,
     reload: bool,
     open_operation_log: bool,
@@ -134,7 +134,17 @@ impl RunPresentation {
     }
 
     pub(crate) fn consume_commit_message(mut self, repo: PathBuf) -> Self {
-        self.consume_commit_message = Some(repo);
+        self.consume_commit_message = Some((repo, None));
+        self
+    }
+
+    pub(crate) fn consume_commit_message_if(
+        mut self,
+        repo: PathBuf,
+        branch: String,
+        message: String,
+    ) -> Self {
+        self.consume_commit_message = Some((repo, Some((branch, message))));
         self
     }
 
@@ -620,8 +630,51 @@ impl KagiApp {
     }
 
     fn apply_run_presentation(&mut self, presentation: RunPresentation, cx: &mut Context<Self>) {
-        if let Some(repo) = presentation.consume_commit_message {
-            self.consume_commit_panel_message(&repo, cx);
+        if let Some((repo, message)) = presentation.consume_commit_message {
+            match message {
+                Some((branch, frozen)) => {
+                    let panel_matches = self.ui().commit_panel.as_ref().is_some_and(|panel| {
+                        let panel = panel.read(cx);
+                        panel.repo_path == repo
+                            && panel
+                                .pending_smart_msg
+                                .as_deref()
+                                .is_none_or(|pending| pending == frozen)
+                            && if panel.title_input.is_some() {
+                                panel.committable_message(cx) == frozen
+                            } else {
+                                panel.state.commit_msg == frozen
+                            }
+                    });
+                    let panel_on_branch = self
+                        .ui()
+                        .commit_panel
+                        .as_ref()
+                        .is_some_and(|panel| panel.read(cx).repo_path == repo)
+                        && self.panel_draft_branch(cx) == branch;
+                    let cleared = crate::ui::commit_panel::clear_committed_draft(
+                        &repo,
+                        &branch,
+                        &frozen,
+                        panel_on_branch && !panel_matches,
+                    );
+                    if cleared && panel_matches {
+                        self.clear_commit_panel_message(cx);
+                    } else {
+                        // A pending debounce for the consumed text must not
+                        // restore the old draft, even when newer editing kept
+                        // us from consuming the panel message.
+                        if let Some(panel) = self.ui().commit_panel.clone() {
+                            panel.update(cx, |panel, _| {
+                                if panel.repo_path == repo && panel.last_draft_value == frozen {
+                                    panel.draft_save_gen = panel.draft_save_gen.wrapping_add(1);
+                                }
+                            });
+                        }
+                    }
+                }
+                None => self.consume_commit_panel_message(&repo, cx),
+            }
         }
         if let Some(failure) = presentation.commit_panel_failure {
             // Re-resolve through the *current* pane: same identity means the

@@ -185,6 +185,7 @@ impl Render for KagiApp {
         // #454: publish this frame's window height so the modal list boxes can
         // cap themselves against the window instead of a fixed row count.
         theme::set_viewport_h(f32::from(window.viewport_size().height));
+        theme::set_viewport_w(f32::from(window.viewport_size().width));
 
         // Auto-update (ADR-0082): kick the run-once background version check.
         self.ensure_update_check(cx);
@@ -227,6 +228,20 @@ impl Render for KagiApp {
         self.sync_issue_inputs(window, cx);
         self.sync_list_filter_input(window, cx);
         self.sync_pending_focus(window, cx);
+        // GPUI can retain focus on an input whose modal was just unmounted.
+        // Only a handle tracked by the last drawn dispatch tree may hold the
+        // queue; the next frame releases a head after an Escape dismissal.
+        use gpui::Focusable as _;
+        use gpui_component::WindowExt as _;
+        self.op_queue.observed_input_focused = window.has_focused_input(cx)
+            && window.focused_input(cx).is_some_and(|input| {
+                let handle = input.read(cx).focus_handle(cx);
+                handle.is_focused(window)
+                    && self
+                        .root_focus
+                        .as_ref()
+                        .is_some_and(|root| root.contains(&handle, window))
+            });
         // Home's rows and its Repositories / Pull requests / Issues switch
         // are drawn only with Home in front. Every way off it (⌘W, a
         // repository tab, a row that opens its clone) leaves a focus on them

@@ -209,6 +209,7 @@ impl KagiApp {
         self.attach_modal_overlays(
             el,
             self.plan_modal().cloned(),
+            self.queued_commit_modal().cloned(),
             self.pull_modal().cloned(),
             self.history_modal().cloned(),
             self.conflict_continue_modal().cloned(),
@@ -260,6 +261,7 @@ impl KagiApp {
         &self,
         el: gpui::Div,
         mut plan_modal: Option<CheckoutPlanModal>,
+        mut queued_commit_modal: Option<QueuedCommitModal>,
         mut pull_modal: Option<PullPlanModal>,
         mut history_modal: Option<HistoryPlanModal>,
         mut conflict_continue_modal: Option<ConflictContinuePlanModal>,
@@ -313,6 +315,13 @@ impl KagiApp {
                 LayerKind::EarlyModal => el
                     .when_some(plan_modal.take(), |el, modal| {
                         el.child(render_plan_modal(modal, &self.modal_section_overrides, cx))
+                    })
+                    .when_some(queued_commit_modal.take(), |el, modal| {
+                        el.child(render_queued_commit_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
                     })
                     // ── Pull plan modal overlay (T-HT-003) ──────────
                     .when_some(pull_modal.take(), |el, modal| {

@@ -13,7 +13,7 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use super::dialog_a11y::{apply_dialog, dialog_a11y, ConfirmStage, DialogHandler};
+use super::dialog_a11y::{apply_dialog, apply_group, dialog_a11y, ConfirmStage, DialogHandler};
 use super::i18n::Msg;
 use super::modal_command::render_equivalent_command;
 use super::modal_copy::{modal_copy_button, plan_clipboard_text};
@@ -24,7 +24,7 @@ use super::modal_shell::{
 };
 use super::plan_card_rows::{render_commit_row, render_note_row};
 use super::theme::{self, theme as current_theme};
-use super::KagiApp;
+use super::{KagiApp, MONO_FONT};
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{Icon, IconName, Sizable as _};
@@ -134,212 +134,160 @@ pub(crate) fn modal_overlay(card: impl IntoElement) -> gpui::Div {
         )
 }
 
-/// Shared plan comparison helpers. Summary strings can also carry operation
-/// prose, so turn only known status forms into labeled chips and preserve all
-/// other descriptions verbatim in fallback chips.
-pub(crate) fn plan_state_chip(text: &str, icon: &'static str, color: u32) -> gpui::AnyElement {
-    let (bg, border, foreground) = theme::badge_style(color);
+/// The same quiet status pill used by Stash Push and every other plan card.
+fn plan_status_chip(text: &str, kind: &str) -> gpui::AnyElement {
+    let t = current_theme();
+    let (color, fill_alpha, text_alpha) = match kind {
+        "staged" | "clean" => (t.color_success, 0x33, 0xff),
+        "modified" => (t.change_modified, 0x22, if t.dark { 0xe0 } else { 0xff }),
+        "conflicted" => (t.color_blocker, 0x33, 0xff),
+        _ => (t.text_main, 0x13, 0xcc),
+    };
     div()
         .flex_shrink_0()
         .flex()
-        .flex_row()
         .items_center()
-        .gap_1()
-        .whitespace_nowrap()
-        .px_1()
-        .rounded_sm()
-        .border_1()
-        .border_color(gpui::rgba(border))
-        .bg(gpui::rgba(bg))
-        .text_color(rgb(foreground))
-        .when(icon.is_empty(), |chip| {
-            chip.child(SharedString::from("\u{2713}"))
-        })
-        .when(!icon.is_empty(), |chip| {
-            chip.child(
-                gpui::svg()
-                    .path(icon)
-                    .flex_shrink_0()
-                    .w(theme::scaled_px(11.))
-                    .h(theme::scaled_px(11.))
-                    .text_color(rgb(foreground)),
-            )
-        })
+        .h(theme::scaled_px(if modal_compact() { 20. } else { 24. }))
+        .px_2()
+        .rounded(theme::scaled_px(6.))
+        .bg(gpui::rgba((color << 8) | fill_alpha))
+        .font_family(MONO_FONT)
+        .text_xs()
+        .text_color(gpui::rgba((color << 8) | text_alpha))
         .child(SharedString::from(text.to_owned()))
         .into_any_element()
 }
 
-fn plan_head_chips(head: &str) -> Vec<gpui::AnyElement> {
-    let t = current_theme();
-    if let Some(rest) = head.strip_prefix("branch: ") {
-        // A branch name contains no whitespace. Everything after it is plan
-        // detail (tip, tracking, merge summary, etc.) and must remain visible.
-        let name_end = rest.find(char::is_whitespace).unwrap_or(rest.len());
-        if name_end > 0 {
-            let mut chips = vec![plan_state_chip(
-                &rest[..name_end],
-                "icons/laptop.svg",
-                t.color_head,
-            )];
-            if name_end < rest.len() {
-                chips.push(plan_state_chip(
-                    &rest[name_end..],
-                    "icons/circle-dot.svg",
-                    t.color_head,
-                ));
-            }
-            return chips;
-        }
-    }
-    let (icon, color) = if head.starts_with("detached: ") {
-        ("icons/git-compare.svg", t.color_head)
-    } else if head.starts_with("unborn (") || head == "unborn" {
-        ("icons/git-branch.svg", t.color_branch)
-    } else if head == "HEAD" || head.starts_with("HEAD ") {
-        ("icons/git-branch.svg", t.color_head)
-    } else if head.starts_with("stash@{") || head.starts_with("stash: ") {
-        ("icons/inbox.svg", t.color_tag)
-    } else if head.starts_with("remote: ") {
-        ("icons/cloud.svg", t.color_remote)
-    } else {
-        ("icons/circle-dot.svg", t.color_head)
-    };
-    vec![plan_state_chip(head, icon, color)]
-}
-
-pub(crate) fn plan_status_chips(dirty: &str) -> Vec<gpui::AnyElement> {
-    let t = current_theme();
+/// Count-only statuses can be split; operation prose must remain one verbatim chip.
+fn plan_status_chips(dirty: &str) -> Vec<gpui::AnyElement> {
     if dirty == "clean" {
-        return vec![plan_state_chip("", "", t.color_success)];
+        // The one status the card names itself; counts come from the plan.
+        return vec![plan_status_chip(Msg::PlanStateClean.t(), "clean")];
     }
-    // Count-only forms are emitted by status_summary_display. In particular,
-    // "3 conflicted file(s) (resolve in Conflict Mode)" is NOT just a count:
-    // preserve the entire predicted description instead of losing the caveat.
-    let mut parts = Vec::new();
+    let mut chips = Vec::new();
     for part in dirty.split(", ") {
         let Some((count, kind)) = part.split_once(' ') else {
-            return vec![plan_state_chip(dirty, "icons/circle-dot.svg", t.text_sub)];
+            return vec![plan_status_chip(dirty, "other")];
         };
-        if count.parse::<usize>().is_err() {
-            return vec![plan_state_chip(dirty, "icons/circle-dot.svg", t.text_sub)];
+        if count.parse::<usize>().is_err()
+            || !matches!(kind, "staged" | "modified" | "untracked" | "conflicted")
+        {
+            return vec![plan_status_chip(dirty, "other")];
         }
-        let (icon, color) = match kind {
-            "staged" => ("icons/plus.svg", t.color_success),
-            "modified" => ("icons/square-pen.svg", t.color_warning),
-            "untracked" => ("icons/file-text.svg", t.color_tag),
-            "conflicted" => ("icons/git-merge.svg", t.color_blocker),
-            _ => return vec![plan_state_chip(dirty, "icons/circle-dot.svg", t.text_sub)],
-        };
-        parts.push(plan_state_chip(part, icon, color));
+        chips.push(plan_status_chip(part, kind));
     }
-    parts
+    chips
 }
 
-fn plan_state(head: &str, dirty: &str, id: &'static str, label: &str) -> gpui::AnyElement {
+fn plan_state(
+    head: &str,
+    dirty: &str,
+    label: &'static str,
+    id: &'static str,
+    label_id: &'static str,
+    head_id: &'static str,
+) -> gpui::AnyElement {
     let full = SharedString::from(format!("{label}: {head} [{dirty}]"));
-    let (label_probe, chips_probe) = if label == "CURRENT" {
-        ("plan-state-current-label", "plan-state-current-chips")
-    } else {
-        ("plan-state-predicted-label", "plan-state-predicted-chips")
-    };
-    div()
-        .id(id)
-        .role(gpui::Role::Group)
-        .aria_label(full.clone())
+    apply_group(id, div().id(id), full.clone())
         .tooltip(move |window, cx| {
             gpui_component::tooltip::Tooltip::new(full.clone()).build(window, cx)
         })
         .relative()
-        .flex_1()
-        .min_w(gpui::px(0.))
+        .flex_shrink_0()
         .flex()
-        .flex_col()
-        .gap_1()
-        .child(
-            div()
-                .relative()
-                .text_xs()
-                .text_color(rgb(current_theme().text_label))
-                .child(SharedString::from(label))
-                .child(super::e2e::measure_inside(label_probe)),
-        )
-        .child(
-            div()
-                .id(chips_probe)
-                .relative()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_1()
-                .overflow_x_scroll()
-                .children(plan_head_chips(head))
-                .children(plan_status_chips(dirty))
-                .child(super::e2e::measure_inside(chips_probe)),
-        )
-        .when(cfg!(feature = "gui-e2e"), |state| {
-            state.child(super::e2e::measure_inside(if label == "CURRENT" {
-                "plan-state-current"
-            } else {
-                "plan-state-predicted"
-            }))
-        })
-        .into_any_element()
-}
-pub(crate) fn render_current_predicted(
-    plan: &OperationPlan,
-    accent: Option<PlanCardAccent>,
-) -> gpui::AnyElement {
-    let color = accent
-        .map(|(_, color)| color)
-        .unwrap_or(current_theme().color_branch);
-    div()
-        .min_w(gpui::px(0.))
-        .id("plan-state-comparison")
-        .w_full()
-        .rounded_md()
-        .bg(gpui::rgba(theme::panel_style().0))
-        .text_sm()
-        .when(modal_compact(), |row| row.text_xs())
+        .flex_row()
+        .items_start()
+        .gap_3()
         .px_3()
         .py_2()
         .when(modal_compact(), |row| row.px_2().py_1())
-        // Scroll the comparison as a unit on narrow windows; never let one
-        // state's chip text steal width from its equal-width neighbor.
-        .overflow_x_scroll()
+        .child(
+            div()
+                .w(theme::scaled_px(64.))
+                .flex_shrink_0()
+                .whitespace_nowrap()
+                .pt(theme::scaled_px(3.))
+                .text_xs()
+                .text_color(rgb(current_theme().text_label))
+                .child(SharedString::from(label))
+                .when(cfg!(feature = "gui-e2e"), |label| {
+                    label.relative().child(super::e2e::measure_inside(label_id))
+                }),
+        )
         .child(
             div()
                 .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .when(modal_compact(), |row| row.gap_1())
-                .min_w(theme::scaled_px(480.))
-                .w_full()
-                .child(plan_state(
-                    &plan.current.head,
-                    &plan.current.dirty,
-                    "plan-current-state",
-                    "CURRENT",
-                ))
+                .flex_col()
+                .flex_1()
+                .min_w(gpui::px(0.))
+                .gap(theme::scaled_px(6.))
                 .child(
                     div()
                         .relative()
-                        .flex_shrink_0()
-                        .w(theme::scaled_px(24.))
-                        .text_center()
-                        .text_color(rgb(color))
-                        .child(SharedString::from("\u{2192}"))
-                        .when(cfg!(feature = "gui-e2e"), |arrow| {
-                            arrow.child(super::e2e::measure_inside("plan-state-arrow"))
+                        .font_family(MONO_FONT)
+                        .text_size(theme::scaled_px(13.))
+                        .line_height(gpui::relative(1.5))
+                        .text_color(rgb(current_theme().text_main))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(SharedString::from(head.to_owned()))
+                        .when(cfg!(feature = "gui-e2e"), |head| {
+                            head.child(super::e2e::measure_inside(head_id))
                         }),
                 )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .flex_wrap()
+                        .gap(theme::scaled_px(6.))
+                        .children(plan_status_chips(dirty)),
+                ),
+        )
+        .when(cfg!(feature = "gui-e2e"), |row| {
+            row.child(super::e2e::measure_inside(id))
+        })
+        .into_any_element()
+}
+
+pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement {
+    div()
+        .id("plan-state-comparison")
+        .relative()
+        .w_full()
+        .min_w(gpui::px(0.))
+        .rounded(theme::scaled_px(10.))
+        .bg(rgb(current_theme().bg_base))
+        .border_1()
+        .border_color(gpui::rgba(theme::panel_style().1))
+        .overflow_x_scroll()
+        .flex()
+        .flex_col()
+        .child(plan_state(
+            &plan.current.head,
+            &plan.current.dirty,
+            Msg::InputStashCurrent.t(),
+            "plan-state-current",
+            "plan-state-current-label",
+            "plan-state-current-head",
+        ))
+        .child(
+            div()
+                .border_t_1()
+                .border_color(rgb(current_theme().surface))
                 .child(plan_state(
                     &plan.predicted.head,
                     &plan.predicted.dirty,
-                    "plan-predicted-state",
-                    "PREDICTED",
+                    Msg::InputStashAfter.t(),
+                    "plan-state-after",
+                    "plan-state-after-label",
+                    "plan-state-after-head",
                 )),
         )
+        .when(cfg!(feature = "gui-e2e"), |panel| {
+            panel.child(super::e2e::measure_inside("plan-state-comparison"))
+        })
         .into_any_element()
 }
 
@@ -611,11 +559,7 @@ fn render_plan_modal_card_styled(
     // Fixed blocks stay flex_shrink_0-wrapped: only the panels give up height,
     // and without the guard flex would compress rows instead of scrolling
     // (same T027 bug class as the discard list).
-    let mut body = modal_body().child(
-        div()
-            .flex_shrink_0()
-            .child(render_current_predicted(&plan, accent.clone())),
-    );
+    let mut body = modal_body().child(div().flex_shrink_0().child(render_current_predicted(&plan)));
 
     // ── Warnings ─────────────────────────────────────────
     // #625: a warning carrying a path list renders as sentence + list, the

@@ -214,11 +214,13 @@ blocked plans keep a visible disabled confirm; recovery, when present, is
 only a Git command for Ready plans (detail remains in Operation Log).
 Shared `Theme.radius`/font/input padding and `modal_shell`/plan/IME stay unchanged; values align by role.
 
-## Plan comparison and Operation Log restore (#988)
+## Plan comparison and Operation Log restore (#988, #1017)
 
-The shared plan card keeps CURRENT and PREDICTED as equal-width columns with a
-centered arrow; branch and status chips stay on one scrollable line per column.
-The operation plan remains the source of truth. Show an equivalent CLI command
+All plan cards, including Stash Push, show CURRENT above AFTER in one shared
+two-row comparison. Each row has a fixed 64px nonwrapping localized label,
+mono head and small status chips; a hairline separates the rows. The MD modal
+is 640px wide to keep repository ref names readable. The operation plan remains
+the source of truth. Show an equivalent CLI command
 only when it faithfully describes the executable plan. Pull has none: its
 execution fetches again and may merge a newly diverged remote even if the
 cached tracking ref indicated a fast-forward at planning time. Where a Ready

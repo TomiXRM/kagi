@@ -7,12 +7,14 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
-- 別の操作が実行中のとき、checkout(double click・Enter・branch の右クリックメニュー・確認 modal)を断らずに後で実行する列に入れます。入れた瞬間に status bar の上の列(右寄せ)と短い toast(`Queued: checkout b`)に出ます。順番が来たら plan を作り直し、blocker も warning も無ければ modal なしで実行し(実行中の行に 2 秒以降の経過秒)、それ以外は確認 modal を出します。前の操作が成功しなければ後ろの checkout は実行せず、理由つきで取り消し一覧に残します(消去・tab を閉じる・終了まで、32 件)。列の各行は「外す」でいつでも取り出せ、「すべて取り消す」で tab の列を空にできます。列がある tab では背景の fetch を行いません。commit と merge の受付は段階 3b です。(#355 段階 3a)
+- commit を操作キューに追加しました。先行する操作の後に実行し、本文や stage 済みの内容が変わっていれば確認します。入力欄に focus がある間は待機します。(#355 段階 3b-1)
+- 別の操作が実行中のとき、checkout(double click・Enter・branch の右クリックメニュー・確認 modal)を断らずに後で実行する列に入れます。入れた瞬間に status bar の上の列(右寄せ)と短い toast(`Queued: checkout b`)に出ます。順番が来たら plan を作り直し、blocker も warning も無ければ modal なしで実行し(実行中の行に 2 秒以降の経過秒)、それ以外は確認 modal を出します。前の操作が成功しなければ後ろの checkout は実行せず、理由つきで取り消し一覧に残します(消去・tab を閉じる・終了まで、32 件)。列の各行は「外す」でいつでも取り出せ、「すべて取り消す」で tab の列を空にできます。列がある tab では背景の fetch を行いません。commit は段階 3b-1 で受付を追加し、merge は未対応です。(#355 段階 3a)
 - 2 秒を超えた lease 保有の書き込み操作の busy snackbar に、操作の種類に基づく理由と更新される経過秒数を表示します。未分類は汎用文とし、Skip・残り時間・進捗率は出しません。remote SSH pull は lease 移行後に追加します。(#355 段階 1)
 - 2 秒を超えた操作と読み込みの説明を、理由(書き込みは経過秒数も)だけにしました。前置きの「時間がかかっています:」と、読み込みの「大きいリポジトリでは〜に時間がかかります」の説明文は表示しません。(#355)
 - commit / branch / remote branch / tag / stash / worktree の右クリックメニューをキーボードで操作できるようにしました。開くと最初の有効な項目に focus が移り、↑/↓(端で折り返し)と Home/End で無効な項目を飛ばして移動し、Enter / Space で実行、Escape で閉じます。閉じると focus は開く前の場所へ戻ります(項目が確認 modal を開いた場合は window へ)。Shift+F10(Windows キーボードの Menu キー)で、Graph では選択中の commit のメニューを、サイドバーでは focus のある行(branch / remote branch / tag / stash / worktree)のメニューを、その行の左下に開きます。ウィンドウより長いメニューは項目の部分がスクロールし、キーで移った項目は常に見える位置まで送られます。Home やほかのタブへ移るとメニューは閉じます。項目は `Role::MenuItem`、無効な項目は AX の disabled 状態を持ちます。(#985)
 
 ### Changed
+- 全 plan 確認カードの状態比較を Stash と同じ縦 2 段の CURRENT / AFTER（日本語は現在 / 実行後）に統一し、MD モーダルを 640px に広げました。Stash の CURRENT ラベルが途中で折り返される問題も修正しました。変更のない状態の chip は日本語では「変更なし」と表示します。SM / LG のカードも指定どおりの幅で描かれるようになりました（これまでは窓幅の上限が自分の幅の 90% として働き、LG が MD より狭くなっていました）。(#1017)
 
 - 計画確認カードの CURRENT → PREDICTED を同じ幅の 2 列と中央の矢印に整理し、状態チップは行内でスクロールできるようにしました。相当する Git コマンドがある計画は折りたたんでコピーでき、見出しは Tab / Enter / Space と読み上げにも対応します（Pull は実行時に再 fetch して merge commit を作る場合があるため、等価コマンドを提示しません）。Operation Log の ref 復元は REFS の移動と削除、変えない対象、既存の線を保った復元後のグラフを先に示し、確認を 2 回必要とする安全境界は維持します。低い窓でも対象 ref の先頭 3 行を優先し、復元後のグラフは 6 行を上限に内容分だけの高さにし、拡大時の横方向の線も見切れないようにします。削除する ref は赤いチップで示します。不正な ref 行の計画は開かず、詳細を Operation Log に記録して短いエラーを表示します。(#988)
 
@@ -20,6 +22,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - Graph で commit を選ぶと Inspector が 180ms で開き、再クリックや Esc で選択を外すと 150ms で閉じるようにしました。途中の反転は現在の幅から続き、`reduce_motion`、タブ切替、Home、Conflict とほかの workspace への移動は即時です。(#1001)
 
+- queued commit の確認中に staged 内容が外部で変わった場合や merge が始まった場合、確認済みの計画を実行せず取り消します。投入時の branch の draft だけを消し、detached HEAD の commit も検証して後続を進めます。入力中の待機理由を明示し、Commit を押した後は入力欄の focus を解放します。(#355、#1020)
+- 入力欄を持つ確認 modal を Escape で閉じた後、表示されていない入力欄の focus が残っても操作キューが待機し続けないようにしました。(#355)
 - 確認カードと Operation Log からコピーできる復旧コマンドの branch・ref・remote・stash message・worktree path などの実値を POSIX shell で安全に引用するようにしました。`$()` やシングルクォートを含む名前／パスも 1 引数として扱い、手順用の `<branch>` などのプレースホルダーは変更しません。(#1004)
 - SSH 経由の remote pull を write lease に載せ、実行中は終了操作とほかの書き込みを保留するようにしました。計画時と実行前に remote の staged index・作業ツリー状態を照合し、変化や再読込失敗があれば pull せず Refused を記録します。結果が Unknown・Partial の場合は reconcile 通知から明示的な確認と監査記録を経て lease を解放します。ssh-agent だけの接続でも計画・実行できます。(#989、#997)
 - SSH remote pull はホスト側の `pull.rebase`・`branch.*.rebase`・`pull.ff=only`・`branch.*.mergeOptions` によらず確認どおり merge (可能なら fast-forward) します。`merge.autoStash` と `submodule.recurse` による予告外の stash・submodule 更新も明示的に無効化します。(#997)

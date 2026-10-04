@@ -48,6 +48,19 @@ pub struct CheckoutPlanModal {
     pub queued: Option<crate::app::IntentId>,
 }
 
+/// Frozen commit request and the live plan shown only when confirmation is needed.
+#[derive(Clone)]
+pub struct QueuedCommitModal {
+    pub queued: crate::app::IntentId,
+    pub message: String,
+    pub draft_branch: String,
+    pub plan: std::sync::Arc<OperationPlan>,
+    /// The index the displayed plan describes, not the index at enqueue.
+    pub staged_at_plan: String,
+    pub draft_changed: bool,
+    pub staged_changed: bool,
+}
+
 /// Execution target for the shared checkout plan modal.
 #[derive(Clone, Debug)]
 pub enum CheckoutPlanTarget {
@@ -668,6 +681,7 @@ pub enum ActiveModal {
     SmartCommit(super::smart_commit::SmartCommitModal),
     AppNotice(AppNotice),
     Checkout(CheckoutPlanModal),
+    QueuedCommit(QueuedCommitModal),
     Pull(PullPlanModal),
     Amend(AmendPlanModal),
     Pop(PopPlanModal),
@@ -723,6 +737,7 @@ impl ActiveModal {
             M::AppNotice(_) | M::RemoteBrowse(_) | M::Clone(_) | M::Update(_) => false,
             M::SmartCommit(_)
             | M::Checkout(_)
+            | M::QueuedCommit(_)
             | M::Pull(_)
             | M::Amend(_)
             | M::Pop(_)

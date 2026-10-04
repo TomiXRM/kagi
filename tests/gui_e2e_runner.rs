@@ -1281,6 +1281,38 @@ mod macos {
                 Box::new(crate::slow_read::scenario_slow_write_cleared_after_panic),
             ),
             (
+                "queue_commit_runs_after_checkout",
+                Box::new(crate::op_queue::scenario_queue_commit_runs_after_checkout),
+            ),
+            (
+                "queue_commit_confirms_changed_draft",
+                Box::new(crate::op_queue::scenario_queue_commit_confirms_changed_draft),
+            ),
+            (
+                "queue_commit_confirms_changed_staging",
+                Box::new(crate::op_queue::scenario_queue_commit_confirms_changed_staging),
+            ),
+            (
+                "queue_commit_consumes_origin_draft",
+                Box::new(crate::op_queue::scenario_queue_commit_consumes_origin_draft),
+            ),
+            (
+                "queue_commit_rechecks_staging_on_confirm",
+                Box::new(crate::op_queue::scenario_queue_commit_rechecks_staging_on_confirm),
+            ),
+            (
+                "queue_commit_refuses_late_merge",
+                Box::new(crate::op_queue::scenario_queue_commit_refuses_late_merge),
+            ),
+            (
+                "queue_commit_detached_successor",
+                Box::new(crate::op_queue::scenario_queue_commit_detached_successor),
+            ),
+            (
+                "queue_waits_while_input_focused",
+                Box::new(crate::op_queue::scenario_queue_waits_while_input_focused),
+            ),
+            (
                 "queue_runs_in_order",
                 Box::new(crate::op_queue::scenario_queue_runs_in_order),
             ),
@@ -1299,6 +1331,10 @@ mod macos {
             (
                 "queue_skips_auto_fetch",
                 Box::new(crate::op_queue::scenario_queue_skips_auto_fetch),
+            ),
+            (
+                "queue_dismissed_input_modal_releases_head",
+                Box::new(crate::op_queue::scenario_queue_dismissed_input_modal_releases_head),
             ),
             (
                 "queue_rejects_during_untracked_write",
@@ -1567,6 +1603,10 @@ mod macos {
             (
                 "input_confirm_disabled_cards",
                 Box::new(crate::recovery_operations::scenario_input_confirm_disabled_cards),
+            ),
+            (
+                "modal_widths_ordered",
+                Box::new(crate::recovery_operations::scenario_modal_widths_ordered),
             ),
             (
                 "create_branch_replan_error",

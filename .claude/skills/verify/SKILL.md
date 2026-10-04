@@ -892,10 +892,21 @@ The current suite covers:
   key move fails with the item at 453. `context_menu_keys_reload`: the
   `feature` branch menu opened from its sidebar row with Shift+F10, then an
   external `git checkout feature` and `reload`: the landed reload closes the
-  menu (`apply_reload_data` closes every context menu through
-  `close_context_menus`, branch and tag menus included) and ↓ moves the
-  Graph. Mutation: the pre-fix clears (commit / stash / worktree only) fail
-  "the reload closed the menu".
+  menu (`apply_reload_data` → `close_context_menus`, branch and tag menus
+  included) and, with nothing refocusing, the focus is back on the
+  `branch:feature` row and ↓ moves on to another LOCAL row. Mutations: the
+  pre-fix clears (commit / stash / worktree only) fail "the reload closed the
+  menu"; the reload using the tab-departure reset (`reset_context_menus`, no
+  focus return) fails "the focus went back to the row". `context_menu_keys_tab`:
+  Tab and Shift+Tab inside a commit menu close it and the window has the
+  focus (dropping the `MenuDismiss` bindings fails "tab closed the menu").
+  `context_menu_keys_covered`: an AppNotice set over an open menu closes it
+  on the next frame (`workspace_menus_covered`, Settings excluded) and the
+  focus leaves the hidden item for the window (disabling the check fails "the
+  notice closed the menu"). `context_menu_keys_a11y`: the disabled Reset item
+  is drawn with its reason as `aria_description`
+  (`menu_overlay::recorded_item_description`), an enabled one with none
+  (drawing disabled items without it fails).
 - Toolbar unavailable reasons (`KAGI_GUI_E2E_ONLY=toolbar_keyboard_reasons`,
   `tests/recovery/toolbar_keyboard.rs`, #972): starting at the root, GPUI's
   `focus_next` visits the rendered toolbar in visual order; an F19 key-down

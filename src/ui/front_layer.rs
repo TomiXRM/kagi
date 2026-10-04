@@ -263,6 +263,22 @@ impl KagiApp {
         cx.notify();
     }
 
+    /// Is a layer drawn above the workspace context menus that leaves the
+    /// keyboard focus where it was — a modal, a notice, a commit plan,
+    /// another menu? Settings (`MenuOverlay`) is not one: it moves the focus
+    /// into its own trap and gives it back when it closes (#991 review).
+    pub(crate) fn workspace_menus_covered(&self, cx: &App) -> bool {
+        let Some(at) = Z_ORDER
+            .iter()
+            .position(|layer| *layer == LayerKind::WorkspaceMenus)
+        else {
+            return false;
+        };
+        Z_ORDER[at + 1..]
+            .iter()
+            .any(|layer| *layer != LayerKind::MenuOverlay && layer.visible(self, cx))
+    }
+
     /// The one closer table: how each menu layer is closed. Modal layers
     /// have no closer here (they are answered or cancelled through their own
     /// confirm / cancel paths).

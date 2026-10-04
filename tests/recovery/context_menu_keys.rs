@@ -325,8 +325,8 @@ fn assert_down_reaches_graph(
 
 /// A branch menu left open across an external checkout: the reload that
 /// lands closes it (its items were planned against the old HEAD; #991
-/// review), so no focus stays on an item that is gone or changed, and ↓
-/// moves the Graph's selection.
+/// review), and the focus goes back to the row it was opened from — no
+/// item that is gone keeps it — so ↓ moves on from that row.
 pub fn scenario_context_menu_keys_reload(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path();
@@ -357,6 +357,107 @@ pub fn scenario_context_menu_keys_reload(cx: &mut VisualTestAppContext) {
         cx.read(|cx| app.read(cx).branch_menu.is_none()),
         "the reload closed the menu"
     );
-    assert_down_reaches_graph(cx, &app, window);
+    // Nothing refocuses here: the close itself gave the focus back.
+    let row_focused = |cx: &mut VisualTestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            window.draw(cx).clear();
+            app.read(cx).sidebar_row_focused_for_e2e(window)
+        })
+        .unwrap()
+    };
+    assert_eq!(
+        row_focused(cx),
+        Some((LOCAL, "branch:feature".into())),
+        "the focus went back to the row the menu was opened from"
+    );
+    keys(cx, window, "down");
+    let moved = row_focused(cx);
+    assert!(
+        moved
+            .as_ref()
+            .is_some_and(|(pane, key)| *pane == LOCAL && key != "branch:feature"),
+        "↓ moves on from that row ({moved:?})"
+    );
+    unmount(cx, app, window);
+}
+
+/// Tab and Shift+Tab inside a menu close it (#991 review) rather than walk
+/// out to the controls behind it; the focus goes back to the window.
+pub fn scenario_context_menu_keys_tab(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    // Selected once: selecting the selected row again would clear it.
+    select_head(cx, &app, window);
+    for key in ["tab", "shift-tab"] {
+        keys(cx, window, "shift-f10");
+        assert!(
+            cx.read(|cx| app.read(cx).commit_menu.is_some()),
+            "{key}: the menu opened"
+        );
+        keys(cx, window, key);
+        assert!(
+            cx.read(|cx| app.read(cx).commit_menu.is_none()),
+            "{key} closed the menu"
+        );
+        assert!(
+            root_focused(cx, &app, window),
+            "{key}: the focus went back to the window"
+        );
+    }
+    unmount(cx, app, window);
+}
+
+/// A notice drawn over an open menu (a modal that leaves the focus where it
+/// was) closes the menu (#991 review): no hidden item keeps the focus for
+/// Enter, which goes to the window — the notice's own key path.
+pub fn scenario_context_menu_keys_covered(cx: &mut VisualTestAppContext) {
+    use kagi::ui::modals::ActiveModal;
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    select_head(cx, &app, window);
+    keys(cx, window, "shift-f10");
+    assert!(
+        menu(cx, &app, window).0.is_some(),
+        "the menu holds the focus"
+    );
+    app.update(cx, |app, cx| {
+        app.active_modal = Some(ActiveModal::AppNotice(
+            "a notice over the menu".to_string().into(),
+        ));
+        cx.notify();
+    });
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert!(
+        cx.read(|cx| app.read(cx).commit_menu.is_none()),
+        "the notice closed the menu"
+    );
+    assert!(
+        root_focused(cx, &app, window),
+        "the focus left the hidden item for the window"
+    );
+    unmount(cx, app, window);
+}
+
+/// A disabled item names its reason to assistive technology
+/// (`aria_description`, #991 review); an enabled one has none.
+pub fn scenario_context_menu_keys_a11y(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    select_head(cx, &app, window);
+    keys(cx, window, "shift-f10");
+    menu(cx, &app, window);
+    let reset = kagi::ui::menu_overlay::recorded_item_description("commit-menu-item-5-0");
+    assert!(
+        reset
+            .as_ref()
+            .is_some_and(|d| d.as_ref().is_some_and(|d| !d.is_empty())),
+        "Reset (disabled) is described by its reason ({reset:?})"
+    );
+    assert_eq!(
+        kagi::ui::menu_overlay::recorded_item_description("commit-menu-item-0-0"),
+        Some(None),
+        "an enabled item has no description"
+    );
     unmount(cx, app, window);
 }

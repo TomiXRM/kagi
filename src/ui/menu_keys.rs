@@ -30,7 +30,14 @@ use super::KagiApp;
 
 actions!(
     kagi_menu,
-    [MenuPrev, MenuNext, MenuFirst, MenuLast, ContextMenuKey]
+    [
+        MenuPrev,
+        MenuNext,
+        MenuFirst,
+        MenuLast,
+        MenuDismiss,
+        ContextMenuKey
+    ]
 );
 
 /// The menus' key context, below which ↑/↓/Home/End are the menu's.
@@ -44,6 +51,11 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new("down", MenuNext, Some(MENU_CONTEXT)),
         KeyBinding::new("home", MenuFirst, Some(MENU_CONTEXT)),
         KeyBinding::new("end", MenuLast, Some(MENU_CONTEXT)),
+        // Tab / Shift+Tab would walk out of the menu to the controls behind
+        // it; they close it instead, and the focus goes back where the menu
+        // was opened from (#991 review).
+        KeyBinding::new("tab", MenuDismiss, Some(MENU_CONTEXT)),
+        KeyBinding::new("shift-tab", MenuDismiss, Some(MENU_CONTEXT)),
         // macOS keyboards have no Menu key; gpui names the Windows Apps key
         // `menu`.
         KeyBinding::new("shift-f10", ContextMenuKey, Some("!Terminal && !Input")),
@@ -190,26 +202,39 @@ impl KagiApp {
             || self.worktree_menu.is_some()
     }
 
-    /// Close every workspace context menu and forget the keyboard's hold on
-    /// it: the repository on screen is being left (Home in front, another
-    /// tab). Whoever leaves places the focus; a menu closed here returns it
+    /// The repository on screen is being left (Home in front, another tab):
+    /// close every workspace context menu and forget the keyboard's hold on
+    /// it. Whoever leaves places the focus; a menu reset here returns it
     /// nowhere (#991 review).
-    pub(crate) fn close_context_menus(&mut self) {
-        self.commit_menu = None;
-        self.branch_menu = None;
-        self.stash_menu = None;
-        self.tag_menu = None;
-        self.worktree_menu = None;
+    pub(crate) fn reset_context_menus(&mut self) {
+        self.close_context_menus();
         let keys = &self.menu_keys.0;
         keys.open.set(false);
         keys.focus_first.set(false);
         keys.return_to.borrow_mut().take();
     }
 
+    /// Close every workspace context menu on the tab on screen (a reload
+    /// replaced the state its items were planned on). The next frame gives
+    /// the focus back as any close does: where the menu was opened from, or
+    /// to the window when a modal is up (#991 review).
+    pub(crate) fn close_context_menus(&mut self) {
+        self.commit_menu = None;
+        self.branch_menu = None;
+        self.stash_menu = None;
+        self.tag_menu = None;
+        self.worktree_menu = None;
+    }
+
     /// Each frame before the menus are drawn: a menu that just opened takes
     /// the focus (on its first item, in its renderer); one that just closed
-    /// gives it back.
+    /// gives it back. A layer drawn above the menus that leaves the focus
+    /// where it was (a modal, a notice, a plan) closes them first: the
+    /// focused item would otherwise take Enter unseen (#991 review).
     pub(super) fn sync_menu_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.any_context_menu_open() && self.workspace_menus_covered(cx) {
+            self.close_context_menus();
+        }
         let open = self.any_context_menu_open();
         let keys = &self.menu_keys.0;
         if open && !keys.open.get() {

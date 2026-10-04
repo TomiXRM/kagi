@@ -15,7 +15,9 @@ use gpui::{
 use gpui_component::tooltip::Tooltip;
 
 use super::context_menu::{ItemState, MenuGroup, MenuItem};
-use super::menu_keys::{MenuFirst, MenuKeys, MenuLast, MenuNext, MenuPrev, Step, MENU_CONTEXT};
+use super::menu_keys::{
+    MenuDismiss, MenuFirst, MenuKeys, MenuLast, MenuNext, MenuPrev, Step, MENU_CONTEXT,
+};
 use super::theme::{self, theme};
 use super::KagiApp;
 
@@ -93,6 +95,15 @@ where
             cx.notify();
         })
     };
+    // Tab / Shift+Tab close a keyboard menu as the backdrop does (#991
+    // review); the next frame gives the focus back where it came from.
+    let dismiss_key = keys.map(|_| {
+        let on_dismiss = on_dismiss.clone();
+        cx.listener(move |this: &mut KagiApp, _: &MenuDismiss, window, cx| {
+            on_dismiss(this, window, cx);
+            cx.notify();
+        })
+    });
     let dismiss_right = cx.listener(move |this: &mut KagiApp, _e: &MouseDownEvent, window, cx| {
         on_dismiss(this, window, cx);
         cx.stop_propagation();
@@ -233,6 +244,9 @@ where
     if let Some(keys) = keys {
         menu = with_menu_keys(menu.key_context(MENU_CONTEXT), keys, opened, window, cx);
     }
+    if let Some(dismiss_key) = dismiss_key {
+        menu = menu.on_action(dismiss_key);
+    }
 
     div()
         .size_full()
@@ -355,18 +369,51 @@ where
             })
     };
 
+    #[cfg(feature = "gui-e2e")]
+    let control = format!("{item_id_prefix}-{group_ix}-{item_ix}");
+    // A disabled item says why to assistive technology too, not only in its
+    // pointer tooltip (#991 review).
     let row = match item.state {
-        ItemState::Disabled(reason) => row
-            .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx))
-            .into_any_element(),
-        _ => row.into_any_element(),
+        ItemState::Disabled(reason) => {
+            #[cfg(feature = "gui-e2e")]
+            record_description(&control, Some(reason.clone()));
+            row.aria_description(reason.clone())
+                .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx))
+                .into_any_element()
+        }
+        _ => {
+            #[cfg(feature = "gui-e2e")]
+            record_description(&control, None);
+            row.into_any_element()
+        }
     };
     #[cfg(feature = "gui-e2e")]
     {
-        super::e2e::measure_control(format!("{item_id_prefix}-{group_ix}-{item_ix}"), row)
+        super::e2e::measure_control(control, row)
     }
     #[cfg(not(feature = "gui-e2e"))]
     {
         row
     }
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static DESCRIPTIONS: std::cell::RefCell<std::collections::HashMap<String, Option<SharedString>>> =
+        std::cell::RefCell::default();
+}
+
+/// What the item drawn as `control` last handed `aria_description`.
+#[cfg(feature = "gui-e2e")]
+fn record_description(control: &str, description: Option<SharedString>) {
+    DESCRIPTIONS.with(|map| {
+        map.borrow_mut().insert(control.to_string(), description);
+    });
+}
+
+/// The `aria_description` the menu item `control` was last drawn with:
+/// `None` when it was never drawn, `Some(None)` when it had none.
+#[cfg(feature = "gui-e2e")]
+pub fn recorded_item_description(control: &str) -> Option<Option<SharedString>> {
+    DESCRIPTIONS.with(|map| map.borrow().get(control).cloned())
 }

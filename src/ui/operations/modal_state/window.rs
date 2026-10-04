@@ -23,7 +23,7 @@ impl KagiApp {
         self.sidebar.swipe.cancel();
         self.app_sessions.invalidate_plan();
         self.drop_repo_scoped_modal();
-        self.close_context_menus();
+        self.reset_context_menus();
     }
 
     #[inline]

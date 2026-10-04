@@ -26,9 +26,7 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         if self.op_latched() || self.active_tab_has_queue() {
-            if !self.enqueue_merge(target, expected_branch, cx) {
-                self.reject_if_busy(cx);
-            }
+            self.enqueue_merge(target, expected_branch, cx);
             return;
         }
         self.clear_merge_modal();
@@ -146,9 +144,7 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         if self.op_latched() || self.active_tab_has_queue() {
-            if !self.enqueue_merge(source, Some(target), cx) {
-                self.reject_if_busy(cx);
-            }
+            self.enqueue_merge(source, Some(target), cx);
             return;
         }
         self.clear_merge_modal();
@@ -300,15 +296,16 @@ impl KagiApp {
             return;
         }
         if self.op_latched() || self.active_tab_has_queue() {
-            if let Some(modal) = self.merge_modal().cloned() {
-                if modal.plan.blockers.is_empty()
-                    && self.enqueue_merge(modal.target, Some(modal.into_branch), cx)
-                {
-                    self.clear_merge_modal();
-                    return;
+            match self.merge_modal().cloned() {
+                Some(modal) if modal.plan.blockers.is_empty() => {
+                    if self.enqueue_merge(modal.target, Some(modal.into_branch), cx) {
+                        self.clear_merge_modal();
+                    }
+                }
+                _ => {
+                    self.reject_if_busy(cx);
                 }
             }
-            self.reject_if_busy(cx);
             return;
         }
         let modal = match self.merge_modal().cloned() {

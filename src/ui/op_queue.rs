@@ -117,6 +117,7 @@ impl KagiApp {
             CheckoutPlanTarget::Commit(commit) => CheckoutIntent::Commit(commit.clone()),
         };
         self.enqueue_intent(IntentRequest::Checkout { target }, cx)
+            .is_ok()
     }
     pub(crate) fn enqueue_commit(&mut self, message: String, cx: &mut Context<Self>) -> bool {
         let staged = match self
@@ -136,14 +137,19 @@ impl KagiApp {
             },
             cx,
         )
+        .is_ok()
     }
 
-    fn enqueue_intent(&mut self, request: IntentRequest, cx: &mut Context<Self>) -> bool {
+    fn enqueue_intent(
+        &mut self,
+        request: IntentRequest,
+        cx: &mut Context<Self>,
+    ) -> Result<(), Option<EnqueueError>> {
         let Some(owner) = self
             .active_session()
             .and_then(|session| self.app_sessions.attachment(session))
         else {
-            return false;
+            return Err(None);
         };
         // The queue must see the write, the tab and the modal as they are now.
         self.sync_queue(cx);
@@ -160,7 +166,7 @@ impl KagiApp {
             klog!("queue: rejected {} ({:?})", label, error);
         }
         self.run_queue_effects(effects, cx);
-        rejected.is_none()
+        rejected.map_or(Ok(()), |error| Err(Some(error)))
     }
 
     fn run_queue_effects(&mut self, effects: Vec<QueueEffect>, cx: &mut Context<Self>) {
@@ -437,6 +443,12 @@ impl KagiApp {
         };
         self.op_queue.confirming = None;
         self.clear_merge_modal();
+        // Enter reaches here even though the button is hidden for a blocked plan.
+        if !modal.plan.blockers.is_empty() {
+            self.refuse_blocked_queued_merge(&modal, cx);
+            self.drive_queue(QueueEvent::PlanError(id), cx);
+            return;
+        }
         self.op_queue.plans.insert(id, QueuedPlan::Merge(modal));
         self.drive_queue(QueueEvent::Approve(id), cx);
     }
@@ -527,16 +539,15 @@ impl KagiApp {
             QueuedPlan::Checkout(modal) => self.run_checkout(modal, Some(id), cx),
             QueuedPlan::Merge(modal) => {
                 if !modal.plan.blockers.is_empty() {
-                    if let Some(repo_path) = self.repo_path.clone() {
-                        self.record_refused(
-                            "merge",
-                            modal.plan.current.clone(),
-                            &modal.plan.blockers,
-                            &repo_path,
-                            cx,
-                        );
-                    }
-                    self.drive_queue(QueueEvent::PlanError(id), cx);
+                    // Admitting cannot take PlanError: settle it as stale.
+                    self.refuse_blocked_queued_merge(&modal, cx);
+                    self.drive_queue(
+                        QueueEvent::Admission {
+                            id,
+                            result: Err(AdmissionError::StaleApproval),
+                        },
+                        cx,
+                    );
                     return;
                 }
                 self.run_merge(modal, Some(id), cx);

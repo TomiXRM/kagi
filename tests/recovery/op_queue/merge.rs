@@ -251,3 +251,162 @@ pub fn scenario_queue_drag_merge_while_busy(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS queue_drag_merge_while_busy");
 }
+
+fn last_toast(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> Option<String> {
+    cx.read(|cx| {
+        let stack = app.read(cx).toast_stack.as_ref()?;
+        stack
+            .read(cx)
+            .toasts()
+            .last()
+            .map(|toast| toast.message.to_string())
+    })
+}
+
+/// Opus review P1 on #1024: Enter still reaches a queued merge whose replan
+/// is blocked (the button is hidden). It must be refused and leave the queue,
+/// never sit in `Admitting` forever.
+pub fn scenario_queue_confirm_blocked_merge_refuses(cx: &mut VisualTestAppContext) {
+    let fixture = merge_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| {
+        app.open_merge_modal("feature".into(), None, cx)
+    });
+    tick_until(cx, &app, "direct merge plan", |app| {
+        app.merge_modal().is_some_and(|m| m.queued.is_none())
+    });
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
+    app.update(cx, |app, cx| app.start_merge(cx));
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+    // The held merge takes `feature` in: the queued one replans as blocked.
+    app.update(cx, |app, cx| {
+        app.open_merge_modal("feature".into(), None, cx)
+    });
+    assert_eq!(rows(&strip(cx, &app))[0].0, "merge feature → main");
+    release.send(());
+    await_merge_modal(cx, &app);
+    let blockers = cx.read(|cx| app.read(cx).merge_modal().unwrap().plan.blockers.len());
+    assert!(blockers > 0, "precondition: the replan is blocked");
+    let merged = rev_parse(&repo, &["HEAD"]);
+    cx.update_window(window, |_, window, cx| {
+        window.focus(&app.read(cx).root_focus.clone().unwrap(), cx);
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.simulate_keystrokes(window, "enter");
+    tick_until(cx, &app, "the blocked merge to leave the queue", |app| {
+        app.queue_strip_for_e2e(std::time::Instant::now())
+            .is_some_and(|(_, rows, cancelled)| rows.is_empty() && cancelled.len() == 1)
+    });
+    assert_eq!(
+        strip(cx, &app).unwrap().2,
+        vec![("merge feature → main".into(), "plan failed".into())]
+    );
+    assert!(klog_index("[kagi] refused: merge plan has blockers, not executing").is_some());
+    assert!(cx.read(|cx| app.read(cx).merge_modal().is_none()));
+    assert_eq!(rev_parse(&repo, &["HEAD"]), merged);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS queue_confirm_blocked_merge_refuses");
+}
+
+/// Opus review P2: a merge plan that finishes after its owner tab left is
+/// discarded, so its failure is never reported on the tab now on screen;
+/// the owner replans upon return.
+pub fn scenario_queue_merge_plan_after_departure(cx: &mut VisualTestAppContext) {
+    let fixture = merge_fixture();
+    let other = branches_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(other.path().to_path_buf(), cx));
+        app.switch_repo(0, cx);
+    });
+    cx.run_until_parked();
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        app.open_merge_modal("feature".into(), Some("main".into()), cx)
+    });
+    // The replan fails: its source is gone.
+    git(&repo, &["branch", "-D", "feature"]);
+    let (plan_hold, plan_release) = deferred::<()>(cx);
+    KagiApp::hold_next_queued_merge_plan_for_e2e(plan_hold);
+    release.send(());
+    tick_until(cx, &app, "the merge replan", |app| {
+        rows(&app.queue_strip_for_e2e(std::time::Instant::now()))
+            == vec![("merge feature → main".to_string(), "planning".to_string())]
+    });
+    app.update(cx, |app, cx| app.switch_repo(1, cx));
+    cx.run_until_parked();
+    plan_release.send(());
+    cx.run_until_parked();
+    assert!(klog_index("[kagi] queue: plan discarded merge feature → main").is_some());
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert_eq!(e2e::app_notice_message(state), None, "no failure on tab B");
+        assert!(!matches!(
+            state.status_footer,
+            kagi::ui::FooterStatus::Failed(_)
+        ));
+    });
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    tick_until(cx, &app, "the replan on return", |app| {
+        app.queue_strip_for_e2e(std::time::Instant::now())
+            .is_some_and(|(_, rows, cancelled)| rows.is_empty() && cancelled.len() == 1)
+    });
+    assert_eq!(
+        strip(cx, &app).unwrap().2,
+        vec![("merge feature → main".into(), "plan failed".into())]
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS queue_merge_plan_after_departure");
+}
+
+/// Opus review P2: with intents queued but nothing running, a merge that
+/// cannot be queued says why instead of doing nothing.
+pub fn scenario_queue_merge_refusal_is_shown(cx: &mut VisualTestAppContext) {
+    let fixture = merge_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("b", cx));
+    // Local changes: b's replan carries a warning and waits for an answer.
+    std::fs::write(repo.join("README.md"), "# fixture\nlocal edit\n").unwrap();
+    release.send(());
+    tick_until(cx, &app, "b's confirmation", |app| {
+        app.plan_modal().and_then(|m| m.queued).is_some()
+    });
+    assert!(!cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+    git(&repo, &["checkout", "-q", "--detach"]);
+    app.update(cx, |app, cx| {
+        app.open_merge_modal("feature".into(), None, cx)
+    });
+    let expected = kagi::ui::i18n::plan_note_text(&kagi_domain::plan_note::PlanNote::Common(
+        kagi_domain::plan_note::CommonNote::HeadDetached {
+            op: kagi_domain::plan_note::PlanOp::Merge,
+        },
+    ));
+    assert_eq!(last_toast(cx, &app), Some(expected.clone()));
+    cx.read(|cx| {
+        assert!(matches!(
+            &app.read(cx).status_footer,
+            kagi::ui::FooterStatus::Idle(text) if text.as_ref() == expected
+        ));
+    });
+    assert_eq!(
+        rows(&strip(cx, &app)),
+        vec![("checkout b".to_string(), "confirming".to_string())]
+    );
+    app.update(cx, |app, _| app.cancel_modal());
+    cx.run_until_parked();
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS queue_merge_refusal_is_shown");
+}

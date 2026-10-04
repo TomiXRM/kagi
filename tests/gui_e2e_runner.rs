@@ -1329,6 +1329,18 @@ mod macos {
                 Box::new(crate::op_queue::scenario_queue_drag_merge_while_busy),
             ),
             (
+                "queue_confirm_blocked_merge_refuses",
+                Box::new(crate::op_queue::scenario_queue_confirm_blocked_merge_refuses),
+            ),
+            (
+                "queue_merge_plan_after_departure",
+                Box::new(crate::op_queue::scenario_queue_merge_plan_after_departure),
+            ),
+            (
+                "queue_merge_refusal_is_shown",
+                Box::new(crate::op_queue::scenario_queue_merge_refusal_is_shown),
+            ),
+            (
                 "queue_waits_while_input_focused",
                 Box::new(crate::op_queue::scenario_queue_waits_while_input_focused),
             ),

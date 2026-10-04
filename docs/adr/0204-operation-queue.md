@@ -427,6 +427,10 @@ SSH remote pull の旧 latch による排他の穴は #989 の write lease 移�
   する。queue 自身の background plan は panic 時も slot を解放し、confirm modal の離脱は
   回答とせず requeue する。承認後は既存の `finish_run` に入り、HEAD または凍結 destination
   tip が新 commit と一致したときのみ Verified。Conflict Mode は Unverified で後続を trip する。
+  #1024 review で、blocker のある queued merge は承認時に refused を記録して PlanError で
+  取り消す（Admitting に残さない。admission 側の同条件は StaleApproval）、owner の離脱・
+  close 後に完了した plan は報告も保存もせず破棄する、queue があり write のない状態で
+  投入できない merge（detached HEAD など）は理由を toast と footer に出す、を加えた。
 
 - **2026-10-04 #989 後の queue 契約整理** — SSH remote pull は lease を保持するが、queue が成功を verify できないため anchor にはせず、他の追跡不能な write と同じく owner tab での投入を拒否する。旧 remote latch に対応する待機理由と解除事象を削除し、排他の穴が #989 で解消したことを明記した。
 

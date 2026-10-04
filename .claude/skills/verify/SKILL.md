@@ -1992,9 +1992,15 @@ departure while B's checkout proceeds, then A's intent reopens),
 `queue_merge_conflict_trips_successors` (Conflict Mode leaves no new commit,
 so the queued checkout is listed `previous step failed`),
 `queue_merge_into_keeps_frozen_target` (checkout moves HEAD to `other`;
-merge still updates the frozen `main` tip) and `queue_drag_merge_while_busy`
-(drag enqueue instead of busy refusal). The merge modal is always required,
-and merge planning owns the plan slot through its terminal callback.
+merge still updates the frozen `main` tip), `queue_drag_merge_while_busy`
+(drag enqueue instead of busy refusal), `queue_confirm_blocked_merge_refuses`
+(Enter on a blocked queued merge records a refusal and lists `plan failed`
+instead of leaving the head `Admitting`), `queue_merge_plan_after_departure`
+(a merge plan held past its owner's departure is discarded, logged as
+`queue: plan discarded`, reports nothing on tab B and replans on return) and
+`queue_merge_refusal_is_shown` (detached HEAD with a queue but no write:
+toast and footer show the HeadDetached note). The merge modal is always
+required, and merge planning owns the plan slot through its terminal callback.
 Scope the full neighboring GUI coverage to
 `KAGI_GUI_E2E_ONLY='queue_,merge,drag'`; do not launch it without a filter.
 Tier B for stage 3b-2: queue checkout → commit → merge behind a slow write,

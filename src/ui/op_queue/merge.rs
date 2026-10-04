@@ -1,7 +1,9 @@
 use super::*;
+use kagi_domain::plan_note::{CommonNote, PlanNote, PlanOp};
 
 impl KagiApp {
     /// Freeze the destination name, never the enqueue-time merge prediction.
+    /// A refusal is shown here: nothing may be running to explain it.
     pub(crate) fn enqueue_merge(
         &mut self,
         source: String,
@@ -16,8 +18,38 @@ impl KagiApp {
                 }
             })
         });
-        into.is_some_and(|into| self.enqueue_intent(IntentRequest::Merge { source, into }, cx))
+        let refusal = match into {
+            None => kagi_ui_core::i18n::plan_note_text(&PlanNote::Common(
+                CommonNote::HeadDetached { op: PlanOp::Merge },
+            )),
+            Some(into) => match self.enqueue_intent(IntentRequest::Merge { source, into }, cx) {
+                Ok(()) => return true,
+                // `run_queue_effects` already reported the full queue.
+                Err(Some(EnqueueError::CapacityRejected)) => return false,
+                Err(_) => i18n::Msg::OpInProgress.t().to_string(),
+            },
+        };
+        self.status_footer = super::super::types::FooterStatus::Idle(refusal.clone().into());
+        self.push_toast(super::super::ToastKind::Error, refusal, cx);
+        false
     }
+
+    /// Record a blocked queued merge as refused, as the direct path does.
+    pub(super) fn refuse_blocked_queued_merge(
+        &mut self,
+        modal: &MergePlanModal,
+        cx: &mut Context<Self>,
+    ) {
+        klog!("refused: merge plan has blockers, not executing");
+        self.record_refused(
+            "merge",
+            modal.plan.current.clone(),
+            &modal.plan.blockers,
+            &modal.owner.path,
+            cx,
+        );
+    }
+
     pub(super) fn plan_queued_merge(
         &mut self,
         id: IntentId,
@@ -59,38 +91,77 @@ impl KagiApp {
                 queued: Some(id),
             })
         });
+        #[cfg(feature = "gui-e2e")]
+        let hold = PLAN_HOLD.with(|slot| slot.borrow_mut().take());
         cx.spawn(async move |this, acx| {
             let result = task.fallible().await;
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
             let _ = this.update(acx, |app, cx| {
                 if app.planning == Some("merge-plan") {
                     app.planning = None;
                     app.status_footer = super::super::types::FooterStatus::Idle("".into());
                 }
                 app.op_queue.planning = false;
-                match result {
-                    Some(Ok(modal)) => {
-                        klog!(
-                            "queue: plan {} blockers={} warnings={}",
-                            app.queued_label(id),
-                            modal.plan.blockers.len(),
-                            modal.plan.warnings.len()
-                        );
-                        app.op_queue.plans.insert(id, QueuedPlan::Merge(modal));
-                        app.drive_queue(QueueEvent::PlanCompleted(id), cx);
-                    }
-                    Some(Err(error)) => {
-                        klog!("queue: plan error {}: {}", app.queued_label(id), error);
-                        app.report_plan_failure(i18n::Op::Merge, error);
-                        app.drive_queue(QueueEvent::PlanError(id), cx);
-                    }
-                    None => {
-                        app.report_plan_failure(i18n::Op::Merge, "merge plan failed unexpectedly");
-                        app.drive_queue(QueueEvent::PlanError(id), cx);
-                    }
-                }
+                app.finish_queued_merge_plan(id, result, cx);
                 app.drive_queue(QueueEvent::PlanSlotFreed(Some(id)), cx);
             });
         })
         .detach();
+    }
+
+    /// A departed or closed owner already requeued (or dropped) the head and
+    /// invalidated its plan: the result belongs to no one on screen.
+    fn finish_queued_merge_plan(
+        &mut self,
+        id: IntentId,
+        result: Option<Result<MergePlanModal, String>>,
+        cx: &mut Context<Self>,
+    ) {
+        let current = self.op_queue.queue.intent(id).is_some_and(|intent| {
+            intent.state == IntentState::Planning
+                && self.app_sessions.attachment(intent.owner).is_some()
+        });
+        if !current {
+            klog!("queue: plan discarded {}", self.queued_label(id));
+            return;
+        }
+        match result {
+            Some(Ok(modal)) => {
+                klog!(
+                    "queue: plan {} blockers={} warnings={}",
+                    self.queued_label(id),
+                    modal.plan.blockers.len(),
+                    modal.plan.warnings.len()
+                );
+                self.op_queue.plans.insert(id, QueuedPlan::Merge(modal));
+                self.drive_queue(QueueEvent::PlanCompleted(id), cx);
+            }
+            Some(Err(error)) => {
+                klog!("queue: plan error {}: {}", self.queued_label(id), error);
+                self.report_plan_failure(i18n::Op::Merge, error);
+                self.drive_queue(QueueEvent::PlanError(id), cx);
+            }
+            None => {
+                self.report_plan_failure(i18n::Op::Merge, "merge plan failed unexpectedly");
+                self.drive_queue(QueueEvent::PlanError(id), cx);
+            }
+        }
+    }
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static PLAN_HOLD: std::cell::RefCell<Option<gpui::Task<()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    /// Hold the next queued merge plan's result until `hold` completes.
+    pub fn hold_next_queued_merge_plan_for_e2e(hold: gpui::Task<()>) {
+        PLAN_HOLD.with(|slot| assert!(slot.borrow_mut().replace(hold).is_none()));
     }
 }

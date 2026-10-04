@@ -1239,6 +1239,8 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
     // depth, so these scoped bindings must register after it to outrank it —
     // only while a cell, inside the list's context, holds the focus.
     super::keyboard_nav::bind_keys(cx);
+    // #985: the menus' ↑/↓/Home/End outrank the app-wide arrows the same way.
+    super::menu_keys::bind_keys(cx);
     // T-WS-EDITOR-002: Cmd-S saves the Editor Workspace's dirty buffer.
     // No context predicate — gpui-component 0.5.1's "Input" context binds
     // no `secondary-s` (verified: no cmd-s/ctrl-s/secondary-s binding in

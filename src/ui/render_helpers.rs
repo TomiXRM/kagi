@@ -64,6 +64,8 @@ pub(crate) fn render_rows(
     solo_visible: Option<&HashSet<CommitId>>,
     // #354: (rows above the commits in the same list, total list size).
     a11y_offset_size: (usize, usize),
+    // #985: where the selected row is drawn, for the context-menu key.
+    anchor: &super::menu_keys::RowAnchor,
     cx: &mut Context<KagiApp>,
 ) -> Vec<impl IntoElement> {
     let rh = row_height(graph_compact);
@@ -222,6 +224,7 @@ pub(crate) fn render_rows(
                         .w(px(2.))
                         .bg(rgb(theme().color_branch)),
                 )
+                .child(anchor.probe())
             })
             .h(px(rh))
             .bg(rgb(row_bg))

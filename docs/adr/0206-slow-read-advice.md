@@ -64,10 +64,11 @@ worktree の状態読み込み、worktree 容量の計測、Analyze の hotspot 
   表示は「<理由> · <秒> s」だけで、前置きの文は付けない。
   write は Skip 不能。read と write が重なれば write の理由と秒数が優先し、
   read の Skip は残してよい。キューおよび running cancel は対象外。
-- **対象外: UI thread で同期に動く write。** snapshot の作成
-  (`create_snapshot_now`)、conflict の continue / skip、stage / unstage / hunk の
-  write は lease を持つが、その間 UI thread が描画できないため、説明を出せない
-  (#995 review)。background へ移す変更は #996(#355 R4)で扱う。
+- **対象外: UI thread で同期に動く write。** stage / unstage / hunk の write は
+  lease を持つが、その間 UI thread が描画できないため、説明を出せない
+  (#995 review)。#355 段階 3(write queue)まで同期のまま。snapshot の作成と
+  conflict の continue / skip は #996 で background の guard writer に移り、
+  経過秒の説明が出る。
 - `[kagi] busy: slow write <kind> after 2s` は開始した write ごとに 1 回。
   実行が終わっても Unknown の lease が保持される場合、admission と
   reconcile の既存契約は変えない。

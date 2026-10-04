@@ -13,13 +13,20 @@ use kagi_domain::plan_note::{
 
 mod settle;
 
-use super::modal_state::AsyncPlanOffer;
+use super::modal_state::{AsyncPlanOffer, AsyncPlanToken};
 use super::RunPresentation;
+use crate::app::{self, PlanState, Planned};
 use crate::ui::*;
 
 impl KagiApp {
     /// Build a pull plan and open the confirmation modal.
     pub fn open_pull_modal(&mut self, cx: &mut Context<Self>) {
+        // A remote identity probe is planning a write. Even a dirty-view
+        // fetch waiter must not start a second probe while it owns the latch.
+        if self.remote_view.is_some() && self.op_latched() {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            return;
+        }
         // Attaching a waiter is not admitting another plan or write.
         if self.view().is_dirty
             && self.fetch_in_flight.is_some()
@@ -32,14 +39,9 @@ impl KagiApp {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        // Remote read-only view (ADR-0089 Phase 3): synthesise the plan from the
-        // snapshot's ahead/behind; the pull runs over SSH in `start_pull`.
+        // The preview remains a synthesis of cached status; resolving the
+        // remote write scope happens in the background before confirmation.
         if let Some(rv) = self.remote_view.clone() {
-            let owner = PathBuf::from(format!("{}:{}", rv.host.label(), rv.root));
-            if self.reject_transport_hold(&owner, "pull") {
-                cx.notify();
-                return;
-            }
             let s = &self.view().status_summary;
             let branch = s.branch.clone();
             let behind = s.behind.unwrap_or(0);
@@ -69,13 +71,94 @@ impl KagiApp {
                 self.view().header.to_string(),
             );
             klog!("plan: remote pull branch={branch} behind={behind} ahead={ahead}");
-            self.set_pull_modal(PullPlanModal {
-                plan: std::sync::Arc::new(plan),
-                auto_stash: false,
-                error: None,
-                // A remote pull stashes nothing locally.
-                dirty_digest: None,
-            });
+            let Some(session) = self.active_session() else {
+                return;
+            };
+            let visit = self.app_sessions.visit(session);
+            let owner = crate::remote::stash::RemoteAttachment {
+                session,
+                host: rv.host,
+                root: rv.root,
+            };
+            let cached_head_oid = self.view().head_oid.clone();
+            let cached_remote_dirty = s.is_dirty;
+            let job = app::plan_remote_pull(
+                &mut self.app_sessions,
+                app::RemotePullRequest {
+                    owner: owner.clone(),
+                    plan: std::sync::Arc::new(plan),
+                    cached_head_oid,
+                    cached_remote_dirty,
+                },
+            );
+            self.planning = Some("pull");
+            let task = cx.background_spawn(async move { job.run() });
+            cx.spawn(async move |this, cx| {
+                let completion = task.fallible().await;
+                let _ = this.update(cx, |app, cx| {
+                    let owns_latch = app.planning == Some("pull");
+                    if owns_latch {
+                        app.planning = None;
+                    }
+                    let Some(completion) = completion else {
+                        if owns_latch {
+                            app.discard_contended_plan_from_async(
+                                i18n::Op::Pull,
+                                AsyncPlanToken::Session,
+                            );
+                        }
+                        cx.notify();
+                        return;
+                    };
+                    let current = app.remote_view.as_ref().is_some_and(|view| {
+                        view.host == owner.host
+                            && view.root == owner.root
+                            && app.active_session() == Some(owner.session)
+                            && app.app_sessions.visit(session) == visit
+                    });
+                    let current_completion = completion.is_current(&app.app_sessions);
+                    if current && !app.has_active_modal() {
+                        if app::apply_plan(&mut app.app_sessions, completion) {
+                            match app.app_sessions.plan_state() {
+                                PlanState::Ready {
+                                    prepared: Planned::RemotePull { plan, .. },
+                                    ..
+                                } => {
+                                    let preview = plan.preview.clone();
+                                    app.offer_plan_from_async(
+                                        AsyncPlanOffer::new(
+                                            i18n::Op::Pull,
+                                            ActiveModal::Pull(PullPlanModal {
+                                                plan: preview,
+                                                auto_stash: false,
+                                                error: None,
+                                                dirty_digest: None,
+                                            }),
+                                        )
+                                        .with_session_token(),
+                                    );
+                                }
+                                PlanState::Error { error, blocker, .. } => {
+                                    let reason = blocker.as_ref().map(i18n::plan_note_text);
+                                    let message =
+                                        SharedString::from(reason.unwrap_or_else(|| error.clone()));
+                                    app.status_footer = FooterStatus::Failed(message.clone());
+                                    app.push_toast(ToastKind::Error, message, cx);
+                                }
+                                _ => {}
+                            }
+                        }
+                    } else if current_completion {
+                        app.discard_contended_plan_from_async(
+                            i18n::Op::Pull,
+                            AsyncPlanToken::Session,
+                        );
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+            cx.notify();
             return;
         }
         let _repo_path = match self.repo_path.clone() {
@@ -282,6 +365,15 @@ impl KagiApp {
     /// Close the pull modal without executing.
     pub fn cancel_pull_modal(&mut self) {
         self.clear_pull_modal();
+        if matches!(
+            self.app_sessions.plan_state(),
+            PlanState::Ready {
+                prepared: Planned::RemotePull { .. },
+                ..
+            }
+        ) {
+            self.app_sessions.invalidate_plan();
+        }
     }
 
     /// W3-NOTIFY: UI-path pull — runs `pull_blocking` on a background thread
@@ -296,100 +388,32 @@ impl KagiApp {
             None => return,
         };
 
-        // Remote read-only view (ADR-0089 Phase 3): pull over SSH (runs
-        // `git pull` on the host), then re-snapshot. Same confirm + oplog path.
-        if let Some(rv) = self.remote_view.clone() {
-            let before = modal.plan.current.clone();
-            let oplog_path = std::path::PathBuf::from(format!("{}:{}", rv.host.label(), rv.root));
-            if self.reject_transport_hold(&oplog_path, "pull") {
+        if let Some(rv) = self.remote_view.as_ref() {
+            let PlanState::Ready {
+                token,
+                prepared: Planned::RemotePull { plan, request },
+            } = self.app_sessions.plan_state()
+            else {
+                return;
+            };
+            if rv.host != request.owner.host
+                || rv.root != request.owner.root
+                || self.active_session() != Some(request.owner.session)
+                || !std::sync::Arc::ptr_eq(&modal.plan, &plan.preview)
+            {
+                self.app_sessions.invalidate_plan();
                 self.clear_pull_modal();
-                self.present_app_notice();
-                cx.notify();
                 return;
             }
-            // Latched before the spawn and owned by this operation alone: a
-            // remote pull holds no lease, so a lease-derived mirror would be
-            // gone by the next `refresh_write_busy()` and the pull would run
-            // with nothing refusing a second write (#708 review P1).
-            self.mark_remote_write("pull");
-            self.clear_pull_modal();
-            self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPull.t()));
-            klog!("async: remote pull started");
-            let (host, root) = (rv.host.clone(), rv.root.clone());
-            // #501: the transport records the attempt; this callback is
-            // presentation only and may be dropped on a tab switch.
-            let recorded_before = before.clone();
-            let task = cx.background_spawn(async move {
-                crate::remote::remote_pull(&host, &root, &recorded_before)
-            });
-            let notice_path = oplog_path.clone();
-            // This completion owns `remote_write`; no other path may release it.
-            let owner = self.active_session();
-            let visit = owner.and_then(|session| self.app_sessions.visit(session));
-            cx.spawn(async move |this, acx| {
-                let report = task.fallible().await;
-                let _ = this.update(acx, move |app, cx| {
-                    // Terminal, whichever way it ended — success, failure, or a
-                    // panicked task (`fallible` yielded `None`). Released here
-                    // and nowhere else, above every early return below.
-                    app.remote_write = None;
-                    let Some(report) = report else {
-                        klog!("op panicked: pull — busy_op cleared");
-                        let message = "pull: operation failed unexpectedly";
-                        app.status_footer = FooterStatus::Failed(SharedString::from(message));
-                        app.enqueue_outcome_notice(i18n::recorded_outcome_notice(message).into());
-                        cx.notify();
-                        return;
-                    };
-                    // Settle first, whatever the tab is doing now (#501): the
-                    // hold a Partial/Unknown transport leaves is what stops the
-                    // button offering the same pull again.
-                    app.notice_recording_failure("pull", &report.recording, &notice_path);
-                    app.settle_transport(&notice_path, "pull", &report.recording.entry().outcome);
-                    if app.active_session() != owner
-                        || owner.and_then(|session| app.app_sessions.visit(session)) != visit
-                    {
-                        klog!("op result dropped: tab switched during op");
-                        cx.notify();
-                        return;
-                    }
-                    let recorded_clean = matches!(
-                        report.recording,
-                        kagi_git::backend::recording::Recording::Appended { .. }
-                    );
-                    match &report.result {
-                        Ok(summary) => {
-                            klog!("async: remote pull finished — {summary}");
-                            app.present_recorded(&report.recording, cx);
-                            // A pull whose record never landed is not a clean
-                            // success; the notice above already said so.
-                            if recorded_clean {
-                                app.status_footer = FooterStatus::Success(SharedString::from(
-                                    format!("pull: {summary}"),
-                                ));
-                            }
-                            app.refresh_remote_view(cx);
-                        }
-                        Err(error) => {
-                            let err_msg = error.to_string();
-                            klog!("async: remote pull failed — {err_msg}");
-                            app.present_recorded(&report.recording, cx);
-                            // Unknown/Partial changed the host: re-read rather
-                            // than re-offering the same pull.
-                            app.refresh_remote_view(cx);
-                            app.enqueue_run_outcome_notice(
-                                crate::app::OperationId(report.recording.entry().id),
-                                &report.recording,
-                                Some(&err_msg),
-                                None,
-                            );
-                        }
-                    }
-                    cx.notify();
-                });
-            })
-            .detach();
-            cx.notify();
+            let token = token.clone();
+            match app::approve(
+                &mut self.app_sessions,
+                token,
+                app::Policy::Stash(kagi_git::backend::ExecutionPolicy::default()),
+            ) {
+                Ok(approved) => self.dispatch_job(approved, cx),
+                Err(error) => self.report_admission_refusal(error, cx),
+            }
             return;
         }
 

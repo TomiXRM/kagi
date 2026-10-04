@@ -181,6 +181,14 @@ impl ReconcileJob {
                     true,
                 )
             }
+            Planned::RemotePull { .. } => {
+                resolution = Resolution::Unobservable {
+                    reason:
+                        "the remote pull's final state cannot be observed from the local SSH client"
+                            .into(),
+                };
+                ("remote pull requires inspection on the host".into(), true)
+            }
             Planned::Conflict { plan, .. } => (
                 kagi_git::Backend::open(plan.repo())
                     .and_then(|backend| backend.conflict_snapshot())

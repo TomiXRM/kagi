@@ -71,6 +71,18 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
                 )
             }
         },
+        Completion::RemotePull(c) => {
+            let c = *c;
+            (
+                c.id,
+                ExecutionReport {
+                    recording: c.report.recording.clone(),
+                    evidence: FamilyEvidence::RemotePull(c.report),
+                },
+                true, // run_child reaps the local ssh client; remote state is unobservable.
+                None,
+            )
+        }
         Completion::Conflict(c) => {
             let c = *c;
             (
@@ -126,16 +138,18 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
         return vec![];
     };
     s.settled.insert(id);
-    if stopped {
+    let outcome = &report.recording.entry().outcome;
+    let remote_pull_uncertain = matches!(owner.plan, Planned::RemotePull { .. })
+        && matches!(
+            outcome,
+            kagi_git::OpOutcome::Unknown { .. } | kagi_git::OpOutcome::Partial { .. }
+        );
+    if stopped && !remote_pull_uncertain {
         s.release_lease(&owner.plan.scope(), id);
     }
-    // An unconfirmed termination is itself a reconcile requirement: the lease
-    // is retained, so there must be an entry to acknowledge it against.
-    if matches!(
-        report.recording.entry().outcome,
-        kagi_git::OpOutcome::Unknown { .. }
-    ) || !stopped
-    {
+    // Remote pull Partial is stopped locally but the host may be mid-merge.
+    // Both it and Unknown must require the explicit unobservable-release audit.
+    if matches!(outcome, kagi_git::OpOutcome::Unknown { .. }) || remote_pull_uncertain || !stopped {
         s.reconcile.insert(
             id,
             ReconcileEntry {
@@ -204,6 +218,7 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
             s.stale.insert(manager.worktree.clone());
         }
         (Planned::RemoteStash { .. }, FamilyEvidence::RemoteStash(_)) => {}
+        (Planned::RemotePull { .. }, FamilyEvidence::RemotePull(_)) => {}
         (Planned::Conflict { request, .. }, FamilyEvidence::Conflict(report)) => {
             let matches_in_flight = matches!(
                 s.conflict_states.get(&request.owner.session),
@@ -261,6 +276,7 @@ pub fn apply(s: &mut Sessions, completion: impl Into<Completion>) -> Vec<Deliver
             Planned::Remove { plan, .. } => &plan.common_dir,
             Planned::Stash { plan, .. } => &plan.common_dir,
             Planned::RemoteStash { .. } => unreachable!("remote refs have no local siblings"),
+            Planned::RemotePull { .. } => unreachable!("remote refs have no local siblings"),
             Planned::Conflict { .. } => unreachable!("conflict writes are worktree-local"),
             Planned::Run(request) => &request.repo,
             Planned::Pull(request) => &request.repo,

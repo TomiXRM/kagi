@@ -1678,16 +1678,77 @@ G: `transport_recording_test` validates the actual `mergedAt` query with fake gh
 `remote_stash_script_test::drop_forces_c_locale_inside_the_remote_shell` runs the
 real script under a simulated translated Git; `conflicts_test::skip_advancing_to_the_next_conflict_is_not_a_failure`
 checks that the next same-path conflict has no skipped draft. UI `transport_hold`
-unit coverage verifies owner/operation isolation and Partial/Unknown admission.
+unit coverage verifies GitHub PR merge owner/operation isolation and Partial/Unknown admission;
+SSH pull now uses the shared app lease, not this hold.
 Skip の分類順 (#569 (1)) は `cargo test -p kagi --lib conflict_skip::tests`
 で確認する。`tests/recovery/conflict_skip_g.rs` は GUI を起動せず、実 repository と
 `Sessions` で Unclear の lease 保持・writer 拒否・reconcile 登録、typed
 TerminationUnknown の Unknown 維持、既知結果の通常解放を検証する。
 既存 `app_writer_admission_test` と `conflicts_test` の `skip_` も併用する。
-For M, check that notice dismissal/tab switching does not re-enable PR merge or
-remote pull after Unknown/Partial; Failed alone permits retry. Holds persist for
-the app lifetime; inspect remote state before restarting. GUI runner build only
-when execution is reserved for PM.
+For M, PR merge retains its transport hold after Partial; remote pull holds its
+`WriteScope::Remote` lease during execution and retains it with a reconcile
+requirement after Unknown/Partial/abandonment. Dismissing a notice or switching
+tabs does not release either one. Remote pull's unobservable result requires
+Inspect → arm → confirm and an audit row before the lease releases. Failed
+releases normally. `KAGI_GUI_E2E_ONLY=remote_pull` (`tests/recovery/pull.rs`)
+drives real fake-SSH `-G`, common-dir and agent-only planning, the blocked pull
+and fetch, quit admission, Unknown notice and audited two-step release.
+`remote_pull_preflight_refusal` changes the common dir after confirmation: no
+`git pull` runs, Refused is recorded, and the lease releases.
+`remote_pull_proxy_route_refusal` keeps the same hostname and common dir but
+changes only `ssh -G` ProxyJump; the frozen route identity must refuse before
+`git pull`, record Refused, and release the lease. Domain
+`pull_route_changes_connection_identity_but_disabled_options_do_not` verifies
+ProxyJump/ProxyCommand/ControlMaster/ControlPath and disabled normalization.
+`remote_pull_toplevel_refusal` keeps the repository common dir but changes the
+physical linked-worktree toplevel after confirmation; no pull runs, Refused is
+recorded, and the lease releases. `remote_pull_lease` verifies that execution
+uses the frozen physical toplevel instead of the selected symlink while the
+oplog scope remains the selected root.
+`remote_pull_branch_refusal`, `remote_pull_head_oid_refusal`, and
+`remote_pull_upstream_refusal` change only the checked-out branch, HEAD OID,
+or resolved upstream after confirmation. All must refuse without running
+`git pull`, record Refused, and release the lease. The
+`remote_pull_head_read_refusal` case also requires Refused when the preflight
+HEAD read fails. `remote_pull_url_refusal` changes only the effective remote
+URL after confirmation; the preflight must record Refused, release the lease,
+and run no pull. Skipping the config comparison fails the zero-pull assertion.
+Domain `pull_common_dir_requires_complete_physical_paths_head_and_git_config`
+rejects missing/malformed Git configuration and preserves all fetch refspecs;
+`remote_oplog_test::pull_probe_binds_symlink_to_real_worktree_and_live_head`
+exercises the actual Git commands against a throwaway repository.
+`remote_pull_dirty_refusal` changes only the host's untracked worktree status
+between the plan and preflight probe: it must record Refused, release the lease,
+and run zero pulls; skipping the fingerprint comparison fails that assertion.
+The same pure frame parser rejects missing staged/status delimiters while
+allowing legitimate empty clean streams and preserving non-UTF-8 filenames.
+The real-Git probe test changes unstaged content and then stages it, proving
+that the two frozen digests change independently without HEAD/config drift.
+`remote_oplog_test::remote_pull_merges_even_when_host_config_requests_rebase_and_ff_only`
+creates divergent real-Git history with `pull.rebase=true`,
+`branch.main.rebase=true`, `pull.ff=only`, and
+`branch.main.mergeOptions=--squash`; the transport still creates a normal
+two-parent merge commit and records Success. Removing the `-c
+branch.main.mergeOptions=` override breaks that parent assertion.
+`remote_pull_disables_host_autostash_instead_of_recording_conflicted_success`
+overlaps dirty local content with an incoming tracked edit under
+`merge.autoStash=true`: no implicit stash, no changed HEAD/worktree, non-Success
+receipt; removing `--no-autostash` returns Ok despite a conflict.
+`remote_pull_does_not_recurse_into_host_submodule_worktrees` proves that
+`submodule.recurse=true` cannot move an initialized submodule's checkout;
+removing `--no-recurse-submodules` moves it. `remote_pull_lease` checks the
+executed fake-SSH argv has all four pull flags and the empty branch override.
+The real-Git probe wraps `git status` and refuses unless
+`GIT_OPTIONAL_LOCKS=0`; removing the export fails before confirmation.
+`remote_pull_cached_preview_stale` changes branch before the live probe and
+requires no modal/lease/pull plus localized refresh. G:
+`cargo test -p kagi --test app_remote_pull_test` additionally checks cached
+HEAD OID and dirty mismatch at plan time, and status fingerprint/config/repo
+drift at preflight: durable Refused, lease released, zero ssh pull calls.
+Mutating the corresponding comparison makes each named assertion fail.
+Success/Failed release; Unknown/Partial/abandonment retain reconcile.
+Remote stash's frozen-identity policy is unchanged. #1014 tracks the separate
+SSH sessions' remaining race.
 
 Continue の post-read (#569 (2)) は
 `cargo test -p kagi --test app_writer_admission_test continue_` で確認する。

@@ -1,5 +1,7 @@
 //! Pure remote stash-drop identity, wire, and outcome contracts.
 
+use std::sync::Arc;
+
 /// Versioned wire contract for the remote stash writer (ADR-0097).
 pub const STASH_FRAME_MAGIC: &str = "KAGI-STASH-DROP";
 pub const STASH_FRAME_VERSION: &str = "1";
@@ -18,6 +20,10 @@ pub struct RemoteConnectionId {
     pub user: String,
     pub port: u16,
     pub host_key_alias: Option<String>,
+    pub proxy_jump: Option<String>,
+    pub proxy_command: Option<String>,
+    pub control_master: Option<String>,
+    pub control_path: Option<String>,
     pub identity_files: Vec<String>,
     pub certificate_files: Vec<String>,
     pub user_known_hosts: Vec<KnownHostsIdentity>,
@@ -28,8 +34,44 @@ pub struct RemoteConnectionId {
 /// Writer lease identity. The selected worktree root is deliberately absent.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RemoteRepoId {
-    pub connection: RemoteConnectionId,
+    pub connection: Arc<RemoteConnectionId>,
     pub common_dir: String,
+}
+
+/// The checkout state confirmed for a remote pull, independent of its lease scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemotePullHead {
+    /// None when HEAD is detached.
+    pub branch: Option<String>,
+    pub oid: String,
+    /// The branch's resolved upstream, or None for detached HEAD.
+    pub upstream: Option<String>,
+}
+
+/// SHA-256 of the exact NUL-delimited staged-index and worktree-status streams
+/// returned by the host at plan time. Empty streams have the SHA-256 of empty
+/// bytes; an absent or truncated stream is never a valid probe frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemotePullFingerprint {
+    pub staged: [u8; 32],
+    pub worktree: [u8; 32],
+}
+
+/// Borrowed, binary-safe Git streams within a complete SSH probe frame.
+#[derive(Debug, PartialEq, Eq)]
+pub struct RemotePullContent<'a> {
+    pub staged: &'a [u8],
+    pub worktree: &'a [u8],
+}
+/// Pull-relevant Git configuration read from the selected remote worktree.
+/// Unlike the resolved upstream, these raw keys and the expanded URL capture
+/// changes to `branch.*`, `remote.*.fetch`, and URL rewrite rules.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemotePullConfig {
+    pub remote_name: String,
+    pub merge_ref: String,
+    pub remote_url: String,
+    pub fetch_refspecs: Vec<String>,
 }
 
 /// Effective SSH values before known-host files have been read and digested.
@@ -39,6 +81,10 @@ pub struct EffectiveSshConfig {
     pub user: String,
     pub port: u16,
     pub host_key_alias: Option<String>,
+    pub proxy_jump: Option<String>,
+    pub proxy_command: Option<String>,
+    pub control_master: Option<String>,
+    pub control_path: Option<String>,
     pub identity_files: Vec<String>,
     pub certificate_files: Vec<String>,
     pub user_known_hosts_files: Vec<String>,
@@ -70,10 +116,32 @@ impl std::fmt::Display for SshConfigError {
 
 /// Parse and validate the security-relevant subset of OpenSSH `-G` output.
 pub fn parse_effective_ssh_config(text: &str) -> Result<EffectiveSshConfig, SshConfigError> {
+    parse_ssh_config(text, false)
+}
+
+/// Pull uses the host's ordinary SSH route, including ssh-agent and proxies.
+/// Stash deliberately retains the stronger frozen-connection policy above.
+pub fn parse_pull_ssh_config(text: &str) -> Result<EffectiveSshConfig, SshConfigError> {
+    parse_ssh_config(text, true)
+}
+
+/// OpenSSH prints disabled route options differently across profiles.
+fn route_option(value: &str) -> Option<&str> {
+    (!["none", "no", "false"]
+        .iter()
+        .any(|disabled| value.eq_ignore_ascii_case(disabled)))
+    .then_some(value)
+}
+
+fn parse_ssh_config(text: &str, pull: bool) -> Result<EffectiveSshConfig, SshConfigError> {
     let mut hostname = None;
     let mut user = None;
     let mut port = None;
     let mut host_key_alias = None;
+    let mut proxy_jump = None;
+    let mut proxy_command = None;
+    let mut control_master = None;
+    let mut control_path = None;
     let mut identity_files = Vec::new();
     let mut certificate_files = Vec::new();
     let mut user_known_hosts_files = Vec::new();
@@ -89,7 +157,7 @@ pub fn parse_effective_ssh_config(text: &str) -> Result<EffectiveSshConfig, SshC
             "user" => user = Some(value.to_string()),
             "port" => port = value.parse::<u16>().ok(),
             "hostkeyalias" if value != "none" => host_key_alias = Some(value.to_string()),
-            "identityfile" => identity_files.push(value.to_string()),
+            "identityfile" if !pull || value != "none" => identity_files.push(value.to_string()),
             "certificatefile" if value != "none" => certificate_files.push(value.to_string()),
             "userknownhostsfile" => {
                 user_known_hosts_files.extend(value.split_whitespace().map(str::to_string))
@@ -98,14 +166,29 @@ pub fn parse_effective_ssh_config(text: &str) -> Result<EffectiveSshConfig, SshC
                 global_known_hosts_files.extend(value.split_whitespace().map(str::to_string))
             }
             "hostkeyalgorithms" => host_key_algorithms.extend(value.split(',').map(str::to_string)),
-            "proxyjump" | "proxycommand" if value != "none" => {
-                return Err(SshConfigError::Unsupported("proxy routing"))
+            "proxyjump" => {
+                proxy_jump = route_option(value);
+                if !pull && proxy_jump.is_some() {
+                    return Err(SshConfigError::Unsupported("proxy routing"));
+                }
             }
-            "controlmaster" if value != "no" && value != "false" => {
-                return Err(SshConfigError::Unsupported("ControlMaster"))
+            "proxycommand" => {
+                proxy_command = route_option(value);
+                if !pull && proxy_command.is_some() {
+                    return Err(SshConfigError::Unsupported("proxy routing"));
+                }
             }
-            "controlpath" if value != "none" => {
-                return Err(SshConfigError::Unsupported("ControlPath"))
+            "controlmaster" => {
+                control_master = route_option(value);
+                if !pull && control_master.is_some() {
+                    return Err(SshConfigError::Unsupported("ControlMaster"));
+                }
+            }
+            "controlpath" => {
+                control_path = route_option(value);
+                if !pull && control_path.is_some() {
+                    return Err(SshConfigError::Unsupported("ControlPath"));
+                }
             }
             _ => {}
         }
@@ -115,13 +198,19 @@ pub fn parse_effective_ssh_config(text: &str) -> Result<EffectiveSshConfig, SshC
         user: user.ok_or(SshConfigError::Missing("user"))?,
         port: port.ok_or(SshConfigError::Malformed("port"))?,
         host_key_alias,
+        proxy_jump: proxy_jump.map(str::to_owned),
+        proxy_command: proxy_command.map(str::to_owned),
+        control_master: control_master.map(str::to_owned),
+        control_path: control_path.map(str::to_owned),
         identity_files,
         certificate_files,
         user_known_hosts_files,
         global_known_hosts_files,
         host_key_algorithms,
     };
-    if config.identity_files.is_empty() || config.identity_files.iter().all(|p| p == "none") {
+    if !pull
+        && (config.identity_files.is_empty() || config.identity_files.iter().all(|p| p == "none"))
+    {
         return Err(SshConfigError::Unsupported("agent-only authentication"));
     }
     for path in config
@@ -135,6 +224,193 @@ pub fn parse_effective_ssh_config(text: &str) -> Result<EffectiveSshConfig, SshC
         }
     }
     Ok(config)
+}
+
+/// Parse the SSH probe's physical paths, HEAD, remote configuration, staged
+/// index and worktree status. Git streams remain borrowed and binary-safe for
+/// SHA-256 at the transport boundary. Framing proves both Git commands ran to
+/// completion; a clean worktree legitimately yields an empty status stream.
+pub fn parse_pull_common_dir(
+    bytes: &[u8],
+) -> Result<
+    (
+        String,
+        String,
+        RemotePullHead,
+        Option<RemotePullConfig>,
+        RemotePullContent<'_>,
+    ),
+    &'static str,
+> {
+    let mut fields = bytes.split(|byte| *byte == 0);
+    let (
+        Some(magic),
+        Some(common_dir),
+        Some(toplevel),
+        Some(kind),
+        Some(branch),
+        Some(oid),
+        Some(upstream),
+        Some(remote),
+        Some(merge),
+        Some(url),
+    ) = (
+        fields.next(),
+        fields.next(),
+        fields.next(),
+        fields.next(),
+        fields.next(),
+        fields.next(),
+        fields.next(),
+        fields.next(),
+        fields.next(),
+        fields.next(),
+    )
+    else {
+        return Err("malformed common-dir frame");
+    };
+    let Some(end) = fields.next_back() else {
+        return Err("malformed common-dir frame");
+    };
+    if magic != b"KAGI-COMMON-DIR" || end != b"KAGI-END\n" {
+        return Err("malformed common-dir frame");
+    }
+    let parse_path = |bytes, name| {
+        let path = std::str::from_utf8(bytes).map_err(|_| name)?;
+        if !path.starts_with('/') || path.contains('\n') || path.contains('\u{fffd}') {
+            return Err(name);
+        }
+        Ok(path.to_string())
+    };
+    let oid = std::str::from_utf8(oid).map_err(|_| "HEAD OID is not UTF-8")?;
+    if !matches!(oid.len(), 40 | 64) || !oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("invalid HEAD OID");
+    }
+    let parse_config = |bytes: &[u8]| {
+        let value = std::str::from_utf8(bytes).map_err(|_| "invalid pull Git config")?;
+        if value.is_empty()
+            || value.contains('\u{fffd}')
+            || value.bytes().any(|byte| byte.is_ascii_control())
+        {
+            return Err("invalid pull Git config");
+        }
+        Ok(value.to_string())
+    };
+    let mut offset = [
+        magic,
+        common_dir,
+        toplevel,
+        kind,
+        branch,
+        oid.as_bytes(),
+        upstream,
+        remote,
+        merge,
+        url,
+    ]
+    .iter()
+    .map(|field| field.len() + 1)
+    .sum::<usize>();
+    let mut fetch_refspecs = Vec::new();
+    let mut fetch_ended = false;
+    for field in fields.by_ref() {
+        offset += field.len() + 1;
+        if field == b"KAGI-FETCH-END" {
+            fetch_ended = true;
+            break;
+        }
+        fetch_refspecs.push(parse_config(field)?);
+    }
+    if !fetch_ended {
+        return Err("missing pull fetch frame end");
+    }
+    let (branch, upstream, config) = match kind {
+        b"detached"
+            if branch.is_empty()
+                && upstream.is_empty()
+                && remote.is_empty()
+                && merge.is_empty()
+                && url.is_empty()
+                && fetch_refspecs.is_empty() =>
+        {
+            (None, None, None)
+        }
+        b"branch" => {
+            let parse_ref = |bytes: &[u8]| {
+                let name = std::str::from_utf8(bytes).map_err(|_| "invalid pull ref")?;
+                if name.is_empty()
+                    || name.contains('\u{fffd}')
+                    || name.bytes().any(|byte| byte.is_ascii_control())
+                {
+                    return Err("invalid pull ref");
+                }
+                Ok(name.to_string())
+            };
+            if fetch_refspecs.is_empty() {
+                return Err("missing pull fetch refspec");
+            }
+            (
+                Some(parse_ref(branch)?),
+                Some(parse_ref(upstream)?),
+                Some(RemotePullConfig {
+                    remote_name: parse_config(remote)?,
+                    merge_ref: parse_config(merge)?,
+                    remote_url: parse_config(url)?,
+                    fetch_refspecs,
+                }),
+            )
+        }
+        _ => return Err("invalid pull HEAD state"),
+    };
+    if fields.next() != Some(b"KAGI-INDEX-BEGIN".as_slice()) {
+        return Err("missing staged-index frame");
+    }
+    offset += b"KAGI-INDEX-BEGIN".len() + 1;
+    let staged_start = offset;
+    let mut index_ended = false;
+    for field in fields.by_ref() {
+        if field == b"KAGI-INDEX-END" {
+            index_ended = true;
+            break;
+        }
+        offset += field.len() + 1;
+    }
+    if !index_ended {
+        return Err("missing staged-index frame end");
+    }
+    let staged = &bytes[staged_start..offset];
+    offset += b"KAGI-INDEX-END".len() + 1;
+    if fields.next() != Some(b"KAGI-WORKTREE-BEGIN".as_slice()) {
+        return Err("missing worktree-status frame");
+    }
+    offset += b"KAGI-WORKTREE-BEGIN".len() + 1;
+    let worktree_start = offset;
+    let mut last = None;
+    for field in fields {
+        last = Some((field, offset));
+        offset += field.len() + 1;
+    }
+    let Some((marker, worktree_end)) = last else {
+        return Err("missing worktree-status frame end");
+    };
+    if marker != b"KAGI-WORKTREE-END" {
+        return Err("missing worktree-status frame end");
+    }
+    let worktree = &bytes[worktree_start..worktree_end];
+    Ok((
+        parse_path(common_dir, "common-dir is not a physical absolute path")?,
+        parse_path(
+            toplevel,
+            "worktree toplevel is not a physical absolute path",
+        )?,
+        RemotePullHead {
+            branch,
+            oid: oid.to_string(),
+            upstream,
+        },
+        config,
+        RemotePullContent { staged, worktree },
+    ))
 }
 
 /// Build the literal direct-SSH argv prefix from an already frozen identity.
@@ -552,7 +828,17 @@ mod tests {
             parse_effective_ssh_config(&format!("{base}identityfile /tmp/key\nproxyjump hop\n")),
             Err(SshConfigError::Unsupported("proxy routing"))
         );
-        assert!(parse_effective_ssh_config(&format!("{base}identityfile /tmp/key\n")).is_ok());
+        let frozen = parse_effective_ssh_config(&format!("{base}identityfile /tmp/key\n"))
+            .expect("disabled routes preserve the stash policy");
+        assert_eq!(
+            (
+                frozen.proxy_jump,
+                frozen.proxy_command,
+                frozen.control_master,
+                frozen.control_path,
+            ),
+            (None, None, None, None)
+        );
         for line in [
             "proxycommand nc hop 22",
             "controlmaster auto",
@@ -572,12 +858,186 @@ mod tests {
     }
 
     #[test]
+    fn pull_accepts_agent_and_normal_ssh_routing_but_rejects_malformed_port() {
+        let config = "hostname host.example\nuser alice\nport 2222\nidentityfile none\nproxyjump hop\ncontrolmaster auto\ncontrolpath /tmp/socket\n";
+        let parsed = parse_pull_ssh_config(config).unwrap();
+        assert_eq!(parsed.hostname, "host.example");
+        assert!(parsed.identity_files.is_empty());
+        assert_eq!(parsed.port, 2222);
+        assert_eq!(parsed.proxy_jump.as_deref(), Some("hop"));
+        assert_eq!(parsed.control_master.as_deref(), Some("auto"));
+        assert_eq!(parsed.control_path.as_deref(), Some("/tmp/socket"));
+        assert_eq!(
+            parse_pull_ssh_config(&config.replace("port 2222", "port invalid")),
+            Err(SshConfigError::Malformed("port"))
+        );
+    }
+
+    #[test]
+    fn pull_route_changes_connection_identity_but_disabled_options_do_not() {
+        let base = "hostname host.example\nuser alice\nport 22\nidentityfile none\n";
+        let identity = |options: &str| {
+            let config = parse_pull_ssh_config(&format!("{base}{options}")).unwrap();
+            RemoteConnectionId {
+                hostname: config.hostname,
+                user: config.user,
+                port: config.port,
+                host_key_alias: config.host_key_alias,
+                proxy_jump: config.proxy_jump,
+                proxy_command: config.proxy_command,
+                control_master: config.control_master,
+                control_path: config.control_path,
+                identity_files: config.identity_files,
+                certificate_files: config.certificate_files,
+                user_known_hosts: vec![],
+                global_known_hosts: vec![],
+                host_key_algorithms: config.host_key_algorithms,
+            }
+        };
+        let direct = identity("");
+        assert_ne!(direct, identity("proxyjump jump.example\n"));
+        assert_ne!(direct, identity("proxycommand nc jump.example 22\n"));
+        assert_ne!(direct, identity("controlmaster auto\n"));
+        assert_ne!(direct, identity("controlpath /tmp/ssh-socket\n"));
+        assert_eq!(
+            direct,
+            identity("proxyjump none\nproxycommand no\ncontrolmaster false\ncontrolpath none\n")
+        );
+    }
+
+    #[test]
+    fn pull_common_dir_requires_complete_physical_paths_head_and_git_config() {
+        let oid = "a".repeat(40);
+        let frame = |kind: &str, branch: &str, oid: &str, upstream: &str| {
+            let config = if kind == "detached" {
+                "\0\0\0\0".to_string()
+            } else {
+                "\0origin\0refs/heads/main\0ssh://example.invalid/repo\0+refs/heads/*:refs/remotes/origin/*\0".to_string()
+            };
+            format!(
+                "KAGI-COMMON-DIR\0/srv/repo/.git\0/srv/real-worktree\0{kind}\0{branch}\0{oid}\0{upstream}{config}KAGI-FETCH-END\0KAGI-INDEX-BEGIN\0100644 {oid} 0\tfile\0KAGI-INDEX-END\0KAGI-WORKTREE-BEGIN\0? new-file\0KAGI-WORKTREE-END\0KAGI-END\n"
+            )
+        };
+        let attached = frame("branch", "main", &oid, "origin/main");
+        let staged = format!("100644 {oid} 0\tfile\0");
+        let config = RemotePullConfig {
+            remote_name: "origin".into(),
+            merge_ref: "refs/heads/main".into(),
+            remote_url: "ssh://example.invalid/repo".into(),
+            fetch_refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".into()],
+        };
+        assert_eq!(
+            parse_pull_common_dir(attached.as_bytes()),
+            Ok((
+                "/srv/repo/.git".into(),
+                "/srv/real-worktree".into(),
+                RemotePullHead {
+                    branch: Some("main".into()),
+                    oid: oid.clone(),
+                    upstream: Some("origin/main".into()),
+                },
+                Some(config.clone()),
+                RemotePullContent {
+                    staged: staged.as_bytes(),
+                    worktree: b"? new-file\0",
+                },
+            ))
+        );
+        let two_fetch = attached.replacen(
+            "+refs/heads/*:refs/remotes/origin/*\0",
+            "+refs/heads/*:refs/remotes/origin/*\0^refs/heads/deleted\0",
+            1,
+        );
+        assert_eq!(
+            parse_pull_common_dir(two_fetch.as_bytes())
+                .unwrap()
+                .3
+                .unwrap()
+                .fetch_refspecs,
+            vec!["+refs/heads/*:refs/remotes/origin/*", "^refs/heads/deleted"],
+        );
+        let detached_frame = frame("detached", "", &oid, "");
+        let detached = parse_pull_common_dir(detached_frame.as_bytes()).unwrap();
+        assert_eq!(
+            detached.2,
+            RemotePullHead {
+                branch: None,
+                oid: oid.clone(),
+                upstream: None,
+            }
+        );
+        assert_eq!(detached.3, None);
+        let empty = attached
+            .replacen(&staged, "", 1)
+            .replacen("? new-file\0", "", 1);
+        assert_eq!(
+            parse_pull_common_dir(empty.as_bytes()).unwrap().4,
+            RemotePullContent {
+                staged: b"",
+                worktree: b"",
+            },
+            "an empty repository and clean worktree have valid empty streams"
+        );
+        let mut non_utf8 = attached.clone().into_bytes();
+        let name = non_utf8
+            .windows(b"new-file".len())
+            .position(|window| window == b"new-file")
+            .unwrap();
+        non_utf8[name] = 0xff;
+        assert_eq!(
+            parse_pull_common_dir(&non_utf8).unwrap().4.worktree[2],
+            0xff,
+            "a non-UTF-8 filename must retain its original bytes"
+        );
+        for invalid in [
+            attached.replacen("/srv/repo/.git", "relative", 1),
+            attached.replacen("/srv/real-worktree", "relative", 1),
+            frame("branch", "", &oid, "origin/main"),
+            frame("branch", "main", &oid, ""),
+            frame("branch", "main", "", "origin/main"),
+            frame("branch", "main", "bad", "origin/main"),
+            frame("detached", "main", &oid, ""),
+            frame("detached", "", &oid, "origin/main"),
+            frame("invalid", "main", &oid, "origin/main"),
+            attached.replacen("\0origin\0", "\0\0", 1),
+            attached.replacen("\0refs/heads/main\0", "\0\0", 1),
+            attached.replacen("\0ssh://example.invalid/repo\0", "\0\0", 1),
+            attached.replacen("+refs/heads/*:refs/remotes/origin/*\0", "", 1),
+            attached.replacen("\0origin\0", "\0origin\nother\0", 1),
+            attached.replacen("KAGI-FETCH-END\0", "", 1),
+            attached.replacen("KAGI-INDEX-BEGIN\0", "", 1),
+            attached.replacen("KAGI-INDEX-END\0", "", 1),
+            attached.replacen("KAGI-WORKTREE-BEGIN\0", "", 1),
+            attached.replacen("KAGI-WORKTREE-END\0", "", 1),
+            attached
+                .split_once("KAGI-WORKTREE-BEGIN\0")
+                .unwrap()
+                .0
+                .to_string(),
+            format!("{attached}extra"),
+        ] {
+            assert!(
+                parse_pull_common_dir(invalid.as_bytes()).is_err(),
+                "{invalid:?}"
+            );
+        }
+        let mut invalid_utf8 = attached.into_bytes();
+        let path_byte = invalid_utf8.iter().position(|byte| *byte == b'a').unwrap();
+        invalid_utf8[path_byte] = 0xff;
+        assert!(parse_pull_common_dir(&invalid_utf8).is_err());
+    }
+
+    #[test]
     fn frozen_direct_argv_uses_every_identity_field_without_alias_resolution() {
         let id = RemoteConnectionId {
             hostname: "192.0.2.4".into(),
             user: "alice".into(),
             port: 2222,
             host_key_alias: Some("git.example".into()),
+            proxy_jump: None,
+            proxy_command: None,
+            control_master: None,
+            control_path: None,
             identity_files: vec!["/keys/id".into()],
             certificate_files: vec!["/keys/id-cert.pub".into()],
             user_known_hosts: vec![KnownHostsIdentity {

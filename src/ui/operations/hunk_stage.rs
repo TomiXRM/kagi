@@ -77,7 +77,7 @@ impl KagiApp {
                 );
             });
         }
-        self.refresh_wip_diffstat();
+        self.start_wip_diffstat_scan(cx);
         self.refresh_worktree_wip_row(&repo_path);
         // The pane keeps showing this side of the file, re-read; it closes
         // when this side has nothing left.

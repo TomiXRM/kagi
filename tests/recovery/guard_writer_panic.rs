@@ -592,3 +592,139 @@ pub fn scenario_editor_save_panic_after_close(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS editor_save_panic_after_close");
 }
+
+pub fn scenario_snapshot_write_panic(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    KagiApp::panic_next_snapshot_for_e2e();
+    cx.dispatch_action(window, kagi::ui::commands::CreateSnapshot);
+    cx.run_until_parked();
+    assert!(
+        crate::macos::for_each_ref(&repo, "refs/kagi/snapshots/")
+            .trim()
+            .is_empty(),
+        "panicked snapshot did not create a ref"
+    );
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert_eq!(state.app_sessions.reconcile_ids().len(), 1);
+        assert!(
+            state.app_notice().is_some(),
+            "Unknown must offer reconciliation"
+        );
+        assert!(
+            state.app_sessions.has_leases(),
+            "unwound snapshot retains its scope until reconciliation"
+        );
+    });
+    acknowledge_panicked_writer(&app, cx);
+    assert!(!cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS snapshot_write_panic");
+}
+
+pub fn scenario_snapshot_write_draws_while_busy(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let other = build_fixture();
+    let other_repo = other.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| assert!(app.open_repository(other_repo, cx)));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    cx.run_until_parked();
+    let before_klog = kagi_ui_core::klog::tail()
+        .iter()
+        .filter(|line| line.starts_with("[kagi] snapshot: created "))
+        .count();
+    let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+    KagiApp::hold_next_snapshot_write_for_e2e(hold);
+    cx.dispatch_action(window, kagi::ui::commands::CreateSnapshot);
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert_eq!(state.write_busy_op, Some("snapshot"));
+        assert!(state.app_sessions.has_leases());
+        assert!(kagi::ui::e2e::busy_snackbar_label(state).is_some());
+    });
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    assert!(
+        crate::macos::for_each_ref(&repo, "refs/kagi/snapshots/")
+            .trim()
+            .is_empty(),
+        "held write must not have run"
+    );
+    app.update(cx, |app, cx| {
+        app.switch_repo(1, cx);
+        app.status_footer = FooterStatus::Idle("snapshot other tab sentinel".into());
+    });
+    release.send(());
+    cx.run_until_parked();
+    assert!(!crate::macos::for_each_ref(&repo, "refs/kagi/snapshots/")
+        .trim()
+        .is_empty());
+    assert!(!cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+    assert_eq!(
+        kagi_ui_core::klog::tail()
+            .iter()
+            .filter(|line| line.starts_with("[kagi] snapshot: created "))
+            .count(),
+        before_klog + 1,
+        "successful snapshot keeps its unchanged contract log after departure"
+    );
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(matches!(&state.status_footer, FooterStatus::Idle(text) if text.as_ref() == "snapshot other tab sentinel"));
+        assert!(!state.toast_stack.as_ref().unwrap().read(cx).toasts().iter()
+            .any(|toast| toast.message.as_ref() == kagi::ui::i18n::Msg::SnapshotCreated.t()));
+    });
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS snapshot_write_draws_while_busy");
+}
+
+/// An ordinary snapshot failure after leaving its tab must remain visible in
+/// the host's notice queue, without changing the replacement tab's footer.
+pub fn scenario_snapshot_failed_after_departure(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let other = build_fixture();
+    let other_repo = other.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| assert!(app.open_repository(other_repo, cx)));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    cx.run_until_parked();
+    let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+    KagiApp::hold_next_snapshot_write_for_e2e(hold);
+    cx.dispatch_action(window, kagi::ui::commands::CreateSnapshot);
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        app.switch_repo(1, cx);
+        app.status_footer = FooterStatus::Idle("snapshot failure other tab".into());
+    });
+    // Keep the fixture intact after the worker has observed the absent Git
+    // directory; no destructive Git command touches the user's repository.
+    std::fs::rename(repo.join(".git"), repo.join(".git-paused")).unwrap();
+    release.send(());
+    cx.run_until_parked();
+    std::fs::rename(repo.join(".git-paused"), repo.join(".git")).unwrap();
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(!state.app_sessions.has_leases());
+        assert!(matches!(&state.status_footer, FooterStatus::Idle(text) if text.as_ref() == "snapshot failure other tab"));
+        let notice = kagi::ui::e2e::app_notice_message(state)
+            .expect("departed snapshot failure must reach the user");
+        assert!(notice.contains(repo.to_str().unwrap()), "{notice}");
+        assert!(notice.contains("Snapshot failed"), "{notice}");
+    });
+    assert!(crate::macos::for_each_ref(&repo, "refs/kagi/snapshots/")
+        .trim()
+        .is_empty());
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS snapshot_failed_after_departure");
+}

@@ -72,6 +72,59 @@ impl KagiApp {
             .with_ref_moves(ref_moves);
         self.record_op_impl(entry, cx, true, None);
     }
+    /// Persist a conflict completion even after its owner departs, without
+    /// routing its footer/toast to the tab that replaced it.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::ui) fn record_conflict_completion(
+        &mut self,
+        op: &str,
+        before: StateSummary,
+        outcome: OpOutcome,
+        ref_moves: Option<Vec<kagi_domain::ref_moves::RefMove>>,
+        repo_path: &std::path::Path,
+        current: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if current {
+            self.record_op_persist_moves(op, before, outcome, ref_moves, repo_path, cx);
+            return;
+        }
+        let entry = OpLogEntry::new(op, repo_path.display().to_string(), before, outcome)
+            .with_ref_moves(ref_moves);
+        let (footer_msg, _) =
+            Self::operation_footer_contract(&entry.op, &entry.before, &entry.outcome);
+        let failed = !matches!(
+            &entry.outcome,
+            OpOutcome::Success { .. } | OpOutcome::Unknown { .. }
+        );
+        let recording = kagi_git::backend::recording::finalize(entry);
+        if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {
+            klog!("oplog: write failed (non-fatal): {}", error);
+            self.app_notices.push_back(
+                format!(
+                    "{}: {}",
+                    repo_path.display(),
+                    i18n::oplog_write_failed(error)
+                )
+                .into(),
+            );
+        }
+        if let Some(panel) = self.op_log.clone() {
+            let shown = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&recording);
+            panel.update(cx, |panel, cx| {
+                panel.push(shown);
+                panel.collapse();
+                cx.notify();
+            });
+        }
+        // The footer contract is logged for the frozen owner, but the live
+        // footer, toast and bottom panel belong to the tab currently on screen.
+        klog!("footer: {}", footer_msg);
+        if failed {
+            self.app_notices
+                .push_back(format!("{}: {}", repo_path.display(), footer_msg).into());
+        }
+    }
 
     /// [`Self::record_op_persist`] for a write that by construction moves no
     /// ref — worktree lock / unlock / prune / repair only touch worktree admin

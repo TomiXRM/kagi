@@ -4,6 +4,7 @@
 //! The production reload runs; only its snapshot is held in the ahead/behind
 //! phase (`KagiApp::hold_next_snapshot_for_e2e`) and released by the test. The
 //! clock is the test dispatcher's, advanced in the tracker's own 250 ms ticks.
+use std::path::Path;
 use std::time::Duration;
 
 use gpui::{AnyWindowHandle, Entity, Modifiers, VisualTestAppContext};
@@ -321,6 +322,150 @@ pub fn scenario_slow_write_cleared_after_panic(cx: &mut VisualTestAppContext) {
     assert_eq!(notified.get(), after, "the ended ticker kept running");
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS slow_write_cleared_after_panic");
+}
+
+/// #996: the snapshot task retains its writer lease while its backend dispatch
+/// is held, so the shared #995 ticker explains its real elapsed write.
+pub fn scenario_slow_write_snapshot(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    let original_language = i18n::lang();
+    for language in [Lang::En, Lang::Ja] {
+        i18n::set_lang(language);
+        let before_refs = crate::macos::for_each_ref(&repo, "refs/kagi/snapshots/")
+            .lines()
+            .count();
+        let (hold, release) = deferred::<()>(cx);
+        KagiApp::hold_next_snapshot_write_for_e2e(hold);
+        cx.dispatch_action(window, kagi::ui::commands::CreateSnapshot);
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert_eq!(state.write_busy_op, Some("snapshot"));
+            assert!(state.app_sessions.running_lease().is_some());
+            assert_eq!(
+                e2e::busy_snackbar_label(state),
+                Some(i18n::busy_label("snapshot"))
+            );
+        });
+        assert_eq!(drawn_write_advice(cx, window), None);
+        advance(cx, TICK * 7);
+        assert_eq!(drawn_write_advice(cx, window), None, "not slow at 1.75 s");
+        advance(cx, TICK);
+        let reason = match language {
+            Lang::En => "stash: updating saved changes",
+            Lang::Ja => "stash: 保存した変更を更新中",
+        };
+        assert_eq!(
+            drawn_write_advice(cx, window).as_deref(),
+            Some(format!("{reason} · 2 s").as_str())
+        );
+        advance(cx, TICK * 8);
+        assert_eq!(
+            drawn_write_advice(cx, window).as_deref(),
+            Some(format!("{reason} · 4 s").as_str())
+        );
+        assert_eq!(
+            crate::macos::for_each_ref(&repo, "refs/kagi/snapshots/")
+                .lines()
+                .count(),
+            before_refs,
+            "held snapshot must not run before release"
+        );
+        release.send(());
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        while cx.read(|cx| app.read(cx).app_sessions.running_lease().is_some()) {
+            cx.run_until_parked();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "snapshot did not settle"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(drawn_write_advice(cx, window), None, "end clears advice");
+        assert!(
+            crate::macos::for_each_ref(&repo, "refs/kagi/snapshots/")
+                .lines()
+                .count()
+                > before_refs,
+            "released snapshot must create a ref"
+        );
+    }
+    i18n::set_lang(original_language);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS slow_write_snapshot: EN/JA 2s, 4s, release");
+}
+
+/// #996: merge Continue's background staging must use the same lease clock as
+/// fetch and snapshot, then remove its explanation on completion.
+pub fn scenario_slow_write_conflict_continue(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    i18n::set_lang(Lang::En);
+    let fixture = crate::app_conflict::content_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        app.ui().conflict.as_ref().unwrap().update(cx, |view, _| {
+            view.mode
+                .as_mut()
+                .unwrap()
+                .buffer
+                .apply_choice(Path::new("file.txt"), kagi_git::ResolutionChoice::Incoming)
+                .unwrap();
+        });
+    });
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_continue_merge_for_e2e(hold);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            let owner = app
+                .app_sessions
+                .attachment(app.active_session().unwrap())
+                .unwrap();
+            app.conflict_continue(owner, window, cx);
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert_eq!(state.write_busy_op, Some("conflict-continue"));
+        assert!(state.app_sessions.running_lease().is_some());
+        assert_eq!(
+            e2e::busy_snackbar_label(state),
+            Some(i18n::busy_label("conflict-continue"))
+        );
+        assert!(!state.ui().commit_panel_open);
+    });
+    assert_eq!(drawn_write_advice(cx, window), None);
+    advance(cx, TICK * 8);
+    assert_eq!(
+        drawn_write_advice(cx, window).as_deref(),
+        Some("conflict resolution: updating local files · 2 s")
+    );
+    advance(cx, TICK * 8);
+    assert_eq!(
+        drawn_write_advice(cx, window).as_deref(),
+        Some("conflict resolution: updating local files · 4 s")
+    );
+    release.send(());
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    while cx.read(|cx| app.read(cx).app_sessions.running_lease().is_some()) {
+        cx.run_until_parked();
+        assert!(
+            std::time::Instant::now() < deadline,
+            "merge Continue did not settle"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(cx.read(|cx| app.read(cx).ui().commit_panel_open));
+    assert_eq!(drawn_write_advice(cx, window), None, "end clears advice");
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS slow_write_conflict_continue: 2s, 4s, release");
 }
 
 /// #1012: measuring a worktree's size is not explained in the busy snackbar,

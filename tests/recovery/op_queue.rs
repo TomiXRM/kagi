@@ -388,6 +388,11 @@ pub fn scenario_queue_skips_auto_fetch(cx: &mut VisualTestAppContext) {
     // b waits for the slot.
     let at = kagi_git::CommitId(rev_parse(&repo, &["HEAD"]));
     app.update(cx, |app, cx| app.open_create_branch_modal(at, cx));
+    cx.update_window(window, |_, window, cx| {
+        window.draw(cx).clear();
+        assert!(window.has_focused_input(cx), "modal input must own focus");
+    })
+    .unwrap();
     release.send(());
     tick_until(cx, &app, "a to finish", |app| {
         !app.app_sessions.has_leases()
@@ -413,8 +418,14 @@ pub fn scenario_queue_skips_auto_fetch(cx: &mut VisualTestAppContext) {
     });
     assert_eq!(skipped(), before + 1);
 
-    app.update(cx, |app, _| app.cancel_create_branch_modal());
-    focus_root(cx, &app, window);
+    cx.simulate_keystrokes(window, "escape");
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).create_branch_modal().is_none()));
+    for _ in 0..2 {
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        cx.run_until_parked();
+    }
     tick_until(cx, &app, "b to run", |app| {
         app.queue_strip_for_e2e(std::time::Instant::now()).is_none()
     });
@@ -429,6 +440,57 @@ pub fn scenario_queue_skips_auto_fetch(cx: &mut VisualTestAppContext) {
     cx.run_until_parked();
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS queue_skips_auto_fetch");
+}
+
+/// Dismissing an Input-bearing modal with Escape must release the queued
+/// head even if GPUI still remembers the unmounted input's focus handle.
+pub fn scenario_queue_dismissed_input_modal_releases_head(cx: &mut VisualTestAppContext) {
+    let fixture = branches_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("b", cx));
+    let at = kagi_git::CommitId(rev_parse(&repo, &["HEAD"]));
+    app.update(cx, |app, cx| app.open_create_branch_modal(at, cx));
+    cx.update_window(window, |_, window, cx| {
+        window.draw(cx).clear();
+        assert!(
+            window.has_focused_input(cx),
+            "create-branch Input has focus"
+        );
+        let modal = app.read(cx).create_branch_modal().expect("modal");
+        let input = modal.input_state.as_ref().expect("real Input");
+        let root = app.read(cx).root_focus.as_ref().expect("root focus");
+        assert!(root.contains(&input.read(cx).focus_handle(cx), window));
+    })
+    .unwrap();
+    release.send(());
+    tick_until(cx, &app, "first checkout to settle", |app| {
+        !app.app_sessions.has_leases()
+    });
+    assert_eq!(head(&repo), "a");
+    assert_eq!(
+        rows(&strip(cx, &app)),
+        vec![("checkout b".into(), "waiting: confirm".into())]
+    );
+
+    cx.simulate_keystrokes(window, "escape");
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).create_branch_modal().is_none()));
+    for _ in 0..2 {
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        cx.run_until_parked();
+    }
+    tick_until(cx, &app, "checkout b after modal Escape", |app| {
+        app.queue_strip_for_e2e(std::time::Instant::now()).is_none()
+    });
+    assert_eq!(head(&repo), "b");
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS queue_dismissed_input_modal_releases_head");
 }
 
 /// The tab's own guard writer (a manual fetch) has no judgeable receipt: a
@@ -826,10 +888,16 @@ pub fn scenario_queue_waits_while_input_focused(cx: &mut VisualTestAppContext) {
         let panel = app.read(cx).ui().commit_panel.clone().unwrap();
         let input = panel.read(cx).title_input.clone().unwrap();
         window.focus(&input.read(cx).focus_handle(cx), cx);
+        input.update(cx, |input, cx| input.set_value("still typing", window, cx));
         window.draw(cx).clear();
         assert!(
             window.has_focused_input(cx),
             "the real Commit Input owns focus"
+        );
+        let root = app.read(cx).root_focus.clone().expect("root focus");
+        assert!(
+            root.contains(&input.read(cx).focus_handle(cx), window),
+            "visible Commit Input belongs to the drawn dispatch tree"
         );
     })
     .unwrap();
@@ -838,6 +906,10 @@ pub fn scenario_queue_waits_while_input_focused(cx: &mut VisualTestAppContext) {
     tick_until(cx, &app, "first checkout to settle", |app| {
         !app.app_sessions.has_leases()
     });
+    assert!(
+        cx.read(|cx| app.read(cx).ui().commit_panel.is_some()),
+        "the input remains drawn after checkout reload"
+    );
     advance(cx, 4);
     assert_eq!(head(&repo), "a", "b must not run while typing");
     assert_eq!(

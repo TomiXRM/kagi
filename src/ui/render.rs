@@ -227,14 +227,20 @@ impl Render for KagiApp {
         self.sync_issue_inputs(window, cx);
         self.sync_list_filter_input(window, cx);
         self.sync_pending_focus(window, cx);
-        // Root's focused-input cache clears one frame after blur. Check the
-        // actual focus handle too, or a queued head can wait on a stale input.
+        // GPUI can retain focus on an input whose modal was just unmounted.
+        // Only a handle tracked by the last drawn dispatch tree may hold the
+        // queue; the next frame releases a head after an Escape dismissal.
         use gpui::Focusable as _;
         use gpui_component::WindowExt as _;
         self.op_queue.observed_input_focused = window.has_focused_input(cx)
-            && window
-                .focused_input(cx)
-                .is_some_and(|input| input.read(cx).focus_handle(cx).is_focused(window));
+            && window.focused_input(cx).is_some_and(|input| {
+                let handle = input.read(cx).focus_handle(cx);
+                handle.is_focused(window)
+                    && self
+                        .root_focus
+                        .as_ref()
+                        .is_some_and(|root| root.contains(&handle, window))
+            });
         // Home's rows and its Repositories / Pull requests / Issues switch
         // are drawn only with Home in front. Every way off it (⌘W, a
         // repository tab, a row that opens its clone) leaves a focus on them

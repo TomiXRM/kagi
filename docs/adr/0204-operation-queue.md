@@ -425,8 +425,10 @@ SSH remote pull の旧 latch による排他の穴は #989 の write lease 移�
     `QueuedCommit` modal に凍結本文と plan を示して確認する。どれもなければ modal なしで進む。
     確認は凍結本文を commit し、後から書き換えた draft は消さない。Cancel は拒否として
     chain を trip する。
-  - text input が focus 中なら先頭は `Waiting { NeedsConfirmation }` に留め、modal も実行も
-    始めない。focus が外れた観測を受けた次の調停で再評価する。
+  - dispatch tree に実際に描画されている text input が focus 中なら先頭は
+    `Waiting { NeedsConfirmation }` に留め、modal も実行も始めない。Escape で閉じた
+    modal の input は focus handle が残っていても待機の理由にしない。focus が外れた
+    観測を受けた次の調停で再評価する。
   - commit の verify は実行後の再 snapshot で HEAD が新 commit を指すこと。queue 経由でない
     commit も追跡可能な anchor にして、Verified と記録成功を確かめてから後続を進める。
 

@@ -1313,6 +1313,10 @@ mod macos {
                 Box::new(crate::op_queue::scenario_queue_skips_auto_fetch),
             ),
             (
+                "queue_dismissed_input_modal_releases_head",
+                Box::new(crate::op_queue::scenario_queue_dismissed_input_modal_releases_head),
+            ),
+            (
                 "queue_rejects_during_untracked_write",
                 Box::new(crate::op_queue::scenario_queue_rejects_during_untracked_write),
             ),

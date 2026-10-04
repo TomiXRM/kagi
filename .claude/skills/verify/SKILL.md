@@ -1915,12 +1915,16 @@ message and no modal),
 `queue_commit_confirms_changed_draft` (a changed draft opens `QueuedCommit`;
 confirm uses the frozen message and preserves the newer draft),
 `queue_commit_confirms_changed_staging` (a staged-set digest change opens
-`QueuedCommit`), and
-`queue_waits_while_input_focused` (the head cannot open a modal or run during
-input focus, then proceeds after blur). Tier B: queue two checkouts behind a
-held or slow checkout in an isolated app and capture the strip, cancel list,
-and running row's seconds in EN/JA; queue a commit behind a held checkout and
-check its frozen message, confirmation and input-focus wait in the real window.
+`QueuedCommit`),
+`queue_waits_while_input_focused` (a drawn, focused Commit Input blocks the
+head until blur), and `queue_dismissed_input_modal_releases_head` (a
+create-branch Input is closed through real Escape without refocusing; the
+queued checkout proceeds after the modal leaves the dispatch tree; dropping
+the focus-membership check reproduces the stuck head).
+Tier B: queue two checkouts behind a held or slow checkout in an isolated app
+and capture the strip, cancel list, and running row's seconds in EN/JA; queue
+a commit behind a held checkout and check its frozen message, confirmation and
+input-focus wait in the real window.
 
 ### Background writer elapsed advice (#996 with #995)
 

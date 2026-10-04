@@ -2079,7 +2079,9 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
             .and_then(|modal| modal.plan.plan())
             .is_some_and(|plan| !plan.blockers.is_empty())
     });
+    kagi::ui::button_style::clear_recorded_modal_buttons();
     kagi::ui::e2e::clear_control_bounds(window.window_id(), "input-recovery");
+    app.update(cx, |_, cx| cx.notify());
     paint(cx, window);
     assert!(
         kagi::ui::e2e::control_bounds(window.window_id(), "input-recovery").is_none(),
@@ -2087,9 +2089,28 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
     );
     let disabled = kagi::ui::e2e::confirm_bounds(window.window_id())
         .expect("empty branch name still shows a disabled Create");
-    assert!(
-        disabled.size.width >= gpui::px(40.) && disabled.size.height >= gpui::px(24.),
-        "blocked Create must occupy button space, not a blank wrapper: {disabled:?}"
+    let blocked_cancel = kagi::ui::e2e::control_bounds(window.window_id(), "create-branch-cancel")
+        .expect("blocked branch card still shows Cancel");
+    assert_eq!(disabled.size.height, gpui::px(24.), "blocked Create size");
+    assert_eq!(blocked_cancel.size.height, gpui::px(24.), "Cancel size");
+    let expected_reason = cx.read(|cx| {
+        let app = app.read(cx);
+        let blocker = app
+            .create_branch_modal()
+            .and_then(|modal| modal.plan.plan())
+            .and_then(|plan| plan.blockers.first())
+            .expect("empty branch name has a blocker");
+        kagi_ui_core::i18n::plan_note_text(blocker)
+    });
+    assert_eq!(
+        kagi::ui::button_style::recorded_modal_button("create-branch-confirm"),
+        Some(kagi::ui::button_style::ModalButtonA11y {
+            role: gpui::Role::Button,
+            label: kagi_ui_core::i18n::Msg::InputCreate.t().to_owned(),
+            description: Some(expected_reason),
+            disabled: true,
+        }),
+        "blocked Create is an AX-disabled button with the specific reason as aria_description"
     );
     cx.simulate_mouse_move(window, disabled.center(), None, gpui::Modifiers::none());
     cx.run_until_parked();
@@ -2168,6 +2189,21 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
         .expect("Create Branch Cancel remains available");
     let confirm =
         kagi::ui::e2e::confirm_bounds(window.window_id()).expect("Create remains available");
+    assert_eq!(cancel.size.height, gpui::px(24.), "ready Cancel size");
+    assert_eq!(confirm.size.height, gpui::px(24.), "ready Create size");
+    kagi::ui::button_style::clear_recorded_modal_buttons();
+    app.update(cx, |_, cx| cx.notify());
+    paint(cx, window);
+    assert_eq!(
+        kagi::ui::button_style::recorded_modal_button("create-branch-confirm"),
+        Some(kagi::ui::button_style::ModalButtonA11y {
+            role: gpui::Role::Button,
+            label: kagi_ui_core::i18n::Msg::InputCreate.t().to_owned(),
+            description: None,
+            disabled: false,
+        }),
+        "ready Create becomes an active button with no blocker description"
+    );
     for (label, button) in [("Cancel", cancel), ("Create", confirm)] {
         assert!(
             button.top() >= card.top() && button.bottom() <= card.bottom(),

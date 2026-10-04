@@ -5,7 +5,7 @@
 use kagi_domain::plan_note::{MaintenanceNote, MaintenanceRecovery, MaintenanceTitle};
 use kagi_domain::repo_health::HealthFinding;
 
-use crate::i18n::{lang, Lang};
+use crate::i18n::{lang, Lang, Msg};
 
 /// What a health finding means for the user, and what the fix does.
 pub fn finding_text(finding: HealthFinding) -> &'static str {
@@ -42,11 +42,28 @@ pub fn enable_label() -> &'static str {
     }
 }
 
+/// Short, localized AFTER-state chip; the complete prediction is retained in
+/// the accessible state description and Copy all text.
+pub fn after_state_label(title: &MaintenanceTitle) -> &'static str {
+    match title {
+        MaintenanceTitle::WriteCommitGraph => Msg::MaintenanceCommitGraphAfter.t(),
+        MaintenanceTitle::EnableFsmonitor => Msg::MaintenanceFsmonitorAfter.t(),
+    }
+}
+
+/// The full localized AFTER-state explanation for accessibility and Copy all.
+pub fn after_state_detail(title: &MaintenanceTitle) -> &'static str {
+    match title {
+        MaintenanceTitle::WriteCommitGraph => Msg::MaintenanceCommitGraphDetail.t(),
+        MaintenanceTitle::EnableFsmonitor => Msg::MaintenanceFsmonitorDetail.t(),
+    }
+}
+
 /// The fix's confirm button on its plan card.
-pub fn confirm_label() -> &'static str {
-    match lang() {
-        Lang::En => "Enable",
-        Lang::Ja => "有効化",
+pub fn confirm_label(title: &MaintenanceTitle) -> &'static str {
+    match title {
+        MaintenanceTitle::WriteCommitGraph => Msg::MaintenanceWriteCommitGraph.t(),
+        MaintenanceTitle::EnableFsmonitor => Msg::MaintenanceEnableFsmonitor.t(),
     }
 }
 

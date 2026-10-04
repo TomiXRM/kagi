@@ -1135,6 +1135,20 @@ pub enum Msg {
     AmendFoldedFiles,
     /// #454: tooltip on a popup's copy button (copies the whole dialog).
     ModalCopyAll,
+    // #1016 modal polish: confirm labels, disabled reasons and maintenance state.
+    ModalCherryPickConfirm,
+    ModalCommitConfirm,
+    ModalNoDiscardTargets,
+    ModalPlanNotReady,
+    /// Repository-health plan AFTER chips, full descriptions, and confirm labels.
+    MaintenanceCommitGraphAfter,
+    MaintenanceFsmonitorAfter,
+    MaintenanceCommitGraphDetail,
+    MaintenanceFsmonitorDetail,
+    MaintenanceWriteCommitGraph,
+    MaintenanceEnableFsmonitor,
+    PlanCreateBranchHere,
+    InputApply,
     /// Header of the distinct equivalent CLI command in Copy all.
     ModalEquivalentCommand,
     /// #454: tooltip on a list panel's copy button (copies every row).
@@ -3110,6 +3124,39 @@ impl Msg {
             (Ja, AmendFoldedFiles) => "この commit に取り込む staged 変更",
             (En, ModalCopyAll) => "Copy this dialog as text",
             (Ja, ModalCopyAll) => "この内容をテキストでコピー",
+            // #1016 modal polish.
+            (En, ModalCherryPickConfirm) => "Cherry-pick",
+            (Ja, ModalCherryPickConfirm) => "cherry-pick",
+            (En, ModalCommitConfirm) => "Commit",
+            (Ja, ModalCommitConfirm) => "commit",
+            (En, ModalNoDiscardTargets) => "No files to discard",
+            (Ja, ModalNoDiscardTargets) => "破棄するファイルがありません",
+            (En, ModalPlanNotReady) => "Plan is not ready",
+            (Ja, ModalPlanNotReady) => "plan の準備ができていません",
+            (En, MaintenanceCommitGraphAfter) => "commit-graph written",
+            (Ja, MaintenanceCommitGraphAfter) => "commit-graph 書き込み済み",
+            (En, MaintenanceFsmonitorAfter) => "fsmonitor enabled",
+            (Ja, MaintenanceFsmonitorAfter) => "fsmonitor 有効",
+            (En, MaintenanceCommitGraphDetail) => {
+                "commit-graph written for every reachable commit; working tree unchanged"
+            }
+            (Ja, MaintenanceCommitGraphDetail) => {
+                "到達可能なすべてのコミットの commit-graph を書き込みます。作業ツリーは変更されません。"
+            }
+            (En, MaintenanceFsmonitorDetail) => {
+                "core.fsmonitor = true (local config); working tree unchanged"
+            }
+            (Ja, MaintenanceFsmonitorDetail) => {
+                "ローカル設定で core.fsmonitor = true にします。作業ツリーは変更されません。"
+            }
+            (En, MaintenanceWriteCommitGraph) => "Write commit-graph",
+            (Ja, MaintenanceWriteCommitGraph) => "commit-graph を書き込む",
+            (En, MaintenanceEnableFsmonitor) => "Enable fsmonitor",
+            (Ja, MaintenanceEnableFsmonitor) => "fsmonitor を有効化",
+            (En, PlanCreateBranchHere) => "Create branch here...",
+            (Ja, PlanCreateBranchHere) => "ここに branch を作成...",
+            (En, InputApply) => "Apply",
+            (Ja, InputApply) => "適用",
             (En, ModalEquivalentCommand) => "equivalent command:",
             (Ja, ModalEquivalentCommand) => "相当するコマンド:",
             (En, ModalCopyList) => "Copy every row",

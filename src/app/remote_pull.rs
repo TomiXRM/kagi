@@ -122,15 +122,10 @@ pub struct RemotePullCompletion {
 pub struct RemotePullJob {
     id: OperationId,
     request: RemotePullRequest,
-    repo_id: RemoteRepoId,
-    physical_toplevel: String,
-    head: RemotePullHead,
-    config: RemotePullConfig,
-    fingerprint: RemotePullFingerprint,
+    identity: crate::remote::PullRepoIdentity,
     abandoned: Sender<Completion>,
     ran: bool,
     fixture: Option<crate::remote::RemotePullReport>,
-    preflight_fixture: Option<Result<crate::remote::PullRepoIdentity, crate::remote::RemoteError>>,
 }
 impl RemotePullJob {
     pub fn id(&self) -> OperationId {
@@ -143,50 +138,15 @@ impl RemotePullJob {
         self
     }
 
-    #[doc(hidden)]
-    pub fn with_preflight_identity_for_test(
-        mut self,
-        observed: Result<crate::remote::PullRepoIdentity, crate::remote::RemoteError>,
-    ) -> Self {
-        self.preflight_fixture = Some(observed);
-        self
-    }
-
     pub fn run(mut self) -> RemotePullCompletion {
         let report = self.fixture.take().unwrap_or_else(|| {
             let owner = &self.request.owner;
-            let observed = self
-                .preflight_fixture
-                .take()
-                .unwrap_or_else(|| crate::remote::resolve_pull_identity(&owner.host, &owner.root));
-            if observed.as_ref().is_ok_and(|identity| {
-                identity.repo_id == self.repo_id
-                    && identity.physical_toplevel == self.physical_toplevel
-                    && identity.head == self.head
-                    && identity.config.as_ref() == Some(&self.config)
-                    && identity.fingerprint == self.fingerprint
-            }) {
-                crate::remote::remote_pull(
-                    &owner.host,
-                    &owner.root,
-                    &self.physical_toplevel,
-                    self.head.branch.as_deref().expect("approved pull branch"),
-                    &self.request.plan.current,
-                )
-            } else {
-                let reason = match observed {
-                    Ok(_) => "remote repository identity changed after pull confirmation".into(),
-                    Err(error) => {
-                        format!("remote pull preflight could not confirm identity: {error}")
-                    }
-                };
-                crate::remote::refused_remote_pull(
-                    &owner.host,
-                    &owner.root,
-                    &self.request.plan.current,
-                    reason,
-                )
-            }
+            crate::remote::remote_pull(
+                &owner.host,
+                &owner.root,
+                &self.identity,
+                &self.request.plan.current,
+            )
         });
         self.ran = true;
         RemotePullCompletion {
@@ -224,17 +184,20 @@ pub fn prepare_remote_pull(
     let Planned::RemotePull { request, plan } = approved.prepared else {
         unreachable!()
     };
+    let remote_dirty = request.cached_remote_dirty;
     Ok(RemotePullJob {
         id: running.operation_id,
         request,
-        repo_id: plan.repo_id,
-        physical_toplevel: plan.physical_toplevel,
-        head: plan.head,
-        config: plan.config,
-        fingerprint: plan.fingerprint,
+        identity: crate::remote::PullRepoIdentity {
+            repo_id: plan.repo_id,
+            physical_toplevel: plan.physical_toplevel,
+            head: plan.head,
+            config: Some(plan.config),
+            fingerprint: plan.fingerprint,
+            remote_dirty,
+        },
         abandoned: s.abandoned_tx.clone(),
         ran: false,
         fixture: None,
-        preflight_fixture: None,
     })
 }

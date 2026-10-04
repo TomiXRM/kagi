@@ -25,6 +25,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 - busy 中の checkout は先行 write の途中で変わり得る dirty 状態で投入を拒否せず、静的に不可能な参照だけを先に拒否して Operation Log に理由を記録します。列には即時表示し、順番が来たときの新しい plan の blocker / warning で安全に確認または拒否します。(#1028)
 
+- SSH remote pull の実行前検査と `git pull` を同じ SSH 接続内の 1 本の remote script にまとめました。確認後に host の repository・worktree・HEAD・upstream・pull 設定・staged index・作業ツリーが変われば pull せず理由つき Refused を記録します。SSH 認証失敗や結果不明時も既存の Operation Log と lease / reconcile を維持し、別接続への自動 fallback はしません。(#1014)
 - Graph で commit を選ぶと Inspector が 180ms で開き、再クリックや Esc で選択を外すと 150ms で閉じるようにしました。途中の反転は現在の幅から続き、`reduce_motion`、タブ切替、Home、Conflict とほかの workspace への移動は即時です。(#1001)
 - サイドバー非表示でも Graph の BRANCH / TAG・GRAPH 列の境界がドラッグした 40px だけ動くように修正し、サイドバーの開閉途中もポインターに追従させました。(#1011)
 

@@ -43,7 +43,7 @@ fn fake_ssh(bin: &Path) {
 }
 
 #[test]
-fn pull_probe_binds_symlink_to_real_worktree_and_live_head() {
+fn pull_probe_and_single_session_preflight_bind_the_approved_worktree() {
     if !crate::test_support::run_isolated() {
         return;
     }
@@ -78,10 +78,17 @@ fn pull_probe_binds_symlink_to_real_worktree_and_live_head() {
     fake_ssh(&bin);
     // Observe the real probe's Git subprocesses, not its script text: status
     // must not take an optional index lock during planning.
+    let pull_attempts = root.path().join("pull-attempts");
     let git_guard = bin.join("git");
     std::fs::write(
         &git_guard,
-        "#!/bin/sh\nif [ \"$1\" = status ] && [ \"$GIT_OPTIONAL_LOCKS\" != 0 ]; then echo 'status may lock index' >&2; exit 81; fi\nexec /usr/bin/git \"$@\"\n",
+        format!(
+            "#!/bin/sh\n\
+             if [ \"$1\" = status ] && [ \"$GIT_OPTIONAL_LOCKS\" != 0 ]; then echo 'status may lock index' >&2; exit 81; fi\n\
+             case \" $* \" in *' pull '*) printf 'pull\\n' >> {} ;; esac\n\
+             exec /usr/bin/git \"$@\"\n",
+            kagi_domain::remote::shell_quote(pull_attempts.to_str().unwrap()),
+        ),
     )
     .unwrap();
     std::fs::set_permissions(&git_guard, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -89,11 +96,12 @@ fn pull_probe_binds_symlink_to_real_worktree_and_live_head() {
         path: std::env::var_os("PATH"),
         log: std::env::var_os("KAGI_LOG_DIR"),
     };
-    let mut paths = vec![bin];
+    let mut paths = vec![bin.clone()];
     paths.extend(std::env::split_paths(
         &_restore.path.clone().unwrap_or_default(),
     ));
     std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+    std::env::set_var("KAGI_LOG_DIR", root.path().join("logs"));
     let host = kagi_domain::remote::RemoteHost::parse("fixture.invalid").unwrap();
     let planned = kagi::remote::resolve_pull_identity(&host, alias.to_str().unwrap()).unwrap();
     assert_eq!(
@@ -115,18 +123,34 @@ fn pull_probe_binds_symlink_to_real_worktree_and_live_head() {
         config.fetch_refspecs,
         ["+refs/heads/*:refs/remotes/origin/*"]
     );
+    let before = kagi_git::StateSummary {
+        head: planned.head.oid.clone(),
+        dirty: "clean".into(),
+    };
     std::fs::write(repo.join("file"), "unstaged change\n").unwrap();
     let dirty = kagi::remote::resolve_pull_identity(&host, alias.to_str().unwrap()).unwrap();
     assert_eq!(planned.head, dirty.head);
     assert_eq!(planned.config, dirty.config);
     assert_eq!(planned.fingerprint.staged, dirty.fingerprint.staged);
     assert_ne!(planned.fingerprint.worktree, dirty.fingerprint.worktree);
+    let refusal = kagi::remote::remote_pull(&host, alias.to_str().unwrap(), &planned, &before);
+    assert!(matches!(
+        refusal.recording.entry().outcome,
+        kagi_git::oplog::OpOutcome::Refused { ref blockers }
+            if blockers.iter().any(|reason| reason.contains("worktree status changed"))
+    ));
     git(&repo, &["add", "file"]);
     let staged = kagi::remote::resolve_pull_identity(&host, alias.to_str().unwrap()).unwrap();
     assert_eq!(planned.head, staged.head);
     assert_eq!(planned.config, staged.config);
     assert_ne!(planned.fingerprint.staged, staged.fingerprint.staged);
     assert_ne!(dirty.fingerprint.worktree, staged.fingerprint.worktree);
+    let refusal = kagi::remote::remote_pull(&host, alias.to_str().unwrap(), &planned, &before);
+    assert!(matches!(
+        refusal.recording.entry().outcome,
+        kagi_git::oplog::OpOutcome::Refused { ref blockers }
+            if blockers.iter().any(|reason| reason.contains("staged index changed"))
+    ));
     git(&repo, &["checkout", "-qb", "feature"]);
     git(
         &repo,
@@ -137,6 +161,12 @@ fn pull_probe_binds_symlink_to_real_worktree_and_live_head() {
     assert_eq!(planned.physical_toplevel, observed.physical_toplevel);
     assert_ne!(planned.head, observed.head);
     assert_eq!(observed.head.branch.as_deref(), Some("feature"));
+    let refusal = kagi::remote::remote_pull(&host, alias.to_str().unwrap(), &planned, &before);
+    assert!(matches!(
+        refusal.recording.entry().outcome,
+        kagi_git::oplog::OpOutcome::Refused { ref blockers }
+            if blockers.iter().any(|reason| reason.contains("branch changed"))
+    ));
     git(
         &repo,
         &[
@@ -148,6 +178,12 @@ fn pull_probe_binds_symlink_to_real_worktree_and_live_head() {
     let changed = kagi::remote::resolve_pull_identity(&host, alias.to_str().unwrap()).unwrap();
     assert_eq!(observed.head, changed.head);
     assert_ne!(observed.config, changed.config);
+    let refusal = kagi::remote::remote_pull(&host, alias.to_str().unwrap(), &observed, &before);
+    assert!(matches!(
+        refusal.recording.entry().outcome,
+        kagi_git::oplog::OpOutcome::Refused { ref blockers }
+            if blockers.iter().any(|reason| reason.contains("remote URL changed"))
+    ));
     git(
         &repo,
         &[
@@ -160,10 +196,198 @@ fn pull_probe_binds_symlink_to_real_worktree_and_live_head() {
         kagi::remote::resolve_pull_identity(&host, alias.to_str().unwrap()).unwrap();
     assert_eq!(changed.head, changed_fetch.head);
     assert_ne!(changed.config, changed_fetch.config);
+    let refusal = kagi::remote::remote_pull(&host, alias.to_str().unwrap(), &changed, &before);
+    assert!(matches!(
+        refusal.recording.entry().outcome,
+        kagi_git::oplog::OpOutcome::Refused { ref blockers }
+            if blockers.iter().any(|reason| reason.contains("fetch refspecs changed"))
+    ));
     git(&repo, &["config", "--unset", "remote.origin.fetch"]);
     assert!(
         kagi::remote::resolve_pull_identity(&host, alias.to_str().unwrap()).is_err(),
         "missing fetch configuration must fail closed"
+    );
+    let other = root.path().join("other");
+    git(
+        root.path(),
+        &[
+            "clone",
+            "-q",
+            repo.to_str().unwrap(),
+            other.to_str().unwrap(),
+        ],
+    );
+    std::fs::remove_file(&alias).unwrap();
+    std::os::unix::fs::symlink(&other, &alias).unwrap();
+    let refusal = kagi::remote::remote_pull(&host, alias.to_str().unwrap(), &planned, &before);
+    assert!(matches!(
+        refusal.recording.entry().outcome,
+        kagi_git::oplog::OpOutcome::Refused { ref blockers }
+            if blockers.iter().any(|reason| reason.contains("repository changed"))
+    ));
+    let ssh = bin.join("ssh");
+    let changed_route = std::fs::read_to_string(&ssh)
+        .unwrap()
+        .replace("hostname fixture.invalid", "hostname changed.invalid");
+    std::fs::write(&ssh, changed_route).unwrap();
+    let refusal = kagi::remote::remote_pull(&host, alias.to_str().unwrap(), &planned, &before);
+    assert!(matches!(
+        refusal.recording.entry().outcome,
+        kagi_git::oplog::OpOutcome::Refused { ref blockers }
+            if blockers.iter().any(|reason| reason.contains("SSH connection changed"))
+    ));
+    let entries = kagi_git::oplog::read_oplog_tail(10);
+    assert_eq!(
+        entries.len(),
+        7,
+        "each host-side refusal has one durable receipt"
+    );
+    assert!(entries
+        .iter()
+        .all(|entry| matches!(entry.outcome, kagi_git::oplog::OpOutcome::Refused { .. })));
+    assert!(!pull_attempts.exists(), "no drift may reach git pull");
+}
+
+/// #1014: after the confirmation, another SSH connection must not open between
+/// the live preflight and pull. The stand-in redirects origin immediately before
+/// a *third* remote connection; the old two-connection execution pulls from it.
+#[test]
+fn remote_pull_cannot_switch_origin_between_preflight_and_pull_connections() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let root = tempfile::tempdir().unwrap();
+    let origin = root.path().join("origin.git");
+    let attacker = root.path().join("other.git");
+    let seed = root.path().join("seed");
+    let repo = root.path().join("clone");
+    let bin = root.path().join("bin");
+    let calls = root.path().join("ssh-connections");
+    let logs = root.path().join("logs");
+    for dir in [&origin, &seed, &bin] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    git(&origin, &["init", "-q", "--bare", "-b", "main"]);
+    git(&seed, &["init", "-q", "-b", "main"]);
+    git(&seed, &["config", "user.email", "fixture@example.invalid"]);
+    git(&seed, &["config", "user.name", "fixture"]);
+    std::fs::write(seed.join("file"), "base\n").unwrap();
+    git(&seed, &["add", "file"]);
+    git(&seed, &["commit", "-qm", "base"]);
+    git(&seed, &["push", "-q", origin.to_str().unwrap(), "main"]);
+    git(
+        root.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            origin.to_str().unwrap(),
+            attacker.to_str().unwrap(),
+        ],
+    );
+    git(
+        root.path(),
+        &[
+            "clone",
+            "-q",
+            origin.to_str().unwrap(),
+            repo.to_str().unwrap(),
+        ],
+    );
+    std::fs::write(seed.join("file"), "unapproved remote commit\n").unwrap();
+    git(&seed, &["commit", "-qam", "other"]);
+    git(&seed, &["push", "-q", attacker.to_str().unwrap(), "main"]);
+    let approved_head = git(&repo, &["rev-parse", "HEAD"]);
+
+    let quoted_calls = kagi_domain::remote::shell_quote(calls.to_str().unwrap());
+    let quoted_repo = kagi_domain::remote::shell_quote(repo.to_str().unwrap());
+    let quoted_attacker = kagi_domain::remote::shell_quote(attacker.to_str().unwrap());
+    let ssh = bin.join("ssh");
+    std::fs::write(
+        &ssh,
+        format!(
+            "#!/bin/sh\n\
+             if [ \"$1\" = -G ]; then\n\
+             printf 'hostname fixture.invalid\\nuser alice\\nport 22\\nidentityfile none\\nuserknownhostsfile none\\nglobalknownhostsfile none\\nproxyjump none\\n'\n\
+             exit 0\n\
+             fi\n\
+             printf 'connection\\n' >> {quoted_calls}\n\
+             if [ \"$(wc -l < {quoted_calls})\" -eq 3 ]; then\n\
+             /usr/bin/git -C {quoted_repo} config remote.origin.url {quoted_attacker}\n\
+             fi\n\
+             for argument do command=$argument; done\n\
+             exec /bin/sh -c \"$command\"\n"
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let _restore = Environment {
+        path: std::env::var_os("PATH"),
+        log: std::env::var_os("KAGI_LOG_DIR"),
+    };
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(
+        &_restore.path.clone().unwrap_or_default(),
+    ));
+    std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+    std::env::set_var("KAGI_LOG_DIR", &logs);
+    let host = kagi_domain::remote::RemoteHost::parse("fixture.invalid").unwrap();
+    let mut sessions = kagi::app::Sessions::new();
+    let session = sessions.attach(format!("fixture.invalid:{}", repo.display()).into());
+    let request = kagi::app::RemotePullRequest {
+        owner: kagi::remote::stash::RemoteAttachment {
+            session,
+            host,
+            root: repo.to_str().unwrap().into(),
+        },
+        plan: std::sync::Arc::new(kagi_git::plan_pull_remote(
+            "main",
+            "origin/main",
+            1,
+            0,
+            false,
+            approved_head.clone(),
+        )),
+        cached_head_oid: Some(approved_head.clone()),
+        cached_remote_dirty: false,
+    };
+    let planned = kagi::app::plan_remote_pull(&mut sessions, request).run();
+    assert!(kagi::app::apply_plan(&mut sessions, planned));
+    let token = match sessions.plan_state() {
+        kagi::app::PlanState::Ready { token, .. } => token.clone(),
+        _ => panic!("fixture plan should be ready"),
+    };
+    let approved = kagi::app::approve(
+        &mut sessions,
+        token,
+        kagi::app::Policy::Stash(Default::default()),
+    )
+    .unwrap();
+    let kagi::app::Job::RemotePull(job) = kagi::app::prepare(&mut sessions, approved).unwrap()
+    else {
+        panic!("fixture must prepare a remote pull");
+    };
+    let completion = job.run();
+    assert!(
+        completion.report.result.is_ok(),
+        "{:?}",
+        completion.report.result
+    );
+    kagi::app::apply(&mut sessions, completion);
+    assert_eq!(
+        git(&repo, &["rev-parse", "HEAD"]),
+        approved_head,
+        "an unapproved repository selected by a second SSH connection was pulled"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&calls).unwrap().lines().count(),
+        2,
+        "planning and execution each open one SSH session, not preflight plus pull"
+    );
+    assert_eq!(
+        git(&repo, &["config", "--get", "remote.origin.url"]),
+        origin.to_str().unwrap()
     );
 }
 
@@ -310,13 +534,8 @@ fn remote_pull_records_success_and_failure_at_the_transport() {
     std::env::set_var("KAGI_LOG_DIR", &logs);
     let host = kagi_domain::remote::RemoteHost::parse("fixture.invalid").unwrap();
 
-    let report = kagi::remote::remote_pull(
-        &host,
-        repo.to_str().unwrap(),
-        repo.to_str().unwrap(),
-        "main",
-        &before,
-    );
+    let frozen = kagi::remote::resolve_pull_identity(&host, repo.to_str().unwrap()).unwrap();
+    let report = kagi::remote::remote_pull(&host, repo.to_str().unwrap(), &frozen, &before);
     let summary = report.result.expect("fixture pull should succeed");
     assert!(
         matches!(
@@ -336,22 +555,16 @@ fn remote_pull_records_success_and_failure_at_the_transport() {
     };
     assert_eq!(after.dirty, summary);
 
-    // A repository that is not there is an explicit refusal — git declined
-    // before touching anything, so Failed is provable.
+    // A confirmed repository that has since disappeared is a durable
+    // pre-exec Refused; no Git command can be run there.
     let missing = root.path().join("gone");
-    let report = kagi::remote::remote_pull(
-        &host,
-        missing.to_str().unwrap(),
-        missing.to_str().unwrap(),
-        "main",
-        &before,
-    );
+    let report = kagi::remote::remote_pull(&host, missing.to_str().unwrap(), &frozen, &before);
     assert!(report.result.is_err());
     let entries = kagi_git::oplog::read_oplog_tail(10);
     assert_eq!(entries.len(), 2);
     assert!(matches!(
         entries[0].outcome,
-        kagi_git::oplog::OpOutcome::Failed { .. }
+        kagi_git::oplog::OpOutcome::Refused { .. }
     ));
 
     // A pull that stopped mid-merge changed the host: Partial, not Failed.
@@ -364,13 +577,8 @@ fn remote_pull_records_success_and_failure_at_the_transport() {
     git(&repo, &["config", "user.name", "fixture"]);
     std::fs::write(repo.join("file"), "ours\n").unwrap();
     git(&repo, &["commit", "-qam", "ours"]);
-    let report = kagi::remote::remote_pull(
-        &host,
-        repo.to_str().unwrap(),
-        repo.to_str().unwrap(),
-        "main",
-        &before,
-    );
+    let frozen = kagi::remote::resolve_pull_identity(&host, repo.to_str().unwrap()).unwrap();
+    let report = kagi::remote::remote_pull(&host, repo.to_str().unwrap(), &frozen, &before);
     assert!(report.result.is_err());
     let entries = kagi_git::oplog::read_oplog_tail(10);
     assert_eq!(entries.len(), 3);
@@ -453,13 +661,8 @@ fn remote_pull_merges_even_when_host_config_requests_rebase_and_ff_only() {
         head: local_oid.clone(),
         dirty: "clean".into(),
     };
-    let report = kagi::remote::remote_pull(
-        &host,
-        repo.to_str().unwrap(),
-        repo.to_str().unwrap(),
-        "main",
-        &before,
-    );
+    let frozen = kagi::remote::resolve_pull_identity(&host, repo.to_str().unwrap()).unwrap();
+    let report = kagi::remote::remote_pull(&host, repo.to_str().unwrap(), &frozen, &before);
     assert!(
         report.result.is_ok(),
         "explicit merge pull must succeed despite rebase/ff-only config: {:?}",
@@ -543,13 +746,8 @@ fn remote_pull_disables_host_autostash_instead_of_recording_conflicted_success()
         head: head.clone(),
         dirty: "dirty".into(),
     };
-    let report = kagi::remote::remote_pull(
-        &host,
-        repo.to_str().unwrap(),
-        repo.to_str().unwrap(),
-        "main",
-        &before,
-    );
+    let frozen = kagi::remote::resolve_pull_identity(&host, repo.to_str().unwrap()).unwrap();
+    let report = kagi::remote::remote_pull(&host, repo.to_str().unwrap(), &frozen, &before);
     assert!(
         report.result.is_err(),
         "dirty overlapping pull must fail without implicit stash: {:?}",
@@ -664,13 +862,8 @@ fn remote_pull_does_not_recurse_into_host_submodule_worktrees() {
         head: git(&repo, &["rev-parse", "HEAD"]),
         dirty: "clean".into(),
     };
-    let report = kagi::remote::remote_pull(
-        &host,
-        repo.to_str().unwrap(),
-        repo.to_str().unwrap(),
-        "main",
-        &before,
-    );
+    let frozen = kagi::remote::resolve_pull_identity(&host, repo.to_str().unwrap()).unwrap();
+    let report = kagi::remote::remote_pull(&host, repo.to_str().unwrap(), &frozen, &before);
     assert!(
         report.result.is_ok(),
         "superproject pull must succeed: {:?}",
@@ -694,7 +887,15 @@ fn pull_outcome_for_ssh_output(stderr_line: &str) -> kagi_git::oplog::OpOutcome 
     let ssh = bin.join("ssh");
     std::fs::write(
         &ssh,
-        format!("#!/bin/sh\necho '{stderr_line}' >&2\nexit 255\n"),
+        format!(
+            "#!/bin/sh\n\
+             if [ \"$1\" = -G ]; then\n\
+             printf 'hostname fixture.invalid\\nuser alice\\nport 22\\nidentityfile none\\nuserknownhostsfile none\\nglobalknownhostsfile none\\nproxyjump none\\n'\n\
+             exit 0\n\
+             fi\n\
+             echo '{stderr_line}' >&2\n\
+             exit 255\n"
+        ),
     )
     .unwrap();
     std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -714,7 +915,44 @@ fn pull_outcome_for_ssh_output(stderr_line: &str) -> kagi_git::oplog::OpOutcome 
         dirty: "clean".into(),
     };
 
-    let report = kagi::remote::remote_pull(&host, "/srv/repo", "/srv/repo", "main", &before);
+    let frozen = kagi::remote::PullRepoIdentity {
+        repo_id: kagi_domain::remote::RemoteRepoId {
+            connection: std::sync::Arc::new(kagi_domain::remote::RemoteConnectionId {
+                hostname: "fixture.invalid".into(),
+                user: "alice".into(),
+                port: 22,
+                host_key_alias: None,
+                proxy_jump: None,
+                proxy_command: None,
+                control_master: None,
+                control_path: None,
+                identity_files: vec![],
+                certificate_files: vec![],
+                user_known_hosts: vec![],
+                global_known_hosts: vec![],
+                host_key_algorithms: vec![],
+            }),
+            common_dir: "/srv/repo/.git".into(),
+        },
+        physical_toplevel: "/srv/repo".into(),
+        head: kagi_domain::remote::RemotePullHead {
+            branch: Some("main".into()),
+            oid: "a".repeat(40),
+            upstream: Some("origin/main".into()),
+        },
+        config: Some(kagi_domain::remote::RemotePullConfig {
+            remote_name: "origin".into(),
+            merge_ref: "refs/heads/main".into(),
+            remote_url: "ssh://fixture.invalid/repo".into(),
+            fetch_refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".into()],
+        }),
+        fingerprint: kagi_domain::remote::RemotePullFingerprint {
+            staged: [0; 32],
+            worktree: [0; 32],
+        },
+        remote_dirty: false,
+    };
+    let report = kagi::remote::remote_pull(&host, "/srv/repo", &frozen, &before);
     assert!(report.result.is_err());
     let entries = kagi_git::oplog::read_oplog_tail(10);
     assert_eq!(entries.len(), 1);
@@ -747,9 +985,12 @@ fn a_non_zero_remote_pull_is_unknown_unless_the_refusal_is_recognized() {
 
     // Only a recognized refusal proves nothing ran.
     let outcome = pull_outcome_for_ssh_output("Permission denied (publickey).");
+    let kagi_git::oplog::OpOutcome::Failed { error } = outcome else {
+        panic!("a recognized auth refusal must stay Failed, got {outcome:?}");
+    };
     assert!(
-        matches!(outcome, kagi_git::oplog::OpOutcome::Failed { .. }),
-        "a recognized refusal must stay Failed, got {outcome:?}"
+        error.contains("Permission denied (publickey)"),
+        "the durable oplog must explain missing agent credentials: {error}"
     );
 }
 

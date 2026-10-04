@@ -5,10 +5,11 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::button_style::{modal_button, ModalButtonKind};
+use super::dialog_a11y::{apply_dialog, dialog_a11y, ConfirmStage, DialogHandler};
 use super::i18n::Msg;
-use super::modal_renderers::{
-    modal_overlay, render_current_predicted, render_plan_heading, render_recovery_box,
-};
+use super::modal_command::{plan_ready, render_recovery_commands};
+use super::modal_copy::{modal_copy_button, plan_clipboard_text};
+use super::modal_renderers::{modal_overlay, render_current_predicted, render_plan_heading};
 use super::modal_renderers_input::render_input_modal_heading;
 use super::modal_renderers_plan::{offered_recovery_commands, render_input_recovery_commands};
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_MD};
@@ -17,8 +18,11 @@ use super::theme::{self, theme as current_theme};
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, FocusHandle, KeyDownEvent, SharedString};
 use gpui_component::{Icon, IconName};
-use kagi_domain::plan_note::{PlanNote, StashNote};
-use kagi_ui_core::i18n::{plan::plan_heading_text, plan_note_text, plan_recovery_text};
+use kagi_domain::plan_note::{PlanNote, ShellKind, StashNote};
+use kagi_ui_core::i18n::{
+    plan::plan_heading_text, plan_note_text, plan_recovery_text, plan_title_text,
+};
+use std::rc::Rc;
 
 // ──────────────────────────────────────────────────────────────
 // Stash push modal renderer (T015)
@@ -291,20 +295,30 @@ pub(crate) fn render_stash_planning(
 ///   - Title (showing stash index)
 ///   - Current → Predicted state
 ///   - Blockers (red) if any
-///   - Recovery text
+///   - Ready recovery commands in one collapsed disclosure
 ///   - Error message (if execute failed)
 ///   - `[Cancel]` and an always-visible, disabled-when-blocked `[Apply]`
 pub(crate) fn render_stash_apply_modal(
     modal: StashApplyModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let Some(plan) = modal.plan.clone() else {
         return render_stash_planning(modal.error, cx);
     };
     let has_blockers = !plan.blockers.is_empty();
+    let disabled_reason = if has_blockers {
+        modal.error.clone().or_else(|| {
+            plan.blockers
+                .first()
+                .map(|blocker| SharedString::from(plan_note_text(blocker)))
+        })
+    } else {
+        None
+    };
 
     // T-BP-003: return focus to root_focus on cancel/confirm.
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
+    let cancel_handler = cx.listener(|this, _event: &(), window, cx| {
         this.cancel_stash_apply_modal();
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh, cx);
@@ -312,7 +326,7 @@ pub(crate) fn render_stash_apply_modal(
         cx.notify();
     });
 
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
+    let confirm_handler = cx.listener(|this, _event: &(), window, cx| {
         this.confirm_stash_apply(cx);
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh, cx);
@@ -320,15 +334,55 @@ pub(crate) fn render_stash_apply_modal(
         cx.notify();
     });
 
-    // #454: blockers and the recovery prose grow with the plan and this card
-    // has no inner scroller, so the body is its single scroll region.
+    // #454: the blockers and command disclosure share this card's single
+    // scroll region; the action row stays pinned.
     let (title, chips) = plan_heading_text(&plan.title);
-    let card = modal_card(MODAL_W_MD).child(div().flex_shrink_0().child(render_plan_heading(
-        title,
-        chips,
-        (IconName::Inbox.into(), current_theme().color_success),
-        None,
-    )));
+    let title_row = div()
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(
+            render_plan_heading(
+                title,
+                chips,
+                (IconName::Inbox.into(), current_theme().color_success),
+                None,
+            )
+            .flex_1()
+            .min_w(gpui::px(0.)),
+        )
+        .child(modal_copy_button(
+            "stash-apply-card-copy",
+            Msg::ModalCopyAll.t(),
+            plan_clipboard_text(
+                &plan,
+                &plan
+                    .preview_files
+                    .iter()
+                    .map(|f| f.path.display().to_string())
+                    .collect::<Vec<_>>(),
+                ShellKind::current(),
+            ),
+            cx,
+        ));
+    let cancel: DialogHandler = Rc::new(move |w, a| cancel_handler(&(), w, a));
+    let confirm: DialogHandler = Rc::new(move |w, a| confirm_handler(&(), w, a));
+    let spec = dialog_a11y(
+        &plan_title_text(&plan.title),
+        disabled_reason.is_none().then_some(Msg::InputApply.t()),
+        plan.destructive,
+        ConfirmStage::Single,
+    )
+    .with_recovery(&plan_recovery_text(plan.recovery.as_ref()));
+    let card = apply_dialog(
+        "stash-apply-card",
+        modal_card(MODAL_W_MD).id("stash-apply-card"),
+        spec,
+        disabled_reason.is_none().then(|| confirm.clone()),
+        cancel.clone(),
+    )
+    .child(title_row);
     let mut body = modal_scroll_body()
         // ── Current → Predicted ─────────────────────────────
         .child(div().flex_shrink_0().child(render_current_predicted(&plan)));
@@ -351,13 +405,17 @@ pub(crate) fn render_stash_apply_modal(
         body = body.child(block_col.flex_shrink_0());
     }
 
-    // ── Recovery ──────────────────────────────────────────
-    let recovery_text = plan_recovery_text(plan.recovery.as_ref());
-    if !recovery_text.is_empty() {
-        body = body.child(div().flex_shrink_0().child(render_recovery_box(
-            &recovery_text,
-            current_theme().color_success,
-        )));
+    if plan_ready(&plan) {
+        if let Some(commands) = offered_recovery_commands(plan.recovery.as_ref()) {
+            body = body.child(render_recovery_commands(
+                commands,
+                "stash-apply-recovery",
+                "stash-apply-recovery-copy",
+                "stash-apply-recovery-body",
+                overrides,
+                cx,
+            ));
+        }
     }
 
     // ── Error message ────────────────────────────────────
@@ -372,15 +430,6 @@ pub(crate) fn render_stash_apply_modal(
         );
     }
 
-    let disabled_reason = if has_blockers {
-        modal.error.clone().or_else(|| {
-            plan.blockers
-                .first()
-                .map(|blocker| SharedString::from(plan_note_text(blocker)))
-        })
-    } else {
-        None
-    };
     let button_row = div()
         .flex()
         .flex_row()
@@ -391,7 +440,7 @@ pub(crate) fn render_stash_apply_modal(
             Msg::PlanCancel.t(),
             ModalButtonKind::Cancel,
             None,
-            cancel_handler,
+            move |_, w, a| cancel(w, a),
             cx,
         ))
         .child(crate::ui::e2e::measure_confirm(modal_button(
@@ -399,7 +448,7 @@ pub(crate) fn render_stash_apply_modal(
             Msg::InputApply.t(),
             ModalButtonKind::Primary,
             disabled_reason,
-            confirm_handler,
+            move |_, w, a| confirm(w, a),
             cx,
         )));
     let card = card

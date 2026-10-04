@@ -89,8 +89,88 @@ fn assert_heading(cx: &mut VisualTestAppContext, window: AnyWindowHandle, title:
     );
 }
 
+/// The bespoke cards have no Copy all button/dialog, but share the same
+/// inline icon, localized operation name and typed target chips.
+fn assert_bespoke_heading(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    let icon = bounds(cx, window, "plan-heading-icon").expect("inline bespoke icon");
+    let title = bounds(cx, window, "plan-heading-title").expect("short bespoke title");
+    let chip = bounds(cx, window, "plan-heading-chip-0").expect("bespoke target chip");
+    let card = bounds(cx, window, "modal-card").expect("bespoke card");
+    assert!(icon.size.width <= gpui::px(20.) && icon.size.height <= gpui::px(20.));
+    assert!(title.size.height < gpui::px(32.), "title stays on one line");
+    for part in [icon, title, chip] {
+        assert!(
+            part.left() >= card.left() && part.right() <= card.right(),
+            "bespoke heading part within card: {part:?} / {card:?}"
+        );
+    }
+    assert!(icon.right() <= title.left() && title.right() <= chip.left());
+}
+
+pub fn scenario_bespoke_plan_heading(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    git(repo, &["checkout", "-q", "-b", "side", "HEAD~1"]);
+    std::fs::write(repo.join("side.txt"), "picked\n").unwrap();
+    git(repo, &["add", "side.txt"]);
+    git(repo, &["commit", "-q", "-m", "side commit"]);
+    let pick = git_fixture::git_output(repo, &["rev-parse", "HEAD"]);
+    git(repo, &["checkout", "-q", "main"]);
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, _| app.open_cherry_pick_modal(CommitId(pick)));
+    cx.run_until_parked();
+    assert_bespoke_heading(cx, window);
+    app.update(cx, |app, cx| {
+        app.clear_cherry_pick_modal();
+        cx.notify();
+    });
+
+    // A checklist blocker keeps the commit plan on screen (clean commits run
+    // immediately without a confirmation card).
+    std::fs::write(
+        repo.join("conflict.txt"),
+        "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> other\n",
+    )
+    .unwrap();
+    git(repo, &["add", "conflict.txt"]);
+    app.update(cx, |app, cx| {
+        e2e::open_local_panel_no_inputs(app, repo.to_path_buf(), cx);
+    });
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        let owner = app.active_session().expect("commit owner");
+        let panel = app.ui().commit_panel.clone().expect("Commit Panel");
+        panel.update(cx, |panel, _| {
+            panel.state.commit_msg = "heading probe".into()
+        });
+        app.open_commit_plan_modal(owner, cx);
+    });
+    assert!(cx.read(|cx| {
+        app.read(cx)
+            .ui()
+            .commit_panel
+            .as_ref()
+            .is_some_and(|panel| panel.read(cx).state.plan_modal.is_some())
+    }));
+    assert_bespoke_heading(cx, window);
+    unmount(cx, app, window);
+
+    let stashed = build_fixture();
+    let repo = stashed.path();
+    std::fs::write(repo.join("README.md"), "stashed for apply\n").unwrap();
+    git(repo, &["stash", "push", "-qm", "heading probe"]);
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| app.open_stash_apply_modal(0, cx));
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).stash_apply_modal().unwrap().plan.is_some()));
+    assert_bespoke_heading(cx, window);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS bespoke_plan_heading: CherryPick, Commit Plan and StashApply inline icons and target chips");
+}
+
 pub fn scenario_plan_card_heading(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_language = i18n::lang();
     let (fixture, _remote, app, window) = ready_push(cx);
     let repo = fixture.path();
     git(repo, &["branch", "heading-target", "HEAD~1"]);
@@ -111,12 +191,14 @@ pub fn scenario_plan_card_heading(cx: &mut VisualTestAppContext) {
         cx.run_until_parked();
     }
     assert_eq!(repo_fingerprint(repo), before);
+    i18n::set_lang(original_language);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS plan_card_heading: inline 18px icon, short title, typed chip, full AX name in EN/JA");
 }
 
 pub fn scenario_plan_recovery_commands(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_language = i18n::lang();
     let (fixture, _remote, app, window) = ready_push(cx);
     let before = repo_fingerprint(fixture.path());
     for lang in [Lang::En, Lang::Ja] {
@@ -208,12 +290,14 @@ pub fn scenario_plan_recovery_commands(cx: &mut VisualTestAppContext) {
         );
     }
     assert_eq!(repo_fingerprint(repo), before);
+    i18n::set_lang(original_language);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS plan_recovery_commands: Ready collapsed, exact shell copy and expansion, EN/JA");
 }
 
 pub fn scenario_plan_recovery_ax(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_language = i18n::lang();
     let (fixture, _remote, app, window) = ready_push(cx);
     for lang in [Lang::En, Lang::Ja] {
         i18n::set_lang(lang);
@@ -239,6 +323,7 @@ pub fn scenario_plan_recovery_ax(cx: &mut VisualTestAppContext) {
             .unwrap()
             .contains(&prose));
     }
+    i18n::set_lang(original_language);
     unmount(cx, app, window);
     drop(fixture);
     eprintln!(
@@ -248,6 +333,7 @@ pub fn scenario_plan_recovery_ax(cx: &mut VisualTestAppContext) {
 
 pub fn scenario_plan_equivalent_summary(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_language = i18n::lang();
     let (_fixture, _remote, app, window) = ready_push(cx);
     let command = cx.read(|cx| {
         app.read(cx)
@@ -273,6 +359,7 @@ pub fn scenario_plan_equivalent_summary(cx: &mut VisualTestAppContext) {
         );
         assert!(!expanded);
     }
+    i18n::set_lang(original_language);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS plan_equivalent_summary: reusable disclosure shows bare command with localized equivalent AX name");
 }

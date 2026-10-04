@@ -266,18 +266,14 @@ pub(crate) fn render_input_plan_modal(
         }
         if input_valid && !has_blockers && plan_ready(&plan) {
             if let Some(commands) = offered_recovery_commands(plan.recovery.as_ref()) {
-                body = body.child(
-                    div()
-                        .flex_shrink_0()
-                        .child(render_recovery_commands(
-                            commands,
-                            "input-recovery",
-                            "input-recovery-copy",
-                            "input-recovery-body",
-                            overrides,
-                            cx,
-                        )),
-                );
+                body = body.child(div().flex_shrink_0().child(render_recovery_commands(
+                    commands,
+                    "input-recovery",
+                    "input-recovery-copy",
+                    "input-recovery-body",
+                    overrides,
+                    cx,
+                )));
             }
         }
     }

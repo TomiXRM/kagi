@@ -3594,7 +3594,12 @@ pub fn scenario_dialog_a11y_roles(cx: &mut VisualTestAppContext) {
     );
     let recovery = cx.read(|cx| {
         kagi_ui_core::i18n::plan_recovery_text(
-            app.read(cx).delete_branch_modal().unwrap().plan.recovery.as_ref(),
+            app.read(cx)
+                .delete_branch_modal()
+                .unwrap()
+                .plan
+                .recovery
+                .as_ref(),
         )
     });
     assert_eq!(d.description.as_deref(), Some(recovery.as_str()));
@@ -3721,12 +3726,23 @@ pub fn scenario_sync_to_remote_armed(cx: &mut VisualTestAppContext) {
         assert_eq!(dialog.role, gpui::Role::AlertDialog);
         let recovery = cx.read(|cx| {
             kagi_ui_core::i18n::plan_recovery_text(
-                app.read(cx).branch_plan_modal().unwrap().plan.recovery.as_ref(),
+                app.read(cx)
+                    .branch_plan_modal()
+                    .unwrap()
+                    .plan
+                    .recovery
+                    .as_ref(),
             )
         });
         assert_eq!(
             dialog.description.as_deref(),
-            Some(format!("{}\n{recovery}", kagi_ui_core::i18n::Msg::A11yDialogTwoStage.t()).as_str())
+            Some(
+                format!(
+                    "{}\n{recovery}",
+                    kagi_ui_core::i18n::Msg::A11yDialogTwoStage.t()
+                )
+                .as_str()
+            )
         );
         assert_eq!(
             output(repo, &["status", "--porcelain"]),

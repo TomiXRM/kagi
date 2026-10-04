@@ -123,7 +123,6 @@ fn op_failed_switches_and_keeps_domain_words() {
     set_lang_no_persist(Lang::En);
 }
 
-
 #[test]
 fn resolve_lang_env_override() {
     let _g = LOCK.lock();

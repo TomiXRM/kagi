@@ -27,7 +27,9 @@ use gpui::{div, prelude::*, rgb, Context, KeyDownEvent, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::Sizable as _;
 use kagi_domain::plan_note::ShellKind;
-use kagi_ui_core::i18n::{plan::plan_heading_text, plan_note_text, plan_recovery_text, plan_title_text};
+use kagi_ui_core::i18n::{
+    plan::plan_heading_text, plan_note_text, plan_recovery_text, plan_title_text,
+};
 use std::rc::Rc;
 
 /// Every fully-bespoke destructive modal in this file badges itself with

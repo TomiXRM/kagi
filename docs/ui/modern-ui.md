@@ -231,6 +231,13 @@ keyboard/screen-reader accessible button (Enter/Space) with its own Copy
 button; Copy all includes its full text. Blocked and no-op plans omit that
 command from both the card and Copy all, even if the backend supplied one.
 
+The shared plan cards, the two input-plan cards, Amend / Discard and the
+bespoke CherryPick / Commit Plan / StashApply cards draw the small inline
+operation icon, short localized title and typed target chips rather than the
+40px badge. CherryPick and StashApply retain their recovery prose until
+#1023; Commit Plan has no recovery text. The other four input cards retain
+the badge heading.
+
 Operation Log restore has its own REFS-first card, not a second generic plan
 summary. It uses the same command-visibility gate as the shared plan card:
 Ready with no blockers. Show each

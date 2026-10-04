@@ -104,10 +104,9 @@ fn render_command_disclosure(
     let open = section_open(overrides, id, false).is_open();
     #[cfg(feature = "gui-e2e")]
     DISCLOSURES.with(|items| {
-        items.borrow_mut().insert(
-            id,
-            (summary.to_string(), ax_label.to_string(), open),
-        );
+        items
+            .borrow_mut()
+            .insert(id, (summary.to_string(), ax_label.to_string(), open));
     });
     let header = div()
         .flex()

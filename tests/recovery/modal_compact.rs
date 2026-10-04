@@ -723,7 +723,11 @@ fn push_case(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, case: &Case) 
     let recovery = measure(
         cx,
         case.win,
-        &["plan-recovery", "plan-recovery-body", "plan-recovery-scroll"],
+        &[
+            "plan-recovery",
+            "plan-recovery-body",
+            "plan-recovery-scroll",
+        ],
     );
     assert!(
         recovery[0].is_some() && recovery[1].is_none() && recovery[2].is_none(),

@@ -30,7 +30,6 @@ pub(crate) const MODAL_LIST_ROW_H: f32 = 18.;
 /// state, warnings, command disclosures and the pinned action row.
 const MODAL_LIST_VIEWPORT_FRAC: f32 = 0.4;
 
-
 /// Row ceiling used only before the first frame publishes a window height
 /// (headless snapshot tests), to keep list heights deterministic there.
 const MODAL_LIST_FALLBACK_ROWS: f32 = 20.;

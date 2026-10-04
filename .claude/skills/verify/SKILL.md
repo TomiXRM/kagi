@@ -514,12 +514,14 @@ The current suite covers:
   fit their own disclosure. A blocked plan has no confirm button, and the
   fixture's HEAD + porcelain status stays unchanged. Git uses a local bare
   remote. `modal_sections` checks closed → open → closed and reset.
-- Plan headings and recovery (`KAGI_GUI_E2E_ONLY=plan_card_heading,plan_recovery_commands,plan_recovery_ax,plan_equivalent_summary,blocked_plan_command,dialog_a11y_roles,operation_strip_abort`,
+- Plan headings and recovery (`KAGI_GUI_E2E_ONLY=plan_card_heading,bespoke_plan_heading,plan_recovery_commands,plan_recovery_ax,plan_equivalent_summary,blocked_plan_command,dialog_a11y_roles,operation_strip_abort`,
   `tests/recovery/plan_card_994.rs`, `tests/recovery/operations.rs`,
   `tests/recovery/app_conflict.rs`, #994): EN/JA shared Push and Checkout
   measure an inline ≤20px icon, one-line short heading, typed target chip and
   right-hand Copy all within the plan card while the AX dialog keeps the full
-  title. Ready Push has one initially collapsed `plan-recovery` row and
+  title. CherryPick, Commit Plan and StashApply measure the same inline icon
+  and target chip on their bespoke cards, without adding Copy all.
+  Ready Push has one initially collapsed `plan-recovery` row and
   command-only body; its dedicated Copy uses precisely
   `PlanRecovery::commands_for(ShellKind::current())`, while Copy all and the
   dialog description retain the full localized recovery explanation. The
@@ -532,9 +534,11 @@ The current suite covers:
   heading icon 18 → 40px failed `plan_card_heading`; disclosure default closed
   → open failed `plan_recovery_commands`; omitting shared-card AX recovery
   failed `plan_recovery_ax`; replacing the bare equivalent summary with the
-  equivalent-label text failed `plan_equivalent_summary`. CherryPick/StashApply
-  recovery is follow-up #1023 (`Refs #1016`); Operation Log persistence and
-  its ADR are follow-up #1025 (`Refs #994`).
+  equivalent-label text failed `plan_equivalent_summary`. Returning CherryPick
+  to the 40px badge failed `bespoke_plan_heading` before restoring the inline
+  heading; the same scenario also renders Commit Plan and StashApply.
+  CherryPick/StashApply recovery is follow-up #1023 (`Refs #1016`);
+  Operation Log persistence and its ADR are follow-up #1025 (`Refs #994`).
 - Input-confirm cards (`KAGI_GUI_E2E_ONLY=create_branch_input_confirm_ime,input_confirm_disabled_cards,stash_push_stacked_preview`,
   `tests/recovery/operations.rs`): #956, #1017. The real Create Branch and
   Stash Push cards measure `plan-state-current` above `plan-state-after`,

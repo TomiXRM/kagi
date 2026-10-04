@@ -7,7 +7,7 @@
 use super::button_style::KagiButton;
 use super::i18n::Msg;
 use super::modal_renderers::{
-    modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box,
+    modal_overlay, render_current_predicted, render_plan_heading, render_recovery_box,
 };
 use super::modal_renderers_input::{
     render_input_modal_action_with_size, render_input_modal_heading, InputActionSize,
@@ -21,7 +21,7 @@ use gpui::{div, prelude::*, rgb, Context, FocusHandle, KeyDownEvent, SharedStrin
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{Icon, IconName, Sizable as _};
 use kagi_domain::plan_note::{PlanNote, StashNote};
-use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
+use kagi_ui_core::i18n::{plan::plan_heading_text, plan_note_text, plan_recovery_text};
 
 // ──────────────────────────────────────────────────────────────
 // Stash push modal renderer (T015)
@@ -333,9 +333,12 @@ pub(crate) fn render_stash_apply_modal(
 
     // #454: blockers and the recovery prose grow with the plan and this card
     // has no inner scroller, so the body is its single scroll region.
-    let card = modal_card(MODAL_W_MD).child(div().flex_shrink_0().child(render_modal_title_row(
-        SharedString::from(plan_title_text(&plan.title)),
-        Some((IconName::Inbox.into(), current_theme().color_success)),
+    let (title, chips) = plan_heading_text(&plan.title);
+    let card = modal_card(MODAL_W_MD).child(div().flex_shrink_0().child(render_plan_heading(
+        title,
+        chips,
+        (IconName::Inbox.into(), current_theme().color_success),
+        None,
     )));
     let mut body = modal_scroll_body()
         // ── Current → Predicted ─────────────────────────────

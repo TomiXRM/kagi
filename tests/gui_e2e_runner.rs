@@ -80,6 +80,9 @@ mod recovery_bottom_panel;
 mod bottom_panel_motion;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/graph_column_divider.rs"]
+mod graph_column_divider;
+#[cfg(target_os = "macos")]
 #[path = "recovery/side_panel_motion.rs"]
 mod side_panel_motion;
 
@@ -223,6 +226,10 @@ mod recovery_header_fit;
 #[cfg(target_os = "macos")]
 #[path = "recovery/modal_compact.rs"]
 mod recovery_modal_compact;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/plan_card_994.rs"]
+mod recovery_plan_card_994;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/oplog_panel.rs"]
@@ -915,6 +922,34 @@ mod macos {
             (
                 "blocked_plan_command",
                 Box::new(crate::recovery_operations::scenario_blocked_plan_command),
+            ),
+            (
+                "plan_heading_chipless",
+                Box::new(crate::recovery_plan_card_994::scenario_plan_heading_chipless),
+            ),
+            (
+                "plan_recovery_noop",
+                Box::new(crate::recovery_plan_card_994::scenario_plan_recovery_noop),
+            ),
+            (
+                "plan_card_heading",
+                Box::new(crate::recovery_plan_card_994::scenario_plan_card_heading),
+            ),
+            (
+                "bespoke_plan_heading",
+                Box::new(crate::recovery_plan_card_994::scenario_bespoke_plan_heading),
+            ),
+            (
+                "plan_recovery_commands",
+                Box::new(crate::recovery_plan_card_994::scenario_plan_recovery_commands),
+            ),
+            (
+                "plan_recovery_ax",
+                Box::new(crate::recovery_plan_card_994::scenario_plan_recovery_ax),
+            ),
+            (
+                "plan_equivalent_summary",
+                Box::new(crate::recovery_plan_card_994::scenario_plan_equivalent_summary),
             ),
             (
                 "commit_list_roles",
@@ -2104,6 +2139,10 @@ mod macos {
             (
                 "right_selection_motion",
                 Box::new(crate::side_panel_motion::scenario_right_selection_motion),
+            ),
+            (
+                "graph_column_divider_hidden",
+                Box::new(crate::graph_column_divider::scenario_graph_column_divider_hidden),
             ),
             ("graph_copy", Box::new(scenario_graph_copy)),
             (

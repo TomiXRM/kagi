@@ -5,12 +5,15 @@
 //! nothing with the plan card except the shell helpers.
 
 use super::i18n::Msg;
+use super::modal_command::{plan_ready, render_recovery_commands};
 use super::modal_renderers::{
-    modal_overlay, render_current_predicted, render_modal_title_row, ModalIcon, PlanCardAccent,
+    modal_overlay, render_current_predicted, render_modal_title_row, render_plan_heading,
+    ModalIcon, PlanCardAccent,
 };
-use super::modal_renderers_plan::{offered_recovery_commands, render_input_recovery_commands};
+use super::modal_renderers_plan::offered_recovery_commands;
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_MD};
 use super::theme::theme as current_theme;
+use super::KagiApp;
 use gpui::{
     div, prelude::*, rgb, Context, Entity, FocusHandle, Hsla, KeyDownEvent, Role, SharedString,
     Window,
@@ -21,7 +24,7 @@ use gpui_component::tooltip::Tooltip;
 use gpui_component::{ActiveTheme as _, Sizable as _};
 use kagi_domain::plan_note::{PlanNote, PushNote};
 use kagi_git::{BranchRenameValidation, OperationPlan};
-use kagi_ui_core::i18n::plan_note_text;
+use kagi_ui_core::i18n::{plan::plan_heading_text, plan_note_text};
 
 /// The input-confirm cards share form density, but keep their own plan and
 /// confirmation handlers. A field error is one line here; the full reason
@@ -153,6 +156,8 @@ pub(crate) fn render_input_modal_action_with_size(
 }
 
 pub(crate) fn render_input_plan_modal(
+    short_title: &'static str,
+    heading_target: &str,
     title: String,
     label: &'static str,
     input_state: Option<Entity<InputState>>,
@@ -163,7 +168,8 @@ pub(crate) fn render_input_plan_modal(
     accent: PlanCardAccent,
     cancel_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     confirm_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-    cx: &gpui::App,
+    overrides: &std::collections::HashMap<&'static str, bool>,
+    cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let field_reason = match validation.as_ref() {
         Some(BranchRenameValidation::Invalid(reason)) => Some(SharedString::from(
@@ -188,11 +194,21 @@ pub(crate) fn render_input_plan_modal(
     } else {
         None
     };
-    // #454 layer 4: adopt the shared shell — fixed title, scrolling middle,
-    // fixed button row. Plan notes are unbounded (a rename can carry many
-    // warnings/blockers), so the body is this card's single scroll region.
-    let (icon, color) = accent.clone();
-    let card = modal_card(MODAL_W_MD).child(render_input_modal_heading(title, None, icon, color));
+    // Plan notes are unbounded, so only this card's middle body scrolls.
+    let (icon, color) = accent;
+    let (heading_title, mut chips) = plan
+        .as_ref()
+        .map(|plan| plan_heading_text(&plan.title))
+        .unwrap_or((short_title, [None, None]));
+    if chips[0].is_none() {
+        chips[0] = Some(std::borrow::Cow::Borrowed(heading_target));
+    }
+    let card = modal_card(MODAL_W_MD).child(
+        render_plan_heading(heading_title, chips, (icon, color), None)
+            .id("input-plan-heading")
+            .role(Role::Heading)
+            .aria_label(SharedString::from(title)),
+    );
     let mut body = modal_scroll_body().child(render_input_modal_field(
         label,
         input_state.as_ref(),
@@ -248,13 +264,16 @@ pub(crate) fn render_input_plan_modal(
                 ));
             }
         }
-        if input_valid && !has_blockers {
+        if input_valid && !has_blockers && plan_ready(&plan) {
             if let Some(commands) = offered_recovery_commands(plan.recovery.as_ref()) {
-                body = body.child(
-                    div()
-                        .flex_shrink_0()
-                        .child(render_input_recovery_commands(commands, color)),
-                );
+                body = body.child(div().flex_shrink_0().child(render_recovery_commands(
+                    commands,
+                    "input-recovery",
+                    "input-recovery-copy",
+                    "input-recovery-body",
+                    overrides,
+                    cx,
+                )));
             }
         }
     }

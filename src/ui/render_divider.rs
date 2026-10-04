@@ -1,18 +1,15 @@
 //! Divider drag-move handler split out of `render.rs` (T-SPLIT-RENDER-001 /
 //! ADR-0116 Wave 3). Child module of `crate::ui`, so it keeps direct access to
-//! `KagiApp`'s private state. Behaviour is unchanged — a pure physical move
-//! from `render`'s root `on_drag_move` listener.
+//! `KagiApp`'s private state. The root `on_drag_move` listener handles pane and
+//! Graph header dividers; Graph columns use measured painted origins (#1011).
 
 use super::*;
 
 impl KagiApp {
     /// T023: divider drag-move handler (single listener handles every divider).
-    /// Extracted verbatim from `render` (T-SPLIT-RENDER-001 / ADR-0116 Wave 3)
-    /// so the entry `render` reads as composition; behaviour is unchanged.
-    /// Placed on the root div so it fires even when the mouse moves outside the
-    /// narrow 4px divider strip. Widths are derived from the ABSOLUTE cursor
-    /// position, not deltas: the sidebar starts at the window's left edge and
-    /// the panel ends at its right edge, so the divider simply tracks the cursor.
+    /// On the root div so a drag continues outside the narrow divider strip.
+    /// Widths use absolute pointer positions, not deltas: outer panes anchor to
+    /// window edges, while Graph columns anchor to their painted header bounds.
     pub(super) fn handle_divider_drag(
         &mut self,
         event: &gpui::DragMoveEvent<DividerDrag>,
@@ -26,16 +23,12 @@ impl KagiApp {
         // 14.4px rem base and relative zoom) for raw cursor coordinates.
         // The 4px divider's 2px half-offset follows that same scale.
         let z = theme::scaled(1.0);
-        // #957 review: while a pane slides, its divider (and the Graph's
-        // column dividers, which follow the sidebar's edge) is not where the
-        // saved size puts it, so the formulas below would turn the cursor
-        // into the wrong size. Ignore the drag until the pane settles; the
-        // next move after that is absolute again, so nothing jumps.
+        // #957: sidebar and outer-pane dividers stay put during a slide.
+        // Graph column dividers use their painted column origins instead,
+        // so they can follow the pointer while the sidebar is moving (#1011).
         let now = super::panel_motion::now();
         let sliding = match drag.kind {
-            DividerKind::Sidebar | DividerKind::BadgeCol | DividerKind::GraphCol => {
-                self.panel_motion.sidebar.animating(now)
-            }
+            DividerKind::Sidebar => self.panel_motion.sidebar.animating(now),
             DividerKind::Panel => self.panel_motion.right.animating(now),
             DividerKind::BottomPanel => self.panel_motion.bottom.animating(now),
             _ => false,
@@ -80,12 +73,13 @@ impl KagiApp {
                 }
             }
             DividerKind::BadgeCol => {
-                // T030/W28: badge column left edge = sidebar_width + INNER_DIV_W, all
-                // rendered scaled, so the on-screen left edge is (..)*z; convert the
-                // raw cursor back to logical space (/z) before clamping/storing.
-                let badge_col_left = self.sidebar.width + INNER_DIV_W; // sidebar divider = 4px
-                let new_w = ((cursor_x / z) - badge_col_left - INNER_DIV_W / 2.0)
-                    .clamp(BADGE_COL_MIN, BADGE_COL_MAX);
+                // The painted column origin includes sidebar visibility, motion,
+                // and header padding; only the divider's half-width is added.
+                let Some(left) = self.badge_col_origin_x.get() else {
+                    return;
+                };
+                let new_w =
+                    ((cursor_x - left) / z - INNER_DIV_W / 2.0).clamp(BADGE_COL_MIN, BADGE_COL_MAX);
                 if (new_w - self.badge_col_w).abs() > 0.5 {
                     self.badge_col_w = new_w;
                     theme::set_col_width("badge_col_w", new_w);
@@ -93,12 +87,11 @@ impl KagiApp {
                 }
             }
             DividerKind::GraphCol => {
-                // T030/W28: graph column left edge = badge_col_left + badge_col_w + INNER_DIV_W,
-                // all rendered scaled; convert the raw cursor back to logical space (/z).
-                let badge_col_left = self.sidebar.width + INNER_DIV_W;
-                let graph_col_left = badge_col_left + self.badge_col_w + INNER_DIV_W;
-                let new_w = ((cursor_x / z) - graph_col_left - INNER_DIV_W / 2.0)
-                    .clamp(GRAPH_COL_MIN, GRAPH_COL_MAX);
+                let Some(left) = self.graph_col_origin_x.get() else {
+                    return;
+                };
+                let new_w =
+                    ((cursor_x - left) / z - INNER_DIV_W / 2.0).clamp(GRAPH_COL_MIN, GRAPH_COL_MAX);
                 if (new_w - self.graph_col_w).abs() > 0.5 {
                     self.graph_col_w = new_w;
                     theme::set_col_width("graph_col_w", new_w);

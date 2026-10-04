@@ -828,7 +828,12 @@ pub fn scenario_blocked_plan_command(cx: &mut VisualTestAppContext) {
         );
     });
     paint(cx, window);
-    for id in ["plan-equivalent-command", "plan-equivalent-command-copy"] {
+    for id in [
+        "plan-equivalent-command",
+        "plan-equivalent-command-copy",
+        "plan-recovery",
+        "plan-recovery-copy",
+    ] {
         assert!(
             kagi::ui::e2e::control_bounds(window.window_id(), id).is_none(),
             "blocked Reset Current must hide {id}"
@@ -850,7 +855,7 @@ pub fn scenario_blocked_plan_command(cx: &mut VisualTestAppContext) {
     assert!(!copied.contains("\nequivalent command:\n"), "{copied}");
     assert_eq!(repo_fingerprint(repo), before);
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS blocked_plan_command: detached Reset Current hides equivalent command and both copy routes");
+    eprintln!("[gui-e2e] PASS blocked_plan_command: detached Reset Current hides executable-looking equivalent and recovery disclosures");
 }
 
 /// Escape with nothing else to close clears the Graph selection, which closes
@@ -3571,7 +3576,7 @@ pub fn scenario_dialog_a11y_roles(cx: &mut VisualTestAppContext) {
     press_key(cx, &app, window, "escape");
     cx.run_until_parked();
 
-    // Single stage (merged): no two-stage description.
+    // Single-stage cards omit stage instructions but retain recovery advice.
     app.update(cx, |app, cx| {
         app.open_delete_branch_modal("merged-delete", cx)
     });
@@ -3587,7 +3592,17 @@ pub fn scenario_dialog_a11y_roles(cx: &mut VisualTestAppContext) {
             Role::Dialog
         }
     );
-    assert_eq!(d.description, None, "single confirm: nothing to announce");
+    let recovery = cx.read(|cx| {
+        kagi_ui_core::i18n::plan_recovery_text(
+            app.read(cx)
+                .delete_branch_modal()
+                .unwrap()
+                .plan
+                .recovery
+                .as_ref(),
+        )
+    });
+    assert_eq!(d.description.as_deref(), Some(recovery.as_str()));
     press_key(cx, &app, window, "escape");
     cx.run_until_parked();
 
@@ -3709,9 +3724,25 @@ pub fn scenario_sync_to_remote_armed(cx: &mut VisualTestAppContext) {
         redraw(cx, &app, window);
         let dialog = kagi::ui::dialog_a11y::recorded_dialog("plan-card").expect("sync card drawn");
         assert_eq!(dialog.role, gpui::Role::AlertDialog);
+        let recovery = cx.read(|cx| {
+            kagi_ui_core::i18n::plan_recovery_text(
+                app.read(cx)
+                    .branch_plan_modal()
+                    .unwrap()
+                    .plan
+                    .recovery
+                    .as_ref(),
+            )
+        });
         assert_eq!(
             dialog.description.as_deref(),
-            Some(kagi_ui_core::i18n::Msg::A11yDialogTwoStage.t())
+            Some(
+                format!(
+                    "{}\n{recovery}",
+                    kagi_ui_core::i18n::Msg::A11yDialogTwoStage.t()
+                )
+                .as_str()
+            )
         );
         assert_eq!(
             output(repo, &["status", "--porcelain"]),

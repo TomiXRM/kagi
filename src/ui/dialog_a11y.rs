@@ -59,6 +59,23 @@ pub struct DialogA11y {
     pub actions: Vec<(i32, String)>,
 }
 
+impl DialogA11y {
+    /// Add the plan's recovery explanation after the confirm-stage instruction.
+    /// Even a plan with no shell commands retains its accessible recovery advice.
+    pub(crate) fn with_recovery(mut self, recovery: &str) -> Self {
+        if !recovery.is_empty() {
+            match &mut self.description {
+                Some(description) => {
+                    description.push('\n');
+                    description.push_str(recovery);
+                }
+                None => self.description = Some(recovery.to_owned()),
+            }
+        }
+        self
+    }
+}
+
 /// The dialog's role, name, description and actions. `confirm_label` is
 /// `None` when blockers hide the confirm button — the action is then not
 /// offered either.
@@ -281,6 +298,30 @@ mod tests {
         );
         assert_eq!(blocked.actions[0].0, CANCEL_ACTION);
         assert!(blocked.description.is_some());
+    }
+
+    #[test]
+    fn recovery_follows_stage_and_is_not_lost_without_commands() {
+        for stage in [
+            ConfirmStage::Single,
+            ConfirmStage::Unarmed,
+            ConfirmStage::Armed,
+        ] {
+            let spec = dialog_a11y("plan", Some("Go"), true, stage)
+                .with_recovery("Return to previous branch.");
+            let expected = match stage {
+                ConfirmStage::Single => "Return to previous branch.".to_owned(),
+                ConfirmStage::Unarmed => format!(
+                    "{}\nReturn to previous branch.",
+                    Msg::A11yDialogTwoStage.t()
+                ),
+                ConfirmStage::Armed => {
+                    format!("{}\nReturn to previous branch.", Msg::A11yDialogArmed.t())
+                }
+            };
+            assert_eq!(spec.description.as_deref(), Some(expected.as_str()));
+            assert_eq!(spec.actions.len(), 2);
+        }
     }
 
     #[test]

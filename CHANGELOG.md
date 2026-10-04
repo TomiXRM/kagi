@@ -15,6 +15,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Changed
 - 既定の表示スケールを従来の 90% 相当（100%=14.4px/rem）にしました。保存済みの拡大率は初回起動時に換算して従来の見た目を保ち、Graph の行と線・Terminal も同じ倍率に揃えました。(#1019)
+- 共通の計画確認カードと Amend / Discard / CherryPick / Commit Plan / StashApply の見出しを小さな inline icon・短い操作名・対象 chip に整理しました。対象がなければ代替 chip は出さず、behind・操作意図(承認 / コメント / 修正依頼 / upstream 設定)・ファイル / stash / branch の件数を英日それぞれの単位で表示します。入力カードの見出しは対象外です。共通カードと Amend / Discard の復旧コマンドは Ready かつ blocker なし・コマンドありの場合だけ閉じた行に表示します。入力カードの復旧行も有効な入力と Ready を要し、Copy all のコマンド欄も Ready の場合だけ出します。説明文は Copy all と読み上げ用 dialog description に残し、相当コマンドも同じ折りたたみ表示に統一しました。CherryPick / StashApply の復旧表示は別課題です。(#994)
 - 全 plan 確認カードの状態比較を Stash と同じ縦 2 段の CURRENT / AFTER（日本語は現在 / 実行後）に統一し、MD モーダルを 640px に広げました。Stash の CURRENT ラベルが途中で折り返される問題も修正しました。変更のない状態の chip は日本語では「変更なし」と表示します。SM / LG のカードも指定どおりの幅で描かれるようになりました（これまでは窓幅の上限が自分の幅の 90% として働き、LG が MD より狭くなっていました）。(#1017)
 
 - 計画確認カードの CURRENT → PREDICTED を同じ幅の 2 列と中央の矢印に整理し、状態チップは行内でスクロールできるようにしました。相当する Git コマンドがある計画は折りたたんでコピーでき、見出しは Tab / Enter / Space と読み上げにも対応します（Pull は実行時に再 fetch して merge commit を作る場合があるため、等価コマンドを提示しません）。Operation Log の ref 復元は REFS の移動と削除、変えない対象、既存の線を保った復元後のグラフを先に示し、確認を 2 回必要とする安全境界は維持します。低い窓でも対象 ref の先頭 3 行を優先し、復元後のグラフは 6 行を上限に内容分だけの高さにし、拡大時の横方向の線も見切れないようにします。削除する ref は赤いチップで示します。不正な ref 行の計画は開かず、詳細を Operation Log に記録して短いエラーを表示します。(#988)
@@ -22,6 +23,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Graph で commit を選ぶと Inspector が 180ms で開き、再クリックや Esc で選択を外すと 150ms で閉じるようにしました。途中の反転は現在の幅から続き、`reduce_motion`、タブ切替、Home、Conflict とほかの workspace への移動は即時です。(#1001)
+- サイドバー非表示でも Graph の BRANCH / TAG・GRAPH 列の境界がドラッグした 40px だけ動くように修正し、サイドバーの開閉途中もポインターに追従させました。(#1011)
 
 - queued commit の確認中に staged 内容が外部で変わった場合や merge が始まった場合、確認済みの計画を実行せず取り消します。投入時の branch の draft だけを消し、detached HEAD の commit も検証して後続を進めます。入力中の待機理由を明示し、Commit を押した後は入力欄の focus を解放します。(#355、#1020)
 - 入力欄を持つ確認 modal を Escape で閉じた後、表示されていない入力欄の focus が残っても操作キューが待機し続けないようにしました。(#355)

@@ -447,6 +447,15 @@ The current suite covers:
   tab switch and workspace-mode changes settle instantly; left/bottom pane
   contracts retain their existing scenario. Tier B: capture a real Graph window
   before selection, during the transition, fully open, then during Esc and closed.
+- Graph header column dividers with the sidebar hidden
+  (`KAGI_GUI_E2E_ONLY=graph_column_divider_hidden`,
+  `tests/recovery/graph_column_divider.rs`, #1011): drag each divider 40px
+  with the sidebar hidden and shown; both the saved column width and painted
+  boundary move exactly 40px. Advance the sidebar-closing clock between drag
+  events: after GPUI's drag threshold, each boundary follows the pointer even
+  while the sidebar moves. Restoring the fixed sidebar-width offset must fail
+  the hidden badge-column drag (-90px instead of +40px). Tier B: capture two
+  real Kagi window screenshots, before and after the hidden-sidebar drag.
 - WIP virtual commit anchors (`KAGI_GUI_E2E_ONLY=commit_row_layout_wip`,
   `tests/recovery/wip_layout.rs`, under the layout suite): actual canvas paints
   must show hollow nodes directly above their own HEADs (columns may repeat),
@@ -512,14 +521,58 @@ The current suite covers:
   target rows must fit the actual scroller, with at least three visible at 600px
   and more than three at 700px. Real wheel events must expose the final file
   or commit, not merely a row near the end.
-  Recovery is folded by default only while compact, warnings never are, an
-  explicit disclosure click survives a zoom change that crosses the compact
-  threshold, and reopening the card restores the default. Both destructive cards
-  are armed (first confirm click) and cancelled. Warning, recovery, blocker and
-  armed text bounds must fit their visible body, not merely remain mounted.
-  A blocked plan has no confirm button, and the fixture's HEAD + porcelain
-  status remains unchanged. Git operations use only a local bare repo.
-  `modal_sections` is the pre-migration disclosure baseline and remains unchanged;
+  The shared Push and bespoke Amend / Discard recoveries now start as one
+  collapsed structured-command row at every height, never a prose scroll box;
+  warning sections remain visible. An explicit recovery click survives a zoom
+  change across compact/roomy, reopening restores the closed default. Both
+  destructive cards are armed (first confirm click) and cancelled. Warning,
+  blocker and armed text bounds must fit their visible body; recovery commands
+  fit their own disclosure. A blocked plan has no confirm button, and the
+  fixture's HEAD + porcelain status stays unchanged. Git uses a local bare
+  remote. `modal_sections` checks closed → open → closed and reset.
+- Plan headings and recovery (`KAGI_GUI_E2E_ONLY=plan_card_heading,plan_heading_chipless,plan_recovery_noop,bespoke_plan_heading,plan_recovery_commands,plan_recovery_ax,plan_equivalent_summary,blocked_plan_command,dialog_a11y_roles,operation_strip_abort`,
+  `tests/recovery/plan_card_994.rs`, `tests/recovery/operations.rs`,
+  `tests/recovery/app_conflict.rs`, #994): EN/JA shared Push and Checkout
+  measure an inline ≤20px icon, one-line short heading, optional typed
+  target chip (no fallback chip when target is absent), and right-hand Copy all
+  within the plan card while the AX dialog keeps the full title. Behind,
+  approve / comment / request changes / set upstream intent, and file / stash / branch
+  counts use localized units. CherryPick, Commit Plan and StashApply measure
+  the inline icon and applicable target chip on their bespoke cards, without
+  adding Copy all. Input-card headings remain out of scope.
+  Ready, blocker-free Push with nonempty
+  `PlanRecovery::commands_for(ShellKind::current())` has one initially
+  collapsed `plan-recovery` row and command-only body; its dedicated Copy uses
+  precisely those commands. Input cards apply the same Ready, valid-input
+  and blocker-free gate to recovery commands. Copy all includes a separate
+  commands block only for Ready plans with available commands; it and the
+  dialog description retain the localized recovery explanation even when
+  there are no commands.
+  The reusable equivalent-command disclosure shows the bare command with a
+  localized *equivalent* AX label; `plan_equivalent_summary` also checks that
+  an identical recovery command prevents the duplicate disclosure. Detached
+  Reset Current has neither executable-looking disclosure. Armed Conflict
+  Abort and Sync to remote
+  announce their stage first, then recovery; unarmed/single cards keep their
+  previous action semantics. Four single-production-edit mutations failed
+  their respective scenario before restoring a backed-up source file byte-for-byte:
+  heading icon 18 → 40px failed `plan_card_heading`; disclosure default closed
+  → open failed `plan_recovery_commands`; omitting shared-card AX recovery
+  failed `plan_recovery_ax`; replacing the bare equivalent summary with the
+  equivalent-label text failed `plan_equivalent_summary`. Returning CherryPick
+  to the 40px badge failed `bespoke_plan_heading` before restoring the inline
+  heading; the same scenario also renders Commit Plan and StashApply.
+  CherryPick/StashApply recovery is follow-up #1023 (`Refs #1016`);
+  Operation Log persistence and its ADR are follow-up #1025 (`Refs #994`).
+  `plan_heading_chipless` opens the real Repo health → Write commit-graph plan:
+  EN/JA have no fabricated chip, and restoring the `current.head[..8]`
+  fallback makes it fail. `plan_recovery_noop` keeps a real push plan's
+  nonempty recovery but changes its disposition to blocker-free NoOp at the
+  modal seam: neither the card nor Copy all offers structured commands;
+  changing the card gate from `plan_ready` to `blockers.is_empty()` makes it
+  fail. `clipboard_text_offers_recovery_commands_only_for_ready_plans` fails
+  the same mutation to Copy all's gate. All three mutations were restored
+  byte-for-byte against their backups.
 - Input-confirm cards (`KAGI_GUI_E2E_ONLY=create_branch_input_confirm_ime,input_confirm_disabled_cards,stash_push_stacked_preview`,
   `tests/recovery/operations.rs`): #956, #1017. The real Create Branch and
   Stash Push cards measure `plan-state-current` above `plan-state-after`,

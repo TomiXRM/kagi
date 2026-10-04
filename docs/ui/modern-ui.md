@@ -150,14 +150,14 @@ Sizes remain logical px at the pinned gpui-component scale; Kagi's new 100% base
 | List row (dense) | keep: sidebar 20, worktree 24, graph commit row 29 (synced with the lane canvas), modal target 18 | Graph author/time are `text_xs`: author is proportional and truncated in a 96px zoom-scaled column (full name in tooltip/AX); time is monospaced, right-aligned in a 48px zoom-scaled column with compact ages (`36m`, `5h`, `3d`, `2mo`), while AX keeps the full relative age. Hover is a full-width wash; selection keeps Kagi's colour meanings (branch/ref/status). Changing a row height needs the visible-row count, virtual list height and a11y positions shown together. |
 | List row (open: Home, PR/Issue lists) | Height follows the actual content and surface, not one open-row size: the PR dashboard row settles near 65px around a 40px avatar; the Issue row has a 104px minimum for its title and metadata ([`pr_dashboard.rs`](../../src/ui/pr_dashboard.rs#L341-L344), [`issues_mode.rs`](../../src/ui/issues_mode.rs#L486-L515)). Home's rows: `keyboard_nav::RowFocus` / `RowList` — the list is one Tab stop (the row last focused while it is drawn, else the first row on screen), ↑/↓ and Home / End / PageUp / PageDown scroll the destination row into view and focus it (Cmd+↑/↓ also move to the ends), Enter/Space press it; a focused row that leaves the list hands the focus to the first row left, or to the window — also when the list itself is not drawn (still loading, failed: `RowFocus::release`) (#959, #986; in #960 every row was a Tab stop). | 32–40px is only a candidate for a single-line result without those contents, not a PR/Issue list target. Keep the identifying part of long names; the full value must be reachable by keyboard/AX, not only a tooltip. The Graph sidebar also has a per-pane row keyboard path (#987); the PR / Issue navigators still do not. |
 | Menu / context menu | Kagi `menu_overlay` (keeps disabled-reason tooltips and danger rows); pinned PopupMenu rows are 26 fixed. The context menus' keyboard is `menu_keys` (#985): an opened menu takes the focus on its first enabled item, ↑/↓ (wrapping) and Home/End move among the enabled items, Enter/Space press one, Escape, Tab and Shift+Tab close; on close the focus goes back where it was (to the window when an item opened a modal). A menu taller than the window scrolls its items and keeps the keyed item in view; leaving the tab, a landed reload, or a modal / notice / plan drawn over the menus closes them. `Role::Menu` / `Role::MenuItem`; a disabled item carries the AX disabled state and its reason as `aria_description`; the focus shows as the hover highlight, only for `focus_visible`. Shift+F10 (and the Menu key) opens the selected commit's menu below its row from the window, and a focused sidebar row's menu below that row. | Adopt PopupMenu only where those contracts are not needed. A new context menu passes `Some(&app.menu_keys)` to `render_menu_overlay` and is added to `KagiApp::any_context_menu_open`. |
-| Modal / confirmation | Kagi `modal_shell` (target list not hideable behind disclosure; long lists scroll inside their panel; fixed action row; existing widths 504/576/648). Six input + confirm cards (#956: Create Branch/Tag, Stash, Add Worktree, Rename Branch, Set Upstream) use a heading with inline operation icon, form `Input`/confirm M = 32 as the base, errors immediately below the field, a visible disabled confirm when invalid/blocked, and only a Git command for recovery when the plan is Ready. | The target rows are not all simultaneously on-screen when the list is long ([`modal_shell.rs`](../../src/ui/modal_shell.rs#L440-L461)). Do not replace with gpui-component Dialog (448 fixed, different focus/Esc). Stash keeps its 38px message field and 24px action buttons; Create Branch has no recovery row, Set Upstream no recovery command. Borrow Dialog's look, not its behaviour. |
+| Modal / confirmation | Kagi `modal_shell` (target list not hideable behind disclosure; long lists scroll inside their panel; fixed action row; existing widths 504/640/648). Six input + confirm cards (#956: Create Branch/Tag, Stash, Add Worktree, Rename Branch, Set Upstream) use form `Input`/confirm M = 32 as the base, errors immediately below the field, a visible disabled confirm when invalid/blocked, and only a Git command for recovery when the plan is Ready. The two shared input-plan cards (Rename Branch/Set Upstream) have the inline heading; the other four retain their badge heading. | The target rows are not all simultaneously on-screen when the list is long ([`modal_shell.rs`](../../src/ui/modal_shell.rs#L440-L461)). Do not replace with gpui-component Dialog (448 fixed, different focus/Esc). Stash keeps its 38px message field and 24px action buttons. |
 | Toast | Kagi `toast_stack` (bounded preview, max 4, info 4 s / error 8 s); the Operation Log owns detail | Not gpui-component Notification. |
 | Tabs / segmented | Kagi's `keyboard_nav::TabList` ([`keyboard_nav.rs`](../../src/ui/keyboard_nav.rs)): `Role::Tab`/`TabList`, one Tab stop (the cell the arrows moved to while the focus is in the list, else the selected cell — Tab / Shift+Tab leave in one press, coming back in lands on the selected cell), ←/→/Home/End between cells, Enter/Space select, a `focus_visible` ring in the Input ring colour, focus handed back after a pointer click. Automatic activation where selecting starts nothing (Home's switch); manual where it starts a read (the workspace-mode nav, the repository tab strip — switching a tab reads it again). A control inside or beside the cells (the strip's × and +) is not a Tab stop of its own; its keyboard path is a command (⌘W closes the tab in front, ⌘T opens Home). Cells are keyed by identity (a tab's `TabId`, Home's own key), so a tab added, closed or moved keeps its focus; a closed tab whose cell held the focus hands it to the window (`TabFocus::release_closed`). The selected label uses `accent_text_on(surface)` (at least 4.5:1). The content the list switches goes through `tab_panel_a11y::tab_panel` ([`tab_panel_a11y.rs`](../../src/ui/tab_panel_a11y.rs), #979, #983): `Role::TabPanel`, named after the selected tab without its count, on an element that is already there (no wrapper, so layout and key context stay): Home's body under the switch; the sidebar page under the workspace-mode nav, only while Graph / PRs / Issues is selected; for the repository tab strip, the workspace body row (sidebar, center with the bottom panel, right pane — the toolbar, operation strip and status bar stay outside) named after the tab, and Home's body named Home. | Pinned Tab/TabBar has no keyboard focus. In Conflict Mode the conflict view replaces the body row and is no panel (#983). Pinned gpui has no `aria-labelledby` / `aria-controls`, so a panel repeats its tab's name as its own label; no panel is tied to its tab by a relation. |
 | Keyboard focus on a Kagi-drawn control | `keyboard_nav` ([`keyboard_nav.rs`](../../src/ui/keyboard_nav.rs)): a roving tabindex — a tab list (`TabList`) or a virtualized list's rows (`RowFocus` / `RowList`) is one Tab stop, the arrows move inside it; the ring is a fixed 2px border (`RING`, not scaled with zoom so it stays crisp at 0.7×) in the theme's `color_branch`, drawn only for `focus_visible`; a control that carries it pads with `keyboard_nav::inset(n)` (the zoomed padding minus the ring), so its outer size is what `scaled_px(n)` gave before at every zoom. | Do not add a second ring or focus helper; a new list or tab row goes through these. A control inside a row or cell (Open, Clone, a tab's ×) is a Tab stop of its own only where it has no other keyboard path. |
 | Toggle / checkbox / radio | gpui-component `Checkbox` for selection, `RadioGroup` for a mutually exclusive choice; `Switch` for immediately applied *app preferences*, always through Kagi's `keyboard_nav::switch` ([`keyboard_nav.rs`](../../src/ui/keyboard_nav.rs), #970): the Switch draws it and keeps its pointer handling; around it one Tab stop per toggle with `Role::Switch`, the row's title as its name and `aria_toggled` checked / unchecked, Enter and Space flip it (gpui's keyboard click, the key-down stopped), and the `focus_visible` ring sits in a negative margin, so the control keeps its size. | Pinned `Switch` alone has no focus/key path or AX role/name/checked state ([`switch.rs`](https://github.com/longbridge/gpui-component/blob/b004e595cf5de98a73b6b561394a559a94ae1e2a/crates/ui/src/switch.rs#L142-L225)): never use it bare. A toggle that changes the repository still needs the Git write pipeline. |
 | Empty / loading / error | a sentence + one action; skeleton rows that match the final layout for lists; error with what to do and a retry | Git write errors: short toast + Operation Log, never a permanent toast. |
 | Motion | instant or ≤ 150 ms for hover/press; Kagi-owned animations honour `reduce_motion` | A library transition that cannot be turned off is listed as an exception in the PR. |
-| Pane open / close | Kagi `panel_motion` ([`panel_motion.rs`](../../src/ui/panel_motion.rs)), shared by the bottom panel, the left sidebar and the right pane: open 180 ms ease-out, close 150 ms ease-in; a change in mid-flight turns around from the current width/height, its time scaled by the distance left. Only the outer box's size moves; the content keeps its size and is clipped (`panel_motion::clip`), so the Terminal's grid and the panes' layouts never change while they slide. The bottom and left panes follow their toggles; the right pane follows visibility of its resolved slot, including Graph commit selection / Esc (#1001). Inspector / Compare / Commit Panel swaps while the slot remains shown do not move. While a pane slides, drags of its divider are ignored (the sidebar's, with the Graph's badge and graph-column dividers that follow its edge; the right pane's; the bottom panel's — [`render_divider.rs`](../../src/ui/render_divider.rs), #957): the divider is drawn at the moving edge, and a drag turns the cursor into the saved size. | Whole-workspace changes (Home, tab switch, Conflict, Editor or another mode) are instant, as is `reduce_motion`. Use the existing pane motion rather than a second timing. |
+| Pane open / close | Kagi `panel_motion` ([`panel_motion.rs`](../../src/ui/panel_motion.rs)), shared by the bottom panel, the left sidebar and the right pane: open 180 ms ease-out, close 150 ms ease-in; a change in mid-flight turns around from the current width/height, its time scaled by the distance left. Only the outer box's size moves; the content keeps its size and is clipped (`panel_motion::clip`), so the Terminal's grid and the panes' layouts never change while they slide. The bottom and left panes follow their toggles; the right pane follows visibility of its resolved slot, including Graph commit selection / Esc (#1001). Inspector / Compare / Commit Panel swaps while the slot remains shown do not move. While a pane slides, drags of its own divider are ignored (left sidebar, right pane, bottom panel — [`render_divider.rs`](../../src/ui/render_divider.rs), #957). Graph's badge and graph-column dividers instead use the painted left edge of their header columns: they track the pointer with the sidebar shown, hidden, or sliding (#1011). | Whole-workspace changes (Home, tab switch, Conflict, Editor or another mode) are instant, as is `reduce_motion`. Use the existing pane motion rather than a second timing. |
 
 ## In an issue for UI work
 
@@ -207,11 +207,13 @@ PR block.
 The Create Branch pilot found a 40px circular badge and long title that
 made the header top-heavy; explanatory text crowded a 24px form `Input`.
 Errors sat away from the field, and invalid/blocked plans hid confirm.
-Six cards now use shorter titles with inline icons and base M = 32 form
-`Input`/confirm, with errors immediately below the field. Invalid or
-blocked plans keep a visible disabled confirm; recovery, when present, is
-only a Git command for Ready plans (detail remains in Operation Log).
-Shared `Theme.radius`/font/input padding and `modal_shell`/plan/IME stay unchanged; values align by role.
+The six input + confirm cards use shorter titles and base M = 32 form
+`Input`/confirm, with errors immediately below the field. Rename Branch and
+Set Upstream now use the shared plan-card inline heading (18px icon, target
+chip); the other four input cards retain their existing badge heading.
+Invalid or blocked plans keep a visible disabled confirm; recovery, when
+present, uses structured commands only for Ready plans. Shared
+`Theme.radius`/font/input padding and `modal_shell`/plan/IME stay unchanged.
 
 ## Plan comparison and Operation Log restore (#988, #1017)
 
@@ -227,6 +229,13 @@ plan with no blockers does have an equivalent, the collapsed command is a
 keyboard/screen-reader accessible button (Enter/Space) with its own Copy
 button; Copy all includes its full text. Blocked and no-op plans omit that
 command from both the card and Copy all, even if the backend supplied one.
+
+The shared plan cards, the two input-plan cards, Amend / Discard and the
+bespoke CherryPick / Commit Plan / StashApply cards draw the small inline
+operation icon, short localized title and typed target chips rather than the
+40px badge. CherryPick and StashApply retain their recovery prose until
+#1023; Commit Plan has no recovery text. The other four input cards retain
+the badge heading.
 
 Operation Log restore has its own REFS-first card, not a second generic plan
 summary. It uses the same command-visibility gate as the shared plan card:
@@ -247,6 +256,25 @@ a moved annotated tag. Ref rows are decoded once at admission; malformed
 rows fail closed with a durable Failed receipt and a bounded UI preview.
 Restore keeps its two confirmations and backend preflight/verification/
 recording unchanged.
+
+## Plan heading and recovery (#994)
+
+The 29 shared plan confirmations (including queued commit), the two
+input-plan confirmations, and Amend / Discard use a short localized operation
+title with an inline 18px icon and up to two monospace target chips, not a
+40px circular badge. The full localized title remains in the dialog name and
+Copy all. `render_modal_title_row` remains for non-plan modals.
+
+Only Ready plans with no blockers show recovery commands, through a single
+keyboard-accessible disclosure that starts closed; Copy on that row copies
+only `PlanRecovery::commands_for(ShellKind::current())`. Unsupported shell
+quoting hides the command disclosure. Recovery explanations never occupy
+these card bodies: Copy all preserves their full text, and the dialog's AX
+description appends them after any confirm-stage instruction (including plans
+with no commands). Equivalent Git commands use the same disclosure geometry,
+with their own identifiers and an explicitly *equivalent*, not *executed*,
+AX name. Cherry-pick / Stash apply bespoke recovery and persisted Operation
+Log recovery prose remain separate follow-ups.
 
 ## Open questions (to settle with evidence)
 

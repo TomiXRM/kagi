@@ -41,10 +41,11 @@ Left `None` (honesty over coverage, issue §5):
 - every other plan kind (commit, merge, rebase, pull, stash, cherry-pick,
   revert, tag, worktree, …) — not yet vetted for faithfulness.
 
-The plan modal renders one muted line via `Msg::PlanEquivalentTo`:
-EN `"This is equivalent to \`{}\`"`, JA `"この操作は \`{}\` に相当します"`.
-The wording is deliberately **"equivalent to" / "相当"**, never
-**"runs" / "実行"** — asserted by a test — because kagi does not run the CLI.
+The plan card now exposes a collapsed command disclosure (#993, #994). Its
+visible summary is the bare monospace command; its accessible label and Copy all
+heading use localized `"equivalent command:"` / `"相当するコマンド:"`. Neither
+claims Kagi ran the CLI: the command describes the operation's equivalent,
+and blocked plans offer no executable-looking command.
 
 ### 2. `GIT_ADVICE=0` on subprocess `git` / `gh`
 

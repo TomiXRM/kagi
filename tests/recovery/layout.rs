@@ -594,11 +594,21 @@ pub(crate) mod wip;
 pub fn scenario_modal_sections(cx: &mut VisualTestAppContext) {
     use kagi::ui::modals::AmendPlanModal;
     let fixture = crate::macos::build_fixture();
+    std::fs::write(
+        fixture.path().join("README.md"),
+        "# fixture\nready to amend\n",
+    )
+    .unwrap();
+    crate::macos::git(fixture.path(), &["add", "README.md"]);
     let plan = kagi_git::Backend::open(fixture.path())
         .unwrap()
         .plan_amend(kagi_git::AmendMode::Both, Some("disclosure baseline"))
         .unwrap();
     assert!(plan.recovery.is_some());
+    assert!(
+        plan.blockers.is_empty(),
+        "the disclosure fixture must be Ready"
+    );
     let modal = AmendPlanModal {
         plan: std::sync::Arc::new(plan),
         error: None,
@@ -619,8 +629,8 @@ pub fn scenario_modal_sections(cx: &mut VisualTestAppContext) {
             .unwrap();
         e2e::control_bounds(win.window_id(), name)
     };
-    assert!(measure(cx, "amend-recovery-body").is_some());
-    for expanded in [false, true, false] {
+    assert!(measure(cx, "amend-recovery-body").is_none());
+    for expanded in [true, false, true] {
         let header = measure(cx, "amend-recovery").unwrap();
         cx.simulate_click(win, header.center(), gpui::Modifiers::none());
         cx.run_until_parked();
@@ -634,7 +644,7 @@ pub fn scenario_modal_sections(cx: &mut VisualTestAppContext) {
         cx.notify();
     });
     cx.run_until_parked();
-    assert!(measure(cx, "amend-recovery-body").is_some());
+    assert!(measure(cx, "amend-recovery-body").is_none());
     unmount(cx, app, win);
     eprintln!("[gui-e2e] PASS modal_sections");
 }

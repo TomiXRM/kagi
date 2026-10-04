@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::{OperationId, RepoId, TabId};
+use crate::app::{AdmissionError, OperationId, RepoId, TabId};
 use kagi_domain::plan::StateSummary;
 use kagi_git::oplog::OpLogEntry;
 use std::path::PathBuf;
@@ -292,7 +292,8 @@ fn q4_every_wait_has_an_exhaustively_named_release_and_rechecks_other_heads() {
                 q.apply(QueueEvent::WriteStarted(stamp(2, 99)));
             }
             WaitReason::PlanSlotBusy => {
-                q.plan_slot_busy = true;
+                // A single-shot family's plan job outside the queue.
+                q.apply(QueueEvent::PlanSlotTaken);
             }
             WaitReason::NeedsConfirmation => {
                 q.apply(QueueEvent::OwnerDeparted(session(1)));
@@ -301,15 +302,12 @@ fn q4_every_wait_has_an_exhaustively_named_release_and_rechecks_other_heads() {
                 q.reconciling.insert(session(1));
             }
             WaitReason::RemoteLatched => {
-                q.plan_slot_busy = true;
+                // Another tab's lease-less pull: this tab may still queue.
+                q.apply(QueueEvent::RemoteLatched(session(3)));
             }
         }
         let a = enqueue(&mut q, 1);
         let other = enqueue(&mut q, 2);
-        if reason == WaitReason::RemoteLatched {
-            q.apply(QueueEvent::RemoteLatched);
-            q.apply(QueueEvent::PlanSlotFreed(None));
-        }
         assert_eq!(state(&q, 1), IntentState::Waiting { reason });
         let effects = match release {
             ReleaseEvent::LeaseReleased => q.apply(QueueEvent::LeaseReleased(stamp(2, 99))),
@@ -401,112 +399,6 @@ fn q6_detach_discards_queue_but_never_releases_running_write() {
     assert!(matches!(state(&q, 1), IntentState::Running { .. }));
     assert!(q.cancelled(session(1)).is_none());
     assert_eq!(q.write, Some(stamp(1, 9)));
-}
-
-#[test]
-fn q9_deterministic_event_sequences_never_create_two_pipeline_owners() {
-    let mut q = IntentQueue::new();
-    q.apply(QueueEvent::OwnerReturned(session(1)));
-    let mut seed = 0x355u64;
-    for step in 0..2000 {
-        seed = seed
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        match seed % 12 {
-            0..=2 => {
-                q.apply(QueueEvent::Enqueue {
-                    owner: owner((seed >> 12) % 3 + 1),
-                    request: request(),
-                });
-            }
-            3 => {
-                q.apply(QueueEvent::OwnerReturned(session((seed >> 12) % 3 + 1)));
-            }
-            4 => {
-                q.apply(QueueEvent::OwnerDeparted(session((seed >> 12) % 3 + 1)));
-            }
-            5 => {
-                let job = q.planning_job;
-                q.apply(QueueEvent::PlanSlotFreed(job));
-            }
-            6 => {
-                q.apply(QueueEvent::ModalSlotFree);
-            }
-            7 => {
-                q.apply(QueueEvent::RevalidationDone(session(1)));
-            }
-            8 => {
-                q.apply(QueueEvent::ReconcileAcknowledged(session(1)));
-            }
-            9 => {
-                q.apply(QueueEvent::RemoteLatched);
-            }
-            10 => {
-                q.apply(QueueEvent::RemoteLatchReleased);
-            }
-            _ => {
-                if let Some((id, phase)) = q
-                    .per_session
-                    .values()
-                    .filter_map(VecDeque::front)
-                    .find_map(|head| {
-                        matches!(
-                            head.state,
-                            IntentState::Planning
-                                | IntentState::AwaitingConfirm
-                                | IntentState::Admitting
-                                | IntentState::Running { .. }
-                        )
-                        .then_some((head.id, head.state))
-                    })
-                {
-                    match phase {
-                        IntentState::Planning => {
-                            q.apply(QueueEvent::PlanCompleted(id));
-                        }
-                        IntentState::AwaitingConfirm => {
-                            q.apply(QueueEvent::Approve(id));
-                        }
-                        IntentState::Admitting => {
-                            let session = q.head(id).unwrap();
-                            q.apply(QueueEvent::Admission {
-                                id,
-                                result: Ok(stamp(session.tab.0, step + 1000)),
-                            });
-                        }
-                        IntentState::Running { stamp: writer } => {
-                            settle(
-                                &mut q,
-                                writer,
-                                &success(),
-                                ExecutionEvidence::Verified,
-                                true,
-                                false,
-                            );
-                            q.apply(QueueEvent::LeaseReleased(writer));
-                        }
-                        IntentState::Queued
-                        | IntentState::Waiting { .. }
-                        | IntentState::Settled
-                        | IntentState::Cancelled { .. } => unreachable!(),
-                    }
-                }
-            }
-        }
-        let owner = q.active;
-        for (session, queue) in &q.per_session {
-            if Some(*session) != owner {
-                assert!(
-                    !queue.iter().any(|i| i.state == IntentState::Planning),
-                    "background planned on step {step}"
-                );
-            }
-        }
-        assert!(
-            q.pipeline_count() <= 1,
-            "multiple pipeline intents on step {step}"
-        );
-    }
 }
 
 #[test]
@@ -629,15 +521,28 @@ fn q13_anchor_is_only_same_session_trackable_write_and_duplicate_receipts_are_ig
         q.apply(QueueEvent::LeaseReleased(stamp(2, 90))),
         vec![QueueEffect::StartPlan(head)]
     );
+    // Its own lease-less pull cannot be the tab's predecessor: refused.
     let mut q = IntentQueue::new();
-    q.apply(QueueEvent::RemoteLatched);
+    q.apply(QueueEvent::OwnerReturned(session(2)));
+    q.apply(QueueEvent::RemoteLatched(session(1)));
     assert!(q
         .apply(QueueEvent::Enqueue {
             owner: owner(1),
             request: request()
         })
         .contains(&QueueEffect::Rejected(EnqueueError::RemoteLatched)));
-    q.apply(QueueEvent::RemoteLatchReleased);
+    // Another tab's pull only blocks, by name, until it ends.
+    let waiting = enqueue(&mut q, 2);
+    assert_eq!(
+        state(&q, 2),
+        IntentState::Waiting {
+            reason: WaitReason::RemoteLatched
+        }
+    );
+    assert_eq!(
+        q.apply(QueueEvent::RemoteLatchReleased),
+        vec![QueueEffect::StartPlan(waiting)]
+    );
     assert!(matches!(
         q.apply(QueueEvent::Enqueue {
             owner: owner(1),
@@ -771,3 +676,5 @@ fn identity_mismatch_trips_chain_without_retargeting_worktree() {
 }
 
 mod extra;
+mod lifecycle;
+mod q9;

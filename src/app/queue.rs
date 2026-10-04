@@ -153,6 +153,8 @@ pub enum QueueEvent<'a> {
     /// An auto-fetch holds a lease but cannot be a chain predecessor.
     AutoFetchStarted,
     LeaseReleased(OwnerStamp),
+    /// A plan job outside the queue took the plan slot.
+    PlanSlotTaken,
     /// `Some(id)` identifies a queue plan job; `None` is an unrelated plan slot.
     PlanSlotFreed(Option<IntentId>),
     OwnerDeparted(SessionId),
@@ -164,7 +166,9 @@ pub enum QueueEvent<'a> {
     RevalidationStarted(SessionId),
     RevalidationDone(SessionId),
     ReconcileAcknowledged(SessionId),
-    RemoteLatched,
+    /// The lease-less remote pull of this session is running (ADR-0204 決定 3:
+    /// it cannot be that session's `&&` predecessor).
+    RemoteLatched(SessionId),
     RemoteLatchReleased,
     DismissCancelled(SessionId),
 }
@@ -201,7 +205,11 @@ pub struct IntentQueue {
     modal_busy: bool,
     revalidating: HashSet<SessionId>,
     reconciling: HashSet<SessionId>,
-    remote_latched: bool,
+    /// Session whose untrackable remote pull is running.
+    remote_latched: Option<SessionId>,
+    /// Heads removed by detach while their admission was in flight: kept only
+    /// to receive that result (a write admitted after all must stay tracked).
+    orphaned: HashSet<IntentId>,
 }
 impl IntentQueue {
     pub fn new() -> Self {
@@ -254,198 +262,13 @@ impl IntentQueue {
             })
             .count()
     }
-    fn head(&self, id: IntentId) -> Option<SessionId> {
-        self.per_session
-            .iter()
-            .find_map(|(session, q)| (q.front().is_some_and(|i| i.id == id)).then_some(*session))
-    }
-    fn clear_empty(&mut self, session: SessionId) {
-        if self
-            .per_session
-            .get(&session)
-            .is_none_or(VecDeque::is_empty)
-        {
-            self.per_session.remove(&session);
-            self.gates.insert(session, ChainGate::default());
-        }
-    }
-    fn record_cancel(&mut self, mut intent: QueuedIntent, reason: CancelReason) {
-        intent.state = IntentState::Cancelled { reason };
-        let list = self.cancelled.entry(intent.owner).or_default();
-        if list.len() == MAX_CANCELLED_INTENTS {
-            list.pop_front();
-        }
-        list.push_back(intent);
-    }
-    fn cancel_head(
-        &mut self,
-        session: SessionId,
-        reason: CancelReason,
-        effects: &mut Vec<QueueEffect>,
-    ) {
-        let Some(head) = self
-            .per_session
-            .get_mut(&session)
-            .and_then(VecDeque::pop_front)
-        else {
-            return;
-        };
-        let id = head.id;
-        match head.state {
-            IntentState::Planning | IntentState::AwaitingConfirm => {
-                effects.push(QueueEffect::CloseConfirm(id));
-                effects.push(QueueEffect::InvalidatePlan(id));
-                // Planning's job still owns the latch. Only PlanSlotFreed clears it.
-                if head.state == IntentState::AwaitingConfirm {
-                    self.plan_slot_busy = false;
-                    self.planning_job = None;
-                }
-                self.modal_busy = false;
-            }
-            IntentState::Admitting => {
-                effects.push(QueueEffect::CloseConfirm(id));
-                effects.push(QueueEffect::InvalidatePlan(id));
-                self.modal_busy = false;
-            }
-            IntentState::Queued | IntentState::Waiting { .. } => {}
-            IntentState::Running { .. } | IntentState::Settled | IntentState::Cancelled { .. } => {
-                self.per_session
-                    .entry(session)
-                    .or_default()
-                    .push_front(head);
-                return;
-            }
-        }
-        self.record_cancel(head, reason);
-        self.trip(session, ChainAnchor::QueuedHead(id));
-    }
-    fn trip(&mut self, session: SessionId, by: ChainAnchor) {
-        self.gates.insert(session, ChainGate::Tripped { by });
-        if let Some(mut queue) = self.per_session.remove(&session) {
-            while let Some(intent) = queue.pop_front() {
-                self.record_cancel(intent, CancelReason::ChainTripped { by });
-            }
-        }
-        self.clear_empty(session);
-    }
-    fn settle(&mut self, stamp: OwnerStamp, receipt: Settlement<'_>) -> Option<IntentId> {
-        let session = stamp.session;
-        let queued = self
-            .per_session
-            .get(&session)
-            .and_then(VecDeque::front)
-            .and_then(|head| match head.state {
-                IntentState::Running { stamp: owner } if owner == stamp => Some(head.id),
-                _ => None,
-            });
-        let anchored = matches!(self.gate(session), ChainGate::Armed { anchor: Some(ChainAnchor::ActiveWrite(owner)) } if owner == stamp);
-        if !anchored && queued.is_none() {
-            return None;
-        } // wrong owner or duplicate receipt
-        if let Some(id) = queued {
-            let mut head = self
-                .per_session
-                .get_mut(&session)
-                .expect("head exists")
-                .pop_front()
-                .expect("head exists");
-            head.state = IntentState::Settled;
-            if receipt.permits_successor() {
-                let anchor = self
-                    .per_session
-                    .get(&session)
-                    .and_then(VecDeque::front)
-                    .map(|next| ChainAnchor::QueuedHead(next.id));
-                self.gates.insert(session, ChainGate::Armed { anchor });
-            } else {
-                self.trip(session, ChainAnchor::QueuedHead(id));
-            }
-        } else if receipt.permits_successor() {
-            let anchor = self
-                .per_session
-                .get(&session)
-                .and_then(VecDeque::front)
-                .map(|next| ChainAnchor::QueuedHead(next.id));
-            self.gates.insert(session, ChainGate::Armed { anchor });
-        } else {
-            if self
-                .per_session
-                .get(&session)
-                .is_some_and(|q| !q.is_empty())
-            {
-                self.trip(session, ChainAnchor::ActiveWrite(stamp));
-            }
-        }
-        if receipt.reconcile_required {
-            self.reconciling.insert(session);
-        }
-        self.clear_empty(session);
-        queued
-    }
-    fn arbitrate(&mut self, effects: &mut Vec<QueueEffect>) {
-        let mut candidates: Vec<_> = self
-            .per_session
-            .iter()
-            .filter_map(|(session, queue)| queue.front().map(|head| (head.enqueued, *session)))
-            .collect();
-        candidates.sort_unstable_by_key(|(order, _)| *order);
-        let occupied = self.pipeline_count() != 0;
-        let mut chosen = false;
-        for (_, session) in candidates {
-            let gate = self.gate(session);
-            let head = self
-                .per_session
-                .get_mut(&session)
-                .and_then(VecDeque::front_mut)
-                .expect("candidate exists");
-            if !matches!(
-                head.state,
-                IntentState::Queued | IntentState::Waiting { .. }
-            ) {
-                continue;
-            }
-            let reason = if self.remote_latched {
-                Some(WaitReason::RemoteLatched)
-            } else if self.write.is_some() || self.write_busy {
-                Some(WaitReason::WriteRunning)
-            } else if self.plan_slot_busy || occupied || chosen {
-                Some(WaitReason::PlanSlotBusy)
-            } else if self.reconciling.contains(&session) {
-                Some(WaitReason::NeedsReconcile)
-            } else if self.active != Some(session)
-                || self.modal_busy
-                || self.revalidating.contains(&session)
-            {
-                Some(WaitReason::NeedsConfirmation)
-            } else if matches!(
-                gate,
-                ChainGate::Armed {
-                    anchor: Some(ChainAnchor::ActiveWrite(_))
-                }
-            ) {
-                Some(WaitReason::WriteRunning)
-            } else {
-                None
-            };
-            match reason {
-                Some(reason) => head.state = IntentState::Waiting { reason },
-                None => {
-                    head.state = IntentState::Planning;
-                    self.plan_slot_busy = true;
-                    self.planning_job = Some(head.id);
-                    chosen = true;
-                    effects.push(QueueEffect::StartPlan(head.id));
-                }
-            }
-        }
-    }
     pub fn apply(&mut self, event: QueueEvent<'_>) -> Vec<QueueEffect> {
         use QueueEvent as E;
         let mut effects = Vec::new();
         match event {
             E::Enqueue { owner, request } => {
                 let session = owner.session;
-                if self.remote_latched {
+                if self.remote_latched == Some(session) {
                     effects.push(QueueEffect::Rejected(EnqueueError::RemoteLatched));
                 } else if owner.worktree.is_none() {
                     effects.push(QueueEffect::Rejected(EnqueueError::IdentityChanged));
@@ -545,7 +368,13 @@ impl IntentQueue {
                     self.cancel_head(session, CancelReason::UserRemoved, &mut effects);
                 } else if let Some(mut queue) = self.per_session.remove(&session) {
                     while let Some(item) = queue.pop_front() {
-                        if matches!(item.state, IntentState::Running { .. }) {
+                        // Decision 3: cancel-all takes waiting intents and a head
+                        // being planned or confirmed, never an admission in flight
+                        // or a running write.
+                        if matches!(
+                            item.state,
+                            IntentState::Running { .. } | IntentState::Admitting
+                        ) {
                             self.per_session.entry(session).or_default().push_back(item);
                         } else {
                             self.record_cancel(item, CancelReason::UserRemoved);
@@ -612,7 +441,36 @@ impl IntentQueue {
                 }
             }
             E::Admission { id, result } => {
-                if let Some(session) = self.head(id) {
+                if self.orphaned.remove(&id) {
+                    if let Some(session) = self.head(id) {
+                        match result {
+                            // Its write was admitted after all: keep tracking it.
+                            Ok(stamp) if stamp.session == session => {
+                                self.per_session
+                                    .get_mut(&session)
+                                    .expect("head")
+                                    .front_mut()
+                                    .expect("head")
+                                    .state = IntentState::Running { stamp };
+                                self.write = Some(stamp);
+                            }
+                            _ => {
+                                self.per_session
+                                    .get_mut(&session)
+                                    .expect("head")
+                                    .pop_front();
+                                if self
+                                    .per_session
+                                    .get(&session)
+                                    .is_some_and(VecDeque::is_empty)
+                                {
+                                    self.per_session.remove(&session);
+                                }
+                                effects.push(QueueEffect::Cancelled(id, CancelReason::OwnerGone));
+                            }
+                        }
+                    }
+                } else if let Some(session) = self.head(id) {
                     if self.per_session[&session].front().expect("head").state
                         == IntentState::Admitting
                     {
@@ -667,9 +525,20 @@ impl IntentQueue {
                             }
                         }
                     }
+                } else if let Ok(stamp) = result {
+                    // No head waits for it, yet a write was admitted: it still
+                    // holds the writer until its lease is released.
+                    self.write = Some(stamp);
                 }
             }
             E::AnchorSettled { stamp, receipt } => {
+                // The receipt is delivered exactly once (ADR-0196 決定 2.5): this
+                // write can no longer anchor anyone, even if its lease outlives
+                // it (Unknown / Unaccounted). It still blocks until released.
+                if self.write == Some(stamp) {
+                    self.write = None;
+                    self.write_busy = true;
+                }
                 if let Some(id) = self.settle(stamp, receipt) {
                     effects.push(QueueEffect::Settled(id));
                 }
@@ -681,6 +550,11 @@ impl IntentQueue {
                     self.write = None;
                 }
                 self.write_busy = false;
+            }
+            E::PlanSlotTaken => {
+                if self.planning_job.is_none() {
+                    self.plan_slot_busy = true;
+                }
             }
             E::PlanSlotFreed(owner) => {
                 if self.planning_job == owner {
@@ -705,8 +579,8 @@ impl IntentQueue {
                         head.state = IntentState::Queued;
                         effects.push(QueueEffect::CloseConfirm(head.id));
                         effects.push(QueueEffect::InvalidatePlan(head.id));
-                        self.modal_busy = false;
                         if !was_planning {
+                            self.modal_busy = false;
                             self.plan_slot_busy = false;
                             self.planning_job = None;
                         }
@@ -733,6 +607,16 @@ impl IntentQueue {
                                 .entry(session)
                                 .or_default()
                                 .push_back(intent);
+                        } else if intent.state == IntentState::Admitting {
+                            // The admission may still succeed: keep the head
+                            // until its result says whether a write runs.
+                            effects.push(QueueEffect::CloseConfirm(intent.id));
+                            self.modal_busy = false;
+                            self.orphaned.insert(intent.id);
+                            self.per_session
+                                .entry(session)
+                                .or_default()
+                                .push_back(intent);
                         } else {
                             if matches!(
                                 intent.state,
@@ -740,8 +624,8 @@ impl IntentQueue {
                             ) {
                                 effects.push(QueueEffect::CloseConfirm(intent.id));
                                 effects.push(QueueEffect::InvalidatePlan(intent.id));
-                                self.modal_busy = false;
                                 if intent.state == IntentState::AwaitingConfirm {
+                                    self.modal_busy = false;
                                     self.plan_slot_busy = false;
                                     self.planning_job = None;
                                 }
@@ -764,8 +648,8 @@ impl IntentQueue {
             E::ReconcileAcknowledged(session) => {
                 self.reconciling.remove(&session);
             }
-            E::RemoteLatched => self.remote_latched = true,
-            E::RemoteLatchReleased => self.remote_latched = false,
+            E::RemoteLatched(session) => self.remote_latched = Some(session),
+            E::RemoteLatchReleased => self.remote_latched = None,
             E::DismissCancelled(session) => {
                 self.cancelled.remove(&session);
                 if matches!(self.gate(session), ChainGate::Tripped { .. }) {
@@ -777,6 +661,8 @@ impl IntentQueue {
         effects
     }
 }
+
+mod chain;
 
 #[cfg(test)]
 mod tests;

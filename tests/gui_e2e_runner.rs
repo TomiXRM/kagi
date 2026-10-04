@@ -80,6 +80,9 @@ mod recovery_bottom_panel;
 mod bottom_panel_motion;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/graph_column_divider.rs"]
+mod graph_column_divider;
+#[cfg(target_os = "macos")]
 #[path = "recovery/side_panel_motion.rs"]
 mod side_panel_motion;
 
@@ -2140,6 +2143,10 @@ mod macos {
             (
                 "right_selection_motion",
                 Box::new(crate::side_panel_motion::scenario_right_selection_motion),
+            ),
+            (
+                "graph_column_divider_hidden",
+                Box::new(crate::graph_column_divider::scenario_graph_column_divider_hidden),
             ),
             ("graph_copy", Box::new(scenario_graph_copy)),
             (

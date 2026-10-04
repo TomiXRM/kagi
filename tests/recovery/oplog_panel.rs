@@ -365,7 +365,12 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
     let original_language = i18n::lang();
 
     let fixture = build_fixture();
-    let repo = fixture.path().canonicalize().unwrap();
+    // Move the fixture under a long worktree path: the warning must leave the
+    // reason legible while exposing the complete path via Copy all and AX.
+    let long_root = tempfile::tempdir().unwrap();
+    let repo = long_root.path().join("a-long-worktree-path-for-restore-warnings-with-several-nested-components-and-a-final-directory");
+    std::fs::rename(fixture.path(), &repo).unwrap();
+    let repo = repo.canonicalize().unwrap();
     let head = CommitId(git_output(&repo, &["rev-parse", "HEAD"]));
     let mut backend = Backend::open(&repo).unwrap();
     for name in ["keep", "drop1", "drop2"] {
@@ -481,6 +486,67 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
         .plan
         .warnings
         .contains(&PlanNote::OplogRestore(OplogRestoreNote::RefsOnly)));
+    let check_checked_out = |cx: &mut VisualTestAppContext, dirty: bool| {
+        let card = restore_card(cx, &app);
+        let (index, path) = card
+            .plan
+            .warnings
+            .iter()
+            .enumerate()
+            .find_map(|(index, note)| match (note, dirty) {
+                (
+                    PlanNote::OplogRestore(OplogRestoreNote::CheckedOutDirty { branch, path }),
+                    true,
+                )
+                | (
+                    PlanNote::OplogRestore(OplogRestoreNote::MovesCheckedOutBranch {
+                        branch,
+                        path,
+                    }),
+                    false,
+                ) if branch == "main" => Some((index, path)),
+                _ => None,
+            })
+            .expect("moving checked-out main warns for its worktree");
+        assert_eq!(std::fs::canonicalize(path).unwrap(), repo);
+        let id = format!("restore-warning-{index}");
+        for language in [i18n::Lang::En, i18n::Lang::Ja] {
+            i18n::set_lang(language);
+            paint(cx, window);
+            let reason = i18n::oplog_panel::restore_checked_out("main", dirty);
+            let note = kagi::ui::dialog_a11y::recorded_note(&id).expect("painted warning");
+            assert_eq!(note, (gpui::Role::Note, format!("{reason} · {path}")));
+            let row = e2e::control_bounds(window.window_id(), &id).expect("warning row");
+            let path_bounds =
+                e2e::control_bounds(window.window_id(), &format!("restore-warning-path-{index}"))
+                    .expect("visible worktree path");
+            assert!(path_bounds.size.width > px(0.));
+            assert!(
+                path_bounds.left() >= row.left() && path_bounds.right() <= row.right() + px(1.),
+                "long path stays within the warning row: {path_bounds:?} vs {row:?}"
+            );
+            click_probe(cx, window, "plan-card-copy");
+            let copied = cx
+                .read_from_clipboard()
+                .and_then(|item| item.text())
+                .expect("copied warning");
+            assert!(copied.contains(&format!("{reason} · {path}")), "{copied}");
+        }
+    };
+    check_checked_out(cx, false);
+    press_key(cx, &app, window, "escape");
+    let dirty_file = repo.join("restore-warning-untracked.txt");
+    std::fs::write(&dirty_file, "uncommitted\n").unwrap();
+    app.update(cx, |app, cx| {
+        app.open_oplog_restore_modal(Operation::RestoreToPoint { entry_id: keep_id }, cx);
+    });
+    check_checked_out(cx, true);
+    std::fs::remove_file(dirty_file).unwrap();
+    press_key(cx, &app, window, "escape");
+    app.update(cx, |app, cx| {
+        app.open_oplog_restore_modal(Operation::RestoreToPoint { entry_id: keep_id }, cx);
+    });
+    i18n::set_lang(original_language);
     paint(cx, window);
     assert!(
         painted(window, "plan-confirm"),

@@ -10,6 +10,7 @@ use crate::ui::modals::oplog_restore::OplogRestoreModal;
 use crate::ui::plan_card_rows::render_note_row;
 use crate::ui::theme::{self, theme};
 use crate::ui::KagiApp;
+use crate::ui::MONO_FONT;
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::Sizable as _;
@@ -134,6 +135,63 @@ fn title_chip(title: &PlanTitle) -> String {
     }
 }
 
+fn checked_out_warning_row(index: usize, reason: &str, path: &str) -> gpui::AnyElement {
+    let id: SharedString = format!("restore-warning-{index}").into();
+    let (bg, border, _) = theme::badge_style(theme().color_warning);
+    let full = format!("{reason} · {path}");
+    let path_text = SharedString::from(path.to_owned());
+    let tooltip = path_text.clone();
+    crate::ui::dialog_a11y::apply_note(id.clone(), div().id(id), false, &full)
+        .relative()
+        .flex()
+        .items_start()
+        .gap_2()
+        .rounded_md()
+        .bg(gpui::rgba(bg))
+        .border_1()
+        .border_color(gpui::rgba(border))
+        .px_2()
+        .py(theme::scaled_px(4.))
+        .child(
+            div()
+                .flex_shrink_0()
+                .text_color(rgb(theme().color_warning))
+                .child("⚠"),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(gpui::px(0.))
+                .text_sm()
+                .text_color(rgb(theme().text_main))
+                .child(SharedString::from(reason.to_owned())),
+        )
+        .child(
+            div()
+                .id(format!("restore-warning-path-{index}"))
+                .relative()
+                .max_w(gpui::relative(0.45))
+                .min_w(gpui::px(0.))
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .font_family(MONO_FONT)
+                .text_xs()
+                .text_color(rgb(theme().text_muted))
+                .tooltip(move |window, cx| {
+                    gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                })
+                .child(path_text)
+                .child(crate::ui::e2e::measure_inside(format!(
+                    "restore-warning-path-{index}"
+                ))),
+        )
+        .child(crate::ui::e2e::measure_inside(format!(
+            "restore-warning-{index}"
+        )))
+        .into_any_element()
+}
+
 fn copy_text(modal: &OplogRestoreModal) -> String {
     let kind = title_chip(&modal.plan.title);
     let mut out = format!(
@@ -154,16 +212,18 @@ fn copy_text(modal: &OplogRestoreModal) -> String {
             PlanNote::OplogRestore(OplogRestoreNote::Moves { .. } | OplogRestoreNote::RefsOnly) => {
                 continue
             }
-            PlanNote::OplogRestore(OplogRestoreNote::MovesCheckedOutBranch { branch, .. }) => out
-                .push_str(&format!(
-                    "{}\n",
+            PlanNote::OplogRestore(OplogRestoreNote::MovesCheckedOutBranch { branch, path }) => {
+                out.push_str(&format!(
+                    "{} · {path}\n",
                     i18n::oplog_panel::restore_checked_out(branch, false)
-                )),
-            PlanNote::OplogRestore(OplogRestoreNote::CheckedOutDirty { branch, .. }) => out
-                .push_str(&format!(
-                    "{}\n",
+                ));
+            }
+            PlanNote::OplogRestore(OplogRestoreNote::CheckedOutDirty { branch, path }) => {
+                out.push_str(&format!(
+                    "{} · {path}\n",
                     i18n::oplog_panel::restore_checked_out(branch, true)
-                )),
+                ));
+            }
             _ => out.push_str(&format!("{}\n", plan_note_text(warning))),
         }
     }
@@ -335,26 +395,33 @@ pub(crate) fn render(
         .child(refs);
     let mut warnings = Vec::new();
     for (index, warning) in modal.plan.warnings.iter().enumerate() {
-        let short = match warning {
+        match warning {
             PlanNote::OplogRestore(OplogRestoreNote::Moves { .. } | OplogRestoreNote::RefsOnly) => {
                 continue
             }
-            PlanNote::OplogRestore(OplogRestoreNote::MovesCheckedOutBranch { branch, .. }) => {
-                i18n::oplog_panel::restore_checked_out(branch, false)
+            PlanNote::OplogRestore(OplogRestoreNote::MovesCheckedOutBranch { branch, path }) => {
+                warnings.push(checked_out_warning_row(
+                    index,
+                    &i18n::oplog_panel::restore_checked_out(branch, false),
+                    path,
+                ));
             }
-            PlanNote::OplogRestore(OplogRestoreNote::CheckedOutDirty { branch, .. }) => {
-                i18n::oplog_panel::restore_checked_out(branch, true)
+            PlanNote::OplogRestore(OplogRestoreNote::CheckedOutDirty { branch, path }) => {
+                warnings.push(checked_out_warning_row(
+                    index,
+                    &i18n::oplog_panel::restore_checked_out(branch, true),
+                    path,
+                ));
             }
-            _ => plan_note_text(warning),
-        };
-        warnings.push(render_note_row(
-            format!("restore-warning-{index}").into(),
-            false,
-            "⚠",
-            theme().color_warning,
-            &short,
-            true,
-        ));
+            _ => warnings.push(render_note_row(
+                format!("restore-warning-{index}").into(),
+                false,
+                "⚠",
+                theme().color_warning,
+                &plan_note_text(warning),
+                true,
+            )),
+        }
     }
     if !warnings.is_empty() {
         body = body.child(

@@ -206,13 +206,12 @@ Shared `Theme.radius`/font/input padding and `modal_shell`/plan/IME stay unchang
 The shared plan card keeps CURRENT and PREDICTED as equal-width columns with a
 centered arrow; branch and status chips stay on one scrollable line per column.
 The operation plan remains the source of truth. Show an equivalent CLI command
-only when it faithfully describes the executable plan: Pull's `git pull
---ff-only` belongs to a clean, known fast-forward, not a merge, dirty-tree
-auto-stash or unknown-upstream plan; its branch operand comes from
-`branch.<name>.merge`, not the local tracking ref's name (custom fetch refspecs
-can map `release` into `origin/main`). The collapsed command is a keyboard/
-screen-reader accessible button (Enter/Space) with its own Copy button; Copy
-all includes its full text.
+only when it faithfully describes the executable plan. Pull has none: its
+execution fetches again and may merge a newly diverged remote even if the
+cached tracking ref indicated a fast-forward at planning time. Where a plan
+does have an equivalent, the collapsed command is a keyboard/screen-reader
+accessible button (Enter/Space) with its own Copy button; Copy all includes
+its full text.
 
 Operation Log restore has its own REFS-first card, not a second generic plan
 summary. Show each planned ref's expected and destination OIDs, including

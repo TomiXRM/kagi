@@ -256,68 +256,6 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         kind: RecoveryKind::Pull(PullRecovery::Pull),
         commands: vec!["git revert -m 1 HEAD".to_string(), "git reflog".to_string()],
     };
-    // A clean, already-fetched fast-forward has a faithful CLI equivalent.
-    // Pull can also merge or guard a dirty tree with an auto-stash; describing
-    // either as `--ff-only` would make the plan's copyable command misleading.
-    let equivalent_command = if blockers.is_empty() && !status.is_dirty() && behind_count > 0 {
-        let expected_upstream = format!("{remote_name}/{branch_name}");
-        let known_fast_forward = repo
-            .find_branch(&branch_name, BranchType::Local)
-            .ok()
-            .and_then(|branch| branch.upstream().ok())
-            .filter(|upstream| upstream.name().ok().flatten() == Some(expected_upstream.as_str()))
-            .and_then(|upstream| upstream.get().target())
-            .zip(match &head {
-                Head::Attached { target, .. } => git2::Oid::from_str(target).ok(),
-                _ => None,
-            })
-            .is_some_and(|(upstream, local)| {
-                repo.graph_descendant_of(upstream, local).unwrap_or(false)
-            });
-        if known_fast_forward && check_operand("remote", &remote_name).is_ok() {
-            // The tracking ref's suffix need not be the remote source branch:
-            // a custom fetch refspec may map release -> origin/main. Use the
-            // configured source, and hide the command if it cannot be proved.
-            let source_branch = repo
-                .config()
-                .ok()
-                .and_then(|config| {
-                    let remote = config
-                        .get_string(&format!("branch.{branch_name}.remote"))
-                        .ok()?;
-                    if remote != remote_name {
-                        return None;
-                    }
-                    config
-                        .get_string(&format!("branch.{branch_name}.merge"))
-                        .ok()
-                })
-                .and_then(|source| source.strip_prefix("refs/heads/").map(str::to_owned))
-                .filter(|source| !source.is_empty() && check_operand("branch", source).is_ok());
-            source_branch.map(|source| {
-                let operand = |value: &str| {
-                    if value
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b"._/-".contains(&b))
-                    {
-                        value.to_string()
-                    } else {
-                        kagi_domain::remote::shell_quote(value)
-                    }
-                };
-                format!(
-                    "git pull --ff-only {} {}",
-                    operand(&remote_name),
-                    operand(&source)
-                )
-            })
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
     Ok(OperationPlan {
         // ADR-0129 F-1: the UI's pull no-op detection keyed on the title text
         // ("up to date (local knowledge…"); the semantic state now travels
@@ -351,7 +289,7 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
         destructive: false,
-        equivalent_command,
+        equivalent_command: None,
     })
 }
 
@@ -779,6 +717,7 @@ mod remote_pull_tests {
         assert!(!plan.destructive);
         assert!(plan.title.message_en().contains("3 commit"));
         assert!(plan.predicted.dirty.contains("fast-forward"));
+        assert!(plan.equivalent_command.is_none());
     }
 
     #[test]
@@ -796,5 +735,6 @@ mod remote_pull_tests {
             .iter()
             .any(|w| w.message_en().contains("diverged")));
         assert!(plan.predicted.dirty.contains("merge"));
+        assert!(plan.equivalent_command.is_none());
     }
 }

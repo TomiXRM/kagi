@@ -144,10 +144,10 @@ fn test_pull_fast_forward() {
     assert!(!st.is_dirty(), "WT must be clean after FF");
 }
 
-/// Only the clean, fetched fast-forward plan can truthfully present the
-/// board's `git pull --ff-only` as a copyable equivalent.
+/// Fetch may change the upstream tip after planning, turning a fast-forward
+/// into a merge; no copyable CLI command describes both outcomes.
 #[test]
-fn test_plan_pull_equivalent_only_for_clean_known_fast_forward() {
+fn test_plan_pull_has_no_equivalent_for_clean_fast_forward_or_diverged() {
     if !crate::test_support::run_isolated() {
         return;
     }
@@ -156,55 +156,13 @@ fn test_plan_pull_equivalent_only_for_clean_known_fast_forward() {
     git(&r.local, &["fetch", "-q", "origin"]);
     let repo = Repository::open(&r.local).unwrap();
     let plan = plan_pull(&repo).expect("clean fast-forward plan");
-    assert_eq!(
-        plan.equivalent_command.as_deref(),
-        Some("git pull --ff-only origin main")
-    );
+    assert!(plan.equivalent_command.is_none());
 
     write_file(&r.local, "local.txt", "from local\n");
     git(&r.local, &["add", "-A"]);
     git(&r.local, &["commit", "-qm", "local work"]);
     let diverged = plan_pull(&Repository::open(&r.local).unwrap()).expect("diverged plan");
-    assert!(
-        diverged.equivalent_command.is_none(),
-        "diverging branches may merge instead of fast-forwarding"
-    );
-}
-
-/// A local `origin/main` tracking ref can fetch `release` rather than remote
-/// `main`; the copyable command must name the remote source of that fetch.
-#[test]
-fn test_plan_pull_equivalent_uses_remote_source_ref() {
-    if !crate::test_support::run_isolated() {
-        return;
-    }
-    let r = setup();
-    git(&r.other, &["checkout", "-qb", "release"]);
-    write_file(&r.other, "release.txt", "from release\n");
-    commit_all(&r.other, "release only");
-    git(&r.other, &["push", "-q", "origin", "release"]);
-    git(
-        &r.local,
-        &[
-            "config",
-            "--replace-all",
-            "remote.origin.fetch",
-            "+refs/heads/release:refs/remotes/origin/main",
-        ],
-    );
-    git(
-        &r.local,
-        &["config", "branch.main.merge", "refs/heads/release"],
-    );
-    git(&r.local, &["fetch", "-q", "origin"]);
-    let plan = plan_pull(&Repository::open(&r.local).unwrap()).expect("mapped FF plan");
-    assert_eq!(
-        plan.equivalent_command.as_deref(),
-        Some("git pull --ff-only origin release"),
-        "remote main is a different branch and must not appear in the command"
-    );
-    git(&r.local, &["pull", "--ff-only", "origin", "release"]);
-    assert_eq!(read_file(&r.local, "release.txt"), "from release\n");
+    assert!(diverged.equivalent_command.is_none());
 }
 
 #[test]
@@ -344,10 +302,7 @@ fn test_plan_pull_dirty_warning_no_blocker() {
         "dirty WT alone must not be a blocker, got: {:?}",
         plan.blockers
     );
-    assert!(
-        plan.equivalent_command.is_none(),
-        "the dirty pull may auto-stash, so --ff-only is not equivalent"
-    );
+    assert!(plan.equivalent_command.is_none());
     assert!(
         plan.warnings
             .iter()

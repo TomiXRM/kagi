@@ -2671,6 +2671,30 @@ pub fn scenario_unmerged_branch_delete_armed(cx: &mut VisualTestAppContext) {
                     .is_some(),
                 "Space on the disclosure must reopen it"
             );
+            // The dedicated Copy control is the next Tab stop after the
+            // disclosure, and keyboard activation must copy without toggling it.
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                "before keyboard copy".into(),
+            ));
+            crate::keyboard_nav::keys(cx, window, "tab enter");
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|item| item.text()),
+                Some(command.clone()),
+                "Enter on the Copy button must write the full command"
+            );
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string("before space copy".into()));
+            crate::keyboard_nav::keys(cx, window, "space");
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|item| item.text()),
+                Some(command.clone()),
+                "Space on the Copy button must write the full command"
+            );
+            paint(cx, window);
+            assert!(
+                kagi::ui::e2e::control_bounds(window.window_id(), "plan-equivalent-command-body")
+                    .is_some(),
+                "keyboard Copy must not toggle the disclosure"
+            );
         }
         confirm_branch_delete(cx, &app, window, input);
         wait_idle(cx, &app);

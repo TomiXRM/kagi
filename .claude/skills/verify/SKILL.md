@@ -1926,12 +1926,11 @@ isolated app, compare screenshots before/after 2 s and after completion, and
 inspect klog. Remote SSH pull follows #989's lease migration; clone remains out
 of scope.
 
-### Operation queue (#355 stage 3a, ADR-0204)
+### Operation queue (#355 stage 3a / 3b-1, ADR-0204)
 
-G: `cargo test -p kagi --lib app::queue` (the pure reducer: Q1–Q13 rows plus the
-stage 3a events — an untracked write rejecting its owner's enqueue, a plan job
-outside the queue holding the slot, a withdrawn confirmation going back to
-`Queued`, strip removal of the head not tripping its successors).
+G: `cargo test -p kagi --lib app::queue` (the pure reducer: Q1–Q13 rows,
+stage 3a's untracked-write, external plan, withdrawn-confirm and strip-removal
+events, plus stage 3b-1's input-focus wait and blur release).
 Tier A: `KAGI_GUI_E2E_ONLY=queue_` with `KAGI_GUI_E2E_KEEP_GOING=1`
 (`tests/recovery/op_queue.rs`). `KagiApp::hold_next_run_for_e2e` (`gui-e2e`
 only) holds the next admitted run-family write (checkout, commit, …) before
@@ -1955,9 +1954,37 @@ kills the held checkout: Unknown, its successor cancelled; once the reconcile
 is acknowledged a later queued checkout runs), `queue_accepts_after_idle_fetch`
 (a fetch that ended while the queue was idle does not refuse the next intent)
 and `queue_refuses_a_blocked_checkout` (confirming a blocked plan while busy is
-refused, not queued). Tier B: queue two checkouts behind a held or slow
-checkout in an isolated app and capture the strip, the cancel list and the
-running row's seconds in EN/JA.
+refused, not queued). Stage 3b-1 adds:
+`queue_commit_runs_after_checkout` (held checkout, staged change, queued commit
+strip row and toast, then HEAD advances on the new branch with the frozen
+message and no modal),
+`queue_commit_confirms_changed_draft` (a changed draft opens `QueuedCommit`;
+confirm uses the frozen message and preserves the newer draft),
+`queue_commit_confirms_changed_staging` (a staged-set digest change opens
+`QueuedCommit`),
+`queue_waits_while_input_focused` (a drawn, focused Commit Input blocks the
+head with `waiting: typing` until blur), and
+`queue_dismissed_input_modal_releases_head` (a create-branch Input is closed
+through real Escape without refocusing; the queued checkout proceeds after
+the modal leaves the dispatch tree; dropping the focus-membership check
+reproduces the stuck head). #1020 review additionally covers
+`queue_commit_consumes_origin_draft` (checkout changes branch; the origin
+draft is cleared and the destination draft survives),
+`queue_commit_rechecks_staging_on_confirm` (a second external `git add` while
+the modal is open cannot be committed by the old approval; reasons are drawn),
+`queue_commit_refuses_late_merge` (external `git merge --no-commit` before
+confirm keeps MERGE_HEAD and HEAD and cancels the queued plain commit), and
+`queue_commit_detached_successor` (confirmed detached checkout then queued
+commit, verified detached HEAD OID and next checkout's admitted successor).
+The Commit Panel busy path releases title-input focus itself, so the clean
+`queue_commit_runs_after_checkout` scenario never calls `focus_root`.
+`cargo test -p kagi-git staged_set_digest` additionally exercises gitlink
+mode and conflict index stage changes; `merge_in_progress_reads_external_state_after_conflicts_are_resolved`
+probes the resolved merge guard.
+Tier B: queue two checkouts behind a held or slow checkout in an isolated app
+and capture the strip, cancel list, and running row's seconds in EN/JA; queue
+a commit behind a held checkout and check its frozen message, confirmation and
+input-focus wait in the real window.
 
 ### Background writer elapsed advice (#996 with #995)
 

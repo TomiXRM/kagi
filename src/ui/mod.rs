@@ -2953,6 +2953,7 @@ impl KagiApp {
             }
             M::SmartCommit(smart_commit::SmartCommitModal::ModelPicker { .. }) => {}
             M::Checkout(_) => self.start_checkout(cx),
+            M::QueuedCommit(_) => self.confirm_queued_commit(cx),
             M::Pull(_) => self.start_pull(cx),
             M::Amend(_) => self.start_amend(cx),
             M::Pop(_) => self.start_pop(cx),
@@ -3034,6 +3035,7 @@ impl KagiApp {
             M::Update(_) => self.cancel_update_modal(),
             M::SmartCommit(_) => self.clear_smart_commit_modal(),
             M::Checkout(_) => self.cancel_modal(),
+            M::QueuedCommit(_) => self.cancel_queued_commit(),
             M::Pull(_) => self.cancel_pull_modal(),
             M::Amend(_) => self.cancel_amend_modal(),
             M::Pop(_) => self.cancel_pop_modal(),

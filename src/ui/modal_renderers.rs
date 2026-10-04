@@ -29,7 +29,9 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{Icon, IconName, Sizable as _};
 use kagi_domain::plan_note::ShellKind;
 use kagi_git::{CommitId, OperationPlan};
-use kagi_ui_core::i18n::{plan::plan_heading_text, plan_note_text, plan_recovery_text, plan_title_text};
+use kagi_ui_core::i18n::{
+    plan::plan_heading_text, plan_note_text, plan_recovery_text, plan_title_text,
+};
 
 /// Richer plan-card header (ADR pending: "richer popup cards", started with
 /// Pull/Push per user request 2026-07-22, extended to every plan-confirmation
@@ -539,9 +541,8 @@ pub(crate) fn render_plan_heading(
     row
 }
 
-/// Builds the plan-confirmation card. `accent` is `None` for the plain,
-/// unchanged card (~14 modals); Pull/Push (user request 2026-07-22) pass an
-/// icon-badge header via `Some(...)` for the richer treatment.
+/// Shared plan-card content. Only this renderer's heading uses
+/// `render_plan_heading`; `render_modal_title_row` remains for non-plan cards.
 fn render_plan_modal_card_styled(
     plan: std::sync::Arc<OperationPlan>,
     error: Option<SharedString>,
@@ -563,7 +564,13 @@ fn render_plan_modal_card_styled(
     let has_blockers = !plan.blockers.is_empty();
     let (heading_title, mut heading_chips) = plan_heading_text(&plan.title);
     if heading_chips.iter().all(Option::is_none) {
-        heading_chips[0] = Some(std::borrow::Cow::Owned(plan.current.head.to_string()));
+        heading_chips[0] = Some(std::borrow::Cow::Owned(
+            plan.current
+                .head
+                .get(..8)
+                .unwrap_or(&plan.current.head)
+                .to_owned(),
+        ));
     }
     // ── Build modal card (#454) ─────────────────────────────
     // Fixed title + scrolling body + fixed button row. The card itself must
@@ -762,9 +769,9 @@ fn render_plan_modal_card_styled(
     // Only structured commands supported by this shell are offered in the
     // compact disclosure. The full explanation remains in Copy all and AX.
     if super::modal_command::plan_ready(&plan) {
-        if let Some(commands) = super::modal_renderers_plan::offered_recovery_commands(
-            plan.recovery.as_ref(),
-        ) {
+        if let Some(commands) =
+            super::modal_renderers_plan::offered_recovery_commands(plan.recovery.as_ref())
+        {
             body = body.child(render_recovery_commands(
                 commands,
                 "plan-recovery",

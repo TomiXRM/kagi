@@ -594,11 +594,21 @@ pub(crate) mod wip;
 pub fn scenario_modal_sections(cx: &mut VisualTestAppContext) {
     use kagi::ui::modals::AmendPlanModal;
     let fixture = crate::macos::build_fixture();
+    std::fs::write(
+        fixture.path().join("README.md"),
+        "# fixture\nready to amend\n",
+    )
+    .unwrap();
+    crate::macos::git(fixture.path(), &["add", "README.md"]);
     let plan = kagi_git::Backend::open(fixture.path())
         .unwrap()
         .plan_amend(kagi_git::AmendMode::Both, Some("disclosure baseline"))
         .unwrap();
     assert!(plan.recovery.is_some());
+    assert!(
+        plan.blockers.is_empty(),
+        "the disclosure fixture must be Ready"
+    );
     let modal = AmendPlanModal {
         plan: std::sync::Arc::new(plan),
         error: None,

@@ -505,14 +505,36 @@ The current suite covers:
   target rows must fit the actual scroller, with at least three visible at 600px
   and more than three at 700px. Real wheel events must expose the final file
   or commit, not merely a row near the end.
-  Recovery is folded by default only while compact, warnings never are, an
-  explicit disclosure click survives a zoom change that crosses the compact
-  threshold, and reopening the card restores the default. Both destructive cards
-  are armed (first confirm click) and cancelled. Warning, recovery, blocker and
-  armed text bounds must fit their visible body, not merely remain mounted.
-  A blocked plan has no confirm button, and the fixture's HEAD + porcelain
-  status remains unchanged. Git operations use only a local bare repo.
-  `modal_sections` is the pre-migration disclosure baseline and remains unchanged;
+  The shared Push and bespoke Amend / Discard recoveries now start as one
+  collapsed structured-command row at every height, never a prose scroll box;
+  warning sections remain visible. An explicit recovery click survives a zoom
+  change across compact/roomy, reopening restores the closed default. Both
+  destructive cards are armed (first confirm click) and cancelled. Warning,
+  blocker and armed text bounds must fit their visible body; recovery commands
+  fit their own disclosure. A blocked plan has no confirm button, and the
+  fixture's HEAD + porcelain status stays unchanged. Git uses a local bare
+  remote. `modal_sections` checks closed → open → closed and reset.
+- Plan headings and recovery (`KAGI_GUI_E2E_ONLY=plan_card_heading,plan_recovery_commands,plan_recovery_ax,plan_equivalent_summary,blocked_plan_command,dialog_a11y_roles,operation_strip_abort`,
+  `tests/recovery/plan_card_994.rs`, `tests/recovery/operations.rs`,
+  `tests/recovery/app_conflict.rs`, #994): EN/JA shared Push and Checkout
+  measure an inline ≤20px icon, one-line short heading, typed target chip and
+  right-hand Copy all within the plan card while the AX dialog keeps the full
+  title. Ready Push has one initially collapsed `plan-recovery` row and
+  command-only body; its dedicated Copy uses precisely
+  `PlanRecovery::commands_for(ShellKind::current())`, while Copy all and the
+  dialog description retain the full localized recovery explanation. The
+  reusable equivalent-command disclosure shows the bare command with a
+  localized *equivalent* AX label. Detached Reset Current has neither
+  executable-looking disclosure. Armed Conflict Abort and Sync to remote
+  announce their stage first, then recovery; unarmed/single cards keep their
+  previous action semantics. Four single-production-edit mutations failed
+  their respective scenario before restoring a backed-up source file byte-for-byte:
+  heading icon 18 → 40px failed `plan_card_heading`; disclosure default closed
+  → open failed `plan_recovery_commands`; omitting shared-card AX recovery
+  failed `plan_recovery_ax`; replacing the bare equivalent summary with the
+  equivalent-label text failed `plan_equivalent_summary`. CherryPick/StashApply
+  recovery is follow-up #1023 (`Refs #1016`); Operation Log persistence and
+  its ADR are follow-up #1025 (`Refs #994`).
 - Input-confirm cards (`KAGI_GUI_E2E_ONLY=create_branch_input_confirm_ime,input_confirm_disabled_cards,stash_push_stacked_preview`,
   `tests/recovery/operations.rs`): #956, #1017. The real Create Branch and
   Stash Push cards measure `plan-state-current` above `plan-state-after`,

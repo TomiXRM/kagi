@@ -301,6 +301,30 @@ mod tests {
     }
 
     #[test]
+    fn recovery_follows_stage_and_is_not_lost_without_commands() {
+        for stage in [
+            ConfirmStage::Single,
+            ConfirmStage::Unarmed,
+            ConfirmStage::Armed,
+        ] {
+            let spec = dialog_a11y("plan", Some("Go"), true, stage)
+                .with_recovery("Return to previous branch.");
+            let expected = match stage {
+                ConfirmStage::Single => "Return to previous branch.".to_owned(),
+                ConfirmStage::Unarmed => format!(
+                    "{}\nReturn to previous branch.",
+                    Msg::A11yDialogTwoStage.t()
+                ),
+                ConfirmStage::Armed => {
+                    format!("{}\nReturn to previous branch.", Msg::A11yDialogArmed.t())
+                }
+            };
+            assert_eq!(spec.description.as_deref(), Some(expected.as_str()));
+            assert_eq!(spec.actions.len(), 2);
+        }
+    }
+
+    #[test]
     fn custom_actions_route_to_confirm_and_cancel_only() {
         assert_eq!(
             dialog_action(Some(&ActionData::CustomAction(CONFIRM_ACTION))),

@@ -152,10 +152,7 @@ pub(crate) fn render_cherry_pick_modal(
 
     // ── Current → Predicted ───────────────────────────────
     let mut body =
-        modal_scroll_body().child(div().flex_shrink_0().child(render_current_predicted(
-            &plan,
-            Some((IconName::Copy.into(), current_theme().color_branch)),
-        )));
+        modal_scroll_body().child(div().flex_shrink_0().child(render_current_predicted(&plan)));
 
     // ── Preview files section ─────────────────────────────
     if !plan.preview_files.is_empty() {
@@ -391,12 +388,9 @@ pub(crate) fn render_commit_plan_modal(
             )),
     );
 
-    // Boxed CURRENT→PREDICTED, then the preview files
+    // Boxed CURRENT / AFTER, then the preview files.
     let mut body = modal_scroll_body()
-        .child(div().flex_shrink_0().child(render_current_predicted(
-            &plan,
-            Some((IconName::Plus.into(), current_theme().color_success)),
-        )))
+        .child(div().flex_shrink_0().child(render_current_predicted(&plan)))
         .child(preview_col.flex_shrink_0());
 
     // Warnings

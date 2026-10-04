@@ -702,6 +702,18 @@ fn push_case(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, case: &Case) 
             .clone()
     });
     let card = assert_card_fits(cx, case, &["plan-cancel", "plan-confirm"]);
+    let comparison = required(cx, case.win, "plan-state-comparison", &label);
+    contained(card, comparison, &format!("{label}: plan comparison"));
+    for side in ["current", "after"] {
+        let row = required(cx, case.win, &format!("plan-state-{side}"), &label);
+        let row_label = required(cx, case.win, &format!("plan-state-{side}-label"), &label);
+        contained(comparison, row, &format!("{label}: {side} row"));
+        assert!(
+            f32::from(row_label.size.width - theme::scaled_px(64.)).abs() <= 1.
+                && row_label.size.height <= theme::scaled_px(24.),
+            "{label}: {side} label stays on one line in EN/JA, including compact: {row_label:?}"
+        );
+    }
     let panel = required(cx, case.win, "modal-target-panel", &label);
     contained(card, panel, &format!("{label}: commits panel"));
     let list = required(cx, case.win, "modal-target-list", &label);
@@ -737,6 +749,21 @@ fn push_case(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, case: &Case) 
             recovery[0].is_none() && recovery[2].is_some(),
             "{label}: a roomy window keeps the push recovery as plain prose"
         );
+    }
+    if !case.compact {
+        theme::set_zoom(1.5);
+        let zoomed = assert_card_fits(cx, case, &["plan-cancel", "plan-confirm"]);
+        let comparison = required(cx, case.win, "plan-state-comparison", &label);
+        contained(zoomed, comparison, &format!("{label}: zoomed comparison"));
+        for side in ["current", "after"] {
+            let row_label = required(cx, case.win, &format!("plan-state-{side}-label"), &label);
+            assert!(
+                f32::from(row_label.size.width - theme::scaled_px(64.)).abs() <= 1.
+                    && row_label.size.height <= theme::scaled_px(24.),
+                "{label}: {side} label at 1.5x zoom: {row_label:?}"
+            );
+        }
+        theme::set_zoom(1.);
     }
     app.update(cx, |app, _| app.clear_push_modal());
     cx.run_until_parked();

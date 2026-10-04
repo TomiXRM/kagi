@@ -1625,6 +1625,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_input_confirm_disabled_cards),
             ),
             (
+                "modal_widths_ordered",
+                Box::new(crate::recovery_operations::scenario_modal_widths_ordered),
+            ),
+            (
                 "create_branch_replan_error",
                 Box::new(crate::recovery_operations::scenario_create_branch_replan_error),
             ),

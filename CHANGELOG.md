@@ -13,6 +13,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - UI ガイドの Known gaps を現状に合わせて更新しました。Settings の通常の focus trap と前面判定、Home / Graph の行キー操作は対応済みとし、未解決の 100 Tab stop 超の制限、Linux / FreeBSD の platform menu と overlay の組み合わせ、UI thread の同期書き込みと WIP diffstat を明記しました。(#974、#976、#980、#986、#981、#987、#990、#996)
 
+### Internal
+
+- 操作キューの核を副作用のない app reducer として追加しました。session ごとに intent を並べ、成功・検証・記録・reconcile の receipt で後続を判定します。画面への配線は #355 段階 3 で行います。(#355 段階 2)
+
 ## [0.42.0] - 2026-10-04
 
 ### Added

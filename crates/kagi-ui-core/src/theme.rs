@@ -614,6 +614,22 @@ pub fn viewport_h() -> Option<f32> {
         h => Some(h as f32),
     }
 }
+/// Last viewport width in logical pixels, for fitting MD confirmation cards
+/// against the actual window rather than a self-relative flex percentage.
+static VIEWPORT_W: AtomicUsize = AtomicUsize::new(0);
+
+#[inline]
+pub fn set_viewport_w(w: f32) {
+    VIEWPORT_W.store(w.max(0.0).round() as usize, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn viewport_w() -> Option<f32> {
+    match VIEWPORT_W.load(Ordering::Relaxed) {
+        0 => None,
+        w => Some(w as f32),
+    }
+}
 
 /// Set the active zoom factor (clamped) and persist it to `settings.json`.
 /// Returns the clamped value that is now active.

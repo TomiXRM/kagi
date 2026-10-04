@@ -185,6 +185,7 @@ impl Render for KagiApp {
         // #454: publish this frame's window height so the modal list boxes can
         // cap themselves against the window instead of a fixed row count.
         theme::set_viewport_h(f32::from(window.viewport_size().height));
+        theme::set_viewport_w(f32::from(window.viewport_size().width));
 
         // Auto-update (ADR-0082): kick the run-once background version check.
         self.ensure_update_check(cx);

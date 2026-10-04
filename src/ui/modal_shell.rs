@@ -114,22 +114,30 @@ pub(crate) fn modal_list_max_h(rows: usize) -> gpui::Pixels {
 /// the cheap half of that fix; the structural half is the sections and caps
 /// above.
 pub(crate) const MODAL_W_SM: f32 = 504.;
-pub(crate) const MODAL_W_MD: f32 = 576.;
+pub(crate) const MODAL_W_MD: f32 = 640.;
 pub(crate) const MODAL_W_LG: f32 = 648.;
 
 pub(crate) fn modal_card(width: f32) -> gpui::Div {
+    let is_md = width == MODAL_W_MD;
     // Spend spare horizontal space before shrinking safety prose vertically.
     let width = if modal_compact() {
         width.max(MODAL_W_LG)
     } else {
         width
     };
-    modal_card_sized()
-        .w(theme::scaled_px(width))
-        // A card must never be wider than the window it sits in: at zoom 1.5
-        // the LG card is 972px, past a 900px-wide window. `max_w` wins over
-        // `w` in taffy, so the card shrinks instead of running off-screen.
-        .max_w(gpui::relative(0.9))
+    let card = modal_card_sized().w(theme::scaled_px(width));
+    if is_md {
+        // A percentage max-width on this flex child resolves against its own
+        // preferred width in GPUI and turns 640px into 576px. Resolve the MD
+        // window cap in pixels instead; 90% still protects narrow viewports.
+        card.max_w(
+            theme::viewport_w()
+                .map(|viewport| gpui::px(viewport * 0.9))
+                .unwrap_or_else(|| theme::scaled_px(width)),
+        )
+    } else {
+        card.max_w(gpui::relative(0.9))
+    }
 }
 
 /// [`modal_card`] without the width, for the one card whose width is already

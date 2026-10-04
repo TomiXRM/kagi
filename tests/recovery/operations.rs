@@ -2121,40 +2121,40 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
     );
     let current = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-current")
         .expect("shared pane renders CURRENT");
-    let arrow = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-arrow")
-        .expect("shared pane renders transition arrow");
-    let predicted = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-predicted")
-        .expect("shared pane renders PREDICTED");
+    let after = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-after")
+        .expect("shared pane renders AFTER");
+    let comparison = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-comparison")
+        .expect("shared comparison");
     assert!(
-        current.right() <= arrow.left() + gpui::px(1.)
-            && arrow.right() <= predicted.left() + gpui::px(1.),
-        "shared state pane must put CURRENT → PREDICTED in one row: {current:?}, {arrow:?}, {predicted:?}"
+        current.bottom() <= after.top() + gpui::px(1.)
+            && f32::from(current.left() - after.left()).abs() <= 2.
+            && f32::from(current.size.width - after.size.width).abs() <= 2.,
+        "both full-width rows must stack and align: {current:?}, {after:?}"
     );
+    assert!(current.top() >= comparison.top() && after.bottom() <= comparison.bottom());
     assert!(
-        f32::from(current.center().y - predicted.center().y).abs() <= 2.,
-        "shared state panes must align vertically: {current:?}, {predicted:?}"
+        kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-arrow").is_none(),
+        "the horizontal transition arrow must be absent"
     );
-    assert!(
-        f32::from(current.size.width - predicted.size.width).abs() <= 2.,
-        "CURRENT and PREDICTED must own equal-width columns: {current:?}, {predicted:?}"
-    );
-    assert!(
-        (f32::from(arrow.center().x - current.center().x)
-            - f32::from(predicted.center().x - arrow.center().x))
-        .abs()
-            <= 2.,
-        "the transition arrow must stay centered between both columns: {current:?}, {arrow:?}, {predicted:?}"
-    );
-    for side in ["current", "predicted"] {
+    for (side, prefix) in [("current", "CURRENT: "), ("after", "AFTER: ")] {
+        let (role, label) = kagi::ui::dialog_a11y::recorded_note(&format!("plan-state-{side}"))
+            .expect("plan row AX label");
+        assert_eq!(role, gpui::Role::Group);
+        assert!(label.starts_with(prefix), "{side} AX name: {label}");
+    }
+    for side in ["current", "after"] {
         let label =
             kagi::ui::e2e::control_bounds(window.window_id(), &format!("plan-state-{side}-label"))
-                .expect("shared comparison renders its column label");
-        let chips =
-            kagi::ui::e2e::control_bounds(window.window_id(), &format!("plan-state-{side}-chips"))
-                .expect("shared comparison renders its column chip row");
+                .expect("fixed-width row label");
+        let head =
+            kagi::ui::e2e::control_bounds(window.window_id(), &format!("plan-state-{side}-head"))
+                .expect("mono row head");
         assert!(
-            label.bottom() <= chips.top() + gpui::px(1.),
-            "{side} label must be above the nonwrapping chip row: {label:?}, {chips:?}"
+            f32::from(label.size.width - gpui::px(64.)).abs() <= 1.
+                && label.size.height <= gpui::px(24.)
+                && label.right() <= head.left()
+                && head.right() <= comparison.right(),
+            "{side} label is one line before its contained head: {label:?}, {head:?}"
         );
     }
     let card = kagi::ui::e2e::control_bounds(window.window_id(), "modal-card")
@@ -2171,9 +2171,9 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
     }
     assert!(
         current.bottom() < cancel.top()
-            && predicted.bottom() < confirm.top()
+            && after.bottom() < confirm.top()
             && f32::from(cancel.center().y - confirm.center().y).abs() <= 2.,
-        "comparison stays above aligned, fixed footer actions: {current:?}, {predicted:?}, {cancel:?}, {confirm:?}"
+        "comparison stays above aligned, fixed footer actions: {current:?}, {after:?}, {cancel:?}, {confirm:?}"
     );
 
     cx.update_window(window, |_, window, cx| {
@@ -2217,12 +2217,16 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS create_branch_input_confirm_ime");
 }
 
-/// #956: Stash shows its actual before/after state in two stacked regions.
-/// A dirty, untracked-inclusive fixture proves the preview without executing
-/// the Git write; the shared Create Branch preview remains horizontal.
+/// #1017: Stash and the shared plan renderer use the same stacked rows, with
+/// one-line EN/JA labels and the full long ref available to assistive technology.
 pub fn scenario_stash_push_stacked_preview(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let previous_lang = kagi_ui_core::i18n::lang();
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
+    let long_ref = "origin/fix/issue-1007-windows-recovery-commands";
+    assert_eq!(long_ref.len(), 47);
+    git(&repo, &["branch", "-m", long_ref]);
     std::fs::write(repo.join("README.md"), "modified before stash\n").unwrap();
     std::fs::write(repo.join("not-tracked.txt"), "untracked before stash\n").unwrap();
     let before = repo_fingerprint(&repo);
@@ -2244,19 +2248,65 @@ pub fn scenario_stash_push_stacked_preview(cx: &mut VisualTestAppContext) {
             "including untracked needs warning"
         );
     });
-    for name in ["plan-state-current", "plan-state-predicted"] {
+    for name in ["plan-state-current", "plan-state-after"] {
         kagi::ui::e2e::clear_control_bounds(window.window_id(), name);
     }
     paint(cx, window);
     let current = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-current")
         .expect("current state is visible");
-    let after = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-predicted")
+    let after = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-after")
         .expect("after state is visible");
     assert!(
         current.bottom() <= after.top() + gpui::px(1.)
             && f32::from(current.left() - after.left()).abs() <= 2.,
         "Stash current and after must stack and align: {current:?}, {after:?}"
     );
+    // 47-character real ref + "branch: " fits without elision at MD width.
+    let comparison = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-comparison")
+        .expect("Stash comparison");
+    let label = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-current-label")
+        .expect("CURRENT label");
+    let head = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-current-head")
+        .expect("mono head");
+    assert!(
+        label.size.height <= gpui::px(24.)
+            && f32::from(label.size.width - gpui::px(64.)).abs() <= 1.
+    );
+    assert!(head.left() >= label.right() && head.right() <= comparison.right());
+    assert!(
+        head.size.width >= gpui::px(55. * 7.8),
+        "the 55-character mono head needs its full drawn width: {head:?}, panel={comparison:?}"
+    );
+    let (role, ax) = kagi::ui::dialog_a11y::recorded_note("plan-state-current")
+        .expect("CURRENT row is named for assistive technology");
+    assert_eq!(role, gpui::Role::Group);
+    assert!(
+        ax.contains(long_ref),
+        "the full head is available in AX: {ax}"
+    );
+    for (lang, current_name, after_name) in [
+        (kagi_ui_core::i18n::Lang::En, "CURRENT: ", "AFTER: "),
+        (kagi_ui_core::i18n::Lang::Ja, "現在: ", "実行後: "),
+    ] {
+        app.update(cx, |app, cx| app.set_lang(lang, cx));
+        redraw(cx, &app, window);
+        for (side, prefix) in [("current", current_name), ("after", after_name)] {
+            let (role, name) = kagi::ui::dialog_a11y::recorded_note(&format!("plan-state-{side}"))
+                .expect("localized plan row");
+            assert_eq!(role, gpui::Role::Group);
+            assert!(name.starts_with(prefix), "{lang:?} {side}: {name}");
+            let label = kagi::ui::e2e::control_bounds(
+                window.window_id(),
+                &format!("plan-state-{side}-label"),
+            )
+            .expect("localized one-line label");
+            assert!(
+                label.size.height <= gpui::px(24.)
+                    && f32::from(label.size.width - gpui::px(64.)).abs() <= 1.,
+                "{lang:?} {side} label never wraps: {label:?}"
+            );
+        }
+    }
     let action = kagi::ui::e2e::confirm_bounds(window.window_id())
         .expect("Stash confirm action remains visible");
     assert!(
@@ -2268,6 +2318,7 @@ pub fn scenario_stash_push_stacked_preview(cx: &mut VisualTestAppContext) {
         repo_fingerprint(&repo),
         "Stash planning is read-only"
     );
+    app.update(cx, |app, cx| app.set_lang(previous_lang, cx));
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS stash_push_stacked_preview");
 }

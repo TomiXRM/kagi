@@ -121,15 +121,9 @@ pub(crate) fn render_create_branch_modal(
         );
 
     if let Some(ref p) = plan {
-        // ── Plan state (current → predicted), same boxed treatment as
-        // Pull/Push (user request 2026-07-23) — creating a branch never
-        // moves HEAD or touches the working tree, so current and predicted
-        // are identical here; showing them side by side is the same
-        // reassurance the recovery text gives, just at a glance.
-        body = body.child(div().flex_shrink_0().child(render_current_predicted(
-            p,
-            Some((IconName::Plus.into(), current_theme().color_success)),
-        )));
+        // Branch creation leaves HEAD and the working tree unchanged; show
+        // both states using the same stacked comparison as every plan card.
+        body = body.child(div().flex_shrink_0().child(render_current_predicted(p)));
 
         // Field validation belongs beside the input; every other safety
         // blocker remains in the plan area and still blocks confirmation.
@@ -306,13 +300,8 @@ pub(crate) fn render_create_worktree_modal(
         ));
 
     if let Some(ref p) = plan {
-        // Same boxed current/predicted treatment as Pull/Push/Create-Branch
-        // (user request 2026-07-23: reuse this display everywhere instead of
-        // a one-off layout per modal).
-        body = body.child(div().flex_shrink_0().child(render_current_predicted(
-            p,
-            Some((IconName::Plus.into(), current_theme().color_success)),
-        )));
+        // Reuse the shared comparison rather than a worktree-specific layout.
+        body = body.child(div().flex_shrink_0().child(render_current_predicted(p)));
 
         if !p.warnings.is_empty() {
             let mut warn_col = div().flex().flex_col().gap_1();
@@ -503,10 +492,7 @@ pub(crate) fn render_create_tag_modal(
     ));
 
     if let Some(ref p) = plan {
-        body = body.child(div().flex_shrink_0().child(render_current_predicted(
-            p,
-            Some((IconName::Plus.into(), current_theme().color_tag)),
-        )));
+        body = body.child(div().flex_shrink_0().child(render_current_predicted(p)));
 
         let mut block_col = div().flex().flex_col().gap_1();
         let mut nonfield_blocker = false;

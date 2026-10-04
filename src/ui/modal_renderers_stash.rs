@@ -7,8 +7,7 @@
 use super::button_style::KagiButton;
 use super::i18n::Msg;
 use super::modal_renderers::{
-    modal_overlay, plan_status_chips, render_current_predicted, render_modal_title_row,
-    render_recovery_box,
+    modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box,
 };
 use super::modal_renderers_input::{
     render_input_modal_action_with_size, render_input_modal_heading, InputActionSize,
@@ -17,146 +16,12 @@ use super::modal_renderers_plan::{offered_recovery_commands, render_input_recove
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_MD};
 use super::modals::*;
 use super::theme::{self, theme as current_theme};
-use super::{KagiApp, MONO_FONT};
+use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, FocusHandle, KeyDownEvent, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{Icon, IconName, Sizable as _};
 use kagi_domain::plan_note::{PlanNote, StashNote};
 use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
-
-/// Stash-only status pills: keep the plan text intact while using quiet fills.
-fn stash_status_chip(text: &str, kind: &str) -> gpui::AnyElement {
-    let t = current_theme();
-    let (color, fill_alpha, text_alpha) = match kind {
-        "staged" | "clean" => (t.color_success, 0x33, 0xff),
-        "modified" => (t.change_modified, 0x22, if t.dark { 0xe0 } else { 0xff }),
-        "conflicted" => (t.color_blocker, 0x33, 0xff),
-        _ => (t.text_main, 0x13, 0xcc),
-    };
-    div()
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .h(theme::scaled_px(24.))
-        .px_2()
-        .rounded(theme::scaled_px(6.))
-        .bg(gpui::rgba((color << 8) | fill_alpha))
-        .font_family(MONO_FONT)
-        .text_xs()
-        .text_color(gpui::rgba((color << 8) | text_alpha))
-        .child(SharedString::from(text.to_owned()))
-        .into_any_element()
-}
-
-fn stash_status_chips(dirty: &str) -> Vec<gpui::AnyElement> {
-    if dirty == "clean" {
-        return vec![stash_status_chip("clean", "clean")];
-    }
-    let mut chips = Vec::new();
-    for part in dirty.split(", ") {
-        let Some((count, kind)) = part.split_once(' ') else {
-            return plan_status_chips(dirty);
-        };
-        if count.parse::<usize>().is_err()
-            || !matches!(kind, "staged" | "modified" | "untracked" | "conflicted")
-        {
-            // An operation's explanatory text is not a count-only status.
-            return plan_status_chips(dirty);
-        }
-        chips.push(stash_status_chip(part, kind));
-    }
-    chips
-}
-
-/// The Stash Push preview renders the live plan in two full-width rows. Every
-/// branch detail remains visible (or horizontally scrollable) at small sizes.
-fn stash_preview_state(
-    head: &str,
-    dirty: &str,
-    label: &'static str,
-    id: &'static str,
-) -> gpui::AnyElement {
-    let full = SharedString::from(format!("{label}: {head} [{dirty}]"));
-    div()
-        .id(id)
-        .role(gpui::Role::Group)
-        .aria_label(full.clone())
-        .tooltip(move |window, cx| {
-            gpui_component::tooltip::Tooltip::new(full.clone()).build(window, cx)
-        })
-        .relative()
-        .flex_shrink_0()
-        .flex()
-        .flex_row()
-        .gap_3()
-        .px_3()
-        .py_2()
-        .child(
-            div()
-                .w(theme::scaled_px(44.))
-                .flex_shrink_0()
-                .pt(theme::scaled_px(3.))
-                .text_xs()
-                .text_color(rgb(current_theme().text_label))
-                .child(SharedString::from(label)),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(theme::scaled_px(6.))
-                .child(
-                    div()
-                        .font_family(MONO_FONT)
-                        .text_size(theme::scaled_px(13.))
-                        .line_height(gpui::relative(1.5))
-                        .text_color(rgb(current_theme().text_main))
-                        .child(SharedString::from(head.to_owned())),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .flex_wrap()
-                        .gap(theme::scaled_px(6.))
-                        .children(stash_status_chips(dirty)),
-                ),
-        )
-        .when(cfg!(feature = "gui-e2e"), |row| {
-            row.child(super::e2e::measure_inside(id))
-        })
-        .into_any_element()
-}
-
-fn render_stash_push_preview(plan: &kagi_git::OperationPlan) -> gpui::AnyElement {
-    div()
-        .id("plan-state-comparison")
-        .w_full()
-        .min_w(gpui::px(0.))
-        .rounded(theme::scaled_px(10.))
-        .bg(rgb(current_theme().panel))
-        .overflow_x_scroll()
-        .flex()
-        .flex_col()
-        .child(stash_preview_state(
-            &plan.current.head,
-            &plan.current.dirty,
-            Msg::InputStashCurrent.t(),
-            "plan-state-current",
-        ))
-        .child(
-            div()
-                .border_t_1()
-                .border_color(rgb(current_theme().surface))
-                .child(stash_preview_state(
-                    &plan.predicted.head,
-                    &plan.predicted.dirty,
-                    Msg::InputStashAfter.t(),
-                    "plan-state-predicted",
-                )),
-        )
-        .into_any_element()
-}
 
 // ──────────────────────────────────────────────────────────────
 // Stash push modal renderer (T015)
@@ -205,7 +70,7 @@ pub(crate) fn render_stash_push_modal(
     // A message is optional. The placeholder describes the input; the group
     // label stays available to assistive technology without a second visual
     // label pushing the state preview away from the title.
-    let card = modal_card(MODAL_W_MD - 16.)
+    let card = modal_card(MODAL_W_MD)
         .bg(rgb(current_theme().bg_base))
         .border_color(rgb(current_theme().surface))
         .rounded(theme::scaled_px(14.))
@@ -238,7 +103,12 @@ pub(crate) fn render_stash_push_modal(
 
     // ── Plan state (current → predicted) ─────────────────
     if let Some(ref p) = plan {
-        body = body.child(div().flex_shrink_0().child(render_stash_push_preview(p)));
+        body = body.child(
+            div()
+                .w_full()
+                .flex_shrink_0()
+                .child(render_current_predicted(p)),
+        );
 
         // ── Warnings ──────────────────────────────────────
         if !p.warnings.is_empty() {
@@ -469,10 +339,7 @@ pub(crate) fn render_stash_apply_modal(
     )));
     let mut body = modal_scroll_body()
         // ── Current → Predicted ─────────────────────────────
-        .child(div().flex_shrink_0().child(render_current_predicted(
-            &plan,
-            Some((IconName::Inbox.into(), current_theme().color_success)),
-        )));
+        .child(div().flex_shrink_0().child(render_current_predicted(&plan)));
 
     // ── Blockers ──────────────────────────────────────────
     if !plan.blockers.is_empty() {

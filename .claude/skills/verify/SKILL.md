@@ -514,12 +514,22 @@ The current suite covers:
   status remains unchanged. Git operations use only a local bare repo.
   `modal_sections` is the pre-migration disclosure baseline and remains unchanged;
 - Input-confirm cards (`KAGI_GUI_E2E_ONLY=create_branch_input_confirm_ime,input_confirm_disabled_cards,stash_push_stacked_preview`,
-  `tests/recovery/operations.rs`): #956. The real Create Branch card measures
-  `plan-state-current`, `plan-state-arrow`, and `plan-state-predicted` in
-  one horizontally aligned row. Stash Push uses a dirty tracked file and an
-  untracked file to verify its real plan has both status counts, a warning and
-  a clean predicted state; its two preview regions stack and align, its ready
-  and blocked actions are 24px high, and planning never writes to the repository.
+  `tests/recovery/operations.rs`): #956, #1017. The real Create Branch and
+  Stash Push cards measure `plan-state-current` above `plan-state-after`,
+  aligned at the left; neither draws the horizontal arrow. The `-label` and
+  `-head` probes verify 64px one-line labels, mono heads contained within the
+  comparison, and a 47-character ref plus `branch: ` at MD width. Stash Push
+  uses a dirty tracked file and an untracked file to verify its real plan has
+  both status counts, a warning and a clean after state. The Group AX names
+  use CURRENT / AFTER in EN and 現在 / 実行後 in JA.
+  Four single-production-edit mutations were each run against
+  `stash_push_stacked_preview` and failed before restoring the backed-up file
+  byte-for-byte: comparison `flex_col` → `flex_row` fails the stack assertion;
+  label width 64 → 44 fails the label-width assertion; AFTER → PREDICTED fails
+  the AX prefix assertion; MD width 640 → 576 fails the 55-character head-room
+  assertion. The restored scenario and the EN/JA `modal_compact` matrix pass;
+  the latter also checks one-line labels at 1.5× zoom in the 900px window.
+  Its ready and blocked actions are 24px high, and planning never writes to the repository.
   An empty name or a blocked plan renders no `input-recovery` row across all
   six cards. Set Upstream's invalid format appears below its input once, not
   again in the plan blocker list; a measured invalid-plan card catches duplicates.

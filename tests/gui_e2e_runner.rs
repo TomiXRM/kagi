@@ -1218,6 +1218,14 @@ mod macos {
                 Box::new(crate::slow_read::scenario_slow_read_explained),
             ),
             (
+                "slow_write_explained",
+                Box::new(crate::slow_read::scenario_slow_write_explained),
+            ),
+            (
+                "slow_write_cleared_after_panic",
+                Box::new(crate::slow_read::scenario_slow_write_cleared_after_panic),
+            ),
+            (
                 "fetch_failure_oplog",
                 Box::new(crate::busy_label::scenario_fetch_failure_reaches_the_oplog),
             ),

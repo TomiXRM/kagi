@@ -2023,8 +2023,14 @@ impl KagiApp {
         }
         let abandonment = lease.abandonment();
         let supervision = abandonment.supervision();
+        #[cfg(feature = "gui-e2e")]
+        let hold = super::busy::take_fetch_hold();
         let task = cx.background_spawn(async move {
             let _supervised = kagi_git::proc::supervisor::enter(supervision);
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
             #[cfg(feature = "gui-e2e")]
             if PANIC_NEXT_FETCH.swap(false, std::sync::atomic::Ordering::SeqCst) {
                 // GPUI's test dispatcher propagates uncaught task panics.

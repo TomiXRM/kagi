@@ -394,6 +394,17 @@ pub fn scenario_pr_ref_fetch_panic(cx: &mut VisualTestAppContext) {
         .any(|entry| entry.op == "fetch-pr"
             && matches!(entry.outcome, OpOutcome::Unknown { .. })
             && entry.before.head == "PR #356"));
+    cx.read(|cx| {
+        let panel = app.read(cx).op_log.as_ref().unwrap().read(cx);
+        assert!(
+            panel.entries().iter().any(|entry| {
+                entry.op == "fetch-pr"
+                    && entry.before.head == "PR #356"
+                    && entry.repo == repo.display().to_string()
+            }),
+            "departed PR fetch receipt was not pushed to the live Operation Log"
+        );
+    });
     acknowledge_panicked_writer(&app, cx);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS pr_ref_fetch_panic");

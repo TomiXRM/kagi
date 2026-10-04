@@ -4,22 +4,19 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use super::button_style::KagiButton;
+use super::button_style::{modal_button, ModalButtonKind};
 use super::i18n::Msg;
 use super::modal_renderers::{
     modal_overlay, render_current_predicted, render_plan_heading, render_recovery_box,
 };
-use super::modal_renderers_input::{
-    render_input_modal_action_with_size, render_input_modal_heading, InputActionSize,
-};
+use super::modal_renderers_input::render_input_modal_heading;
 use super::modal_renderers_plan::{offered_recovery_commands, render_input_recovery_commands};
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_MD};
 use super::modals::*;
 use super::theme::{self, theme as current_theme};
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, FocusHandle, KeyDownEvent, SharedString};
-use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::{Icon, IconName, Sizable as _};
+use gpui_component::{Icon, IconName};
 use kagi_domain::plan_note::{PlanNote, StashNote};
 use kagi_ui_core::i18n::{plan::plan_heading_text, plan_note_text, plan_recovery_text};
 
@@ -94,7 +91,7 @@ pub(crate) fn render_stash_push_modal(
                 .aria_label(Msg::InputStashMessage.t())
                 .children(modal.input_state.as_ref().map(|state| {
                     gpui_component::input::Input::new(state)
-                        .h(theme::scaled_px(38.))
+                        .h(theme::scaled_px(32.))
                         .rounded(theme::scaled_px(8.))
                         .bg(rgb(current_theme().panel))
                         .text_size(theme::scaled_px(14.))
@@ -212,32 +209,22 @@ pub(crate) fn render_stash_push_modal(
         .flex_row()
         .gap_2()
         .justify_end()
-        .child(
-            Button::new("stash-push-cancel")
-                .label(Msg::PlanCancel.t())
-                .ghost()
-                .small()
-                .on_click(cancel_handler),
-        )
-        .child(crate::ui::e2e::measure_confirm(
-            render_input_modal_action_with_size(
-                || {
-                    KagiButton::accent(
-                        "stash-push-confirm",
-                        Msg::InputStash.t(),
-                        current_theme().color_warning,
-                        cx,
-                    )
-                    .small()
-                    .on_click(confirm_handler)
-                },
-                Msg::InputStash.t(),
-                current_theme().color_warning,
-                disabled_reason,
-                InputActionSize::Small,
-                cx,
-            ),
-        ));
+        .child(modal_button(
+            "stash-push-cancel",
+            Msg::PlanCancel.t(),
+            ModalButtonKind::Cancel,
+            None,
+            cancel_handler,
+            cx,
+        ))
+        .child(crate::ui::e2e::measure_confirm(modal_button(
+            "stash-push-confirm",
+            Msg::InputStash.t(),
+            ModalButtonKind::Primary,
+            disabled_reason,
+            confirm_handler,
+            cx,
+        )));
 
     let card = card
         .child(body)
@@ -278,15 +265,17 @@ pub(crate) fn render_stash_planning(
 ) -> gpui::AnyElement {
     let card = modal_card(MODAL_W_MD)
         .child(error.unwrap_or_else(|| Msg::EditorWorkspaceLoading.t().into()))
-        .child(
-            Button::new("stash-planning-cancel")
-                .label(Msg::PlanCancel.t())
-                .ghost()
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.cancel_active_modal(cx);
-                    cx.notify();
-                })),
-        );
+        .child(modal_button(
+            "stash-planning-cancel",
+            Msg::PlanCancel.t(),
+            ModalButtonKind::Cancel,
+            None,
+            cx.listener(|this, _, _, cx| {
+                this.cancel_active_modal(cx);
+                cx.notify();
+            }),
+            cx,
+        ));
     modal_overlay(card).into_any_element()
 }
 
@@ -304,7 +293,7 @@ pub(crate) fn render_stash_planning(
 ///   - Blockers (red) if any
 ///   - Recovery text
 ///   - Error message (if execute failed)
-///   - `[Cancel]` always; `[Apply]` only when no blockers
+///   - `[Cancel]` and an always-visible, disabled-when-blocked `[Apply]`
 pub(crate) fn render_stash_apply_modal(
     modal: StashApplyModal,
     cx: &mut Context<KagiApp>,
@@ -383,28 +372,36 @@ pub(crate) fn render_stash_apply_modal(
         );
     }
 
-    // ── Buttons ───────────────────────────────────────────
-    let mut button_row = div().flex().flex_row().gap_2().justify_end().child(
-        Button::new("stash-apply-cancel")
-            .label(Msg::PlanCancel.t())
-            .ghost()
-            .small()
-            .on_click(cancel_handler),
-    );
-
-    if !has_blockers {
-        button_row = button_row.child(crate::ui::e2e::measure_confirm(
-            KagiButton::accent(
-                "stash-apply-confirm",
-                "Apply",
-                current_theme().color_success,
-                cx,
-            )
-            .small()
-            .on_click(confirm_handler),
-        ));
-    }
-
+    let disabled_reason = if has_blockers {
+        modal.error.clone().or_else(|| {
+            plan.blockers
+                .first()
+                .map(|blocker| SharedString::from(plan_note_text(blocker)))
+        })
+    } else {
+        None
+    };
+    let button_row = div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .justify_end()
+        .child(modal_button(
+            "stash-apply-cancel",
+            Msg::PlanCancel.t(),
+            ModalButtonKind::Cancel,
+            None,
+            cancel_handler,
+            cx,
+        ))
+        .child(crate::ui::e2e::measure_confirm(modal_button(
+            "stash-apply-confirm",
+            Msg::InputApply.t(),
+            ModalButtonKind::Primary,
+            disabled_reason,
+            confirm_handler,
+            cx,
+        )));
     let card = card
         .child(body)
         .child(div().flex_shrink_0().child(button_row));

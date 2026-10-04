@@ -1135,6 +1135,18 @@ pub enum Msg {
     AmendFoldedFiles,
     /// #454: tooltip on a popup's copy button (copies the whole dialog).
     ModalCopyAll,
+    /// Confirm labels and disabled-state reasons for plan cards.
+    ModalCherryPickConfirm,
+    ModalCommitConfirm,
+    ModalNoDiscardTargets,
+    ModalPlanNotReady,
+    /// Repository-health plan AFTER chips, full descriptions, and confirm labels.
+    MaintenanceCommitGraphAfter,
+    MaintenanceFsmonitorAfter,
+    MaintenanceCommitGraphDetail,
+    MaintenanceFsmonitorDetail,
+    MaintenanceWriteCommitGraph,
+    MaintenanceEnableFsmonitor,
     /// Header of the distinct equivalent CLI command in Copy all.
     ModalEquivalentCommand,
     /// #454: tooltip on a list panel's copy button (copies every row).
@@ -1170,6 +1182,8 @@ pub enum Msg {
     PlanHeadingFiles,
     PlanHeadingStashes,
     PlanHeadingBranches,
+    /// Secondary action from a plan card to create a branch at its target.
+    PlanCreateBranchHere,
     /// Confirm button on the set-upstream modal, `{}` = branch.
     PlanSetUpstreamFor,
     /// Confirm button on the rename-branch modal, `{}` = old name.
@@ -1255,6 +1269,7 @@ pub enum Msg {
     InputCheckoutAfterCreate,
     InputCreate,
     InputStash,
+    InputApply,
     InputSetUpstream,
     InputRename,
     InputPlanPending,
@@ -3110,6 +3125,34 @@ impl Msg {
             (Ja, AmendFoldedFiles) => "この commit に取り込む staged 変更",
             (En, ModalCopyAll) => "Copy this dialog as text",
             (Ja, ModalCopyAll) => "この内容をテキストでコピー",
+            (En, ModalCherryPickConfirm) => "Cherry-pick",
+            (Ja, ModalCherryPickConfirm) => "cherry-pick",
+            (En, ModalCommitConfirm) => "Commit",
+            (Ja, ModalCommitConfirm) => "commit",
+            (En, ModalNoDiscardTargets) => "No files to discard",
+            (Ja, ModalNoDiscardTargets) => "破棄するファイルがありません",
+            (En, ModalPlanNotReady) => "Plan is not ready",
+            (Ja, ModalPlanNotReady) => "plan の準備ができていません",
+            (En, MaintenanceCommitGraphAfter) => "commit-graph written",
+            (Ja, MaintenanceCommitGraphAfter) => "commit-graph 書き込み済み",
+            (En, MaintenanceFsmonitorAfter) => "fsmonitor enabled",
+            (Ja, MaintenanceFsmonitorAfter) => "fsmonitor 有効",
+            (En, MaintenanceCommitGraphDetail) => {
+                "commit-graph written for every reachable commit; working tree unchanged"
+            }
+            (Ja, MaintenanceCommitGraphDetail) => {
+                "到達可能なすべてのコミットの commit-graph を書き込みます。作業ツリーは変更されません。"
+            }
+            (En, MaintenanceFsmonitorDetail) => {
+                "core.fsmonitor = true (local config); working tree unchanged"
+            }
+            (Ja, MaintenanceFsmonitorDetail) => {
+                "ローカル設定で core.fsmonitor = true にします。作業ツリーは変更されません。"
+            }
+            (En, MaintenanceWriteCommitGraph) => "Write commit-graph",
+            (Ja, MaintenanceWriteCommitGraph) => "commit-graph を書き込む",
+            (En, MaintenanceEnableFsmonitor) => "Enable fsmonitor",
+            (Ja, MaintenanceEnableFsmonitor) => "fsmonitor を有効化",
             (En, ModalEquivalentCommand) => "equivalent command:",
             (Ja, ModalEquivalentCommand) => "相当するコマンド:",
             (En, ModalCopyList) => "Copy every row",
@@ -3152,6 +3195,8 @@ impl Msg {
             (Ja, PlanHeadingStashes) => "stash {} 件",
             (En, PlanHeadingBranches) => "{} branches",
             (Ja, PlanHeadingBranches) => "{} 件のブランチ",
+            (En, PlanCreateBranchHere) => "Create branch here...",
+            (Ja, PlanCreateBranchHere) => "ここに branch を作成...",
             (En, PlanSetUpstreamFor) => "Set upstream for {}",
             (Ja, PlanSetUpstreamFor) => "{} の upstream を設定",
             (En, PlanRenameBranch) => "Rename {}",
@@ -3302,6 +3347,8 @@ impl Msg {
             (Ja, InputCreate) => "作成",
             (En, InputStash) => "Stash",
             (Ja, InputStash) => "退避する",
+            (En, InputApply) => "Apply",
+            (Ja, InputApply) => "適用",
             (En, InputSetUpstream) => "Set upstream",
             (Ja, InputSetUpstream) => "upstream を設定",
             (En, InputRename) => "Rename",

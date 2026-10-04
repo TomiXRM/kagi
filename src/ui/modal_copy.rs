@@ -12,6 +12,8 @@ use super::types::ToastKind;
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 use kagi_domain::plan::OperationPlan;
+use kagi_domain::plan_note::PlanTitle;
+use kagi_ui_core::i18n::plan::maintenance;
 use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
 
 /// A hover-quiet copy button for a popup surface.
@@ -79,11 +81,15 @@ pub(crate) fn plan_clipboard_text(
     shell: kagi_domain::plan_note::ShellKind,
 ) -> String {
     let mut out = String::new();
+    let predicted_dirty = match &plan.title {
+        PlanTitle::Maintenance(title) => maintenance::after_state_detail(title),
+        _ => &plan.predicted.dirty,
+    };
     out.push_str(&plan_title_text(&plan.title));
     out.push('\n');
     out.push_str(&format!(
         "\ncurrent:   {} [{}]\npredicted: {} [{}]\n",
-        plan.current.head, plan.current.dirty, plan.predicted.head, plan.predicted.dirty
+        plan.current.head, plan.current.dirty, plan.predicted.head, predicted_dirty
     ));
     for w in &plan.warnings {
         out.push_str(&format!("\nwarning: {}", plan_note_text(w)));

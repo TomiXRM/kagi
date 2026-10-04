@@ -1,7 +1,7 @@
 # Decision Log
 
 > **Status:** Active — append-only  
-> **Last updated:** 2026-10-04
+> **Last updated:** 2026-10-05
 
 ADR にするほどではないが、再計測や同じ失敗を避けるために残すべき決定と実測事実のログです。ADR を置き換えるものではありません。
 
@@ -15,6 +15,7 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-05 | #1016 PR A の計画・入力・Amend / Discard / CherryPick / Commit Plan / StashApply 確認は `modal_button` に一本化し、ボタンは Small = 24px、入力は Medium = 32px とする。実行不可の確認は消さずに理由付き AX disabled とし、破壊的な操作と 2 段階目は blocker 色にする。maintenance の AFTER chip は状態語だけを表示し、詳細は AX / Copy all に残す | #1013 の棚卸しと #1016 PM 承認。従来の input 専用無効ボタンと計画カードの confirm 消失を統合し、操作可能性と警告を一貫して示す。幅・余白・PR B の別カードは変更しない。 |
 | 2026-10-04 | 共通 plan card と Amend / Discard / CherryPick / Commit Plan / StashApply の見出しは小さな inline icon・短い操作名・対象 chip とし、対象のないときは代替 chip を出さない。behind・操作意図(approve / comment / request changes / set upstream)・files / stashes / branches の件数は EN/JA の適切な語句と単位で示す。入力カードの見出しは対象外。共通 card と Amend / Discard の復旧は Ready・blocker なし・`commands_for(ShellKind::current())` が空でないときだけ閉じた disclosure に示す。入力カードの復旧行も入力有効・Ready・blocker なしを要し、Copy all のコマンド欄も Ready のときだけ出す。説明文は Copy all と dialog の AX description (stage の文の後) に保つ。相当コマンドも同じ disclosure を使い、非 plan modal の見出しは変更しない | #994。shell に合わないコマンドや復旧コマンドのない計画に空の行を出さず、説明文の読み上げは保つ。CherryPick / StashApply の復旧表示と Operation Log の説明文は独立した follow-up に分離し、oplog schema はここで変えない。[ADR-0169](adr/0169-accountability-equivalent-command.md) の表現も更新。 |
 | 2026-10-04 | Graph の badge / graph 列の分割線は、描画時に測った各列要素の window 座標の左端を基準にし、`(cursor.x - origin.x) / zoom - divider の半幅` で列幅を決める。サイドバーの非表示・表示・開閉途中もドラッグを受け付ける。サイドバー自体と右・下ペインの分割線は motion 中のドラッグを引き続き無視する | #1011。サイドバーの保存幅を固定で引く旧式では非表示時に badge 列が下限へ飛んだ（Tier A で 40px ドラッグ → −90px を再現）。列の左端はその列の幅を動かしても変わらないため、paint 間に複数の move が届いても絶対座標から同じ幅を算出できる。移動中のサイドバーの実際の位置は paint bounds に反映される。下の #957 の Graph 列も無視する決定だけを置き換える。 |
 | 2026-10-04 | 右ペインの開閉は `inspector_visible` の toggle ではなく Graph の解決済み `RightPane` が表示 / 非表示に変わったことを起点にする。commit のクリック・再クリック・Esc は同じ `PanelMotion` の 180/150ms と途中反転を使い、Inspector / Compare / Commit Panel の表示中の交換は動かさない。Home・タブ切替・Conflict・Graph 外への移動は即時、`reduce_motion` も即時。Esc 後の最後の Inspector 行は閉じる clip の描画だけに使い、active な選択は解除する | #1001 は下の #955 の「toggle のときだけ動く」を右ペインに限って置き換える。Graph で選択が変わっても toggle は変わらず、開閉が即時になっていた。表示中の slot 交換と workspace 全体の遷移を除外すれば、不要な二重アニメーションを増やさず selection / Esc を同じ幅の motion として扱える。Tier A `right_selection_motion` で中間幅、反転、Esc、reduced motion、tab 境界を測る。 |

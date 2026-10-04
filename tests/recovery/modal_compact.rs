@@ -568,7 +568,7 @@ fn amend_case(
         "{label}: arming a confirm must not touch the repository"
     );
 
-    // A blocked plan offers no way to proceed — and still fits the window.
+    // A blocked plan retains the confirm with its reason but cannot arm it.
     open_amend(cx, app, "");
     assert!(
         cx.read(|cx| app
@@ -577,7 +577,7 @@ fn amend_case(
             .is_some_and(|modal| !modal.plan.blockers.is_empty())),
         "{label}: an empty amend message must block the plan"
     );
-    assert_card_fits(cx, case, &["amend-cancel"]);
+    assert_card_fits(cx, case, &["amend-cancel", "amend-confirm"]);
     assert_body_content(cx, case, "modal-blocker-content");
     let (role, text) = kagi::ui::dialog_a11y::recorded_note("amend-blocker-0")
         .expect("blocked amend has an accessible alert");
@@ -585,9 +585,20 @@ fn amend_case(
     let blocker =
         cx.read(|cx| i18n::plan_note_text(&app.read(cx).amend_modal().unwrap().plan.blockers[0]));
     assert_eq!(text, blocker);
+    let confirm = required(cx, case.win, "amend-confirm", &label);
+    cx.simulate_click(case.win, confirm.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
     assert!(
-        one(cx, case.win, "amend-confirm").is_none(),
-        "{label}: a blocked plan must not render a confirm button"
+        cx.read(|cx| app
+            .read(cx)
+            .amend_modal()
+            .is_some_and(|modal| !modal.confirm_armed && !modal.plan.blockers.is_empty())),
+        "{label}: clicking a disabled confirm must neither arm nor close the modal"
+    );
+    assert_eq!(
+        repo_fingerprint(repo),
+        *clean,
+        "{label}: blocked confirm cannot write"
     );
     app.update(cx, |app, _| app.cancel_amend_modal());
     cx.run_until_parked();

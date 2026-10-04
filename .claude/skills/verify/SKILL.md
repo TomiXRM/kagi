@@ -527,8 +527,9 @@ The current suite covers:
   change across compact/roomy, reopening restores the closed default. Both
   destructive cards are armed (first confirm click) and cancelled. Warning,
   blocker and armed text bounds must fit their visible body; recovery commands
-  fit their own disclosure. A blocked plan has no confirm button, and the
-  fixture's HEAD + porcelain status stays unchanged. Git uses a local bare
+  fit their own disclosure. A blocked plan retains a disabled confirm with
+  the first blocker as its accessible description; its click leaves the
+  fixture's HEAD + porcelain status unchanged. Git uses a local bare
   remote. `modal_sections` checks closed → open → closed and reset.
 - Plan headings and recovery (`KAGI_GUI_E2E_ONLY=plan_card_heading,plan_heading_chipless,plan_recovery_noop,bespoke_plan_heading,plan_recovery_commands,plan_recovery_ax,plan_equivalent_summary,blocked_plan_command,dialog_a11y_roles,operation_strip_abort`,
   `tests/recovery/plan_card_994.rs`, `tests/recovery/operations.rs`,
@@ -573,6 +574,19 @@ The current suite covers:
   fail. `clipboard_text_offers_recovery_commands_only_for_ready_plans` fails
   the same mutation to Copy all's gate. All three mutations were restored
   byte-for-byte against their backups.
+- Dialog buttons (#1016 PR A, `KAGI_GUI_E2E_ONLY=create_branch_input_confirm_ime,repo_health_proposal`,
+  `tests/recovery/operations.rs`, `tests/recovery/repo_health.rs`): a real card measures cancel and confirm at
+  Small = 24px; a blocked confirm remains drawn and inert with its localized
+  `aria_description` and disabled AX state. Destructive plans use the blocker
+  colour (including two-stage armed confirmation); the plan-kind unit test
+  covers the classification when native colour introspection is unavailable.
+  Maintenance AFTER shows only a short localized state chip while AX and
+  Copy all retain the full localized detail; Write commit-graph confirms with
+  Write rather than Enable. Inputs remain Medium = 32px. Two production
+  mutations failed independently: removing the helper's `.small()` made the
+  blocked Create measure 32px in `create_branch_input_confirm_ime`, and
+  mapping Prune to Repair in `plan_confirm_kind` failed the destructive
+  variant unit test. Each source was restored byte-for-byte from a backup.
 - Input-confirm cards (`KAGI_GUI_E2E_ONLY=create_branch_input_confirm_ime,input_confirm_disabled_cards,stash_push_stacked_preview`,
   `tests/recovery/operations.rs`): #956, #1017. The real Create Branch and
   Stash Push cards measure `plan-state-current` above `plan-state-after`,

@@ -216,10 +216,11 @@ const SLOW_WRITE_KINDS: &[(&str, super::Msg)] = {
         // Writes a commit object.
         ("commit", SlowWriteCommit),
         ("amend", SlowWriteCommit),
-        // Stash entries.
+        // Stash entries (stash-apply leaves the entry and writes the
+        // worktree, so it is a worktree write).
         ("stash", SlowWriteStash),
         ("stash-push", SlowWriteStash),
-        ("stash-apply", SlowWriteStash),
+        ("stash-apply", SlowWriteWorktree),
         ("stash-pop", SlowWriteStash),
         ("stash-drop", SlowWriteStash),
         ("snapshot", SlowWriteStash),
@@ -459,7 +460,7 @@ mod tests {
             ("amend", SlowWriteCommit),
             ("stash", SlowWriteStash),
             ("stash-push", SlowWriteStash),
-            ("stash-apply", SlowWriteStash),
+            ("stash-apply", SlowWriteWorktree),
             ("stash-pop", SlowWriteStash),
             ("stash-drop", SlowWriteStash),
             ("snapshot", SlowWriteStash),

@@ -70,7 +70,7 @@ impl KagiApp {
                 return false;
             }
         };
-        self.mark_write_busy("pull");
+        self.mark_write_busy("pull", cx);
         let stamp = job.stamp();
         // #289: gpui does not propagate a background panic, so the task can end
         // without a completion. That is not evidence of termination — the write

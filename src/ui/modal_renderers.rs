@@ -161,7 +161,8 @@ fn plan_status_chip(text: &str, kind: &str) -> gpui::AnyElement {
 /// Count-only statuses can be split; operation prose must remain one verbatim chip.
 fn plan_status_chips(dirty: &str) -> Vec<gpui::AnyElement> {
     if dirty == "clean" {
-        return vec![plan_status_chip("clean", "clean")];
+        // The one status the card names itself; counts come from the plan.
+        return vec![plan_status_chip(Msg::PlanStateClean.t(), "clean")];
     }
     let mut chips = Vec::new();
     for part in dirty.split(", ") {

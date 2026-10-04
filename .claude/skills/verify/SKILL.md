@@ -529,6 +529,10 @@ The current suite covers:
   the AX prefix assertion; MD width 640 → 576 fails the 55-character head-room
   assertion. The restored scenario and the EN/JA `modal_compact` matrix pass;
   the latter also checks one-line labels at 1.5× zoom in the 900px window.
+  `modal_widths_ordered` (#1022 review): the real Create Branch (MD) and
+  Create Worktree (LG) comparisons are measured; LG ≥ MD and MD draws its full
+  640px (comparison 604px inside border + padding). Putting the percentage
+  window cap back for SM / LG fails it (LG drew 547px).
   Its ready and blocked actions are 24px high, and planning never writes to the repository.
   An empty name or a blocked plan renders no `input-recovery` row across all
   six cards. Set Upstream's invalid format appears below its input once, not

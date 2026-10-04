@@ -118,26 +118,21 @@ pub(crate) const MODAL_W_MD: f32 = 640.;
 pub(crate) const MODAL_W_LG: f32 = 648.;
 
 pub(crate) fn modal_card(width: f32) -> gpui::Div {
-    let is_md = width == MODAL_W_MD;
     // Spend spare horizontal space before shrinking safety prose vertically.
     let width = if modal_compact() {
         width.max(MODAL_W_LG)
     } else {
         width
     };
-    let card = modal_card_sized().w(theme::scaled_px(width));
-    if is_md {
-        // A percentage max-width on this flex child resolves against its own
-        // preferred width in GPUI and turns 640px into 576px. Resolve the MD
-        // window cap in pixels instead; 90% still protects narrow viewports.
-        card.max_w(
-            theme::viewport_w()
-                .map(|viewport| gpui::px(viewport * 0.9))
-                .unwrap_or_else(|| theme::scaled_px(width)),
-        )
-    } else {
-        card.max_w(gpui::relative(0.9))
-    }
+    // A percentage max-width on this flex child resolves against its own
+    // preferred width in GPUI (90% of 640px drew 576px; of LG 648px, 583px —
+    // narrower than MD). Resolve the window cap in pixels for every width;
+    // 90% of the viewport still protects narrow windows (#1022 review).
+    modal_card_sized().w(theme::scaled_px(width)).max_w(
+        theme::viewport_w()
+            .map(|viewport| gpui::px(viewport * 0.9))
+            .unwrap_or_else(|| theme::scaled_px(width)),
+    )
 }
 
 /// [`modal_card`] without the width, for the one card whose width is already

@@ -2323,6 +2323,56 @@ pub fn scenario_stash_push_stacked_preview(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS stash_push_stacked_preview");
 }
 
+/// #1022 review: every standard width resolves its window cap in pixels, so
+/// the large card (Create Worktree) is never narrower than the medium one
+/// (Create Branch), and the medium card draws its full 640px. A percentage
+/// cap resolves against the card's own width in GPUI (LG drew 583px).
+pub fn scenario_modal_widths_ordered(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let head = CommitId(output(&repo, &["rev-parse", "HEAD"]));
+    let (app, window) = mount(cx, &repo);
+    let mut widths = Vec::new();
+    for case in ["branch", "worktree"] {
+        app.update(cx, |app, cx| match case {
+            "branch" => app.open_create_branch_modal(head.clone(), cx),
+            _ => app.open_create_worktree_modal(head.clone(), cx),
+        });
+        kagi::ui::e2e::clear_control_bounds(window.window_id(), "plan-state-comparison");
+        wait_painted(cx, &app, window, |app| match case {
+            "branch" => app
+                .create_branch_modal()
+                .and_then(|m| m.plan.plan())
+                .is_some(),
+            _ => app
+                .create_worktree_modal()
+                .and_then(|m| m.plan.plan())
+                .is_some(),
+        });
+        paint(cx, window);
+        let comparison = kagi::ui::e2e::control_bounds(window.window_id(), "plan-state-comparison")
+            .unwrap_or_else(|| panic!("{case}: the comparison is drawn"));
+        widths.push(f32::from(comparison.size.width));
+        app.update(cx, |app, cx| {
+            app.active_modal = None;
+            cx.notify();
+        });
+        paint(cx, window);
+    }
+    let (md, lg) = (widths[0], widths[1]);
+    assert!(
+        lg >= md,
+        "LG ({lg}px) must not be narrower than MD ({md}px)"
+    );
+    // MD 640 minus the card's 1px border and 16px padding on each side.
+    assert!(
+        (md - (640. - 2. - 32.)).abs() <= 2.,
+        "MD draws its full width: comparison {md}px"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS modal_widths_ordered: md={md} lg={lg}");
+}
+
 /// #956: each input-confirm renderer must expose an unavailable primary
 /// action rather than remove it when its plan cannot run. A real click at the
 /// measured button must leave the modal and repository untouched.

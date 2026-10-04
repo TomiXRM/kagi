@@ -100,17 +100,18 @@ pub fn scenario_bottom_panel_nested(cx: &mut VisualTestAppContext) {
         let view = editor.read(cx);
         (view.tree_w, view.hunks_w)
     });
+    let physical_scale = theme::scaled(1.0);
     assert!(
         near(bottom(panel), bottom(editor_root)),
         "Editor pane should span the bottom panel: {panel:?} {editor_root:?}"
     );
     assert!(
         f32::from(panel.origin.x)
-            >= f32::from(editor_root.origin.x) + tree_width * theme::zoom() - 2.0,
+            >= f32::from(editor_root.origin.x) + tree_width * physical_scale - 2.0,
         "bottom panel extends under Editor file tree: {panel:?} {editor_root:?}"
     );
     assert!(
-        right(panel) <= right(editor_root) - hunks_width * theme::zoom() + 2.0,
+        right(panel) <= right(editor_root) - hunks_width * physical_scale + 2.0,
         "bottom panel extends under Editor hunks: {panel:?} {editor_root:?}"
     );
 
@@ -123,7 +124,7 @@ pub fn scenario_bottom_panel_nested(cx: &mut VisualTestAppContext) {
     draw(cx, window);
     let moved = bounds(window, "bottom-panel");
     assert!(
-        f32::from(moved.origin.x) >= f32::from(panel.origin.x) + 24.0 * theme::zoom() - 2.0,
+        f32::from(moved.origin.x) >= f32::from(panel.origin.x) + 24.0 * physical_scale - 2.0,
         "Editor-only rerender lost or misplaced the panel: {panel:?} {moved:?}"
     );
     assert!(

@@ -519,12 +519,12 @@ pub fn themes_by_name() -> Vec<ThemeHandle> {
 // persist it to `settings.json` under `"ui_zoom"`, and apply it every frame
 // via `window.set_rem_size(px(BASE_REM_PX * zoom()))` at the top of render.
 
-/// Base (1.0×) rem size in pixels — gpui's own default.
-pub const BASE_REM_PX: f32 = 16.0;
+/// Base (1.0×) rem size in pixels; matches the previous 0.9× visual scale.
+pub const BASE_REM_PX: f32 = 14.4;
 
-/// Zoom clamp bounds (inclusive), as documented in the ticket.
+/// Zoom bounds include the converted former 150% setting (`1500 / 0.9 = 1667` permille).
 pub const ZOOM_MIN: f32 = 0.7;
-pub const ZOOM_MAX: f32 = 1.5;
+pub const ZOOM_MAX: f32 = 1.67;
 
 /// One zoom step (cmd-+ / cmd--).
 pub const ZOOM_STEP: f32 = 0.1;
@@ -537,6 +537,20 @@ static UI_ZOOM_PERMILLE: AtomicUsize = AtomicUsize::new(1000);
 #[inline]
 pub fn clamp_zoom(z: f32) -> f32 {
     z.clamp(ZOOM_MIN, ZOOM_MAX)
+}
+
+/// Move to the next 10% preset in the requested direction. Migrated zooms
+/// between presets (e.g. 1111 permille) land on 1200 or 1100 rather than
+/// inheriting that offset on every subsequent click.
+pub fn step_zoom(z: f32, increase: bool) -> f32 {
+    let step = (ZOOM_STEP * 1000.0).round() as i32;
+    let current = (clamp_zoom(z) * 1000.0).round() as i32;
+    let next = if increase {
+        (current / step + 1) * step
+    } else {
+        ((current - 1) / step) * step
+    };
+    (next as f32 / 1000.0).clamp(ZOOM_MIN, ZOOM_MAX)
 }
 
 /// The currently-active UI zoom factor (e.g. `1.0`, `1.2`). Read every frame.
@@ -559,29 +573,28 @@ pub fn rem_size_px() -> f32 {
 /// heights, panel widths, paddings, graph node/lane geometry) stay fixed unless
 /// routed through here, which causes text↔layout drift on zoom — most visibly
 /// the commit graph misaligning with its (rem-scaled) text rows.  Wrapping a
-/// layout constant as `scaled_px(N)` makes it track the same `zoom()` factor as
-/// the text, so the whole UI scales uniformly.
+/// layout constant as `scaled_px(N)` makes it track the same physical factor
+/// as the text: the 14.4px rem base relative to gpui's 16px default, times
+/// `zoom()`.
 ///
 /// Use for **layout** dimensions, not for text sizes (text already scales via
-/// rem).  `scaled_px(0.0)` and hairline `1.0` borders are returned unscaled-ish
-/// by nature of multiplication; callers that want crisp 1px borders may keep a
-/// literal `px(1.)`.
+/// rem). Callers that want crisp 1px hairlines may keep a literal `px(1.)`.
 #[inline]
 pub fn scaled_px(n: f32) -> gpui::Pixels {
-    gpui::px(n * zoom())
+    gpui::px(n * (BASE_REM_PX / 16.0) * zoom())
 }
 
 /// W28: bare-`f32` sibling of [`scaled_px`] for coordinate math.
 ///
 /// The commit-graph path-builder computes lane x-centres, node radii, corner
 /// radii and edge widths as plain `f32` before wrapping the final point in
-/// `px(..)`.  Routing those intermediate values through `scaled(..)` makes the
-/// graph geometry track the same `zoom()` factor as the (rem-scaled) row text,
-/// so the whole graph scales uniformly and stays aligned.  Identical to
-/// `scaled_px` except it returns the bare `f32` instead of `Pixels`.
+/// `px(..)`. Routing those intermediate values through `scaled(..)` makes the
+/// graph geometry track the same physical factor as the (rem-scaled) row text,
+/// so the graph stays aligned. Identical to `scaled_px` except it returns the
+/// bare `f32` instead of `Pixels`.
 #[inline]
 pub fn scaled(n: f32) -> f32 {
-    n * zoom()
+    n * (BASE_REM_PX / 16.0) * zoom()
 }
 
 /// Last known window (viewport) height in logical pixels; `0` = not yet seen.
@@ -642,10 +655,11 @@ pub fn set_zoom(z: f32) -> f32 {
 }
 
 /// Initialise the active zoom at startup from `settings.json` (`"ui_zoom"`,
-/// stored as a permille integer). Missing / unparsable / out-of-range values
-/// fall back to 1.0×.
+/// stored as a permille integer). Convert legacy values and record the scale
+/// version together before reading; missing or unparsable zoom uses 1.0×,
+/// while out-of-range values are clamped.
 pub fn init_zoom() {
-    if let Some(permille) = Settings::load().ui_zoom_permille() {
+    if let Some(permille) = crate::settings::migrate_ui_scale_base() {
         let z = clamp_zoom(permille as f32 / 1000.0);
         UI_ZOOM_PERMILLE.store((z * 1000.0).round() as usize, Ordering::Relaxed);
     }
@@ -917,7 +931,7 @@ pub fn clamp_menu_pos(
     viewport: gpui::Size<gpui::Pixels>,
 ) -> gpui::Point<gpui::Pixels> {
     const MARGIN: f32 = 8.0;
-    let z = zoom();
+    let z = scaled(1.0);
     let (w, h) = (menu_w * z, menu_h * z);
     let (vw, vh) = (f32::from(viewport.width), f32::from(viewport.height));
     let (raw_x, raw_y) = (f32::from(pos.x), f32::from(pos.y));
@@ -1537,6 +1551,21 @@ mod tests {
         assert_eq!(clamp_zoom(0.5), ZOOM_MIN);
         assert_eq!(clamp_zoom(2.0), ZOOM_MAX);
         assert_eq!(clamp_zoom(1.0), 1.0);
+        assert_eq!(clamp_zoom(1.556), 1.556, "legacy 140% stays visible");
+        assert_eq!(clamp_zoom(1.667), 1.667, "legacy 150% stays visible");
+    }
+
+    #[test]
+    fn zoom_steps_follow_presets_and_clamp() {
+        assert_eq!(step_zoom(1.111, true), 1.2);
+        assert_eq!(step_zoom(1.111, false), 1.1);
+        assert_eq!(step_zoom(1.0, true), 1.1);
+        assert_eq!(step_zoom(1.0, false), 0.9);
+        assert_eq!(step_zoom(ZOOM_MIN, false), ZOOM_MIN);
+        assert_eq!(step_zoom(ZOOM_MAX, true), ZOOM_MAX);
+        assert_eq!(step_zoom(1.667, false), 1.6);
+        assert_eq!(step_zoom(1.667, true), 1.67);
+        assert_eq!(step_zoom(1.67, false), 1.6);
     }
 
     /// T-SYNTAX-001: every theme must produce a usable highlight theme —

@@ -100,13 +100,11 @@ enum Edge {
     Left,
 }
 
-/// #960 review: the ring is a fixed 2px taken out of the *zoomed* padding,
-/// so at every zoom the label sits `offset × zoom` from the measured outer
-/// edge, where the cell's padding put it before the ring (within the half
-/// pixel gpui's layout rounds positions to); and keyboard focus, which only
-/// colours the ring, moves and resizes nothing. Subtracting the ring before
-/// scaling put the label `2 − 2·zoom` px off per padded edge: 1px at 1.5×,
-/// past the rounding.
+/// #960 review: the ring is a fixed 2px taken out of the rem-scaled padding,
+/// so the label's inset is `offset × theme::scaled(1.0)` from the measured
+/// outer edge (within GPUI's half-pixel layout rounding). Keyboard focus
+/// colours the ring but must never move or resize the label. Subtracting
+/// the ring before scaling displaced the label past that rounding tolerance.
 fn ring_keeps_geometry(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
@@ -143,10 +141,11 @@ fn ring_keeps_geometry(
             Edge::Top => text.origin.y - cell.origin.y,
             Edge::Left => text.origin.x - cell.origin.x,
         });
+        let physical_scale = theme::scaled(1.0);
         assert!(
-            (inset - offset * zoom).abs() <= 0.5,
-            "{label} at {zoom}×: {inset}px from {outer}'s edge, {offset} × {zoom} = {}px expected",
-            offset * zoom
+            (inset - offset * physical_scale).abs() <= 0.5,
+            "{label} at {zoom}×: {inset}px from {outer}'s edge, {offset} × {physical_scale} = {}px expected",
+            offset * physical_scale
         );
         focus(cx);
         // A key with no binding makes the last input a key, so the ring is

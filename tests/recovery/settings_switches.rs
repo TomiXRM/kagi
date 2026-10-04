@@ -163,6 +163,47 @@ pub fn scenario_settings_switches(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS settings_switches");
 }
 
+/// Migrated 150% must keep its physical size and appear as 167% in the real
+/// Settings renderer. At the upper bound, + clamps; − reaches the 160% preset.
+pub fn scenario_settings_zoom_bound(cx: &mut VisualTestAppContext) {
+    let restore = crate::recovery_layout::GlobalSettings::capture();
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.handle_menu_command("app.settings", window, cx)
+        })
+    })
+    .unwrap();
+
+    let check = |cx: &mut VisualTestAppContext, zoom: f32, label: &str, saved: &str| {
+        assert_eq!(kagi_ui_core::theme::set_zoom(zoom), zoom);
+        draw(cx, window);
+        assert_eq!(
+            e2e::settings_zoom_label().as_deref(),
+            Some(label),
+            "Settings must show the active migrated zoom"
+        );
+        assert_eq!(settings::read_setting("ui_zoom").as_deref(), Some(saved));
+    };
+    check(cx, 1.556, "156%", "1556");
+    check(cx, 1.667, "167%", "1667");
+    let capped = kagi_ui_core::theme::step_zoom(kagi_ui_core::theme::zoom(), true);
+    check(cx, capped, "167%", "1670");
+    let lower = kagi_ui_core::theme::step_zoom(kagi_ui_core::theme::zoom(), false);
+    check(cx, lower, "160%", "1600");
+
+    app.update(cx, |app, cx| {
+        app.menu_overlay = None;
+        cx.notify();
+    });
+    unmount(cx, app, window);
+    drop(restore);
+    eprintln!(
+        "[gui-e2e] PASS settings_zoom_bound 150% legacy -> 167%, upper step and 160% lower preset"
+    );
+}
+
 fn focus(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,

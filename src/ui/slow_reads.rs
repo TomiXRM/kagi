@@ -195,11 +195,6 @@ impl KagiApp {
             return;
         };
         ui.slow_reads.skip(kind);
-        if kind == SlowRead::WorktreeSize {
-            // The inspection's own cancel: unmeasured worktrees read "not
-            // measured", and the next sweep measures them again.
-            ui.worktree_inspections.cancel();
-        }
         klog!("busy: skip {}", kind.tag());
         cx.notify();
     }

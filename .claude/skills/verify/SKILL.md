@@ -62,6 +62,13 @@ KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='modal_compact,moda
   cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
 ```
 
+For #1016 PR B use `KAGI_GUI_E2E_ONLY='modal_polish_'` with
+`KAGI_GUI_E2E_KEEP_GOING=1` (`tests/recovery/modal_polish_b.rs`). The three
+scenarios draw the Editor name form (including invalid names, valid action,
+Delete `.git`, and Trust Repo), Remote Browse's idle/busy connect button, and
+Stash Drop's localized AFTER chip with its full AX and Copy all text. Each
+unmounts its own window; keep this filter rather than launching unfiltered.
+
 It uses `VisualTestAppContext` with deterministic assertions. Its test windows
 can appear at the primary display's top-left while a scenario runs; each must
 disappear when the scenario ends, and none may remain when the runner exits.

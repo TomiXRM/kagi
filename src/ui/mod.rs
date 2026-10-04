@@ -1864,13 +1864,16 @@ impl KagiApp {
             return false;
         }
         self.update_installing = true;
-        self.update_status = Some(SharedString::from("Downloading & verifying…"));
+        self.update_status = Some(SharedString::from(Msg::UpdateInstallingReason.t()));
         true
     }
 
     fn finish_update_install_failure(&mut self, error: impl std::fmt::Display) {
         self.update_installing = false;
-        self.update_status = Some(SharedString::from(format!("Update failed: {error}")));
+        self.update_status = Some(SharedString::from(format!(
+            "{}: {error}",
+            Msg::UpdateFailed.t()
+        )));
     }
 
     /// Download + verify + install the offered update, then relaunch. A failure

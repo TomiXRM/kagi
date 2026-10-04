@@ -3,23 +3,23 @@
 //! not, and whose `repo clone` really clones a local bare repository.
 //!
 //! The local one opens its tab; the other opens the clone card, which refuses
-//! a destination that is already in use (no Clone button) and, once it is
+//! a destination that is already in use (Clone stays disabled with a reason) and, once it is
 //! free, clones, records a receipt, remembers the folder and opens the new
 //! repository in place of Home.
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use crate::app_conflict::click_control;
+use crate::macos::{build_fixture, git, mount, unmount};
+use crate::pr_fields_focus::OfflineGh;
+use crate::recovery_operations::press_key;
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::home_github::GithubRepos;
 use kagi::ui::{e2e, settings, tabs, KagiApp};
 use kagi_git::github_repos::{OwnerRepos, RepoList, RepoListing};
 use kagi_git::github_repos_cache;
 use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
-
-use crate::app_conflict::click_control;
-use crate::macos::{build_fixture, git, mount, unmount};
-use crate::pr_fields_focus::OfflineGh;
-use crate::recovery_operations::press_key;
+use kagi_ui_core::theme;
 
 const REPO_LIST: &str = r#"[
  {"nameWithOwner":"acme/local","url":"https://github.com/acme/local","isFork":false,
@@ -347,6 +347,24 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
             .clone_modal()
             .is_some_and(|m| m.target.is_none())),
         "the card opens without a folder"
+    );
+    assert_eq!(
+        kagi::ui::button_style::recorded_modal_button("clone-confirm"),
+        Some(kagi::ui::button_style::ModalButtonA11y {
+            role: gpui::Role::Button,
+            label: kagi_ui_core::i18n::Msg::CloneConfirm.t().to_owned(),
+            description: Some(kagi_ui_core::i18n::Msg::CloneNoLocation.t().to_owned()),
+            disabled: true,
+        }),
+        "Clone stays visible and explains the missing folder"
+    );
+    let clone_height = e2e::control_bounds(window.window_id(), "clone-confirm")
+        .expect("Clone is drawn")
+        .size
+        .height;
+    assert!(
+        f32::from(clone_height - theme::scaled_px(24.)).abs() <= 0.5,
+        "Clone must retain its scaled 24px control: {clone_height:?}"
     );
     click_control(cx, window, "clone-confirm");
     cx.run_until_parked();

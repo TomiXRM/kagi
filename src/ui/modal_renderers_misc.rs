@@ -1,10 +1,8 @@
-//! Smart-commit / auto-update modal renderers split out of `modal_renderers.rs`
-//! (T-SPLIT-MODALS-001 / ADR-0116 Wave 3). Pure physical move — behaviour
-//! unchanged.
+//! Smart Commit, update, editor guard, and app-notice modal renderers.
 
 #![allow(clippy::too_many_arguments)]
 
-use super::button_style::KagiButton;
+use super::button_style::{modal_button, modal_button_without_tab_stop, ModalButtonKind};
 use super::i18n::Msg;
 use super::modal_renderers::{modal_overlay, render_modal_title_row, ModalIcon};
 use super::modal_shell::{
@@ -14,8 +12,7 @@ use super::modals::{AppNotice, EditorDirtyGuardModal};
 use super::theme::{self, theme as current_theme};
 use super::{smart_commit, KagiApp};
 use gpui::{div, prelude::*, px, rgb, Context, SharedString, Window};
-use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::{Disableable as _, IconName, Sizable as _};
+use gpui_component::IconName;
 
 // ──────────────────────────────────────────────────────────────
 // Smart Commit modal renderer (T-COMMIT-016, ADR-0044)
@@ -31,138 +28,137 @@ pub(crate) fn render_smart_commit_modal(
     modal: smart_commit::SmartCommitModal,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
-    let card = match modal {
-        smart_commit::SmartCommitModal::Consent => {
-            let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-                this.cancel_smart_modal(cx);
-            });
-            let confirm = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-                this.confirm_smart_consent(cx);
-            });
-            let mut lines_col = div().flex().flex_col().gap_1();
-            for line in smart_commit::CONSENT_LINES {
-                lines_col = lines_col.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_1()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().color_branch))
-                                .child(SharedString::from("•")),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_main))
-                                .child(SharedString::from(line)),
-                        ),
-                );
-            }
-            // Two short paragraphs and the four fixed `CONSENT_LINES`: the
-            // content is bounded, so this card needs no scrolling body (#454).
-            modal_card(MODAL_W_MD)
-                .child(div().flex_shrink_0().child(render_modal_title_row(
-                    SharedString::from("Enable Local LLM generation?"),
-                    Some((IconName::Settings.into(), current_theme().color_success)),
-                )))
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_sub))
-                        .child(SharedString::from(
-                            "Pressing Generate sends your staged diff to a local Ollama \
-                             model on this machine. Please review:",
-                        )),
-                )
-                .child(lines_col)
-                .child(
-                    div().flex_shrink_0().child(
+    let card =
+        match modal {
+            smart_commit::SmartCommitModal::Consent => {
+                let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
+                    this.cancel_smart_modal(cx);
+                });
+                let confirm = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
+                    this.confirm_smart_consent(cx);
+                });
+                let mut lines_col = div().flex().flex_col().gap_1();
+                for line in smart_commit::CONSENT_LINES {
+                    lines_col = lines_col.child(
                         div()
                             .flex()
                             .flex_row()
-                            .gap_2()
-                            .justify_end()
+                            .gap_1()
+                            .text_sm()
                             .child(
-                                Button::new("smart-consent-cancel")
-                                    .label(Msg::PlanCancel.t())
-                                    .ghost()
-                                    .small()
-                                    .on_click(cancel),
+                                div()
+                                    .text_color(rgb(current_theme().color_branch))
+                                    .child(SharedString::from("•")),
                             )
                             .child(
-                                KagiButton::accent(
-                                    "smart-consent-confirm",
-                                    "Enable & continue",
-                                    current_theme().color_success,
-                                    cx,
-                                )
-                                .small()
-                                .on_click(confirm),
+                                div()
+                                    .text_color(rgb(current_theme().text_main))
+                                    .child(SharedString::from(line.t())),
                             ),
-                    ),
-                )
-        }
-        smart_commit::SmartCommitModal::ModelPicker { models } => {
-            let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-                this.cancel_smart_modal(cx);
-            });
-            let mut list = div().flex().flex_col().gap_1();
-            for (i, m) in models.iter().enumerate() {
-                let model_name = m.clone();
-                let pick = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
-                    this.choose_smart_model(model_name.clone(), window, cx);
-                });
-                list = list.child(
-                    div()
-                        .id(("smart-model", i))
-                        .px_3()
-                        .py_1()
-                        .rounded_sm()
-                        .bg(rgb(current_theme().surface))
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_main))
-                        .on_click(pick)
-                        .hover(|s| s.bg(rgb(current_theme().selected)).cursor_pointer())
-                        .child(SharedString::from(m.clone())),
-                );
-            }
-            // The installed-model list is unbounded and nothing inside it
-            // scrolls, so the body is this card's single scroll region (#454).
-            // Its rows stay `flex_shrink_0` or flex compresses them instead of
-            // handing the overflow to the scroller (T027).
-            modal_card(MODAL_W_SM)
-                .child(div().flex_shrink_0().child(render_modal_title_row(
-                    SharedString::from("Select a local model"),
-                    Some((IconName::Settings.into(), current_theme().color_branch)),
-                )))
-                .child(
-                    modal_scroll_body()
-                        .child(
+                    );
+                }
+                // The short intro and four fixed `CONSENT_LINES` are bounded;
+                // this card needs no scrolling body (#454).
+                modal_card(MODAL_W_MD)
+                    .child(div().flex_shrink_0().child(render_modal_title_row(
+                        SharedString::from(Msg::SmartConsentTitle.t()),
+                        Some((
+                            ModalIcon::Path("icons/sparkles.svg"),
+                            current_theme().color_success,
+                        )),
+                    )))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(current_theme().text_sub))
+                            .child(SharedString::from(Msg::SmartConsentIntro.t())),
+                    )
+                    .child(lines_col)
+                    .child(
+                        div().flex_shrink_0().child(
                             div()
-                                .flex_shrink_0()
-                                .text_sm()
-                                .text_color(rgb(current_theme().text_sub))
-                                .child(SharedString::from(
-                                    "Choose which installed Ollama model to use. \
-                                     Your choice is remembered.",
+                                .flex()
+                                .flex_row()
+                                .gap_2()
+                                .justify_end()
+                                .child(modal_button(
+                                    "smart-consent-cancel",
+                                    Msg::PlanCancel.t(),
+                                    ModalButtonKind::Cancel,
+                                    None,
+                                    cancel,
+                                    cx,
+                                ))
+                                .child(modal_button(
+                                    "smart-consent-confirm",
+                                    Msg::SmartConsentEnable.t(),
+                                    ModalButtonKind::Primary,
+                                    None,
+                                    confirm,
+                                    cx,
                                 )),
-                        )
-                        .child(list.flex_shrink_0()),
-                )
-                .child(
-                    div().flex_shrink_0().child(
-                        div().flex().flex_row().justify_end().child(
-                            Button::new("smart-model-cancel")
-                                .label(Msg::PlanCancel.t())
-                                .ghost()
-                                .small()
-                                .on_click(cancel),
                         ),
-                    ),
-                )
-        }
-    };
+                    )
+            }
+            smart_commit::SmartCommitModal::ModelPicker { models } => {
+                let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
+                    this.cancel_smart_modal(cx);
+                });
+                let mut list = div().flex().flex_col().gap_1();
+                for (i, m) in models.iter().enumerate() {
+                    let model_name = m.clone();
+                    let pick = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
+                        this.choose_smart_model(model_name.clone(), window, cx);
+                    });
+                    list = list.child(
+                        div()
+                            .id(("smart-model", i))
+                            .px_3()
+                            .py_1()
+                            .rounded_sm()
+                            .bg(rgb(current_theme().surface))
+                            .text_sm()
+                            .text_color(rgb(current_theme().text_main))
+                            .on_click(pick)
+                            .hover(|s| s.bg(rgb(current_theme().selected)).cursor_pointer())
+                            .child(SharedString::from(m.clone())),
+                    );
+                }
+                // The installed-model list is unbounded and nothing inside it
+                // scrolls, so the body is this card's single scroll region (#454).
+                // Its rows stay `flex_shrink_0` or flex compresses them instead of
+                // handing the overflow to the scroller (T027).
+                modal_card(MODAL_W_SM)
+                    .child(div().flex_shrink_0().child(render_modal_title_row(
+                        SharedString::from(Msg::SmartModelTitle.t()),
+                        Some((
+                            ModalIcon::Path("icons/sparkles.svg"),
+                            current_theme().color_branch,
+                        )),
+                    )))
+                    .child(
+                        modal_scroll_body()
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_sm()
+                                    .text_color(rgb(current_theme().text_sub))
+                                    .child(Msg::SmartModelRemembered.t()),
+                            )
+                            .child(list.flex_shrink_0()),
+                    )
+                    .child(div().flex_shrink_0().child(
+                        div().flex().flex_row().justify_end().child(modal_button(
+                            "smart-model-cancel",
+                            Msg::PlanCancel.t(),
+                            ModalButtonKind::Cancel,
+                            None,
+                            cancel,
+                            cx,
+                        )),
+                    ))
+            }
+        };
 
     modal_overlay(card)
 }
@@ -210,7 +206,7 @@ pub(crate) fn render_update_modal(
     let card = modal_card_sized()
         .w(card_w)
         .child(div().flex_shrink_0().child(render_modal_title_row(
-            SharedString::from("Update available"),
+            SharedString::from(Msg::UpdateAvailableTitle.t()),
             Some((
                 ModalIcon::Path("icons/refresh-cw.svg"),
                 current_theme().color_branch,
@@ -313,58 +309,49 @@ pub(crate) fn render_update_modal(
         ));
     }
 
-    // Buttons row.
-    let mut actions = div()
+    // Installation is the only primary action; release notes and skip are quieter.
+    let actions = div()
         .flex()
         .flex_row()
         .items_center()
         .gap_2()
-        .child(
-            Button::new("update-skip")
-                .label("Skip this version")
-                .ghost()
-                .small()
-                .on_click(skip),
-        )
-        .child(
-            Button::new("update-page")
-                .label("Release page")
-                // The modal's actual call to action. It was ghost like the
-                // other two, so nothing signalled which button mattered
-                // (user report) — a filled primary next to ghost "Later" /
-                // "Skip this version" is the same pairing every other modal
-                // in the app uses for confirm-vs-cancel.
-                .primary()
-                .small()
-                .on_click(open_page),
-        )
+        .child(modal_button(
+            "update-skip",
+            Msg::UpdateSkipVersion.t(),
+            ModalButtonKind::Secondary,
+            None,
+            skip,
+            cx,
+        ))
+        .child(modal_button(
+            "update-page",
+            Msg::UpdateReleasePage.t(),
+            ModalButtonKind::Secondary,
+            None,
+            open_page,
+            cx,
+        ))
         .child(div().flex_grow(1.))
-        .child(
-            Button::new("update-cancel")
-                .label("Later")
-                .ghost()
-                .small()
-                .on_click(cancel),
-        );
-    if installing {
-        actions = actions.child(
-            Button::new("update-now")
-                .label("Updating…")
-                .primary()
-                .small()
-                .loading(true)
-                .disabled(true)
-                .on_click(|_, _, _| {}),
-        );
-    } else {
-        actions = actions.child(
-            Button::new("update-now")
-                .label("Update now")
-                .primary()
-                .small()
-                .on_click(update_now),
-        );
-    }
+        .child(modal_button(
+            "update-cancel",
+            Msg::UpdateLater.t(),
+            ModalButtonKind::Cancel,
+            None,
+            cancel,
+            cx,
+        ))
+        .child(modal_button(
+            "update-now",
+            if installing {
+                Msg::UpdateInstalling.t()
+            } else {
+                Msg::UpdateNow.t()
+            },
+            ModalButtonKind::Primary,
+            installing.then(|| SharedString::from(Msg::UpdateInstallingReason.t())),
+            update_now,
+            cx,
+        ));
     let card = card.child(body).child(div().flex_shrink_0().child(actions));
 
     modal_overlay(card).into_any_element()
@@ -398,8 +385,8 @@ pub(crate) fn render_editor_dirty_guard_modal(
         .child(div().flex_shrink_0().child(render_modal_title_row(
             SharedString::from(Msg::EditorWorkspaceUnsavedTitle.t()),
             Some((
-                ModalIcon::Path("icons/trash-2.svg"),
-                current_theme().color_blocker,
+                ModalIcon::Path("icons/file-text.svg"),
+                current_theme().color_warning,
             )),
         )))
         .child(
@@ -409,23 +396,22 @@ pub(crate) fn render_editor_dirty_guard_modal(
                     .flex_row()
                     .gap_2()
                     .justify_end()
-                    .child(
-                        Button::new("editor-dirty-guard-cancel")
-                            .label(Msg::EditorWorkspaceCancel.t())
-                            .ghost()
-                            .small()
-                            .on_click(cancel),
-                    )
-                    .child(
-                        KagiButton::accent(
-                            "editor-dirty-guard-discard",
-                            Msg::EditorWorkspaceDiscard.t(),
-                            current_theme().color_blocker,
-                            cx,
-                        )
-                        .small()
-                        .on_click(discard),
-                    ),
+                    .child(modal_button(
+                        "editor-dirty-guard-cancel",
+                        Msg::EditorWorkspaceCancel.t(),
+                        ModalButtonKind::Cancel,
+                        None,
+                        cancel,
+                        cx,
+                    ))
+                    .child(modal_button(
+                        "editor-dirty-guard-discard",
+                        Msg::EditorWorkspaceDiscard.t(),
+                        ModalButtonKind::Destructive,
+                        None,
+                        discard,
+                        cx,
+                    )),
             ),
         );
 
@@ -458,60 +444,64 @@ pub(crate) fn render_app_notice_modal(
         Msg::AppNoticeDismiss.t()
     };
 
-    let card = modal_card(MODAL_W_SM)
-        .child(div().flex_shrink_0().child(render_modal_title_row(
-            SharedString::from(Msg::AppNoticeTitle.t()),
-            Some((IconName::Inbox.into(), current_theme().color_warning)),
-        )))
-        .child(
-            // One scroll region for the whole card: the message is producer
-            // text of unbounded length (a multi-line evidence string among
-            // them), and the header and the action row stay pinned.
-            modal_scroll_body()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_main))
-                        .child(SharedString::from(notice.message)),
-                )
-                // #706 stage two. Never behind disclosure: this is the
-                // sentence the second confirm acts on.
-                .when(notice.release_armed, |body| {
-                    body.child(super::e2e::measure_control(
-                        "app-notice-release-warning",
+    let card =
+        modal_card(MODAL_W_SM)
+            .child(div().flex_shrink_0().child(render_modal_title_row(
+                SharedString::from(Msg::AppNoticeTitle.t()),
+                Some((IconName::Info.into(), current_theme().color_warning)),
+            )))
+            .child(
+                // One scroll region for the whole card: the message is producer
+                // text of unbounded length (a multi-line evidence string among
+                // them), and the header and the action row stay pinned.
+                modal_scroll_body()
+                    .child(
                         div()
                             .text_sm()
-                            .text_color(rgb(current_theme().color_warning))
-                            .child(Msg::AppReconcileReleaseArmed.t()),
-                    ))
-                })
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(current_theme().text_muted))
-                        .child(Msg::AppNoticeDetailsInOpLog.t()),
-                ),
-        )
-        .child(
-            div().flex_shrink_0().child(
+                            .text_color(rgb(current_theme().text_main))
+                            .child(SharedString::from(notice.message)),
+                    )
+                    // #706 stage two. Never behind disclosure: this is the
+                    // sentence the second confirm acts on.
+                    .when(notice.release_armed, |body| {
+                        body.child(super::e2e::measure_control(
+                            "app-notice-release-warning",
+                            div()
+                                .text_sm()
+                                .text_color(rgb(current_theme().color_warning))
+                                .child(Msg::AppReconcileReleaseArmed.t()),
+                        ))
+                    })
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(current_theme().text_muted))
+                            .child(Msg::AppNoticeDetailsInOpLog.t()),
+                    ),
+            )
+            .child(
                 div()
-                    .flex()
-                    .flex_row()
-                    .justify_end()
-                    .child(super::e2e::measure_control(
-                        "app-notice-confirm",
-                        Button::new("app-notice-dismiss")
-                            .label(action_label)
-                            .primary()
-                            .small()
-                            // Preserve the old non-focusable action's root-focus behavior.
-                            .tab_stop(false)
-                            .on_click(cx.listener(|this, _e: &gpui::ClickEvent, _, cx| {
-                                this.confirm_app_notice(cx);
-                            })),
+                    .flex_shrink_0()
+                    .child(div().flex().flex_row().justify_end().child(
+                        super::e2e::measure_control(
+                            "app-notice-confirm",
+                            modal_button_without_tab_stop(
+                                "app-notice-dismiss",
+                                action_label,
+                                if notice.release_armed {
+                                    ModalButtonKind::Destructive
+                                } else {
+                                    ModalButtonKind::Primary
+                                },
+                                None,
+                                cx.listener(|this, _e: &gpui::ClickEvent, _, cx| {
+                                    this.confirm_app_notice(cx);
+                                }),
+                                cx,
+                            ),
+                        ),
                     )),
-            ),
-        );
+            );
 
     modal_overlay(card)
         .child(super::e2e::measure_inside("active-modal/app-notice"))

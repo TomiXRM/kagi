@@ -221,6 +221,22 @@ fn exercise_cleanup(cx: &mut VisualTestAppContext, language: Lang, cleanup: Clea
             "only an approval that keeps the branch may say so in the plan"
         );
     });
+    if cleanup == Cleanup::Deleted {
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        let dialog = kagi::ui::dialog_a11y::recorded_dialog("plan-card")
+            .expect("PR merge confirmation is drawn");
+        assert!(
+            dialog.label.contains(i18n::Msg::PrMergeMethodSquash.t()),
+            "{language:?} method in plan title: {}",
+            dialog.label
+        );
+        assert_eq!(
+            e2e::last_plan_status_chip().as_deref(),
+            Some(i18n::Msg::AfterPrMerged.t()),
+            "{language:?} PR merge AFTER is a short localized state"
+        );
+    }
     let capture_tag = format!("pr-merge-local-{language:?}-{}", cleanup.tag());
     crate::macos::capture_screenshot_best_effort(cx, window, &format!("{capture_tag}-plan"));
     if cleanup == Cleanup::Drifted {

@@ -15,6 +15,7 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-05 | #1016 PR B の残りの確認カードも既存の `modal_button` に揃え、名前入力が無効でも理由付きの確認を表示する。backend の `predicted.dirty` は oplog のため変えず、`PlanTitle` から AFTER chip の短い英日状態語を選び、完全な文は AX / Copy all に残す | PR A のボタン・maintenance chip を同じ owner で拡張する。差分・警告・SSH の接続制約など安全上必要な説明は省かず、Clone の進捗説明とモデル選択の繰り返しのみ減らす。Clone / Remote Browse / Trust Repo の独自 container サイズは変更しない。 |
 | 2026-10-05 | #1019 の旧 150% は新 1667 permille（表示 167%）まで保持するため、上限を 1.67× にする。旧版と新版の同時起動・新版の `ui_scale_base=v2` 書込後の旧版へのダウングレードは自動変換の対象外として受容し、戻す際は事前の設定ファイルのバックアップを復元する | 旧版は v2 を理解せず新しい `ui_zoom` を 16px/rem 基準で読むうえ、旧版で倍率を保存すると v2 marker のまま旧基準値に置き換わり、再び新版を起動しても再換算されない。共用設定を異なるバイナリで同時に編集しない運用とし、黙った自動修復・二重換算は行わない。旧 1500→新 1667 を上限 1500 で切り捨てない。 |
 | 2026-10-05 | #1016 PR A の計画・入力・Amend / Discard / CherryPick / Commit Plan / StashApply 確認は `modal_button` に一本化し、ボタンは Small = 24px、入力は Medium = 32px とする。実行不可の確認は消さずに理由付き AX disabled とし、破壊的な操作と 2 段階目は blocker 色にする。maintenance の AFTER chip は状態語だけを表示し、詳細は AX / Copy all に残す | #1013 の棚卸しと #1016 PM 承認。従来の input 専用無効ボタンと計画カードの confirm 消失を統合し、操作可能性と警告を一貫して示す。幅・余白・PR B の別カードは変更しない。 |
 | 2026-10-05 | UI の 100% を旧 90%（14.4px/rem）に変更し、文字の rem と `scaled_px` / Graph の `scaled`、Terminal と divider の座標換算を同じ基準に揃える。旧 `ui_zoom` は初回起動時だけ `round(v / 0.9)` に換算し、`ui_scale_base=v2` と同一の atomic 保存に載せる。未設定でも版を記録し、Cmd と Settings の ± は非プリセット値から進行方向の次の 10% 刻みに移る | #1019。定数だけ 16→14.4 にすると文字と行・lane がずれる。旧 900→新 1000、旧 1000→新 1111 を移して見た目を保ち、既存の `settings/store.rs` の破損退避・未知キー保持・単一ロックを迂回しない。 |

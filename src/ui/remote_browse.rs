@@ -4,10 +4,8 @@
 //! deliberately split into focused view modules). It holds:
 //!
 //! - the modal state ([`RemoteBrowseModal`]),
-//! - its renderer ([`render_remote_browse`]) — built from the
-//!   **longbridge `gpui-component`** widgets already vendored as a dependency
-//!   (`Button`, `Input`) rather than hand-rolled `div`s, so the dialog matches
-//!   the rest of the component-based UI,
+//! - its renderer ([`render_remote_browse`]) — built from gpui-component
+//!   inputs and the shared modal button style,
 //! - the [`KagiApp`] methods that open it and drive the (background) SSH calls,
 //! - the off-thread blocking helpers that call `crate::remote`.
 //!
@@ -20,12 +18,11 @@ use gpui::{
     div, prelude::*, rgb, App, ClickEvent, Context, Entity, FocusHandle, KeyDownEvent,
     SharedString, Window,
 };
-use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::Input;
-use gpui_component::{Disableable as _, Sizable as _};
 
 use kagi_domain::remote::{self, RemoteDirEntry, RemoteHost, RemoteRepoSummary};
 
+use super::button_style::{modal_button, ModalButtonKind};
 use super::theme::{self, theme as current_theme};
 use super::KagiApp;
 
@@ -156,9 +153,7 @@ impl KagiApp {
             let mut host = match RemoteHost::parse(&spec) {
                 Some(h) => h,
                 None => {
-                    m.error = Some(SharedString::from(
-                        "Enter a host like user@host, host, or a ~/.ssh/config alias",
-                    ));
+                    m.error = Some(SharedString::from(Msg::RemoteHostInvalid.t()));
                     return;
                 }
             };
@@ -167,7 +162,7 @@ impl KagiApp {
                 match port_s.parse::<u16>() {
                     Ok(p) if p != 0 => host.port = Some(p),
                     _ => {
-                        m.error = Some(SharedString::from("Port must be a number 1\u{2013}65535"));
+                        m.error = Some(SharedString::from(Msg::RemotePortInvalid.t()));
                         return;
                     }
                 }
@@ -318,7 +313,7 @@ impl KagiApp {
 /// borderless input (the same look as Home's search field). The box is a
 /// flex row so the input takes its whole width.
 fn labeled_input(
-    label: &str,
+    label: &'static str,
     state: Option<&Entity<gpui_component::input::InputState>>,
 ) -> impl IntoElement {
     div()
@@ -329,7 +324,7 @@ fn labeled_input(
             div()
                 .text_xs()
                 .text_color(rgb(current_theme().text_muted))
-                .child(SharedString::from(label.to_string())),
+                .child(SharedString::from(label)),
         )
         .children(state.map(|st| {
             div()
@@ -407,21 +402,17 @@ pub(crate) fn render_remote_browse(
                             div()
                                 .text_color(rgb(current_theme().text_main))
                                 .text_lg()
-                                .child(SharedString::from("Connect to a remote host (SSH)")),
+                                .child(SharedString::from(Msg::RemoteConnectTitle.t())),
                         )
                         .child(
                             div()
                                 .text_sm()
                                 .text_color(rgb(current_theme().text_muted))
-                                .child(SharedString::from(
-                                    "Uses your system ssh (~/.ssh/config, keys, ssh-agent, \
-                                     known_hosts). New or password-only hosts must be set up \
-                                     in a terminal first.",
-                                )),
+                                .child(SharedString::from(Msg::RemoteSshNotice.t())),
                         ),
                 )
                 .child(labeled_input(
-                    "Host — user@host or a ~/.ssh/config alias",
+                    Msg::RemoteHostLabel.t(),
                     modal.host_state.as_ref(),
                 ))
                 .child(
@@ -429,13 +420,12 @@ pub(crate) fn render_remote_browse(
                         .flex()
                         .flex_row()
                         .gap_3()
-                        .child(
-                            div()
-                                .w(theme::scaled_px(120.))
-                                .child(labeled_input("Port (optional)", modal.port_state.as_ref())),
-                        )
+                        .child(div().w(theme::scaled_px(120.)).child(labeled_input(
+                            Msg::RemotePortLabel.t(),
+                            modal.port_state.as_ref(),
+                        )))
                         .child(div().flex_1().child(labeled_input(
-                            "Identity file (optional)",
+                            Msg::RemoteIdentityLabel.t(),
                             modal.identity_state.as_ref(),
                         ))),
                 );
@@ -457,24 +447,32 @@ pub(crate) fn render_remote_browse(
                     .gap_2()
                     .pt_2()
                     .justify_end()
-                    .child(
-                        Button::new("remote-connect-cancel")
-                            .label(Msg::PlanCancel.t())
-                            .ghost()
-                            .on_click(cancel),
-                    )
-                    .child(
-                        Button::new("remote-connect-go")
-                            .label(if busy {
-                                "Connecting\u{2026}"
+                    .child(super::e2e::measure_control(
+                        "remote-connect-cancel",
+                        modal_button(
+                            "remote-connect-cancel",
+                            Msg::PlanCancel.t(),
+                            ModalButtonKind::Cancel,
+                            None,
+                            cancel,
+                            cx,
+                        ),
+                    ))
+                    .child(super::e2e::measure_control(
+                        "remote-connect-go",
+                        modal_button(
+                            "remote-connect-go",
+                            if busy {
+                                Msg::RemoteConnecting.t()
                             } else {
-                                "Connect"
-                            })
-                            .primary()
-                            .loading(busy)
-                            .disabled(busy)
-                            .on_click(connect),
-                    ),
+                                Msg::RemoteConnect.t()
+                            },
+                            ModalButtonKind::Primary,
+                            busy.then(|| SharedString::from(Msg::RemoteRequestBusy.t())),
+                            connect,
+                            cx,
+                        ),
+                    )),
             );
         }
 
@@ -523,16 +521,14 @@ pub(crate) fn render_remote_browse(
                                     })),
                             ),
                     )
-                    .child(
-                        Button::new("remote-change-host")
-                            .label("Change host")
-                            // outline, not ghost — a ghost button paints no
-                            // background of its own and reads as plain text
-                            // (same fix as the diff / File History headers).
-                            .outline()
-                            .xsmall()
-                            .on_click(change_host),
-                    ),
+                    .child(modal_button(
+                        "remote-change-host",
+                        Msg::RemoteChangeHost.t(),
+                        ModalButtonKind::Secondary,
+                        busy.then(|| SharedString::from(Msg::RemoteRequestBusy.t())),
+                        change_host,
+                        cx,
+                    )),
             );
 
             // Repo card when the current directory is itself a repository.
@@ -548,10 +544,16 @@ pub(crate) fn render_remote_browse(
                         div()
                             .text_sm()
                             .text_color(rgb(current_theme().color_success))
-                            .child(SharedString::from("\u{25cf} Git repository")),
+                            .child(SharedString::from(format!(
+                                "\u{25cf} {}",
+                                Msg::RemoteGitRepository.t()
+                            ))),
                     );
                 if let Some(ref s) = modal.summary {
-                    let branch = s.branch.clone().unwrap_or_else(|| "(detached)".to_string());
+                    let branch = s
+                        .branch
+                        .clone()
+                        .unwrap_or_else(|| Msg::RemoteDetached.t().to_string());
                     repo_card = repo_card
                         .child(
                             div()
@@ -582,7 +584,7 @@ pub(crate) fn render_remote_browse(
                         div()
                             .text_xs()
                             .text_color(rgb(current_theme().text_muted))
-                            .child(SharedString::from("(no commits yet)")),
+                            .child(SharedString::from(Msg::RemoteNoCommits.t())),
                     );
                 }
                 let open_repo = {
@@ -594,21 +596,18 @@ pub(crate) fn render_remote_browse(
                         });
                     }
                 };
-                repo_card = repo_card.child(
-                    div().pt_1().child(
-                        Button::new("remote-open-repo")
-                            .label(if busy {
-                                "Opening\u{2026}"
-                            } else {
-                                "Open repository (read-only)"
-                            })
-                            .primary()
-                            .small()
-                            .loading(busy)
-                            .disabled(busy)
-                            .on_click(open_repo),
-                    ),
-                );
+                repo_card = repo_card.child(div().pt_1().child(modal_button(
+                    "remote-open-repo",
+                    if busy {
+                        Msg::RemoteOpeningRepository.t()
+                    } else {
+                        Msg::RemoteOpenRepository.t()
+                    },
+                    ModalButtonKind::Primary,
+                    busy.then(|| SharedString::from(Msg::RemoteRequestBusy.t())),
+                    open_repo,
+                    cx,
+                )));
                 card = card.child(repo_card);
             }
 
@@ -685,15 +684,19 @@ pub(crate) fn render_remote_browse(
             }
 
             card = card.child(
-                div().flex().flex_row().gap_2().justify_end().child(
-                    Button::new("remote-browse-close")
-                        .label("Close")
-                        // Lone footer action with no primary beside it, so
-                        // ghost left it looking like a label.
-                        .outline()
-                        .small()
-                        .on_click(cancel),
-                ),
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .justify_end()
+                    .child(modal_button(
+                        "remote-browse-close",
+                        Msg::RemoteClose.t(),
+                        ModalButtonKind::Cancel,
+                        None,
+                        cancel,
+                        cx,
+                    )),
             );
         }
     }

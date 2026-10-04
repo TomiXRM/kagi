@@ -74,6 +74,9 @@ pub enum PullNote {
     /// warning (`plan_pull_remote`, SSH): the remote working tree has
     /// uncommitted changes.
     RemoteDirty,
+    /// blocker (remote pull plan): cached branch, upstream, HEAD OID, or dirty
+    /// state differs from the host's live plan-time state.
+    RemotePreviewStale,
 }
 
 /// How many colliding paths a [`PullNote::RestoreConflict`] spells out before
@@ -177,6 +180,9 @@ impl PullNote {
                 branch, ahead, behind
             ),
             PullNote::RemoteDirty => crate::advice_template_en!(PullRemoteDirty).to_string(),
+            PullNote::RemotePreviewStale => {
+                crate::advice_template_en!(PullRemotePreviewStale).to_string()
+            }
         }
     }
 }

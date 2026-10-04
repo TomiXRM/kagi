@@ -1124,8 +1124,56 @@ mod macos {
                 Box::new(crate::recovery_pull::scenario_pull_auto_stash_overlap_preview),
             ),
             (
-                "remote_pull_latch",
-                Box::new(crate::recovery_pull::scenario_remote_pull_holds_its_latch),
+                "remote_pull_lease",
+                Box::new(crate::recovery_pull::scenario_remote_pull_lease),
+            ),
+            (
+                "remote_pull_unknown_release",
+                Box::new(crate::recovery_pull::scenario_remote_pull_unknown_release),
+            ),
+            (
+                "remote_pull_preflight_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_preflight_refusal),
+            ),
+            (
+                "remote_pull_proxy_route_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_proxy_route_refusal),
+            ),
+            (
+                "remote_pull_toplevel_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_toplevel_refusal),
+            ),
+            (
+                "remote_pull_branch_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_branch_refusal),
+            ),
+            (
+                "remote_pull_head_oid_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_head_oid_refusal),
+            ),
+            (
+                "remote_pull_upstream_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_upstream_refusal),
+            ),
+            (
+                "remote_pull_head_read_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_head_read_refusal),
+            ),
+            (
+                "remote_pull_cached_preview_stale",
+                Box::new(crate::recovery_pull::scenario_remote_pull_cached_preview_stale),
+            ),
+            (
+                "remote_pull_url_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_url_refusal),
+            ),
+            (
+                "remote_pull_dirty_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_dirty_refusal),
+            ),
+            (
+                "remote_pull_planning_latch",
+                Box::new(crate::recovery_pull::scenario_remote_pull_planning_latch),
             ),
             (
                 "pull_confirm_departure_discards_old_visit",

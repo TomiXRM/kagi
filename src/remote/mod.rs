@@ -22,6 +22,7 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Arc;
 use std::time::Duration;
 
 use kagi_domain::refs::Worktree;
@@ -35,6 +36,150 @@ use kagi_domain::status::FileStatus;
 use kagi_git::{FileDiff, Head, RepoSnapshot};
 
 pub mod stash;
+
+#[derive(Clone, Debug)]
+pub struct PullRepoIdentity {
+    pub repo_id: remote::RemoteRepoId,
+    pub physical_toplevel: String,
+    pub head: remote::RemotePullHead,
+    pub config: Option<remote::RemotePullConfig>,
+    pub fingerprint: remote::RemotePullFingerprint,
+    /// Whether the host's porcelain-v2 status contained staged/unstaged/untracked entries.
+    pub remote_dirty: bool,
+}
+
+/// Resolve a pull's lease identity, physical worktree toplevel, and checkout
+/// state with the same SSH options as execution. Unlike remote stash this does
+/// not freeze or disable ssh-agent.
+pub fn resolve_pull_identity(
+    host: &RemoteHost,
+    root: &str,
+) -> Result<PullRepoIdentity, RemoteError> {
+    use sha2::{Digest, Sha256};
+    if root.contains(['\n', '\0']) {
+        return Err(RemoteError::Spawn("invalid remote repository root".into()));
+    }
+    let mut args = vec!["-G".to_string()];
+    args.extend(host.connection_opts());
+    args.extend(["--".into(), host.target()]);
+    let mut cmd = Command::new("ssh");
+    cmd.args(args).env("LC_ALL", "C");
+    let run = kagi_git::run_child(
+        &mut cmd,
+        Duration::from_secs(SSH_COMMAND_TIMEOUT_SECS),
+        None,
+    )
+    .map_err(|e| RemoteError::Spawn(e.to_string()))?;
+    let code = run.status.as_ref().map_err(RemoteError::unknown)?;
+    run.io
+        .as_ref()
+        .map_err(|e| RemoteError::Incomplete(e.to_string()))?;
+    if *code != 0 {
+        return Err(RemoteError::NonZero {
+            code: *code,
+            stderr: run.stderr_lossy(),
+        });
+    }
+    let text = std::str::from_utf8(&run.stdout)
+        .map_err(|_| RemoteError::Incomplete("ssh -G output is not UTF-8".into()))?;
+    let config =
+        remote::parse_pull_ssh_config(text).map_err(|e| RemoteError::Incomplete(e.to_string()))?;
+    let known_hosts = |paths: &[String]| -> Result<Vec<remote::KnownHostsIdentity>, RemoteError> {
+        paths
+            .iter()
+            .filter(|path| path.as_str() != "none")
+            .map(|path| {
+                let bytes = match std::fs::read(path) {
+                    Ok(bytes) => bytes,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+                    Err(e) => return Err(RemoteError::Incomplete(e.to_string())),
+                };
+                Ok(remote::KnownHostsIdentity {
+                    path: path.clone(),
+                    digest: format!("{:x}", Sha256::digest(&bytes)),
+                })
+            })
+            .collect()
+    };
+    let connection = remote::RemoteConnectionId {
+        hostname: config.hostname,
+        user: config.user,
+        port: config.port,
+        host_key_alias: config.host_key_alias,
+        proxy_jump: config.proxy_jump,
+        proxy_command: config.proxy_command,
+        control_master: config.control_master,
+        control_path: config.control_path,
+        // ssh -G lists default candidate key paths even for agent-only hosts.
+        // Only the explicitly selected profile key is reproducible here.
+        identity_files: host.identity_file.iter().cloned().collect(),
+        certificate_files: config.certificate_files,
+        user_known_hosts: known_hosts(&config.user_known_hosts_files)?,
+        global_known_hosts: known_hosts(&config.global_known_hosts_files)?,
+        host_key_algorithms: config.host_key_algorithms,
+    };
+    let script = r#"set -eu
+export GIT_OPTIONAL_LOCKS=0
+cd -P -- "$1"
+test "$(git rev-parse --is-inside-work-tree)" = true
+top=$(git rev-parse --show-toplevel)
+cd -P -- "$top"
+top=$(pwd -P)
+oid=$(git rev-parse --verify HEAD)
+if branch=$(git symbolic-ref -q --short HEAD); then
+  upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}')
+  kind=branch
+else
+  kind=detached
+  branch=
+  upstream=
+fi
+common=$(git rev-parse --path-format=absolute --git-common-dir)
+common=$(cd -P -- "$common" && pwd -P)
+if [ "$kind" = branch ]; then
+  remote=$(git config --get "branch.$branch.remote")
+  merge=$(git config --get "branch.$branch.merge")
+  url=$(git ls-remote --get-url "$remote")
+else
+  remote=
+  merge=
+  url=
+fi
+printf 'KAGI-COMMON-DIR\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' "$common" "$top" "$kind" "$branch" "$oid" "$upstream" "$remote" "$merge" "$url"
+if [ "$kind" = branch ]; then
+  git config --null --get-all "remote.$remote.fetch"
+fi
+printf 'KAGI-FETCH-END\0KAGI-INDEX-BEGIN\0'
+git ls-files -s -z
+printf 'KAGI-INDEX-END\0KAGI-WORKTREE-BEGIN\0'
+git status --porcelain=v2 -z --untracked-files=all
+printf 'KAGI-WORKTREE-END\0KAGI-END\n'"#;
+    let output = run_ssh_raw(host, &["sh", "-c", script, "--", root])?;
+    if output.code != 0 {
+        return Err(RemoteError::NonZero {
+            code: output.code,
+            stderr: output.stderr,
+        });
+    }
+    let (common_dir, physical_toplevel, head, config, content) =
+        remote::parse_pull_common_dir(&output.stdout)
+            .map_err(|e| RemoteError::Incomplete(e.into()))?;
+    let fingerprint = remote::RemotePullFingerprint {
+        staged: Sha256::digest(content.staged).into(),
+        worktree: Sha256::digest(content.worktree).into(),
+    };
+    Ok(PullRepoIdentity {
+        repo_id: remote::RemoteRepoId {
+            connection: Arc::new(connection),
+            common_dir,
+        },
+        physical_toplevel,
+        head,
+        config,
+        fingerprint,
+        remote_dirty: !content.worktree.is_empty(),
+    })
+}
 
 /// Whole-command backstop timeout. ssh's own `ConnectTimeout`
 /// ([`SSH_CONNECT_TIMEOUT_SECS`]) bounds the handshake; this bounds the entire
@@ -62,6 +207,8 @@ pub enum RemoteError {
     /// message (e.g. "Host key verification failed", "Permission denied",
     /// "No such file or directory").
     NonZero { code: i32, stderr: String },
+    /// A preflight identity mismatch refused the write before `git pull` ran.
+    Refused(String),
 }
 
 impl RemoteError {
@@ -94,6 +241,7 @@ impl std::fmt::Display for RemoteError {
             RemoteError::Incomplete(reason) => {
                 write!(f, "ssh output is not complete: {reason}")
             }
+            RemoteError::Refused(reason) => f.write_str(reason),
             RemoteError::NonZero { code, stderr } => {
                 write!(f, "ssh exited {code}: {}", stderr.trim())
             }
@@ -107,6 +255,14 @@ impl std::error::Error for RemoteError {}
 struct SshOutput {
     code: i32,
     stdout: String,
+    stderr: String,
+}
+
+/// Binary-safe form of the captured output, required by NUL-delimited Git
+/// index and worktree status (non-UTF-8 filenames must not be replaced).
+struct SshRawOutput {
+    code: i32,
+    stdout: Vec<u8>,
     stderr: String,
 }
 
@@ -124,6 +280,16 @@ struct SshOutput {
 ///   never as an exit code — the local client is gone, the *remote* command is
 ///   not proven stopped.
 fn run_ssh(host: &RemoteHost, remote_tokens: &[&str]) -> Result<SshOutput, RemoteError> {
+    let raw = run_ssh_raw(host, remote_tokens)?;
+    Ok(SshOutput {
+        code: raw.code,
+        stdout: String::from_utf8(raw.stdout)
+            .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned()),
+        stderr: raw.stderr,
+    })
+}
+
+fn run_ssh_raw(host: &RemoteHost, remote_tokens: &[&str]) -> Result<SshRawOutput, RemoteError> {
     let args = host.ssh_invocation(remote_tokens);
 
     let mut cmd = Command::new("ssh");
@@ -144,10 +310,11 @@ fn run_ssh(host: &RemoteHost, remote_tokens: &[&str]) -> Result<SshOutput, Remot
     if let Err(io) = &run.io {
         return Err(RemoteError::Incomplete(io.to_string()));
     }
-    Ok(SshOutput {
+    let stderr = run.stderr_lossy();
+    Ok(SshRawOutput {
         code,
-        stdout: run.stdout_lossy(),
-        stderr: run.stderr_lossy(),
+        stdout: run.stdout,
+        stderr,
     })
 }
 
@@ -521,7 +688,9 @@ pub fn remote_stash_drop(
 }
 
 /// Pull the current branch of the remote repository over SSH (ADR-0089 Phase 3).
-/// Runs `git -C <repo> pull` *on the host*, so the host's own credentials,
+/// Runs `git -C <physical_toplevel> pull` *on the host*, so a selected root
+/// symlink cannot redirect execution to another worktree after preflight. The
+/// durable scope still uses `display_root`. The host's own credentials,
 /// network, and config reach its `origin` — Kagi only carries the command over
 /// the system-ssh transport. Returns git's summary (`Fast-forward`,
 /// `Already up to date.`, merge text) on success. A non-zero exit (no upstream,
@@ -534,6 +703,7 @@ pub fn remote_stash_drop(
 /// guard. Previously the only recorder was the UI's presentation-only
 /// `record_op`, so a remote pull was never persisted at all. The receipt comes
 /// back with the result — a failed append is never swallowed.
+#[derive(Clone, Debug)]
 pub struct RemotePullReport {
     pub result: Result<String, RemoteError>,
     pub recording: kagi_git::backend::recording::Recording,
@@ -563,11 +733,31 @@ const REFUSAL_MARKERS: [&str; 8] = [
 
 pub fn remote_pull(
     host: &RemoteHost,
-    repo: &str,
+    display_root: &str,
+    physical_toplevel: &str,
+    branch: &str,
     before: &kagi_git::StateSummary,
 ) -> RemotePullReport {
     use kagi_git::oplog::OpOutcome;
-    let transport = run_ssh(host, &["git", "-C", repo, "pull"]);
+    // Pin the confirmed merge policy, disable implicit writes outside the
+    // selected worktree, and clear per-branch merge arguments such as --squash
+    // or -s ours. These host settings must not override the confirmation.
+    let merge_options = format!("branch.{branch}.mergeOptions=");
+    let transport = run_ssh(
+        host,
+        &[
+            "git",
+            "-c",
+            &merge_options,
+            "-C",
+            physical_toplevel,
+            "pull",
+            "--no-rebase",
+            "--ff",
+            "--no-autostash",
+            "--no-recurse-submodules",
+        ],
+    );
     let after = |dirty: String| kagi_git::StateSummary {
         head: before.head.clone(),
         dirty,
@@ -648,12 +838,67 @@ pub fn remote_pull(
             (Err(error), outcome)
         }
     };
-    let scope = format!("{}:{repo}", host.label());
+    let scope = format!("{}:{display_root}", host.label());
     let entry = kagi_git::oplog::OpLogEntry::new("pull", scope.clone(), before.clone(), outcome)
         .with_worktree(Some(scope));
     RemotePullReport {
         result,
         recording: kagi_git::backend::recording::finalize(entry),
+    }
+}
+
+/// Record a plan/execute identity mismatch without starting `git pull`.
+pub fn refused_remote_pull(
+    host: &RemoteHost,
+    repo: &str,
+    before: &kagi_git::StateSummary,
+    reason: String,
+) -> RemotePullReport {
+    let scope = format!("{}:{repo}", host.label());
+    let recording = kagi_git::backend::recording::finalize(
+        kagi_git::oplog::OpLogEntry::new(
+            "pull",
+            scope.clone(),
+            before.clone(),
+            kagi_git::oplog::OpOutcome::Refused {
+                blockers: vec![reason.clone()],
+            },
+        )
+        .with_worktree(Some(scope)),
+    );
+    RemotePullReport {
+        result: Err(RemoteError::Refused(reason)),
+        recording,
+    }
+}
+
+/// A task lost before it returned a receipt must never look like a clean
+/// failure. The remote process cannot be observed from the dropped client.
+pub fn abandoned_remote_pull(
+    host: &RemoteHost,
+    repo: &str,
+    before: &kagi_git::StateSummary,
+) -> RemotePullReport {
+    let reason = "remote pull task was abandoned; the remote result is unobservable";
+    let scope = format!("{}:{repo}", host.label());
+    let recording = kagi_git::backend::recording::finalize(
+        kagi_git::oplog::OpLogEntry::new(
+            "pull",
+            scope.clone(),
+            before.clone(),
+            kagi_git::oplog::OpOutcome::Unknown {
+                after: kagi_git::StateSummary {
+                    head: before.head.clone(),
+                    dirty: "unknown".into(),
+                },
+                evidence: reason.into(),
+            },
+        )
+        .with_worktree(Some(scope)),
+    );
+    RemotePullReport {
+        result: Err(RemoteError::TerminationUnknown(reason.into())),
+        recording,
     }
 }
 

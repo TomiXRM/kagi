@@ -1838,6 +1838,10 @@ removing `--no-recurse-submodules` moves it. The real-Git tests, not fake SSH
 argv text, check the confirmed physical target and all pinned pull behavior.
 The real-Git probe wraps `git status` and refuses unless
 `GIT_OPTIONAL_LOCKS=0`; removing the export fails before confirmation.
+The same fixture sets `TMPDIR` first to the approved worktree and then to
+its Git common dir. Both must refuse before invoking `mktemp` or `git pull`;
+the worktree must remain clean. Scratch outside the repository is removed
+before the approved write begins.
 `remote_pull_cached_preview_stale` changes branch before the live probe and
 requires no modal/lease/pull plus localized refresh. G:
 `cargo test -p kagi --test app_remote_pull_test` additionally checks cached
@@ -1854,6 +1858,13 @@ while a disconnect or unrecognized response records Unknown. No managed
 ControlMaster/socket or second-connection fallback is used, including on
 Windows clients (system ssh to a remote POSIX shell); remote stash's
 frozen-identity policy is unchanged.
+For a real authenticated SSH fast-forward, the opt-in
+`remote_ssh_live_test::live_remote_pull_fast_forwards` requires
+`KAGI_REMOTE_TEST_HOST`, `KAGI_REMOTE_TEST_PORT`,
+`KAGI_REMOTE_TEST_PULL_REPO` (a disposable checkout already behind its
+upstream), and `KAGI_REMOTE_TEST_PULL_EXPECTED_HEAD` (the upstream's full
+commit OID). Only set both pull-specific variables for a repository where
+the test is allowed to write; the ordinary live read test stays read-only.
 
 Continue の post-read (#569 (2)) は
 `cargo test -p kagi --test app_writer_admission_test continue_` で確認する。

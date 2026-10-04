@@ -15,6 +15,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - commit / branch / remote branch / tag / stash / worktree の右クリックメニューをキーボードで操作できるようにしました。開くと最初の有効な項目に focus が移り、↑/↓(端で折り返し)と Home/End で無効な項目を飛ばして移動し、Enter / Space で実行、Escape で閉じます。閉じると focus は開く前の場所へ戻ります(項目が確認 modal を開いた場合は window へ)。Shift+F10(Windows キーボードの Menu キー)で、Graph では選択中の commit のメニューを、サイドバーでは focus のある行(branch / remote branch / tag / stash / worktree)のメニューを、その行の左下に開きます。ウィンドウより長いメニューは項目の部分がスクロールし、キーで移った項目は常に見える位置まで送られます。Home やほかのタブへ移るとメニューは閉じます。項目は `Role::MenuItem`、無効な項目は AX の disabled 状態を持ちます。(#985)
 
 ### Changed
+- SSH remote pull の実行前検査と `git pull` を同じ SSH 接続内の 1 本の remote script にまとめました。確認後に host の repository・worktree・HEAD・upstream・pull 設定・staged index・作業ツリーが変われば pull せず理由つき Refused を記録します。SSH 認証失敗や結果不明時も既存の Operation Log と lease / reconcile を維持し、別接続への自動 fallback はしません。(#1014)
 - 計画確認・入力確認と Amend / Discard / CherryPick / Commit Plan / StashApply の操作ボタンを共通の 24px に統一し、実行できない確認操作は理由を読み上げられる無効なボタンとして残します。削除・破棄・復元などの破壊的な確認は 2 段階目も blocker 色にし、maintenance 計画の実行後 chip を短い状態語に、詳細を読み上げと Copy all に分けました。commit-graph の確認は「Write / 書き込む」に修正しました。detached HEAD で Reset Current を開いたときの空の branch chip も表示しません。(#1016 PR A)
 - 既定の表示スケールを従来の 90% 相当（100%=14.4px/rem）にしました。保存済みの拡大率は初回起動時に換算して従来の見た目を保ち、旧 150% まで保持できるよう上限を 167% に広げました。Graph の行と線・Terminal・メニューの位置も同じ倍率に揃えました。(#1019)
 - 共通の計画確認カードと Amend / Discard / CherryPick / Commit Plan / StashApply の見出しを小さな inline icon・短い操作名・対象 chip に整理しました。対象がなければ代替 chip は出さず、behind・操作意図(承認 / コメント / 修正依頼 / upstream 設定)・ファイル / stash / branch の件数を英日それぞれの単位で表示します。入力カードの見出しは対象外です。共通カードと Amend / Discard の復旧コマンドは Ready かつ blocker なし・コマンドありの場合だけ閉じた行に表示します。入力カードの復旧行も有効な入力と Ready を要し、Copy all のコマンド欄も Ready の場合だけ出します。説明文は Copy all と読み上げ用 dialog description に残し、相当コマンドも同じ折りたたみ表示に統一しました。CherryPick / StashApply の復旧表示は別課題です。(#994)
@@ -24,8 +25,6 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 - busy 中の checkout は先行 write の途中で変わり得る dirty 状態で投入を拒否せず、静的に不可能な参照だけを先に拒否して Operation Log に理由を記録します。列には即時表示し、順番が来たときの新しい plan の blocker / warning で安全に確認または拒否します。(#1028)
-
-- SSH remote pull の実行前検査と `git pull` を同じ SSH 接続内の 1 本の remote script にまとめました。確認後に host の repository・worktree・HEAD・upstream・pull 設定・staged index・作業ツリーが変われば pull せず理由つき Refused を記録します。SSH 認証失敗や結果不明時も既存の Operation Log と lease / reconcile を維持し、別接続への自動 fallback はしません。(#1014)
 - Graph で commit を選ぶと Inspector が 180ms で開き、再クリックや Esc で選択を外すと 150ms で閉じるようにしました。途中の反転は現在の幅から続き、`reduce_motion`、タブ切替、Home、Conflict とほかの workspace への移動は即時です。(#1001)
 - サイドバー非表示でも Graph の BRANCH / TAG・GRAPH 列の境界がドラッグした 40px だけ動くように修正し、サイドバーの開閉途中もポインターに追従させました。(#1011)
 

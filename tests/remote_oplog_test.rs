@@ -92,6 +92,17 @@ fn pull_probe_and_single_session_preflight_bind_the_approved_worktree() {
     )
     .unwrap();
     std::fs::set_permissions(&git_guard, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let scratch_attempts = root.path().join("scratch-attempts");
+    let mktemp_guard = bin.join("mktemp");
+    std::fs::write(
+        &mktemp_guard,
+        format!(
+            "#!/bin/sh\nprintf 'attempt\\n' >> {}\nexec /usr/bin/mktemp \"$@\"\n",
+            kagi_domain::remote::shell_quote(scratch_attempts.to_str().unwrap()),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&mktemp_guard, std::fs::Permissions::from_mode(0o700)).unwrap();
     let _restore = Environment {
         path: std::env::var_os("PATH"),
         log: std::env::var_os("KAGI_LOG_DIR"),
@@ -127,6 +138,44 @@ fn pull_probe_and_single_session_preflight_bind_the_approved_worktree() {
         head: planned.head.oid.clone(),
         dirty: "clean".into(),
     };
+    // Scratch files inside either part of the repository are writes. Refuse
+    // before invoking mktemp (and before invoking pull).
+    let original_tmpdir = std::env::var_os("TMPDIR");
+    let git_dir = repo.join(".git");
+    for scratch_root in [&repo, &git_dir] {
+        std::env::set_var("TMPDIR", scratch_root);
+        let refusal = kagi::remote::remote_pull(&host, alias.to_str().unwrap(), &planned, &before);
+        assert!(matches!(
+            refusal.recording.entry().outcome,
+            kagi_git::oplog::OpOutcome::Refused { ref blockers }
+                if blockers.iter().any(|reason| reason.contains("scratch directory is inside"))
+        ));
+        assert!(
+            !scratch_attempts.exists(),
+            "no scratch file may be created in the repository"
+        );
+    }
+    if let Some(tmpdir) = original_tmpdir {
+        std::env::set_var("TMPDIR", tmpdir);
+    } else {
+        std::env::remove_var("TMPDIR");
+    }
+    assert!(
+        !pull_attempts.exists(),
+        "rejected scratch location cannot reach git pull"
+    );
+    let status = std::process::Command::new("/usr/bin/git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["status", "--porcelain"])
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+    assert!(
+        status.stdout.is_empty(),
+        "preflight must not dirty the worktree"
+    );
     std::fs::write(repo.join("file"), "unstaged change\n").unwrap();
     let dirty = kagi::remote::resolve_pull_identity(&host, alias.to_str().unwrap()).unwrap();
     assert_eq!(planned.head, dirty.head);
@@ -239,7 +288,7 @@ fn pull_probe_and_single_session_preflight_bind_the_approved_worktree() {
     let entries = kagi_git::oplog::read_oplog_tail(10);
     assert_eq!(
         entries.len(),
-        7,
+        9,
         "each host-side refusal has one durable receipt"
     );
     assert!(entries

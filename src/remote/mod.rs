@@ -172,7 +172,13 @@ shift 9
 expected_index=$1
 expected_worktree=$2
 shift 2
-tmp=$(mktemp "${TMPDIR:-/tmp}/kagi-pull.XXXXXXXX") || pull_refuse 'cannot prepare preflight scratch'
+scratch_dir=$(cd -P -- "${TMPDIR:-/tmp}" && pwd -P) || pull_refuse 'cannot resolve preflight scratch directory'
+[ "$top" != / ] && [ "$common" != / ] || pull_refuse 'no scratch directory outside repository'
+case "$scratch_dir" in
+  "$top"|"$top"/*|"$common"|"$common"/*)
+    pull_refuse 'preflight scratch directory is inside approved repository' ;;
+esac
+tmp=$(mktemp "$scratch_dir/kagi-pull.XXXXXXXX") || pull_refuse 'cannot prepare preflight scratch'
 trap 'rm -f -- "$tmp"' 0
 git config --null --get-all "remote.$remote.fetch" > "$tmp" || pull_refuse 'cannot read fetch refspecs'
 printf '%s\0' "$@" | cmp -s - "$tmp" || pull_refuse 'fetch refspecs changed'

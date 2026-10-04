@@ -1653,6 +1653,14 @@ mod macos {
                 Box::new(crate::fetch_owner::scenario_fetch_new_visit_waiter_sees_old_flight_failure),
             ),
             (
+                "fetch_new_visit_waiter_success_notifies",
+                Box::new(crate::fetch_owner::scenario_fetch_new_visit_waiter_success_notifies),
+            ),
+            (
+                "auto_fetch_old_visit_logs_contract",
+                Box::new(crate::fetch_owner::scenario_auto_fetch_old_visit_logs_contract),
+            ),
+            (
                 "remote_branch_fetch_panic",
                 Box::new(crate::guard_writer_panic::scenario_remote_branch_fetch_panic),
             ),

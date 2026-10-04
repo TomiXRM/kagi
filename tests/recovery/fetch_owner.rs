@@ -533,3 +533,125 @@ pub fn scenario_fetch_new_visit_waiter_sees_old_flight_failure(cx: &mut VisualTe
     ));
     unmount(cx, app, window);
 }
+
+/// #992 review: a new-visit Pull joined to an old-visit flight that SUCCEEDS
+/// opens its confirmation, and the app is notified after that delivery so the
+/// modal is drawn now rather than on the next unrelated frame.
+pub fn scenario_fetch_new_visit_waiter_success_notifies(cx: &mut VisualTestAppContext) {
+    let fixture_a = build_fixture();
+    let fixture_b = build_fixture();
+    let repo_a = fixture_a.path().canonicalize().unwrap();
+    let repo_b = fixture_b.path().canonicalize().unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    local_remote_with_change(&repo_a, remote.path());
+    dirty(&repo_a);
+    let (app, window) = mount(cx, &repo_a);
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(repo_b.clone(), cx))
+    });
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        app.switch_repo(0, cx);
+        let owner = app.active_session().unwrap();
+        assert!(app.fetch_async_for(false, None, cx));
+        app.open_pull_modal(cx);
+        let old_visit = app.fetch_in_flight.as_ref().unwrap().visit;
+        app.switch_repo(1, cx);
+        app.switch_repo(0, cx);
+        let new_visit = app.app_sessions.attachment(owner).unwrap().visit;
+        assert_ne!(new_visit, old_visit);
+        app.open_pull_modal(cx);
+        assert!(app.pull_modal().is_none());
+    });
+    // Count notifications from here on: the setup's own are already flushed.
+    // The first notification that sees the modal must be flushed by the
+    // completion's own update (before it returns), not by a later task.
+    let completions = kagi::ui::e2e::fetch_completions_returned();
+    let first_modal_notify = std::rc::Rc::new(std::cell::Cell::new(None::<u64>));
+    {
+        let first_modal_notify = first_modal_notify.clone();
+        cx.update(|cx| {
+            cx.observe(&app, move |app, cx| {
+                if first_modal_notify.get().is_none() && app.read(cx).pull_modal().is_some() {
+                    first_modal_notify.set(Some(kagi::ui::e2e::fetch_completions_returned()));
+                }
+            })
+            .detach()
+        });
+    }
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.fetch_in_flight.is_none());
+        assert!(
+            app.pull_modal().is_some(),
+            "the new visit's Pull confirmation must open after the old flight succeeds"
+        );
+    });
+    assert_eq!(
+        first_modal_notify.get(),
+        Some(completions),
+        "fetch-new-visit-success-notifies: the delivered Pull confirmation was not notified by the completion itself"
+    );
+    unmount(cx, app, window);
+}
+
+/// #992 review: an auto-fetch whose visit has ended still emits its `[kagi]`
+/// contract line (ok / failed), unchanged; only the presentation is withheld.
+pub fn scenario_auto_fetch_old_visit_logs_contract(cx: &mut VisualTestAppContext) {
+    let fixture_a = build_fixture();
+    let fixture_b = build_fixture();
+    let repo_a = fixture_a.path().canonicalize().unwrap();
+    let repo_b = fixture_b.path().canonicalize().unwrap();
+    let missing = repo_a.join("no-such-origin");
+    git(
+        &repo_a,
+        &["remote", "add", "origin", missing.to_str().unwrap()],
+    );
+    let (app, window) = mount(cx, &repo_a);
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(repo_b.clone(), cx))
+    });
+    cx.run_until_parked();
+    let count = |needle: &str| {
+        kagi_ui_core::klog::tail()
+            .into_iter()
+            .filter(|line| line.starts_with(needle))
+            .count()
+    };
+
+    // Failed: the silent fetch's failure line survives the departure.
+    let failed_before = count("[kagi] auto-fetch: failed (silent): ");
+    app.update(cx, |app, cx| {
+        app.switch_repo(0, cx);
+        assert!(app.fetch_async_for(true, None, cx));
+        app.switch_repo(1, cx);
+        app.switch_repo(0, cx);
+    });
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).fetch_in_flight.is_none()));
+    assert_eq!(
+        count("[kagi] auto-fetch: failed (silent): "),
+        failed_before + 1,
+        "auto-fetch-old-visit-contract: the departed failure lost its contract line"
+    );
+
+    // Ok: same for a successful silent fetch.
+    git(&repo_a, &["remote", "remove", "origin"]);
+    let remote = tempfile::tempdir().unwrap();
+    local_remote_with_change(&repo_a, remote.path());
+    let ok_before = count("[kagi] auto-fetch: ok remote=");
+    app.update(cx, |app, cx| {
+        assert!(app.fetch_async_for(true, None, cx));
+        app.switch_repo(1, cx);
+        app.switch_repo(0, cx);
+    });
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).fetch_in_flight.is_none()));
+    assert_eq!(
+        count("[kagi] auto-fetch: ok remote="),
+        ok_before + 1,
+        "auto-fetch-old-visit-contract: the departed success lost its contract line"
+    );
+    unmount(cx, app, window);
+}

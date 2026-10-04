@@ -2022,6 +2022,14 @@ impl KagiApp {
                         app.active_session() == Some(*session)
                             && app.app_sessions.visit(*session) == Some(*visit)
                     });
+                    // The auto-fetch contract lines are emitted whatever the
+                    // visit: only the presentation is withheld (#992 review).
+                    if silent {
+                        match &result {
+                            Ok(outcome) => klog!("auto-fetch: ok remote={}", outcome.remote),
+                            Err(e) => klog!("auto-fetch: failed (silent): {e}"),
+                        }
+                    }
                     match &mut result {
                         Err(failure) => {
                             app.record_ref_fetch_failure(
@@ -2045,6 +2053,9 @@ impl KagiApp {
                         Ok(_) if current_waiter => app.deliver_pull_confirm(flight.owner, cx),
                         Ok(_) => {}
                     }
+                    // A delivered Pull confirmation (or failure preview) must
+                    // be drawn now, not on the next unrelated frame.
+                    cx.notify();
                     return;
                 }
                 let fetch_succeeded = result.is_ok();
@@ -2114,6 +2125,8 @@ impl KagiApp {
                 }
                 cx.notify();
             });
+            #[cfg(feature = "gui-e2e")]
+            super::e2e::mark_fetch_completion_returned();
         })
         .detach();
         // The request now belongs to the flight above: this fetch will deliver it.

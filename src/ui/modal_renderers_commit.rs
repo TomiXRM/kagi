@@ -6,19 +6,24 @@
 
 use super::button_style::{modal_button, ModalButtonKind};
 use super::commit_panel::{status_badge, CommitPlanModal};
+use super::dialog_a11y::{apply_dialog, dialog_a11y, ConfirmStage, DialogHandler};
 use super::i18n::Msg;
-use super::modal_command::plan_ready;
-use super::modal_renderers::{
-    modal_overlay, render_current_predicted, render_plan_heading, render_recovery_box,
-};
+use super::modal_command::{plan_ready, render_recovery_commands};
+use super::modal_copy::{modal_copy_button, plan_clipboard_text};
+use super::modal_renderers::{modal_overlay, render_current_predicted, render_plan_heading};
+use super::modal_renderers_plan::offered_recovery_commands;
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_LG, MODAL_W_MD};
 use super::modals::*;
 use super::theme::{self, theme as current_theme};
 use super::{file_tree, KagiApp};
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 use gpui_component::IconName;
+use kagi_domain::plan_note::ShellKind;
 use kagi_git::ChangeKind;
-use kagi_ui_core::i18n::{plan::plan_heading_text, plan_note_text, plan_recovery_text};
+use kagi_ui_core::i18n::{
+    plan::plan_heading_text, plan_note_text, plan_recovery_text, plan_title_text,
+};
+use std::rc::Rc;
 
 // ──────────────────────────────────────────────────────────────
 // Cherry-pick modal renderer (T016)
@@ -33,11 +38,12 @@ use kagi_ui_core::i18n::{plan::plan_heading_text, plan_note_text, plan_recovery_
 ///   - Current → Predicted state
 ///   - Preview files section (file tree, reusing T018 build_file_tree)
 ///   - Blockers (red) if any — includes conflict file names
-///   - Recovery text
+///   - Ready recovery commands in one collapsed disclosure
 ///   - Error message (if preflight/execute failed)
 ///   - `[Cancel]` always; `[Cherry-pick]` disabled with a reason when unavailable
 pub(crate) fn render_cherry_pick_modal(
     modal: CherryPickModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     let plan = modal.plan.clone();
@@ -55,7 +61,7 @@ pub(crate) fn render_cherry_pick_modal(
         });
 
     // T-BP-003: return focus to root_focus on cancel/confirm.
-    let cancel_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
+    let cancel_handler = cx.listener(|this, _event: &(), window, cx| {
         this.cancel_cherry_pick_modal();
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh, cx);
@@ -63,7 +69,7 @@ pub(crate) fn render_cherry_pick_modal(
         cx.notify();
     });
 
-    let confirm_handler = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
+    let confirm_handler = cx.listener(|this, _event: &(), window, cx| {
         this.start_cherry_pick(cx);
         if let Some(fh) = this.root_focus.clone() {
             window.focus(&fh, cx);
@@ -145,24 +151,57 @@ pub(crate) fn render_cherry_pick_modal(
         .collect();
 
     // ── Build modal card ────────────────────────────────────
-    // #454: fixed title + scrolling body + pinned button row (`modal_card`),
-    // so a long preview tree can no longer push Cancel/Cherry-pick out of
-    // view. The preview file tree is a plain list and the card carries
-    // recovery prose, so the body is this card's single scroll region.
-    let card = modal_card(MODAL_W_LG).child(
-        div()
-            .flex_shrink_0()
-            // Keep the copy icon; only the plan heading treatment changes.
-            .child({
-                let (title, chips) = plan_heading_text(&plan.title);
-                render_plan_heading(
-                    title,
-                    chips,
-                    (IconName::Copy.into(), current_theme().color_branch),
-                    None,
-                )
-            }),
-    );
+    // #454: fixed title + scrolling body + pinned button row (`modal_card`).
+    // The preview tree fits in this card's single scroll region.
+    let (title, chips) = plan_heading_text(&plan.title);
+    let title_row = div()
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(
+            render_plan_heading(
+                title,
+                chips,
+                (IconName::Copy.into(), current_theme().color_branch),
+                None,
+            )
+            .flex_1()
+            .min_w(gpui::px(0.)),
+        )
+        .child(modal_copy_button(
+            "cherry-pick-card-copy",
+            Msg::ModalCopyAll.t(),
+            plan_clipboard_text(
+                &plan,
+                &plan
+                    .preview_files
+                    .iter()
+                    .map(|f| f.path.display().to_string())
+                    .collect::<Vec<_>>(),
+                ShellKind::current(),
+            ),
+            cx,
+        ));
+    let cancel: DialogHandler = Rc::new(move |w, a| cancel_handler(&(), w, a));
+    let confirm: DialogHandler = Rc::new(move |w, a| confirm_handler(&(), w, a));
+    let spec = dialog_a11y(
+        &plan_title_text(&plan.title),
+        disabled_reason
+            .is_none()
+            .then_some(Msg::ModalCherryPickConfirm.t()),
+        plan.destructive,
+        ConfirmStage::Single,
+    )
+    .with_recovery(&plan_recovery_text(plan.recovery.as_ref()));
+    let card = apply_dialog(
+        "cherry-pick-card",
+        modal_card(MODAL_W_LG).id("cherry-pick-card"),
+        spec,
+        disabled_reason.is_none().then(|| confirm.clone()),
+        cancel.clone(),
+    )
+    .child(title_row);
 
     // ── Current → Predicted ───────────────────────────────
     let mut body =
@@ -228,13 +267,17 @@ pub(crate) fn render_cherry_pick_modal(
         body = body.child(block_col.flex_shrink_0());
     }
 
-    // ── Recovery ──────────────────────────────────────────
-    let recovery_text = plan_recovery_text(plan.recovery.as_ref());
-    if !recovery_text.is_empty() {
-        body = body.child(div().flex_shrink_0().child(render_recovery_box(
-            &recovery_text,
-            current_theme().color_branch,
-        )));
+    if plan_ready(&plan) {
+        if let Some(commands) = offered_recovery_commands(plan.recovery.as_ref()) {
+            body = body.child(render_recovery_commands(
+                commands,
+                "cherry-pick-recovery",
+                "cherry-pick-recovery-copy",
+                "cherry-pick-recovery-body",
+                overrides,
+                cx,
+            ));
+        }
     }
 
     // ── Error message (preflight / execute failure) ───────
@@ -260,7 +303,7 @@ pub(crate) fn render_cherry_pick_modal(
             Msg::PlanCancel.t(),
             ModalButtonKind::Cancel,
             None,
-            cancel_handler,
+            move |_, w, a| cancel(w, a),
             cx,
         ))
         .child(modal_button(
@@ -268,7 +311,7 @@ pub(crate) fn render_cherry_pick_modal(
             Msg::ModalCherryPickConfirm.t(),
             ModalButtonKind::Primary,
             disabled_reason,
-            confirm_handler,
+            move |_, w, a| confirm(w, a),
             cx,
         ));
 

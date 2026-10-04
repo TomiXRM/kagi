@@ -535,11 +535,19 @@ impl KagiApp {
                     })
                     // ── Stash apply modal overlay ────────────────────
                     .when_some(stash_apply_modal.take(), |el, modal| {
-                        el.child(render_stash_apply_modal(modal, cx))
+                        el.child(render_stash_apply_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
                     })
                     // ── Cherry-pick modal overlay (T016) ────────────
                     .when_some(cherry_pick_modal.take(), |el, modal| {
-                        el.child(render_cherry_pick_modal(modal, cx))
+                        el.child(render_cherry_pick_modal(
+                            modal,
+                            &self.modal_section_overrides,
+                            cx,
+                        ))
                     })
                     // ── Revert modal overlay (T-CM-034) ──────────────
                     .when_some(revert_modal.take(), |el, modal| {

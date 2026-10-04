@@ -788,56 +788,6 @@ pub(crate) fn render_revert_modal(
     )
 }
 
-/// Recovery box (Pull/Push only). Two earlier passes boxed this section —
-/// first a bordered card with bordered "chip" pills around each `git ...`
-/// command, then a further tinted "NOTE" callout around the prose — but
-/// chrome kept compounding: a card inside a card, pills that looked tappable
-/// for text that wasn't, and boxes-within-boxes read as busier, not more
-/// readable (user follow-ups 2026-07-22). A cross-model design review (codex
-/// and a Claude planning pass, prompted by the user asking for "Appleらしい"
-/// taste) converged independently on the same fix: delete the chrome and let
-/// typography carry the hierarchy instead. So: no outer card, no pill
-/// borders. Prose recedes (small, muted, proportional); `git ...` commands
-/// step forward in monospace against a single hairline accent rule that ties
-/// them back to the modal's colour without adding another filled box.
-///
-/// Lines are grouped by consecutive kind — prose vs. `git `-prefixed command
-/// — purely by shape, so a caption ("if the push is rejected...") stays
-/// visually attached to the command(s) right after it, with more space
-/// between groups than within one. This scans the ALREADY-LOCALIZED display
-/// text for lines that *look like* a command — a per-line cosmetic choice,
-/// never a behavioural one, same category as the commit-row sha/summary
-/// split in `modal_renderers.rs` (ADR-0129 keeps string-sniffing out of
-/// *decisions*, not out of *display shape*). A recovery whose prose has no
-/// command lines (or none at all) just shows as plain paragraphs.
-pub(crate) fn render_recovery_box(text: &str, color: u32) -> gpui::AnyElement {
-    let (_, rule_color, _) = theme_mod::badge_style(color);
-
-    let mut groups: Vec<(bool, Vec<&str>)> = Vec::new();
-    for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
-        let is_command = line.starts_with("git ");
-        match groups.last_mut() {
-            Some((last_is_command, lines)) if *last_is_command == is_command => lines.push(line),
-            _ => groups.push((is_command, vec![line])),
-        }
-    }
-
-    let mut col = div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .pt(theme_mod::scaled_px(6.))
-        .gap(theme_mod::scaled_px(10.));
-    for (group_index, (is_command, lines)) in groups.into_iter().enumerate() {
-        col = col.child(if is_command {
-            render_recovery_commands(lines.iter().copied(), rule_color, group_index)
-        } else {
-            render_recovery_prose(&lines)
-        });
-    }
-    col.into_any_element()
-}
-
 /// The structured commands an input card's collapsed rows offer, if any:
 /// none on a shell that does not read their POSIX quoting (cmd.exe, #1007).
 pub(crate) fn offered_recovery_commands(
@@ -848,9 +798,8 @@ pub(crate) fn offered_recovery_commands(
         .filter(|commands| !commands.is_empty())
 }
 
-/// Input cards show only the structured, copyable commands once their input
-/// and plan are ready. Unlike the general recovery box, this never renders
-/// localized explanatory prose or infers commands from display text.
+/// Input cards show only structured commands when their input and plan are
+/// ready. They never infer copyable commands from localized recovery prose.
 pub(crate) fn render_input_recovery_commands(commands: &[String], color: u32) -> gpui::AnyElement {
     let (_, rule_color, _) = theme_mod::badge_style(color);
     let lines = commands.iter().map(String::as_str);
@@ -864,36 +813,9 @@ pub(crate) fn render_input_recovery_commands(commands: &[String], color: u32) ->
     .into_any_element()
 }
 
-/// A consecutive run of non-command recovery lines: small, proportional, and
-/// de-emphasized only through type family/rule (not through crushing
-/// contrast) — `text_muted` measures under 2:1 against this modal's
-/// background, well below legible-body-text range, so hierarchy here comes
-/// from `text_sub` (same colour as the commands below) plus the surrounding
-/// spacing, never from a hard-to-read grey (user follow-up 2026-07-22).
-fn render_recovery_prose(lines: &[&str]) -> gpui::AnyElement {
-    // `w_full` on every line: a text node only wraps when its parent has a
-    // definite width, and without it a long sentence ran straight out of the
-    // card (user report 2026-09-06 — "文字が箱の枠から飛び出している").
-    let mut block = div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .gap(theme_mod::scaled_px(3.));
-    for line in lines {
-        block = block.child(
-            div()
-                .w_full()
-                .text_xs()
-                .text_color(rgb(theme().text_sub))
-                .child(SharedString::from(line.to_string())),
-        );
-    }
-    block.into_any_element()
-}
-
-/// A consecutive run of `git ...` command lines: monospace, set off from the
-/// prose by a single hairline accent rule — no fill, no border-all-round, so
-/// it can't be mistaken for a button.
+/// Input-card command lines stay readable horizontally without truncating
+/// shell arguments. Structured disclosures for bespoke/shared plan cards live
+/// in `modal_command` instead.
 fn render_recovery_commands<'a>(
     lines: impl IntoIterator<Item = &'a str>,
     rule_color: u32,

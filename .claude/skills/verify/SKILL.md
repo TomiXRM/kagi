@@ -554,8 +554,9 @@ The current suite covers:
   within the plan card while the AX dialog keeps the full title. Behind,
   approve / comment / request changes / set upstream intent, and file / stash / branch
   counts use localized units. CherryPick, Commit Plan and StashApply measure
-  the inline icon and applicable target chip on their bespoke cards, without
-  adding Copy all. Input-card headings remain out of scope.
+  the inline icon and applicable target chip on their bespoke cards;
+  CherryPick and StashApply also carry Copy all (#1023). Input-card headings
+  remain out of scope.
   Ready, blocker-free Push with nonempty
   `PlanRecovery::commands_for(ShellKind::current())` has one initially
   collapsed `plan-recovery` row and command-only body; its dedicated Copy uses
@@ -578,7 +579,6 @@ The current suite covers:
   equivalent-label text failed `plan_equivalent_summary`. Returning CherryPick
   to the 40px badge failed `bespoke_plan_heading` before restoring the inline
   heading; the same scenario also renders Commit Plan and StashApply.
-  CherryPick/StashApply recovery is follow-up #1023 (`Refs #1016`);
   Operation Log persistence and its ADR are follow-up #1025 (`Refs #994`).
   `plan_heading_chipless` opens the real Repo health → Write commit-graph plan:
   EN/JA have no fabricated chip, and restoring the `current.head[..8]`
@@ -589,6 +589,16 @@ The current suite covers:
   fail. `clipboard_text_offers_recovery_commands_only_for_ready_plans` fails
   the same mutation to Copy all's gate. All three mutations were restored
   byte-for-byte against their backups.
+- CherryPick / StashApply bespoke recovery (#1023, `KAGI_GUI_E2E_ONLY=bespoke_recovery_1023`,
+  `tests/recovery/plan_card_994.rs`): EN/JA Ready plans each show one closed command
+  disclosure; the dedicated copy holds exact `commands_for(ShellKind::current())`
+  while Copy all carries the recovery prose and separate command block. The
+  AX dialog describes the recovery after its confirmation stage; the old prose
+  box does not appear in the body. A blocker-free NoOp with commands does not
+  expose the disclosure, and Copy all retains prose but omits the commands
+  block. Mutating CherryPick's `plan_ready` gate to a blocker-only check failed
+  the NoOp disclosure assertion; the original source was restored byte-for-byte
+  against its backup (`cmp`).
 - Dialog buttons (#1016 PR A, `KAGI_GUI_E2E_ONLY=create_branch_input_confirm_ime,repo_health_proposal`,
   `tests/recovery/operations.rs`, `tests/recovery/repo_health.rs`): a real card measures cancel and confirm at
   Small = 24px; a blocked confirm remains drawn and inert with its localized

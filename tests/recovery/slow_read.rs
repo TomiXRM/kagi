@@ -262,3 +262,63 @@ pub fn scenario_slow_write_explained(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS slow_write_explained: EN/JA fetch admission, 2s, 4s, release");
 }
+
+/// #995 review: a slow write whose guard is dropped by a panic stops being a
+/// running write. The ticker's tick that finds it ended must notify on its
+/// own, so the advice drawn on the last frame is withdrawn rather than left
+/// until an unrelated frame.
+pub fn scenario_slow_write_cleared_after_panic(cx: &mut VisualTestAppContext) {
+    let (fixture, _remote) = ahead_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    cx.run_until_parked();
+
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_fetch_for_e2e(hold);
+    app.update(cx, |app, cx| {
+        app.panic_next_fetch_for_e2e();
+        app.fetch_async(false, cx);
+    });
+    cx.run_until_parked();
+    advance(cx, TICK * 8);
+    assert!(
+        drawn_write_advice(cx, window).is_some(),
+        "precondition: the held fetch is explained after 2 s"
+    );
+
+    // The task panics once released; its completion and abandonment land.
+    release.send(());
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).app_sessions.running_lease().is_none()),
+        "precondition: the panicked guard is no longer a running write"
+    );
+
+    // From here, count only what the ticker itself sends on its next tick.
+    let notified = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    {
+        let notified = notified.clone();
+        cx.update(|cx| {
+            cx.observe(&app, move |_, _| notified.set(notified.get() + 1))
+                .detach()
+        });
+    }
+    cx.advance_clock(TICK);
+    cx.run_until_parked();
+    assert!(
+        notified.get() >= 1,
+        "slow-write-cleared-after-panic: the tick that found the write ended did not notify"
+    );
+    assert_eq!(
+        drawn_write_advice(cx, window),
+        None,
+        "slow-write-cleared-after-panic: the advice outlived the panicked write"
+    );
+    // The ticker stopped: no further self-notifications.
+    let after = notified.get();
+    cx.advance_clock(TICK * 4);
+    cx.run_until_parked();
+    assert_eq!(notified.get(), after, "the ended ticker kept running");
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS slow_write_cleared_after_panic");
+}

@@ -53,10 +53,16 @@ impl KagiApp {
             let alive = this
                 .update(acx, |app, cx| {
                     app.refresh_write_busy();
+                    // The tick that finds this write ended (settled, guard
+                    // dropped by a panic, or superseded) still notifies: the
+                    // advice drawn on the last frame must be withdrawn now,
+                    // not on the next unrelated frame (#995 review).
                     let Some((running, started)) = app.app_sessions.running_lease() else {
+                        cx.notify();
                         return false;
                     };
                     if running != id {
+                        cx.notify();
                         return false;
                     }
                     let elapsed = cx

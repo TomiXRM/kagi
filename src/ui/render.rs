@@ -25,7 +25,13 @@ impl KagiApp {
         let title = detail.full_message.as_ref().lines().next().unwrap_or("");
         let header = context_menu::short_title_header(detail.full_sha.as_ref(), title);
         Some(context_menu::render_commit_menu_overlay(
-            state, target, header, groups, window, cx,
+            state,
+            target,
+            header,
+            groups,
+            &self.menu_keys,
+            window,
+            cx,
         ))
     }
 
@@ -39,7 +45,12 @@ impl KagiApp {
         let groups = branch_menu::branch_context_menu_items(&ctx);
         let header = branch_menu::header(&ctx);
         Some(branch_menu::render_branch_menu_overlay(
-            state, header, groups, window, cx,
+            state,
+            header,
+            groups,
+            &self.menu_keys,
+            window,
+            cx,
         ))
     }
     fn render_worktree_menu_overlay(
@@ -52,7 +63,12 @@ impl KagiApp {
             worktree_menu::build_worktree_menu(state.locked, state.is_main, state.path.as_deref());
         let header = SharedString::from(state.name.clone());
         Some(worktree_menu::render_worktree_menu_overlay(
-            state, header, groups, window, cx,
+            state,
+            header,
+            groups,
+            &self.menu_keys,
+            window,
+            cx,
         ))
     }
 
@@ -65,7 +81,12 @@ impl KagiApp {
         let groups = tag_menu::build_tag_menu(state.remote.as_deref());
         let header = SharedString::from(state.name.clone());
         Some(tag_menu::render_tag_menu_overlay(
-            state, header, groups, window, cx,
+            state,
+            header,
+            groups,
+            &self.menu_keys,
+            window,
+            cx,
         ))
     }
 
@@ -78,7 +99,12 @@ impl KagiApp {
         let groups = stash_menu::build_stash_menu();
         let header = SharedString::from(format!("stash@{{{}}}: {}", state.index, state.message));
         Some(stash_menu::render_stash_menu_overlay(
-            state, header, groups, window, cx,
+            state,
+            header,
+            groups,
+            &self.menu_keys,
+            window,
+            cx,
         ))
     }
 }
@@ -392,6 +418,10 @@ impl Render for KagiApp {
         if conflict_body_visible {
             self.yield_sidebar_focus(window, cx);
         }
+        // #985: a menu that just opened takes the focus; one that closed
+        // gives it back. The selected row records where it is drawn anew.
+        self.sync_menu_keys(window, cx);
+        self.context_anchor.clear();
         let commit_menu_overlay = self
             .commit_menu
             .clone()
@@ -568,6 +598,11 @@ impl Render for KagiApp {
             .on_action(toggle_bottom_panel)
             .on_action(copy_diff_selection)
             .on_action(save_editor_file)
+            .on_action(
+                cx.listener(|this, _: &menu_keys::ContextMenuKey, window, cx| {
+                    this.open_context_menu_from_key(window, cx);
+                }),
+            )
             // Arrows: step diff files while the main diff is open, otherwise
             // move the commit selection (user request).
             .on_action(cx.listener(|this, _: &DiffPrevFile, window, cx| {

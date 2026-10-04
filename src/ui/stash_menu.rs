@@ -62,6 +62,7 @@ pub fn render_stash_menu_overlay(
     state: StashMenuState,
     header: SharedString,
     groups: Vec<MenuGroup<StashAction>>,
+    keys: &super::menu_keys::MenuKeys,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -86,6 +87,7 @@ pub fn render_stash_menu_overlay(
         groups,
         on_dismiss,
         on_select,
+        Some(keys),
         window,
         cx,
     )

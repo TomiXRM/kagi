@@ -642,6 +642,22 @@ impl WriteGuard {
         self.kind = GuardKind::of(op);
         self
     }
+
+    /// Keep the writer's identity outside a background task, so an unwind can
+    /// park a reconcile requirement even though the guard itself was dropped.
+    /// Register before dispatch: spawned process groups then belong to this
+    /// job rather than to the task that may unwind (#703).
+    pub fn abandonment(&self) -> GuardAbandonment {
+        GuardAbandonment {
+            id: self.id,
+            scope: self.scope.clone(),
+            op: self.op,
+            kind: self.kind,
+            path: self.path.clone(),
+            unaccounted: self.unaccounted.clone(),
+            supervision: kagi_git::proc::supervisor::begin(),
+        }
+    }
     pub fn complete(self) {
         if let Ok(mut leases) = self.leases.lock() {
             if leases
@@ -693,6 +709,46 @@ impl WriteGuard {
             Err(kagi_git::GitError::StashIdentityUnverified(_)) => {}
             _ => self.complete(),
         }
+    }
+}
+
+/// The exit for a guard writer whose background task produced no completion.
+/// Unlike an ordinary `complete_git(Stopped)` for an idempotent write, an
+/// unwind does not account for what the task did before stopping: always park
+/// an Unknown requirement, including when no child was spawned.
+pub struct GuardAbandonment {
+    id: OperationId,
+    scope: WriteScope,
+    op: &'static str,
+    kind: GuardKind,
+    path: PathBuf,
+    unaccounted: std::sync::mpsc::Sender<UnaccountedWrite>,
+    supervision: kagi_git::proc::supervisor::JobId,
+}
+impl GuardAbandonment {
+    pub fn supervision(&self) -> kagi_git::proc::supervisor::JobId {
+        self.supervision
+    }
+
+    pub fn into_unknown(self) -> kagi_git::GitError {
+        let evidence = format!(
+            "the {} task unwound; whether the write happened cannot be established",
+            self.op
+        );
+        let termination = kagi_git::Termination::from_abandoned_job(
+            evidence,
+            &kagi_git::proc::supervisor::take_live_groups(self.supervision),
+        );
+        let _ = self.unaccounted.send(UnaccountedWrite {
+            id: self.id,
+            scope: self.scope,
+            op: self.op,
+            path: self.path,
+            kind: self.kind,
+            stopped: termination.child_stopped(),
+            group: termination.group(),
+        });
+        kagi_git::GitError::TerminationUnknown(termination)
     }
 }
 

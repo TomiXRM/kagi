@@ -89,6 +89,7 @@ mod inspector_model;
 pub(crate) mod keyboard_nav;
 pub mod list_a11y;
 pub mod main_diff_pane;
+mod menu_keys;
 pub mod menu_overlay;
 /// #454: shared modal chrome (card shell + collapsible sections).
 mod modal_copy;
@@ -1192,17 +1193,6 @@ pub struct KagiApp {
     pub toast_stack: Option<Entity<toast_stack::ToastStack>>,
     /// Operation-owned fetch coordination; detach prunes waiters, not execution.
     pub fetch_in_flight: Option<commands::FetchFlight>,
-    /// #625: Pull confirmations whose fetch finished while their tab was not
-    /// on screen, waiting for that tab to come back (ADR-0192).
-    ///
-    /// Keyed by `SessionId` and *parked*, never a bare flag: the request
-    /// belongs to one tab, so a bool let another tab's reload drop it and an
-    /// unrelated fetch consume it — the "press Pull, nothing happens" bug,
-    /// twice over (#626 review). The live request itself is not here at all:
-    /// it rides inside its own fetch task and only lands here when it cannot
-    /// be delivered immediately.
-    pub pending_pull_confirm:
-        std::collections::HashMap<crate::app::SessionId, operations::PullConfirmDelivery>,
     /// True while the periodic background auto-fetch ticker task is alive
     /// (spawned lazily from render; see `ensure_auto_fetch_ticker`).
     pub auto_fetch_ticker_alive: bool,
@@ -1251,6 +1241,11 @@ pub struct KagiApp {
     /// ADR-0140: open tag context menu (right-click on a sidebar tag row).
     pub tag_menu: Option<tag_menu::TagMenuState>,
     pub worktree_menu: Option<worktree_menu::WorktreeMenuState>,
+    /// The context menus' keyboard (#985).
+    pub(crate) menu_keys: menu_keys::MenuKeys,
+    /// The selected commit row's bounds as last drawn: where the
+    /// context-menu key opens its menu (#985).
+    pub(crate) context_anchor: menu_keys::RowAnchor,
     /// Owner-stamped file menu; its path survives row renumbering (#286).
     pub file_menu: Option<file_menu::FileMenu>,
     /// Right-click context menu on an Inspector / Compare changed-file row
@@ -1431,7 +1426,6 @@ impl KagiApp {
             // Created in `open_main_window`'s `cx.new` closure (needs `cx`).
             toast_stack: None,
             fetch_in_flight: None,
-            pending_pull_confirm: Default::default(),
             auto_fetch_ticker_alive: false,
             transport_holds: Default::default(),
             github_ticker_alive: false,
@@ -1451,6 +1445,8 @@ impl KagiApp {
             stash_menu: None,
             tag_menu: None,
             worktree_menu: None,
+            menu_keys: Default::default(),
+            context_anchor: Default::default(),
             file_menu: None,
             inspector_file_menu: None,
             // W5-MENU

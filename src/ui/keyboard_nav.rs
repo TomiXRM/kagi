@@ -770,6 +770,11 @@ impl RowList {
         self.stop.is_some()
     }
 
+    /// Whether row `at`'s focus handle is `handle`.
+    pub(crate) fn is_handle(&self, at: usize, handle: &FocusHandle) -> bool {
+        self.handles.get(at) == Some(handle)
+    }
+
     /// Focus the list's Tab stop, if it has one.
     pub(crate) fn focus_stop(&self, window: &mut Window, cx: &mut App) {
         if let Some(at) = self.stop {
@@ -854,7 +859,6 @@ impl FocusSlots {
     }
 
     /// The slot holding the focus, if any.
-    #[cfg(feature = "gui-e2e")]
     pub(crate) fn focused(&self, window: &Window) -> Option<usize> {
         self.0
             .borrow()
@@ -947,7 +951,7 @@ fn with_ring(el: Stateful<Div>) -> Stateful<Div> {
 
 /// Enter / Space press the focused element (gpui's keyboard click, already
 /// armed by the time this runs); nothing above it may act on them too.
-fn stop_activation_keys(event: &KeyDownEvent, _: &mut Window, cx: &mut App) {
+pub(crate) fn stop_activation_keys(event: &KeyDownEvent, _: &mut Window, cx: &mut App) {
     let stroke = &event.keystroke;
     if (stroke.key == "enter" || stroke.key == "space") && !stroke.modifiers.modified() {
         cx.stop_propagation();

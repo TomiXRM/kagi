@@ -1528,6 +1528,7 @@ pub fn render_file_menu(
         groups,
         on_dismiss,
         on_select,
+        None,
         window,
         cx,
     )

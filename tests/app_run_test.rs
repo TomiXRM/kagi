@@ -176,11 +176,71 @@ fn a_second_run_is_refused_while_the_first_holds_the_lease() {
     let first = f.request(&mut s);
     let second = first.clone();
     let approved = approve_run(&mut s, first).unwrap();
-    let _job = prepare_run(&mut s, approved, Box::new(|| Err("never run".to_string()))).unwrap();
-    let approved = approve_run(&mut s, second).unwrap();
+    let job = prepare_run(&mut s, approved, Box::new(|| Err("never run".to_string()))).unwrap();
     assert_eq!(
-        prepare_run(&mut s, approved, Box::new(|| Err("never run".to_string()))).err(),
-        Some(AdmissionError::Busy)
+        approve_run(&mut s, second.clone()).err(),
+        Some(AdmissionError::Busy),
+        "the second run is refused before it can replace any existing plan"
+    );
+    apply(&mut s, job.run());
+    let approved = approve_run(&mut s, second).expect("Busy is retry-later");
+    let retry = prepare_run(&mut s, approved, Box::new(|| Err("never run".to_string())))
+        .expect("the settled writer releases admission");
+    apply(&mut s, retry.run());
+}
+
+/// A Busy modal admission is retry-later, not a replacement of another
+/// family's ready plan. Once the first writer settles without changing Git,
+/// the original token is still approvable and is consumed only by begin_write.
+#[test]
+fn busy_run_admission_preserves_another_ready_plan_and_its_one_shot_token() {
+    let f = Fixture::new();
+    let mut s = Sessions::new();
+    let request = f.request(&mut s);
+    let first = approve_run(&mut s, request.clone()).unwrap();
+    let job = prepare_run(
+        &mut s,
+        first,
+        Box::new(|| Err("repository did not open".to_string())),
+    )
+    .unwrap();
+
+    std::fs::write(f.repo.join("a.txt"), "changed\n").unwrap();
+    let plan = plan_stash(
+        &mut s,
+        StashRequest {
+            owner: request.owner.clone(),
+            action: StashAction::Push {
+                message: Some("keep this plan".into()),
+                include_untracked: false,
+            },
+        },
+        StashPolicy::default(),
+    );
+    assert!(apply_plan(&mut s, plan.run()));
+    let PlanState::Ready { token, .. } = s.plan_state() else {
+        panic!("expected a ready stash plan, got {:?}", s.plan_state());
+    };
+    let token = token.clone();
+
+    assert_eq!(
+        approve_run(&mut s, request).err(),
+        Some(AdmissionError::Busy),
+        "a concurrent run must refuse before replacing the ready plan"
+    );
+    assert!(
+        matches!(s.plan_state(), PlanState::Ready { .. }),
+        "Busy must leave the ready plan on screen"
+    );
+
+    apply(&mut s, job.run());
+    let approved = approve(&mut s, token, StashPolicy::default())
+        .expect("the original plan revision remains current after Busy");
+    begin_write(&mut s, &approved).expect("one write may spend the approval");
+    assert_eq!(
+        begin_write(&mut s, &approved).err(),
+        Some(AdmissionError::StaleApproval),
+        "begin_write still spends the approval exactly once"
     );
 }
 

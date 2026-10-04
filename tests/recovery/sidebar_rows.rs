@@ -132,8 +132,9 @@ pub fn scenario_sidebar_rows_open_short(cx: &mut VisualTestAppContext) {
 }
 
 /// A right-click on a focused row gives the window the focus, as a left
-/// press does (#987 review): Enter behind the row's menu does not press the
-/// row (no checkout plan opens).
+/// press does (#987 review), and the row's menu takes it (#985): Enter goes
+/// to the menu's item, never to the row behind it. Escape gives the focus
+/// back to the window, where the right-click left it.
 pub fn scenario_sidebar_rows_right_click(cx: &mut VisualTestAppContext) {
     use gpui::{Modifiers, MouseButton};
     let fixture = build_fixture();
@@ -161,10 +162,23 @@ pub fn scenario_sidebar_rows_right_click(cx: &mut VisualTestAppContext) {
         "the right-click opened the row's menu"
     );
     assert_eq!(focused(cx, &app, window), None, "the row gave up the focus");
-    keys(cx, window, "enter");
-    assert!(
-        app.read_with(cx, |app, _| app.active_modal.is_none()),
-        "Enter behind the menu pressed no row"
+    let (item, enabled) = cx
+        .update_window(window, |_, window, cx| {
+            window.draw(cx).clear();
+            app.read(cx).menu_keys_for_e2e(window)
+        })
+        .unwrap();
+    assert_eq!(
+        item,
+        enabled.first().copied(),
+        "the menu's first item holds the focus, so Enter is the menu's"
+    );
+    keys(cx, window, "escape");
+    assert!(app.read_with(cx, |app, _| app.branch_menu.is_none()));
+    assert_eq!(
+        focused(cx, &app, window),
+        None,
+        "the focus went back to the window, not to the row"
     );
     unmount(cx, app, window);
 }

@@ -1744,12 +1744,24 @@ mod macos {
                 Box::new(crate::guard_writer_panic::scenario_snapshot_write_draws_while_busy),
             ),
             (
+                "snapshot_failed_after_departure",
+                Box::new(crate::guard_writer_panic::scenario_snapshot_failed_after_departure),
+            ),
+            (
                 "conflict_merge_continue_panic",
                 Box::new(crate::app_conflict::scenario_conflict_merge_continue_panic),
             ),
             (
                 "conflict_confirm_continue_panic",
                 Box::new(crate::app_conflict::scenario_conflict_confirm_continue_panic),
+            ),
+            (
+                "conflict_confirm_dismissed_still_reloads",
+                Box::new(crate::app_conflict::scenario_conflict_confirm_dismissed_still_reloads),
+            ),
+            (
+                "conflict_merge_failure_contract",
+                Box::new(crate::app_conflict::scenario_conflict_merge_failure_contract),
             ),
             (
                 "conflict_skip_panic",
@@ -1874,6 +1886,10 @@ mod macos {
             (
                 "wip_diffstat_stage_order",
                 Box::new(crate::hunk_staging::scenario_wip_diffstat_stage_order),
+            ),
+            (
+                "wip_diffstat_watcher_order",
+                Box::new(crate::hunk_staging::scenario_wip_diffstat_watcher_order),
             ),
             (
                 "issue_failure_notice_survives_tab_switch",

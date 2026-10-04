@@ -1604,13 +1604,22 @@ impl KagiApp {
                     Ok(entry) => klog!("snapshot: created {}", entry.id),
                     Err(e) => klog!("snapshot: create failed: {}", e),
                 }
+                let current = owner.is_some_and(|id| {
+                    app.active_session() == Some(id) && app.app_sessions.visit(id) == visit
+                });
+                if !current {
+                    if let Err(e) = &result {
+                        app.app_notices.push_back(
+                            format!("{}: {}: {e}", repo_path.display(), Msg::SnapshotFailed.t())
+                                .into(),
+                        );
+                    }
+                }
                 for (id, op, path) in app.app_sessions.drain_unaccounted() {
                     app.notice_reconcile_required(id, op, &path);
                 }
                 app.present_app_notice();
-                if !owner.is_some_and(|id| {
-                    app.active_session() == Some(id) && app.app_sessions.visit(id) == visit
-                }) {
+                if !current {
                     cx.notify();
                     return;
                 }

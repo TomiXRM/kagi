@@ -271,6 +271,46 @@ pub fn scenario_wip_diffstat_stage_order(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS wip_diffstat_stage_order");
 }
 
+/// A watcher refresh with the same status classification still publishes a
+/// newer badge than a held scan computed before the file changed.
+pub fn scenario_wip_diffstat_watcher_order(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    std::fs::write(repo.join("README.md"), "# fixture\nfirst\n").unwrap();
+    let (app, window) = mount(cx, &repo);
+    cx.run_until_parked();
+    let old_stat = WipDiffStat {
+        additions: 1,
+        deletions: 1,
+    };
+    assert_eq!(cx.read(|cx| app.read(cx).ui().wip_diffstat), Some(old_stat));
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_wip_diffstat_scan_for_e2e(hold);
+    app.update(cx, |app, cx| app.start_wip_diffstat_scan(cx));
+    cx.run_until_parked(); // old diff is computed, then held before publishing.
+    std::fs::write(repo.join("README.md"), "# fixture\nfirst\nsecond\n").unwrap();
+    app.update(cx, |app, cx| app.refresh_working_tree_external(cx));
+    cx.run_until_parked();
+    let refreshed = WipDiffStat {
+        additions: 2,
+        deletions: 1,
+    };
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().wip_diffstat),
+        Some(refreshed),
+        "watcher must publish new badge before old scan completes"
+    );
+    release.send(());
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().wip_diffstat),
+        Some(refreshed),
+        "older scan overwrote the watcher's newer result"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS wip_diffstat_watcher_order");
+}
+
 fn index_text_readme(repo: &Path) -> String {
     let out = std::process::Command::new("git")
         .args(["show", ":README.md"])

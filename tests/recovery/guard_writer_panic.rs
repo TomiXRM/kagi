@@ -686,3 +686,45 @@ pub fn scenario_snapshot_write_draws_while_busy(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS snapshot_write_draws_while_busy");
 }
+
+/// An ordinary snapshot failure after leaving its tab must remain visible in
+/// the host's notice queue, without changing the replacement tab's footer.
+pub fn scenario_snapshot_failed_after_departure(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let other = build_fixture();
+    let other_repo = other.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| assert!(app.open_repository(other_repo, cx)));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    cx.run_until_parked();
+    let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+    KagiApp::hold_next_snapshot_write_for_e2e(hold);
+    cx.dispatch_action(window, kagi::ui::commands::CreateSnapshot);
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        app.switch_repo(1, cx);
+        app.status_footer = FooterStatus::Idle("snapshot failure other tab".into());
+    });
+    // Keep the fixture intact after the worker has observed the absent Git
+    // directory; no destructive Git command touches the user's repository.
+    std::fs::rename(repo.join(".git"), repo.join(".git-paused")).unwrap();
+    release.send(());
+    cx.run_until_parked();
+    std::fs::rename(repo.join(".git-paused"), repo.join(".git")).unwrap();
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(!state.app_sessions.has_leases());
+        assert!(matches!(&state.status_footer, FooterStatus::Idle(text) if text.as_ref() == "snapshot failure other tab"));
+        let notice = kagi::ui::e2e::app_notice_message(state)
+            .expect("departed snapshot failure must reach the user");
+        assert!(notice.contains(repo.to_str().unwrap()), "{notice}");
+        assert!(notice.contains("Snapshot failed"), "{notice}");
+    });
+    assert!(crate::macos::for_each_ref(&repo, "refs/kagi/snapshots/")
+        .trim()
+        .is_empty());
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS snapshot_failed_after_departure");
+}

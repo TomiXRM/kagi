@@ -1669,19 +1669,13 @@ impl KagiApp {
         Some((branch, sha))
     }
 
-    /// Present (and, when `persist`, append) one outcome: footer, toast and
-    /// panel. `refusal` is the user-facing text for a typed refusal (#353).
-    pub(in crate::ui) fn record_op_impl(
-        &mut self,
-        entry: OpLogEntry,
-        cx: &mut Context<Self>,
-        persist: bool,
-        refusal: Option<String>,
-    ) {
-        let op = entry.op.as_str();
-        let before = &entry.before;
-        let outcome = &entry.outcome;
-        let (footer_msg, footer_ok) = match outcome {
+    /// Stable footer/klog wording shared by on-screen and departed receipts.
+    fn operation_footer_contract(
+        op: &str,
+        before: &StateSummary,
+        outcome: &OpOutcome,
+    ) -> (SharedString, bool) {
+        match outcome {
             OpOutcome::Success { after } => (
                 SharedString::from(format!("{}: {} → {}", op, before.head, after.head)),
                 true,
@@ -1701,7 +1695,22 @@ impl KagiApp {
                 operations::record::refused_contract(op, blockers.len()).into(),
                 false,
             ),
-        };
+        }
+    }
+
+    /// Present (and, when `persist`, append) one outcome: footer, toast and
+    /// panel. `refusal` is the user-facing text for a typed refusal (#353).
+    pub(in crate::ui) fn record_op_impl(
+        &mut self,
+        entry: OpLogEntry,
+        cx: &mut Context<Self>,
+        persist: bool,
+        refusal: Option<String>,
+    ) {
+        let op = entry.op.as_str();
+        let before = &entry.before;
+        let outcome = &entry.outcome;
+        let (footer_msg, footer_ok) = Self::operation_footer_contract(op, before, outcome);
 
         let display_footer_msg = Self::display_footer_message(op, outcome, &footer_msg, refusal);
 
@@ -2329,6 +2338,7 @@ impl KagiApp {
                 }
                 if ui.wip_diffstat != stat {
                     ui.wip_diffstat = stat;
+                    ui.wip_diffstat_request = ui.wip_diffstat_request.wrapping_add(1);
                     cx.notify();
                 }
             });

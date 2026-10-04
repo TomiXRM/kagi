@@ -1118,6 +1118,19 @@ The current suite covers:
   before awaiting it fails the held-frame scenario; forcing departed
   completions through the presenting branch of `record_conflict_completion`
   fails the stash tab-switch scenario.
+  PR #1008 follow-up Tier A:
+  `KAGI_GUI_E2E_ONLY=conflict_confirm_dismissed_still_reloads,snapshot_failed_after_departure,conflict_merge_failure_contract`.
+  The dismissed sequencer modal cannot suppress a successful current owner's
+  reload and conflict re-detection; ordinary snapshot errors after leaving
+  the tab reach a repository-named host notice without changing B's footer;
+  current merge-stage errors show the normal footer/toast/bottom panel, and
+  departed errors retain their oplog receipt, footer contract klog, notice and
+  B's untouched footer/panel. Each holds or defers the real writer, not a mock.
+  Three independent production mutations, each fails its own scenario:
+  change the successful sequencer reload gate from `current` back to
+  `modal_matches`; change the departed snapshot error queue gate from
+  `!current` to `current`; remove the departed `record_conflict_completion`
+  `klog!("footer: {}", footer_msg)` call.
 - session-owned positioning and Smart Commit state
   (`tests/recovery/tab_ui_state.rs`, `tests/recovery/operations.rs`):
   `KAGI_GUI_E2E_ONLY=tab_ui_state_ownership,pr_open_enters_before_ref_fetch,smart_commit_generation_owner,smart_commit_modal_and_probe`.
@@ -1743,6 +1756,14 @@ index already reflect staging while the first read is held. The second scan
 publishes the final badge; releasing the first cannot roll it back. Mutation:
 remove the `wip_diffstat_request` completion check in
 `start_wip_diffstat_scan` and this scenario fails on the final badge.
+Tier A `KAGI_GUI_E2E_ONLY=wip_diffstat_watcher_order` holds an older scan
+after its backend read, edits the same already-modified file, and accepts
+the watcher's newer diffstat without changing its cache epoch. Releasing
+the older scan must not overwrite the badge. Every direct badge assignment
+advances `wip_diffstat_request`, including reload, activation clear, tab
+load, both watcher paths, and accepted scan publication. Production
+mutation: remove the request increment from the status-changed watcher
+branch; this scenario fails with the older badge.
 
 ### Busy snackbar labels (#607)
 

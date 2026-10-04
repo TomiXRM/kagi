@@ -368,7 +368,6 @@ impl KagiApp {
                             && app.app_sessions.visit(owner) == visit;
                         if let Err(e) = &result {
                             klog!("refused: {} stage failed: {}", op_name, e);
-                            let is_unknown = unknown.is_some();
                             app.record_conflict_completion(
                                 &op_name,
                                 StateSummary {
@@ -380,7 +379,7 @@ impl KagiApp {
                                 }),
                                 None,
                                 &repo_path,
-                                current && is_unknown,
+                                current,
                                 cx,
                             );
                         }
@@ -641,6 +640,8 @@ impl KagiApp {
                         );
                         if modal_matches {
                             app.clear_conflict_continue_modal();
+                        }
+                        if current {
                             app.reload(cx);
                             if let Some(ui) = app.ui_mut() {
                                 ui.conflict_detected = false;

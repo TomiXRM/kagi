@@ -91,17 +91,38 @@ impl KagiApp {
         }
         let entry = OpLogEntry::new(op, repo_path.display().to_string(), before, outcome)
             .with_ref_moves(ref_moves);
+        let (footer_msg, _) =
+            Self::operation_footer_contract(&entry.op, &entry.before, &entry.outcome);
+        let failed = !matches!(
+            &entry.outcome,
+            OpOutcome::Success { .. } | OpOutcome::Unknown { .. }
+        );
         let recording = kagi_git::backend::recording::finalize(entry);
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {
-            self.app_notices
-                .push_back(format!("{}: recording failed: {}", repo_path.display(), error).into());
+            klog!("oplog: write failed (non-fatal): {}", error);
+            self.app_notices.push_back(
+                format!(
+                    "{}: {}",
+                    repo_path.display(),
+                    i18n::oplog_write_failed(error)
+                )
+                .into(),
+            );
         }
         if let Some(panel) = self.op_log.clone() {
             let shown = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&recording);
             panel.update(cx, |panel, cx| {
                 panel.push(shown);
+                panel.collapse();
                 cx.notify();
             });
+        }
+        // The footer contract is logged for the frozen owner, but the live
+        // footer, toast and bottom panel belong to the tab currently on screen.
+        klog!("footer: {}", footer_msg);
+        if failed {
+            self.app_notices
+                .push_back(format!("{}: {}", repo_path.display(), footer_msg).into());
         }
     }
 

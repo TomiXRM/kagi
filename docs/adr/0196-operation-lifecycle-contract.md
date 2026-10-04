@@ -418,6 +418,9 @@ refusal は core が `Refused` の no-execute step として記録し、UI は e
 (`git status --porcelain=v2 -z --untracked-files=all`) の binary stream を取得し、
 SHA-256 fingerprint を凍結する。実行前に同じ probe を再読して照合し、
 stream の不一致・読取失敗は pull を実行せず `Refused` として lease を解放する。
+実行する pull は `git pull --no-rebase --ff` に固定し、ホスト側の
+`pull.rebase`・`branch.<name>.rebase`・`pull.ff=only` より確認時の merge-only
+policy を優先する（fast-forward 可能な場合は維持する）。
 `Planned::RemotePull` は `begin_write` で `WriteScope::Remote(RemoteRepoId)` を取り、
 `OperationId` / `OwnerStamp` によって配送される。Success / Failed は通常解放し、
 Unknown / Partial / job abandonment は停止済みの reconcile requirement と lease を保持する。

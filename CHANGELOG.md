@@ -14,6 +14,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - SSH 経由の remote pull を write lease に載せ、実行中は終了操作とほかの書き込みを保留するようにしました。計画時と実行前に remote の staged index・作業ツリー状態を照合し、変化や再読込失敗があれば pull せず Refused を記録します。結果が Unknown・Partial の場合は reconcile 通知から明示的な確認と監査記録を経て lease を解放します。ssh-agent だけの接続でも計画・実行できます。(#989、#997)
+- SSH remote pull はホスト側の `pull.rebase`・`branch.*.rebase`・`pull.ff=only` に影響されず、確認で提示した merge pull を `git pull --no-rebase --ff` で実行します。fast-forward が可能なら維持し、分岐時はローカルの commit を書き換えず merge します。(#997)
 - SSH の remote pull で選択したパスが symlink の場合、確認中に別の linked worktree へ付け替えられても誤った worktree に pull しないよう、計画時の物理パスを保持し、実行前に照合してからそのパスで実行するようにしました。異なる場合は実行せず Refused を記録します。(#997)
 - SSH の remote pull で確認中に対象 worktree の branch・HEAD commit・upstream が変わっても別の変更を pull しないよう、計画時の状態を実行前に照合し、異なる場合は実行せず Refused を記録します。(#997)
 - SSH remote pull の確認を開く前に、キャッシュ済みの branch / upstream とホスト上の現在の値を照合し、ずれている場合は確認 modal を出さず更新を促すようにしました。(#997)

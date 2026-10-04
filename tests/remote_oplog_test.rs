@@ -372,6 +372,102 @@ fn remote_pull_records_success_and_failure_at_the_transport() {
     assert!(!git(&repo, &["status", "--porcelain"]).is_empty());
 }
 
+/// A confirmation promises a merge pull, not a rebase or ff-only refusal
+/// chosen later by the remote worktree's mutable Git configuration.
+#[test]
+fn remote_pull_merges_even_when_host_config_requests_rebase_and_ff_only() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let root = tempfile::tempdir().unwrap();
+    let origin = root.path().join("origin.git");
+    let seed = root.path().join("seed");
+    let repo = root.path().join("clone");
+    let bin = root.path().join("bin");
+    let logs = root.path().join("logs");
+    for dir in [&origin, &seed, &bin] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    git(&origin, &["init", "-q", "--bare", "-b", "main"]);
+    git(&seed, &["init", "-q", "-b", "main"]);
+    std::fs::write(seed.join("base"), "base\n").unwrap();
+    git(&seed, &["add", "base"]);
+    git(&seed, &["commit", "-q", "-m", "base"]);
+    git(&seed, &["push", "-q", origin.to_str().unwrap(), "main"]);
+    git(
+        root.path(),
+        &[
+            "clone",
+            "-q",
+            origin.to_str().unwrap(),
+            repo.to_str().unwrap(),
+        ],
+    );
+    std::fs::write(seed.join("upstream"), "upstream\n").unwrap();
+    git(&seed, &["add", "upstream"]);
+    git(&seed, &["commit", "-q", "-m", "upstream"]);
+    let upstream_oid = git(&seed, &["rev-parse", "HEAD"]);
+    git(&seed, &["push", "-q", origin.to_str().unwrap(), "main"]);
+    std::fs::write(repo.join("local"), "local\n").unwrap();
+    git(&repo, &["add", "local"]);
+    git(&repo, &["commit", "-q", "-m", "local"]);
+    let local_oid = git(&repo, &["rev-parse", "HEAD"]);
+    for (key, value) in [
+        ("pull.rebase", "true"),
+        ("branch.main.rebase", "true"),
+        ("pull.ff", "only"),
+        ("user.email", "fixture@example.invalid"),
+        ("user.name", "fixture"),
+        ("commit.gpgSign", "false"),
+        ("core.hooksPath", "/dev/null"),
+    ] {
+        git(&repo, &["config", key, value]);
+    }
+    fake_ssh(&bin);
+    let _restore = Environment {
+        path: std::env::var_os("PATH"),
+        log: std::env::var_os("KAGI_LOG_DIR"),
+    };
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(
+        &_restore.path.clone().unwrap_or_default(),
+    ));
+    std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+    std::env::set_var("KAGI_LOG_DIR", &logs);
+    let host = kagi_domain::remote::RemoteHost::parse("fixture.invalid").unwrap();
+    let before = kagi_git::StateSummary {
+        head: local_oid.clone(),
+        dirty: "clean".into(),
+    };
+    let report = kagi::remote::remote_pull(
+        &host,
+        repo.to_str().unwrap(),
+        repo.to_str().unwrap(),
+        &before,
+    );
+    assert!(
+        report.result.is_ok(),
+        "explicit merge pull must succeed despite rebase/ff-only config: {:?}",
+        report.result
+    );
+    assert!(matches!(
+        report.recording.entry().outcome,
+        kagi_git::oplog::OpOutcome::Success { .. }
+    ));
+    let commit = git(&repo, &["rev-list", "--parents", "-n", "1", "HEAD"]);
+    let parents = commit.split_whitespace().collect::<Vec<_>>();
+    assert_eq!(
+        parents.len(),
+        3,
+        "pull must create a merge commit: {commit}"
+    );
+    assert_eq!(parents[1], local_oid, "local commit must not be rebased");
+    assert_eq!(parents[2], upstream_oid, "upstream commit must be merged");
+    assert_eq!(git(&repo, &["show", "HEAD:local"]), "local");
+    assert_eq!(git(&repo, &["show", "HEAD:upstream"]), "upstream");
+}
+
 /// Run a remote pull against an `ssh` stand-in that just prints `stderr_line`
 /// and exits non-zero, and return the single entry it recorded.
 fn pull_outcome_for_ssh_output(stderr_line: &str) -> kagi_git::oplog::OpOutcome {

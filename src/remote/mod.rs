@@ -734,7 +734,19 @@ pub fn remote_pull(
     before: &kagi_git::StateSummary,
 ) -> RemotePullReport {
     use kagi_git::oplog::OpOutcome;
-    let transport = run_ssh(host, &["git", "-C", physical_toplevel, "pull"]);
+    // The preview promises a merge pull. CLI flags outrank pull.rebase,
+    // branch.<name>.rebase, and pull.ff=only on the remote host.
+    let transport = run_ssh(
+        host,
+        &[
+            "git",
+            "-C",
+            physical_toplevel,
+            "pull",
+            "--no-rebase",
+            "--ff",
+        ],
+    );
     let after = |dirty: String| kagi_git::StateSummary {
         head: before.head.clone(),
         dirty,

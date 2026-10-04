@@ -1649,6 +1649,12 @@ The same pure frame parser rejects missing staged/status delimiters while
 allowing legitimate empty clean streams and preserving non-UTF-8 filenames.
 The real-Git probe test changes unstaged content and then stages it, proving
 that the two frozen digests change independently without HEAD/config drift.
+`remote_oplog_test::remote_pull_merges_even_when_host_config_requests_rebase_and_ff_only`
+creates a divergent real-Git pair with `pull.rebase=true`,
+`branch.main.rebase=true`, and `pull.ff=only`; the transport must still make
+a merge commit retaining the local parent and record Success. `remote_pull_lease`
+also checks the fake SSH's executed pull argv contains `--no-rebase --ff`.
+Removing `--no-rebase` makes the real-Git merge-parent assertion fail.
 `remote_pull_cached_preview_stale` changes the checked-out branch before the
 first live plan probe while cached status still names `main`; the plan must
 reject without a confirmation modal, lease or `git pull` and show a localized

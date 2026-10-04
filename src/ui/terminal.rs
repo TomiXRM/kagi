@@ -97,17 +97,16 @@ pub fn build_color_palette() -> ColorPalette {
         .build()
 }
 
-/// Build the full terminal config (font + the active-theme palette).  Used both
-/// Terminal font size at 1.0x zoom, in px.
+/// Terminal font size at the former 16px-rem reference scale, in px.
 pub(crate) const TERMINAL_FONT_SIZE: f32 = 13.0;
 
-/// Terminal font size at `zoom`. Pure, so it can be tested without touching
-/// the process-global zoom (which other tests read concurrently).
+/// Terminal font size at relative `zoom`, including the shared physical base.
+/// Pure so tests need not mutate process-global zoom.
 pub(crate) fn terminal_font_size(zoom: f32) -> f32 {
-    TERMINAL_FONT_SIZE * zoom
+    TERMINAL_FONT_SIZE * (crate::ui::theme::BASE_REM_PX / 16.0) * zoom
 }
 
-/// to start a session and to live-apply a theme switch via `update_config`.
+/// Build the full terminal config for new and live-updated sessions.
 pub fn build_terminal_config() -> TerminalConfig {
     TerminalConfig {
         font_family: pick_font_family(),
@@ -691,28 +690,20 @@ pub fn ensure_terminal(
 mod font_size_tests {
     use super::*;
 
-    /// Regression: the terminal font was a hardcoded `px(13.0)` and ignored
-    /// the UI zoom entirely, so View -> Zoom In/Out resized every surface
-    /// except the terminal (user report).
-    ///
-    /// Deliberately exercises the pure `terminal_font_size` rather than
-    /// `set_zoom` + `build_terminal_config`: zoom is process-global state and
-    /// `graph_view`'s own zoom test reads it from a parallel test thread, so
-    /// mutating it here made that test fail intermittently.
+    /// The PTY grid uses physical pixels instead of rems; it must follow the
+    /// same base and relative zoom as text in the other panes.
     #[test]
     fn terminal_font_follows_ui_zoom() {
         let base = terminal_font_size(1.0);
         assert!(
-            (base - TERMINAL_FONT_SIZE).abs() < f32::EPSILON,
-            "1.0x must be the base size, got {base}"
+            (base - 11.7).abs() < 1e-4,
+            "default terminal font is 11.7px"
         );
         assert!(
-            terminal_font_size(1.5) > base,
-            "zooming in must enlarge the terminal font"
+            (terminal_font_size(1.111) - 13.0).abs() < 0.002,
+            "migrated 1111 permille retains the old 13px size"
         );
-        assert!(
-            terminal_font_size(0.8) < base,
-            "zooming out must shrink the terminal font"
-        );
+        assert!(terminal_font_size(1.5) > base);
+        assert!(terminal_font_size(0.8) < base);
     }
 }

@@ -331,15 +331,19 @@ fn appearance_section(
     let zoom = theme::zoom();
     let app_minus = app.clone();
     let dec = move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
-        let z = (theme::zoom() - theme::ZOOM_STEP).max(theme::ZOOM_MIN);
-        theme::set_zoom(z);
-        app_minus.update(cx, |_a, cx| cx.notify());
+        theme::set_zoom(theme::step_zoom(theme::zoom(), false));
+        app_minus.update(cx, |app, cx| {
+            app.apply_terminal_config(cx);
+            cx.notify();
+        });
     };
     let app_plus = app.clone();
     let inc = move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
-        let z = (theme::zoom() + theme::ZOOM_STEP).min(theme::ZOOM_MAX);
-        theme::set_zoom(z);
-        app_plus.update(cx, |_a, cx| cx.notify());
+        theme::set_zoom(theme::step_zoom(theme::zoom(), true));
+        app_plus.update(cx, |app, cx| {
+            app.apply_terminal_config(cx);
+            cx.notify();
+        });
     };
     let zoom_ctl = div()
         .flex()

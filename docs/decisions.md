@@ -1,7 +1,7 @@
 # Decision Log
 
 > **Status:** Active — append-only  
-> **Last updated:** 2026-10-04
+> **Last updated:** 2026-10-05
 
 ADR にするほどではないが、再計測や同じ失敗を避けるために残すべき決定と実測事実のログです。ADR を置き換えるものではありません。
 
@@ -15,6 +15,7 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-05 | UI の 100% を旧 90%（14.4px/rem）に変更し、文字の rem と `scaled_px` / Graph の `scaled`、Terminal と divider の座標換算を同じ基準に揃える。旧 `ui_zoom` は初回起動時だけ `round(v / 0.9)` に換算し、`ui_scale_base=v2` と同一の atomic 保存に載せる。未設定でも版を記録し、Cmd と Settings の ± は非プリセット値から進行方向の次の 10% 刻みに移る | #1019。定数だけ 16→14.4 にすると文字と行・lane がずれる。旧 900→新 1000、旧 1000→新 1111 を移して見た目を保ち、既存の `settings/store.rs` の破損退避・未知キー保持・単一ロックを迂回しない。 |
 | 2026-10-04 | 右ペインの開閉は `inspector_visible` の toggle ではなく Graph の解決済み `RightPane` が表示 / 非表示に変わったことを起点にする。commit のクリック・再クリック・Esc は同じ `PanelMotion` の 180/150ms と途中反転を使い、Inspector / Compare / Commit Panel の表示中の交換は動かさない。Home・タブ切替・Conflict・Graph 外への移動は即時、`reduce_motion` も即時。Esc 後の最後の Inspector 行は閉じる clip の描画だけに使い、active な選択は解除する | #1001 は下の #955 の「toggle のときだけ動く」を右ペインに限って置き換える。Graph で選択が変わっても toggle は変わらず、開閉が即時になっていた。表示中の slot 交換と workspace 全体の遷移を除外すれば、不要な二重アニメーションを増やさず selection / Esc を同じ幅の motion として扱える。Tier A `right_selection_motion` で中間幅、反転、Esc、reduced motion、tab 境界を測る。 |
 | 2026-10-04 | 全 plan card と Stash Push の状態比較を共有の CURRENT / AFTER 縦 2 段にし、固定 64px のラベルを折り返さず、MD 幅を 576 → 640px に統一する。compact 時の縮小は維持する | #1017。13px の等幅文字は約 7.8px/文字で、head 列は 576px 時に約 56 文字、640px 時に約 64 文字。repo の remote refs は p90 が 41、最大が 47 文字で、`branch: ` の 8 文字を加えた 55 文字が余裕をもって収まる。Stash だけの 44px ラベル列では CURRENT が CURRE/NT に折れた。 |
 | 2026-10-04 | queued commit の draft key は投入時の branch で凍結し、stage digest は path・OID・mode・conflict stage を含める。確認時と admission 直前に index と merge state を再読し、変化した確認済み内容を黙って commit しない。write / plan slot / reconcile 待ちを input focus より優先して区別し、detached HEAD の新 commit OID も verify する | #1020 review、[ADR-0204](adr/0204-operation-queue.md) 決定 4・改訂履歴(段階 3b-1)。古い承認を再利用せず、正しい detached commit の後続 chain だけを進める。 |

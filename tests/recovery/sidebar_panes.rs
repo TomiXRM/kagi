@@ -32,6 +32,8 @@ const WORKTREES: usize = 2;
 /// leaves share one row; the worktree-only list is taller.
 const ROW: f32 = 20.;
 const WORKTREE_ROW: f32 = 24.;
+/// #1019: new 100% renders the old 90% logical row dimensions.
+const BASE_SCALE: f32 = 0.9;
 /// The unreleased six-pane encoding (PR first). The five-pane parser must
 /// reject it, so the app falls back to defaults and leaves the raw value.
 const SIX_PANE_V1: &str = "v1:1200,2600,2200,1800,1100,1100:0";
@@ -218,8 +220,8 @@ fn assert_row_density(
         e2e::control_bounds(id, &name)
             .unwrap_or_else(|| panic!("{name} laid out at {zoom}x; panes {panes:?}"))
     });
-    let row = ROW * zoom;
-    let wt_row = WORKTREE_ROW * zoom;
+    let row = ROW * BASE_SCALE * zoom;
+    let wt_row = WORKTREE_ROW * BASE_SCALE * zoom;
     for (name, measured) in [(&names[0], header), (&names[3], wt_header)] {
         assert!(
             near(tall(measured), row),
@@ -359,7 +361,7 @@ pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
     let initial = bounds(cx, &app);
     for (index, &pane) in initial.iter().enumerate() {
         assert!(
-            height(pane) >= ROW - 0.5,
+            height(pane) >= ROW * BASE_SCALE - 0.5,
             "pane {index} header fits: {initial:?}"
         );
         if index > 0 {
@@ -387,7 +389,7 @@ pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
     assert_eq!(repaired.weights, defaults);
     assert_eq!(repaired.collapsed_mask, 1);
     assert!(
-        near(height(bounds(cx, &app)[LOCAL]), ROW),
+        near(height(bounds(cx, &app)[LOCAL]), ROW * BASE_SCALE),
         "collapsed LOCAL keeps only its header: {:?}",
         bounds(cx, &app)
     );
@@ -493,7 +495,7 @@ pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
     click_header(cx, &app, window, REMOTE);
     let collapsed_bounds = bounds(cx, &app);
     assert!(
-        near(height(collapsed_bounds[REMOTE]), ROW),
+        near(height(collapsed_bounds[REMOTE]), ROW * BASE_SCALE),
         "collapsed REMOTE is one header row: {collapsed_bounds:?}"
     );
     drag_divider(cx, &app, window, divider, &[8., 24.], |_| {});
@@ -524,8 +526,10 @@ pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
     assert!(cx.read(|cx| reopened.read(cx).sidebar.collapsed.contains("remote")));
     let headers = header_heights(cx, &reopened, compact_window);
     assert!(
-        headers.iter().all(|&measured| near(measured, ROW)),
-        "five {ROW}px headers at 600px: {headers:?}"
+        headers
+            .iter()
+            .all(|&measured| near(measured, ROW * BASE_SCALE)),
+        "five 18px headers at 600px: {headers:?}"
     );
     let compact = bounds(cx, &reopened);
     let sidebar = e2e::control_bounds(compact_window.window_id(), "worktree-sidebar").unwrap();
@@ -534,17 +538,24 @@ pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
         compact[4].1 <= sidebar_bottom + 1.,
         "five panes fit 600px: {compact:?}, sidebar={sidebar:?}"
     );
-    assert!(near(height(compact[REMOTE]), ROW), "{compact:?}");
+    assert!(
+        near(height(compact[REMOTE]), ROW * BASE_SCALE),
+        "{compact:?}"
+    );
 
     theme::set_zoom(1.25);
     let headers = header_heights(cx, &reopened, compact_window);
     assert!(
-        headers.iter().all(|&measured| near(measured, ROW * 1.25)),
+        headers
+            .iter()
+            .all(|&measured| near(measured, ROW * BASE_SCALE * 1.25)),
         "five scaled headers at 600px/125%: {headers:?}"
     );
     let scaled = bounds(cx, &reopened);
     assert!(
-        scaled.iter().all(|&pane| height(pane) >= ROW * 1.25 - 0.5),
+        scaled
+            .iter()
+            .all(|&pane| height(pane) >= ROW * BASE_SCALE * 1.25 - 0.5),
         "all five scaled panes retain their header: {scaled:?}"
     );
     let sidebar = e2e::control_bounds(compact_window.window_id(), "worktree-sidebar").unwrap();
@@ -560,7 +571,7 @@ pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
             gpui::ScrollWheelEvent {
                 position: point(
                     pane_viewport.origin.x + px(8.),
-                    pane_viewport.origin.y + px(ROW * 1.25 / 2.),
+                    pane_viewport.origin.y + px(ROW * BASE_SCALE * 1.25 / 2.),
                 ),
                 delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-1000.))),
                 touch_phase: gpui::TouchPhase::Moved,
@@ -580,5 +591,5 @@ pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
     settings::flush();
     theme::set_zoom(previous_zoom);
     drop(linked_root);
-    eprintln!("[gui-e2e] PASS sidebar_panes: five panes without PULL REQUESTS, 20px rows / 24px worktree rows at 100% and 125%, six-pane v1 raw fallback and first-edit repair via LOCAL, LOCAL/REMOTE pointer-tracking drag, independent LOCAL/REMOTE scroll, collapsed REMOTE skip to WORKTREES, remount at 600px and 125% zoom");
+    eprintln!("[gui-e2e] PASS sidebar_panes: five panes without PULL REQUESTS, 18px rows / 21.6px worktree rows at new 100% and 125%, six-pane v1 raw fallback and first-edit repair via LOCAL, LOCAL/REMOTE pointer-tracking drag, independent LOCAL/REMOTE scroll, collapsed REMOTE skip to WORKTREES, remount at 600px and 125% zoom");
 }

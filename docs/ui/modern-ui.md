@@ -139,8 +139,7 @@ Before / after: <images>
 
 ## Role targets (start here; change only with a measured reason)
 
-Sizes are the pinned gpui-component scale (16px/rem, scaled with zoom) unless
-the row says a Kagi geometry is kept on purpose.
+Sizes remain logical px at the pinned gpui-component scale; Kagi's new 100% base is 14.4px/rem (the previous 90%), with `scaled_px`/graph geometry following the same factor. Zoom scales from that base; fixed 2px `RING` and layout minima remain exceptions.
 
 | Role | Target | Keep / exceptions |
 |---|---|---|

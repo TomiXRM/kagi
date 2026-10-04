@@ -52,6 +52,33 @@ fn settings_text(dir: &Path) -> String {
     std::fs::read_to_string(dir.join("settings.json")).expect("settings.json")
 }
 
+#[test]
+fn public_scale_migration_uses_the_live_settings_store() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        tmp.path().join("settings.json"),
+        r#"{"ui_zoom":"1000","future_only_key":"keepme"}"#,
+    )
+    .expect("seed");
+    run_child("public_scale_migration_child", tmp.path());
+    let saved: serde_json::Value = serde_json::from_str(&settings_text(tmp.path())).expect("json");
+    assert_eq!(saved["ui_zoom"], "1111");
+    assert_eq!(saved["ui_scale_base"], "v2");
+    assert_eq!(saved["future_only_key"], "keepme");
+}
+
+#[test]
+#[ignore = "child process: needs a private KAGI_LOG_DIR"]
+fn public_scale_migration_child() {
+    use crate::settings::{migrate_ui_scale_base, read_setting, settings_path};
+    let path = settings_path().expect("settings path");
+    assert_eq!(migrate_ui_scale_base(), Some(1111));
+    assert_eq!(read_setting("ui_zoom").as_deref(), Some("1111"));
+    let first_bytes = std::fs::read(&path).expect("persisted");
+    assert_eq!(migrate_ui_scale_base(), Some(1111));
+    assert_eq!(std::fs::read(&path).expect("persisted"), first_bytes);
+}
+
 // ── #617 review 3: the public read path sees a stat-invisible edit ─────────
 
 #[test]

@@ -14,6 +14,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - commit / branch / remote branch / tag / stash / worktree の右クリックメニューをキーボードで操作できるようにしました。開くと最初の有効な項目に focus が移り、↑/↓(端で折り返し)と Home/End で無効な項目を飛ばして移動し、Enter / Space で実行、Escape で閉じます。閉じると focus は開く前の場所へ戻ります(項目が確認 modal を開いた場合は window へ)。Shift+F10(Windows キーボードの Menu キー)で、Graph では選択中の commit のメニューを、サイドバーでは focus のある行(branch / remote branch / tag / stash / worktree)のメニューを、その行の左下に開きます。ウィンドウより長いメニューは項目の部分がスクロールし、キーで移った項目は常に見える位置まで送られます。Home やほかのタブへ移るとメニューは閉じます。項目は `Role::MenuItem`、無効な項目は AX の disabled 状態を持ちます。(#985)
 
 ### Changed
+- 既定の表示スケールを従来の 90% 相当（100%=14.4px/rem）にしました。保存済みの拡大率は初回起動時に換算して従来の見た目を保ち、Graph の行と線・Terminal も同じ倍率に揃えました。(#1019)
 - 全 plan 確認カードの状態比較を Stash と同じ縦 2 段の CURRENT / AFTER（日本語は現在 / 実行後）に統一し、MD モーダルを 640px に広げました。Stash の CURRENT ラベルが途中で折り返される問題も修正しました。変更のない状態の chip は日本語では「変更なし」と表示します。SM / LG のカードも指定どおりの幅で描かれるようになりました（これまでは窓幅の上限が自分の幅の 90% として働き、LG が MD より狭くなっていました）。(#1017)
 
 - 計画確認カードの CURRENT → PREDICTED を同じ幅の 2 列と中央の矢印に整理し、状態チップは行内でスクロールできるようにしました。相当する Git コマンドがある計画は折りたたんでコピーでき、見出しは Tab / Enter / Space と読み上げにも対応します（Pull は実行時に再 fetch して merge commit を作る場合があるため、等価コマンドを提示しません）。Operation Log の ref 復元は REFS の移動と削除、変えない対象、既存の線を保った復元後のグラフを先に示し、確認を 2 回必要とする安全境界は維持します。低い窓でも対象 ref の先頭 3 行を優先し、復元後のグラフは 6 行を上限に内容分だけの高さにし、拡大時の横方向の線も見切れないようにします。削除する ref は赤いチップで示します。不正な ref 行の計画は開かず、詳細を Operation Log に記録して短いエラーを表示します。(#988)

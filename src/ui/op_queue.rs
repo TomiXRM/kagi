@@ -1,4 +1,4 @@
-//! Wiring of the operation queue (#355 stage 3a, ADR-0204).
+//! Wiring of the operation queue (#355 stages 3a–3b-2, ADR-0204).
 //!
 //! [`crate::app::IntentQueue`] is a pure reducer. This module is the one place
 //! that feeds it events and carries out its effects: everything reaches it
@@ -9,16 +9,16 @@
 //! which runs on every enqueue, on every completed run-family write, and on a
 //! 250 ms ticker while any tab has intents.
 //!
-//! Checkout and commit are wired into the shared queue.
+//! Checkout, commit and merge are wired into the shared queue.
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use gpui::{Context, SharedString};
+use gpui::{AppContext as _, Context, SharedString};
 use kagi_ui_core::i18n::{queue_text, QueueText};
 
-use super::modals::{CheckoutPlanModal, CheckoutPlanTarget, QueuedCommitModal};
+use super::modals::{CheckoutPlanModal, CheckoutPlanTarget, MergePlanModal, QueuedCommitModal};
 use super::{i18n, KagiApp};
 use crate::app::{
     AdmissionError, CheckoutIntent, EnqueueError, ExecutionEvidence, IntentId, IntentQueue,
@@ -27,6 +27,8 @@ use crate::app::{
 };
 
 const TICK: Duration = Duration::from_millis(250);
+mod merge;
+mod sync;
 
 /// The window's queue and what it was last told.
 #[derive(Default)]
@@ -65,6 +67,7 @@ struct NextRun {
 enum QueuedPlan {
     Checkout(CheckoutPlanModal),
     Commit(QueuedCommitModal),
+    Merge(MergePlanModal),
 }
 
 /// Domain words stay English in both languages (ADR-0048).
@@ -190,6 +193,9 @@ impl KagiApp {
                     if self.queued_commit_modal().is_some_and(|m| m.queued == id) {
                         self.clear_queued_commit_modal();
                     }
+                    if self.merge_modal().is_some_and(|m| m.queued == Some(id)) {
+                        self.clear_merge_modal();
+                    }
                     if self.op_queue.confirming == Some(id) {
                         self.op_queue.confirming = None;
                     }
@@ -251,6 +257,7 @@ impl KagiApp {
         let Some(repo) = self.ui().repo_session.as_ref().map(|s| s.backend()) else {
             let op = match intent.request {
                 IntentRequest::Commit { .. } => i18n::Op::Commit,
+                IntentRequest::Merge { .. } => i18n::Op::Merge,
                 _ => i18n::Op::Checkout,
             };
             self.report_plan_failure(op, super::modal_plan::SESSION_UNAVAILABLE);
@@ -273,6 +280,10 @@ impl KagiApp {
                     return;
                 }
             }
+        }
+        if matches!(&intent.request, IntentRequest::Merge { .. }) {
+            self.plan_queued_merge(id, &intent, cx);
+            return;
         }
         let (op, planned) = match &intent.request {
             IntentRequest::Checkout { target } => {
@@ -324,17 +335,14 @@ impl KagiApp {
                     }))
                 }),
             ),
-            IntentRequest::Merge { .. } => {
-                self.drive_queue(QueueEvent::PlanError(id), cx);
-                self.drive_queue(QueueEvent::PlanSlotFreed(Some(id)), cx);
-                return;
-            }
+            IntentRequest::Merge { .. } => unreachable!("async merge handled above"),
         };
         match planned {
             Ok(modal) => {
                 let plan = match &modal {
                     QueuedPlan::Checkout(m) => &m.plan,
                     QueuedPlan::Commit(m) => &m.plan,
+                    QueuedPlan::Merge(m) => &m.plan,
                 };
                 klog!(
                     "queue: plan {} blockers={} warnings={}",
@@ -387,6 +395,7 @@ impl KagiApp {
                     || m.draft_changed
                     || m.staged_changed
             }
+            QueuedPlan::Merge(_) => true,
         };
         let label = self.queued_label(id);
         if asks {
@@ -396,6 +405,7 @@ impl KagiApp {
             match modal {
                 QueuedPlan::Checkout(m) => self.set_plan_modal(m),
                 QueuedPlan::Commit(m) => self.set_queued_commit_modal(m),
+                QueuedPlan::Merge(m) => self.set_merge_modal(m),
             }
         } else {
             klog!("queue: run {} (clean plan)", label);
@@ -419,6 +429,15 @@ impl KagiApp {
         }
         self.clear_plan_modal();
         self.op_queue.plans.insert(id, QueuedPlan::Checkout(modal));
+        self.drive_queue(QueueEvent::Approve(id), cx);
+    }
+    pub(crate) fn confirm_queued_merge(&mut self, id: IntentId, cx: &mut Context<Self>) {
+        let Some(modal) = self.merge_modal().cloned().filter(|m| m.queued == Some(id)) else {
+            return;
+        };
+        self.op_queue.confirming = None;
+        self.clear_merge_modal();
+        self.op_queue.plans.insert(id, QueuedPlan::Merge(modal));
         self.drive_queue(QueueEvent::Approve(id), cx);
     }
     pub(crate) fn confirm_queued_commit(&mut self, cx: &mut Context<Self>) {
@@ -487,6 +506,7 @@ impl KagiApp {
             .plan_modal()
             .and_then(|m| m.queued)
             .or_else(|| self.queued_commit_modal().map(|m| m.queued))
+            .or_else(|| self.merge_modal().and_then(|m| m.queued))
         {
             self.op_queue.rejected = Some(id);
         }
@@ -505,6 +525,22 @@ impl KagiApp {
         };
         match modal {
             QueuedPlan::Checkout(modal) => self.run_checkout(modal, Some(id), cx),
+            QueuedPlan::Merge(modal) => {
+                if !modal.plan.blockers.is_empty() {
+                    if let Some(repo_path) = self.repo_path.clone() {
+                        self.record_refused(
+                            "merge",
+                            modal.plan.current.clone(),
+                            &modal.plan.blockers,
+                            &repo_path,
+                            cx,
+                        );
+                    }
+                    self.drive_queue(QueueEvent::PlanError(id), cx);
+                    return;
+                }
+                self.run_merge(modal, Some(id), cx);
+            }
             QueuedPlan::Commit(modal) => {
                 let state = self.ui().repo_session.as_ref().map(|session| {
                     let repo = session.backend();
@@ -685,149 +721,6 @@ impl KagiApp {
         }
     }
 
-    fn queue_revalidating(&self, session: SessionId) -> bool {
-        self.ui
-            .get(&session)
-            .is_some_and(|ui| ui.panes_revalidating())
-            || self
-                .app_sessions
-                .worktree_of(session)
-                .is_some_and(|worktree| self.app_sessions.is_stale(worktree))
-    }
-
-    /// Before a new writer is admitted: release in the queue whatever ended
-    /// while it was idle, so the new write is not mistaken for the old one's
-    /// owner (#1018 review). A queued write admitted by this very sync owns
-    /// the slot itself; the caller's prepared run is kept for its own turn.
-    pub(crate) fn sync_queue_before_admission(&mut self, cx: &mut Context<Self>) {
-        let prepared = self.op_queue.next_run.take();
-        self.sync_queue(cx);
-        self.op_queue.next_run = prepared;
-    }
-
-    /// Tell the queue what changed since it was last told. The release of a
-    /// write is reported last, so the arbitration it triggers already sees
-    /// the tab, the read and the modal slot as they are.
-    pub(crate) fn sync_queue(&mut self, cx: &mut Context<Self>) {
-        let active = self.active_session();
-        if self.op_queue.observed_input_focused != self.op_queue.input_focused {
-            self.op_queue.input_focused = self.op_queue.observed_input_focused;
-            let event = if self.op_queue.input_focused {
-                QueueEvent::InputFocused
-            } else {
-                QueueEvent::InputBlurred
-            };
-            self.drive_queue(event, cx);
-        }
-        // The returning tab's read state first: an `OwnerReturned` that lands
-        // before its `RevalidationStarted` would replan against a stale read.
-        let revalidating = active.filter(|session| self.queue_revalidating(*session));
-        if revalidating != self.op_queue.revalidating {
-            let previous = self.op_queue.revalidating;
-            self.op_queue.revalidating = revalidating;
-            if let Some(session) = revalidating {
-                self.drive_queue(QueueEvent::RevalidationStarted(session), cx);
-            }
-            if let Some(session) = previous.filter(|p| Some(*p) != revalidating) {
-                self.drive_queue(QueueEvent::RevalidationDone(session), cx);
-            }
-        }
-        if active != self.op_queue.active {
-            let previous = self.op_queue.active;
-            self.op_queue.active = active;
-            match (active, previous) {
-                (Some(session), _) => self.drive_queue(QueueEvent::OwnerReturned(session), cx),
-                (None, Some(session)) => self.drive_queue(QueueEvent::OwnerDeparted(session), cx),
-                (None, None) => {}
-            }
-        }
-        for session in self.op_queue.queue.sessions() {
-            if !self.app_sessions.is_attached(session) {
-                self.drive_queue(QueueEvent::OwnerDetached(session), cx);
-            }
-        }
-        let planning = self.planning.is_some();
-        if planning != self.op_queue.planning {
-            self.op_queue.planning = planning;
-            let event = if planning {
-                QueueEvent::PlanSlotTaken
-            } else {
-                QueueEvent::PlanSlotFreed(None)
-            };
-            self.drive_queue(event, cx);
-        }
-        let modal = self.has_active_modal();
-        if modal != self.op_queue.modal {
-            self.op_queue.modal = modal;
-            let event = if modal {
-                QueueEvent::ModalSlotBusy
-            } else {
-                QueueEvent::ModalSlotFree
-            };
-            self.drive_queue(event, cx);
-        }
-        if let Some(id) = self.op_queue.confirming {
-            if !self.plan_modal().is_some_and(|m| m.queued == Some(id))
-                && !self.queued_commit_modal().is_some_and(|m| m.queued == id)
-            {
-                self.op_queue.confirming = None;
-                let event = if self.op_queue.rejected.take() == Some(id) {
-                    klog!("queue: declined {}", self.queued_label(id));
-                    QueueEvent::Reject(id)
-                } else {
-                    QueueEvent::ConfirmWithdrawn(id)
-                };
-                self.drive_queue(event, cx);
-            }
-        }
-        // A reconcile the queue waits on is cleared only by its acknowledgement
-        // (ADR-0204 決定 5). The entries carry no session, so the queue waits
-        // until none is left anywhere.
-        if self.app_sessions.blocking_reconcile().is_none() {
-            for session in self.op_queue.queue.reconciling_sessions() {
-                self.drive_queue(QueueEvent::ReconcileAcknowledged(session), cx);
-            }
-        }
-        let cloning = self.home_github.cloning.is_some();
-        if cloning && !self.op_queue.untracked && self.op_queue.write.is_none() {
-            self.queue_untracked_write(None, cx);
-        }
-        if !cloning
-            && !self.app_sessions.has_leases()
-            && (self.op_queue.write.is_some() || self.op_queue.untracked)
-        {
-            let stamp = self.op_queue.write.take();
-            self.op_queue.untracked = false;
-            self.drive_queue(QueueEvent::LeaseReleased(stamp), cx);
-        }
-    }
-
-    fn ensure_queue_ticker(&mut self, cx: &mut Context<Self>) {
-        if self.op_queue.ticker_alive || self.op_queue.queue.is_empty() {
-            return;
-        }
-        self.op_queue.ticker_alive = true;
-        cx.spawn(async move |this, acx| loop {
-            acx.background_executor().timer(TICK).await;
-            let alive = this
-                .update(acx, |app, cx| {
-                    app.sync_queue(cx);
-                    // Redraw for the running row's elapsed seconds.
-                    cx.notify();
-                    if app.op_queue.queue.is_empty() {
-                        app.op_queue.ticker_alive = false;
-                        return false;
-                    }
-                    true
-                })
-                .unwrap_or(false);
-            if !alive {
-                break;
-            }
-        })
-        .detach();
-    }
-
     /// Strip actions.
     pub(crate) fn queue_remove(&mut self, id: IntentId, cx: &mut Context<Self>) {
         let head = self.op_queue.queue.intent(id).map(|intent| intent.state);
@@ -853,42 +746,6 @@ impl KagiApp {
         if let Some(session) = self.active_session() {
             self.drive_queue(QueueEvent::DismissCancelled(session), cx);
         }
-    }
-
-    /// A label for the strip's state column.
-    pub(crate) fn queue_state_text(state: IntentState) -> SharedString {
-        use crate::app::WaitReason;
-        let key = match state {
-            IntentState::Queued => QueueText::Count,
-            IntentState::Waiting { reason } => match reason {
-                WaitReason::WriteRunning => QueueText::WaitWrite,
-                WaitReason::PlanSlotBusy => QueueText::WaitPlan,
-                WaitReason::NeedsConfirmation => QueueText::WaitConfirm,
-                WaitReason::NeedsReconcile => QueueText::WaitReconcile,
-                WaitReason::Typing => QueueText::WaitTyping,
-            },
-            IntentState::Planning => QueueText::Planning,
-            IntentState::AwaitingConfirm => QueueText::Confirming,
-            IntentState::Admitting => QueueText::Starting,
-            IntentState::Running { .. } => QueueText::Running,
-            IntentState::Settled | IntentState::Cancelled { .. } => QueueText::Cancelled,
-        };
-        SharedString::from(queue_text(key))
-    }
-
-    pub(crate) fn queue_cancel_text(reason: crate::app::CancelReason) -> &'static str {
-        use crate::app::CancelReason as R;
-        queue_text(match reason {
-            R::UserRemoved => QueueText::ReasonRemoved,
-            R::UserRejected => QueueText::ReasonRejected,
-            R::PlanError => QueueText::ReasonPlanError,
-            R::ChainTripped { .. } => QueueText::ReasonChain,
-            R::OwnerGone => QueueText::ReasonOwnerGone,
-            R::IdentityChanged => QueueText::ReasonIdentity,
-            R::MergeStarted => QueueText::ReasonMergeStarted,
-            R::StaleApproval => QueueText::ReasonStale,
-            R::CapacityRejected => QueueText::Full,
-        })
     }
 }
 

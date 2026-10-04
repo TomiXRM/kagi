@@ -1916,7 +1916,7 @@ isolated app, compare screenshots before/after 2 s and after completion, and
 inspect klog. Remote SSH pull follows #989's lease migration; clone remains out
 of scope.
 
-### Operation queue (#355 stage 3a / 3b-1, ADR-0204)
+### Operation queue (#355 stage 3a / 3b-1 / 3b-2, ADR-0204)
 
 G: `cargo test -p kagi --lib app::queue` (the pure reducer: Q1–Q13 rows,
 stage 3a's untracked-write, external plan, withdrawn-confirm and strip-removal
@@ -1971,6 +1971,23 @@ The Commit Panel busy path releases title-input focus itself, so the clean
 `cargo test -p kagi-git staged_set_digest` additionally exercises gitlink
 mode and conflict index stage changes; `merge_in_progress_reads_external_state_after_conflicts_are_resolved`
 probes the resolved merge guard.
+Stage 3b-2 adds `queue_replans_merge_after_predecessor` (held commit changes
+HEAD; live merge kind changes from fast-forward to merge commit),
+`queue_confirm_departure_requeues` (A's queued merge modal withdraws on
+departure while B's checkout proceeds, then A's intent reopens),
+`queue_merge_conflict_trips_successors` (Conflict Mode leaves no new commit,
+so the queued checkout is listed `previous step failed`),
+`queue_merge_into_keeps_frozen_target` (checkout moves HEAD to `other`;
+merge still updates the frozen `main` tip) and `queue_drag_merge_while_busy`
+(drag enqueue instead of busy refusal). The merge modal is always required,
+and merge planning owns the plan slot through its terminal callback.
+Scope the full neighboring GUI coverage to
+`KAGI_GUI_E2E_ONLY='queue_,merge,drag'`; do not launch it without a filter.
+Tier B for stage 3b-2: queue checkout → commit → merge behind a slow write,
+check each confirmation and `waiting: typing` on an input, the 32-entry
+cancel list, and English/Japanese in an isolated app. The executable recipe
+is prepared at `/tmp/kagi-944/tierb-355-s3b2.md`; its app run is separate.
+
 Tier B: queue two checkouts behind a held or slow checkout in an isolated app
 and capture the strip, cancel list, and running row's seconds in EN/JA; queue
 a commit behind a held checkout and check its frozen message, confirmation and

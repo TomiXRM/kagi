@@ -32,6 +32,8 @@ pub(crate) const ADVICE_PULL_REMOTE_DIVERGED: &str =
     "`{}` は upstream から乖離しています(ahead {}、behind {})。pull はremote上で merge commit を作成します。";
 pub(crate) const ADVICE_PULL_REMOTE_DIRTY: &str =
     "remoteの作業ツリーに未 commit の変更があります。pull が失敗するか、ホスト側での conflict 解決が必要になる場合があります。";
+pub(crate) const ADVICE_PULL_REMOTE_PREVIEW_STALE: &str =
+    "remote pull の確認内容とホストの現在の branch・upstream・HEAD commit・作業ツリーの変更状態が一致しません。remote の表示を更新してから、もう一度お試しください。";
 
 /// `「stage 済み 2 件、変更 1 件」` — the dirty-parts fragment in JA
 /// (mirrors `plan/common.rs::parts_ja`; pull has its own module so it stays
@@ -115,6 +117,7 @@ pub fn note_ja(note: &PullNote) -> String {
             behind,
         } => super::advice_text(Msg::AdvicePullRemoteDiverged, &[branch, ahead, behind]),
         PullNote::RemoteDirty => super::advice_text(Msg::AdvicePullRemoteDirty, &[]),
+        PullNote::RemotePreviewStale => super::advice_text(Msg::AdvicePullRemotePreviewStale, &[]),
     }
 }
 

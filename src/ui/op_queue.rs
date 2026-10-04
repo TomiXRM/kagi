@@ -4,7 +4,7 @@
 //! that feeds it events and carries out its effects: everything reaches it
 //! through [`KagiApp::drive_queue`]. Observations the reducer needs but no
 //! single call site owns — the tab on screen, the modal slot, a revalidating
-//! read, the remote latch, a plan job outside the queue, a released lease —
+//! read, a plan job outside the queue, a released lease —
 //! are compared with what the queue was last told in [`KagiApp::sync_queue`],
 //! which runs on every enqueue, on every completed run-family write, and on a
 //! 250 ms ticker while any tab has intents.
@@ -35,9 +35,6 @@ pub(crate) struct QueueWiring {
     active: Option<SessionId>,
     modal: bool,
     revalidating: Option<SessionId>,
-    remote: bool,
-    /// The tab that started the lease-less remote pull (set at its latch).
-    remote_owner: Option<SessionId>,
     planning: bool,
     /// The tracked write the queue was told about, until its release.
     write: Option<OwnerStamp>,
@@ -415,12 +412,6 @@ impl KagiApp {
         }
     }
 
-    /// The lease-less remote pull latched from the tab now on screen: its
-    /// own queue must refuse new intents, others only wait (ADR-0204 決定 3).
-    pub(crate) fn note_remote_write_owner(&mut self) {
-        self.op_queue.remote_owner = self.active_session();
-    }
-
     /// A write the queue cannot judge started. `owner: None` is background
     /// work (auto-fetch) that is no one's predecessor.
     pub(crate) fn queue_untracked_write(
@@ -513,22 +504,6 @@ impl KagiApp {
         for session in self.op_queue.queue.sessions() {
             if !self.app_sessions.is_attached(session) {
                 self.drive_queue(QueueEvent::OwnerDetached(session), cx);
-            }
-        }
-        let remote = self.remote_write.is_some();
-        if remote != self.op_queue.remote {
-            self.op_queue.remote = remote;
-            match (remote, self.op_queue.remote_owner.or(active)) {
-                (true, Some(owner)) => {
-                    self.drive_queue(QueueEvent::RemoteLatched(owner), cx);
-                }
-                // No tab owns the screen: nothing can be queued, and the
-                // latch is observed again once a tab is on screen.
-                (true, None) => self.op_queue.remote = false,
-                (false, _) => {
-                    self.op_queue.remote_owner = None;
-                    self.drive_queue(QueueEvent::RemoteLatchReleased, cx);
-                }
             }
         }
         let planning = self.planning.is_some();

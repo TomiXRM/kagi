@@ -97,15 +97,24 @@ impl UnobservableReleaseReport {
     }
 }
 
-/// The one remote-writing run a parked entry is, when it is one kagi can name.
-/// Derived from the entry rather than from a [`ReconcileRead`], so eligibility
-/// is a property of the requirement and not of a value the UI carries around.
-fn eligible_remote_write(entry: &ReconcileEntry) -> Option<&RunRequest> {
+/// Derived from the parked requirement rather than a caller-supplied read.
+fn eligible_unobservable_release(
+    entry: &ReconcileEntry,
+) -> Option<(&'static str, String, kagi_git::StateSummary)> {
     let ReconcileTarget::Planned(plan) = &entry.target else {
         return None;
     };
     match plan.as_ref() {
-        Planned::Run(request) if writes_to_a_known_remote(request.name) => Some(request),
+        Planned::Run(request) if writes_to_a_known_remote(request.name) => Some((
+            request.name,
+            request.path.display().to_string(),
+            request.plan.current.clone(),
+        )),
+        Planned::RemotePull { plan, request } => Some((
+            "pull",
+            format!("{}:{}", request.owner.host.label(), request.owner.root),
+            plan.preview.current.clone(),
+        )),
         _ => None,
     }
 }
@@ -128,14 +137,14 @@ pub fn prepare_unobservable_release(
     let Some(reason) = read.unobservable_reason() else {
         return Err(AdmissionError::NeedsReconcile);
     };
-    let Some(request) = eligible_remote_write(entry) else {
+    let Some((op, repo, before)) = eligible_unobservable_release(entry) else {
         return Err(AdmissionError::NeedsReconcile);
     };
     Ok(UnobservableReleaseJob {
         id: read.id,
-        op: request.name,
-        repo: request.path.display().to_string(),
-        before: request.plan.current.clone(),
+        op,
+        repo,
+        before,
         reason: reason.to_string(),
         observation: read.observation,
         stop_proven: read.stop_proven,
@@ -163,7 +172,7 @@ pub fn acknowledge_unobserved(
     if !entry.stopped && !report.stop_proven {
         return Err("the writer is not proven stopped, so the scope stays reserved".to_string());
     }
-    if eligible_remote_write(entry).is_none() {
+    if eligible_unobservable_release(entry).is_none() {
         return Err(
             "this operation is not one of the remote-writing families kagi can \
              release without an observation"

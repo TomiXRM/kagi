@@ -206,19 +206,11 @@ use kagi_git::OperationPlan;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Whether a state-changing op may start right now. A held **lease** is the
-/// truth about every write that can take one, `remote_write` is the latch of
-/// the one that cannot (remote pull over SSH), `planning` the in-flight *plan*
-/// latch (ADR-0196 Wave 3). A mutation started while any of the three holds is
-/// exactly the concurrent-mutation hazard #283 is about, so every entry point
-/// that begins one consults this — through [`KagiApp::op_latched`]. Pure so the
-/// gate is testable without a Context.
-pub(crate) fn op_may_start(
-    has_leases: bool,
-    remote_write: Option<&'static str>,
-    planning: Option<&'static str>,
-) -> bool {
-    !has_leases && remote_write.is_none() && planning.is_none()
+/// Whether a state-changing op may start right now. Every admitted write
+/// holds a lease; `planning` reserves the modal slot for a background plan.
+/// All mutation entry points consult this through [`KagiApp::op_latched`].
+pub(crate) fn op_may_start(has_leases: bool, planning: Option<&'static str>) -> bool {
+    !has_leases && planning.is_none()
 }
 
 impl KagiApp {
@@ -770,35 +762,14 @@ mod tests {
         // #283: the in-flight-op latch is the concurrent-mutation gate, and
         // ADR-0196 Wave 3 makes the *lease* its first term — a write that
         // reserved one blocks the next op with no busy mirror in the picture.
-        assert!(op_may_start(false, None, None), "idle must allow a new op");
+        assert!(op_may_start(false, None), "idle must allow a new op");
         assert!(
-            !op_may_start(true, None, None),
-            "a held lease alone must block a new op"
+            !op_may_start(true, None),
+            "a held lease must block a new op"
         );
         assert!(
-            !op_may_start(false, None, Some("merge-plan")),
-            "a plan in flight alone must block a new op"
-        );
-        // The remote latch is the only one remote pull (lease-less) has.
-        assert!(
-            !op_may_start(false, Some("pull"), None),
-            "a lease-less writer's own latch alone must block a new op"
-        );
-    }
-
-    #[test]
-    fn pr_merge_is_blocked_while_another_op_is_in_flight() {
-        // #402: a PR merge is a write op — with any op latched (its own lease
-        // or a plan) `reject_if_busy` must refuse it, same as every other
-        // start_*. Guards the regression where start_pr_merge never read the
-        // latch at all.
-        assert!(
-            !op_may_start(true, Some("pr-merge"), None),
-            "a pr-merge in flight must block a new op"
-        );
-        assert!(
-            !op_may_start(true, Some("checkout"), None),
-            "a local op in flight must block a pr-merge"
+            !op_may_start(false, Some("merge-plan")),
+            "planning must block another op"
         );
     }
 }

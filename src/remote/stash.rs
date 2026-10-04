@@ -164,7 +164,7 @@ pub fn plan_remote_stash_drop_for_test(
         attachment,
         connection: frozen,
         repo_id: RemoteRepoId {
-            connection: fixture.connection,
+            connection: Arc::new(fixture.connection),
             common_dir: fixture.common_dir,
         },
         before: fixture.before,
@@ -200,7 +200,7 @@ pub fn plan_remote_stash_drop(
         before.head.clone(),
     ));
     let repo_id = RemoteRepoId {
-        connection: connection.id.clone(),
+        connection: Arc::new(connection.id.clone()),
         common_dir,
     };
     Ok(RemoteStashPlan {
@@ -260,6 +260,10 @@ fn freeze_connection(host: &RemoteHost) -> Result<FrozenConnection, RemotePlanEr
         user: effective.user.clone(),
         port: effective.port,
         host_key_alias: effective.host_key_alias.clone(),
+        proxy_jump: None,
+        proxy_command: None,
+        control_master: None,
+        control_path: None,
         identity_files: effective.identity_files.clone(),
         certificate_files: effective.certificate_files.clone(),
         user_known_hosts: user.0,

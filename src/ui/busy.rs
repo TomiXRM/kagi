@@ -25,27 +25,6 @@ impl KagiApp {
         }
     }
 
-    /// Latch the one write that cannot hold a lease: remote pull over SSH,
-    /// whose `WriteScope::Remote(RemoteRepoId)` needs two network probes that
-    /// cannot run on the UI thread before the spawn. (The remote stash family
-    /// gets its id from a background plan job; a pull plan synthesised from a
-    /// cached snapshot has no equivalent.) ADR-0196 決定 5 has the rationale.
-    ///
-    /// This is **not** a lease mirror, so [`settle_write_busy`] must never see
-    /// it: a lease-derived retire would drop it on the very next
-    /// `refresh_write_busy()` — which `render` → `poll_app_jobs` and every
-    /// admission preamble call — and the pull would run unlatched (#708
-    /// review P1). Only the pull's own terminal callback clears it, before
-    /// every branch, so success, failure and a panicked task all release.
-    ///
-    /// Known gap, unchanged by this slice: `may_close_host` reads leases, so a
-    /// remote pull does not hold quit. Putting it on a real lease fixes both,
-    /// and is the same follow-up slice as #703.
-    pub(crate) fn mark_remote_write(&mut self, name: &'static str) {
-        self.remote_write = Some(name);
-        self.note_remote_write_owner();
-    }
-
     /// An admitted lease is the sole timer owner. No separate write clock
     /// survives settlement, cancellation, or a newer admission.
     fn tick_busy_write(&mut self, id: crate::app::OperationId, cx: &mut Context<Self>) {
@@ -86,29 +65,22 @@ impl KagiApp {
         })
         .detach();
     }
-
     /// Is any operation latched — a write, a planning task or a clone? The
     /// single question every gate asks (ADR-0196 Wave 3).
     ///
-    /// A held **lease** is the truth about every write that can take one;
-    /// `remote_write` covers the one that cannot; `planning` writes nothing but
-    /// owns the modal slot it is about to fill; a clone (#930) has no
-    /// repository session to lease, but writes a folder that may lie inside
-    /// an open worktree, so nothing else may start beside it.
+    /// A held **lease** is the truth about every admitted write; `planning`
+    /// owns the modal slot for a separate background plan; a clone (#930)
+    /// has no repository session to lease but still writes a folder.
     /// `write_busy_op` is deliberately absent: it is only a presentation
     /// mirror of the lease, so reading it here would answer with the lease
     /// twice and with nothing new.
     pub(crate) fn op_latched(&self) -> bool {
-        !super::operations::op_may_start(
-            self.app_sessions.has_leases(),
-            self.remote_write,
-            self.planning,
-        ) || self.home_github.cloning.is_some()
+        !super::operations::op_may_start(self.app_sessions.has_leases(), self.planning)
+            || self.home_github.cloning.is_some()
     }
 
     pub(crate) fn busy_snackbar_label(&self) -> Option<&'static str> {
         self.write_busy_op
-            .or(self.remote_write)
             .or(self.planning)
             .map(kagi_ui_core::i18n::busy_label)
     }
@@ -238,9 +210,6 @@ impl KagiApp {
 /// writer's termination is unconfirmed (or its task panicked, which proves
 /// nothing), so it may still be running — clearing the mirror there would leave
 /// `has_leases()` true with the name gone from the snackbar.
-///
-/// Only ever hand this the lease mirror. `remote_write` is owned by its writer,
-/// not by the lease count, and passing it here is the #708 P1 defect.
 pub(super) fn settle_write_busy(writer: &mut Option<&'static str>, has_leases: bool) {
     if !has_leases {
         *writer = None;

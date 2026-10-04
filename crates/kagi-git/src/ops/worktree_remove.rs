@@ -3,6 +3,7 @@ use super::worktree_lifecycle::{admin_plan, lock_reason, worktree_branch_and_dir
 use super::*;
 use git2::{WorktreeLockStatus, WorktreePruneOptions};
 use kagi_domain::plan_note::{WorktreeNote, WorktreeRecovery, WorktreeTitle};
+use kagi_domain::remote::shell_quote;
 
 // ────────────────────────────────────────────────────────────
 // remove
@@ -88,6 +89,7 @@ pub fn plan_remove_worktree(
             warnings.push(note);
         }
     }
+    let branch_arg = branch.as_deref().map(shell_quote);
     let recovery = Some(PlanRecovery {
         kind: RecoveryKind::Worktree(WorktreeRecovery::RemoveWorktree {
             path: path_str,
@@ -95,8 +97,8 @@ pub fn plan_remove_worktree(
         }),
         commands: vec![format!(
             "git worktree add {} {}",
-            path.display(),
-            branch.as_deref().unwrap_or("<branch>")
+            shell_quote(path.to_string_lossy().as_ref()),
+            branch_arg.as_deref().unwrap_or("<branch>")
         )],
     });
 

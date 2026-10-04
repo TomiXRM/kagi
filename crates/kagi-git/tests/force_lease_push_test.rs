@@ -116,6 +116,12 @@ fn test_plan_normal_no_blockers_after_amend() {
         "expected a rewrites-history warning, got: {:?}",
         plan.warnings
     );
+    let recovery = plan.recovery.as_ref().expect("force-lease recovery");
+    assert!(
+        recovery.commands[0].contains(" -- 'origin' "),
+        "remote remains positional: {:?}",
+        recovery.commands
+    );
 }
 
 #[test]

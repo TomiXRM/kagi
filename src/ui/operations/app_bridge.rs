@@ -269,6 +269,7 @@ impl KagiApp {
                 },
             ),
             app::Planned::RemoteStash { .. } => ("remote-stash-drop", Msg::BusyStashDrop),
+            app::Planned::RemotePull { .. } => ("pull", Msg::BusyPull),
             // Run-family writes dispatch through `finish_run`; `prepare` refuses
             // this one below and the refusal is presented like any other.
             app::Planned::Run(request) => (request.name, Msg::OpInProgress),
@@ -321,6 +322,7 @@ impl KagiApp {
             "stash-pop" => self.clear_pop_modal(),
             "stash-drop" => self.clear_stash_drop_modal(),
             "remote-stash-drop" => self.clear_stash_drop_modal(),
+            "pull" => self.clear_pull_modal(),
             "conflict-save"
             | "conflict-dir-file:keep-directory"
             | "conflict-dir-file:keep-file" => {}
@@ -332,6 +334,8 @@ impl KagiApp {
             klog!("async: remove-worktree started");
         } else if name == "remote-stash-drop" {
             klog!("async: remote stash-drop started");
+        } else if name == "pull" {
+            klog!("async: remote pull started");
         }
         let task = cx.background_spawn(async move {
             let started = std::time::Instant::now();
@@ -413,7 +417,9 @@ impl KagiApp {
                         self.deliver_stash_result(id, attachment, report, cx);
                         return;
                     }
-                    app::FamilyEvidence::RemoteStash(_) => return,
+                    app::FamilyEvidence::RemoteStash(_) | app::FamilyEvidence::RemotePull(_) => {
+                        return
+                    }
                     // Presented by the `finish_run` that admitted it; a
                     // completion abandoned by its window has no one to show.
                     app::FamilyEvidence::Run(_) | app::FamilyEvidence::Pull(_) => return,
@@ -521,14 +527,17 @@ impl KagiApp {
             Delivery::RemoteCompleted {
                 id,
                 attachment,
+                stamp,
                 report,
-                ..
-            } => {
-                let app::FamilyEvidence::RemoteStash(report) = report.evidence else {
-                    return;
-                };
-                self.deliver_remote_stash_result(id, attachment, report, cx);
-            }
+            } => match report.evidence {
+                app::FamilyEvidence::RemoteStash(report) => {
+                    self.deliver_remote_stash_result(id, attachment, report, cx);
+                }
+                app::FamilyEvidence::RemotePull(report) => {
+                    self.deliver_remote_pull_result(id, attachment, stamp, report, cx);
+                }
+                _ => unreachable!("remote completion belongs to a remote family"),
+            },
         }
     }
     fn deliver_remote_stash_result(
@@ -597,6 +606,60 @@ impl KagiApp {
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = report.recording {
             self.app_notices
                 .push_back(format!("{}: recording failed: {}", entry.repo, error).into());
+        }
+    }
+    fn deliver_remote_pull_result(
+        &mut self,
+        id: app::OperationId,
+        owner: crate::remote::stash::RemoteAttachment,
+        stamp: app::OwnerStamp,
+        report: crate::remote::RemotePullReport,
+        cx: &mut Context<Self>,
+    ) {
+        let path = std::path::PathBuf::from(format!("{}:{}", owner.host.label(), owner.root));
+        self.notice_recording_failure("pull", &report.recording, &path);
+        if matches!(
+            report.recording.entry().outcome,
+            OpOutcome::Unknown { .. } | OpOutcome::Partial { .. }
+        ) {
+            self.notice_reconcile_required(id, "pull", &path);
+        }
+        let active = self.remote_view.as_ref().is_some_and(|view| {
+            view.host == owner.host
+                && view.root == owner.root
+                && self.active_session() == Some(owner.session)
+                && self.app_sessions.visit(owner.session) == Some(stamp.visit)
+        });
+        if !active {
+            klog!("op result dropped: tab switched during op");
+            return;
+        }
+        let recorded_clean = matches!(
+            report.recording,
+            kagi_git::backend::recording::Recording::Appended { .. }
+        );
+        match &report.result {
+            Ok(summary) => {
+                klog!("async: remote pull finished — {summary}");
+                self.present_recorded(&report.recording, cx);
+                if recorded_clean {
+                    self.status_footer =
+                        FooterStatus::Success(SharedString::from(format!("pull: {summary}")));
+                }
+                self.refresh_remote_view(cx);
+            }
+            Err(error) => {
+                let err_msg = error.to_string();
+                klog!("async: remote pull failed — {err_msg}");
+                self.present_recorded(&report.recording, cx);
+                self.refresh_remote_view(cx);
+                self.enqueue_run_outcome_notice(
+                    app::OperationId(report.recording.entry().id),
+                    &report.recording,
+                    Some(&err_msg),
+                    None,
+                );
+            }
         }
     }
     /// Whether this window may close (or the app quit) now: no write holds a

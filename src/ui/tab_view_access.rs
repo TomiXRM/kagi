@@ -158,9 +158,8 @@ impl KagiApp {
         self.app_sessions.detach(session);
         self.reads.forget(session);
         self.ui.remove(&session);
-        self.pending_pull_confirm.remove(&session);
         if let Some(flight) = &mut self.fetch_in_flight {
-            flight.waiters.retain(|waiter| *waiter != session);
+            flight.waiters.retain(|(waiter, _)| *waiter != session);
         }
     }
 

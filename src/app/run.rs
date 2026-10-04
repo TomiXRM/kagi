@@ -38,8 +38,8 @@ pub struct RunRequest {
 
 /// Admission for a plan that lives in a modal rather than the plan slot: the
 /// owner must still be attached and still be the worktree it froze at attach
-/// time. The slot is re-issued so a migrated family's pending plan can never
-/// be spent across this write.
+/// time. Busy is retry-later, so only successful approval replaces the current
+/// plan slot; [`begin_write`] consumes that approval once.
 pub fn approve_run(s: &mut Sessions, request: RunRequest) -> Result<Approved, AdmissionError> {
     let owner = request.owner.clone();
     approve_modal_plan(s, owner, Planned::Run(request))
@@ -56,6 +56,19 @@ pub(crate) fn approve_modal_plan(
         return Err(AdmissionError::StaleApproval);
     }
     s.confirm_identity(&owner)?;
+    // Run-family callers can arrive without a UI latch. A competing writer
+    // must not consume a ready plan just because this modal tried to approve.
+    // Reconcile takes precedence over Busy at begin_write, including when an
+    // Unknown writer still holds its lease; keep that admission path unchanged.
+    if let Planned::Run(request) = &prepared {
+        if s.has_leases()
+            && !s.reconcile.values().any(
+                |entry| matches!(&entry.scope, WriteScope::Local(repo) if repo == &request.repo),
+            )
+        {
+            return Err(AdmissionError::Busy);
+        }
+    }
     s.invalidate_plan();
     s.plan_owner = Some(owner.session);
     s.state = PlanState::Approved;

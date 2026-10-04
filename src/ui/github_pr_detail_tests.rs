@@ -20,6 +20,7 @@ fn tab(head: &str) -> PrTab {
         pr: pr(1, head),
         local_refs_loading: false,
         local_refs_generation: 0,
+        local_refs_visit: None,
         base: CommitId("base".into()),
         base_tip: CommitId("base-tip".into()),
         head: CommitId(head.into()),

@@ -244,10 +244,11 @@ impl KagiApp {
         // user is not bounced out of the commit screen; the post-detect block
         // below confirms the merge is still pending (else it resets everything).
         let was_merge_commit_pending = self.ui().conflict_merge_pending;
-        self.commit_menu = None;
+        // Every context menu was planned against the state this reload
+        // replaced: its items' enabled / hidden states may have changed under
+        // a focused item (#991 review), so all of them close.
+        self.close_context_menus();
         self.file_menu = None;
-        self.stash_menu = None;
-        self.worktree_menu = None;
         if !was_merge_commit_pending {
             // ADR-0068: a reload after commit / abort ends any continued-merge flow.
             if let Some(ui) = self.ui_mut() {

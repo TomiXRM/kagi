@@ -62,6 +62,11 @@ pub(crate) struct SidebarFocus {
     pub(super) card: Option<PathBuf>,
     /// The panes were not drawn last frame.
     away: bool,
+    /// The window's focus as this frame began: the row holding it carries
+    /// the context-menu key and records where it is drawn (#985).
+    focused: Option<FocusHandle>,
+    /// Where the focused row was last drawn, for the menu the key opens.
+    pub(super) row_anchor: super::menu_keys::RowAnchor,
 }
 
 /// A row's key among its pane's rows; `None` for a pane header, which is not
@@ -151,6 +156,9 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let focus = &mut self.sidebar.focus;
+        focus.row_anchor.clear();
+        focus.focused = if front { window.focused(cx) } else { None };
         if !front {
             self.yield_sidebar_focus(window, cx);
             return;
@@ -335,6 +343,15 @@ pub(super) fn row(
         )),
         _ => None,
     };
+    // #985: the focused row opens its menu from the keyboard (Shift+F10,
+    // the Menu key) below itself; only that row pays for the listener.
+    let focused = app
+        .sidebar
+        .focus
+        .focused
+        .as_ref()
+        .is_some_and(|focus| list.is_handle(at, focus));
+    let menu_row = focused.then(|| row.clone());
     let el = list
         .row(at, el)
         .child(under_ring(drawn, app.root_focus.clone()))
@@ -343,6 +360,16 @@ pub(super) fn row(
                 this.activate_sidebar_row(&row, cx);
             }
         }));
+    let el = match menu_row {
+        Some(menu_row) => el
+            .child(app.sidebar.focus.row_anchor.probe())
+            .on_action(cx.listener(
+                move |this, _: &super::menu_keys::ContextMenuKey, window, cx| {
+                    this.open_sidebar_row_menu(&menu_row, window, cx);
+                },
+            )),
+        None => el,
+    };
     match card {
         Some((path, card)) => {
             let width = super::theme::scaled_px(app.sidebar.width);

@@ -15,6 +15,7 @@ use kagi_domain::plan_note::ShellKind;
 use kagi_domain::ref_moves::RefMove;
 use kagi_git::oplog::{append_oplog, read_oplog_tail, Actor, OpLogEntry, OpOutcome};
 use kagi_git::{Backend, CommitId, Operation, StateSummary};
+use kagi_ui_core::theme;
 
 use crate::macos::{build_fixture, git, mount, open_offscreen, repo_fingerprint, unmount};
 use crate::recovery_operations::{press_key, wait_idle};
@@ -796,7 +797,7 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
     let refs_bounds = e2e::control_bounds(id, "restore-refs").expect("compact refs");
     let confirm_bounds = e2e::control_bounds(id, "plan-confirm").expect("compact confirm");
     assert!(card_bounds.bottom() <= px(300.));
-    assert!(refs_bounds.size.height >= px(3. * 31. - 1.));
+    assert!(refs_bounds.size.height >= theme::scaled_px(3. * 31.) - px(1.));
     assert!(refs_bounds.top() >= card_bounds.top());
     assert!(refs_bounds.bottom() <= card_bounds.bottom());
     for n in 0..3 {

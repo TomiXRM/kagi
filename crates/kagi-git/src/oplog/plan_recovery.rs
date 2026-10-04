@@ -6,14 +6,16 @@ use kagi_domain::plan_note::*;
 use serde::{ser::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 
 macro_rules! family {
-    ($name:ident, $domain:literal, { $($variants:tt)* }) => {
+    ($(#[$attr:meta])* $name:ident, $domain:literal, { $($variants:tt)* }) => {
+        $(#[$attr])*
         #[derive(Serialize, Deserialize)]
         #[serde(remote = $domain)]
         enum $name { $($variants)* }
     };
 }
 
-family!(BranchRecord, "BranchRecovery", {
+// serde's remote enum must retain the domain's three *Branch variant names.
+family!(#[expect(clippy::enum_variant_names, reason = "remote enum mirrors the domain")] BranchRecord, "BranchRecovery", {
     CreateBranch { name: String }, RenameBranch { old: String, new: String },
     DeleteBranch { name: String, tip: Option<String> },
 });

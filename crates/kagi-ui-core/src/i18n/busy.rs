@@ -182,8 +182,12 @@ fn slow_write_advice_for(op: &str, seconds: u64, language: Lang) -> String {
         | "issue-create"
         | "issue-comment" => Msg::SlowWriteNetwork,
         "rebase" | "replay-onto" | "cherry-pick" | "revert" => Msg::SlowWriteRebase,
-        "checkout" | "checkout-commit" | "checkout-tracking" | "switch" | "switch-to-latest"
-        | "reset-current" | "reset" => Msg::SlowWriteCheckout,
+        "checkout" | "checkout-commit" | "checkout-tracking" | "switch" | "switch-to-latest" => {
+            Msg::SlowWriteCheckout
+        }
+        // Reset here is ref-only (`git reset --soft`): it moves the branch
+        // and never touches the index or the worktree (#995 review).
+        "reset-current" | "reset" => Msg::SlowWriteRefs,
         "merge" | "merge-into" | "merge-commit" => Msg::SlowWriteMerge,
         "commit" | "amend" | "undo" | "op-revert" | "create-branch" | "delete-branch"
         | "rename-branch" | "set-upstream" | "create-tag" | "branch-cleanup"
@@ -353,6 +357,26 @@ mod tests {
         ] {
             assert_eq!(slow_write_advice_for(op, 3, Lang::En), network, "{op}");
         }
+    }
+
+    /// #995 review: reset moves only the branch ref, so it is never described
+    /// as updating the worktree.
+    #[test]
+    fn reset_is_described_as_a_ref_move() {
+        use super::super::Msg;
+        for op in ["reset-current", "reset"] {
+            for language in [Lang::En, Lang::Ja] {
+                assert_eq!(
+                    slow_write_advice_for(op, 3, language),
+                    format!("{} · 3 s", Msg::SlowWriteRefs.t_for(language)),
+                    "{op}"
+                );
+            }
+        }
+        assert_eq!(
+            slow_write_advice_for("reset-current", 3, Lang::En),
+            "refs: moving the branch · 3 s"
+        );
     }
 
     #[test]

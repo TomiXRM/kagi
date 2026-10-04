@@ -415,8 +415,10 @@ count の精密化）は別件で触れない。ADR-0153 は Accepted のまま�
   - 決定 4 の「先頭では必ず新しい modal」を「family の通常規則で確認」に改めた（PM 決定）。checkout の
     verify は実行後の再 snapshot で HEAD が対象を指すことで、これが `ExecutionEvidence::Verified` になる。
   - 投入の入口は今 `OpInProgress` で捨てている地点（`start_checkout` の latch 分岐）。その tab に列が
-    残っていれば idle でも後ろに並べる。dirty tree の Enter（stash してから checkout）は 2 つの write
-    なので対象外のまま。
+    残っていれば idle でも後ろに並べる。そこへ届く経路（double click、Graph の Enter、local branch の
+    右クリック Checkout、確認 modal）は busy でも plan を開けるようにした（remote branch の Checkout
+    は tracking branch を作るので busy では従来どおり無効）。dirty tree の Enter（stash してから
+    checkout）は 2 つの write なので対象外のまま。
   - **receipt を判定できない write**（guard writer、verify 経路の無い run family、stash / remove /
     conflict の job、pull）は anchor にしない。その write の owner の tab では投入を拒否する
     （`EnqueueError::UntrackedWrite`、見え方は従来の `OpInProgress`）。決定 3 の「busy なら新しい chain」

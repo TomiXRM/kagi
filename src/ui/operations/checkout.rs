@@ -313,7 +313,9 @@ impl KagiApp {
         if !self.root_has_focus(window) {
             return;
         }
-        if self.op_latched() || self.repo_path.is_none() {
+        // Busy is not a reason to ignore Enter any more: its confirmation
+        // queues the checkout behind the running operation (#355 stage 3a).
+        if self.repo_path.is_none() {
             return;
         }
         // Ignore Enter while any overlay / panel / text input is active.

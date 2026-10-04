@@ -86,6 +86,10 @@ impl KagiApp {
             .id("queue-strip")
             .flex()
             .flex_col()
+            // Right-aligned: the toast stack and busy snackbar float over the
+            // bottom-left corner above the status bar, exactly while a queue
+            // is waiting on a running write.
+            .items_end()
             .w_full()
             .flex_shrink_0()
             .px_3()
@@ -112,7 +116,6 @@ impl KagiApp {
                                 model.count
                             ))),
                     )
-                    .child(div().flex_1())
                     .when(model.count > 0, |el| {
                         el.child(strip_button(
                             "queue-strip-cancel-all",
@@ -144,7 +147,6 @@ impl KagiApp {
                                 model.cancelled.len()
                             ))),
                     )
-                    .child(div().flex_1())
                     .child(strip_button(
                         "queue-strip-clear",
                         queue_text(QueueText::Clear),
@@ -185,7 +187,6 @@ fn render_row(row: StripRow, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
                     .text_color(rgb(theme().text_sub))
                     .child(SharedString::from(row.state)),
             )
-            .child(div().flex_1())
             .when(row.removable, |el| {
                 el.child(strip_button(
                     format!("queue-strip-remove-{}", id.0),

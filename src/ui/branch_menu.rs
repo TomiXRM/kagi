@@ -464,7 +464,9 @@ fn fetch_remote_branch_state(ctx: &BranchMenuContext) -> ItemState {
 }
 
 fn checkout_state(ctx: &BranchMenuContext) -> ItemState {
-    if ctx.busy {
+    // A local checkout behind a running operation is queued (#355 stage 3a);
+    // the remote one creates a tracking branch, which the queue does not take.
+    if ctx.busy && !matches!(ctx.kind, BranchKind::Local) {
         disabled(Msg::BcmBusy.t())
     } else if matches!(ctx.conflict_mode, BranchConflictMode::Conflicted) {
         disabled(Msg::BcmConflictMode.t())
@@ -929,7 +931,8 @@ mod tests {
         c.busy = true;
         let groups = branch_context_menu_items(&c);
 
-        assert_disabled_contains(&groups, BranchAction::Checkout, "operation");
+        // A local checkout is queued behind the running operation (#355).
+        assert_enabled(&groups, BranchAction::Checkout);
         assert_disabled_contains(&groups, BranchAction::CreateBranchFromHere, "operation");
         assert_disabled_contains(&groups, BranchAction::Pull, "operation");
         assert_disabled_contains(&groups, BranchAction::Push, "operation");
@@ -940,6 +943,15 @@ mod tests {
         assert_enabled(&groups, BranchAction::ToggleSolo);
         assert_enabled(&groups, BranchAction::CopyBranchName);
         assert_enabled(&groups, BranchAction::CopyHeadSha);
+    }
+
+    #[test]
+    fn busy_still_disables_checking_out_a_remote_branch() {
+        let mut c = ctx();
+        c.busy = true;
+        c.kind = BranchKind::Remote;
+        let groups = branch_context_menu_items(&c);
+        assert_disabled_contains(&groups, BranchAction::Checkout, "operation");
     }
 
     #[test]

@@ -54,10 +54,10 @@ fn q9_deterministic_event_sequences_never_create_two_pipeline_owners() {
                 q.apply(QueueEvent::ReconcileAcknowledged(session(pick)));
             }
             9 => {
-                q.apply(QueueEvent::RemoteLatched(session(pick)));
+                q.apply(QueueEvent::InputFocused);
             }
             10 => {
-                q.apply(QueueEvent::RemoteLatchReleased);
+                q.apply(QueueEvent::InputBlurred);
             }
             11 => {
                 q.apply(QueueEvent::ModalSlotBusy);

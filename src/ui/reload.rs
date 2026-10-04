@@ -367,15 +367,10 @@ impl KagiApp {
     /// Refresh the Commit Panel after a reload, and close it only when its
     /// repository has nothing left to list.
     ///
-    /// The panel is the WIP row's pane, and a WIP row exists exactly while that
-    /// working tree is dirty (`graph_wip::wip_targets`) — so "there is
-    /// something to stage or commit" is the panel's real display condition.
-    /// T025/T026 enforced it by dropping the whole entity on every reload,
-    /// which is correct after a commit (the tree goes clean) but also closed
-    /// the panel the user was typing into whenever an auto-fetch or an external
-    /// git change fired. Refreshing in place and testing the condition gives
-    /// the same result where it mattered — a commit, a discard, an external
-    /// checkout all leave nothing to list — without the collateral.
+    /// The panel is normally the WIP row's pane and closes after the tree
+    /// becomes clean. A newer draft typed while a commit was running is the
+    /// exception: do not discard its input just because the older commit
+    /// consumed the staged files.
     ///
     /// #473: the lists come from the PANEL's repository, which for a linked
     /// worktree's panel is not the tab's.
@@ -397,7 +392,13 @@ impl KagiApp {
             v.state.reload_status(&repo_path);
             v.state.staged.is_empty() && v.state.unstaged.is_empty()
         });
-        if nothing_left {
+        let has_draft = entity.read_with(cx, |panel, cx| {
+            panel.pending_smart_msg.as_ref().map_or_else(
+                || !panel.committable_message(cx).trim().is_empty(),
+                |pending| !pending.trim().is_empty(),
+            )
+        });
+        if nothing_left && !has_draft {
             if let Some(ui) = self.ui_mut() {
                 ui.commit_panel_open = false;
                 ui.commit_panel = None;

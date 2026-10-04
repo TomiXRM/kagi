@@ -14,7 +14,8 @@
 
 use super::i18n::Msg;
 use super::modal_renderers::{
-    render_plan_modal_wrapper_staged, render_plan_modal_wrapper_styled, ModalIcon,
+    render_plan_modal_wrapper_extra, render_plan_modal_wrapper_staged,
+    render_plan_modal_wrapper_styled, ModalIcon, PlanCardExtra,
 };
 use super::modal_renderers_input::render_input_plan_modal;
 use super::modal_renderers_stash::render_stash_planning;
@@ -25,6 +26,85 @@ use super::{KagiApp, MONO_FONT};
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 use gpui_component::IconName;
 use kagi_git::{MergeKind, OperationPlan};
+/// Queue confirmation preserves the message that was selected at enqueue,
+/// even when the live draft has since changed.
+pub(crate) fn render_queued_commit_modal(
+    modal: QueuedCommitModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    use kagi_ui_core::i18n::{queue_text, QueueText};
+
+    let message = modal.message;
+    let reasons = [
+        (
+            modal.draft_changed,
+            QueueText::DraftChanged,
+            "queued-commit-draft-changed",
+        ),
+        (
+            modal.staged_changed,
+            QueueText::StagedChanged,
+            "queued-commit-staged-changed",
+        ),
+        (
+            !modal.plan.blockers.is_empty(),
+            QueueText::PlanBlockers,
+            "queued-commit-plan-blockers",
+        ),
+        (
+            !modal.plan.warnings.is_empty(),
+            QueueText::PlanWarnings,
+            "queued-commit-plan-warnings",
+        ),
+    ];
+    let extra = PlanCardExtra {
+        element: super::e2e::measure_control(
+            "queued-commit-message",
+            div()
+                .id("queued-commit-message")
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .id("queued-commit-reasons")
+                        .flex()
+                        .flex_col()
+                        .children(reasons.into_iter().filter(|(changed, _, _)| *changed).map(
+                            |(_, reason, id)| {
+                                super::e2e::measure_control(
+                                    id,
+                                    div().text_sm().child(queue_text(reason)),
+                                )
+                            },
+                        )),
+                )
+                .child(queue_text(QueueText::FrozenMessage))
+                .children(message.split('\n').map(|line| {
+                    div()
+                        .min_h(theme_mod::scaled_px(16.))
+                        .font_family(MONO_FONT)
+                        .text_sm()
+                        .child(SharedString::from(line.to_string()))
+                })),
+        ),
+        clipboard: message,
+    };
+    render_plan_modal_wrapper_extra(
+        modal.plan,
+        None,
+        "Commit",
+        None,
+        None,
+        super::dialog_a11y::ConfirmStage::Single,
+        Some(extra),
+        |this, _cx| this.cancel_queued_commit(),
+        |this, cx| this.confirm_queued_commit(cx),
+        overrides,
+        cx,
+    )
+}
 
 pub(crate) fn render_plan_modal(
     modal: CheckoutPlanModal,

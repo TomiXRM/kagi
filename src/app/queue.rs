@@ -14,9 +14,19 @@ pub struct IntentId(pub u64);
 /// Only frozen user inputs, never an approved plan, resolved HEAD, or prediction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IntentRequest {
-    Checkout { target: CheckoutIntent },
-    Commit { message: String },
-    Merge { source: String, into: String },
+    Checkout {
+        target: CheckoutIntent,
+    },
+    Commit {
+        message: String,
+        staged: String,
+        /// Draft key at enqueue, not the branch after an earlier queued checkout.
+        draft_branch: String,
+    },
+    Merge {
+        source: String,
+        into: String,
+    },
 }
 
 /// The checkout target the user picked: a branch name or a commit OID.
@@ -28,11 +38,11 @@ pub enum CheckoutIntent {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WaitReason {
+    Typing,
     WriteRunning,
     PlanSlotBusy,
     NeedsConfirmation,
     NeedsReconcile,
-    RemoteLatched,
 }
 
 /// The observable event which may release each named wait. All such events run
@@ -43,23 +53,24 @@ pub enum ReleaseEvent {
     PlanSlotFreed,
     OwnerReturned,
     ModalSlotFree,
+    InputBlurred,
     RevalidationDone,
     ReconcileAcknowledged,
-    RemoteLatchReleased,
 }
 impl WaitReason {
     pub fn released_by(self, event: ReleaseEvent) -> bool {
         match self {
             Self::WriteRunning => matches!(event, ReleaseEvent::LeaseReleased),
             Self::PlanSlotBusy => matches!(event, ReleaseEvent::PlanSlotFreed),
+            Self::Typing => matches!(event, ReleaseEvent::InputBlurred),
             Self::NeedsConfirmation => matches!(
                 event,
                 ReleaseEvent::OwnerReturned
                     | ReleaseEvent::ModalSlotFree
+                    | ReleaseEvent::InputBlurred
                     | ReleaseEvent::RevalidationDone
             ),
             Self::NeedsReconcile => matches!(event, ReleaseEvent::ReconcileAcknowledged),
-            Self::RemoteLatched => matches!(event, ReleaseEvent::RemoteLatchReleased),
         }
     }
 }
@@ -74,6 +85,7 @@ pub enum CancelReason {
     IdentityChanged,
     StaleApproval,
     CapacityRejected,
+    MergeStarted,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IntentState {
@@ -156,6 +168,8 @@ pub enum QueueEvent<'a> {
         receipt: Settlement<'a>,
     },
     IdentityChanged(IntentId),
+    /// The queued commit's merge state changed outside Kagi before admission.
+    MergeStarted(IntentId),
     /// A run-family write whose receipt the chain can judge (it has a
     /// verify path), started outside the queue.
     WriteStarted(OwnerStamp),
@@ -180,19 +194,17 @@ pub enum QueueEvent<'a> {
     OwnerReattached(SessionId),
     ModalSlotBusy,
     ModalSlotFree,
+    /// Observation of text input focus in this window, independent of modal state.
+    InputFocused,
+    InputBlurred,
     RevalidationStarted(SessionId),
     RevalidationDone(SessionId),
     ReconcileAcknowledged(SessionId),
-    /// The lease-less remote pull of this session is running (ADR-0204 決定 3:
-    /// it cannot be that session's `&&` predecessor).
-    RemoteLatched(SessionId),
-    RemoteLatchReleased,
     DismissCancelled(SessionId),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EnqueueError {
     CapacityRejected,
-    RemoteLatched,
     IdentityChanged,
     /// The owner's own write has no judgeable receipt, so `&&` cannot hold.
     UntrackedWrite,
@@ -223,10 +235,9 @@ pub struct IntentQueue {
     plan_slot_busy: bool,
     planning_job: Option<IntentId>,
     modal_busy: bool,
+    input_focused: bool,
     revalidating: HashSet<SessionId>,
     reconciling: HashSet<SessionId>,
-    /// Session whose untrackable remote pull is running.
-    remote_latched: Option<SessionId>,
     /// Heads removed by detach while their admission was in flight: kept only
     /// to receive that result (a write admitted after all must stay tracked).
     orphaned: HashSet<IntentId>,
@@ -316,9 +327,7 @@ impl IntentQueue {
         match event {
             E::Enqueue { owner, request } => {
                 let session = owner.session;
-                if self.remote_latched == Some(session) {
-                    effects.push(QueueEffect::Rejected(EnqueueError::RemoteLatched));
-                } else if self.untracked_owner == Some(session) {
+                if self.untracked_owner == Some(session) {
                     effects.push(QueueEffect::Rejected(EnqueueError::UntrackedWrite));
                 } else if owner.worktree.is_none() {
                     effects.push(QueueEffect::Rejected(EnqueueError::IdentityChanged));
@@ -454,6 +463,11 @@ impl IntentQueue {
                     self.cancel_head(session, CancelReason::IdentityChanged, &mut effects);
                 }
             }
+            E::MergeStarted(id) => {
+                if let Some(session) = self.head(id) {
+                    self.cancel_head(session, CancelReason::MergeStarted, &mut effects);
+                }
+            }
             E::PlanCompleted(id) => {
                 if let Some(session) = self.head(id) {
                     let head = self
@@ -467,6 +481,7 @@ impl IntentQueue {
                         self.planning_job = None;
                         if self.active == Some(session)
                             && !self.modal_busy
+                            && !self.input_focused
                             && !self.revalidating.contains(&session)
                         {
                             head.state = IntentState::AwaitingConfirm;
@@ -487,7 +502,10 @@ impl IntentQueue {
                         .expect("head")
                         .front_mut()
                         .expect("head");
-                    if head.state == IntentState::AwaitingConfirm && self.active == Some(session) {
+                    if head.state == IntentState::AwaitingConfirm
+                        && self.active == Some(session)
+                        && !self.input_focused
+                    {
                         head.state = IntentState::Admitting;
                         effects.push(QueueEffect::BeginAdmission(id));
                     }
@@ -717,11 +735,31 @@ impl IntentQueue {
             E::RevalidationDone(session) => {
                 self.revalidating.remove(&session);
             }
+            E::InputFocused => {
+                self.input_focused = true;
+                // A confirmation already on screen must not admit a write
+                // while another text input takes focus.
+                if let Some(session) = self.active {
+                    if let Some(head) = self
+                        .per_session
+                        .get_mut(&session)
+                        .and_then(VecDeque::front_mut)
+                    {
+                        if head.state == IntentState::AwaitingConfirm {
+                            head.state = IntentState::Queued;
+                            self.modal_busy = false;
+                            self.plan_slot_busy = false;
+                            self.planning_job = None;
+                            effects.push(QueueEffect::CloseConfirm(head.id));
+                            effects.push(QueueEffect::InvalidatePlan(head.id));
+                        }
+                    }
+                }
+            }
+            E::InputBlurred => self.input_focused = false,
             E::ReconcileAcknowledged(session) => {
                 self.reconciling.remove(&session);
             }
-            E::RemoteLatched(session) => self.remote_latched = Some(session),
-            E::RemoteLatchReleased => self.remote_latched = None,
             E::DismissCancelled(session) => {
                 self.cancelled.remove(&session);
                 if matches!(self.gate(session), ChainGate::Tripped { .. }) {

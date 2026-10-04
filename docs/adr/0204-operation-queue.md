@@ -1,6 +1,6 @@
 # ADR-0204: operation queue と遅延の説明 — 並べるのは承認済み plan ではなく intent
 
-- Status: **Accepted**（2026-10-04、#355 段階 2 は pure reducer を実装。段階 3a で checkout の入口・strip・auto-fetch の skip を配線。commit / merge の入口は段階 3b。改訂履歴は末尾）
+- Status: **Accepted**（2026-10-04、#355 段階 2 は pure reducer を実装。段階 3a で checkout の入口・strip・auto-fetch の skip を配線。段階 3b-1 で commit の入口を配線。merge の入口は未対応。改訂履歴は末尾）
 - Date: 2026-10-04（Draft: 2026-09-23）
 - Base: `origin/main` @ `47d30be4`（#355 段階 2 着手時。§1 は当時の main の実測）
 - Related: [#355](https://github.com/TomiXRM/kagi/issues/355)（親 #359）、ADR-0196（lifecycle 契約）、
@@ -168,13 +168,12 @@ pub struct IntentQueue {
   lease 解放までは `WriteRunning` の blocker としてだけ残る（二度と来ない receipt を待たない）。
   「busy なら enqueue して新しい chain を始める」形は**禁止** — 先行者を失えば `&&` が成立しない。
 - **anchor にできるのは「追跡できる先行者」だけ。** 条件は `OperationId` と `OwnerStamp` を持ち、
-  終端が `apply` の権威ある completion として届くこと。SSH remote pull も
-  `Planned::RemotePull` として同じ identity と lease を持つため anchor になれる（#989）。
-  追跡できない legacy 先行者は残っていない。**走っている write が無ければ
+  終端が `apply` の権威ある completion として届き、queue が成功を verify できること。
+  SSH remote pull は #989 以降 lease を保持するが、他の verify できない write と同じく
+  queue では追跡不能な write として扱い、anchor にせず、その owner tab での投入を拒否する。
+  lease を持たない legacy 先行者は残っていない。**走っている write が無ければ
   `anchor = None` が正常な状態**で、idle の列への投入はそのまま受け付ける（適格 family の
-  entry point は idle でも typed intent を積む、§0）。reducer の `RemoteLatched(session)` /
-  `Rejected(RemoteLatched)` / `Waiting { RemoteLatched }` は #989 以前の lease を持たない pull latch
-  のためのもので、#989 以降は発火元が無い（reducer からの削除は queue 側の follow-up）。
+  entry point は idle でも typed intent を積む、§0）。
 - **別 session で走っている write は anchor にしない**。追跡できている writer であっても、それは
   global な blocker（`Waiting { WriteRunning }`）にすぎず、他 tab の失敗が自分の列を cancel する
   ことはない。
@@ -227,7 +226,7 @@ pub struct IntentQueue {
 ```rust
 pub enum IntentRequest {                // 段階 2 で受け付ける最初の 3 family
     Checkout { target: String },        // ユーザーが選んだ ref 名
-    Commit { message: String },         // 本文そのものを凍結する
+    Commit { message: String, staged: String, draft_branch: String }, // 本文・index digest・投入時の draft key
     Merge { source: String, into: String },
 }
 // 将来の family も local verify と同期完了を証明してから追加する。
@@ -279,6 +278,12 @@ pub enum IntentRequest {                // 段階 2 で受け付ける最初の 
   普段どおりに確認するかを決める。modal を持たない場面の family は modal なしで進む（blocker も
   warning も無い checkout は double click と同じく modal を出さない）。blocker か warning があれば
   modal を出す。**凍結した入力が今の draft と違えば必ず modal を出す**（commit message、段階 3b）。
+  queued commit は plan に blocker / warning がある場合、現在の draft が凍結した本文と異なる場合、
+  または現在の staged 集合の digest が凍結した digest と異なる場合に確認 modal を出し、
+  理由を短いラベルで表示する。いずれにも当てはまらなければ modal なしで実行する。
+  modal で承認するときにも表示時の staged digest と index を比較し、異なれば承認を失効させて
+  commit しない。さらに admission 直前まで merge 状態を live に検査し、外部で始まった merge
+  は専用の取消理由を残して通常 commit に渡さない（#355 段階 3b-1）。
   どの経路でも preflight は省かない。
 - **「確認したのに、また確認するのか」への答え**: 先行する write が後続の前提を変えるから。
   `rebase onto origin/main` → `merge feature` では rebase が commit を書き換えるので、merge base も
@@ -323,9 +328,8 @@ pub enum IntentRequest {                // 段階 2 で受け付ける最初の 
 | --- | --- | --- |
 | `WriteRunning`（どの tab の write でも） | lease 解放 | `apply(Completion)` → `Sessions::release_lease` |
 | `PlanSlotBusy` | plan job が実際に終わり、**一致する** `IntentId` の `PlanSlotFreed(Some(id))` が届くこと。queue 外の plan job は `PlanSlotTaken` で slot を占め、`PlanSlotFreed(None)` で返す。古い job の callback は別の plan の latch を解放しない | `finish_planning` の終端 callback、`Sessions::invalidate_plan` |
-| `NeedsConfirmation` | owner tab が前面に戻り、**かつ** `active_modal` が空、**かつ** `panes_revalidating()` が false、**かつ** pipeline が空（`Running` 無し） | `active_session()` / `active_modal` / `pane_mutation_admitted` / `op_latched` |
+| `NeedsConfirmation` | owner tab が前面に戻り、**かつ** `active_modal` が空、**かつ** text input が focus されておらず、**かつ** `panes_revalidating()` が false、**かつ** pipeline が空（`Running` 無し） | `active_session()` / `active_modal` / `InputBlurred` / `pane_mutation_admitted` / `op_latched` |
 | `NeedsReconcile` | reconcile の acknowledge | ADR-0196 決定 2.4 |
-| `RemoteLatched` | （#989 以降は発火元なし） | 旧 `remote_write` latch の解除。SSH pull は lease を持つので `WriteRunning` で待つ |
 
 `Admitting` の `Busy` / `NeedsReconcile` が失敗ではなく差し戻しであること、
 `AwaitingConfirm` の tab 離脱が cancel ではなく `Queued` 復帰であること、この 2 点が
@@ -380,7 +384,7 @@ count の精密化）は別件で触れない。ADR-0153 は Accepted のまま�
 | Q10 | 確認中に他 session が永久に待たない | Tier B: A で confirm を開いたまま B へ切替 → A の intent は `Queued` に戻り、B の先頭が進むこと |
 | Q11 | 受理を完了として扱わない | Tier A: 非同期 server family の受理（`PrMergeLocalReason::Queued` 相当）で chain が **trip** し、依存する後片付けも「merged」表示も起きないこと。適格条件を満たさない family は enqueue 自体が拒否されること |
 | Q12 | 先頭 cancel が「止めた」と偽らない | Tier A: `Planning` / `AwaitingConfirm` の cancel で intent は `Cancelled`、自分の modal は閉じ、遅れて届く plan 結果は revision 不一致で捨てられ、**`planning` latch は job の終端 callback でのみ解放**され、次の dispatch は `Waiting { PlanSlotBusy }` を経ること |
-| Q13 | queue 経由でない先行 write も `&&` の anchor になる | Tier A: 同 session で走行中の operation（`OperationId` + `OwnerStamp`、SSH remote pull を含む）を anchor に持つ列が、その `apply` receipt 一回で判定されること。非 Success なら新しい列が全 cancel されること。**別 session の write は anchor にならず**、失敗しても自分の列は残ること |
+| Q13 | queue 経由でない先行 write も `&&` の anchor になる | Tier A: 同 session で走行中の verify できる operation（`OperationId` + `OwnerStamp`）を anchor に持つ列が、その `apply` receipt 一回で判定されること。非 Success なら新しい列が全 cancel されること。SSH remote pull など verify できない write の owner tab では投入を拒否すること。**別 session の write は anchor にならず**、失敗しても自分の列は残ること |
 
 **`gh pr checks --watch` 固有の解除条件（Q1–Q13 に加えて全て必須）**
 
@@ -399,6 +403,8 @@ count の精密化）は別件で触れない。ADR-0153 は Accepted のまま�
 
 ## 未解決リスク（段階 3 で計測）
 
+SSH remote pull の旧 latch による排他の穴は #989 の write lease 移行で解消済みであり、未解決リスクに含めない。
+
 1. **確認の回数**。先頭ごとに confirm が出るため、3 件積むと 3 回確認する。安全性の対価として
    受け入れるが、体感が #355 の目的に反しないかは native（Q8）で測る。「確認の束ね」は plan の
    束ね＝前提の共有になるので、安易な緩和策にはしない。
@@ -410,6 +416,29 @@ count の精密化）は別件で触れない。ADR-0153 は Accepted のまま�
    plan slot を session 別にする案は ADR-0182 の単一 slot 決定に触るので本 ADR では採らない。
 
 ## 改訂履歴
+
+- **2026-10-04 #989 後の queue 契約整理** — SSH remote pull は lease を保持するが、queue が成功を verify できないため anchor にはせず、他の追跡不能な write と同じく owner tab での投入を拒否する。旧 remote latch に対応する待機理由と解除事象を削除し、排他の穴が #989 で解消したことを明記した。
+
+- **2026-10-04 段階 3b-1（#355、#1020 review）** — commit を checkout に続く適格 family として配線した。
+  - `start_commit` で write が実行中、または同じ tab に queued intent が残る場合、本文・投入時の
+    draft branch と staged `(path, blob OID, mode, conflict stage)` 集合の digest を凍結して投入する。
+    linked worktree の panel、conflict merge pending、blocker のある plan、amend は従来どおり拒否する。
+  - 先頭では同じ owner を確かめて凍結本文で live replan し、plan の blocker / warning、
+    現在の draft と凍結本文の差、現在の staged digest と凍結値の差のどれかがあれば
+    `QueuedCommit` modal に理由ラベル・凍結本文・plan を示して確認する。どれもなければ
+    modal なしで進む。承認時と admission 直前に staged digest を再照合し、確認中の外部 `git add`
+    を含む変化は黙って commit しない。外部 merge の開始は計画・承認・admission の各境界で
+    実際の merge state を読んで取り消し、MERGE_HEAD と index を残す。Cancel は chain を trip する。
+  - 完了時は投入時の branch の draft だけを、内容が凍結本文と同じ場合に消す。別 branch や
+    後から編集された本文は残し、autosave の debounce も編集した branch に結びつける。
+  - dispatch tree に実際に描画されている text input が focus 中なら先頭は
+    `Waiting { Typing }` に留め、modal も実行も始めない。ただし write / plan slot / reconcile
+    の待機理由を優先して表示する。Commit ボタンで enqueue できたら focus を root に戻し、
+    入力欄に残った focus で自分の列が止まらないようにする。Escape で閉じた modal の input は
+    focus handle が残っていても待機の理由にしない。
+  - commit の verify は実行後の再 snapshot で HEAD が新 commit を指すこと。attached と detached
+    の両方を認め、queue 経由でない commit も追跡可能な anchor にして、Verified と記録成功を
+    確かめてから後続を進める。
 
 - **2026-10-04 段階 3a（#355）** — checkout を最初の適格 family として配線した。
   - 決定 4 の「先頭では必ず新しい modal」を「family の通常規則で確認」に改めた（PM 決定）。checkout の

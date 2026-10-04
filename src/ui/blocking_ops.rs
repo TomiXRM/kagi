@@ -363,6 +363,7 @@ pub(crate) fn commit_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
     message: &str,
+    verified: &std::sync::atomic::AtomicBool,
 ) -> Result<RunReport, String> {
     let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // Commit's plan is a HEAD snapshot; preflight detects a checkout/commit
@@ -373,27 +374,34 @@ pub(crate) fn commit_blocking(
     let report = repo.run_recorded(&op, plan);
     if let Ok(kagi_git::OperationOutcome::Commit(new_id)) = &report.result {
         klog!("executed: commit {}", new_id.short());
-        log_commit_verification(repo_path, new_id);
+        log_commit_verification(repo_path, new_id, verified);
     }
     Ok(report)
 }
 
-/// Verify evidence for the log only: HEAD is the new commit, unstaged remain.
-/// The receipt already carries the recorded `after`.
-fn log_commit_verification(repo_path: &std::path::Path, new_id: &CommitId) {
+/// Verify HEAD against the new commit; the receipt already carries `after`.
+fn log_commit_verification(
+    repo_path: &std::path::Path,
+    new_id: &CommitId,
+    verified: &std::sync::atomic::AtomicBool,
+) {
     match open_backend(repo_path) {
         Ok(mut repo2) => match repo2.snapshot(10_000) {
             Ok(snap) => {
-                if let Head::Attached { target, branch } = &snap.head {
-                    if *target == new_id.0 {
+                match &snap.head {
+                    Head::Attached { target, branch } if *target == new_id.0 => {
+                        verified.store(true, std::sync::atomic::Ordering::SeqCst);
                         eprintln!(
                             "[kagi] verified: commit HEAD={} on {}",
                             new_id.short(),
                             branch
                         );
-                    } else {
-                        klog!("verify: HEAD mismatch after commit");
                     }
+                    Head::Detached { target } if *target == new_id.0 => {
+                        verified.store(true, std::sync::atomic::Ordering::SeqCst);
+                        klog!("verified: commit HEAD={} (detached)", new_id.short());
+                    }
+                    _ => klog!("verify: HEAD mismatch after commit"),
                 }
                 eprintln!(
                     "[kagi] verified: working tree {} after commit",
@@ -721,3 +729,67 @@ pub(crate) fn verify_new_commit_snapshot(
 #[cfg(test)]
 #[path = "blocking_ops_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod commit_verification_tests {
+    use super::log_commit_verification;
+    use std::path::Path;
+    use std::process::Command;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    fn git(repo: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(repo)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", repo)
+            .output()
+            .expect("git executable");
+        assert!(
+            output.status.success(),
+            "git {}: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn detached_commit_verifies_exact_head_and_rejects_stale_oid() {
+        let root = tempfile::tempdir().expect("isolated repository");
+        let repo = root.path();
+        git(repo, &["init", "-q", "-b", "main", "."]);
+        git(repo, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(repo.join("file"), "first\n").unwrap();
+        git(repo, &["add", "file"]);
+        git(repo, &["commit", "-qm", "first"]);
+        let old_id = kagi_git::Backend::open(repo)
+            .unwrap()
+            .head_commit_id()
+            .unwrap();
+        git(repo, &["checkout", "-q", "--detach", "HEAD"]);
+        std::fs::write(repo.join("file"), "second\n").unwrap();
+        git(repo, &["add", "file"]);
+        git(repo, &["commit", "-qm", "second"]);
+        let new_id = kagi_git::Backend::open(repo)
+            .unwrap()
+            .head_commit_id()
+            .unwrap();
+        let verified = AtomicBool::new(false);
+        log_commit_verification(repo, &new_id, &verified);
+        assert!(
+            verified.load(Ordering::SeqCst),
+            "detached HEAD is the new commit"
+        );
+
+        let stale = AtomicBool::new(false);
+        log_commit_verification(repo, &old_id, &stale);
+        assert!(
+            !stale.load(Ordering::SeqCst),
+            "a real detached HEAD must not verify an earlier commit"
+        );
+    }
+}

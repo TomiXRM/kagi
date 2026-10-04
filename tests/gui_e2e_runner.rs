@@ -1253,6 +1253,18 @@ mod macos {
                 Box::new(crate::op_queue::scenario_queue_rejects_during_untracked_write),
             ),
             (
+                "queue_resumes_after_reconcile",
+                Box::new(crate::op_queue::scenario_queue_resumes_after_reconcile),
+            ),
+            (
+                "queue_accepts_after_idle_fetch",
+                Box::new(crate::op_queue::scenario_queue_accepts_after_idle_fetch),
+            ),
+            (
+                "queue_refuses_a_blocked_checkout",
+                Box::new(crate::op_queue::scenario_queue_refuses_a_blocked_checkout),
+            ),
+            (
                 "slow_write_snapshot",
                 Box::new(crate::slow_read::scenario_slow_write_snapshot),
             ),

@@ -304,6 +304,12 @@ impl IntentQueue {
     pub fn is_empty(&self) -> bool {
         self.per_session.values().all(VecDeque::is_empty)
     }
+    /// Sessions waiting on a reconcile acknowledgement, in a stable order.
+    pub fn reconciling_sessions(&self) -> Vec<SessionId> {
+        let mut sessions: Vec<_> = self.reconciling.iter().copied().collect();
+        sessions.sort_unstable_by_key(|s| (s.tab.0, s.incarnation));
+        sessions
+    }
     pub fn apply(&mut self, event: QueueEvent<'_>) -> Vec<QueueEffect> {
         use QueueEvent as E;
         let mut effects = Vec::new();

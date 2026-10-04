@@ -1839,11 +1839,18 @@ listed as `previous step failed` until `queue-strip-clear`),
 `queue_confirms_a_warned_plan` (a replan with a warning opens the queued
 modal; confirm runs it, Cancel lists it as `declined`),
 `queue_strip_owner_only` (tab B never draws tab A's strip; A's head waits for A
-to return), `queue_skips_auto_fetch` (a quiet fetch is skipped while the tab has
-intents) and `queue_rejects_during_untracked_write` (a checkout behind the tab's
-own manual fetch keeps the old `OpInProgress` refusal). Tier B: queue two
-checkouts behind a held or slow checkout in an isolated app and capture the
-strip, the cancel list and the running row's seconds in EN/JA.
+to return, and the queue hears of A's held activation read before A itself
+through `sync_queue_for_e2e`), `queue_skips_auto_fetch` (a quiet fetch is
+skipped while the tab has intents), `queue_rejects_during_untracked_write` (a
+checkout behind the tab's own manual fetch keeps the old `OpInProgress`
+refusal), `queue_resumes_after_reconcile` (`KagiApp::panic_next_run_for_e2e`
+kills the held checkout: Unknown, its successor cancelled; once the reconcile
+is acknowledged a later queued checkout runs), `queue_accepts_after_idle_fetch`
+(a fetch that ended while the queue was idle does not refuse the next intent)
+and `queue_refuses_a_blocked_checkout` (confirming a blocked plan while busy is
+refused, not queued). Tier B: queue two checkouts behind a held or slow
+checkout in an isolated app and capture the strip, the cancel list and the
+running row's seconds in EN/JA.
 
 ### Background writer elapsed advice (#996 with #995)
 

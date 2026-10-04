@@ -228,8 +228,12 @@ impl KagiApp {
         }
         if self.op_latched() || self.active_tab_has_queue() {
             // A dirty-tree Enter stashes first: two writes the queue cannot
-            // carry as one intent, so it keeps the old refusal.
-            if !modal.stash_first && self.enqueue_checkout(&modal.target, cx) {
+            // carry as one intent, so it keeps the old refusal. So does a
+            // plan with blockers: the user confirmed something they cannot run.
+            if !modal.stash_first
+                && modal.plan.blockers.is_empty()
+                && self.enqueue_checkout(&modal.target, cx)
+            {
                 self.clear_plan_modal();
                 return;
             }

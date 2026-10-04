@@ -180,3 +180,28 @@ fn cancel_all_takes_the_confirming_head_and_every_waiting_intent() {
             reason: CancelReason::UserRemoved
         }));
 }
+
+#[test]
+fn a_reconcile_wait_names_its_session_until_acknowledged() {
+    let mut q = IntentQueue::new();
+    q.apply(QueueEvent::OwnerReturned(session(1)));
+    let id = enqueue(&mut q, 1);
+    q.apply(QueueEvent::PlanCompleted(id));
+    q.apply(QueueEvent::Approve(id));
+    q.apply(QueueEvent::Admission {
+        id,
+        result: Err(crate::app::AdmissionError::NeedsReconcile),
+    });
+    assert_eq!(q.reconciling_sessions(), vec![session(1)]);
+    assert_eq!(
+        state(&q, 1),
+        IntentState::Waiting {
+            reason: WaitReason::NeedsReconcile
+        }
+    );
+    assert_eq!(
+        q.apply(QueueEvent::ReconcileAcknowledged(session(1))),
+        vec![QueueEffect::StartPlan(id)]
+    );
+    assert!(q.reconciling_sessions().is_empty());
+}

@@ -473,20 +473,23 @@ impl KagiApp {
                 .is_some_and(|worktree| self.app_sessions.is_stale(worktree))
     }
 
+    /// Before a new writer is admitted: release in the queue whatever ended
+    /// while it was idle, so the new write is not mistaken for the old one's
+    /// owner (#1018 review). A queued write admitted by this very sync owns
+    /// the slot itself; the caller's prepared run is kept for its own turn.
+    pub(crate) fn sync_queue_before_admission(&mut self, cx: &mut Context<Self>) {
+        let prepared = self.op_queue.next_run.take();
+        self.sync_queue(cx);
+        self.op_queue.next_run = prepared;
+    }
+
     /// Tell the queue what changed since it was last told. The release of a
     /// write is reported last, so the arbitration it triggers already sees
     /// the tab, the read and the modal slot as they are.
     pub(crate) fn sync_queue(&mut self, cx: &mut Context<Self>) {
         let active = self.active_session();
-        if active != self.op_queue.active {
-            let previous = self.op_queue.active;
-            self.op_queue.active = active;
-            match (active, previous) {
-                (Some(session), _) => self.drive_queue(QueueEvent::OwnerReturned(session), cx),
-                (None, Some(session)) => self.drive_queue(QueueEvent::OwnerDeparted(session), cx),
-                (None, None) => {}
-            }
-        }
+        // The returning tab's read state first: an `OwnerReturned` that lands
+        // before its `RevalidationStarted` would replan against a stale read.
         let revalidating = active.filter(|session| self.queue_revalidating(*session));
         if revalidating != self.op_queue.revalidating {
             let previous = self.op_queue.revalidating;
@@ -496,6 +499,15 @@ impl KagiApp {
             }
             if let Some(session) = previous.filter(|p| Some(*p) != revalidating) {
                 self.drive_queue(QueueEvent::RevalidationDone(session), cx);
+            }
+        }
+        if active != self.op_queue.active {
+            let previous = self.op_queue.active;
+            self.op_queue.active = active;
+            match (active, previous) {
+                (Some(session), _) => self.drive_queue(QueueEvent::OwnerReturned(session), cx),
+                (None, Some(session)) => self.drive_queue(QueueEvent::OwnerDeparted(session), cx),
+                (None, None) => {}
             }
         }
         for session in self.op_queue.queue.sessions() {
@@ -549,6 +561,14 @@ impl KagiApp {
                     QueueEvent::ConfirmWithdrawn(id)
                 };
                 self.drive_queue(event, cx);
+            }
+        }
+        // A reconcile the queue waits on is cleared only by its acknowledgement
+        // (ADR-0204 決定 5). The entries carry no session, so the queue waits
+        // until none is left anywhere.
+        if self.app_sessions.blocking_reconcile().is_none() {
+            for session in self.op_queue.queue.reconciling_sessions() {
+                self.drive_queue(QueueEvent::ReconcileAcknowledged(session), cx);
             }
         }
         let cloning = self.home_github.cloning.is_some();
@@ -658,6 +678,12 @@ impl KagiApp {
 thread_local! {
     static RUN_HOLD: std::cell::RefCell<Option<gpui::Task<()>>> =
         const { std::cell::RefCell::new(None) };
+    static RUN_PANIC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(super) fn take_run_panic() -> bool {
+    RUN_PANIC.with(|flag| flag.replace(false))
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -671,5 +697,17 @@ impl KagiApp {
     /// its backend work: the lease is held, nothing has been written.
     pub fn hold_next_run_for_e2e(hold: gpui::Task<()>) {
         RUN_HOLD.with(|slot| assert!(slot.borrow_mut().replace(hold).is_none()));
+    }
+
+    /// The next admitted run-family job dies before running: its completion
+    /// is the abandonment's `Unknown`, which parks a reconcile entry.
+    pub fn panic_next_run_for_e2e() {
+        RUN_PANIC.with(|flag| flag.set(true));
+    }
+
+    /// Report the current window state to the queue now, as the ticker would,
+    /// before any read started by the caller can land.
+    pub fn sync_queue_for_e2e(&mut self, cx: &mut Context<Self>) {
+        self.sync_queue(cx);
     }
 }

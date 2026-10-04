@@ -344,6 +344,9 @@ impl KagiApp {
     {
         use crate::app::{self, Delivery, FamilyEvidence};
         self.refresh_write_busy();
+        // A writer that ended while the queue was idle must be released in
+        // the queue before this one is admitted (#1018 review).
+        self.sync_queue_before_admission(cx);
         // The lease answers for every other writer; the UI latch is what a
         // planning task in flight is refused by (ADR-0196 Wave 3).
         let latched = self.op_latched();
@@ -399,16 +402,26 @@ impl KagiApp {
         // leave `has_leases()` true with `op_latched()` false.
         let abandonment = job.abandonment();
         #[cfg(feature = "gui-e2e")]
-        let hold = crate::ui::op_queue::take_run_hold();
+        let (hold, panic) = (
+            crate::ui::op_queue::take_run_hold(),
+            crate::ui::op_queue::take_run_panic(),
+        );
         let task = cx.background_spawn(async move {
             #[cfg(feature = "gui-e2e")]
             if let Some(hold) = hold {
                 hold.await;
             }
-            job.run()
+            // An injected worker death: the job is dropped unrun, as an
+            // executor unwind would leave it (the abandonment settles it).
+            #[cfg(feature = "gui-e2e")]
+            if panic {
+                drop(job);
+                return None;
+            }
+            Some(job.run())
         });
         cx.spawn(async move |this, acx| {
-            let completion = task.fallible().await;
+            let completion = task.fallible().await.flatten();
             let _ = this.update(acx, move |app, cx| {
                 let completion = match completion {
                     Some(completion) => completion,

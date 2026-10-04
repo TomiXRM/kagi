@@ -341,13 +341,19 @@ pub fn scenario_queue_strip_owner_only(cx: &mut VisualTestAppContext) {
     });
     advance(cx, 4);
     assert_eq!(head(&repo), "a");
-    app.update(cx, |app, cx| app.switch_repo(0, cx));
-    cx.run_until_parked();
+    // The queue hears of A's return in the same turn as the switch, while A's
+    // activation read is still out: revalidation must reach it before the
+    // owner does, or the head replans against the stale read.
+    app.update(cx, |app, cx| {
+        app.switch_repo(0, cx);
+        app.sync_queue_for_e2e(cx);
+    });
     let rows = rows(&strip(cx, &app));
     assert!(
         rows == vec![("checkout b".to_string(), "waiting: confirm".to_string())],
-        "A's head waited for A to return: {rows:?}"
+        "A's head waits for A's read: {rows:?}"
     );
+    assert_eq!(head(&repo), "a", "nothing ran on the stale read");
     tick_until(cx, &app, "b to run on return", |app| {
         app.queue_strip_for_e2e(std::time::Instant::now()).is_none()
     });
@@ -443,4 +449,129 @@ pub fn scenario_queue_rejects_during_untracked_write(cx: &mut VisualTestAppConte
     assert_eq!(head(&repo), "main");
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS queue_rejects_during_untracked_write");
+}
+
+/// A tab whose chain ended in a reconcile is not stuck once the reconcile is
+/// acknowledged: a later queued checkout runs (#1018 review P1).
+pub fn scenario_queue_resumes_after_reconcile(cx: &mut VisualTestAppContext) {
+    let fixture = branches_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+
+    // a's worker dies: Unknown, reconcile parked, b behind it is cancelled.
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
+    KagiApp::panic_next_run_for_e2e();
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("b", cx));
+    cx.run_until_parked();
+    release.send(());
+    tick_until(cx, &app, "the chain to trip on Unknown", |app| {
+        app.queue_strip_for_e2e(std::time::Instant::now())
+            .is_some_and(|(_, rows, cancelled)| rows.is_empty() && cancelled.len() == 1)
+    });
+    app.update(cx, |app, cx| {
+        kagi::ui::e2e::poll_app_jobs(app, cx);
+        let ids = app.app_sessions.reconcile_ids();
+        assert_eq!(ids.len(), 1, "the dead worker parks one reconcile");
+        let read = kagi::app::read_reconcile(&app.app_sessions, ids[0]).expect("readable");
+        kagi::app::acknowledge(&mut app.app_sessions, read).expect("acknowledged");
+        // The reconcile notice holds the modal slot until the user closes it.
+        while kagi::ui::e2e::active_modal_present(app) {
+            app.clear_app_notice();
+            kagi::ui::e2e::present_app_notice(app);
+        }
+    });
+    tick_until(cx, &app, "the lease to go with the reconcile", |app| {
+        !app.app_sessions.has_leases()
+    });
+    click(cx, window, "queue-strip-clear");
+    cx.run_until_parked();
+
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("c", cx));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
+    cx.run_until_parked();
+    assert_eq!(strip(cx, &app).expect("queued").0, 1);
+    release.send(());
+    tick_until(cx, &app, "a to run after the reconcile", |app| {
+        app.queue_strip_for_e2e(std::time::Instant::now()).is_none()
+    });
+    assert_eq!(head(&repo), "a");
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS queue_resumes_after_reconcile");
+}
+
+/// A fetch that ended while the queue was idle does not make the next write
+/// look like the tab's own untrackable predecessor (#1018 review).
+pub fn scenario_queue_accepts_after_idle_fetch(cx: &mut VisualTestAppContext) {
+    let fixture = branches_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.fetch_async(false, cx));
+    cx.run_until_parked();
+    assert!(
+        !cx.read(|cx| app.read(cx).app_sessions.has_leases()),
+        "fetch ended"
+    );
+
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("b", cx));
+    cx.run_until_parked();
+    assert_eq!(
+        rows(&strip(cx, &app)),
+        vec![("checkout b".to_string(), "waiting: write".to_string())],
+        "queued behind the checkout, not refused for the old fetch"
+    );
+    release.send(());
+    tick_until(cx, &app, "b to run", |app| {
+        app.queue_strip_for_e2e(std::time::Instant::now()).is_none()
+    });
+    assert_eq!(head(&repo), "b");
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS queue_accepts_after_idle_fetch");
+}
+
+/// Confirming a blocked checkout while busy is refused, never queued.
+pub fn scenario_queue_refuses_a_blocked_checkout(cx: &mut VisualTestAppContext) {
+    let fixture = branches_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    // `blocked` changes the file the worktree is about to edit locally.
+    git(&repo, &["checkout", "-q", "-b", "blocked"]);
+    std::fs::write(repo.join("README.md"), "# fixture\nfrom blocked\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "blocked edit"]);
+    git(&repo, &["checkout", "-q", "main"]);
+    std::fs::write(repo.join("README.md"), "# fixture\nlocal edit\n").unwrap();
+    let (app, window) = mount(cx, &repo);
+
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
+    app.update(cx, |app, _| app.open_plan_modal("a"));
+    app.update(cx, |app, cx| app.start_checkout(cx));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| app.read(cx).app_sessions.has_leases()),
+        "a is held"
+    );
+
+    app.update(cx, |app, _| app.open_plan_modal("blocked"));
+    let blockers = cx.read(|cx| app.read(cx).plan_modal().map(|m| m.plan.blockers.len()));
+    assert!(
+        blockers.is_some_and(|n| n > 0),
+        "precondition: a blocked plan"
+    );
+    app.update(cx, |app, cx| app.start_checkout(cx));
+    cx.run_until_parked();
+    assert!(strip(cx, &app).is_none(), "a blocked plan is not queued");
+    assert!(klog_index("[kagi] queue: enqueued checkout blocked").is_none());
+    release.send(());
+    cx.run_until_parked();
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS queue_refuses_a_blocked_checkout");
 }

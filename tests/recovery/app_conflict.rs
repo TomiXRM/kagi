@@ -714,10 +714,26 @@ pub fn scenario_operation_strip_abort(cx: &mut VisualTestAppContext) {
     let dialog =
         kagi::ui::dialog_a11y::recorded_dialog("plan-card").expect("abort confirmation drawn");
     assert_eq!(dialog.role, gpui::Role::AlertDialog);
+    let recovery = cx.read(|cx| {
+        kagi_ui_core::i18n::plan_recovery_text(
+            app.read(cx)
+                .conflict_abort_modal()
+                .unwrap()
+                .plan
+                .recovery
+                .as_ref(),
+        )
+    });
     assert_eq!(
         dialog.description.as_deref(),
-        Some(kagi_ui_core::i18n::Msg::A11yDialogArmed.t()),
-        "the next Confirm aborts immediately"
+        Some(
+            format!(
+                "{}\n{recovery}",
+                kagi_ui_core::i18n::Msg::A11yDialogArmed.t()
+            )
+            .as_str()
+        ),
+        "the next Confirm aborts immediately, then recovery is announced"
     );
     app.update(cx, |app, cx| app.confirm_conflict_abort(cx));
     wait_idle(cx, &app);

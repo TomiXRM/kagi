@@ -9,14 +9,15 @@
 use super::button_style::KagiButton;
 use super::dialog_a11y::{apply_dialog, apply_note, dialog_a11y, ConfirmStage, DialogHandler};
 use super::i18n::Msg;
+use super::modal_command::{plan_ready, render_recovery_commands};
 use super::modal_copy::{modal_copy_button, plan_clipboard_text};
 use super::modal_renderers::{
-    modal_overlay, render_current_predicted, render_modal_title_row, render_recovery_box, ModalIcon,
+    modal_overlay, render_current_predicted, render_plan_heading, ModalIcon,
 };
+use super::modal_renderers_plan::offered_recovery_commands;
 use super::modal_shell::{
     modal_body, modal_card, modal_change_summary, modal_chip, modal_file_row, modal_list_max_h,
-    modal_list_panel, modal_path_text, modal_prose_box, modal_recovery_section, modal_section,
-    section_open, MODAL_LIST_ROW_H, MODAL_W_MD,
+    modal_list_panel, modal_path_text, modal_section, section_open, MODAL_LIST_ROW_H, MODAL_W_MD,
 };
 use super::modals::*;
 use super::theme::{self, theme as current_theme};
@@ -26,7 +27,9 @@ use gpui::{div, prelude::*, rgb, Context, KeyDownEvent, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::Sizable as _;
 use kagi_domain::plan_note::ShellKind;
-use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
+use kagi_ui_core::i18n::{
+    plan::plan_heading_text, plan_note_text, plan_recovery_text, plan_title_text,
+};
 use std::rc::Rc;
 
 /// Every fully-bespoke destructive modal in this file badges itself with
@@ -106,25 +109,25 @@ pub(crate) fn render_amend_modal(
     // worktree's suffix must be heard as well as seen (#354).
     let title =
         worktree_wip::worktree_modal_title(&plan_title_text(&plan.title), worktree.as_deref());
+    let (heading_title, mut heading_chips) = plan_heading_text(&plan.title);
+    if let Some(worktree) = worktree.as_ref() {
+        heading_chips[1] = Some(std::borrow::Cow::Owned(worktree.to_string()));
+    }
     let mut title_row = div()
         .flex_shrink_0()
         .flex()
         .flex_row()
-        // items_start, not items_center: a wrapped title would otherwise push
-        // the chip to its vertical middle, where it reads as floating.
-        .items_start()
+        .items_center()
         .gap_2()
-        // flex_1 + min_w(0): without it a long title claims the whole row and
-        // squeezes the chip to zero width (observed on the amend card, whose
-        // title carries the commit subject).
         .child(
-            div()
-                .flex_1()
-                .min_w(gpui::px(0.))
-                .child(render_modal_title_row(
-                    SharedString::from(title.clone()),
-                    Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
-                )),
+            render_plan_heading(
+                heading_title,
+                heading_chips,
+                (DESTRUCTIVE_ICON, current_theme().color_blocker),
+                None,
+            )
+            .flex_1()
+            .min_w(gpui::px(0.)),
         );
     if plan.destructive {
         title_row = title_row.child(modal_chip(
@@ -152,7 +155,8 @@ pub(crate) fn render_amend_modal(
         (!has_blockers).then_some(confirm_label),
         plan.destructive,
         ConfirmStage::two_stage(armed),
-    );
+    )
+    .with_recovery(&plan_recovery_text(plan.recovery.as_ref()));
     let card = apply_dialog(
         "amend-card",
         modal_card(MODAL_W_MD).id("amend-card"),
@@ -283,27 +287,17 @@ pub(crate) fn render_amend_modal(
         body = body.child(block_col);
     }
 
-    // Recovery: the mock's `復元方法` panel with an `oplog` chip.
-    let recovery_text = plan_recovery_text(plan.recovery.as_ref());
-    if !recovery_text.is_empty() {
-        let open = section_open(
-            overrides,
-            SECTION_AMEND_RECOVERY,
-            !super::modal_shell::modal_compact(),
-        );
-        body = body.child(modal_recovery_section(
-            SECTION_AMEND_RECOVERY,
-            open,
-            // Built only while open, so a folded section costs nothing.
-            open.is_open().then(|| {
-                modal_prose_box(
-                    "modal-recovery-scroll",
-                    render_recovery_box(&recovery_text, current_theme().color_blocker),
-                )
-                .into_any_element()
-            }),
-            cx,
-        ));
+    if plan_ready(&plan) {
+        if let Some(commands) = offered_recovery_commands(plan.recovery.as_ref()) {
+            body = body.child(render_recovery_commands(
+                commands,
+                SECTION_AMEND_RECOVERY,
+                "amend-recovery-copy",
+                "amend-recovery-body",
+                overrides,
+                cx,
+            ));
+        }
     }
 
     // When armed: explicit "what is lost" second-stage notice (ADR-0023).
@@ -507,22 +501,25 @@ pub(crate) fn render_discard_modal(
     // Cancel/Discard out of view. The target-file list is the scroll region
     // and is NOT collapsible — a destructive confirm always shows what it
     // acts on.
+    let (heading_title, mut heading_chips) = plan_heading_text(&plan.title);
+    if let Some(worktree) = worktree.as_ref() {
+        heading_chips[1] = Some(std::borrow::Cow::Owned(worktree.to_string()));
+    }
     let mut title_row = div()
         .flex_shrink_0()
         .flex()
         .flex_row()
-        // items_start, not items_center: a wrapped title would otherwise push
-        // the chip to its vertical middle, where it reads as floating.
-        .items_start()
+        .items_center()
         .gap_2()
         .child(
-            div()
-                .flex_1()
-                .min_w(gpui::px(0.))
-                .child(render_modal_title_row(
-                    SharedString::from(title.clone()),
-                    Some((DESTRUCTIVE_ICON, current_theme().color_blocker)),
-                )),
+            render_plan_heading(
+                heading_title,
+                heading_chips,
+                (DESTRUCTIVE_ICON, current_theme().color_blocker),
+                None,
+            )
+            .flex_1()
+            .min_w(gpui::px(0.)),
         );
     if plan.destructive {
         title_row = title_row.child(modal_chip(
@@ -541,7 +538,8 @@ pub(crate) fn render_discard_modal(
         can_discard.then_some(confirm_label.as_str()),
         true,
         ConfirmStage::two_stage(armed),
-    );
+    )
+    .with_recovery(&plan_recovery_text(plan.recovery.as_ref()));
     let card = apply_dialog(
         "discard-card",
         modal_card(MODAL_W_MD).id("discard-card"),
@@ -686,29 +684,17 @@ pub(crate) fn render_discard_modal(
         body = body.child(block_col);
     }
 
-    // ── Recovery note ───────────────────────────────────────
-    // Recovery remains available through disclosure, initially closed when
-    // compact so targets keep the usable space.
-    let recovery_text = plan_recovery_text(plan.recovery.as_ref());
-    if !recovery_text.is_empty() {
-        let open = section_open(
-            overrides,
-            SECTION_DISCARD_RECOVERY,
-            !super::modal_shell::modal_compact(),
-        );
-        body = body.child(modal_recovery_section(
-            SECTION_DISCARD_RECOVERY,
-            open,
-            // Built only while open, so a folded section costs nothing.
-            open.is_open().then(|| {
-                modal_prose_box(
-                    "modal-recovery-scroll",
-                    render_recovery_box(&recovery_text, current_theme().color_blocker),
-                )
-                .into_any_element()
-            }),
-            cx,
-        ));
+    if plan_ready(&plan) {
+        if let Some(commands) = offered_recovery_commands(plan.recovery.as_ref()) {
+            body = body.child(render_recovery_commands(
+                commands,
+                SECTION_DISCARD_RECOVERY,
+                "discard-recovery-copy",
+                "discard-recovery-body",
+                overrides,
+                cx,
+            ));
+        }
     }
 
     // ── Error (preflight / execute failure) ─────────────────

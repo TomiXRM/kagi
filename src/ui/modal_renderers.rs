@@ -15,12 +15,11 @@
 
 use super::dialog_a11y::{apply_dialog, apply_group, dialog_a11y, ConfirmStage, DialogHandler};
 use super::i18n::Msg;
-use super::modal_command::render_equivalent_command;
+use super::modal_command::{render_equivalent_command, render_recovery_commands};
 use super::modal_copy::{modal_copy_button, plan_clipboard_text};
 use super::modal_shell::{
-    modal_body, modal_card, modal_compact, modal_list_max_h, modal_list_panel, modal_prose_box,
-    modal_recovery_section, note_path_list, note_path_list_element, section_open, MODAL_LIST_ROW_H,
-    MODAL_W_MD,
+    modal_body, modal_card, modal_compact, modal_list_max_h, modal_list_panel, note_path_list,
+    note_path_list_element, MODAL_LIST_ROW_H, MODAL_W_MD,
 };
 use super::plan_card_rows::{render_commit_row, render_note_row};
 use super::theme::{self, theme as current_theme};
@@ -30,14 +29,9 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{Icon, IconName, Sizable as _};
 use kagi_domain::plan_note::ShellKind;
 use kagi_git::{CommitId, OperationPlan};
-use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
-
-/// #462 section id for the shared plan card's recovery prose — the one block
-/// on this card that is *supporting* detail. Warnings, blockers, the commit
-/// preview and the error line are not collapsible: a confirmation may never
-/// hide what it acts on or why it is refused. `KagiApp` owns the user's flip
-/// (`modal_section_overrides`); this renderer owns the default.
-const SECTION_PLAN_RECOVERY: &str = "plan-recovery";
+use kagi_ui_core::i18n::{
+    plan::plan_heading_text, plan_note_text, plan_recovery_text, plan_title_text,
+};
 
 /// Richer plan-card header (ADR pending: "richer popup cards", started with
 /// Pull/Push per user request 2026-07-22, extended to every plan-confirmation
@@ -474,9 +468,81 @@ pub(crate) fn render_modal_title_row(
     }
 }
 
-/// Builds the plan-confirmation card. `accent` is `None` for the plain,
-/// unchanged card (~14 modals); Pull/Push (user request 2026-07-22) pass an
-/// icon-badge header via `Some(...)` for the richer treatment.
+/// Plan-only heading: an inline operation icon, short localized title and up
+/// to two mono target chips. Non-plan modals keep `render_modal_title_row`.
+pub(crate) fn render_plan_heading(
+    title: &'static str,
+    chips: [Option<std::borrow::Cow<'_, str>>; 2],
+    accent: PlanCardAccent,
+    copy: Option<gpui::AnyElement>,
+) -> gpui::Div {
+    let (icon, color) = accent;
+    let mut row = div()
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(
+            div()
+                .id("plan-heading-icon")
+                .relative()
+                .flex_shrink_0()
+                .child(
+                    modal_icon_element(icon)
+                        .with_size(gpui_component::Size::Size(theme::scaled_px(18.)))
+                        .text_color(rgb(color)),
+                )
+                .child(super::e2e::measure_inside("plan-heading-icon")),
+        )
+        .child(
+            div()
+                .id("plan-heading-title")
+                .relative()
+                .flex_shrink_0()
+                .whitespace_nowrap()
+                .text_lg()
+                .text_color(rgb(current_theme().text_main))
+                .child(title)
+                .child(super::e2e::measure_inside("plan-heading-title")),
+        );
+    for (index, chip) in chips.into_iter().enumerate() {
+        if let Some(chip) = chip {
+            let id = match index {
+                0 => "plan-heading-chip-0",
+                _ => "plan-heading-chip-1",
+            };
+            let (bg, border, foreground) = theme::badge_style(current_theme().text_muted);
+            row = row.child(
+                div()
+                    .id(id)
+                    .relative()
+                    .min_w(gpui::px(0.))
+                    .max_w(theme::scaled_px(150.))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .font_family(MONO_FONT)
+                    .text_xs()
+                    .px_1()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(gpui::rgba(border))
+                    .bg(gpui::rgba(bg))
+                    .text_color(rgb(foreground))
+                    .child(SharedString::from(chip.into_owned()))
+                    .child(super::e2e::measure_inside(id)),
+            );
+        }
+    }
+    row = row.child(div().flex_1());
+    if let Some(copy) = copy {
+        row = row.child(copy);
+    }
+    row
+}
+
+/// Shared plan-card content. Only this renderer's heading uses
+/// `render_plan_heading`; `render_modal_title_row` remains for non-plan cards.
 fn render_plan_modal_card_styled(
     plan: std::sync::Arc<OperationPlan>,
     error: Option<SharedString>,
@@ -496,13 +562,7 @@ fn render_plan_modal_card_styled(
     // `SharedString` (merge: `Merge <source> into <target>`, T-DNDMERGE-001).
     let confirm_label: SharedString = confirm_label.into();
     let has_blockers = !plan.blockers.is_empty();
-
-    // ── Title (plain, or icon-badge header when `accent` is set) ──────
-    let title_row = render_modal_title_row(
-        SharedString::from(plan_title_text(&plan.title)),
-        accent.clone(),
-    );
-
+    let (heading_title, heading_chips) = plan_heading_text(&plan.title);
     // ── Build modal card (#454) ─────────────────────────────
     // Fixed title + scrolling body + fixed button row. The card itself must
     // NOT scroll: a push plan with many preview commits used to grow past the
@@ -524,7 +584,8 @@ fn render_plan_modal_card_styled(
         (!has_blockers).then_some(confirm_label.as_ref()),
         plan.destructive,
         stage,
-    );
+    )
+    .with_recovery(&plan_recovery_text(plan.recovery.as_ref()));
     let on_confirm = (!has_blockers).then(|| confirm_handler.clone());
     let card = apply_dialog(
         "plan-card",
@@ -533,15 +594,15 @@ fn render_plan_modal_card_styled(
         on_confirm,
         cancel_handler.clone(),
     )
-    .child(
-        div()
-            .flex_shrink_0()
-            .flex()
-            .flex_row()
-            .items_start()
-            .gap_2()
-            .child(div().flex_1().min_w(gpui::px(0.)).child(title_row))
-            .child(modal_copy_button(
+    .child(render_plan_heading(
+        heading_title,
+        heading_chips,
+        accent.clone().unwrap_or((
+            ModalIcon::Named(IconName::Plus),
+            current_theme().color_success,
+        )),
+        Some(
+            modal_copy_button(
                 "plan-card-copy",
                 Msg::ModalCopyAll.t(),
                 match &extra {
@@ -553,8 +614,10 @@ fn render_plan_modal_card_styled(
                     None => plan_clipboard_text(&plan, &plan.preview_commits, ShellKind::current()),
                 },
                 cx,
-            )),
-    );
+            )
+            .into_any_element(),
+        ),
+    ));
 
     // Fixed blocks stay flex_shrink_0-wrapped: only the panels give up height,
     // and without the guard flex would compress rows instead of scrolling
@@ -694,48 +757,31 @@ fn render_plan_modal_card_styled(
         body = body.child(block_col.flex_shrink_0());
     }
 
-    // ── Recovery (supporting detail) ──────────────────────
-    // Capped and scrollable in place: the body no longer scrolls, so a long
-    // recovery text would otherwise be clipped by the card (the recovery
-    // instructions are the reason a destructive operation is allowed at all).
-    //
-    // Fold only supporting recovery. Preserve explicit choices across resizes;
-    // untouched normal-height cards keep their existing plain prose.
-    let recovery_text = plan_recovery_text(plan.recovery.as_ref());
-    if !recovery_text.is_empty() {
-        let prose = move || {
-            modal_prose_box(
-                "plan-recovery-scroll",
-                match accent {
-                    Some((_, color)) => render_recovery_box(&recovery_text, color),
-                    None => div()
-                        .text_xs()
-                        .text_color(rgb(current_theme().text_muted))
-                        .child(SharedString::from(recovery_text))
-                        .into_any_element(),
-                },
-            )
-            .into_any_element()
-        };
-        let compact = modal_compact();
-        if compact || overrides.contains_key(SECTION_PLAN_RECOVERY) {
-            let open = section_open(overrides, SECTION_PLAN_RECOVERY, !compact);
-            body = body.child(modal_recovery_section(
-                SECTION_PLAN_RECOVERY,
-                open,
-                // Built only while open, so a folded section costs nothing.
-                open.is_open().then(prose),
+    // Only structured commands supported by this shell are offered in the
+    // compact disclosure. The full explanation remains in Copy all and AX.
+    if super::modal_command::plan_ready(&plan) {
+        if let Some(commands) =
+            super::modal_renderers_plan::offered_recovery_commands(plan.recovery.as_ref())
+        {
+            body = body.child(render_recovery_commands(
+                commands,
+                "plan-recovery",
+                "plan-recovery-copy",
+                "plan-recovery-body",
+                overrides,
                 cx,
             ));
-        } else {
-            body = body.child(prose());
         }
     }
-
     // Kagi executes the plan through its backend; the CLI spelling is
     // reference text, collapsed by default and separately copyable.
     if let Some(cmd) = super::modal_command::equivalent_command(&plan) {
-        body = body.child(render_equivalent_command(cmd, None, overrides, cx));
+        let already_offered =
+            super::modal_renderers_plan::offered_recovery_commands(plan.recovery.as_ref())
+                .is_some_and(|commands| commands.iter().any(|recovery| recovery == cmd));
+        if !already_offered {
+            body = body.child(render_equivalent_command(cmd, None, overrides, cx));
+        }
     }
 
     // ── Error message (preflight / execute failure) ───────

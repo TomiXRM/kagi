@@ -201,6 +201,7 @@ enum PullLeaseCase {
     OidChanged,
     UpstreamChanged,
     HeadReadFailure,
+    CachedPreviewStale,
     PlanningLatch,
 }
 
@@ -239,6 +240,10 @@ pub fn scenario_remote_pull_upstream_refusal(cx: &mut VisualTestAppContext) {
 pub fn scenario_remote_pull_head_read_refusal(cx: &mut VisualTestAppContext) {
     remote_pull_lease(cx, PullLeaseCase::HeadReadFailure);
 }
+pub fn scenario_remote_pull_cached_preview_stale(cx: &mut VisualTestAppContext) {
+    remote_pull_lease(cx, PullLeaseCase::CachedPreviewStale);
+}
+
 
 pub fn scenario_remote_pull_planning_latch(cx: &mut VisualTestAppContext) {
     remote_pull_lease(cx, PullLeaseCase::PlanningLatch);
@@ -292,6 +297,10 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
     );
     if !matches!(case, PullLeaseCase::PlanningLatch) {
         std::fs::write(&probe_release, b"go").unwrap();
+    }
+    if matches!(case, PullLeaseCase::CachedPreviewStale) {
+        // The cached status says main; the first live SSH probe says feature.
+        std::fs::write(&branch_change, b"switched before planning").unwrap();
     }
     let original_path = std::env::var_os("PATH");
     std::env::set_var(
@@ -379,6 +388,52 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
             app.confirm_app_notice(cx);
             app.open_pull_modal(cx);
         });
+    }
+    if matches!(case, PullLeaseCase::CachedPreviewStale) {
+        wait_for(cx, |cx| {
+            cx.read(|cx| {
+                !matches!(
+                    app.read(cx).app_sessions.plan_state(),
+                    kagi::app::PlanState::Planning { .. }
+                )
+            })
+        });
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert!(
+                matches!(
+                    state.app_sessions.plan_state(),
+                    kagi::app::PlanState::Error {
+                        blocker: Some(kagi_domain::plan_note::PlanNote::Pull(
+                            kagi_domain::plan_note::PullNote::RemotePreviewStale
+                        )),
+                        ..
+                    }
+                ),
+                "a cached main preview must be rejected when the live checkout is feature"
+            );
+            assert!(state.pull_modal().is_none(), "stale preview opened a modal");
+            assert!(!state.app_sessions.has_leases());
+            assert!(state.app_sessions.may_close_host());
+            assert!(
+                matches!(&state.status_footer, kagi::ui::FooterStatus::Failed(text)
+                    if text.as_ref() == kagi::ui::i18n::plan_note_text(
+                        &kagi_domain::plan_note::PlanNote::Pull(
+                            kagi_domain::plan_note::PullNote::RemotePreviewStale
+                        )
+                    )),
+                "stale preview must explain the failure in the UI"
+            );
+        });
+        assert_eq!(ssh_probes(&calls), 1);
+        assert_eq!(ssh_pulls(&calls), 0, "never pull from an unconfirmed checkout");
+        match original_path {
+            Some(path) => std::env::set_var("PATH", path),
+            None => std::env::remove_var("PATH"),
+        }
+        unmount(cx, app, window);
+        eprintln!("[gui-e2e] PASS remote_pull_cached_preview_stale");
+        return;
     }
     wait_for(cx, |cx| cx.read(|cx| app.read(cx).pull_modal().is_some()));
     if let Some(unblock_probe) = unblock_probe {
@@ -598,6 +653,7 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
             PullLeaseCase::OidChanged => "remote_pull_head_oid_refusal",
             PullLeaseCase::UpstreamChanged => "remote_pull_upstream_refusal",
             PullLeaseCase::HeadReadFailure => "remote_pull_head_read_refusal",
+            PullLeaseCase::CachedPreviewStale => "remote_pull_cached_preview_stale",
         }
     );
 }

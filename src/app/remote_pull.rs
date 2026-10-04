@@ -2,6 +2,7 @@
 //! transport-owned durable receipt.
 use super::*;
 use kagi_domain::remote::{RemotePullHead, RemoteRepoId};
+use kagi_domain::plan_note::{PlanNote, PlanTitle, PullNote, PullTitle};
 use std::sync::{mpsc::Sender, Arc};
 
 #[derive(Clone, Debug)]
@@ -29,20 +30,41 @@ impl RemotePullPlanJob {
             crate::remote::resolve_pull_identity(&self.request.owner.host, &self.request.owner.root)
         });
         let state = match result {
-            Ok(identity) => PlanState::Ready {
-                token: PlanToken {
-                    revision: self.revision,
-                },
-                prepared: Planned::RemotePull {
-                    plan: Box::new(RemotePullPlan {
-                        preview: self.request.plan.clone(),
-                        repo_id: identity.repo_id,
-                        physical_toplevel: identity.physical_toplevel,
-                        head: identity.head,
-                    }),
-                    request: self.request,
-                },
-            },
+            Ok(identity) => {
+                // The preview is synthesized from cached status, whereas this
+                // identity is read from the host. Never confirm one branch or
+                // upstream and run a pull against another.
+                let matches_preview = matches!(
+                    &self.request.plan.title,
+                    PlanTitle::Pull(PullTitle::PullRemote { branch, upstream, .. })
+                        if identity.head.branch.as_deref() == Some(branch.as_str())
+                            && identity.head.upstream.as_deref() == Some(upstream.as_str())
+                );
+                if !matches_preview {
+                    let blocker = PlanNote::Pull(PullNote::RemotePreviewStale);
+                    PlanState::Error {
+                        error: blocker.message_en(),
+                        blocker: Some(blocker),
+                        open_failed: false,
+                        recording: None,
+                    }
+                } else {
+                    PlanState::Ready {
+                        token: PlanToken {
+                            revision: self.revision,
+                        },
+                        prepared: Planned::RemotePull {
+                            plan: Box::new(RemotePullPlan {
+                                preview: self.request.plan.clone(),
+                                repo_id: identity.repo_id,
+                                physical_toplevel: identity.physical_toplevel,
+                                head: identity.head,
+                            }),
+                            request: self.request,
+                        },
+                    }
+                }
+            }
             Err(error) => PlanState::Error {
                 error: error.to_string(),
                 blocker: None,

@@ -10,6 +10,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - SSH 経由の remote pull を write lease に載せ、実行中は終了操作とほかの書き込みを保留するようにしました。結果が Unknown・Partial の場合は reconcile 通知から明示的な確認と監査記録を経て lease を解放します。ssh-agent だけの接続でも計画・実行できます。(#989)
 - SSH の remote pull で選択したパスが symlink の場合、確認中に別の linked worktree へ付け替えられても誤った worktree に pull しないよう、計画時の物理パスを保持し、実行前に照合してからそのパスで実行するようにしました。異なる場合は実行せず Refused を記録します。(#997)
 - SSH の remote pull で確認中に対象 worktree の branch・HEAD commit・upstream が変わっても別の変更を pull しないよう、計画時の状態を実行前に照合し、異なる場合は実行せず Refused を記録します。(#997)
+- SSH remote pull の確認を開く前に、キャッシュ済みの branch / upstream とホスト上の現在の値を照合し、ずれている場合は確認 modal を出さず更新を促すようにしました。(#997)
 - UI ガイドの Known gaps を現状に合わせて更新しました。Settings の通常の focus trap と前面判定、Home / Graph の行キー操作は対応済みとし、未解決の 100 Tab stop 超の制限、Linux / FreeBSD の platform menu と overlay の組み合わせ、UI thread の同期書き込みと WIP diffstat を明記しました。(#974、#976、#980、#986、#981、#987、#990、#996)
 
 ## [0.42.0] - 2026-10-04

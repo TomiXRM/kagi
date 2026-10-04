@@ -469,6 +469,9 @@ macro_rules! advice_template_en {
     (PullRemoteDirty) => {
         "The remote working tree has uncommitted changes; the pull may fail or produce conflicts that must be resolved on the host."
     };
+    (PullRemotePreviewStale) => {
+        "Remote pull preview does not match the host's checked-out branch or upstream. Refresh the remote view and try again."
+    };
     (StashUntrackedIncluded) => {
         "{} untracked file(s) will be included in the stash (equivalent to `git stash push -u`)."
     };

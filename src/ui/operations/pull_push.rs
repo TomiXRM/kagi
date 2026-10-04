@@ -135,8 +135,10 @@ impl KagiApp {
                                         .with_session_token(),
                                     );
                                 }
-                                PlanState::Error { error, .. } => {
-                                    let message = SharedString::from(error.clone());
+                                PlanState::Error { error, blocker, .. } => {
+                                    let reason = blocker.as_ref().map(i18n::plan_note_text);
+                                    let message =
+                                        SharedString::from(reason.unwrap_or_else(|| error.clone()));
                                     app.status_footer = FooterStatus::Failed(message.clone());
                                     app.push_toast(ToastKind::Error, message, cx);
                                 }

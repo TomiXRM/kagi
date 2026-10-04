@@ -1545,6 +1545,10 @@ or resolved upstream after confirmation. All must refuse without running
 HEAD read fails. Domain
 `pull_common_dir_requires_complete_physical_paths_and_head_state` rejects
 incomplete or malformed HEAD frames.
+`remote_pull_cached_preview_stale` changes the checked-out branch before the
+first live plan probe while cached status still names `main`; the plan must
+reject without a confirmation modal, lease or `git pull` and show a localized
+refresh reason. Mutating the plan-time comparison makes this Tier A assertion fail.
 `remote_pull_planning_latch` blocks `ssh -G`, clicks Pull twice, and requires
 one probe and a cleared latch when the modal arrives. G:
 `cargo test -p kagi --test app_remote_pull_test` covers Unknown/Partial/abandonment

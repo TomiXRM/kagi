@@ -1101,6 +1101,10 @@ mod macos {
                 Box::new(crate::recovery_pull::scenario_remote_pull_head_read_refusal),
             ),
             (
+                "remote_pull_cached_preview_stale",
+                Box::new(crate::recovery_pull::scenario_remote_pull_cached_preview_stale),
+            ),
+            (
                 "remote_pull_planning_latch",
                 Box::new(crate::recovery_pull::scenario_remote_pull_planning_latch),
             ),

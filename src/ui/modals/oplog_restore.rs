@@ -2,7 +2,7 @@
 //! slice 2b, ADR-0214 §5).
 
 use gpui::SharedString;
-use kagi_domain::restore_preview::RestorePreview;
+use kagi_domain::{ref_restore::RefRestore, restore_preview::RestorePreview};
 use kagi_git::{Operation, OperationPlan};
 use kagi_ui_core::i18n;
 
@@ -13,6 +13,11 @@ pub struct RestoreGraphPreview {
     pub graph: RestorePreview,
     /// One-line summary per drawn row (same order as the preview's rows).
     pub summaries: Vec<SharedString>,
+    /// Existing current-graph rail geometry, aligned with the preview rows.
+    pub rails: Vec<kagi_domain::graph::GraphRow>,
+    pub merges: Vec<bool>,
+    /// Attached branch at planning; follows its predicted ref tip, not the old row.
+    pub head_branch: Option<String>,
 }
 
 /// The planned `Operation::OpRevert` / `RestoreToPoint` and its card. The
@@ -21,6 +26,8 @@ pub struct RestoreGraphPreview {
 pub struct OplogRestoreModal {
     pub op: Operation,
     pub plan: std::sync::Arc<OperationPlan>,
+    /// Canonical plan rows decoded once on opening; the original plan stays intact.
+    pub restores: Vec<RefRestore>,
     pub error: Option<SharedString>,
     pub confirm_armed: bool,
     /// `None` when the plan moves nothing (a blocked plan).
@@ -35,15 +42,14 @@ impl OplogRestoreModal {
         }
     }
 
-    /// The first confirm names the action; the second states what it does.
+    /// The second stage names exactly how many refs are about to move.
     pub fn confirm_label(&self) -> String {
         if self.confirm_armed {
-            format!(
-                "\u{26a0} {}",
-                i18n::Msg::OplogPanel(i18n::oplog_panel::OplogPanelMsg::RestoreArmed).t()
-            )
+            i18n::oplog_panel::restore_confirm(self.restores.len())
         } else {
-            self.i18n_op().t().to_string()
+            i18n::Msg::OplogPanel(i18n::oplog_panel::OplogPanelMsg::RestoreConfirm)
+                .t()
+                .to_string()
         }
     }
 
@@ -55,16 +61,5 @@ impl OplogRestoreModal {
         } else {
             ConfirmStage::Unarmed
         }
-    }
-
-    /// The display-only card shows the ref moves, refs left unchanged, graph
-    /// preview and Git command. Its generic recovery prose repeats that same
-    /// explanation; keep the executable plan and its recovery intact.
-    pub fn display_plan(&self) -> std::sync::Arc<OperationPlan> {
-        std::sync::Arc::new(OperationPlan {
-            preview_commits: Vec::new(),
-            recovery: None,
-            ..(*self.plan).clone()
-        })
     }
 }

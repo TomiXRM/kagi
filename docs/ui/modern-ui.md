@@ -148,7 +148,7 @@ the row says a Kagi geometry is kept on purpose.
 | Search — inline filter | `Input` S = 24, leading search icon, clear (×) when non-empty | Command palette keeps Cmd/Ctrl+P, subsequence fuzzy match and single-Esc close. |
 | Search — hero (Home) | larger box, leading icon, no heavy border, results grouped by heading | Only where search is the screen's main action. |
 | Button | gpui-component `Button` / `KagiButton`: S = 24 in toolbars, M = 32 in forms and dialogs, radius 6 | The vertical `render_header` toolbar is a Kagi geometry exception: each button (including unavailable) is one Tab stop with a `keyboard_nav::with_ring` focus-visible border. An unavailable action keeps its click handler (never `.disabled(true)`), exposes its existing footer reason via `aria_description` alongside the visible AX name and AccessKit disabled state, and Enter / Space show that same reason in the footer. |
-| List row (dense) | keep: sidebar 20, worktree 24, graph commit row 29 (synced with the lane canvas), modal target 18 | Hover is a full-width wash; selection keeps Kagi's colour meanings (branch/ref/status). Changing a row height needs the visible-row count, virtual list height and a11y positions shown together. |
+| List row (dense) | keep: sidebar 20, worktree 24, graph commit row 29 (synced with the lane canvas), modal target 18 | Graph author/time are `text_xs`: author is proportional and truncated in a 96px zoom-scaled column (full name in tooltip/AX); time is monospaced, right-aligned in a 48px zoom-scaled column with compact ages (`36m`, `5h`, `3d`, `2mo`), while AX keeps the full relative age. Hover is a full-width wash; selection keeps Kagi's colour meanings (branch/ref/status). Changing a row height needs the visible-row count, virtual list height and a11y positions shown together. |
 | List row (open: Home, PR/Issue lists) | Height follows the actual content and surface, not one open-row size: the PR dashboard row settles near 65px around a 40px avatar; the Issue row has a 104px minimum for its title and metadata ([`pr_dashboard.rs`](../../src/ui/pr_dashboard.rs#L341-L344), [`issues_mode.rs`](../../src/ui/issues_mode.rs#L486-L515)). Home's rows: `keyboard_nav::RowFocus` / `RowList` — the list is one Tab stop (the row last focused while it is drawn, else the first row on screen), ↑/↓ and Home / End / PageUp / PageDown scroll the destination row into view and focus it (Cmd+↑/↓ also move to the ends), Enter/Space press it; a focused row that leaves the list hands the focus to the first row left, or to the window — also when the list itself is not drawn (still loading, failed: `RowFocus::release`) (#959, #986; in #960 every row was a Tab stop). | 32–40px is only a candidate for a single-line result without those contents, not a PR/Issue list target. Keep the identifying part of long names; the full value must be reachable by keyboard/AX, not only a tooltip. The Graph sidebar also has a per-pane row keyboard path (#987); the PR / Issue navigators still do not. |
 | Menu / context menu | Kagi `menu_overlay` (keeps disabled-reason tooltips and danger rows); pinned PopupMenu rows are 26 fixed. The context menus' keyboard is `menu_keys` (#985): an opened menu takes the focus on its first enabled item, ↑/↓ (wrapping) and Home/End move among the enabled items, Enter/Space press one, Escape, Tab and Shift+Tab close; on close the focus goes back where it was (to the window when an item opened a modal). A menu taller than the window scrolls its items and keeps the keyed item in view; leaving the tab, a landed reload, or a modal / notice / plan drawn over the menus closes them. `Role::Menu` / `Role::MenuItem`; a disabled item carries the AX disabled state and its reason as `aria_description`; the focus shows as the hover highlight, only for `focus_visible`. Shift+F10 (and the Menu key) opens the selected commit's menu below its row from the window, and a focused sidebar row's menu below that row. | Adopt PopupMenu only where those contracts are not needed. A new context menu passes `Some(&app.menu_keys)` to `render_menu_overlay` and is added to `KagiApp::any_context_menu_open`. |
 | Modal / confirmation | Kagi `modal_shell` (target list not hideable behind disclosure; long lists scroll inside their panel; fixed action row; existing widths 504/576/648). Six input + confirm cards (#956: Create Branch/Tag, Stash, Add Worktree, Rename Branch, Set Upstream) use a heading with inline operation icon, form `Input`/confirm M = 32 as the base, errors immediately below the field, a visible disabled confirm when invalid/blocked, and only a Git command for recovery when the plan is Ready. | The target rows are not all simultaneously on-screen when the list is long ([`modal_shell.rs`](../../src/ui/modal_shell.rs#L440-L461)). Do not replace with gpui-component Dialog (448 fixed, different focus/Esc). Stash keeps its 38px message field and 24px action buttons; Create Branch has no recovery row, Set Upstream no recovery command. Borrow Dialog's look, not its behaviour. |
@@ -197,12 +197,11 @@ PR block.
   three-layer Escape order, command-overlay dismissal, and tab / repository
   switches with a dropdown open remain unverified (#990). The resolved
   `front_layer` / `Z_ORDER` priority and modal veto are not this gap (#976).
-- UI-thread repository work still blocks interaction: snapshot creation,
-  conflict continue / skip, and stage / unstage / hunk writes run
-  synchronously under a lease; the post-write `refresh_wip_diffstat` is a
-  synchronous read. The writes need background tasks with the operation's
-  `fallible()` → abandonment → Unknown → reconcile path and `OwnerStamp`
-  delivery; WIP diffstat needs an async read (#996).
+- UI-thread repository work still blocks interaction for stage / unstage /
+  hunk writes, which run synchronously under a lease until the write queue
+  lands (#355 stage 3). Snapshot creation and conflict continue / skip run in
+  background guard writers, and the post-stage WIP diffstat is an ordered
+  background scan (#996).
 
 ## Resolved: dated text boxes in input + confirm cards (#956)
 
@@ -214,6 +213,39 @@ Six cards now use shorter titles with inline icons and base M = 32 form
 blocked plans keep a visible disabled confirm; recovery, when present, is
 only a Git command for Ready plans (detail remains in Operation Log).
 Shared `Theme.radius`/font/input padding and `modal_shell`/plan/IME stay unchanged; values align by role.
+
+## Plan comparison and Operation Log restore (#988)
+
+The shared plan card keeps CURRENT and PREDICTED as equal-width columns with a
+centered arrow; branch and status chips stay on one scrollable line per column.
+The operation plan remains the source of truth. Show an equivalent CLI command
+only when it faithfully describes the executable plan. Pull has none: its
+execution fetches again and may merge a newly diverged remote even if the
+cached tracking ref indicated a fast-forward at planning time. Where a Ready
+plan with no blockers does have an equivalent, the collapsed command is a
+keyboard/screen-reader accessible button (Enter/Space) with its own Copy
+button; Copy all includes its full text. Blocked and no-op plans omit that
+command from both the card and Copy all, even if the backend supplied one.
+
+Operation Log restore has its own REFS-first card, not a second generic plan
+summary. It uses the same command-visibility gate as the shared plan card:
+Ready with no blockers. Show each
+planned ref's expected and destination OIDs, including red-tinted deletions.
+Long ref-name chips cap at 45% of their row with ellipsis; their tooltip and
+accessibility name retain the complete canonical ref, while the OIDs remain
+visible. Then show unchanged worktree/index/untracked/stash/remotes and
+warnings. The first three ref targets stay visible at compact window sizes;
+the refs list scrolls independently when longer. Draw the AFTER graph from the
+loaded tab's existing commit rails: moved branch badges go to their
+destination, commits no longer reached by any ref are muted, and retained
+commits stay normal. The preview fits its rows up to six, then scrolls
+independently; lane pitch, rail width and horizontal follow-scroll use the same
+scaled pixels so a focused far-right lane stays visible at zoom > 100%. Do not
+claim a graph projection for an unloaded destination or
+a moved annotated tag. Ref rows are decoded once at admission; malformed
+rows fail closed with a durable Failed receipt and a bounded UI preview.
+Restore keeps its two confirmations and backend preflight/verification/
+recording unchanged.
 
 ## Open questions (to settle with evidence)
 

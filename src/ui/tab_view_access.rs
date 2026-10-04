@@ -14,6 +14,7 @@ impl KagiApp {
             ui.cache_epoch = ui.cache_epoch.wrapping_add(1);
             ui.diff_caches.clear();
             ui.wip_diffstat = None;
+            ui.wip_diffstat_request = ui.wip_diffstat_request.wrapping_add(1);
             ui.last_working_status = None;
             ui.pane_revalidation = crate::ui::tab_ui_state_ops::PaneRevalidation::AwaitingRead;
             ui.conflict_merge_pending = false;
@@ -158,9 +159,8 @@ impl KagiApp {
         self.app_sessions.detach(session);
         self.reads.forget(session);
         self.ui.remove(&session);
-        self.pending_pull_confirm.remove(&session);
         if let Some(flight) = &mut self.fetch_in_flight {
-            flight.waiters.retain(|waiter| *waiter != session);
+            flight.waiters.retain(|(waiter, _)| *waiter != session);
         }
     }
 

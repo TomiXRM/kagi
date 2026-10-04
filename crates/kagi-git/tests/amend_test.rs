@@ -190,7 +190,7 @@ fn test_amend_message_only() {
     assert_eq!(
         recovery.commands,
         vec![
-            format!("git reset --soft {}", &old_sha[..8]),
+            format!("git reset --soft '{}'", &old_sha[..8]),
             "git reflog".to_string(),
         ]
     );

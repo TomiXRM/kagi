@@ -4,6 +4,7 @@ use ignore::WalkBuilder;
 use kagi_domain::plan_note::{
     CommonNote, DirtyParts, OpPhrase, UntrackedCtx, WorktreeNote, WorktreeRecovery, WorktreeTitle,
 };
+use kagi_domain::remote::shell_quote;
 use kagi_domain::worktree_include::{
     select_worktree_include, WorktreeIncludeCandidate, WorktreeIncludeSelection,
     WORKTREE_INCLUDE_CAP_BYTES,
@@ -289,6 +290,7 @@ pub fn plan_create_branch_with_checkout(
         .strip_prefix("branch: ")
         .unwrap_or("<previous-branch>")
         .to_string();
+    let prev_arg = (prev != "<previous-branch>").then(|| shell_quote(&prev));
     plan.title = PlanTitle::Worktree(WorktreeTitle::CreateBranchCheckout {
         name: name.to_string(),
         at: at.short().to_string(),
@@ -300,8 +302,11 @@ pub fn plan_create_branch_with_checkout(
             prev: prev.clone(),
         }),
         commands: vec![
-            format!("git branch -d {}", name),
-            format!("git checkout {}", prev),
+            format!("git branch -d {}", shell_quote(name)),
+            format!(
+                "git checkout {}",
+                prev_arg.as_deref().unwrap_or("<previous-branch>")
+            ),
         ],
     });
     Ok(plan)
@@ -430,8 +435,11 @@ fn plan_create_worktree_impl(
             branch: branch.to_string(),
         }),
         commands: vec![
-            format!("git worktree remove {}", target_path.display()),
-            format!("git branch -d {}", branch),
+            format!(
+                "git worktree remove {}",
+                shell_quote(target_path.to_string_lossy().as_ref())
+            ),
+            format!("git branch -d {}", shell_quote(branch)),
         ],
     });
     plan.warnings
@@ -670,7 +678,7 @@ pub fn plan_unlock_worktree(repo: &Repository, name: &str) -> Result<OperationPl
             }),
             commands: vec![format!(
                 "git worktree lock --reason \"<why>\" <path-of-{}>",
-                name
+                shell_quote(name)
             )],
         }),
         head_at_plan: head,

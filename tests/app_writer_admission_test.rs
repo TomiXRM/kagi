@@ -246,12 +246,20 @@ fn dropped_or_panicking_writer_does_not_release_an_unconfirmed_lease() {
         let f = Fixture::new();
         let mut sessions = Sessions::new();
         let guard = sessions.write_lease(&f.linked).unwrap();
+        assert!(
+            sessions.running_lease().is_some(),
+            "the admitted guard is running"
+        );
         if panic {
             assert!(std::panic::catch_unwind(|| guard.run(|| panic!("writer"))).is_err());
         } else {
             drop(guard);
         }
         assert!(sessions.has_leases());
+        assert!(
+            sessions.running_lease().is_none(),
+            "a dropped or panicked guard must not leave running advice"
+        );
         let approved = f.approved(&mut sessions);
         assert!(matches!(
             prepare_remove(&mut sessions, approved),

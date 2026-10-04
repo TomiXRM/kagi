@@ -329,6 +329,37 @@ latest 20 run（20 distinct SHA）の Windows job が **20/20 success**（failur
 settle matrix」の実機統合は今回の検証に含まれない。#728 は blocking CI の選択肢で
 完了とする。
 
+**#355 段階 0（2026-10-04）**: 上の「全 family の matrix」のうち、
+background task で動く guard writer（単独 fetch、remote branch fetch、
+PR ref fetch、Editor 保存）の **task unwind → Unknown receipt → reconcile →
+acknowledge → 次の write** を Tier A の実経路で確認した。`WriteGuard` の Drop は
+引き続き解放しない。job 外に保持した abandonment が supervisor の停止証拠と
+`UnaccountedWrite` を届け、停止済みでも結果不明の write は確認前に再実行させない。
+単独 fetch の結果は開始時の `session + visit` 以外へ表示せず、古い visit の
+失敗 receipt は永続記録する。Busy は plan revision を消費しない。remote SSH pull
+の lease 化は #989 の範囲であり、実機 Windows と全 family の matrix は引き続き
+未検証である。
+
+**#992 review（2026-10-04）**: dirty Pull の fetch waiter も要求時の
+`session + visit` を保持し、離脱済み visit への確認提案を破棄する。
+fetch 失敗は waiter ごとに記録せず、fetch 自身が一度だけ永続化する。
+remote branch fetch の通常失敗も、表示中 tab ではなく開始時の frozen repository
+へ必ず永続化する。PR ref fetch の通常失敗は既に同じ境界で記録している。
+ただし旧 visit の fetch に新 visit の dirty Pull が相乗りした場合は、
+新 waiter に結果を配送する。失敗なら新 visit に短い footer/toast のみ表示し、
+fetch 自体の receipt は重複させない（#992 review 4175367910）。
+remote branch fetch の `[kagi] fetch-remote-branch: ok` / `failed` 行は
+表示先の有無に関係なく完了時に出し、footer/toast のみ current visit に限定する
+（#992 review 4175420136）。PR ref fetch は既に早期 return より前に
+terminal klog 行を出している。
+離脱後の fetch / remote branch fetch / PR ref fetch の失敗 receipt は、永続化と
+Operation Log panel への追加を同時に行い、panel の自動表示と footer/toast
+のみ current visit に限定する（#992 review 4175461885）。#643 S6 の
+activation は PR mode を破棄するため、新 visit で同じ PR を開き直すと
+その visit の fetch が始まる。旧 visit の完了は新 fetch の loading latch
+と data を触らず、もし新 visit の fetch が走っておらず head が未読なら
+`fetch_pr_for_open` で一度だけ再開する（#992 review 4175505337）。
+
 **pull（A' 採用 = 上記 (a) の改訂結果）**: `FamilyEvidence::Pull(PullReport)`。
 `PullReport { steps: Vec<RunReport>, terminal }` は実際に走った child の receipt を
 実行順で運び、settle は最後の step ではなく `terminal.decisive`（pull 失敗後に restore
@@ -340,16 +371,12 @@ refusal は core が `Refused` の no-execute step として記録し、UI は e
 `write_lease`（`reserve_write`）／run family へ。(c) merge-plan / delete-branch-plan は
 書き込みではなく planning の UI latch なので `planning` フラグへ分離。その結果:
 
-- gate は `KagiApp::op_latched()` 一本 = `has_leases() || remote_write.is_some() ||
-  planning.is_some()`。3 項の役割は固定で、混ぜてはならない:
-  - **`has_leases()`** — lease を取れる全 write の真実。
-  - **`remote_write`** — lease を取れない唯一の write（remote pull over SSH）の
-    排他 latch。所有者はその operation だけ（下記「唯一の例外」）。
+- gate は `KagiApp::op_latched()` 一本 = `has_leases() || planning.is_some()`（加えて
+  repository session を持たない clone の実行中も拒否する）。
+  - **`has_leases()`** — remote pull を含む全 write の真実。
   - **`planning`** — 書き込まないが modal slot を占める plan task。
-  - **`write_busy_op` は gate が読まない**。これは lease の *presentation mirror*
-    （snackbar のラベル用）に過ぎず、`refresh_write_busy` が lease 消滅で retire
-    する。gate に足すと lease を二度読むだけで何も足さず、lease-less writer の
-    latch として流用すると refresh に消される（#708 review P1 がこれ）。
+  - **`write_busy_op` は gate が読まない**。lease の *presentation mirror*
+    （snackbar のラベル用）であり、`refresh_write_busy` が lease 消滅で retire する。
 - `LegacyBusy` を全 admission signature から削除。`begin_write` / `write_lease` /
   `prepare_*` は lease と reconcile だけを根拠に `AdmissionError::Busy` を返す。
   planning 中の write 拒否は UI 側の `op_latched()` が担う（`reserve_write` /
@@ -384,31 +411,28 @@ refusal は core が `Refused` の no-execute step として記録し、UI は e
 `operations/modal_state*` の storage helper に限定し、`modal-slot-storage` gate は
 その module boundary を補助する。
 
-**唯一の例外 — lease を取れない write（remote pull over SSH）**:
-`src/ui/operations/pull_push.rs`。`WriteScope::Remote(RemoteRepoId)` を作るには
-`freeze_connection` + `probe_common_dir` の 2 往復が要る。remote stash family は
-これを background の plan job で済ませてから `prepare_stash` で lease を取るが、
-remote pull の plan は cached ahead/behind から**ローカルに合成**されるので相当する
-job が無く、spawn 前の UI thread で probe するしかない = network I/O で UI を止める。
-よって lease は取らず、専用 latch **`KagiApp::remote_write`** を持つ。
 
-規約（#708 review P1、破ると排他が消える）:
-
-- `remote_write` は **lease mirror ではない**。`refresh_write_busy` /
-  `settle_write_busy` に渡してはならない。lease 数から retire すると、`render` →
-  `poll_app_jobs` と全 admission preamble が呼ぶ次の refresh で消え、走行中の
-  `git pull` に 2 本目の write（stage / fetch / conflict abort / 同じ remote への
-  2 本目の pull）が admit されうる。
-- 解放するのは remote pull 自身の terminal callback（success / failure / task
-  panic）**のみ**。op 名の文字列判定はしない — field の所有者が 1 か所だから。
-- `op_latched()` = `has_leases() || remote_write.is_some() || planning.is_some()`。
-  `write_busy_op` は snackbar 用の lease mirror なので gate は読まない。
-- 回帰テストは gui-e2e `remote_pull_latch`（停止可能な fake `ssh` を PATH に置き、
-  `run_ssh` を実際に通す）。
-
-残る差: `may_close_host()` は lease を読むので remote pull は quit を保留**しない**。
-これは本 slice 以前からの状態で、write family 化（#703 と同じ後続 slice）で lease に
-載せれば同時に解消する。
+**remote pull（#989）**: cached ahead/behind から preview を合成し、background plan job
+で通常の SSH options による `ssh -G` と common-dir probe を行う。cached
+branch / upstream / HEAD OID / dirty と host の live 値が違えば、
+確認を開かず `RemotePreviewStale` で再読み込みを促す。
+同じ plan-time SSH probe は `GIT_OPTIONAL_LOCKS=0` で index の任意書込を止め、
+staged index (`git ls-files -s -z`) と worktree status
+(`git status --porcelain=v2 -z --untracked-files=all`) の binary stream を取得し、
+SHA-256 fingerprint を凍結する。実行前に同じ probe を再読して照合し、
+stream の不一致・読取失敗は pull を実行せず `Refused` として lease を解放する。
+実行は `git -c branch.<name>.mergeOptions= -C <physical-worktree> pull
+--no-rebase --ff --no-autostash --no-recurse-submodules` に固定する。
+host の rebase / ff-only / branch merge options / autostash / submodule.recurse は
+確認内容を上書きしない。fast-forward 可能なら行い、分岐時のみ通常の merge にする。
+preflight と実行は別 SSH session なので間の host drift はまだ原子的に防げず、
+同一 session 化は #1014 に分離する。
+`Planned::RemotePull` は `begin_write` で `WriteScope::Remote(RemoteRepoId)` を取り、
+`OperationId` / `OwnerStamp` によって配送される。Success / Failed は通常解放し、
+Unknown / Partial / job abandonment は停止済みの reconcile requirement と lease を保持する。
+remote の結果を観測できないため、確認後の明示的な unobservable-release audit によってのみ解放する。
+**Limitation:** ssh-agent-only 接続では connection identity の identity files が空で、
+identity-file 接続より reconcile の再現可能性が弱い。remote stash の凍結接続 policy は変更しない。
 
 **SubAgent 規律**: family / module / report は単独 owner。shared schema・router・ADR・
 migration summary は integration owner 専有。子 agent は evidence packet（revision、

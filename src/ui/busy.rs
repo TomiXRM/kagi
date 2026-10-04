@@ -1,62 +1,95 @@
 //! Busy presentation is independent of the writer lease's lifecycle marker.
+use std::time::{Duration, Instant};
+
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::Sizable as _;
 use kagi_ui_core::i18n;
-use kagi_ui_core::slow_read::SlowRead;
+use kagi_ui_core::slow_read::{is_slow, SlowRead};
 
 use super::theme::{self, theme};
 use super::{render_overlay, KagiApp};
 
+const TICK: Duration = Duration::from_millis(250);
+
 impl KagiApp {
-    pub(crate) fn mark_write_busy(&mut self, name: &'static str) {
+    pub(crate) fn mark_write_busy(&mut self, name: &'static str, cx: &mut Context<Self>) {
         self.write_busy_op = Some(name);
+        if let Some((id, _)) = self.app_sessions.running_lease() {
+            // The runner's synthetic clock is written onto the same lease
+            // record; production retains the exact admission Instant.
+            #[cfg(feature = "gui-e2e")]
+            self.app_sessions
+                .set_lease_start_for_e2e(id, cx.background_executor().now());
+            self.tick_busy_write(id, cx);
+        }
     }
 
-    /// Latch the one write that cannot hold a lease: remote pull over SSH,
-    /// whose `WriteScope::Remote(RemoteRepoId)` needs two network probes that
-    /// cannot run on the UI thread before the spawn. (The remote stash family
-    /// gets its id from a background plan job; a pull plan synthesised from a
-    /// cached snapshot has no equivalent.) ADR-0196 決定 5 has the rationale.
-    ///
-    /// This is **not** a lease mirror, so [`settle_write_busy`] must never see
-    /// it: a lease-derived retire would drop it on the very next
-    /// `refresh_write_busy()` — which `render` → `poll_app_jobs` and every
-    /// admission preamble call — and the pull would run unlatched (#708
-    /// review P1). Only the pull's own terminal callback clears it, before
-    /// every branch, so success, failure and a panicked task all release.
-    ///
-    /// Known gap, unchanged by this slice: `may_close_host` reads leases, so a
-    /// remote pull does not hold quit. Putting it on a real lease fixes both,
-    /// and is the same follow-up slice as #703.
-    pub(crate) fn mark_remote_write(&mut self, name: &'static str) {
-        self.remote_write = Some(name);
+    /// An admitted lease is the sole timer owner. No separate write clock
+    /// survives settlement, cancellation, or a newer admission.
+    fn tick_busy_write(&mut self, id: crate::app::OperationId, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, acx| loop {
+            acx.background_executor().timer(TICK).await;
+            let alive = this
+                .update(acx, |app, cx| {
+                    app.refresh_write_busy();
+                    // The tick that finds this write ended (settled, guard
+                    // dropped by a panic, or superseded) still notifies: the
+                    // advice drawn on the last frame must be withdrawn now,
+                    // not on the next unrelated frame (#995 review).
+                    let Some((running, started)) = app.app_sessions.running_lease() else {
+                        cx.notify();
+                        return false;
+                    };
+                    if running != id {
+                        cx.notify();
+                        return false;
+                    }
+                    let elapsed = cx
+                        .background_executor()
+                        .now()
+                        .saturating_duration_since(started);
+                    if is_slow(elapsed) && app.app_sessions.note_slow_lease(id) {
+                        klog!(
+                            "busy: slow write {} after 2s",
+                            app.write_busy_op.unwrap_or("write")
+                        );
+                    }
+                    cx.notify();
+                    true
+                })
+                .unwrap_or(false);
+            if !alive {
+                break;
+            }
+        })
+        .detach();
     }
-
     /// Is any operation latched — a write, a planning task or a clone? The
     /// single question every gate asks (ADR-0196 Wave 3).
     ///
-    /// A held **lease** is the truth about every write that can take one;
-    /// `remote_write` covers the one that cannot; `planning` writes nothing but
-    /// owns the modal slot it is about to fill; a clone (#930) has no
-    /// repository session to lease, but writes a folder that may lie inside
-    /// an open worktree, so nothing else may start beside it.
+    /// A held **lease** is the truth about every admitted write; `planning`
+    /// owns the modal slot for a separate background plan; a clone (#930)
+    /// has no repository session to lease but still writes a folder.
     /// `write_busy_op` is deliberately absent: it is only a presentation
     /// mirror of the lease, so reading it here would answer with the lease
     /// twice and with nothing new.
     pub(crate) fn op_latched(&self) -> bool {
-        !super::operations::op_may_start(
-            self.app_sessions.has_leases(),
-            self.remote_write,
-            self.planning,
-        ) || self.home_github.cloning.is_some()
+        !super::operations::op_may_start(self.app_sessions.has_leases(), self.planning)
+            || self.home_github.cloning.is_some()
     }
 
     pub(crate) fn busy_snackbar_label(&self) -> Option<&'static str> {
         self.write_busy_op
-            .or(self.remote_write)
             .or(self.planning)
             .map(kagi_ui_core::i18n::busy_label)
+    }
+
+    fn slow_write_shown(&self, now: Instant) -> Option<(&'static str, u64)> {
+        let name = self.write_busy_op?;
+        let (_, started) = self.app_sessions.running_lease()?;
+        let elapsed = now.saturating_duration_since(started);
+        is_slow(elapsed).then_some((name, elapsed.as_secs()))
     }
 
     /// Render the toast / busy overlay as an absolute container (bottom-left,
@@ -82,11 +115,12 @@ impl KagiApp {
         // (user request) — a lighter alternative to a blocking popup. A slow
         // read adds its explanation; with no write running it owns the label.
         let slow = self.slow_read_shown();
+        let write = self.slow_write_shown(cx.background_executor().now());
         let label = self
             .busy_snackbar_label()
             .or(slow.map(i18n::slow_read_label));
         if let Some(label) = label {
-            stack = stack.child(self.render_busy_snackbar(label, slow, cx));
+            stack = stack.child(self.render_busy_snackbar(label, slow, write, cx));
         }
 
         // The toast cards are an independently-rendered child entity.
@@ -105,6 +139,7 @@ impl KagiApp {
         &self,
         label: &'static str,
         slow: Option<SlowRead>,
+        write: Option<(&'static str, u64)>,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let accent = theme().color_branch;
@@ -115,14 +150,28 @@ impl KagiApp {
             .flex()
             .flex_col()
             .child(SharedString::from(label));
-        if let Some(read) = slow {
+        if let Some((kind, elapsed)) = write {
+            let advice = i18n::slow_write_advice(kind, elapsed);
+            #[cfg(feature = "gui-e2e")]
+            super::e2e::record_busy_advice(&advice);
             text = text.child(super::e2e::measure_control(
                 "busy-snackbar-advice",
                 div()
                     .text_sm()
                     .text_color(rgb(theme().text_sub))
-                    .child(SharedString::from(i18n::slow_read_advice(read))),
+                    .child(SharedString::from(advice)),
             ));
+        }
+        if write.is_none() {
+            if let Some(read) = slow {
+                text = text.child(super::e2e::measure_control(
+                    "busy-snackbar-advice",
+                    div()
+                        .text_sm()
+                        .text_color(rgb(theme().text_sub))
+                        .child(SharedString::from(i18n::slow_read_advice(read))),
+                ));
+            }
         }
         let skip = slow.filter(|read| read.skippable()).map(|_| {
             super::e2e::measure_control(
@@ -161,12 +210,28 @@ impl KagiApp {
 /// writer's termination is unconfirmed (or its task panicked, which proves
 /// nothing), so it may still be running — clearing the mirror there would leave
 /// `has_leases()` true with the name gone from the snackbar.
-///
-/// Only ever hand this the lease mirror. `remote_write` is owned by its writer,
-/// not by the lease count, and passing it here is the #708 P1 defect.
 pub(super) fn settle_write_busy(writer: &mut Option<&'static str>, has_leases: bool) {
     if !has_leases {
         *writer = None;
+    }
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static FETCH_HOLD: std::cell::RefCell<Option<gpui::Task<()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(super) fn take_fetch_hold() -> Option<gpui::Task<()>> {
+    FETCH_HOLD.with(|slot| slot.borrow_mut().take())
+}
+
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    /// Hold the next admitted fetch before its backend work, not its planning.
+    pub fn hold_next_fetch_for_e2e(hold: gpui::Task<()>) {
+        FETCH_HOLD.with(|slot| assert!(slot.borrow_mut().replace(hold).is_none()));
     }
 }
 
@@ -188,8 +253,6 @@ mod tests {
             let mut writer = Some(name);
             settle_write_busy(&mut writer, true);
             assert_eq!(writer, Some(name));
-            // Known termination: the lease went with the settle, so does the
-            // mirror.
             settle_write_busy(&mut writer, false);
             assert_eq!(writer, None);
         }

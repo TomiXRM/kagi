@@ -235,8 +235,8 @@ Wave 4 は #703（abandoned executor の supervisor）より先に開始・land 
 - #703: executor / process group、termination proof、lease / reconcile、host-close。
 - Wave 4: session-keyed な presentation intent / resource、pane callback routing、tab attach / detach。
 - `TabUiState` の detach / drop は write task、lease、reconcile、supervisor handle を
-  **所有も解放もしない**。`remote_write` / fetch flight / planning / operation completion は
-  operation-owned のまま。
+  **所有も解放もしない**。remote pull を含む lease / fetch flight / planning /
+  operation completion は operation-owned のまま。
 
 共有 hotspot は `Sessions` と `release_session` 周辺なので、同時に実装する場合は
 #703 が `src/app/session.rs`、Wave 4 が UI 側 store / tabs を owner とし、schema 変更は直列に統合する。

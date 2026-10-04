@@ -18,6 +18,7 @@ use super::remote_common::{
 use super::*;
 use kagi_domain::plan_note::{CommonNote, DirtyParts, OpPhrase, PlanOp, UntrackedCtx};
 use kagi_domain::plan_note::{PullNote, PullRecovery, PullTitle};
+use kagi_domain::remote::shell_quote;
 
 /// Build the confirm plan for pulling a **remote** branch over SSH (ADR-0089
 /// Phase 3 / ADR-0097). There is no local `Repository`, so this synthesises the
@@ -256,7 +257,6 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         kind: RecoveryKind::Pull(PullRecovery::Pull),
         commands: vec!["git revert -m 1 HEAD".to_string(), "git reflog".to_string()],
     };
-
     Ok(OperationPlan {
         // ADR-0129 F-1: the UI's pull no-op detection keyed on the title text
         // ("up to date (local knowledge…"); the semantic state now travels
@@ -630,7 +630,10 @@ pub fn plan_pull_branch_ff(
             kind: RecoveryKind::Pull(PullRecovery::PullBranchFf {
                 branch: branch_name.to_string(),
             }),
-            commands: vec![format!("git branch -f {} <old-sha>", branch_name)],
+            commands: vec![format!(
+                "git branch -f {} <old-sha>",
+                shell_quote(branch_name)
+            )],
         }),
         head_at_plan: head,
         stash_count_at_plan: 0,
@@ -718,6 +721,7 @@ mod remote_pull_tests {
         assert!(!plan.destructive);
         assert!(plan.title.message_en().contains("3 commit"));
         assert!(plan.predicted.dirty.contains("fast-forward"));
+        assert!(plan.equivalent_command.is_none());
     }
 
     #[test]
@@ -735,5 +739,6 @@ mod remote_pull_tests {
             .iter()
             .any(|w| w.message_en().contains("diverged")));
         assert!(plan.predicted.dirty.contains("merge"));
+        assert!(plan.equivalent_command.is_none());
     }
 }

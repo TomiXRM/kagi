@@ -455,6 +455,13 @@ The current suite covers:
   policy uses the same lane. Node/dash `paint_order` proves that WIP paths are
   behind crossed nodes. The same run covers shared HEAD (stacked rings, one
   trace), detached/unborn state, 1.25× zoom, hover and selection.
+  The same painted frame records `graph-commit-row` (29px at 100%) and
+  `graph-commit-author` / `graph-commit-time` (96px / 48px at 100%,
+  120px / 60px at 125%) using `e2e::measure_inside` on the first row/cells.
+  `KAGI_GUI_E2E_ONLY=commit_list_roles` confirms the Graph AX row still
+  names the full author and verbose age even though the visible time is short.
+  For the compact metadata display (#1003), Tier B compares EN Dark
+  screenshots of the same fixture before/after at 100% zoom and normal density.
   Ring diameter matches the visible HEAD ring (classic) or commit avatar disc
   (swimlane); stroke stays 2px, lane-coloured, without a fill. The trace is
   compile-time `gui-e2e` only and opt-in per window through
@@ -662,6 +669,32 @@ The current suite covers:
   no longer loaded, so it paints `restore-preview-unavailable`. Domain rules:
   `kagi-domain` `restore_preview`. Tier B: read the graph after on the card
   (EN/JA) before confirming.
+  #988 extends the existing scenario: a ref-only blocked plan has no
+  Confirm button or accessibility Confirm action; REFS rows and the
+  CURRENT-to-AFTER graph stay visible without re-laying the original rails.
+  The checked-out branch's warning and six unchanged-state chips remain
+  outside the graph; Copy all includes the ref transaction and preview.
+  At the first confirmation no ref moves; at the second the existing
+  `run_recorded` pipeline performs the write.
+- Blocked plan command (`KAGI_GUI_E2E_ONLY=blocked_plan_command`,
+  `tests/recovery/operations.rs`): #993 P2. A real detached-HEAD Reset Current
+  plan has a blocker and still carries `git reset --soft` in the backend.
+  The shared confirmation renders neither the collapsed command nor its Copy
+  button; Copy all keeps blocker details but not the command, and inspecting it
+  leaves the repository unchanged. The shared visibility predicate also gates
+  Operation Log restore; `oplog_restore_guarded_rows` covers that card.
+- Restore card safety and long refs (`KAGI_GUI_E2E_ONLY=oplog_restore_guarded_rows`,
+  `tests/recovery/oplog_panel.rs`): #993 review. Reverting a recorded
+  `create-branch` whose branch is now checked out yields a real
+  `DeletesCheckedOutBranch` blocker while the backend still carries an
+  equivalent `git update-ref --stdin` command. The card hides the command
+  disclosure and dedicated Copy button; Copy all retains the ref details but
+  omits the executable command. Enter records a Refused receipt without
+  changing the repository. A second fixture moves a >200-character branch
+  through a recorded commit; restoring to its creation leaves both expected
+  and destination OID bounds inside the row/card, bounds the name chip, and
+  exposes its complete canonical ref in AX and Copy all. Inspection/copy
+  leaves repository fingerprint and oplog unchanged.
 - Operation Log local-tag restore (`KAGI_GUI_E2E_ONLY=oplog_restore_tag_preview`,
   `tests/recovery/oplog_panel.rs`): #887. A recorded branch point followed by
   a recorded local tag opens Restore to this point. The card lists the tag
@@ -672,6 +705,16 @@ The current suite covers:
   `crates/kagi-git/tests/oplog_restore_test.rs`. Tier B: create a local tag
   after an earlier recorded operation, inspect the card and its neutral
   preview, then confirm and check that only the local tag disappeared.
+  #988 adds a malformed canonical plan-row admission leg to the same
+  scenario: no card opens or ref moves, the full error persists in a Failed
+  receipt, and the footer/toast carry only a bounded EN/JA preview.
+  #993 review also checks the EN/JA missing-session footer and the no-repository
+  toast, without appending another receipt or moving any ref.
+  `oplog_restore_preview_review` uses a long recorded branch history with
+  Solo enabled and a fetched PR head as a fixed root. The ghost count omits
+  commits that PR ref retains; the six-row AFTER window scrolls to the last
+  loaded row, and Copy all contains its projection. Scope it explicitly with
+  `KAGI_GUI_E2E_ONLY=oplog_restore_preview_review`.
 - Operation Log restore across a resolved merge
   (`KAGI_GUI_E2E_ONLY=oplog_restore_across_merge`, `tests/recovery/oplog_panel.rs`):
   #884 / ADR-0214 §4. `create-branch mark` → `merge-into-conflict side` → the
@@ -930,6 +973,14 @@ The current suite covers:
   Push appear above it, and the focus stays on Copy head SHA, whose Enter
   copies the SHA. Numbering slots by drawn items only fails with the focus on
   `branch-menu-item-4-2` (Copy branch name).
+  `context_menu_keys_row_behind_info` (#1000): with an Info `MenuOverlay` up
+  and the sidebar `branch:feature` row (on HEAD~1) focused, Shift+F10 opens
+  no branch menu and the Graph selection stays on row 0 (dropping the
+  `front_layer == None` guard in `open_sidebar_row_menu` fails: the selection
+  jumps behind the panel). `context_menu_keys_last_tab` (#1000): with a
+  commit-menu item focused, `CloseTab` on the last tab leaves no menu and the
+  root focused on Welcome (dropping the window-slot reset / root focus in the
+  `TabClose::Welcome` branch fails).
 - Toolbar unavailable reasons (`KAGI_GUI_E2E_ONLY=toolbar_keyboard_reasons`,
   `tests/recovery/toolbar_keyboard.rs`, #972): starting at the root, GPUI's
   `focus_next` visits the rendered toolbar in visual order; an F19 key-down
@@ -1069,6 +1120,60 @@ The current suite covers:
   closes a visible menu without clearing Graph selection.
   The existing `unmerged_branch_delete_armed` scenario also rejects delayed
   plans after departure and revisit while releasing the planning latch.
+- guard writer abandonment (`tests/recovery/fetch_owner.rs`,
+  `tests/recovery/guard_writer_panic.rs`):
+  `KAGI_GUI_E2E_ONLY=fetch_panicked_worker_reconciles,fetch_previous_visit_is_not_presented,fetch_old_visit_drops_pull_waiter,fetch_new_visit_waiter_sees_old_flight_failure,remote_branch_fetch_panic,remote_branch_fetch_failed_after_departure,remote_branch_fetch_success_after_departure,pr_ref_fetch_restarts_after_revisit,pr_ref_fetch_panic,editor_save_panic,pull_confirm_departure_discards_old_visit`
+  exercises the admitted background work's panic, Unknown receipt and reconcile
+  notice, acknowledgement and fresh admission. `editor_save_panic_after_close`
+  closes the pane before the panicked worker settles and requires one durable
+  receipt, one live Operation Log row and exactly one toast; the open-pane
+  `editor_save_panic` also requires one row and one toast. Departing and returning drops
+  the old Pull waiter; a new visit's Pull joined to the old fetch gets its
+  failure footer and toast, with one receipt and no old-visit confirmation.
+  Failed fetches (including an old-visit fetch and a departed remote branch
+  fetch) keep their frozen repository receipt visible in the shared Operation
+  Log panel without changing the current tab's footer/toast or opening the
+  panel. The remote branch success and failure legs inspect `klog::tail()` for
+  the unchanged terminal lines after departure. After PR mode is cleared by
+  activation, reopening that PR admits one current-visit fetch; the old
+  completion cannot clear its loading latch or replace its head/files.
+  `TestDispatcher`
+  propagates an uncaught task panic before `Task::fallible()` can deliver `None`;
+  the GUI-only seam catches the injected panic inside the worker and returns an
+  absent result so the production abandonment branch can be inspected. The
+  non-test path still uses `fallible()` for actual unwinds.
+- #996 background writers (`tests/recovery/guard_writer_panic.rs`,
+  `tests/recovery/app_conflict.rs`, `tests/recovery/app_stash.rs`):
+  `KAGI_GUI_E2E_ONLY=snapshot_write_panic,snapshot_write_draws_while_busy,conflict_merge_continue_panic,conflict_confirm_continue_panic,conflict_skip_panic,stash_continue_panic,stash_continue_after_tab_switch,create_snapshot,stash_conflict_close_reopen,stash_conflict_followup`.
+  Each panic scenario injects an absent worker completion through its own
+  GUI-only seam, requires an Unknown/reconcile exit (and a durable conflict
+  receipt), and distinguishes snapshot's GroupOnly scope from retained
+  sequencer leases. The snapshot hold scenario draws a frame with its busy
+  label while the write awaits release, then switches tabs and requires its
+  unchanged `snapshot: created` contract line without a toast/footer on B.
+  The stash tab-switch scenario requires the departed continuation's receipt
+  without a toast or footer on B. Production mutations that fail each panic
+  scenario: replace that writer's `abandonment.into_unknown()` conversion
+  with an ordinary `GitError::Other` in its `fallible()` absent-completion path
+  (snapshot, merge-stage, stash-continue, sequencer-confirm, and skip each
+  fail individually). Removing `drain_unaccounted` alone is not a useful
+  mutation: shared app-job polling also drains it. Dropping the snapshot hold
+  before awaiting it fails the held-frame scenario; forcing departed
+  completions through the presenting branch of `record_conflict_completion`
+  fails the stash tab-switch scenario.
+  PR #1008 follow-up Tier A:
+  `KAGI_GUI_E2E_ONLY=conflict_confirm_dismissed_still_reloads,snapshot_failed_after_departure,conflict_merge_failure_contract`.
+  The dismissed sequencer modal cannot suppress a successful current owner's
+  reload and conflict re-detection; ordinary snapshot errors after leaving
+  the tab reach a repository-named host notice without changing B's footer;
+  current merge-stage errors show the normal footer/toast/bottom panel, and
+  departed errors retain their oplog receipt, footer contract klog, notice and
+  B's untouched footer/panel. Each holds or defers the real writer, not a mock.
+  Three independent production mutations, each fails its own scenario:
+  change the successful sequencer reload gate from `current` back to
+  `modal_matches`; change the departed snapshot error queue gate from
+  `!current` to `current`; remove the departed `record_conflict_completion`
+  `klog!("footer: {}", footer_msg)` call.
 - session-owned positioning and Smart Commit state
   (`tests/recovery/tab_ui_state.rs`, `tests/recovery/operations.rs`):
   `KAGI_GUI_E2E_ONLY=tab_ui_state_ownership,pr_open_enters_before_ref_fetch,smart_commit_generation_owner,smart_commit_modal_and_probe`.
@@ -1580,16 +1685,77 @@ G: `transport_recording_test` validates the actual `mergedAt` query with fake gh
 `remote_stash_script_test::drop_forces_c_locale_inside_the_remote_shell` runs the
 real script under a simulated translated Git; `conflicts_test::skip_advancing_to_the_next_conflict_is_not_a_failure`
 checks that the next same-path conflict has no skipped draft. UI `transport_hold`
-unit coverage verifies owner/operation isolation and Partial/Unknown admission.
+unit coverage verifies GitHub PR merge owner/operation isolation and Partial/Unknown admission;
+SSH pull now uses the shared app lease, not this hold.
 Skip の分類順 (#569 (1)) は `cargo test -p kagi --lib conflict_skip::tests`
 で確認する。`tests/recovery/conflict_skip_g.rs` は GUI を起動せず、実 repository と
 `Sessions` で Unclear の lease 保持・writer 拒否・reconcile 登録、typed
 TerminationUnknown の Unknown 維持、既知結果の通常解放を検証する。
 既存 `app_writer_admission_test` と `conflicts_test` の `skip_` も併用する。
-For M, check that notice dismissal/tab switching does not re-enable PR merge or
-remote pull after Unknown/Partial; Failed alone permits retry. Holds persist for
-the app lifetime; inspect remote state before restarting. GUI runner build only
-when execution is reserved for PM.
+For M, PR merge retains its transport hold after Partial; remote pull holds its
+`WriteScope::Remote` lease during execution and retains it with a reconcile
+requirement after Unknown/Partial/abandonment. Dismissing a notice or switching
+tabs does not release either one. Remote pull's unobservable result requires
+Inspect → arm → confirm and an audit row before the lease releases. Failed
+releases normally. `KAGI_GUI_E2E_ONLY=remote_pull` (`tests/recovery/pull.rs`)
+drives real fake-SSH `-G`, common-dir and agent-only planning, the blocked pull
+and fetch, quit admission, Unknown notice and audited two-step release.
+`remote_pull_preflight_refusal` changes the common dir after confirmation: no
+`git pull` runs, Refused is recorded, and the lease releases.
+`remote_pull_proxy_route_refusal` keeps the same hostname and common dir but
+changes only `ssh -G` ProxyJump; the frozen route identity must refuse before
+`git pull`, record Refused, and release the lease. Domain
+`pull_route_changes_connection_identity_but_disabled_options_do_not` verifies
+ProxyJump/ProxyCommand/ControlMaster/ControlPath and disabled normalization.
+`remote_pull_toplevel_refusal` keeps the repository common dir but changes the
+physical linked-worktree toplevel after confirmation; no pull runs, Refused is
+recorded, and the lease releases. `remote_pull_lease` verifies that execution
+uses the frozen physical toplevel instead of the selected symlink while the
+oplog scope remains the selected root.
+`remote_pull_branch_refusal`, `remote_pull_head_oid_refusal`, and
+`remote_pull_upstream_refusal` change only the checked-out branch, HEAD OID,
+or resolved upstream after confirmation. All must refuse without running
+`git pull`, record Refused, and release the lease. The
+`remote_pull_head_read_refusal` case also requires Refused when the preflight
+HEAD read fails. `remote_pull_url_refusal` changes only the effective remote
+URL after confirmation; the preflight must record Refused, release the lease,
+and run no pull. Skipping the config comparison fails the zero-pull assertion.
+Domain `pull_common_dir_requires_complete_physical_paths_head_and_git_config`
+rejects missing/malformed Git configuration and preserves all fetch refspecs;
+`remote_oplog_test::pull_probe_binds_symlink_to_real_worktree_and_live_head`
+exercises the actual Git commands against a throwaway repository.
+`remote_pull_dirty_refusal` changes only the host's untracked worktree status
+between the plan and preflight probe: it must record Refused, release the lease,
+and run zero pulls; skipping the fingerprint comparison fails that assertion.
+The same pure frame parser rejects missing staged/status delimiters while
+allowing legitimate empty clean streams and preserving non-UTF-8 filenames.
+The real-Git probe test changes unstaged content and then stages it, proving
+that the two frozen digests change independently without HEAD/config drift.
+`remote_oplog_test::remote_pull_merges_even_when_host_config_requests_rebase_and_ff_only`
+creates divergent real-Git history with `pull.rebase=true`,
+`branch.main.rebase=true`, `pull.ff=only`, and
+`branch.main.mergeOptions=--squash`; the transport still creates a normal
+two-parent merge commit and records Success. Removing the `-c
+branch.main.mergeOptions=` override breaks that parent assertion.
+`remote_pull_disables_host_autostash_instead_of_recording_conflicted_success`
+overlaps dirty local content with an incoming tracked edit under
+`merge.autoStash=true`: no implicit stash, no changed HEAD/worktree, non-Success
+receipt; removing `--no-autostash` returns Ok despite a conflict.
+`remote_pull_does_not_recurse_into_host_submodule_worktrees` proves that
+`submodule.recurse=true` cannot move an initialized submodule's checkout;
+removing `--no-recurse-submodules` moves it. `remote_pull_lease` checks the
+executed fake-SSH argv has all four pull flags and the empty branch override.
+The real-Git probe wraps `git status` and refuses unless
+`GIT_OPTIONAL_LOCKS=0`; removing the export fails before confirmation.
+`remote_pull_cached_preview_stale` changes branch before the live probe and
+requires no modal/lease/pull plus localized refresh. G:
+`cargo test -p kagi --test app_remote_pull_test` additionally checks cached
+HEAD OID and dirty mismatch at plan time, and status fingerprint/config/repo
+drift at preflight: durable Refused, lease released, zero ssh pull calls.
+Mutating the corresponding comparison makes each named assertion fail.
+Success/Failed release; Unknown/Partial/abandonment retain reconcile.
+Remote stash's frozen-identity policy is unchanged. #1014 tracks the separate
+SSH sessions' remaining race.
 
 Continue の post-read (#569 (2)) は
 `cargo test -p kagi --test app_writer_admission_test continue_` で確認する。
@@ -1685,6 +1851,24 @@ index unchanged). M: open a two-hunk file from the Commit Panel, Stage hunk /
 Unstage hunk in unified and split view (EN/JA labels), and check the panel and
 diff update.
 
+### WIP diffstat after staging (#996)
+
+Tier A: `KAGI_GUI_E2E_ONLY=wip_diffstat_stage_order` in
+`tests/recovery/hunk_staging.rs`. Hold the first scan after its background
+diffs, stage again within the same cache epoch, and assert that the panel and
+index already reflect staging while the first read is held. The second scan
+publishes the final badge; releasing the first cannot roll it back. Mutation:
+remove the `wip_diffstat_request` completion check in
+`start_wip_diffstat_scan` and this scenario fails on the final badge.
+Tier A `KAGI_GUI_E2E_ONLY=wip_diffstat_watcher_order` holds an older scan
+after its backend read, edits the same already-modified file, and accepts
+the watcher's newer diffstat without changing its cache epoch. Releasing
+the older scan must not overwrite the badge. Every direct badge assignment
+advances `wip_diffstat_request`, including reload, activation clear, tab
+load, both watcher paths, and accepted scan publication. Production
+mutation: remove the request increment from the status-changed watcher
+branch; this scenario fails with the older badge.
+
 ### Busy snackbar labels (#607)
 
 G covers EN/JA labels, unknown-tag fallback, and lease-mirror settlement without
@@ -1713,3 +1897,77 @@ hides them, the released read lands `counts: None` (status summary unknown, not
 `bash scripts/make_fixture.sh <dir> 10500`, add branches with upstreams, reload
 and read the snackbar and `[kagi] busy: slow <op> after 2s` /
 `[kagi] busy: skip <op>`; after Skip the sidebar shows `—`.
+`KAGI_GUI_E2E_ONLY=worktree_size_not_explained` (#1012): the automatic worktree
+size sweep, held on `e2e::worktree_inspection::queue`, stays "measuring" for
+3 s with no `slow_read_shown` and no drawn snackbar advice / Skip; the released
+measurement still lands on the row. Re-adding a slow read for the sweep fails
+"a slow size measurement is not explained".
+
+### Slow running writes (#355 stage 1, ADR-0206 amendment)
+
+Tier A: `KAGI_GUI_E2E_ONLY=slow_write_explained,slow_read_explained,fetch_busy_label`
+checks a real local fetch admitted on a lease, with backend dispatch held by
+`KagiApp::hold_next_fetch_for_e2e` (`tests/recovery/slow_read.rs`). The dispatcher
+clock advances in 250 ms ticks: no advice at 1.75 s, a drawn network reason and
+`2 s` at the boundary, updated `4 s`, one
+`[kagi] busy: slow write fetch after 2s`, no Skip or interruption warning, and
+no advice after completion. While the write and snapshot read are both slow,
+the write's explanation wins and the read's Skip remains available. The
+neighbouring read scenario checks Skip alone. `cargo test -p kagi-ui-core
+slow_write_advice` covers EN/JA reason classification and unknown fallback;
+`cargo test -p kagi --test oplog_nonrun_ops_test a_panicked_run_job` and
+`cargo test -p kagi --test app_writer_admission_test dropped_or_panicking_writer`
+cover an abandoned run and a panicked guard losing their running explanation
+without releasing an unconfirmed lease. Tier B: start a slow local fetch in an
+isolated app, compare screenshots before/after 2 s and after completion, and
+inspect klog. Remote SSH pull follows #989's lease migration; clone remains out
+of scope.
+
+### Operation queue (#355 stage 3a, ADR-0204)
+
+G: `cargo test -p kagi --lib app::queue` (the pure reducer: Q1–Q13 rows plus the
+stage 3a events — an untracked write rejecting its owner's enqueue, a plan job
+outside the queue holding the slot, a withdrawn confirmation going back to
+`Queued`, strip removal of the head not tripping its successors).
+Tier A: `KAGI_GUI_E2E_ONLY=queue_` with `KAGI_GUI_E2E_KEEP_GOING=1`
+(`tests/recovery/op_queue.rs`). `KagiApp::hold_next_run_for_e2e` (`gui-e2e`
+only) holds the next admitted run-family write (checkout, commit, …) before
+its backend work, with the lease held. Scenarios drive the product entry
+(`dblclick_checkout_branch` → `start_checkout`) and read the strip through
+`queue_strip_for_e2e(now)`:
+`queue_runs_in_order` (strip row and `Queued: checkout b` toast at once, a real
+click on `queue-strip-remove-<id>`, the queued checkout runs only after the held
+one settles, with no modal on a clean replan, and its row reads `running · 2 s`),
+`queue_trip_lists_cancelled` (the held checkout fails, both successors are
+listed as `previous step failed` until `queue-strip-clear`),
+`queue_confirms_a_warned_plan` (a replan with a warning opens the queued
+modal; confirm runs it, Cancel lists it as `declined`),
+`queue_strip_owner_only` (tab B never draws tab A's strip; A's head waits for A
+to return, and the queue hears of A's held activation read before A itself
+through `sync_queue_for_e2e`), `queue_skips_auto_fetch` (a quiet fetch is
+skipped while the tab has intents), `queue_rejects_during_untracked_write` (a
+checkout behind the tab's own manual fetch keeps the old `OpInProgress`
+refusal), `queue_resumes_after_reconcile` (`KagiApp::panic_next_run_for_e2e`
+kills the held checkout: Unknown, its successor cancelled; once the reconcile
+is acknowledged a later queued checkout runs), `queue_accepts_after_idle_fetch`
+(a fetch that ended while the queue was idle does not refuse the next intent)
+and `queue_refuses_a_blocked_checkout` (confirming a blocked plan while busy is
+refused, not queued). Tier B: queue two checkouts behind a held or slow
+checkout in an isolated app and capture the strip, the cancel list and the
+running row's seconds in EN/JA.
+
+### Background writer elapsed advice (#996 with #995)
+
+Tier A: `KAGI_GUI_E2E_ONLY=slow_write_snapshot,slow_write_conflict_continue`
+in `tests/recovery/slow_read.rs` holds the real snapshot and merge Continue
+background workers before their Git writes. Each checks the admitted lease and
+operation-specific snackbar label, a drawn reason plus `2 s` at the dispatcher
+clock's 2-second boundary, `4 s` while held, and no advice after release.
+Snapshot checks EN/JA and the ref only appears after release; merge Continue
+checks conflict-resolution advice and the commit panel after staging. Their
+`reserve_write` calls already register the kind and lease-start clock through
+`mark_write_busy`, as #992's branch fetch does. Restore-snapshot is classified
+`SlowWriteWorktree` rather than `SlowWriteStash`: restoring checks out the index
+and worktree. Production mutation: subtract one second from the elapsed seconds
+in `KagiApp::slow_write_shown`; `slow_write_snapshot` fails on the 2-second
+drawn advice even though the lease and backend operation still run.

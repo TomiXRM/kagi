@@ -25,6 +25,7 @@ mod issue_write_e2e;
 pub mod merge;
 pub mod modal_state;
 pub(crate) mod oplog_restore;
+pub(crate) mod oplog_restore_card;
 pub(crate) mod oplog_restore_preview;
 pub mod pull_push;
 pub mod rebase;
@@ -197,13 +198,6 @@ impl RunPresentation {
     }
 }
 
-/// A Pull confirmation that could not be delivered when its fetch finished,
-/// waiting for the tab that asked for it (#625, ADR-0192).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PullConfirmDelivery {
-    /// Plan and open the confirmation.
-    Confirm,
-}
 use crate::ui::KagiApp;
 use gpui::{AppContext, Context, SharedString, Task};
 use kagi_git::backend::recording::{Recording, RunReport};
@@ -213,19 +207,11 @@ use kagi_git::OperationPlan;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Whether a state-changing op may start right now. A held **lease** is the
-/// truth about every write that can take one, `remote_write` is the latch of
-/// the one that cannot (remote pull over SSH), `planning` the in-flight *plan*
-/// latch (ADR-0196 Wave 3). A mutation started while any of the three holds is
-/// exactly the concurrent-mutation hazard #283 is about, so every entry point
-/// that begins one consults this — through [`KagiApp::op_latched`]. Pure so the
-/// gate is testable without a Context.
-pub(crate) fn op_may_start(
-    has_leases: bool,
-    remote_write: Option<&'static str>,
-    planning: Option<&'static str>,
-) -> bool {
-    !has_leases && remote_write.is_none() && planning.is_none()
+/// Whether a state-changing op may start right now. Every admitted write
+/// holds a lease; `planning` reserves the modal slot for a background plan.
+/// All mutation entry points consult this through [`KagiApp::op_latched`].
+pub(crate) fn op_may_start(has_leases: bool, planning: Option<&'static str>) -> bool {
+    !has_leases && planning.is_none()
 }
 
 impl KagiApp {
@@ -351,6 +337,9 @@ impl KagiApp {
     {
         use crate::app::{self, Delivery, FamilyEvidence};
         self.refresh_write_busy();
+        // A writer that ended while the queue was idle must be released in
+        // the queue before this one is admitted (#1018 review).
+        self.sync_queue_before_admission(cx);
         // The lease answers for every other writer; the UI latch is what a
         // planning task in flight is refused by (ADR-0196 Wave 3).
         let latched = self.op_latched();
@@ -360,6 +349,9 @@ impl KagiApp {
         let admitted = owner
             .ok_or(app::AdmissionError::StaleApproval)
             .and_then(|owner| {
+                if latched {
+                    return Err(app::AdmissionError::Busy);
+                }
                 let backend = kagi_git::Backend::open(&repo_path)
                     .map_err(|error| app::AdmissionError::Identity(error.to_string()))?;
                 let repo = backend
@@ -382,20 +374,19 @@ impl KagiApp {
                 )
             })
             .and_then(|approved| {
-                if latched {
-                    return Err(app::AdmissionError::Busy);
-                }
                 app::prepare_run(&mut self.app_sessions, approved, Box::new(execute))
             });
         let job = match app::admit(&mut self.reads, admitted) {
             Ok(job) => job,
             Err(error) => {
+                self.queue_admission_refused(&error, cx);
                 self.report_admission_refusal(error, cx);
                 return false;
             }
         };
-        self.mark_write_busy(op_name);
+        self.mark_write_busy(op_name, cx);
         let stamp = job.stamp();
+        self.queue_write_admitted(stamp, cx);
         // #289: gpui does not propagate a background panic, so the task can end
         // without a completion. That is not evidence of termination — the write
         // may have happened — so it settles as `Unknown` through the same
@@ -403,9 +394,27 @@ impl KagiApp {
         // the reconcile entry. Clearing the busy mirror here instead would
         // leave `has_leases()` true with `op_latched()` false.
         let abandonment = job.abandonment();
-        let task = cx.background_spawn(async move { job.run() });
+        #[cfg(feature = "gui-e2e")]
+        let (hold, panic) = (
+            crate::ui::op_queue::take_run_hold(),
+            crate::ui::op_queue::take_run_panic(),
+        );
+        let task = cx.background_spawn(async move {
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
+            // An injected worker death: the job is dropped unrun, as an
+            // executor unwind would leave it (the abandonment settles it).
+            #[cfg(feature = "gui-e2e")]
+            if panic {
+                drop(job);
+                return None;
+            }
+            Some(job.run())
+        });
         cx.spawn(async move |this, acx| {
-            let completion = task.fallible().await;
+            let completion = task.fallible().await.flatten();
             let _ = this.update(acx, move |app, cx| {
                 let completion = match completion {
                     Some(completion) => completion,
@@ -440,6 +449,8 @@ impl KagiApp {
                     // `Partial` transport hold `settle_run_receipt` registers.
                     app.settle_run_receipt(op_name, &report, &repo_path);
                     app.notice_reconcile_required(id, op_name, &repo_path);
+                    // The chain judges the receipt, never the presentation.
+                    app.queue_write_settled(stamp, id, &report, cx);
                     let current = app.active_session() == Some(stamp.session)
                         && app.app_sessions.visit(stamp.session) == Some(stamp.visit);
                     let (mut presentation, failure_message, finished) = match &report.result {
@@ -559,6 +570,9 @@ impl KagiApp {
                     }
                 }
                 app.present_app_notice();
+                // Reports the lease release after the reload above has marked
+                // the owner's read stale, so a successor waits for that read.
+                app.sync_queue(cx);
                 cx.notify();
             });
         })
@@ -749,35 +763,14 @@ mod tests {
         // #283: the in-flight-op latch is the concurrent-mutation gate, and
         // ADR-0196 Wave 3 makes the *lease* its first term — a write that
         // reserved one blocks the next op with no busy mirror in the picture.
-        assert!(op_may_start(false, None, None), "idle must allow a new op");
+        assert!(op_may_start(false, None), "idle must allow a new op");
         assert!(
-            !op_may_start(true, None, None),
-            "a held lease alone must block a new op"
+            !op_may_start(true, None),
+            "a held lease must block a new op"
         );
         assert!(
-            !op_may_start(false, None, Some("merge-plan")),
-            "a plan in flight alone must block a new op"
-        );
-        // The remote latch is the only one remote pull (lease-less) has.
-        assert!(
-            !op_may_start(false, Some("pull"), None),
-            "a lease-less writer's own latch alone must block a new op"
-        );
-    }
-
-    #[test]
-    fn pr_merge_is_blocked_while_another_op_is_in_flight() {
-        // #402: a PR merge is a write op — with any op latched (its own lease
-        // or a plan) `reject_if_busy` must refuse it, same as every other
-        // start_*. Guards the regression where start_pr_merge never read the
-        // latch at all.
-        assert!(
-            !op_may_start(true, Some("pr-merge"), None),
-            "a pr-merge in flight must block a new op"
-        );
-        assert!(
-            !op_may_start(true, Some("checkout"), None),
-            "a local op in flight must block a pr-merge"
+            !op_may_start(false, Some("merge-plan")),
+            "planning must block another op"
         );
     }
 }

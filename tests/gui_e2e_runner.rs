@@ -112,6 +112,9 @@ mod app_stash;
 mod busy_label;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/op_queue.rs"]
+mod op_queue;
+#[cfg(target_os = "macos")]
 #[path = "recovery/slow_read.rs"]
 mod slow_read;
 
@@ -263,6 +266,10 @@ mod remote_refresh_owner;
 #[cfg(target_os = "macos")]
 #[path = "recovery/fetch_owner.rs"]
 mod fetch_owner;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/guard_writer_panic.rs"]
+mod guard_writer_panic;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/file_menu_owner.rs"]
@@ -656,7 +663,7 @@ mod macos {
 
     /// `git for-each-ref <pattern>` — the ref-existence probe for the snapshot
     /// scenario. Returns the raw stdout (one line per matching ref).
-    fn for_each_ref(dir: &Path, pattern: &str) -> String {
+    pub(super) fn for_each_ref(dir: &Path, pattern: &str) -> String {
         let out = Command::new("git")
             .current_dir(dir)
             .args(["for-each-ref", pattern])
@@ -906,6 +913,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_modal_no_fallthrough),
             ),
             (
+                "blocked_plan_command",
+                Box::new(crate::recovery_operations::scenario_blocked_plan_command),
+            ),
+            (
                 "commit_list_roles",
                 Box::new(crate::recovery_operations::scenario_commit_list_roles),
             ),
@@ -1046,6 +1057,14 @@ mod macos {
                 Box::new(crate::context_menu_keys::scenario_context_menu_keys_item_appears),
             ),
             (
+                "context_menu_keys_row_behind_info",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_row_behind_info),
+            ),
+            (
+                "context_menu_keys_last_tab",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_last_tab),
+            ),
+            (
                 "home_list_place",
                 Box::new(crate::home_list_place::scenario_home_list_place),
             ),
@@ -1112,12 +1131,60 @@ mod macos {
                 Box::new(crate::recovery_pull::scenario_pull_auto_stash_overlap_preview),
             ),
             (
-                "remote_pull_latch",
-                Box::new(crate::recovery_pull::scenario_remote_pull_holds_its_latch),
+                "remote_pull_lease",
+                Box::new(crate::recovery_pull::scenario_remote_pull_lease),
             ),
             (
-                "pull_confirm_parks_for_its_tab",
-                Box::new(crate::recovery_pull::scenario_pull_confirm_parks_for_its_tab),
+                "remote_pull_unknown_release",
+                Box::new(crate::recovery_pull::scenario_remote_pull_unknown_release),
+            ),
+            (
+                "remote_pull_preflight_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_preflight_refusal),
+            ),
+            (
+                "remote_pull_proxy_route_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_proxy_route_refusal),
+            ),
+            (
+                "remote_pull_toplevel_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_toplevel_refusal),
+            ),
+            (
+                "remote_pull_branch_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_branch_refusal),
+            ),
+            (
+                "remote_pull_head_oid_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_head_oid_refusal),
+            ),
+            (
+                "remote_pull_upstream_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_upstream_refusal),
+            ),
+            (
+                "remote_pull_head_read_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_head_read_refusal),
+            ),
+            (
+                "remote_pull_cached_preview_stale",
+                Box::new(crate::recovery_pull::scenario_remote_pull_cached_preview_stale),
+            ),
+            (
+                "remote_pull_url_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_url_refusal),
+            ),
+            (
+                "remote_pull_dirty_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_dirty_refusal),
+            ),
+            (
+                "remote_pull_planning_latch",
+                Box::new(crate::recovery_pull::scenario_remote_pull_planning_latch),
+            ),
+            (
+                "pull_confirm_departure_discards_old_visit",
+                Box::new(crate::recovery_pull::scenario_pull_confirm_departure_discards_old_visit),
             ),
             (
                 "pull_confirm_yields_to_another_modal",
@@ -1204,6 +1271,62 @@ mod macos {
             (
                 "slow_read_explained",
                 Box::new(crate::slow_read::scenario_slow_read_explained),
+            ),
+            (
+                "slow_write_explained",
+                Box::new(crate::slow_read::scenario_slow_write_explained),
+            ),
+            (
+                "slow_write_cleared_after_panic",
+                Box::new(crate::slow_read::scenario_slow_write_cleared_after_panic),
+            ),
+            (
+                "queue_runs_in_order",
+                Box::new(crate::op_queue::scenario_queue_runs_in_order),
+            ),
+            (
+                "queue_trip_lists_cancelled",
+                Box::new(crate::op_queue::scenario_queue_trip_lists_cancelled),
+            ),
+            (
+                "queue_confirms_a_warned_plan",
+                Box::new(crate::op_queue::scenario_queue_confirms_a_warned_plan),
+            ),
+            (
+                "queue_strip_owner_only",
+                Box::new(crate::op_queue::scenario_queue_strip_owner_only),
+            ),
+            (
+                "queue_skips_auto_fetch",
+                Box::new(crate::op_queue::scenario_queue_skips_auto_fetch),
+            ),
+            (
+                "queue_rejects_during_untracked_write",
+                Box::new(crate::op_queue::scenario_queue_rejects_during_untracked_write),
+            ),
+            (
+                "queue_resumes_after_reconcile",
+                Box::new(crate::op_queue::scenario_queue_resumes_after_reconcile),
+            ),
+            (
+                "queue_accepts_after_idle_fetch",
+                Box::new(crate::op_queue::scenario_queue_accepts_after_idle_fetch),
+            ),
+            (
+                "queue_refuses_a_blocked_checkout",
+                Box::new(crate::op_queue::scenario_queue_refuses_a_blocked_checkout),
+            ),
+            (
+                "slow_write_snapshot",
+                Box::new(crate::slow_read::scenario_slow_write_snapshot),
+            ),
+            (
+                "slow_write_conflict_continue",
+                Box::new(crate::slow_read::scenario_slow_write_conflict_continue),
+            ),
+            (
+                "worktree_size_not_explained",
+                Box::new(crate::slow_read::scenario_worktree_size_not_explained),
             ),
             (
                 "fetch_failure_oplog",
@@ -1680,6 +1803,98 @@ mod macos {
                 Box::new(crate::fetch_owner::scenario_fetch_owner_display_isolated),
             ),
             (
+                "fetch_panicked_worker_reconciles",
+                Box::new(crate::fetch_owner::scenario_fetch_panicked_worker_reconciles),
+            ),
+            (
+                "fetch_previous_visit_is_not_presented",
+                Box::new(crate::fetch_owner::scenario_fetch_previous_visit_is_not_presented),
+            ),
+            (
+                "fetch_old_visit_drops_pull_waiter",
+                Box::new(crate::fetch_owner::scenario_fetch_old_visit_drops_pull_waiter),
+            ),
+            (
+                "fetch_new_visit_waiter_sees_old_flight_failure",
+                Box::new(crate::fetch_owner::scenario_fetch_new_visit_waiter_sees_old_flight_failure),
+            ),
+            (
+                "fetch_new_visit_waiter_success_notifies",
+                Box::new(crate::fetch_owner::scenario_fetch_new_visit_waiter_success_notifies),
+            ),
+            (
+                "auto_fetch_old_visit_logs_contract",
+                Box::new(crate::fetch_owner::scenario_auto_fetch_old_visit_logs_contract),
+            ),
+            (
+                "remote_branch_fetch_panic",
+                Box::new(crate::guard_writer_panic::scenario_remote_branch_fetch_panic),
+            ),
+            (
+                "snapshot_write_panic",
+                Box::new(crate::guard_writer_panic::scenario_snapshot_write_panic),
+            ),
+            (
+                "snapshot_write_draws_while_busy",
+                Box::new(crate::guard_writer_panic::scenario_snapshot_write_draws_while_busy),
+            ),
+            (
+                "snapshot_failed_after_departure",
+                Box::new(crate::guard_writer_panic::scenario_snapshot_failed_after_departure),
+            ),
+            (
+                "conflict_merge_continue_panic",
+                Box::new(crate::app_conflict::scenario_conflict_merge_continue_panic),
+            ),
+            (
+                "conflict_confirm_continue_panic",
+                Box::new(crate::app_conflict::scenario_conflict_confirm_continue_panic),
+            ),
+            (
+                "conflict_confirm_dismissed_still_reloads",
+                Box::new(crate::app_conflict::scenario_conflict_confirm_dismissed_still_reloads),
+            ),
+            (
+                "conflict_merge_failure_contract",
+                Box::new(crate::app_conflict::scenario_conflict_merge_failure_contract),
+            ),
+            (
+                "conflict_skip_panic",
+                Box::new(crate::app_conflict::scenario_conflict_skip_panic),
+            ),
+            (
+                "stash_continue_panic",
+                Box::new(crate::app_stash::scenario_stash_continue_panic),
+            ),
+            (
+                "stash_continue_after_tab_switch",
+                Box::new(crate::app_stash::scenario_stash_continue_after_tab_switch),
+            ),
+            (
+                "remote_branch_fetch_failed_after_departure",
+                Box::new(crate::guard_writer_panic::scenario_remote_branch_fetch_failed_after_departure),
+            ),
+            (
+                "remote_branch_fetch_success_after_departure",
+                Box::new(crate::guard_writer_panic::scenario_remote_branch_fetch_success_after_departure),
+            ),
+            (
+                "pr_ref_fetch_restarts_after_revisit",
+                Box::new(crate::guard_writer_panic::scenario_pr_ref_fetch_restarts_after_revisit),
+            ),
+            (
+                "pr_ref_fetch_panic",
+                Box::new(crate::guard_writer_panic::scenario_pr_ref_fetch_panic),
+            ),
+            (
+                "editor_save_panic",
+                Box::new(crate::guard_writer_panic::scenario_editor_save_panic),
+            ),
+            (
+                "editor_save_panic_after_close",
+                Box::new(crate::guard_writer_panic::scenario_editor_save_panic_after_close),
+            ),
+            (
                 "file_menu_freezes_path",
                 Box::new(crate::file_menu_owner::scenario_file_menu_freezes_path),
             ),
@@ -1762,6 +1977,14 @@ mod macos {
             (
                 "hunk_staging",
                 Box::new(crate::hunk_staging::scenario_hunk_staging),
+            ),
+            (
+                "wip_diffstat_stage_order",
+                Box::new(crate::hunk_staging::scenario_wip_diffstat_stage_order),
+            ),
+            (
+                "wip_diffstat_watcher_order",
+                Box::new(crate::hunk_staging::scenario_wip_diffstat_watcher_order),
             ),
             (
                 "issue_failure_notice_survives_tab_switch",
@@ -1867,6 +2090,10 @@ mod macos {
             (
                 "oplog_restore_card",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_card),
+            ),
+            (
+                "oplog_restore_guarded_rows",
+                Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_guarded_rows),
             ),
             (
                 "oplog_restore_tag_preview",
@@ -3079,6 +3306,7 @@ mod macos {
         );
 
         cx.dispatch_action(win, CreateSnapshot);
+        cx.run_until_parked();
 
         let refs = for_each_ref(&repo_path, "refs/kagi/snapshots/");
         let count = refs.lines().filter(|l| !l.trim().is_empty()).count();

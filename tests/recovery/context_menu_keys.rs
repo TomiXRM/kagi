@@ -536,16 +536,18 @@ pub fn scenario_context_menu_keys_covered_row(cx: &mut VisualTestAppContext) {
 }
 
 /// The focused item turns disabled while the menu stays open (a write is
-/// admitted, so Checkout is no longer offered): the focus stays inside the
-/// menu and ↓ still moves it onto an enabled item (#991 review).
+/// admitted, so opening a worktree is no longer offered): the focus stays
+/// inside the menu and ↓ still moves it onto an enabled item (#991 review).
+/// The first item, Checkout, stays enabled while busy since #355 queues it.
 pub fn scenario_context_menu_keys_disabled_live(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     git(fixture.path(), &["branch", "feature"]);
     let (app, window) = mount(cx, fixture.path());
     open_row_menu(cx, &app, window);
+    keys(cx, window, "down");
     let (before, enabled) = menu(cx, &app, window);
     let before = before.expect("an item has the focus");
-    assert_eq!(Some(&before), enabled.first());
+    assert_eq!(Some(&before), enabled.get(1));
     // Any latched operation disables the branch menu's write items.
     app.update(cx, |app, cx| {
         app.planning = Some("e2e");
@@ -621,6 +623,70 @@ pub fn scenario_context_menu_keys_item_appears(cx: &mut VisualTestAppContext) {
         cx.read_from_clipboard().and_then(|item| item.text()),
         Some(head),
         "Enter ran the action that had the focus (Copy head SHA)"
+    );
+    unmount(cx, app, window);
+}
+
+/// Shift+F10 on a sidebar row while an Info panel is in front (it leaves the
+/// row focused) does nothing (#1000): no branch menu, and the Graph does not
+/// jump to the branch's commit behind the panel.
+pub fn scenario_context_menu_keys_row_behind_info(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    // On the first commit, so opening its menu would move the selection.
+    git(fixture.path(), &["branch", "feature", "HEAD~1"]);
+    let (app, window) = mount(cx, fixture.path());
+    select_head(cx, &app, window);
+    app.update(cx, |app, cx| {
+        app.menu_overlay = Some(kagi::ui::commands::MenuOverlay::Info {
+            title: "About".into(),
+            lines: vec![],
+        });
+        cx.notify();
+    });
+    cx.update_window(window, |_, window, cx| {
+        window.draw(cx).clear();
+        app.update(cx, |app, cx| {
+            app.focus_sidebar_row_for_e2e(LOCAL, "branch:feature", window, cx)
+        });
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    keys(cx, window, "shift-f10");
+    assert!(
+        cx.read(|cx| app.read(cx).branch_menu.is_none()),
+        "no branch menu behind the Info panel"
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().selected),
+        Some(0),
+        "the Graph did not jump to feature behind the Info panel"
+    );
+    unmount(cx, app, window);
+}
+
+/// Closing the last tab (⌘W) with a menu item focused leaves no menu and no
+/// focus on an item Home never draws (#1000): the window holds the focus.
+pub fn scenario_context_menu_keys_last_tab(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    select_head(cx, &app, window);
+    keys(cx, window, "shift-f10");
+    assert!(
+        menu(cx, &app, window).0.is_some(),
+        "the menu holds the focus"
+    );
+    cx.dispatch_action(window, kagi::ui::commands::CloseTab);
+    assert!(
+        cx.read(|cx| app.read(cx).tabs.is_empty()),
+        "⌘W closed the last tab"
+    );
+    assert!(
+        cx.read(|cx| app.read(cx).commit_menu.is_none()),
+        "the menu went with the tab"
+    );
+    assert!(
+        root_focused(cx, &app, window),
+        "the window holds the focus on Welcome"
     );
     unmount(cx, app, window);
 }

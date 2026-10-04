@@ -28,12 +28,13 @@ use crate::settings::{read_setting, write_setting};
 // Lang + active-language atomic
 /// UI language.  `En` is index 0 (the default), `Ja` is index 1.
 pub mod busy;
-pub use busy::{busy_label, slow_read_advice, slow_read_label, slow_read_skip};
+pub use busy::{busy_label, slow_read_advice, slow_read_label, slow_read_skip, slow_write_advice};
 pub mod op;
 pub mod oplog_panel;
 pub mod plan;
 pub mod pr_threads;
 pub mod pr_viewed;
+pub mod queue;
 pub use op::{
     auto_stash_identity_unverified, auto_stash_missing, auto_stash_plan_stale,
     auto_stash_restore_conflicted, auto_stash_restore_failed, op_failed, op_plan_failed,
@@ -42,6 +43,7 @@ pub use op::{
     terminal_nonconcurrent_blocked, terminal_ports_exhausted, Op,
 };
 pub use plan::{plan_note_text, plan_recovery_text, plan_title_text};
+pub use queue::{queue_text, QueueText};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lang {
     En,
@@ -184,6 +186,17 @@ pub enum Msg {
     // ── Generic guards / footers ────────────────────────────────────
     /// "another operation is in progress" (was "別の操作が実行中です").
     OpInProgress,
+    SlowWriteNetwork,
+    SlowWriteRebase,
+    SlowWriteCheckout,
+    SlowWriteRefs,
+    SlowWriteMerge,
+    SlowWriteCommit,
+    SlowWriteStash,
+    SlowWriteWorktree,
+    SlowWriteConflict,
+    SlowWriteLocal,
+    SlowWriteGeneric,
     RemoteOpAwaitingCompletion,
     TransportRetryHeld,
     NoRepoOpen,
@@ -933,6 +946,10 @@ pub enum Msg {
     AdviceNoForceUsed(kagi_domain::plan_note::push::PushPunct),
     /// The Operation Log panel's fixed strings (#334, keys in `oplog_panel`).
     OplogPanel(oplog_panel::OplogPanelMsg),
+    /// Restore planning and malformed canonical ref-row failures (#993).
+    RestoreRepoSessionUnavailable,
+    RestorePlanRowsInvalidSeeLog,
+    RestorePlanRowsInvalidNoRepository,
     AdviceWillDetachHead,
     AdviceRecommendCreateBranchHereFirst,
     AdviceDirtyStashFirst,
@@ -1073,6 +1090,7 @@ pub enum Msg {
     AdvicePullCannotFastForward,
     AdvicePullRemoteDiverged,
     AdvicePullRemoteDirty,
+    AdvicePullRemotePreviewStale,
     AdviceStashUntrackedIncluded,
     AdviceStashDirtyBlocksApply,
     AdviceStashConflictUnknownFiles,
@@ -1119,6 +1137,8 @@ pub enum Msg {
     AmendFoldedFiles,
     /// #454: tooltip on a popup's copy button (copies the whole dialog).
     ModalCopyAll,
+    /// Header of the distinct equivalent CLI command in Copy all.
+    ModalEquivalentCommand,
     /// #454: tooltip on a list panel's copy button (copies every row).
     ModalCopyList,
     /// #454: toast after a popup copy.
@@ -1500,6 +1520,20 @@ impl Msg {
         use Msg::*;
         match (language, self) {
             (language, OplogPanel(key)) => key.t_for(language),
+            (En, RestoreRepoSessionUnavailable) => "repo session unavailable",
+            (Ja, RestoreRepoSessionUnavailable) => "リポジトリのセッションを利用できません",
+            (En, RestorePlanRowsInvalidSeeLog) => {
+                "Restore plan ref rows are invalid; see the Operation Log"
+            }
+            (Ja, RestorePlanRowsInvalidSeeLog) => {
+                "復元計画の ref 行が不正です。詳細は Operation Log を確認してください"
+            }
+            (En, RestorePlanRowsInvalidNoRepository) => {
+                "Restore plan ref rows are invalid; no repository is open"
+            }
+            (Ja, RestorePlanRowsInvalidNoRepository) => {
+                "復元計画の ref 行が不正です。リポジトリは開かれていません"
+            }
             (En, AdviceUntrackedRemain(ctx)) => match ctx {
                 UntrackedCtx::AfterCheckout => advice_en!(UntrackedAfterCheckout),
                 UntrackedCtx::AfterSwitching => advice_en!(UntrackedAfterSwitching),
@@ -1795,6 +1829,8 @@ impl Msg {
             (Ja, AdvicePullRemoteDiverged) => plan::pull::ADVICE_PULL_REMOTE_DIVERGED,
             (En, AdvicePullRemoteDirty) => advice_en!(PullRemoteDirty),
             (Ja, AdvicePullRemoteDirty) => plan::pull::ADVICE_PULL_REMOTE_DIRTY,
+            (En, AdvicePullRemotePreviewStale) => advice_en!(PullRemotePreviewStale),
+            (Ja, AdvicePullRemotePreviewStale) => plan::pull::ADVICE_PULL_REMOTE_PREVIEW_STALE,
             (En, AdviceStashUntrackedIncluded) => advice_en!(StashUntrackedIncluded),
             (Ja, AdviceStashUntrackedIncluded) => plan::stash::ADVICE_STASH_UNTRACKED_INCLUDED,
             (En, AdviceStashDirtyBlocksApply) => advice_en!(StashDirtyBlocksApply),
@@ -1906,6 +1942,28 @@ impl Msg {
             (Ja, AppNoticeDismiss) => "閉じる",
             (En, OpInProgress) => "another operation is in progress",
             (Ja, OpInProgress) => "別の操作が実行中です",
+            (En, SlowWriteNetwork) => "network: waiting for the remote",
+            (Ja, SlowWriteNetwork) => "network: remote の応答を待っています",
+            (En, SlowWriteRebase) => "rebase: replaying commits",
+            (Ja, SlowWriteRebase) => "rebase: commit を適用中",
+            (En, SlowWriteCheckout) => "checkout: updating the worktree",
+            (Ja, SlowWriteCheckout) => "checkout: worktree を更新中",
+            (En, SlowWriteRefs) => "refs: updating branches",
+            (Ja, SlowWriteRefs) => "refs: branch を更新中",
+            (En, SlowWriteMerge) => "merge: combining changes",
+            (Ja, SlowWriteMerge) => "merge: 変更を統合中",
+            (En, SlowWriteCommit) => "commit: writing repository history",
+            (Ja, SlowWriteCommit) => "commit: 履歴を書き込み中",
+            (En, SlowWriteStash) => "stash: updating saved changes",
+            (Ja, SlowWriteStash) => "stash: 保存した変更を更新中",
+            (En, SlowWriteWorktree) => "worktree: updating local files",
+            (Ja, SlowWriteWorktree) => "worktree: ローカルファイルを更新中",
+            (En, SlowWriteConflict) => "conflict resolution: updating local files",
+            (Ja, SlowWriteConflict) => "競合解決: ローカルファイルを更新中",
+            (En, SlowWriteLocal) => "writing local repository data",
+            (Ja, SlowWriteLocal) => "ローカルの repository データを書き込み中",
+            (En, SlowWriteGeneric) => "operation in progress",
+            (Ja, SlowWriteGeneric) => "処理中",
             (En, TransportRetryHeld) => "Retry is disabled because the operation may have changed remote state. Inspect it before restarting Kagi.",
             (Ja, TransportRetryHeld) => "remote の状態が変わった可能性があるため、再実行を停止しています。状態を確認してから Kagi を再起動してください。",
             (En, RemoteOpAwaitingCompletion) => "Waiting to confirm that the remote operation stopped. Do not retry it; inspect the remote state and completion token.",
@@ -3047,6 +3105,8 @@ impl Msg {
             (Ja, AmendFoldedFiles) => "この commit に取り込む staged 変更",
             (En, ModalCopyAll) => "Copy this dialog as text",
             (Ja, ModalCopyAll) => "この内容をテキストでコピー",
+            (En, ModalEquivalentCommand) => "equivalent command:",
+            (Ja, ModalEquivalentCommand) => "相当するコマンド:",
             (En, ModalCopyList) => "Copy every row",
             (Ja, ModalCopyList) => "一覧をすべてコピー",
             (En, ModalCopied) => "Copied to clipboard",

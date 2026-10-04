@@ -14,6 +14,7 @@ use super::*;
 use kagi_domain::plan_note::{
     CommonNote, DirtyParts, OpPhrase, SwitchNote, SwitchRecovery, SwitchTitle, UntrackedCtx,
 };
+use kagi_domain::remote::shell_quote;
 
 // ────────────────────────────────────────────────────────────
 // plan_checkout_tracking_branch / execute_checkout_tracking_branch (T-BCM-061)
@@ -97,7 +98,7 @@ pub fn plan_checkout_tracking_branch(
             }),
             commands: vec![
                 "git checkout -".to_string(),
-                format!("git branch -d {}", local_branch),
+                format!("git branch -d {}", shell_quote(local_branch)),
             ],
         }),
         head_at_plan: head,

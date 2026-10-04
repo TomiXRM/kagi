@@ -7,7 +7,7 @@ use kagi_domain::remote::{
     KnownHostsIdentity, RemoteConnectionId, RemoteDropOutcome, RemoteHost, RemoteStashState,
 };
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 #[path = "support/remote_stash.rs"]
 mod remote_stash_support;
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -22,6 +22,10 @@ fn connection(hostname: &str) -> RemoteConnectionId {
         user: "alice".into(),
         port: 22,
         host_key_alias: None,
+        proxy_jump: None,
+        proxy_command: None,
+        control_master: None,
+        control_path: None,
         identity_files: vec!["/keys/id".into()],
         certificate_files: vec![],
         user_known_hosts: vec![KnownHostsIdentity {
@@ -223,18 +227,18 @@ fn only_matching_completion_token_plus_read_releases_unknown() {
 #[test]
 fn main_and_linked_roots_share_remote_repo_identity() {
     let left = kagi_domain::remote::RemoteRepoId {
-        connection: connection("host"),
+        connection: Arc::new(connection("host")),
         common_dir: "/srv/repo/.git".into(),
     };
     let right = kagi_domain::remote::RemoteRepoId {
-        connection: connection("host"),
+        connection: Arc::new(connection("host")),
         common_dir: "/srv/repo/.git".into(),
     };
     assert_eq!(left, right);
     assert_ne!(
         left,
         kagi_domain::remote::RemoteRepoId {
-            connection: connection("other"),
+            connection: Arc::new(connection("other")),
             common_dir: "/srv/repo/.git".into(),
         }
     );

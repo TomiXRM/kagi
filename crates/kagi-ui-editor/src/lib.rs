@@ -271,6 +271,15 @@ pub struct EditorSaveRequest {
     text: String,
     snapshot: Option<String>,
 }
+impl EditorSaveRequest {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+/// Host settlement on the foreground executor, independent of pane lifetime.
+/// The optional string is a recording error for the existing save-failure log.
+pub type SaveCompletion = Box<dyn FnOnce(bool, &mut gpui::AsyncApp) -> Option<String> + Send>;
 
 /// `Conflict` preserves disk bytes until the user decides via the banner.
 enum SaveOutcome {
@@ -1654,13 +1663,15 @@ impl EditorWorkspaceView {
         }));
     }
 
-    /// The host supplies an owned reservation's completion callback. Dropping
-    /// it without invoking it (panic/cancellation) must retain the reservation.
+    /// The host supplies an owned reservation's terminal callback. It lives
+    /// outside the worker and runs even when that worker unwinds or the pane is
+    /// gone. The host alone classifies uncertainty and records its receipt.
     /// No app/Git dependency crosses the pane boundary.
     pub fn save_reserved(
         &mut self,
         request: EditorSaveRequest,
-        complete: Box<dyn FnOnce() + Send>,
+        complete: SaveCompletion,
+        panic_for_e2e: bool,
         cx: &mut Context<Self>,
     ) {
         let EditorSaveRequest {
@@ -1672,6 +1683,13 @@ impl EditorWorkspaceView {
         } = request;
 
         let task = cx.background_spawn(async move {
+            if panic_for_e2e {
+                // The native TestDispatcher propagates uncaught task panics;
+                // return an absent worker completion after a real injected
+                // panic so the host's ordinary abandonment path runs.
+                let _ = std::panic::catch_unwind(|| panic!("injected editor save task panic"));
+                return None;
+            }
             let result = (|| {
                 // A missing file is NOT a conflict: saving simply recreates it.
                 // Any other read error means the disk-vs-snapshot comparison
@@ -1692,11 +1710,20 @@ impl EditorWorkspaceView {
                     Err(e) => SaveOutcome::Failed(e.to_string()),
                 }
             })();
-            complete();
-            result
+            Some(result)
         });
         cx.spawn(async move |view, acx| {
-            let result = task.await;
+            let outcome = task.fallible().await.flatten();
+            let unwound = outcome.is_none();
+            let record_error = complete(!unwound, acx);
+            let result = outcome.unwrap_or_else(|| {
+                SaveOutcome::Failed(match record_error {
+                    Some(error) => format!("save task unwound; {error}"),
+                    None => {
+                        "save task unwound; outcome unknown — inspect the operation notice".into()
+                    }
+                })
+            });
             let _ = view.update(acx, |v, cx| match result {
                 SaveOutcome::Saved(text) => {
                     klog!("editor-ws: saved {}", path.display());
@@ -1729,13 +1756,14 @@ impl EditorWorkspaceView {
                 }
                 SaveOutcome::Failed(e) => {
                     klog!("editor-ws: save failed: {}", e);
-                    // Non-git file error: the host surfaces it via toast +
-                    // footer (the established precedent for a background op
-                    // outside the plan pipeline), not a git plan modal.
-                    cx.emit(EditorWorkspaceEvent::SaveFailed {
-                        path: path.clone(),
-                        error: e,
-                    });
+                    // The host already presented an unwound task, even if
+                    // this pane was dropped before the completion arrived.
+                    if !unwound {
+                        cx.emit(EditorWorkspaceEvent::SaveFailed {
+                            path: path.clone(),
+                            error: e,
+                        });
+                    }
                     cx.notify();
                 }
             });

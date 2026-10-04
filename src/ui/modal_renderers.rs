@@ -15,6 +15,7 @@
 
 use super::dialog_a11y::{apply_dialog, dialog_a11y, ConfirmStage, DialogHandler};
 use super::i18n::Msg;
+use super::modal_command::render_equivalent_command;
 use super::modal_copy::{modal_copy_button, plan_clipboard_text};
 use super::modal_shell::{
     modal_body, modal_card, modal_compact, modal_list_max_h, modal_list_panel, modal_prose_box,
@@ -27,6 +28,7 @@ use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{Icon, IconName, Sizable as _};
+use kagi_domain::plan_note::ShellKind;
 use kagi_git::{CommitId, OperationPlan};
 use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
 
@@ -235,6 +237,11 @@ pub(crate) fn plan_status_chips(dirty: &str) -> Vec<gpui::AnyElement> {
 
 fn plan_state(head: &str, dirty: &str, id: &'static str, label: &str) -> gpui::AnyElement {
     let full = SharedString::from(format!("{label}: {head} [{dirty}]"));
+    let (label_probe, chips_probe) = if label == "CURRENT" {
+        ("plan-state-current-label", "plan-state-current-chips")
+    } else {
+        ("plan-state-predicted-label", "plan-state-predicted-chips")
+    };
     div()
         .id(id)
         .role(gpui::Role::Group)
@@ -243,32 +250,31 @@ fn plan_state(head: &str, dirty: &str, id: &'static str, label: &str) -> gpui::A
             gpui_component::tooltip::Tooltip::new(full.clone()).build(window, cx)
         })
         .relative()
-        .flex_shrink_0()
+        .flex_1()
+        .min_w(gpui::px(0.))
         .flex()
         .flex_col()
         .gap_1()
         .child(
             div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_1()
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .text_xs()
-                        .text_color(rgb(current_theme().text_label))
-                        .child(SharedString::from(label)),
-                )
-                .children(plan_head_chips(head)),
+                .relative()
+                .text_xs()
+                .text_color(rgb(current_theme().text_label))
+                .child(SharedString::from(label))
+                .child(super::e2e::measure_inside(label_probe)),
         )
         .child(
             div()
+                .id(chips_probe)
+                .relative()
                 .flex()
                 .flex_row()
                 .items_center()
                 .gap_1()
-                .children(plan_status_chips(dirty)),
+                .overflow_x_scroll()
+                .children(plan_head_chips(head))
+                .children(plan_status_chips(dirty))
+                .child(super::e2e::measure_inside(chips_probe)),
         )
         .when(cfg!(feature = "gui-e2e"), |state| {
             state.child(super::e2e::measure_inside(if label == "CURRENT" {
@@ -297,36 +303,43 @@ pub(crate) fn render_current_predicted(
         .px_3()
         .py_2()
         .when(modal_compact(), |row| row.px_2().py_1())
-        // Keep even long non-branch plan descriptions readable without
-        // squeezing the modal or truncating the safety context.
+        // Scroll the comparison as a unit on narrow windows; never let one
+        // state's chip text steal width from its equal-width neighbor.
         .overflow_x_scroll()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_2()
-        .when(modal_compact(), |row| row.gap_1())
-        .child(plan_state(
-            &plan.current.head,
-            &plan.current.dirty,
-            "plan-current-state",
-            "CURRENT",
-        ))
         .child(
             div()
-                .relative()
-                .flex_shrink_0()
-                .text_color(rgb(color))
-                .child(SharedString::from("\u{2192}"))
-                .when(cfg!(feature = "gui-e2e"), |arrow| {
-                    arrow.child(super::e2e::measure_inside("plan-state-arrow"))
-                }),
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .when(modal_compact(), |row| row.gap_1())
+                .min_w(theme::scaled_px(480.))
+                .w_full()
+                .child(plan_state(
+                    &plan.current.head,
+                    &plan.current.dirty,
+                    "plan-current-state",
+                    "CURRENT",
+                ))
+                .child(
+                    div()
+                        .relative()
+                        .flex_shrink_0()
+                        .w(theme::scaled_px(24.))
+                        .text_center()
+                        .text_color(rgb(color))
+                        .child(SharedString::from("\u{2192}"))
+                        .when(cfg!(feature = "gui-e2e"), |arrow| {
+                            arrow.child(super::e2e::measure_inside("plan-state-arrow"))
+                        }),
+                )
+                .child(plan_state(
+                    &plan.predicted.head,
+                    &plan.predicted.dirty,
+                    "plan-predicted-state",
+                    "PREDICTED",
+                )),
         )
-        .child(plan_state(
-            &plan.predicted.head,
-            &plan.predicted.dirty,
-            "plan-predicted-state",
-            "PREDICTED",
-        ))
         .into_any_element()
 }
 
@@ -586,10 +599,10 @@ fn render_plan_modal_card_styled(
                 match &extra {
                     Some(extra) => format!(
                         "{}\n{}",
-                        plan_clipboard_text(&plan, &plan.preview_commits),
+                        plan_clipboard_text(&plan, &plan.preview_commits, ShellKind::current()),
                         extra.clipboard
                     ),
-                    None => plan_clipboard_text(&plan, &plan.preview_commits),
+                    None => plan_clipboard_text(&plan, &plan.preview_commits, ShellKind::current()),
                 },
                 cx,
             )),
@@ -775,23 +788,10 @@ fn render_plan_modal_card_styled(
         }
     }
 
-    // ── Equivalent git command (#353) ─────────────────────
-    // "This is *equivalent to* `<cmd>`" — never "runs": kagi executes via
-    // libgit2, so the CLI command is shown only as the faithful equivalent.
-    //
-    // #462: supporting description too, but it stays visible on a compact card
-    // — one `text_xs` line behind a header row plus panel padding and border
-    // *costs* height rather than buying it back.
-    if let Some(cmd) = plan.equivalent_command.as_deref() {
-        let line = Msg::PlanEquivalentTo.t().replace("{}", cmd);
-        body = body.child(
-            div()
-                .flex_shrink_0()
-                .text_xs()
-                .text_color(rgb(current_theme().text_muted))
-                .overflow_hidden()
-                .child(SharedString::from(line)),
-        );
+    // Kagi executes the plan through its backend; the CLI spelling is
+    // reference text, collapsed by default and separately copyable.
+    if let Some(cmd) = super::modal_command::equivalent_command(&plan) {
+        body = body.child(render_equivalent_command(cmd, None, overrides, cx));
     }
 
     // ── Error message (preflight / execute failure) ───────

@@ -82,6 +82,34 @@ fn test_plan_clean_repo_no_blockers() {
     );
 }
 
+#[cfg(not(windows))]
+#[test]
+fn checkout_equivalent_command_quotes_shell_metacharacters() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let (repo_dir, repo) = build_two_branch_repo(&tmp);
+    // Git refs forbid spaces, but allow command substitution syntax and quotes.
+    // Keep spaces covered by the shared shell_quote unit test.
+    let branch = "topic$(id)'branch";
+    git(&repo_dir, &["branch", branch]);
+
+    let plan = plan_checkout(&repo, branch).expect("plan_checkout failed");
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    assert_eq!(
+        plan.equivalent_command.as_deref(),
+        Some("git checkout 'topic$(id)'\\''branch'")
+    );
+    let output = std::process::Command::new("sh")
+        .args(["-c", plan.equivalent_command.as_deref().unwrap()])
+        .current_dir(&repo_dir)
+        .output()
+        .expect("execute copied POSIX command");
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(git_output(&repo_dir, &["branch", "--show-current"]), branch);
+}
+
 #[test]
 fn test_execute_clean_repo_moves_head() {
     if !crate::test_support::run_isolated() {
@@ -111,6 +139,35 @@ fn test_execute_clean_repo_moves_head() {
         repo_dir.join("feat.txt").exists(),
         "feat.txt should exist after checkout to feature/one"
     );
+}
+
+#[cfg(not(windows))]
+#[test]
+fn checkout_recovery_command_round_trips_shell_metacharacters() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let (repo_dir, _repo) = build_two_branch_repo(&tmp);
+    let original = "topic$(id)'branch";
+    git(&repo_dir, &["checkout", "-qb", original]);
+    let repo = Repository::open(&repo_dir).unwrap();
+
+    let plan = plan_checkout(&repo, "feature/one").unwrap();
+    let recovery = plan.recovery.as_ref().expect("checkout recovery");
+    git(&repo_dir, &["checkout", "-q", "feature/one"]);
+    let result = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&recovery.commands[0])
+        .current_dir(&repo_dir)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "recovery checkout failed: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(repo.head().unwrap().shorthand().unwrap(), original);
 }
 
 // ────────────────────────────────────────────────────────────

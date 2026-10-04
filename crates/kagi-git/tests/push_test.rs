@@ -238,6 +238,36 @@ fn test_push_set_upstream() {
     );
 }
 
+#[test]
+fn push_equivalent_command_separates_option_like_remote() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let r = setup();
+    git(&r.local, &["remote", "remove", "origin"]);
+    let remote = "--exec=printf";
+    git(
+        &r.local,
+        &[
+            "config",
+            "remote.--exec=printf.url",
+            r.remote.to_str().unwrap(),
+        ],
+    );
+    git(&r.local, &["checkout", "-qb", "feature/new"]);
+    write_file(&r.local, "feat.txt", "feature work\n");
+    commit_all(&r.local, "feature commit");
+
+    let repo = Repository::open(&r.local).unwrap();
+    let plan = plan_push(&repo).unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    assert_eq!(
+        plan.equivalent_command.as_deref(),
+        (!cfg!(windows)).then_some("git push -u -- '--exec=printf' 'feature/new'"),
+        "an option-like remote must remain a positional operand: {remote}"
+    );
+}
+
 /// Test 3a: a branch created from `origin/main` tracks main as its base. Push
 /// must publish `origin/<branch>` and move the upstream there (user report:
 /// the push landed on the remote but the branch stayed "3 ahead" of

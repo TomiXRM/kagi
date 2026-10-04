@@ -75,6 +75,7 @@ pub use kagi_ui_core::file_tree; // ADR-0121: was a shim file
 mod graph_solo;
 pub mod graph_squash;
 pub mod graph_view;
+mod graph_window;
 pub mod graph_wip;
 pub use kagi_ui_core::i18n; // ADR-0121: was a shim file
 pub mod dialog_a11y;
@@ -92,6 +93,7 @@ pub mod main_diff_pane;
 mod menu_keys;
 pub mod menu_overlay;
 /// #454: shared modal chrome (card shell + collapsible sections).
+mod modal_command;
 mod modal_copy;
 mod modal_key_routing;
 pub mod modal_plan;
@@ -106,12 +108,14 @@ mod modal_renderers_plan;
 mod modal_renderers_stash;
 mod modal_shell;
 pub mod modals;
+mod op_queue;
 mod operation_strip;
 mod operations;
 pub mod oplog_panel;
 mod oplog_render;
 mod plan_card_rows;
 mod platform_menu;
+mod queue_strip;
 pub mod reload;
 pub mod remote_browse;
 mod render;
@@ -1193,20 +1197,11 @@ pub struct KagiApp {
     pub toast_stack: Option<Entity<toast_stack::ToastStack>>,
     /// Operation-owned fetch coordination; detach prunes waiters, not execution.
     pub fetch_in_flight: Option<commands::FetchFlight>,
-    /// #625: Pull confirmations whose fetch finished while their tab was not
-    /// on screen, waiting for that tab to come back (ADR-0192).
-    ///
-    /// Keyed by `SessionId` and *parked*, never a bare flag: the request
-    /// belongs to one tab, so a bool let another tab's reload drop it and an
-    /// unrelated fetch consume it — the "press Pull, nothing happens" bug,
-    /// twice over (#626 review). The live request itself is not here at all:
-    /// it rides inside its own fetch task and only lands here when it cannot
-    /// be delivered immediately.
-    pub pending_pull_confirm:
-        std::collections::HashMap<crate::app::SessionId, operations::PullConfirmDelivery>,
     /// True while the periodic background auto-fetch ticker task is alive
     /// (spawned lazily from render; see `ensure_auto_fetch_ticker`).
     pub auto_fetch_ticker_alive: bool,
+    /// The operation queue and its observation mirror (#355 stage 3).
+    pub(crate) op_queue: op_queue::QueueWiring,
     transport_holds: operations::transport_hold::TransportHolds,
     pub github_ticker_alive: bool,
     /// The `gh` login on each repository host (`None`: `gh`'s default host).
@@ -1229,12 +1224,9 @@ pub struct KagiApp {
     /// The lease's presentation mirror — the in-flight write's name, for the
     /// busy snackbar. `refresh_write_busy` retires it; the gate never reads it.
     pub write_busy_op: Option<&'static str>,
-    /// Exclusion latch for the one write that can hold no lease, remote pull
-    /// over SSH. Rules on [`KagiApp::mark_remote_write`], why in ADR-0196 決定 5.
-    pub remote_write: Option<&'static str>,
     /// A *planning* task in flight (`merge-plan`, `delete-branch-plan`): no
     /// lease, but it owns the modal slot. Ask [`KagiApp::op_latched`], never
-    /// one of these three alone (ADR-0196).
+    /// this field alone (ADR-0196).
     pub planning: Option<&'static str>,
     pub app_sessions: crate::app::Sessions,
     pub(crate) app_notices: std::collections::VecDeque<modals::AppNotice>,
@@ -1371,6 +1363,20 @@ pub struct WipDiffStat {
     pub deletions: usize,
 }
 
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static WIP_DIFFSTAT_HOLD: std::cell::RefCell<Option<gpui::Task<()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    /// Hold the next scan after it computes its result, before it can publish.
+    pub fn hold_next_wip_diffstat_scan_for_e2e(hold: gpui::Task<()>) {
+        WIP_DIFFSTAT_HOLD.with(|slot| assert!(slot.borrow_mut().replace(hold).is_none()));
+    }
+}
+
 impl KagiApp {
     /// The single place a `KagiApp` is constructed: every field default lives
     /// here exactly once, so adding a field means touching one place.  The two
@@ -1437,14 +1443,13 @@ impl KagiApp {
             // Created in `open_main_window`'s `cx.new` closure (needs `cx`).
             toast_stack: None,
             fetch_in_flight: None,
-            pending_pull_confirm: Default::default(),
             auto_fetch_ticker_alive: false,
+            op_queue: Default::default(),
             transport_holds: Default::default(),
             github_ticker_alive: false,
             github_host_logins: Default::default(),
             github_host_login_requests: Default::default(),
             write_busy_op: None,
-            remote_write: None,
             planning: None,
             app_sessions: crate::app::Sessions::new(),
             app_notices: std::collections::VecDeque::new(),
@@ -1554,6 +1559,7 @@ impl KagiApp {
 
     /// Cancel and close the checkout plan modal without making any changes.
     pub fn cancel_modal(&mut self) {
+        self.note_queued_confirm_dismissed();
         self.clear_plan_modal();
     }
 
@@ -1667,19 +1673,13 @@ impl KagiApp {
         Some((branch, sha))
     }
 
-    /// Present (and, when `persist`, append) one outcome: footer, toast and
-    /// panel. `refusal` is the user-facing text for a typed refusal (#353).
-    pub(in crate::ui) fn record_op_impl(
-        &mut self,
-        entry: OpLogEntry,
-        cx: &mut Context<Self>,
-        persist: bool,
-        refusal: Option<String>,
-    ) {
-        let op = entry.op.as_str();
-        let before = &entry.before;
-        let outcome = &entry.outcome;
-        let (footer_msg, footer_ok) = match outcome {
+    /// Stable footer/klog wording shared by on-screen and departed receipts.
+    fn operation_footer_contract(
+        op: &str,
+        before: &StateSummary,
+        outcome: &OpOutcome,
+    ) -> (SharedString, bool) {
+        match outcome {
             OpOutcome::Success { after } => (
                 SharedString::from(format!("{}: {} → {}", op, before.head, after.head)),
                 true,
@@ -1699,9 +1699,26 @@ impl KagiApp {
                 operations::record::refused_contract(op, blockers.len()).into(),
                 false,
             ),
-        };
+        }
+    }
 
-        let display_footer_msg = Self::display_footer_message(op, outcome, &footer_msg, refusal);
+    /// Present (and, when `persist`, append) one outcome: footer, toast and
+    /// panel. A caller with typed refusal text or a bounded failed-plan reason
+    /// may override only the human-facing preview; the receipt keeps detail.
+    pub(in crate::ui) fn record_op_impl(
+        &mut self,
+        entry: OpLogEntry,
+        cx: &mut Context<Self>,
+        persist: bool,
+        display_override: Option<String>,
+    ) {
+        let op = entry.op.as_str();
+        let before = &entry.before;
+        let outcome = &entry.outcome;
+        let (footer_msg, footer_ok) = Self::operation_footer_contract(op, before, outcome);
+
+        let display_footer_msg =
+            Self::display_footer_message(op, outcome, &footer_msg, display_override);
 
         // W3-NOTIFY: snackbar mirror of the footer message — every plan-pipeline
         // outcome (Success / Failed / Refused) becomes a toast.
@@ -2283,16 +2300,6 @@ impl KagiApp {
         out
     }
 
-    pub fn refresh_wip_diffstat(&mut self) {
-        // ADR-0107: use the per-tab RepoSession instead of re-opening.
-        let stat = self
-            .ui()
-            .repo_session
-            .as_ref()
-            .map(|session| Self::wip_diffstat_from_backend(session.backend()));
-        self.with_ui(|ui| ui.wip_diffstat = stat);
-    }
-
     /// Same value, computed off the UI thread.
     ///
     /// It is two full tree diffs for a "+N −M" badge — measured at 157ms on a
@@ -2305,26 +2312,39 @@ impl KagiApp {
         let Some(session) = self.active_session() else {
             return;
         };
-        let cache_epoch = self.ui().cache_epoch;
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
+        let Some(ui) = self.ui.get_mut(&session) else {
+            return;
+        };
+        ui.wip_diffstat_request = ui.wip_diffstat_request.wrapping_add(1);
+        let (cache_epoch, request) = (ui.cache_epoch, ui.wip_diffstat_request);
         let task = cx.background_spawn(async move {
             kagi_git::Backend::open(&repo_path)
                 .ok()
                 .map(|b| Self::wip_diffstat_from_backend(&b))
         });
+        // The E2E hold is after the read: the test can stage again while the
+        // first result is waiting to land, then release it out of order.
+        #[cfg(feature = "gui-e2e")]
+        let hold = WIP_DIFFSTAT_HOLD.with(|slot| slot.borrow_mut().take());
         cx.spawn(async move |app, acx| {
             let stat = task.await;
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
             let _ = app.update(acx, |app, cx| {
                 let Some(ui) = app.ui.get_mut(&session) else {
                     return;
                 };
-                if ui.cache_epoch != cache_epoch {
+                if ui.cache_epoch != cache_epoch || ui.wip_diffstat_request != request {
                     return;
                 }
                 if ui.wip_diffstat != stat {
                     ui.wip_diffstat = stat;
+                    ui.wip_diffstat_request = ui.wip_diffstat_request.wrapping_add(1);
                     cx.notify();
                 }
             });

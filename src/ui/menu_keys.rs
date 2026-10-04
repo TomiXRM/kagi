@@ -287,8 +287,10 @@ impl KagiApp {
 
     /// The context-menu key on a focused sidebar row: that row's menu (as
     /// its right-click opens), below it. A row without a menu (a group
-    /// heading) does nothing, as does a key pressed while a modal or another
-    /// menu is up.
+    /// heading) does nothing, as does a key pressed while anything is drawn
+    /// over the workspace: a modal, another menu, or an Info panel / the
+    /// branch picker, which leave the row focused — opening a branch menu
+    /// jumps the Graph to its commit, behind them (#1000).
     pub(super) fn open_sidebar_row_menu(
         &mut self,
         row: &super::sidebar::SidebarRow,
@@ -296,7 +298,10 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         use super::sidebar::SidebarRow;
-        if self.active_modal.is_some() || self.any_context_menu_open() {
+        if self.active_modal.is_some()
+            || self.any_context_menu_open()
+            || self.front_layer(cx) != super::front_layer::FrontLayer::None
+        {
             return;
         }
         let at = menu_point(&self.sidebar.focus.row_anchor, window);

@@ -42,6 +42,17 @@ use kagi_git::CommitId;
 /// and a repo is open). Kept conservative to avoid hammering the remote.
 const AUTO_FETCH_INTERVAL_SECS: u64 = 180;
 
+#[cfg(feature = "gui-e2e")]
+static PANIC_NEXT_FETCH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(feature = "gui-e2e")]
+static PANIC_NEXT_SNAPSHOT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static SNAPSHOT_WRITE_HOLD: std::cell::RefCell<Option<gpui::Task<()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 use super::context_menu::CommitAction;
 use super::i18n::{self, Lang, Msg};
 use super::theme::{self, theme};
@@ -1480,7 +1491,11 @@ const ISSUES_URL: &str = "https://github.com/TomiXRM/kagi/issues";
 /// Detach only prunes that session from `waiters`.
 pub struct FetchFlight {
     pub owner: crate::app::SessionId,
-    pub waiters: Vec<crate::app::SessionId>,
+    pub visit: u64,
+    /// Frozen before dispatch: an earlier visit's failure is recorded even
+    /// when the tab is no longer the display owner.
+    pub before: kagi_git::StateSummary,
+    pub waiters: Vec<(crate::app::SessionId, u64)>,
     /// Admission superseded the owner's read in flight (`app::admit`), which a
     /// no-op fetch would never replace (ADR-0127): the completion owes it (#851).
     pub superseded_read: bool,
@@ -1510,42 +1525,120 @@ impl std::fmt::Display for FetchFailure {
     }
 }
 
+impl FetchFailure {
+    fn outcome(&self) -> kagi_git::oplog::OpOutcome {
+        if self.termination_unknown {
+            kagi_git::oplog::OpOutcome::Unknown {
+                after: kagi_git::StateSummary {
+                    head: "unchanged".to_string(),
+                    dirty: "unchanged".to_string(),
+                },
+                evidence: self.message.clone(),
+            }
+        } else {
+            kagi_git::oplog::OpOutcome::Failed {
+                error: i18n::op_failed(i18n::Op::Fetch, &self.message),
+            }
+        }
+    }
+}
+
 impl KagiApp {
     /// ADR-0154 / #335: capture the current working tree as a savepoint
     /// snapshot under `refs/kagi/snapshots/`. Non-destructive (only adds a ref),
     /// so it needs no plan/confirm — a menu action + toast is the whole flow.
     /// Restore lives in the oplog panel (#334), which consumes the tested
     /// `Backend::plan_restore_snapshot` / `run(Operation::RestoreSnapshot)` path.
+    #[cfg(feature = "gui-e2e")]
+    pub fn panic_next_snapshot_for_e2e() {
+        PANIC_NEXT_SNAPSHOT.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    #[cfg(feature = "gui-e2e")]
+    pub fn hold_next_snapshot_write_for_e2e(hold: gpui::Task<()>) {
+        SNAPSHOT_WRITE_HOLD.with(|slot| assert!(slot.borrow_mut().replace(hold).is_none()));
+    }
+
     fn create_snapshot_now(&mut self, cx: &mut Context<Self>) {
         let Some(repo_path) = self.repo_path.clone() else {
             return;
         };
-        let Some(lease) = self.reserve_write("snapshot", &repo_path, cx) else {
+        let Some(guard) = self.reserve_write("snapshot", &repo_path, cx) else {
             return;
         };
-        let result = lease.run(|| {
-            kagi_git::Backend::open(&repo_path).and_then(|backend| {
+        let owner = self.active_session();
+        let visit = owner.and_then(|id| self.app_sessions.visit(id));
+        let abandonment = guard.abandonment();
+        let supervision = abandonment.supervision();
+        let bg_path = repo_path.clone();
+        #[cfg(feature = "gui-e2e")]
+        let hold = SNAPSHOT_WRITE_HOLD.with(|slot| slot.borrow_mut().take());
+        let task = cx.background_spawn(async move {
+            let _supervised = kagi_git::proc::supervisor::enter(supervision);
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
+            #[cfg(feature = "gui-e2e")]
+            if PANIC_NEXT_SNAPSHOT.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                let _ = std::panic::catch_unwind(|| panic!("injected snapshot task panic"));
+                return None;
+            }
+            let result = kagi_git::Backend::open(&bg_path).and_then(|backend| {
                 let entry = backend.create_snapshot("manual snapshot")?;
                 // Enforce the generation cap so the ODB does not grow unbounded.
                 let _ = backend.prune_snapshots(kagi_git::DEFAULT_SNAPSHOT_CAP);
                 Ok(entry)
-            })
+            });
+            guard.complete_git(&result);
+            Some(result)
         });
-        self.refresh_write_busy();
-        match result {
-            Ok(entry) => {
-                klog!("snapshot: created {}", entry.id);
-                self.push_toast(ToastKind::Success, Msg::SnapshotCreated.t(), cx);
-            }
-            Err(e) => {
-                klog!("snapshot: create failed: {}", e);
-                self.push_toast(
-                    ToastKind::Error,
-                    format!("{}: {e}", Msg::SnapshotFailed.t()),
-                    cx,
-                );
-            }
-        }
+        cx.spawn(async move |this, acx| {
+            let result = task
+                .fallible()
+                .await
+                .flatten()
+                .unwrap_or_else(|| Err(abandonment.into_unknown()));
+            let _ = this.update(acx, |app, cx| {
+                app.refresh_write_busy();
+                match &result {
+                    Ok(entry) => klog!("snapshot: created {}", entry.id),
+                    Err(e) => klog!("snapshot: create failed: {}", e),
+                }
+                let current = owner.is_some_and(|id| {
+                    app.active_session() == Some(id) && app.app_sessions.visit(id) == visit
+                });
+                if !current {
+                    if let Err(e) = &result {
+                        app.app_notices.push_back(
+                            format!("{}: {}: {e}", repo_path.display(), Msg::SnapshotFailed.t())
+                                .into(),
+                        );
+                    }
+                }
+                for (id, op, path) in app.app_sessions.drain_unaccounted() {
+                    app.notice_reconcile_required(id, op, &path);
+                }
+                app.present_app_notice();
+                if !current {
+                    cx.notify();
+                    return;
+                }
+                match result {
+                    Ok(_) => {
+                        app.push_toast(ToastKind::Success, Msg::SnapshotCreated.t(), cx);
+                    }
+                    Err(e) => {
+                        app.push_toast(
+                            ToastKind::Error,
+                            format!("{}: {e}", Msg::SnapshotFailed.t()),
+                            cx,
+                        );
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Route a menu command (by registry id) to its handler.  This is the only
@@ -1865,6 +1958,12 @@ impl KagiApp {
         let _ = self.fetch_async_for(silent, None, cx);
     }
 
+    /// Inject an executor unwind after admission, before the fetch work begins.
+    #[cfg(feature = "gui-e2e")]
+    pub fn panic_next_fetch_for_e2e(&mut self) {
+        PANIC_NEXT_FETCH.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
     /// [`Self::fetch_async`], plus the tab whose dirty Pull waits for this fetch
     /// before its confirmation can be planned (#625). The launch request and
     /// later same-owner requests all live in the flight's waiter list.
@@ -1876,14 +1975,17 @@ impl KagiApp {
     ) -> bool {
         self.refresh_write_busy();
         if let Some(flight) = self.fetch_in_flight.as_mut() {
-            // A Pull may piggyback only on a fetch launched by this exact tab
-            // incarnation. A path is a locator, not repository identity.
+            // Only this incarnation can join; its request retains the visit
+            // even if the user leaves and returns before completion.
             if let Some(session) = pull_confirm.filter(|session| *session == flight.owner) {
-                if !flight.waiters.contains(&session) {
-                    flight.waiters.push(session);
+                if let Some(visit) = self.app_sessions.visit(session) {
+                    let waiter = (session, visit);
+                    if !flight.waiters.contains(&waiter) {
+                        flight.waiters.push(waiter);
+                    }
+                    klog!("pull-confirm: waiting on the fetch already in flight");
+                    return true;
                 }
-                klog!("pull-confirm: waiting on the fetch already in flight");
-                return true;
             }
             return false;
         }
@@ -1897,14 +1999,38 @@ impl KagiApp {
         let Some(owner) = self.active_session() else {
             return false;
         };
+        // ADR-0204 決定 7: a quiet fetch would move remote-tracking refs in
+        // the middle of this tab's queue, changing what the next replan sees.
+        if silent && !self.op_queue.queue.auto_fetch_allowed(owner) {
+            klog!("auto-fetch: skipped while operations are queued");
+            return false;
+        }
+        let Some(visit) = self
+            .app_sessions
+            .attachment(owner)
+            .map(|attachment| attachment.visit)
+        else {
+            return false;
+        };
         // Before admission: e.g. Cmd+R's read, about to be superseded (#851).
         let superseded_read = self.reads.is_loading(owner);
-        let Some(lease) = self.reserve_write("fetch", &repo_path, cx) else {
+        // A quiet fetch is background work, never this tab's `&&` predecessor.
+        let queue_owner = (!silent).then_some(owner);
+        let Some(lease) = self.reserve_write_for("fetch", &repo_path, queue_owner, cx) else {
             return false;
+        };
+        let before = kagi_git::StateSummary {
+            head: format!("branch: {}", self.view().status_summary.branch),
+            dirty: "unchanged".to_string(),
         };
         self.fetch_in_flight = Some(FetchFlight {
             owner,
-            waiters: pull_confirm.into_iter().collect(),
+            visit,
+            before,
+            waiters: pull_confirm
+                .map(|session| (session, visit))
+                .into_iter()
+                .collect(),
             superseded_read,
         });
         let repo_path_guard = repo_path.clone();
@@ -1912,7 +2038,24 @@ impl KagiApp {
             self.refresh_spin_started = Some(Instant::now());
             klog!("fetch: start");
         }
+        let abandonment = lease.abandonment();
+        let supervision = abandonment.supervision();
+        #[cfg(feature = "gui-e2e")]
+        let hold = super::busy::take_fetch_hold();
         let task = cx.background_spawn(async move {
+            let _supervised = kagi_git::proc::supervisor::enter(supervision);
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
+            #[cfg(feature = "gui-e2e")]
+            if PANIC_NEXT_FETCH.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                // GPUI's test dispatcher propagates uncaught task panics.
+                // Catch the injected work panic and return an abandoned task
+                // result; production's fallible() catches real unwinds.
+                let _ = std::panic::catch_unwind(|| panic!("injected fetch worker panic"));
+                return None;
+            }
             let (result, ref_moves, open_failed) = match kagi_git::Backend::open(&repo_path) {
                 // Nothing ran: nothing moved.
                 Err(error) => (Err(error), Some(Vec::new()), true),
@@ -1927,7 +2070,7 @@ impl KagiApp {
             // as `Unknown` and never as a retryable `Failed` (ADR-0177). The
             // previous `format!` flattened both into a string here, which is
             // why the distinction could not be made at the call site (#646).
-            result.map_err(|error| FetchFailure {
+            Some(result.map_err(|error| FetchFailure {
                 termination_unknown: matches!(error, kagi_git::GitError::TerminationUnknown(_)),
                 ref_moves,
                 message: if open_failed {
@@ -1935,26 +2078,71 @@ impl KagiApp {
                 } else {
                     format!("{error}")
                 },
-            })
+            }))
         });
         cx.spawn(async move |this, acx| {
-            let result = task.await;
+            let mut result = task.fallible().await.flatten().unwrap_or_else(|| {
+                let error = abandonment.into_unknown();
+                Err(FetchFailure {
+                    message: error.to_string(),
+                    termination_unknown: true,
+                    ref_moves: None,
+                })
+            });
             let _ = this.update(acx, |app, cx| {
                 let Some(flight) = app.fetch_in_flight.take() else {
                     return;
                 };
-                app.refresh_write_busy();
-                // Terminalize the operation and route every still-attached
-                // waiter even when its owner is no longer on screen. Only the
-                // fetch owner's active session may receive display effects.
-                if app.active_session() != Some(flight.owner) {
-                    let error = result.err().map(|failure| failure.message);
-                    for session in flight.waiters {
-                        app.deliver_pull_confirm(session, error.clone(), cx);
+                app.poll_app_jobs(cx);
+                app.present_app_notice();
+                // A visit is a stay in the same tab, not merely its session.
+                // The flight owns one receipt; only waiters on the current
+                // visit may receive a result from an earlier visit's flight.
+                if app.active_session() != Some(flight.owner)
+                    || app.app_sessions.attachment(flight.owner).map(|a| a.visit)
+                        != Some(flight.visit)
+                {
+                    let current_waiter = flight.waiters.iter().any(|(session, visit)| {
+                        app.active_session() == Some(*session)
+                            && app.app_sessions.visit(*session) == Some(*visit)
+                    });
+                    // The auto-fetch contract lines are emitted whatever the
+                    // visit: only the presentation is withheld (#992 review).
+                    if silent {
+                        match &result {
+                            Ok(outcome) => klog!("auto-fetch: ok remote={}", outcome.remote),
+                            Err(e) => klog!("auto-fetch: failed (silent): {e}"),
+                        }
                     }
+                    match &mut result {
+                        Err(failure) => {
+                            app.record_ref_fetch_failure(
+                                "fetch",
+                                Some(flight.owner),
+                                Some(flight.visit),
+                                flight.before,
+                                failure.outcome(),
+                                failure.ref_moves.take(),
+                                &repo_path_guard,
+                                cx,
+                            );
+                            if current_waiter {
+                                let preview = format!("Fetch failed: {}", failure.message);
+                                app.status_footer =
+                                    FooterStatus::Failed(SharedString::from(preview.clone()));
+                                app.push_toast(ToastKind::Error, preview, cx);
+                                cx.notify();
+                            }
+                        }
+                        Ok(_) if current_waiter => app.deliver_pull_confirm(flight.owner, cx),
+                        Ok(_) => {}
+                    }
+                    // A delivered Pull confirmation (or failure preview) must
+                    // be drawn now, not on the next unrelated frame.
+                    cx.notify();
                     return;
                 }
-                let fetch_error = result.as_ref().err().map(|f| f.message.clone());
+                let fetch_succeeded = result.is_ok();
                 if flight.superseded_read && !result.as_ref().is_ok_and(|o| o.changed) {
                     app.reload(cx);
                 }
@@ -1986,39 +2174,15 @@ impl KagiApp {
                             );
                         }
                     }
-                    Err(e) => {
-                        // AGENTS.md: a user-facing error surfaces via the oplog
-                        // *and* a modal. The footer and toast below were the
-                        // only surfaces, so a failed fetch left no record to
-                        // recover or audit from (#646). A silent auto-fetch is
-                        // recorded too — it is exactly the case the user cannot
-                        // see happen.
-                        let before = kagi_git::StateSummary {
-                            head: format!("branch: {}", app.view().status_summary.branch),
-                            dirty: "unchanged".to_string(),
-                        };
-                        let outcome = if e.termination_unknown {
-                            // The deadline expired before the child was reaped,
-                            // so the fetch may have reached the remote. Recording
-                            // Failed would invite a retry of something that may
-                            // already have happened (ADR-0177).
-                            kagi_git::oplog::OpOutcome::Unknown {
-                                after: kagi_git::StateSummary {
-                                    head: "unchanged".to_string(),
-                                    dirty: "unchanged".to_string(),
-                                },
-                                evidence: e.message.clone(),
-                            }
-                        } else {
-                            kagi_git::oplog::OpOutcome::Failed {
-                                error: i18n::op_failed(i18n::Op::Fetch, &e.message),
-                            }
-                        };
+                    Err(mut e) => {
+                        // Record even a silent auto-fetch failure. A stopped
+                        // child with an uncertain effect is Unknown, not Failed.
+                        let outcome = e.outcome();
                         app.record_op_persist_moves(
                             "fetch",
-                            before,
+                            flight.before,
                             outcome,
-                            e.ref_moves.clone(),
+                            e.ref_moves.take(),
                             &repo_path_guard,
                             cx,
                         );
@@ -2032,13 +2196,21 @@ impl KagiApp {
                         }
                     }
                 }
-                // Every request, including the one that launched this fetch,
-                // is drained with the flight and delivered exactly once.
-                for session in flight.waiters {
-                    app.deliver_pull_confirm(session, fetch_error.clone(), cx);
+                // Failed fetches already own one durable receipt. A waiter
+                // only offers a confirmation after a successful fetch.
+                if fetch_succeeded {
+                    for (session, visit) in flight.waiters {
+                        if app.active_session() == Some(session)
+                            && app.app_sessions.visit(session) == Some(visit)
+                        {
+                            app.deliver_pull_confirm(session, cx);
+                        }
+                    }
                 }
                 cx.notify();
             });
+            #[cfg(feature = "gui-e2e")]
+            super::e2e::mark_fetch_completion_returned();
         })
         .detach();
         // The request now belongs to the flight above: this fetch will deliver it.

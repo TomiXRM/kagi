@@ -1,53 +1,37 @@
 # ADR-0204: operation queue と遅延の説明 — 並べるのは承認済み plan ではなく intent
 
-- Status: **Draft**（設計のみ。#355 は未実装。本 ADR の時点でコードは 1 行も変えていない）
-- Date: 2026-09-23
-- Base: `fix/issue-355` @ `3ab32af4235887563ee36425a81b0b4253ef1dc0`（fetched `origin/main`）
+- Status: **Accepted**（2026-10-04、#355 段階 2 は pure reducer を実装。段階 3a で checkout の入口・strip・auto-fetch の skip を配線。commit / merge の入口は段階 3b。改訂履歴は末尾）
+- Date: 2026-10-04（Draft: 2026-09-23）
+- Base: `origin/main` @ `47d30be4`（#355 段階 2 着手時。§1 は当時の main の実測）
 - Related: [#355](https://github.com/TomiXRM/kagi/issues/355)（親 #359）、ADR-0196（lifecycle 契約）、
   ADR-0197（session-owned UI state）、ADR-0182（session identity / close は実行取消ではない）、
   ADR-0183（session-owned read）、ADR-0086（busy snackbar）、ADR-0093（active modal 1 slot）、
   ADR-0153 `## Consequences` 71 行（`gh pr checks --watch` の #355 繰延）
-- 適用範囲（提案）: `src/app/session.rs`・`src/app/flow.rs`、`src/ui/busy.rs`、`src/ui/operations/*`、
-  `src/ui/render.rs`。**新しい manager / service / crate / worker は作らない**（ADR-0182 の方針を継続）。
-- Draft である間、ADR-0153 の繰延は**解除されていない**。本 ADR は解除の条件だけを定義する。
+- 適用範囲: 段階 2 は `src/app/queue.rs`（`Sessions` の隣に独立して保持）、段階 3 は `src/ui/op_queue.rs`（配線の唯一の入口 `drive_queue` と観測の同期 `sync_queue`）・`src/ui/queue_strip.rs`・`src/ui/operations/*`・`src/ui/render.rs`。**新しい service / crate / worker や admission route は作らない**（ADR-0182）。
+- ADR-0153 の watch 繰延は **解除していない**。段階 2 は queue の核だけを実装し、UI の Q3/Q5/Q8/Q10 と watch 固有の W1–W8 は段階 3 以降の条件である。
 
 ## 0. アーキテクチャレビュー（5 点）
 
-1. **既存コードに属するか。** 属する。直列化の真実源は `Sessions`（`src/app/session.rs:222-241`）で、
-   admission の route は既存の **2 本** — 承認を消費する `begin_write`（`src/app/flow.rs:297-327`）と、
-   guard を直接取る `write_lease`（`src/app/session.rs:472-499`。`Busy` / `NeedsReconcile` /
-   `reserve_lease` の判定は同じ）。queue は「まだそのどちらにも到達していない意図」を `Sessions` 内に
-   `SessionId` keyed で足す層である。UI 側は、**適格 family の entry point が（idle のときも含め）
-   owner 付きの typed intent を作って列に入れる**形にする。既存の `op_latched` / `reject_if_busy`
-   （`src/ui/operations/mod.rs:198-217`）は bool を返すだけで intent も owner も持たないので、
-   その helper を「積む」に読み替えるだけでは足りない。**適格でない family はその既存 guard の
-   まま**で、本 Draft は広い source 改変を求めない。**3 本目の admission route は作らない**。
-2. **境界。** app 層 = 順序・調停・chain 判定（pure、`Context` 不要）。UI 層 = 表示と confirm modal。
-   実行 lifecycle（lease / reconcile / supervisor / oplog）は ADR-0196 のまま**変えない**。
-3. **代替案と却下。** 楽観的 UI = preflight を飛ばす（#355 §7 却下済み）／並列 write = #283・
-   ADR-0182「保守的な global busy は維持する」／`QueueService` 新設 = 直列性の真実源が 2 つになる／
-   `TabUiState` 配置 = ADR-0197 決定 1 で調停は operation-owned。
-4. **失敗モード。** 確認待ちの先頭が他 session を巻き込む（決定 1）、古い承認が新しい plan を通す
-   （決定 4）、「取り消した」と言って process が走り続ける（決定 3）、trip 後に二度と動かない
-   （決定 3 の gate reset）、queue の無限成長（決定 7）。
-5. **受入 oracle。** 決定 8。Draft の本 ADR はどれも満たしていないし、満たしたとも主張しない。
+1. **既存コードに属するか。** 直列化の真実源は `Sessions`（`src/app/session.rs`）。admission は `begin_write`（`src/app/flow.rs`）と `Sessions::write_lease` の 2 route のまま。待機中の意図は `src/app/queue.rs` の `SessionId` keyed `IntentQueue` に置き、段階 3 で UI が `Sessions` と並べて所有する。lease 関数には触れない。`op_latched` / `reject_if_busy`（`src/ui/busy.rs` / `src/ui/operations/mod.rs`）は意図の identity を持たないので、単なる bool の読み替えでは足りない。
+2. **境界。** app 層 = 順序・調停・chain 判定（pure、`Context` 不要）。UI 層 = 表示と confirm modal。実行 lifecycle（lease / reconcile / supervisor / oplog）は ADR-0196 のまま**変えない**。
+3. **代替案と却下。** 楽観的 UI = preflight を飛ばす（#355 §7 却下済み）／並列 write = #283・ADR-0182「保守的な global busy は維持する」／`QueueService` 新設 = 直列性の真実源が 2 つになる／`TabUiState` 配置 = ADR-0197 決定 1 で調停は operation-owned。
+4. **失敗モード。** 確認待ちの先頭が他 session を巻き込む（決定 1）、古い承認が新しい plan を通す（決定 4）、「取り消した」と言って process が走り続ける（決定 3）、trip 後に二度と動かない（決定 3 の gate reset）、queue の無限成長（決定 7）。
+5. **受入 oracle。** 段階 2 は決定 8 の reducer 該当行を pure unit test で固定。UI と native の oracle は段階 3 で測る。
 
-## 1. 現在の baseline（実測、base `3ab32af4`）
+## 1. 現在の baseline（実測、#355 段階 2 着手時の main）
 
 | 事実 | 位置 |
 | --- | --- |
-| ユーザーに見える busy は bool 1 個（ラベル 1 本）。`busy_snackbar_label` が `write_busy_op` → `remote_write` → `planning` を or して 1 語を返す | `src/ui/busy.rs:45-50`、描画は `src/ui/render.rs:35` |
-| その facade の背後は**独立した 3 つの latch**。`op_may_start(has_leases, remote_write, planning)` | `src/ui/operations/mod.rs:198-204`、`src/ui/busy.rs:37-43` |
-| 3 つの意味: `has_leases` = 実 lease（write の真実）、`remote_write` = lease を取れない唯一の write（SSH pull）、`planning` = plan 中の latch | `src/ui/busy.rs:9-36` |
-| `write_busy_op` は lease の**表示 mirror にすぎず**、gate は読まない | `src/ui/busy.rs:29-36`、`settle_write_busy` は `src/ui/busy.rs:60-64` |
-| 弾き方: footer を `Msg::OpInProgress` にして `true` を返すだけ。再試行の予約も列も残らない | `src/ui/operations/mod.rs:209-217` |
-| その入口は 10 file / 20 行（定義・doc を含む grep 実測） | `render.rs` `render_header.rs` `github.rs` `github_issues.rs` `conflict_abort.rs`、`operations/{mod,merge,conflict,conflict_skip,worktree}.rs` |
-| admission は **global single-writer**。`begin_write` は scope 別ではなく `s.has_leases()` で `Busy` | `src/app/flow.rs:305-307`、方針は ADR-0182「RepoId の導入は並行 write 解禁ではない」 |
-| lease 予約は scope 別ではなく **空の map であること**を要求する（`if !leases.is_empty() { return Err(Busy) }`） | `src/app/session.rs:500-509` |
-| plan slot も **window に 1 つ**。`state: PlanState` / `plan_owner: Option<SessionId>` / `revision: RequestId` は `Sessions` に 1 組しかなく、session 別ではない | `src/app/session.rs:232-235`、ADR-0182「単一 plan slot に `plan_owner`」 |
-| 承認は one-shot。`approved.revision != s.revision` または `PlanState::Approved` でなければ `StaleApproval` | `src/app/flow.rs:298-300` |
-| 完了の配送鍵は `OwnerStamp { session, visit, operation }`（path ではない） | `src/app/session.rs:126-141` |
-| `detach` は表示だけを捨て、`operations` / `leases` / `settled` / `reconcile` に触れない | ADR-0182「close は実行取消ではない」、`src/app/session.rs:338-345` |
+| busy の表示は `write_busy_op` → `planning` で 1 語を返す。`op_latched` は lease / planning のほか `cloning` latch も検査する | `KagiApp::busy_snackbar_label` / `KagiApp::op_latched`（`src/ui/busy.rs`） |
+| `op_may_start(has_leases, planning)` は write を lease で、plan 中を planning latch で拒否する。SSH remote pull も lease を持つ（#989） | `op_may_start`（`src/ui/operations/mod.rs`）、ADR-0196 決定 5 |
+| `write_busy_op` は lease の表示 mirror で gate は読まない | `settle_write_busy`（`src/ui/busy.rs`） |
+| `reject_if_busy` は footer を更新して `true` を返すだけ。再試行の列は残さない | `KagiApp::reject_if_busy` |
+| admission は **global single-writer**。`begin_write` は `s.has_leases()` で `Busy` | `begin_write`（`src/app/flow.rs`）、ADR-0182 |
+| lease 予約には空の map が必要 | `Sessions::reserve_lease` |
+| plan slot は window に 1 つ。`state` / `plan_owner` / `revision` は `Sessions` に 1 組 | `Sessions` の field |
+| 承認は one-shot。revision 不一致なら `StaleApproval` | `begin_write` の revision 照合 |
+| 完了の配送鍵は `OwnerStamp { session, visit, operation }` | `OwnerStamp`（`src/app/session.rs`） |
+| `detach` は operation / lease / settled / reconcile に触れない | `Sessions::detach` |
 
 **#355 の記述との差分（訂正ではなく現況）**: issue が挙げる `busy_op` は ADR-0196 Wave 3（#698–#702）で
 削除済みで、#284（tab scope が無い）と #289（解放保証が無い）は `OwnerStamp` routing と
@@ -58,34 +42,34 @@ commit walk）は対象外で、queue 化の前提条件にもしない。
 ## 決定 1 — queue は `SessionId` が所有し、実行の直列性は既存 admission が持つ（(a)）
 
 ```rust
-// src/app/session.rs（Sessions のフィールドとして。新 module でも新 service でもない）
-pub struct IntentId(u64);                  // OperationId とは別。まだ承認されていない
+// src/app/queue.rs（stage 3 で Sessions と並べて window owner が保持。lease は Sessions に残す）
+pub struct IntentId(pub u64);               // OperationId とは別。まだ承認されていない
 pub struct QueuedIntent {
     pub id: IntentId,
-    pub owner: SessionId,                  // 投入した tab の世代
-    pub visit: u64,                        // 投入時の滞在。**診断・表示のみ**。承認の根拠にしない
-    pub worktree: WorktreeId,              // attach 時に凍結された対象
-    pub kind: OperationKind,
-    pub request: IntentRequest,            // 決定 4。plan でも Approved でもない
-    pub enqueued: Instant,
-    pub state: IntentState,                // 決定 5 の表
+    pub owner: SessionId,                    // 投入した tab の世代
+    pub visit: u64,                          // 診断・表示のみ
+    pub worktree: WorktreeId,                // attach 時に凍結された対象
+    pub request: IntentRequest,              // plan でも Approved でもない
+    pub enqueued: u64,                       // reducer の単調 sequence、wall clock ではない
+    pub state: IntentState,
 }
 pub struct IntentQueue {
     per_session: HashMap<SessionId, VecDeque<QueuedIntent>>,
-    gate: HashMap<SessionId, ChainGate>,   // 決定 3。anchor は IntentId か走行中 write の OwnerStamp
+    gates: HashMap<SessionId, ChainGate>,
+    // cancel 一覧、window-global の single pipeline gate
 }
 ```
 
 - **列は session ごと。ただし session ごとの並行実行では断じてない。** 所有（誰の意図か、誰に
   確認を出すか、誰の chain が切れるか）が session 単位なのであって、実行資源は window に
-  1 組しかない。`reserve_lease` は空の lease map を要求する（`src/app/session.rs:500-509`）ので、
+  1 組しかない。`reserve_lease` は空の lease map を要求する（`Sessions::reserve_lease`）ので、
   同時に走る write は **常に 0 か 1**。この ADR は `has_leases()` も `reserve_lease` も緩めない。
 - **globally single な資源は 3 つ**あり、queue はそのどれも増やさない:
 
   | 資源 | 実体 | queue 側の規律 |
   | --- | --- | --- |
   | writer lease | `leases`（空でなければ `Busy`） | 同時に `Running` は 1 件 |
-  | plan slot + `revision` | `state` / `plan_owner` / `revision`（`src/app/session.rs:232-235`） | `Planning` / `AwaitingConfirm` は **window 全体で 1 件**。さらに `Running` と**重ねない**（`op_may_start` が lease と planning を相互排他にしている、`src/ui/operations/mod.rs:198-204`） |
+  | plan slot + `revision` | `Sessions` の `state` / `plan_owner` / `revision` | `Planning` / `AwaitingConfirm` は **window 全体で 1 件**。`Running` と重ねない（`op_may_start`、`src/ui/operations/mod.rs`） |
   | modal slot | `active_modal`（ADR-0093、ADR-0197 決定 1） | confirm を出せるのは前面 session の 1 件だけ |
 - **調停の規則（これだけ）**: 候補は各 session の先頭 1 件。候補を `enqueued` の古い順に見て、
   最初に「今すぐ前進できる」ものを 1 件だけ進める。前進できない候補は理由付きで `Waiting` に
@@ -105,17 +89,17 @@ pub struct IntentQueue {
   ユーザーが確認に答えない、といった状態では `Waiting { reason }` に**留まるのが正しい**。
   時間切れで gate を外す仕掛けは置かない。**永久停止の回避は「理由が消えれば必ず再評価される」
   ことであって、「いつか必ず動く」ことではない**。confirm modal を開いたまま別 tab へ移れば
-  `close_window_slots_of_departing_tab`（`src/ui/operations/modal_state/window.rs:17`）が
+  `close_window_slots_of_departing_tab`（`src/ui/operations/modal_state/window.rs`）が
   slot を閉じ（ADR-0197 決定 5 S6）、未回答の intent は `Queued` に戻って他候補が再評価される。
 - **reconcile**: 同一 `WriteScope` に reconcile entry があれば `begin_write` は `NeedsReconcile` を
-  返す（`src/app/flow.rs:302-304`）。その候補は `Waiting { NeedsReconcile }` になり、
+  返す（`begin_write` の reconcile 判定）。その候補は `Waiting { NeedsReconcile }` になり、
   順番を他 session に譲る。解除は既存の reconcile 完了だけで、queue は近道を作らない。
 - **owner の lifecycle**:
 
   | 事象 | 実行中の operation | その session の queued intent |
   | --- | --- | --- |
   | depart（tab 切替） | 継続（ADR-0182） | 保持。ただし先頭は confirm を開けない（決定 4） |
-  | close / detach | 継続。lease も reconcile も保持 | **全件 cancel** `CancelReason::OwnerGone` |
+  | close / detach | 継続。lease も reconcile も保持 | **全件 cancel** `CancelReason::OwnerGone`。ただし admission の結果待ち（`Admitting`）の先頭は確認だけ閉じて結果まで残し、`Ok` なら `Running` として追跡し、それ以外は外す（write が走ったかどうかを捨てない） |
   | reattach（incarnation 更新） | 継続 | 全件 cancel（`SessionId` が別物になる） |
   | restore / 再 open（同 path） | — | 継承しない。別 incarnation は別の owner |
 
@@ -144,8 +128,8 @@ pub struct IntentQueue {
   **表示**にも適用する。intent 状態は決定 5 の表の値をそのまま出し、`Unknown` を「失敗」と
   書き換えない（ADR-0196 決定 2.1）。
 - ADR-0086 の busy snackbar は**そのまま 1 本**（今走っている 1 件のラベル）。spinner を 2 個目に
-  増やさない。`write_busy_op` / `remote_write` / `planning` の 3 latch は strip 上では
-  「今走っている 1 件」の phase として 1 行に畳む（語彙は決定 6 と共通）。
+  増やさない。`write_busy_op` / `planning` は strip 上では「今走っている 1 件」の phase
+  として 1 行に畳む（語彙は決定 6 と共通）。
 - **警告を件数で上書きしない。** `Unknown` の未解決、reconcile 待ち、`Recording::Failed`（変わったが
   記録できていない）の表示は、queue の件数表示より**優先して残す**。strip は `queued: N` を
   足すだけで、これらの警告行や AppNotice を隠したり置き換えたりしない（#501 の「成功 footer で
@@ -156,16 +140,18 @@ pub struct IntentQueue {
 | 操作 | 対象 | 何が起きるか | oplog |
 | --- | --- | --- | --- |
 | 1 件の削除（`RemoveOne`） | `Queued` / `Waiting` **のみ** | 列から外すだけ。plan も lease も無いので副作用ゼロ | 記録しない（何も走っていない） |
-| 先頭（`Planning` / `AwaitingConfirm`）の取り消し | pipeline に載っている 1 件 | intent を `Cancelled` にし、**自分の** confirm modal を閉じ、`invalidate_plan` で revision を進めて遅れて届く plan 結果を破棄する。plan job が止まったとは主張せず、`planning` latch はその job 自身の終端 callback（`finish_planning`、`src/ui/operations/mod.rs:245-263`）だけが解放する。次の dispatch はその lifecycle の終了を `Waiting { PlanSlotBusy }` で待つ | 記録しない（write は始まっていない） |
-| cancel all | 自 session の待機中全件（`Queued` / `Waiting`）＋ 先頭が `Planning` / `AwaitingConfirm` ならその 1 件も上記の手順で | **`Running` の write には触れない**（決定 3 の stop 規律） | 記録しない |
-| running の cancel | 実行中 | **提供しない**（本 Draft の決定。理由は下記） | — |
+| 先頭（`Planning` / `AwaitingConfirm`）の取り消し | pipeline に載っている 1 件 | intent を `Cancelled` にし、**自分の** confirm modal を閉じ、`invalidate_plan` で revision を進めて遅れて届く plan 結果を破棄する。plan job が止まったとは主張せず、`planning` latch はその job 自身の終端 callback（`finish_planning`）だけが解放する。次の dispatch はその lifecycle の終了を `Waiting { PlanSlotBusy }` で待つ。`Planning` の先頭はまだ modal を持たないので、modal slot は解放しない（他の modal が開いていればそれが slot を持つ） | 記録しない |
+| cancel all | 自 session の待機中全件（`Queued` / `Waiting`）＋ 先頭が `Planning` / `AwaitingConfirm` ならその 1 件も上記の手順で | **`Admitting` と `Running` には触れない**（決定 3 の stop 規律。admission の結果はそのまま受け取る） | 記録しない |
+| running の cancel | 実行中 | **提供しない**（本決定。理由は下記） | — |
 | chain trip（`&&`） | 先頭が非 Success、または先頭が **cancel された**（plan error / ユーザー拒否 / identity 不一致） | 自 session の残り全件を cancel し、**一覧で見せる** | 記録しない |
 
 - **running cancel を提供しない理由。** 停止証明は process group が空であることであり
   （ADR-0196 決定 2.4 と `Termination` 表）、証明できない停止要求の結果は `Unknown` になる。
-  `Unknown` は **必ず reconcile を要求する**。`Termination::Stopped` なら lease は解放されるが、
-  その scope は reconcile entry がある限り `begin_write` に `NeedsReconcile` で塞がれ
-  （`src/app/flow.rs:302-304`）、`Unaccounted` なら lease 自体が保持される（ADR-0196 決定 2.1 / 2.4）。
+  `Unknown` は **必ず reconcile を要求する**。通常は `Termination::Stopped` で lease を解放しても
+  scope が reconcile entry によって `NeedsReconcile` で塞がれ（`begin_write` の reconcile 判定）、
+  `Unaccounted` なら lease 自体を保持する。SSH remote pull は停止済みでも host の結果を観測できないため
+  Unknown / Partial の lease を保持し、監査付き unobservable-release でのみ解放する
+  （ADR-0196 決定 2.1 / 2.4、#989）。
   「キャンセル」と書かれたボタンが、実際には「結果不明の write を 1 件作り、その scope への次の
   write を reconcile 完了まで止める」ものであってはならない。lease を勝手に解放する
   **見せかけの取消は禁止**（#706 の unobservable release は remote の既知 family 限定の別 tier で、
@@ -178,16 +164,17 @@ pub struct IntentQueue {
   なく、anchor が settle するまで先頭は `Waiting { WriteRunning }` に留まる。
   anchor の結果は `apply(Completion)` の **一回性**（`settled` set、ADR-0196 決定 2.5）を通じて
   ちょうど一度だけ gate に配られ、`OperationId` / `OwnerStamp` が一致した receipt だけを見る。
+  receipt を配った write は、lease が残っていても（`Unknown` / `Unaccounted`）以後の anchor にならず、
+  lease 解放までは `WriteRunning` の blocker としてだけ残る（二度と来ない receipt を待たない）。
   「busy なら enqueue して新しい chain を始める」形は**禁止** — 先行者を失えば `&&` が成立しない。
 - **anchor にできるのは「追跡できる先行者」だけ。** 条件は `OperationId` と `OwnerStamp` を持ち、
-  終端が `apply` の権威ある completion として届くこと。**lease を持たない legacy な
-  `remote_write`（SSH pull、`src/ui/busy.rs:9-27`）はこれを満たさない** — `apply` の receipt が
-  届く保証が無いので、anchor を**でっち上げない**し、「queue が包んでいる」とも書かない。
-  この拒否が働くのは **自 session に write が走っていて、その先行者の identity / 所有を
-  権威ある形で解決できない場合だけ**である（legacy remote の例）。**走っている write が無ければ
+  終端が `apply` の権威ある completion として届くこと。SSH remote pull も
+  `Planned::RemotePull` として同じ identity と lease を持つため anchor になれる（#989）。
+  追跡できない legacy 先行者は残っていない。**走っている write が無ければ
   `anchor = None` が正常な状態**で、idle の列への投入はそのまま受け付ける（適格 family の
-  entry point は idle でも typed intent を積む、§0）。守れない連鎖を見せるより弾く方が誠実だが、
-  先行者が存在しないことを拒否の理由にはしない。
+  entry point は idle でも typed intent を積む、§0）。reducer の `RemoteLatched(session)` /
+  `Rejected(RemoteLatched)` / `Waiting { RemoteLatched }` は #989 以前の lease を持たない pull latch
+  のためのもので、#989 以降は発火元が無い（reducer からの削除は queue 側の follow-up）。
 - **別 session で走っている write は anchor にしない**。追跡できている writer であっても、それは
   global な blocker（`Waiting { WriteRunning }`）にすぎず、他 tab の失敗が自分の列を cancel する
   ことはない。
@@ -214,8 +201,8 @@ pub struct IntentQueue {
   「1 件を降ろす」と「この tab の待ち行列を空にする」であり、曖昧な中間はない。
 - **trip からの復帰（gate reset）。** `Tripped` は自動前進だけを止める。cancel 一覧をユーザーが
   破棄した時点、または対象 session の列が空になった時点で gate は `Armed` に戻り、以後の投入は
-  普通の chain として動く。**空の列に投入された intent は常に `Armed` で始まる** — これがないと
-  一度 trip した tab が永久に動かない（#355 §6 最終項の再来）。
+  普通の chain として動く。**空の列に投入された intent は常に `Armed` で始まる**。過去の cancel 一覧を後から破棄しても、既に `Armed` の新しい chain が持つ `ActiveWrite` / `QueuedHead` anchor は消さない。
+  これがないと一度 trip した tab が永久に動かないか、新しい chain の失敗を見逃す。
 - **「受理された」は「完了した」ではない。** server 側が非同期に完了させる family では、
   成功した submission が **postcondition を意味しない**: GitHub merge queue に入った PR は
   `PrMergeLocalReason::Queued` = 「`gh` は受理し GitHub は queue に入れた。まだ何も merge されて
@@ -238,18 +225,16 @@ pub struct IntentQueue {
 ## 決定 4 — 積むのは intent。承認済み plan を凍結して使い回さない（(d)）
 
 ```rust
-pub enum IntentRequest {            // ユーザーの決定入力。安定した対象 identity は持ってよい
-    Checkout { target: RefName },
-    Stage { paths: Vec<RepoRelPath> },
-    Commit { draft: CommitDraftRevision },  // 本文は revision で凍結する（下記）
-    Merge { source: RefName, into: RefName },
-    CherryPick { commit: Oid },             // ユーザーが選んだ commit の OID は intent の identity
-    // …適格な family ごと。非同期 server family は適格条件を満たさない（下記）
+pub enum IntentRequest {                // 段階 2 で受け付ける最初の 3 family
+    Checkout { target: String },        // ユーザーが選んだ ref 名
+    Commit { message: String },         // 本文そのものを凍結する
+    Merge { source: String, into: String },
 }
+// 将来の family も local verify と同期完了を証明してから追加する。
 ```
 
 - **`Approved` / `PlanToken` / `OperationPlan` を queue に入れない。** 承認は one-shot で
-  revision に束縛されており（`src/app/flow.rs:298-300`）、保存した承認を後で使うことは
+  revision に束縛されており（`begin_write` の revision 照合）、保存した承認を後で使うことは
   「古い承認が新しい plan を認可する」ことと同義になる。queue が持つのは *何をしたかったか* だけ。
 - **「OID を持たない」ではなく「予測を持たない」。** ユーザーが明示的に選んだ対象の identity —
   cherry-pick / revert の commit OID、対象 ref 名、対象 file path — は **intent そのもの**であり、
@@ -276,11 +261,11 @@ pub enum IntentRequest {            // ユーザーの決定入力。安定し�
   （`fetch` は remote を書かず local の remote-tracking ref を更新する操作なので、この段落の
   対象ではない。適格性は family ごとの証拠で判定し、Git の意味論を一括で言い切らない。）
   **未判定の family は既定で対象外**。対象外の family は従来どおり単発で、実行中は現行
-  `reject_if_busy` の拒否のまま（本 Draft はここを変えない）。
+  `reject_if_busy` の拒否のまま（段階 2 はここを変えない）。
 - **先頭に来たときのパイプライン（毎回フル）**:
 
   ```
-  live replan → ユーザー確認（新しい modal）→ approve_run / approve → admission
+  live replan → family の通常規則で確認 → approve_run / approve → admission
                （`begin_write`。guard を直接取る既存 family は `write_lease` の同じ判定を通る。
                 どちらの route も迂回しない）
               → preflight（live 再検証。凍結 request と今の repository の照合）
@@ -290,6 +275,11 @@ pub enum IntentRequest {            // ユーザーの決定入力。安定し�
   ADR-0196 のパイプラインそのままで、queue が決めるのは開始時刻だけ。preflight は #704 規範
   （ADR-0196 決定 4 の規範節）のとおり accepted read revision + Backend の live preflight で、
   **確認の後・実行の前に必ず通る**。ここで前提が崩れていれば `Refused` になり、chain は trip する。
+- **確認は family の通常規則に従う**（2026-10-04 改訂）。replan は毎回行い、その plan を見て family が
+  普段どおりに確認するかを決める。modal を持たない場面の family は modal なしで進む（blocker も
+  warning も無い checkout は double click と同じく modal を出さない）。blocker か warning があれば
+  modal を出す。**凍結した入力が今の draft と違えば必ず modal を出す**（commit message、段階 3b）。
+  どの経路でも preflight は省かない。
 - **「確認したのに、また確認するのか」への答え**: 先行する write が後続の前提を変えるから。
   `rebase onto origin/main` → `merge feature` では rebase が commit を書き換えるので、merge base も
   競合判定も投入時点の予測とは**別物になる**。`commit` → `amend`（対象 OID を先行が作る）、
@@ -299,14 +289,14 @@ pub enum IntentRequest {            // ユーザーの決定入力。安定し�
   （`src/ui/modals.rs:116-123`）。凍結値を持ち越せる設計にしていたら、head が動いた PR に対して
   「確認済み」の顔をした refuse を量産していた。
 - **先頭処理直前の照合と、その結果の振り分け**: (i) owner が attach 済みで `SessionId` が一致するか、
-  (ii) `Sessions::confirm_identity`（`src/app/session.rs:365`）で凍結 `WorktreeId` が今も同じものに
+  (ii) `Sessions::confirm_identity` で凍結 `WorktreeId` が今も同じものに
   解決するか、(iii) owner の read が revalidate 中か。**(i)(ii) の不一致だけが cancel**
   （`CancelReason::OwnerGone` / `IdentityChanged`）であり、**黙って別の対象に向け直さない**。
   (iii) の「read がまだ新しくない」は失敗ではなく待ちなので、`Waiting { NeedsConfirmation }` に
   留めて次の候補を見る（ADR-0197 決定 3 の activate 時 revalidation）。
 - **modal を奪わない**: confirm を開く条件は (1) owner == active session、(2) `active_modal` が空、
   (3) `panes_revalidating()` が false — 既存 `pane_mutation_admitted`
-  （`src/ui/operations/mod.rs:234-236`）と同じ形の gate。満たさない間は
+  （`src/ui/operations/mod.rs`）と同じ形の gate。満たさない間は
   `Waiting { NeedsConfirmation }` に留まる（ADR-0093 の 1 slot、ADR-0197 決定 1）。
 
 ## 決定 5 — 状態遷移表
@@ -314,15 +304,15 @@ pub enum IntentRequest {            // ユーザーの決定入力。安定し�
 | 状態 | 意味 | 次 | 遷移条件 |
 | --- | --- | --- | --- |
 | `Queued` | 列に入った。まだ何も読んでいない | `Planning` / `Waiting` / `Cancelled` | 調停で選ばれた / 選ばれない / 削除・trip・owner 喪失 |
-| `Waiting { reason }` | 走れない理由が名前を持っている。`reason ∈ { WriteRunning, PlanSlotBusy, NeedsConfirmation, NeedsReconcile, RemoteLatched }`（trip 後の intent は `Waiting` ではなく `Cancelled` になるので、chain 由来の待ち状態は存在しない） | `Planning` / `Cancelled` | 理由が消えた / 削除・trip |
+| `Waiting { reason }` | 走れない理由が名前を持っている。`reason ∈ { WriteRunning, PlanSlotBusy, NeedsConfirmation, NeedsReconcile }`（trip 後の intent は `Waiting` ではなく `Cancelled` になるので、chain 由来の待ち状態は存在しない） | `Planning` / `Cancelled` | 理由が消えた / 削除・trip |
 | `Planning` | live replan 実行中。**plan slot を占有**（既存 `planning` latch） | `AwaitingConfirm` / `Queued` / `Cancelled` | plan 完了 / tab 離脱で slot ごと破棄 / plan error・identity 不一致 |
 | `AwaitingConfirm` | confirm modal を前面に出している。**plan slot と modal slot を占有** | `Admitting` / `Queued` / `Cancelled` | ユーザー承認 / tab 離脱で modal が閉じる（未回答なので `Queued` に戻す） / ユーザー拒否・owner 喪失 |
 | `Admitting` | `approve_*` → admission（`begin_write`、guard family は `write_lease`）。lease も `OperationId` もまだ無い短命状態 | `Running` / `Waiting` / `Cancelled` | 成功 / `Busy`・`NeedsReconcile` は `Waiting` へ差し戻し / `StaleApproval`・`Identity` は cancel |
 | `Running` | lease 保持。`OperationId` と `OwnerStamp` が付いた。**ここから先は close しても取り消されない**（ADR-0182） | `Settled` | `apply(Completion)` |
-| `Settled { outcome }` | 終端。lease / reconcile は ADR-0196 決定 2.1 のまま | — | 決定 3 の 4 条件を満たせば gate は `Armed` のまま、でなければ `Tripped` |
+| `Settled` | 終端。結果は receipt（`Settlement`）が持ち、intent は列から外れる。lease / reconcile は ADR-0196 決定 2.1 のまま | — | 決定 3 の 4 条件を満たせば gate は `Armed` のまま、でなければ `Tripped` |
 | `Cancelled { reason }` | 列から外れた。副作用なし | — | 一覧が破棄されるまで表示に残る（決定 3 の保持規則） |
 
-`CancelReason ∈ { UserRemoved, UserRejected, ChainTripped { by }, OwnerGone, IdentityChanged, CapacityRejected }`。
+`CancelReason ∈ { UserRemoved, UserRejected, PlanError, StaleApproval, ChainTripped { by: ChainAnchor }, OwnerGone, IdentityChanged, CapacityRejected }`。
 
 **詰まりが名前を持つことの根拠（#355 §6 最終項）**: 前進できない理由は必ず `Waiting { reason }` と
 して名前を持ち、各 reason には**それを解除しうる観測可能な事象**が対応する。下表はその対応であって、
@@ -331,52 +321,40 @@ pub enum IntentRequest {            // ユーザーの決定入力。安定し�
 
 | reason | 解除する事象 | 観測点 |
 | --- | --- | --- |
-| `WriteRunning`（どの tab の write でも） | lease 解放 | `apply(Completion)` → `release_lease`（`src/app/session.rs:512`） |
-| `PlanSlotBusy` | plan job が実際に終わること（`finish_planning` が自分の tag を解放する、`src/ui/operations/mod.rs:245-263`）。`invalidate_plan` は遅延結果を捨てるだけで slot を空けない | `finish_planning` の終端 callback、`invalidate_plan`（`src/app/session.rs:523`）、`close_window_slots_of_departing_tab` |
-| `NeedsConfirmation` | owner tab が前面に戻り、**かつ** `active_modal` が空、**かつ** `panes_revalidating()` が false、**かつ** pipeline が空（`Running` 無し） | `active_session()` / `active_modal` / `pane_mutation_admitted`（`src/ui/operations/mod.rs:234-236`）/ `op_latched` |
+| `WriteRunning`（どの tab の write でも） | lease 解放 | `apply(Completion)` → `Sessions::release_lease` |
+| `PlanSlotBusy` | plan job が実際に終わり、**一致する** `IntentId` の `PlanSlotFreed(Some(id))` が届くこと。queue 外の plan job は `PlanSlotTaken` で slot を占め、`PlanSlotFreed(None)` で返す。古い job の callback は別の plan の latch を解放しない | `finish_planning` の終端 callback、`Sessions::invalidate_plan` |
+| `NeedsConfirmation` | owner tab が前面に戻り、**かつ** `active_modal` が空、**かつ** `panes_revalidating()` が false、**かつ** pipeline が空（`Running` 無し） | `active_session()` / `active_modal` / `pane_mutation_admitted` / `op_latched` |
 | `NeedsReconcile` | reconcile の acknowledge | ADR-0196 決定 2.4 |
-| `RemoteLatched` | pull の終端 callback | `remote_write` の解除（`src/ui/busy.rs:25-27`） |
+| `RemoteLatched` | （#989 以降は発火元なし） | 旧 `remote_write` latch の解除。SSH pull は lease を持つので `WriteRunning` で待つ |
 
 `Admitting` の `Busy` / `NeedsReconcile` が失敗ではなく差し戻しであること、
 `AwaitingConfirm` の tab 離脱が cancel ではなく `Queued` 復帰であること、この 2 点が
 「詰まって永久に動かない」も「黙って消える」も避ける要である。bool latch にはこの対応表が無かった。
 
-## 決定 6 — 2 秒を超えたら理由を出す。ETA は作らない
+## 決定 6 — write / remote の遅延を 2 秒で説明する。ETA は作らない
 
-- 閾値 2s は git の `advice.statusAheadBehind` に合わせる（#355 §2）。計測の起点は
+派生 read の表示上の遅延・Skip は ADR-0206（Accepted、2026-10-01）で実装済み。本 ADR に残るのは長い local write と fetch / pull / push / clone の説明であり、段階 2 の reducer に時計・描画を持ち込まない。閾値 2s は git の `advice.statusAheadBehind` に合わせる（#355 §2）。計測の起点は
   **現在の phase の開始時刻**で、intent の投入時刻ではない（待たされた時間を計算時間として出さない）。
 - 出すのは `{ 理由, 経過秒, 取れる手段 }` の 3 点。**残り時間・進捗率・「まもなく完了」は出さない** —
   分布を持っていないので、出せば捏造である（唯一の例外は GitHub 自身が返す
   `QueuePosition::estimated_time_to_merge`、`crates/kagi-domain/src/merge_state.rs:150-157`。出典が
   server なのでそのまま引用する）。
-- **理由は phase から機械的に引く**。例: 「ahead/behind を計算中（commit 数が多い repository では
-  時間がかかります）」「worktree を列挙中」「大きい diff を読み込み中」。分類済みでない phase は
-  汎用文（「処理中」）+ 経過秒にし、**もっともらしい原因を推測して書かない**。
-- **取れる手段も必ず書く**。skip できる計算なら skip を提示し、できないなら
-  「この処理は中断できません（実行中の write です）」と明示する — 手段の無い待ちに
-  「お待ちください」だけを出さない。表示できる手段が無い場合は、その理由（write の実行中など）を
-  そのまま書く。
-- **skip は「計算をやめて不明として表示する」だけ**（#355 §5 の論点への決定）。対象は**派生 read の
-  表示値に限る** — ahead/behind、worktree 収集、大きい diff、Analyze。
-  **plan / preflight / verify / identity 照合の入力は skip の対象外**: それらは表示ではなく
-  admission と検証の根拠なので、飛ばせば「確認せずに実行する」ことになる（楽観的 UI の却下と
-  同じ理由）。write そのものにも出さない（それは cancel であり本 Draft では提供しない）。
-- **skip の結果は実行を認可しない。** skip した値は `Unknown` として描き、計算済みの値として
-  cache せず、`Unknown` を根拠に mutation を始めることも chain を前進させることもしない。
-  次の明示的な refresh でやり直す。skip は intent の状態を変えない（`Running` の write は走り続ける）。
+- **理由は phase から機械的に引く**。fetch / pull / push / clone または長い local write の phase を示し、分類済みでない phase は汎用文（「処理中」）+ 経過秒とする。**もっともらしい原因を推測して書かない**。
+- **取れる手段も必ず書く**。実行中の write に Skip / running cancel は提供せず、「この処理は中断できません（実行中の write です）」と明示する。派生 read の Skip は ADR-0206 の表示値を `Unknown` とするだけで、plan / preflight / verify / identity 照合を飛ばさず、chain を前進させない。
 
-## 決定 7 — 範囲外と端（Draft の既定値）
+## 決定 7 — 範囲外と端
 
-| 論点 | Draft の決定 | 理由 |
+| 論点 | 決定 | 理由 |
 | --- | --- | --- |
 | `;` 継続 | 入れない | 決定 3 |
 | 並列実行 | 入れない | #283 / ADR-0182。global single-writer 維持 |
 | 永続化 | しない（process 終了で消える） | 復元した intent は「最も古い前提」で再開する。決定 4 の live replan が毎回必要なら、保存する価値は列の順序だけで、安全性の負債の方が大きい |
 | fairness | 候補（各 session の先頭）の中から `enqueued` 最古を選ぶ | 決定的で、飢餓しない。優先度も昇格も入れない |
-| 容量 | 1 session あたり 16 件で上限。超過は `CapacityRejected` を即返す（既存 notice 経路） | 無限成長と、人間が追えない長さの chain を同時に防ぐ。16 は「画面に出せる長さ」から来た保守的な値で、測定後に上げてよい |
+| 容量 | 1 session あたり**未実行の intent** 16 件で上限（`Queued` / `Waiting` / `Planning` / `AwaitingConfirm` / `Admitting`）。`Running` は数えない。超過は `CapacityRejected` を即返す | 決定 2 の queued 件数と同じ定義にする。取消一覧は別枠で直近 32 件 |
 | coalescing | しない | 同種 intent を畳むと、trip 時の cancel 一覧が「ユーザーが投入した操作の集合」と一致しなくなる。誠実さ（決定 3）のコストの方が、節約できる 1 回の replan より大きい |
 | 自動再試行 | しない | 非 Success は必ず chain を trip する（決定 3） |
 | 非同期 server family（PR merge / GitHub merge queue） | 適格条件を満たさないので queue に入れない | 成功が「受理」であって「merge 完了」ではない（決定 3・決定 4）。kagi 側に server queue や watcher を新設もしない |
+| auto-fetch | その session の列が空でない間は skip し、chain の anchor にもしない | fetch は remote-tracking ref を更新し得るが、背景 fetch の失敗でユーザーの chain を trip しない。`IntentQueue::auto_fetch_allowed` を UI 配線時に用いる |
 | 停止要求と補償操作 | cancel は stop request のみ。`--abort` / `reset` / revert は発行しない | 決定 3。戻す操作は各 family の plan → confirm → write |
 
 ## 決定 8 — ADR-0153 繰延の解除条件と受入 oracle（(e)）
@@ -402,7 +380,7 @@ count の精密化）は別件で触れない。ADR-0153 は Accepted のまま�
 | Q10 | 確認中に他 session が永久に待たない | Tier B: A で confirm を開いたまま B へ切替 → A の intent は `Queued` に戻り、B の先頭が進むこと |
 | Q11 | 受理を完了として扱わない | Tier A: 非同期 server family の受理（`PrMergeLocalReason::Queued` 相当）で chain が **trip** し、依存する後片付けも「merged」表示も起きないこと。適格条件を満たさない family は enqueue 自体が拒否されること |
 | Q12 | 先頭 cancel が「止めた」と偽らない | Tier A: `Planning` / `AwaitingConfirm` の cancel で intent は `Cancelled`、自分の modal は閉じ、遅れて届く plan 結果は revision 不一致で捨てられ、**`planning` latch は job の終端 callback でのみ解放**され、次の dispatch は `Waiting { PlanSlotBusy }` を経ること |
-| Q13 | queue 経由でない先行 write も `&&` の anchor になる | Tier A: 同 session で走行中の operation（`OperationId` + `OwnerStamp`）を anchor に持つ列が、その `apply` receipt 一回で判定されること。非 Success なら新しい列が全 cancel されること。**別 session の write は anchor にならず**、失敗しても自分の列は残ること。追跡できない先行者（lease を持たない legacy `remote_write`）では enqueue せず既存の拒否を返すこと |
+| Q13 | queue 経由でない先行 write も `&&` の anchor になる | Tier A: 同 session で走行中の operation（`OperationId` + `OwnerStamp`、SSH remote pull を含む）を anchor に持つ列が、その `apply` receipt 一回で判定されること。非 Success なら新しい列が全 cancel されること。**別 session の write は anchor にならず**、失敗しても自分の列は残ること |
 
 **`gh pr checks --watch` 固有の解除条件（Q1–Q13 に加えて全て必須）**
 
@@ -417,20 +395,39 @@ count の精密化）は別件で触れない。ADR-0153 は Accepted のまま�
 | W7 | 2 秒ルールが watch にも適用され、skip は「監視をやめて **不明** と表示」。PR の状態を「成功」と言い換えない | 決定 6 |
 | W8 | native case: 実 PR に対し (a) watch 中に write が admit できる、(b) 監視中に head が動いたら結果が破棄される、(c) tab close で watcher が止まる、を人が確認する | GUI / 外部サービスを伴うので Tier A/B では閉じない |
 
-**Draft の正直な現状**: 上表はどれも未実施である。ADR-0153 の繰延が解除されたと書けるのは、
-W1–W8 と Q1–Q13 が実装・実測されたときだけで、本 ADR の Status が Draft である限りその主張はしない。
+**段階 2 の現状**: queue reducer の unit oracle のみ実装済み。UI を要する Q3/Q5/Q8/Q10 と watch の W1–W8 は未実施であり、ADR-0153 の繰延は解除されていない。
 
-## 未解決リスク（Draft）
+## 未解決リスク（段階 3 で計測）
 
 1. **確認の回数**。先頭ごとに confirm が出るため、3 件積むと 3 回確認する。安全性の対価として
    受け入れるが、体感が #355 の目的に反しないかは native（Q8）で測る。「確認の束ね」は plan の
    束ね＝前提の共有になるので、安易な緩和策にはしない。
-2. **`remote_write` latch の穴**（`src/ui/busy.rs:22-24`、既知）: remote pull は lease を持たず
-   `may_close_host` に効かない。queue 化は悪化も改善もさせないが、`Waiting { RemoteLatched }` が
-   この latch に依存する以上、lease 化（#703 の follow-up slice）と同時に見直すのが望ましい。
-3. **16 件という上限**に測定根拠が無い（決定 7）。実測前の保守値である。
-4. **cancel 一覧の表示量**。決定 3 の保持規則（破棄・detach・quit・上限 32 件）で寿命は閉じているが、
+2. **16 件という上限**に測定根拠が無い（決定 7）。実測前の保守値である。
+3. **cancel 一覧の表示量**。決定 3 の保持規則（破棄・detach・quit・上限 32 件）で寿命は閉じているが、
    32 件が実際に読める量かは native（Q8）で確かめる必要がある。
-5. **plan slot の競合**。window に 1 件である以上、tab を行き来しながら複数の列を進めると確認の
+4. **plan slot の競合**。window に 1 件である以上、tab を行き来しながら複数の列を進めると確認の
    順番待ちが出る。停止は決定 1 の「離脱で slot 解放」で防げるが、体感は Q10 と native で測る。
    plan slot を session 別にする案は ADR-0182 の単一 slot 決定に触るので本 ADR では採らない。
+
+## 改訂履歴
+
+- **2026-10-04 段階 3a（#355）** — checkout を最初の適格 family として配線した。
+  - 決定 4 の「先頭では必ず新しい modal」を「family の通常規則で確認」に改めた（PM 決定）。checkout の
+    verify は実行後の再 snapshot で HEAD が対象を指すことで、これが `ExecutionEvidence::Verified` になる。
+  - 投入の入口は今 `OpInProgress` で捨てている地点（`start_checkout` の latch 分岐）。その tab に列が
+    残っていれば idle でも後ろに並べる。そこへ届く経路（double click、Graph の Enter、local branch の
+    右クリック Checkout、確認 modal）は busy でも plan を開けるようにした（remote branch の Checkout
+    は tracking branch を作るので busy では従来どおり無効）。dirty tree の Enter（stash してから
+    checkout）は 2 つの write なので対象外のまま。
+  - **receipt を判定できない write**（guard writer、verify 経路の無い run family、stash / remove /
+    conflict の job、pull）は anchor にしない。その write の owner の tab では投入を拒否する
+    （`EnqueueError::UntrackedWrite`、見え方は従来の `OpInProgress`）。決定 3 の「busy なら新しい chain」
+    の禁止をこの形で守る。quiet fetch（auto-fetch・Refresh 後の fetch）と clone は owner を持たない
+    背景作業として扱い、全 tab の列を `WriteRunning` で待たせるだけにする。quiet fetch は列が空で
+    ない tab では走らせない（決定 7 の auto-fetch の行を quiet fetch 全体に適用）。
+  - 確認 modal が回答なしに消えた場合（repository の reload が plan を無効にした、別の modal が
+    置き換えた）は `ConfirmWithdrawn` で `Queued` に戻す。回答ではないので cancel にしない。
+    queue の外の plan job（merge の plan など）は `PlanSlotTaken` で slot を占有する。
+  - strip の「外す」は先頭（`Planning` / `AwaitingConfirm`）にも効く。これはユーザーの削除なので
+    後続を trip しない（`RemoveOne` と同じ）。modal で断った場合は `UserRejected` で、決定 3 の
+    とおり後続を trip する。

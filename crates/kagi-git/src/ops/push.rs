@@ -17,6 +17,7 @@ use super::*;
 // the shared `plan_note/mod.rs`.
 use kagi_domain::plan_note::push::PushPunct;
 use kagi_domain::plan_note::{CommonNote, PlanOp, PushNote, PushRecovery, PushTitle, RecoveryKind};
+use kagi_domain::remote::shell_quote;
 
 /// A branch created from `origin/master` tracks it as its *base*, not as where
 /// it is published. Pushing it publishes `origin/<branch>` and moves the
@@ -304,13 +305,15 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
         preview_files: Vec::new(),
         preview_commits,
         destructive: false,
-        // #353: faithful equivalent — `git push [-u] <remote> <branch>`.
-        equivalent_command: Some(format!(
-            "git push{} {} {}",
-            if is_set_upstream_flow { " -u" } else { "" },
-            remote_name,
-            branch_name
-        )),
+        // #353: faithful equivalent — `git push [-u] -- <remote> <branch>`.
+        equivalent_command: (!cfg!(windows)).then(|| {
+            format!(
+                "git push{} -- {} {}",
+                if is_set_upstream_flow { " -u" } else { "" },
+                shell_quote(&remote_name),
+                shell_quote(&branch_name)
+            )
+        }),
     })
 }
 

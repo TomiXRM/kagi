@@ -49,6 +49,9 @@ pub struct PrTab {
     pub local_refs_loading: bool,
     /// Rejects an older ref fetch after a retry for the same PR tab.
     pub local_refs_generation: u64,
+    /// Visit that admitted the currently tracked local-ref fetch. A reopened
+    /// PR can reuse the same generation, but an old visit must not clear it.
+    pub local_refs_visit: Option<u64>,
     /// merge-base(base, head) — the diff base for the whole-PR view.
     pub base: CommitId,
     /// The base **branch's** current tip, which is what a merge would actually
@@ -283,6 +286,7 @@ impl KagiApp {
             pr: pr.clone(),
             local_refs_loading: false,
             local_refs_generation: 0,
+            local_refs_visit: None,
             base: CommitId(String::new()),
             base_tip: CommitId(String::new()),
             head: CommitId(String::new()),
@@ -667,7 +671,7 @@ impl KagiApp {
         if dx.abs() < 0.01 {
             return;
         }
-        let max = super::pr_lane::max_scroll(lanes, rail);
+        let max = super::graph_window::max_scroll(lanes, rail, super::graph_view::LANE_W);
         let next = (current - dx).clamp(0.0, max);
         let Some(m) = self.pr_mode_mut() else {
             return;

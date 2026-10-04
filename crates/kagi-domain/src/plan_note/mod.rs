@@ -294,6 +294,39 @@ impl PlanRecovery {
             }
         }
     }
+
+    /// The commands to offer for pasting into `shell` (Copy all, the
+    /// collapsed command rows). Their dynamic operands are quoted for a POSIX
+    /// shell (`shell_quote`); `cmd.exe` — the Windows terminal's default —
+    /// takes neither single quotes nor a literal `&`, so it is offered none
+    /// and keeps only the explanation (#1007, as #993 does for the
+    /// equivalent command).
+    pub fn commands_for(&self, shell: ShellKind) -> &[String] {
+        match shell {
+            ShellKind::Posix => &self.commands,
+            ShellKind::WindowsCmd => &[],
+        }
+    }
+}
+
+/// The shell a copied command line is pasted into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellKind {
+    /// sh / bash / zsh: the quoting `PlanRecovery::commands` is written in.
+    Posix,
+    /// `cmd.exe`, the Windows terminal's default shell.
+    WindowsCmd,
+}
+
+impl ShellKind {
+    /// The shell of the platform this build runs on.
+    pub const fn current() -> Self {
+        if cfg!(windows) {
+            Self::WindowsCmd
+        } else {
+            Self::Posix
+        }
+    }
 }
 
 /// Which recovery text to render.
@@ -540,5 +573,18 @@ mod tests {
             PlanDisposition::for_blockers(&[PlanNote::Discard(DiscardNote::NothingSelected)]),
             PlanDisposition::Blocked
         );
+    }
+
+    #[test]
+    fn recovery_commands_are_not_offered_to_cmd() {
+        let recovery = PlanRecovery {
+            kind: RecoveryKind::Discard,
+            commands: vec!["git branch 'a&b' 0123abc".to_string()],
+        };
+        assert_eq!(
+            recovery.commands_for(ShellKind::Posix),
+            recovery.commands.as_slice()
+        );
+        assert!(recovery.commands_for(ShellKind::WindowsCmd).is_empty());
     }
 }

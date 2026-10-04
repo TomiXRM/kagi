@@ -1,5 +1,7 @@
 //! Pure remote stash-drop identity, wire, and outcome contracts.
 
+use std::sync::Arc;
+
 /// Versioned wire contract for the remote stash writer (ADR-0097).
 pub const STASH_FRAME_MAGIC: &str = "KAGI-STASH-DROP";
 pub const STASH_FRAME_VERSION: &str = "1";
@@ -18,6 +20,10 @@ pub struct RemoteConnectionId {
     pub user: String,
     pub port: u16,
     pub host_key_alias: Option<String>,
+    pub proxy_jump: Option<String>,
+    pub proxy_command: Option<String>,
+    pub control_master: Option<String>,
+    pub control_path: Option<String>,
     pub identity_files: Vec<String>,
     pub certificate_files: Vec<String>,
     pub user_known_hosts: Vec<KnownHostsIdentity>,
@@ -28,7 +34,7 @@ pub struct RemoteConnectionId {
 /// Writer lease identity. The selected worktree root is deliberately absent.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RemoteRepoId {
-    pub connection: RemoteConnectionId,
+    pub connection: Arc<RemoteConnectionId>,
     pub common_dir: String,
 }
 
@@ -39,6 +45,10 @@ pub struct EffectiveSshConfig {
     pub user: String,
     pub port: u16,
     pub host_key_alias: Option<String>,
+    pub proxy_jump: Option<String>,
+    pub proxy_command: Option<String>,
+    pub control_master: Option<String>,
+    pub control_path: Option<String>,
     pub identity_files: Vec<String>,
     pub certificate_files: Vec<String>,
     pub user_known_hosts_files: Vec<String>,
@@ -79,11 +89,23 @@ pub fn parse_pull_ssh_config(text: &str) -> Result<EffectiveSshConfig, SshConfig
     parse_ssh_config(text, true)
 }
 
+/// OpenSSH prints disabled route options differently across profiles.
+fn route_option(value: &str) -> Option<&str> {
+    (!["none", "no", "false"]
+        .iter()
+        .any(|disabled| value.eq_ignore_ascii_case(disabled)))
+    .then_some(value)
+}
+
 fn parse_ssh_config(text: &str, pull: bool) -> Result<EffectiveSshConfig, SshConfigError> {
     let mut hostname = None;
     let mut user = None;
     let mut port = None;
     let mut host_key_alias = None;
+    let mut proxy_jump = None;
+    let mut proxy_command = None;
+    let mut control_master = None;
+    let mut control_path = None;
     let mut identity_files = Vec::new();
     let mut certificate_files = Vec::new();
     let mut user_known_hosts_files = Vec::new();
@@ -108,14 +130,29 @@ fn parse_ssh_config(text: &str, pull: bool) -> Result<EffectiveSshConfig, SshCon
                 global_known_hosts_files.extend(value.split_whitespace().map(str::to_string))
             }
             "hostkeyalgorithms" => host_key_algorithms.extend(value.split(',').map(str::to_string)),
-            "proxyjump" | "proxycommand" if !pull && value != "none" => {
-                return Err(SshConfigError::Unsupported("proxy routing"))
+            "proxyjump" => {
+                proxy_jump = route_option(value);
+                if !pull && proxy_jump.is_some() {
+                    return Err(SshConfigError::Unsupported("proxy routing"));
+                }
             }
-            "controlmaster" if !pull && value != "no" && value != "false" => {
-                return Err(SshConfigError::Unsupported("ControlMaster"))
+            "proxycommand" => {
+                proxy_command = route_option(value);
+                if !pull && proxy_command.is_some() {
+                    return Err(SshConfigError::Unsupported("proxy routing"));
+                }
             }
-            "controlpath" if !pull && value != "none" => {
-                return Err(SshConfigError::Unsupported("ControlPath"))
+            "controlmaster" => {
+                control_master = route_option(value);
+                if !pull && control_master.is_some() {
+                    return Err(SshConfigError::Unsupported("ControlMaster"));
+                }
+            }
+            "controlpath" => {
+                control_path = route_option(value);
+                if !pull && control_path.is_some() {
+                    return Err(SshConfigError::Unsupported("ControlPath"));
+                }
             }
             _ => {}
         }
@@ -125,6 +162,10 @@ fn parse_ssh_config(text: &str, pull: bool) -> Result<EffectiveSshConfig, SshCon
         user: user.ok_or(SshConfigError::Missing("user"))?,
         port: port.ok_or(SshConfigError::Malformed("port"))?,
         host_key_alias,
+        proxy_jump: proxy_jump.map(str::to_owned),
+        proxy_command: proxy_command.map(str::to_owned),
+        control_master: control_master.map(str::to_owned),
+        control_path: control_path.map(str::to_owned),
         identity_files,
         certificate_files,
         user_known_hosts_files,
@@ -577,7 +618,17 @@ mod tests {
             parse_effective_ssh_config(&format!("{base}identityfile /tmp/key\nproxyjump hop\n")),
             Err(SshConfigError::Unsupported("proxy routing"))
         );
-        assert!(parse_effective_ssh_config(&format!("{base}identityfile /tmp/key\n")).is_ok());
+        let frozen = parse_effective_ssh_config(&format!("{base}identityfile /tmp/key\n"))
+            .expect("disabled routes preserve the stash policy");
+        assert_eq!(
+            (
+                frozen.proxy_jump,
+                frozen.proxy_command,
+                frozen.control_master,
+                frozen.control_path,
+            ),
+            (None, None, None, None)
+        );
         for line in [
             "proxycommand nc hop 22",
             "controlmaster auto",
@@ -603,9 +654,44 @@ mod tests {
         assert_eq!(parsed.hostname, "host.example");
         assert!(parsed.identity_files.is_empty());
         assert_eq!(parsed.port, 2222);
+        assert_eq!(parsed.proxy_jump.as_deref(), Some("hop"));
+        assert_eq!(parsed.control_master.as_deref(), Some("auto"));
+        assert_eq!(parsed.control_path.as_deref(), Some("/tmp/socket"));
         assert_eq!(
             parse_pull_ssh_config(&config.replace("port 2222", "port invalid")),
             Err(SshConfigError::Malformed("port"))
+        );
+    }
+
+    #[test]
+    fn pull_route_changes_connection_identity_but_disabled_options_do_not() {
+        let base = "hostname host.example\nuser alice\nport 22\nidentityfile none\n";
+        let identity = |options: &str| {
+            let config = parse_pull_ssh_config(&format!("{base}{options}")).unwrap();
+            RemoteConnectionId {
+                hostname: config.hostname,
+                user: config.user,
+                port: config.port,
+                host_key_alias: config.host_key_alias,
+                proxy_jump: config.proxy_jump,
+                proxy_command: config.proxy_command,
+                control_master: config.control_master,
+                control_path: config.control_path,
+                identity_files: config.identity_files,
+                certificate_files: config.certificate_files,
+                user_known_hosts: vec![],
+                global_known_hosts: vec![],
+                host_key_algorithms: config.host_key_algorithms,
+            }
+        };
+        let direct = identity("");
+        assert_ne!(direct, identity("proxyjump jump.example\n"));
+        assert_ne!(direct, identity("proxycommand nc jump.example 22\n"));
+        assert_ne!(direct, identity("controlmaster auto\n"));
+        assert_ne!(direct, identity("controlpath /tmp/ssh-socket\n"));
+        assert_eq!(
+            direct,
+            identity("proxyjump none\nproxycommand no\ncontrolmaster false\ncontrolpath none\n")
         );
     }
 
@@ -627,6 +713,10 @@ mod tests {
             user: "alice".into(),
             port: 2222,
             host_key_alias: Some("git.example".into()),
+            proxy_jump: None,
+            proxy_command: None,
+            control_master: None,
+            control_path: None,
             identity_files: vec!["/keys/id".into()],
             certificate_files: vec!["/keys/id-cert.pub".into()],
             user_known_hosts: vec![KnownHostsIdentity {

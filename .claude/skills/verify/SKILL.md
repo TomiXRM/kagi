@@ -1527,6 +1527,11 @@ drives real fake-SSH `-G`, common-dir and agent-only planning, the blocked pull
 and fetch, quit admission, Unknown notice and audited two-step release.
 `remote_pull_preflight_refusal` changes the common dir after confirmation: no
 `git pull` runs, Refused is recorded, and the lease releases.
+`remote_pull_proxy_route_refusal` keeps the same hostname and common dir but
+changes only `ssh -G` ProxyJump; the frozen route identity must refuse before
+`git pull`, record Refused, and release the lease. Domain
+`pull_route_changes_connection_identity_but_disabled_options_do_not` verifies
+ProxyJump/ProxyCommand/ControlMaster/ControlPath and disabled normalization.
 `remote_pull_planning_latch` blocks `ssh -G`, clicks Pull twice, and requires
 one probe and a cleared latch when the modal arrives. G:
 `cargo test -p kagi --test app_remote_pull_test` covers Unknown/Partial/abandonment

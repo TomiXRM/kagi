@@ -134,6 +134,7 @@ fn blocking_fake_ssh(
     fail: &Path,
     probe_release: &Path,
     identity_change: &Path,
+    route_change: &Path,
 ) {
     std::fs::create_dir_all(bin).expect("shim dir");
     let path = bin.join("ssh");
@@ -145,6 +146,8 @@ fn blocking_fake_ssh(
              if [ \"$1\" = '-G' ]; then\n\
                while [ ! -f {probe_release:?} ]; do sleep 0.05; done\n\
                printf 'hostname e2e.invalid\\nuser kagi-e2e\\nport 22\\nidentityfile none\\nuserknownhostsfile none\\nglobalknownhostsfile none\\n'\n\
+               if [ -f {route_change:?} ]; then printf 'proxyjump hop.e2e\\n';\n\
+               else printf 'proxyjump none\\n'; fi\n\
                exit 0\n\
              fi\n\
              case \"$*\" in\n\
@@ -181,6 +184,7 @@ enum PullLeaseCase {
     Success,
     Unknown,
     IdentityChanged,
+    ProxyRouteChanged,
     PlanningLatch,
 }
 
@@ -194,6 +198,10 @@ pub fn scenario_remote_pull_unknown_release(cx: &mut VisualTestAppContext) {
 
 pub fn scenario_remote_pull_preflight_refusal(cx: &mut VisualTestAppContext) {
     remote_pull_lease(cx, PullLeaseCase::IdentityChanged);
+}
+
+pub fn scenario_remote_pull_proxy_route_refusal(cx: &mut VisualTestAppContext) {
+    remote_pull_lease(cx, PullLeaseCase::ProxyRouteChanged);
 }
 
 pub fn scenario_remote_pull_planning_latch(cx: &mut VisualTestAppContext) {
@@ -226,6 +234,7 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
     let calls = shim.path().join("calls");
     let probe_release = shim.path().join("probe-release");
     let identity_change = shim.path().join("identity-change");
+    let route_change = shim.path().join("route-change");
     blocking_fake_ssh(
         shim.path(),
         &release,
@@ -233,6 +242,7 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
         &fail,
         &probe_release,
         &identity_change,
+        &route_change,
     );
     if !matches!(case, PullLeaseCase::PlanningLatch) {
         std::fs::write(&probe_release, b"go").unwrap();
@@ -348,6 +358,9 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
     if matches!(case, PullLeaseCase::IdentityChanged) {
         std::fs::write(&identity_change, b"different common dir").unwrap();
     }
+    if matches!(case, PullLeaseCase::ProxyRouteChanged) {
+        std::fs::write(&route_change, b"proxy route changed").unwrap();
+    }
     app.update(cx, |app, cx| {
         app.start_pull(cx);
         assert!(
@@ -397,7 +410,10 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
     });
     assert_eq!(
         ssh_pulls(&calls),
-        if matches!(case, PullLeaseCase::IdentityChanged) {
+        if matches!(
+            case,
+            PullLeaseCase::IdentityChanged | PullLeaseCase::ProxyRouteChanged
+        ) {
             0
         } else {
             1
@@ -451,7 +467,10 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
             1,
             "one audited release row must precede lease release"
         );
-    } else if matches!(case, PullLeaseCase::IdentityChanged) {
+    } else if matches!(
+        case,
+        PullLeaseCase::IdentityChanged | PullLeaseCase::ProxyRouteChanged
+    ) {
         cx.read(|cx| {
             let state = app.read(cx);
             assert!(!state.app_sessions.has_leases());
@@ -486,6 +505,7 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
             PullLeaseCase::Success => "remote_pull_lease",
             PullLeaseCase::Unknown => "remote_pull_unknown_release",
             PullLeaseCase::IdentityChanged => "remote_pull_preflight_refusal",
+            PullLeaseCase::ProxyRouteChanged => "remote_pull_proxy_route_refusal",
             PullLeaseCase::PlanningLatch => "remote_pull_planning_latch",
         }
     );

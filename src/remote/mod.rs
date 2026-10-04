@@ -22,6 +22,7 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Arc;
 use std::time::Duration;
 
 use kagi_domain::refs::Worktree;
@@ -93,6 +94,10 @@ pub fn resolve_pull_repo_id(
         user: config.user,
         port: config.port,
         host_key_alias: config.host_key_alias,
+        proxy_jump: config.proxy_jump,
+        proxy_command: config.proxy_command,
+        control_master: config.control_master,
+        control_path: config.control_path,
         // ssh -G lists default candidate key paths even for agent-only hosts.
         // Only the explicitly selected profile key is reproducible here.
         identity_files: host.identity_file.iter().cloned().collect(),
@@ -112,7 +117,7 @@ pub fn resolve_pull_repo_id(
     let common_dir = remote::parse_pull_common_dir(output.stdout.as_bytes())
         .map_err(|e| RemoteError::Incomplete(e.into()))?;
     Ok(remote::RemoteRepoId {
-        connection,
+        connection: Arc::new(connection),
         common_dir,
     })
 }

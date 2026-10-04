@@ -61,6 +61,10 @@ pub(super) fn plan(
                 user: "kagi-e2e".into(),
                 port: 22,
                 host_key_alias: None,
+                proxy_jump: None,
+                proxy_command: None,
+                control_master: None,
+                control_path: None,
                 identity_files: vec!["/e2e/id".into()],
                 certificate_files: Vec::new(),
                 user_known_hosts: vec![KnownHostsIdentity {

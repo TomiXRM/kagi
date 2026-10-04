@@ -33,17 +33,21 @@ fn plan(sessions: &mut Sessions) -> (Job, RemoteRepoId) {
         )),
     };
     let repo_id = RemoteRepoId {
-        connection: RemoteConnectionId {
+        connection: Arc::new(RemoteConnectionId {
             hostname: "example.invalid".into(),
             user: "alice".into(),
             port: 22,
             host_key_alias: None,
+            proxy_jump: None,
+            proxy_command: None,
+            control_master: None,
+            control_path: None,
             identity_files: vec![],
             certificate_files: vec![],
             user_known_hosts: vec![],
             global_known_hosts: vec![],
             host_key_algorithms: vec![],
-        },
+        }),
         common_dir: "/srv/repo/.git".into(),
     };
     let completion = app::plan_remote_pull_for_test(sessions, request, repo_id.clone()).run();

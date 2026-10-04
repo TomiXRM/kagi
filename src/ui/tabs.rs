@@ -490,6 +490,7 @@ impl KagiApp {
                         }
                         if let Some(ui) = app.ui.get_mut(&session) {
                             ui.wip_diffstat = Some(wip_diffstat);
+                            ui.wip_diffstat_request = ui.wip_diffstat_request.wrapping_add(1);
                             ui.last_working_status = Some(status);
                         }
                         app.app_sessions.read_applied(session);

@@ -224,8 +224,8 @@ const SLOW_WRITE_KINDS: &[(&str, super::Msg)] = {
         ("stash-pop", SlowWriteStash),
         ("stash-drop", SlowWriteStash),
         ("snapshot", SlowWriteStash),
-        ("restore-snapshot", SlowWriteStash),
         // Local files in a worktree.
+        ("restore-snapshot", SlowWriteWorktree),
         ("create-worktree", SlowWriteWorktree),
         ("open-worktree", SlowWriteWorktree),
         ("remove-worktree", SlowWriteWorktree),
@@ -461,7 +461,7 @@ mod tests {
             ("stash-pop", SlowWriteStash),
             ("stash-drop", SlowWriteStash),
             ("snapshot", SlowWriteStash),
-            ("restore-snapshot", SlowWriteStash),
+            ("restore-snapshot", SlowWriteWorktree),
             ("create-worktree", SlowWriteWorktree),
             ("open-worktree", SlowWriteWorktree),
             ("remove-worktree", SlowWriteWorktree),

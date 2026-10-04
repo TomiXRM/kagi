@@ -1099,6 +1099,38 @@ The current suite covers:
   the GUI-only seam catches the injected panic inside the worker and returns an
   absent result so the production abandonment branch can be inspected. The
   non-test path still uses `fallible()` for actual unwinds.
+- #996 background writers (`tests/recovery/guard_writer_panic.rs`,
+  `tests/recovery/app_conflict.rs`, `tests/recovery/app_stash.rs`):
+  `KAGI_GUI_E2E_ONLY=snapshot_write_panic,snapshot_write_draws_while_busy,conflict_merge_continue_panic,conflict_confirm_continue_panic,conflict_skip_panic,stash_continue_panic,stash_continue_after_tab_switch,create_snapshot,stash_conflict_close_reopen,stash_conflict_followup`.
+  Each panic scenario injects an absent worker completion through its own
+  GUI-only seam, requires an Unknown/reconcile exit (and a durable conflict
+  receipt), and distinguishes snapshot's GroupOnly scope from retained
+  sequencer leases. The snapshot hold scenario draws a frame with its busy
+  label while the write awaits release, then switches tabs and requires its
+  unchanged `snapshot: created` contract line without a toast/footer on B.
+  The stash tab-switch scenario requires the departed continuation's receipt
+  without a toast or footer on B. Production mutations that fail each panic
+  scenario: replace that writer's `abandonment.into_unknown()` conversion
+  with an ordinary `GitError::Other` in its `fallible()` absent-completion path
+  (snapshot, merge-stage, stash-continue, sequencer-confirm, and skip each
+  fail individually). Removing `drain_unaccounted` alone is not a useful
+  mutation: shared app-job polling also drains it. Dropping the snapshot hold
+  before awaiting it fails the held-frame scenario; forcing departed
+  completions through the presenting branch of `record_conflict_completion`
+  fails the stash tab-switch scenario.
+  PR #1008 follow-up Tier A:
+  `KAGI_GUI_E2E_ONLY=conflict_confirm_dismissed_still_reloads,snapshot_failed_after_departure,conflict_merge_failure_contract`.
+  The dismissed sequencer modal cannot suppress a successful current owner's
+  reload and conflict re-detection; ordinary snapshot errors after leaving
+  the tab reach a repository-named host notice without changing B's footer;
+  current merge-stage errors show the normal footer/toast/bottom panel, and
+  departed errors retain their oplog receipt, footer contract klog, notice and
+  B's untouched footer/panel. Each holds or defers the real writer, not a mock.
+  Three independent production mutations, each fails its own scenario:
+  change the successful sequencer reload gate from `current` back to
+  `modal_matches`; change the departed snapshot error queue gate from
+  `!current` to `current`; remove the departed `record_conflict_completion`
+  `klog!("footer: {}", footer_msg)` call.
 - session-owned positioning and Smart Commit state
   (`tests/recovery/tab_ui_state.rs`, `tests/recovery/operations.rs`):
   `KAGI_GUI_E2E_ONLY=tab_ui_state_ownership,pr_open_enters_before_ref_fetch,smart_commit_generation_owner,smart_commit_modal_and_probe`.
@@ -1715,6 +1747,24 @@ index unchanged). M: open a two-hunk file from the Commit Panel, Stage hunk /
 Unstage hunk in unified and split view (EN/JA labels), and check the panel and
 diff update.
 
+### WIP diffstat after staging (#996)
+
+Tier A: `KAGI_GUI_E2E_ONLY=wip_diffstat_stage_order` in
+`tests/recovery/hunk_staging.rs`. Hold the first scan after its background
+diffs, stage again within the same cache epoch, and assert that the panel and
+index already reflect staging while the first read is held. The second scan
+publishes the final badge; releasing the first cannot roll it back. Mutation:
+remove the `wip_diffstat_request` completion check in
+`start_wip_diffstat_scan` and this scenario fails on the final badge.
+Tier A `KAGI_GUI_E2E_ONLY=wip_diffstat_watcher_order` holds an older scan
+after its backend read, edits the same already-modified file, and accepts
+the watcher's newer diffstat without changing its cache epoch. Releasing
+the older scan must not overwrite the badge. Every direct badge assignment
+advances `wip_diffstat_request`, including reload, activation clear, tab
+load, both watcher paths, and accepted scan publication. Production
+mutation: remove the request increment from the status-changed watcher
+branch; this scenario fails with the older badge.
+
 ### Busy snackbar labels (#607)
 
 G covers EN/JA labels, unknown-tag fallback, and lease-mirror settlement without
@@ -1794,3 +1844,19 @@ intents) and `queue_rejects_during_untracked_write` (a checkout behind the tab's
 own manual fetch keeps the old `OpInProgress` refusal). Tier B: queue two
 checkouts behind a held or slow checkout in an isolated app and capture the
 strip, the cancel list and the running row's seconds in EN/JA.
+
+### Background writer elapsed advice (#996 with #995)
+
+Tier A: `KAGI_GUI_E2E_ONLY=slow_write_snapshot,slow_write_conflict_continue`
+in `tests/recovery/slow_read.rs` holds the real snapshot and merge Continue
+background workers before their Git writes. Each checks the admitted lease and
+operation-specific snackbar label, a drawn reason plus `2 s` at the dispatcher
+clock's 2-second boundary, `4 s` while held, and no advice after release.
+Snapshot checks EN/JA and the ref only appears after release; merge Continue
+checks conflict-resolution advice and the commit panel after staging. Their
+`reserve_write` calls already register the kind and lease-start clock through
+`mark_write_busy`, as #992's branch fetch does. Restore-snapshot is classified
+`SlowWriteWorktree` rather than `SlowWriteStash`: restoring checks out the index
+and worktree. Production mutation: subtract one second from the elapsed seconds
+in `KagiApp::slow_write_shown`; `slow_write_snapshot` fails on the 2-second
+drawn advice even though the lease and backend operation still run.

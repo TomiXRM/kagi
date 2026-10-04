@@ -572,7 +572,7 @@ impl KagiApp {
                 );
             });
         }
-        self.refresh_wip_diffstat();
+        self.start_wip_diffstat_scan(cx);
         self.refresh_worktree_wip_row(&repo_path);
     }
 
@@ -649,7 +649,7 @@ impl KagiApp {
                 );
             });
         }
-        self.refresh_wip_diffstat();
+        self.start_wip_diffstat_scan(cx);
         self.refresh_worktree_wip_row(&repo_path);
     }
 
@@ -721,7 +721,7 @@ impl KagiApp {
         if let Some(ev) = self.ui().editor_workspace.clone() {
             ev.update(cx, |v, cx| v.start_load(cx));
         }
-        self.refresh_wip_diffstat();
+        self.start_wip_diffstat_scan(cx);
     }
 
     /// Unstage `path` directly — the `do_stage_file_by_path` counterpart.
@@ -786,7 +786,7 @@ impl KagiApp {
         if let Some(ev) = self.ui().editor_workspace.clone() {
             ev.update(cx, |v, cx| v.start_load(cx));
         }
-        self.refresh_wip_diffstat();
+        self.start_wip_diffstat_scan(cx);
     }
 
     /// T-UI-003: Select a file in the commit panel and open it in the main diff pane.

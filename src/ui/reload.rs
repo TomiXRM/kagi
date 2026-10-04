@@ -85,6 +85,7 @@ impl KagiApp {
         self.publish_tab_view(session, view);
         if let Some(ui) = self.ui.get_mut(&session) {
             ui.wip_diffstat = Some(wip_diffstat);
+            ui.wip_diffstat_request = ui.wip_diffstat_request.wrapping_add(1);
             ui.last_working_status = Some(snap.status.clone());
         }
         self.seed_history_from_reflog(&repo);
@@ -162,6 +163,7 @@ impl KagiApp {
         }
         if let Some(ui) = self.ui.get_mut(&session) {
             ui.wip_diffstat = Some(wip_diffstat);
+            ui.wip_diffstat_request = ui.wip_diffstat_request.wrapping_add(1);
             ui.last_working_status = Some(status);
         }
         if let Some(reflog) = reflog {
@@ -607,6 +609,7 @@ impl KagiApp {
                     if let Some(ui) = app.ui.get_mut(&session) {
                         if ui.wip_diffstat != Some(wip_diffstat) {
                             ui.wip_diffstat = Some(wip_diffstat);
+                            ui.wip_diffstat_request = ui.wip_diffstat_request.wrapping_add(1);
                             cx.notify();
                         }
                     }
@@ -630,6 +633,7 @@ impl KagiApp {
                 if let Some(ui) = app.ui.get_mut(&session) {
                     ui.last_working_status = Some(new_status);
                     ui.wip_diffstat = Some(wip_diffstat);
+                    ui.wip_diffstat_request = ui.wip_diffstat_request.wrapping_add(1);
                 }
                 // Refresh the open commit panel's lists in place (keeps it open).
                 // ADR-0118 (correction #6c): update the entity, never rebuild via

@@ -197,12 +197,11 @@ PR block.
   three-layer Escape order, command-overlay dismissal, and tab / repository
   switches with a dropdown open remain unverified (#990). The resolved
   `front_layer` / `Z_ORDER` priority and modal veto are not this gap (#976).
-- UI-thread repository work still blocks interaction: snapshot creation,
-  conflict continue / skip, and stage / unstage / hunk writes run
-  synchronously under a lease; the post-write `refresh_wip_diffstat` is a
-  synchronous read. The writes need background tasks with the operation's
-  `fallible()` → abandonment → Unknown → reconcile path and `OwnerStamp`
-  delivery; WIP diffstat needs an async read (#996).
+- UI-thread repository work still blocks interaction for stage / unstage /
+  hunk writes, which run synchronously under a lease until the write queue
+  lands (#355 stage 3). Snapshot creation and conflict continue / skip run in
+  background guard writers, and the post-stage WIP diffstat is an ordered
+  background scan (#996).
 
 ## Resolved: dated text boxes in input + confirm cards (#956)
 

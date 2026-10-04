@@ -744,6 +744,16 @@ pub(crate) fn render_recovery_box(text: &str, color: u32) -> gpui::AnyElement {
     col.into_any_element()
 }
 
+/// The structured commands an input card's collapsed rows offer, if any:
+/// none on a shell that does not read their POSIX quoting (cmd.exe, #1007).
+pub(crate) fn offered_recovery_commands(
+    recovery: Option<&kagi_domain::plan_note::PlanRecovery>,
+) -> Option<&[String]> {
+    recovery
+        .map(|r| r.commands_for(kagi_domain::plan_note::ShellKind::current()))
+        .filter(|commands| !commands.is_empty())
+}
+
 /// Input cards show only the structured, copyable commands once their input
 /// and plan are ready. Unlike the general recovery box, this never renders
 /// localized explanatory prose or infers commands from display text.

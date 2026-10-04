@@ -19,6 +19,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - SSH の remote pull で確認中に対象 worktree の branch・HEAD commit・upstream が変わっても別の変更を pull しないよう、計画時の状態を実行前に照合し、異なる場合は実行せず Refused を記録します。(#997)
 - SSH remote pull の確認を開く前に、キャッシュ済みの branch / upstream とホスト上の現在の値を照合し、ずれている場合は確認 modal を出さず更新を促すようにしました。(#997)
 - SSH remote pull の計画時に有効な remote URL、fetch refspec、branch の remote / merge 設定を保持し、確認後に設定が変わる・再読込できない場合は pull せず Refused を記録するようにしました。(#997)
+- Windows では、確認カードの Copy all の `commands:` ブロックと、入力カードの折りたたみ行に復旧コマンドを出さないようにしました。コマンドの引数は POSIX shell 向けに quote されていますが、Windows の既定 shell(`cmd.exe`)では single quote が効かず `&` なども区切りとして働くため、貼り付けると意図しないコマンドが動き得ました。説明文はそのまま表示します。(#1007)
 - background の fetch・remote branch fetch・PR ref fetch・Editor 保存が異常終了したとき、write lease と実行中の表示が理由なく残り、以後の書き込みを拒否し続ける問題を修正しました。不明な結果を Operation Log に記録し、reconcile の確認後に次の書き込みを許可します。Editor の保存中にペインを閉じても、不明な結果を実行中の Operation Log に反映し、短いエラー toast を 1 回だけ表示します。fetch の完了が元のタブへ戻った後の新しい滞在に表示される問題と、Busy の拒否で確認済み計画が失効する問題も修正しました。(#355 段階 0)
 - Info パネル(About / Keyboard Shortcuts)や branch picker が前面にある間、サイドバーの行で Shift+F10 を押しても何も起きないようにしました。これまではメニューは次の描画で閉じるものの、その前に Graph の選択とスクロールがパネルの背後で branch の commit へ移っていました。また、メニューの項目に focus がある状態で ⌘W で最後のタブを閉じると、メニューの状態と消えた項目への focus が残り Welcome でキーが効かなかったのを直し、メニューを閉じて focus を window へ移すようにしました。(#1000)
 - UI ガイドの Known gaps を現状に合わせて更新しました。Settings の通常の focus trap と前面判定、Home / Graph の行キー操作は対応済みとし、未解決の 100 Tab stop 超の制限、Linux / FreeBSD の platform menu と overlay の組み合わせ、UI thread の同期書き込みと WIP diffstat を明記しました。(#974、#976、#980、#986、#981、#987、#990、#996)
@@ -71,6 +72,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Changed
 
+- Graph の commit 行で author と経過時間を小さい文字にし、名前の列を 96px、時間の列を 48px に縮めました。時間は右寄せの等幅フォントで `36m` などと表示し、名前の全文は tooltip、支援技術向けの経過時間は従来の完全形のまま残します。行高 29px は変更しません。(#1003)
 - Create Branch / Create Tag / Stash / Add Worktree / Rename Branch / Set Upstream の入力確認カードを、基本 32px の入力欄・確認ボタン、入力欄の直下に出る検証理由、常に見える無効な確認ボタンに統一し、見出しの従来の操作別アイコンは残しました。Stash 以外の CURRENT → PREDICTED は横 1 行にし、Stash は 38px のメッセージ欄の下に現在と実行後の状態を上下に並べ、暗い背景・小さい状態チップと簡潔な警告にしました。Stash のキャンセル・確認ボタンだけ従来の角丸のまま高さを 24px に縮めます。branch / HEAD と staged・modified・untracked などの状態は状態名・件数付きで表示し、警告の全文は Tooltip / 支援技術向けラベルに残します。空欄や実行不能な計画では復旧行を出さず、入力済みの実行可能な計画では Git コマンドだけ表示します（Create Branch はカード内に復旧行なし、Set Upstream は復旧コマンドなし）。完全な復旧説明は Operation Log に残します。IME 変換中の Enter は 6 種類すべてで Git 操作を確定しません。(#956)
 - Graph の「Avatar commit nodes」(commit の点を作者のアバターにする表示)を既定で ON にしました。設定で一度 OFF にしている場合はそのまま OFF です。
 - Worktree 行とホバーカードをアイコン・短い状態表示中心に整理し、再計測はアイコンのみ（支援技術向けの名前は維持）にしました。ignored file の注意はホバーから外し、削除時の確認計画で対象のファイル数とフォルダー数を示します。(#934)

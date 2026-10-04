@@ -1532,6 +1532,11 @@ changes only `ssh -G` ProxyJump; the frozen route identity must refuse before
 `git pull`, record Refused, and release the lease. Domain
 `pull_route_changes_connection_identity_but_disabled_options_do_not` verifies
 ProxyJump/ProxyCommand/ControlMaster/ControlPath and disabled normalization.
+`remote_pull_toplevel_refusal` keeps the repository common dir but changes the
+physical linked-worktree toplevel after confirmation; no pull runs, Refused is
+recorded, and the lease releases. `remote_pull_lease` verifies that execution
+uses the frozen physical toplevel instead of the selected symlink while the
+oplog scope remains the selected root.
 `remote_pull_planning_latch` blocks `ssh -G`, clicks Pull twice, and requires
 one probe and a cleared latch when the modal arrives. G:
 `cargo test -p kagi --test app_remote_pull_test` covers Unknown/Partial/abandonment

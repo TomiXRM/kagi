@@ -135,6 +135,7 @@ fn blocking_fake_ssh(
     probe_release: &Path,
     identity_change: &Path,
     route_change: &Path,
+    toplevel_change: &Path,
 ) {
     std::fs::create_dir_all(bin).expect("shim dir");
     let path = bin.join("ssh");
@@ -152,8 +153,10 @@ fn blocking_fake_ssh(
              fi\n\
              case \"$*\" in\n\
                *KAGI-COMMON-DIR*) if [ -f {identity_change:?} ]; then\n\
-                       printf 'KAGI-COMMON-DIR\\0/srv/other/.git\\0KAGI-END\\n'\n\
-                     else printf 'KAGI-COMMON-DIR\\0/srv/repo/.git\\0KAGI-END\\n'; fi ;;\n\
+                       printf 'KAGI-COMMON-DIR\\0/srv/other/.git\\0/srv/real-worktree\\0KAGI-END\\n'\n\
+                     elif [ -f {toplevel_change:?} ]; then\n\
+                       printf 'KAGI-COMMON-DIR\\0/srv/repo/.git\\0/srv/other-linked-worktree\\0KAGI-END\\n'\n\
+                     else printf 'KAGI-COMMON-DIR\\0/srv/repo/.git\\0/srv/real-worktree\\0KAGI-END\\n'; fi ;;\n\
                *pull*) while [ ! -f {release:?} ]; do sleep 0.05; done\n\
                        if [ -f {fail:?} ]; then echo 'unexpected remote reply' >&2; exit 42; fi\n\
                        echo 'Already up to date.' ;;\n\
@@ -185,6 +188,7 @@ enum PullLeaseCase {
     Unknown,
     IdentityChanged,
     ProxyRouteChanged,
+    ToplevelChanged,
     PlanningLatch,
 }
 
@@ -202,6 +206,10 @@ pub fn scenario_remote_pull_preflight_refusal(cx: &mut VisualTestAppContext) {
 
 pub fn scenario_remote_pull_proxy_route_refusal(cx: &mut VisualTestAppContext) {
     remote_pull_lease(cx, PullLeaseCase::ProxyRouteChanged);
+}
+
+pub fn scenario_remote_pull_toplevel_refusal(cx: &mut VisualTestAppContext) {
+    remote_pull_lease(cx, PullLeaseCase::ToplevelChanged);
 }
 
 pub fn scenario_remote_pull_planning_latch(cx: &mut VisualTestAppContext) {
@@ -235,6 +243,7 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
     let probe_release = shim.path().join("probe-release");
     let identity_change = shim.path().join("identity-change");
     let route_change = shim.path().join("route-change");
+    let toplevel_change = shim.path().join("toplevel-change");
     blocking_fake_ssh(
         shim.path(),
         &release,
@@ -243,6 +252,7 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
         &probe_release,
         &identity_change,
         &route_change,
+        &toplevel_change,
     );
     if !matches!(case, PullLeaseCase::PlanningLatch) {
         std::fs::write(&probe_release, b"go").unwrap();
@@ -361,6 +371,13 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
     if matches!(case, PullLeaseCase::ProxyRouteChanged) {
         std::fs::write(&route_change, b"proxy route changed").unwrap();
     }
+    if matches!(case, PullLeaseCase::ToplevelChanged) {
+        std::fs::write(
+            &toplevel_change,
+            b"same repository, different linked worktree",
+        )
+        .unwrap();
+    }
     app.update(cx, |app, cx| {
         app.start_pull(cx);
         assert!(
@@ -412,7 +429,9 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
         ssh_pulls(&calls),
         if matches!(
             case,
-            PullLeaseCase::IdentityChanged | PullLeaseCase::ProxyRouteChanged
+            PullLeaseCase::IdentityChanged
+                | PullLeaseCase::ProxyRouteChanged
+                | PullLeaseCase::ToplevelChanged
         ) {
             0
         } else {
@@ -420,6 +439,27 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
         },
         "a refused identity must never execute git pull"
     );
+    if !matches!(
+        case,
+        PullLeaseCase::IdentityChanged
+            | PullLeaseCase::ProxyRouteChanged
+            | PullLeaseCase::ToplevelChanged
+    ) {
+        let calls = std::fs::read_to_string(&calls).unwrap();
+        let command = calls.lines().find(|line| line.contains("pull")).unwrap();
+        assert!(
+            command.contains("/srv/real-worktree") && !command.contains("/srv/repo"),
+            "git pull must target the frozen physical worktree, not the selected symlink: {command}"
+        );
+    }
+    if matches!(case, PullLeaseCase::Success) {
+        let recorded = kagi_git::oplog::read_oplog_tail(100);
+        let entry = recorded.iter().find(|entry| entry.op == "pull").unwrap();
+        assert_eq!(
+            entry.repo, "kagi-e2e@e2e.invalid:/srv/repo",
+            "durable scope must retain the selected root, not the execution path"
+        );
+    }
     if matches!(case, PullLeaseCase::Unknown) {
         let id = cx.read(|cx| {
             let state = app.read(cx);
@@ -469,7 +509,9 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
         );
     } else if matches!(
         case,
-        PullLeaseCase::IdentityChanged | PullLeaseCase::ProxyRouteChanged
+        PullLeaseCase::IdentityChanged
+            | PullLeaseCase::ProxyRouteChanged
+            | PullLeaseCase::ToplevelChanged
     ) {
         cx.read(|cx| {
             let state = app.read(cx);
@@ -507,6 +549,7 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
             PullLeaseCase::IdentityChanged => "remote_pull_preflight_refusal",
             PullLeaseCase::ProxyRouteChanged => "remote_pull_proxy_route_refusal",
             PullLeaseCase::PlanningLatch => "remote_pull_planning_latch",
+            PullLeaseCase::ToplevelChanged => "remote_pull_toplevel_refusal",
         }
     );
 }

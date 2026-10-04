@@ -185,7 +185,12 @@ fn remote_pull_records_success_and_failure_at_the_transport() {
     std::env::set_var("KAGI_LOG_DIR", &logs);
     let host = kagi_domain::remote::RemoteHost::parse("fixture.invalid").unwrap();
 
-    let report = kagi::remote::remote_pull(&host, repo.to_str().unwrap(), &before);
+    let report = kagi::remote::remote_pull(
+        &host,
+        repo.to_str().unwrap(),
+        repo.to_str().unwrap(),
+        &before,
+    );
     let summary = report.result.expect("fixture pull should succeed");
     assert!(
         matches!(
@@ -208,7 +213,12 @@ fn remote_pull_records_success_and_failure_at_the_transport() {
     // A repository that is not there is an explicit refusal — git declined
     // before touching anything, so Failed is provable.
     let missing = root.path().join("gone");
-    let report = kagi::remote::remote_pull(&host, missing.to_str().unwrap(), &before);
+    let report = kagi::remote::remote_pull(
+        &host,
+        missing.to_str().unwrap(),
+        missing.to_str().unwrap(),
+        &before,
+    );
     assert!(report.result.is_err());
     let entries = kagi_git::oplog::read_oplog_tail(10);
     assert_eq!(entries.len(), 2);
@@ -227,7 +237,12 @@ fn remote_pull_records_success_and_failure_at_the_transport() {
     git(&repo, &["config", "user.name", "fixture"]);
     std::fs::write(repo.join("file"), "ours\n").unwrap();
     git(&repo, &["commit", "-qam", "ours"]);
-    let report = kagi::remote::remote_pull(&host, repo.to_str().unwrap(), &before);
+    let report = kagi::remote::remote_pull(
+        &host,
+        repo.to_str().unwrap(),
+        repo.to_str().unwrap(),
+        &before,
+    );
     assert!(report.result.is_err());
     let entries = kagi_git::oplog::read_oplog_tail(10);
     assert_eq!(entries.len(), 3);
@@ -271,7 +286,7 @@ fn pull_outcome_for_ssh_output(stderr_line: &str) -> kagi_git::oplog::OpOutcome 
         dirty: "clean".into(),
     };
 
-    let report = kagi::remote::remote_pull(&host, "/srv/repo", &before);
+    let report = kagi::remote::remote_pull(&host, "/srv/repo", "/srv/repo", &before);
     assert!(report.result.is_err());
     let entries = kagi_git::oplog::read_oplog_tail(10);
     assert_eq!(entries.len(), 1);

@@ -50,7 +50,9 @@ fn plan(sessions: &mut Sessions) -> (Job, RemoteRepoId) {
         }),
         common_dir: "/srv/repo/.git".into(),
     };
-    let completion = app::plan_remote_pull_for_test(sessions, request, repo_id.clone()).run();
+    let completion =
+        app::plan_remote_pull_for_test(sessions, request, repo_id.clone(), "/srv/repo".into())
+            .run();
     assert!(matches!(sessions.plan_state(), PlanState::Planning { .. }));
     assert!(app::apply_plan(sessions, completion));
     let PlanState::Ready { token, prepared } = sessions.plan_state() else {
@@ -60,6 +62,7 @@ fn plan(sessions: &mut Sessions) -> (Job, RemoteRepoId) {
         panic!("wrong plan family")
     };
     assert_eq!(plan.repo_id, repo_id);
+    assert_eq!(plan.physical_toplevel, "/srv/repo");
     assert_eq!(prepared.scope(), WriteScope::Remote(repo_id.clone()));
     let approved = app::approve(
         sessions,

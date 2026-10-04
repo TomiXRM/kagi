@@ -37,12 +37,19 @@ use kagi_git::{FileDiff, Head, RepoSnapshot};
 
 pub mod stash;
 
-/// Resolve a pull's lease identity at plan time using the same SSH options as
-/// execution. Unlike remote stash this does not freeze or disable ssh-agent.
-pub fn resolve_pull_repo_id(
+#[derive(Debug)]
+pub struct PullRepoIdentity {
+    pub repo_id: remote::RemoteRepoId,
+    pub physical_toplevel: String,
+}
+
+/// Resolve a pull's lease identity and physical worktree toplevel at plan time
+/// using the same SSH options as execution. Unlike remote stash this does not
+/// freeze or disable ssh-agent.
+pub fn resolve_pull_identity(
     host: &RemoteHost,
     root: &str,
-) -> Result<remote::RemoteRepoId, RemoteError> {
+) -> Result<PullRepoIdentity, RemoteError> {
     use sha2::{Digest, Sha256};
     if root.contains(['\n', '\0']) {
         return Err(RemoteError::Spawn("invalid remote repository root".into()));
@@ -106,7 +113,15 @@ pub fn resolve_pull_repo_id(
         global_known_hosts: known_hosts(&config.global_known_hosts_files)?,
         host_key_algorithms: config.host_key_algorithms,
     };
-    let script = "set -eu; cd -P -- \"$1\"; test \"$(git rev-parse --is-inside-work-tree)\" = true; common=$(git rev-parse --path-format=absolute --git-common-dir); cd -P -- \"$common\"; printf 'KAGI-COMMON-DIR\\0%s\\0KAGI-END\\n' \"$(pwd -P)\"";
+    let script = r#"set -eu
+cd -P -- "$1"
+test "$(git rev-parse --is-inside-work-tree)" = true
+top=$(git rev-parse --show-toplevel)
+cd -P -- "$top"
+top=$(pwd -P)
+common=$(git rev-parse --path-format=absolute --git-common-dir)
+cd -P -- "$common"
+printf 'KAGI-COMMON-DIR\0%s\0%s\0KAGI-END\n' "$(pwd -P)" "$top""#;
     let output = run_ssh(host, &["sh", "-c", script, "--", root])?;
     if output.code != 0 {
         return Err(RemoteError::NonZero {
@@ -114,11 +129,14 @@ pub fn resolve_pull_repo_id(
             stderr: output.stderr,
         });
     }
-    let common_dir = remote::parse_pull_common_dir(output.stdout.as_bytes())
+    let (common_dir, physical_toplevel) = remote::parse_pull_common_dir(output.stdout.as_bytes())
         .map_err(|e| RemoteError::Incomplete(e.into()))?;
-    Ok(remote::RemoteRepoId {
-        connection: Arc::new(connection),
-        common_dir,
+    Ok(PullRepoIdentity {
+        repo_id: remote::RemoteRepoId {
+            connection: Arc::new(connection),
+            common_dir,
+        },
+        physical_toplevel,
     })
 }
 
@@ -610,7 +628,9 @@ pub fn remote_stash_drop(
 }
 
 /// Pull the current branch of the remote repository over SSH (ADR-0089 Phase 3).
-/// Runs `git -C <repo> pull` *on the host*, so the host's own credentials,
+/// Runs `git -C <physical_toplevel> pull` *on the host*, so a selected root
+/// symlink cannot redirect execution to another worktree after preflight. The
+/// durable scope still uses `display_root`. The host's own credentials,
 /// network, and config reach its `origin` — Kagi only carries the command over
 /// the system-ssh transport. Returns git's summary (`Fast-forward`,
 /// `Already up to date.`, merge text) on success. A non-zero exit (no upstream,
@@ -653,11 +673,12 @@ const REFUSAL_MARKERS: [&str; 8] = [
 
 pub fn remote_pull(
     host: &RemoteHost,
-    repo: &str,
+    display_root: &str,
+    physical_toplevel: &str,
     before: &kagi_git::StateSummary,
 ) -> RemotePullReport {
     use kagi_git::oplog::OpOutcome;
-    let transport = run_ssh(host, &["git", "-C", repo, "pull"]);
+    let transport = run_ssh(host, &["git", "-C", physical_toplevel, "pull"]);
     let after = |dirty: String| kagi_git::StateSummary {
         head: before.head.clone(),
         dirty,
@@ -738,7 +759,7 @@ pub fn remote_pull(
             (Err(error), outcome)
         }
     };
-    let scope = format!("{}:{repo}", host.label());
+    let scope = format!("{}:{display_root}", host.label());
     let entry = kagi_git::oplog::OpLogEntry::new("pull", scope.clone(), before.clone(), outcome)
         .with_worktree(Some(scope));
     RemotePullReport {

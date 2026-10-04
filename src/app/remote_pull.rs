@@ -14,27 +14,29 @@ pub struct RemotePullRequest {
 pub struct RemotePullPlan {
     pub preview: Arc<kagi_git::OperationPlan>,
     pub repo_id: RemoteRepoId,
+    pub physical_toplevel: String,
 }
 
 pub struct RemotePullPlanJob {
     revision: RequestId,
     request: RemotePullRequest,
-    fixture: Option<RemoteRepoId>,
+    fixture: Option<crate::remote::PullRepoIdentity>,
 }
 impl RemotePullPlanJob {
     pub fn run(self) -> PlanCompletion {
         let result = self.fixture.map(Ok).unwrap_or_else(|| {
-            crate::remote::resolve_pull_repo_id(&self.request.owner.host, &self.request.owner.root)
+            crate::remote::resolve_pull_identity(&self.request.owner.host, &self.request.owner.root)
         });
         let state = match result {
-            Ok(repo_id) => PlanState::Ready {
+            Ok(identity) => PlanState::Ready {
                 token: PlanToken {
                     revision: self.revision,
                 },
                 prepared: Planned::RemotePull {
                     plan: Box::new(RemotePullPlan {
                         preview: self.request.plan.clone(),
-                        repo_id,
+                        repo_id: identity.repo_id,
+                        physical_toplevel: identity.physical_toplevel,
                     }),
                     request: self.request,
                 },
@@ -72,9 +74,13 @@ pub fn plan_remote_pull_for_test(
     sessions: &mut Sessions,
     request: RemotePullRequest,
     repo_id: RemoteRepoId,
+    physical_toplevel: String,
 ) -> RemotePullPlanJob {
     let mut job = plan_remote_pull(sessions, request);
-    job.fixture = Some(repo_id);
+    job.fixture = Some(crate::remote::PullRepoIdentity {
+        repo_id,
+        physical_toplevel,
+    });
     job
 }
 
@@ -88,6 +94,7 @@ pub struct RemotePullJob {
     id: OperationId,
     request: RemotePullRequest,
     repo_id: RemoteRepoId,
+    physical_toplevel: String,
     abandoned: Sender<Completion>,
     ran: bool,
     fixture: Option<crate::remote::RemotePullReport>,
@@ -106,9 +113,17 @@ impl RemotePullJob {
     pub fn run(mut self) -> RemotePullCompletion {
         let report = self.fixture.take().unwrap_or_else(|| {
             let owner = &self.request.owner;
-            let observed = crate::remote::resolve_pull_repo_id(&owner.host, &owner.root);
-            if observed.as_ref() == Ok(&self.repo_id) {
-                crate::remote::remote_pull(&owner.host, &owner.root, &self.request.plan.current)
+            let observed = crate::remote::resolve_pull_identity(&owner.host, &owner.root);
+            if observed.as_ref().is_ok_and(|identity| {
+                identity.repo_id == self.repo_id
+                    && identity.physical_toplevel == self.physical_toplevel
+            }) {
+                crate::remote::remote_pull(
+                    &owner.host,
+                    &owner.root,
+                    &self.physical_toplevel,
+                    &self.request.plan.current,
+                )
             } else {
                 let reason = match observed {
                     Ok(_) => "remote repository identity changed after pull confirmation".into(),
@@ -162,8 +177,9 @@ pub fn prepare_remote_pull(
     };
     Ok(RemotePullJob {
         id: running.operation_id,
-        repo_id: plan.repo_id,
         request,
+        repo_id: plan.repo_id,
+        physical_toplevel: plan.physical_toplevel,
         abandoned: s.abandoned_tx.clone(),
         ran: false,
         fixture: None,

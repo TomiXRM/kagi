@@ -190,17 +190,36 @@ fn parse_ssh_config(text: &str, pull: bool) -> Result<EffectiveSshConfig, SshCon
     Ok(config)
 }
 
-/// The SSH common-dir probe must return exactly one absolute physical path.
-pub fn parse_pull_common_dir(bytes: &[u8]) -> Result<String, &'static str> {
-    let fields: Vec<_> = bytes.split(|byte| *byte == 0).collect();
-    if fields.len() != 3 || fields[0] != b"KAGI-COMMON-DIR" || fields[2] != b"KAGI-END\n" {
+/// The SSH probe must return exactly one absolute physical common directory
+/// and one absolute physical worktree toplevel in a complete frame.
+pub fn parse_pull_common_dir(bytes: &[u8]) -> Result<(String, String), &'static str> {
+    let mut fields = bytes.split(|byte| *byte == 0);
+    let (Some(magic), Some(common_dir), Some(toplevel), Some(end), None) = (
+        fields.next(),
+        fields.next(),
+        fields.next(),
+        fields.next(),
+        fields.next(),
+    ) else {
+        return Err("malformed common-dir frame");
+    };
+    if magic != b"KAGI-COMMON-DIR" || end != b"KAGI-END\n" {
         return Err("malformed common-dir frame");
     }
-    let path = std::str::from_utf8(fields[1]).map_err(|_| "common-dir is not UTF-8")?;
-    if !path.starts_with('/') || path.contains('\n') || path.contains('\u{fffd}') {
-        return Err("common-dir is not a physical absolute path");
-    }
-    Ok(path.to_string())
+    let parse_path = |bytes, name| {
+        let path = std::str::from_utf8(bytes).map_err(|_| name)?;
+        if !path.starts_with('/') || path.contains('\n') || path.contains('\u{fffd}') {
+            return Err(name);
+        }
+        Ok(path.to_string())
+    };
+    Ok((
+        parse_path(common_dir, "common-dir is not a physical absolute path")?,
+        parse_path(
+            toplevel,
+            "worktree toplevel is not a physical absolute path",
+        )?,
+    ))
 }
 
 /// Build the literal direct-SSH argv prefix from an already frozen identity.
@@ -696,14 +715,31 @@ mod tests {
     }
 
     #[test]
-    fn pull_common_dir_requires_exact_frame_and_physical_absolute_path() {
+    fn pull_common_dir_requires_exact_frame_and_physical_absolute_paths() {
         assert_eq!(
-            parse_pull_common_dir(b"KAGI-COMMON-DIR\0/srv/repo/.git\0KAGI-END\n"),
-            Ok("/srv/repo/.git".into())
+            parse_pull_common_dir(
+                b"KAGI-COMMON-DIR\0/srv/repo/.git\0/srv/real-worktree\0KAGI-END\n"
+            ),
+            Ok(("/srv/repo/.git".into(), "/srv/real-worktree".into()))
         );
-        assert!(parse_pull_common_dir(b"KAGI-COMMON-DIR\0relative\0KAGI-END\n").is_err());
-        assert!(parse_pull_common_dir(b"KAGI-COMMON-DIR\0/srv/repo\0KAGI-END\nextra").is_err());
-        assert!(parse_pull_common_dir(b"KAGI-COMMON-DIR\0/srv/\xff\0KAGI-END\n").is_err());
+        assert!(
+            parse_pull_common_dir(b"KAGI-COMMON-DIR\0relative\0/srv/repo\0KAGI-END\n").is_err()
+        );
+        assert!(
+            parse_pull_common_dir(b"KAGI-COMMON-DIR\0/srv/repo/.git\0relative\0KAGI-END\n")
+                .is_err()
+        );
+        assert!(parse_pull_common_dir(
+            b"KAGI-COMMON-DIR\0/srv/repo/.git\0/srv/repo\0KAGI-END\nextra"
+        )
+        .is_err());
+        assert!(
+            parse_pull_common_dir(b"KAGI-COMMON-DIR\0/srv/\xff\0/srv/repo\0KAGI-END\n").is_err()
+        );
+        assert!(
+            parse_pull_common_dir(b"KAGI-COMMON-DIR\0/srv/repo/.git\0/srv/\xff\0KAGI-END\n")
+                .is_err()
+        );
     }
 
     #[test]

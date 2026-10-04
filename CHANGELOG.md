@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- UI ガイドの Known gaps を現状に合わせて更新しました。Settings の通常の focus trap と前面判定、Home / Graph の行キー操作は対応済みとし、未解決の 100 Tab stop 超の制限、Linux / FreeBSD の platform menu と overlay の組み合わせ、UI thread の同期書き込みと WIP diffstat を明記しました。(#974、#976、#980、#986、#981、#987、#990、#996)
+
 ## [0.42.0] - 2026-10-04
 
 ### Added
@@ -13,7 +17,6 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
-- UI ガイドの Known gaps から解消済みの Settings focus trap、重なり順、Home / Graph の行キー操作を外し、Linux / FreeBSD の platform menu と overlay の組み合わせ、および UI thread で同期実行する書き込みと WIP diffstat の未解決項目を明示しました。(#974、#976、#980、#986、#981、#987、#990、#996)
 - Home や Branch Cleanup が Graph を隠している間、または Settings・確認 modal・メニュー(menu overlay、commit / branch / stash / tag / worktree の右クリック、Linux / FreeBSD の platform menu など)が Graph に重なる間、End / Home / PageUp / PageDown と ↑/↓ で背面の commit 選択が変わる問題を修正しました。選択中の先頭行をホイールで画面外へスクロールした後も、Home で再表示できます。(#980)
 - filter menu が開いている間に Stash などの確認 modal が届くと、背面の確認を Enter で確定できてしまう問題を修正しました。重なり順を `Z_ORDER` に一元化し、描画とキーの前面判定を同じ順序で行います。(#976 review)
 - repo A の file context menu を開いたまま repo B を開くと、描かれなくなった A の menu が Enter を消費し続ける問題を修正しました。描画とキー操作は同じ可視判定を使い、Escape は前面の menu をまとめて閉じます。(#974、#976 review)

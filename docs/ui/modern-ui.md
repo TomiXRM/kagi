@@ -185,6 +185,10 @@ PR block.
   `AXUIElement` probe does not activate GPUI's accessibility tree (#354).
 - Library transitions (Switch 150 ms, Tab 200 ms, Dialog 250 ms) do not follow
   `reduce_motion`.
+- Settings' gpui-component Root focus trap searches at most 100 focus moves
+  when wrapping Tab / Shift+Tab. If the window has more Tab stops, focus
+  may still leave Settings; the original Terminal Tab escape is fixed, but
+  this search bound remains (see `docs/decisions.md`, #974).
 - Linux / FreeBSD platform-menu overlays still need keyboard and focus
   verification when combined with Settings or a confirmation modal: the
   three-layer Escape order, command-overlay dismissal, and tab / repository

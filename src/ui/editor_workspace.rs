@@ -30,6 +30,17 @@ use super::{
     MainDiffSource, MainDiffView, ToastKind,
 };
 
+#[cfg(feature = "gui-e2e")]
+static PANIC_NEXT_EDITOR_SAVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    pub fn panic_next_editor_save_for_e2e() {
+        PANIC_NEXT_EDITOR_SAVE.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// The host hooks injected at construction (ADR-0121 C4): the bin-owned
 /// helpers the crate renders/loads with but must not own.
 fn editor_hooks() -> EditorHooks {
@@ -177,8 +188,87 @@ impl KagiApp {
                 let Some(guard) = self.reserve_write("editor-save", &repo_path, cx) else {
                     return;
                 };
+                let record_path = repo_path.clone();
+                let saved_path = request.path().to_path_buf();
+                let host = cx.entity().downgrade();
                 view.update(cx, |view, cx| {
-                    view.save_reserved(request.clone(), Box::new(move || guard.complete()), cx);
+                    view.save_reserved(
+                        request.clone(),
+                        Box::new(move |completed, acx| {
+                            if completed {
+                                guard.complete();
+                                return None;
+                            }
+                            // A file-only writer has no process group to supervise.
+                            // The host owns its guard even if the pane disappears.
+                            let error = guard.abandonment().into_unknown();
+                            let entry = kagi_git::oplog::OpLogEntry::new(
+                                "editor-save",
+                                record_path.display().to_string(),
+                                kagi_git::StateSummary {
+                                    head: format!("editor file {}", saved_path.display()),
+                                    dirty: "unchanged".into(),
+                                },
+                                kagi_git::oplog::OpOutcome::Unknown {
+                                    after: kagi_git::StateSummary {
+                                        head: "unknown".into(),
+                                        dirty: "unknown".into(),
+                                    },
+                                    evidence: error.to_string(),
+                                },
+                            );
+                            let recording = kagi_git::backend::recording::finalize(entry);
+                            let recording_error = match &recording {
+                                kagi_git::backend::recording::Recording::Failed {
+                                    error, ..
+                                } => Some(format!("recording failed: {error}")),
+                                _ => None,
+                            };
+                            let _ = host.update(acx, |app, cx| {
+                                let entry =
+                                    super::oplog_panel::OpLogPanel::entry_for_recording(&recording);
+                                if let Some(panel) = app.op_log.clone() {
+                                    panel.update(cx, |panel, cx| {
+                                        panel.push(entry);
+                                        panel.collapse();
+                                        cx.notify();
+                                    });
+                                }
+                                app.poll_app_jobs(cx);
+                                if let kagi_git::backend::recording::Recording::Failed {
+                                    error,
+                                    ..
+                                } = &recording
+                                {
+                                    app.app_notices
+                                        .push_back(i18n::oplog_write_failed(error).into());
+                                }
+                                app.present_app_notice();
+                                let detail = if recording_error.is_some() {
+                                    "save task unwound; recording failed — inspect the operation notice"
+                                } else {
+                                    "save task unwound; outcome unknown — inspect the operation notice"
+                                };
+                                let msg = i18n::op_failed(i18n::Op::Save, detail);
+                                app.push_toast(ToastKind::Error, msg.clone(), cx);
+                                app.status_footer = FooterStatus::Failed(SharedString::from(msg));
+                                cx.notify();
+                            });
+                            recording_error
+                        }),
+                        {
+                            #[cfg(feature = "gui-e2e")]
+                            {
+                                PANIC_NEXT_EDITOR_SAVE
+                                    .swap(false, std::sync::atomic::Ordering::SeqCst)
+                            }
+                            #[cfg(not(feature = "gui-e2e"))]
+                            {
+                                false
+                            }
+                        },
+                        cx,
+                    );
                 });
             }
             EditorWorkspaceEvent::CloseRequested => {
@@ -205,6 +295,10 @@ impl KagiApp {
                 // plan pipeline — e.g. `repo.fetch`'s failure path,
                 // `commands.rs`), not a git plan modal.
                 let msg = i18n::op_failed(i18n::Op::Save, format!("{}: {}", path.display(), error));
+                // A panicked save parks a reconcile requirement before this
+                // event. Offer its inspect path even if the buffer stayed dirty.
+                self.poll_app_jobs(cx);
+                self.present_app_notice();
                 self.push_toast(ToastKind::Error, msg.clone(), cx);
                 self.status_footer = FooterStatus::Failed(SharedString::from(msg));
                 cx.notify();

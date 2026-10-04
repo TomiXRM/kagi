@@ -15,7 +15,6 @@ mod settle;
 
 use super::modal_state::AsyncPlanOffer;
 use super::RunPresentation;
-use crate::ui::operations::PullConfirmDelivery;
 use crate::ui::*;
 
 impl KagiApp {
@@ -110,93 +109,17 @@ impl KagiApp {
         self.plan_and_open_pull_modal(cx);
     }
 
-    /// Deliver the confirmation a dirty Pull asked for when *its* fetch task
-    /// finishes (#625, ADR-0192; #626 review).
-    ///
-    /// Every case is decided here rather than at the call site, because the
-    /// three earlier attempts each fixed one branch and left another:
-    ///
-    /// | state at completion | delivery |
-    /// |---|---|
-    /// | fetch failed | oplog entry + toast; no confirmation is opened |
-    /// | ok, tab on screen, no other modal | plan and open the confirmation |
-    /// | ok, tab **not** on screen | parked; opened when that tab is next activated |
-    /// | ok, another modal open | request cancelled — the user's newer modal wins |
-    /// | requesting tab closed | dropped with the tab |
-    ///
-    /// Parking is what makes "press Pull, switch tabs, come back" work: the
-    /// answer belongs to the tab that asked, so it waits for that tab instead
-    /// of being lost (or opening over a different repository).
+    /// Deliver a successful fetch's confirmation only to the visit that
+    /// requested it. The fetch completion records failures independently;
+    /// a waiter must neither create a second receipt nor revive an old visit.
     pub(crate) fn deliver_pull_confirm(
         &mut self,
         session: crate::app::SessionId,
-        fetch_error: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        if !self.app_sessions.is_attached(session) {
-            klog!("pull-confirm: dropped (tab closed)");
-            return;
+        if self.active_session() == Some(session) {
+            self.plan_and_offer_pull_modal_from_async(cx);
         }
-        if let Some(error) = fetch_error {
-            // The durable explanation is the Operation Log row; record_op also
-            // emits its short-lived toast. There is no action for a modal.
-            self.record_pull_fetch_failure(session, &error, cx);
-            return;
-        }
-        if self.active_session() != Some(session) {
-            self.pending_pull_confirm
-                .insert(session, PullConfirmDelivery::Confirm);
-            klog!("pull-confirm: parked for its tab");
-            return;
-        }
-        self.plan_and_offer_pull_modal_from_async(cx);
-    }
-
-    /// Deliver a parked Pull confirmation to the tab that asked for it, now
-    /// that it is on screen again.
-    pub(crate) fn deliver_parked_pull_confirm(&mut self, cx: &mut Context<Self>) {
-        let Some(session) = self.active_session() else {
-            return;
-        };
-        let Some(parked) = self.pending_pull_confirm.remove(&session) else {
-            return;
-        };
-        match parked {
-            PullConfirmDelivery::Confirm => {
-                klog!("pull-confirm: delivered on tab activation");
-                self.plan_and_offer_pull_modal_from_async(cx);
-            }
-        }
-    }
-
-    /// #625: a fetch run *for* a Pull confirmation failed, so there is no
-    /// confirmation to show. The persisted Operation Log entry is the durable
-    /// explanation after the transient toast disappears.
-    fn record_pull_fetch_failure(
-        &mut self,
-        session: crate::app::SessionId,
-        error: &str,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(owner) = self.app_sessions.attachment(session) else {
-            return;
-        };
-        let repo_path = owner.path.clone();
-        // The fetch has no OperationController boundary that records it, so it
-        // takes ADR-0149's "non-run op" path and is persisted here.
-        let before = StateSummary {
-            head: format!("branch: {}", self.view().status_summary.branch),
-            dirty: "unchanged".to_string(),
-        };
-        self.record_op_persist(
-            "fetch",
-            before,
-            kagi_git::oplog::OpOutcome::Failed {
-                error: i18n::op_failed(i18n::Op::Fetch, error),
-            },
-            &repo_path,
-            cx,
-        );
     }
 
     /// Plan a local pull and open (or skip) its confirmation modal. `true` when

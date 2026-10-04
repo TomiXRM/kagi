@@ -14,6 +14,24 @@ use super::RunPresentation;
 use crate::ui::blocking_ops::*;
 use crate::ui::*;
 
+#[cfg(feature = "gui-e2e")]
+static PANIC_NEXT_BRANCH_FETCH: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(feature = "gui-e2e")]
+static PANIC_NEXT_PR_FETCH: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    pub fn panic_next_branch_fetch_for_e2e() {
+        PANIC_NEXT_BRANCH_FETCH.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn panic_next_pr_fetch_for_e2e() {
+        PANIC_NEXT_PR_FETCH.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 struct LoadedPrLocal {
     base: CommitId,
     base_tip: CommitId,
@@ -152,29 +170,92 @@ impl KagiApp {
         let Some(lease) = self.reserve_write("fetch", &repo_path, cx) else {
             return;
         };
+        let owner = self.active_session();
+        let visit = owner.and_then(|owner| self.app_sessions.visit(owner));
+        let abandonment = lease.abandonment();
+        let supervision = abandonment.supervision();
         klog!("fetch-remote-branch: start {}", remote_branch);
         let bg_path = repo_path.clone();
         let bg_remote_branch = remote_branch.clone();
         let task = cx.background_spawn(async move {
+            let _supervised = kagi_git::proc::supervisor::enter(supervision);
+            #[cfg(feature = "gui-e2e")]
+            if PANIC_NEXT_BRANCH_FETCH.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                // TestDispatcher propagates an uncaught worker panic rather than
+                // returning a failed task. Catch only the injected panic, then
+                // deliver the same absent completion as Task::fallible.
+                let _ = std::panic::catch_unwind(|| panic!("injected branch fetch task panic"));
+                return None;
+            }
             let result = crate::ui::blocking_ops::open_backend(&bg_path);
             let open_failed = result.is_err();
             let result = result.and_then(|backend| backend.fetch_remote_branch(&bg_remote_branch));
             lease.complete_git(&result);
-            result.map_err(|e| {
-                if open_failed {
-                    i18n::op_failed(i18n::Op::RepoOpen, e)
-                } else {
-                    format!("{e}")
-                }
-            })
+            Some((result, open_failed))
         });
         cx.spawn(async move |this, acx| {
-            let result = task.await;
+            let (result, open_failed) = task
+                .fallible()
+                .await
+                .flatten()
+                .unwrap_or_else(|| (Err(abandonment.into_unknown()), false));
             let _ = this.update(acx, |app, cx| {
                 app.refresh_write_busy();
+                let current = owner.is_some_and(|owner| {
+                    app.active_session() == Some(owner) && app.app_sessions.visit(owner) == visit
+                });
+                if let Err(error) = &result {
+                    let outcome = if let kagi_git::GitError::TerminationUnknown(reason) = error {
+                        kagi_git::oplog::OpOutcome::Unknown {
+                            after: kagi_git::StateSummary {
+                                head: "unknown".into(),
+                                dirty: "unknown".into(),
+                            },
+                            evidence: reason.to_string(),
+                        }
+                    } else {
+                        let detail = if open_failed {
+                            i18n::op_failed(i18n::Op::RepoOpen, error)
+                        } else {
+                            error.to_string()
+                        };
+                        kagi_git::oplog::OpOutcome::Failed { error: detail }
+                    };
+                    app.record_ref_fetch_failure(
+                        "fetch-remote-branch",
+                        owner,
+                        visit,
+                        kagi_git::StateSummary {
+                            head: format!("remote branch {remote_branch}"),
+                            dirty: "unchanged".into(),
+                        },
+                        outcome,
+                        None,
+                        &repo_path,
+                        cx,
+                    );
+                }
+                for (id, op, path) in app.app_sessions.drain_unaccounted() {
+                    app.notice_reconcile_required(id, op, &path);
+                }
+                app.present_app_notice();
+                let result = result.map_err(|e| {
+                    if open_failed {
+                        i18n::op_failed(i18n::Op::RepoOpen, e)
+                    } else {
+                        e.to_string()
+                    }
+                });
+                match &result {
+                    Ok(_) => klog!("fetch-remote-branch: ok {}", remote_branch),
+                    Err(e) => klog!("fetch-remote-branch: failed {} — {}", remote_branch, e),
+                }
+                if !current {
+                    cx.notify();
+                    return;
+                }
                 match result {
                     Ok(outcome) => {
-                        klog!("fetch-remote-branch: ok {}", remote_branch);
                         if outcome.changed {
                             app.reload(cx);
                         }
@@ -189,7 +270,6 @@ impl KagiApp {
                         );
                     }
                     Err(e) => {
-                        klog!("fetch-remote-branch: failed {} — {}", remote_branch, e);
                         let msg = i18n::op_failed(i18n::Op::Fetch, e);
                         app.status_footer = FooterStatus::Failed(SharedString::from(msg.clone()));
                         app.push_toast(ToastKind::Error, msg, cx);
@@ -232,6 +312,7 @@ impl KagiApp {
                 .find(|tab| tab.pr.number == pr.number && tab.pr.base_repo == pr.base_repo)
         }) {
             tab.local_refs_loading = true;
+            tab.local_refs_visit = Some(visit);
             tab.local_refs_generation = tab.local_refs_generation.wrapping_add(1);
             tab.local_refs_generation
         } else {
@@ -283,6 +364,8 @@ impl KagiApp {
             self.finish_pr_ref_load(owner, visit, generation, &pr, None, cx);
             return;
         };
+        let abandonment = lease.abandonment();
+        let supervision = abandonment.supervision();
         klog!("pr-mode: fetch #{} start", pr.number);
         let base_repo = pr.base_repo.clone();
         let base_branch = pr.base.clone();
@@ -290,6 +373,12 @@ impl KagiApp {
         let number = pr.number;
         let recorded_repo = repo_path.clone();
         let task = cx.background_spawn(async move {
+            let _supervised = kagi_git::proc::supervisor::enter(supervision);
+            #[cfg(feature = "gui-e2e")]
+            if PANIC_NEXT_PR_FETCH.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                let _ = std::panic::catch_unwind(|| panic!("injected PR fetch task panic"));
+                return None;
+            }
             // #885: the refs this job moved are observed, not assumed (its
             // refspecs target refs/remotes and refs/kagi/pr, but a configured
             // fetch refspec may also write local branches). #907 review: only
@@ -345,10 +434,14 @@ impl KagiApp {
                 ),
             };
             lease.complete_git(&result);
-            (result, ref_moves)
+            Some((result, ref_moves))
         });
         cx.spawn(async move |this, acx| {
-            let (result, ref_moves) = task.await;
+            let (result, ref_moves) = task
+                .fallible()
+                .await
+                .flatten()
+                .unwrap_or_else(|| (Err(abandonment.into_unknown()), None));
             let _ = this.update(acx, |app, cx| match result {
                 Ok((outcome, local)) => {
                     app.refresh_write_busy();
@@ -373,6 +466,10 @@ impl KagiApp {
                 Err(error) => {
                     app.refresh_write_busy();
                     let applied = app.finish_pr_ref_load(owner, visit, generation, &pr, None, cx);
+                    for (id, op, path) in app.app_sessions.drain_unaccounted() {
+                        app.notice_reconcile_required(id, op, &path);
+                    }
+                    app.present_app_notice();
                     klog!("pr-mode: fetch #{} failed: {}", pr.number, error);
                     let detail =
                         format!("{} — PR #{}: {}", recorded_repo.display(), pr.number, error);
@@ -387,8 +484,10 @@ impl KagiApp {
                     } else {
                         kagi_git::oplog::OpOutcome::Failed { error: detail }
                     };
-                    app.record_pr_fetch_failure(
-                        owner,
+                    app.record_ref_fetch_failure(
+                        "fetch-pr",
+                        Some(owner),
+                        Some(visit),
                         kagi_git::StateSummary {
                             head: format!("PR #{}", pr.number),
                             dirty: "unchanged".into(),
@@ -418,9 +517,7 @@ impl KagiApp {
         local: Option<LoadedPrLocal>,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.app_sessions.visit(owner) != Some(visit) {
-            return false;
-        }
+        let current_visit = self.app_sessions.visit(owner) == Some(visit);
         let owner_is_active = self.active_session() == Some(owner);
         let Some(ui) = self.ui.get_mut(&owner) else {
             return false;
@@ -433,10 +530,17 @@ impl KagiApp {
                 && tab.pr.base_repo == pr.base_repo
                 && tab.pr.head_sha == pr.head_sha
                 && tab.local_refs_generation == generation
+                && tab.local_refs_visit == Some(visit)
         }) else {
             return false;
         };
         tab.local_refs_loading = false;
+        if !current_visit {
+            // Only this visit's request can clear its latch. A reopened PR in
+            // the new visit may reuse the same generation and head SHA.
+            cx.notify();
+            return false;
+        }
         let loaded = local.is_some();
         if let Some(local) = local {
             let diff = local.diff;
@@ -470,9 +574,9 @@ impl KagiApp {
         true
     }
 
-    /// A newer L1 head may arrive while an older fetch owns the global fetch
-    /// lease. Once that stale request settles, hand the lease to the newest
-    /// tab intent instead of leaving the page empty until another click.
+    /// A completed old request may leave either a newer head waiting in the
+    /// same visit, or an unloaded PR waiting after departure and return. The
+    /// current visit's active fetch owns its latch; never start over it.
     fn retry_stale_pr_ref_load(
         &mut self,
         owner: crate::app::SessionId,
@@ -480,17 +584,22 @@ impl KagiApp {
         stale: &kagi_domain::github::PullRequest,
         cx: &mut Context<Self>,
     ) {
-        if self.active_session() != Some(owner) || self.app_sessions.visit(owner) != Some(visit) {
+        if self.active_session() != Some(owner) {
             return;
         }
+        let revisited = self.app_sessions.visit(owner) != Some(visit);
         let latest = self.pr_mode().and_then(|mode| {
             mode.tabs
                 .iter()
                 .find(|tab| {
                     tab.pr.number == stale.number
                         && tab.pr.base_repo == stale.base_repo
-                        && tab.pr.head_sha != stale.head_sha
                         && !tab.local_refs_loading
+                        && if revisited {
+                            tab.head.0 != tab.pr.head_sha
+                        } else {
+                            tab.pr.head_sha != stale.head_sha
+                        }
                 })
                 .map(|tab| tab.pr.clone())
         });
@@ -499,31 +608,45 @@ impl KagiApp {
         }
     }
 
-    /// Persist a passive PR-load failure without replacing another tab's
-    /// footer or creating an expiring snackbar. The Operation Log owns the
-    /// complete error; when its repository is active, reveal that row.
-    fn record_pr_fetch_failure(
+    /// Persist the fetch failure for its frozen repository and push its
+    /// receipt into the shared Operation Log panel even after a tab switch.
+    /// Only the still-current owner may open the panel or show an error.
+    // The frozen receipt and owner stamp arrive separately from two fetch jobs.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::ui) fn record_ref_fetch_failure(
         &mut self,
-        owner: crate::app::SessionId,
+        op: &'static str,
+        owner: Option<crate::app::SessionId>,
+        visit: Option<u64>,
         before: kagi_git::StateSummary,
         outcome: kagi_git::oplog::OpOutcome,
         ref_moves: Option<Vec<kagi_domain::ref_moves::RefMove>>,
         repo_path: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
-        let entry = kagi_git::oplog::OpLogEntry::new(
-            "fetch-pr",
-            repo_path.display().to_string(),
-            before,
-            outcome,
-        )
-        .with_ref_moves(ref_moves);
+        let entry =
+            kagi_git::oplog::OpLogEntry::new(op, repo_path.display().to_string(), before, outcome)
+                .with_ref_moves(ref_moves);
+        let current = owner.is_some_and(|owner| {
+            self.active_session() == Some(owner) && self.app_sessions.visit(owner) == visit
+        });
         // #907 review: the panel gets the appended entry (the log's id), not
         // the placeholder id 0 — recorded moves enable undo / restore.
         let recording = kagi_git::backend::recording::finalize(entry);
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = &recording {
             klog!("oplog: write failed (non-fatal): {}", error);
-            self.present_oplog_write_failure(error, cx);
+            if current {
+                self.present_oplog_write_failure(error, cx);
+            } else {
+                self.app_notices.push_back(
+                    format!(
+                        "{}: {}",
+                        repo_path.display(),
+                        i18n::oplog_write_failed(error)
+                    )
+                    .into(),
+                );
+            }
         }
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&recording);
         if let Some(panel) = self.op_log.clone() {
@@ -533,7 +656,7 @@ impl KagiApp {
                 cx.notify();
             });
         }
-        if self.active_session() == Some(owner) {
+        if current {
             self.bottom_panel_open = true;
             self.bottom_tab = BottomTab::OperationLog;
         }

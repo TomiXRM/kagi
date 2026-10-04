@@ -133,7 +133,7 @@ impl KagiApp {
         };
         match app::admit(&mut self.reads, admitted) {
             Ok(guard) => {
-                self.mark_write_busy(action.name());
+                self.mark_write_busy(action.name(), cx);
                 Some(guard)
             }
             Err(error) => {

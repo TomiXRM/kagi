@@ -1,16 +1,28 @@
 //! Busy presentation is independent of the writer lease's lifecycle marker.
+use std::time::{Duration, Instant};
+
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::Sizable as _;
 use kagi_ui_core::i18n;
-use kagi_ui_core::slow_read::SlowRead;
+use kagi_ui_core::slow_read::{is_slow, SlowRead};
 
 use super::theme::{self, theme};
 use super::{render_overlay, KagiApp};
 
+const TICK: Duration = Duration::from_millis(250);
+
 impl KagiApp {
-    pub(crate) fn mark_write_busy(&mut self, name: &'static str) {
+    pub(crate) fn mark_write_busy(&mut self, name: &'static str, cx: &mut Context<Self>) {
         self.write_busy_op = Some(name);
+        if let Some((id, _)) = self.app_sessions.running_lease() {
+            // The runner's synthetic clock is written onto the same lease
+            // record; production retains the exact admission Instant.
+            #[cfg(feature = "gui-e2e")]
+            self.app_sessions
+                .set_lease_start_for_e2e(id, cx.background_executor().now());
+            self.tick_busy_write(id, cx);
+        }
     }
 
     /// Latch the one write that cannot hold a lease: remote pull over SSH,
@@ -31,6 +43,47 @@ impl KagiApp {
     /// and is the same follow-up slice as #703.
     pub(crate) fn mark_remote_write(&mut self, name: &'static str) {
         self.remote_write = Some(name);
+    }
+
+    /// An admitted lease is the sole timer owner. No separate write clock
+    /// survives settlement, cancellation, or a newer admission.
+    fn tick_busy_write(&mut self, id: crate::app::OperationId, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, acx| loop {
+            acx.background_executor().timer(TICK).await;
+            let alive = this
+                .update(acx, |app, cx| {
+                    app.refresh_write_busy();
+                    // The tick that finds this write ended (settled, guard
+                    // dropped by a panic, or superseded) still notifies: the
+                    // advice drawn on the last frame must be withdrawn now,
+                    // not on the next unrelated frame (#995 review).
+                    let Some((running, started)) = app.app_sessions.running_lease() else {
+                        cx.notify();
+                        return false;
+                    };
+                    if running != id {
+                        cx.notify();
+                        return false;
+                    }
+                    let elapsed = cx
+                        .background_executor()
+                        .now()
+                        .saturating_duration_since(started);
+                    if is_slow(elapsed) && app.app_sessions.note_slow_lease(id) {
+                        klog!(
+                            "busy: slow write {} after 2s",
+                            app.write_busy_op.unwrap_or("write")
+                        );
+                    }
+                    cx.notify();
+                    true
+                })
+                .unwrap_or(false);
+            if !alive {
+                break;
+            }
+        })
+        .detach();
     }
 
     /// Is any operation latched — a write, a planning task or a clone? The
@@ -59,6 +112,13 @@ impl KagiApp {
             .map(kagi_ui_core::i18n::busy_label)
     }
 
+    fn slow_write_shown(&self, now: Instant) -> Option<(&'static str, u64)> {
+        let name = self.write_busy_op?;
+        let (_, started) = self.app_sessions.running_lease()?;
+        let elapsed = now.saturating_duration_since(started);
+        is_slow(elapsed).then_some((name, elapsed.as_secs()))
+    }
+
     /// Render the toast / busy overlay as an absolute container (bottom-left,
     /// above the status bar). The toast cards live in the `Entity<ToastStack>`
     /// child, so a push / expire re-renders only that subtree instead of all of
@@ -82,11 +142,12 @@ impl KagiApp {
         // (user request) — a lighter alternative to a blocking popup. A slow
         // read adds its explanation; with no write running it owns the label.
         let slow = self.slow_read_shown();
+        let write = self.slow_write_shown(cx.background_executor().now());
         let label = self
             .busy_snackbar_label()
             .or(slow.map(i18n::slow_read_label));
         if let Some(label) = label {
-            stack = stack.child(self.render_busy_snackbar(label, slow, cx));
+            stack = stack.child(self.render_busy_snackbar(label, slow, write, cx));
         }
 
         // The toast cards are an independently-rendered child entity.
@@ -105,6 +166,7 @@ impl KagiApp {
         &self,
         label: &'static str,
         slow: Option<SlowRead>,
+        write: Option<(&'static str, u64)>,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let accent = theme().color_branch;
@@ -115,14 +177,28 @@ impl KagiApp {
             .flex()
             .flex_col()
             .child(SharedString::from(label));
-        if let Some(read) = slow {
+        if let Some((kind, elapsed)) = write {
+            let advice = i18n::slow_write_advice(kind, elapsed);
+            #[cfg(feature = "gui-e2e")]
+            super::e2e::record_busy_advice(&advice);
             text = text.child(super::e2e::measure_control(
                 "busy-snackbar-advice",
                 div()
                     .text_sm()
                     .text_color(rgb(theme().text_sub))
-                    .child(SharedString::from(i18n::slow_read_advice(read))),
+                    .child(SharedString::from(advice)),
             ));
+        }
+        if write.is_none() {
+            if let Some(read) = slow {
+                text = text.child(super::e2e::measure_control(
+                    "busy-snackbar-advice",
+                    div()
+                        .text_sm()
+                        .text_color(rgb(theme().text_sub))
+                        .child(SharedString::from(i18n::slow_read_advice(read))),
+                ));
+            }
         }
         let skip = slow.filter(|read| read.skippable()).map(|_| {
             super::e2e::measure_control(
@@ -170,6 +246,25 @@ pub(super) fn settle_write_busy(writer: &mut Option<&'static str>, has_leases: b
     }
 }
 
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static FETCH_HOLD: std::cell::RefCell<Option<gpui::Task<()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(super) fn take_fetch_hold() -> Option<gpui::Task<()>> {
+    FETCH_HOLD.with(|slot| slot.borrow_mut().take())
+}
+
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    /// Hold the next admitted fetch before its backend work, not its planning.
+    pub fn hold_next_fetch_for_e2e(hold: gpui::Task<()>) {
+        FETCH_HOLD.with(|slot| assert!(slot.borrow_mut().replace(hold).is_none()));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,8 +283,6 @@ mod tests {
             let mut writer = Some(name);
             settle_write_busy(&mut writer, true);
             assert_eq!(writer, Some(name));
-            // Known termination: the lease went with the settle, so does the
-            // mirror.
             settle_write_busy(&mut writer, false);
             assert_eq!(writer, None);
         }

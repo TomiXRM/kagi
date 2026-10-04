@@ -115,6 +115,7 @@ fn main() {
                 stash_first: false,
                 plan: std::sync::Arc::new(plan),
                 error: None,
+                queued: None,
             });
         }
         // #454 layer 4: cards that adopted the shared shell in this slice.

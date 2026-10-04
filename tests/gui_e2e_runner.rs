@@ -112,6 +112,9 @@ mod app_stash;
 mod busy_label;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/op_queue.rs"]
+mod op_queue;
+#[cfg(target_os = "macos")]
 #[path = "recovery/slow_read.rs"]
 mod slow_read;
 
@@ -1224,6 +1227,30 @@ mod macos {
             (
                 "slow_write_cleared_after_panic",
                 Box::new(crate::slow_read::scenario_slow_write_cleared_after_panic),
+            ),
+            (
+                "queue_runs_in_order",
+                Box::new(crate::op_queue::scenario_queue_runs_in_order),
+            ),
+            (
+                "queue_trip_lists_cancelled",
+                Box::new(crate::op_queue::scenario_queue_trip_lists_cancelled),
+            ),
+            (
+                "queue_confirms_a_warned_plan",
+                Box::new(crate::op_queue::scenario_queue_confirms_a_warned_plan),
+            ),
+            (
+                "queue_strip_owner_only",
+                Box::new(crate::op_queue::scenario_queue_strip_owner_only),
+            ),
+            (
+                "queue_skips_auto_fetch",
+                Box::new(crate::op_queue::scenario_queue_skips_auto_fetch),
+            ),
+            (
+                "queue_rejects_during_untracked_write",
+                Box::new(crate::op_queue::scenario_queue_rejects_during_untracked_write),
             ),
             (
                 "fetch_failure_oplog",

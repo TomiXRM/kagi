@@ -30,7 +30,7 @@ fn stamp(n: u64, operation: u64) -> OwnerStamp {
 }
 fn request() -> IntentRequest {
     IntentRequest::Checkout {
-        target: "feature".into(),
+        target: CheckoutIntent::Branch("feature".into()),
     }
 }
 fn enqueue(queue: &mut IntentQueue, n: u64) -> IntentId {
@@ -145,7 +145,7 @@ fn q1_running_anchor_settles_then_successors_execute_in_order() {
         false,
     );
     assert_eq!(
-        q.apply(QueueEvent::LeaseReleased(stamp(1, 70))),
+        q.apply(QueueEvent::LeaseReleased(Some(stamp(1, 70)))),
         vec![QueueEffect::StartPlan(first)]
     );
     assert_eq!(
@@ -169,7 +169,7 @@ fn q1_running_anchor_settles_then_successors_execute_in_order() {
         vec![QueueEffect::Settled(first)]
     );
     assert_eq!(
-        q.apply(QueueEvent::LeaseReleased(stamp(1, 71))),
+        q.apply(QueueEvent::LeaseReleased(Some(stamp(1, 71)))),
         vec![QueueEffect::StartPlan(second)]
     );
 }
@@ -312,7 +312,7 @@ fn q4_every_wait_has_an_exhaustively_named_release_and_rechecks_other_heads() {
         }
         assert_eq!(state(&q, 1), IntentState::Waiting { reason });
         let effects = match release {
-            ReleaseEvent::LeaseReleased => q.apply(QueueEvent::LeaseReleased(stamp(2, 99))),
+            ReleaseEvent::LeaseReleased => q.apply(QueueEvent::LeaseReleased(Some(stamp(2, 99)))),
             ReleaseEvent::PlanSlotFreed => q.apply(QueueEvent::PlanSlotFreed(None)),
             ReleaseEvent::OwnerReturned => q.apply(QueueEvent::OwnerReturned(session(1))),
             ReleaseEvent::ReconcileAcknowledged => {
@@ -371,7 +371,7 @@ fn q4_every_wait_has_an_exhaustively_named_release_and_rechecks_other_heads() {
         false,
     );
     assert_eq!(q.gate(session(1)), ChainGate::default());
-    q.apply(QueueEvent::LeaseReleased(stamp(1, 10)));
+    q.apply(QueueEvent::LeaseReleased(Some(stamp(1, 10))));
     assert_eq!(
         q.apply(QueueEvent::Enqueue {
             owner: owner(1),
@@ -483,7 +483,7 @@ fn q9_deterministic_event_sequences_never_create_two_pipeline_owners() {
                                 true,
                                 false,
                             );
-                            q.apply(QueueEvent::LeaseReleased(writer));
+                            q.apply(QueueEvent::LeaseReleased(Some(writer)));
                         }
                         IntentState::Queued
                         | IntentState::Waiting { .. }
@@ -626,7 +626,7 @@ fn q13_anchor_is_only_same_session_trackable_write_and_duplicate_receipts_are_ig
         false,
     );
     assert_eq!(
-        q.apply(QueueEvent::LeaseReleased(stamp(2, 90))),
+        q.apply(QueueEvent::LeaseReleased(Some(stamp(2, 90)))),
         vec![QueueEffect::StartPlan(head)]
     );
     let mut q = IntentQueue::new();
@@ -713,7 +713,7 @@ fn admission_busy_waits_for_lease_release_instead_of_replanning_immediately() {
         }
     );
     assert_eq!(
-        q.apply(QueueEvent::LeaseReleased(stamp(2, 88))),
+        q.apply(QueueEvent::LeaseReleased(Some(stamp(2, 88)))),
         vec![QueueEffect::StartPlan(id)]
     );
 }
@@ -771,3 +771,4 @@ fn identity_mismatch_trips_chain_without_retargeting_worktree() {
 }
 
 mod extra;
+mod stage3;

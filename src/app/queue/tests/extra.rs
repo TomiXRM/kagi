@@ -22,7 +22,7 @@ fn remove_one_does_not_cancel_the_suffix_or_the_other_session() {
 fn auto_fetch_is_neither_anchor_nor_chain_failure() {
     let mut q = IntentQueue::new();
     q.apply(QueueEvent::OwnerReturned(session(1)));
-    q.apply(QueueEvent::AutoFetchStarted);
+    q.apply(QueueEvent::UntrackedWriteStarted { owner: None });
     let id = enqueue(&mut q, 1);
     assert_eq!(q.gate(session(1)), ChainGate::Armed { anchor: None });
     assert!(!q.auto_fetch_allowed(session(1)));
@@ -33,7 +33,7 @@ fn auto_fetch_is_neither_anchor_nor_chain_failure() {
         }
     );
     assert_eq!(
-        q.apply(QueueEvent::LeaseReleased(stamp(1, 99))),
+        q.apply(QueueEvent::LeaseReleased(None)),
         vec![QueueEffect::StartPlan(id)]
     );
     assert!(q.cancelled(session(1)).is_none());

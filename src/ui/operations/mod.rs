@@ -383,12 +383,14 @@ impl KagiApp {
         let job = match app::admit(&mut self.reads, admitted) {
             Ok(job) => job,
             Err(error) => {
+                self.queue_admission_refused(&error, cx);
                 self.report_admission_refusal(error, cx);
                 return false;
             }
         };
         self.mark_write_busy(op_name, cx);
         let stamp = job.stamp();
+        self.queue_write_admitted(stamp, cx);
         // #289: gpui does not propagate a background panic, so the task can end
         // without a completion. That is not evidence of termination — the write
         // may have happened — so it settles as `Unknown` through the same
@@ -396,7 +398,15 @@ impl KagiApp {
         // the reconcile entry. Clearing the busy mirror here instead would
         // leave `has_leases()` true with `op_latched()` false.
         let abandonment = job.abandonment();
-        let task = cx.background_spawn(async move { job.run() });
+        #[cfg(feature = "gui-e2e")]
+        let hold = crate::ui::op_queue::take_run_hold();
+        let task = cx.background_spawn(async move {
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
+            job.run()
+        });
         cx.spawn(async move |this, acx| {
             let completion = task.fallible().await;
             let _ = this.update(acx, move |app, cx| {
@@ -433,6 +443,8 @@ impl KagiApp {
                     // `Partial` transport hold `settle_run_receipt` registers.
                     app.settle_run_receipt(op_name, &report, &repo_path);
                     app.notice_reconcile_required(id, op_name, &repo_path);
+                    // The chain judges the receipt, never the presentation.
+                    app.queue_write_settled(stamp, id, &report, cx);
                     let current = app.active_session() == Some(stamp.session)
                         && app.app_sessions.visit(stamp.session) == Some(stamp.visit);
                     let (mut presentation, failure_message, finished) = match &report.result {
@@ -552,6 +564,9 @@ impl KagiApp {
                     }
                 }
                 app.present_app_notice();
+                // Reports the lease release after the reload above has marked
+                // the owner's read stale, so a successor waits for that read.
+                app.sync_queue(cx);
                 cx.notify();
             });
         })

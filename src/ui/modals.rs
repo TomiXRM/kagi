@@ -43,6 +43,9 @@ pub struct CheckoutPlanModal {
     pub plan: std::sync::Arc<OperationPlan>,
     /// Error message to show if execute or preflight failed (replaces normal buttons).
     pub error: Option<SharedString>,
+    /// The queued intent this confirmation answers (#355 stage 3). Confirm
+    /// approves it, Cancel rejects it; `None` is an ordinary checkout.
+    pub queued: Option<crate::app::IntentId>,
 }
 
 /// Execution target for the shared checkout plan modal.

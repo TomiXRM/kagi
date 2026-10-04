@@ -106,12 +106,14 @@ mod modal_renderers_plan;
 mod modal_renderers_stash;
 mod modal_shell;
 pub mod modals;
+mod op_queue;
 mod operation_strip;
 mod operations;
 pub mod oplog_panel;
 mod oplog_render;
 mod plan_card_rows;
 mod platform_menu;
+mod queue_strip;
 pub mod reload;
 pub mod remote_browse;
 mod render;
@@ -1196,6 +1198,8 @@ pub struct KagiApp {
     /// True while the periodic background auto-fetch ticker task is alive
     /// (spawned lazily from render; see `ensure_auto_fetch_ticker`).
     pub auto_fetch_ticker_alive: bool,
+    /// The operation queue and its observation mirror (#355 stage 3).
+    pub(crate) op_queue: op_queue::QueueWiring,
     transport_holds: operations::transport_hold::TransportHolds,
     pub github_ticker_alive: bool,
     /// The `gh` login on each repository host (`None`: `gh`'s default host).
@@ -1427,6 +1431,7 @@ impl KagiApp {
             toast_stack: None,
             fetch_in_flight: None,
             auto_fetch_ticker_alive: false,
+            op_queue: Default::default(),
             transport_holds: Default::default(),
             github_ticker_alive: false,
             github_host_logins: Default::default(),
@@ -1542,6 +1547,7 @@ impl KagiApp {
 
     /// Cancel and close the checkout plan modal without making any changes.
     pub fn cancel_modal(&mut self) {
+        self.note_queued_confirm_dismissed();
         self.clear_plan_modal();
     }
 

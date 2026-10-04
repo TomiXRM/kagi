@@ -1,13 +1,13 @@
 # ADR-0204: operation queue と遅延の説明 — 並べるのは承認済み plan ではなく intent
 
-- Status: **Accepted**（2026-10-04、#355 段階 2 は pure reducer を実装。UI 配線・strip・適格 family の入口は段階 3）
+- Status: **Accepted**（2026-10-04、#355 段階 2 は pure reducer を実装。段階 3a で checkout の入口・strip・auto-fetch の skip を配線。commit / merge の入口は段階 3b。改訂履歴は末尾）
 - Date: 2026-10-04（Draft: 2026-09-23）
 - Base: `origin/main` @ `47d30be4`（#355 段階 2 着手時。§1 は当時の main の実測）
 - Related: [#355](https://github.com/TomiXRM/kagi/issues/355)（親 #359）、ADR-0196（lifecycle 契約）、
   ADR-0197（session-owned UI state）、ADR-0182（session identity / close は実行取消ではない）、
   ADR-0183（session-owned read）、ADR-0086（busy snackbar）、ADR-0093（active modal 1 slot）、
   ADR-0153 `## Consequences` 71 行（`gh pr checks --watch` の #355 繰延）
-- 適用範囲: 段階 2 は `src/app/queue.rs`（`Sessions` の隣に独立して保持）、段階 3 は `src/ui/busy.rs`・`src/ui/operations/*`・`src/ui/render.rs`。**新しい service / crate / worker や admission route は作らない**（ADR-0182）。
+- 適用範囲: 段階 2 は `src/app/queue.rs`（`Sessions` の隣に独立して保持）、段階 3 は `src/ui/op_queue.rs`（配線の唯一の入口 `drive_queue` と観測の同期 `sync_queue`）・`src/ui/queue_strip.rs`・`src/ui/operations/*`・`src/ui/render.rs`。**新しい service / crate / worker や admission route は作らない**（ADR-0182）。
 - ADR-0153 の watch 繰延は **解除していない**。段階 2 は queue の核だけを実装し、UI の Q3/Q5/Q8/Q10 と watch 固有の W1–W8 は段階 3 以降の条件である。
 
 ## 0. アーキテクチャレビュー（5 点）
@@ -262,7 +262,7 @@ pub enum IntentRequest {                // 段階 2 で受け付ける最初の 
 - **先頭に来たときのパイプライン（毎回フル）**:
 
   ```
-  live replan → ユーザー確認（新しい modal）→ approve_run / approve → admission
+  live replan → family の通常規則で確認 → approve_run / approve → admission
                （`begin_write`。guard を直接取る既存 family は `write_lease` の同じ判定を通る。
                 どちらの route も迂回しない）
               → preflight（live 再検証。凍結 request と今の repository の照合）
@@ -272,6 +272,11 @@ pub enum IntentRequest {                // 段階 2 で受け付ける最初の 
   ADR-0196 のパイプラインそのままで、queue が決めるのは開始時刻だけ。preflight は #704 規範
   （ADR-0196 決定 4 の規範節）のとおり accepted read revision + Backend の live preflight で、
   **確認の後・実行の前に必ず通る**。ここで前提が崩れていれば `Refused` になり、chain は trip する。
+- **確認は family の通常規則に従う**（2026-10-04 改訂）。replan は毎回行い、その plan を見て family が
+  普段どおりに確認するかを決める。modal を持たない場面の family は modal なしで進む（blocker も
+  warning も無い checkout は double click と同じく modal を出さない）。blocker か warning があれば
+  modal を出す。**凍結した入力が今の draft と違えば必ず modal を出す**（commit message、段階 3b）。
+  どの経路でも preflight は省かない。
 - **「確認したのに、また確認するのか」への答え**: 先行する write が後続の前提を変えるから。
   `rebase onto origin/main` → `merge feature` では rebase が commit を書き換えるので、merge base も
   競合判定も投入時点の予測とは**別物になる**。`commit` → `amend`（対象 OID を先行が作る）、
@@ -403,3 +408,24 @@ count の精密化）は別件で触れない。ADR-0153 は Accepted のまま�
 5. **plan slot の競合**。window に 1 件である以上、tab を行き来しながら複数の列を進めると確認の
    順番待ちが出る。停止は決定 1 の「離脱で slot 解放」で防げるが、体感は Q10 と native で測る。
    plan slot を session 別にする案は ADR-0182 の単一 slot 決定に触るので本 ADR では採らない。
+
+## 改訂履歴
+
+- **2026-10-04 段階 3a（#355）** — checkout を最初の適格 family として配線した。
+  - 決定 4 の「先頭では必ず新しい modal」を「family の通常規則で確認」に改めた（PM 決定）。checkout の
+    verify は実行後の再 snapshot で HEAD が対象を指すことで、これが `ExecutionEvidence::Verified` になる。
+  - 投入の入口は今 `OpInProgress` で捨てている地点（`start_checkout` の latch 分岐）。その tab に列が
+    残っていれば idle でも後ろに並べる。dirty tree の Enter（stash してから checkout）は 2 つの write
+    なので対象外のまま。
+  - **receipt を判定できない write**（guard writer、verify 経路の無い run family、stash / remove /
+    conflict の job、pull）は anchor にしない。その write の owner の tab では投入を拒否する
+    （`EnqueueError::UntrackedWrite`、見え方は従来の `OpInProgress`）。決定 3 の「busy なら新しい chain」
+    の禁止をこの形で守る。quiet fetch（auto-fetch・Refresh 後の fetch）と clone は owner を持たない
+    背景作業として扱い、全 tab の列を `WriteRunning` で待たせるだけにする。quiet fetch は列が空で
+    ない tab では走らせない（決定 7 の auto-fetch の行を quiet fetch 全体に適用）。
+  - 確認 modal が回答なしに消えた場合（repository の reload が plan を無効にした、別の modal が
+    置き換えた）は `ConfirmWithdrawn` で `Queued` に戻す。回答ではないので cancel にしない。
+    queue の外の plan job（merge の plan など）は `PlanSlotTaken` で slot を占有する。
+  - strip の「外す」は先頭（`Planning` / `AwaitingConfirm`）にも効く。これはユーザーの削除なので
+    後続を trip しない（`RemoveOne` と同じ）。modal で断った場合は `UserRejected` で、決定 3 の
+    とおり後続を trip する。

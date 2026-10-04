@@ -14,9 +14,16 @@ pub struct IntentId(pub u64);
 /// Only frozen user inputs, never an approved plan, resolved HEAD, or prediction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IntentRequest {
-    Checkout { target: String },
+    Checkout { target: CheckoutIntent },
     Commit { message: String },
     Merge { source: String, into: String },
+}
+
+/// The checkout target the user picked: a branch name or a commit OID.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CheckoutIntent {
+    Branch(String),
+    Commit(kagi_git::CommitId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -149,12 +156,24 @@ pub enum QueueEvent<'a> {
         receipt: Settlement<'a>,
     },
     IdentityChanged(IntentId),
+    /// A run-family write whose receipt the chain can judge (it has a
+    /// verify path), started outside the queue.
     WriteStarted(OwnerStamp),
-    /// An auto-fetch holds a lease but cannot be a chain predecessor.
-    AutoFetchStarted,
-    LeaseReleased(OwnerStamp),
+    /// A write with no judgeable receipt: a guard writer, a run-family write
+    /// without a verify path, or a clone. `owner: None` is window-level
+    /// background work (auto-fetch, clone) that is no one's predecessor.
+    UntrackedWriteStarted {
+        owner: Option<SessionId>,
+    },
+    /// The lease (or untracked latch) is gone. `Some` names the tracked write.
+    LeaseReleased(Option<OwnerStamp>),
+    /// A plan job outside the queue took the plan slot.
+    PlanSlotTaken,
     /// `Some(id)` identifies a queue plan job; `None` is an unrelated plan slot.
     PlanSlotFreed(Option<IntentId>),
+    /// The head's confirmation went away unanswered (a repository reload
+    /// invalidated the plan, or another modal replaced it). Not a decision.
+    ConfirmWithdrawn(IntentId),
     OwnerDeparted(SessionId),
     OwnerReturned(SessionId),
     OwnerDetached(SessionId),
@@ -173,6 +192,8 @@ pub enum EnqueueError {
     CapacityRejected,
     RemoteLatched,
     IdentityChanged,
+    /// The owner's own write has no judgeable receipt, so `&&` cannot hold.
+    UntrackedWrite,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueueEffect {
@@ -196,6 +217,7 @@ pub struct IntentQueue {
     active: Option<SessionId>,
     write: Option<OwnerStamp>,
     write_busy: bool,
+    untracked_owner: Option<SessionId>,
     plan_slot_busy: bool,
     planning_job: Option<IntentId>,
     modal_busy: bool,
@@ -254,190 +276,27 @@ impl IntentQueue {
             })
             .count()
     }
-    fn head(&self, id: IntentId) -> Option<SessionId> {
-        self.per_session
-            .iter()
-            .find_map(|(session, q)| (q.front().is_some_and(|i| i.id == id)).then_some(*session))
-    }
-    fn clear_empty(&mut self, session: SessionId) {
-        if self
+    /// Every session that owns queued or cancelled intents.
+    pub fn sessions(&self) -> Vec<SessionId> {
+        let mut sessions: Vec<_> = self
             .per_session
-            .get(&session)
-            .is_none_or(VecDeque::is_empty)
-        {
-            self.per_session.remove(&session);
-            self.gates.insert(session, ChainGate::default());
-        }
-    }
-    fn record_cancel(&mut self, mut intent: QueuedIntent, reason: CancelReason) {
-        intent.state = IntentState::Cancelled { reason };
-        let list = self.cancelled.entry(intent.owner).or_default();
-        if list.len() == MAX_CANCELLED_INTENTS {
-            list.pop_front();
-        }
-        list.push_back(intent);
-    }
-    fn cancel_head(
-        &mut self,
-        session: SessionId,
-        reason: CancelReason,
-        effects: &mut Vec<QueueEffect>,
-    ) {
-        let Some(head) = self
-            .per_session
-            .get_mut(&session)
-            .and_then(VecDeque::pop_front)
-        else {
-            return;
-        };
-        let id = head.id;
-        match head.state {
-            IntentState::Planning | IntentState::AwaitingConfirm => {
-                effects.push(QueueEffect::CloseConfirm(id));
-                effects.push(QueueEffect::InvalidatePlan(id));
-                // Planning's job still owns the latch. Only PlanSlotFreed clears it.
-                if head.state == IntentState::AwaitingConfirm {
-                    self.plan_slot_busy = false;
-                    self.planning_job = None;
-                }
-                self.modal_busy = false;
-            }
-            IntentState::Admitting => {
-                effects.push(QueueEffect::CloseConfirm(id));
-                effects.push(QueueEffect::InvalidatePlan(id));
-                self.modal_busy = false;
-            }
-            IntentState::Queued | IntentState::Waiting { .. } => {}
-            IntentState::Running { .. } | IntentState::Settled | IntentState::Cancelled { .. } => {
-                self.per_session
-                    .entry(session)
-                    .or_default()
-                    .push_front(head);
-                return;
-            }
-        }
-        self.record_cancel(head, reason);
-        self.trip(session, ChainAnchor::QueuedHead(id));
-    }
-    fn trip(&mut self, session: SessionId, by: ChainAnchor) {
-        self.gates.insert(session, ChainGate::Tripped { by });
-        if let Some(mut queue) = self.per_session.remove(&session) {
-            while let Some(intent) = queue.pop_front() {
-                self.record_cancel(intent, CancelReason::ChainTripped { by });
-            }
-        }
-        self.clear_empty(session);
-    }
-    fn settle(&mut self, stamp: OwnerStamp, receipt: Settlement<'_>) -> Option<IntentId> {
-        let session = stamp.session;
-        let queued = self
-            .per_session
-            .get(&session)
-            .and_then(VecDeque::front)
-            .and_then(|head| match head.state {
-                IntentState::Running { stamp: owner } if owner == stamp => Some(head.id),
-                _ => None,
-            });
-        let anchored = matches!(self.gate(session), ChainGate::Armed { anchor: Some(ChainAnchor::ActiveWrite(owner)) } if owner == stamp);
-        if !anchored && queued.is_none() {
-            return None;
-        } // wrong owner or duplicate receipt
-        if let Some(id) = queued {
-            let mut head = self
-                .per_session
-                .get_mut(&session)
-                .expect("head exists")
-                .pop_front()
-                .expect("head exists");
-            head.state = IntentState::Settled;
-            if receipt.permits_successor() {
-                let anchor = self
-                    .per_session
-                    .get(&session)
-                    .and_then(VecDeque::front)
-                    .map(|next| ChainAnchor::QueuedHead(next.id));
-                self.gates.insert(session, ChainGate::Armed { anchor });
-            } else {
-                self.trip(session, ChainAnchor::QueuedHead(id));
-            }
-        } else if receipt.permits_successor() {
-            let anchor = self
-                .per_session
-                .get(&session)
-                .and_then(VecDeque::front)
-                .map(|next| ChainAnchor::QueuedHead(next.id));
-            self.gates.insert(session, ChainGate::Armed { anchor });
-        } else {
-            if self
-                .per_session
-                .get(&session)
-                .is_some_and(|q| !q.is_empty())
-            {
-                self.trip(session, ChainAnchor::ActiveWrite(stamp));
-            }
-        }
-        if receipt.reconcile_required {
-            self.reconciling.insert(session);
-        }
-        self.clear_empty(session);
-        queued
-    }
-    fn arbitrate(&mut self, effects: &mut Vec<QueueEffect>) {
-        let mut candidates: Vec<_> = self
-            .per_session
-            .iter()
-            .filter_map(|(session, queue)| queue.front().map(|head| (head.enqueued, *session)))
+            .keys()
+            .chain(self.cancelled.keys())
+            .copied()
             .collect();
-        candidates.sort_unstable_by_key(|(order, _)| *order);
-        let occupied = self.pipeline_count() != 0;
-        let mut chosen = false;
-        for (_, session) in candidates {
-            let gate = self.gate(session);
-            let head = self
-                .per_session
-                .get_mut(&session)
-                .and_then(VecDeque::front_mut)
-                .expect("candidate exists");
-            if !matches!(
-                head.state,
-                IntentState::Queued | IntentState::Waiting { .. }
-            ) {
-                continue;
-            }
-            let reason = if self.remote_latched {
-                Some(WaitReason::RemoteLatched)
-            } else if self.write.is_some() || self.write_busy {
-                Some(WaitReason::WriteRunning)
-            } else if self.plan_slot_busy || occupied || chosen {
-                Some(WaitReason::PlanSlotBusy)
-            } else if self.reconciling.contains(&session) {
-                Some(WaitReason::NeedsReconcile)
-            } else if self.active != Some(session)
-                || self.modal_busy
-                || self.revalidating.contains(&session)
-            {
-                Some(WaitReason::NeedsConfirmation)
-            } else if matches!(
-                gate,
-                ChainGate::Armed {
-                    anchor: Some(ChainAnchor::ActiveWrite(_))
-                }
-            ) {
-                Some(WaitReason::WriteRunning)
-            } else {
-                None
-            };
-            match reason {
-                Some(reason) => head.state = IntentState::Waiting { reason },
-                None => {
-                    head.state = IntentState::Planning;
-                    self.plan_slot_busy = true;
-                    self.planning_job = Some(head.id);
-                    chosen = true;
-                    effects.push(QueueEffect::StartPlan(head.id));
-                }
-            }
-        }
+        sessions.sort_unstable_by_key(|s| (s.tab.0, s.incarnation));
+        sessions.dedup();
+        sessions
+    }
+    /// A live (not settled, not cancelled) intent.
+    pub fn intent(&self, id: IntentId) -> Option<&QueuedIntent> {
+        self.per_session
+            .values()
+            .flat_map(|q| q.iter())
+            .find(|intent| intent.id == id)
+    }
+    pub fn is_empty(&self) -> bool {
+        self.per_session.values().all(VecDeque::is_empty)
     }
     pub fn apply(&mut self, event: QueueEvent<'_>) -> Vec<QueueEffect> {
         use QueueEvent as E;
@@ -447,6 +306,8 @@ impl IntentQueue {
                 let session = owner.session;
                 if self.remote_latched {
                     effects.push(QueueEffect::Rejected(EnqueueError::RemoteLatched));
+                } else if self.untracked_owner == Some(session) {
+                    effects.push(QueueEffect::Rejected(EnqueueError::UntrackedWrite));
                 } else if owner.worktree.is_none() {
                     effects.push(QueueEffect::Rejected(EnqueueError::IdentityChanged));
                 } else if self.queued_count(session) >= MAX_QUEUED_INTENTS {
@@ -542,8 +403,11 @@ impl IntentQueue {
                         )
                     })
                 {
+                    // Closes its own confirmation and leaves the latch to
+                    // the plan job's terminal callback (決定 3).
                     self.cancel_head(session, CancelReason::UserRemoved, &mut effects);
-                } else if let Some(mut queue) = self.per_session.remove(&session) {
+                }
+                if let Some(mut queue) = self.per_session.remove(&session) {
                     while let Some(item) = queue.pop_front() {
                         if matches!(item.state, IntentState::Running { .. }) {
                             self.per_session.entry(session).or_default().push_back(item);
@@ -675,17 +539,41 @@ impl IntentQueue {
                 }
             }
             E::WriteStarted(stamp) => self.write = Some(stamp),
-            E::AutoFetchStarted => self.write_busy = true,
+            E::UntrackedWriteStarted { owner } => {
+                self.write_busy = true;
+                self.untracked_owner = owner;
+            }
             E::LeaseReleased(stamp) => {
-                if self.write == Some(stamp) {
+                if stamp.is_some() && self.write == stamp {
                     self.write = None;
                 }
                 self.write_busy = false;
+                self.untracked_owner = None;
+            }
+            E::PlanSlotTaken => {
+                if self.planning_job.is_none() {
+                    self.plan_slot_busy = true;
+                }
             }
             E::PlanSlotFreed(owner) => {
                 if self.planning_job == owner {
                     self.plan_slot_busy = false;
                     self.planning_job = None;
+                }
+            }
+            E::ConfirmWithdrawn(id) => {
+                if let Some(session) = self.head(id) {
+                    let head = self
+                        .per_session
+                        .get_mut(&session)
+                        .and_then(VecDeque::front_mut)
+                        .expect("head");
+                    // Whatever took the slot (or nothing) is reported by
+                    // ModalSlotBusy / ModalSlotFree, never assumed here.
+                    if head.state == IntentState::AwaitingConfirm {
+                        head.state = IntentState::Queued;
+                        effects.push(QueueEffect::InvalidatePlan(id));
+                    }
                 }
             }
             E::OwnerDeparted(session) => {
@@ -777,6 +665,8 @@ impl IntentQueue {
         effects
     }
 }
+
+mod chain;
 
 #[cfg(test)]
 mod tests;

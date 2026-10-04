@@ -7,7 +7,11 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Changed
 
-- 計画確認カードの CURRENT → PREDICTED を同じ幅の 2 列と中央の矢印に整理し、状態チップは行内でスクロールできるようにしました。相当する Git コマンドがある計画は折りたたんでコピーでき、見出しは Tab / Enter / Space と読み上げにも対応します（Pull は clean な fast-forward に限り、remote の追跡元 branch を確認できる場合だけ提示します）。Operation Log の ref 復元は REFS の移動と削除、変えない対象、既存の線を保った復元後のグラフを先に示し、確認を 2 回必要とする安全境界は維持します。低い窓でも対象 ref の先頭 3 行を優先し、復元後のグラフは 6 行を上限に内容分だけの高さにし、拡大時の横方向の線も見切れないようにします。削除する ref は赤いチップで示します。不正な ref 行の計画は開かず、詳細を Operation Log に記録して短いエラーを表示します。(#988)
+- 計画確認カードの CURRENT → PREDICTED を同じ幅の 2 列と中央の矢印に整理し、状態チップは行内でスクロールできるようにしました。相当する Git コマンドがある計画は折りたたんでコピーでき、見出しは Tab / Enter / Space と読み上げにも対応します（Pull は実行時に再 fetch して merge commit を作る場合があるため、等価コマンドを提示しません）。Operation Log の ref 復元は REFS の移動と削除、変えない対象、既存の線を保った復元後のグラフを先に示し、確認を 2 回必要とする安全境界は維持します。低い窓でも対象 ref の先頭 3 行を優先し、復元後のグラフは 6 行を上限に内容分だけの高さにし、拡大時の横方向の線も見切れないようにします。削除する ref は赤いチップで示します。不正な ref 行の計画は開かず、詳細を Operation Log に記録して短いエラーを表示します。(#988)
+
+### Fixed
+
+- UI ガイドの Known gaps を現状に合わせて更新しました。Settings の通常の focus trap と前面判定、Home / Graph の行キー操作は対応済みとし、未解決の 100 Tab stop 超の制限、Linux / FreeBSD の platform menu と overlay の組み合わせ、UI thread の同期書き込みと WIP diffstat を明記しました。(#974、#976、#980、#986、#981、#987、#990、#996)
 
 ## [0.42.0] - 2026-10-04
 

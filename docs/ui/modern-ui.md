@@ -149,7 +149,7 @@ the row says a Kagi geometry is kept on purpose.
 | Search — hero (Home) | larger box, leading icon, no heavy border, results grouped by heading | Only where search is the screen's main action. |
 | Button | gpui-component `Button` / `KagiButton`: S = 24 in toolbars, M = 32 in forms and dialogs, radius 6 | The vertical `render_header` toolbar is a Kagi geometry exception: each button (including unavailable) is one Tab stop with a `keyboard_nav::with_ring` focus-visible border. An unavailable action keeps its click handler (never `.disabled(true)`), exposes its existing footer reason via `aria_description` alongside the visible AX name and AccessKit disabled state, and Enter / Space show that same reason in the footer. |
 | List row (dense) | keep: sidebar 20, worktree 24, graph commit row 29 (synced with the lane canvas), modal target 18 | Hover is a full-width wash; selection keeps Kagi's colour meanings (branch/ref/status). Changing a row height needs the visible-row count, virtual list height and a11y positions shown together. |
-| List row (open: Home, PR/Issue lists) | Height follows the actual content and surface, not one open-row size: the PR dashboard row settles near 65px around a 40px avatar; the Issue row has a 104px minimum for its title and metadata ([`pr_dashboard.rs`](../../src/ui/pr_dashboard.rs#L341-L344), [`issues_mode.rs`](../../src/ui/issues_mode.rs#L486-L515)). Home's rows: `keyboard_nav::RowFocus` / `RowList` — the list is one Tab stop (the row last focused while it is drawn, else the first row on screen), ↑/↓ scroll the neighbouring row into view and focus it, Enter/Space press it; a focused row that leaves the list hands the focus to the first row left, or to the window — also when the list itself is not drawn (still loading, failed: `RowFocus::release`) (#959; in #960 every row was a Tab stop). | 32–40px is only a candidate for a single-line result without those contents, not a PR/Issue list target. Keep the identifying part of long names; the full value must be reachable by keyboard/AX, not only a tooltip. Other virtualized lists (the PR / Issue navigators, the Graph sidebar) do not have the row keyboard path yet. |
+| List row (open: Home, PR/Issue lists) | Height follows the actual content and surface, not one open-row size: the PR dashboard row settles near 65px around a 40px avatar; the Issue row has a 104px minimum for its title and metadata ([`pr_dashboard.rs`](../../src/ui/pr_dashboard.rs#L341-L344), [`issues_mode.rs`](../../src/ui/issues_mode.rs#L486-L515)). Home's rows: `keyboard_nav::RowFocus` / `RowList` — the list is one Tab stop (the row last focused while it is drawn, else the first row on screen), ↑/↓ and Home / End / PageUp / PageDown scroll the destination row into view and focus it (Cmd+↑/↓ also move to the ends), Enter/Space press it; a focused row that leaves the list hands the focus to the first row left, or to the window — also when the list itself is not drawn (still loading, failed: `RowFocus::release`) (#959, #986; in #960 every row was a Tab stop). | 32–40px is only a candidate for a single-line result without those contents, not a PR/Issue list target. Keep the identifying part of long names; the full value must be reachable by keyboard/AX, not only a tooltip. The Graph sidebar also has a per-pane row keyboard path (#987); the PR / Issue navigators still do not. |
 | Menu / context menu | Kagi `menu_overlay` (keeps disabled-reason tooltips and danger rows); pinned PopupMenu rows are 26 fixed | Adopt PopupMenu only where those contracts are not needed. |
 | Modal / confirmation | Kagi `modal_shell` (target list not hideable behind disclosure; long lists scroll inside their panel; fixed action row; existing widths 504/576/648). Six input + confirm cards (#956: Create Branch/Tag, Stash, Add Worktree, Rename Branch, Set Upstream) use a heading with inline operation icon, form `Input`/confirm M = 32 as the base, errors immediately below the field, a visible disabled confirm when invalid/blocked, and only a Git command for recovery when the plan is Ready. | The target rows are not all simultaneously on-screen when the list is long ([`modal_shell.rs`](../../src/ui/modal_shell.rs#L440-L461)). Do not replace with gpui-component Dialog (448 fixed, different focus/Esc). Stash keeps its 38px message field and 24px action buttons; Create Branch has no recovery row, Set Upstream no recovery command. Borrow Dialog's look, not its behaviour. |
 | Toast | Kagi `toast_stack` (bounded preview, max 4, info 4 s / error 8 s); the Operation Log owns detail | Not gpui-component Notification. |
@@ -169,26 +169,37 @@ PR block.
 
 ## Known gaps (do not claim these are met)
 
-- Home's list and the Graph sidebar's panes have the row keyboard path (one
-  Tab stop, ↑/↓ and Home/End/PageUp/PageDown, with Cmd+↑/↓ for the ends);
-  the PR / Issue navigators do not. The commit graph pages from
-  root focus only while Graph is visible and no menu overlay or confirmation
-  modal covers it, independently of Home's row focus. Its ↑/↓ keys use
-  the same visibility guard.
-- The Graph sidebar (#981): a pane collapses only by the pointer; the
-  keyboard-opened worktree card's Refresh and port link are pointer-only;
-  the branch row's × and the right-click menus have no keyboard path (#985);
-  after a checkout plan opened from a row closes, the focus is on the
-  window, not back on the row.
-- gpui shows `focus_visible` only while the last input was a key: moving the
-  mouse hides the ring while the focus stays, so the next Enter / Space
-  presses an element with no ring (gpui-wide; #960 review).
+- The PR / Issue navigators still lack a row keyboard path.
+- The Graph sidebar's secondary controls remain pointer-only: a pane cannot
+  be collapsed from the keyboard, the worktree card's Refresh and port link
+  are pointer-only, and branch-row deletion and context menus need #985.
+  Closing a checkout plan opened from a row returns focus to the window,
+  not to the row.
+- GPUI shows `focus_visible` only while the last input was a key: `MouseMove`
+  hides the ring without moving focus, but Enter / Space still activates the
+  focused control. A GPUI/Kagi fix is deferred (#354 gap 1).
+- A tab's `Role::TabPanel` has no `aria-labelledby` / `aria-controls` relation
+  back to its tab; the panel repeats the tab name instead (#983).
+- Actual VoiceOver readout of unavailable toolbar reasons is not verified.
+  Keyboard access and `aria_description` are wired (#975), but a direct
+  `AXUIElement` probe does not activate GPUI's accessibility tree (#354).
 - Library transitions (Switch 150 ms, Tab 200 ms, Dialog 250 ms) do not follow
   `reduce_motion`.
-- Settings' focus trap is gpui-component Root's: when Tab steps out of the
-  panel, it searches for the way back with at most 100 focus moves over the
-  window's Tab stops. A window with more stops than that would let the wrap
-  leave Settings (#974).
+- Settings' gpui-component Root focus trap searches at most 100 focus moves
+  when wrapping Tab / Shift+Tab. If the window has more Tab stops, focus
+  may still leave Settings; the original Terminal Tab escape is fixed, but
+  this search bound remains (see `docs/decisions.md`, #974).
+- Linux / FreeBSD platform-menu overlays still need keyboard and focus
+  verification when combined with Settings or a confirmation modal: the
+  three-layer Escape order, command-overlay dismissal, and tab / repository
+  switches with a dropdown open remain unverified (#990). The resolved
+  `front_layer` / `Z_ORDER` priority and modal veto are not this gap (#976).
+- UI-thread repository work still blocks interaction: snapshot creation,
+  conflict continue / skip, and stage / unstage / hunk writes run
+  synchronously under a lease; the post-write `refresh_wip_diffstat` is a
+  synchronous read. The writes need background tasks with the operation's
+  `fallible()` → abandonment → Unknown → reconcile path and `OwnerStamp`
+  delivery; WIP diffstat needs an async read (#996).
 
 ## Resolved: dated text boxes in input + confirm cards (#956)
 

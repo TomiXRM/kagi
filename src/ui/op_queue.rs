@@ -737,7 +737,6 @@ impl KagiApp {
                 WaitReason::PlanSlotBusy => QueueText::WaitPlan,
                 WaitReason::NeedsConfirmation => QueueText::WaitConfirm,
                 WaitReason::NeedsReconcile => QueueText::WaitReconcile,
-                WaitReason::RemoteLatched => QueueText::WaitPull,
             },
             IntentState::Planning => QueueText::Planning,
             IntentState::AwaitingConfirm => QueueText::Confirming,

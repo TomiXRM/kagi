@@ -32,7 +32,6 @@ pub enum WaitReason {
     PlanSlotBusy,
     NeedsConfirmation,
     NeedsReconcile,
-    RemoteLatched,
 }
 
 /// The observable event which may release each named wait. All such events run
@@ -46,7 +45,6 @@ pub enum ReleaseEvent {
     InputBlurred,
     RevalidationDone,
     ReconcileAcknowledged,
-    RemoteLatchReleased,
 }
 impl WaitReason {
     pub fn released_by(self, event: ReleaseEvent) -> bool {
@@ -61,7 +59,6 @@ impl WaitReason {
                     | ReleaseEvent::RevalidationDone
             ),
             Self::NeedsReconcile => matches!(event, ReleaseEvent::ReconcileAcknowledged),
-            Self::RemoteLatched => matches!(event, ReleaseEvent::RemoteLatchReleased),
         }
     }
 }
@@ -188,16 +185,11 @@ pub enum QueueEvent<'a> {
     RevalidationStarted(SessionId),
     RevalidationDone(SessionId),
     ReconcileAcknowledged(SessionId),
-    /// The lease-less remote pull of this session is running (ADR-0204 決定 3:
-    /// it cannot be that session's `&&` predecessor).
-    RemoteLatched(SessionId),
-    RemoteLatchReleased,
     DismissCancelled(SessionId),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EnqueueError {
     CapacityRejected,
-    RemoteLatched,
     IdentityChanged,
     /// The owner's own write has no judgeable receipt, so `&&` cannot hold.
     UntrackedWrite,
@@ -231,8 +223,6 @@ pub struct IntentQueue {
     input_focused: bool,
     revalidating: HashSet<SessionId>,
     reconciling: HashSet<SessionId>,
-    /// Session whose untrackable remote pull is running.
-    remote_latched: Option<SessionId>,
     /// Heads removed by detach while their admission was in flight: kept only
     /// to receive that result (a write admitted after all must stay tracked).
     orphaned: HashSet<IntentId>,
@@ -322,9 +312,7 @@ impl IntentQueue {
         match event {
             E::Enqueue { owner, request } => {
                 let session = owner.session;
-                if self.remote_latched == Some(session) {
-                    effects.push(QueueEffect::Rejected(EnqueueError::RemoteLatched));
-                } else if self.untracked_owner == Some(session) {
+                if self.untracked_owner == Some(session) {
                     effects.push(QueueEffect::Rejected(EnqueueError::UntrackedWrite));
                 } else if owner.worktree.is_none() {
                     effects.push(QueueEffect::Rejected(EnqueueError::IdentityChanged));
@@ -752,8 +740,6 @@ impl IntentQueue {
             E::ReconcileAcknowledged(session) => {
                 self.reconciling.remove(&session);
             }
-            E::RemoteLatched(session) => self.remote_latched = Some(session),
-            E::RemoteLatchReleased => self.remote_latched = None,
             E::DismissCancelled(session) => {
                 self.cancelled.remove(&session);
                 if matches!(self.gate(session), ChainGate::Tripped { .. }) {

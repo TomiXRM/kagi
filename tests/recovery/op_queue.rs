@@ -414,6 +414,7 @@ pub fn scenario_queue_skips_auto_fetch(cx: &mut VisualTestAppContext) {
     assert_eq!(skipped(), before + 1);
 
     app.update(cx, |app, _| app.cancel_create_branch_modal());
+    focus_root(cx, &app, window);
     tick_until(cx, &app, "b to run", |app| {
         app.queue_strip_for_e2e(std::time::Instant::now()).is_none()
     });

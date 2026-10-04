@@ -274,14 +274,12 @@ fn q4_every_wait_has_an_exhaustively_named_release_and_rechecks_other_heads() {
         WaitReason::PlanSlotBusy,
         WaitReason::NeedsConfirmation,
         WaitReason::NeedsReconcile,
-        WaitReason::RemoteLatched,
     ];
     let releases = [
         ReleaseEvent::LeaseReleased,
         ReleaseEvent::PlanSlotFreed,
         ReleaseEvent::OwnerReturned,
         ReleaseEvent::ReconcileAcknowledged,
-        ReleaseEvent::RemoteLatchReleased,
     ];
     for (reason, release) in reasons.into_iter().zip(releases) {
         assert!(reason.released_by(release));
@@ -301,10 +299,6 @@ fn q4_every_wait_has_an_exhaustively_named_release_and_rechecks_other_heads() {
             WaitReason::NeedsReconcile => {
                 q.reconciling.insert(session(1));
             }
-            WaitReason::RemoteLatched => {
-                // Another tab's lease-less pull: this tab may still queue.
-                q.apply(QueueEvent::RemoteLatched(session(3)));
-            }
         }
         let a = enqueue(&mut q, 1);
         let other = enqueue(&mut q, 2);
@@ -316,7 +310,6 @@ fn q4_every_wait_has_an_exhaustively_named_release_and_rechecks_other_heads() {
             ReleaseEvent::ReconcileAcknowledged => {
                 q.apply(QueueEvent::ReconcileAcknowledged(session(1)))
             }
-            ReleaseEvent::RemoteLatchReleased => q.apply(QueueEvent::RemoteLatchReleased),
             ReleaseEvent::ModalSlotFree
             | ReleaseEvent::InputBlurred
             | ReleaseEvent::RevalidationDone => unreachable!(),
@@ -603,35 +596,6 @@ fn q13_anchor_is_only_same_session_trackable_write_and_duplicate_receipts_are_ig
         q.apply(QueueEvent::LeaseReleased(Some(stamp(2, 90)))),
         vec![QueueEffect::StartPlan(head)]
     );
-    // Its own lease-less pull cannot be the tab's predecessor: refused.
-    let mut q = IntentQueue::new();
-    q.apply(QueueEvent::OwnerReturned(session(2)));
-    q.apply(QueueEvent::RemoteLatched(session(1)));
-    assert!(q
-        .apply(QueueEvent::Enqueue {
-            owner: owner(1),
-            request: request()
-        })
-        .contains(&QueueEffect::Rejected(EnqueueError::RemoteLatched)));
-    // Another tab's pull only blocks, by name, until it ends.
-    let waiting = enqueue(&mut q, 2);
-    assert_eq!(
-        state(&q, 2),
-        IntentState::Waiting {
-            reason: WaitReason::RemoteLatched
-        }
-    );
-    assert_eq!(
-        q.apply(QueueEvent::RemoteLatchReleased),
-        vec![QueueEffect::StartPlan(waiting)]
-    );
-    assert!(matches!(
-        q.apply(QueueEvent::Enqueue {
-            owner: owner(1),
-            request: request()
-        })[0],
-        QueueEffect::Enqueued(_)
-    ));
 }
 
 #[test]

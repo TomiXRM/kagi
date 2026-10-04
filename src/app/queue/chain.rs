@@ -180,8 +180,6 @@ impl IntentQueue {
             }
             let reason = if self.input_focused {
                 Some(WaitReason::NeedsConfirmation)
-            } else if self.remote_latched.is_some() {
-                Some(WaitReason::RemoteLatched)
             } else if self.write.is_some() || self.write_busy {
                 Some(WaitReason::WriteRunning)
             } else if self.plan_slot_busy || occupied || chosen {

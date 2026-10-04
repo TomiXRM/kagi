@@ -168,13 +168,12 @@ pub struct IntentQueue {
   lease 解放までは `WriteRunning` の blocker としてだけ残る（二度と来ない receipt を待たない）。
   「busy なら enqueue して新しい chain を始める」形は**禁止** — 先行者を失えば `&&` が成立しない。
 - **anchor にできるのは「追跡できる先行者」だけ。** 条件は `OperationId` と `OwnerStamp` を持ち、
-  終端が `apply` の権威ある completion として届くこと。SSH remote pull も
-  `Planned::RemotePull` として同じ identity と lease を持つため anchor になれる（#989）。
-  追跡できない legacy 先行者は残っていない。**走っている write が無ければ
+  終端が `apply` の権威ある completion として届き、queue が成功を verify できること。
+  SSH remote pull は #989 以降 lease を保持するが、他の verify できない write と同じく
+  queue では追跡不能な write として扱い、anchor にせず、その owner tab での投入を拒否する。
+  lease を持たない legacy 先行者は残っていない。**走っている write が無ければ
   `anchor = None` が正常な状態**で、idle の列への投入はそのまま受け付ける（適格 family の
-  entry point は idle でも typed intent を積む、§0）。reducer の `RemoteLatched(session)` /
-  `Rejected(RemoteLatched)` / `Waiting { RemoteLatched }` は #989 以前の lease を持たない pull latch
-  のためのもので、#989 以降は発火元が無い（reducer からの削除は queue 側の follow-up）。
+  entry point は idle でも typed intent を積む、§0）。
 - **別 session で走っている write は anchor にしない**。追跡できている writer であっても、それは
   global な blocker（`Waiting { WriteRunning }`）にすぎず、他 tab の失敗が自分の列を cancel する
   ことはない。
@@ -326,9 +325,8 @@ pub enum IntentRequest {                // 段階 2 で受け付ける最初の 
 | --- | --- | --- |
 | `WriteRunning`（どの tab の write でも） | lease 解放 | `apply(Completion)` → `Sessions::release_lease` |
 | `PlanSlotBusy` | plan job が実際に終わり、**一致する** `IntentId` の `PlanSlotFreed(Some(id))` が届くこと。queue 外の plan job は `PlanSlotTaken` で slot を占め、`PlanSlotFreed(None)` で返す。古い job の callback は別の plan の latch を解放しない | `finish_planning` の終端 callback、`Sessions::invalidate_plan` |
-| `NeedsConfirmation` | owner tab が前面に戻り、**かつ** `active_modal` が空、**かつ** `panes_revalidating()` が false、**かつ** pipeline が空（`Running` 無し） | `active_session()` / `active_modal` / `pane_mutation_admitted` / `op_latched` |
+| `NeedsConfirmation` | owner tab が前面に戻り、**かつ** `active_modal` が空、**かつ** text input が focus されておらず、**かつ** `panes_revalidating()` が false、**かつ** pipeline が空（`Running` 無し） | `active_session()` / `active_modal` / `InputBlurred` / `pane_mutation_admitted` / `op_latched` |
 | `NeedsReconcile` | reconcile の acknowledge | ADR-0196 決定 2.4 |
-| `RemoteLatched` | （#989 以降は発火元なし） | 旧 `remote_write` latch の解除。SSH pull は lease を持つので `WriteRunning` で待つ |
 
 `Admitting` の `Busy` / `NeedsReconcile` が失敗ではなく差し戻しであること、
 `AwaitingConfirm` の tab 離脱が cancel ではなく `Queued` 復帰であること、この 2 点が
@@ -383,7 +381,7 @@ count の精密化）は別件で触れない。ADR-0153 は Accepted のまま�
 | Q10 | 確認中に他 session が永久に待たない | Tier B: A で confirm を開いたまま B へ切替 → A の intent は `Queued` に戻り、B の先頭が進むこと |
 | Q11 | 受理を完了として扱わない | Tier A: 非同期 server family の受理（`PrMergeLocalReason::Queued` 相当）で chain が **trip** し、依存する後片付けも「merged」表示も起きないこと。適格条件を満たさない family は enqueue 自体が拒否されること |
 | Q12 | 先頭 cancel が「止めた」と偽らない | Tier A: `Planning` / `AwaitingConfirm` の cancel で intent は `Cancelled`、自分の modal は閉じ、遅れて届く plan 結果は revision 不一致で捨てられ、**`planning` latch は job の終端 callback でのみ解放**され、次の dispatch は `Waiting { PlanSlotBusy }` を経ること |
-| Q13 | queue 経由でない先行 write も `&&` の anchor になる | Tier A: 同 session で走行中の operation（`OperationId` + `OwnerStamp`、SSH remote pull を含む）を anchor に持つ列が、その `apply` receipt 一回で判定されること。非 Success なら新しい列が全 cancel されること。**別 session の write は anchor にならず**、失敗しても自分の列は残ること |
+| Q13 | queue 経由でない先行 write も `&&` の anchor になる | Tier A: 同 session で走行中の verify できる operation（`OperationId` + `OwnerStamp`）を anchor に持つ列が、その `apply` receipt 一回で判定されること。非 Success なら新しい列が全 cancel されること。SSH remote pull など verify できない write の owner tab では投入を拒否すること。**別 session の write は anchor にならず**、失敗しても自分の列は残ること |
 
 **`gh pr checks --watch` 固有の解除条件（Q1–Q13 に加えて全て必須）**
 
@@ -402,6 +400,8 @@ count の精密化）は別件で触れない。ADR-0153 は Accepted のまま�
 
 ## 未解決リスク（段階 3 で計測）
 
+SSH remote pull の旧 latch による排他の穴は #989 の write lease 移行で解消済みであり、未解決リスクに含めない。
+
 1. **確認の回数**。先頭ごとに confirm が出るため、3 件積むと 3 回確認する。安全性の対価として
    受け入れるが、体感が #355 の目的に反しないかは native（Q8）で測る。「確認の束ね」は plan の
    束ね＝前提の共有になるので、安易な緩和策にはしない。
@@ -413,6 +413,8 @@ count の精密化）は別件で触れない。ADR-0153 は Accepted のまま�
    plan slot を session 別にする案は ADR-0182 の単一 slot 決定に触るので本 ADR では採らない。
 
 ## 改訂履歴
+
+- **2026-10-04 #989 後の queue 契約整理** — SSH remote pull は lease を保持するが、queue が成功を verify できないため anchor にはせず、他の追跡不能な write と同じく owner tab での投入を拒否する。旧 remote latch に対応する待機理由と解除事象を削除し、排他の穴が #989 で解消したことを明記した。
 
 - **2026-10-04 段階 3b-1（#355）** — commit を checkout に続く適格 family として配線した。
   - `start_commit` で write が実行中、または同じ tab に queued intent が残る場合、本文と staged

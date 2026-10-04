@@ -20,7 +20,6 @@ pub enum QueueText {
     WaitPlan,
     WaitConfirm,
     WaitReconcile,
-    WaitPull,
     /// The cancel list heading.
     Cancelled,
     CancelAll,
@@ -61,8 +60,6 @@ pub fn queue_text(key: QueueText) -> &'static str {
         (Lang::Ja, WaitConfirm) => "待機: 確認",
         (Lang::En, WaitReconcile) => "waiting: reconcile",
         (Lang::Ja, WaitReconcile) => "待機: reconcile",
-        (Lang::En, WaitPull) => "waiting: pull",
-        (Lang::Ja, WaitPull) => "待機: pull",
         (Lang::En, Cancelled) => "cancelled",
         (Lang::Ja, Cancelled) => "取り消し",
         (Lang::En, CancelAll) => "Cancel all",

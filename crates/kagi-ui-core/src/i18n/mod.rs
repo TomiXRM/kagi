@@ -936,10 +936,8 @@ pub enum Msg {
     CleanupGrownHint,
     /// Empty-table body message.
     // ── Plan-modal confirm labels (destructive ops get an armed variant) ──
-    /// Equivalent-git-command line in the plan modal, `{}` = the command
-    /// (#353). Deliberately "equivalent to", never "runs" — kagi executes in-process via
-    /// the git library, not the CLI.
-    PlanEquivalentTo,
+    /// Heading for the structured recovery commands in a plan card / Copy all.
+    ModalRecoveryCommands,
     // Advice catalog (#353): contextual variants retain their original wording.
     AdviceUntrackedRemain(kagi_domain::plan_note::UntrackedCtx),
     AdviceSuggestStashPush,
@@ -3101,8 +3099,8 @@ impl Msg {
             (Ja, CleanupBadgeStale) => "ストール",
             (En, CleanupGrownHint) => "new commits since merge:",
             (Ja, CleanupGrownHint) => "merge 後の新規 commit:",
-            (En, PlanEquivalentTo) => "This is equivalent to `{}`",
-            (Ja, PlanEquivalentTo) => "この操作は `{}` に相当します",
+            (En, ModalRecoveryCommands) => "recovery commands:",
+            (Ja, ModalRecoveryCommands) => "復旧コマンド:",
             (En, AmendFoldedFiles) => "Staged changes folded in",
             (Ja, AmendFoldedFiles) => "この commit に取り込む staged 変更",
             (En, ModalCopyAll) => "Copy this dialog as text",

@@ -457,14 +457,16 @@ fn assert_section(cx: &mut VisualTestAppContext, case: &Case, id: &str, expect_o
             section,
             &format!("{label}: {id} section"),
         );
-        let content_id = if id.ends_with("-recovery") {
-            "modal-recovery-scroll"
+        if id.ends_with("-recovery") {
+            assert!(
+                measure(cx, case.win, &["modal-recovery-scroll"])[0].is_none(),
+                "{label}: recovery prose is not in the card"
+            );
         } else {
-            "modal-warning-content"
-        };
-        let content = required(cx, case.win, content_id, label);
-        solid(content, &format!("{label}: {id} content"));
-        contained(section, content, &format!("{label}: {id} content"));
+            let content = required(cx, case.win, "modal-warning-content", label);
+            solid(content, &format!("{label}: {id} content"));
+            contained(section, content, &format!("{label}: {id} content"));
+        }
     }
 }
 
@@ -504,10 +506,10 @@ fn amend_case(
 
     let card = assert_card_fits(cx, case, &["amend-cancel", "amend-confirm"]);
     assert_targets(cx, case, card, staged);
-    // Safety detail stays visible even when the window is short; supporting
-    // detail is what compact mode folds.
+    // Warnings remain visible; structured recovery starts collapsed at every
+    // viewport, including the normal-height card.
     assert_section(cx, case, "amend-warnings", true);
-    assert_section(cx, case, "amend-recovery", !case.compact);
+    assert_section(cx, case, "amend-recovery", false);
     let (role, text) = kagi::ui::dialog_a11y::recorded_note("amend-warning-0")
         .expect("amend checklist warning has an accessible note");
     assert_eq!(role, gpui::Role::Note);
@@ -522,10 +524,9 @@ fn amend_case(
         assert_section(cx, case, "amend-warnings", true);
         theme::set_zoom(1.);
     }
-    // The user outranks the default: clicking the real header flips the
-    // section, and the card still fits with it flipped.
+    // A real click expands the command disclosure; a fresh card resets it.
     toggle_section(cx, case, "amend-recovery");
-    assert_section(cx, case, "amend-recovery", case.compact);
+    assert_section(cx, case, "amend-recovery", true);
     let card = assert_card_fits(cx, case, &["amend-cancel", "amend-confirm"]);
     assert_targets(cx, case, card, staged);
 
@@ -533,27 +534,17 @@ fn amend_case(
     // card starts from the renderer's default again. No test-only reset here —
     // the production open path is what has to do it.
     open_amend(cx, app, "compact amend");
-    assert_section(cx, case, "amend-recovery", !case.compact);
+    assert_section(cx, case, "amend-recovery", false);
 
-    // The responsive default is not allowed to re-decide a section the user
-    // has already decided. Compact mode keys off the zoom-normalised window
-    // height, and the native queue never settles a resize here, so the zoom is
-    // what moves this window across the threshold — a real responsive change
-    // through the real root, not an injected viewport.
-    //
-    // Two clicks: the second lands back on the value the current default
-    // happens to have, which is the point — it must be stored as the user's
-    // choice, not forgotten as "same as default", or the flipped default
-    // silently overrides it.
+    // A user-opened command disclosure survives a zoom across the compact
+    // threshold; zoom never re-decides its state.
     toggle_section(cx, case, "amend-recovery");
-    assert_section(cx, case, "amend-recovery", case.compact);
-    toggle_section(cx, case, "amend-recovery");
-    assert_section(cx, case, "amend-recovery", !case.compact);
+    assert_section(cx, case, "amend-recovery", true);
     theme::set_zoom(case.flip_zoom());
     assert_card_fits(cx, case, &["amend-cancel", "amend-confirm"]);
-    assert_section(cx, case, "amend-recovery", !case.compact);
+    assert_section(cx, case, "amend-recovery", true);
     theme::set_zoom(1.);
-    assert_section(cx, case, "amend-recovery", !case.compact);
+    assert_section(cx, case, "amend-recovery", true);
 
     // Arming is the first of the two confirm clicks. The armed notice adds
     // prose to an already-full card: the buttons and the targets must survive
@@ -652,7 +643,7 @@ fn discard_case(
     let warning =
         cx.read(|cx| i18n::plan_note_text(&app.read(cx).discard_modal().unwrap().plan.warnings[0]));
     assert_eq!(text, warning);
-    assert_section(cx, case, "discard-recovery", !case.compact);
+    assert_section(cx, case, "discard-recovery", false);
 
     app.update(cx, |app, cx| app.start_discard(cx));
     cx.run_until_parked();
@@ -727,29 +718,17 @@ fn push_case(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, case: &Case) 
     );
     contained(list, last, &format!("{label}: final push target"));
 
-    // Recovery on the shared card: plain prose at a normal height, folded into
-    // a section only where the window is short. Measuring both tells the two
-    // shapes apart instead of just "something was drawn".
+    // The structured recovery commands are always one collapsed disclosure;
+    // neither compact nor roomy cards show explanatory prose in the body.
     let recovery = measure(
         cx,
         case.win,
-        &[
-            "plan-recovery",
-            "plan-recovery-body",
-            "plan-recovery-scroll",
-        ],
+        &["plan-recovery", "plan-recovery-body", "plan-recovery-scroll"],
     );
-    if case.compact {
-        assert!(
-            recovery[0].is_some() && recovery[1].is_none(),
-            "{label}: a short window folds the push recovery into a closed section"
-        );
-    } else {
-        assert!(
-            recovery[0].is_none() && recovery[2].is_some(),
-            "{label}: a roomy window keeps the push recovery as plain prose"
-        );
-    }
+    assert!(
+        recovery[0].is_some() && recovery[1].is_none() && recovery[2].is_none(),
+        "{label}: push recovery is collapsed command-only at every height"
+    );
     if !case.compact {
         theme::set_zoom(1.5);
         let zoomed = assert_card_fits(cx, case, &["plan-cancel", "plan-confirm"]);

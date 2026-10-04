@@ -225,6 +225,10 @@ mod recovery_header_fit;
 mod recovery_modal_compact;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/plan_card_994.rs"]
+mod recovery_plan_card_994;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/oplog_panel.rs"]
 mod recovery_oplog_panel;
 #[cfg(target_os = "macos")]
@@ -915,6 +919,22 @@ mod macos {
             (
                 "blocked_plan_command",
                 Box::new(crate::recovery_operations::scenario_blocked_plan_command),
+            ),
+            (
+                "plan_card_heading",
+                Box::new(crate::recovery_plan_card_994::scenario_plan_card_heading),
+            ),
+            (
+                "plan_recovery_commands",
+                Box::new(crate::recovery_plan_card_994::scenario_plan_recovery_commands),
+            ),
+            (
+                "plan_recovery_ax",
+                Box::new(crate::recovery_plan_card_994::scenario_plan_recovery_ax),
+            ),
+            (
+                "plan_equivalent_summary",
+                Box::new(crate::recovery_plan_card_994::scenario_plan_equivalent_summary),
             ),
             (
                 "commit_list_roles",

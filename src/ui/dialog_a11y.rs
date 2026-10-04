@@ -59,6 +59,23 @@ pub struct DialogA11y {
     pub actions: Vec<(i32, String)>,
 }
 
+impl DialogA11y {
+    /// Add the plan's recovery explanation after the confirm-stage instruction.
+    /// Even a plan with no shell commands retains its accessible recovery advice.
+    pub(crate) fn with_recovery(mut self, recovery: &str) -> Self {
+        if !recovery.is_empty() {
+            match &mut self.description {
+                Some(description) => {
+                    description.push('\n');
+                    description.push_str(recovery);
+                }
+                None => self.description = Some(recovery.to_owned()),
+            }
+        }
+        self
+    }
+}
+
 /// The dialog's role, name, description and actions. `confirm_label` is
 /// `None` when blockers hide the confirm button — the action is then not
 /// offered either.

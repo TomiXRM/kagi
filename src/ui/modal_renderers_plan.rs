@@ -430,6 +430,7 @@ pub(crate) fn render_branch_plan_modal(
 
 pub(crate) fn render_set_upstream_modal(
     modal: SetUpstreamModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
@@ -447,6 +448,8 @@ pub(crate) fn render_set_upstream_modal(
         cx.notify();
     });
     render_input_plan_modal(
+        Msg::InputSetUpstream.t(),
+        &modal.branch_name,
         Msg::PlanSetUpstreamFor
             .t()
             .replace("{}", &modal.branch_name),
@@ -461,12 +464,14 @@ pub(crate) fn render_set_upstream_modal(
         (IconName::ExternalLink.into(), theme().color_branch),
         cancel_handler,
         confirm_handler,
+        overrides,
         cx,
     )
 }
 
 pub(crate) fn render_rename_branch_modal(
     modal: RenameBranchModal,
+    overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let cancel_handler = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
@@ -484,6 +489,8 @@ pub(crate) fn render_rename_branch_modal(
         cx.notify();
     });
     render_input_plan_modal(
+        Msg::InputRename.t(),
+        &modal.old_name,
         Msg::PlanRenameBranch.t().replace("{}", &modal.old_name),
         Msg::InputNewBranchName.t(),
         modal.input_state,
@@ -499,6 +506,7 @@ pub(crate) fn render_rename_branch_modal(
         ),
         cancel_handler,
         confirm_handler,
+        overrides,
         cx,
     )
 }

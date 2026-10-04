@@ -208,11 +208,13 @@ PR block.
 The Create Branch pilot found a 40px circular badge and long title that
 made the header top-heavy; explanatory text crowded a 24px form `Input`.
 Errors sat away from the field, and invalid/blocked plans hid confirm.
-Six cards now use shorter titles with inline icons and base M = 32 form
-`Input`/confirm, with errors immediately below the field. Invalid or
-blocked plans keep a visible disabled confirm; recovery, when present, is
-only a Git command for Ready plans (detail remains in Operation Log).
-Shared `Theme.radius`/font/input padding and `modal_shell`/plan/IME stay unchanged; values align by role.
+The six input + confirm cards use shorter titles and base M = 32 form
+`Input`/confirm, with errors immediately below the field. Rename Branch and
+Set Upstream now use the shared plan-card inline heading (18px icon, target
+chip); the other four input cards retain their existing badge heading.
+Invalid or blocked plans keep a visible disabled confirm; recovery, when
+present, uses structured commands only for Ready plans. Shared
+`Theme.radius`/font/input padding and `modal_shell`/plan/IME stay unchanged.
 
 ## Plan comparison and Operation Log restore (#988, #1017)
 
@@ -248,6 +250,25 @@ a moved annotated tag. Ref rows are decoded once at admission; malformed
 rows fail closed with a durable Failed receipt and a bounded UI preview.
 Restore keeps its two confirmations and backend preflight/verification/
 recording unchanged.
+
+## Plan heading and recovery (#994)
+
+The 29 shared plan confirmations (including queued commit), the two
+input-plan confirmations, and Amend / Discard use a short localized operation
+title with an inline 18px icon and up to two monospace target chips, not a
+40px circular badge. The full localized title remains in the dialog name and
+Copy all. `render_modal_title_row` remains for non-plan modals.
+
+Only Ready plans with no blockers show recovery commands, through a single
+keyboard-accessible disclosure that starts closed; Copy on that row copies
+only `PlanRecovery::commands_for(ShellKind::current())`. Unsupported shell
+quoting hides the command disclosure. Recovery explanations never occupy
+these card bodies: Copy all preserves their full text, and the dialog's AX
+description appends them after any confirm-stage instruction (including plans
+with no commands). Equivalent Git commands use the same disclosure geometry,
+with their own identifiers and an explicitly *equivalent*, not *executed*,
+AX name. Cherry-pick / Stash apply bespoke recovery and persisted Operation
+Log recovery prose remain separate follow-ups.
 
 ## Open questions (to settle with evidence)
 

@@ -69,12 +69,10 @@ pub(crate) fn modal_copy_button(
 
 /// The whole popup as plain text, for [`modal_copy_button`].
 ///
-/// Renders what the card shows, in the card's own order and already localized:
-/// title, current → predicted, warnings, blockers, the row list the caller
-/// passes in, then the recovery text. Plain text, not markdown: it is going
-/// into a terminal or an issue, and the commands must survive verbatim. The
-/// paste-able `commands:` block is only offered to a shell that reads its
-/// quoting (`PlanRecovery::commands_for`, #1007).
+/// Copies the complete plan: full title, state, warnings, blockers, rows and
+/// recovery explanation (which no longer occupies the card body). Structured
+/// shell commands get a separate localized heading when this shell supports
+/// their quoting (`PlanRecovery::commands_for`, #1010).
 pub(crate) fn plan_clipboard_text(
     plan: &OperationPlan,
     rows: &[String],
@@ -118,7 +116,9 @@ pub(crate) fn plan_clipboard_text(
     if let Some(rec) = plan.recovery.as_ref() {
         let commands = rec.commands_for(shell);
         if !commands.is_empty() {
-            out.push_str("\ncommands:\n");
+            out.push('\n');
+            out.push_str(Msg::ModalRecoveryCommands.t());
+            out.push('\n');
             for c in commands {
                 out.push_str("  ");
                 out.push_str(c);
@@ -218,7 +218,7 @@ mod tests {
             );
         }
         assert!(
-            text.contains("\ncommands:\n  git cat-file -p <blob-sha>\n"),
+            text.contains("\nrecovery commands:\n  git cat-file -p <blob-sha>\n"),
             "the paste-able block for a POSIX shell:\n{text}"
         );
 
@@ -231,7 +231,7 @@ mod tests {
             kagi_domain::plan_note::ShellKind::WindowsCmd,
         );
         assert!(
-            !windows.contains("commands:"),
+            !windows.contains("recovery commands:"),
             "no paste-able block for cmd.exe:\n{windows}"
         );
         assert!(

@@ -619,8 +619,8 @@ pub fn scenario_modal_sections(cx: &mut VisualTestAppContext) {
             .unwrap();
         e2e::control_bounds(win.window_id(), name)
     };
-    assert!(measure(cx, "amend-recovery-body").is_some());
-    for expanded in [false, true, false] {
+    assert!(measure(cx, "amend-recovery-body").is_none());
+    for expanded in [true, false, true] {
         let header = measure(cx, "amend-recovery").unwrap();
         cx.simulate_click(win, header.center(), gpui::Modifiers::none());
         cx.run_until_parked();
@@ -634,7 +634,7 @@ pub fn scenario_modal_sections(cx: &mut VisualTestAppContext) {
         cx.notify();
     });
     cx.run_until_parked();
-    assert!(measure(cx, "amend-recovery-body").is_some());
+    assert!(measure(cx, "amend-recovery-body").is_none());
     unmount(cx, app, win);
     eprintln!("[gui-e2e] PASS modal_sections");
 }

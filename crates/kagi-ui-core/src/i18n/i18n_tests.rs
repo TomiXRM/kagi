@@ -123,25 +123,6 @@ fn op_failed_switches_and_keeps_domain_words() {
     set_lang_no_persist(Lang::En);
 }
 
-// #353: the equivalent-command line must read "equivalent to" / "相当",
-// NEVER "runs" / "実行" — X, so
-// claiming it "runs" the command would be a lie.
-#[test]
-fn equivalent_command_wording_says_equivalent_not_runs() {
-    let _g = LOCK.lock();
-    set_lang_no_persist(Lang::En);
-    let en = Msg::PlanEquivalentTo.t();
-    assert!(en.contains("equivalent to"), "EN wording: {en}");
-    assert!(!en.contains("runs"), "EN must not say 'runs': {en}");
-    assert!(en.contains("{}"), "EN keeps the command placeholder: {en}");
-
-    set_lang_no_persist(Lang::Ja);
-    let ja = Msg::PlanEquivalentTo.t();
-    assert!(ja.contains("相当"), "JA wording: {ja}");
-    assert!(!ja.contains("実行"), "JA must not say '実行': {ja}");
-
-    set_lang_no_persist(Lang::En);
-}
 
 #[test]
 fn resolve_lang_env_override() {

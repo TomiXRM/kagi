@@ -395,7 +395,7 @@ impl CommitPanelState {
 /// # Re-entrancy invariant (CRITICAL — proven by `ConflictView`)
 /// A `CommitPanelView` listener leases this entity. NO listener may synchronously
 /// call a `KagiApp` method that reads/updates `app.commit_panel` (directly or via
-/// `refresh_wip_diffstat`'s neighbours / `reload()` / `finish_merge_commit`).
+/// `start_wip_diffstat_scan`'s neighbours / `reload()` / `finish_merge_commit`).
 /// Every such path DEFERS to the parent via `cx.spawn_in(window, …)` +
 /// `weak_app.update_in(acx, …)`, by which time the listener has returned and the
 /// lease is released. Pure entity-internal mutations stay synchronous + a child

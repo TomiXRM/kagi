@@ -1,6 +1,6 @@
 # ADR-0204: operation queue と遅延の説明 — 並べるのは承認済み plan ではなく intent
 
-- Status: **Accepted**（2026-10-04、#355 段階 2 は pure reducer を実装。段階 3a で checkout の入口・strip・auto-fetch の skip を配線。段階 3b-1 で commit の入口を配線。merge の入口は未対応。改訂履歴は末尾）
+- Status: **Accepted**（2026-10-04、#355 段階 2 は pure reducer、段階 3a は checkout、段階 3b-1 は commit、段階 3b-2 は merge を配線。改訂履歴は末尾）
 - Date: 2026-10-04（Draft: 2026-09-23）
 - Base: `origin/main` @ `47d30be4`（#355 段階 2 着手時。§1 は当時の main の実測）
 - Related: [#355](https://github.com/TomiXRM/kagi/issues/355)（親 #359）、ADR-0196（lifecycle 契約）、
@@ -284,6 +284,11 @@ pub enum IntentRequest {                // 段階 2 で受け付ける最初の 
   modal で承認するときにも表示時の staged digest と index を比較し、異なれば承認を失効させて
   commit しない。さらに admission 直前まで merge 状態を live に検査し、外部で始まった merge
   は専用の取消理由を残して通常 commit に渡さない（#355 段階 3b-1）。
+  queued merge は常に通常の merge modal で確認する。投入時の `into` は HEAD の branch 名
+  （drag で明示された場合はその destination 名）として凍結し、先頭時点の HEAD が異なれば
+  その凍結 destination への merge-into として live replan する。予測済み plan は保存しない。
+  実行後の `Commit(new)` と HEAD（merge-into は `into` の tip）が一致したときだけ Verified とし、
+  `MergeIntoConflict` は Conflict Mode に入っても新 commit が無いため Unverified で後続を止める。
   どの経路でも preflight は省かない。
 - **「確認したのに、また確認するのか」への答え**: 先行する write が後続の前提を変えるから。
   `rebase onto origin/main` → `merge feature` では rebase が commit を書き換えるので、merge base も
@@ -416,6 +421,18 @@ SSH remote pull の旧 latch による排他の穴は #989 の write lease 移�
    plan slot を session 別にする案は ADR-0182 の単一 slot 決定に触るので本 ADR では採らない。
 
 ## 改訂履歴
+
+- **2026-10-04 段階 3b-2（#355）** — merge の busy 入口（通常・drag・非 HEAD destination）を
+  intent queue に配線した。`into` を branch 名で凍結し、head が変わればその branch に merge-into
+  する。queue 自身の background plan は panic 時も slot を解放し、confirm modal の離脱は
+  回答とせず requeue する。承認後は既存の `finish_run` に入り、HEAD または凍結 destination
+  tip が新 commit と一致したときのみ Verified。Conflict Mode は Unverified で後続を trip する。
+  #1024 review で、blocker のある queued merge は承認時に refused を記録して PlanError で
+  取り消す（Admitting に残さない。admission 側の同条件は StaleApproval）、owner の離脱・
+  close 後に完了した plan は報告も保存もせず破棄する、queue があり write のない状態で
+  投入できない merge（detached HEAD など）は理由を toast と footer に出す、を加えた。
+  sidebar の branch menu も busy のとき eligible な merge action を無効化せず、通常入口と
+  同じ queue に送る。detached HEAD / Conflict Mode / 同一 branch の既存ガードは維持する。
 
 - **2026-10-04 #989 後の queue 契約整理** — SSH remote pull は lease を保持するが、queue が成功を verify できないため anchor にはせず、他の追跡不能な write と同じく owner tab での投入を拒否する。旧 remote latch に対応する待機理由と解除事象を削除し、排他の穴が #989 で解消したことを明記した。
 

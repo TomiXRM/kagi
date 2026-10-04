@@ -9,7 +9,7 @@
 //! which runs on every enqueue, on every completed run-family write, and on a
 //! 250 ms ticker while any tab has intents.
 //!
-//! Only the checkout family is wired in stage 3a.
+//! Checkout and commit are wired into the shared queue.
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -18,7 +18,7 @@ use std::time::Duration;
 use gpui::{Context, SharedString};
 use kagi_ui_core::i18n::{queue_text, QueueText};
 
-use super::modals::{CheckoutPlanModal, CheckoutPlanTarget};
+use super::modals::{CheckoutPlanModal, CheckoutPlanTarget, QueuedCommitModal};
 use super::{i18n, KagiApp};
 use crate::app::{
     AdmissionError, CheckoutIntent, EnqueueError, ExecutionEvidence, IntentId, IntentQueue,
@@ -32,6 +32,9 @@ const TICK: Duration = Duration::from_millis(250);
 #[derive(Default)]
 pub(crate) struct QueueWiring {
     pub(crate) queue: IntentQueue,
+    /// Last focus state sent to the reducer (render samples the window).
+    input_focused: bool,
+    pub(crate) observed_input_focused: bool,
     active: Option<SessionId>,
     modal: bool,
     revalidating: Option<SessionId>,
@@ -48,7 +51,7 @@ pub(crate) struct QueueWiring {
     /// Verify results of tracked writes still running.
     runs: HashMap<OwnerStamp, Arc<AtomicBool>>,
     /// Replanned intents not yet shown or admitted.
-    plans: HashMap<IntentId, CheckoutPlanModal>,
+    plans: HashMap<IntentId, QueuedPlan>,
     /// The head whose confirmation is on screen.
     confirming: Option<IntentId>,
     /// The user dismissed that confirmation (`cancel_modal` has no context).
@@ -61,6 +64,11 @@ struct NextRun {
     intent: Option<IntentId>,
     verified: Arc<AtomicBool>,
 }
+#[derive(Clone)]
+enum QueuedPlan {
+    Checkout(CheckoutPlanModal),
+    Commit(QueuedCommitModal),
+}
 
 /// Domain words stay English in both languages (ADR-0048).
 pub(crate) fn intent_label(request: &IntentRequest) -> String {
@@ -71,7 +79,7 @@ pub(crate) fn intent_label(request: &IntentRequest) -> String {
         IntentRequest::Checkout {
             target: CheckoutIntent::Commit(commit),
         } => format!("checkout {}", commit.short()),
-        IntentRequest::Commit { message } => {
+        IntentRequest::Commit { message, .. } => {
             let subject: String = message
                 .lines()
                 .next()
@@ -109,6 +117,18 @@ impl KagiApp {
             CheckoutPlanTarget::Commit(commit) => CheckoutIntent::Commit(commit.clone()),
         };
         self.enqueue_intent(IntentRequest::Checkout { target }, cx)
+    }
+    pub(crate) fn enqueue_commit(&mut self, message: String, cx: &mut Context<Self>) -> bool {
+        let staged = match self
+            .ui()
+            .repo_session
+            .as_ref()
+            .map(|session| session.backend().staged_set_digest())
+        {
+            Some(Ok(staged)) => staged,
+            _ => return false,
+        };
+        self.enqueue_intent(IntentRequest::Commit { message, staged }, cx)
     }
 
     fn enqueue_intent(&mut self, request: IntentRequest, cx: &mut Context<Self>) -> bool {
@@ -163,6 +183,9 @@ impl KagiApp {
                     if self.plan_modal().is_some_and(|m| m.queued == Some(id)) {
                         self.clear_plan_modal();
                     }
+                    if self.queued_commit_modal().is_some_and(|m| m.queued == id) {
+                        self.clear_queued_commit_modal();
+                    }
                     if self.op_queue.confirming == Some(id) {
                         self.op_queue.confirming = None;
                     }
@@ -204,14 +227,11 @@ impl KagiApp {
         self.op_queue.logged_cancels = seen;
     }
 
-    /// Live replan at the head (ADR-0204 決定 4). Checkout plans synchronously
-    /// against the tab's session, so the plan slot is freed in the same turn.
+    /// Live replan at the head, against the same session and worktree.
     fn plan_queued(&mut self, id: IntentId, cx: &mut Context<Self>) {
         let Some(intent) = self.op_queue.queue.intent(id).cloned() else {
             return;
         };
-        // Same `SessionId`, same `WorktreeId`, on screen — or cancel. Never
-        // re-aim at another target.
         let same_owner = self.active_session() == Some(intent.owner)
             && self
                 .app_sessions
@@ -224,84 +244,128 @@ impl KagiApp {
             self.drive_queue(QueueEvent::PlanSlotFreed(Some(id)), cx);
             return;
         }
-        let IntentRequest::Checkout { target } = &intent.request else {
-            // Stage 3a has no entry point for the other families.
+        let Some(repo) = self.ui().repo_session.as_ref().map(|s| s.backend()) else {
+            let op = match intent.request {
+                IntentRequest::Commit { .. } => i18n::Op::Commit,
+                _ => i18n::Op::Checkout,
+            };
+            self.report_plan_failure(op, super::modal_plan::SESSION_UNAVAILABLE);
             self.drive_queue(QueueEvent::PlanError(id), cx);
             self.drive_queue(QueueEvent::PlanSlotFreed(Some(id)), cx);
             return;
         };
-        let (target, planned) = {
-            let Some(repo) = self.ui().repo_session.as_ref().map(|s| s.backend()) else {
-                self.report_plan_failure(
+        let (op, planned) = match &intent.request {
+            IntentRequest::Checkout { target } => {
+                let (target, result) = match target {
+                    CheckoutIntent::Branch(branch) => (
+                        CheckoutPlanTarget::Branch(branch.clone()),
+                        repo.plan_checkout(branch),
+                    ),
+                    CheckoutIntent::Commit(commit) => (
+                        CheckoutPlanTarget::Commit(commit.clone()),
+                        repo.plan_checkout_commit(commit),
+                    ),
+                };
+                (
                     i18n::Op::Checkout,
-                    super::modal_plan::SESSION_UNAVAILABLE,
-                );
+                    result.map(|plan| {
+                        QueuedPlan::Checkout(CheckoutPlanModal {
+                            target,
+                            stash_first: false,
+                            plan: Arc::new(plan),
+                            error: None,
+                            queued: Some(id),
+                        })
+                    }),
+                )
+            }
+            IntentRequest::Commit { message, staged } => (
+                i18n::Op::Commit,
+                repo.plan_commit(message).and_then(|plan| {
+                    let staged_changed = repo.staged_set_digest()? != *staged;
+                    Ok(QueuedPlan::Commit(QueuedCommitModal {
+                        queued: id,
+                        message: message.clone(),
+                        plan: Arc::new(plan),
+                        staged_changed,
+                    }))
+                }),
+            ),
+            IntentRequest::Merge { .. } => {
                 self.drive_queue(QueueEvent::PlanError(id), cx);
                 self.drive_queue(QueueEvent::PlanSlotFreed(Some(id)), cx);
                 return;
-            };
-            match target {
-                CheckoutIntent::Branch(branch) => (
-                    CheckoutPlanTarget::Branch(branch.clone()),
-                    repo.plan_checkout(branch),
-                ),
-                CheckoutIntent::Commit(commit) => (
-                    CheckoutPlanTarget::Commit(commit.clone()),
-                    repo.plan_checkout_commit(commit),
-                ),
             }
         };
         match planned {
-            Ok(plan) => {
+            Ok(modal) => {
+                let plan = match &modal {
+                    QueuedPlan::Checkout(m) => &m.plan,
+                    QueuedPlan::Commit(m) => &m.plan,
+                };
                 klog!(
                     "queue: plan {} blockers={} warnings={}",
                     label,
                     plan.blockers.len(),
                     plan.warnings.len()
                 );
-                self.op_queue.plans.insert(
-                    id,
-                    CheckoutPlanModal {
-                        target,
-                        stash_first: false,
-                        plan: Arc::new(plan),
-                        error: None,
-                        queued: Some(id),
-                    },
-                );
+                self.op_queue.plans.insert(id, modal);
                 self.drive_queue(QueueEvent::PlanCompleted(id), cx);
             }
             Err(error) => {
                 klog!("queue: plan error {}: {}", label, error);
-                self.report_plan_failure(i18n::Op::Checkout, error);
+                self.report_plan_failure(op, error);
                 self.drive_queue(QueueEvent::PlanError(id), cx);
                 self.drive_queue(QueueEvent::PlanSlotFreed(Some(id)), cx);
             }
         }
     }
 
-    /// The family's own confirmation rule (ADR-0204 決定 4, amended): a
-    /// checkout whose plan has neither blockers nor warnings runs without a
-    /// modal, exactly as a double click does; anything else asks.
+    /// Replanned commit requires a confirmation when its draft or staging
+    /// differs from the frozen request, or the plan has notes; checkout uses
+    /// its usual clean-plan rule.
     fn confirm_or_run_queued(&mut self, id: IntentId, cx: &mut Context<Self>) {
         let Some(modal) = self.op_queue.plans.get(&id).cloned() else {
             return;
         };
-        // Never take the slot from a modal the queue has not heard of yet.
         if self.has_active_modal() {
             self.sync_queue(cx);
             self.drive_queue(QueueEvent::ConfirmWithdrawn(id), cx);
             return;
         }
+        let asks = match &modal {
+            QueuedPlan::Checkout(m) => !m.plan.blockers.is_empty() || !m.plan.warnings.is_empty(),
+            QueuedPlan::Commit(m) => {
+                let draft = self
+                    .ui()
+                    .commit_panel
+                    .as_ref()
+                    .map(|p| p.read(cx))
+                    .map(|p| {
+                        if p.title_input.is_some() {
+                            p.committable_message(cx)
+                        } else {
+                            p.state.commit_msg.clone()
+                        }
+                    });
+                !m.plan.blockers.is_empty()
+                    || !m.plan.warnings.is_empty()
+                    || draft.as_deref() != Some(&m.message)
+                    || m.staged_changed
+            }
+        };
         let label = self.queued_label(id);
-        if modal.plan.blockers.is_empty() && modal.plan.warnings.is_empty() {
-            klog!("queue: run {} (clean plan)", label);
-            self.drive_queue(QueueEvent::Approve(id), cx);
-        } else {
+        if asks {
             klog!("queue: confirm {}", label);
             self.op_queue.plans.remove(&id);
             self.op_queue.confirming = Some(id);
-            self.set_plan_modal(modal);
+            match modal {
+                QueuedPlan::Checkout(m) => self.set_plan_modal(m),
+                QueuedPlan::Commit(m) => self.set_queued_commit_modal(m),
+            }
+        } else {
+            klog!("queue: run {} (clean plan)", label);
+            self.drive_queue(QueueEvent::Approve(id), cx);
         }
     }
 
@@ -320,14 +384,46 @@ impl KagiApp {
             return;
         }
         self.clear_plan_modal();
-        self.op_queue.plans.insert(id, modal);
+        self.op_queue.plans.insert(id, QueuedPlan::Checkout(modal));
         self.drive_queue(QueueEvent::Approve(id), cx);
+    }
+    pub(crate) fn confirm_queued_commit(&mut self, cx: &mut Context<Self>) {
+        let Some(modal) = self.queued_commit_modal().cloned() else {
+            return;
+        };
+        let id = modal.queued;
+        self.op_queue.confirming = None;
+        self.clear_queued_commit_modal();
+        if !modal.plan.blockers.is_empty() {
+            if let Some(repo_path) = self.repo_path.clone() {
+                self.record_refused(
+                    "commit",
+                    modal.plan.current.clone(),
+                    &modal.plan.blockers,
+                    &repo_path,
+                    cx,
+                );
+            }
+            self.drive_queue(QueueEvent::PlanError(id), cx);
+            return;
+        }
+        self.op_queue.plans.insert(id, QueuedPlan::Commit(modal));
+        self.drive_queue(QueueEvent::Approve(id), cx);
+    }
+
+    pub(crate) fn cancel_queued_commit(&mut self) {
+        self.note_queued_confirm_dismissed();
+        self.clear_queued_commit_modal();
     }
 
     /// `cancel_modal` runs without a context: remember the answer for the next
     /// sync, which turns it into `Reject`.
     pub(crate) fn note_queued_confirm_dismissed(&mut self) {
-        if let Some(id) = self.plan_modal().and_then(|m| m.queued) {
+        if let Some(id) = self
+            .plan_modal()
+            .and_then(|m| m.queued)
+            .or_else(|| self.queued_commit_modal().map(|m| m.queued))
+        {
             self.op_queue.rejected = Some(id);
         }
     }
@@ -343,7 +439,14 @@ impl KagiApp {
             );
             return;
         };
-        self.run_checkout(modal, Some(id), cx);
+        match modal {
+            QueuedPlan::Checkout(modal) => self.run_checkout(modal, Some(id), cx),
+            QueuedPlan::Commit(modal) => {
+                if let Some(repo_path) = self.repo_path.clone() {
+                    self.run_commit(repo_path, modal.plan, modal.message, Some(id), cx);
+                }
+            }
+        }
         // `run_checkout` returned before admission (no repository path).
         if self
             .op_queue
@@ -488,6 +591,15 @@ impl KagiApp {
     /// the tab, the read and the modal slot as they are.
     pub(crate) fn sync_queue(&mut self, cx: &mut Context<Self>) {
         let active = self.active_session();
+        if self.op_queue.observed_input_focused != self.op_queue.input_focused {
+            self.op_queue.input_focused = self.op_queue.observed_input_focused;
+            let event = if self.op_queue.input_focused {
+                QueueEvent::InputFocused
+            } else {
+                QueueEvent::InputBlurred
+            };
+            self.drive_queue(event, cx);
+        }
         // The returning tab's read state first: an `OwnerReturned` that lands
         // before its `RevalidationStarted` would replan against a stale read.
         let revalidating = active.filter(|session| self.queue_revalidating(*session));
@@ -552,7 +664,9 @@ impl KagiApp {
             self.drive_queue(event, cx);
         }
         if let Some(id) = self.op_queue.confirming {
-            if !self.plan_modal().is_some_and(|m| m.queued == Some(id)) {
+            if !self.plan_modal().is_some_and(|m| m.queued == Some(id))
+                && !self.queued_commit_modal().is_some_and(|m| m.queued == id)
+            {
                 self.op_queue.confirming = None;
                 let event = if self.op_queue.rejected.take() == Some(id) {
                     klog!("queue: declined {}", self.queued_label(id));

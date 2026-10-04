@@ -8,6 +8,8 @@ use super::{lang, Lang};
 pub enum QueueText {
     /// Prefix of the toast for an accepted intent.
     Queued,
+    /// Label above the frozen subject and body in a queued commit confirmation.
+    FrozenMessage,
     /// `queued: N` — intents whose write has not started (決定 2).
     Count,
     Running,
@@ -39,6 +41,8 @@ pub fn queue_text(key: QueueText) -> &'static str {
     match (lang(), key) {
         (Lang::En, Queued) => "Queued",
         (Lang::Ja, Queued) => "キューに追加",
+        (Lang::En, FrozenMessage) => "Queued message",
+        (Lang::Ja, FrozenMessage) => "キューに追加したメッセージ",
         (Lang::En, Count) => "queued",
         (Lang::Ja, Count) => "待ち",
         (Lang::En, Running) => "running",

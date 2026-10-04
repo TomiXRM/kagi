@@ -1,6 +1,6 @@
 # ADR-0204: operation queue と遅延の説明 — 並べるのは承認済み plan ではなく intent
 
-- Status: **Accepted**（2026-10-04、#355 段階 2 は pure reducer を実装。段階 3a で checkout の入口・strip・auto-fetch の skip を配線。commit / merge の入口は段階 3b。改訂履歴は末尾）
+- Status: **Accepted**（2026-10-04、#355 段階 2 は pure reducer を実装。段階 3a で checkout の入口・strip・auto-fetch の skip を配線。段階 3b-1 で commit の入口を配線。merge の入口は未対応。改訂履歴は末尾）
 - Date: 2026-10-04（Draft: 2026-09-23）
 - Base: `origin/main` @ `47d30be4`（#355 段階 2 着手時。§1 は当時の main の実測）
 - Related: [#355](https://github.com/TomiXRM/kagi/issues/355)（親 #359）、ADR-0196（lifecycle 契約）、
@@ -228,7 +228,7 @@ pub struct IntentQueue {
 ```rust
 pub enum IntentRequest {                // 段階 2 で受け付ける最初の 3 family
     Checkout { target: String },        // ユーザーが選んだ ref 名
-    Commit { message: String },         // 本文そのものを凍結する
+    Commit { message: String, staged: String }, // 本文と staged (path, blob OID, mode) 集合の digest を凍結する
     Merge { source: String, into: String },
 }
 // 将来の family も local verify と同期完了を証明してから追加する。
@@ -280,6 +280,9 @@ pub enum IntentRequest {                // 段階 2 で受け付ける最初の 
   普段どおりに確認するかを決める。modal を持たない場面の family は modal なしで進む（blocker も
   warning も無い checkout は double click と同じく modal を出さない）。blocker か warning があれば
   modal を出す。**凍結した入力が今の draft と違えば必ず modal を出す**（commit message、段階 3b）。
+  queued commit は plan に blocker / warning がある場合、現在の draft が凍結した本文と異なる場合、
+  または現在の staged 集合の digest が凍結した digest と異なる場合に確認 modal を出し、
+  いずれにも当てはまらなければ modal なしで実行する（#355 段階 3b-1）。
   どの経路でも preflight は省かない。
 - **「確認したのに、また確認するのか」への答え**: 先行する write が後続の前提を変えるから。
   `rebase onto origin/main` → `merge feature` では rebase が commit を書き換えるので、merge base も
@@ -414,6 +417,20 @@ count の精密化）は別件で触れない。ADR-0153 は Accepted のまま�
    plan slot を session 別にする案は ADR-0182 の単一 slot 決定に触るので本 ADR では採らない。
 
 ## 改訂履歴
+
+- **2026-10-04 段階 3b-1（#355）** — commit を checkout に続く適格 family として配線した。
+  - `start_commit` で write が実行中、または同じ tab に queued intent が残る場合、本文と staged
+    `(path, blob OID, mode)` 集合の digest を凍結して投入する。linked worktree の panel、
+    conflict merge pending、blocker のある plan、amend は従来どおり拒否する。
+  - 先頭では同じ owner を確かめて凍結本文で live replan し、plan の blocker / warning、
+    現在の draft と凍結本文の差、現在の staged digest と凍結値の差のどれかがあれば
+    `QueuedCommit` modal に凍結本文と plan を示して確認する。どれもなければ modal なしで進む。
+    確認は凍結本文を commit し、後から書き換えた draft は消さない。Cancel は拒否として
+    chain を trip する。
+  - text input が focus 中なら先頭は `Waiting { NeedsConfirmation }` に留め、modal も実行も
+    始めない。focus が外れた観測を受けた次の調停で再評価する。
+  - commit の verify は実行後の再 snapshot で HEAD が新 commit を指すこと。queue 経由でない
+    commit も追跡可能な anchor にして、Verified と記録成功を確かめてから後続を進める。
 
 - **2026-10-04 段階 3a（#355）** — checkout を最初の適格 family として配線した。
   - 決定 4 の「先頭では必ず新しい modal」を「family の通常規則で確認」に改めた（PM 決定）。checkout の

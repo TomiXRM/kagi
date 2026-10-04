@@ -317,7 +317,9 @@ fn q4_every_wait_has_an_exhaustively_named_release_and_rechecks_other_heads() {
                 q.apply(QueueEvent::ReconcileAcknowledged(session(1)))
             }
             ReleaseEvent::RemoteLatchReleased => q.apply(QueueEvent::RemoteLatchReleased),
-            ReleaseEvent::ModalSlotFree | ReleaseEvent::RevalidationDone => unreachable!(),
+            ReleaseEvent::ModalSlotFree
+            | ReleaseEvent::InputBlurred
+            | ReleaseEvent::RevalidationDone => unreachable!(),
         };
         assert!(
             effects.contains(&QueueEffect::StartPlan(a)),
@@ -333,6 +335,7 @@ fn q4_every_wait_has_an_exhaustively_named_release_and_rechecks_other_heads() {
     }
     for (event, setup) in [
         (ReleaseEvent::ModalSlotFree, QueueEvent::ModalSlotBusy),
+        (ReleaseEvent::InputBlurred, QueueEvent::InputFocused),
         (
             ReleaseEvent::RevalidationDone,
             QueueEvent::RevalidationStarted(session(1)),
@@ -351,6 +354,7 @@ fn q4_every_wait_has_an_exhaustively_named_release_and_rechecks_other_heads() {
         );
         let effect = match event {
             ReleaseEvent::ModalSlotFree => q.apply(QueueEvent::ModalSlotFree),
+            ReleaseEvent::InputBlurred => q.apply(QueueEvent::InputBlurred),
             ReleaseEvent::RevalidationDone => q.apply(QueueEvent::RevalidationDone(session(1))),
             _ => unreachable!(),
         };
@@ -382,6 +386,83 @@ fn q4_every_wait_has_an_exhaustively_named_release_and_rechecks_other_heads() {
     );
     assert_eq!(q.gate(session(1)), ChainGate::Armed { anchor: None });
     assert!(first.0 > 0);
+}
+
+#[test]
+fn focused_input_blocks_every_head_after_writer_releases_until_blur() {
+    let mut q = IntentQueue::new();
+    q.apply(QueueEvent::OwnerReturned(session(1)));
+    q.apply(QueueEvent::WriteStarted(stamp(3, 9)));
+    let first = enqueue(&mut q, 1);
+    let second = enqueue(&mut q, 2);
+    q.apply(QueueEvent::InputFocused);
+    assert!(q
+        .apply(QueueEvent::LeaseReleased(Some(stamp(3, 9))))
+        .is_empty());
+    for n in [1, 2] {
+        assert_eq!(
+            state(&q, n),
+            IntentState::Waiting {
+                reason: WaitReason::NeedsConfirmation
+            }
+        );
+    }
+    assert_eq!(
+        q.apply(QueueEvent::InputBlurred),
+        vec![QueueEffect::StartPlan(first)]
+    );
+    assert_eq!(state(&q, 1), IntentState::Planning);
+    assert_eq!(q.intents(session(2)).unwrap().front().unwrap().id, second);
+    assert_eq!(
+        state(&q, 2),
+        IntentState::Waiting {
+            reason: WaitReason::PlanSlotBusy
+        }
+    );
+}
+
+#[test]
+fn focus_during_planning_or_confirmation_does_not_open_or_admit() {
+    let mut q = IntentQueue::new();
+    q.apply(QueueEvent::OwnerReturned(session(1)));
+    let id = enqueue(&mut q, 1);
+    q.apply(QueueEvent::InputFocused);
+    assert_eq!(
+        q.apply(QueueEvent::PlanCompleted(id)),
+        vec![QueueEffect::InvalidatePlan(id)]
+    );
+    assert_eq!(
+        state(&q, 1),
+        IntentState::Waiting {
+            reason: WaitReason::NeedsConfirmation
+        }
+    );
+    assert_eq!(
+        q.apply(QueueEvent::InputBlurred),
+        vec![QueueEffect::StartPlan(id)]
+    );
+    assert_eq!(
+        q.apply(QueueEvent::PlanCompleted(id)),
+        vec![QueueEffect::OpenConfirm(id)]
+    );
+    assert_eq!(
+        q.apply(QueueEvent::InputFocused),
+        vec![
+            QueueEffect::CloseConfirm(id),
+            QueueEffect::InvalidatePlan(id)
+        ]
+    );
+    assert_eq!(
+        state(&q, 1),
+        IntentState::Waiting {
+            reason: WaitReason::NeedsConfirmation
+        }
+    );
+    assert!(q.apply(QueueEvent::Approve(id)).is_empty());
+    assert_eq!(
+        q.apply(QueueEvent::InputBlurred),
+        vec![QueueEffect::StartPlan(id)]
+    );
 }
 
 #[test]

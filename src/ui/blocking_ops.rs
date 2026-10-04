@@ -363,6 +363,7 @@ pub(crate) fn commit_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
     message: &str,
+    verified: &std::sync::atomic::AtomicBool,
 ) -> Result<RunReport, String> {
     let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
     // Commit's plan is a HEAD snapshot; preflight detects a checkout/commit
@@ -373,19 +374,23 @@ pub(crate) fn commit_blocking(
     let report = repo.run_recorded(&op, plan);
     if let Ok(kagi_git::OperationOutcome::Commit(new_id)) = &report.result {
         klog!("executed: commit {}", new_id.short());
-        log_commit_verification(repo_path, new_id);
+        log_commit_verification(repo_path, new_id, verified);
     }
     Ok(report)
 }
 
-/// Verify evidence for the log only: HEAD is the new commit, unstaged remain.
-/// The receipt already carries the recorded `after`.
-fn log_commit_verification(repo_path: &std::path::Path, new_id: &CommitId) {
+/// Verify HEAD against the new commit; the receipt already carries `after`.
+fn log_commit_verification(
+    repo_path: &std::path::Path,
+    new_id: &CommitId,
+    verified: &std::sync::atomic::AtomicBool,
+) {
     match open_backend(repo_path) {
         Ok(mut repo2) => match repo2.snapshot(10_000) {
             Ok(snap) => {
                 if let Head::Attached { target, branch } = &snap.head {
                     if *target == new_id.0 {
+                        verified.store(true, std::sync::atomic::Ordering::SeqCst);
                         eprintln!(
                             "[kagi] verified: commit HEAD={} on {}",
                             new_id.short(),

@@ -894,10 +894,7 @@ impl KagiApp {
         if self.commit_panel_is_foreign(cx) {
             klog!("commit-panel: commit into {}", repo_path.display());
         }
-        if self.op_latched() {
-            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
-            return;
-        }
+        let busy = self.op_latched() || self.active_tab_has_queue();
         let commit_message: String = if self.cp_has_commit_input(cx) {
             self.committable_message(cx)
         } else {
@@ -921,16 +918,39 @@ impl KagiApp {
             return;
         }
 
-        // ADR-0068 (T-CONFLICT-FLOW-031): a merge that was continued routes the
-        // commit button here with MERGE_HEAD still present.  Create the 2-parent
-        // merge commit (HEAD + MERGE_HEAD) + cleanup_state instead of a plain
-        // single-parent commit.  This is synchronous (cheap; no tree rebuild on a
-        // worker) so the conflict-mode transition stays simple.
+        // ADR-0068: this button also finishes a conflicted merge. It is a
+        // different write family and cannot be represented by Commit intent.
         if self.ui().conflict_merge_pending {
-            self.finish_merge_commit(&commit_message, cx);
+            if busy {
+                self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            } else {
+                self.finish_merge_commit(&commit_message, cx);
+            }
             return;
         }
+        if busy {
+            if !self.commit_panel_is_foreign(cx) && self.enqueue_commit(commit_message, cx) {
+                if let Some(entity) = self.ui().commit_panel.clone() {
+                    entity.update(cx, |panel, _| panel.state.plan_modal = None);
+                }
+                return;
+            }
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            return;
+        }
+        self.run_commit(repo_path, plan, commit_message, None, cx);
+    }
 
+    /// Run the approved live plan, retaining the frozen message across async
+    /// execution and conditional draft consumption.
+    pub(crate) fn run_commit(
+        &mut self,
+        repo_path: std::path::PathBuf,
+        plan: std::sync::Arc<kagi_git::OperationPlan>,
+        commit_message: String,
+        intent: Option<crate::app::IntentId>,
+        cx: &mut Context<Self>,
+    ) {
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCommit.t()));
         klog!("async: commit started");
 
@@ -951,18 +971,19 @@ impl KagiApp {
             .take(72)
             .collect();
         let expected_panel = self.ui().commit_panel.as_ref().map(|p| p.downgrade());
+        let verified = self.prepare_queue_run(intent);
         self.finish_run(
             cx,
             "commit",
             i18n::Op::Commit,
             plan.clone(),
             repo_path.clone(),
-            move || commit_blocking(&bg_path, &bg_plan, &bg_msg),
+            move || commit_blocking(&bg_path, &bg_plan, &bg_msg, &verified),
             |_| None,
             move |done| match done {
                 Ok(_) => {
                     let presentation = RunPresentation::none()
-                        .consume_commit_message(repo_path.clone())
+                        .consume_commit_message_if(repo_path.clone(), commit_message.clone())
                         .refresh_worktree_wip(repo_path.clone());
                     if skip_undo {
                         presentation

@@ -1229,6 +1229,22 @@ mod macos {
                 Box::new(crate::slow_read::scenario_slow_write_cleared_after_panic),
             ),
             (
+                "queue_commit_runs_after_checkout",
+                Box::new(crate::op_queue::scenario_queue_commit_runs_after_checkout),
+            ),
+            (
+                "queue_commit_confirms_changed_draft",
+                Box::new(crate::op_queue::scenario_queue_commit_confirms_changed_draft),
+            ),
+            (
+                "queue_commit_confirms_changed_staging",
+                Box::new(crate::op_queue::scenario_queue_commit_confirms_changed_staging),
+            ),
+            (
+                "queue_waits_while_input_focused",
+                Box::new(crate::op_queue::scenario_queue_waits_while_input_focused),
+            ),
+            (
                 "queue_runs_in_order",
                 Box::new(crate::op_queue::scenario_queue_runs_in_order),
             ),

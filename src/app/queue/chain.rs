@@ -178,7 +178,9 @@ impl IntentQueue {
             ) {
                 continue;
             }
-            let reason = if self.remote_latched.is_some() {
+            let reason = if self.input_focused {
+                Some(WaitReason::NeedsConfirmation)
+            } else if self.remote_latched.is_some() {
                 Some(WaitReason::RemoteLatched)
             } else if self.write.is_some() || self.write_busy {
                 Some(WaitReason::WriteRunning)

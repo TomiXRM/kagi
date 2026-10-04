@@ -611,6 +611,41 @@ impl Backend {
         Ok(Some(blob.content().to_vec()))
     }
 
+    /// Read-only identity of the index's staged content. Index stat-cache
+    /// metadata is deliberately excluded; only path bytes, blob OID, and mode
+    /// affect whether the queued commit's selected content has changed.
+    pub fn staged_set_digest(&self) -> Result<String, GitError> {
+        use sha2::{Digest, Sha256};
+
+        let mut index = self
+            .repo
+            .index()
+            .map_err(|e| GitError::Other(e.message().to_string()))?;
+        // `Repository::index` can return its cached snapshot. A queued
+        // commit must observe staging performed after this Backend was opened.
+        index
+            .read(true)
+            .map_err(|e| GitError::Other(e.message().to_string()))?;
+        let mut entries: Vec<_> = index.iter().collect();
+        entries.sort_unstable_by(|a, b| {
+            a.path
+                .cmp(&b.path)
+                .then_with(|| a.id.as_bytes().cmp(b.id.as_bytes()))
+                .then_with(|| a.mode.cmp(&b.mode))
+        });
+
+        let mut digest = Sha256::new();
+        for entry in entries {
+            // A length prefix separates paths even when their bytes contain
+            // arbitrary delimiters; OID and mode have fixed byte lengths.
+            digest.update((entry.path.len() as u64).to_be_bytes());
+            digest.update(&entry.path);
+            digest.update(entry.id.as_bytes());
+            digest.update(entry.mode.to_be_bytes());
+        }
+        Ok(hex::encode(digest.finalize()))
+    }
+
     /// Raw blob bytes for `path` at HEAD, if present.
     pub fn blob_bytes_head(&self, path: &Path) -> Result<Option<Vec<u8>>, GitError> {
         let head = self
@@ -1784,5 +1819,62 @@ impl Backend {
     ) -> Result<crate::ops::SuggestionOutcome, GitError> {
         self.require_trust()?;
         ops::execute_apply_suggestion(&self.repo, plan, s, expected)
+    }
+}
+
+#[cfg(test)]
+mod staged_set_digest_tests {
+    use super::Backend;
+    use std::path::Path;
+
+    #[test]
+    fn digest_tracks_path_blob_and_mode_without_writing_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        std::fs::write(dir.path().join("a"), b"first").unwrap();
+        std::fs::write(dir.path().join("b"), b"second").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("a")).unwrap();
+        index.add_path(Path::new("b")).unwrap();
+        index.write().unwrap();
+        let backend = Backend::open(dir.path()).unwrap();
+
+        let initial_index = std::fs::read(repo.path().join("index")).unwrap();
+        let initial = backend.staged_set_digest().unwrap();
+        assert_eq!(initial.len(), 64);
+        assert_eq!(initial, backend.staged_set_digest().unwrap());
+        assert_eq!(
+            initial_index,
+            std::fs::read(repo.path().join("index")).unwrap()
+        );
+
+        // Insertion order is not part of identity.
+        index.remove_path(Path::new("a")).unwrap();
+        index.add_path(Path::new("a")).unwrap();
+        index.write().unwrap();
+        assert_eq!(initial, backend.staged_set_digest().unwrap());
+
+        let mut entry = index.get_path(Path::new("a"), 0).unwrap();
+        entry.path = b"renamed".to_vec();
+        index.remove_path(Path::new("a")).unwrap();
+        index.add(&entry).unwrap();
+        index.write().unwrap();
+        let renamed = backend.staged_set_digest().unwrap();
+        assert_ne!(initial, renamed, "path must participate");
+
+        entry.id = repo.blob(b"other content").unwrap();
+        index.add(&entry).unwrap();
+        index.write().unwrap();
+        let changed_blob = backend.staged_set_digest().unwrap();
+        assert_ne!(renamed, changed_blob, "OID must participate");
+
+        entry.mode = 0o100755;
+        index.add(&entry).unwrap();
+        index.write().unwrap();
+        assert_ne!(
+            changed_blob,
+            backend.staged_set_digest().unwrap(),
+            "mode must participate"
+        );
     }
 }

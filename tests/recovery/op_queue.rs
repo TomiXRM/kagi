@@ -8,7 +8,8 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
-use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
+use gpui::{AnyWindowHandle, Entity, Focusable, VisualTestAppContext};
+use gpui_component::WindowExt as _;
 use kagi::ui::{e2e, KagiApp};
 
 use crate::app_conflict::click_control;
@@ -32,12 +33,22 @@ fn head(repo: &Path) -> String {
 }
 
 fn rev_parse(repo: &Path, args: &[&str]) -> String {
+    let mut command = vec!["rev-parse"];
+    command.extend_from_slice(args);
+    git_output(repo, &command)
+}
+
+fn git_output(repo: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .current_dir(repo)
-        .arg("rev-parse")
         .args(args)
         .output()
-        .expect("rev-parse");
+        .unwrap_or_else(|error| panic!("git {args:?}: {error}"));
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8(out.stdout).unwrap().trim().to_string()
 }
 
@@ -574,4 +585,270 @@ pub fn scenario_queue_refuses_a_blocked_checkout(cx: &mut VisualTestAppContext) 
     cx.run_until_parked();
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS queue_refuses_a_blocked_checkout");
+}
+
+/// Use the real Commit Panel inputs and plan button, not a synthetic queue event.
+fn queue_commit(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    title: &str,
+    body: &str,
+) {
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.open_commit_panel(window, cx));
+        let panel = app
+            .read(cx)
+            .ui()
+            .commit_panel
+            .clone()
+            .expect("commit panel");
+        let (title_input, body_input) = {
+            let panel = panel.read(cx);
+            (
+                panel.title_input.clone().expect("title input"),
+                panel.body_input.clone().expect("body input"),
+            )
+        };
+        title_input.update(cx, |input, cx| input.set_value(title, window, cx));
+        body_input.update(cx, |input, cx| input.set_value(body, window, cx));
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        let owner = app.active_session().expect("commit owner");
+        app.open_commit_plan_modal(owner, cx);
+    });
+    cx.run_until_parked();
+}
+
+fn change_commit_title(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    title: &str,
+) {
+    cx.update_window(window, |_, window, cx| {
+        let panel = app
+            .read(cx)
+            .ui()
+            .commit_panel
+            .clone()
+            .expect("commit panel");
+        let input = panel.read(cx).title_input.clone().expect("title input");
+        input.update(cx, |input, cx| input.set_value(title, window, cx));
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+fn focus_root(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+    cx.update_window(window, |_, window, cx| {
+        let root = app.read(cx).root_focus.clone().expect("root focus");
+        window.focus(&root, cx);
+        assert!(root.is_focused(window), "root owns focus after blur");
+        window.draw(cx).clear();
+    })
+    .unwrap();
+}
+
+fn frozen_modal(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    frozen: &str,
+) {
+    tick_until(cx, app, "queued commit confirmation", |app| {
+        app.queued_commit_message_for_e2e().is_some()
+    });
+    assert_eq!(
+        cx.read(|cx| app.read(cx).queued_commit_message_for_e2e()),
+        Some(frozen.to_string()),
+        "confirmation shows the entire frozen subject and body"
+    );
+    assert!(drawn(cx, window, "queued-commit-message"));
+    assert!(drawn(cx, window, "plan-confirm"));
+}
+
+fn finish_queued_commit(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
+    tick_until(cx, app, "queued commit to settle", |app| {
+        !app.app_sessions.has_leases()
+            && app.queue_strip_for_e2e(std::time::Instant::now()).is_none()
+    });
+}
+
+/// A clean queued commit uses the message and staged content selected behind
+/// the held checkout, executes on its resulting branch, and verifies its HEAD.
+pub fn scenario_queue_commit_runs_after_checkout(cx: &mut VisualTestAppContext) {
+    let fixture = branches_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let before = rev_parse(&repo, &["HEAD"]);
+    let (app, window) = mount(cx, &repo);
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+    std::fs::write(repo.join("first.txt"), "staged for a\n").unwrap();
+    git(&repo, &["add", "first.txt"]);
+    queue_commit(cx, &app, window, "frozen subject", "frozen body");
+    assert_eq!(
+        rows(&strip(cx, &app)),
+        vec![("commit frozen subject".into(), "waiting: confirm".into())]
+    );
+    assert!(drawn(cx, window, "queue-strip"));
+    cx.read(|cx| {
+        let toasts = app.read(cx).toast_stack.as_ref().unwrap().read(cx);
+        assert!(toasts
+            .toasts()
+            .iter()
+            .any(|toast| toast.message.as_ref() == "Queued: commit frozen subject"));
+    });
+    assert_eq!(rev_parse(&repo, &["HEAD"]), before);
+    focus_root(cx, &app, window);
+    release.send(());
+    finish_queued_commit(cx, &app);
+    assert_eq!(head(&repo), "a");
+    assert_ne!(rev_parse(&repo, &["HEAD"]), before);
+    assert_eq!(
+        rev_parse(&repo, &["HEAD^{tree}:first.txt"]),
+        rev_parse(&repo, &[":first.txt"])
+    );
+    assert_eq!(
+        git_output(&repo, &["log", "-1", "--format=%B"]),
+        "frozen subject\n\nfrozen body"
+    );
+    assert!(cx.read(|cx| app.read(cx).queued_commit_message_for_e2e().is_none()));
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS queue_commit_runs_after_checkout");
+}
+
+/// Q5b: editing the draft after queueing must ask, and approval must use the
+/// old message while preserving the new text in the panel.
+pub fn scenario_queue_commit_confirms_changed_draft(cx: &mut VisualTestAppContext) {
+    let fixture = branches_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
+    cx.run_until_parked();
+    std::fs::write(repo.join("first.txt"), "first\n").unwrap();
+    git(&repo, &["add", "first.txt"]);
+    queue_commit(cx, &app, window, "original subject", "original body");
+    change_commit_title(cx, &app, window, "new draft");
+    focus_root(cx, &app, window);
+    release.send(());
+    frozen_modal(cx, &app, window, "original subject\n\noriginal body");
+    assert_eq!(head(&repo), "a");
+    assert_eq!(rows(&strip(cx, &app))[0].1, "confirming");
+    click(cx, window, "plan-confirm");
+    finish_queued_commit(cx, &app);
+    assert_eq!(
+        git_output(&repo, &["log", "-1", "--format=%B"]),
+        "original subject\n\noriginal body"
+    );
+    cx.read(|cx| {
+        let state = app.read(cx);
+        let panel = state
+            .ui()
+            .commit_panel
+            .as_ref()
+            .expect("draft panel")
+            .read(cx);
+        assert_eq!(
+            panel
+                .title_input
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .value()
+                .to_string(),
+            "new draft",
+            "confirming the frozen intent cannot consume the newer draft"
+        );
+    });
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS queue_commit_confirms_changed_draft");
+}
+
+/// The staged-set digest is the frozen identity: a newly staged path asks for
+/// approval even with an unchanged message and a clean live plan.
+pub fn scenario_queue_commit_confirms_changed_staging(cx: &mut VisualTestAppContext) {
+    let fixture = branches_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
+    cx.run_until_parked();
+    std::fs::write(repo.join("first.txt"), "first\n").unwrap();
+    git(&repo, &["add", "first.txt"]);
+    queue_commit(cx, &app, window, "same subject", "same body");
+    std::fs::write(repo.join("second.txt"), "second\n").unwrap();
+    git(&repo, &["add", "second.txt"]);
+    focus_root(cx, &app, window);
+    release.send(());
+    frozen_modal(cx, &app, window, "same subject\n\nsame body");
+    assert_eq!(head(&repo), "a");
+    assert_eq!(rows(&strip(cx, &app))[0].1, "confirming");
+    click(cx, window, "plan-confirm");
+    finish_queued_commit(cx, &app);
+    assert_eq!(
+        git_output(&repo, &["log", "-1", "--format=%B"]),
+        "same subject\n\nsame body"
+    );
+    assert_eq!(
+        rev_parse(&repo, &["HEAD^{tree}:second.txt"]),
+        rev_parse(&repo, &[":second.txt"])
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS queue_commit_confirms_changed_staging");
+}
+
+/// A focused Input holds the queue even after the preceding write settles.
+/// The next observation after a real blur admits the waiting head.
+pub fn scenario_queue_waits_while_input_focused(cx: &mut VisualTestAppContext) {
+    let fixture = branches_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_run_for_e2e(hold);
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.dblclick_checkout_branch("b", cx));
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.open_commit_panel(window, cx));
+        let panel = app.read(cx).ui().commit_panel.clone().unwrap();
+        let input = panel.read(cx).title_input.clone().unwrap();
+        window.focus(&input.read(cx).focus_handle(cx), cx);
+        window.draw(cx).clear();
+        assert!(
+            window.has_focused_input(cx),
+            "the real Commit Input owns focus"
+        );
+    })
+    .unwrap();
+    advance(cx, 2);
+    release.send(());
+    tick_until(cx, &app, "first checkout to settle", |app| {
+        !app.app_sessions.has_leases()
+    });
+    advance(cx, 4);
+    assert_eq!(head(&repo), "a", "b must not run while typing");
+    assert_eq!(
+        rows(&strip(cx, &app)),
+        vec![("checkout b".into(), "waiting: confirm".into())]
+    );
+    assert!(!cx.read(|cx| e2e::active_modal_present(app.read(cx))));
+    focus_root(cx, &app, window);
+    tick_until(cx, &app, "checkout b after input blur", |app| {
+        app.queue_strip_for_e2e(std::time::Instant::now()).is_none()
+    });
+    assert_eq!(head(&repo), "b");
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS queue_waits_while_input_focused");
 }

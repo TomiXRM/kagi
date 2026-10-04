@@ -261,4 +261,8 @@ impl KagiApp {
             .map(|q| q.iter().map(|intent| intent.id.0).collect())
             .unwrap_or_default()
     }
+
+    pub fn queued_commit_message_for_e2e(&self) -> Option<String> {
+        self.queued_commit_modal().map(|m| m.message.clone())
+    }
 }

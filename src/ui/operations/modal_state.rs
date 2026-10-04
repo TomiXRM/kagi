@@ -26,9 +26,10 @@ use super::super::modals::{
     AmendPlanModal, BranchCleanupModal, BranchPlanModal, CheckoutPlanModal, CherryPickModal,
     CreateBranchModal, CreateTagModal, DeleteBranchModal, DeleteRemoteBranchModal, DiscardModal,
     ForceLeasePushModal, HistoryPlanModal, MergePlanModal, PopPlanModal, PrMergeModal,
-    PullPlanModal, PushPlanModal, PushTagModal, RebaseCurrentOntoModal, RenameBranchModal,
-    ResetCurrentModal, RevertModal, SetUpstreamModal, StashApplyModal, StashDropModal,
-    StashPushModal, SwitchToLatestPlanModal, TrackingCheckoutPlanModal, TrustRepoModal,
+    PullPlanModal, PushPlanModal, PushTagModal, QueuedCommitModal, RebaseCurrentOntoModal,
+    RenameBranchModal, ResetCurrentModal, RevertModal, SetUpstreamModal, StashApplyModal,
+    StashDropModal, StashPushModal, SwitchToLatestPlanModal, TrackingCheckoutPlanModal,
+    TrustRepoModal,
 };
 use super::super::KagiApp;
 pub(crate) use arbitration::{AsyncPlanOffer, AsyncPlanToken, PlanningPresentation};
@@ -56,6 +57,7 @@ impl KagiApp {
                 | M::Clone(_)
                 | M::AppNotice(_)
                 | M::Checkout(_)
+                | M::QueuedCommit(_)
                 | M::Pull(_)
                 | M::Amend(_)
                 | M::Pop(_)
@@ -136,6 +138,7 @@ impl KagiApp {
                 | M::SmartCommit(_)
                 | M::AppNotice(_)
                 | M::Checkout(_)
+                | M::QueuedCommit(_)
                 | M::Pull(_)
                 | M::Amend(_)
                 | M::Pop(_)
@@ -249,6 +252,23 @@ impl KagiApp {
     #[inline]
     pub fn clear_plan_modal(&mut self) {
         if matches!(self.active_modal, Some(ActiveModal::Checkout(_))) {
+            self.active_modal = None;
+        }
+    }
+    #[inline]
+    pub fn queued_commit_modal(&self) -> Option<&QueuedCommitModal> {
+        match &self.active_modal {
+            Some(ActiveModal::QueuedCommit(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn set_queued_commit_modal(&mut self, m: QueuedCommitModal) {
+        self.replace_modal_from_user(ActiveModal::QueuedCommit(m));
+    }
+    #[inline]
+    pub fn clear_queued_commit_modal(&mut self) {
+        if matches!(self.active_modal, Some(ActiveModal::QueuedCommit(_))) {
             self.active_modal = None;
         }
     }

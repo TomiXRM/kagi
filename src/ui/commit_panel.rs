@@ -786,6 +786,9 @@ impl KagiApp {
         if let Some(entity) = self.ui().commit_panel.clone() {
             entity.update(cx, |v, _| {
                 v.last_draft_value = String::new();
+                // Supersede an in-flight debounced save of the consumed text;
+                // it must not restore the draft after clear_draft succeeded.
+                v.draft_save_gen = v.draft_save_gen.wrapping_add(1);
                 // The `InputState`s need a `Window`; the panel's own
                 // window-bearing pass applies this on the next frame (the same
                 // hand-off smart-commit uses).

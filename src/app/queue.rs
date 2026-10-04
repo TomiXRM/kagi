@@ -15,7 +15,7 @@ pub struct IntentId(pub u64);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IntentRequest {
     Checkout { target: CheckoutIntent },
-    Commit { message: String },
+    Commit { message: String, staged: String },
     Merge { source: String, into: String },
 }
 
@@ -43,6 +43,7 @@ pub enum ReleaseEvent {
     PlanSlotFreed,
     OwnerReturned,
     ModalSlotFree,
+    InputBlurred,
     RevalidationDone,
     ReconcileAcknowledged,
     RemoteLatchReleased,
@@ -56,6 +57,7 @@ impl WaitReason {
                 event,
                 ReleaseEvent::OwnerReturned
                     | ReleaseEvent::ModalSlotFree
+                    | ReleaseEvent::InputBlurred
                     | ReleaseEvent::RevalidationDone
             ),
             Self::NeedsReconcile => matches!(event, ReleaseEvent::ReconcileAcknowledged),
@@ -180,6 +182,9 @@ pub enum QueueEvent<'a> {
     OwnerReattached(SessionId),
     ModalSlotBusy,
     ModalSlotFree,
+    /// Observation of text input focus in this window, independent of modal state.
+    InputFocused,
+    InputBlurred,
     RevalidationStarted(SessionId),
     RevalidationDone(SessionId),
     ReconcileAcknowledged(SessionId),
@@ -223,6 +228,7 @@ pub struct IntentQueue {
     plan_slot_busy: bool,
     planning_job: Option<IntentId>,
     modal_busy: bool,
+    input_focused: bool,
     revalidating: HashSet<SessionId>,
     reconciling: HashSet<SessionId>,
     /// Session whose untrackable remote pull is running.
@@ -467,6 +473,7 @@ impl IntentQueue {
                         self.planning_job = None;
                         if self.active == Some(session)
                             && !self.modal_busy
+                            && !self.input_focused
                             && !self.revalidating.contains(&session)
                         {
                             head.state = IntentState::AwaitingConfirm;
@@ -487,7 +494,10 @@ impl IntentQueue {
                         .expect("head")
                         .front_mut()
                         .expect("head");
-                    if head.state == IntentState::AwaitingConfirm && self.active == Some(session) {
+                    if head.state == IntentState::AwaitingConfirm
+                        && self.active == Some(session)
+                        && !self.input_focused
+                    {
                         head.state = IntentState::Admitting;
                         effects.push(QueueEffect::BeginAdmission(id));
                     }
@@ -717,6 +727,28 @@ impl IntentQueue {
             E::RevalidationDone(session) => {
                 self.revalidating.remove(&session);
             }
+            E::InputFocused => {
+                self.input_focused = true;
+                // A confirmation already on screen must not admit a write
+                // while another text input takes focus.
+                if let Some(session) = self.active {
+                    if let Some(head) = self
+                        .per_session
+                        .get_mut(&session)
+                        .and_then(VecDeque::front_mut)
+                    {
+                        if head.state == IntentState::AwaitingConfirm {
+                            head.state = IntentState::Queued;
+                            self.modal_busy = false;
+                            self.plan_slot_busy = false;
+                            self.planning_job = None;
+                            effects.push(QueueEffect::CloseConfirm(head.id));
+                            effects.push(QueueEffect::InvalidatePlan(head.id));
+                        }
+                    }
+                }
+            }
+            E::InputBlurred => self.input_focused = false,
             E::ReconcileAcknowledged(session) => {
                 self.reconciling.remove(&session);
             }

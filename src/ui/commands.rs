@@ -2024,19 +2024,16 @@ impl KagiApp {
                     });
                     match &mut result {
                         Err(failure) => {
-                            let entry = kagi_git::oplog::OpLogEntry::new(
+                            app.record_ref_fetch_failure(
                                 "fetch",
-                                repo_path_guard.display().to_string(),
+                                Some(flight.owner),
+                                Some(flight.visit),
                                 flight.before,
                                 failure.outcome(),
-                            )
-                            .with_ref_moves(failure.ref_moves.take());
-                            if let kagi_git::backend::recording::Recording::Failed {
-                                error, ..
-                            } = kagi_git::backend::recording::finalize(entry)
-                            {
-                                app.present_oplog_write_failure(error, cx);
-                            }
+                                failure.ref_moves.take(),
+                                &repo_path_guard,
+                                cx,
+                            );
                             if current_waiter {
                                 let preview = format!("Fetch failed: {}", failure.message);
                                 app.status_footer =

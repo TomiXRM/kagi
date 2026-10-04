@@ -135,6 +135,17 @@ pub fn scenario_remote_branch_fetch_failed_after_departure(cx: &mut VisualTestAp
         matches!(receipts.last().unwrap().outcome, OpOutcome::Failed { .. }),
         "ordinary transport failure must not become Unknown"
     );
+    cx.read(|cx| {
+        let panel = app.read(cx).op_log.as_ref().unwrap().read(cx);
+        assert!(
+            panel.entries().iter().any(|entry| {
+                entry.id == receipts.last().unwrap().id
+                    && entry.op == "fetch-remote-branch"
+                    && entry.repo == repo.display().to_string()
+            }),
+            "departed fetch receipt was not pushed to the live Operation Log"
+        );
+    });
     assert!(
         !read_oplog_tail_for_repo(&other_repo, 100)
             .iter()
@@ -199,6 +210,115 @@ pub fn scenario_remote_branch_fetch_success_after_departure(cx: &mut VisualTestA
                 .any(|toast| toast.message.as_ref().contains("Fetched origin/main")),
             "departed success displayed on the other tab"
         );
+    });
+    unmount(cx, app, window);
+}
+
+/// A PR ref fetch started in one visit cannot publish into the next visit;
+/// settling the old fetch must start exactly one fresh fetch for the open PR.
+pub fn scenario_pr_ref_fetch_restarts_after_revisit(cx: &mut VisualTestAppContext) {
+    let _gh = crate::pr_fields_focus::OfflineGh::install();
+    let fixture = build_fixture();
+    let other = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let other_repo = other.path().canonicalize().unwrap();
+    let remote_dir = tempfile::tempdir().unwrap();
+    let remote = remote_dir.path().join("repo.git");
+    git(remote_dir.path(), &["init", "-q", "--bare", "repo.git"]);
+    git(
+        &repo,
+        &[
+            "push",
+            "-q",
+            remote.to_str().unwrap(),
+            "main:refs/heads/main",
+        ],
+    );
+    let url = "https://github.com/example/repo.git";
+    git(&repo, &["remote", "add", "origin", url]);
+    let file_url = format!("file://{}", remote.display());
+    git(
+        &repo,
+        &["config", &format!("url.{file_url}.insteadOf"), url],
+    );
+    let head =
+        crate::pr_viewed::push_pr_head(&repo, &remote, "main", &[("a.txt", "new PR content\n")]);
+    let pr = crate::pr_viewed::pr_at(&head);
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| assert!(app.open_repository(other_repo, cx)));
+    cx.run_until_parked();
+    let contract_line = "[kagi] pr-mode: fetch #7 start";
+    let before = kagi_ui_core::klog::tail()
+        .iter()
+        .filter(|line| line.as_str() == contract_line)
+        .count();
+    let previous_completions = kagi_ui_core::klog::tail()
+        .iter()
+        .filter(|line| line.as_str() == "[kagi] pr-mode: fetch #7 ok")
+        .count();
+    app.update(cx, |app, cx| {
+        app.switch_repo(0, cx);
+        let owner = app.active_session().unwrap();
+        let original_visit = app.app_sessions.attachment(owner).unwrap().visit;
+        app.pr_mode_open(&pr, cx);
+        assert!(app.pr_mode().unwrap().tabs[0].local_refs_loading);
+        app.switch_repo(1, cx);
+        app.switch_repo(0, cx);
+        assert_ne!(
+            app.app_sessions.attachment(owner).map(|a| a.visit),
+            Some(original_visit)
+        );
+        // #643 S6 clears PR mode on activation. Reopen the same PR before
+        // releasing the old worker; this new tab owns its own fetch latch.
+        assert!(app.pr_mode().is_none());
+        app.pr_mode_open(&pr, cx);
+        assert!(app.pr_mode().unwrap().tabs[0].local_refs_loading);
+    });
+    // Wait for the old completion without advancing the virtual clock: the
+    // new visit's fetch is queued behind its 200ms lease retry timer.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        cx.run_until_parked();
+        if kagi_ui_core::klog::tail()
+            .iter()
+            .filter(|line| line.as_str() == "[kagi] pr-mode: fetch #7 ok")
+            .count()
+            > previous_completions
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "old PR fetch did not settle");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    cx.read(|cx| {
+        assert!(
+            app.read(cx).pr_mode().unwrap().tabs[0].local_refs_loading,
+            "old visit cleared the reopened PR's current-visit loading latch"
+        );
+    });
+    cx.advance_clock(Duration::from_millis(250));
+    cx.run_until_parked();
+    crate::pr_viewed::wait_loaded(cx, &app, &head);
+    assert_eq!(
+        kagi_ui_core::klog::tail()
+            .iter()
+            .filter(|line| line.as_str() == contract_line)
+            .count(),
+        before + 2,
+        "old completion did not start exactly one fetch for the new visit"
+    );
+    cx.read(|cx| {
+        let state = app.read(cx);
+        let tab = &state.pr_mode().unwrap().tabs[0];
+        assert!(!tab.local_refs_loading, "fresh fetch left PR loading");
+        assert_eq!(
+            tab.head.0, head,
+            "the new visit did not receive the PR head"
+        );
+        assert!(tab
+            .files
+            .iter()
+            .any(|file| file.path.to_string_lossy() == "a.txt"));
     });
     unmount(cx, app, window);
 }

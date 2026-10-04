@@ -1665,6 +1665,10 @@ mod macos {
                 Box::new(crate::guard_writer_panic::scenario_remote_branch_fetch_success_after_departure),
             ),
             (
+                "pr_ref_fetch_restarts_after_revisit",
+                Box::new(crate::guard_writer_panic::scenario_pr_ref_fetch_restarts_after_revisit),
+            ),
+            (
                 "pr_ref_fetch_panic",
                 Box::new(crate::guard_writer_panic::scenario_pr_ref_fetch_panic),
             ),

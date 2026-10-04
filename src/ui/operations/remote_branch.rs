@@ -312,6 +312,7 @@ impl KagiApp {
                 .find(|tab| tab.pr.number == pr.number && tab.pr.base_repo == pr.base_repo)
         }) {
             tab.local_refs_loading = true;
+            tab.local_refs_visit = Some(visit);
             tab.local_refs_generation = tab.local_refs_generation.wrapping_add(1);
             tab.local_refs_generation
         } else {
@@ -529,14 +530,14 @@ impl KagiApp {
                 && tab.pr.base_repo == pr.base_repo
                 && tab.pr.head_sha == pr.head_sha
                 && tab.local_refs_generation == generation
+                && tab.local_refs_visit == Some(visit)
         }) else {
             return false;
         };
         tab.local_refs_loading = false;
         if !current_visit {
-            // The old task still owns this generation's loading latch, even
-            // though it may no longer publish content into the owner's view.
-            // Clearing it permits a fresh request when this tab is revisited.
+            // Only this visit's request can clear its latch. A reopened PR in
+            // the new visit may reuse the same generation and head SHA.
             cx.notify();
             return false;
         }
@@ -573,9 +574,9 @@ impl KagiApp {
         true
     }
 
-    /// A newer L1 head may arrive while an older fetch owns the global fetch
-    /// lease. Once that stale request settles, hand the lease to the newest
-    /// tab intent instead of leaving the page empty until another click.
+    /// A completed old request may leave either a newer head waiting in the
+    /// same visit, or an unloaded PR waiting after departure and return. The
+    /// current visit's active fetch owns its latch; never start over it.
     fn retry_stale_pr_ref_load(
         &mut self,
         owner: crate::app::SessionId,
@@ -583,17 +584,22 @@ impl KagiApp {
         stale: &kagi_domain::github::PullRequest,
         cx: &mut Context<Self>,
     ) {
-        if self.active_session() != Some(owner) || self.app_sessions.visit(owner) != Some(visit) {
+        if self.active_session() != Some(owner) {
             return;
         }
+        let revisited = self.app_sessions.visit(owner) != Some(visit);
         let latest = self.pr_mode().and_then(|mode| {
             mode.tabs
                 .iter()
                 .find(|tab| {
                     tab.pr.number == stale.number
                         && tab.pr.base_repo == stale.base_repo
-                        && tab.pr.head_sha != stale.head_sha
                         && !tab.local_refs_loading
+                        && if revisited {
+                            tab.head.0 != tab.pr.head_sha
+                        } else {
+                            tab.pr.head_sha != stale.head_sha
+                        }
                 })
                 .map(|tab| tab.pr.clone())
         });
@@ -602,11 +608,12 @@ impl KagiApp {
         }
     }
 
-    /// Persist the fetch failure for its frozen repository even after a tab
-    /// switch. Only the still-current owner may reveal it in the active panel.
+    /// Persist the fetch failure for its frozen repository and push its
+    /// receipt into the shared Operation Log panel even after a tab switch.
+    /// Only the still-current owner may open the panel or show an error.
     // The frozen receipt and owner stamp arrive separately from two fetch jobs.
     #[allow(clippy::too_many_arguments)]
-    fn record_ref_fetch_failure(
+    pub(in crate::ui) fn record_ref_fetch_failure(
         &mut self,
         op: &'static str,
         owner: Option<crate::app::SessionId>,
@@ -641,15 +648,15 @@ impl KagiApp {
                 );
             }
         }
+        let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&recording);
+        if let Some(panel) = self.op_log.clone() {
+            panel.update(cx, |panel, cx| {
+                panel.push(entry);
+                panel.collapse();
+                cx.notify();
+            });
+        }
         if current {
-            let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&recording);
-            if let Some(panel) = self.op_log.clone() {
-                panel.update(cx, |panel, cx| {
-                    panel.push(entry);
-                    panel.collapse();
-                    cx.notify();
-                });
-            }
             self.bottom_panel_open = true;
             self.bottom_tab = BottomTab::OperationLog;
         }

@@ -1001,15 +1001,19 @@ The current suite covers:
   plans after departure and revisit while releasing the planning latch.
 - guard writer abandonment (`tests/recovery/fetch_owner.rs`,
   `tests/recovery/guard_writer_panic.rs`):
-  `KAGI_GUI_E2E_ONLY=fetch_panicked_worker_reconciles,fetch_previous_visit_is_not_presented,fetch_old_visit_drops_pull_waiter,fetch_new_visit_waiter_sees_old_flight_failure,remote_branch_fetch_panic,remote_branch_fetch_failed_after_departure,remote_branch_fetch_success_after_departure,pr_ref_fetch_panic,editor_save_panic,pull_confirm_departure_discards_old_visit`
+  `KAGI_GUI_E2E_ONLY=fetch_panicked_worker_reconciles,fetch_previous_visit_is_not_presented,fetch_old_visit_drops_pull_waiter,fetch_new_visit_waiter_sees_old_flight_failure,remote_branch_fetch_panic,remote_branch_fetch_failed_after_departure,remote_branch_fetch_success_after_departure,pr_ref_fetch_restarts_after_revisit,pr_ref_fetch_panic,editor_save_panic,pull_confirm_departure_discards_old_visit`
   exercises the admitted background work's panic, Unknown receipt and reconcile
   notice, acknowledgement and fresh admission. Departing and returning drops
   the old Pull waiter; a new visit's Pull joined to the old fetch gets its
   failure footer and toast, with one receipt and no old-visit confirmation.
-  A failed remote-branch fetch records against its frozen repo even while
-  another tab is active, without changing that tab's footer/toast. The success
-  and failure legs also inspect `klog::tail()` for the unchanged terminal
-  contract lines after departure. `TestDispatcher`
+  Failed fetches (including an old-visit fetch and a departed remote branch
+  fetch) keep their frozen repository receipt visible in the shared Operation
+  Log panel without changing the current tab's footer/toast or opening the
+  panel. The remote branch success and failure legs inspect `klog::tail()` for
+  the unchanged terminal lines after departure. After PR mode is cleared by
+  activation, reopening that PR admits one current-visit fetch; the old
+  completion cannot clear its loading latch or replace its head/files.
+  `TestDispatcher`
   propagates an uncaught task panic before `Task::fallible()` can deliver `None`;
   the GUI-only seam catches the injected panic inside the worker and returns an
   absent result so the production abandonment branch can be inspected. The

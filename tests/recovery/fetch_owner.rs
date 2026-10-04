@@ -345,6 +345,17 @@ pub fn scenario_fetch_previous_visit_is_not_presented(cx: &mut VisualTestAppCont
         records.last().unwrap().outcome,
         kagi_git::oplog::OpOutcome::Failed { .. }
     ));
+    cx.read(|cx| {
+        let panel = app.read(cx).op_log.as_ref().unwrap().read(cx);
+        assert!(
+            panel.entries().iter().any(|entry| {
+                entry.id == records.last().unwrap().id
+                    && entry.op == "fetch"
+                    && entry.repo == repo_a.display().to_string()
+            }),
+            "old-visit failure was persisted but not pushed to the live panel"
+        );
+    });
     unmount(cx, app, window);
 }
 

@@ -56,18 +56,14 @@ pub(crate) fn approve_modal_plan(
         return Err(AdmissionError::StaleApproval);
     }
     s.confirm_identity(&owner)?;
-    // Run-family callers can arrive without a UI latch. A competing writer
-    // must not consume a ready plan just because this modal tried to approve.
-    // Reconcile takes precedence over Busy at begin_write, including when an
-    // Unknown writer still holds its lease; keep that admission path unchanged.
-    if let Planned::Run(request) = &prepared {
-        if s.has_leases()
-            && !s.reconcile.values().any(
-                |entry| matches!(&entry.scope, WriteScope::Local(repo) if repo == &request.repo),
-            )
-        {
-            return Err(AdmissionError::Busy);
-        }
+    // A modal-plan family (run and pull alike) can arrive without a UI latch.
+    // A competing writer must not consume a ready plan just because this
+    // modal tried to approve: Busy is retry-later (#992 review, R5). Reconcile
+    // takes precedence over Busy at begin_write, including when an Unknown
+    // writer still holds its lease; keep that admission path unchanged.
+    let scope = prepared.scope();
+    if s.has_leases() && !s.reconcile.values().any(|entry| entry.scope == scope) {
+        return Err(AdmissionError::Busy);
     }
     s.invalidate_plan();
     s.plan_owner = Some(owner.session);

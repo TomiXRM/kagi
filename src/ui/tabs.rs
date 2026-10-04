@@ -204,6 +204,8 @@ impl KagiApp {
         // ADR-0197 決定 3: a plain tab switch retains the departing owner's
         // editor and its unsaved buffer, so it must not be gated on dirtiness.
         // The dirty guard stays only on owner-destroying paths (close / reopen).
+        // A different session's Inspector cannot finish this tab's slide.
+        self.panel_motion.reset_right();
         self.depart_active_tab();
         self.active_tab = index;
         self.error = None;
@@ -327,6 +329,9 @@ impl KagiApp {
 
         // No local path: every `self.repo_path.as_ref()?` operation no-ops, and
         // `arm_watcher` returns early.
+        // Entering a remote session is a tab transition even when it reuses
+        // an existing slot; a previous Inspector exit must not cross it.
+        self.panel_motion.reset_right();
         self.depart_active_tab();
         self.repo_path = None;
         // No repo_session write here (P1-a): the departing local owner keeps its

@@ -186,6 +186,7 @@ pub enum Msg {
     // ── Generic guards / footers ────────────────────────────────────
     /// "another operation is in progress" (was "別の操作が実行中です").
     OpInProgress,
+    CheckoutStashCannotQueue,
     SlowWriteNetwork,
     SlowWriteRebase,
     SlowWriteCheckout,
@@ -2026,6 +2027,8 @@ impl Msg {
             (Ja, AppNoticeDismiss) => "閉じる",
             (En, OpInProgress) => "another operation is in progress",
             (Ja, OpInProgress) => "別の操作が実行中です",
+            (En, CheckoutStashCannotQueue) => "Cannot queue stash + checkout during another write: they require two writes. Try again when it finishes.",
+            (Ja, CheckoutStashCannotQueue) => "ほかの書き込み中は stash + checkout をキューに入れられません。2 回の書き込みが必要です。完了後にやり直してください。",
             (En, SlowWriteNetwork) => "network: waiting for the remote",
             (Ja, SlowWriteNetwork) => "network: remote の応答を待っています",
             (En, SlowWriteRebase) => "rebase: replaying commits",

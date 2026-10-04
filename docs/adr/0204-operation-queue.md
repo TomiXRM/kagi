@@ -291,9 +291,12 @@ pub enum IntentRequest {                // 段階 2 で受け付ける最初の 
   先行 write が branch を作成・linked worktree を解放した場合は誤拒否もあり得るが、
   write 完了後の再試行で済む。静的拒否は oplog に記録し footer と toast に理由を示す。
   先頭に来てから通常の checkout plan を作り直し、その時点の blocker / warning と
-  admission 前 preflight で判断する。
+  admission 前 preflight で判断する。commit modal の busy 入口も OID を凍結し、
+  先行 write 後の HEAD から再計画する。確認中に HEAD が変われば preflight で失敗し、
+  stale な checkout は実行しない。
   commit への Enter が dirty + busy の場合、stash + checkout は 2 write なので
-  単一 checkout intent としては受け付けず、既存の busy 拒否を維持する。
+  単一 checkout intent としては受け付けない。先行 write 中は 1 intent にできない旨を
+  専用の EN / JA 文言で footer と toast に出す。通常の busy 拒否の汎用文言とは区別する。
   queued merge は常に通常の merge modal で確認する。投入時の `into` は HEAD の branch 名
   （drag で明示された場合はその destination 名）として凍結し、先頭時点の HEAD が異なれば
   その凍結 destination への merge-into として live replan する。予測済み plan は保存しない。
@@ -431,6 +434,11 @@ SSH remote pull の旧 latch による排他の穴は #989 の write lease 移�
    plan slot を session 別にする案は ADR-0182 の単一 slot 決定に触るので本 ADR では採らない。
 
 ## 改訂履歴
+
+- **2026-10-05 #1032** — busy commit checkout の OID 凍結・先行 write 後の
+  live plan / 確認 / preflight を native Tier A で直接検証。dirty + busy の
+  commit Enter では stash + checkout を 1 intent に入れられない理由を
+  英日それぞれの footer / toast に明示し、stash や checkout を開始しない。
 
 - **2026-10-05 #1028** — busy checkout の enqueue-time plan に含まれる一時的な
   dirty blocker が先行 write の結果を予測できないまま後続を拒否していたため、投入時は

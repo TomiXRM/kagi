@@ -2056,6 +2056,14 @@ shows the strip at once, then asks about the fresh carry-over warning) and
 the localized footer/toast and a durable refusal receipt), and
 `queue_checkout_linked_worktree_refuses` (a branch checked out in another
 worktree cannot enter the busy queue; its typed blocker reaches the oplog).
+#1032 adds `queue_commit_checkout_busy_replans` (direct busy
+`open_checkout_commit_modal` freezes the target OID; the head plan reads the
+predecessor's new HEAD; an external HEAD change after confirm makes preflight
+fail with a durable `Preflight` receipt rather than executing a stale checkout)
+and `queue_dirty_commit_enter_refuses` (real Enter on a dirty selected commit
+while a write is held keeps the queue empty, starts no stash/checkout, and
+shows a dedicated EN/JA two-write explanation in footer and error toast).
+
 Stage 3b-1 adds:
 `queue_commit_runs_after_checkout` (held checkout, staged change, queued commit
 strip row and toast, then HEAD advances on the new branch with the frozen

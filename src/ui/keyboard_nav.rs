@@ -17,8 +17,9 @@
 //! holds the focus, and the tab list's bindings are scoped to its own key
 //! context.
 //!
-//! A row list (a virtualized `gpui::list`) is one Tab stop too: the row last
-//! focused while it is drawn, else the first row on screen. ↑/↓ move to the
+//! A row list (a virtualized `gpui::list` or `uniform_list`, see
+//! [`RowScroll`]) is one Tab stop too: the row last focused while it is
+//! drawn, else the first row on screen. ↑/↓ move to the
 //! neighbouring row, scrolling it into view first (#959). Its rows' focus
 //! handles live in app state by each row's key, so a row scrolled out of view
 //! keeps its handle, and a focused row that leaves the list (a filter, a read
@@ -36,7 +37,8 @@ use std::rc::{Rc, Weak};
 
 use gpui::{
     actions, prelude::*, rgb, transparent_black, App, ClickEvent, Div, FocusHandle, KeyBinding,
-    KeyDownEvent, ListOffset, ListState, Role, SharedString, Stateful, Window,
+    KeyDownEvent, ListOffset, ListState, Role, ScrollStrategy, SharedString, Stateful,
+    UniformListScrollHandle, Window,
 };
 
 use super::theme::theme;
@@ -435,6 +437,90 @@ impl TabList {
 /// a frame that draws the same rows hands the same `Rc` back.
 pub(crate) type RowKeys = Rc<[(String, usize)]>;
 
+/// How a row list scrolls and what it drew last frame: a `gpui::list`'s
+/// [`ListState`], or a `uniform_list`'s handle with the range of items its
+/// processor was last asked for (#981) — a `uniform_list` keeps no bounds per
+/// item, but it draws exactly the items it asks for. Cheap to clone.
+#[derive(Clone)]
+pub(crate) enum RowScroll {
+    List(ListState),
+    Uniform(UniformListScrollHandle, std::ops::Range<usize>),
+}
+
+impl RowScroll {
+    /// The entry at the top of the list's viewport.
+    fn top(&self) -> usize {
+        match self {
+            Self::List(state) => state.logical_scroll_top().item_ix,
+            // The first item it drew is the one at the top (the handle's own
+            // `logical_scroll_top_index` is test-only in gpui).
+            Self::Uniform(_, drawn) => drawn.start,
+        }
+    }
+
+    /// Whether entry `ix` was drawn last frame.
+    fn drawn(&self, ix: usize) -> bool {
+        match self {
+            Self::List(state) => state.bounds_for_item(ix).is_some(),
+            Self::Uniform(_, drawn) => drawn.contains(&ix),
+        }
+    }
+
+    /// Scroll entry `ix` into view, as little as it takes.
+    fn reveal(&self, ix: usize) {
+        match self {
+            Self::List(state) => {
+                state.scroll_to_reveal_item(ix);
+                // gpui's lazy list does not yet know the height of distant
+                // items. Reveal cannot reach one until it has been measured;
+                // anchor it directly so the next layout can draw that row.
+                if state.bounds_for_item(ix).is_none() {
+                    state.scroll_to(ListOffset {
+                        item_ix: ix,
+                        offset_in_item: gpui::px(0.),
+                    });
+                }
+            }
+            // Not strict: it scrolls only when the item is out of view.
+            Self::Uniform(handle, _) => handle.scroll_to_item(ix, ScrollStrategy::Top),
+        }
+    }
+
+    /// How far Page Up / Page Down move, counted from `first`, the first row
+    /// at the top.
+    fn page_size(&self, keys: &[(String, usize)], first: usize) -> usize {
+        match self {
+            Self::List(state) => {
+                let viewport = state.viewport_bounds();
+                page(
+                    keys.iter()
+                        .skip(first)
+                        .filter_map(|(_, ix)| state.bounds_for_item(*ix))
+                        .take_while(|bounds| bounds.top() < viewport.bottom())
+                        .filter(|bounds| bounds.bottom() > viewport.top())
+                        .count(),
+                )
+            }
+            Self::Uniform(_, drawn) => uniform_page(keys, first, drawn),
+        }
+    }
+}
+
+/// A page: the rows on screen less one, at least one.
+fn page(visible: usize) -> usize {
+    visible.saturating_sub(1).max(1)
+}
+
+/// A page of a `uniform_list` that drew the items `drawn`.
+fn uniform_page(keys: &[(String, usize)], first: usize, drawn: &std::ops::Range<usize>) -> usize {
+    page(
+        keys.iter()
+            .skip(first)
+            .take_while(|(_, ix)| drawn.contains(ix))
+            .count(),
+    )
+}
+
 /// The focus handles of one virtualized list's rows and the row last focused
 /// (#959). The handles are made again only when the rows change — not on
 /// every frame (#937) — and a row keeps its handle while its key stays.
@@ -464,7 +550,7 @@ impl RowFocus {
     pub(crate) fn rows(
         &mut self,
         keys: RowKeys,
-        state: &ListState,
+        scroll: &RowScroll,
         fallback: Option<&FocusHandle>,
         window: &mut Window,
         cx: &mut App,
@@ -525,7 +611,7 @@ impl RowFocus {
         // rows or before the next ones. The first row at or after the top
         // entry is the only candidate — a later one is further down — and it
         // counts only if drawn.
-        let top = state.logical_scroll_top().item_ix;
+        let top = scroll.top();
         let first = self.keys.partition_point(|&(_, ix)| ix < top);
         // On the frame the rows were rebuilt the list has no bounds yet (it
         // was reset or put back at its scroll top, and lays the rows out in
@@ -537,7 +623,7 @@ impl RowFocus {
         if rebuild {
             window.request_animation_frame();
         }
-        let drawn = |at: usize| !rebuild && state.bounds_for_item(self.keys[at].1).is_some();
+        let drawn = |at: usize| !rebuild && scroll.drawn(self.keys[at].1);
         // The row holding the focus — itself or a control inside it, its
         // Open button (#961 review) — scrolled out of the drawn range by the
         // wheel is unmounted: no ↑/↓, no ring. Not on the frame the focus
@@ -562,21 +648,12 @@ impl RowFocus {
             }
             self.current = stop;
         }
-        let viewport = state.viewport_bounds();
-        let visible = self
-            .keys
-            .iter()
-            .skip(first)
-            .filter_map(|(_, ix)| state.bounds_for_item(*ix))
-            .take_while(|bounds| bounds.top() < viewport.bottom())
-            .filter(|bounds| bounds.bottom() > viewport.top())
-            .count();
         RowList {
             rows: self.keys.clone(),
             handles: self.handles.clone(),
             stop,
-            state: state.clone(),
-            page_size: visible.saturating_sub(1).max(1),
+            scroll: scroll.clone(),
+            page_size: scroll.page_size(&self.keys, first),
         }
     }
 
@@ -633,13 +710,28 @@ impl RowFocus {
     }
 
     /// The key of the row holding the focus, if any.
-    #[cfg(feature = "gui-e2e")]
-    pub(crate) fn focused(&self, window: &Window) -> Option<String> {
+    pub(crate) fn focused(&self, window: &Window) -> Option<&str> {
         self.keys
             .iter()
             .zip(self.handles.iter())
             .find(|(_, handle)| handle.is_focused(window))
-            .map(|((key, _), _)| key.clone())
+            .map(|((key, _), _)| key.as_str())
+    }
+
+    /// Focus the first row, scrolling it into view (a pane opened from the
+    /// keyboard, #981). False when there is no row.
+    pub(crate) fn focus_first(
+        &self,
+        scroll: &RowScroll,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let Some((handle, (_, ix))) = self.handles.first().zip(self.keys.first()) else {
+            return false;
+        };
+        scroll.reveal(*ix);
+        handle.focus(window, cx);
+        true
     }
 
     /// Focus the row `key` (GUI E2E: Tier A cannot press Tab into a list
@@ -657,7 +749,7 @@ pub(crate) struct RowList {
     rows: RowKeys,
     handles: Rc<[FocusHandle]>,
     stop: Option<usize>,
-    state: ListState,
+    scroll: RowScroll,
     page_size: usize,
 }
 
@@ -672,6 +764,40 @@ impl RowList {
         self.rows.len()
     }
 
+    /// Whether a drawn row is the list's Tab stop this frame (none while no
+    /// row is known to be on screen).
+    pub(crate) fn has_stop(&self) -> bool {
+        self.stop.is_some()
+    }
+
+    /// Focus the list's Tab stop, if it has one.
+    pub(crate) fn focus_stop(&self, window: &mut Window, cx: &mut App) {
+        if let Some(at) = self.stop {
+            self.handles[at].focus(window, cx);
+        }
+    }
+
+    /// This list as a `uniform_list` draws it this frame, `visible` being
+    /// the items its processor was asked for: those are on screen now, so the
+    /// stop moves to the first of them when the one picked from last frame's
+    /// range has scrolled out (#987 review — a wheel, a divider drag or a
+    /// resize changes the range after the stop was picked).
+    pub(crate) fn as_drawn(&self, visible: &std::ops::Range<usize>) -> RowList {
+        let on = |at: usize| visible.contains(&self.rows[at].1);
+        let first = self.rows.partition_point(|&(_, ix)| ix < visible.start);
+        let stop = self
+            .stop
+            .filter(|&at| on(at))
+            .or_else(|| (first < self.rows.len() && on(first)).then_some(first));
+        RowList {
+            rows: self.rows.clone(),
+            handles: self.handles.clone(),
+            stop,
+            scroll: self.scroll.clone(),
+            page_size: uniform_page(&self.rows, first, visible),
+        }
+    }
+
     /// The row at `at` (its place among the rows): Tab reaches it when it is
     /// the list's stop, ↑/↓ move from it, Enter/Space press it (`on_click`).
     pub(crate) fn row(&self, at: usize, el: Stateful<Div>) -> Stateful<Div> {
@@ -680,21 +806,11 @@ impl RowList {
             .tab_index(0)
             .tab_stop(self.stop == Some(at));
         let move_to = |to: usize| {
-            let (rows, handles, state) =
-                (self.rows.clone(), self.handles.clone(), self.state.clone());
+            let (rows, handles, scroll) =
+                (self.rows.clone(), self.handles.clone(), self.scroll.clone());
             move |window: &mut Window, cx: &mut App| {
                 let to = to.min(rows.len() - 1);
-                let item = rows[to].1;
-                state.scroll_to_reveal_item(item);
-                // gpui's lazy list does not yet know the height of distant
-                // items. Reveal cannot reach one until it has been measured;
-                // anchor it directly so the next layout can draw that row.
-                if state.bounds_for_item(item).is_none() {
-                    state.scroll_to(ListOffset {
-                        item_ix: item,
-                        offset_in_item: gpui::px(0.),
-                    });
-                }
+                scroll.reveal(rows[to].1);
                 handles[to].focus(window, cx);
             }
         };

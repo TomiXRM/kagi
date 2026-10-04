@@ -216,6 +216,9 @@ impl Render for KagiApp {
                 .work
                 .pane_focus
                 .yield_focus(fallback.as_ref(), window, cx);
+        } else {
+            // The same for the Graph sidebar's rows and headers (#981).
+            self.yield_sidebar_focus(window, cx);
         }
         // Before any tab list picks its Tab stop this frame (#968).
         super::keyboard_nav::forget_roving_without_focus(window);
@@ -367,10 +370,12 @@ impl Render for KagiApp {
                 &sidebar_filter_text,
             );
             self.sidebar.pane_ranges = sidebar_panes::pane_ranges(&rows);
+            self.sidebar
+                .focus
+                .set_keys(&rows, &self.sidebar.pane_ranges);
             self.sidebar.rows = rows;
             self.sidebar.rows_fingerprint = sidebar_fingerprint;
         }
-
         let status_footer = self.status_footer.clone();
         // ADR-0118 / T-ENTITY-CONFLICT-001: the conflict body is its own
         // `Entity<ConflictView>`. The entity renders itself (`el.child(entity)`);
@@ -382,61 +387,58 @@ impl Render for KagiApp {
         // resolution body (ADR-0068). Conflict Mode is still active (MERGE_HEAD
         // present) but the editor is hidden behind the commit message panel.
         let conflict_body_visible = self.conflict_body_visible();
+        // Conflict Mode replaces the body, the sidebar's panes with it; the
+        // body's frames sync them as they lay the sidebar out (#981).
+        if conflict_body_visible {
+            self.yield_sidebar_focus(window, cx);
+        }
         let commit_menu_overlay = self
             .commit_menu
             .clone()
+            .filter(|_| self.commit_menu_visible())
             .and_then(|state| self.render_commit_menu_overlay(state, window, cx));
         let branch_menu_overlay = self
             .branch_menu
             .clone()
+            .filter(|_| self.branch_menu_visible())
             .and_then(|state| self.render_branch_menu_overlay(state, window, cx));
         let tag_menu_overlay = self
             .tag_menu
             .clone()
+            .filter(|_| self.tag_menu_visible())
             .and_then(|state| self.render_tag_menu_overlay(state, window, cx));
         let stash_menu_overlay = self
             .stash_menu
             .clone()
+            .filter(|_| self.stash_menu_visible())
             .and_then(|state| self.render_stash_menu_overlay(state, window, cx));
         let worktree_menu_overlay = self
             .worktree_menu
             .clone()
+            .filter(|_| self.worktree_menu_visible())
             .and_then(|state| self.render_worktree_menu_overlay(state, window, cx));
-        // T-CONFLICT-DASH-022: per-file "…" overflow menu overlay (anchored at the
-        // click position; rendered TOP-LEVEL on the `KagiApp` context — never
-        // inside the entity render — so its actions defer/dispatch on the parent
-        // without leasing the entity. Reads `file_menu` + `mode` from the entity.
-        let conflict_file_menu_overlay = match conflict_entity.as_ref() {
-            Some(entity) => {
-                let (file_menu, mode) = {
-                    let v = entity.read(cx);
-                    (v.file_menu, v.mode.clone())
+        // Per-file and Editor tree menus render on the root, not inside the
+        // entity, so their actions can dispatch without leasing that entity.
+        let conflict_file_menu_overlay = if self.conflict_file_menu_visible(cx) {
+            conflict_entity.as_ref().and_then(|entity| {
+                let view = entity.read(cx);
+                let (Some((idx, pos)), Some(mode)) = (view.file_menu, view.mode.clone()) else {
+                    return None;
                 };
-                match (mode, file_menu) {
-                    (Some(m), Some((idx, pos))) => Some(conflict_view::render_file_menu(
-                        entity, &m, idx, pos, window, cx,
-                    )),
-                    _ => None,
-                }
-            }
-            None => None,
+                Some(conflict_view::render_file_menu(
+                    entity, &mode, idx, pos, window, cx,
+                ))
+            })
+        } else {
+            None
         };
-        // T-WS-EDITOR-007: the Editor Workspace tree's right-click context
-        // menu overlay — same top-level-on-`KagiApp` pattern as
-        // `conflict_file_menu_overlay` above (reads `tree_menu` from the
-        // entity, so its `on_select` dispatches `KagiApp` methods directly
-        // without leasing the entity).
-        let editor_tree_menu_overlay = match self.ui().editor_workspace.as_ref() {
-            Some(entity) => {
-                let tree_menu = entity.read(cx).tree_menu;
-                match tree_menu {
-                    Some((target, pos)) => {
-                        editor_tree_menu::render_editor_tree_menu(entity, target, pos, window, cx)
-                    }
-                    None => None,
-                }
-            }
-            None => None,
+        let editor_tree_menu_overlay = if self.editor_tree_menu_visible(cx) {
+            self.ui().editor_workspace.as_ref().and_then(|entity| {
+                let (target, pos) = entity.read(cx).tree_menu?;
+                editor_tree_menu::render_editor_tree_menu(entity, target, pos, window, cx)
+            })
+        } else {
+            None
         };
         // T-HT-001: clone toolbar/summary state for header render.
         // W3-NOTIFY: while a background git op runs, disable every git button
@@ -487,9 +489,8 @@ impl Render for KagiApp {
         );
 
         // T-BP-002: cmd-j toggle action handler.
-        let toggle_bottom_panel = cx.listener(|this, _: &ToggleBottomPanel, _window, cx| {
-            this.bottom_panel_open = !this.bottom_panel_open;
-            cx.notify();
+        let toggle_bottom_panel = cx.listener(|this, _: &ToggleBottomPanel, window, cx| {
+            this.toggle_bottom_panel(window, cx);
         });
 
         // T-WS-EDITOR-002: Cmd-S saves the Editor Workspace's dirty buffer.
@@ -529,6 +530,23 @@ impl Render for KagiApp {
         });
 
         // ── Normal state: header + body + bottom panel slot + status bar ─────
+        // Outer layers are composed here rather than in attach_modal_overlays:
+        // their pane/body and window-shell parents cannot be attached by the
+        // shared modal collector. Keep that boundary pinned to Z_ORDER.
+        debug_assert_eq!(
+            &super::front_layer::Z_ORDER[..5],
+            &[
+                super::front_layer::LayerKind::ConflictFileMenu,
+                super::front_layer::LayerKind::EditorTreeMenu,
+                super::front_layer::LayerKind::CoauthorMenu,
+                super::front_layer::LayerKind::WorkspaceMenus,
+                super::front_layer::LayerKind::MenuOverlay,
+            ]
+        );
+        debug_assert_eq!(
+            super::front_layer::Z_ORDER.last(),
+            Some(&super::front_layer::LayerKind::PlatformMenu)
+        );
         let root = div()
             .flex()
             .flex_col()
@@ -700,9 +718,14 @@ impl Render for KagiApp {
                     commit_panel_open,
                     commit_panel.clone(),
                     wip_diffstat,
+                    window,
                     cx,
                 ))
             })
+            // The body owns the Commit Panel coauthor popover. Keep these
+            // two root-level pane popovers below workspace menus as in Z_ORDER.
+            .children(conflict_file_menu_overlay)
+            .children(editor_tree_menu_overlay)
             // ── Commit context menu overlay (below modals) ─────
             .children(commit_menu_overlay)
             // ── Branch context menu overlay (below modals) ─────
@@ -711,10 +734,6 @@ impl Render for KagiApp {
             .children(stash_menu_overlay)
             .children(tag_menu_overlay)
             .children(worktree_menu_overlay)
-            // ── Conflict per-file "…" overflow menu overlay ────
-            .children(conflict_file_menu_overlay)
-            // ── Editor Workspace tree right-click context menu overlay ──
-            .children(editor_tree_menu_overlay)
             // ── W5-MENU: menu-driven overlay (branch picker / About / shortcuts) ──
             .children(self.render_menu_overlay(window, cx));
 

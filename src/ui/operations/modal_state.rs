@@ -32,7 +32,7 @@ use super::super::modals::{
 };
 use super::super::KagiApp;
 pub(crate) use arbitration::{AsyncPlanOffer, AsyncPlanToken, PlanningPresentation};
-use gpui::{AppContext as _, Context, Window};
+use gpui::{AppContext as _, Context, Focusable as _, Window};
 use gpui_component::input::InputState;
 
 // Accessors for the single `active_modal: Option<ActiveModal>` field
@@ -43,6 +43,136 @@ use gpui_component::input::InputState;
 impl KagiApp {
     pub(crate) fn has_active_modal(&self) -> bool {
         self.active_modal.is_some()
+    }
+
+    /// Slot variants drawn after the repo popovers and Commit Panel plan.
+    /// This exhaustive split keeps key ownership aligned with rendering.
+    pub(crate) fn early_modal_visible(&self) -> bool {
+        use ActiveModal as M;
+        match self.active_modal.as_ref() {
+            None | Some(M::SmartCommit(_) | M::Update(_)) => false,
+            Some(
+                M::RemoteBrowse(_)
+                | M::Clone(_)
+                | M::AppNotice(_)
+                | M::Checkout(_)
+                | M::Pull(_)
+                | M::Amend(_)
+                | M::Pop(_)
+                | M::StashDrop(_)
+                | M::PushTag(_)
+                | M::PrMerge(_)
+                | M::PrFields(_)
+                | M::Push(_)
+                | M::BranchPlan(_)
+                | M::SetUpstream(_)
+                | M::RenameBranch(_)
+                | M::Merge(_)
+                | M::TrackingCheckout(_)
+                | M::SwitchToLatest(_)
+                | M::CreateBranch(_)
+                | M::CreateTag(_)
+                | M::CreateWorktree(_)
+                | M::UnlockWorktree(_)
+                | M::RemoveWorktree(_)
+                | M::WorktreeLockReason(_)
+                | M::LockWorktree(_)
+                | M::PruneWorktrees(_)
+                | M::RepairWorktrees(_)
+                | M::RepoHealth(_)
+                | M::ApplySuggestion(_)
+                | M::OplogRestore(_)
+                | M::StashPush(_)
+                | M::StashApply(_)
+                | M::CherryPick(_)
+                | M::Revert(_)
+                | M::History(_)
+                | M::DeleteBranch(_)
+                | M::DeleteRemoteBranch(_)
+                | M::ResetCurrent(_)
+                | M::ForceLeasePush(_)
+                | M::RebaseCurrentOnto(_)
+                | M::BranchCleanup(_)
+                | M::Discard(_)
+                | M::ConflictContinue(_)
+                | M::ConflictAbort(_)
+                | M::EditorDirtyGuard(_)
+                | M::EditorFsPrompt(_)
+                | M::EditorDeleteConfirm(_)
+                | M::TrustRepo(_),
+            ) => true,
+        }
+    }
+
+    /// Settings yields to an arriving modal only after deciding whether the
+    /// modal already owns keyboard focus. Match every variant so new modals
+    /// cannot silently inherit the fieldless behavior.
+    pub(crate) fn active_modal_input_focused(&self, window: &Window, cx: &Context<Self>) -> bool {
+        let owns_focus = |input: Option<&gpui::Entity<InputState>>| {
+            input.is_some_and(|input| input.read(cx).focus_handle(cx).contains_focused(window, cx))
+        };
+        use ActiveModal as M;
+        match self.active_modal.as_ref() {
+            Some(M::RemoteBrowse(m)) => {
+                owns_focus(m.host_state.as_ref())
+                    || owns_focus(m.port_state.as_ref())
+                    || owns_focus(m.identity_state.as_ref())
+            }
+            Some(M::PrFields(_)) => owns_focus(self.pr_fields_input.as_ref()),
+            Some(M::CreateBranch(m)) => owns_focus(m.input_state.as_ref()),
+            Some(M::CreateTag(m)) => owns_focus(m.input_state.as_ref()),
+            Some(M::StashPush(m)) => owns_focus(m.input_state.as_ref()),
+            Some(M::SetUpstream(m)) => owns_focus(m.input_state.as_ref()),
+            Some(M::RenameBranch(m)) => owns_focus(m.input_state.as_ref()),
+            Some(M::CreateWorktree(m)) => {
+                owns_focus(m.branch_state.as_ref()) || owns_focus(m.path_state.as_ref())
+            }
+            Some(M::WorktreeLockReason(m)) => owns_focus(m.input_state.as_ref()),
+            Some(M::EditorFsPrompt(m)) => owns_focus(m.input_state.as_ref()),
+            None
+            | Some(
+                M::Clone(_)
+                | M::Update(_)
+                | M::SmartCommit(_)
+                | M::AppNotice(_)
+                | M::Checkout(_)
+                | M::Pull(_)
+                | M::Amend(_)
+                | M::Pop(_)
+                | M::StashDrop(_)
+                | M::PushTag(_)
+                | M::PrMerge(_)
+                | M::Push(_)
+                | M::BranchPlan(_)
+                | M::Merge(_)
+                | M::TrackingCheckout(_)
+                | M::SwitchToLatest(_)
+                | M::UnlockWorktree(_)
+                | M::RemoveWorktree(_)
+                | M::LockWorktree(_)
+                | M::PruneWorktrees(_)
+                | M::RepairWorktrees(_)
+                | M::RepoHealth(_)
+                | M::ApplySuggestion(_)
+                | M::OplogRestore(_)
+                | M::StashApply(_)
+                | M::CherryPick(_)
+                | M::Revert(_)
+                | M::History(_)
+                | M::DeleteBranch(_)
+                | M::DeleteRemoteBranch(_)
+                | M::ResetCurrent(_)
+                | M::ForceLeasePush(_)
+                | M::RebaseCurrentOnto(_)
+                | M::BranchCleanup(_)
+                | M::Discard(_)
+                | M::ConflictContinue(_)
+                | M::ConflictAbort(_)
+                | M::EditorDirtyGuard(_)
+                | M::EditorDeleteConfirm(_)
+                | M::TrustRepo(_),
+            ) => false,
+        }
     }
 
     /// Drop the active modal when it belongs to the repository being switched

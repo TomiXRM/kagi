@@ -180,6 +180,9 @@ mod overlay_focus;
 #[path = "recovery/settings_switches.rs"]
 mod settings_switches;
 #[cfg(target_os = "macos")]
+#[path = "recovery/sidebar_rows.rs"]
+mod sidebar_rows;
+#[cfg(target_os = "macos")]
 #[path = "recovery/tab_panels.rs"]
 mod tab_panels;
 
@@ -1256,12 +1259,44 @@ mod macos {
                 Box::new(crate::overlay_focus::scenario_settings_close_returns_focus),
             ),
             (
+                "settings_focus_trap",
+                Box::new(crate::overlay_focus::scenario_settings_focus_trap),
+            ),
+            (
+                "settings_hidden_return_target",
+                Box::new(crate::overlay_focus::scenario_settings_hidden_return_target),
+            ),
+            (
                 "settings_switches",
                 Box::new(crate::settings_switches::scenario_settings_switches),
             ),
             (
                 "tab_panels",
                 Box::new(crate::tab_panels::scenario_tab_panels),
+            ),
+            (
+                "sidebar_rows",
+                Box::new(crate::sidebar_rows::scenario_sidebar_rows),
+            ),
+            (
+                "sidebar_rows_short",
+                Box::new(crate::sidebar_rows::scenario_sidebar_rows_short),
+            ),
+            (
+                "sidebar_rows_open_short",
+                Box::new(crate::sidebar_rows::scenario_sidebar_rows_open_short),
+            ),
+            (
+                "sidebar_rows_right_click",
+                Box::new(crate::sidebar_rows::scenario_sidebar_rows_right_click),
+            ),
+            (
+                "sidebar_rows_scroll",
+                Box::new(crate::sidebar_rows::scenario_sidebar_rows_scroll),
+            ),
+            (
+                "sidebar_rows_keys",
+                Box::new(crate::sidebar_rows::scenario_sidebar_rows_keys),
             ),
             (
                 "repo_tab_panels",
@@ -1606,6 +1641,10 @@ mod macos {
                 Box::new(crate::file_menu_owner::scenario_file_menu_rejects_stale_owner),
             ),
             (
+                "file_menu_focus_after_open_repository",
+                Box::new(crate::file_menu_owner::scenario_file_menu_focus_after_open_repository),
+            ),
+            (
                 "github_evidence_restores",
                 Box::new(crate::github_evidence_owner::scenario_github_evidence_restores),
             ),
@@ -1686,6 +1725,26 @@ mod macos {
             (
                 "platform_menu_scroll",
                 Box::new(crate::platform_menu_scroll::scenario_platform_menu_scroll),
+            ),
+            (
+                "platform_menu_over_modal",
+                Box::new(crate::platform_menu_scroll::scenario_platform_menu_over_modal),
+            ),
+            (
+                "filter_menu_over_modal",
+                Box::new(crate::platform_menu_scroll::scenario_filter_menu_over_modal),
+            ),
+            (
+                "filter_menu_then_settings",
+                Box::new(crate::platform_menu_scroll::scenario_filter_menu_then_settings),
+            ),
+            (
+                "coauthor_menu_under_conflict",
+                Box::new(crate::platform_menu_scroll::scenario_coauthor_menu_under_conflict),
+            ),
+            (
+                "platform_menu_modal_settings",
+                Box::new(crate::platform_menu_scroll::scenario_platform_menu_modal_settings),
             ),
             (
                 "field_picker_owner",

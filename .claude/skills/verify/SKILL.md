@@ -295,6 +295,50 @@ The current suite covers:
   Escape prints nothing. That is exactly what the accepted run recorded —
   no key line, modal closed. A printed `escape` with the modal still open is
   the interesting failure: the key arrived and no binding matched.
+- Settings focus trap (`KAGI_GUI_E2E_ONLY=settings_focus_trap`,
+  `tests/recovery/overlay_focus.rs`, #974):
+  - Setup: a stand-in shell runs in the bottom-panel terminal, which holds
+    the focus. Settings is then opened with `app.settings`, and the focus
+    must be on the trap container.
+  - Raw Tab: every press stays inside Settings. It walks into the
+    Analyze-ignore editor and out again to Save without editing the text,
+    and returns to the editor after one full turn. Shift+Tab also leaves
+    the editor (#977).
+  - Wrapping: from the container, Shift+Tab, Tab and Shift+Tab wrap around
+    both ends while staying inside.
+  - Close: Escape closes Settings and gives the focus back to the terminal.
+  - Pointer open: a click on `tb-settings` lands the focus on the ring-less
+    container. Escape then takes it out of Settings, back to the clicked
+    button.
+  - Toggle: from a focused terminal, Settings → raw Cmd+J closes both
+    Settings and the bottom panel; Escape and several frames later focus
+    remains on the visible root, not the hidden terminal. Repeat with the
+    panel initially closed to verify the opening direction and with the
+    command-id route used by the platform menu / palette. Removing the
+    Settings-close helper from the shared toggle fails
+    `settings-toggle-terminal: Cmd+J must close Settings`.
+  - Checked mutations: without `.focus_trap` the wrap leaves Settings;
+    without the focus on open, the focus stays on the terminal; without the
+    return-focus capture, Escape does not return to the terminal; with the
+    editor made an indenting multi-line input, Tab stays in it.
+  - Unmounted return targets (`KAGI_GUI_E2E_ONLY=settings_hidden_return_target`):
+    focus a sidebar mode-nav cell, open Settings through `app.settings`,
+    press raw Cmd+B, then Escape *during* the 150 ms close animation,
+    when the restored handle still belongs to the drawn root. Advance the
+    stand-in clock past close; raw Down must reach Graph because
+    `restored_focus` moves to root after unmount. Repeat with the inspector's
+    selectable commit message focused and raw Cmd+Option+B hiding commit
+    details, finishing the animation before Escape. Neither retained handle
+    may receive keys after its pane disappears, even in the same session.
+    Disabling either the return-time membership check or the per-frame
+    `restored_focus` check must fail.
+- Overlay z-order (`KAGI_GUI_E2E_ONLY=filter_menu_over_modal`,
+  `tests/recovery/platform_menu_scroll.rs`, #976 review): open the Issues
+  filter chip, then deliver the early Stash Push slot on a dirty tree. With
+  root focused, Enter leaves the modal and repository fingerprint unchanged;
+  Escape closes the filter first and retains the modal. `front_layer::Z_ORDER`
+  drives both modal rendering and key ownership. Moving overlay menus below
+  early modals must fail the front-menu assertion.
 - overlay focus return (`KAGI_GUI_E2E_ONLY=palette_push_modal_keys,settings_close_returns_focus`,
   `tests/recovery/overlay_focus.rs`): #817 / #812. Every key is raw, with no
   test-side refocusing. The palette scenario first starts the bottom-panel
@@ -331,6 +375,38 @@ The current suite covers:
   `home-tab-panel` is named Home and no `repo-tab-panel` is drawn.
   `gh` is a failing stand-in. What VoiceOver speaks is not observable by an
   agent (the #972 probe found the native AX tree exposes no GPUI content).
+- Sidebar rows from the keyboard (`KAGI_GUI_E2E_ONLY=sidebar_rows`,
+  `tests/recovery/sidebar_rows.rs`, #981): a fixture with branches alpha /
+  beta / gamma, tags v1 / v2 and a linked worktree. ↓ from LOCAL's first row
+  moves to the next and stops at LOCAL's last row (never into REMOTE or
+  WORKTREES), ↑ stops at its first; TAGS collapsed by a click on its header,
+  Tab from the window reaches that header (`sidebar_header_focused_for_e2e`)
+  and Enter opens TAGS onto `tag:v1`; Enter on the worktree row opens the
+  keyboard's inspection card (`sidebar-worktree-keyboard-card`), Escape
+  closes it and the row keeps the focus. Rows are read and focused through
+  `sidebar_row_focused_for_e2e` / `focus_sidebar_row_for_e2e` (keys
+  `branch:` / `group:` / `remote:` / `tag:` / `worktree:<path>` /
+  `stash:<n>`). From the #987 review: `view.toggleSidebar` with a row
+  focused leaves no row focused and the root focused on that one drawn
+  frame (no pump: a later frame would hide the bug), and Tab from the
+  window reaches the open-but-empty REMOTE pane's header. Back from Issues
+  to Graph in one update with one drawn frame, Tab (no frame between)
+  still reaches a LOCAL row: what the panes drew when last shown is kept
+  while they are away. `sidebar_rows_short` mounts a 300px-high window,
+  where LOCAL has rows but draws none: Tab reaches LOCAL's header.
+  `sidebar_rows_scroll` (40 branches): with b00 remembered, LOCAL scrolled
+  to its end inside the one drawn frame still offers a drawn row to Tab (not
+  b00); a focused b00 scrolled out has its focus on a drawn LOCAL row after
+  the next frame. `sidebar_rows_keys`: a focused stash keeps the focus on
+  its entry when a new stash pushes it down (keys are the stash commit), and
+  a focused header of the empty REMOTE pane hands its focus to the row a
+  refresh brings. `sidebar_rows_open_short`: with LOCAL's pane weight too
+  small for a row (a short window; Tier A cannot resize), Enter on its
+  collapsed header opens it and on no frame does an undrawn row take the
+  focus — the header keeps it until the weight is restored, then the first
+  row has it. `sidebar_rows_right_click`: a right-click on a focused row
+  opens its menu and gives the window the focus; Enter then opens no
+  checkout plan. The ring is not observable in Tier A.
 - modal input transitions (`KAGI_GUI_E2E_ONLY=remote_browse_escape_focus,pr_fields_escape_focus`,
   `tests/recovery/remote_browse_focus.rs`, `tests/recovery/pr_fields_focus.rs`):
   #755 follow-up. Real InputStates own focus before Remote Browse's
@@ -925,13 +1001,17 @@ The current suite covers:
   `remote_refresh_departed_owner`, `remote_refresh_newest_request`,
   `fetch_same_owner_piggybacks`, `fetch_different_owner_does_not_piggyback`,
   `fetch_owner_display_isolated`, `fetch_detach_retains_flight_and_isolates_reopen`,
-  `file_menu_freezes_path`, and `file_menu_rejects_stale_owner`.
+  `file_menu_freezes_path`, `file_menu_rejects_stale_owner`, and
+  `file_menu_focus_after_open_repository`.
   Use `KAGI_GUI_E2E_ONLY=remote_refresh_,fetch_same_owner,fetch_different_owner,fetch_owner_display,fetch_detach,file_menu_`.
   Remote tests queue a yielding transport task through `ui::e2e`, then exercise
   the real refresh launch and completion; no SSH process blocks the dispatcher.
   Fetch tests launch a real local fetch and switch/close before draining.
   File-menu tests defer the real panel callback, renumber rows, click the measured
-  Discard control, and deliver a retained action after changing owners.
+  Discard control, deliver a retained action after changing owners, and assert
+  that an invisible A menu cannot consume B's keyboard after `open_repository`.
+  The focus scenario checks raw Enter opens B's Graph checkout plan and Escape
+  closes a visible menu without clearing Graph selection.
   The existing `unmerged_branch_delete_armed` scenario also rejects delayed
   plans after departure and revisit while releasing the planning latch.
 - session-owned positioning and Smart Commit state

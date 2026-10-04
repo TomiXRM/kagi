@@ -94,6 +94,8 @@ pub struct SidebarState {
     pub settle_gen: u64,
     /// The Graph / PRs / Issues cells, for the keyboard (#944).
     pub(crate) mode_focus: super::keyboard_nav::TabFocus,
+    /// The panes' rows and headers, for the keyboard (#981).
+    pub(crate) focus: super::sidebar_focus::SidebarFocus,
 }
 
 impl SidebarState {
@@ -121,6 +123,7 @@ impl SidebarState {
             swipe: Default::default(),
             settle_gen: 0,
             mode_focus: Default::default(),
+            focus: Default::default(),
         }
     }
 
@@ -249,8 +252,13 @@ pub enum SidebarRow {
         /// `localhost:<port>` (#855). `None` when it has none.
         port: Option<u16>,
     },
-    /// A stash leaf.
-    Stash { index: usize, message: String },
+    /// A stash leaf. `target` is the stash commit, which names the entry
+    /// while its index shifts (a new stash pushes the others down).
+    Stash {
+        index: usize,
+        message: String,
+        target: CommitId,
+    },
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -325,7 +333,7 @@ pub(super) fn build_sidebar_row(
             this,
             cx,
         ),
-        SidebarRow::Stash { index, message } => build_stash_row(*index, message, cx),
+        SidebarRow::Stash { index, message, .. } => build_stash_row(*index, message, cx),
     }
 }
 

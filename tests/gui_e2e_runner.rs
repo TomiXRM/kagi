@@ -1050,6 +1050,14 @@ mod macos {
                 Box::new(crate::context_menu_keys::scenario_context_menu_keys_item_appears),
             ),
             (
+                "context_menu_keys_row_behind_info",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_row_behind_info),
+            ),
+            (
+                "context_menu_keys_last_tab",
+                Box::new(crate::context_menu_keys::scenario_context_menu_keys_last_tab),
+            ),
+            (
                 "home_list_place",
                 Box::new(crate::home_list_place::scenario_home_list_place),
             ),

@@ -577,8 +577,14 @@ impl KagiApp {
                 // Clear any remote view so the Welcome gate (tabs empty &&
                 // remote_view none) actually shows the Welcome screen (ADR-0089).
                 self.remote_view = None;
+                // The window slots go as on any departure (`depart_active_tab`;
+                // the session itself is already released): a context menu left
+                // open would keep its keys and a focus on an item Home never
+                // draws (#1000). Home places the focus on the window.
+                self.close_window_slots_of_departing_tab();
                 self.show_welcome();
                 self.home_takes_window();
+                self.focus_root_for_modal();
                 self.save_session();
                 self.log_tabs();
                 // Bump generation so the old watcher loop terminates; no new arm.

@@ -923,6 +923,14 @@ The current suite covers:
   Push appear above it, and the focus stays on Copy head SHA, whose Enter
   copies the SHA. Numbering slots by drawn items only fails with the focus on
   `branch-menu-item-4-2` (Copy branch name).
+  `context_menu_keys_row_behind_info` (#1000): with an Info `MenuOverlay` up
+  and the sidebar `branch:feature` row (on HEAD~1) focused, Shift+F10 opens
+  no branch menu and the Graph selection stays on row 0 (dropping the
+  `front_layer == None` guard in `open_sidebar_row_menu` fails: the selection
+  jumps behind the panel). `context_menu_keys_last_tab` (#1000): with a
+  commit-menu item focused, `CloseTab` on the last tab leaves no menu and the
+  root focused on Welcome (dropping the window-slot reset / root focus in the
+  `TabClose::Welcome` branch fails).
 - Toolbar unavailable reasons (`KAGI_GUI_E2E_ONLY=toolbar_keyboard_reasons`,
   `tests/recovery/toolbar_keyboard.rs`, #972): starting at the root, GPUI's
   `focus_next` visits the rendered toolbar in visual order; an F19 key-down

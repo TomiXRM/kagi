@@ -265,6 +265,10 @@ mod remote_refresh_owner;
 mod fetch_owner;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/guard_writer_panic.rs"]
+mod guard_writer_panic;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/file_menu_owner.rs"]
 mod file_menu_owner;
 
@@ -1124,8 +1128,8 @@ mod macos {
                 Box::new(crate::recovery_pull::scenario_remote_pull_holds_its_latch),
             ),
             (
-                "pull_confirm_parks_for_its_tab",
-                Box::new(crate::recovery_pull::scenario_pull_confirm_parks_for_its_tab),
+                "pull_confirm_departure_discards_old_visit",
+                Box::new(crate::recovery_pull::scenario_pull_confirm_departure_discards_old_visit),
             ),
             (
                 "pull_confirm_yields_to_another_modal",
@@ -1686,6 +1690,58 @@ mod macos {
             (
                 "fetch_owner_display_isolated",
                 Box::new(crate::fetch_owner::scenario_fetch_owner_display_isolated),
+            ),
+            (
+                "fetch_panicked_worker_reconciles",
+                Box::new(crate::fetch_owner::scenario_fetch_panicked_worker_reconciles),
+            ),
+            (
+                "fetch_previous_visit_is_not_presented",
+                Box::new(crate::fetch_owner::scenario_fetch_previous_visit_is_not_presented),
+            ),
+            (
+                "fetch_old_visit_drops_pull_waiter",
+                Box::new(crate::fetch_owner::scenario_fetch_old_visit_drops_pull_waiter),
+            ),
+            (
+                "fetch_new_visit_waiter_sees_old_flight_failure",
+                Box::new(crate::fetch_owner::scenario_fetch_new_visit_waiter_sees_old_flight_failure),
+            ),
+            (
+                "fetch_new_visit_waiter_success_notifies",
+                Box::new(crate::fetch_owner::scenario_fetch_new_visit_waiter_success_notifies),
+            ),
+            (
+                "auto_fetch_old_visit_logs_contract",
+                Box::new(crate::fetch_owner::scenario_auto_fetch_old_visit_logs_contract),
+            ),
+            (
+                "remote_branch_fetch_panic",
+                Box::new(crate::guard_writer_panic::scenario_remote_branch_fetch_panic),
+            ),
+            (
+                "remote_branch_fetch_failed_after_departure",
+                Box::new(crate::guard_writer_panic::scenario_remote_branch_fetch_failed_after_departure),
+            ),
+            (
+                "remote_branch_fetch_success_after_departure",
+                Box::new(crate::guard_writer_panic::scenario_remote_branch_fetch_success_after_departure),
+            ),
+            (
+                "pr_ref_fetch_restarts_after_revisit",
+                Box::new(crate::guard_writer_panic::scenario_pr_ref_fetch_restarts_after_revisit),
+            ),
+            (
+                "pr_ref_fetch_panic",
+                Box::new(crate::guard_writer_panic::scenario_pr_ref_fetch_panic),
+            ),
+            (
+                "editor_save_panic",
+                Box::new(crate::guard_writer_panic::scenario_editor_save_panic),
+            ),
+            (
+                "editor_save_panic_after_close",
+                Box::new(crate::guard_writer_panic::scenario_editor_save_panic_after_close),
             ),
             (
                 "file_menu_freezes_path",

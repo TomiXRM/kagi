@@ -131,11 +131,10 @@ ancestor = HEAD の blob（ユーザーの編集の基準）、ours = upstream t
 EN/JA とも断定と可能性で文面を分ける（"will conflict" / "may conflict"、
 「conflict します」/「conflict する可能性があります」）。modal の summary も別 `Msg`。
 
-**保留中の Pull 確認は `SessionId` で持つ（#626 review）。** 素の bool では tab A が fetch を
-待っている間に tab B の reload がそれを消し、「押しても何も起きない」が別経路で再発する
-（CLAUDE.md の state ルール: タブ固有の状態は SessionId で持つ）。`pending_pull_confirm:
-Option<SessionId>` を、要求した tab が表示されているときだけ消費する。reload 側はこの状態に
-一切触らない（触る必要が無くなった: モーダルは fetch の継続で即開き、以降の reload は replan）。
+**保留中の Pull 確認は `(SessionId, visit)` で持つ（#992 review、2026-10-04 改訂）。**
+要求はその fetch の waiter に格納する。別 tab への離脱では同じ session の
+`visit` が進む（`Sessions::depart`）。完了時に現在の visit と一致する waiter
+だけが確認を開ける。旧 visit の提案を帰還時に復活させない。
 
 **確認前 fetch の失敗は toast + oplog に残す（#626 review、2026-09-20 改訂）。** toast は
 短い通知に限定し、完全なエラーは ADR-0149 の non-run op 経路で `fetch` の `Failed` として
@@ -156,15 +155,15 @@ oplog に永続化する。記録済みの結果を閉じるだけの `AppNotice
 
 | 完了時の状態 | 配送 |
 |---|---|
-| fetch 失敗 | oplog に `fetch` Failed を必ず記録し、短い toast を表示。modal / park は作らない |
-| 成功・要求元 tab 表示中・他の modal 無し | plan して確認モーダルを開く |
-| 成功・要求元 tab が**非表示** | その tab 用に park し、次にその tab がアクティブになった時に配送 |
+| fetch 失敗 | fetch 自体が oplog に一度だけ記録し、現在の visit にだけ短い toast を表示。modal は作らない |
+| 成功・要求元 tab の同じ visit が表示中・他の modal 無し | plan して確認モーダルを開く |
+| 成功・要求元 tab が離脱済み／閉じられた | waiter を破棄し、帰還後も配送しない |
 | 成功・別の modal が開いている | 要求を取り消す（新しいユーザー操作が勝つ）|
-| 要求元 tab が閉じられた | tab と一緒に破棄 |
 
-park は `pending_pull_confirm: HashMap<SessionId, PullConfirmDelivery>`。「Pull を押して
-tab を離れ、戻ってくる」が成立するのはこれのため。答えは要求した tab のものなので、
-別 repo の上に開かずに待つ。
+失敗した fetch の receipt は waiter から追加記録しない。別 tab 表示中の失敗も
+元の repository の oplog に一度だけ永続化する。古い visit の modal/footer/toast
+は表示しない。ただし旧 visit の fetch がまだ走っている間に新 visit で Pull を要求したら、
+新 visit の waiter にだけ失敗の短い footer/toast を配送する（#992 review）。
 
 ### 2c. 確認の約束は stash の前に照合する（#626 review 3 周目）
 

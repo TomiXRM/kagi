@@ -10,11 +10,14 @@
 
 use gpui::{
     div, prelude::*, px, rgb, AnyElement, ClickEvent, Context, IntoElement, MouseButton,
-    MouseDownEvent, Pixels, Point, SharedString, Window,
+    MouseDownEvent, Pixels, Point, Role, SharedString, Window,
 };
 use gpui_component::tooltip::Tooltip;
 
 use super::context_menu::{ItemState, MenuGroup, MenuItem};
+use super::menu_keys::{
+    MenuDismiss, MenuFirst, MenuKeys, MenuLast, MenuNext, MenuPrev, Step, MENU_CONTEXT,
+};
 use super::theme::{self, theme};
 use super::KagiApp;
 
@@ -35,6 +38,8 @@ const MENU_SEPARATOR_H: f32 = 9.0;
 /// * `position` — cursor anchor in unscaled window px.
 /// * `on_dismiss` — clears the owning menu state (run for the backdrop click).
 /// * `on_select` — clears the owning state and dispatches the chosen action.
+/// * `keys` — the context menus' keyboard (#985, see `menu_keys`); `None`
+///   for a menu without it (the pointer and the window's Escape only).
 #[allow(clippy::too_many_arguments)]
 pub fn render_menu_overlay<A>(
     id: &'static str,
@@ -46,6 +51,7 @@ pub fn render_menu_overlay<A>(
     groups: Vec<MenuGroup<A>>,
     on_dismiss: impl Fn(&mut KagiApp, &mut Window, &mut Context<KagiApp>) + Clone + 'static,
     on_select: impl Fn(&mut KagiApp, A, &mut Window, &mut Context<KagiApp>) + Clone + 'static,
+    keys: Option<&MenuKeys>,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement
@@ -89,6 +95,15 @@ where
             cx.notify();
         })
     };
+    // Tab / Shift+Tab close a keyboard menu as the backdrop does (#991
+    // review); the next frame gives the focus back where it came from.
+    let dismiss_key = keys.map(|_| {
+        let on_dismiss = on_dismiss.clone();
+        cx.listener(move |this: &mut KagiApp, _: &MenuDismiss, window, cx| {
+            on_dismiss(this, window, cx);
+            cx.notify();
+        })
+    });
     let dismiss_right = cx.listener(move |this: &mut KagiApp, _e: &MouseDownEvent, window, cx| {
         on_dismiss(this, window, cx);
         cx.stop_propagation();
@@ -107,6 +122,8 @@ where
         .left(px(x))
         .w(theme::scaled_px(menu_w))
         .max_h(px((viewport_h - MENU_MARGIN * 2.0).max(120.0)))
+        .flex()
+        .flex_col()
         .overflow_hidden()
         .rounded(theme::scaled_px(6.))
         .border_1()
@@ -116,6 +133,7 @@ where
         .child(
             div()
                 .h(theme::scaled_px(MENU_HEADER_H))
+                .flex_shrink_0()
                 .px_3()
                 .flex()
                 .flex_row()
@@ -125,9 +143,38 @@ where
                 .text_sm()
                 .text_color(rgb(theme().text_main))
                 .truncate()
-                .child(header),
-        );
+                .child(header.clone()),
+        )
+        .role(Role::Menu)
+        .aria_label(header);
+    // #985: the menu's keyboard (see `menu_keys`). A slot is an item's place
+    // in the menu's list, hidden items included, so it names the same action
+    // however many items above it are hidden (#991 review).
+    let opened = keys.is_some_and(|keys| {
+        keys.drawn(
+            groups
+                .iter()
+                .flat_map(|group| group.items.iter())
+                .enumerate()
+                .filter(|(_, item)| item.state == ItemState::Enabled)
+                .map(|(slot, _)| slot),
+        )
+    });
 
+    // The items scroll under the header when the menu is taller than the
+    // window (#991 review: a key must not focus an item out of sight).
+    let mut list = div()
+        .id("menu-items")
+        .flex()
+        .flex_col()
+        .flex_shrink(1.)
+        .min_h(px(0.))
+        .overflow_y_scroll();
+    if let Some(keys) = keys {
+        list = list.track_scroll(keys.scroll());
+    }
+    let mut child = 0_usize;
+    let mut slot = 0_usize;
     let mut previous_group = false;
     for (group_ix, group) in groups.into_iter().enumerate() {
         if !group
@@ -135,10 +182,11 @@ where
             .iter()
             .any(|item| item.state != ItemState::Hidden)
         {
+            slot += group.items.len();
             continue;
         }
         if previous_group {
-            menu = menu.child(
+            list = list.child(
                 div()
                     .h(theme::scaled_px(MENU_SEPARATOR_H))
                     .flex_shrink_0()
@@ -152,6 +200,7 @@ where
                             .bg(rgb(theme().selected)),
                     ),
             );
+            child += 1;
         }
         previous_group = true;
         if let Some(title) = group.title {
@@ -160,29 +209,50 @@ where
             } else {
                 theme().text_muted
             };
-            menu = menu.child(
+            list = list.child(
                 div()
                     .h(theme::scaled_px(MENU_GROUP_H))
+                    .flex_shrink_0()
                     .px_3()
                     .pt_1()
                     .text_xs()
                     .text_color(rgb(title_color))
                     .child(SharedString::from(title)),
             );
+            child += 1;
         }
         for (item_ix, item) in group.items.into_iter().enumerate() {
             if item.state == ItemState::Hidden {
+                slot += 1;
                 continue;
             }
-            menu = menu.child(render_menu_item(
+            if let Some(keys) = keys {
+                keys.place(slot, child);
+                #[cfg(feature = "gui-e2e")]
+                SLOT_CONTROLS.with(|map| {
+                    map.borrow_mut()
+                        .insert(slot, format!("{item_id_prefix}-{group_ix}-{item_ix}"));
+                });
+            }
+            list = list.child(render_menu_item(
                 item_id_prefix,
                 group_ix,
                 item_ix,
                 item,
                 on_select.clone(),
+                keys.map(|keys| keys.item(slot, cx)),
                 cx,
             ));
+            child += 1;
+            slot += 1;
         }
+    }
+    menu = menu.child(list);
+    if let Some(keys) = keys {
+        menu = with_menu_keys(menu.key_context(MENU_CONTEXT), keys, opened, window, cx);
+    }
+    if let Some(dismiss_key) = dismiss_key {
+        menu = menu.on_action(dismiss_key);
     }
 
     div()
@@ -207,12 +277,41 @@ where
         .into_any_element()
 }
 
+/// The menu's ↑/↓/Home/End, and the focus on its first enabled item when
+/// it has just `opened`.
+fn with_menu_keys(
+    menu: gpui::Stateful<gpui::Div>,
+    keys: &MenuKeys,
+    opened: bool,
+    window: &mut Window,
+    cx: &mut Context<KagiApp>,
+) -> gpui::Stateful<gpui::Div> {
+    if opened {
+        keys.step(Step::First, window, cx);
+    }
+    let step = |step: Step| {
+        let keys = keys.clone();
+        move |window: &mut Window, cx: &mut gpui::App| keys.step(step, window, cx)
+    };
+    let (prev, next, first, last) = (
+        step(Step::Prev),
+        step(Step::Next),
+        step(Step::First),
+        step(Step::Last),
+    );
+    menu.on_action(move |_: &MenuPrev, window, cx| prev(window, cx))
+        .on_action(move |_: &MenuNext, window, cx| next(window, cx))
+        .on_action(move |_: &MenuFirst, window, cx| first(window, cx))
+        .on_action(move |_: &MenuLast, window, cx| last(window, cx))
+}
+
 fn render_menu_item<A>(
     item_id_prefix: &'static str,
     group_ix: usize,
     item_ix: usize,
     item: MenuItem<A>,
     on_select: impl Fn(&mut KagiApp, A, &mut Window, &mut Context<KagiApp>) + 'static,
+    focus: Option<gpui::FocusHandle>,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement
 where
@@ -243,7 +342,10 @@ where
             "{}-{}-{}",
             item_id_prefix, group_ix, item_ix
         )))
+        .role(Role::MenuItem)
+        .aria_label(item.label.clone())
         .h(theme::scaled_px(MENU_ROW_H))
+        .flex_shrink_0()
         .px_3()
         .flex()
         .flex_row()
@@ -253,25 +355,87 @@ where
         .overflow_hidden()
         .child(div().flex_1().truncate().child(text));
 
+    // #985: every item tracks its focus handle, so a focused item that turns
+    // disabled while the menu is open (a write starts) stays in the dispatch
+    // tree and ↑/↓ still reach the menu (#991 review); the keys only ever
+    // move onto enabled items, and Enter / Space press one through gpui's
+    // keyboard click on `on_click` (a disabled item has none). Keyboard focus
+    // shows as the pointer's hover does.
+    let row = match focus {
+        Some(focus) => row
+            .track_focus(&focus.tab_index(0).tab_stop(false))
+            .on_key_down(super::keyboard_nav::stop_activation_keys)
+            .focus_visible(|style| style.bg(rgb(theme().selected))),
+        None => row,
+    };
     let row = if enabled {
         row.on_click(click)
             .hover(|style| style.bg(rgb(theme().selected)).cursor_pointer())
     } else {
+        // gpui has no aria_disabled setter; the node's own builder has one.
         row.hover(|style| style.bg(rgb(theme().surface)))
+            .a11y_synthetic_children(|builder: &mut gpui::A11ySubtreeBuilder| {
+                builder.parent_node().set_disabled();
+            })
     };
 
+    #[cfg(feature = "gui-e2e")]
+    let control = format!("{item_id_prefix}-{group_ix}-{item_ix}");
+    // A disabled item says why to assistive technology too, not only in its
+    // pointer tooltip (#991 review).
     let row = match item.state {
-        ItemState::Disabled(reason) => row
-            .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx))
-            .into_any_element(),
-        _ => row.into_any_element(),
+        ItemState::Disabled(reason) => {
+            #[cfg(feature = "gui-e2e")]
+            record_description(&control, Some(reason.clone()));
+            row.aria_description(reason.clone())
+                .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx))
+                .into_any_element()
+        }
+        _ => {
+            #[cfg(feature = "gui-e2e")]
+            record_description(&control, None);
+            row.into_any_element()
+        }
     };
     #[cfg(feature = "gui-e2e")]
     {
-        super::e2e::measure_control(format!("{item_id_prefix}-{group_ix}-{item_ix}"), row)
+        super::e2e::measure_control(control, row)
     }
     #[cfg(not(feature = "gui-e2e"))]
     {
         row
     }
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static DESCRIPTIONS: std::cell::RefCell<std::collections::HashMap<String, Option<SharedString>>> =
+        std::cell::RefCell::default();
+}
+
+/// What the item drawn as `control` last handed `aria_description`.
+#[cfg(feature = "gui-e2e")]
+fn record_description(control: &str, description: Option<SharedString>) {
+    DESCRIPTIONS.with(|map| {
+        map.borrow_mut().insert(control.to_string(), description);
+    });
+}
+
+/// The `aria_description` the menu item `control` was last drawn with:
+/// `None` when it was never drawn, `Some(None)` when it had none.
+#[cfg(feature = "gui-e2e")]
+pub fn recorded_item_description(control: &str) -> Option<Option<SharedString>> {
+    DESCRIPTIONS.with(|map| map.borrow().get(control).cloned())
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static SLOT_CONTROLS: std::cell::RefCell<std::collections::HashMap<usize, String>> =
+        std::cell::RefCell::default();
+}
+
+/// The menu item last drawn for keyboard slot `slot` (its control id).
+#[cfg(feature = "gui-e2e")]
+pub fn recorded_slot_control(slot: usize) -> Option<String> {
+    SLOT_CONTROLS.with(|map| map.borrow().get(&slot).cloned())
 }

@@ -36,30 +36,35 @@ pub(crate) fn modal_copy_button(
             cx,
         );
     });
-    div()
-        .id(id)
-        .flex_shrink_0()
-        .p_1()
-        .rounded_sm()
-        .cursor_pointer()
-        .opacity(0.55)
-        .hover(|st| st.bg(rgb(current_theme().selected)).opacity(1.0))
-        .tooltip(move |w, cx| gpui_component::tooltip::Tooltip::new(tooltip).build(w, cx))
-        .on_mouse_down(gpui::MouseButton::Left, |_e, _w, cx| {
-            cx.stop_propagation();
-        })
-        .on_click(copy)
-        .child(
-            gpui::svg()
-                .path("icons/copy.svg")
-                .w(theme::scaled_px(12.))
-                .h(theme::scaled_px(12.))
-                .text_color(rgb(current_theme().text_sub)),
-        )
-        // Measured, so a scenario can press the real button (#883 review).
-        .relative()
-        .child(super::e2e::measure_inside(id))
-        .into_any_element()
+    super::keyboard_nav::focusable(
+        div()
+            .id(id)
+            .flex_shrink_0()
+            // Keep the original 4px padding in the 2px focus-ring border.
+            .p(gpui::px(2.))
+            .rounded_sm()
+            .cursor_pointer()
+            .role(gpui::Role::Button)
+            .aria_label(SharedString::from(tooltip))
+            .opacity(0.55)
+            .hover(|st| st.bg(rgb(current_theme().selected)).opacity(1.0))
+            .tooltip(move |w, cx| gpui_component::tooltip::Tooltip::new(tooltip).build(w, cx))
+            .on_mouse_down(gpui::MouseButton::Left, |_e, _w, cx| {
+                cx.stop_propagation();
+            })
+            .on_click(copy),
+    )
+    .child(
+        gpui::svg()
+            .path("icons/copy.svg")
+            .w(theme::scaled_px(12.))
+            .h(theme::scaled_px(12.))
+            .text_color(rgb(current_theme().text_sub)),
+    )
+    // Measured, so a scenario can press the real button (#883 review).
+    .relative()
+    .child(super::e2e::measure_inside(id))
+    .into_any_element()
 }
 
 /// The whole popup as plain text, for [`modal_copy_button`].
@@ -114,6 +119,20 @@ pub(crate) fn plan_clipboard_text(plan: &OperationPlan, rows: &[String]) -> Stri
             }
         }
     }
+    if let Some(cmd) = plan.equivalent_command.as_deref() {
+        // A recovery command already appears in the structured block above.
+        // Don't repeat it merely because the plan also describes it as an
+        // equivalent CLI command.
+        let in_recovery = plan
+            .recovery
+            .as_ref()
+            .is_some_and(|rec| rec.commands.iter().any(|recovery| recovery == cmd));
+        if !in_recovery {
+            out.push_str("\nequivalent command:\n");
+            out.push_str(cmd);
+            out.push('\n');
+        }
+    }
     out
 }
 
@@ -131,7 +150,7 @@ mod tests {
         use kagi_domain::plan_note::{PlanDisposition, PlanRecovery, PlanTitle, RecoveryKind};
 
         let deep = "crates/kagi-git/src/ops/very/deeply/nested/file.rs".to_string();
-        let plan = OperationPlan {
+        let mut plan = OperationPlan {
             title: PlanTitle::Discard {
                 single: None,
                 count: 2,
@@ -185,5 +204,18 @@ mod tests {
                 "row {row} must appear verbatim:\n{text}"
             );
         }
+        plan.equivalent_command = Some("git checkout -- main".into());
+        let text = plan_clipboard_text(&plan, &[]);
+        assert!(
+            text.contains("\nequivalent command:\ngit checkout -- main\n"),
+            "Copy all must preserve a distinct equivalent command verbatim: {text}"
+        );
+
+        plan.equivalent_command = Some("git cat-file -p <blob-sha>".into());
+        let text = plan_clipboard_text(&plan, &[]);
+        assert!(
+            !text.contains("\nequivalent command:\n"),
+            "a recovery command must not acquire a duplicate equivalent block: {text}"
+        );
     }
 }

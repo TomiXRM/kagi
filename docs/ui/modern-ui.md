@@ -212,6 +212,34 @@ blocked plans keep a visible disabled confirm; recovery, when present, is
 only a Git command for Ready plans (detail remains in Operation Log).
 Shared `Theme.radius`/font/input padding and `modal_shell`/plan/IME stay unchanged; values align by role.
 
+## Plan comparison and Operation Log restore (#988)
+
+The shared plan card keeps CURRENT and PREDICTED as equal-width columns with a
+centered arrow; branch and status chips stay on one scrollable line per column.
+The operation plan remains the source of truth. Show an equivalent CLI command
+only when it faithfully describes the executable plan. Pull has none: its
+execution fetches again and may merge a newly diverged remote even if the
+cached tracking ref indicated a fast-forward at planning time. Where a plan
+does have an equivalent, the collapsed command is a keyboard/screen-reader
+accessible button (Enter/Space) with its own Copy button; Copy all includes
+its full text.
+
+Operation Log restore has its own REFS-first card, not a second generic plan
+summary. Show each planned ref's expected and destination OIDs, including
+red-tinted deletions, then unchanged worktree/index/untracked/stash/remotes and
+warnings. The first three ref targets stay visible at compact window sizes;
+the refs list scrolls independently when longer. Draw the AFTER graph from the
+loaded tab's existing commit rails: moved branch badges go to their
+destination, commits no longer reached by any ref are muted, and retained
+commits stay normal. The preview fits its rows up to six, then scrolls
+independently; lane pitch, rail width and horizontal follow-scroll use the same
+scaled pixels so a focused far-right lane stays visible at zoom > 100%. Do not
+claim a graph projection for an unloaded destination or
+a moved annotated tag. Ref rows are decoded once at admission; malformed
+rows fail closed with a durable Failed receipt and a bounded UI preview.
+Restore keeps its two confirmations and backend preflight/verification/
+recording unchanged.
+
 ## Open questions (to settle with evidence)
 
 - Whether to own a small `kagi-ui-core` input/button wrapper that fixes the

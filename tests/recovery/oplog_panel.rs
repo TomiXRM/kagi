@@ -2,10 +2,12 @@
 //! on each row; a selected row shows the ref moves it recorded (slice 2a), or,
 //! for an entry without a record, reflog lines estimated by its time window
 //! with a shared second marked ambiguous (slice 1). Nothing is written.
+use std::cell::RefCell;
 use std::path::Path;
+use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
+use gpui::{px, size, AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::oplog_panel::{entry_worktree, ReflogDetail};
 use kagi::ui::{e2e, i18n, KagiApp};
 use kagi_domain::oplog_reflog::Attribution;
@@ -13,7 +15,7 @@ use kagi_domain::ref_moves::RefMove;
 use kagi_git::oplog::{append_oplog, read_oplog_tail, Actor, OpLogEntry, OpOutcome};
 use kagi_git::{Backend, CommitId, Operation, StateSummary};
 
-use crate::macos::{build_fixture, git, mount, repo_fingerprint, unmount};
+use crate::macos::{build_fixture, git, mount, open_offscreen, repo_fingerprint, unmount};
 use crate::recovery_operations::{press_key, wait_idle};
 
 #[path = "../support/git_fixture.rs"]
@@ -335,12 +337,16 @@ fn restore_card(
 
 /// Confirm the open card twice (destructive: arm, then run) and wait for it.
 fn confirm_twice(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+    let before = restore_card(cx, app);
+    assert!(!before.confirm_armed);
+    let ref_count = before.restores.len();
     press_key(cx, app, window, "enter");
     cx.run_until_parked();
-    assert!(
-        restore_card(cx, app).confirm_armed,
-        "the first Enter only arms"
-    );
+    let armed = restore_card(cx, app);
+    assert!(armed.confirm_armed, "the first Enter only arms");
+    assert_eq!(armed.restores.len(), ref_count);
+    assert!(armed.confirm_label().contains(&ref_count.to_string()));
+    assert_ne!(before.confirm_label(), armed.confirm_label());
     press_key(cx, app, window, "enter");
     wait_idle(cx, app);
     assert!(cx.read(|cx| app.read(cx).oplog_restore_modal().is_none()));
@@ -359,7 +365,12 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
     let original_language = i18n::lang();
 
     let fixture = build_fixture();
-    let repo = fixture.path().canonicalize().unwrap();
+    // Move the fixture under a long worktree path: the warning must leave the
+    // reason legible while exposing the complete path via Copy all and AX.
+    let long_root = tempfile::tempdir().unwrap();
+    let repo = long_root.path().join("a-long-worktree-path-for-restore-warnings-with-several-nested-components-and-a-final-directory");
+    std::fs::rename(fixture.path(), &repo).unwrap();
+    let repo = repo.canonicalize().unwrap();
     let head = CommitId(git_output(&repo, &["rev-parse", "HEAD"]));
     let mut backend = Backend::open(&repo).unwrap();
     for name in ["keep", "drop1", "drop2"] {
@@ -419,6 +430,22 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
         cx.notify();
     });
     paint(cx, window);
+    // A blocked restore with no canonical rows still shows its blockers and
+    // cannot expose a Confirm button or AX confirm action.
+    app.update(cx, |app, cx| {
+        app.open_oplog_restore_modal(Operation::OpRevert { entry_id: u64::MAX }, cx)
+    });
+    let blocked = restore_card(cx, &app);
+    assert!(blocked.restores.is_empty());
+    assert!(!blocked.plan.blockers.is_empty());
+    paint(cx, window);
+    assert!(!painted(window, "plan-confirm"));
+    let actions = kagi::ui::dialog_a11y::recorded_dialog("plan-card")
+        .expect("blocked dialog")
+        .actions;
+    assert_eq!(actions.len(), 1, "blocked dialog offers only Cancel");
+    assert_eq!(actions[0].1, i18n::Msg::PlanCancel.t());
+    press_key(cx, &app, window, "escape");
 
     // ── no record: both buttons disabled ─────────────────────────────────
     let other = rows_of(cx, &app, &elsewhere)[0];
@@ -440,23 +467,86 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
     let card = restore_card(cx, &app);
     assert_eq!(card.op, Operation::RestoreToPoint { entry_id: keep_id });
     assert!(card.plan.blockers.is_empty(), "{:?}", card.plan.blockers);
+    assert_eq!(card.restores.len(), 3);
     for branch in ["refs/heads/drop1", "refs/heads/drop2"] {
         assert!(
-            card.plan.warnings.iter().any(|w| matches!(
-                w,
-                PlanNote::OplogRestore(OplogRestoreNote::Moves { refname, to: None, .. })
-                    if refname == branch
-            )),
-            "the card lists deleting {branch}: {:?}",
-            card.plan.warnings
+            card.restores
+                .iter()
+                .any(|r| r.refname == branch && r.restore_to.is_none()),
+            "delete {branch}: {:?}",
+            card.restores
         );
     }
-    assert!(
-        card.plan
+    assert!(card
+        .restores
+        .iter()
+        .any(|r| r.refname == "refs/heads/main"
+            && r.restore_to.as_deref() == Some(main_before.as_str())));
+    assert!(card
+        .plan
+        .warnings
+        .contains(&PlanNote::OplogRestore(OplogRestoreNote::RefsOnly)));
+    let check_checked_out = |cx: &mut VisualTestAppContext, dirty: bool| {
+        let card = restore_card(cx, &app);
+        let (index, path) = card
+            .plan
             .warnings
-            .contains(&PlanNote::OplogRestore(OplogRestoreNote::RefsOnly)),
-        "the card says what is not restored"
-    );
+            .iter()
+            .enumerate()
+            .find_map(|(index, note)| match (note, dirty) {
+                (
+                    PlanNote::OplogRestore(OplogRestoreNote::CheckedOutDirty { branch, path }),
+                    true,
+                )
+                | (
+                    PlanNote::OplogRestore(OplogRestoreNote::MovesCheckedOutBranch {
+                        branch,
+                        path,
+                    }),
+                    false,
+                ) if branch == "main" => Some((index, path)),
+                _ => None,
+            })
+            .expect("moving checked-out main warns for its worktree");
+        assert_eq!(std::fs::canonicalize(path).unwrap(), repo);
+        let id = format!("restore-warning-{index}");
+        for language in [i18n::Lang::En, i18n::Lang::Ja] {
+            i18n::set_lang(language);
+            paint(cx, window);
+            let reason = i18n::oplog_panel::restore_checked_out("main", dirty);
+            let note = kagi::ui::dialog_a11y::recorded_note(&id).expect("painted warning");
+            assert_eq!(note, (gpui::Role::Note, format!("{reason} · {path}")));
+            let row = e2e::control_bounds(window.window_id(), &id).expect("warning row");
+            let path_bounds =
+                e2e::control_bounds(window.window_id(), &format!("restore-warning-path-{index}"))
+                    .expect("visible worktree path");
+            assert!(path_bounds.size.width > px(0.));
+            assert!(
+                path_bounds.left() >= row.left() && path_bounds.right() <= row.right() + px(1.),
+                "long path stays within the warning row: {path_bounds:?} vs {row:?}"
+            );
+            click_probe(cx, window, "plan-card-copy");
+            let copied = cx
+                .read_from_clipboard()
+                .and_then(|item| item.text())
+                .expect("copied warning");
+            assert!(copied.contains(&format!("{reason} · {path}")), "{copied}");
+        }
+    };
+    check_checked_out(cx, false);
+    press_key(cx, &app, window, "escape");
+    let dirty_file = repo.join("restore-warning-untracked.txt");
+    std::fs::write(&dirty_file, "uncommitted\n").unwrap();
+    app.update(cx, |app, cx| {
+        app.open_oplog_restore_modal(Operation::RestoreToPoint { entry_id: keep_id }, cx);
+    });
+    check_checked_out(cx, true);
+    std::fs::remove_file(dirty_file).unwrap();
+    press_key(cx, &app, window, "escape");
+    app.update(cx, |app, cx| {
+        app.open_oplog_restore_modal(Operation::RestoreToPoint { entry_id: keep_id }, cx);
+    });
+    i18n::set_lang(original_language);
     paint(cx, window);
     assert!(
         painted(window, "plan-confirm"),
@@ -478,6 +568,18 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
         panic!("every target is loaded: {:?}", preview.graph)
     };
     assert!(prow.len() <= kagi_domain::restore_preview::PREVIEW_MAX_ROWS);
+    assert!(prow.len() < 6, "short preview fixture: {} rows", prow.len());
+    let list = e2e::control_bounds(window.window_id(), "restore-preview-rows")
+        .expect("short preview viewport");
+    let row_h = e2e::control_bounds(window.window_id(), "restore-preview-row-0")
+        .expect("first preview row")
+        .size
+        .height;
+    assert!(
+        (list.size.height - row_h * prow.len() as f32).abs() < gpui::px(1.),
+        "viewport should fit its {} rows: {list:?}, row height {row_h:?}",
+        prow.len()
+    );
     assert_eq!(*removed, 1, "the commit made on main after the branches");
     let main_row = prow
         .iter()
@@ -485,15 +587,52 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
         .expect("main is drawn where it goes back to");
     assert_eq!(main_row.id.0, main_before);
     assert!(
-        !prow.iter().any(|r| r.id.0 == main_after),
-        "the commit leaving every branch is not in the graph after"
+        prow.iter().any(|r| r.id.0 == main_after && r.off_branch),
+        "the commit leaving every branch remains as a ghost"
     );
+    assert!(!main_row.off_branch, "restored tip is reachable");
     assert!(painted(window, "restore-preview"));
     assert!(painted(window, "restore-preview-removed-1"));
     assert!(painted(
         window,
         &format!("restore-preview-moved-main-{}", main_row.id.short())
     ));
+    assert!(painted(
+        window,
+        &format!("restore-preview-ghost-{}", &main_after[..8])
+    ));
+    assert!(painted(window, "restore-ref-0") && painted(window, "restore-ref-1"));
+    assert!(!painted(window, "plan-state-current"));
+    assert!(!painted(window, "plan-state-predicted"));
+    // A compact native window must still show destructive targets and Confirm.
+    let small_state = e2e::app_state(&repo).expect("compact app state");
+    let captured: Rc<RefCell<Option<Entity<KagiApp>>>> = Rc::default();
+    let out = captured.clone();
+    let small_window = open_offscreen(cx, size(px(1200.), px(300.)), move |window, cx| {
+        e2e::mount_root(small_state, window, cx, &out)
+    });
+    let small_app = captured.borrow().clone().expect("compact Kagi");
+    let small_window: AnyWindowHandle = small_window.into();
+    small_app.update(cx, |app, cx| {
+        app.open_oplog_restore_modal(Operation::RestoreToPoint { entry_id: keep_id }, cx);
+    });
+    paint(cx, small_window);
+    let id = small_window.window_id();
+    let card_bounds = e2e::control_bounds(id, "modal-card").expect("compact card");
+    let refs_bounds = e2e::control_bounds(id, "restore-refs").expect("compact refs");
+    let confirm_bounds = e2e::control_bounds(id, "plan-confirm").expect("compact confirm");
+    assert!(card_bounds.bottom() <= px(300.));
+    assert!(refs_bounds.size.height >= px(3. * 31. - 1.));
+    assert!(refs_bounds.top() >= card_bounds.top());
+    assert!(refs_bounds.bottom() <= card_bounds.bottom());
+    for n in 0..3 {
+        let row = e2e::control_bounds(id, &format!("restore-ref-{n}")).expect("target ref row");
+        assert!(row.top() >= refs_bounds.top() && row.bottom() <= refs_bounds.bottom() + px(1.));
+        assert!(row.top() >= card_bounds.top() && row.bottom() <= card_bounds.bottom());
+    }
+    assert!(confirm_bounds.bottom() <= card_bounds.bottom() + px(1.));
+    unmount(cx, small_app, small_window);
+
     let count_before = on_branches(&repo);
 
     confirm_twice(cx, &app, window);
@@ -538,16 +677,7 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
             oid: main_after.clone(),
         })
     );
-    for (language, status) in [
-        (
-            i18n::Lang::En,
-            "No preview: target commit is outside loaded history",
-        ),
-        (
-            i18n::Lang::Ja,
-            "プレビューなし: 戻し先の commit は読み込み済みの履歴外",
-        ),
-    ] {
+    for language in [i18n::Lang::En, i18n::Lang::Ja] {
         i18n::set_lang(language);
         paint(cx, window);
         assert!(painted(window, "restore-preview-unavailable"));
@@ -557,10 +687,8 @@ pub fn scenario_oplog_restore_card(cx: &mut VisualTestAppContext) {
             .read_from_clipboard()
             .and_then(|item| item.text())
             .unwrap();
-        assert!(copied.contains(status), "{copied}");
-        assert_eq!(copied.matches(status).count(), 1, "{copied}");
-        assert!(!copied.contains("This is itself recorded"), "{copied}");
-        assert!(!copied.contains("これ自体"), "{copied}");
+        assert!(copied.contains("refs/heads/main"), "{copied}");
+        assert!(copied.contains("git update-ref --stdin"), "{copied}");
     }
     i18n::set_lang(original_language);
     confirm_twice(cx, &app, window);
@@ -629,19 +757,15 @@ pub fn scenario_oplog_restore_tag_preview(cx: &mut VisualTestAppContext) {
         PlanNote::OplogRestore(OplogRestoreNote::Moves { refname, to: None, .. })
             if refname == "refs/tags/release"
     )));
+    assert!(card
+        .restores
+        .iter()
+        .any(|row| row.refname == "refs/tags/release" && row.restore_to.is_none()));
+    paint(cx, window);
+    assert!(painted(window, "restore-ref-0"));
+    let valid_plan = (*card.plan).clone();
     assert_eq!(card.preview.unwrap().graph, RestorePreview::TagChange);
-    for (language, status, unchanged) in [
-        (
-            i18n::Lang::En,
-            "No preview: local tags change",
-            "tags changed outside Kagi",
-        ),
-        (
-            i18n::Lang::Ja,
-            "プレビューなし: local tag が変更されます",
-            "Kagi 外での tag の変更",
-        ),
-    ] {
+    for language in [i18n::Lang::En, i18n::Lang::Ja] {
         i18n::set_lang(language);
         paint(cx, window);
         assert!(painted(window, "restore-preview-unavailable"));
@@ -651,13 +775,8 @@ pub fn scenario_oplog_restore_tag_preview(cx: &mut VisualTestAppContext) {
             .read_from_clipboard()
             .and_then(|item| item.text())
             .unwrap();
-        assert_eq!(copied.matches("\nwarning:").count(), 2, "{copied}");
         assert!(copied.contains("refs/tags/release"), "{copied}");
-        assert!(copied.contains(status), "{copied}");
-        assert!(copied.contains(unchanged), "{copied}");
-        assert_eq!(copied.matches(status).count(), 1, "{copied}");
-        assert!(!copied.contains("This is itself recorded"), "{copied}");
-        assert!(!copied.contains("これ自体"), "{copied}");
+        assert!(copied.contains("git update-ref --stdin"), "{copied}");
     }
     assert!(restore_card(cx, &app)
         .plan
@@ -675,6 +794,48 @@ pub fn scenario_oplog_restore_tag_preview(cx: &mut VisualTestAppContext) {
         &["show-ref", "--verify", "refs/tags/outside"]
     ));
     assert_eq!(read_oplog_tail(1).pop().unwrap().op, "restore-to-point");
+    // Malformed canonical ref rows fail closed at the real admission seam.
+    // The full reason is persisted, but the visible error stays short.
+    let mut malformed = valid_plan;
+    let bad_row = format!("invalid-restore-row-{}", "x".repeat(300));
+    malformed.preview_commits = vec![bad_row.clone()];
+    let refs_before = git_output(&repo, &["show-ref"]);
+    let previous_id = read_oplog_tail(1).pop().unwrap().id;
+    app.update(cx, |app, cx| {
+        app.admit_oplog_restore_plan_for_test(
+            Operation::RestoreToPoint { entry_id: point_id },
+            malformed,
+            cx,
+        )
+    });
+    assert!(cx.read(|cx| app.read(cx).oplog_restore_modal().is_none()));
+    assert_eq!(git_output(&repo, &["show-ref"]), refs_before);
+    let receipt = read_oplog_tail(1).pop().expect("failed receipt persisted");
+    assert_ne!(receipt.id, previous_id);
+    let OpOutcome::Failed { error } = &receipt.outcome else {
+        panic!(
+            "malformed plan must have a failed receipt: {:?}",
+            receipt.outcome
+        )
+    };
+    assert!(error.contains(&bad_row), "{error}");
+    cx.read(|cx| {
+        let state = app.read(cx);
+        let kagi::ui::FooterStatus::Failed(footer) = &state.status_footer else {
+            panic!("malformed plan must show failed footer")
+        };
+        assert!(footer.len() < 120 && !footer.contains(&bad_row), "{footer}");
+        let toast = state
+            .toast_stack
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .toasts()
+            .last()
+            .unwrap();
+        assert_eq!(toast.kind, kagi::ui::ToastKind::Error);
+        assert!(toast.message.len() < 120 && !toast.message.contains(&bad_row));
+    });
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS oplog_restore_tag_preview: EN/JA card warns about unrecorded tag changes; confirming removes recorded tag and leaves external tag untouched");
 }

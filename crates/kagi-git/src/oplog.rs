@@ -21,6 +21,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::{ops::StateSummary, GitError};
 
 mod codec;
+mod plan_recovery;
 mod reading;
 pub mod recovery;
 pub mod retention;
@@ -337,6 +338,9 @@ pub struct OpLogEntry {
     /// that used to be readable only out of the `after.dirty` sentence (#500).
     /// Additive: an entry written before this field reads back as empty.
     pub recovery: Vec<RecoveryHandle>,
+    /// The approved plan's typed recovery guidance, separate from execution
+    /// handles. Absent for old records and paths without an approved plan.
+    pub recovery_plan: Option<kagi_domain::plan_note::PlanRecovery>,
     /// The refs this operation moved, by raw OID (#334 / #887, ADR-0214 §4):
     /// HEAD of the worktree it ran in, `refs/heads/*`, and `refs/tags/*`.
     /// `None` = not recorded (older entry or a path without ref observation);
@@ -383,6 +387,7 @@ impl OpLogEntry {
             outcome,
             backup_refs: Vec::new(),
             recovery: Vec::new(),
+            recovery_plan: None,
             failure_code: None,
             ref_moves: None,
             ref_scope: RefScope::LegacyOrUnknown,

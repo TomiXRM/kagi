@@ -12,6 +12,7 @@ fn entry(op: &str) -> OpLogEntry {
         parent: None,
         backup_refs: Vec::new(),
         recovery: Vec::new(),
+        recovery_plan: None,
         failure_code: None,
         ref_moves: None,
         ref_scope: Default::default(),

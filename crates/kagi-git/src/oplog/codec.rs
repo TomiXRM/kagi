@@ -4,8 +4,8 @@
 //! reconstruction, and retention continue to own their existing policies.
 
 use super::{
-    recovery, Actor, FailureCode, OpLogEntry, OpOutcome, RecordedIdentity, RefScope, RepoIdentity,
-    StateSummary,
+    plan_recovery, recovery, Actor, FailureCode, OpLogEntry, OpOutcome, RecordedIdentity, RefScope,
+    RepoIdentity, StateSummary,
 };
 use kagi_domain::github::IssueCreateFields;
 use kagi_domain::ref_moves::RefMove;
@@ -96,6 +96,11 @@ struct EntryRef<'a> {
     backup_refs: &'a [String],
     #[serde(serialize_with = "recovery::serialize")]
     recovery: &'a [recovery::RecoveryHandle],
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "plan_recovery::serialize"
+    )]
+    recovery_plan: Option<&'a kagi_domain::plan_note::PlanRecovery>,
     #[serde(skip_serializing_if = "Option::is_none")]
     failure_code: Option<&'static str>,
     // Written whenever recorded, an empty list included: "nothing moved" is
@@ -213,6 +218,8 @@ struct EntryRecord {
     backup_refs: Vec<String>,
     #[serde(default, deserialize_with = "recovery::deserialize")]
     recovery: Vec<recovery::RecoveryHandle>,
+    #[serde(default, deserialize_with = "plan_recovery::deserialize")]
+    recovery_plan: Option<kagi_domain::plan_note::PlanRecovery>,
     #[serde(default, deserialize_with = "failure_code")]
     failure_code: Option<FailureCode>,
     #[serde(default, deserialize_with = "ref_moves")]
@@ -242,6 +249,7 @@ pub(super) fn to_json(entry: &OpLogEntry) -> String {
         outcome: &entry.outcome,
         backup_refs: &entry.backup_refs,
         recovery: &entry.recovery,
+        recovery_plan: entry.recovery_plan.as_ref(),
         failure_code: entry.failure_code.map(FailureCode::as_str),
         ref_moves: entry.ref_moves.as_ref().map(|moves| {
             moves
@@ -296,6 +304,7 @@ pub(super) fn from_value(value: Value) -> Option<OpLogEntry> {
         outcome: record.outcome,
         backup_refs: record.backup_refs,
         recovery: record.recovery,
+        recovery_plan: record.recovery_plan,
         failure_code: record.failure_code,
         ref_moves: record.ref_moves,
         ref_scope: record.ref_scope,

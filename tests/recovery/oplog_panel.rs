@@ -11,6 +11,7 @@ use gpui::{px, size, AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::oplog_panel::{entry_worktree, ReflogDetail};
 use kagi::ui::{e2e, i18n, KagiApp};
 use kagi_domain::oplog_reflog::Attribution;
+use kagi_domain::plan_note::ShellKind;
 use kagi_domain::ref_moves::RefMove;
 use kagi_git::oplog::{append_oplog, read_oplog_tail, Actor, OpLogEntry, OpOutcome};
 use kagi_git::{Backend, CommitId, Operation, StateSummary};
@@ -159,6 +160,179 @@ fn select_recorded(
 
 fn painted(window: AnyWindowHandle, name: &str) -> bool {
     e2e::control_bounds(window.window_id(), name).is_some()
+}
+
+/// #1025: a real backend receipt is rendered with the plan-time explanation
+/// and its separately copyable commands; switching language changes prose.
+pub fn scenario_oplog_recovery_recorded(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_language = i18n::lang();
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let mut backend = Backend::open(&repo).unwrap();
+    backend.set_auto_snapshot(false);
+    let op = Operation::CreateBranch {
+        name: "recovery-feature".into(),
+        at: CommitId(git_output(&repo, &["rev-parse", "HEAD"])),
+    };
+    let plan = backend.plan(&op).unwrap();
+    let approved = plan.recovery.as_ref().unwrap().clone();
+    let report = backend.run_recorded(&op, &plan);
+    assert!(matches!(
+        report.recording.entry().outcome,
+        OpOutcome::Success { .. }
+    ));
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| {
+        app.bottom_panel_open = true;
+        app.bottom_tab = kagi::ui::BottomTab::OperationLog;
+        cx.notify();
+    });
+    for language in [i18n::Lang::En, i18n::Lang::Ja] {
+        i18n::set_lang(language);
+        let row = rows_of(cx, &app, &repo)[0];
+        if language == i18n::Lang::En {
+            click_row(cx, &app, window, row);
+        }
+        kagi::ui::dialog_a11y::clear_recorded_a11y();
+        paint(cx, window);
+        assert!(painted(window, &format!("oplog-recovery-{row}")));
+        assert_eq!(
+            kagi::ui::dialog_a11y::recorded_note("oplog-recovery"),
+            Some((gpui::Role::Group, i18n::Msg::OpLogRecovery.t().into()))
+        );
+        let expected = i18n::plan_recovery_text(Some(&approved));
+        if language == i18n::Lang::Ja {
+            assert_ne!(
+                expected,
+                approved.message_en(),
+                "language switch must translate recovery"
+            );
+        } else {
+            assert_eq!(expected, approved.message_en());
+        }
+        let entry = cx.read(|cx| {
+            let panel = app.read(cx).op_log.clone().unwrap();
+            panel.read(cx).entries()[row].clone()
+        });
+        assert_eq!(entry.recovery_plan, Some(approved.clone()));
+        let details = kagi::ui::oplog_panel::detail_lines(&entry).join("\n");
+        assert!(
+            expected.lines().all(|line| details.contains(line)),
+            "{details}"
+        );
+        for command in approved.commands_for(ShellKind::current()) {
+            assert!(
+                details.contains(&format!("command: {command}")),
+                "{details}"
+            );
+        }
+        let panel = cx.read(|cx| app.read(cx).op_log.clone().unwrap());
+        cx.update(|cx| panel.update(cx, |panel, cx| panel.copy_entry(row, cx)));
+        let copied = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .unwrap();
+        assert!(
+            expected.lines().all(|line| copied.contains(line)),
+            "{copied}"
+        );
+        for command in approved.commands_for(ShellKind::current()) {
+            assert!(copied.contains(&format!("command: {command}")), "{copied}");
+        }
+    }
+    i18n::set_lang(original_language);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS oplog_recovery_recorded: real receipt, section/AX/Copy in EN and JA");
+}
+
+/// #1025: Failed never advertises recovery, even when a plan was approved.
+pub fn scenario_oplog_recovery_failed_omitted(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let mut backend = Backend::open(&repo).unwrap();
+    backend.set_auto_snapshot(false);
+    let op = Operation::CreateBranch {
+        name: "stale-recovery".into(),
+        at: CommitId(git_output(&repo, &["rev-parse", "HEAD"])),
+    };
+    let plan = backend.plan(&op).unwrap();
+    assert!(plan.recovery.is_some());
+    git(&repo, &["checkout", "-qb", "external-change"]);
+    let report = backend.run_recorded(&op, &plan);
+    assert!(matches!(
+        report.recording.entry().outcome,
+        OpOutcome::Failed { .. }
+    ));
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| {
+        app.bottom_panel_open = true;
+        app.bottom_tab = kagi::ui::BottomTab::OperationLog;
+        cx.notify();
+    });
+    let row = rows_of(cx, &app, &repo)[0];
+    click_row(cx, &app, window, row);
+    paint(cx, window);
+    assert!(!painted(window, &format!("oplog-recovery-{row}")));
+    let entry = cx.read(|cx| {
+        let panel = app.read(cx).op_log.clone().unwrap();
+        panel.read(cx).entries()[row].clone()
+    });
+    assert_eq!(entry.recovery_plan, None);
+    let copied = kagi::ui::oplog_panel::entry_clipboard_text(&entry);
+    assert!(!copied.contains(i18n::Msg::OpLogRecovery.t()));
+    assert!(!copied.contains(i18n::Msg::OpLogRecoveryNotRecorded.t()));
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS oplog_recovery_failed_omitted: failed preflight has no section");
+}
+
+/// #1025: an old Success receipt does not grow invented recovery guidance.
+pub fn scenario_oplog_recovery_old_not_recorded(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_language = i18n::lang();
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let state = StateSummary {
+        head: "main".into(),
+        dirty: "clean".into(),
+    };
+    append_oplog(&OpLogEntry::new(
+        "old-operation",
+        repo.display().to_string(),
+        state.clone(),
+        OpOutcome::Success { after: state },
+    ))
+    .unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| {
+        app.bottom_panel_open = true;
+        app.bottom_tab = kagi::ui::BottomTab::OperationLog;
+        cx.notify();
+    });
+    for language in [i18n::Lang::En, i18n::Lang::Ja] {
+        i18n::set_lang(language);
+        let row = rows_of(cx, &app, &repo)[0];
+        if language == i18n::Lang::En {
+            click_row(cx, &app, window, row);
+        }
+        paint(cx, window);
+        assert!(painted(window, &format!("oplog-recovery-{row}")));
+        let entry = cx.read(|cx| {
+            let panel = app.read(cx).op_log.clone().unwrap();
+            panel.read(cx).entries()[row].clone()
+        });
+        let copied = kagi::ui::oplog_panel::entry_clipboard_text(&entry);
+        assert!(
+            copied.contains(i18n::Msg::OpLogRecoveryNotRecorded.t()),
+            "{copied}"
+        );
+        assert!(!copied.contains("command:"), "{copied}");
+    }
+    i18n::set_lang(original_language);
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS oplog_recovery_old_not_recorded: old receipt shows localized absence"
+    );
 }
 
 pub fn scenario_oplog_actor_reflog(cx: &mut VisualTestAppContext) {

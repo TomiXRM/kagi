@@ -388,6 +388,9 @@ pub enum Msg {
     /// Operation Log row: shown above a huge expanded detail block, whose text
     /// selection is switched off to keep the draw cheap (issue #548).
     OpLogDetailSelectionOff,
+    // #1025 — Operation Log plan-recovery section.
+    OpLogRecovery,
+    OpLogRecoveryNotRecorded,
 
     // ── Command palette (issue #352) ─────────────────────────────────
     /// Placeholder text in the palette's search box.
@@ -2343,6 +2346,11 @@ impl Msg {
             (Ja, OpLogDetailSelectionOff) => {
                 "長いエントリのため文字選択は無効です。全文はコピーボタンから取得できます。"
             }
+            // #1025 — Operation Log plan-recovery section.
+            (En, OpLogRecovery) => "Recovery",
+            (Ja, OpLogRecovery) => "復旧",
+            (En, OpLogRecoveryNotRecorded) => "not recorded",
+            (Ja, OpLogRecoveryNotRecorded) => "記録されていません",
 
             // ── Misc footers ────────────────────────────────────────
             (En, Refreshed) => "Refreshed",

@@ -2243,6 +2243,18 @@ mod macos {
             ),
             ("oplog_expand_copy", Box::new(scenario_oplog_expand_copy)),
             (
+                "oplog_recovery_recorded",
+                Box::new(crate::recovery_oplog_panel::scenario_oplog_recovery_recorded),
+            ),
+            (
+                "oplog_recovery_failed_omitted",
+                Box::new(crate::recovery_oplog_panel::scenario_oplog_recovery_failed_omitted),
+            ),
+            (
+                "oplog_recovery_old_not_recorded",
+                Box::new(crate::recovery_oplog_panel::scenario_oplog_recovery_old_not_recorded),
+            ),
+            (
                 "oplog_actor_reflog",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_actor_reflog),
             ),

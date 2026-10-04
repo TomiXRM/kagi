@@ -242,9 +242,10 @@ pub fn recovery_handles(result: &Result<OperationOutcome, GitError>) -> Vec<Reco
 }
 
 /// What a backend attempt leaves on its oplog entry besides the outcome.
-pub(super) struct Receipt {
+pub(super) struct Receipt<'a> {
     pub backup_refs: Vec<String>,
     pub recovery: Vec<RecoveryHandle>,
+    pub recovery_plan: Option<&'a kagi_domain::plan_note::PlanRecovery>,
     pub failure_code: Option<crate::oplog::FailureCode>,
     pub ref_moves: Option<Vec<kagi_domain::ref_moves::RefMove>>,
 }
@@ -255,7 +256,7 @@ impl Backend {
         op: &str,
         before: &ops::StateSummary,
         outcome: crate::oplog::OpOutcome,
-        receipt: Receipt,
+        receipt: Receipt<'_>,
     ) -> Recording {
         let repo = self.path.display().to_string();
         let mut entry = crate::oplog::OpLogEntry::new(op, repo.clone(), before.clone(), outcome)
@@ -269,6 +270,14 @@ impl Backend {
         }
         entry.backup_refs = receipt.backup_refs;
         entry.recovery = receipt.recovery;
+        entry.recovery_plan = match entry.outcome {
+            crate::oplog::OpOutcome::Success { .. }
+            | crate::oplog::OpOutcome::Partial { .. }
+            | crate::oplog::OpOutcome::Unknown { .. } => receipt.recovery_plan.cloned(),
+            crate::oplog::OpOutcome::Failed { .. } | crate::oplog::OpOutcome::Refused { .. } => {
+                None
+            }
+        };
         entry.failure_code = receipt.failure_code;
         finalize(entry)
     }
@@ -379,6 +388,7 @@ impl Backend {
             Receipt {
                 backup_refs: Vec::new(),
                 recovery: handles,
+                recovery_plan: plan.recovery.as_ref(),
                 failure_code,
                 ref_moves,
             },
@@ -487,6 +497,7 @@ mod identity_tests {
             Receipt {
                 backup_refs: Vec::new(),
                 recovery: Vec::new(),
+                recovery_plan: None,
                 failure_code: None,
                 ref_moves: moves,
             },

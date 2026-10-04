@@ -139,7 +139,11 @@ pub(crate) fn clipboard_text(preview: &RestoreGraphPreview) -> String {
                 } else {
                     format!(" [{}]", refs.join(", "))
                 };
-                let ghost = if row.off_branch { " (off branch)" } else { "" };
+                let ghost = if row.off_branch {
+                    Msg::OplogPanel(OplogPanelMsg::PreviewOffBranch).t()
+                } else {
+                    ""
+                };
                 let summary = preview.summaries.get(n).map(|s| s.as_ref()).unwrap_or("");
                 out.push_str(&format!("  {}{label}{ghost} {summary}\n", row.id.short()));
             }

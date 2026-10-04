@@ -849,6 +849,8 @@ pub fn scenario_oplog_restore_tag_preview(cx: &mut VisualTestAppContext) {
 /// - `Copy all` carries the preview.
 pub fn scenario_oplog_restore_preview_review(cx: &mut VisualTestAppContext) {
     use kagi_domain::restore_preview::RestorePreview;
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_language = i18n::lang();
 
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
@@ -985,6 +987,35 @@ pub fn scenario_oplog_restore_preview_review(cx: &mut VisualTestAppContext) {
         "{copied}"
     );
     assert!(copied.contains("[main ←"), "{copied}");
+    // One Copy all wording check: the same off-branch commit must carry a
+    // localized marker, not English embedded in Japanese clipboard text.
+    let off_branch = drawn
+        .iter()
+        .find(|row| row.off_branch)
+        .expect("restore leaves a commit off every branch")
+        .id
+        .short();
+    for (language, marker) in [
+        (i18n::Lang::En, " (off branch)"),
+        (i18n::Lang::Ja, "（どの branch からも外れます）"),
+    ] {
+        i18n::set_lang(language);
+        paint(cx, window);
+        click_probe(cx, window, "plan-card-copy");
+        let copied = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .expect("localized Copy all text");
+        let ghost = copied
+            .lines()
+            .find(|line| line.starts_with(&format!("  {off_branch}")))
+            .expect("off-branch commit in Copy all");
+        assert!(ghost.contains(marker), "{language:?}: {ghost}");
+        if language == i18n::Lang::Ja {
+            assert!(!copied.contains("(off branch)"), "{copied}");
+        }
+    }
+    i18n::set_lang(original_language);
 
     press_key(cx, &app, window, "escape");
     unmount(cx, app, window);

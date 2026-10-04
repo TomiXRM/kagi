@@ -48,6 +48,8 @@ pub enum OplogPanelMsg {
     PreviewUnavailableHeading,
     /// A changed tag can point at an annotated tag object, not a commit row.
     PreviewTagChange,
+    /// Suffix for a commit no longer reachable from any branch in Copy all.
+    PreviewOffBranch,
 }
 
 impl OplogPanelMsg {
@@ -110,6 +112,8 @@ impl OplogPanelMsg {
             (Lang::Ja, PreviewUnavailableHeading) => "戻した後のグラフ",
             (Lang::En, PreviewTagChange) => "No preview: local tags change",
             (Lang::Ja, PreviewTagChange) => "プレビューなし: local tag が変更されます",
+            (Lang::En, PreviewOffBranch) => " (off branch)",
+            (Lang::Ja, PreviewOffBranch) => "（どの branch からも外れます）",
         }
     }
 }

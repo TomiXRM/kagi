@@ -562,16 +562,7 @@ fn render_plan_modal_card_styled(
     // `SharedString` (merge: `Merge <source> into <target>`, T-DNDMERGE-001).
     let confirm_label: SharedString = confirm_label.into();
     let has_blockers = !plan.blockers.is_empty();
-    let (heading_title, mut heading_chips) = plan_heading_text(&plan.title);
-    if heading_chips.iter().all(Option::is_none) {
-        heading_chips[0] = Some(std::borrow::Cow::Owned(
-            plan.current
-                .head
-                .get(..8)
-                .unwrap_or(&plan.current.head)
-                .to_owned(),
-        ));
-    }
+    let (heading_title, heading_chips) = plan_heading_text(&plan.title);
     // ── Build modal card (#454) ─────────────────────────────
     // Fixed title + scrolling body + fixed button row. The card itself must
     // NOT scroll: a push plan with many preview commits used to grow past the
@@ -785,7 +776,12 @@ fn render_plan_modal_card_styled(
     // Kagi executes the plan through its backend; the CLI spelling is
     // reference text, collapsed by default and separately copyable.
     if let Some(cmd) = super::modal_command::equivalent_command(&plan) {
-        body = body.child(render_equivalent_command(cmd, None, overrides, cx));
+        let already_offered =
+            super::modal_renderers_plan::offered_recovery_commands(plan.recovery.as_ref())
+                .is_some_and(|commands| commands.iter().any(|recovery| recovery == cmd));
+        if !already_offered {
+            body = body.child(render_equivalent_command(cmd, None, overrides, cx));
+        }
     }
 
     // ── Error message (preflight / execute failure) ───────

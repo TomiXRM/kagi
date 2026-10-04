@@ -1148,10 +1148,6 @@ pub enum Msg {
     ModalTargetFiles,
     /// #454: section header for a plan's warnings (what will NOT be touched).
     ModalWarningsSection,
-    /// #454: section header for the recovery instructions.
-    ModalRecoverySection,
-    /// #454: chip on the recovery section — the backup lives in the oplog.
-    ModalRecoveryChip,
     /// #454: collapsible-section header for the paths discard skips
     /// (untracked / conflicted). The count is rendered by `modal_section`.
     DiscardSkippedSection,
@@ -1165,6 +1161,15 @@ pub enum Msg {
     /// #625: same, for the paths kagi could **not** decide in advance — the
     /// wording says *may* conflict and must stay distinct.
     PlanRestoreConflictMaybeSummary,
+    /// Short operation labels and count templates used in plan heading chips.
+    PlanHeadingSetUpstream,
+    PlanHeadingApprove,
+    PlanHeadingComment,
+    PlanHeadingRequestChanges,
+    PlanHeadingBehind,
+    PlanHeadingFiles,
+    PlanHeadingStashes,
+    PlanHeadingBranches,
     /// Confirm button on the set-upstream modal, `{}` = branch.
     PlanSetUpstreamFor,
     /// Confirm button on the rename-branch modal, `{}` = old name.
@@ -3117,10 +3122,6 @@ impl Msg {
             (Ja, ModalTargetFiles) => "対象ファイル",
             (En, ModalWarningsSection) => "Warnings",
             (Ja, ModalWarningsSection) => "警告",
-            (En, ModalRecoverySection) => "How to recover",
-            (Ja, ModalRecoverySection) => "復元方法",
-            (En, ModalRecoveryChip) => "oplog",
-            (Ja, ModalRecoveryChip) => "oplog",
             (En, DiscardSkippedSection) => "Skipped (untracked / conflicted)",
             (Ja, DiscardSkippedSection) => "対象外(untracked / conflict)",
             (En, PlanOverlapSummary) => {
@@ -3135,6 +3136,22 @@ impl Msg {
                 "{} path(s) changed on both sides that Kagi could not merge in advance — the stash restore may conflict. The stash is kept."
             }
             (Ja, PlanRestoreConflictMaybeSummary) => "両方で変更され、事前に merge を判定できなかった {} 件のパスです。stash 復元は conflict する可能性があります(stash は保持されます)。",
+            (En, PlanHeadingSetUpstream) => "set upstream",
+            (Ja, PlanHeadingSetUpstream) => "upstream を設定",
+            (En, PlanHeadingApprove) => "approve",
+            (Ja, PlanHeadingApprove) => "承認",
+            (En, PlanHeadingComment) => "comment",
+            (Ja, PlanHeadingComment) => "コメント",
+            (En, PlanHeadingRequestChanges) => "request changes",
+            (Ja, PlanHeadingRequestChanges) => "修正を依頼",
+            (En, PlanHeadingBehind) => "{} behind",
+            (Ja, PlanHeadingBehind) => "{} 件遅れ",
+            (En, PlanHeadingFiles) => "{} files",
+            (Ja, PlanHeadingFiles) => "{} 件のファイル",
+            (En, PlanHeadingStashes) => "{} stashes",
+            (Ja, PlanHeadingStashes) => "stash {} 件",
+            (En, PlanHeadingBranches) => "{} branches",
+            (Ja, PlanHeadingBranches) => "{} 件のブランチ",
             (En, PlanSetUpstreamFor) => "Set upstream for {}",
             (Ja, PlanSetUpstreamFor) => "{} の upstream を設定",
             (En, PlanRenameBranch) => "Rename {}",

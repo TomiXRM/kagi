@@ -175,7 +175,7 @@ pub(crate) fn render_stash_push_modal(
             .input_state
             .as_ref()
             .is_some_and(|state| !state.read(cx).value().trim().is_empty());
-        if message_filled && !has_blockers {
+        if message_filled && super::modal_command::plan_ready(p) {
             if let Some(commands) = offered_recovery_commands(p.recovery.as_ref()) {
                 body = body.child(div().flex_shrink_0().child(render_input_recovery_commands(
                     commands,

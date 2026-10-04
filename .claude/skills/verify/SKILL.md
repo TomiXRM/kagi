@@ -521,20 +521,29 @@ The current suite covers:
   fit their own disclosure. A blocked plan has no confirm button, and the
   fixture's HEAD + porcelain status stays unchanged. Git uses a local bare
   remote. `modal_sections` checks closed → open → closed and reset.
-- Plan headings and recovery (`KAGI_GUI_E2E_ONLY=plan_card_heading,bespoke_plan_heading,plan_recovery_commands,plan_recovery_ax,plan_equivalent_summary,blocked_plan_command,dialog_a11y_roles,operation_strip_abort`,
+- Plan headings and recovery (`KAGI_GUI_E2E_ONLY=plan_card_heading,plan_heading_chipless,plan_recovery_noop,bespoke_plan_heading,plan_recovery_commands,plan_recovery_ax,plan_equivalent_summary,blocked_plan_command,dialog_a11y_roles,operation_strip_abort`,
   `tests/recovery/plan_card_994.rs`, `tests/recovery/operations.rs`,
   `tests/recovery/app_conflict.rs`, #994): EN/JA shared Push and Checkout
-  measure an inline ≤20px icon, one-line short heading, typed target chip and
-  right-hand Copy all within the plan card while the AX dialog keeps the full
-  title. CherryPick, Commit Plan and StashApply measure the same inline icon
-  and target chip on their bespoke cards, without adding Copy all.
-  Ready Push has one initially collapsed `plan-recovery` row and
-  command-only body; its dedicated Copy uses precisely
-  `PlanRecovery::commands_for(ShellKind::current())`, while Copy all and the
-  dialog description retain the full localized recovery explanation. The
-  reusable equivalent-command disclosure shows the bare command with a
-  localized *equivalent* AX label. Detached Reset Current has neither
-  executable-looking disclosure. Armed Conflict Abort and Sync to remote
+  measure an inline ≤20px icon, one-line short heading, optional typed
+  target chip (no fallback chip when target is absent), and right-hand Copy all
+  within the plan card while the AX dialog keeps the full title. Behind,
+  approve / comment / request changes / set upstream intent, and file / stash / branch
+  counts use localized units. CherryPick, Commit Plan and StashApply measure
+  the inline icon and applicable target chip on their bespoke cards, without
+  adding Copy all. Input-card headings remain out of scope.
+  Ready, blocker-free Push with nonempty
+  `PlanRecovery::commands_for(ShellKind::current())` has one initially
+  collapsed `plan-recovery` row and command-only body; its dedicated Copy uses
+  precisely those commands. Input cards apply the same Ready, valid-input
+  and blocker-free gate to recovery commands. Copy all includes a separate
+  commands block only for Ready plans with available commands; it and the
+  dialog description retain the localized recovery explanation even when
+  there are no commands.
+  The reusable equivalent-command disclosure shows the bare command with a
+  localized *equivalent* AX label; `plan_equivalent_summary` also checks that
+  an identical recovery command prevents the duplicate disclosure. Detached
+  Reset Current has neither executable-looking disclosure. Armed Conflict
+  Abort and Sync to remote
   announce their stage first, then recovery; unarmed/single cards keep their
   previous action semantics. Four single-production-edit mutations failed
   their respective scenario before restoring a backed-up source file byte-for-byte:
@@ -546,6 +555,15 @@ The current suite covers:
   heading; the same scenario also renders Commit Plan and StashApply.
   CherryPick/StashApply recovery is follow-up #1023 (`Refs #1016`);
   Operation Log persistence and its ADR are follow-up #1025 (`Refs #994`).
+  `plan_heading_chipless` opens the real Repo health → Write commit-graph plan:
+  EN/JA have no fabricated chip, and restoring the `current.head[..8]`
+  fallback makes it fail. `plan_recovery_noop` keeps a real push plan's
+  nonempty recovery but changes its disposition to blocker-free NoOp at the
+  modal seam: neither the card nor Copy all offers structured commands;
+  changing the card gate from `plan_ready` to `blockers.is_empty()` makes it
+  fail. `clipboard_text_offers_recovery_commands_only_for_ready_plans` fails
+  the same mutation to Copy all's gate. All three mutations were restored
+  byte-for-byte against their backups.
 - Input-confirm cards (`KAGI_GUI_E2E_ONLY=create_branch_input_confirm_ime,input_confirm_disabled_cards,stash_push_stacked_preview`,
   `tests/recovery/operations.rs`): #956, #1017. The real Create Branch and
   Stash Push cards measure `plan-state-current` above `plan-state-after`,

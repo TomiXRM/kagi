@@ -921,6 +921,14 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_blocked_plan_command),
             ),
             (
+                "plan_heading_chipless",
+                Box::new(crate::recovery_plan_card_994::scenario_plan_heading_chipless),
+            ),
+            (
+                "plan_recovery_noop",
+                Box::new(crate::recovery_plan_card_994::scenario_plan_recovery_noop),
+            ),
+            (
                 "plan_card_heading",
                 Box::new(crate::recovery_plan_card_994::scenario_plan_card_heading),
             ),

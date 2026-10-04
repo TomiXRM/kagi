@@ -1,7 +1,11 @@
 //! #994: the renderer's headings, collapsed shell commands, and AX recovery.
 use gpui::{AnyWindowHandle, Bounds, Entity, Pixels, VisualTestAppContext};
 use kagi::ui::{dialog_a11y, e2e, KagiApp};
-use kagi_domain::plan_note::ShellKind;
+use kagi_domain::plan_note::{
+    CleanupTitle, GithubTitle, NoOpKind, PlanDisposition, PlanTitle, PullTitle, PushTitle,
+    ShellKind, StashTitle, SyncTitle,
+};
+use kagi_domain::repo_health::HealthFix;
 use kagi_git::CommitId;
 use kagi_ui_core::i18n::{self, Lang, Msg};
 
@@ -54,6 +58,10 @@ fn ready_push(
     cx.run_until_parked();
     assert!(cx.read(|cx| app.read(cx).push_modal().unwrap().plan.blockers.is_empty()));
     (fixture, remote, app, window)
+}
+
+fn heading_chips(title: &PlanTitle) -> [Option<std::borrow::Cow<'_, str>>; 2] {
+    kagi_ui_core::i18n::plan::plan_heading_text(title).1
 }
 
 fn assert_heading(cx: &mut VisualTestAppContext, window: AnyWindowHandle, title: &str) {
@@ -168,6 +176,85 @@ pub fn scenario_bespoke_plan_heading(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS bespoke_plan_heading: CherryPick, Commit Plan and StashApply inline icons and target chips");
 }
 
+pub fn scenario_plan_heading_chipless(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_language = i18n::lang();
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let before = repo_fingerprint(repo);
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, _| {
+        app.open_repo_health_modal(HealthFix::WriteCommitGraph)
+    });
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app
+        .read(cx)
+        .repo_health_modal()
+        .unwrap()
+        .plan
+        .blockers
+        .is_empty()));
+    for lang in [Lang::En, Lang::Ja] {
+        i18n::set_lang(lang);
+        assert!(bounds(cx, window, "plan-heading-icon").is_some());
+        assert!(bounds(cx, window, "plan-heading-title").is_some());
+        assert!(
+            bounds(cx, window, "plan-heading-chip-0").is_none(),
+            "Write commit-graph has no typed target chip in {lang:?}"
+        );
+    }
+    assert_eq!(repo_fingerprint(repo), before);
+    i18n::set_lang(original_language);
+    unmount(cx, app, window);
+    eprintln!(
+        "[gui-e2e] PASS plan_heading_chipless: Repo health shows no fabricated chip in EN/JA"
+    );
+}
+
+pub fn scenario_plan_recovery_noop(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_language = i18n::lang();
+    let (fixture, _remote, app, window) = ready_push(cx);
+    let before = repo_fingerprint(fixture.path());
+    // A NoOp normally skips opening the modal at the producer. Preserve the
+    // populated recovery from a real push plan to exercise this card's gate.
+    app.update(cx, |app, cx| {
+        let mut modal = app.push_modal().unwrap().clone();
+        let mut plan = (*modal.plan).clone();
+        assert!(!plan.recovery.as_ref().unwrap().commands.is_empty());
+        plan.disposition = PlanDisposition::NoOp(NoOpKind::PushUpToDate);
+        modal.plan = std::sync::Arc::new(plan);
+        app.set_push_modal(modal);
+        cx.notify();
+    });
+    for lang in [Lang::En, Lang::Ja] {
+        i18n::set_lang(lang);
+        assert!(cx.read(|cx| app.read(cx).push_modal().unwrap().plan.blockers.is_empty()));
+        assert!(bounds(cx, window, "plan-heading-title").is_some());
+        for id in ["plan-recovery", "plan-recovery-copy", "plan-recovery-body"] {
+            assert!(
+                bounds(cx, window, id).is_none(),
+                "NoOp offered {id} in {lang:?}"
+            );
+        }
+        let copy = bounds(cx, window, "plan-card-copy").unwrap();
+        cx.simulate_click(window, copy.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        let copied = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .unwrap();
+        assert!(
+            !copied.contains(Msg::ModalRecoveryCommands.t()),
+            "NoOp Copy all offered structured recovery in {lang:?}"
+        );
+    }
+    assert_eq!(repo_fingerprint(fixture.path()), before);
+    i18n::set_lang(original_language);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS plan_recovery_noop: blocker-free NoOp offers no recovery commands in card or Copy all");
+}
+
 pub fn scenario_plan_card_heading(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let original_language = i18n::lang();
@@ -177,6 +264,66 @@ pub fn scenario_plan_card_heading(cx: &mut VisualTestAppContext) {
     let before = repo_fingerprint(repo);
     for lang in [Lang::En, Lang::Ja] {
         i18n::set_lang(lang);
+        let chips = heading_chips;
+        let push_title = PlanTitle::Push(PushTitle::Push {
+            branch: "main".into(),
+            remote: "origin".into(),
+            set_upstream: true,
+        });
+        let push = chips(&push_title);
+        assert_eq!(push[1].as_deref(), Some(Msg::PlanHeadingSetUpstream.t()));
+        let pull_title = PlanTitle::Pull(PullTitle::PullRemote {
+            branch: "main".into(),
+            upstream: "origin/main".into(),
+            behind: 1,
+        });
+        let pull = chips(&pull_title);
+        assert_eq!(
+            pull[1].as_deref(),
+            Some(Msg::PlanHeadingBehind.t().replace("{}", "1").as_str())
+        );
+        for (verdict, message) in [
+            ("approve", Msg::PlanHeadingApprove),
+            ("request-changes", Msg::PlanHeadingRequestChanges),
+            ("comment", Msg::PlanHeadingComment),
+        ] {
+            let review_title = PlanTitle::Github(GithubTitle::ReviewPr {
+                number: 1026,
+                verdict: verdict.into(),
+            });
+            let review = chips(&review_title);
+            assert_eq!(review[1].as_deref(), Some(message.t()));
+        }
+        let sync_title = PlanTitle::Sync(SyncTitle::SyncToRemote {
+            branch: "main".into(),
+            upstream: "origin/main".into(),
+            to: "abc1234".into(),
+        });
+        let sync = chips(&sync_title);
+        assert_eq!(sync[1].as_deref(), Some("abc1234"));
+        for (title, message) in [
+            (
+                PlanTitle::Discard {
+                    single: None,
+                    count: 3,
+                },
+                Msg::PlanHeadingFiles,
+            ),
+            (
+                PlanTitle::Stash(StashTitle::Push { next_count: 3 }),
+                Msg::PlanHeadingStashes,
+            ),
+            (
+                PlanTitle::Cleanup(CleanupTitle::CleanupDelete { count: 3 }),
+                Msg::PlanHeadingBranches,
+            ),
+        ] {
+            let heading = chips(&title);
+            assert_eq!(
+                heading[0].as_deref(),
+                Some(message.t().replace("{}", "3").as_str())
+            );
+        }
         let push_title =
             cx.read(|cx| i18n::plan_title_text(&app.read(cx).push_modal().unwrap().plan.title));
         assert_heading(cx, window, &push_title);
@@ -358,6 +505,22 @@ pub fn scenario_plan_equivalent_summary(cx: &mut VisualTestAppContext) {
             format!("{} {command}", Msg::ModalEquivalentCommand.t())
         );
         assert!(!expanded);
+    }
+    app.update(cx, |app, cx| {
+        let mut modal = app.push_modal().unwrap().clone();
+        let mut plan = (*modal.plan).clone();
+        plan.equivalent_command = Some(plan.recovery.as_ref().unwrap().commands[0].clone());
+        modal.plan = std::sync::Arc::new(plan);
+        app.set_push_modal(modal);
+        cx.notify();
+    });
+    for lang in [Lang::En, Lang::Ja] {
+        i18n::set_lang(lang);
+        assert!(bounds(cx, window, "plan-recovery").is_some());
+        assert!(
+            bounds(cx, window, "plan-equivalent-command").is_none(),
+            "identical recovery and equivalent command was shown twice in {lang:?}"
+        );
     }
     i18n::set_lang(original_language);
     unmount(cx, app, window);

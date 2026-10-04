@@ -172,7 +172,11 @@ pub fn plan_heading_text(
         ),
         Stash(StashTitle::Push { next_count }) => (
             Op::StashPush,
-            Some(std::borrow::Cow::Owned(next_count.to_string())),
+            Some(std::borrow::Cow::Owned(
+                Msg::PlanHeadingStashes
+                    .t()
+                    .replace("{}", &next_count.to_string()),
+            )),
             None,
         ),
         Stash(StashTitle::Apply { index }) => (
@@ -216,12 +220,14 @@ pub fn plan_heading_text(
             Some(std::borrow::Cow::Borrowed(branch.as_str())),
             Some(std::borrow::Cow::Borrowed(to.as_str())),
         ),
-        Pull(PullTitle::PullRemote {
-            branch, upstream, ..
-        }) => (
+        Pull(PullTitle::PullRemote { branch, behind, .. }) => (
             Op::Pull,
             Some(std::borrow::Cow::Borrowed(branch.as_str())),
-            Some(std::borrow::Cow::Borrowed(upstream.as_str())),
+            Some(std::borrow::Cow::Owned(
+                Msg::PlanHeadingBehind
+                    .t()
+                    .replace("{}", &behind.to_string()),
+            )),
         ),
         Pull(
             PullTitle::Pull { branch, remote, .. } | PullTitle::PullBranchFf { branch, remote, .. },
@@ -229,6 +235,15 @@ pub fn plan_heading_text(
             Op::Pull,
             Some(std::borrow::Cow::Borrowed(branch.as_str())),
             Some(std::borrow::Cow::Borrowed(remote.as_str())),
+        ),
+        Push(PushTitle::Push {
+            branch,
+            set_upstream: true,
+            ..
+        }) => (
+            Op::Push,
+            Some(std::borrow::Cow::Borrowed(branch.as_str())),
+            Some(std::borrow::Cow::Borrowed(Msg::PlanHeadingSetUpstream.t())),
         ),
         Push(
             PushTitle::Push { branch, remote, .. } | PushTitle::PushBranch { branch, remote, .. },
@@ -312,7 +327,11 @@ pub fn plan_heading_text(
         ),
         Cleanup(kagi_domain::plan_note::CleanupTitle::CleanupDelete { count }) => (
             Op::Cleanup,
-            Some(std::borrow::Cow::Owned(count.to_string())),
+            Some(std::borrow::Cow::Owned(
+                Msg::PlanHeadingBranches
+                    .t()
+                    .replace("{}", &count.to_string()),
+            )),
             None,
         ),
         Conflicts(ConflictsTitle::Continue { op }) => (
@@ -385,10 +404,15 @@ pub fn plan_heading_text(
             Some(std::borrow::Cow::Owned(format!("#{number}"))),
             None,
         ),
-        Github(GithubTitle::ReviewPr { number, .. }) => (
+        Github(GithubTitle::ReviewPr { number, verdict }) => (
             Op::PrReview,
             Some(std::borrow::Cow::Owned(format!("#{number}"))),
-            None,
+            Some(std::borrow::Cow::Borrowed(match verdict.as_str() {
+                "approve" => Msg::PlanHeadingApprove.t(),
+                "request-changes" => Msg::PlanHeadingRequestChanges.t(),
+                "comment" => Msg::PlanHeadingComment.t(),
+                _ => verdict.as_str(),
+            })),
         ),
         Github(GithubTitle::EditPr { number }) => (
             Op::PrEdit,
@@ -410,12 +434,10 @@ pub fn plan_heading_text(
             Some(std::borrow::Cow::Borrowed(id.as_str())),
             None,
         ),
-        Sync(kagi_domain::plan_note::SyncTitle::SyncToRemote {
-            branch, upstream, ..
-        }) => (
+        Sync(kagi_domain::plan_note::SyncTitle::SyncToRemote { branch, to, .. }) => (
             Op::SyncToRemote,
             Some(std::borrow::Cow::Borrowed(branch.as_str())),
-            Some(std::borrow::Cow::Borrowed(upstream.as_str())),
+            Some(std::borrow::Cow::Borrowed(to.as_str())),
         ),
         Maintenance(MaintenanceTitle::WriteCommitGraph) => (Op::WriteCommitGraph, None, None),
         Maintenance(MaintenanceTitle::EnableFsmonitor) => (Op::EnableFsmonitor, None, None),
@@ -440,7 +462,11 @@ pub fn plan_heading_text(
                 single
                     .as_deref()
                     .map(std::borrow::Cow::Borrowed)
-                    .unwrap_or_else(|| std::borrow::Cow::Owned(count.to_string())),
+                    .unwrap_or_else(|| {
+                        std::borrow::Cow::Owned(
+                            Msg::PlanHeadingFiles.t().replace("{}", &count.to_string()),
+                        )
+                    }),
             ),
             None,
         ),

@@ -413,14 +413,20 @@ refusal は core が `Refused` の no-execute step として記録し、UI は e
 
 
 **remote pull（#989）**: cached ahead/behind から preview を合成し、background plan job
-で通常の SSH options による `ssh -G` と common-dir probe を行う。
-同じ plan-time SSH probe は staged index (`git ls-files -s -z`) と worktree status
+で通常の SSH options による `ssh -G` と common-dir probe を行う。cached
+branch / upstream / HEAD OID / dirty と host の live 値が違えば、
+確認を開かず `RemotePreviewStale` で再読み込みを促す。
+同じ plan-time SSH probe は `GIT_OPTIONAL_LOCKS=0` で index の任意書込を止め、
+staged index (`git ls-files -s -z`) と worktree status
 (`git status --porcelain=v2 -z --untracked-files=all`) の binary stream を取得し、
 SHA-256 fingerprint を凍結する。実行前に同じ probe を再読して照合し、
 stream の不一致・読取失敗は pull を実行せず `Refused` として lease を解放する。
-実行する pull は `git pull --no-rebase --ff` に固定し、ホスト側の
-`pull.rebase`・`branch.<name>.rebase`・`pull.ff=only` より確認時の merge-only
-policy を優先する（fast-forward 可能な場合は維持する）。
+実行は `git -c branch.<name>.mergeOptions= -C <physical-worktree> pull
+--no-rebase --ff --no-autostash --no-recurse-submodules` に固定する。
+host の rebase / ff-only / branch merge options / autostash / submodule.recurse は
+確認内容を上書きしない。fast-forward 可能なら行い、分岐時のみ通常の merge にする。
+preflight と実行は別 SSH session なので間の host drift はまだ原子的に防げず、
+同一 session 化は #1014 に分離する。
 `Planned::RemotePull` は `begin_write` で `WriteScope::Remote(RemoteRepoId)` を取り、
 `OperationId` / `OwnerStamp` によって配送される。Success / Failed は通常解放し、
 Unknown / Partial / job abandonment は停止済みの reconcile requirement と lease を保持する。

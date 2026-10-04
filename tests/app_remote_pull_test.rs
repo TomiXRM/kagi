@@ -1,6 +1,6 @@
 use kagi::app::{self, AdmissionError, Job, PlanState, Planned, Sessions, WriteScope};
 use kagi::remote::stash::RemoteAttachment;
-use kagi::remote::{RemoteError, RemotePullReport};
+use kagi::remote::{PullRepoIdentity, RemoteError, RemotePullReport};
 use kagi_domain::remote::{
     RemoteConnectionId, RemoteHost, RemotePullConfig, RemotePullFingerprint, RemotePullHead,
     RemoteRepoId,
@@ -12,7 +12,17 @@ use std::sync::{Arc, Mutex};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-fn plan(sessions: &mut Sessions) -> (Job, RemoteRepoId) {
+struct PathRestore(Option<std::ffi::OsString>);
+impl Drop for PathRestore {
+    fn drop(&mut self) {
+        match &self.0 {
+            Some(path) => std::env::set_var("PATH", path),
+            None => std::env::remove_var("PATH"),
+        }
+    }
+}
+
+fn fixture(sessions: &mut Sessions) -> (app::RemotePullRequest, PullRepoIdentity) {
     let host = RemoteHost {
         user: Some("alice".into()),
         host: "example.invalid".into(),
@@ -34,6 +44,8 @@ fn plan(sessions: &mut Sessions) -> (Job, RemoteRepoId) {
             false,
             "main".into(),
         )),
+        cached_head_oid: Some("a".repeat(40)),
+        cached_remote_dirty: false,
     };
     let repo_id = RemoteRepoId {
         connection: Arc::new(RemoteConnectionId {
@@ -68,14 +80,32 @@ fn plan(sessions: &mut Sessions) -> (Job, RemoteRepoId) {
         staged: [1; 32],
         worktree: [2; 32],
     };
+    let identity = PullRepoIdentity {
+        repo_id: repo_id.clone(),
+        physical_toplevel: "/srv/repo".into(),
+        head: head.clone(),
+        config: Some(config.clone()),
+        fingerprint: fingerprint.clone(),
+        remote_dirty: false,
+    };
+    (request, identity)
+}
+
+fn plan(sessions: &mut Sessions) -> (Job, PullRepoIdentity) {
+    let (request, identity) = fixture(sessions);
+    let repo_id = &identity.repo_id;
+    let head = &identity.head;
+    let config = identity.config.as_ref().unwrap();
+    let fingerprint = &identity.fingerprint;
     let completion = app::plan_remote_pull_for_test(
         sessions,
         request,
         repo_id.clone(),
-        "/srv/repo".into(),
+        identity.physical_toplevel.clone(),
         head.clone(),
         config.clone(),
         fingerprint.clone(),
+        false,
     )
     .run();
     assert!(matches!(sessions.plan_state(), PlanState::Planning { .. }));
@@ -86,11 +116,11 @@ fn plan(sessions: &mut Sessions) -> (Job, RemoteRepoId) {
     let Planned::RemotePull { plan, .. } = prepared else {
         panic!("wrong plan family")
     };
-    assert_eq!(plan.repo_id, repo_id);
+    assert_eq!(&plan.repo_id, repo_id);
     assert_eq!(plan.physical_toplevel, "/srv/repo");
-    assert_eq!(plan.head, head);
-    assert_eq!(plan.config, config);
-    assert_eq!(plan.fingerprint, fingerprint);
+    assert_eq!(&plan.head, head);
+    assert_eq!(&plan.config, config);
+    assert_eq!(&plan.fingerprint, fingerprint);
     assert_eq!(prepared.scope(), WriteScope::Remote(repo_id.clone()));
     let approved = app::approve(
         sessions,
@@ -101,7 +131,7 @@ fn plan(sessions: &mut Sessions) -> (Job, RemoteRepoId) {
     let job = app::prepare(sessions, approved).unwrap();
     assert!(sessions.has_leases());
     assert!(!sessions.may_close_host());
-    (job, repo_id)
+    (job, identity)
 }
 
 fn report(outcome: OpOutcome) -> RemotePullReport {
@@ -231,4 +261,110 @@ fn dropped_remote_pull_job_parks_unknown_instead_of_unlocking() {
         .run();
     app::acknowledge_unobserved(&mut sessions, release).unwrap();
     assert!(!sessions.has_leases());
+}
+
+#[test]
+fn stale_cached_head_or_dirty_preview_never_opens_a_pull_confirmation() {
+    for mismatch in ["head", "dirty"] {
+        let mut sessions = Sessions::new();
+        let (request, mut identity) = fixture(&mut sessions);
+        if mismatch == "head" {
+            identity.head.oid = "b".repeat(40);
+        } else {
+            identity.remote_dirty = true;
+            identity.fingerprint.worktree = [3; 32];
+        }
+        let completion = app::plan_remote_pull_for_test(
+            &mut sessions,
+            request,
+            identity.repo_id,
+            identity.physical_toplevel,
+            identity.head,
+            identity.config.unwrap(),
+            identity.fingerprint,
+            identity.remote_dirty,
+        )
+        .run();
+        assert!(app::apply_plan(&mut sessions, completion));
+        assert!(
+            matches!(
+                sessions.plan_state(),
+                PlanState::Error {
+                    blocker: Some(kagi_domain::plan_note::PlanNote::Pull(
+                        kagi_domain::plan_note::PullNote::RemotePreviewStale
+                    )),
+                    ..
+                }
+            ),
+            "cached {mismatch} must refuse before confirmation"
+        );
+        assert!(!sessions.has_leases());
+        assert!(sessions.may_close_host());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn remote_pull_preflight_refuses_changed_status_config_and_repo_without_ssh_pull() {
+    use std::os::unix::fs::PermissionsExt;
+    let _lock = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let root = tempfile::tempdir().unwrap();
+    std::env::set_var("KAGI_LOG_DIR", root.path());
+    let bin = root.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let calls = root.path().join("ssh-calls");
+    let ssh = bin.join("ssh");
+    std::fs::write(
+        &ssh,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 99\n",
+            calls.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let _restore = PathRestore(std::env::var_os("PATH"));
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(
+        &_restore.0.clone().unwrap_or_default(),
+    ));
+    std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+
+    for (index, mismatch) in ["status", "config", "repo"].into_iter().enumerate() {
+        let mut sessions = Sessions::new();
+        let (job, mut observed) = plan(&mut sessions);
+        match mismatch {
+            "status" => observed.fingerprint.worktree = [9; 32],
+            "config" => observed.config.as_mut().unwrap().remote_url = "ssh://other/repo".into(),
+            "repo" => observed.repo_id.common_dir = "/srv/other/.git".into(),
+            _ => unreachable!(),
+        }
+        let Job::RemotePull(job) = job else {
+            panic!("wrong job family");
+        };
+        let id = job.id();
+        let completion = (*job).with_preflight_identity_for_test(Ok(observed)).run();
+        assert!(
+            matches!(
+                completion.report.recording.entry().outcome,
+                OpOutcome::Refused { .. }
+            ),
+            "{mismatch} drift must be Refused, not a failed or successful SSH pull"
+        );
+        app::apply(&mut sessions, completion);
+        assert!(!sessions.has_leases(), "{mismatch} refusal releases lease");
+        assert!(sessions.may_close_host());
+        assert!(!sessions.reconcile_ids().contains(&id));
+        assert_eq!(
+            kagi_git::oplog::read_oplog_tail(10)
+                .iter()
+                .filter(|entry| matches!(entry.outcome, OpOutcome::Refused { .. }))
+                .count(),
+            index + 1,
+            "each refusal is durable"
+        );
+        assert!(!calls.exists(), "{mismatch} drift must not call ssh pull");
+    }
 }

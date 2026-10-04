@@ -591,6 +591,12 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
             command.contains("--no-rebase") && command.contains("--ff"),
             "the executed merge pull must override remote rebase and ff-only config: {command}"
         );
+        assert!(
+            command.contains("branch.main.mergeOptions=")
+                && command.contains("--no-autostash")
+                && command.contains("--no-recurse-submodules"),
+            "the executed pull must pin all host-configurable write behavior: {command}"
+        );
     }
     if matches!(case, PullLeaseCase::Success) {
         let recorded = kagi_git::oplog::read_oplog_tail(100);

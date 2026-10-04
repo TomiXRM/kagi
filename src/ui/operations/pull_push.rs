@@ -80,11 +80,15 @@ impl KagiApp {
                 host: rv.host,
                 root: rv.root,
             };
+            let cached_head_oid = self.view().head_oid.clone();
+            let cached_remote_dirty = s.is_dirty;
             let job = app::plan_remote_pull(
                 &mut self.app_sessions,
                 app::RemotePullRequest {
                     owner: owner.clone(),
                     plan: std::sync::Arc::new(plan),
+                    cached_head_oid,
+                    cached_remote_dirty,
                 },
             );
             self.planning = Some("pull");

@@ -9,6 +9,8 @@ use std::sync::{mpsc::Sender, Arc};
 pub struct RemotePullRequest {
     pub owner: crate::remote::stash::RemoteAttachment,
     pub plan: Arc<kagi_git::OperationPlan>,
+    pub cached_head_oid: Option<String>,
+    pub cached_remote_dirty: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -33,14 +35,16 @@ impl RemotePullPlanJob {
         });
         let state = match result {
             Ok(identity) => {
-                // The preview is synthesized from cached status, whereas this
-                // identity is read from the host. Never confirm one branch or
-                // upstream and run a pull against another.
+                // A cached preview is not authority: its HEAD, dirty state,
+                // checkout, and upstream must all describe the live host.
                 let matches_preview = matches!(
                     &self.request.plan.title,
                     PlanTitle::Pull(PullTitle::PullRemote { branch, upstream, .. })
                         if identity.head.branch.as_deref() == Some(branch.as_str())
                             && identity.head.upstream.as_deref() == Some(upstream.as_str())
+                            && Some(identity.head.oid.as_str())
+                                == self.request.cached_head_oid.as_deref()
+                            && identity.remote_dirty == self.request.cached_remote_dirty
                             && identity.config.is_some()
                 );
                 if !matches_preview {
@@ -107,6 +111,7 @@ pub fn plan_remote_pull_for_test(
     head: RemotePullHead,
     config: RemotePullConfig,
     fingerprint: RemotePullFingerprint,
+    remote_dirty: bool,
 ) -> RemotePullPlanJob {
     let mut job = plan_remote_pull(sessions, request);
     job.fixture = Some(crate::remote::PullRepoIdentity {
@@ -115,6 +120,7 @@ pub fn plan_remote_pull_for_test(
         head,
         config: Some(config),
         fingerprint,
+        remote_dirty,
     });
     job
 }
@@ -136,6 +142,7 @@ pub struct RemotePullJob {
     abandoned: Sender<Completion>,
     ran: bool,
     fixture: Option<crate::remote::RemotePullReport>,
+    preflight_fixture: Option<Result<crate::remote::PullRepoIdentity, crate::remote::RemoteError>>,
 }
 impl RemotePullJob {
     pub fn id(&self) -> OperationId {
@@ -148,10 +155,22 @@ impl RemotePullJob {
         self
     }
 
+    #[doc(hidden)]
+    pub fn with_preflight_identity_for_test(
+        mut self,
+        observed: Result<crate::remote::PullRepoIdentity, crate::remote::RemoteError>,
+    ) -> Self {
+        self.preflight_fixture = Some(observed);
+        self
+    }
+
     pub fn run(mut self) -> RemotePullCompletion {
         let report = self.fixture.take().unwrap_or_else(|| {
             let owner = &self.request.owner;
-            let observed = crate::remote::resolve_pull_identity(&owner.host, &owner.root);
+            let observed = self
+                .preflight_fixture
+                .take()
+                .unwrap_or_else(|| crate::remote::resolve_pull_identity(&owner.host, &owner.root));
             if observed.as_ref().is_ok_and(|identity| {
                 identity.repo_id == self.repo_id
                     && identity.physical_toplevel == self.physical_toplevel
@@ -163,6 +182,7 @@ impl RemotePullJob {
                     &owner.host,
                     &owner.root,
                     &self.physical_toplevel,
+                    self.head.branch.as_deref().expect("approved pull branch"),
                     &self.request.plan.current,
                 )
             } else {
@@ -227,5 +247,6 @@ pub fn prepare_remote_pull(
         abandoned: s.abandoned_tx.clone(),
         ran: false,
         fixture: None,
+        preflight_fixture: None,
     })
 }

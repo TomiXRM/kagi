@@ -74,8 +74,8 @@ pub enum PullNote {
     /// warning (`plan_pull_remote`, SSH): the remote working tree has
     /// uncommitted changes.
     RemoteDirty,
-    /// blocker (remote pull plan): the cached confirmation names a different
-    /// checkout or upstream from the host's live plan-time state.
+    /// blocker (remote pull plan): cached branch, upstream, HEAD OID, or dirty
+    /// state differs from the host's live plan-time state.
     RemotePreviewStale,
 }
 

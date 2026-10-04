@@ -1657,19 +1657,30 @@ allowing legitimate empty clean streams and preserving non-UTF-8 filenames.
 The real-Git probe test changes unstaged content and then stages it, proving
 that the two frozen digests change independently without HEAD/config drift.
 `remote_oplog_test::remote_pull_merges_even_when_host_config_requests_rebase_and_ff_only`
-creates a divergent real-Git pair with `pull.rebase=true`,
-`branch.main.rebase=true`, and `pull.ff=only`; the transport must still make
-a merge commit retaining the local parent and record Success. `remote_pull_lease`
-also checks the fake SSH's executed pull argv contains `--no-rebase --ff`.
-Removing `--no-rebase` makes the real-Git merge-parent assertion fail.
-`remote_pull_cached_preview_stale` changes the checked-out branch before the
-first live plan probe while cached status still names `main`; the plan must
-reject without a confirmation modal, lease or `git pull` and show a localized
-refresh reason. Mutating the plan-time comparison makes this Tier A assertion fail.
-`remote_pull_planning_latch` blocks `ssh -G`, clicks Pull twice, and requires
-one probe and a cleared latch when the modal arrives. G:
-`cargo test -p kagi --test app_remote_pull_test` covers Unknown/Partial/abandonment
-plus Success/Failed. Remote stash's frozen-identity policy is unchanged.
+creates divergent real-Git history with `pull.rebase=true`,
+`branch.main.rebase=true`, `pull.ff=only`, and
+`branch.main.mergeOptions=--squash`; the transport still creates a normal
+two-parent merge commit and records Success. Removing the `-c
+branch.main.mergeOptions=` override breaks that parent assertion.
+`remote_pull_disables_host_autostash_instead_of_recording_conflicted_success`
+overlaps dirty local content with an incoming tracked edit under
+`merge.autoStash=true`: no implicit stash, no changed HEAD/worktree, non-Success
+receipt; removing `--no-autostash` returns Ok despite a conflict.
+`remote_pull_does_not_recurse_into_host_submodule_worktrees` proves that
+`submodule.recurse=true` cannot move an initialized submodule's checkout;
+removing `--no-recurse-submodules` moves it. `remote_pull_lease` checks the
+executed fake-SSH argv has all four pull flags and the empty branch override.
+The real-Git probe wraps `git status` and refuses unless
+`GIT_OPTIONAL_LOCKS=0`; removing the export fails before confirmation.
+`remote_pull_cached_preview_stale` changes branch before the live probe and
+requires no modal/lease/pull plus localized refresh. G:
+`cargo test -p kagi --test app_remote_pull_test` additionally checks cached
+HEAD OID and dirty mismatch at plan time, and status fingerprint/config/repo
+drift at preflight: durable Refused, lease released, zero ssh pull calls.
+Mutating the corresponding comparison makes each named assertion fail.
+Success/Failed release; Unknown/Partial/abandonment retain reconcile.
+Remote stash's frozen-identity policy is unchanged. #1014 tracks the separate
+SSH sessions' remaining race.
 
 Continue の post-read (#569 (2)) は
 `cargo test -p kagi --test app_writer_admission_test continue_` で確認する。

@@ -44,6 +44,8 @@ pub struct PullRepoIdentity {
     pub head: remote::RemotePullHead,
     pub config: Option<remote::RemotePullConfig>,
     pub fingerprint: remote::RemotePullFingerprint,
+    /// Whether the host's porcelain-v2 status contained staged/unstaged/untracked entries.
+    pub remote_dirty: bool,
 }
 
 /// Resolve a pull's lease identity, physical worktree toplevel, and checkout
@@ -117,6 +119,7 @@ pub fn resolve_pull_identity(
         host_key_algorithms: config.host_key_algorithms,
     };
     let script = r#"set -eu
+export GIT_OPTIONAL_LOCKS=0
 cd -P -- "$1"
 test "$(git rev-parse --is-inside-work-tree)" = true
 top=$(git rev-parse --show-toplevel)
@@ -174,6 +177,7 @@ printf 'KAGI-WORKTREE-END\0KAGI-END\n'"#;
         head,
         config,
         fingerprint,
+        remote_dirty: !content.worktree.is_empty(),
     })
 }
 
@@ -731,20 +735,27 @@ pub fn remote_pull(
     host: &RemoteHost,
     display_root: &str,
     physical_toplevel: &str,
+    branch: &str,
     before: &kagi_git::StateSummary,
 ) -> RemotePullReport {
     use kagi_git::oplog::OpOutcome;
-    // The preview promises a merge pull. CLI flags outrank pull.rebase,
-    // branch.<name>.rebase, and pull.ff=only on the remote host.
+    // Pin the confirmed merge policy, disable implicit writes outside the
+    // selected worktree, and clear per-branch merge arguments such as --squash
+    // or -s ours. These host settings must not override the confirmation.
+    let merge_options = format!("branch.{branch}.mergeOptions=");
     let transport = run_ssh(
         host,
         &[
             "git",
+            "-c",
+            &merge_options,
             "-C",
             physical_toplevel,
             "pull",
             "--no-rebase",
             "--ff",
+            "--no-autostash",
+            "--no-recurse-submodules",
         ],
     );
     let after = |dirty: String| kagi_git::StateSummary {

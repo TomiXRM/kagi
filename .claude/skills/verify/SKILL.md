@@ -1953,10 +1953,24 @@ confirm uses the frozen message and preserves the newer draft),
 `queue_commit_confirms_changed_staging` (a staged-set digest change opens
 `QueuedCommit`),
 `queue_waits_while_input_focused` (a drawn, focused Commit Input blocks the
-head until blur), and `queue_dismissed_input_modal_releases_head` (a
-create-branch Input is closed through real Escape without refocusing; the
-queued checkout proceeds after the modal leaves the dispatch tree; dropping
-the focus-membership check reproduces the stuck head).
+head with `waiting: typing` until blur), and
+`queue_dismissed_input_modal_releases_head` (a create-branch Input is closed
+through real Escape without refocusing; the queued checkout proceeds after
+the modal leaves the dispatch tree; dropping the focus-membership check
+reproduces the stuck head). #1020 review additionally covers
+`queue_commit_consumes_origin_draft` (checkout changes branch; the origin
+draft is cleared and the destination draft survives),
+`queue_commit_rechecks_staging_on_confirm` (a second external `git add` while
+the modal is open cannot be committed by the old approval; reasons are drawn),
+`queue_commit_refuses_late_merge` (external `git merge --no-commit` before
+confirm keeps MERGE_HEAD and HEAD and cancels the queued plain commit), and
+`queue_commit_detached_successor` (confirmed detached checkout then queued
+commit, verified detached HEAD OID and next checkout's admitted successor).
+The Commit Panel busy path releases title-input focus itself, so the clean
+`queue_commit_runs_after_checkout` scenario never calls `focus_root`.
+`cargo test -p kagi-git staged_set_digest` additionally exercises gitlink
+mode and conflict index stage changes; `merge_in_progress_reads_external_state_after_conflicts_are_resolved`
+probes the resolved merge guard.
 Tier B: queue two checkouts behind a held or slow checkout in an isolated app
 and capture the strip, cancel list, and running row's seconds in EN/JA; queue
 a commit behind a held checkout and check its frozen message, confirmation and

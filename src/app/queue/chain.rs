@@ -178,26 +178,26 @@ impl IntentQueue {
             ) {
                 continue;
             }
-            let reason = if self.input_focused {
-                Some(WaitReason::NeedsConfirmation)
-            } else if self.write.is_some() || self.write_busy {
+            let reason = if self.write.is_some()
+                || self.write_busy
+                || matches!(
+                    gate,
+                    ChainGate::Armed {
+                        anchor: Some(ChainAnchor::ActiveWrite(_))
+                    }
+                ) {
                 Some(WaitReason::WriteRunning)
             } else if self.plan_slot_busy || occupied || chosen {
                 Some(WaitReason::PlanSlotBusy)
             } else if self.reconciling.contains(&session) {
                 Some(WaitReason::NeedsReconcile)
+            } else if self.input_focused {
+                Some(WaitReason::Typing)
             } else if self.active != Some(session)
                 || self.modal_busy
                 || self.revalidating.contains(&session)
             {
                 Some(WaitReason::NeedsConfirmation)
-            } else if matches!(
-                gate,
-                ChainGate::Armed {
-                    anchor: Some(ChainAnchor::ActiveWrite(_))
-                }
-            ) {
-                Some(WaitReason::WriteRunning)
             } else {
                 None
             };

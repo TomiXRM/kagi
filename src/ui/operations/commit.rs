@@ -933,21 +933,24 @@ impl KagiApp {
                 if let Some(entity) = self.ui().commit_panel.clone() {
                     entity.update(cx, |panel, _| panel.state.plan_modal = None);
                 }
+                self.focus_root_for_modal();
                 return;
             }
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
-        self.run_commit(repo_path, plan, commit_message, None, cx);
+        let draft_branch = self.panel_draft_branch(cx);
+        self.run_commit(repo_path, plan, commit_message, draft_branch, None, cx);
     }
 
-    /// Run the approved live plan, retaining the frozen message across async
-    /// execution and conditional draft consumption.
+    /// Run the approved live plan, retaining the frozen message and draft key
+    /// across async execution and conditional draft consumption.
     pub(crate) fn run_commit(
         &mut self,
         repo_path: std::path::PathBuf,
         plan: std::sync::Arc<kagi_git::OperationPlan>,
         commit_message: String,
+        draft_branch: String,
         intent: Option<crate::app::IntentId>,
         cx: &mut Context<Self>,
     ) {
@@ -983,7 +986,11 @@ impl KagiApp {
             move |done| match done {
                 Ok(_) => {
                     let presentation = RunPresentation::none()
-                        .consume_commit_message_if(repo_path.clone(), commit_message.clone())
+                        .consume_commit_message_if(
+                            repo_path.clone(),
+                            draft_branch.clone(),
+                            commit_message.clone(),
+                        )
                         .refresh_worktree_wip(repo_path.clone());
                     if skip_undo {
                         presentation

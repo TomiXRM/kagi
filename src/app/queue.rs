@@ -14,9 +14,19 @@ pub struct IntentId(pub u64);
 /// Only frozen user inputs, never an approved plan, resolved HEAD, or prediction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IntentRequest {
-    Checkout { target: CheckoutIntent },
-    Commit { message: String, staged: String },
-    Merge { source: String, into: String },
+    Checkout {
+        target: CheckoutIntent,
+    },
+    Commit {
+        message: String,
+        staged: String,
+        /// Draft key at enqueue, not the branch after an earlier queued checkout.
+        draft_branch: String,
+    },
+    Merge {
+        source: String,
+        into: String,
+    },
 }
 
 /// The checkout target the user picked: a branch name or a commit OID.
@@ -28,6 +38,7 @@ pub enum CheckoutIntent {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WaitReason {
+    Typing,
     WriteRunning,
     PlanSlotBusy,
     NeedsConfirmation,
@@ -51,6 +62,7 @@ impl WaitReason {
         match self {
             Self::WriteRunning => matches!(event, ReleaseEvent::LeaseReleased),
             Self::PlanSlotBusy => matches!(event, ReleaseEvent::PlanSlotFreed),
+            Self::Typing => matches!(event, ReleaseEvent::InputBlurred),
             Self::NeedsConfirmation => matches!(
                 event,
                 ReleaseEvent::OwnerReturned
@@ -73,6 +85,7 @@ pub enum CancelReason {
     IdentityChanged,
     StaleApproval,
     CapacityRejected,
+    MergeStarted,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IntentState {
@@ -155,6 +168,8 @@ pub enum QueueEvent<'a> {
         receipt: Settlement<'a>,
     },
     IdentityChanged(IntentId),
+    /// The queued commit's merge state changed outside Kagi before admission.
+    MergeStarted(IntentId),
     /// A run-family write whose receipt the chain can judge (it has a
     /// verify path), started outside the queue.
     WriteStarted(OwnerStamp),
@@ -446,6 +461,11 @@ impl IntentQueue {
             E::IdentityChanged(id) => {
                 if let Some(session) = self.head(id) {
                     self.cancel_head(session, CancelReason::IdentityChanged, &mut effects);
+                }
+            }
+            E::MergeStarted(id) => {
+                if let Some(session) = self.head(id) {
+                    self.cancel_head(session, CancelReason::MergeStarted, &mut effects);
                 }
             }
             E::PlanCompleted(id) => {

@@ -715,28 +715,30 @@ impl CommitPanelView {
                 let gen = self.draft_save_gen;
                 let mode = "plain".to_string();
                 let repo_path = self.repo_path.clone();
-                let weak_app = self.app.clone();
-                let owner = self.owner;
+                let tab_branch = self
+                    .app
+                    .read_with(cx, |app, _| {
+                        app.reads
+                            .get(Some(self.owner))
+                            .status_summary
+                            .branch
+                            .clone()
+                    })
+                    .unwrap_or_default();
+                // A queued checkout can switch HEAD during the debounce. The
+                // draft still belongs to the branch on which editing occurred.
+                let branch = crate::ui::worktree_wip::draft_branch(
+                    self.foreign.as_ref().map(|(label, _)| label.as_ref()),
+                    &tab_branch,
+                );
                 cx.spawn(async move |this, acx| {
                     acx.background_executor()
                         .timer(std::time::Duration::from_millis(250))
                         .await;
-                    let tab_branch = weak_app
-                        .read_with(acx, |app, _| {
-                            app.reads.get(Some(owner)).status_summary.branch.clone()
-                        })
-                        .unwrap_or_default();
                     let _ = this.update(acx, |view, _cx| {
                         if view.draft_save_gen != gen {
                             return;
                         }
-                        // #476: key the draft by the PANEL's repo path (already
-                        // captured above) AND its branch — a worktree panel is
-                        // on the worktree's branch, not the tab's.
-                        let branch = crate::ui::worktree_wip::draft_branch(
-                            view.foreign.as_ref().map(|(l, _)| l.as_ref()),
-                            &tab_branch,
-                        );
                         let msg = view.last_draft_value.clone();
                         if msg.trim().is_empty() {
                             let _ = kagi_git::clear_draft(&repo_path, &branch);
@@ -764,6 +766,37 @@ pub use kagi_ui_core::file_tree::status_badge;
 #[path = "commit_panel_tests.rs"]
 mod generated_fold_tests;
 
+/// Consume only the draft belonging to the enqueued commit. A newer autosave,
+/// or an unsaved edit still in the same branch's panel, owns that key now.
+pub(crate) fn clear_committed_draft(
+    repo_path: &std::path::Path,
+    branch: &str,
+    frozen_message: &str,
+    newer_panel_draft: bool,
+) -> bool {
+    if newer_panel_draft {
+        return false;
+    }
+    match kagi_git::load_draft(repo_path, branch) {
+        Some(draft) if draft.message != frozen_message => false,
+        Some(_) => {
+            if kagi_git::clear_draft(repo_path, branch).is_ok() {
+                klog!("draft: cleared {}", branch);
+                true
+            } else {
+                false
+            }
+        }
+        None => {
+            let cleared = kagi_git::clear_draft(repo_path, branch).is_ok();
+            if cleared {
+                klog!("draft: cleared {}", branch);
+            }
+            cleared
+        }
+    }
+}
+
 impl KagiApp {
     /// The message has reached a commit (or an amend): clear the branch draft
     /// (T-COMMIT-007) **and** the panel's own copy of it.
@@ -783,6 +816,11 @@ impl KagiApp {
         let branch = self.panel_draft_branch(cx);
         let _ = kagi_git::clear_draft(repo_path, &branch);
         klog!("draft: cleared {}", branch);
+        self.clear_commit_panel_message(cx);
+    }
+
+    /// Clear the in-memory message without choosing another branch's draft key.
+    pub(crate) fn clear_commit_panel_message(&mut self, cx: &mut Context<Self>) {
         if let Some(entity) = self.ui().commit_panel.clone() {
             entity.update(cx, |v, _| {
                 v.last_draft_value = String::new();
@@ -796,5 +834,61 @@ impl KagiApp {
                 v.state.commit_msg.clear();
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod draft_clear_tests {
+    use super::clear_committed_draft;
+    use std::ffi::OsString;
+
+    struct LogDirRestore(Option<OsString>);
+
+    impl Drop for LogDirRestore {
+        fn drop(&mut self) {
+            if let Some(previous) = self.0.take() {
+                std::env::set_var("KAGI_LOG_DIR", previous);
+            } else {
+                std::env::remove_var("KAGI_LOG_DIR");
+            }
+        }
+    }
+
+    #[test]
+    fn queued_commit_consumes_only_its_frozen_branch_and_message() {
+        let _lock = crate::ui::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let root = tempfile::tempdir().expect("isolated drafts");
+        let _restore = LogDirRestore(std::env::var_os("KAGI_LOG_DIR"));
+        std::env::set_var("KAGI_LOG_DIR", root.path());
+        let repo = root.path().join("repo");
+
+        kagi_git::save_draft(&repo, "main", "already committed", "plain").unwrap();
+        kagi_git::save_draft(&repo, "feat", "new branch's draft", "plain").unwrap();
+        assert!(clear_committed_draft(
+            &repo,
+            "main",
+            "already committed",
+            false
+        ));
+        assert!(kagi_git::load_draft(&repo, "main").is_none());
+        assert_eq!(
+            kagi_git::load_draft(&repo, "feat").unwrap().message,
+            "new branch's draft"
+        );
+
+        kagi_git::save_draft(&repo, "main", "newer edit", "plain").unwrap();
+        assert!(!clear_committed_draft(
+            &repo,
+            "main",
+            "already committed",
+            false
+        ));
+        assert!(!clear_committed_draft(&repo, "main", "newer edit", true));
+        assert_eq!(
+            kagi_git::load_draft(&repo, "main").unwrap().message,
+            "newer edit"
+        );
     }
 }

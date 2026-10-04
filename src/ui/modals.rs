@@ -53,7 +53,11 @@ pub struct CheckoutPlanModal {
 pub struct QueuedCommitModal {
     pub queued: crate::app::IntentId,
     pub message: String,
+    pub draft_branch: String,
     pub plan: std::sync::Arc<OperationPlan>,
+    /// The index the displayed plan describes, not the index at enqueue.
+    pub staged_at_plan: String,
+    pub draft_changed: bool,
     pub staged_changed: bool,
 }
 

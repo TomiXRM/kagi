@@ -36,6 +36,28 @@ pub(crate) fn render_queued_commit_modal(
     use kagi_ui_core::i18n::{queue_text, QueueText};
 
     let message = modal.message;
+    let reasons = [
+        (
+            modal.draft_changed,
+            QueueText::DraftChanged,
+            "queued-commit-draft-changed",
+        ),
+        (
+            modal.staged_changed,
+            QueueText::StagedChanged,
+            "queued-commit-staged-changed",
+        ),
+        (
+            !modal.plan.blockers.is_empty(),
+            QueueText::PlanBlockers,
+            "queued-commit-plan-blockers",
+        ),
+        (
+            !modal.plan.warnings.is_empty(),
+            QueueText::PlanWarnings,
+            "queued-commit-plan-warnings",
+        ),
+    ];
     let extra = PlanCardExtra {
         element: super::e2e::measure_control(
             "queued-commit-message",
@@ -44,6 +66,20 @@ pub(crate) fn render_queued_commit_modal(
                 .flex()
                 .flex_col()
                 .gap_1()
+                .child(
+                    div()
+                        .id("queued-commit-reasons")
+                        .flex()
+                        .flex_col()
+                        .children(reasons.into_iter().filter(|(changed, _, _)| *changed).map(
+                            |(_, reason, id)| {
+                                super::e2e::measure_control(
+                                    id,
+                                    div().text_sm().child(queue_text(reason)),
+                                )
+                            },
+                        )),
+                )
                 .child(queue_text(QueueText::FrozenMessage))
                 .children(message.split('\n').map(|line| {
                     div()

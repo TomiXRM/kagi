@@ -226,7 +226,7 @@ pub struct IntentQueue {
 ```rust
 pub enum IntentRequest {                // 段階 2 で受け付ける最初の 3 family
     Checkout { target: String },        // ユーザーが選んだ ref 名
-    Commit { message: String, staged: String }, // 本文と staged (path, blob OID, mode) 集合の digest を凍結する
+    Commit { message: String, staged: String, draft_branch: String }, // 本文・index digest・投入時の draft key
     Merge { source: String, into: String },
 }
 // 将来の family も local verify と同期完了を証明してから追加する。
@@ -280,7 +280,10 @@ pub enum IntentRequest {                // 段階 2 で受け付ける最初の 
   modal を出す。**凍結した入力が今の draft と違えば必ず modal を出す**（commit message、段階 3b）。
   queued commit は plan に blocker / warning がある場合、現在の draft が凍結した本文と異なる場合、
   または現在の staged 集合の digest が凍結した digest と異なる場合に確認 modal を出し、
-  いずれにも当てはまらなければ modal なしで実行する（#355 段階 3b-1）。
+  理由を短いラベルで表示する。いずれにも当てはまらなければ modal なしで実行する。
+  modal で承認するときにも表示時の staged digest と index を比較し、異なれば承認を失効させて
+  commit しない。さらに admission 直前まで merge 状態を live に検査し、外部で始まった merge
+  は専用の取消理由を残して通常 commit に渡さない（#355 段階 3b-1）。
   どの経路でも preflight は省かない。
 - **「確認したのに、また確認するのか」への答え**: 先行する write が後続の前提を変えるから。
   `rebase onto origin/main` → `merge feature` では rebase が commit を書き換えるので、merge base も
@@ -416,21 +419,26 @@ SSH remote pull の旧 latch による排他の穴は #989 の write lease 移�
 
 - **2026-10-04 #989 後の queue 契約整理** — SSH remote pull は lease を保持するが、queue が成功を verify できないため anchor にはせず、他の追跡不能な write と同じく owner tab での投入を拒否する。旧 remote latch に対応する待機理由と解除事象を削除し、排他の穴が #989 で解消したことを明記した。
 
-- **2026-10-04 段階 3b-1（#355）** — commit を checkout に続く適格 family として配線した。
-  - `start_commit` で write が実行中、または同じ tab に queued intent が残る場合、本文と staged
-    `(path, blob OID, mode)` 集合の digest を凍結して投入する。linked worktree の panel、
-    conflict merge pending、blocker のある plan、amend は従来どおり拒否する。
+- **2026-10-04 段階 3b-1（#355、#1020 review）** — commit を checkout に続く適格 family として配線した。
+  - `start_commit` で write が実行中、または同じ tab に queued intent が残る場合、本文・投入時の
+    draft branch と staged `(path, blob OID, mode, conflict stage)` 集合の digest を凍結して投入する。
+    linked worktree の panel、conflict merge pending、blocker のある plan、amend は従来どおり拒否する。
   - 先頭では同じ owner を確かめて凍結本文で live replan し、plan の blocker / warning、
     現在の draft と凍結本文の差、現在の staged digest と凍結値の差のどれかがあれば
-    `QueuedCommit` modal に凍結本文と plan を示して確認する。どれもなければ modal なしで進む。
-    確認は凍結本文を commit し、後から書き換えた draft は消さない。Cancel は拒否として
-    chain を trip する。
+    `QueuedCommit` modal に理由ラベル・凍結本文・plan を示して確認する。どれもなければ
+    modal なしで進む。承認時と admission 直前に staged digest を再照合し、確認中の外部 `git add`
+    を含む変化は黙って commit しない。外部 merge の開始は計画・承認・admission の各境界で
+    実際の merge state を読んで取り消し、MERGE_HEAD と index を残す。Cancel は chain を trip する。
+  - 完了時は投入時の branch の draft だけを、内容が凍結本文と同じ場合に消す。別 branch や
+    後から編集された本文は残し、autosave の debounce も編集した branch に結びつける。
   - dispatch tree に実際に描画されている text input が focus 中なら先頭は
-    `Waiting { NeedsConfirmation }` に留め、modal も実行も始めない。Escape で閉じた
-    modal の input は focus handle が残っていても待機の理由にしない。focus が外れた
-    観測を受けた次の調停で再評価する。
-  - commit の verify は実行後の再 snapshot で HEAD が新 commit を指すこと。queue 経由でない
-    commit も追跡可能な anchor にして、Verified と記録成功を確かめてから後続を進める。
+    `Waiting { Typing }` に留め、modal も実行も始めない。ただし write / plan slot / reconcile
+    の待機理由を優先して表示する。Commit ボタンで enqueue できたら focus を root に戻し、
+    入力欄に残った focus で自分の列が止まらないようにする。Escape で閉じた modal の input は
+    focus handle が残っていても待機の理由にしない。
+  - commit の verify は実行後の再 snapshot で HEAD が新 commit を指すこと。attached と detached
+    の両方を認め、queue 経由でない commit も追跡可能な anchor にして、Verified と記録成功を
+    確かめてから後続を進める。
 
 - **2026-10-04 段階 3a（#355）** — checkout を最初の適格 family として配線した。
   - 決定 4 の「先頭では必ず新しい modal」を「family の通常規則で確認」に改めた（PM 決定）。checkout の

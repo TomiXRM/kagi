@@ -274,12 +274,14 @@ fn q4_every_wait_has_an_exhaustively_named_release_and_rechecks_other_heads() {
         WaitReason::PlanSlotBusy,
         WaitReason::NeedsConfirmation,
         WaitReason::NeedsReconcile,
+        WaitReason::Typing,
     ];
     let releases = [
         ReleaseEvent::LeaseReleased,
         ReleaseEvent::PlanSlotFreed,
         ReleaseEvent::OwnerReturned,
         ReleaseEvent::ReconcileAcknowledged,
+        ReleaseEvent::InputBlurred,
     ];
     for (reason, release) in reasons.into_iter().zip(releases) {
         assert!(reason.released_by(release));
@@ -299,6 +301,9 @@ fn q4_every_wait_has_an_exhaustively_named_release_and_rechecks_other_heads() {
             WaitReason::NeedsReconcile => {
                 q.reconciling.insert(session(1));
             }
+            WaitReason::Typing => {
+                q.apply(QueueEvent::InputFocused);
+            }
         }
         let a = enqueue(&mut q, 1);
         let other = enqueue(&mut q, 2);
@@ -310,9 +315,8 @@ fn q4_every_wait_has_an_exhaustively_named_release_and_rechecks_other_heads() {
             ReleaseEvent::ReconcileAcknowledged => {
                 q.apply(QueueEvent::ReconcileAcknowledged(session(1)))
             }
-            ReleaseEvent::ModalSlotFree
-            | ReleaseEvent::InputBlurred
-            | ReleaseEvent::RevalidationDone => unreachable!(),
+            ReleaseEvent::ModalSlotFree | ReleaseEvent::RevalidationDone => unreachable!(),
+            ReleaseEvent::InputBlurred => q.apply(QueueEvent::InputBlurred),
         };
         assert!(
             effects.contains(&QueueEffect::StartPlan(a)),
@@ -322,29 +326,40 @@ fn q4_every_wait_has_an_exhaustively_named_release_and_rechecks_other_heads() {
         assert_eq!(
             state(&q, 2),
             IntentState::Waiting {
-                reason: WaitReason::PlanSlotBusy
+                reason: if reason == WaitReason::WriteRunning {
+                    // Session 2's tracked writer remains its chain anchor
+                    // until the receipt settles, even after lease release.
+                    WaitReason::WriteRunning
+                } else {
+                    WaitReason::PlanSlotBusy
+                }
             }
         );
     }
-    for (event, setup) in [
-        (ReleaseEvent::ModalSlotFree, QueueEvent::ModalSlotBusy),
-        (ReleaseEvent::InputBlurred, QueueEvent::InputFocused),
+    for (event, setup, expected) in [
+        (
+            ReleaseEvent::ModalSlotFree,
+            QueueEvent::ModalSlotBusy,
+            WaitReason::NeedsConfirmation,
+        ),
+        (
+            ReleaseEvent::InputBlurred,
+            QueueEvent::InputFocused,
+            WaitReason::Typing,
+        ),
         (
             ReleaseEvent::RevalidationDone,
             QueueEvent::RevalidationStarted(session(1)),
+            WaitReason::NeedsConfirmation,
         ),
     ] {
+        assert!(expected.released_by(event));
         assert!(WaitReason::NeedsConfirmation.released_by(event));
         let mut q = IntentQueue::new();
         q.apply(QueueEvent::OwnerReturned(session(1)));
         q.apply(setup);
         let a = enqueue(&mut q, 1);
-        assert_eq!(
-            state(&q, 1),
-            IntentState::Waiting {
-                reason: WaitReason::NeedsConfirmation
-            }
-        );
+        assert_eq!(state(&q, 1), IntentState::Waiting { reason: expected });
         let effect = match event {
             ReleaseEvent::ModalSlotFree => q.apply(QueueEvent::ModalSlotFree),
             ReleaseEvent::InputBlurred => q.apply(QueueEvent::InputBlurred),
@@ -396,7 +411,7 @@ fn focused_input_blocks_every_head_after_writer_releases_until_blur() {
         assert_eq!(
             state(&q, n),
             IntentState::Waiting {
-                reason: WaitReason::NeedsConfirmation
+                reason: WaitReason::Typing
             }
         );
     }
@@ -427,7 +442,7 @@ fn focus_during_planning_or_confirmation_does_not_open_or_admit() {
     assert_eq!(
         state(&q, 1),
         IntentState::Waiting {
-            reason: WaitReason::NeedsConfirmation
+            reason: WaitReason::Typing
         }
     );
     assert_eq!(
@@ -448,7 +463,7 @@ fn focus_during_planning_or_confirmation_does_not_open_or_admit() {
     assert_eq!(
         state(&q, 1),
         IntentState::Waiting {
-            reason: WaitReason::NeedsConfirmation
+            reason: WaitReason::Typing
         }
     );
     assert!(q.apply(QueueEvent::Approve(id)).is_empty());
@@ -456,6 +471,84 @@ fn focus_during_planning_or_confirmation_does_not_open_or_admit() {
         q.apply(QueueEvent::InputBlurred),
         vec![QueueEffect::StartPlan(id)]
     );
+}
+
+#[test]
+fn write_plan_and_reconcile_waits_precede_typing_until_their_own_release() {
+    let mut q = IntentQueue::new();
+    q.apply(QueueEvent::OwnerReturned(session(1)));
+    q.apply(QueueEvent::WriteStarted(stamp(2, 99)));
+    q.apply(QueueEvent::InputFocused);
+    let id = enqueue(&mut q, 1);
+    assert_eq!(
+        state(&q, 1),
+        IntentState::Waiting {
+            reason: WaitReason::WriteRunning
+        }
+    );
+    q.apply(QueueEvent::LeaseReleased(Some(stamp(2, 99))));
+    assert_eq!(
+        state(&q, 1),
+        IntentState::Waiting {
+            reason: WaitReason::Typing
+        }
+    );
+    q.apply(QueueEvent::PlanSlotTaken);
+    assert_eq!(
+        state(&q, 1),
+        IntentState::Waiting {
+            reason: WaitReason::PlanSlotBusy
+        }
+    );
+    q.apply(QueueEvent::PlanSlotFreed(None));
+    q.reconciling.insert(session(1));
+    q.apply(QueueEvent::InputFocused);
+    assert_eq!(
+        state(&q, 1),
+        IntentState::Waiting {
+            reason: WaitReason::NeedsReconcile
+        }
+    );
+    q.apply(QueueEvent::ReconcileAcknowledged(session(1)));
+    assert_eq!(
+        state(&q, 1),
+        IntentState::Waiting {
+            reason: WaitReason::Typing
+        }
+    );
+    assert_eq!(
+        q.apply(QueueEvent::InputBlurred),
+        vec![QueueEffect::StartPlan(id)]
+    );
+}
+
+#[test]
+fn externally_started_merge_cancels_commit_head_and_trips_successor() {
+    let mut q = IntentQueue::new();
+    q.apply(QueueEvent::OwnerReturned(session(1)));
+    let first = enqueue(&mut q, 1);
+    enqueue(&mut q, 1);
+    assert_eq!(
+        q.apply(QueueEvent::MergeStarted(first)),
+        vec![
+            QueueEffect::CloseConfirm(first),
+            QueueEffect::InvalidatePlan(first)
+        ]
+    );
+    assert!(q.intents(session(1)).is_none());
+    let cancelled = q.cancelled(session(1)).unwrap();
+    assert_eq!(
+        cancelled[0].state,
+        IntentState::Cancelled {
+            reason: CancelReason::MergeStarted
+        }
+    );
+    assert!(matches!(
+        cancelled[1].state,
+        IntentState::Cancelled {
+            reason: CancelReason::ChainTripped { .. }
+        }
+    ));
 }
 
 #[test]

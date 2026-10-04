@@ -1293,6 +1293,22 @@ mod macos {
                 Box::new(crate::op_queue::scenario_queue_commit_confirms_changed_staging),
             ),
             (
+                "queue_commit_consumes_origin_draft",
+                Box::new(crate::op_queue::scenario_queue_commit_consumes_origin_draft),
+            ),
+            (
+                "queue_commit_rechecks_staging_on_confirm",
+                Box::new(crate::op_queue::scenario_queue_commit_rechecks_staging_on_confirm),
+            ),
+            (
+                "queue_commit_refuses_late_merge",
+                Box::new(crate::op_queue::scenario_queue_commit_refuses_late_merge),
+            ),
+            (
+                "queue_commit_detached_successor",
+                Box::new(crate::op_queue::scenario_queue_commit_detached_successor),
+            ),
+            (
                 "queue_waits_while_input_focused",
                 Box::new(crate::op_queue::scenario_queue_waits_while_input_focused),
             ),

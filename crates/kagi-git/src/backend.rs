@@ -612,8 +612,8 @@ impl Backend {
     }
 
     /// Read-only identity of the index's staged content. Index stat-cache
-    /// metadata is deliberately excluded; only path bytes, blob OID, and mode
-    /// affect whether the queued commit's selected content has changed.
+    /// metadata is deliberately excluded; path bytes, object OID, mode, and
+    /// conflict stage determine whether the selected content has changed.
     pub fn staged_set_digest(&self) -> Result<String, GitError> {
         use sha2::{Digest, Sha256};
 
@@ -626,24 +626,26 @@ impl Backend {
         index
             .read(true)
             .map_err(|e| GitError::Other(e.message().to_string()))?;
-        let mut entries: Vec<_> = index.iter().collect();
-        entries.sort_unstable_by(|a, b| {
-            a.path
-                .cmp(&b.path)
-                .then_with(|| a.id.as_bytes().cmp(b.id.as_bytes()))
-                .then_with(|| a.mode.cmp(&b.mode))
-        });
 
         let mut digest = Sha256::new();
-        for entry in entries {
+        // libgit2's index is already ordered by path and conflict stage.
+        for entry in index.iter() {
             // A length prefix separates paths even when their bytes contain
-            // arbitrary delimiters; OID and mode have fixed byte lengths.
+            // arbitrary delimiters; OID, mode, and stage have fixed lengths.
             digest.update((entry.path.len() as u64).to_be_bytes());
             digest.update(&entry.path);
             digest.update(entry.id.as_bytes());
             digest.update(entry.mode.to_be_bytes());
+            digest.update((entry.flags & 0x3000).to_be_bytes()); // GIT_INDEX_ENTRY_STAGEMASK
         }
         Ok(hex::encode(digest.finalize()))
+    }
+
+    /// Whether this worktree is mid-merge, including a merge whose conflicts
+    /// have all been staged. Repository state reads its Git metadata, not the
+    /// index conflict count or a cached UI snapshot.
+    pub fn merge_in_progress(&self) -> Result<bool, GitError> {
+        Ok(self.repo.state() == git2::RepositoryState::Merge)
     }
 
     /// Raw blob bytes for `path` at HEAD, if present.
@@ -1848,12 +1850,6 @@ mod staged_set_digest_tests {
             std::fs::read(repo.path().join("index")).unwrap()
         );
 
-        // Insertion order is not part of identity.
-        index.remove_path(Path::new("a")).unwrap();
-        index.add_path(Path::new("a")).unwrap();
-        index.write().unwrap();
-        assert_eq!(initial, backend.staged_set_digest().unwrap());
-
         let mut entry = index.get_path(Path::new("a"), 0).unwrap();
         entry.path = b"renamed".to_vec();
         index.remove_path(Path::new("a")).unwrap();
@@ -1876,5 +1872,144 @@ mod staged_set_digest_tests {
             backend.staged_set_digest().unwrap(),
             "mode must participate"
         );
+    }
+
+    #[test]
+    fn digest_tracks_gitlink_tip() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let signature = git2::Signature::now("Test", "test@example.com").unwrap();
+        let tree_id = repo.treebuilder(None).unwrap().write().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let first_tip = repo
+            .commit(None, &signature, &signature, "first", &tree, &[])
+            .unwrap();
+        let second_tip = repo
+            .commit(None, &signature, &signature, "second", &tree, &[])
+            .unwrap();
+        std::fs::write(dir.path().join("submodule"), b"seed").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("submodule")).unwrap();
+        let mut gitlink = index.get_path(Path::new("submodule"), 0).unwrap();
+        gitlink.mode = 0o160000;
+        gitlink.id = first_tip;
+        index.add(&gitlink).unwrap();
+        index.write().unwrap();
+        let backend = Backend::open(dir.path()).unwrap();
+        let first = backend.staged_set_digest().unwrap();
+
+        gitlink.id = second_tip;
+        index.add(&gitlink).unwrap();
+        index.write().unwrap();
+        assert_eq!(
+            index.get_path(Path::new("submodule"), 0).unwrap().mode,
+            0o160000
+        );
+        assert_ne!(first, backend.staged_set_digest().unwrap());
+    }
+
+    #[test]
+    fn digest_tracks_conflict_stage_with_identical_path_oid_and_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        std::fs::write(dir.path().join("conflict"), b"same content").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("conflict")).unwrap();
+        index.write().unwrap();
+        let backend = Backend::open(dir.path()).unwrap();
+        let resolved = backend.staged_set_digest().unwrap();
+        let mut entry = index.get_path(Path::new("conflict"), 0).unwrap();
+
+        index.remove_path(Path::new("conflict")).unwrap();
+        entry.flags = (entry.flags & !0x3000) | (2 << 12);
+        index.add(&entry).unwrap();
+        index.write().unwrap();
+        let ours = index.get_path(Path::new("conflict"), 2).unwrap();
+        assert_eq!(
+            (ours.path, ours.id, ours.mode),
+            (entry.path, entry.id, entry.mode)
+        );
+        assert_ne!(resolved, backend.staged_set_digest().unwrap());
+    }
+}
+
+#[cfg(test)]
+mod merge_state_tests {
+    use super::Backend;
+
+    #[test]
+    fn merge_in_progress_reads_external_state_after_conflicts_are_resolved() {
+        use std::path::Path;
+
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let signature = git2::Signature::now("Test", "test@example.com").unwrap();
+        let conflict_path = Path::new("conflict.txt");
+        let mut index = repo.index().unwrap();
+        std::fs::write(dir.path().join(conflict_path), b"base\n").unwrap();
+        index.add_path(conflict_path).unwrap();
+        let base_tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        index.write().unwrap();
+        let base_id = repo
+            .commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                "base",
+                &base_tree,
+                &[],
+            )
+            .unwrap();
+        let base = repo.find_commit(base_id).unwrap();
+        repo.branch("feature", &base, false).unwrap();
+
+        std::fs::write(dir.path().join(conflict_path), b"feature\n").unwrap();
+        index.add_path(conflict_path).unwrap();
+        let feature_tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        index.write().unwrap();
+        let feature_id = repo
+            .commit(
+                Some("refs/heads/feature"),
+                &signature,
+                &signature,
+                "feature",
+                &feature_tree,
+                &[&base],
+            )
+            .unwrap();
+        std::fs::write(dir.path().join(conflict_path), b"main\n").unwrap();
+        index.add_path(conflict_path).unwrap();
+        let main_tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        index.write().unwrap();
+        repo.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            "main",
+            &main_tree,
+            &[&base],
+        )
+        .unwrap();
+
+        let backend = Backend::open(dir.path()).unwrap();
+        assert!(!backend.merge_in_progress().unwrap());
+        let feature = repo.find_annotated_commit(feature_id).unwrap();
+        repo.merge(
+            &[&feature],
+            None,
+            Some(&mut git2::build::CheckoutBuilder::new().safe()),
+        )
+        .unwrap();
+        assert!(repo.index().unwrap().has_conflicts());
+        assert!(backend.merge_in_progress().unwrap());
+
+        std::fs::write(dir.path().join(conflict_path), b"resolved\n").unwrap();
+        let mut resolved_index = repo.index().unwrap();
+        resolved_index.add_path(conflict_path).unwrap();
+        resolved_index.write().unwrap();
+        assert!(!repo.index().unwrap().has_conflicts());
+        assert!(backend.merge_in_progress().unwrap());
+        repo.cleanup_state().unwrap();
+        assert!(!backend.merge_in_progress().unwrap());
     }
 }

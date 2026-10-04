@@ -125,7 +125,14 @@ impl KagiApp {
             Some(Ok(staged)) => staged,
             _ => return false,
         };
-        self.enqueue_intent(IntentRequest::Commit { message, staged }, cx)
+        self.enqueue_intent(
+            IntentRequest::Commit {
+                message,
+                staged,
+                draft_branch: self.panel_draft_branch(cx),
+            },
+            cx,
+        )
     }
 
     fn enqueue_intent(&mut self, request: IntentRequest, cx: &mut Context<Self>) -> bool {
@@ -251,6 +258,22 @@ impl KagiApp {
             self.drive_queue(QueueEvent::PlanSlotFreed(Some(id)), cx);
             return;
         };
+        if matches!(&intent.request, IntentRequest::Commit { .. }) {
+            match repo.merge_in_progress() {
+                Ok(false) => {}
+                Ok(true) => {
+                    self.drive_queue(QueueEvent::MergeStarted(id), cx);
+                    self.drive_queue(QueueEvent::PlanSlotFreed(Some(id)), cx);
+                    return;
+                }
+                Err(error) => {
+                    self.report_plan_failure(i18n::Op::Commit, error);
+                    self.drive_queue(QueueEvent::PlanError(id), cx);
+                    self.drive_queue(QueueEvent::PlanSlotFreed(Some(id)), cx);
+                    return;
+                }
+            }
+        }
         let (op, planned) = match &intent.request {
             IntentRequest::Checkout { target } => {
                 let (target, result) = match target {
@@ -276,15 +299,28 @@ impl KagiApp {
                     }),
                 )
             }
-            IntentRequest::Commit { message, staged } => (
+            IntentRequest::Commit {
+                message,
+                staged,
+                draft_branch,
+            } => (
                 i18n::Op::Commit,
-                repo.plan_commit(message).and_then(|plan| {
-                    let staged_changed = repo.staged_set_digest()? != *staged;
+                repo.staged_set_digest().and_then(|before| {
+                    let plan = repo.plan_commit(message)?;
+                    let staged_at_plan = repo.staged_set_digest()?;
+                    if before != staged_at_plan {
+                        return Err(kagi_git::GitError::Other(
+                            queue_text(QueueText::StagedChanged).to_string(),
+                        ));
+                    }
                     Ok(QueuedPlan::Commit(QueuedCommitModal {
                         queued: id,
                         message: message.clone(),
+                        draft_branch: draft_branch.clone(),
                         plan: Arc::new(plan),
-                        staged_changed,
+                        staged_changed: staged_at_plan != *staged,
+                        staged_at_plan,
+                        draft_changed: false,
                     }))
                 }),
             ),
@@ -322,7 +358,7 @@ impl KagiApp {
     /// differs from the frozen request, or the plan has notes; checkout uses
     /// its usual clean-plan rule.
     fn confirm_or_run_queued(&mut self, id: IntentId, cx: &mut Context<Self>) {
-        let Some(modal) = self.op_queue.plans.get(&id).cloned() else {
+        let Some(mut modal) = self.op_queue.plans.get(&id).cloned() else {
             return;
         };
         if self.has_active_modal() {
@@ -330,7 +366,7 @@ impl KagiApp {
             self.drive_queue(QueueEvent::ConfirmWithdrawn(id), cx);
             return;
         }
-        let asks = match &modal {
+        let asks = match &mut modal {
             QueuedPlan::Checkout(m) => !m.plan.blockers.is_empty() || !m.plan.warnings.is_empty(),
             QueuedPlan::Commit(m) => {
                 let draft = self
@@ -345,9 +381,10 @@ impl KagiApp {
                             p.state.commit_msg.clone()
                         }
                     });
+                m.draft_changed = draft.as_deref() != Some(&m.message);
                 !m.plan.blockers.is_empty()
                     || !m.plan.warnings.is_empty()
-                    || draft.as_deref() != Some(&m.message)
+                    || m.draft_changed
                     || m.staged_changed
             }
         };
@@ -389,6 +426,36 @@ impl KagiApp {
             return;
         };
         let id = modal.queued;
+        let state = self.ui().repo_session.as_ref().map(|session| {
+            let repo = session.backend();
+            if repo.merge_in_progress()? {
+                Ok(None)
+            } else {
+                repo.staged_set_digest().map(Some)
+            }
+        });
+        match state {
+            Some(Ok(None)) => {
+                self.drive_queue(QueueEvent::MergeStarted(id), cx);
+                return;
+            }
+            Some(Ok(Some(staged))) if staged != modal.staged_at_plan => {
+                self.report_plan_failure(i18n::Op::Commit, queue_text(QueueText::StagedChanged));
+                self.drive_queue(QueueEvent::PlanError(id), cx);
+                return;
+            }
+            Some(Ok(Some(_))) => {}
+            Some(Err(error)) => {
+                self.report_plan_failure(i18n::Op::Commit, error);
+                self.drive_queue(QueueEvent::PlanError(id), cx);
+                return;
+            }
+            None => {
+                self.report_plan_failure(i18n::Op::Commit, super::modal_plan::SESSION_UNAVAILABLE);
+                self.drive_queue(QueueEvent::PlanError(id), cx);
+                return;
+            }
+        }
         self.op_queue.confirming = None;
         self.clear_queued_commit_modal();
         if !modal.plan.blockers.is_empty() {
@@ -439,8 +506,69 @@ impl KagiApp {
         match modal {
             QueuedPlan::Checkout(modal) => self.run_checkout(modal, Some(id), cx),
             QueuedPlan::Commit(modal) => {
+                let state = self.ui().repo_session.as_ref().map(|session| {
+                    let repo = session.backend();
+                    if repo.merge_in_progress()? {
+                        Ok(None)
+                    } else {
+                        repo.staged_set_digest().map(Some)
+                    }
+                });
+                match state {
+                    Some(Ok(None)) => {
+                        self.drive_queue(QueueEvent::MergeStarted(id), cx);
+                        return;
+                    }
+                    Some(Ok(Some(staged))) if staged != modal.staged_at_plan => {
+                        self.report_plan_failure(
+                            i18n::Op::Commit,
+                            queue_text(QueueText::StagedChanged),
+                        );
+                        self.drive_queue(
+                            QueueEvent::Admission {
+                                id,
+                                result: Err(AdmissionError::StaleApproval),
+                            },
+                            cx,
+                        );
+                        return;
+                    }
+                    Some(Ok(Some(_))) => {}
+                    Some(Err(error)) => {
+                        self.report_plan_failure(i18n::Op::Commit, error);
+                        self.drive_queue(
+                            QueueEvent::Admission {
+                                id,
+                                result: Err(AdmissionError::StaleApproval),
+                            },
+                            cx,
+                        );
+                        return;
+                    }
+                    None => {
+                        self.report_plan_failure(
+                            i18n::Op::Commit,
+                            super::modal_plan::SESSION_UNAVAILABLE,
+                        );
+                        self.drive_queue(
+                            QueueEvent::Admission {
+                                id,
+                                result: Err(AdmissionError::StaleApproval),
+                            },
+                            cx,
+                        );
+                        return;
+                    }
+                }
                 if let Some(repo_path) = self.repo_path.clone() {
-                    self.run_commit(repo_path, modal.plan, modal.message, Some(id), cx);
+                    self.run_commit(
+                        repo_path,
+                        modal.plan,
+                        modal.message,
+                        modal.draft_branch,
+                        Some(id),
+                        cx,
+                    );
                 }
             }
         }
@@ -737,6 +865,7 @@ impl KagiApp {
                 WaitReason::PlanSlotBusy => QueueText::WaitPlan,
                 WaitReason::NeedsConfirmation => QueueText::WaitConfirm,
                 WaitReason::NeedsReconcile => QueueText::WaitReconcile,
+                WaitReason::Typing => QueueText::WaitTyping,
             },
             IntentState::Planning => QueueText::Planning,
             IntentState::AwaitingConfirm => QueueText::Confirming,
@@ -756,6 +885,7 @@ impl KagiApp {
             R::ChainTripped { .. } => QueueText::ReasonChain,
             R::OwnerGone => QueueText::ReasonOwnerGone,
             R::IdentityChanged => QueueText::ReasonIdentity,
+            R::MergeStarted => QueueText::ReasonMergeStarted,
             R::StaleApproval => QueueText::ReasonStale,
             R::CapacityRejected => QueueText::Full,
         })

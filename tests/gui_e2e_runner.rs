@@ -1344,6 +1344,42 @@ mod macos {
                 Box::new(crate::op_queue::scenario_queue_commit_detached_successor),
             ),
             (
+                "queue_replans_merge_after_predecessor",
+                Box::new(crate::op_queue::scenario_queue_replans_merge_after_predecessor),
+            ),
+            (
+                "queue_confirm_departure_requeues",
+                Box::new(crate::op_queue::scenario_queue_confirm_departure_requeues),
+            ),
+            (
+                "queue_merge_conflict_trips_successors",
+                Box::new(crate::op_queue::scenario_queue_merge_conflict_trips_successors),
+            ),
+            (
+                "queue_merge_into_keeps_frozen_target",
+                Box::new(crate::op_queue::scenario_queue_merge_into_keeps_frozen_target),
+            ),
+            (
+                "queue_drag_merge_while_busy",
+                Box::new(crate::op_queue::scenario_queue_drag_merge_while_busy),
+            ),
+            (
+                "queue_menu_merge_while_busy",
+                Box::new(crate::op_queue::scenario_queue_menu_merge_while_busy),
+            ),
+            (
+                "queue_confirm_blocked_merge_refuses",
+                Box::new(crate::op_queue::scenario_queue_confirm_blocked_merge_refuses),
+            ),
+            (
+                "queue_merge_plan_after_departure",
+                Box::new(crate::op_queue::scenario_queue_merge_plan_after_departure),
+            ),
+            (
+                "queue_merge_refusal_is_shown",
+                Box::new(crate::op_queue::scenario_queue_merge_refusal_is_shown),
+            ),
+            (
                 "queue_waits_while_input_focused",
                 Box::new(crate::op_queue::scenario_queue_waits_while_input_focused),
             ),

@@ -30,7 +30,9 @@ pub(crate) fn execution_policy() -> kagi_git::backend::ExecutionPolicy {
 }
 
 mod discard;
+mod merge_verify;
 pub(crate) use discard::discard_blocking;
+use merge_verify::{snapshot_after, summary_after, verify_merge_after_snapshot};
 mod pull;
 pub(crate) use pull::{pull_blocking, refuse_blocked_pull};
 
@@ -68,20 +70,9 @@ pub(crate) fn verify_after_snapshot(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
 ) -> StateSummary {
-    match open_backend(repo_path) {
-        Ok(mut repo2) => match repo2.snapshot(10_000) {
-            Ok(snap) => StateSummary {
-                head: snap.head.display(),
-                dirty: if snap.status.is_dirty() {
-                    "dirty".to_string()
-                } else {
-                    "clean".to_string()
-                },
-            },
-            Err(_) => plan.predicted.clone(),
-        },
-        Err(_) => plan.predicted.clone(),
-    }
+    snapshot_after(repo_path)
+        .map(|snap| summary_after(&snap))
+        .unwrap_or_else(|_| plan.predicted.clone())
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -188,6 +179,7 @@ pub(crate) fn merge_into_branch_blocking(
     plan: &OperationPlan,
     source: &str,
     target: &str,
+    verified: &std::sync::atomic::AtomicBool,
 ) -> Result<RunReport, String> {
     let repo_path = owner.path.as_path();
     let mut repo = open_merge_backend(owner)?;
@@ -203,7 +195,7 @@ pub(crate) fn merge_into_branch_blocking(
             target,
             new_tip.short()
         );
-        let after = verify_after_snapshot(repo_path, plan);
+        let after = verify_merge_after_snapshot(repo_path, plan, new_tip, Some(target), verified);
         klog!("verified: merge-into after = {}", after.head);
     }
     Ok(report)
@@ -214,6 +206,7 @@ pub(crate) fn merge_blocking(
     plan: &OperationPlan,
     target: &str,
     kind: &MergeKind,
+    verified: &std::sync::atomic::AtomicBool,
 ) -> Result<RunReport, String> {
     let repo_path = owner.path.as_path();
     let mut repo = open_merge_backend(owner)?;
@@ -239,7 +232,7 @@ pub(crate) fn merge_blocking(
         }
         Ok(kagi_git::OperationOutcome::Commit(new_head)) => {
             klog!("executed: merge {} -> {}", target, new_head.short());
-            let after = verify_after_snapshot(repo_path, plan);
+            let after = verify_merge_after_snapshot(repo_path, plan, new_head, None, verified);
             klog!("verified: merge after = {}", after.head);
         }
         _ => {}

@@ -25,7 +25,8 @@ impl KagiApp {
         expected_branch: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        if self.reject_if_busy(cx) {
+        if self.op_latched() || self.active_tab_has_queue() {
+            self.enqueue_merge(target, expected_branch, cx);
             return;
         }
         self.clear_merge_modal();
@@ -83,6 +84,7 @@ impl KagiApp {
                         kind,
                         off_branch: false,
                         error: None,
+                        queued: None,
                     }),
                 )))
             }
@@ -94,6 +96,7 @@ impl KagiApp {
     }
 
     pub fn cancel_merge_modal(&mut self) {
+        self.note_queued_confirm_dismissed();
         self.clear_merge_modal();
     }
 
@@ -115,8 +118,7 @@ impl KagiApp {
             .iter()
             .map(|rb| format!("{}/{}", rb.remote, rb.name))
             .collect();
-        match validate_merge_from_drag(&source, &self.view().branches, &remotes, self.op_latched())
-        {
+        match validate_merge_from_drag(&source, &self.view().branches, &remotes, false) {
             Ok(()) => {
                 klog!("drag-merge: start merge from drag — source={}", source);
                 self.open_merge_modal(source, None, cx);
@@ -141,7 +143,8 @@ impl KagiApp {
         target: String,
         cx: &mut Context<Self>,
     ) {
-        if self.reject_if_busy(cx) {
+        if self.op_latched() || self.active_tab_has_queue() {
+            self.enqueue_merge(source, Some(target), cx);
             return;
         }
         self.clear_merge_modal();
@@ -185,6 +188,7 @@ impl KagiApp {
                         kind: kagi_git::MergeKind::MergeCommit,
                         off_branch: true,
                         error: None,
+                        queued: None,
                     }),
                 )))
             }
@@ -214,7 +218,7 @@ impl KagiApp {
             &target,
             &self.view().branches,
             &remotes,
-            self.op_latched(),
+            false,
         ) {
             Ok(()) => {
                 klog!("drag-merge: into {} from {}", target, source);
@@ -286,7 +290,22 @@ impl KagiApp {
     }
 
     pub fn start_merge(&mut self, cx: &mut Context<Self>) {
-        if self.reject_if_busy(cx) {
+        let queued = self.merge_modal().and_then(|modal| modal.queued);
+        if let Some(id) = queued {
+            self.confirm_queued_merge(id, cx);
+            return;
+        }
+        if self.op_latched() || self.active_tab_has_queue() {
+            match self.merge_modal().cloned() {
+                Some(modal) if modal.plan.blockers.is_empty() => {
+                    if self.enqueue_merge(modal.target, Some(modal.into_branch), cx) {
+                        self.clear_merge_modal();
+                    }
+                }
+                _ => {
+                    self.reject_if_busy(cx);
+                }
+            }
             return;
         }
         let modal = match self.merge_modal().cloned() {
@@ -318,6 +337,16 @@ impl KagiApp {
             return;
         }
 
+        self.run_merge(modal, None, cx);
+    }
+
+    pub(crate) fn run_merge(
+        &mut self,
+        modal: MergePlanModal,
+        intent: Option<crate::app::IntentId>,
+        cx: &mut Context<Self>,
+    ) {
+        let repo_path = modal.owner.path.clone();
         self.clear_merge_modal();
         self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyMerge.t()));
         klog!("async: merge started");
@@ -332,6 +361,7 @@ impl KagiApp {
         let off_branch = modal.off_branch;
         let bg_into = modal.into_branch.clone();
         let (note_source, note_into) = (modal.target.clone(), modal.into_branch.clone());
+        let verified = self.prepare_queue_run(intent);
         self.finish_run(
             cx,
             "merge",
@@ -341,10 +371,10 @@ impl KagiApp {
             move || {
                 if off_branch {
                     crate::ui::blocking_ops::merge_into_branch_blocking(
-                        &bg_owner, &plan, &target, &bg_into,
+                        &bg_owner, &plan, &target, &bg_into, &verified,
                     )
                 } else {
-                    merge_blocking(&bg_owner, &plan, &target, &kind)
+                    merge_blocking(&bg_owner, &plan, &target, &kind, &verified)
                 }
             },
             move |outcome| {

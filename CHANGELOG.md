@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- background の fetch・remote branch fetch・PR ref fetch・Editor 保存が異常終了したとき、write lease と実行中の表示が理由なく残り、以後の書き込みを拒否し続ける問題を修正しました。不明な結果を Operation Log に記録し、reconcile の確認後に次の書き込みを許可します。fetch の完了が元のタブへ戻った後の新しい滞在に表示される問題と、Busy の拒否で確認済み計画が失効する問題も修正しました。(#355 段階 0)
+
 ## [0.42.0] - 2026-10-04
 
 ### Added
@@ -13,7 +17,6 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
-- background の fetch・remote branch fetch・PR ref fetch・Editor 保存が異常終了したとき、write lease と実行中の表示が理由なく残り、以後の書き込みを拒否し続ける問題を修正しました。不明な結果を Operation Log に記録し、reconcile の確認後に次の書き込みを許可します。fetch の完了が元のタブへ戻った後の新しい滞在に表示される問題と、Busy の拒否で確認済み計画が失効する問題も修正しました。(#355 段階 0)
 - Home や Branch Cleanup が Graph を隠している間、または Settings・確認 modal・メニュー(menu overlay、commit / branch / stash / tag / worktree の右クリック、Linux / FreeBSD の platform menu など)が Graph に重なる間、End / Home / PageUp / PageDown と ↑/↓ で背面の commit 選択が変わる問題を修正しました。選択中の先頭行をホイールで画面外へスクロールした後も、Home で再表示できます。(#980)
 - filter menu が開いている間に Stash などの確認 modal が届くと、背面の確認を Enter で確定できてしまう問題を修正しました。重なり順を `Z_ORDER` に一元化し、描画とキーの前面判定を同じ順序で行います。(#976 review)
 - repo A の file context menu を開いたまま repo B を開くと、描かれなくなった A の menu が Enter を消費し続ける問題を修正しました。描画とキー操作は同じ可視判定を使い、Escape は前面の menu をまとめて閉じます。(#974、#976 review)

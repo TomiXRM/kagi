@@ -1522,12 +1522,15 @@ For M, PR merge retains its transport hold after Partial; remote pull holds its
 requirement after Unknown/Partial/abandonment. Dismissing a notice or switching
 tabs does not release either one. Remote pull's unobservable result requires
 Inspect → arm → confirm and an audit row before the lease releases. Failed
-releases normally. `KAGI_GUI_E2E_ONLY=remote_pull_lease,remote_pull_unknown_release`
-(`tests/recovery/pull.rs`) drives real fake-SSH `-G`, common-dir and agent-only
-planning, the blocked pull and fetch, quit admission, Unknown notice and audited
-two-step release. G: `cargo test -p kagi --test app_remote_pull_test` covers
-Unknown/Partial/abandonment plus Success/Failed. Remote stash's frozen-identity
-policy is unchanged.
+releases normally. `KAGI_GUI_E2E_ONLY=remote_pull` (`tests/recovery/pull.rs`)
+drives real fake-SSH `-G`, common-dir and agent-only planning, the blocked pull
+and fetch, quit admission, Unknown notice and audited two-step release.
+`remote_pull_preflight_refusal` changes the common dir after confirmation: no
+`git pull` runs, Refused is recorded, and the lease releases.
+`remote_pull_planning_latch` blocks `ssh -G`, clicks Pull twice, and requires
+one probe and a cleared latch when the modal arrives. G:
+`cargo test -p kagi --test app_remote_pull_test` covers Unknown/Partial/abandonment
+plus Success/Failed. Remote stash's frozen-identity policy is unchanged.
 
 Continue の post-read (#569 (2)) は
 `cargo test -p kagi --test app_writer_admission_test continue_` で確認する。

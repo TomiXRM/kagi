@@ -127,7 +127,14 @@ fn wait_for(
 }
 
 /// Stand-in for the host's ordinary SSH options, scope probe and pull.
-fn blocking_fake_ssh(bin: &Path, release: &Path, calls: &Path, fail: &Path) {
+fn blocking_fake_ssh(
+    bin: &Path,
+    release: &Path,
+    calls: &Path,
+    fail: &Path,
+    probe_release: &Path,
+    identity_change: &Path,
+) {
     std::fs::create_dir_all(bin).expect("shim dir");
     let path = bin.join("ssh");
     std::fs::write(
@@ -136,11 +143,14 @@ fn blocking_fake_ssh(bin: &Path, release: &Path, calls: &Path, fail: &Path) {
             "#!/bin/sh\n\
              echo \"$*\" >> {calls:?}\n\
              if [ \"$1\" = '-G' ]; then\n\
+               while [ ! -f {probe_release:?} ]; do sleep 0.05; done\n\
                printf 'hostname e2e.invalid\\nuser kagi-e2e\\nport 22\\nidentityfile none\\nuserknownhostsfile none\\nglobalknownhostsfile none\\n'\n\
                exit 0\n\
              fi\n\
              case \"$*\" in\n\
-               *KAGI-COMMON-DIR*) printf 'KAGI-COMMON-DIR\\0/srv/repo/.git\\0KAGI-END\\n' ;;\n\
+               *KAGI-COMMON-DIR*) if [ -f {identity_change:?} ]; then\n\
+                       printf 'KAGI-COMMON-DIR\\0/srv/other/.git\\0KAGI-END\\n'\n\
+                     else printf 'KAGI-COMMON-DIR\\0/srv/repo/.git\\0KAGI-END\\n'; fi ;;\n\
                *pull*) while [ ! -f {release:?} ]; do sleep 0.05; done\n\
                        if [ -f {fail:?} ]; then echo 'unexpected remote reply' >&2; exit 42; fi\n\
                        echo 'Already up to date.' ;;\n\
@@ -161,16 +171,36 @@ fn ssh_pulls(calls: &Path) -> usize {
         .map(|text| text.lines().filter(|line| line.contains("pull")).count())
         .unwrap_or(0)
 }
+fn ssh_probes(calls: &Path) -> usize {
+    std::fs::read_to_string(calls)
+        .map(|text| text.lines().filter(|line| line.starts_with("-G ")).count())
+        .unwrap_or(0)
+}
+
+enum PullLeaseCase {
+    Success,
+    Unknown,
+    IdentityChanged,
+    PlanningLatch,
+}
 
 pub fn scenario_remote_pull_lease(cx: &mut VisualTestAppContext) {
-    remote_pull_lease(cx, false);
+    remote_pull_lease(cx, PullLeaseCase::Success);
 }
 
 pub fn scenario_remote_pull_unknown_release(cx: &mut VisualTestAppContext) {
-    remote_pull_lease(cx, true);
+    remote_pull_lease(cx, PullLeaseCase::Unknown);
 }
 
-fn remote_pull_lease(cx: &mut VisualTestAppContext, unknown: bool) {
+pub fn scenario_remote_pull_preflight_refusal(cx: &mut VisualTestAppContext) {
+    remote_pull_lease(cx, PullLeaseCase::IdentityChanged);
+}
+
+pub fn scenario_remote_pull_planning_latch(cx: &mut VisualTestAppContext) {
+    remote_pull_lease(cx, PullLeaseCase::PlanningLatch);
+}
+
+fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
     use gpui::Modifiers;
     use kagi::ui::e2e;
 
@@ -194,7 +224,19 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, unknown: bool) {
     let release = shim.path().join("release");
     let fail = shim.path().join("fail");
     let calls = shim.path().join("calls");
-    blocking_fake_ssh(shim.path(), &release, &calls, &fail);
+    let probe_release = shim.path().join("probe-release");
+    let identity_change = shim.path().join("identity-change");
+    blocking_fake_ssh(
+        shim.path(),
+        &release,
+        &calls,
+        &fail,
+        &probe_release,
+        &identity_change,
+    );
+    if !matches!(case, PullLeaseCase::PlanningLatch) {
+        std::fs::write(&probe_release, b"go").unwrap();
+    }
     let original_path = std::env::var_os("PATH");
     std::env::set_var(
         "PATH",
@@ -223,7 +265,7 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, unknown: bool) {
             app.app_sessions.plan_state(),
             kagi::app::PlanState::Planning { .. }
         ));
-        if !unknown {
+        if matches!(case, PullLeaseCase::Success) {
             // An async identity result must not replace a newer user modal.
             app.set_pop_modal(kagi::ui::modals::PopPlanModal {
                 stash_index: 0,
@@ -232,7 +274,37 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, unknown: bool) {
             });
         }
     });
-    if !unknown {
+    let unblock_probe = if matches!(case, PullLeaseCase::PlanningLatch) {
+        // The GPUI harness pumps background tasks only after this update. The
+        // second click occurs while the first plan is queued; once pumped,
+        // fake ssh stays in -G until this independent releaser sees its call.
+        app.update(cx, |app, cx| {
+            app.open_pull_modal(cx);
+            assert!(
+                matches!(&app.status_footer, kagi::ui::FooterStatus::Idle(text)
+                    if text.as_ref() == kagi::ui::i18n::Msg::OpInProgress.t()),
+                "a second pull must be refused during identity planning"
+            );
+            assert!(e2e::op_latched(app));
+        });
+        let calls = calls.clone();
+        let probe_release = probe_release.clone();
+        Some(std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while ssh_probes(&calls) == 0 && std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let observed = ssh_probes(&calls) > 0;
+            if observed {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            std::fs::write(probe_release, b"go").unwrap();
+            observed
+        }))
+    } else {
+        None
+    };
+    if matches!(case, PullLeaseCase::Success) {
         wait_for(cx, |cx| {
             cx.read(|cx| {
                 let state = app.read(cx);
@@ -253,6 +325,29 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, unknown: bool) {
         });
     }
     wait_for(cx, |cx| cx.read(|cx| app.read(cx).pull_modal().is_some()));
+    if let Some(unblock_probe) = unblock_probe {
+        assert!(
+            unblock_probe.join().unwrap(),
+            "fake ssh must enter the blocked -G probe"
+        );
+    }
+    if matches!(case, PullLeaseCase::PlanningLatch) {
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert!(
+                !e2e::op_latched(state),
+                "planning latch must clear on Ready"
+            );
+        });
+        assert_eq!(
+            ssh_probes(&calls),
+            1,
+            "a retry must not start a second plan"
+        );
+    }
+    if matches!(case, PullLeaseCase::IdentityChanged) {
+        std::fs::write(&identity_change, b"different common dir").unwrap();
+    }
     app.update(cx, |app, cx| {
         app.start_pull(cx);
         assert!(
@@ -286,14 +381,14 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, unknown: bool) {
         assert!(app.pull_modal().is_none(), "second pull must be refused");
     });
 
-    if unknown {
+    if matches!(case, PullLeaseCase::Unknown) {
         std::fs::write(&fail, b"non-zero unrecognized output").unwrap();
     }
     std::fs::write(&release, b"go").expect("release the transport");
     wait_for(cx, |cx| {
         cx.read(|cx| {
             let state = app.read(cx);
-            if unknown {
+            if matches!(case, PullLeaseCase::Unknown) {
                 !state.app_sessions.reconcile_ids().is_empty()
             } else {
                 !state.app_sessions.has_leases()
@@ -302,10 +397,14 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, unknown: bool) {
     });
     assert_eq!(
         ssh_pulls(&calls),
-        1,
-        "exactly one SSH pull reached the host"
+        if matches!(case, PullLeaseCase::IdentityChanged) {
+            0
+        } else {
+            1
+        },
+        "a refused identity must never execute git pull"
     );
-    if unknown {
+    if matches!(case, PullLeaseCase::Unknown) {
         let id = cx.read(|cx| {
             let state = app.read(cx);
             assert!(
@@ -352,6 +451,23 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, unknown: bool) {
             1,
             "one audited release row must precede lease release"
         );
+    } else if matches!(case, PullLeaseCase::IdentityChanged) {
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert!(!state.app_sessions.has_leases());
+            assert!(state.app_sessions.reconcile_ids().is_empty());
+            assert!(state.app_sessions.may_close_host());
+        });
+        let pulls = kagi_git::oplog::read_oplog_tail(100)
+            .into_iter()
+            .filter(|entry| entry.op == "pull")
+            .collect::<Vec<_>>();
+        assert_eq!(pulls.len(), 1, "preflight must write one durable receipt");
+        assert!(
+            matches!(&pulls[0].outcome, OpOutcome::Refused { blockers }
+                if blockers.iter().any(|reason| reason.contains("identity changed"))),
+            "the receipt must explain why the preflight refused"
+        );
     } else {
         cx.read(|cx| {
             let state = app.read(cx);
@@ -365,8 +481,13 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, unknown: bool) {
     }
     unmount(cx, app, window);
     eprintln!(
-        "[gui-e2e] PASS remote_pull_{}",
-        if unknown { "unknown_release" } else { "lease" }
+        "[gui-e2e] PASS {}",
+        match case {
+            PullLeaseCase::Success => "remote_pull_lease",
+            PullLeaseCase::Unknown => "remote_pull_unknown_release",
+            PullLeaseCase::IdentityChanged => "remote_pull_preflight_refusal",
+            PullLeaseCase::PlanningLatch => "remote_pull_planning_latch",
+        }
     );
 }
 

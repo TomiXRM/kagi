@@ -1073,6 +1073,14 @@ mod macos {
                 Box::new(crate::recovery_pull::scenario_remote_pull_unknown_release),
             ),
             (
+                "remote_pull_preflight_refusal",
+                Box::new(crate::recovery_pull::scenario_remote_pull_preflight_refusal),
+            ),
+            (
+                "remote_pull_planning_latch",
+                Box::new(crate::recovery_pull::scenario_remote_pull_planning_latch),
+            ),
+            (
                 "pull_confirm_parks_for_its_tab",
                 Box::new(crate::recovery_pull::scenario_pull_confirm_parks_for_its_tab),
             ),

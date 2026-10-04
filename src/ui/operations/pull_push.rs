@@ -22,6 +22,12 @@ use crate::ui::*;
 impl KagiApp {
     /// Build a pull plan and open the confirmation modal.
     pub fn open_pull_modal(&mut self, cx: &mut Context<Self>) {
+        // A remote identity probe is planning a write. Even a dirty-view
+        // fetch waiter must not start a second probe while it owns the latch.
+        if self.remote_view.is_some() && self.op_latched() {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            return;
+        }
         // Attaching a waiter is not admitting another plan or write.
         if self.view().is_dirty
             && self.fetch_in_flight.is_some()
@@ -82,10 +88,25 @@ impl KagiApp {
                     plan: std::sync::Arc::new(plan),
                 },
             );
+            self.planning = Some("pull");
             let task = cx.background_spawn(async move { job.run() });
             cx.spawn(async move |this, cx| {
-                let completion = task.await;
+                let completion = task.fallible().await;
                 let _ = this.update(cx, |app, cx| {
+                    let owns_latch = app.planning == Some("pull");
+                    if owns_latch {
+                        app.planning = None;
+                    }
+                    let Some(completion) = completion else {
+                        if owns_latch {
+                            app.discard_contended_plan_from_async(
+                                i18n::Op::Pull,
+                                AsyncPlanToken::Session,
+                            );
+                        }
+                        cx.notify();
+                        return;
+                    };
                     let current = app.remote_view.as_ref().is_some_and(|view| {
                         view.host == owner.host
                             && view.root == owner.root

@@ -1736,3 +1736,23 @@ hides them, the released read lands `counts: None` (status summary unknown, not
 `bash scripts/make_fixture.sh <dir> 10500`, add branches with upstreams, reload
 and read the snackbar and `[kagi] busy: slow <op> after 2s` /
 `[kagi] busy: skip <op>`; after Skip the sidebar shows `—`.
+
+### Slow running writes (#355 stage 1, ADR-0206 amendment)
+
+Tier A: `KAGI_GUI_E2E_ONLY=slow_write_explained,slow_read_explained,fetch_busy_label`
+checks a real local fetch admitted on a lease, with backend dispatch held by
+`KagiApp::hold_next_fetch_for_e2e` (`tests/recovery/slow_read.rs`). The dispatcher
+clock advances in 250 ms ticks: no advice at 1.75 s, a drawn network reason and
+`2 s` at the boundary, updated `4 s`, one
+`[kagi] busy: slow write fetch after 2s`, no Skip or interruption warning, and
+no advice after completion. While the write and snapshot read are both slow,
+the write's explanation wins and the read's Skip remains available. The
+neighbouring read scenario checks Skip alone. `cargo test -p kagi-ui-core
+slow_write_advice` covers EN/JA reason classification and unknown fallback;
+`cargo test -p kagi --test oplog_nonrun_ops_test a_panicked_run_job` and
+`cargo test -p kagi --test app_writer_admission_test dropped_or_panicking_writer`
+cover an abandoned run and a panicked guard losing their running explanation
+without releasing an unconfirmed lease. Tier B: start a slow local fetch in an
+isolated app, compare screenshots before/after 2 s and after completion, and
+inspect klog. Remote SSH pull follows #989's lease migration; clone remains out
+of scope.

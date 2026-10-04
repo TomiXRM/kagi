@@ -140,6 +140,7 @@ fn blocking_fake_ssh(
     oid_change: &Path,
     upstream_change: &Path,
     head_read_failure: &Path,
+    remote_url_change: &Path,
 ) {
     std::fs::create_dir_all(bin).expect("shim dir");
     let path = bin.join("ssh");
@@ -158,13 +159,15 @@ fn blocking_fake_ssh(
              case \"$*\" in\n\
                *KAGI-COMMON-DIR*) common=/srv/repo/.git; top=/srv/real-worktree\n\
                      branch=main; oid=$(printf '%040d' 0); upstream=origin/main\n\
+                     url=ssh://e2e.invalid/repo\n\
                      if [ -f {identity_change:?} ]; then common=/srv/other/.git; fi\n\
                      if [ -f {toplevel_change:?} ]; then top=/srv/other-linked-worktree; fi\n\
                      if [ -f {branch_change:?} ]; then branch=feature; fi\n\
                      if [ -f {oid_change:?} ]; then oid=$(printf '%040d' 1); fi\n\
                      if [ -f {upstream_change:?} ]; then upstream=origin/feature; fi\n\
+                     if [ -f {remote_url_change:?} ]; then url=ssh://e2e.invalid/changed; fi\n\
                      if [ -f {head_read_failure:?} ]; then echo 'HEAD query failed' >&2; exit 1; fi\n\
-                     printf 'KAGI-COMMON-DIR\\0%s\\0%s\\0branch\\0%s\\0%s\\0%s\\0KAGI-END\\n' \"$common\" \"$top\" \"$branch\" \"$oid\" \"$upstream\" ;;\n\
+                     printf 'KAGI-COMMON-DIR\\0%s\\0%s\\0branch\\0%s\\0%s\\0%s\\0origin\\0refs/heads/main\\0%s\\0+refs/heads/*:refs/remotes/origin/*\\0KAGI-END\\n' \"$common\" \"$top\" \"$branch\" \"$oid\" \"$upstream\" \"$url\" ;;\n\
                *pull*) while [ ! -f {release:?} ]; do sleep 0.05; done\n\
                        if [ -f {fail:?} ]; then echo 'unexpected remote reply' >&2; exit 42; fi\n\
                        echo 'Already up to date.' ;;\n\
@@ -201,6 +204,7 @@ enum PullLeaseCase {
     OidChanged,
     UpstreamChanged,
     HeadReadFailure,
+    RemoteUrlChanged,
     CachedPreviewStale,
     PlanningLatch,
 }
@@ -243,7 +247,9 @@ pub fn scenario_remote_pull_head_read_refusal(cx: &mut VisualTestAppContext) {
 pub fn scenario_remote_pull_cached_preview_stale(cx: &mut VisualTestAppContext) {
     remote_pull_lease(cx, PullLeaseCase::CachedPreviewStale);
 }
-
+pub fn scenario_remote_pull_url_refusal(cx: &mut VisualTestAppContext) {
+    remote_pull_lease(cx, PullLeaseCase::RemoteUrlChanged);
+}
 
 pub fn scenario_remote_pull_planning_latch(cx: &mut VisualTestAppContext) {
     remote_pull_lease(cx, PullLeaseCase::PlanningLatch);
@@ -281,6 +287,7 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
     let oid_change = shim.path().join("oid-change");
     let upstream_change = shim.path().join("upstream-change");
     let head_read_failure = shim.path().join("head-read-failure");
+    let remote_url_change = shim.path().join("remote-url-change");
     blocking_fake_ssh(
         shim.path(),
         &release,
@@ -294,6 +301,7 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
         &oid_change,
         &upstream_change,
         &head_read_failure,
+        &remote_url_change,
     );
     if !matches!(case, PullLeaseCase::PlanningLatch) {
         std::fs::write(&probe_release, b"go").unwrap();
@@ -417,16 +425,20 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
             assert!(state.app_sessions.may_close_host());
             assert!(
                 matches!(&state.status_footer, kagi::ui::FooterStatus::Failed(text)
-                    if text.as_ref() == kagi::ui::i18n::plan_note_text(
-                        &kagi_domain::plan_note::PlanNote::Pull(
-                            kagi_domain::plan_note::PullNote::RemotePreviewStale
-                        )
-                    )),
+                if text.as_ref() == kagi::ui::i18n::plan_note_text(
+                    &kagi_domain::plan_note::PlanNote::Pull(
+                        kagi_domain::plan_note::PullNote::RemotePreviewStale
+                    )
+                )),
                 "stale preview must explain the failure in the UI"
             );
         });
         assert_eq!(ssh_probes(&calls), 1);
-        assert_eq!(ssh_pulls(&calls), 0, "never pull from an unconfirmed checkout");
+        assert_eq!(
+            ssh_pulls(&calls),
+            0,
+            "never pull from an unconfirmed checkout"
+        );
         match original_path {
             Some(path) => std::env::set_var("PATH", path),
             None => std::env::remove_var("PATH"),
@@ -481,6 +493,9 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
     if matches!(case, PullLeaseCase::HeadReadFailure) {
         std::fs::write(&head_read_failure, b"HEAD query failed").unwrap();
     }
+    if matches!(case, PullLeaseCase::RemoteUrlChanged) {
+        std::fs::write(&remote_url_change, b"effective URL changed").unwrap();
+    }
     let refused = matches!(
         case,
         PullLeaseCase::IdentityChanged
@@ -490,6 +505,7 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
             | PullLeaseCase::OidChanged
             | PullLeaseCase::UpstreamChanged
             | PullLeaseCase::HeadReadFailure
+            | PullLeaseCase::RemoteUrlChanged
     );
     app.update(cx, |app, cx| {
         app.start_pull(cx);
@@ -543,6 +559,13 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
         if refused { 0 } else { 1 },
         "a refused identity must never execute git pull"
     );
+    if matches!(case, PullLeaseCase::RemoteUrlChanged) {
+        assert_eq!(
+            ssh_probes(&calls),
+            2,
+            "plan and preflight each read the URL"
+        );
+    }
     if !refused {
         let calls = std::fs::read_to_string(&calls).unwrap();
         let command = calls.lines().find(|line| line.contains("pull")).unwrap();
@@ -654,6 +677,7 @@ fn remote_pull_lease(cx: &mut VisualTestAppContext, case: PullLeaseCase) {
             PullLeaseCase::UpstreamChanged => "remote_pull_upstream_refusal",
             PullLeaseCase::HeadReadFailure => "remote_pull_head_read_refusal",
             PullLeaseCase::CachedPreviewStale => "remote_pull_cached_preview_stale",
+            PullLeaseCase::RemoteUrlChanged => "remote_pull_url_refusal",
         }
     );
 }

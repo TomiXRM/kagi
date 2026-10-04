@@ -1,8 +1,8 @@
 //! Remote SSH pull: cached preview, asynchronously resolved lease scope, and one
 //! transport-owned durable receipt.
 use super::*;
-use kagi_domain::remote::{RemotePullHead, RemoteRepoId};
 use kagi_domain::plan_note::{PlanNote, PlanTitle, PullNote, PullTitle};
+use kagi_domain::remote::{RemotePullConfig, RemotePullHead, RemoteRepoId};
 use std::sync::{mpsc::Sender, Arc};
 
 #[derive(Clone, Debug)]
@@ -17,6 +17,7 @@ pub struct RemotePullPlan {
     pub repo_id: RemoteRepoId,
     pub physical_toplevel: String,
     pub head: RemotePullHead,
+    pub config: RemotePullConfig,
 }
 
 pub struct RemotePullPlanJob {
@@ -39,6 +40,7 @@ impl RemotePullPlanJob {
                     PlanTitle::Pull(PullTitle::PullRemote { branch, upstream, .. })
                         if identity.head.branch.as_deref() == Some(branch.as_str())
                             && identity.head.upstream.as_deref() == Some(upstream.as_str())
+                            && identity.config.is_some()
                 );
                 if !matches_preview {
                     let blocker = PlanNote::Pull(PullNote::RemotePreviewStale);
@@ -59,6 +61,7 @@ impl RemotePullPlanJob {
                                 repo_id: identity.repo_id,
                                 physical_toplevel: identity.physical_toplevel,
                                 head: identity.head,
+                                config: identity.config.expect("matched pull configuration"),
                             }),
                             request: self.request,
                         },
@@ -100,12 +103,14 @@ pub fn plan_remote_pull_for_test(
     repo_id: RemoteRepoId,
     physical_toplevel: String,
     head: RemotePullHead,
+    config: RemotePullConfig,
 ) -> RemotePullPlanJob {
     let mut job = plan_remote_pull(sessions, request);
     job.fixture = Some(crate::remote::PullRepoIdentity {
         repo_id,
         physical_toplevel,
         head,
+        config: Some(config),
     });
     job
 }
@@ -122,6 +127,7 @@ pub struct RemotePullJob {
     repo_id: RemoteRepoId,
     physical_toplevel: String,
     head: RemotePullHead,
+    config: RemotePullConfig,
     abandoned: Sender<Completion>,
     ran: bool,
     fixture: Option<crate::remote::RemotePullReport>,
@@ -145,6 +151,7 @@ impl RemotePullJob {
                 identity.repo_id == self.repo_id
                     && identity.physical_toplevel == self.physical_toplevel
                     && identity.head == self.head
+                    && identity.config.as_ref() == Some(&self.config)
             }) {
                 crate::remote::remote_pull(
                     &owner.host,
@@ -209,6 +216,7 @@ pub fn prepare_remote_pull(
         repo_id: plan.repo_id,
         physical_toplevel: plan.physical_toplevel,
         head: plan.head,
+        config: plan.config,
         abandoned: s.abandoned_tx.clone(),
         ran: false,
         fixture: None,

@@ -1542,9 +1542,13 @@ oplog scope remains the selected root.
 or resolved upstream after confirmation. All must refuse without running
 `git pull`, record Refused, and release the lease. The
 `remote_pull_head_read_refusal` case also requires Refused when the preflight
-HEAD read fails. Domain
-`pull_common_dir_requires_complete_physical_paths_and_head_state` rejects
-incomplete or malformed HEAD frames.
+HEAD read fails. `remote_pull_url_refusal` changes only the effective remote
+URL after confirmation; the preflight must record Refused, release the lease,
+and run no pull. Skipping the config comparison fails the zero-pull assertion.
+Domain `pull_common_dir_requires_complete_physical_paths_head_and_git_config`
+rejects missing/malformed Git configuration and preserves all fetch refspecs;
+`remote_oplog_test::pull_probe_binds_symlink_to_real_worktree_and_live_head`
+exercises the actual Git commands against a throwaway repository.
 `remote_pull_cached_preview_stale` changes the checked-out branch before the
 first live plan probe while cached status still names `main`; the plan must
 reject without a confirmation modal, lease or `git pull` and show a localized

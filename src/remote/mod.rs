@@ -42,6 +42,7 @@ pub struct PullRepoIdentity {
     pub repo_id: remote::RemoteRepoId,
     pub physical_toplevel: String,
     pub head: remote::RemotePullHead,
+    pub config: Option<remote::RemotePullConfig>,
 }
 
 /// Resolve a pull's lease identity, physical worktree toplevel, and checkout
@@ -130,8 +131,21 @@ else
   upstream=
 fi
 common=$(git rev-parse --path-format=absolute --git-common-dir)
-cd -P -- "$common"
-printf 'KAGI-COMMON-DIR\0%s\0%s\0%s\0%s\0%s\0%s\0KAGI-END\n' "$(pwd -P)" "$top" "$kind" "$branch" "$oid" "$upstream""#;
+common=$(cd -P -- "$common" && pwd -P)
+if [ "$kind" = branch ]; then
+  remote=$(git config --get "branch.$branch.remote")
+  merge=$(git config --get "branch.$branch.merge")
+  url=$(git ls-remote --get-url "$remote")
+else
+  remote=
+  merge=
+  url=
+fi
+printf 'KAGI-COMMON-DIR\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' "$common" "$top" "$kind" "$branch" "$oid" "$upstream" "$remote" "$merge" "$url"
+if [ "$kind" = branch ]; then
+  git config --null --get-all "remote.$remote.fetch"
+fi
+printf 'KAGI-END\n'"#;
     let output = run_ssh(host, &["sh", "-c", script, "--", root])?;
     if output.code != 0 {
         return Err(RemoteError::NonZero {
@@ -139,7 +153,7 @@ printf 'KAGI-COMMON-DIR\0%s\0%s\0%s\0%s\0%s\0%s\0KAGI-END\n' "$(pwd -P)" "$top" 
             stderr: output.stderr,
         });
     }
-    let (common_dir, physical_toplevel, head) =
+    let (common_dir, physical_toplevel, head, config) =
         remote::parse_pull_common_dir(output.stdout.as_bytes())
             .map_err(|e| RemoteError::Incomplete(e.into()))?;
     Ok(PullRepoIdentity {
@@ -149,6 +163,7 @@ printf 'KAGI-COMMON-DIR\0%s\0%s\0%s\0%s\0%s\0%s\0KAGI-END\n' "$(pwd -P)" "$top" 
         },
         physical_toplevel,
         head,
+        config,
     })
 }
 

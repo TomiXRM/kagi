@@ -1,7 +1,9 @@
 use kagi::app::{self, AdmissionError, Job, PlanState, Planned, Sessions, WriteScope};
 use kagi::remote::stash::RemoteAttachment;
 use kagi::remote::{RemoteError, RemotePullReport};
-use kagi_domain::remote::{RemoteConnectionId, RemoteHost, RemotePullHead, RemoteRepoId};
+use kagi_domain::remote::{
+    RemoteConnectionId, RemoteHost, RemotePullConfig, RemotePullHead, RemoteRepoId,
+};
 use kagi_git::oplog::{OpLogEntry, OpOutcome};
 use kagi_git::StateSummary;
 use std::path::PathBuf;
@@ -55,12 +57,19 @@ fn plan(sessions: &mut Sessions) -> (Job, RemoteRepoId) {
         oid: "a".repeat(40),
         upstream: Some("origin/main".into()),
     };
+    let config = RemotePullConfig {
+        remote_name: "origin".into(),
+        merge_ref: "refs/heads/main".into(),
+        remote_url: "ssh://example.invalid/repo".into(),
+        fetch_refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".into()],
+    };
     let completion = app::plan_remote_pull_for_test(
         sessions,
         request,
         repo_id.clone(),
         "/srv/repo".into(),
         head.clone(),
+        config.clone(),
     )
     .run();
     assert!(matches!(sessions.plan_state(), PlanState::Planning { .. }));
@@ -74,6 +83,7 @@ fn plan(sessions: &mut Sessions) -> (Job, RemoteRepoId) {
     assert_eq!(plan.repo_id, repo_id);
     assert_eq!(plan.physical_toplevel, "/srv/repo");
     assert_eq!(plan.head, head);
+    assert_eq!(plan.config, config);
     assert_eq!(prepared.scope(), WriteScope::Remote(repo_id.clone()));
     let approved = app::approve(
         sessions,

@@ -117,9 +117,7 @@ pub fn note_ja(note: &PullNote) -> String {
             behind,
         } => super::advice_text(Msg::AdvicePullRemoteDiverged, &[branch, ahead, behind]),
         PullNote::RemoteDirty => super::advice_text(Msg::AdvicePullRemoteDirty, &[]),
-        PullNote::RemotePreviewStale => {
-            super::advice_text(Msg::AdvicePullRemotePreviewStale, &[])
-        }
+        PullNote::RemotePreviewStale => super::advice_text(Msg::AdvicePullRemotePreviewStale, &[]),
     }
 }
 

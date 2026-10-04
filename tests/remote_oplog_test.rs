@@ -60,8 +60,20 @@ fn pull_probe_binds_symlink_to_real_worktree_and_live_head() {
     std::fs::write(repo.join("file"), "base\n").unwrap();
     git(&repo, &["add", "file"]);
     git(&repo, &["commit", "-qm", "base"]);
-    git(&repo, &["branch", "upstream"]);
-    git(&repo, &["branch", "--set-upstream-to=upstream", "main"]);
+    git(
+        &repo,
+        &["config", "remote.origin.url", "ssh://fixture.invalid/repo"],
+    );
+    git(
+        &repo,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ],
+    );
+    git(&repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    git(&repo, &["branch", "--set-upstream-to=origin/main", "main"]);
     std::os::unix::fs::symlink(&repo, &alias).unwrap();
     fake_ssh(&bin);
     let _restore = Environment {
@@ -85,14 +97,53 @@ fn pull_probe_binds_symlink_to_real_worktree_and_live_head() {
     );
     assert_eq!(planned.head.branch.as_deref(), Some("main"));
     assert_eq!(planned.head.oid, git(&repo, &["rev-parse", "HEAD"]));
-    assert_eq!(planned.head.upstream.as_deref(), Some("upstream"));
+    assert_eq!(planned.head.upstream.as_deref(), Some("origin/main"));
+    let config = planned.config.as_ref().unwrap();
+    assert_eq!(config.remote_name, "origin");
+    assert_eq!(config.merge_ref, "refs/heads/main");
+    assert_eq!(config.remote_url, "ssh://fixture.invalid/repo");
+    assert_eq!(
+        config.fetch_refspecs,
+        ["+refs/heads/*:refs/remotes/origin/*"]
+    );
     git(&repo, &["checkout", "-qb", "feature"]);
-    git(&repo, &["branch", "--set-upstream-to=upstream", "feature"]);
+    git(
+        &repo,
+        &["branch", "--set-upstream-to=origin/main", "feature"],
+    );
     let observed = kagi::remote::resolve_pull_identity(&host, alias.to_str().unwrap()).unwrap();
     assert_eq!(planned.repo_id, observed.repo_id);
     assert_eq!(planned.physical_toplevel, observed.physical_toplevel);
     assert_ne!(planned.head, observed.head);
     assert_eq!(observed.head.branch.as_deref(), Some("feature"));
+    git(
+        &repo,
+        &[
+            "config",
+            "remote.origin.url",
+            "ssh://fixture.invalid/changed",
+        ],
+    );
+    let changed = kagi::remote::resolve_pull_identity(&host, alias.to_str().unwrap()).unwrap();
+    assert_eq!(observed.head, changed.head);
+    assert_ne!(observed.config, changed.config);
+    git(
+        &repo,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/main:refs/remotes/origin/main",
+        ],
+    );
+    let changed_fetch =
+        kagi::remote::resolve_pull_identity(&host, alias.to_str().unwrap()).unwrap();
+    assert_eq!(changed.head, changed_fetch.head);
+    assert_ne!(changed.config, changed_fetch.config);
+    git(&repo, &["config", "--unset", "remote.origin.fetch"]);
+    assert!(
+        kagi::remote::resolve_pull_identity(&host, alias.to_str().unwrap()).is_err(),
+        "missing fetch configuration must fail closed"
+    );
 }
 
 #[test]

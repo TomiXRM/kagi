@@ -47,6 +47,16 @@ pub struct RemotePullHead {
     /// The branch's resolved upstream, or None for detached HEAD.
     pub upstream: Option<String>,
 }
+/// Pull-relevant Git configuration read from the selected remote worktree.
+/// Unlike the resolved upstream, these raw keys and the expanded URL capture
+/// changes to `branch.*`, `remote.*.fetch`, and URL rewrite rules.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemotePullConfig {
+    pub remote_name: String,
+    pub merge_ref: String,
+    pub remote_url: String,
+    pub fetch_refspecs: Vec<String>,
+}
 
 /// Effective SSH values before known-host files have been read and digested.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -200,11 +210,12 @@ fn parse_ssh_config(text: &str, pull: bool) -> Result<EffectiveSshConfig, SshCon
     Ok(config)
 }
 
-/// The SSH probe returns absolute physical common-dir and worktree paths plus
-/// the branch (or detached HEAD), exact HEAD OID, and resolved upstream.
+/// Parse the SSH probe's physical paths, HEAD state, and effective Git remote
+/// configuration. Fetch refspecs are individually NUL-delimited; rejecting
+/// partial or malformed frames prevents an incomplete config from being trusted.
 pub fn parse_pull_common_dir(
     bytes: &[u8],
-) -> Result<(String, String, RemotePullHead), &'static str> {
+) -> Result<(String, String, RemotePullHead, Option<RemotePullConfig>), &'static str> {
     let mut fields = bytes.split(|byte| *byte == 0);
     let (
         Some(magic),
@@ -214,9 +225,11 @@ pub fn parse_pull_common_dir(
         Some(branch),
         Some(oid),
         Some(upstream),
-        Some(end),
-        None,
+        Some(remote),
+        Some(merge),
+        Some(url),
     ) = (
+        fields.next(),
         fields.next(),
         fields.next(),
         fields.next(),
@@ -228,6 +241,9 @@ pub fn parse_pull_common_dir(
         fields.next(),
     )
     else {
+        return Err("malformed common-dir frame");
+    };
+    let Some(end) = fields.next_back() else {
         return Err("malformed common-dir frame");
     };
     if magic != b"KAGI-COMMON-DIR" || end != b"KAGI-END\n" {
@@ -244,8 +260,27 @@ pub fn parse_pull_common_dir(
     if !matches!(oid.len(), 40 | 64) || !oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("invalid HEAD OID");
     }
-    let (branch, upstream) = match kind {
-        b"detached" if branch.is_empty() && upstream.is_empty() => (None, None),
+    let parse_config = |bytes: &[u8]| {
+        let value = std::str::from_utf8(bytes).map_err(|_| "invalid pull Git config")?;
+        if value.is_empty()
+            || value.contains('\u{fffd}')
+            || value.bytes().any(|byte| byte.is_ascii_control())
+        {
+            return Err("invalid pull Git config");
+        }
+        Ok(value.to_string())
+    };
+    let (branch, upstream, config) = match kind {
+        b"detached"
+            if branch.is_empty()
+                && upstream.is_empty()
+                && remote.is_empty()
+                && merge.is_empty()
+                && url.is_empty()
+                && fields.next().is_none() =>
+        {
+            (None, None, None)
+        }
         b"branch" => {
             let parse_ref = |bytes: &[u8]| {
                 let name = std::str::from_utf8(bytes).map_err(|_| "invalid pull ref")?;
@@ -257,7 +292,20 @@ pub fn parse_pull_common_dir(
                 }
                 Ok(name.to_string())
             };
-            (Some(parse_ref(branch)?), Some(parse_ref(upstream)?))
+            let fetch_refspecs = fields.map(parse_config).collect::<Result<Vec<_>, _>>()?;
+            if fetch_refspecs.is_empty() {
+                return Err("missing pull fetch refspec");
+            }
+            (
+                Some(parse_ref(branch)?),
+                Some(parse_ref(upstream)?),
+                Some(RemotePullConfig {
+                    remote_name: parse_config(remote)?,
+                    merge_ref: parse_config(merge)?,
+                    remote_url: parse_config(url)?,
+                    fetch_refspecs,
+                }),
+            )
         }
         _ => return Err("invalid pull HEAD state"),
     };
@@ -272,6 +320,7 @@ pub fn parse_pull_common_dir(
             oid: oid.to_string(),
             upstream,
         },
+        config,
     ))
 }
 
@@ -768,14 +817,25 @@ mod tests {
     }
 
     #[test]
-    fn pull_common_dir_requires_complete_physical_paths_and_head_state() {
+    fn pull_common_dir_requires_complete_physical_paths_head_and_git_config() {
         let oid = "a".repeat(40);
         let frame = |kind: &str, branch: &str, oid: &str, upstream: &str| {
+            let config = if kind == "detached" {
+                "\0\0\0\0".to_string()
+            } else {
+                "\0origin\0refs/heads/main\0ssh://example.invalid/repo\0+refs/heads/*:refs/remotes/origin/*\0".to_string()
+            };
             format!(
-                "KAGI-COMMON-DIR\0/srv/repo/.git\0/srv/real-worktree\0{kind}\0{branch}\0{oid}\0{upstream}\0KAGI-END\n"
+                "KAGI-COMMON-DIR\0/srv/repo/.git\0/srv/real-worktree\0{kind}\0{branch}\0{oid}\0{upstream}{config}KAGI-END\n"
             )
         };
         let attached = frame("branch", "main", &oid, "origin/main");
+        let config = RemotePullConfig {
+            remote_name: "origin".into(),
+            merge_ref: "refs/heads/main".into(),
+            remote_url: "ssh://example.invalid/repo".into(),
+            fetch_refspecs: vec!["+refs/heads/*:refs/remotes/origin/*".into()],
+        };
         assert_eq!(
             parse_pull_common_dir(attached.as_bytes()),
             Ok((
@@ -785,19 +845,33 @@ mod tests {
                     branch: Some("main".into()),
                     oid: oid.clone(),
                     upstream: Some("origin/main".into()),
-                }
+                },
+                Some(config.clone()),
             ))
         );
+        let two_fetch = attached.replacen(
+            "+refs/heads/*:refs/remotes/origin/*\0",
+            "+refs/heads/*:refs/remotes/origin/*\0^refs/heads/deleted\0",
+            1,
+        );
         assert_eq!(
-            parse_pull_common_dir(frame("detached", "", &oid, "").as_bytes())
+            parse_pull_common_dir(two_fetch.as_bytes())
                 .unwrap()
-                .2,
+                .3
+                .unwrap()
+                .fetch_refspecs,
+            vec!["+refs/heads/*:refs/remotes/origin/*", "^refs/heads/deleted"],
+        );
+        let detached = parse_pull_common_dir(frame("detached", "", &oid, "").as_bytes()).unwrap();
+        assert_eq!(
+            detached.2,
             RemotePullHead {
                 branch: None,
                 oid: oid.clone(),
                 upstream: None,
             }
         );
+        assert_eq!(detached.3, None);
         for invalid in [
             attached.replacen("/srv/repo/.git", "relative", 1),
             attached.replacen("/srv/real-worktree", "relative", 1),
@@ -808,6 +882,11 @@ mod tests {
             frame("detached", "main", &oid, ""),
             frame("detached", "", &oid, "origin/main"),
             frame("invalid", "main", &oid, "origin/main"),
+            attached.replacen("\0origin\0", "\0\0", 1),
+            attached.replacen("\0refs/heads/main\0", "\0\0", 1),
+            attached.replacen("\0ssh://example.invalid/repo\0", "\0\0", 1),
+            attached.replacen("+refs/heads/*:refs/remotes/origin/*\0", "", 1),
+            attached.replacen("\0origin\0", "\0origin\nother\0", 1),
             format!("{attached}extra"),
         ] {
             assert!(

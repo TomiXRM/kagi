@@ -148,10 +148,7 @@ pub fn tar(root: &Path) -> Result<(), String> {
         .map_err(|e| format!("symlink bin/kagi: {e}"))?;
 
     let version = util::kagi_version(root)?;
-    let tarball = dist.join(format!(
-        "kagi-{version}-{}-macos.tar.gz",
-        util::host_arch_appimage()
-    ));
+    let tarball = dist.join(format!("kagi-{version}-{}-macos.tar.gz", util::host_arch()));
     println!("tar-macos: tar czf {}", tarball.display());
     util::run(
         Command::new("tar")

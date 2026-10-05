@@ -3,7 +3,7 @@
 //! Stdlib-only. Subcommands:
 //!   icon          regenerate assets/icon/ via scripts/make_icon.sh (macOS)
 //!   bundle-macos  release build → target/dist/Kagi.app (ad-hoc signed)
-//!   tar-macos    signed Kagi.app + bin/kagi symlink → kagi-<v>-aarch64-macos.tar.gz
+//!   tar-macos    signed Kagi.app + bin/kagi symlink → kagi-<v>-arm64-macos.tar.gz
 //!   dmg-macos     hdiutil DMG (Kagi.app + /Applications) → target/dist/Kagi-<v>-<arch>.dmg
 //!   bundle-linux  tar.gz layout (bin + .desktop + 512px icon) → target/dist/
 //!   bundle-appimage  Kagi.AppDir → Kagi-<arch>.AppImage (appimagetool) + zip
@@ -28,7 +28,8 @@ subcommands:
   bundle-macos             release build + assemble & ad-hoc-sign Kagi.app
   tar-macos               archive the signed app + bin/kagi symlink (run bundle-macos first)
   dmg-macos                build the distributable DMG (run bundle-macos first)
-  bundle-linux [--bin P]   assemble the Linux tar.gz layout (--bin overrides the binary)
+  bundle-linux [--bin P] [--legacy-linux-name]
+                           assemble the Linux tar.gz layout (legacy name is transitional)
   bundle-windows [--bin P]  zip kagi.exe (+ LICENSE) → kagi-<v>-x86_64-windows.zip (Windows)
   bundle-appimage --bin P [--arch x86_64|aarch64]
                            assemble Kagi.AppDir, run appimagetool when present, and zip
@@ -44,17 +45,19 @@ fn run() -> Result<(), String> {
         Some("tar-macos") => macos::tar(&root),
         Some("dmg-macos") => macos::dmg(&root),
         Some("bundle-linux") => {
-            // optional `--bin <path>` override
+            // `--bin <path>` overrides the binary; the old archive name is
+            // emitted only when the release workflow opts in during cutover.
             let mut override_bin = None;
+            let mut legacy_linux_name = false;
             let mut it = args.iter().skip(1);
             while let Some(a) = it.next() {
-                if a == "--bin" {
-                    override_bin = it.next().map(String::as_str);
-                } else {
-                    return Err(format!("unknown argument: {a}\n\n{}", usage()));
+                match a.as_str() {
+                    "--bin" => override_bin = it.next().map(String::as_str),
+                    "--legacy-linux-name" => legacy_linux_name = true,
+                    _ => return Err(format!("unknown argument: {a}\n\n{}", usage())),
                 }
             }
-            linux::bundle(&root, override_bin)
+            linux::bundle(&root, override_bin, legacy_linux_name)
         }
         Some("bundle-windows") => {
             // optional `--bin <path>` override

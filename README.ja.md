@@ -154,9 +154,11 @@ kagi --version
 
 | OS | アセット |
 |----|---------|
-| macOS (Apple Silicon) | `kagi-<version>-aarch64-macos.tar.gz` (署名済み `Kagi.app` + CLI シンボリックリンク、v0.44.0 以降)、`Kagi-<version>-arm64.dmg` (`Kagi.app` を Applications にドラッグ) |
+| macOS (Apple Silicon) | `kagi-<version>-arm64-macos.tar.gz` (署名済み `Kagi.app` + CLI シンボリックリンク、v0.44.0 以降)、`Kagi-<version>-arm64.dmg` (`Kagi.app` を Applications にドラッグ) |
 | Linux (x86_64 / arm64) | `kagi-<version>-<arch>-linux.tar.gz` (`<arch>` は `x86_64` または `aarch64`。バージョン名付きディレクトリにバイナリ、`.desktop`、アイコンを格納。v0.44.0 以降)、または AppImage の zip `kagi_Linux-AppImage_<arch>.zip` |
 | Windows (x86_64) | `kagi-<version>-x86_64-windows.zip` (展開して `kagi.exe` を実行。単体で動作) |
+
+macOS tar は意図的に `arm64-macos` とし、`aarch64-macos` は使いません。v0.43 以前の Linux aarch64 更新クライアントが旧 Linux tar の名前として誤認するのを防ぐためです。この PR を含む初回リリースに限り、release workflow が `--legacy-linux-name` を明示して旧 Linux tar 名を `-linux.tar.gz` と併載します。そのリリースの公開後に workflow からフラグを外します。Linux tar 内のバージョン名付きルートディレクトリはそのままです。
 
 <details>
 <summary><b>macOS（notarize 前のビルドの初回起動）</b></summary>

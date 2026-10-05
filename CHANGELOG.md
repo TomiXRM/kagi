@@ -7,7 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Added
 
-- macOS / Linux 向けに `curl -fsSL https://raw.githubusercontent.com/TomiXRM/kagi/main/install.sh | sh` で使えるインストーラーと、mise が直接取得できるプラットフォーム別 tar.gz を追加しました。macOS の tar は ad-hoc 署名済み `Kagi.app` と `bin/kagi` の相対 symlink を格納し、Linux は従来のディレクトリ構造を保ってアーカイブ名に `-linux` を追加します。旧 Linux 名は v0.44.0 のみ併載し、DMG / AppImage zip / deb / Windows zip は変更しません。`--version vX.Y.Z` / `--prefix DIR` / `--dry-run` / `--no-modify-path` に対応します。実リリースからのインストールと mise 導入は v0.44.0 公開後に利用できます。(#1055)
+- macOS / Linux 向けに `curl -fsSL https://raw.githubusercontent.com/TomiXRM/kagi/main/install.sh | sh` で使えるインストーラーと、mise が直接取得できるプラットフォーム別 tar.gz を追加しました。macOS tar は `kagi-<version>-arm64-macos.tar.gz` (旧 Linux aarch64 更新クライアントが誤認しないよう `aarch64-macos` は使わない)で、ad-hoc 署名済み `Kagi.app` と `bin/kagi` の相対 symlink を格納します。Linux は従来のディレクトリ構造を保ってアーカイブ名に `-linux` を追加します。旧 Linux 名の併載は release workflow の `--legacy-linux-name` 明示指定による移行リリース限定で、この PR を含む初回リリースの公開後にフラグを外します。DMG / AppImage zip / deb / Windows zip は変更しません。`--version vX.Y.Z` / `--prefix DIR` / `--dry-run` / `--no-modify-path` に対応します。実リリースからのインストールと mise 導入は初回対応リリースの公開後に利用できます。(#1055)
 - `kagi --version` / `kagi -V` で Cargo のバージョンを表示し、GUI・設定読込・既存インスタンスへの転送より前に終了できるようにしました。(#1055)
 
 ## [0.43.0] - 2026-10-05

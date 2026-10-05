@@ -7,6 +7,17 @@ fail() {
     exit 1
 }
 
+# Only explicit fixture URL overrides may use plain HTTP.
+download() {
+    policy=$1
+    shift
+    if [ -z "$policy" ]; then
+        curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "$@"
+    else
+        curl -fsSL "$@"
+    fi
+}
+
 main() {
     version=
     prefix=
@@ -43,10 +54,12 @@ main() {
         *) fail 'unsupported CPU architecture' ;;
     esac
     [ "$os-$arch" != macos-x86_64 ] || fail 'macOS releases support arm64 only'
+    if [ "$os" = macos ]; then arch=arm64; fi
     command -v curl >/dev/null 2>&1 || fail 'curl is required'
     if [ -z "$version" ]; then
         api=${KAGI_RELEASE_API_URL:-https://api.github.com/repos/TomiXRM/kagi/releases/latest}
-        response=$(curl -fsSL "$api" 2>/dev/null) || fail 'release API unavailable; specify a tag with --version vX.Y.Z'
+        response=$(download "${KAGI_RELEASE_API_URL:+override}" "$api" 2>&1) ||
+            fail "release API unavailable; specify a tag with --version vX.Y.Z: $(printf '%s' "$response" | tr '\r\n' '  ')"
         version=$(printf '%s\n' "$response" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
         [ -n "$version" ] || fail 'release API returned no tag; specify a tag with --version vX.Y.Z'
     fi
@@ -87,8 +100,8 @@ main() {
     temp=$(mktemp -d "${TMPDIR:-/tmp}/kagi-install.XXXXXXXX" 2>/dev/null) || fail 'cannot create temporary directory'
     trap 'rm -rf "$temp"' 0
     trap 'exit 1' HUP INT TERM
-    curl -fsSL "$url/$asset" -o "$temp/$asset" 2>/dev/null || fail "cannot download $asset (available from v0.44.0)"
-    curl -fsSL "$url/$sums" -o "$temp/$sums" 2>/dev/null || fail "cannot download $sums"
+    download "${KAGI_RELEASE_BASE_URL:+override}" "$url/$asset" -o "$temp/$asset" || fail "cannot download $asset"
+    download "${KAGI_RELEASE_BASE_URL:+override}" "$url/$sums" -o "$temp/$sums" || fail "cannot download $sums"
     expected=
     while read -r digest name extra; do
         if [ "$name" = "$asset" ] || [ "$name" = "*$asset" ]; then
@@ -124,6 +137,8 @@ main() {
         link_stage=$(mktemp -d "$bin_dir/.kagi-link.XXXXXXXX" 2>/dev/null) || fail 'cannot stage CLI symlink'
         trap 'rm -rf "$temp" "$staged" "$link_stage"' 0
         ln -s "$app_dir/Kagi.app/Contents/MacOS/kagi" "$link_stage/kagi" 2>/dev/null || fail 'cannot stage CLI symlink'
+        # Do not let catchable signals delete the saved app between renames.
+        trap '' HUP INT TERM
         if [ -e "$app_dir/Kagi.app" ] || [ -L "$app_dir/Kagi.app" ]; then
             mv "$app_dir/Kagi.app" "$staged/previous.app" 2>/dev/null || fail 'cannot move existing application'
         fi
@@ -149,6 +164,7 @@ main() {
             fi
             fail 'cannot install CLI symlink'
         fi
+        trap 'exit 1' HUP INT TERM
     else
         # Linux tarballs retain their single top-level package directory.
         set -- "$temp/unpacked"/*
@@ -164,8 +180,9 @@ main() {
         staged=$(mktemp -d "$prefix/.kagi-install.XXXXXXXX" 2>/dev/null) || fail 'cannot stage Linux installation'
         trap 'rm -rf "$temp" "$staged"' 0
         cp -R "$package/bin" "$package/share" "$staged/" 2>/dev/null || fail 'cannot stage Linux installation'
-        for relative in bin/kagi share/applications/com.tomixrm.kagi.desktop share/icons/hicolor/512x512/apps/kagi.png; do
-            mv -f "$staged/$relative" "$prefix/$relative" 2>/dev/null || fail 'cannot install Linux files'
+        for relative in share/applications/com.tomixrm.kagi.desktop share/icons/hicolor/512x512/apps/kagi.png bin/kagi; do
+            mv -f "$staged/$relative" "$prefix/$relative" 2>/dev/null ||
+                fail 'partial Linux install: resources may have changed; executable is replaced last'
         done
     fi
     printf 'Installed Kagi %s (%s/kagi)\n' "$version" "$bin_dir"

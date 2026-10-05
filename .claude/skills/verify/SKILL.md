@@ -39,6 +39,13 @@ Published mise recipe (only after v0.44.0 is published; run on each named host):
 - macOS arm64: `mise install github:TomiXRM/kagi@0.44.0 && mise exec github:TomiXRM/kagi@0.44.0 -- kagi --version && codesign --verify --strict "$(mise where github:TomiXRM/kagi@0.44.0)/Kagi.app"`
 - Linux x86_64 and aarch64 (run separately on each): `mise install github:TomiXRM/kagi@0.44.0 && mise exec github:TomiXRM/kagi@0.44.0 -- kagi --version`
 
+The macOS release tar must be named `kagi-<version>-arm64-macos.tar.gz`, never
+`aarch64-macos`: Linux aarch64 updaters through v0.43 could match the latter
+as a legacy Linux tar. For the first release shipping this change, check that
+Linux has both `kagi-<version>-<arch>-linux.tar.gz` and the old
+`kagi-<version>-<arch>.tar.gz`; the release workflow opts in to the old name
+with `--legacy-linux-name`. Remove that flag after publishing that release.
+
 ## Tier A — native GUI E2E runner
 
 `tests/gui_e2e_runner.rs` is an opt-in macOS main-thread runner. It needs both the

@@ -109,6 +109,8 @@ def verify(dist: Path) -> None:
     arch = "aarch64" if platform.machine() in ("arm64", "aarch64") else "x86_64"
     os_name = "macos" if macos else "linux"
     checksum_arch = "arm64" if arch == "aarch64" else arch
+    if macos and arch == "aarch64":
+        arch = "arm64"
     archive = dist / f"kagi-{version[1:]}-{arch}-{os_name}.tar.gz"
     sums = dist / f"SHA256SUMS-{os_name}-{checksum_arch}.txt"
     check(archive.is_file() and sums.is_file(), f"release tar/SHA missing from {dist}")

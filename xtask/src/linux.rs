@@ -56,8 +56,13 @@ fn resolve_bin(root: &Path, override_path: Option<&str>) -> Result<PathBuf, Stri
     Ok(p)
 }
 
-/// `bundle-linux [--bin <path>]`: assemble the tar.gz layout and create the tarball.
-pub fn bundle(root: &Path, override_bin: Option<&str>) -> Result<(), String> {
+/// `bundle-linux [--bin <path>] [--legacy-linux-name]`: assemble the tar.gz
+/// layout; optionally copy it under the old name for the transition release.
+pub fn bundle(
+    root: &Path,
+    override_bin: Option<&str>,
+    legacy_linux_name: bool,
+) -> Result<(), String> {
     let version = util::kagi_version(root)?;
     let bin = resolve_bin(root, override_bin)?;
     let icon = root.join("assets/icon/icon_512x512.png");
@@ -101,9 +106,10 @@ pub fn bundle(root: &Path, override_bin: Option<&str>) -> Result<(), String> {
         dist.to_str().unwrap(),
         &stem,
     ]))?;
-    // Keep the old filename for the v0.44.0 transition release only.
-    // The new archive still has the existing versioned directory at its root.
-    if version == "0.44.0" {
+    // Only the release workflow opts in for the first release with the new
+    // name; remove that invocation after publishing the transition release.
+    // The archive still has the existing versioned directory at its root.
+    if legacy_linux_name {
         let legacy = dist.join(format!("{stem}.tar.gz"));
         std::fs::copy(&tarball, &legacy)
             .map_err(|e| format!("copy legacy tarball {}: {e}", legacy.display()))?;

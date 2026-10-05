@@ -37,6 +37,8 @@ jobs:
           filters: |
             installer:
               - 'install.sh'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
               - 'xtask/**'
               - '.github/workflows/*.yml'
               - 'ci/src/kagi_checks/install_fixture.py'

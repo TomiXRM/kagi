@@ -126,9 +126,11 @@ jobs:
         if: matrix.kind == 'linux'
         run: cargo build --release -p kagi
 
+      # Transitional alias for the first release shipping the new Linux tar
+      # names. Remove --legacy-linux-name after that release is published.
       - name: Bundle Linux tar.gz
         if: matrix.kind == 'linux'
-        run: cargo run -p xtask -- bundle-linux --bin target/release/kagi
+        run: cargo run -p xtask -- bundle-linux --bin target/release/kagi --legacy-linux-name
 
       # ── Linux: AppImage zip (ADR-0047 追補, W21-APPIMAGE) ──────────────────
       # Fetch the matching appimagetool (FUSE-free via --appimage-extract-and-run,

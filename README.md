@@ -136,9 +136,11 @@ kagi --version
 
 | OS | Asset |
 |----|-------|
-| macOS (Apple Silicon) | `kagi-<version>-aarch64-macos.tar.gz` (signed `Kagi.app` + CLI symlink, from v0.44.0); `Kagi-<version>-arm64.dmg` (drag `Kagi.app` to Applications) |
+| macOS (Apple Silicon) | `kagi-<version>-arm64-macos.tar.gz` (signed `Kagi.app` + CLI symlink, from v0.44.0); `Kagi-<version>-arm64.dmg` (drag `Kagi.app` to Applications) |
 | Linux (x86_64 / arm64) | `kagi-<version>-<arch>-linux.tar.gz` (`<arch>` = `x86_64` or `aarch64`; versioned directory with binary, `.desktop`, icon, from v0.44.0), or `kagi_Linux-AppImage_<arch>.zip` |
 | Windows (x86_64) | `kagi-<version>-x86_64-windows.zip` — extract and run `kagi.exe` (self-contained) |
+
+The macOS tar intentionally uses `arm64-macos`, **not** `aarch64-macos`: Linux aarch64 updaters shipped through v0.43 could otherwise match it as a legacy Linux tar. For the first release containing these new archives, the release workflow explicitly passes `--legacy-linux-name` to publish the old Linux tar name alongside `-linux.tar.gz`; remove that workflow flag after that release is published. The canonical Linux tar keeps the original versioned root directory.
 
 <details>
 <summary><b>macOS — first launch on an unnotarized build</b></summary>

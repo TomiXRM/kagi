@@ -81,7 +81,7 @@ abort すれば、始める前の状態にそのまま戻ります。
 merge ノードはインラインで描かれ、先頭には常に WIP 行が並びます。
 **stash もグラフの中に描画され**、それぞれが作成元の commit へ線で繋がります。
 ラベルとノードを結ぶコネクタが、すべての branch と tag をその commit に対応づけます。
-仮想化しているので、1 万 commit を超えるリポジトリでも動きは滑らかです(スクリーンショットはいずれも実際の履歴で、上は Zed、こちらは小さな fixture)。
+仮想化しているので、1 万 commit を超えるリポジトリでも動きは滑らかです(スクリーンショットは Zed の実際の履歴にデモ用の branch を数本足したもので、上の conflict だけは小さな Arduino Blink のスケッチ)。
 
 ## commit を詳しく見る
 
@@ -105,7 +105,7 @@ diff は `+`/`−` の hunk をシンタックスハイライトと行番号付�
 ## 変更が集中する場所を見つける
 
 <div align="center">
-<img src="docs/images/hotspots.png" width="900" alt="Hotspots モードの Analyze ビュー。churn × サイズ でリスク順に並べたファイル、churn / LOC / リスクバーの列、期間セレクタ、List / Map 切り替え、Hotspots / Coupling / Ownership / Health モード切り替え、Copy diagnostic アクション" />
+<img src="docs/images/hotspots.png" width="900" alt="Hotspots モードの Analyze ビュー。churn × サイズ でリスク順に並べたファイルのツリーマップ(タイルの大きさ = LOC、色 = リスク)、期間セレクタ、List / Map 切り替え、Hotspots / Coupling / Ownership / Health モード切り替え、Copy diagnostic アクション" />
 </div>
 
 **Analyze**(Settings の隣にある読み取り専用のツールバービュー)は、Git 履歴の全体を掘り起こして、リポジトリの「コードのエコシステム」を可視化します。

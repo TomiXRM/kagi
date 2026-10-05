@@ -62,7 +62,7 @@ In the shot above, one branch moved the LED to the board's built-in pin and anot
 <img src="docs/images/graph-stash.png" width="900" alt="Commit graph with colored lanes, ref badges, a HEAD ring, a WIP row at the top, and a stash rendered in the graph with a yellow line to its base commit" />
 </div>
 
-Colored lanes track each branch's history; ref badges and a HEAD ring mark where you are; merge nodes render inline; a live **WIP row** sits at the top; and **stashes are drawn right in the graph** — each with a line back to the commit it was created on. A label-to-node connector ties every branch and tag to its commit. Virtualized, so it stays smooth on repositories with 10k+ commits (the screenshots are real history — Zed above, a small fixture here).
+Colored lanes track each branch's history; ref badges and a HEAD ring mark where you are; merge nodes render inline; a live **WIP row** sits at the top; and **stashes are drawn right in the graph** — each with a line back to the commit it was created on. A label-to-node connector ties every branch and tag to its commit. Virtualized, so it stays smooth on repositories with 10k+ commits (the screenshots are the real Zed history with a few demo branches added; the conflict shot above uses a small Arduino Blink sketch).
 
 ## See every worktree at once
 
@@ -91,7 +91,7 @@ Open **File History** on any file to walk every commit that touched it: the per-
 ## See where change concentrates
 
 <div align="center">
-<img src="docs/images/hotspots.png" width="900" alt="Analyze view in Hotspots mode — files risk-ranked by churn × size, with churn / LOC / risk-bar columns, a window selector, a List / Map toggle, the Hotspots / Coupling / Ownership / Health mode switch, and a Copy diagnostic action" />
+<img src="docs/images/hotspots.png" width="900" alt="Analyze view in Hotspots mode — files risk-ranked by churn × size as a treemap heatmap (tile size = LOC, colour = risk), with a window selector, a List / Map toggle, the Hotspots / Coupling / Ownership / Health mode switch, and a Copy diagnostic action" />
 </div>
 
 **Analyze** (a read-only toolbar view, next to Settings) mines your whole Git history into a map of the repo's "code ecosystem" — it adds no write operation and no new Git command, and it's framed as *attention*, never a verdict. Three modes share one **window selector** (Day / Week / Month / Year / All):

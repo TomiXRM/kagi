@@ -39,7 +39,7 @@ Kagi はひとつの方針で作ったデスクトップ Git クライアント�
 ## 安全性が中心にある設計
 
 <div align="center">
-<img src="docs/images/safety-plan.png" width="880" alt="push の plan モーダル。現在から予測へと変わる状態、non-fast-forward の警告、push される commit、復旧手順を、実行前にすべて提示する" />
+<img src="docs/images/safety-plan.png" width="880" alt="push の plan モーダル。CURRENT → AFTER の状態、non-fast-forward の警告、push される commit、復旧コマンドを、実行前にすべて提示する" />
 </div>
 
 書き込み操作はすべて、まず **plan** を開きます。
@@ -97,7 +97,7 @@ diff は `+`/`−` の hunk をシンタックスハイライトと行番号付�
 ## ファイルの履歴をたどる
 
 <div align="center">
-<img src="docs/images/file-history.png" width="900" alt="File History ビュー。左にそのファイルを変更した全 commit(subject・author・日付)、右に選択中 commit のそのファイルの diff、Back / Copy Path / Open File / Follow Renames の操作付き" />
+<img src="docs/images/file-history.png" width="900" alt="File History ビュー。上にそのファイルを変更した全 commit(subject・author・日付)、下に選択中 commit のそのファイルの diff、Back / Copy Path / Open File / Follow Renames の操作付き" />
 </div>
 
 任意のファイルで **File History** を開くと、そのファイルを変更したすべての commit をたどれます。左にファイル単位の commit 一覧、右に選択中エントリのそのファイルの diff が出ます。矢印キーでエントリを移動でき、**rename を追跡**してファイルの過去まで遡り、パスのコピーやファイルを開く操作、終わったらグラフへ戻る、ができます。
@@ -105,7 +105,7 @@ diff は `+`/`−` の hunk をシンタックスハイライトと行番号付�
 ## 変更が集中する場所を見つける
 
 <div align="center">
-<img src="docs/images/hotspots.png" width="900" alt="Hotspots モードの Analyze ビュー。churn × サイズ でリスク順に並べたファイル、churn / LOC / リスクバーの列、期間セレクタ、List / Map 切り替え、Hotspots / Coupling / Ownership モード切り替え、Copy diagnostic アクション" />
+<img src="docs/images/hotspots.png" width="900" alt="Hotspots モードの Analyze ビュー。churn × サイズ でリスク順に並べたファイル、churn / LOC / リスクバーの列、期間セレクタ、List / Map 切り替え、Hotspots / Coupling / Ownership / Health モード切り替え、Copy diagnostic アクション" />
 </div>
 
 **Analyze**(Settings の隣にある読み取り専用のツールバービュー)は、Git 履歴の全体を掘り起こして、リポジトリの「コードのエコシステム」を可視化します。

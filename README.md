@@ -32,7 +32,7 @@ The commands that lose work — `push --force`, `reset --hard`, `git clean` — 
 ## Safety is the product
 
 <div align="center">
-<img src="docs/images/safety-plan.png" width="880" alt="A push plan modal: current → predicted state, a non-fast-forward warning, the commit to be pushed, and a recovery recipe — all shown before anything runs" />
+<img src="docs/images/safety-plan.png" width="880" alt="A push plan modal: CURRENT → AFTER state, a non-fast-forward warning, the commit to be pushed, and the recovery commands — all shown before anything runs" />
 </div>
 
 Every write opens a **plan** first — current → predicted state, warnings, blockers, and a plain-language recovery recipe. When a blocker is present, there is no execute button to click. This isn't an "are you sure?" dialog bolted on top; it's the only way operations run.
@@ -67,7 +67,7 @@ Colored lanes track each branch's history; ref badges and a HEAD ring mark where
 ## See every worktree at once
 
 <div align="center">
-<img src="docs/images/worktree.png" width="900" alt="Commit graph with one colored WIP row per worktree, each tinted in its own lane color with a 🌲 chip and change count, plus 🌲 markers on branches checked out in another worktree and a colored worktree tab" />
+<img src="docs/images/worktree.png" width="900" alt="Commit graph with one colored WIP row per worktree, each tinted in its own lane color with a 🌲 chip and change count, plus 🌲 markers on branches checked out in another worktree and the worktrees listed in the sidebar" />
 </div>
 
 Most clients show one worktree at a time. Kagi draws **a WIP row for every worktree at once**, each tinted in its own lane color with a 🌲 chip and change count — so you can see what's uncommitted across all of them in a single glance. The main repo's own WIP row carries an ✏️ chip instead, so a worktree is never confused with your normal working tree. Branches checked out in another worktree carry a 🌲 marker in the graph. Click your current worktree's WIP row to stage and commit; click another's to **switch to that worktree** (it opens as a tab in the matching color, never a duplicate). Create new worktrees from any branch, all from the safe `plan → confirm → execute` path.
@@ -83,7 +83,7 @@ Select a commit to open the inspector: author, co-authors, and full message; a c
 ## Trace a file's history
 
 <div align="center">
-<img src="docs/images/file-history.png" width="900" alt="File History view — on the left, every commit that touched the file (subject, author, date); on the right, the selected commit's diff for that file; with Back, Copy Path, Open File, and Follow Renames controls" />
+<img src="docs/images/file-history.png" width="900" alt="File History view — at the top, every commit that touched the file (subject, author, date); below, the selected commit's diff for that file; with Back, Copy Path, Open File, and Follow Renames controls" />
 </div>
 
 Open **File History** on any file to walk every commit that touched it: the per-file commit list on the left, the selected entry's diff for that file on the right. Step through entries with the arrow keys, **follow renames** back through the file's past, copy its path or open it, and return to the full graph when you're done.
@@ -91,7 +91,7 @@ Open **File History** on any file to walk every commit that touched it: the per-
 ## See where change concentrates
 
 <div align="center">
-<img src="docs/images/hotspots.png" width="900" alt="Analyze view in Hotspots mode — files risk-ranked by churn × size, with churn / LOC / risk-bar columns, a window selector, a List / Map toggle, the Hotspots / Coupling / Ownership mode switch, and a Copy diagnostic action" />
+<img src="docs/images/hotspots.png" width="900" alt="Analyze view in Hotspots mode — files risk-ranked by churn × size, with churn / LOC / risk-bar columns, a window selector, a List / Map toggle, the Hotspots / Coupling / Ownership / Health mode switch, and a Copy diagnostic action" />
 </div>
 
 **Analyze** (a read-only toolbar view, next to Settings) mines your whole Git history into a map of the repo's "code ecosystem" — it adds no write operation and no new Git command, and it's framed as *attention*, never a verdict. Three modes share one **window selector** (Day / Week / Month / Year / All):

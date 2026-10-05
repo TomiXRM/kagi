@@ -4,7 +4,7 @@
 //! this card is the one that pairs a text input with a plan, and it shares
 //! nothing with the plan card except the shell helpers.
 
-use super::button_style::{modal_button, ModalButtonKind};
+use super::button_style::{modal_button, modal_icon_button, ModalButtonKind};
 use super::i18n::Msg;
 use super::modal_command::{plan_ready, render_recovery_commands};
 use super::modal_renderers::{
@@ -32,6 +32,59 @@ pub(crate) fn render_input_modal_field(
     state: Option<&Entity<InputState>>,
     reason: Option<SharedString>,
 ) -> gpui::Div {
+    input_modal_field(
+        label,
+        state.map(|s| Input::new(s).into_any_element()),
+        reason,
+    )
+}
+
+/// #1043: a path field with the system folder dialog's button on its left.
+/// The input keeps its height and gives up only the button's width.
+pub(crate) fn render_input_modal_path_field(
+    label: &'static str,
+    state: Option<&Entity<InputState>>,
+    reason: Option<SharedString>,
+    button_id: &'static str,
+    choose_folder: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> gpui::Div {
+    let row = state.map(|state| {
+        // The measuring wrapper is the flex item in Tier A builds, so the
+        // growing box sits outside it.
+        div()
+            .w_full()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .child(crate::ui::e2e::measure_control(
+                button_id,
+                modal_icon_button(
+                    button_id,
+                    gpui_component::IconName::FolderOpen,
+                    Msg::InputChooseFolder.t(),
+                    choose_folder,
+                ),
+            ))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(crate::ui::e2e::measure_control(
+                        format!("{button_id}-input"),
+                        Input::new(state),
+                    )),
+            )
+            .into_any_element()
+    });
+    input_modal_field(label, row, reason)
+}
+
+fn input_modal_field(
+    label: &'static str,
+    control: Option<gpui::AnyElement>,
+    reason: Option<SharedString>,
+) -> gpui::Div {
     let field = div()
         .flex_shrink_0()
         .flex()
@@ -43,7 +96,7 @@ pub(crate) fn render_input_modal_field(
                 .text_color(rgb(current_theme().text_label))
                 .child(SharedString::from(label)),
         )
-        .children(state.map(Input::new));
+        .children(control);
     match reason {
         Some(reason) => field.child(crate::ui::e2e::measure_control(
             "input-field-error",

@@ -248,6 +248,9 @@ chip); the other four input cards retain their existing badge heading.
 Invalid or blocked plans keep a visible disabled confirm; recovery, when
 present, uses structured commands only for Ready plans. Shared
 `Theme.radius`/font/input padding and `modal_shell`/plan/IME stay unchanged.
+A path field puts the system folder dialog's 24px icon button on the input's
+left (Add Worktree, #1043); the input keeps its 32px height and gives up only
+the button's width.
 
 ## Plan comparison and Operation Log restore (#988, #1017)
 

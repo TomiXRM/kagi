@@ -247,6 +247,9 @@ mod recovery_plan_card_994;
 #[path = "recovery/oplog_panel.rs"]
 mod recovery_oplog_panel;
 #[cfg(target_os = "macos")]
+#[path = "recovery/oplog_select.rs"]
+mod recovery_oplog_select;
+#[cfg(target_os = "macos")]
 #[path = "recovery/worktree_lock_reason.rs"]
 mod recovery_worktree_lock_reason;
 
@@ -2310,6 +2313,10 @@ mod macos {
                 Box::new(scenario_commit_panel_survives_reload),
             ),
             ("oplog_expand_copy", Box::new(scenario_oplog_expand_copy)),
+            (
+                "oplog_detail_select_copy",
+                Box::new(crate::recovery_oplog_select::scenario_oplog_detail_select_copy),
+            ),
             (
                 "oplog_recovery_recorded",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_recovery_recorded),

@@ -5,18 +5,21 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-10-05
+
 ### Added
 
 - Add Worktree のパス入力の左にフォルダアイコン(24px、「Choose folder / フォルダを選択」)を追加しました。クリックすると Finder / エクスプローラーのフォルダ選択ダイアログが開きます。worktree は新しいフォルダが必要で、ダイアログは既存のフォルダしか返さないため、選んだフォルダの中に branch 名のフォルダを置くパスを入力し、手入力と同じく計画を作り直します。キャンセルでは何も変わりません。(#1043)
 - Operation Log に承認済み計画の復旧説明と復旧コマンドを追加しました。Success / Partial / Unknown のみ現在の表示言語で表示・コピーし、説明に埋め込まれたコマンドは別行に一度だけ表示します。記録のない旧エントリは「記録されていません」と明示し、Failed / Refused では復旧欄を表示しません。(#1025)
 - merge を操作キューに追加しました。実行中や同じ tab の列の後ろに積み、対象 branch を凍結して順番が来たら計画を作り直します。確認は常に merge modal で行い、競合が起きれば後続は実行しません。(#355 段階 3b-2)
 - commit を操作キューに追加しました。先行する操作の後に実行し、本文や stage 済みの内容が変わっていれば確認します。入力欄に focus がある間は待機します。(#355 段階 3b-1)
-- 別の操作が実行中のとき、checkout(double click・Enter・branch の右クリックメニュー・確認 modal)を断らずに後で実行する列に入れます。入れた瞬間に status bar の上の列(右寄せ)と短い toast(`Queued: checkout b`)に出ます。順番が来たら plan を作り直し、blocker も warning も無ければ modal なしで実行し(実行中の行に 2 秒以降の経過秒)、それ以外は確認 modal を出します。前の操作が成功しなければ後ろの checkout は実行せず、理由つきで取り消し一覧に残します(消去・tab を閉じる・終了まで、32 件)。列の各行は「外す」でいつでも取り出せ、「すべて取り消す」で tab の列を空にできます。列がある tab では背景の fetch を行いません。commit は段階 3b-1 で受付を追加し、merge は未対応です。(#355 段階 3a)
-- 2 秒を超えた lease 保有の書き込み操作の busy snackbar に、操作の種類に基づく理由と更新される経過秒数を表示します。未分類は汎用文とし、Skip・残り時間・進捗率は出しません。remote SSH pull は lease 移行後に追加します。(#355 段階 1)
+- 別の操作が実行中のとき、checkout(double click・Enter・branch の右クリックメニュー・確認 modal)を断らずに後で実行する列に入れます。入れた瞬間に status bar の上の列(右寄せ)と短い toast(`Queued: checkout b`)に出ます。順番が来たら plan を作り直し、blocker も warning も無ければ modal なしで実行し(実行中の行に 2 秒以降の経過秒)、それ以外は確認 modal を出します。前の操作が成功しなければ後ろの checkout は実行せず、理由つきで取り消し一覧に残します(消去・tab を閉じる・終了まで、32 件)。列の各行は「外す」でいつでも取り出せ、「すべて取り消す」で tab の列を空にできます。列がある tab では背景の fetch を行いません。commit(段階 3b-1)と merge(段階 3b-2)も同じ列で受け付けます。(#355 段階 3a)
+- 2 秒を超えた lease 保有の書き込み操作の busy snackbar に、操作の種類に基づく理由と更新される経過秒数を表示します。未分類は汎用文とし、Skip・残り時間・進捗率は出しません。remote SSH pull も write lease に載った(#997)ため、pull と同じ network の理由を表示します。(#355 段階 1)
 - 2 秒を超えた操作と読み込みの説明を、理由(書き込みは経過秒数も)だけにしました。前置きの「時間がかかっています:」と、読み込みの「大きいリポジトリでは〜に時間がかかります」の説明文は表示しません。(#355)
 - commit / branch / remote branch / tag / stash / worktree の右クリックメニューをキーボードで操作できるようにしました。開くと最初の有効な項目に focus が移り、↑/↓(端で折り返し)と Home/End で無効な項目を飛ばして移動し、Enter / Space で実行、Escape で閉じます。閉じると focus は開く前の場所へ戻ります(項目が確認 modal を開いた場合は window へ)。Shift+F10(Windows キーボードの Menu キー)で、Graph では選択中の commit のメニューを、サイドバーでは focus のある行(branch / remote branch / tag / stash / worktree)のメニューを、その行の左下に開きます。ウィンドウより長いメニューは項目の部分がスクロールし、キーで移った項目は常に見える位置まで送られます。Home やほかのタブへ移るとメニューは閉じます。項目は `Role::MenuItem`、無効な項目は AX の disabled 状態を持ちます。(#985)
 
 ### Changed
+
 - SSH remote pull の実行前検査と `git pull` を同じ SSH 接続内の 1 本の remote script にまとめました。確認後に host の repository・worktree・HEAD・upstream・pull 設定・staged index・作業ツリーが変われば pull せず理由つき Refused を記録します。計画時の拒否は内部コードを除いた理由だけを示し、実行時は `ssh -T` で stderr の判定を保ちます。SSH 認証失敗や結果不明時も既存の Operation Log と lease / reconcile を維持し、別接続への自動 fallback はしません。(#1014)
 - CherryPick / StashApply の復旧説明をカード本文から外し、実行可能な計画でのみ復旧コマンドを 1 つの閉じた行に表示します。説明文は「Copy all」と読み上げ用 dialog に残し、Windows の cmd ではコピー可能なコマンドを提示しません。(#1023)
 - Clone / Remote Browse / Smart Commit / Update / App Notice / Trust Repo / PR 項目編集 / Editor の名前入力・削除・未保存確認のボタンを 24px に統一しました。無効な確認も消さず、理由を読み上げと tooltip に表示します。削除・破棄の確認は危険色にし、英日両言語の表示と警告アイコンを見直しました。Stash Drop / Pop、履歴操作、Switch to Latest、PR レビュー・merge の実行後 chip は短い状態語とし、完全な予告文は読み上げと Copy all に残します。(#1016 PR B)
@@ -24,17 +27,17 @@ All notable changes to Kagi are documented here. Format loosely follows
 - 既定の表示スケールを従来の 90% 相当（100%=14.4px/rem）にしました。保存済みの拡大率は初回起動時に換算して従来の見た目を保ち、旧 150% まで保持できるよう上限を 167% に広げました。Graph の行と線・Terminal・メニューの位置も同じ倍率に揃えました。(#1019)
 - 共通の計画確認カードと Amend / Discard / CherryPick / Commit Plan / StashApply の見出しを小さな inline icon・短い操作名・対象 chip に整理しました。対象がなければ代替 chip は出さず、behind・操作意図(承認 / コメント / 修正依頼 / upstream 設定)・ファイル / stash / branch の件数を英日それぞれの単位で表示します。入力カードの見出しは対象外です。共通カードと Amend / Discard の復旧コマンドは Ready かつ blocker なし・コマンドありの場合だけ閉じた行に表示します。入力カードの復旧行も有効な入力と Ready を要し、Copy all のコマンド欄も Ready の場合だけ出します。説明文は Copy all と読み上げ用 dialog description に残し、相当コマンドも同じ折りたたみ表示に統一しました。(#994)
 - 全 plan 確認カードの状態比較を Stash と同じ縦 2 段の CURRENT / AFTER（日本語は現在 / 実行後）に統一し、MD モーダルを 640px に広げました。Stash の CURRENT ラベルが途中で折り返される問題も修正しました。変更のない状態の chip は日本語では「変更なし」と表示します。SM / LG のカードも指定どおりの幅で描かれるようになりました（これまでは窓幅の上限が自分の幅の 90% として働き、LG が MD より狭くなっていました）。(#1017)
-
 - 計画確認カードの CURRENT → PREDICTED を同じ幅の 2 列と中央の矢印に整理し、状態チップは行内でスクロールできるようにしました。相当する Git コマンドがある計画は折りたたんでコピーでき、見出しは Tab / Enter / Space と読み上げにも対応します（Pull は実行時に再 fetch して merge commit を作る場合があるため、等価コマンドを提示しません）。Operation Log の ref 復元は REFS の移動と削除、変えない対象、既存の線を保った復元後のグラフを先に示し、確認を 2 回必要とする安全境界は維持します。低い窓でも対象 ref の先頭 3 行を優先し、復元後のグラフは 6 行を上限に内容分だけの高さにし、拡大時の横方向の線も見切れないようにします。削除する ref は赤いチップで示します。不正な ref 行の計画は開かず、詳細を Operation Log に記録して短いエラーを表示します。(#988)
+- Graph で commit を選ぶと Inspector が 180ms で開き、再クリックや Esc で選択を外すと 150ms で閉じるようにしました。途中の反転は現在の幅から続き、`reduce_motion`、タブ切替、Home、Conflict とほかの workspace への移動は即時です。(#1001)
+- Graph の commit 行で author と経過時間を小さい文字にし、名前の列を 96px、時間の列を 48px に縮めました。時間は右寄せの等幅フォントで `36m` などと表示し、名前の全文は tooltip、支援技術向けの経過時間は従来の完全形のまま残します。行高 29px は変更しません。(#1003)
 
 ### Fixed
+
 - BranchPicker を開いたまま別の repository や Home へ移ると、旧 repository の branch 一覧が新しい画面に残る問題を修正しました。画面離脱時には About / Keyboard Shortcuts、Command Palette も同じ MenuOverlay として閉じ、元画面への focus を引き継ぎません。(#1039)
 - Linux / FreeBSD の platform menu を Settings や確認 modal と重ねたとき、Tab / Shift+Tab を keybinding より前に止め、Escape は dropdown だけを先に閉じるようにしました。menu command の dispatch 前に dropdown を閉じ、tab / repository 離脱時には古い Settings / dropdown を閉じます。dropdown 終了後は Command Palette と入力 modal の既存 input に focus を戻します。macOS の native Tier A で 4 組み合わせと command による tab 閉じ・palette 入力復帰を確認します。workspace の scrim は Linux の titlebar head を覆うため、Tier A は head click の到達性ではなく dropdown が開いた状態の挙動を検証します（Home の titlebar は scrim の外）。(#990、#1038)
 - 先行書き込み中に dirty な commit を Enter で checkout しようとしたとき、stash + checkout は 2 回の書き込みなので 1 件のキューとして受け付けられない理由を英日それぞれ footer と toast に表示します。commit checkout の直接入口が対象 OID を固定し、先行操作後の新しい計画と確認・preflight を通ることも native テストで検証しました。(#1032)
 - busy 中の checkout は先行 write の途中で変わり得る dirty 状態で投入を拒否せず、静的に不可能な参照だけを先に拒否して Operation Log に理由を記録します。列には即時表示し、順番が来たときの新しい plan の blocker / warning で安全に確認または拒否します。(#1028)
-- Graph で commit を選ぶと Inspector が 180ms で開き、再クリックや Esc で選択を外すと 150ms で閉じるようにしました。途中の反転は現在の幅から続き、`reduce_motion`、タブ切替、Home、Conflict とほかの workspace への移動は即時です。(#1001)
 - サイドバー非表示でも Graph の BRANCH / TAG・GRAPH 列の境界がドラッグした 40px だけ動くように修正し、サイドバーの開閉途中もポインターに追従させました。(#1011)
-
 - queued commit の確認中に staged 内容が外部で変わった場合や merge が始まった場合、確認済みの計画を実行せず取り消します。投入時の branch の draft だけを消し、detached HEAD の commit も検証して後続を進めます。入力中の待機理由を明示し、Commit を押した後は入力欄の focus を解放します。(#355、#1020)
 - 入力欄を持つ確認 modal を Escape で閉じた後、表示されていない入力欄の focus が残っても操作キューが待機し続けないようにしました。(#355)
 - 確認カードと Operation Log からコピーできる復旧コマンドの branch・ref・remote・stash message・worktree path などの実値を POSIX shell で安全に引用するようにしました。`$()` やシングルクォートを含む名前／パスも 1 引数として扱い、手順用の `<branch>` などのプレースホルダーは変更しません。(#1004)
@@ -49,19 +52,17 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Windows では、確認カードの Copy all の `commands:` ブロックと、入力カードの折りたたみ行に復旧コマンドを出さないようにしました。コマンドの引数は POSIX shell 向けに quote されていますが、Windows の既定 shell(`cmd.exe`)では single quote が効かず `&` なども区切りとして働くため、貼り付けると意図しないコマンドが動き得ました。説明文はそのまま表示します。(#1007)
 - background の fetch・remote branch fetch・PR ref fetch・Editor 保存が異常終了したとき、write lease と実行中の表示が理由なく残り、以後の書き込みを拒否し続ける問題を修正しました。不明な結果を Operation Log に記録し、reconcile の確認後に次の書き込みを許可します。Editor の保存中にペインを閉じても、不明な結果を実行中の Operation Log に反映し、短いエラー toast を 1 回だけ表示します。fetch の完了が元のタブへ戻った後の新しい滞在に表示される問題と、Busy の拒否で確認済み計画が失効する問題も修正しました。(#355 段階 0)
 - Info パネル(About / Keyboard Shortcuts)や branch picker が前面にある間、サイドバーの行で Shift+F10 を押しても何も起きないようにしました。これまではメニューは次の描画で閉じるものの、その前に Graph の選択とスクロールがパネルの背後で branch の commit へ移っていました。また、メニューの項目に focus がある状態で ⌘W で最後のタブを閉じると、メニューの状態と消えた項目への focus が残り Welcome でキーが効かなかったのを直し、メニューを閉じて focus を window へ移すようにしました。(#1000)
-- UI ガイドの Known gaps を現状に合わせて更新しました。Settings の通常の focus trap と前面判定、Home / Graph の行キー操作は対応済みとし、未解決の 100 Tab stop 超の制限、Linux / FreeBSD の platform menu と overlay の組み合わせ、UI thread の同期書き込みと WIP diffstat を明記しました。(#974、#976、#980、#986、#981、#987、#990、#996)
-
 - Reset Current などの共通確認カードで、blocker がある計画や実行しない計画に相当 Git コマンドが付いていても、折りたたみ行・専用コピー・「Copy all」に表示しないようにしました。Operation Log の復元カードと同じ条件を使います。(#993 review)
 - Operation Log の ref 復元計画で不正な ref 行やリポジトリセッションの欠落を検出したとき、footer と toast の短いエラーを表示言語（英語・日本語）に合わせました。完全な decode エラーは引き続き Operation Log に残します。(#993 review)
 - 計画確認カードの相当 Git コマンドで、branch・remote・refspec・target OID など動的な引数を POSIX shell 向けに quote します。名前に `$(` や single quote が含まれても、表示・コピーしたコマンドで shell の置換を実行しません。POSIX quote が使えない Windows ではコマンドを隠し、Push は remote 名の前に `--` を付けて option としての解釈を防ぎ、「Copy all」の見出しも EN/JA に合わせます。(#993 review)
-
 - Operation Log の ref 復元プレビューで「Copy all」を使うとき、branch から外れる commit の印を現在の表示言語（英語・日本語）で出すようにしました。(#988)
-
 - Operation Log の ref 復元計画に blocker がある場合は、実行できない `git update-ref --stdin` をカードと「Copy all」から除きます。長い ref 名は名前欄で省略し、全文は tooltip・読み上げ・コピーに残したまま、移動前後の OID をカード内に表示します。(#988)
 
 ### Internal
 
 - 操作キューの核を副作用のない app reducer として追加しました。session ごとに intent を並べ、成功・検証・記録・reconcile の receipt で後続を判定します。画面への配線は #355 段階 3 で行います。(#355 段階 2)
+- remote pull の後片付けと SHA の fallback を検証するテストを追加しました。(#1037、#1041)
+- UI ガイドの Known gaps を現状に合わせて更新しました。Settings の通常の focus trap と前面判定、Home / Graph の行キー操作は対応済みとし、未解決の 100 Tab stop 超の制限、Linux / FreeBSD の platform menu と overlay の組み合わせ、UI thread の同期書き込みと WIP diffstat を明記しました。(#974、#976、#980、#986、#981、#987、#990、#996)
 
 ## [0.42.0] - 2026-10-04
 
@@ -111,7 +112,6 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Changed
 
-- Graph の commit 行で author と経過時間を小さい文字にし、名前の列を 96px、時間の列を 48px に縮めました。時間は右寄せの等幅フォントで `36m` などと表示し、名前の全文は tooltip、支援技術向けの経過時間は従来の完全形のまま残します。行高 29px は変更しません。(#1003)
 - Create Branch / Create Tag / Stash / Add Worktree / Rename Branch / Set Upstream の入力確認カードを、基本 32px の入力欄・確認ボタン、入力欄の直下に出る検証理由、常に見える無効な確認ボタンに統一し、見出しの従来の操作別アイコンは残しました。Stash 以外の CURRENT → PREDICTED は横 1 行にし、Stash は 38px のメッセージ欄の下に現在と実行後の状態を上下に並べ、暗い背景・小さい状態チップと簡潔な警告にしました。Stash のキャンセル・確認ボタンだけ従来の角丸のまま高さを 24px に縮めます。branch / HEAD と staged・modified・untracked などの状態は状態名・件数付きで表示し、警告の全文は Tooltip / 支援技術向けラベルに残します。空欄や実行不能な計画では復旧行を出さず、入力済みの実行可能な計画では Git コマンドだけ表示します（Create Branch はカード内に復旧行なし、Set Upstream は復旧コマンドなし）。完全な復旧説明は Operation Log に残します。IME 変換中の Enter は 6 種類すべてで Git 操作を確定しません。(#956)
 - Graph の「Avatar commit nodes」(commit の点を作者のアバターにする表示)を既定で ON にしました。設定で一度 OFF にしている場合はそのまま OFF です。
 - Worktree 行とホバーカードをアイコン・短い状態表示中心に整理し、再計測はアイコンのみ（支援技術向けの名前は維持）にしました。ignored file の注意はホバーから外し、削除時の確認計画で対象のファイル数とフォルダー数を示します。(#934)

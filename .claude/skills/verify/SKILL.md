@@ -1458,6 +1458,58 @@ table.
 
 ## Tier B — real GUI driver
 
+### Reusable modal/popup inventory (#1047)
+
+`tests/recovery/inventory/table.rs` keeps the 74 historical #1013 targets,
+their opening paths and fixture states, including explicit `skip` reasons.
+Use the full stable name, for example `inventory:01-RemoteBrowse`; `inventory:`
+selects the inventory, not the whole GUI suite. Inventory selections use the
+existing KEEP_GOING supervisor automatically: one target per child process,
+one window at a time. Ordinary scenario selections keep their previous behavior.
+Mixed inventory/ordinary selections are rejected before output or window setup;
+run them as separate commands so ordinary windows remain hidden/offscreen.
+
+For matching product revisions, run these three commands in the indicated
+worktrees (both must contain the inventory tool):
+
+```sh
+# Before: main worktree
+KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='inventory:01-RemoteBrowse' KAGI_INVENTORY_OUT=/tmp/kagi-inventory-before cargo test -p kagi --features gui-e2e --test gui_e2e_runner
+# After: feature worktree, same target, language, theme and viewport
+KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='inventory:01-RemoteBrowse' KAGI_INVENTORY_OUT=/tmp/kagi-inventory-after cargo test -p kagi --features gui-e2e --test gui_e2e_runner
+bash scripts/inventory-diff.sh /tmp/kagi-inventory-before /tmp/kagi-inventory-after
+```
+
+Choose fresh output directories; an existing inventory is not overwritten.
+Without `KAGI_INVENTORY_OUT`, output goes to worktree-local
+`target/inventory/<timestamp>/`. `KAGI_INVENTORY_LANG=en,ja` and
+`KAGI_INVENTORY_THEME=dark,light` request the four-image matrix; defaults are
+`en` and `dark`. PNGs are `<name>-<lang>-<theme>.png`; `index.md` records each
+captured target's opening path, image, or explicit skip/failure.
+The parent appends a final failure row for unsuccessful children, including
+timeout, abort/crash, startup and cleanup failures, even if the child could not
+write its own result. A captured image is not proof of successful teardown.
+
+Inventory enables `KAGI_GUI_E2E_ONSCREEN` and `KAGI_GUI_E2E_VISIBLE` only for
+its opt-in run, without focusing the window. Native `screencapture` needs Screen
+Recording permission. These are screenshots of the real rendered root under
+the Tier A dispatcher, suitable for visual before/after inspection; they do not
+replace Tier B's live-input, focus, Accessibility or IME checks.
+
+Composition is a separate command. It prefers ImageMagick `magick`, falling
+back to macOS `sips` plus Python 3's standard library (no PIL). It matches PNG
+names and writes `*-before-after.png` in the after directory; missing
+counterparts fail before output. Missing tools report `合成なし` and exit nonzero,
+without invalidating successful captures or altering their index.
+
+Tool contracts are scoped with
+`KAGI_GUI_E2E_ONLY='inventory_tool_selection,inventory_tool_matrix,inventory_tool_composition,inventory_tool_existing_runner'`.
+They exercise target selection and mixed-selection rejection, parent-recorded
+timeouts, actual language/theme capture, pixel-correct composition including its
+fallback, and unchanged ordinary runner execution with hidden/offscreen windows.
+
+### Live GUI interaction
+
 Build `scripts/pidclick.swift` and, into the same directory, `scripts/pidcursor.swift`
 (the agent cursor, below). Launch Kagi with a unique `USER` value, and retain
 all three isolation flags. `USER` namespaces the per-user socket name, while

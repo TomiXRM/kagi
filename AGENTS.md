@@ -265,11 +265,22 @@ copy — the skill changes when seams change.
     the window's own scale factor (logical = physical ÷ `backingScaleFactor`, 2 on
     a Retina panel but not on every display), and re-read them from a fresh
     screenshot every time.
-- **Screenshots in a PR**: commit only the images to an orphan
-  `pr-assets/<topic>` branch (`git hash-object -w` → `git mktree` →
-  `git commit-tree`), push it, and link
-  `https://raw.githubusercontent.com/TomiXRM/kagi/<sha>/<file>.png`. Never delete
-  those branches — the PR's images point at them.
+- **Screenshots in a PR or issue**: upload them with `gh`'s `--attach` (gh ≥ 2.99;
+  this machine has 2.102). Never commit screenshots to a branch, and never create
+  `pr-assets/*` orphan branches (removed 2026-10-06). The only images tracked in
+  git are the README's `docs/images/*.png`.
+
+  ```sh
+  gh pr create --attach './before.png#Before' --attach './after.png#After' ...
+  gh pr comment <n> --attach ./after.png      # add images to an existing PR
+  gh pr edit <n> --attach ./after.png         # append to the PR body
+  gh issue create / gh issue comment / gh issue edit take the same flag
+  ```
+
+  Write `![Before](./before.png)` in the body and `gh` rewrites the path to the
+  uploaded URL; without a reference the image is appended. Up to 50 files per
+  command; the alt text follows `#`. Attachments survive branch deletion, so
+  there is nothing to keep around after the merge.
 
 ## Workflow: PRs and multi-agent work
 

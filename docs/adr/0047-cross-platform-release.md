@@ -74,6 +74,48 @@ taskbar エントリ**として現れる(minimize→そのエントリから復�
   最新 attempt に集約がない部分再実行も古い成功では代用せず、CI 全体を再実行する。
 - fixture 検証コマンドは ADR-0077 追補を参照。実 release / tag 操作なしで検証できる。
 
+### 追補 (2026-10-06, #1055): リリースアーカイブとワンコマンド導入
+
+- `install.sh` を macOS arm64 / Linux x86_64・aarch64 の第一導入経路とする。
+  GitHub Release の `kagi-<version>-aarch64-macos.tar.gz` /
+  `kagi-<version>-x86_64-linux.tar.gz` /
+  `kagi-<version>-aarch64-linux.tar.gz` と既存の各プラットフォーム別
+  `SHA256SUMS-*.txt` を取得・照合してから配置する。`--version vX.Y.Z` は
+  latest-release API を呼ばず、`--prefix DIR` / `--dry-run` /
+  `--no-modify-path` を提供する。API 失敗時は `--version` 指定を案内して終了する。
+- macOS tar は `xtask bundle-macos` が **ad-hoc 署名・検証済み**の
+  `target/dist/Kagi.app/` を変更・再署名せずにそのまま格納し、
+  tar ルートの `bin/kagi` は `../Kagi.app/Contents/MacOS/kagi` への
+  相対 symlink とする。既存の DMG 名・作成手順は維持する。既定は
+  `/Applications/Kagi.app` (書き込めない場合 `~/Applications/Kagi.app`) と
+  `~/.local/bin/kagi`、明示 `--prefix DIR` は `DIR/Kagi.app` と `DIR/bin/kagi`。
+  notarize は未対応で、初回起動の Gatekeeper / quarantine 案内は残す。
+  script は検証済み app に限って `xattr -dr com.apple.quarantine` を実行する。
+  これはユーザーが信頼した配布物の quarantine を外す判断であり、SHA256 の一致も
+  Apple の認証や配布者署名の代替にはならない。Developer ID / notarization は未定。
+- Linux tar は既存の `kagi-<version>-<arch>/` という外側ディレクトリ
+  (`bin/kagi`、`share/applications/com.tomixrm.kagi.desktop`、
+  `share/icons/hicolor/512x512/apps/kagi.png`)を維持し、ファイル名だけ
+  `kagi-<version>-<arch>-linux.tar.gz` にする。旧ファイル名
+  `kagi-<version>-<arch>.tar.gz` の同内容コピーは **v0.44.0 だけ**公開し、
+  以降は生成しない。既定導入先は `~/.local`、明示 prefix は `DIR/bin` と
+  `DIR/share`。AppImage zip・deb・Windows zip の名前と内容は変更しない。
+- release CI は macOS の署名済み app を tar 化してから従来どおり DMG を作り、
+  tar.gz を checksum と release asset に含める。README は script → mise
+  (公開済み GitHub asset を直接使う) → 手動 → cargo の順に案内する。
+  script と mise の実リリース導入は **v0.44.0 公開後**に可能となる。
+- `kagi --version` / `kagi -V` は `src/main.rs` 冒頭で
+  `kagi <CARGO_PKG_VERSION>` を stdout に表示して exit 0 とする。
+  GPUI・settings・single-instance IPC に触れず、通常の引数と `KAGI_*` の経路は維持する。
+  root の binary 起動 test と、実 tar から prefix に入れた CLI の実行で検証する。
+- installer CI は `install.sh` / `xtask/**` / `.github/workflows/*.yml` /
+  CI fixture の変更時だけ Linux release build と install を実行する。
+  選択された install は blocking、非選択時の skip だけ集約が成功扱いし、
+  従来の Linux tests は advisory を維持する。
+- Windows の PowerShell installer は [#1056](https://github.com/TomiXRM/kagi/issues/1056)、
+  mise registry への登録は [#1057](https://github.com/TomiXRM/kagi/issues/1057)
+  に分離する。本件の `github:TomiXRM/kagi` は registry 登録なしで使う。
+
 ### Icon pipeline(ユーザー素材: assets/icon-512x512.png)
 
 - **Apple スタイルの角丸**を画像加工で適用する(ユーザー依頼)。macOS 標準ツールのみ:

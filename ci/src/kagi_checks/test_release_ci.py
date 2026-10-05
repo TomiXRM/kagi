@@ -47,12 +47,19 @@ def runs_page(*runs: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 class DependencyFixtures(unittest.TestCase):
-    def test_failed_gates_lint_blocks_release_despite_other_successes(self) -> None:
-        needs = {
+    def needs(self, selected: str = "true", install: str = "success") -> dict[str, Any]:
+        return {
+            "changes": {"result": "success", "outputs": {"installer": selected}},
             "invariants": {"result": "success"},
-            "gates-lint": {"result": "failure"},
+            "gates-lint": {"result": "success"},
             "test-macos": {"result": "success"},
+            "build-windows": {"result": "success"},
+            "install-linux": {"result": install},
         }
+
+    def test_failed_gates_lint_blocks_release_despite_other_successes(self) -> None:
+        needs = self.needs()
+        needs["gates-lint"]["result"] = "failure"
         decision = release_ci.needs_decision(needs)
         run = ci_run()
         self.assertEqual(decision.state, "failure")
@@ -64,25 +71,44 @@ class DependencyFixtures(unittest.TestCase):
         )
 
     def test_incomplete_matrix_dependency_never_authorizes_release(self) -> None:
-        # GitHub folds all invariant matrix legs into needs.invariants.result.
-        # An absent leg cannot provide a successful completed matrix result.
         for result in (None, "pending", "skipped", "cancelled", "failure"):
             with self.subTest(result=result):
-                needs = {
-                    "invariants": {} if result is None else {"result": result},
-                    "gates-lint": {"result": "success"},
-                    "test-macos": {"result": "success"},
-                }
+                needs = self.needs()
+                needs["invariants"] = {} if result is None else {"result": result}
                 self.assertEqual(release_ci.needs_decision(needs).state, "failure")
 
+    def test_conditional_install_only_skips_when_not_selected(self) -> None:
+        self.assertEqual(release_ci.needs_decision(self.needs("false", "skipped")).state, "success")
+        for result in ("skipped", "failure", "cancelled", "neutral", None):
+            with self.subTest(selected=True, result=result):
+                needs = self.needs("true", "success")
+                needs["install-linux"] = {} if result is None else {"result": result}
+                self.assertEqual(release_ci.needs_decision(needs).state, "failure")
+        for result in ("failure", "cancelled"):
+            with self.subTest(selected=False, result=result):
+                self.assertEqual(
+                    release_ci.needs_decision(self.needs("false", result)).state, "failure"
+                )
+
     def test_dependency_names_do_not_define_the_required_set_in_python(self) -> None:
-        needs = {"renamed-matrix": {"result": "success"}, "new-gate": {"result": "success"}}
+        needs = self.needs()
+        needs["renamed-matrix"] = needs.pop("invariants")
         self.assertEqual(release_ci.needs_decision(needs).state, "success")
-        needs["new-gate"]["result"] = "failure"
+        needs["renamed-matrix"]["result"] = "failure"
         self.assertEqual(release_ci.needs_decision(needs).state, "failure")
 
     def test_missing_dependency_evidence_fails_closed(self) -> None:
-        for needs in ({}, None, {"invariants": None}):
+        for needs in (
+            {},
+            None,
+            {"invariants": None},
+            {
+                "changes": {"result": "success", "outputs": {}},
+                "install-linux": {"result": "skipped"},
+            },
+            {**self.needs(), "changes": {"result": "success", "outputs": None}},
+            {name: value for name, value in self.needs().items() if name != "install-linux"},
+        ):
             with self.subTest(needs=needs):
                 self.assertEqual(release_ci.needs_decision(needs).state, "failure")
 

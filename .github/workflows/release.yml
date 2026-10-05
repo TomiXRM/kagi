@@ -1,8 +1,8 @@
 name: release
 
 # ADR-0047 / W20-RELEASE: cross-platform distribution Phase 1 (unsigned/ad-hoc).
-# Triggered by `v*` tags. Builds macOS (.app + .dmg) and Linux (tar.gz) artifacts
-# via the `xtask` helper, generates SHA256SUMS, and uploads everything to a
+# Triggered by `v*` tags. Builds macOS (.app + installer tar.gz + .dmg) and
+# Linux (tar.gz) artifacts via xtask, generates SHA256SUMS, and uploads everything to a
 # single DRAFT GitHub release for manual review before publishing.
 
 on:
@@ -92,7 +92,7 @@ jobs:
             libzstd-dev \
             dpkg-dev
 
-      # ── macOS: .app (ad-hoc signed) + .dmg ────────────────────────────────
+      # ── macOS: .app (ad-hoc signed) + tar.gz (mise/installer) + .dmg ─────
       # v0.26.0 failed here with `hdiutil create: No space left on device`.
       #
       # The `df` lines are the point of this step; the `rm`s have not been
@@ -114,10 +114,11 @@ jobs:
           sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes || true
           df -h / | tail -1
 
-      - name: Bundle macOS app + dmg
+      - name: Bundle macOS app + tar.gz + dmg
         if: matrix.kind == 'macos'
         run: |
           cargo run -p xtask -- bundle-macos
+          cargo run -p xtask -- tar-macos
           cargo run -p xtask -- dmg-macos
 
       # ── Linux: release build + tar.gz ─────────────────────────────────────

@@ -23,14 +23,25 @@ class Decision:
 
 
 def needs_decision(needs: object) -> Decision:
-    """GitHub supplies every declared `needs` entry, including the whole matrix result."""
+    """GitHub supplies every declared `needs` entry, including skipped conditional jobs."""
     if not isinstance(needs, dict) or not needs:
         return Decision("failure", "blocking CI has no dependency results")
+    changes = needs.get("changes")
+    if not isinstance(changes, dict) or changes.get("result") != "success":
+        return Decision("failure", "blocking dependency changes did not succeed")
+    outputs = changes.get("outputs")
+    selected = outputs.get("installer") if isinstance(outputs, dict) else None
+    if selected not in ("true", "false"):
+        return Decision("failure", "blocking dependency changes has no installer selection")
     for name, dependency in needs.items():
         result = dependency.get("result") if isinstance(dependency, dict) else None
+        if name == "install-linux" and selected == "false" and result == "skipped":
+            continue
         if result != "success":
             return Decision("failure", f"blocking dependency {name}: {result or 'missing result'}")
-    return Decision("success", "every blocking CI dependency succeeded")
+    if "install-linux" not in needs:
+        return Decision("failure", "blocking dependency install-linux: missing result")
+    return Decision("success", "every selected blocking CI dependency succeeded")
 
 
 def latest_run(runs: list[dict[str, Any]], sha: str, workflow_id: int) -> dict[str, Any] | None:

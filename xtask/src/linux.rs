@@ -88,7 +88,7 @@ pub fn bundle(root: &Path, override_bin: Option<&str>) -> Result<(), String> {
         .map_err(|e| format!("write desktop: {e}"))?;
     std::fs::copy(&icon, icon_dir.join("kagi.png")).map_err(|e| format!("copy icon: {e}"))?;
 
-    let tarball = dist.join(format!("{stem}.tar.gz"));
+    let tarball = dist.join(format!("{stem}-linux.tar.gz"));
     if tarball.exists() {
         std::fs::remove_file(&tarball).map_err(|e| format!("rm old tarball: {e}"))?;
     }
@@ -101,6 +101,14 @@ pub fn bundle(root: &Path, override_bin: Option<&str>) -> Result<(), String> {
         dist.to_str().unwrap(),
         &stem,
     ]))?;
+    // Keep the old filename for the v0.44.0 transition release only.
+    // The new archive still has the existing versioned directory at its root.
+    if version == "0.44.0" {
+        let legacy = dist.join(format!("{stem}.tar.gz"));
+        std::fs::copy(&tarball, &legacy)
+            .map_err(|e| format!("copy legacy tarball {}: {e}", legacy.display()))?;
+        println!("bundle-linux: wrote {}", legacy.display());
+    }
 
     util::clean_dir(&stage)?;
     println!("bundle-linux: wrote {}", tarball.display());

@@ -3,6 +3,7 @@
 //! Stdlib-only. Subcommands:
 //!   icon          regenerate assets/icon/ via scripts/make_icon.sh (macOS)
 //!   bundle-macos  release build → target/dist/Kagi.app (ad-hoc signed)
+//!   tar-macos    signed Kagi.app + bin/kagi symlink → kagi-<v>-aarch64-macos.tar.gz
 //!   dmg-macos     hdiutil DMG (Kagi.app + /Applications) → target/dist/Kagi-<v>-<arch>.dmg
 //!   bundle-linux  tar.gz layout (bin + .desktop + 512px icon) → target/dist/
 //!   bundle-appimage  Kagi.AppDir → Kagi-<arch>.AppImage (appimagetool) + zip
@@ -25,6 +26,7 @@ usage: cargo run -p xtask -- <subcommand>
 subcommands:
   icon                     regenerate app icons (scripts/make_icon.sh; macOS only)
   bundle-macos             release build + assemble & ad-hoc-sign Kagi.app
+  tar-macos               archive the signed app + bin/kagi symlink (run bundle-macos first)
   dmg-macos                build the distributable DMG (run bundle-macos first)
   bundle-linux [--bin P]   assemble the Linux tar.gz layout (--bin overrides the binary)
   bundle-windows [--bin P]  zip kagi.exe (+ LICENSE) → kagi-<v>-x86_64-windows.zip (Windows)
@@ -39,6 +41,7 @@ fn run() -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("icon") => icon::generate(&root),
         Some("bundle-macos") => macos::bundle(&root),
+        Some("tar-macos") => macos::tar(&root),
         Some("dmg-macos") => macos::dmg(&root),
         Some("bundle-linux") => {
             // optional `--bin <path>` override

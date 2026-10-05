@@ -127,6 +127,56 @@ pub fn bundle(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// `tar-macos`: archive the already signed app without copying or modifying it.
+/// The CLI entry is a relative symlink so its target stays inside the archive
+/// and mise can expose `bin/kagi` without altering the app's code signature.
+#[cfg(unix)]
+pub fn tar(root: &Path) -> Result<(), String> {
+    let dist = dist_dir(root);
+    let app = dist.join(BUNDLE_NAME);
+    if !app.join("Contents/MacOS/kagi").exists() {
+        return Err(format!(
+            "{} not found — run bundle-macos first",
+            app.display()
+        ));
+    }
+    let stage = dist.join("macos-tar-stage");
+    util::clean_dir(&stage)?;
+    let bin_dir = stage.join("bin");
+    std::fs::create_dir_all(&bin_dir).map_err(|e| format!("mkdir {}: {e}", bin_dir.display()))?;
+    std::os::unix::fs::symlink("../Kagi.app/Contents/MacOS/kagi", bin_dir.join(BIN_NAME))
+        .map_err(|e| format!("symlink bin/kagi: {e}"))?;
+
+    let version = util::kagi_version(root)?;
+    let tarball = dist.join(format!(
+        "kagi-{version}-{}-macos.tar.gz",
+        util::host_arch_appimage()
+    ));
+    println!("tar-macos: tar czf {}", tarball.display());
+    util::run(
+        Command::new("tar")
+            .env("COPYFILE_DISABLE", "1") // No AppleDouble sidecars in the archive.
+            .args([
+                "-czf",
+                tarball.to_str().unwrap(),
+                "-C",
+                dist.to_str().unwrap(),
+                BUNDLE_NAME,
+                "-C",
+                stage.to_str().unwrap(),
+                "bin",
+            ]),
+    )?;
+    util::clean_dir(&stage)?;
+    println!("tar-macos: wrote {}", tarball.display());
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub fn tar(_root: &Path) -> Result<(), String> {
+    Err("tar-macos requires a Unix host".to_string())
+}
+
 /// `dmg-macos`: `hdiutil`-built DMG containing `Kagi.app` + an `/Applications` symlink.
 pub fn dmg(root: &Path) -> Result<(), String> {
     let version = util::kagi_version(root)?;

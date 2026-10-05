@@ -82,6 +82,10 @@ fn record(entry: &Entry, result: &str, file: &str) {
     .expect("append inventory result");
 }
 
+pub(super) fn record_child_failure(entry: &Entry, reason: &str) {
+    record(entry, &format!("failed: {reason}"), "—");
+}
+
 pub(super) fn run(entry: &Entry, cx: &mut VisualTestAppContext) {
     if let Err(panic) =
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_entry(entry, cx)))

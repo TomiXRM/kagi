@@ -761,6 +761,14 @@ mod macos {
             show: std::env::var_os("KAGI_GUI_E2E_VISIBLE").is_some(),
             ..Default::default()
         };
+        if let Some(WindowBounds::Windowed(bounds)) = &options.window_bounds {
+            eprintln!(
+                "[gui-e2e] window options: origin={},{} visible={}",
+                f32::from(bounds.origin.x),
+                f32::from(bounds.origin.y),
+                options.show
+            );
+        }
         cx.update(|app| app.open_window(options, build_root))
             .expect("open hidden offscreen window")
     }
@@ -2655,6 +2663,7 @@ mod macos {
             };
             if let Some(reason) = &line {
                 crate::gui_evidence::exit_record(name, reason);
+                crate::inventory::record_child_failure(name, reason);
             }
             results.push((*name, line, evidence));
         }

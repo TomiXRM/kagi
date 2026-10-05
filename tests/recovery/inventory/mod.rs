@@ -78,8 +78,24 @@ pub(crate) fn prepare(filters: Option<&[String]>, exact: Option<&str>) -> Result
             .iter()
             .any(|filter| filter.starts_with("inventory:"))
     }) || exact.is_some_and(|name| name.starts_with("inventory:"));
+    if requested
+        && filters.is_some_and(|filters| {
+            filters
+                .iter()
+                .any(|filter| !filter.starts_with("inventory:"))
+        })
+    {
+        return Err("inventory: selections cannot be mixed with ordinary scenarios".into());
+    }
     if requested {
         capture::prepare(exact.is_none())?;
     }
     Ok(requested)
+}
+
+/// Preserve the supervisor's final failure even when the child could not unwind.
+pub(crate) fn record_child_failure(name: &str, reason: &str) {
+    if let Some(entry) = table::INVENTORY.iter().find(|entry| entry.name == name) {
+        capture::record_child_failure(entry, reason);
+    }
 }

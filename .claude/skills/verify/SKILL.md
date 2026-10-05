@@ -1466,6 +1466,8 @@ Use the full stable name, for example `inventory:01-RemoteBrowse`; `inventory:`
 selects the inventory, not the whole GUI suite. Inventory selections use the
 existing KEEP_GOING supervisor automatically: one target per child process,
 one window at a time. Ordinary scenario selections keep their previous behavior.
+Mixed inventory/ordinary selections are rejected before output or window setup;
+run them as separate commands so ordinary windows remain hidden/offscreen.
 
 For matching product revisions, run these three commands in the indicated
 worktrees (both must contain the inventory tool):
@@ -1484,6 +1486,9 @@ Without `KAGI_INVENTORY_OUT`, output goes to worktree-local
 `KAGI_INVENTORY_THEME=dark,light` request the four-image matrix; defaults are
 `en` and `dark`. PNGs are `<name>-<lang>-<theme>.png`; `index.md` records each
 captured target's opening path, image, or explicit skip/failure.
+The parent appends a final failure row for unsuccessful children, including
+timeout, abort/crash, startup and cleanup failures, even if the child could not
+write its own result. A captured image is not proof of successful teardown.
 
 Inventory enables `KAGI_GUI_E2E_ONSCREEN` and `KAGI_GUI_E2E_VISIBLE` only for
 its opt-in run, without focusing the window. Native `screencapture` needs Screen
@@ -1499,8 +1504,9 @@ without invalidating successful captures or altering their index.
 
 Tool contracts are scoped with
 `KAGI_GUI_E2E_ONLY='inventory_tool_selection,inventory_tool_matrix,inventory_tool_composition,inventory_tool_existing_runner'`.
-They exercise target selection, actual language/theme capture, pixel-correct
-composition including its fallback, and unchanged ordinary runner execution.
+They exercise target selection and mixed-selection rejection, parent-recorded
+timeouts, actual language/theme capture, pixel-correct composition including its
+fallback, and unchanged ordinary runner execution with hidden/offscreen windows.
 
 ### Live GUI interaction
 

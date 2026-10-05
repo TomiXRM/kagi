@@ -109,7 +109,8 @@ pub struct UpdatePlan {
 ///
 /// `os` = [`std::env::consts::OS`] (`"macos"`/`"linux"`/`"windows"`), `arch` =
 /// [`std::env::consts::ARCH`] (`"aarch64"`/`"x86_64"`). Mirrors the names emitted
-/// by `release.yml` (ADR-0047): `Kagi-<v>-arm64.dmg`, `kagi-<v>-<arch>.tar.gz`,
+/// by `release.yml` (ADR-0047): `Kagi-<v>-arm64.dmg`,
+/// `kagi-<v>-<arch>-linux.tar.gz` (or legacy `kagi-<v>-<arch>.tar.gz`),
 /// `kagi_Linux-AppImage_<arch>.zip`, `kagi-<v>-x86_64-windows.zip`.
 ///
 /// On Linux, `appimage` selects which artifact to self-update from (issue #29):
@@ -145,9 +146,27 @@ pub fn pick_asset<'a>(
                     x.name.contains("AppImage") && x.name.contains(a) && x.name.ends_with(".zip")
                 })
             } else {
+                // Prefer explicitly Linux-qualified archives regardless of asset order.
+                // Older releases use an unqualified archive name; retain that fallback,
+                // but never select a macOS/Darwin tarball for a Linux install.
+                let linux_tar = |x: &&Asset| {
+                    x.name.ends_with(".tar.gz")
+                        && x.name.contains(a)
+                        && !x
+                            .name
+                            .as_bytes()
+                            .windows(5)
+                            .any(|part| part.eq_ignore_ascii_case(b"macos"))
+                        && !x
+                            .name
+                            .as_bytes()
+                            .windows(6)
+                            .any(|part| part.eq_ignore_ascii_case(b"darwin"))
+                };
                 assets
                     .iter()
-                    .find(|x| x.name.ends_with(".tar.gz") && x.name.contains(a))
+                    .find(|x| linux_tar(x) && x.name.ends_with("-linux.tar.gz"))
+                    .or_else(|| assets.iter().find(linux_tar))
             }
         }
         _ => None,
@@ -480,6 +499,45 @@ mod tests {
                 .name,
             "kagi-0.3.4-x86_64-windows.zip"
         );
+    }
+
+    #[test]
+    fn linux_tar_prefers_os_qualified_asset_over_legacy_and_macos() {
+        let assets = [
+            "kagi-0.44.0-aarch64-macos.tar.gz",
+            "kagi-0.44.0-aarch64.tar.gz",
+            "kagi-0.44.0-aarch64-linux.tar.gz",
+        ]
+        .map(|name| Asset {
+            name: name.to_owned(),
+            url: String::new(),
+            size: 0,
+        });
+
+        assert_eq!(
+            pick_asset(&assets, "linux", "aarch64", false).unwrap().name,
+            "kagi-0.44.0-aarch64-linux.tar.gz"
+        );
+    }
+
+    #[test]
+    fn linux_tar_rejects_darwin_and_falls_back_to_legacy() {
+        let assets = [
+            "kagi-0.44.0-aarch64-Darwin.tar.gz",
+            "kagi-0.44.0-aarch64-macos.tar.gz",
+            "kagi-0.44.0-aarch64.tar.gz",
+        ]
+        .map(|name| Asset {
+            name: name.to_owned(),
+            url: String::new(),
+            size: 0,
+        });
+
+        assert_eq!(
+            pick_asset(&assets, "linux", "aarch64", false).unwrap().name,
+            "kagi-0.44.0-aarch64.tar.gz"
+        );
+        assert!(pick_asset(&assets[..2], "linux", "aarch64", false).is_none());
     }
 
     #[test]

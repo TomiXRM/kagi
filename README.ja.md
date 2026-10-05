@@ -135,24 +135,38 @@ diff は `+`/`−` の hunk をシンタックスハイライトと行番号付�
 
 ## 📦 インストール
 
-最新ビルドは [**GitHub Releases**](https://github.com/TomiXRM/kagi/releases) から入手できます。
-各リリースには `SHA256SUMS-*.txt` が付属するので、ダウンロードしたファイルを検証してください。
-v0.3.4 以降は、アプリ内から更新の確認とインストールもできます。
+**1. インストールスクリプト(macOS Apple Silicon / Linux x86_64・arm64)。** **v0.44.0 の公開後**(現時点では未公開)に利用できます。OS/アーキテクチャに合うリリースアーカイブを取得し、リリースの `SHA256SUMS-*.txt` で SHA-256 を検証してからインストールします。
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/TomiXRM/kagi/main/install.sh | sh
+```
+
+公開済みバージョンを指定する場合はスクリプトをダウンロードし、`sh install.sh --version vX.Y.Z` を実行してください(最新リリース API は呼びません)。ほかのオプションは `--prefix DIR`(配置先の変更)、`--dry-run`(変更せずに予定を表示)、`--no-modify-path`(PATH の案内を省略)です。シェルの起動設定は常に変更しません。macOS の既定の配置先は書き込み可能なら `/Applications/Kagi.app`、それ以外は `~/Applications/Kagi.app` で、`~/.local/bin/kagi` がアプリのバイナリを指します。`--prefix DIR` では `DIR/Kagi.app` と `DIR/bin/kagi` です。Linux の既定の配置先は `~/.local` (`bin/kagi`、`share/applications/`、`share/icons/`)で、`--prefix DIR` は同じ `bin/` と `share/` を `DIR` 以下に配置します。選んだ `bin/` を `PATH` に含めてください。
+
+**2. mise(macOS Apple Silicon / Linux x86_64・arm64)。** **v0.44.0 の公開後**に GitHub リリースのアーカイブを直接インストールできます(ローカル plugin や個別設定は不要)。
+
+```sh
+mise use -g github:TomiXRM/kagi@latest
+kagi --version
+```
+
+**3. 手動ダウンロード。** [**GitHub Releases**](https://github.com/TomiXRM/kagi/releases) から入手し、付属の `SHA256SUMS-*.txt` と照合してください。v0.3.4 以降はアプリ内から更新の確認とインストールもできます。新しい installer / mise 向けアーカイブは v0.44.0 からです。それまでは既存の DMG、Linux tar/AppImage、Windows zip を利用してください。
 
 | OS | アセット |
 |----|---------|
-| macOS (Apple Silicon) | `Kagi-<version>-arm64.dmg` |
-| Linux (x86_64 / arm64) | `kagi-<version>-<arch>.tar.gz`(バイナリ + `.desktop` + アイコン)、または AppImage の zip `kagi_Linux-AppImage_<arch>.zip` |
-| Windows (x86_64) | `kagi-<version>-x86_64-windows.zip`(展開して `kagi.exe` を実行。単体で動作) |
+| macOS (Apple Silicon) | `kagi-<version>-arm64-macos.tar.gz` (署名済み `Kagi.app` + CLI シンボリックリンク、v0.44.0 以降)、`Kagi-<version>-arm64.dmg` (`Kagi.app` を Applications にドラッグ) |
+| Linux (x86_64 / arm64) | `kagi-<version>-<arch>-linux.tar.gz` (`<arch>` は `x86_64` または `aarch64`。バージョン名付きディレクトリにバイナリ、`.desktop`、アイコンを格納。v0.44.0 以降)、または AppImage の zip `kagi_Linux-AppImage_<arch>.zip` |
+| Windows (x86_64) | `kagi-<version>-x86_64-windows.zip` (展開して `kagi.exe` を実行。単体で動作) |
+
+macOS tar は意図的に `arm64-macos` とし、`aarch64-macos` は使いません。v0.43 以前の Linux aarch64 更新クライアントが旧 Linux tar の名前として誤認するのを防ぐためです。この PR を含む初回リリースに限り、release workflow が `--legacy-linux-name` を明示して旧 Linux tar 名を `-linux.tar.gz` と併載します。そのリリースの公開後に workflow からフラグを外します。Linux tar 内のバージョン名付きルートディレクトリはそのままです。
 
 <details>
-<summary><b>macOS（未署名ビルドの初回起動）</b></summary>
+<summary><b>macOS（notarize 前のビルドの初回起動）</b></summary>
 
-Kagi はまだ **Apple の notarize に対応していない**(ad-hoc 署名のみで Apple Developer ID も未取得)ため、Gatekeeper が「開発元を確認できない」と警告します。
-次のいずれかで起動してください。
+Kagi は **ad-hoc 署名済みですが Apple の notarize には未対応**(Apple Developer ID は未取得)です。スクリプト・mise・DMG のどの方法でインストールしても、Gatekeeper が「開発元を確認できない」と警告することがあります。次のいずれかで起動してください。
 
 1. **`Kagi.app` を右クリック → 開く → 開く**(初回だけ。以降は通常どおり起動できます)。
-2. quarantine 属性を外す。
+2. インストール済みのアプリから quarantine 属性を外す(`~/Applications` や指定した prefix に配置した場合はパスを変更)。
    ```sh
    xattr -dr com.apple.quarantine /Applications/Kagi.app
    ```
@@ -161,7 +175,7 @@ Kagi はまだ **Apple の notarize に対応していない**(ad-hoc 署名の�
 </details>
 
 <details>
-<summary><b>Linux（AppImage）</b></summary>
+<summary><b>Linux（AppImage を手動インストール）</b></summary>
 
 ```sh
 unzip kagi_Linux-AppImage_<arch>.zip && bash install_linux_desktop.sh
@@ -177,6 +191,8 @@ Windows ビルドは**実験的かつベストエフォート**です(CI での�
 **詳細情報 → 実行**を選んでください。
 `PATH` に通常の `git` を通しておくことをおすすめします(Kagi は `git` を呼び出し、内蔵ターミナルを開きます)。
 </details>
+
+**4. Cargo(ソースからビルド)。** 下の「ソースからビルド」を参照してください。`cargo install --path .` で `kagi` を `~/.cargo/bin` にインストールできます。
 
 ## 🛠️ ソースからビルド
 

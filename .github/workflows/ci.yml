@@ -17,8 +17,37 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
+  # Only installer/packaging changes pay for a second Linux release build.
+  # workflow_dispatch deliberately exercises the install proof regardless of diff.
+  changes:
+    name: installer paths
+    runs-on: ubuntu-latest
+    outputs:
+      installer: ${{ steps.dispatch.outputs.installer || steps.filter.outputs.installer }}
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name != 'workflow_dispatch'
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          filters: |
+            installer:
+              - 'install.sh'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'xtask/**'
+              - '.github/workflows/*.yml'
+              - 'ci/src/kagi_checks/install_fixture.py'
+              - 'ci/pyproject.toml'
+              - 'ci/uv.lock'
+      - id: dispatch
+        if: github.event_name == 'workflow_dispatch'
+        run: echo 'installer=true' >> "$GITHUB_OUTPUT"
+
   # ── BLOCKING: repository invariants (one uv project, one dialect) ────────────
   #
   # Every gate lives in `ci/` as a uv project (`kagi-checks`) and runs as
@@ -149,8 +178,9 @@ jobs:
   # This dependency list is the sole authority for release-blocking CI.
   # `always()` is essential: a failed/skipped dependency must produce a red
   # aggregate, not skip the verification step. Matrix success covers every leg.
+  # Only install-linux may be skipped, and only when changes selected false.
   blocking-ci:
-    needs: [invariants, gates-lint, test-macos, build-windows]
+    needs: [changes, invariants, gates-lint, test-macos, build-windows, install-linux]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
@@ -158,14 +188,15 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - name: Require every blocking dependency to succeed
+      - name: Require every selected blocking dependency to succeed
         env:
           CI_NEEDS: ${{ toJSON(needs) }}
         run: uv run --frozen --project ci check-blocking-ci
 
-  # ── ADVISORY: Linux test leg (gpui system deps; not yet validated headless) ──
+  # ── ADVISORY: Linux tests; conditional release artifact for blocking install ─
   test-linux:
     name: test (Linux, advisory)
+    needs: changes
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -183,9 +214,54 @@ jobs:
             libasound2-dev \
             libvulkan-dev \
             libzstd-dev
+      - name: Build actual Linux binary for installer
+        if: needs.changes.outputs.installer == 'true'
+        run: cargo build --release -p kagi
+      - name: Bundle installer tar and checksum
+        if: needs.changes.outputs.installer == 'true'
+        run: |
+          cargo run -p xtask -- bundle-linux --bin target/release/kagi
+          cd target/dist
+          archives=(kagi-*-x86_64-linux.tar.gz)
+          test "${#archives[@]}" -eq 1
+          sha256sum "${archives[0]}" > SHA256SUMS-linux-x86_64.txt
+      - name: Upload installer fixture artifact before advisory tests
+        if: needs.changes.outputs.installer == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-linux-x86_64
+          path: |
+            target/dist/kagi-*-x86_64-linux.tar.gz
+            target/dist/SHA256SUMS-linux-x86_64.txt
+          if-no-files-found: error
       - name: cargo test --workspace
         run: cargo test --workspace
 
+  # The advisory job may fail after artifact upload; always attempt the proof
+  # when selected. Missing artifacts / failed packaging must fail this job.
+  install-linux:
+    name: install (Linux)
+    needs: [changes, test-linux]
+    if: ${{ always() && needs.changes.result == 'success' && needs.changes.outputs.installer == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install dynamic libraries for the release binary
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon0 libxkbcommon-x11-0 libwayland-client0 libwayland-cursor0 \
+            libwayland-egl1 libx11-6 libxcb1 libfontconfig1 libfreetype6 \
+            libasound2t64 libvulkan1 libzstd1
+      - uses: actions/download-artifact@v4
+        with:
+          name: install-linux-x86_64
+          path: installer-dist
+      - name: Exercise real installer against local release assets
+        run: uv run --frozen --project ci install-fixture --dist installer-dist
   # ── ADVISORY: fmt + clippy (pre-existing v0.2.0 debt; tracked for S7 cleanup) ─
   lint:
     name: fmt + clippy (advisory)

@@ -1,8 +1,8 @@
 name: release
 
 # ADR-0047 / W20-RELEASE: cross-platform distribution Phase 1 (unsigned/ad-hoc).
-# Triggered by `v*` tags. Builds macOS (.app + .dmg) and Linux (tar.gz) artifacts
-# via the `xtask` helper, generates SHA256SUMS, and uploads everything to a
+# Triggered by `v*` tags. Builds macOS (.app + installer tar.gz + .dmg) and
+# Linux (tar.gz) artifacts via xtask, generates SHA256SUMS, and uploads everything to a
 # single DRAFT GitHub release for manual review before publishing.
 
 on:
@@ -92,7 +92,7 @@ jobs:
             libzstd-dev \
             dpkg-dev
 
-      # ── macOS: .app (ad-hoc signed) + .dmg ────────────────────────────────
+      # ── macOS: .app (ad-hoc signed) + tar.gz (mise/installer) + .dmg ─────
       # v0.26.0 failed here with `hdiutil create: No space left on device`.
       #
       # The `df` lines are the point of this step; the `rm`s have not been
@@ -114,10 +114,11 @@ jobs:
           sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes || true
           df -h / | tail -1
 
-      - name: Bundle macOS app + dmg
+      - name: Bundle macOS app + tar.gz + dmg
         if: matrix.kind == 'macos'
         run: |
           cargo run -p xtask -- bundle-macos
+          cargo run -p xtask -- tar-macos
           cargo run -p xtask -- dmg-macos
 
       # ── Linux: release build + tar.gz ─────────────────────────────────────
@@ -125,9 +126,11 @@ jobs:
         if: matrix.kind == 'linux'
         run: cargo build --release -p kagi
 
+      # Transitional alias for the first release shipping the new Linux tar
+      # names. Remove --legacy-linux-name after that release is published.
       - name: Bundle Linux tar.gz
         if: matrix.kind == 'linux'
-        run: cargo run -p xtask -- bundle-linux --bin target/release/kagi
+        run: cargo run -p xtask -- bundle-linux --bin target/release/kagi --legacy-linux-name
 
       # ── Linux: AppImage zip (ADR-0047 追補, W21-APPIMAGE) ──────────────────
       # Fetch the matching appimagetool (FUSE-free via --appimage-extract-and-run,

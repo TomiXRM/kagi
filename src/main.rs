@@ -81,6 +81,14 @@ fn headless_mode() -> bool {
 }
 
 fn main() {
+    let mut arguments = std::env::args().skip(1).peekable();
+    if arguments
+        .peek()
+        .is_some_and(|arg| arg == "--version" || arg == "-V")
+    {
+        println!("kagi {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     install_panic_log_hook();
     // `cargo run` hands the binary `CARGO_MANIFEST_DIR`, which the oplog reads
     // as "I am a test harness - refuse the real ~/.kagi unless KAGI_LOG_DIR
@@ -99,7 +107,7 @@ fn main() {
     shell_env::ensure_login_shell_path();
 
     // Collect CLI arguments (skip argv[0]).
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<String> = arguments.collect();
 
     // ── Headless CLI (#330) ──────────────────────────────────
     // If argv[1] is a known subcommand (plan/confirm/status/oplog), run the

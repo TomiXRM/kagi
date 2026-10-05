@@ -117,21 +117,38 @@ A configurable ignore list (gitignore syntax, edited in Settings) keeps binaries
 
 ## 📦 Install
 
-Grab the latest build from [**GitHub Releases**](https://github.com/TomiXRM/kagi/releases). Each release ships `SHA256SUMS-*.txt` — please verify your download. From v0.3.4 on, Kagi can also check for and install updates from within the app.
+**1. Install script (macOS Apple Silicon / Linux x86_64 or arm64).** Starting with the **v0.44.0 release** (not yet published), the script downloads the matching release archive, checks its SHA-256 against the release's `SHA256SUMS-*.txt`, and installs it:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/TomiXRM/kagi/main/install.sh | sh
+```
+
+To select a published release explicitly, download the script and run `sh install.sh --version vX.Y.Z`; this skips the latest-release API. Other flags are `--prefix DIR` (custom install root), `--dry-run` (show planned changes without installing), and `--no-modify-path` (suppress the PATH hint). The script never modifies shell startup files. On macOS the default is `/Applications/Kagi.app` if writable, otherwise `~/Applications/Kagi.app`, with `~/.local/bin/kagi` pointing to the app binary. With `--prefix DIR`, the app is `DIR/Kagi.app` and the command is `DIR/bin/kagi`. On Linux the default root is `~/.local` (`bin/kagi`, `share/applications/`, and `share/icons/`); `--prefix DIR` uses those same `bin/` and `share/` paths under `DIR`. Ensure the selected `bin/` is on your `PATH`.
+
+**2. mise (macOS Apple Silicon / Linux x86_64 or arm64).** After **v0.44.0 is published**, install its GitHub release archive directly (no local plugin or custom configuration):
+
+```sh
+mise use -g github:TomiXRM/kagi@latest
+kagi --version
+```
+
+**3. Manual download.** Grab the latest build from [**GitHub Releases**](https://github.com/TomiXRM/kagi/releases) and verify it against its `SHA256SUMS-*.txt`. From v0.3.4 on, Kagi can also check for and install updates from within the app. The new installer/mise archives below first ship with v0.44.0; until then use the existing DMG, Linux tar/AppImage, or Windows zip.
 
 | OS | Asset |
 |----|-------|
-| macOS (Apple Silicon) | `Kagi-<version>-arm64.dmg` |
-| Linux (x86_64 / arm64) | `kagi-<version>-<arch>.tar.gz` (binary + `.desktop` + icon), or the AppImage zip `kagi_Linux-AppImage_<arch>.zip` |
+| macOS (Apple Silicon) | `kagi-<version>-arm64-macos.tar.gz` (signed `Kagi.app` + CLI symlink, from v0.44.0); `Kagi-<version>-arm64.dmg` (drag `Kagi.app` to Applications) |
+| Linux (x86_64 / arm64) | `kagi-<version>-<arch>-linux.tar.gz` (`<arch>` = `x86_64` or `aarch64`; versioned directory with binary, `.desktop`, icon, from v0.44.0), or `kagi_Linux-AppImage_<arch>.zip` |
 | Windows (x86_64) | `kagi-<version>-x86_64-windows.zip` — extract and run `kagi.exe` (self-contained) |
 
-<details>
-<summary><b>macOS — first launch on an unsigned build</b></summary>
+The macOS tar intentionally uses `arm64-macos`, **not** `aarch64-macos`: Linux aarch64 updaters shipped through v0.43 could otherwise match it as a legacy Linux tar. For the first release containing these new archives, the release workflow explicitly passes `--legacy-linux-name` to publish the old Linux tar name alongside `-linux.tar.gz`; remove that workflow flag after that release is published. The canonical Linux tar keeps the original versioned root directory.
 
-Kagi is **not yet notarized by Apple** (ad-hoc signature only — no Apple Developer ID yet), so Gatekeeper warns that the developer can't be verified. Either:
+<details>
+<summary><b>macOS — first launch on an unnotarized build</b></summary>
+
+Kagi has an **ad-hoc signature but is not yet notarized by Apple** (no Apple Developer ID yet). Gatekeeper may warn that the developer can't be verified, whether installed via the script, mise, or a DMG. Either:
 
 1. **Right-click `Kagi.app` → Open → Open** (once; afterwards it opens normally), or
-2. Remove the quarantine attribute:
+2. Remove quarantine from the installed app (substitute its actual location if you installed under `~/Applications` or a custom prefix):
    ```sh
    xattr -dr com.apple.quarantine /Applications/Kagi.app
    ```
@@ -140,7 +157,7 @@ Signing + notarization is planned once an Apple Developer Program membership is 
 </details>
 
 <details>
-<summary><b>Linux — AppImage</b></summary>
+<summary><b>Linux — manual AppImage install</b></summary>
 
 ```sh
 unzip kagi_Linux-AppImage_<arch>.zip && bash install_linux_desktop.sh
@@ -153,6 +170,8 @@ registers it under `~/.local` (icon + `.desktop` entry, fully offline).
 
 The Windows build is **experimental / best-effort** (built and packaged by CI, not yet runtime-verified by the maintainers — please report issues). It is unsigned, so SmartScreen warns on first launch: **More info → Run anyway**. A normal `git` install on `PATH` is recommended (Kagi shells out to `git` and opens an integrated terminal).
 </details>
+
+**4. Cargo (build from source).** See **Build from source** below; `cargo install --path .` installs `kagi` to `~/.cargo/bin`.
 
 ## 🛠️ Build from source
 

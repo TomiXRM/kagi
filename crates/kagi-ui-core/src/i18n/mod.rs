@@ -1264,6 +1264,8 @@ pub enum Msg {
     InputNewBranchName,
     InputTagName,
     InputWorktreePath,
+    // #1043 — Add Worktree path: the folder dialog's button.
+    InputChooseFolder,
     InputStashMessage,
     InputStashCurrent,
     InputStashAfter,
@@ -3410,6 +3412,9 @@ impl Msg {
             (Ja, InputTagName) => "tag 名",
             (En, InputWorktreePath) => "Path",
             (Ja, InputWorktreePath) => "パス",
+            // #1043 — Add Worktree path: the folder dialog's button.
+            (En, InputChooseFolder) => "Choose folder",
+            (Ja, InputChooseFolder) => "フォルダを選択",
             (En, InputStashMessage) => "Message (optional)",
             (Ja, InputStashMessage) => "メッセージ（省略可）",
             (En, InputStashCurrent) => "CURRENT",

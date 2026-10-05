@@ -738,6 +738,10 @@ The current suite covers:
     the session probe (`kagi_git::proc::session`).
   - Tier B: open a worktree's terminal, run `nohup sleep 999 &`, try to remove
     it (blocked, EN/JA), `exit`, then plan again (warning) and remove.
+- Add Worktree のフォルダ選択 (#1043):
+  `KAGI_GUI_E2E_KEEP_GOING=1 KAGI_GUI_E2E_ONLY='worktree_folder_picker'`
+  (`tests/recovery/worktree_folder_picker.rs`)。native dialog は runner から操作できないため、`e2e::answer_folder_prompt` で答えを決め、`e2e::take_folder_prompts` で要求を数える。EN/JA で、パス入力の左にある 24px のボタン(AX 名「Choose folder / フォルダを選択」)と、32px のままの入力欄を確認する。キャンセルではパスが変わらない。フォルダを選ぶと `<選んだフォルダ>/<branch 名>` が入力され、手入力と同じく計画され、何も書き込まれない。
+  mutation で FAIL することを確認済み: 選んだフォルダをそのまま使う、選択を反映しない、ボタンを右に置く、28px にする。Tier B は隔離した実アプリで Add Worktree を開き、ボタンをクリックして Finder のダイアログが開くこと、選んだ結果が入力欄と CURRENT / AFTER に反映されることを確認する。
 - Operation Log の計画復旧説明 (#1025 / ADR-0221):
   `KAGI_GUI_E2E_KEEP_GOING=1 KAGI_GUI_E2E_ONLY='oplog_recovery_,oplog_actor_reflog,oplog_restore_card,oplog_expand_copy'`
   (`tests/recovery/oplog_panel.rs`)。実 `run_recorded` の Success 行で EN/JA の説明、重複しない英日別ラベルのコマンド行、AX Recovery group と Copy を確認する。実行前に HEAD を動かした Failed 行には Recovery 欄を描かず、旧形式の Success 行は「not recorded / 記録されていません」を表示する。

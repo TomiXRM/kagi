@@ -175,6 +175,10 @@ mod repo_health;
 mod modal_polish_b;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/worktree_folder_picker.rs"]
+mod worktree_folder_picker;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/refusal_reasons.rs"]
 mod refusal_reasons;
 
@@ -1526,6 +1530,10 @@ mod macos {
             (
                 "modal_polish_stash_after",
                 Box::new(crate::modal_polish_b::scenario_modal_polish_stash_after),
+            ),
+            (
+                "worktree_folder_picker",
+                Box::new(crate::worktree_folder_picker::scenario_worktree_folder_picker),
             ),
             (
                 "repo_health_proposal",

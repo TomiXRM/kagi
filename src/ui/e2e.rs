@@ -908,6 +908,29 @@ thread_local! {
     static PANEL_MOTION_CLOCK: std::cell::Cell<Option<std::time::Instant>> =
         const { std::cell::Cell::new(None) };
     static GITHUB_NAV: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FOLDER_PROMPTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static FOLDER_ANSWER: RefCell<Option<std::path::PathBuf>> = const { RefCell::new(None) };
+}
+
+/// #1043: the system folder dialog cannot be driven from the GUI runner. A
+/// request is recorded under its prompt and answered with the folder set by
+/// [`answer_folder_prompt`]; with none set it is cancelled.
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn take_folder_prompt(prompt: &str) -> Option<std::path::PathBuf> {
+    FOLDER_PROMPTS.with(|prompts| prompts.borrow_mut().push(prompt.to_string()));
+    FOLDER_ANSWER.with(|answer| answer.borrow_mut().take())
+}
+
+/// The folder the next dialog request chooses (`None`: it is cancelled).
+#[cfg(feature = "gui-e2e")]
+pub fn answer_folder_prompt(folder: Option<std::path::PathBuf>) {
+    FOLDER_ANSWER.with(|answer| *answer.borrow_mut() = folder);
+}
+
+/// The prompts of the folder dialogs requested since the last call.
+#[cfg(feature = "gui-e2e")]
+pub fn take_folder_prompts() -> Vec<String> {
+    FOLDER_PROMPTS.with(|prompts| std::mem::take(&mut *prompts.borrow_mut()))
 }
 
 /// A URL Kagi asked the OS to open, recorded instead of launching the

@@ -8,7 +8,9 @@
 use super::button_style::{modal_button, ModalButtonKind};
 use super::i18n::Msg;
 use super::modal_renderers::{modal_overlay, render_current_predicted, ModalIcon};
-use super::modal_renderers_input::{render_input_modal_field, render_input_modal_heading};
+use super::modal_renderers_input::{
+    render_input_modal_field, render_input_modal_heading, render_input_modal_path_field,
+};
 use super::modal_renderers_plan::{offered_recovery_commands, render_input_recovery_commands};
 use super::modal_shell::{modal_card, modal_scroll_body, MODAL_W_LG, MODAL_W_MD};
 use super::modals::worktree::CreateWorktreeModal;
@@ -254,6 +256,10 @@ pub(crate) fn render_create_worktree_modal(
         }
         cx.notify();
     });
+    // #1043: the folder dialog writes into the path field (input, not a write).
+    let choose_folder = cx.listener(|this, _event: &gpui::ClickEvent, window, cx| {
+        this.choose_create_worktree_folder(window, cx);
+    });
 
     // Keep the two fields together above the safety preview. Only keyed
     // validation for a field moves out of the blocker area.
@@ -275,7 +281,7 @@ pub(crate) fn render_create_worktree_modal(
                 })
                 .map(|b| SharedString::from(plan_note_text(b))),
         ))
-        .child(render_input_modal_field(
+        .child(render_input_modal_path_field(
             Msg::InputWorktreePath.t(),
             modal.path_state.as_ref(),
             plan.as_ref()
@@ -291,6 +297,8 @@ pub(crate) fn render_create_worktree_modal(
                     })
                 })
                 .map(|b| SharedString::from(plan_note_text(b))),
+            "create-worktree-choose-folder",
+            choose_folder,
         ));
 
     if let Some(ref p) = plan {

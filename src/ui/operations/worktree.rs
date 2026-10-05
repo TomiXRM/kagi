@@ -62,22 +62,70 @@ impl KagiApp {
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("repo");
-        let safe_branch: String = branch
-            .chars()
-            .map(|ch| {
-                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
-                    ch
-                } else {
-                    '-'
-                }
+        format!("../{}-worktrees/{}", repo_name, worktree_dir_name(branch))
+    }
+
+    /// #1043: choose where the new worktree goes in the system dialog — the
+    /// same `prompt_for_paths` as Open Repository and the clone folder
+    /// (ADR-0028). The dialog can only return a folder that exists, and a
+    /// worktree needs a new one, so the field becomes a folder for the branch
+    /// inside the chosen one, named like the default path. It is planned
+    /// exactly as if it had been typed; cancelling changes nothing. Choosing
+    /// a folder is input to the plan, not a write.
+    pub(crate) fn choose_create_worktree_folder(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let prompt = i18n::Msg::InputChooseFolder.t();
+        #[cfg(feature = "gui-e2e")]
+        if let Some(folder) = crate::ui::e2e::take_folder_prompt(prompt) {
+            self.place_create_worktree_in(&folder, window, cx);
+        }
+        #[cfg(not(feature = "gui-e2e"))]
+        {
+            let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+                files: false,
+                directories: true,
+                multiple: false,
+                prompt: Some(SharedString::from(prompt)),
+            });
+            cx.spawn_in(window, async move |app, acx| {
+                let Ok(Ok(Some(paths))) = receiver.await else {
+                    return;
+                };
+                let Some(folder) = paths.into_iter().next() else {
+                    return;
+                };
+                let _ = app.update_in(acx, |app, window, cx| {
+                    app.place_create_worktree_in(&folder, window, cx);
+                });
             })
-            .collect();
-        let safe_branch = if safe_branch.is_empty() {
-            "new-branch".to_string()
-        } else {
-            safe_branch
+            .detach();
+        }
+    }
+
+    /// Put `<folder>/<branch>` in the open card's path field. The next input
+    /// sync sees a user edit: the path stops following the branch name and is
+    /// replanned.
+    fn place_create_worktree_in(
+        &mut self,
+        folder: &std::path::Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((state, branch)) = self
+            .create_worktree_modal()
+            .and_then(|modal| Some((modal.path_state.clone()?, modal.branch_input.clone())))
+        else {
+            return;
         };
-        format!("../{}-worktrees/{}", repo_name, safe_branch)
+        let value = folder
+            .join(worktree_dir_name(&branch))
+            .display()
+            .to_string();
+        state.update(cx, |input, cx| input.set_value(value, window, cx));
+        cx.notify();
     }
 
     pub(crate) fn replan_create_worktree(&mut self) {
@@ -563,5 +611,25 @@ impl KagiApp {
                 }
             }
         }
+    }
+}
+
+/// The new worktree's folder name for `branch`: path-safe characters only,
+/// `new-branch` while the branch name is empty.
+fn worktree_dir_name(branch: &str) -> String {
+    let safe: String = branch
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    if safe.is_empty() {
+        "new-branch".to_string()
+    } else {
+        safe
     }
 }

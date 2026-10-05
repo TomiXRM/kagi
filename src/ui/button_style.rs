@@ -212,3 +212,70 @@ fn modal_button_with_tab_stop(
         .on_click(on_click)
         .into_any_element()
 }
+
+/// An icon-only dialog action (#1043): the same small (24px) square as an
+/// icon `Button`, named by `label` in its tooltip and for assistive
+/// technology. gpui-component's `Button` names its AX node only from a
+/// visible label, so the glyph-only control is drawn here — still a Tab stop
+/// that Enter / Space press like a click.
+pub(crate) fn modal_icon_button(
+    id: &'static str,
+    icon: gpui_component::IconName,
+    label: impl Into<SharedString>,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> gpui::AnyElement {
+    let label = label.into();
+    record_modal_button(id, &label, None);
+    ModalIconButton {
+        id,
+        icon,
+        label,
+        on_click: Box::new(on_click),
+    }
+    .into_any_element()
+}
+
+type ClickHandler = Box<dyn Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App)>;
+
+#[derive(IntoElement)]
+struct ModalIconButton {
+    id: &'static str,
+    icon: gpui_component::IconName,
+    label: SharedString,
+    on_click: ClickHandler,
+}
+
+impl RenderOnce for ModalIconButton {
+    fn render(self, window: &mut Window, cx: &mut gpui::App) -> impl IntoElement {
+        let focus = window
+            .use_keyed_state(self.id, cx, |_, cx| cx.focus_handle())
+            .read(cx)
+            .clone();
+        let focused = focus.is_focused(window);
+        let label = self.label;
+        let on_click = self.on_click;
+        let size = super::theme::scaled_px(24.);
+        div()
+            .id(self.id)
+            .role(Role::Button)
+            .aria_label(label.clone())
+            .track_focus(&focus)
+            .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .justify_center()
+            .size(size)
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(if focused {
+                cx.theme().ring
+            } else {
+                gpui::transparent_black()
+            })
+            .text_color(cx.theme().muted_foreground)
+            .hover(|style| style.bg(cx.theme().secondary_hover))
+            .on_click(move |event, window, cx| on_click(event, window, cx))
+            .child(gpui_component::Icon::new(self.icon).small())
+    }
+}

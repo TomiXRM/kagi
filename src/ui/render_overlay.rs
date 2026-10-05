@@ -685,15 +685,12 @@ impl KagiApp {
                         let Some((plan, _)) = self.update_available.as_ref() else {
                             return el;
                         };
-                        el.child(super::e2e::measure_control(
-                            "active-modal/update",
-                            render_update_modal(
-                                plan.clone(),
-                                self.update_installing,
-                                self.update_status.clone(),
-                                window,
-                                cx,
-                            ),
+                        el.child(render_update_modal(
+                            plan.clone(),
+                            self.update_installing,
+                            self.update_status.clone(),
+                            window,
+                            cx,
                         ))
                     }),
                 LayerKind::ConflictFileMenu

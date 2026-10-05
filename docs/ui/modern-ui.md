@@ -116,6 +116,10 @@ screen with no siblings to copy (#934's worktree row).
      AX tree (Accessibility Inspector) where the contract asks for them.
      Screenshots of **before** and **after** with the same data, viewport,
      theme, language, zoom and state; the reference sits beside them.
+     For repeatable modal/popup captures, use the [inventory before/after
+     recipe](../../.claude/skills/verify/SKILL.md#reusable-modalpopup-inventory-1047).
+     Its rendered native screenshots aid comparison; they do not replace the
+     live-input, focus or IME checks above.
    - **Choose the matrix by risk**, not all combinations: zoom 1.0 plus the
      end the change can break (0.7 for small text, 1.67 for clipping);
      light and dark when a colour or token changed (and a custom theme when a

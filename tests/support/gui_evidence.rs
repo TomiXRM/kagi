@@ -219,7 +219,7 @@ unsafe fn send_integer(receiver: Id, selector: &std::ffi::CStr) -> isize {
 }
 
 /// The window numbers of this process's windows, and whether each is on screen.
-fn app_windows() -> Vec<(isize, bool)> {
+pub(crate) fn app_windows() -> Vec<(isize, bool)> {
     // SAFETY: AppKit classes and selectors with the documented signatures,
     // called on the runner's main thread.
     unsafe {
@@ -240,6 +240,35 @@ fn app_windows() -> Vec<(isize, bool)> {
                 (number, visible)
             })
             .collect()
+    }
+}
+
+/// Present layer-backed views without activating the runner's windows.
+/// A visual-test app has no normal AppKit display loop; explicit layer display
+/// also drains GPUI's on_next_frame callbacks before a window is removed.
+pub(crate) fn present_windows() {
+    // SAFETY: called only on the native runner's main thread. All receivers are
+    // live AppKit windows/views and CALayers obtained through their public APIs.
+    unsafe {
+        let app = send(
+            objc_getClass(c"NSApplication".as_ptr()),
+            c"sharedApplication",
+        ) as Id;
+        let windows = send(app, c"windows") as Id;
+        let call: unsafe extern "C" fn(Id, Id) = std::mem::transmute(objc_msgSend as *const ());
+        for index in 0..send(windows, c"count") {
+            let window = send_index(windows, c"objectAtIndex:", index) as Id;
+            let content = send(window, c"contentView") as Id;
+            let views = send(content, c"subviews") as Id;
+            for index in 0..send(views, c"count") {
+                let view = send_index(views, c"objectAtIndex:", index) as Id;
+                let layer = send(view, c"layer") as Id;
+                if !layer.is_null() {
+                    call(layer, sel_registerName(c"setNeedsDisplay".as_ptr()));
+                    call(layer, sel_registerName(c"displayIfNeeded".as_ptr()));
+                }
+            }
+        }
     }
 }
 

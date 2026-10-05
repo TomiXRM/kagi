@@ -175,6 +175,10 @@ mod repo_health;
 mod modal_polish_b;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/inventory/mod.rs"]
+mod inventory;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/worktree_folder_picker.rs"]
 mod worktree_folder_picker;
 
@@ -427,7 +431,7 @@ mod macos {
         ) -> i32;
     }
 
-    fn drain_native_events() {
+    pub(crate) fn drain_native_events() {
         // MacWindow closes on MacPlatform's native executor, not TestDispatcher.
         unsafe {
             CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, 0);
@@ -746,7 +750,11 @@ mod macos {
         );
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
-                origin: point(px(-10000.0), px(-10000.0)),
+                origin: if std::env::var_os("KAGI_GUI_E2E_ONSCREEN").is_some() {
+                    point(px(80.0), px(80.0))
+                } else {
+                    point(px(-10000.0), px(-10000.0))
+                },
                 size: window_size,
             })),
             focus: false,
@@ -2370,9 +2378,24 @@ mod macos {
                 ),
             ),
         ];
+        let inventory = match crate::inventory::prepare(filters.as_deref(), exact.as_deref()) {
+            Ok(requested) => requested,
+            Err(error) => {
+                eprintln!("[inventory] ERROR: {error}");
+                return 1;
+            }
+        };
+        crate::inventory::register(
+            &mut scenarios,
+            inventory,
+            filters.as_deref(),
+            exact.as_deref(),
+        );
         // #516: KAGI_GUI_E2E_KEEP_GOING=1 re-runs this runner once per
         // scenario instead (`keep_going`), before anything here is set up.
-        if exact.is_none() && std::env::var("KAGI_GUI_E2E_KEEP_GOING").as_deref() == Ok("1") {
+        if exact.is_none()
+            && (inventory || std::env::var("KAGI_GUI_E2E_KEEP_GOING").as_deref() == Ok("1"))
+        {
             // #967 review: the filter stays required. KEEP_GOING without it
             // would run every scenario, each for up to the timeout — the
             // unscoped run that once took macOS down (#549).
@@ -2513,7 +2536,7 @@ mod macos {
         0
     }
 
-    type Scenario = (&'static str, Box<dyn FnMut(&mut VisualTestAppContext)>);
+    pub(crate) type Scenario = (&'static str, Box<dyn FnMut(&mut VisualTestAppContext)>);
 
     /// Whether `name` runs: only the one a re-executed child was given
     /// (`KAGI_GUI_E2E_EXACT`), else every match of `KAGI_GUI_E2E_ONLY`.

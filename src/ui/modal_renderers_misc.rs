@@ -354,7 +354,9 @@ pub(crate) fn render_update_modal(
         ));
     let card = card.child(body).child(div().flex_shrink_0().child(actions));
 
-    modal_overlay(card).into_any_element()
+    // Measure the in-flow card, not the absolute overlay: a relative probe
+    // around the overlay would give it a zero-height containing block.
+    modal_overlay(super::e2e::measure_control("active-modal/update", card)).into_any_element()
 }
 
 /// Editor Workspace unsaved-changes confirmation (T-WS-EDITOR-002 §5). Not a

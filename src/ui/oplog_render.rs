@@ -31,6 +31,8 @@ use gpui::{
     div, px, rgb, App, ClickEvent, Context, Element as _, Entity, InteractiveElement, IntoElement,
     MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled, Window,
 };
+use gpui_component::button::Button;
+use gpui_component::{Disableable as _, Sizable as _};
 use kagi_domain::oplog_reflog::Attribution;
 use kagi_git::oplog::{Actor, OpLogEntry, OpOutcome};
 
@@ -167,15 +169,21 @@ fn render_row(
         .flex_col()
         .w_full()
         .bg(rgb(row_bg))
-        .hover(|s| s.bg(rgb(theme().surface)).cursor_pointer())
-        .on_click(row_click)
         .child(
+            // Only the summary line toggles the row. The expanded block below
+            // must not sit inside a click target: stopping its mouse-down to
+            // keep a drag from toggling the row also hid the press from
+            // gpui-component's window text selection, so nothing could be
+            // selected there.
             div()
+                .id(("oplog-row-summary", i))
                 .flex()
                 .flex_row()
                 .items_center()
                 .px_3()
                 .h(theme_mod::scaled_px(SUMMARY_ROW_H))
+                .hover(|s| s.bg(rgb(theme().surface)).cursor_pointer())
+                .on_click(row_click)
                 .child(
                     div()
                         .w(theme_mod::scaled_px(60.))
@@ -253,20 +261,11 @@ fn render_row(
 }
 
 /// The expanded detail block: every line of the entry, soft-wrapped (never
-/// truncated — the row is variable-height now) and drag-selectable.
-///
-/// `message_to_html` puts every line in its own paragraph (the pinned
-/// `TextView` drops a `<br>` inside one, #908 / #946); the gap between them is
-/// 0 so the lines sit together. Leading / aligned spaces still collapse on
-/// screen; the clipboard copy keeps the alignment.
+/// truncated — the row is variable-height now) and drag-selectable. Leading /
+/// aligned spaces collapse on screen; the row's copy button keeps them.
 fn render_detail(i: usize, entry: &OpLogEntry) -> gpui::AnyElement {
     let text = oplog_panel::base_detail_lines(entry).join("\n");
     let selectable = text.len() <= SELECTABLE_DETAIL_MAX;
-    let html = SharedString::from(kagi_domain::message::message_to_html(&text));
-    let style = gpui_component::text::TextViewStyle {
-        paragraph_gap: gpui::rems(0.),
-        ..Default::default()
-    };
     div()
         .id(("oplog-row-detail", i))
         .flex()
@@ -279,10 +278,6 @@ fn render_detail(i: usize, entry: &OpLogEntry) -> gpui::AnyElement {
         .text_xs()
         .text_color(rgb(theme().text_sub))
         .whitespace_normal()
-        // Don't let a drag-select on the detail text toggle the row closed.
-        .on_mouse_down(MouseButton::Left, |_e, _w, cx| {
-            cx.stop_propagation();
-        })
         .when(!selectable, |d| {
             d.child(
                 div()
@@ -292,14 +287,28 @@ fn render_detail(i: usize, entry: &OpLogEntry) -> gpui::AnyElement {
             )
         })
         .child(
-            gpui_component::text::TextView::html(
-                SharedString::from(format!("oplog-detail-{}-{}", entry.id, i)),
-                html,
-            )
-            .style(style)
-            .selectable(selectable),
+            selectable_text(format!("oplog-detail-{}-{}", entry.id, i), &text)
+                .selectable(selectable),
         )
         .into_any_element()
+}
+
+/// Text of the expanded block, selectable by drag and copied with ⌘C. The
+/// selection is window-wide, so a drag across several of these copies them as
+/// one text. `message_to_html` keeps each line its own paragraph (the pinned
+/// `TextView` drops a `<br>` inside one, #908 / #946); the gap is 0 so the
+/// lines sit together. The pinned `TextView` copies paragraphs with a blank
+/// line between them; the row's copy button gives the exact entry.
+fn selectable_text(id: String, text: &str) -> gpui_component::text::TextView {
+    gpui_component::text::TextView::html(
+        SharedString::from(id),
+        SharedString::from(kagi_domain::message::message_to_html(text)),
+    )
+    .style(gpui_component::text::TextViewStyle {
+        paragraph_gap: gpui::rems(0.),
+        ..Default::default()
+    })
+    .selectable(true)
 }
 
 /// Separate plan guidance from execution facts in both the visual hierarchy
@@ -307,8 +316,9 @@ fn render_detail(i: usize, entry: &OpLogEntry) -> gpui::AnyElement {
 fn render_recovery(i: usize, entry: &OpLogEntry, lines: Vec<String>) -> gpui::AnyElement {
     let text = lines.join("\n");
     let selectable = text.len() <= SELECTABLE_DETAIL_MAX;
-    let html = SharedString::from(kagi_domain::message::message_to_html(&text));
-    let group = super::dialog_a11y::apply_group(
+    let view =
+        selectable_text(format!("oplog-recovery-{}-{i}", entry.id), &text).selectable(selectable);
+    super::dialog_a11y::apply_group(
         "oplog-recovery",
         div()
             .id(("oplog-recovery", i))
@@ -322,24 +332,12 @@ fn render_recovery(i: usize, entry: &OpLogEntry, lines: Vec<String>) -> gpui::An
             .text_xs()
             .text_color(rgb(theme().text_sub))
             .whitespace_normal()
-            .on_mouse_down(MouseButton::Left, |_e, _w, cx| cx.stop_propagation())
             .child(super::e2e::measure_inside(format!("oplog-recovery-{i}"))),
         SharedString::from(Msg::OpLogRecovery.t()),
     )
-    .aria_description(SharedString::from(text));
-    group
-        .child(
-            gpui_component::text::TextView::html(
-                SharedString::from(format!("oplog-recovery-{}-{i}", entry.id)),
-                html,
-            )
-            .style(gpui_component::text::TextViewStyle {
-                paragraph_gap: gpui::rems(0.),
-                ..Default::default()
-            })
-            .selectable(selectable),
-        )
-        .into_any_element()
+    .aria_description(SharedString::from(text))
+    .child(view)
+    .into_any_element()
 }
 
 /// #334: who ran the operation — the person in the GUI, the MCP server or the
@@ -410,27 +408,29 @@ fn render_reflog(i: usize, reflog: Option<&oplog_panel::ReflogDetail>) -> gpui::
         .bg(rgb(theme().selected))
         .text_xs()
         .text_color(rgb(theme().text_sub));
-    let muted = |text: String| {
+    let muted = |id: &str, text: String| {
         div()
             .text_color(rgb(theme().text_muted))
-            .child(SharedString::from(text))
+            .child(selectable_text(format!("oplog-reflog-{id}-{i}"), &text))
     };
     match reflog {
-        None | Some(ReflogDetail::Loading) => {
-            section.child(muted(Msg::OplogPanel(P::ReflogLoading).t().into()))
-        }
-        Some(ReflogDetail::Unavailable(error)) => {
-            section.child(muted(i18n::oplog_panel::reflog_unavailable(error)))
-        }
+        None | Some(ReflogDetail::Loading) => section.child(muted(
+            "loading",
+            Msg::OplogPanel(P::ReflogLoading).t().into(),
+        )),
+        Some(ReflogDetail::Unavailable(error)) => section.child(muted(
+            "unavailable",
+            i18n::oplog_panel::reflog_unavailable(error),
+        )),
         Some(ReflogDetail::Loaded { window, lines }) => {
             let heading = i18n::oplog_panel::reflog_heading(
                 window.open_start,
                 kagi_domain::oplog_reflog::UNBOUNDED_LOOKBACK_SECS,
             );
-            let section = section.child(muted(heading));
+            let section = section.child(muted("heading", heading));
             if lines.is_empty() {
                 return section
-                    .child(muted(Msg::OplogPanel(P::ReflogNone).t().into()))
+                    .child(muted("none", Msg::OplogPanel(P::ReflogNone).t().into()))
                     .into_any_element();
             }
             section.children(lines.iter().enumerate().map(|(n, (line, attribution))| {
@@ -447,7 +447,12 @@ fn render_reflog(i: usize, reflog: Option<&oplog_panel::ReflogDetail>) -> gpui::
                     .flex()
                     .flex_row()
                     .gap_2()
-                    .child(div().truncate().child(SharedString::from(text)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .child(selectable_text(format!("oplog-reflog-line-{i}-{n}"), &text)),
+                    )
                     .when(ambiguous, |row| {
                         row.child(
                             div()
@@ -483,7 +488,10 @@ fn render_ref_moves(i: usize, moves: &[kagi_domain::ref_moves::RefMove]) -> gpui
         .child(
             div()
                 .text_color(rgb(theme().color_success))
-                .child(Msg::OplogPanel(P::RecordedHeading).t()),
+                .child(selectable_text(
+                    format!("oplog-recorded-heading-{i}"),
+                    Msg::OplogPanel(P::RecordedHeading).t(),
+                )),
         )
         .child(super::e2e::measure_inside(format!("oplog-recorded-{i}")));
     if moves.is_empty() {
@@ -491,7 +499,10 @@ fn render_ref_moves(i: usize, moves: &[kagi_domain::ref_moves::RefMove]) -> gpui
             .child(
                 div()
                     .text_color(rgb(theme().text_muted))
-                    .child(Msg::OplogPanel(P::RecordedNone).t()),
+                    .child(selectable_text(
+                        format!("oplog-recorded-none-{i}"),
+                        Msg::OplogPanel(P::RecordedNone).t(),
+                    )),
             )
             .into_any_element();
     }
@@ -501,8 +512,10 @@ fn render_ref_moves(i: usize, moves: &[kagi_domain::ref_moves::RefMove]) -> gpui
                 super::oplog_panel::ref_move_text(m, false, Msg::OplogPanel(P::RefAbsent).t());
             div()
                 .relative()
-                .truncate()
-                .child(SharedString::from(text))
+                .child(selectable_text(
+                    format!("oplog-refmove-text-{i}-{n}"),
+                    &text,
+                ))
                 .child(super::e2e::measure_inside(format!(
                     "oplog-refmove-{i}-{n}-{}",
                     m.refname
@@ -514,6 +527,7 @@ fn render_ref_moves(i: usize, moves: &[kagi_domain::ref_moves::RefMove]) -> gpui
 /// #334 slice 2b: the selected row's "revert this operation…" and "restore to
 /// this point…" buttons. They only ask the app to plan (the card confirms);
 /// an entry without recorded ref moves gets them disabled, with the reason.
+/// Real buttons, so they read as buttons on the block's own background.
 fn render_restore_actions(
     i: usize,
     entry: &OpLogEntry,
@@ -521,40 +535,28 @@ fn render_restore_actions(
 ) -> gpui::AnyElement {
     let enabled = oplog_panel::restorable(entry);
     let state = if enabled { "enabled" } else { "disabled" };
-    let button = |kind: &'static str, label: &'static str, op: kagi_git::Operation| {
-        let entity = entity.clone();
-        div()
-            .id(SharedString::from(format!("oplog-{kind}-{i}")))
-            .relative()
-            .px_2()
-            .py_0p5()
-            .rounded_sm()
-            .border_1()
-            .border_color(rgb(theme().selected))
-            .text_xs()
-            .text_color(rgb(if enabled {
-                theme().text_main
-            } else {
-                theme().text_muted
-            }))
-            .when(enabled, |b| {
-                b.cursor_pointer()
-                    .hover(|s| s.bg(rgb(theme().surface)))
-                    // Swallow the press so the row does not toggle closed.
-                    .on_mouse_down(MouseButton::Left, |_e, _w, cx| cx.stop_propagation())
-                    .on_click(move |_: &ClickEvent, _w: &mut Window, cx: &mut App| {
-                        cx.stop_propagation();
-                        let op = op.clone();
-                        entity.update(cx, |_, cx| {
-                            cx.emit(oplog_panel::OpLogPanelEvent::Restore(op))
-                        });
-                    })
-            })
-            .child(label)
-            .child(super::e2e::measure_inside(format!(
-                "oplog-{kind}-{i}-{state}"
-            )))
-    };
+    let button =
+        |kind: &'static str, icon: &'static str, label: &'static str, op: kagi_git::Operation| {
+            let entity = entity.clone();
+            div()
+                .relative()
+                .child(
+                    Button::new(SharedString::from(format!("oplog-{kind}-{i}")))
+                        .icon(gpui_component::Icon::empty().path(icon))
+                        .label(label)
+                        .small()
+                        .disabled(!enabled)
+                        .on_click(move |_: &ClickEvent, _w: &mut Window, cx: &mut App| {
+                            let op = op.clone();
+                            entity.update(cx, |_, cx| {
+                                cx.emit(oplog_panel::OpLogPanelEvent::Restore(op))
+                            });
+                        }),
+                )
+                .child(super::e2e::measure_inside(format!(
+                    "oplog-{kind}-{i}-{state}"
+                )))
+        };
     let entry_id = entry.id;
     div()
         .id(("oplog-row-restore", i))
@@ -572,11 +574,13 @@ fn render_restore_actions(
                 .gap_2()
                 .child(button(
                     "revert",
+                    "icons/undo-2.svg",
                     Msg::OplogPanel(P::RevertButton).t(),
                     kagi_git::Operation::OpRevert { entry_id },
                 ))
                 .child(button(
                     "restore",
+                    "icons/history.svg",
                     Msg::OplogPanel(P::RestoreButton).t(),
                     kagi_git::Operation::RestoreToPoint { entry_id },
                 )),

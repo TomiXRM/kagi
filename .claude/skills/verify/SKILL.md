@@ -742,6 +742,10 @@ The current suite covers:
   `KAGI_GUI_E2E_KEEP_GOING=1 KAGI_GUI_E2E_ONLY='worktree_folder_picker'`
   (`tests/recovery/worktree_folder_picker.rs`)。native dialog は runner から操作できないため、`e2e::answer_folder_prompt` で答えを決め、`e2e::take_folder_prompts` で要求を数える。EN/JA で、パス入力の左にある 24px のボタン(AX 名「Choose folder / フォルダを選択」)と、32px のままの入力欄を確認する。キャンセルではパスが変わらない。フォルダを選ぶと `<選んだフォルダ>/<branch 名>` が入力され、手入力と同じく計画され、何も書き込まれない。
   mutation で FAIL することを確認済み: 選んだフォルダをそのまま使う、選択を反映しない、ボタンを右に置く、28px にする。Tier B は隔離した実アプリで Add Worktree を開き、ボタンをクリックして Finder のダイアログが開くこと、選んだ結果が入力欄と CURRENT / AFTER に反映されることを確認する。
+- Operation Log 展開パネルの選択とコピー (#1053):
+  `KAGI_GUI_E2E_KEEP_GOING=1 KAGI_GUI_E2E_ONLY='oplog_detail_select_copy'`
+  (`tests/recovery/oplog_select.rs`)。実 `run_recorded` の create-branch 行を要約のクリックで開き、detail の文字から記録した ref の文字までドラッグして `WindowExt::selected_text` が空でないこと、⌘C で clipboard に before / after・復旧コマンド・ref 名が入ること、ドラッグと展開部分のクリックで行が閉じないこと、取り消すボタンで計画カードが開くことを確認する。selection は最後に描いた hover で当たり判定するため、押す前に move と描画が要り、両端は文字の上に置く。
+  mutation で FAIL することを確認済み: detail の `on_mouse_down` で propagation を止める、開閉の click を行全体に戻す、記録した ref を普通の div に戻す。Tier B は隔離した実アプリで branch を作り、Operation Log の行を開いてボタンの見た目を撮影する(pidclick に drag はないので選択は Tier A で担保)。
 - Operation Log の計画復旧説明 (#1025 / ADR-0221):
   `KAGI_GUI_E2E_KEEP_GOING=1 KAGI_GUI_E2E_ONLY='oplog_recovery_,oplog_actor_reflog,oplog_restore_card,oplog_expand_copy'`
   (`tests/recovery/oplog_panel.rs`)。実 `run_recorded` の Success 行で EN/JA の説明、重複しない英日別ラベルのコマンド行、AX Recovery group と Copy を確認する。実行前に HEAD を動かした Failed 行には Recovery 欄を描かず、旧形式の Success 行は「not recorded / 記録されていません」を表示する。

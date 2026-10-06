@@ -23,6 +23,17 @@ Rust + [GPUI](https://www.gpui.rs/)([Zed](https://zed.dev/) の UI フレーム�
 
 ---
 
+```sh
+# macOS(Apple Silicon)/ Linux — Kagi.app(または ~/.local)と `kagi` コマンドを入れます
+curl -fsSL https://raw.githubusercontent.com/TomiXRM/kagi/main/install.sh | sh
+# mise を使っているなら:
+mise use -g github:TomiXRM/kagi@latest
+```
+
+手動のダウンロード(dmg / AppImage / deb / zip)、Windows、詳細は [📦 インストール](#-インストール) にあります。
+
+---
+
 Kagi はひとつの方針で作ったデスクトップ Git クライアントです。
 **Git コマンドで不意打ちを食らわせない。**
 何かを書き込む前に、現在の状態、実行後に予測される状態、警告や blocker、取り消す方法を示します。

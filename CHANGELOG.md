@@ -5,10 +5,22 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-10-06
+
 ### Added
 
 - macOS / Linux 向けに `curl -fsSL https://raw.githubusercontent.com/TomiXRM/kagi/main/install.sh | sh` で使えるインストーラーと、mise が直接取得できるプラットフォーム別 tar.gz を追加しました。macOS tar は `kagi-<version>-arm64-macos.tar.gz` (旧 Linux aarch64 更新クライアントが誤認しないよう `aarch64-macos` は使わない)で、ad-hoc 署名済み `Kagi.app` と `bin/kagi` の相対 symlink を格納します。Linux は従来のディレクトリ構造を保ってアーカイブ名に `-linux` を追加します。旧 Linux 名の併載は release workflow の `--legacy-linux-name` 明示指定による移行リリース限定で、この PR を含む初回リリースの公開後にフラグを外します。DMG / AppImage zip / deb / Windows zip は変更しません。`--version vX.Y.Z` / `--prefix DIR` / `--dry-run` / `--no-modify-path` に対応します。実リリースからのインストールと mise 導入は初回対応リリースの公開後に利用できます。(#1055)
 - `kagi --version` / `kagi -V` で Cargo のバージョンを表示し、GUI・設定読込・既存インスタンスへの転送より前に終了できるようにしました。(#1055)
+
+### Changed
+
+- Operation Log で展開した行の文字列(before / after・復旧・記録した ref・reflog)をドラッグで選択し、⌘C でコピーできるようにしました。これまでは行の開閉を避けるために押下を止めていたため選択が始まらず、記録した ref と reflog はそもそも選択できませんでした。開閉は 1 行目の要約だけで行い、展開した部分の押下やドラッグでは閉じません。「この操作を取り消す…」「この時点まで戻す…」は背景と同じ色で枠も見えなかったため、アイコン付きのボタンにしました(無効時も無効なボタンとして表示します)。(#1053)
+
+### Internal
+
+- modal / popup の棚卸し撮影を再利用できる E2E 道具にしました。`KAGI_GUI_E2E_ONLY='inventory:<name>'` で 74 対象を EN/JA × Dark/Light で撮り、`scripts/inventory-diff.sh` で before/after を横並びに合成します。(#1047)
+- README の画像 10 枚を Apple Dark / 現在の UI で撮り直しました。(#1049)
+- PR / issue のスクショは orphan の `pr-assets/*` branch ではなく `gh --attach` でアップロードする運用にし、AGENTS.md を更新しました。(#1058)
 
 ## [0.43.0] - 2026-10-05
 
@@ -38,7 +50,6 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
-- Operation Log で展開した行の文字列(before / after・復旧・記録した ref・reflog)をドラッグで選択し、⌘C でコピーできるようにしました。これまでは行の開閉を避けるために押下を止めていたため選択が始まらず、記録した ref と reflog はそもそも選択できませんでした。開閉は 1 行目の要約だけで行い、展開した部分の押下やドラッグでは閉じません。「この操作を取り消す…」「この時点まで戻す…」は背景と同じ色で枠も見えなかったため、アイコン付きのボタンにしました(無効時も無効なボタンとして表示します)。(#1053)
 - BranchPicker を開いたまま別の repository や Home へ移ると、旧 repository の branch 一覧が新しい画面に残る問題を修正しました。画面離脱時には About / Keyboard Shortcuts、Command Palette も同じ MenuOverlay として閉じ、元画面への focus を引き継ぎません。(#1039)
 - Linux / FreeBSD の platform menu を Settings や確認 modal と重ねたとき、Tab / Shift+Tab を keybinding より前に止め、Escape は dropdown だけを先に閉じるようにしました。menu command の dispatch 前に dropdown を閉じ、tab / repository 離脱時には古い Settings / dropdown を閉じます。dropdown 終了後は Command Palette と入力 modal の既存 input に focus を戻します。macOS の native Tier A で 4 組み合わせと command による tab 閉じ・palette 入力復帰を確認します。workspace の scrim は Linux の titlebar head を覆うため、Tier A は head click の到達性ではなく dropdown が開いた状態の挙動を検証します（Home の titlebar は scrim の外）。(#990、#1038)
 - 先行書き込み中に dirty な commit を Enter で checkout しようとしたとき、stash + checkout は 2 回の書き込みなので 1 件のキューとして受け付けられない理由を英日それぞれ footer と toast に表示します。commit checkout の直接入口が対象 OID を固定し、先行操作後の新しい計画と確認・preflight を通ることも native テストで検証しました。(#1032)

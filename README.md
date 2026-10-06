@@ -23,6 +23,17 @@ Built with Rust + [GPUI](https://www.gpui.rs/) — the UI framework behind [Zed]
 
 ---
 
+```sh
+# macOS (Apple Silicon) / Linux — installs Kagi.app (or ~/.local) and the `kagi` command
+curl -fsSL https://raw.githubusercontent.com/TomiXRM/kagi/main/install.sh | sh
+# or, with mise:
+mise use -g github:TomiXRM/kagi@latest
+```
+
+Manual downloads (dmg / AppImage / deb / zip), Windows and the details are in [📦 Install](#-install).
+
+---
+
 Kagi is a desktop Git client built around one idea: **you should never be surprised by a Git command.** Before anything is written, it shows you the current state, the predicted state, any warnings or blockers, and how to undo it — then runs the operation through a `plan → confirm → preflight → execute → verify` pipeline.
 
 The commands that lose work — `push --force`, `reset --hard`, `git clean` — aren't gated behind a confirmation dialog. **They aren't in the codebase at all.**

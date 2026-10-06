@@ -325,3 +325,5 @@ Log recovery prose remain separate follow-ups.
   each needs its own before/after and contract, not a sweep.
 
 <!-- screenshot demo: Home tab keyboard notes -->
+
+<!-- screenshot demo: Operation Log selection -->

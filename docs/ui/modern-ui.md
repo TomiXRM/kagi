@@ -323,3 +323,5 @@ Log recovery prose remain separate follow-ups.
   placeholder and focus treatment once.
 - Which hand-made controls (research: 176 builders) are worth migrating —
   each needs its own before/after and contract, not a sweep.
+
+<!-- screenshot demo: Home tab keyboard notes -->

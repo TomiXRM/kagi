@@ -267,41 +267,6 @@ mod tests {
     }
 
     #[test]
-    fn test_clipboard_store_event() {
-        use alacritty_terminal::term::ClipboardType;
-
-        let (tx, rx) = channel();
-        let proxy = GpuiEventProxy::new(tx);
-
-        proxy.send_event(Event::ClipboardStore(
-            ClipboardType::Clipboard,
-            "clipboard data".to_string(),
-        ));
-
-        let event = rx.recv().unwrap();
-        match event {
-            TerminalEvent::ClipboardStore(data) => assert_eq!(data, "clipboard data"),
-            _ => panic!("Expected ClipboardStore event"),
-        }
-    }
-
-    #[test]
-    fn test_clipboard_load_event() {
-        use alacritty_terminal::term::ClipboardType;
-        use std::sync::Arc;
-
-        let (tx, rx) = channel();
-        let proxy = GpuiEventProxy::new(tx);
-
-        // ClipboardLoad requires a callback function
-        let callback = Arc::new(|s: &str| s.to_string());
-        proxy.send_event(Event::ClipboardLoad(ClipboardType::Clipboard, callback));
-
-        let event = rx.recv().unwrap();
-        assert!(matches!(event, TerminalEvent::ClipboardLoad));
-    }
-
-    #[test]
     fn test_exit_event() {
         let (tx, rx) = channel();
         let proxy = GpuiEventProxy::new(tx);

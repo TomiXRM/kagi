@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Remote repository の directory picker を1つの keyboard list にし、矢印・Home / End / Page Up / Page Down で選択と表示位置を移動できるようにしました。Enter / Space は directory と親だけを開き、file は開きません。読み込み中の再実行を防ぎ、失敗・閉じる／開き直す際に古い一覧や focus を受け渡しません。(#1071)
+
 ## [0.44.0] - 2026-10-06
 
 ### Added

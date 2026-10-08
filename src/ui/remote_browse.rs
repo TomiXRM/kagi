@@ -15,14 +15,17 @@
 
 use super::i18n::Msg;
 use gpui::{
-    div, prelude::*, rgb, App, ClickEvent, Context, Entity, FocusHandle, KeyDownEvent,
+    div, prelude::*, rgb, App, ClickEvent, Context, Entity, FocusHandle, KeyDownEvent, ListState,
     SharedString, Window,
 };
 use gpui_component::input::Input;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use kagi_domain::remote::{self, RemoteDirEntry, RemoteHost, RemoteRepoSummary};
 
 use super::button_style::{modal_button, ModalButtonKind};
+use super::keyboard_nav::{self, RowFocus, RowKeys, RowScroll};
 use super::theme::{self, theme as current_theme};
 use super::KagiApp;
 
@@ -67,12 +70,17 @@ pub struct RemoteBrowseModal {
     /// Connected host (set once a connection succeeds).
     pub host: Option<RemoteHost>,
     pub cwd: String,
-    pub entries: Vec<RemoteDirEntry>,
+    pub entries: Rc<[RemoteDirEntry]>,
     pub current_is_repo: bool,
     pub summary: Option<RemoteRepoSummary>,
     /// An SSH round-trip (connect / navigate / open) is in flight.
     pub busy: bool,
     pub error: Option<SharedString>,
+    row_keys: RowKeys,
+    row_focus: Rc<RefCell<RowFocus>>,
+    row_scroll: ListState,
+    selected_row: Rc<Cell<Option<usize>>>,
+    focus_accepted_read: Rc<Cell<bool>>,
 }
 
 impl RemoteBrowseModal {
@@ -88,17 +96,48 @@ impl RemoteBrowseModal {
             identity_state: None,
             host: None,
             cwd: String::new(),
-            entries: Vec::new(),
+            entries: Rc::from([]),
             current_is_repo: false,
             summary: None,
             busy: false,
             error: None,
+            row_keys: Rc::from([]),
+            row_focus: Rc::new(RefCell::new(RowFocus::default())),
+            row_scroll: ListState::new(0, gpui::ListAlignment::Top, gpui::px(0.)),
+            selected_row: Rc::new(Cell::new(None)),
+            focus_accepted_read: Rc::new(Cell::new(false)),
         }
     }
 
     fn with_generation(mut self, generation: u64) -> Self {
         self.generation = generation;
         self
+    }
+
+    fn accept_directory(&mut self, data: RemoteBrowseData) {
+        self.stage = RemoteBrowseStage::Browse;
+        self.cwd = data.cwd;
+        self.entries = data.entries.into();
+        self.current_is_repo = data.is_repo;
+        self.summary = data.summary;
+        self.error = None;
+        let parent = remote::parent_dir(&self.cwd);
+        self.row_keys = parent
+            .iter()
+            .map(|_| format!("{}/..", self.cwd))
+            .chain(
+                self.entries
+                    .iter()
+                    .map(|entry| remote::join_path(&self.cwd, &entry.name)),
+            )
+            .enumerate()
+            .map(|(ix, key)| (key, ix))
+            .collect();
+        self.row_scroll.reset(self.row_keys.len());
+        *self.row_focus.borrow_mut() = RowFocus::default();
+        self.selected_row
+            .set((!self.row_keys.is_empty()).then_some(0));
+        self.focus_accepted_read.set(true);
     }
 }
 
@@ -197,14 +236,7 @@ impl KagiApp {
                 app.update_remote_browse_from_async(generation, |m| {
                     m.busy = false;
                     match result {
-                        Ok(data) => {
-                            m.stage = RemoteBrowseStage::Browse;
-                            m.cwd = data.cwd;
-                            m.entries = data.entries;
-                            m.current_is_repo = data.is_repo;
-                            m.summary = data.summary;
-                            m.error = None;
-                        }
+                        Ok(data) => m.accept_directory(data),
                         Err(e) => m.error = Some(SharedString::from(e)),
                     }
                 });
@@ -218,11 +250,11 @@ impl KagiApp {
     /// a background thread).
     pub fn remote_browse_navigate(&mut self, path: String, cx: &mut Context<Self>) {
         let (host, generation) = match self.remote_browse() {
-            Some(m) => match m.host.clone() {
+            Some(m) if m.stage == RemoteBrowseStage::Browse && !m.busy => match m.host.clone() {
                 Some(host) => (host, m.generation),
                 None => return,
             },
-            None => return,
+            _ => return,
         };
         if let Some(m) = self.remote_browse_mut() {
             if m.busy {
@@ -233,20 +265,26 @@ impl KagiApp {
         }
         cx.notify();
 
-        let task = cx.background_spawn(async move { remote_browse_blocking(&host, &path) });
+        #[cfg(feature = "gui-e2e")]
+        let supplied = e2e_transport::take_remote_navigate(&path);
+        let browse = async move { remote_browse_blocking(&host, &path) };
+        #[cfg(feature = "gui-e2e")]
+        let task = supplied.unwrap_or_else(|| {
+            cx.background_spawn(async move {
+                e2e_transport::RemoteConnectOutcome::from_transport(browse.await)
+            })
+        });
+        #[cfg(not(feature = "gui-e2e"))]
+        let task = cx.background_spawn(browse);
         cx.spawn(async move |this, acx| {
             let result = task.await;
+            #[cfg(feature = "gui-e2e")]
+            let result = result.into_result();
             let _ = this.update(acx, |app, cx| {
                 app.update_remote_browse_from_async(generation, |m| {
                     m.busy = false;
                     match result {
-                        Ok(data) => {
-                            m.cwd = data.cwd;
-                            m.entries = data.entries;
-                            m.current_is_repo = data.is_repo;
-                            m.summary = data.summary;
-                            m.error = None;
-                        }
+                        Ok(data) => m.accept_directory(data),
                         Err(e) => m.error = Some(SharedString::from(e)),
                     }
                 });
@@ -344,6 +382,7 @@ fn labeled_input(
 pub(crate) fn render_remote_browse(
     modal: RemoteBrowseModal,
     focus_handle: Option<FocusHandle>,
+    window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     let busy = modal.busy;
@@ -611,67 +650,12 @@ pub(crate) fn render_remote_browse(
                 card = card.child(repo_card);
             }
 
-            // Directory listing (scrollable). A `..` row navigates to the parent.
-            // Rows are lightweight clickable list items (not Buttons) — a file
-            // browser reads better as rows, matching how Zed renders its tree.
-            let mut list = div()
-                .id("remote-dir-list")
-                .flex()
-                .flex_col()
-                .gap_px()
-                .max_h(theme::scaled_px(280.))
-                .overflow_y_scroll();
-
-            if let Some(parent) = remote::parent_dir(&modal.cwd) {
-                let nav = cx.listener(move |this, _e: &ClickEvent, _window, cx| {
-                    this.remote_browse_navigate(parent.clone(), cx);
-                    cx.notify();
-                });
-                list = list.child(
-                    div()
-                        .id("remote-dir-up")
-                        .px_2()
-                        .py_1()
-                        .rounded_sm()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_main))
-                        .on_click(nav)
-                        .hover(|style| style.bg(rgb(current_theme().surface)))
-                        .child(SharedString::from("\u{2191}  ..")),
-                );
-            }
-
-            for entry in &modal.entries {
-                if entry.is_dir() {
-                    let target = remote::join_path(&modal.cwd, &entry.name);
-                    let nav = cx.listener(move |this, _e: &ClickEvent, _window, cx| {
-                        this.remote_browse_navigate(target.clone(), cx);
-                        cx.notify();
-                    });
-                    list = list.child(
-                        div()
-                            .id(SharedString::from(format!("remote-dir-{}", entry.name)))
-                            .px_2()
-                            .py_1()
-                            .rounded_sm()
-                            .text_sm()
-                            .text_color(rgb(current_theme().text_main))
-                            .on_click(nav)
-                            .hover(|style| style.bg(rgb(current_theme().surface)))
-                            .child(SharedString::from(format!("\u{1f4c1}  {}/", entry.name))),
-                    );
-                } else {
-                    list = list.child(
-                        div()
-                            .px_2()
-                            .py_1()
-                            .text_sm()
-                            .text_color(rgb(current_theme().text_muted))
-                            .child(SharedString::from(format!("\u{1f4c4}  {}", entry.name))),
-                    );
-                }
-            }
-            card = card.child(list);
+            card = card.child(render_directory_list(
+                &modal,
+                focus_handle.as_ref(),
+                window,
+                cx,
+            ));
 
             if let Some(ref err) = modal.error {
                 card = card.child(
@@ -754,6 +738,142 @@ pub(crate) fn render_remote_browse(
                 .items_center()
                 .child(focusable_card),
         )
+}
+
+/// Dense directory browser: RowList owns the single Tab stop, reveal and
+/// keyboard ring; list_a11y owns role/name/selection. Files remain meaningful
+/// selectable rows but never navigate. Busy keeps the accepted directory and
+/// its selection visible and makes activation inert; failures retain that
+/// same owner. Only an accepted, generation-guarded read requests row focus.
+fn render_directory_list(
+    modal: &RemoteBrowseModal,
+    fallback: Option<&FocusHandle>,
+    window: &mut Window,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let scroll = RowScroll::List(modal.row_scroll.clone());
+    let rows = Rc::new(modal.row_focus.borrow_mut().rows(
+        modal.row_keys.clone(),
+        &scroll,
+        fallback,
+        window,
+        cx,
+    ));
+    if modal.focus_accepted_read.replace(false) {
+        if !modal.row_focus.borrow().focus_first(&scroll, window, cx) {
+            if let Some(fallback) = fallback {
+                fallback.focus(window, cx);
+            }
+        }
+    }
+    if let Some(key) = modal.row_focus.borrow().focused(window) {
+        modal
+            .selected_row
+            .set(modal.row_keys.iter().position(|(k, _)| k == key));
+    }
+    let selected = modal.selected_row.get();
+    let wrapper = rows.list(super::list_a11y::list_box(
+        "remote-dir-list",
+        div().id("remote-dir-list").w_full(),
+        Msg::RemoteDirectoryList.t(),
+    ));
+    if modal.row_keys.is_empty() {
+        return wrapper
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(current_theme().text_muted))
+                    .child(SharedString::from(Msg::RemoteDirectoryEmpty.t())),
+            )
+            .into_any_element();
+    }
+    let entries = modal.entries.clone();
+    let cwd = modal.cwd.clone();
+    let parent = remote::parent_dir(&cwd);
+    let busy = modal.busy;
+    let generation = modal.generation;
+    let app = cx.entity();
+    let row_keys = modal.row_keys.clone();
+    let size = row_keys.len();
+    let list = gpui::list(modal.row_scroll.clone(), move |ix, _window, _cx| {
+        let (label, text, target) = if ix == 0 && parent.is_some() {
+            (
+                Msg::RemoteParentDirectory.t().to_string(),
+                "\u{2191}  ..".to_string(),
+                parent.clone(),
+            )
+        } else {
+            let entry = &entries[ix - usize::from(parent.is_some())];
+            if entry.is_dir() {
+                (
+                    Msg::RemoteDirectoryRow.t().replacen("{}", &entry.name, 1),
+                    format!("\u{1f4c1}  {}/", entry.name),
+                    Some(remote::join_path(&cwd, &entry.name)),
+                )
+            } else {
+                (
+                    Msg::RemoteFileRow.t().replacen("{}", &entry.name, 1),
+                    format!("\u{1f4c4}  {}", entry.name),
+                    None,
+                )
+            }
+        };
+        let navigable = target.is_some();
+        let app = app.clone();
+        let click_rows = rows.clone();
+        let row = rows
+            .row(
+                ix,
+                super::list_a11y::list_option(
+                    "remote-dir-list",
+                    div().id(SharedString::from(row_keys[ix].0.clone())),
+                    ix,
+                    size,
+                    label,
+                    selected == Some(ix),
+                ),
+            )
+            .w_full()
+            .px(keyboard_nav::inset(8.))
+            .py(keyboard_nav::inset(4.))
+            .rounded_sm()
+            .text_sm()
+            .overflow_hidden()
+            .text_color(rgb(if navigable {
+                current_theme().text_main
+            } else {
+                current_theme().text_muted
+            }))
+            .when(selected == Some(ix), |row| {
+                row.bg(rgb(current_theme().surface))
+            })
+            .when(busy, |row| {
+                row.aria_description(SharedString::from(Msg::RemoteRequestBusy.t()))
+                    .a11y_synthetic_children(|builder: &mut gpui::A11ySubtreeBuilder| {
+                        builder.parent_node().set_disabled();
+                    })
+            })
+            .when(!busy && navigable, |row| {
+                row.cursor_pointer()
+                    .hover(|style| style.bg(rgb(current_theme().surface)))
+            })
+            .on_click(move |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    if app.remote_browse_generation_is(generation) {
+                        click_rows.focus_row(ix, window, cx);
+                        if let Some(target) = &target {
+                            app.remote_browse_navigate(target.clone(), cx);
+                        }
+                        cx.notify();
+                    }
+                });
+            })
+            .child(SharedString::from(text));
+        row.into_any_element()
+    })
+    .w_full()
+    .h(theme::scaled_px((size as f32 * 28.).min(280.)));
+    wrapper.child(list).into_any_element()
 }
 
 // ──────────────────────────────────────────────────────────────

@@ -103,6 +103,24 @@ whose banner matches no known marker degrades to "empty", never to a silent
 transport error appears. Failure and emptiness stay distinguishable — the
 discipline ADR-0177 applies to writes and #506 applied to PR fetches.
 
+### Directory picker keyboard ownership (#1071)
+
+The accepted directory read owns one immutable entry snapshot, virtual list
+state and roving row selection. The list is one Tab stop, not one stop per
+directory; arrows, Home/End and Page Up/Down move the selection and reveal it.
+Enter/Space activation is handled by the focused row on key-up and stops at
+that row: directories and the parent navigate, while files remain inert.
+The existing modal-level Enter route still opens an already recognized repo
+when the directory list is not the event owner; connection-input and Escape
+contracts are unchanged.
+
+A loading read disables activation without replacing the accepted row owner.
+Failed reads retain that owner; successful reads replace the entries, reset
+the virtual list and transfer focus only for the current modal generation.
+Closing/reopening cannot accept an earlier modal's result or focus. The picker
+remains read-only; reaching a repo does not stage or write repository state.
+
+
 ## Alternatives considered
 - **Pure-Rust SSH (`russh`)** — full control and no external `ssh` dependency,
   but re-implements auth, `~/.ssh/config`, and `known_hosts`, pulls a large

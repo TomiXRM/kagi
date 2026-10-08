@@ -8,6 +8,12 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Remote repository の directory picker を1つの keyboard list にし、矢印・Home / End / Page Up / Page Down で選択と表示位置を移動できるようにしました。Enter / Space は directory と親だけを開き、file は開きません。読み込み中の再実行を防ぎ、失敗・閉じる／開き直す際に古い一覧や focus を受け渡しません。(#1071)
+- Command Palette で矢印キー・検索変更による選択行が画面内へ追従するようにしました。マウスでのスクロールは再描画で巻き戻さず、次のキー操作で選択先を再表示します。disabled 理由の可変行高と、表示中の highlight / Enter の実行対象も維持します。(#1069)
+- Editor の History 一覧は読み込み済みの履歴を不変 snapshot として保持し、再描画のたびに全 commit の message・body を複製しないようにしました。表示範囲の仮想化、選択 commit の Diff / Snapshot と作業中 buffer の分離は維持します。(#1074)
+
+### Changed
+
+- Apple Light のサイドバーと toolbar の明度を同じ Mac の実 Finder ウィンドウと比較して揃え、hover の灰色を中立色にしました。見出し・更新時刻・フォーム label などの補助文字も読みやすくしました。白い本文、Git の状態色・レイアウト・Apple Dark は維持します。(#1065、#1066)
 
 ## [0.44.0] - 2026-10-06
 

@@ -247,16 +247,23 @@ impl KagiApp {
     /// the selection, and shows the overlay.
     pub fn open_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         klog!("palette: open");
+        let scroll = self
+            .command_palette_scroll
+            .get_or_insert_with(gpui::ScrollHandle::new);
+        scroll.set_offset(Default::default());
         if self.command_palette_input.is_none() {
             let input = cx.new(|cx| {
                 InputState::new(window, cx).placeholder(i18n::Msg::CommandPalettePlaceholder.t())
             });
-            // Re-render (and reset the highlight to the top hit) on every
-            // keystroke; `Change` carries no `Window`, which is fine — filtering
-            // only needs `cx.notify()`.
+            // Reset and reveal the top hit on query changes. The handle applies
+            // the one-shot request against the next frame's filtered children;
+            // neither a Window nor a uniform row height is needed here.
             cx.subscribe(&input, |this, _input, event, cx| {
                 if matches!(event, gpui_component::input::InputEvent::Change) {
                     this.command_palette_selected = 0;
+                    if let Some(scroll) = &this.command_palette_scroll {
+                        scroll.scroll_to_item(0);
+                    }
                     cx.notify();
                 }
             })
@@ -268,6 +275,9 @@ impl KagiApp {
             });
         }
         self.command_palette_selected = 0;
+        if let Some(scroll) = &self.command_palette_scroll {
+            scroll.scroll_to_item(0);
+        }
         self.capture_overlay_return_focus(window, cx);
         if let Some(input) = &self.command_palette_input {
             input.update(cx, |st, cx| st.focus(window, cx));
@@ -289,7 +299,11 @@ impl KagiApp {
     pub fn run_selected_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let query = self.command_palette_query(cx);
         let rows = rows_for(self, &query);
-        let Some(row) = rows.get(self.command_palette_selected) else {
+        // Use the same clamped index as the highlight if live results shrink.
+        let selected = self
+            .command_palette_selected
+            .min(rows.len().saturating_sub(1));
+        let Some(row) = rows.get(selected) else {
             return;
         };
         if !row.enabled {
@@ -326,6 +340,11 @@ impl KagiApp {
         }
         let cur = self.command_palette_selected as i64;
         self.command_palette_selected = (cur + delta).clamp(0, n as i64 - 1) as usize;
+        // Event-driven, not render-driven: a mouse scroll stays put until the
+        // next navigation, even when that key hits an unchanged end boundary.
+        if let Some(scroll) = &self.command_palette_scroll {
+            scroll.scroll_to_item(self.command_palette_selected);
+        }
     }
 
     /// Render the command-palette overlay. Returns the wrapped element (dim
@@ -399,6 +418,9 @@ impl KagiApp {
             .flex_col()
             .overflow_y_scroll()
             .max_h(theme::scaled_px(420.0));
+        if let Some(scroll) = &self.command_palette_scroll {
+            list = list.track_scroll(scroll);
+        }
 
         if rows.is_empty() {
             list = list.child(

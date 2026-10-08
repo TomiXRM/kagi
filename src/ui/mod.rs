@@ -1164,6 +1164,9 @@ pub struct KagiApp {
     /// Issue #352: index of the highlighted row in the command palette's current
     /// (filtered) result list. Reset to 0 on open and on every query change.
     pub command_palette_selected: usize,
+    /// #1069: lazily created list scroll, retained across redraws and reset on
+    /// open. Child-bound reveals keep variable-height disabled reasons intact.
+    pub(crate) command_palette_scroll: Option<gpui::ScrollHandle>,
     // ── W2-INSPECTOR: Changed-files display mode ─────────────────
     /// When `true` the inspector shows files in tree view; `false` = flat path list.
     /// Default: `true`.
@@ -1445,6 +1448,7 @@ impl KagiApp {
             pr_fields_generation: 0,
             pr_fields_input: None,
             command_palette_selected: 0,
+            command_palette_scroll: None,
             // W3-NOTIFY
             // Created in `open_main_window`'s `cx.new` closure (needs `cx`).
             toast_stack: None,

@@ -14,6 +14,11 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - Apple Light のサイドバーと toolbar の明度を同じ Mac の実 Finder ウィンドウと比較して揃え、hover の灰色を中立色にしました。見出し・更新時刻・フォーム label などの補助文字も読みやすくしました。白い本文、Git の状態色・レイアウト・Apple Dark は維持します。(#1065、#1066)
 
+### Internal
+
+- `gpui-terminal` の通常テストから、ホストの共有 clipboard に接続・書き込み・消去しながら失敗を判定しない 3 件の smoke test と、consumer の挙動を検証しない clipboard event の転送 echo 2 件を削除しました。製品の `Clipboard` API と event proxy は変更せず、terminal の選択文字列抽出と、GPUI の private clipboard を使う既存の選択 / Copy の検証を維持します。arboard と OS clipboard の実連携を検証したことにはしません。
+- process の deadline / stop / incomplete-I/O テストの後片付けは、ホスト全体の process 名検索・`pkill` ではなく、fixture が公開した子孫 PID と kernel の起動 identity を照合して行う契約にしました。identity helper とそれを使うテストは macOS / Linux に限定し、macOS は既存の `proc_identity` helper、Linux は `/proc/<pid>/stat` を使います。root group を止めるのは所有する Child が未 reap の間だけで、reap 後は記録した子孫 identity だけを照合します。実 subprocess による停止・未完了 I/O の判定と、その他 Unix でも使える既存の direct deadline / I/O テストは維持します。
+
 ## [0.44.0] - 2026-10-06
 
 ### Added

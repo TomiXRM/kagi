@@ -1,7 +1,7 @@
 # Decision Log
 
 > **Status:** Active — append-only  
-> **Last updated:** 2026-10-05
+> **Last updated:** 2026-10-09
 
 ADR にするほどではないが、再計測や同じ失敗を避けるために残すべき決定と実測事実のログです。ADR を置き換えるものではありません。
 
@@ -15,6 +15,8 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-09 | process テストの後片付けは fixture が private に公開した子孫 PID と kernel の起動 identity を RAII で保持し、signal 直前に照合する。root group の panic cleanup は所有する Child が未 reap の間だけに限り、reap 後は記録した子孫 identity だけを対象にする。ホスト全体の検索・`pkill -f` と、reap 後の group 番号だけへの signal は使わない | 同じ sleep の名前や引数は利用者・並列テストの process にも一致するため。identity helper と helper を使うケースは元の Unix guard に加え macOS / Linux に限定する（macOS は既存の `tests/support/proc_identity.rs`、Linux は `/proc/<pid>/stat`）。その他 Unix で恒常的に失敗する fallback や PID だけの cleanup は作らず、既存の process-group-leadership・direct deadline・input / output テストは保持する。held-pipe 子孫が生存中の clean exit を group-stopped proof にしない。`fixture_cleanup_does_not_stop_another_same_marker_child` は同じ marker の実 sleep を 2 つ所有し、一方の cleanup / reap で他方の identity が生存することを検証する。Linux の container PID 1 が orphan zombie を reap しなければ group proof は保守的に不明のままとする。 |
+| 2026-10-09 | `vendor/gpui-terminal/src/clipboard.rs` の assertion のない creation / copy-paste / clear の 3 テストと tests module、`event.rs` の clipboard store / load 転送 echo 2 テストを削除する。製品の `Clipboard` と event proxy は変更せず、skip guard・mock・別の fake clipboard・opt-in の無判定 smoke には置き換えない | 3 件は arboard でホストの共有 clipboard に接続し、copy-paste / clear は内容を上書き・消去する一方、初期化失敗・コピー失敗・内容不一致でも成功していた。event の 2 件は渡した payload / event が返るだけで consumer の選択・コピーを検証しない。通常の package lib suite は 87 件から 82 件になる見込み（この変更では未実行）。既存の `terminal::tests::test_bounds_to_string_extracts_selection` と、GPUI の private clipboard を使う `scenario_graph_copy` / `scenario_oplog_detail_select_copy` は維持するが、arboard / OS clipboard integration は検証していない。既存測定 artifact 407 は 87 件 / 2018.29 秒、935 は 87 件 / 0.15 秒だった。同じ 87 件の異なる実行の観測であり、危険な旧テストは再実行せず、原因の特定や今回の削除による高速化の証拠にはしない。 |
 | 2026-10-06 | #1053 の Operation Log は行の開閉を 1 行目の要約だけに付け、展開部分の press を止めない。展開部分の文字列(記録した ref・reflog・見出しを含む)はすべて selectable な `TextView` で描き、取り消す / 戻すは gpui-component の `Button`(アイコン付き)にする | 現在の gpui-component は選択を window 単位の controller が bubble 段で開始するため、`on_mouse_down` の `stop_propagation` があると選択が始まらない。開閉の click 対象から展開部分を外せば止める必要がなくなる。ボタンは枠も背景もブロックと同色の div だったため、既存の Button に揃える。⌘C は `TextView` 側の Copy のため段落の間に空行が入る(正確な全文は行のコピーボタン)。 |
 | 2026-10-05 | #1043 の Add Worktree のフォルダ選択は既存の `cx.prompt_for_paths`(ADR-0028)をそのまま使い、選んだフォルダを親として `<選択>/<branch 名を path 安全にした名前>` をパス入力に書く。書き込んだ値は手入力と同じ同期・再計画の経路に流し、キャンセルは何もしない。ボタンは AX 名を持つ 24px の icon-only control(`modal_icon_button`)にする | ダイアログは既存のフォルダしか返せず、`validate_worktree_path_keyed` は既存パスを拒否するため、選んだフォルダをそのまま入れると常に blocker になる。名前は既定パスと同じ規則(`worktree_dir_name`)。gpui-component の `Button` は表示ラベルからしか AX 名を付けないため、Tab stop と Enter / Space を保った小さな RenderOnce を `button_style` に置く。Tier A では `e2e` seam が要求を記録し答えを返す。 |
 | 2026-10-05 | #1025 の Operation Log は承認済み計画の復旧種別とコマンドを追加フィールド `recovery_plan` に記録し、現在の表示言語で再描画する。Success / Partial / Unknown のみ欄を出し、未記録は明示、Refused / Failed は欄を出さない | [ADR-0221](adr/0221-oplog-plan-recovery.md)。blocker の永続英語 detail（ADR-0129）とは異なり、復旧説明は計画時の型と可変の表示言語の両方を要する。旧ログの推測はしない。 |

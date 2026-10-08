@@ -99,6 +99,10 @@ mod reconcile_unobservable;
 mod recovery_pull;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pull_freshness.rs"]
+mod pull_freshness;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/cli_capability.rs"]
 mod recovery_cli_capability;
 
@@ -1191,6 +1195,40 @@ mod macos {
                 Box::new(
                     crate::recovery_cli_capability::scenario_backend_cli_capability_observation,
                 ),
+            ),
+            (
+                "pull_freshness_clean_updates",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_clean_updates),
+            ),
+            (
+                "pull_freshness_synced_waits",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_synced_waits),
+            ),
+            (
+                "pull_freshness_fetch_failure",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_fetch_failure),
+            ),
+            (
+                "pull_freshness_joins_held_fetch",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_joins_held_fetch),
+            ),
+            (
+                "pull_freshness_external_head_invalidates",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_external_head_invalidates),
+            ),
+            (
+                "pull_freshness_external_worktree_invalidates",
+                Box::new(
+                    crate::pull_freshness::scenario_pull_freshness_external_worktree_invalidates,
+                ),
+            ),
+            (
+                "pull_freshness_closed_modal_displaces",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_closed_modal_displaces),
+            ),
+            (
+                "pull_freshness_captured_reload_drift",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_captured_reload_drift),
             ),
             (
                 "pull_auto_stash_success",

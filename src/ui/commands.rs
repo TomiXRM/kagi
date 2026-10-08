@@ -1496,6 +1496,9 @@ pub struct FetchFlight {
     /// when the tab is no longer the display owner.
     pub before: kagi_git::StateSummary,
     pub waiters: Vec<(crate::app::SessionId, u64)>,
+    /// A later user modal superseded the waiting Pull intent, even if that
+    /// modal closed before the fetch finished. A new explicit Pull re-arms it.
+    pub pull_confirm_displaced: bool,
     /// Admission superseded the owner's read in flight (`app::admit`), which a
     /// no-op fetch would never replace (ADR-0127): the completion owes it (#851).
     pub superseded_read: bool,
@@ -1964,8 +1967,8 @@ impl KagiApp {
         PANIC_NEXT_FETCH.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
-    /// [`Self::fetch_async`], plus the tab whose dirty Pull waits for this fetch
-    /// before its confirmation can be planned (#625). The launch request and
+    /// [`Self::fetch_async`], plus the tab whose Pull waits for this fetch
+    /// before confirming or claiming it is up to date. The launch request and
     /// later same-owner requests all live in the flight's waiter list.
     pub fn fetch_async_for(
         &mut self,
@@ -1983,6 +1986,7 @@ impl KagiApp {
                     if !flight.waiters.contains(&waiter) {
                         flight.waiters.push(waiter);
                     }
+                    flight.pull_confirm_displaced = false;
                     klog!("pull-confirm: waiting on the fetch already in flight");
                     return true;
                 }
@@ -2031,6 +2035,7 @@ impl KagiApp {
                 .map(|session| (session, visit))
                 .into_iter()
                 .collect(),
+            pull_confirm_displaced: false,
             superseded_read,
         });
         let repo_path_guard = repo_path.clone();
@@ -2134,7 +2139,11 @@ impl KagiApp {
                                 cx.notify();
                             }
                         }
-                        Ok(_) if current_waiter => app.deliver_pull_confirm(flight.owner, cx),
+                        Ok(_) if current_waiter => app.deliver_pull_confirm(
+                            flight.owner,
+                            flight.pull_confirm_displaced,
+                            cx,
+                        ),
                         Ok(_) => {}
                     }
                     // A delivered Pull confirmation (or failure preview) must
@@ -2203,7 +2212,7 @@ impl KagiApp {
                         if app.active_session() == Some(session)
                             && app.app_sessions.visit(session) == Some(visit)
                         {
-                            app.deliver_pull_confirm(session, cx);
+                            app.deliver_pull_confirm(session, flight.pull_confirm_displaced, cx);
                         }
                     }
                 }

@@ -1243,8 +1243,17 @@ The current suite covers:
   confirmation, an advanced upstream unknown to the consumer, true synchronization,
   fetch failure, and same-owner joining. Native toolbar activation follows
   `keyboard_nav::keys` (keydown **and keyup**); toolbar ids are not bounds-registry
-  controls. Compare staged content with `git ls-files --stage -z`, not raw index
-  bytes: opt-in status refresh may repair stat metadata without staging a change
+  controls.
+  `pull_freshness_clean_updates` runs both that toolbar gesture and the actual
+  current-branch context menu: right-click the measured `sidebar-local-main`
+  row, then click its Pull item. Start each with cached zero and a separately
+  advanced real origin; neither gesture may claim latest or change checkout
+  before its held fetch succeeds and the user confirms. Local row measurements
+  cover HEAD and non-HEAD rows only under `gui-e2e`, with no normal-build probe
+  identifier allocation. Cached zero/unknown never disables healthy upstream
+  Pull; busy/detached/remote/no-upstream guardrails remain intact.
+  Compare staged content with `git ls-files --stage -z`, not raw index bytes:
+  opt-in status refresh may repair stat metadata without staging a change
   (ADR-0193). Tier B uses two isolated clones and normal pushes to a dedicated
   remote: advance the producer without fetching in the consumer, click Pull in
   the owned app window, photograph stale `↓0` → fresh confirmation → confirmed

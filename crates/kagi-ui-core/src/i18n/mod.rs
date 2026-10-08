@@ -377,7 +377,6 @@ pub enum Msg {
     BcmDetachedHead,
     BcmCheckedOutElsewhere,
     BcmConflictMode,
-    BcmNothingToPull,
     BcmNothingToPush,
 
     // ── Empty states ────────────────────────────────────────────────
@@ -2327,8 +2326,6 @@ impl Msg {
             (Ja, BcmCheckedOutElsewhere) => "branch は別の worktree で checkout 済みです",
             (En, BcmConflictMode) => "resolve conflicts first",
             (Ja, BcmConflictMode) => "先に conflict を解決してください",
-            (En, BcmNothingToPull) => "nothing to pull",
-            (Ja, BcmNothingToPull) => "pull するものがありません",
             (En, BcmNothingToPush) => "nothing to push",
             (Ja, BcmNothingToPush) => "push するものがありません",
 

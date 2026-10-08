@@ -66,6 +66,12 @@ async: pull partially applied — Pull completed, but auto-stash restoration
 **その要求を所有する session の fetch 成功を待つ**。バックエンドの `plan_pull` は純粋な
 ローカル計画のままにし、ネットワークアクセスを隠して追加しない。
 
+sidebar の branch context menu も同じ freshness の入口である。最後に取得した
+`behind=0` / unknown は Pull / Pull ff-only の admission を閉じる根拠にしない。
+未確認の zero に「最新」の label を付けず、busy・detached HEAD・remote branch・
+upstream 未設定の既存 guard は維持する。current branch の通常 Pull は既存の
+fetch-first 経路へ入り、非 current branch の ff-only 操作の対象・確認の意味は変えない。
+
 fetch は remote-tracking refs を変更する **write** である。既存の admitted
 `fetch_async_for` の lease・実行・verify・oplog 経路を使い、新しい UI 直書き経路を作らない。
 確認前の fetch は HEAD、index の staged content、working tree を変更しない。

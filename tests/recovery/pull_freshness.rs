@@ -1,4 +1,4 @@
-//! Pull's freshness promise is exercised through the real native toolbar.
+//! Pull's freshness promise is exercised through the real native toolbar and menu.
 //! The second clone advances origin while the mounted checkout still says ↓0.
 
 use std::collections::BTreeMap;
@@ -176,6 +176,28 @@ fn click_pull(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     panic!("native Pull toolbar button is not keyboard reachable");
 }
 
+fn click_branch_pull(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    draw(cx, window);
+    let row = e2e::control_bounds(window.window_id(), "sidebar-local-main")
+        .expect("current branch row is drawn");
+    cx.simulate_mouse_down(
+        window,
+        row.center(),
+        gpui::MouseButton::Right,
+        gpui::Modifiers::none(),
+    );
+    cx.simulate_mouse_up(
+        window,
+        row.center(),
+        gpui::MouseButton::Right,
+        gpui::Modifiers::none(),
+    );
+    draw(cx, window);
+    let pull = e2e::control_bounds(window.window_id(), "branch-menu-item-1-1")
+        .expect("branch context-menu Pull is drawn");
+    cx.simulate_click(window, pull.center(), gpui::Modifiers::none());
+}
+
 fn assert_cached_zero(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, repo: &Path) {
     cx.read(|cx| {
         let summary = &app.read(cx).view().status_summary;
@@ -305,6 +327,15 @@ fn fetch_and_confirm(
 /// Only the production Pull click fetches. Its own reload must not erase approval.
 pub fn scenario_pull_freshness_clean_updates(cx: &mut VisualTestAppContext) {
     let _settings = SettingsGuard::install();
+    clean_updates_from(cx, click_pull);
+    clean_updates_from(cx, click_branch_pull);
+    eprintln!("[gui-e2e] PASS pull_freshness_clean_updates");
+}
+
+fn clean_updates_from(
+    cx: &mut VisualTestAppContext,
+    click: fn(&mut VisualTestAppContext, AnyWindowHandle),
+) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let origin = Origin::new(&repo);
@@ -312,7 +343,12 @@ pub fn scenario_pull_freshness_clean_updates(cx: &mut VisualTestAppContext) {
     let expected = origin.advance();
     assert_cached_zero(cx, &app, &repo);
     let before = Checkout::read(&repo);
-    fetch_and_confirm(cx, &app, window, &repo, &before);
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_fetch_for_e2e(hold);
+    click(cx, window);
+    assert_waiting(cx, &app, &repo, &before);
+    release.send(());
+    assert_fresh_confirm(cx, &app, window);
     assert_eq!(
         output(&repo, &["rev-parse", "origin/main"]),
         expected,
@@ -395,7 +431,6 @@ pub fn scenario_pull_freshness_clean_updates(cx: &mut VisualTestAppContext) {
         );
     });
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS pull_freshness_clean_updates");
 }
 
 /// Even a genuinely synced checkout owes the user a successful freshness check.

@@ -43,3 +43,26 @@
 - コマンドパレット(cmd-shift-p)は registry がそのまま供給源になる(later)
 - KeyBinding は root focus 必須(既存制約)。menu 起動はメニュー側 dispatch なので
   フォーカスが input にあっても動く
+
+## Amendment (2026-10-08): palette selection follows the viewport
+
+Issue #1069: `Cmd/Ctrl+P` の結果を矢印で選ぶと、選択が表示範囲外へ進んでも
+scroll offset が変わらず、Enter の対象を目で確認できなかった。
+実ウィンドウの空 query → Down 24 回で before / after を比較した。
+
+- 結果リストは既存の可変行高の div を維持する。disabled 理由を切らず、
+  `MenuKeys` と同じ pinned GPUI `ScrollHandle::scroll_to_item` を使う。
+- handle は palette を初めて開くまで確保しない。再度開くときは既存 handle の
+  offset と選択を先頭へ戻し、古い選択の reveal request を上書きする。
+- arrows と query 更新だけが、一回限りの selected-child reveal を予約する。
+  新しい children の実際の bounds に対して prepaint で適用するため、
+  検索結果の減少・空結果からの復帰・翻訳・zoom で固定行高を仮定しない。
+- 通常の render は reveal を予約しない。マウスで選択行から離れてもその
+  scroll を維持し、次の矢印操作で選択先を表示する。先頭・末尾で index が
+  変わらない矢印にも同じ契約を適用する。
+- live results の長さが変わったときも、highlight と Enter は同じ current
+  result index に clamp する。空結果・disabled は実行しない。
+- command registry と既存の operation lifecycle、IME、Escape の return focus、
+  MouseDown の action dispatch は変えない。palette の viewport geometry は
+  #1084 の別監査で扱う。
+

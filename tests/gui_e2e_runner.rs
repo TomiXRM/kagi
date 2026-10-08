@@ -1645,6 +1645,10 @@ mod macos {
                 Box::new(crate::overlay_focus::scenario_palette_push_modal_keys),
             ),
             (
+                "palette_selection_scroll",
+                Box::new(crate::overlay_focus::scenario_palette_selection_scroll),
+            ),
+            (
                 "settings_close_returns_focus",
                 Box::new(crate::overlay_focus::scenario_settings_close_returns_focus),
             ),

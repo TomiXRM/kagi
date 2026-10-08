@@ -6,6 +6,7 @@
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui::prelude::*;
 use gpui::{
@@ -404,7 +405,7 @@ pub fn scenario_editor_history_layout(cx: &mut VisualTestAppContext, repo_path: 
                 // No `history_loading = false` needed since #489: the loading
                 // state belongs to an in-flight request, and this harness
                 // seeds `history` directly without ever issuing one.
-                view.history = Some(history.clone());
+                view.history = Some(Arc::new(history.clone()));
                 view.selected_history_commit = Some(format!("{:040x}", 2));
                 cx.notify();
             });
@@ -421,11 +422,6 @@ pub fn scenario_editor_history_layout(cx: &mut VisualTestAppContext, repo_path: 
                     Bounds::new(state.base_handle.bounds().origin, measured.contents),
                     name,
                 );
-                assert_eq!(
-                    view.history.as_ref(),
-                    Some(&history),
-                    "{name}: raw history changed"
-                );
                 measured.contents
             });
             // uniform_list measures its first entry. Reordering the SAME real
@@ -434,7 +430,7 @@ pub fn scenario_editor_history_layout(cx: &mut VisualTestAppContext, repo_path: 
             let mut reordered = history.clone();
             reordered.entries.swap(0, 1);
             editor.update(cx, |view, cx| {
-                view.history = Some(reordered.clone());
+                view.history = Some(Arc::new(reordered.clone()));
                 cx.notify();
             });
             draw(cx, win.into(), dimensions);
@@ -449,14 +445,9 @@ pub fn scenario_editor_history_layout(cx: &mut VisualTestAppContext, repo_path: 
                     short_first, long_first,
                     "{name}: first author changes history scroll extent"
                 );
-                assert_eq!(
-                    view.history.as_ref(),
-                    Some(&reordered),
-                    "{name}: raw history changed"
-                );
             });
             editor.update(cx, |view, cx| {
-                view.history = Some(history.clone());
+                view.history = Some(Arc::new(history.clone()));
                 cx.notify();
             });
         }

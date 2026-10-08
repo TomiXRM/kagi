@@ -159,8 +159,8 @@ pub(crate) fn render_history_pane(
         .and_then(|e| e.commit.as_ref());
     let header = render_history_header(selected_commit, &view.avatars);
 
-    let entries = Arc::new(history.entries.clone());
-    let row_count = entries.len();
+    let history = Arc::clone(history);
+    let row_count = history.entries.len();
     let scroll_handle = view.history_scroll.clone();
     let scrollbar_handle = scroll_handle.clone();
     let selected = view.selected_history_commit.clone();
@@ -175,7 +175,7 @@ pub(crate) fn render_history_pane(
             cx.processor(move |this, range: Range<usize>, _window, cx| {
                 range
                     .filter_map(|i| {
-                        render_history_row(this, i, entries.get(i)?, &selected, now, cx)
+                        render_history_row(this, i, history.entries.get(i)?, &selected, now, cx)
                     })
                     .collect::<Vec<_>>()
             }),

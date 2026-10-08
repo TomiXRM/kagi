@@ -113,6 +113,27 @@ diff は `+`/`−` の hunk をシンタックスハイライトと行番号付�
 
 任意のファイルで **File History** を開くと、そのファイルを変更したすべての commit をたどれます。左にファイル単位の commit 一覧、右に選択中エントリのそのファイルの diff が出ます。矢印キーでエントリを移動でき、**rename を追跡**してファイルの過去まで遡り、パスのコピーやファイルを開く操作、終わったらグラフへ戻る、ができます。
 
+## Pull Request と Issue をグラフから離れずに
+
+<div align="center">
+<img src="docs/images/pr-list.png" width="900" alt="Zed リポジトリの PRs ワークスペース。最近更新された open な pull request を state・label・author・draft・checks・タイトル・並び順で絞り込み、注意が必要なものの集計と Inbox / My PRs / Review / Assigned のナビゲーター付きで表示" />
+<img src="docs/images/pr-detail.png" width="900" alt="pull request のページ。PR の commit をリポジトリのグラフの swimlane で強調し、Overview / Review / Files / Commits のタブ、reviewer・assignee・label、checks と merge status のカード、説明文、request changes / approve / comment の入力欄、ヘッダーの Merge" />
+</div>
+
+**PRs** と **Issues** のワークスペースは **Graph** の隣にあり、pull request からその commit まで 1 クリックです。GitHub との通信はすべて `gh` CLI 経由で、いつもの `gh auth login` をそのまま使います。Kagi が token を読んだり保存したりすることはなく、GitHub Enterprise のリポジトリはそのリポジトリのホストを使います。
+
+- **PR 一覧**：open・closed・すべての PR を Inbox / My PRs / Review / Assigned に分け、label・author・draft・checks・タイトルで絞り込めます。自分の PR には、何を待っているか(修正依頼、conflict、CI の失敗、merge 可能)が出ます。
+- **PR のページ**：会話、diff 上のレビュースレッド、ファイルごとの「確認済み」印、commit 一覧、ローカルで計算する Conflicts タブ。PR の commit はリポジトリのグラフの swimlane で強調され、PR の ref は自動で fetch されます。
+- **レビューと merge**：approve・request changes・comment と、reviewer・assignee・label の編集。**Merge**(squash)と **Apply suggestion** はほかの書き込みと同じく先に plan カードを開き、操作ログに残ります。
+- **Issue**：自分に assign された・自分が作成した・自分に言及した・最近更新された issue を、絞り込みとページ送りで表示。スレッドを読んで返信したり、label と assignee を付けて新しい issue を作成したりできます。下書きはディスクに保存されます。
+
+<div align="center">
+<img src="docs/images/issues.png" width="900" alt="Zed リポジトリの Issues ワークスペース。Assigned to me / Created by me / Mentioning me / Recently updated のナビゲーターと、GitHub の Markdown で表示した選択中の issue のスレッド" />
+<img src="docs/images/home-github.png" width="900" alt="Home の Pull requests 切り替えを自分のリポジトリに絞り込んだ状態。自分が作成した open な pull request を、リポジトリ・番号・日付・Open ボタン付きで表示" />
+</div>
+
+**Home** にはリポジトリをまたいだ自分の作業がまとまります。自分が作成した PR、レビューを依頼された PR、自分に assign された issue です。行を開くとローカルの clone がタブで開き、まだ clone していなければ GitHub をブラウザで開きます。
+
 ## 変更が集中する場所を見つける
 
 <div align="center">

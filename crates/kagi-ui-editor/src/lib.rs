@@ -402,9 +402,10 @@ pub struct EditorWorkspaceView {
     pub right_tab: RightPaneTab,
     /// This file's commit history, seeded by the bin ([`seed_history`]
     /// (Self::seed_history)) once `right_tab` first switches to `History`.
-    /// `None` while loading or before the tab has ever been opened for this
-    /// file.
-    pub history: Option<FileHistory>,
+    /// Shared with the virtualized list so redraws retain the loaded entries
+    /// without copying them. `None` while loading or before the tab has ever
+    /// been opened for this file.
+    pub history: Option<Arc<FileHistory>>,
     /// The in-flight History load, owned by its own request key
     /// (`(file_req, path)`) rather than by a bare bool — see
     /// [`kagi_domain::load_request`] and [`Self::history_loading`] (#489).
@@ -1177,7 +1178,7 @@ impl EditorWorkspaceView {
         {
             return;
         }
-        self.history = result.ok();
+        self.history = result.ok().map(Arc::new);
         cx.notify();
     }
 

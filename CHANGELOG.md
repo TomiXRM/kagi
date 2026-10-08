@@ -9,6 +9,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - Command Palette で矢印キー・検索変更による選択行が画面内へ追従するようにしました。マウスでのスクロールは再描画で巻き戻さず、次のキー操作で選択先を再表示します。disabled 理由の可変行高と、表示中の highlight / Enter の実行対象も維持します。(#1069)
 
+### Changed
+
+- Apple Light のサイドバーと toolbar の明度を同じ Mac の実 Finder ウィンドウと比較して揃え、hover の灰色を中立色にしました。見出し・更新時刻・フォーム label などの補助文字も読みやすくしました。白い本文、Git の状態色・レイアウト・Apple Dark は維持します。(#1065、#1066)
+
 ## [0.44.0] - 2026-10-06
 
 ### Added

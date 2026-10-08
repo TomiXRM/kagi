@@ -1567,6 +1567,16 @@ lists on-screen windows only) prints nothing even though the window exists;
 clicks, keys and `screencapture -l` address the window by ID and still work, so
 take the ID from `CGWindowListCopyWindowInfo([.optionAll], …)` for that PID.
 
+**README images** (`docs/images/*.png`, #1049 / #1062) are 3104×2064: a
+1440×920 pt window (`KAGI_WINDOW=1440x920`) plus the active-window shadow, on
+the 2× built-in display. Three things change that size: a window opened on a
+1× external display (1552×1032 — move it with System Events `set position`), a
+window that is not frontmost (smaller shadow: 3016×1976 — activate it after
+placing, then capture), and a locked screen, during which the window opens at
+0.9× (`KAGI_WINDOW=1440x920` gave 1296×830 pt) and `screencapture -l` fails
+with "could not create image from window". Check the size with `sips` after
+every capture.
+
 **Drop `KAGI_NO_ACTIVATE=1` when the scenario clicks the tab strip.** The tabs
 live in the window's title bar, and macOS hands a title-bar click on a *non-key*
 window to its own window-drag handling instead of the application. The click

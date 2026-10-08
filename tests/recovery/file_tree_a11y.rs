@@ -1,7 +1,7 @@
 //! #354: the Editor Workspace and Commit Panel expose real flattened file
 //! trees with localized names, absolute hierarchy, selection and disclosure.
 use crate::macos::{build_fixture, git, mount, unmount};
-use gpui::{Entity, VisualTestAppContext};
+use gpui::{Entity, Focusable, VisualTestAppContext};
 use kagi::ui::{
     commit_panel::CommitPanelFileRef,
     e2e,
@@ -14,6 +14,155 @@ use kagi_ui_core::{
 };
 use std::path::Path;
 use std::time::{Duration, Instant};
+
+fn wait_editor(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    editor: &Entity<kagi_ui_editor::EditorWorkspaceView>,
+    window: gpui::AnyWindowHandle,
+) {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        cx.run_until_parked();
+        draw(cx, app, window);
+        if cx.read(|cx| {
+            let view = editor.read(cx);
+            !view.loading && !view.file_loading && view.editor.is_some()
+        }) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "editor read did not finish");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+fn editor_layout_transitions(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    editor: &Entity<kagi_ui_editor::EditorWorkspaceView>,
+    window: gpui::AnyWindowHandle,
+    repo: &Path,
+) {
+    use kagi_ui_editor::TreeSource;
+    wait_editor(cx, app, editor, window);
+    let warm = cx.read(|cx| editor.read(cx).tree_layout_derivations());
+    cx.update_window(window, |_, window, cx| {
+        let input = editor.read(cx).editor.clone().unwrap();
+        window.focus(&input.read(cx).focus_handle(cx), cx);
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.simulate_keystrokes(window, "x");
+    cx.run_until_parked();
+    assert!(cx.read(|cx| editor.read(cx).dirty));
+    editor.update(cx, |view, cx| {
+        view.step_selection(1, cx);
+        view.step_selection(-1, cx);
+        view.tree_scroll
+            .scroll_to_item(0, gpui::ScrollStrategy::Top);
+        view.expand_all(cx);
+        cx.notify();
+    });
+    wait_editor(cx, app, editor, window);
+    for _ in 0..3 {
+        draw(cx, app, window);
+    }
+    assert_eq!(
+        cx.read(|cx| editor.read(cx).tree_layout_derivations()),
+        warm
+    );
+    assert_eq!(
+        item(&recorded_tree("ews-file-tree").unwrap(), "Fix {}.txt").selected,
+        Some(true)
+    );
+
+    let tree_len = cx.read(|cx| editor.read(cx).tree.len());
+    std::fs::rename(repo.join("Cargo.lock"), repo.join("src/Next.lock")).unwrap();
+    editor.update(cx, |view, cx| view.start_load(cx));
+    wait_editor(cx, app, editor, window);
+    assert_eq!(cx.read(|cx| editor.read(cx).tree.len()), tree_len);
+    let tree = recorded_tree("ews-file-tree").unwrap();
+    assert_eq!(
+        (
+            item(&tree, "Fix {}.txt").position,
+            item(&tree, "Fix {}.txt").size
+        ),
+        (1, 3)
+    );
+    assert_eq!(
+        (
+            item(&tree, "Next.lock").level,
+            item(&tree, "Next.lock").position
+        ),
+        (2, 2)
+    );
+    assert!(!tree
+        .rows
+        .values()
+        .any(|row| row.label.contains("Cargo.lock")));
+    cx.read(|cx| {
+        let view = editor.read(cx);
+        assert_eq!(
+            view.files[view.selected.unwrap()].path,
+            Path::new("src/Fix {}.txt")
+        );
+        assert!(view.dirty, "tree replacement preserves the edited buffer");
+        let rebuilt = view.tree_layout_derivations();
+        assert!(rebuilt.0 > warm.0 && rebuilt.1 > warm.1);
+    });
+
+    editor.update(cx, |view, cx| view.set_source(TreeSource::All, cx));
+    wait_editor(cx, app, editor, window);
+    let tree = recorded_tree("ews-file-tree").unwrap();
+    assert_eq!(item(&tree, "Folder src").expanded, Some(false));
+    assert!(!tree
+        .rows
+        .values()
+        .any(|row| row.label.contains("Fix {}.txt")));
+    editor.update(cx, |view, cx| view.expand_all(cx));
+    cx.run_until_parked();
+    draw(cx, app, window);
+    let tree = recorded_tree("ews-file-tree").unwrap();
+    assert_eq!(item(&tree, "Fix {}.txt").selected, Some(true));
+    assert!(tree
+        .rows
+        .values()
+        .any(|row| row.label.contains("README.md")));
+    editor.update(cx, |view, cx| view.collapse_all(cx));
+    cx.run_until_parked();
+    draw(cx, app, window);
+    let tree = recorded_tree("ews-file-tree").unwrap();
+    assert_eq!(item(&tree, "Folder src").expanded, Some(false));
+    assert!(!tree
+        .rows
+        .values()
+        .any(|row| row.label.contains("Fix {}.txt")));
+    let folded = cx.read(|cx| editor.read(cx).tree_layout_derivations());
+    editor.update(cx, |view, cx| view.collapse_all(cx));
+    draw(cx, app, window);
+    assert_eq!(
+        cx.read(|cx| editor.read(cx).tree_layout_derivations()),
+        folded
+    );
+    editor.update(cx, |view, cx| view.set_source(TreeSource::Changes, cx));
+    wait_editor(cx, app, editor, window);
+    let tree = recorded_tree("ews-file-tree").unwrap();
+    assert_eq!(item(&tree, "Folder src").expanded, Some(true));
+    assert!(!tree
+        .rows
+        .values()
+        .any(|row| row.label.contains("README.md")));
+    assert_eq!(item(&tree, "Fix {}.txt").size, 3);
+    assert!(cx.read(|cx| editor.read(cx).dirty));
+
+    std::fs::rename(repo.join("src/Next.lock"), repo.join("Cargo.lock")).unwrap();
+    editor.update(cx, |view, cx| view.start_load(cx));
+    wait_editor(cx, app, editor, window);
+    assert_eq!(
+        item(&recorded_tree("ews-file-tree").unwrap(), "Fix {}.txt").size,
+        2
+    );
+}
 
 fn fixture_files(repo: &Path) {
     std::fs::create_dir(repo.join("src")).unwrap();
@@ -107,6 +256,7 @@ pub fn scenario_file_tree_roles(cx: &mut VisualTestAppContext) {
         ),
         (2, 2)
     );
+    let before_fold = cx.read(|cx| editor.read(cx).tree_layout_derivations());
     editor.update(cx, |editor, cx| editor.toggle_dir(src_dir, cx));
     cx.run_until_parked();
     draw(cx, &app, window);
@@ -116,6 +266,10 @@ pub fn scenario_file_tree_roles(cx: &mut VisualTestAppContext) {
         .rows
         .values()
         .any(|row| row.label.contains("Fix {}.txt")));
+    assert_eq!(
+        cx.read(|cx| editor.read(cx).tree_layout_derivations()),
+        (before_fold.0 + 1, before_fold.1 + 1)
+    );
     editor.update(cx, |editor, cx| editor.toggle_dir(src_dir, cx));
     i18n::set_lang(Lang::Ja);
     cx.run_until_parked();
@@ -124,6 +278,9 @@ pub fn scenario_file_tree_roles(cx: &mut VisualTestAppContext) {
     assert_eq!(tree.label, Msg::A11yFileTree.t());
     assert_eq!(item(&tree, "Fix {}.txt").label, "ファイル Fix {}.txt、変更");
     assert_eq!(item(&tree, "Fix {}.txt").selected, Some(true));
+    i18n::set_lang(Lang::En);
+    editor_layout_transitions(cx, &app, &editor, window, &repo);
+    i18n::set_lang(Lang::Ja);
     // The center pane is exclusive: close the editor to display the panel.
     drop(editor);
     app.update(cx, |app, cx| {

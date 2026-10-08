@@ -27,6 +27,7 @@ mod bottom_panel;
 pub mod markdown;
 mod panes;
 mod save_binding;
+mod tree_layout;
 mod watcher;
 
 pub use bottom_panel::EditorWorkspaceElement;
@@ -319,10 +320,12 @@ pub struct EditorWorkspaceView {
     pub tree_w: f32,
     /// Right hunks-pane width (drag-resizable, T-WS-EDITOR-004).
     pub hunks_w: f32,
-    /// Collapsed directory rows, keyed by their index into `tree` (stable per
-    /// load — `tree` is only rebuilt by `start_load`, which clears this).
-    /// Children of a collapsed dir are filtered out by `visible_tree_indices`.
+    /// Collapsed directory rows, keyed by their index into `tree`. An accepted
+    /// file-list replacement resets these indices to the source's default;
+    /// superseded reads leave both the tree and its layout untouched.
     pub collapsed: HashSet<usize>,
+    /// Same entity owns the input revisions and the derived display mapping.
+    tree_layout: tree_layout::TreeLayoutCache,
     /// `true` while the working-tree file-list load is in flight.
     pub loading: bool,
     /// Set if the file-list load failed.
@@ -560,6 +563,7 @@ impl EditorWorkspaceView {
             tree_w: TREE_PANE_DEFAULT_W,
             hunks_w: HUNKS_PANE_DEFAULT_W,
             collapsed: HashSet::new(),
+            tree_layout: Default::default(),
             loading: false,
             error: None,
             generation: 0,
@@ -654,6 +658,7 @@ impl EditorWorkspaceView {
                     TreeSource::Changes => HashSet::new(),
                     TreeSource::All => all_dir_indices(&self.tree),
                 };
+                self.tree_layout.tree_changed();
                 klog!("editor-ws: files {}", files.len());
                 let was_empty = files.is_empty();
                 self.files = files;
@@ -1528,22 +1533,19 @@ impl EditorWorkspaceView {
     /// subtrees skipped) so the selection never lands on a hidden file, and
     /// scrolls the tree to keep the selected row on screen.
     pub fn step_selection(&mut self, delta: i32, cx: &mut Context<Self>) {
-        let visible = visible_tree_indices(&self.tree, &self.collapsed);
-        // (position in the visible list, file_index) for every visible file row.
-        let file_rows: Vec<(usize, usize)> = visible
-            .iter()
-            .enumerate()
-            .filter_map(|(vis_pos, &ti)| match self.tree.get(ti) {
-                Some(TreeRow::File { file_index, .. }) => Some((vis_pos, *file_index)),
-                _ => None,
-            })
-            .collect();
+        self.refresh_tree_layout();
+        let visible = &self.tree_layout.visible;
+        let file_rows = &self.tree_layout.file_rows;
         if file_rows.is_empty() {
             return;
         }
-        let cur = self
-            .selected
-            .and_then(|sel| file_rows.iter().position(|&(_, fi)| fi == sel));
+        let cur = self.selected.and_then(|sel| {
+            self.tree_layout
+                .file_row_indices
+                .get(sel)
+                .copied()
+                .flatten()
+        });
         let next = match cur {
             Some(p) => (p as i64 + i64::from(delta)).clamp(0, file_rows.len() as i64 - 1) as usize,
             None => {
@@ -1552,12 +1554,14 @@ impl EditorWorkspaceView {
                 // so we can step from where it *would* be instead of
                 // teleporting to an end (T-WS-EDITOR-005 finding #7).
                 let hidden_base_index = self.selected.and_then(|sel| {
-                    self.tree.iter().position(
-                        |r| matches!(r, TreeRow::File { file_index, .. } if *file_index == sel),
-                    )
+                    self.tree_layout
+                        .file_base_indices
+                        .get(sel)
+                        .copied()
+                        .flatten()
                 });
                 match hidden_base_index {
-                    Some(base) => nearest_visible_file_row(&visible, &file_rows, base, delta),
+                    Some(base) => nearest_visible_file_row(visible, file_rows, base, delta),
                     // No selection at all yet: ↓ starts at the top, ↑ at the bottom.
                     None if delta >= 0 => 0,
                     None => file_rows.len() - 1,
@@ -1584,18 +1588,28 @@ impl EditorWorkspaceView {
         if !self.collapsed.remove(&tree_index) {
             self.collapsed.insert(tree_index);
         }
+        self.tree_layout.collapse_changed();
         cx.notify();
     }
 
     /// Expand every directory (the ⌄⌄ button in the chip row).
     pub fn expand_all(&mut self, cx: &mut Context<Self>) {
+        if self.collapsed.is_empty() {
+            return;
+        }
         self.collapsed.clear();
+        self.tree_layout.collapse_changed();
         cx.notify();
     }
 
     /// Collapse every directory (the ⌃⌃ button in the chip row).
     pub fn collapse_all(&mut self, cx: &mut Context<Self>) {
-        self.collapsed = all_dir_indices(&self.tree);
+        let collapsed = all_dir_indices(&self.tree);
+        if self.collapsed == collapsed {
+            return;
+        }
+        self.collapsed = collapsed;
+        self.tree_layout.collapse_changed();
         cx.notify();
     }
 
@@ -2077,10 +2091,8 @@ fn nearest_visible_file_row(
     hidden_base_index: usize,
     delta: i32,
 ) -> usize {
-    let insert_pos = file_rows
-        .iter()
-        .position(|&(vis_pos, _)| visible[vis_pos] >= hidden_base_index)
-        .unwrap_or(file_rows.len());
+    let insert_pos =
+        file_rows.partition_point(|&(vis_pos, _)| visible[vis_pos] < hidden_base_index);
     if delta >= 0 {
         insert_pos.min(file_rows.len() - 1)
     } else {
@@ -2233,6 +2245,9 @@ impl Render for EditorWorkspaceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_editor(window, cx);
         self.sync_snapshot_editor(window, cx);
+        if self.show_tree && !self.loading && self.error.is_none() {
+            self.refresh_tree_layout();
+        }
         if self.preview_markdown {
             self.ensure_preview_mermaids(cx);
         }
@@ -2536,18 +2551,9 @@ fn render_tree_pane(
 
     // Zed-style collapse: the uniform_list virtualizes the *visible* rows;
     // the processor maps a visible position back to its base tree index.
-    // Accessibility levels and sibling positions are computed once per
-    // render from the same visible rows, so they follow the current
-    // collapse state (#354).
-    let visible = visible_tree_indices(&view.tree, &view.collapsed);
-    let levels: Vec<usize> = visible
-        .iter()
-        .map(|&i| match &view.tree[i] {
-            TreeRow::Dir { depth, .. } | TreeRow::File { depth, .. } => depth + 1,
-        })
-        .collect();
-    let positions = tree_a11y::sibling_positions(&levels);
-    let row_count = visible.len();
+    // Like Commit Panel, cache the full display/AX mapping by input revisions;
+    // warm redraws and per-scroll processors only index the entity-owned layout.
+    let row_count = view.tree_layout.visible.len();
     let scroll_handle = view.tree_scroll.clone();
     let scrollbar_handle = scroll_handle.clone();
     let tree_root = tree_a11y::tree(
@@ -2573,11 +2579,8 @@ fn render_tree_pane(
                     // key on visible position, not the base `tree` index.
                     range
                         .filter_map(|i| {
-                            let a11y = TreeRowA11y {
-                                level: *levels.get(i)?,
-                                position: *positions.get(i)?,
-                            };
-                            render_tree_row(this, i, *visible.get(i)?, a11y, cx)
+                            let a11y = *this.tree_layout.a11y.get(i)?;
+                            render_tree_row(this, i, *this.tree_layout.visible.get(i)?, a11y, cx)
                         })
                         .collect::<Vec<_>>()
                 }),
@@ -3275,13 +3278,13 @@ fn with_vertical_scrollbar<H: gpui_component::scroll::ScrollbarHandle + Clone>(
 mod tests {
     use super::*;
 
-    fn dir(depth: usize, name: &str) -> TreeRow {
+    pub(super) fn dir(depth: usize, name: &str) -> TreeRow {
         TreeRow::Dir {
             depth,
             name: SharedString::from(name.to_string()),
         }
     }
-    fn file(depth: usize, name: &str, file_index: usize) -> TreeRow {
+    pub(super) fn file(depth: usize, name: &str, file_index: usize) -> TreeRow {
         TreeRow::File {
             depth,
             name: SharedString::from(name.to_string()),
@@ -3291,7 +3294,7 @@ mod tests {
     }
 
     /// src/(a.rs, ui/(b.rs)), root.rs — the shape `build_file_tree` emits.
-    fn sample_tree() -> Vec<TreeRow> {
+    pub(super) fn sample_tree() -> Vec<TreeRow> {
         vec![
             dir(0, "src"),         // 0
             file(1, "a.rs", 0),    // 1

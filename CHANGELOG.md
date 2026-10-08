@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Editor の file tree は、受理した file 一覧と folder の開閉が変わるときだけ可視行・accessibility の階層／同列位置・keyboard 選択の対応を更新するようにしました。再描画で全 file tree を作り直さず、同じ件数の一覧置換でも新しい file に選択を対応させます。(#1073)
+
 ## [0.44.0] - 2026-10-06
 
 ### Added

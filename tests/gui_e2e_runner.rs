@@ -1209,6 +1209,10 @@ mod macos {
                 Box::new(crate::pull_freshness::scenario_pull_freshness_branch_entries),
             ),
             (
+                "pull_ff_only_current_tree_consistency",
+                Box::new(crate::pull_freshness::scenario_pull_ff_only_current_tree_consistency),
+            ),
+            (
                 "pull_freshness_synced_waits",
                 Box::new(crate::pull_freshness::scenario_pull_freshness_synced_waits),
             ),
@@ -1245,6 +1249,18 @@ mod macos {
             (
                 "pull_auto_stash_remote_identity_drift",
                 Box::new(crate::pull_freshness::scenario_pull_auto_stash_remote_identity_drift),
+            ),
+            (
+                "pull_auto_stash_dirty_plan_drift",
+                Box::new(crate::pull_freshness::scenario_pull_auto_stash_dirty_plan_drift),
+            ),
+            (
+                "pull_auto_stash_restore_preview_drift",
+                Box::new(crate::pull_freshness::scenario_pull_auto_stash_restore_preview_drift),
+            ),
+            (
+                "pull_auto_stash_same_upstream_advancement",
+                Box::new(crate::pull_freshness::scenario_pull_auto_stash_same_upstream_advancement),
             ),
             (
                 "pull_fetch_preserves_conflict_blocker",

@@ -289,17 +289,26 @@ fn assert_refused_without_mutation(current: bool, same_remote: bool) {
     );
 }
 
-fn assert_newer_same_upstream_allowed(current: bool) {
+fn assert_newer_same_upstream_allowed(
+    current: bool,
+    cached_after_approval: bool,
+    strict_current: bool,
+) {
     let fixture = Fixture::new(current);
     let mut backend = fixture.backend();
-    let op = fixture.op(current);
+    let op = if strict_current {
+        Operation::PullBranchFf {
+            branch_name: fixture.branch.into(),
+        }
+    } else {
+        fixture.op(current)
+    };
     let plan = fixture.plan(&backend, &op);
     let before = checkout_state(fixture.local());
 
-    // Publish a newer descendant only AFTER approval, without fetching locally.
-    // fork_tip is already in the producer's history; the approved origin now
-    // advances beyond it. Pull must fetch the new origin tip, not freeze its
-    // cached OID at plan time (nor reject it merely because that OID changed).
+    // Publish a newer descendant only AFTER approval. Exercise both discovery
+    // by execution fetch and discovery by another fetch before execution:
+    // the approval freezes the upstream name, not its cached OID or count.
     write_file(&fixture.producer, "a.txt", "newer approved upstream\n");
     write_file(
         &fixture.producer,
@@ -312,13 +321,20 @@ fn assert_newer_same_upstream_allowed(current: bool) {
         &["push", "-q", "origin", &format!("main:{}", fixture.branch)],
     );
     let newer_tip = git_output(&fixture.producer, &["rev-parse", "HEAD"]);
+    if cached_after_approval {
+        git(fixture.local(), &["fetch", "-q", "origin"]);
+    }
     assert_eq!(
         git_output(
             fixture.local(),
             &["rev-parse", &format!("origin/{}", fixture.branch)]
         ),
-        fixture.origin_tip,
-        "local tracker must still have the approved cached tip"
+        if cached_after_approval {
+            newer_tip.as_str()
+        } else {
+            fixture.origin_tip.as_str()
+        },
+        "local tracker must match the actual pre-execution fetch state"
     );
 
     let report = backend.run_recorded(&op, &plan);
@@ -365,6 +381,16 @@ fn assert_newer_same_upstream_allowed(current: bool) {
         "newer approved upstream"
     );
     if current {
+        let actual = checkout_state(fixture.local());
+        let incoming = checkout_state(&fixture.producer);
+        assert_eq!(
+            actual.index_entries, incoming.index_entries,
+            "actual path/OID/mode/stage must equal the incoming tree"
+        );
+        assert_eq!(
+            actual.worktree, incoming.worktree,
+            "every actual worktree file must equal the incoming tree"
+        );
         assert_eq!(
             git_output(fixture.local(), &["rev-parse", "HEAD"]),
             newer_tip
@@ -400,6 +426,100 @@ fn assert_newer_same_upstream_allowed(current: bool) {
             before,
             "non-current pull must update only the target ref, not HEAD/index/worktree"
         );
+    }
+}
+
+fn assert_malformed_pull_titles_refused(strict_current: bool) {
+    use kagi_domain::plan_note::{PlanTitle, PullTitle};
+
+    for mismatch in ["family", "branch", "remote"] {
+        let fixture = Fixture::new(true);
+        if mismatch == "branch" {
+            git(fixture.local(), &["branch", "other"]);
+        }
+        let mut backend = fixture.backend();
+        let op = if strict_current {
+            Operation::PullBranchFf {
+                branch_name: fixture.branch.into(),
+            }
+        } else {
+            Operation::Pull
+        };
+        let mut plan = fixture.plan(&backend, &op);
+        // A caller-owned approval for the wrong family or displayed target
+        // must never authorize the real operation, even with a valid identity.
+        let (mut branch, mut remote, behind) = match plan.title {
+            PlanTitle::Pull(
+                PullTitle::Pull {
+                    branch,
+                    remote,
+                    behind,
+                }
+                | PullTitle::PullBranchFf {
+                    branch,
+                    remote,
+                    behind,
+                },
+            ) => (branch, remote, behind),
+            title => panic!("unexpected real Pull plan: {title:?}"),
+        };
+        if mismatch == "branch" {
+            branch = "other".into();
+        } else if mismatch == "remote" {
+            remote = "fork".into();
+        }
+        plan.title = PlanTitle::Pull(if strict_current != (mismatch == "family") {
+            PullTitle::PullBranchFf {
+                branch,
+                remote,
+                behind,
+            }
+        } else {
+            PullTitle::Pull {
+                branch,
+                remote,
+                behind,
+            }
+        });
+        let before = checkout_state(fixture.local());
+        let refs = git_output(fixture.local(), &["show-ref"]);
+        let fetch_head = std::fs::read(fixture.local().join(".git/FETCH_HEAD")).unwrap();
+        let report = backend.run_recorded(&op, &plan);
+        assert!(
+            matches!(&report.result, Err(kagi_git::GitError::Preflight(_))),
+            "{mismatch}: {:?}",
+            report.result
+        );
+        assert!(matches!(
+            &report.recording,
+            kagi_git::backend::recording::Recording::Appended { .. }
+        ));
+        assert!(matches!(
+            &report.recording.entry().outcome,
+            OpOutcome::Failed { .. }
+        ));
+        assert_eq!(
+            checkout_state(fixture.local()),
+            before,
+            "{mismatch} title must preserve HEAD/index/files"
+        );
+        assert_eq!(
+            git_output(fixture.local(), &["show-ref"]),
+            refs,
+            "{mismatch} title must preserve every ref"
+        );
+        assert_eq!(
+            std::fs::read(fixture.local().join(".git/FETCH_HEAD")).unwrap(),
+            fetch_head,
+            "{mismatch} title must refuse before fetching"
+        );
+        let durable = kagi_git::oplog::read_oplog_tail_for_repo(fixture.local(), 100);
+        assert_eq!(
+            durable.len(),
+            1,
+            "one actual malformed-approval refusal receipt"
+        );
+        assert_eq!(durable[0].id, report.recording.entry().id);
     }
 }
 
@@ -440,7 +560,7 @@ fn non_current_pull_fetches_newer_same_upstream_after_approval() {
     if !test_support::run_isolated() {
         return;
     }
-    assert_newer_same_upstream_allowed(false);
+    assert_newer_same_upstream_allowed(false, false, false);
 }
 
 #[test]
@@ -448,5 +568,45 @@ fn current_pull_fetches_newer_same_upstream_after_approval() {
     if !test_support::run_isolated() {
         return;
     }
-    assert_newer_same_upstream_allowed(true);
+    assert_newer_same_upstream_allowed(true, false, false);
+}
+
+#[test]
+fn non_current_pull_accepts_cached_newer_same_upstream_after_approval() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    assert_newer_same_upstream_allowed(false, true, false);
+}
+
+#[test]
+fn current_pull_accepts_cached_newer_same_upstream_after_approval() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    assert_newer_same_upstream_allowed(true, true, false);
+}
+
+#[test]
+fn current_strict_ff_accepts_cached_newer_same_upstream_after_approval() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    assert_newer_same_upstream_allowed(true, true, true);
+}
+
+#[test]
+fn current_pull_rejects_malformed_title_before_write() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    assert_malformed_pull_titles_refused(false);
+}
+
+#[test]
+fn current_strict_ff_rejects_malformed_title_before_write() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    assert_malformed_pull_titles_refused(true);
 }

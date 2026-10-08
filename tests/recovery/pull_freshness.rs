@@ -95,6 +95,20 @@ impl Origin {
         output(&self.other, &["rev-parse", "HEAD"])
     }
 
+    fn advance_tree(&self) -> String {
+        std::fs::write(self.other.join("README.md"), "updated tracked content\n").unwrap();
+        std::fs::remove_file(self.other.join("pull-remove.txt")).unwrap();
+        std::fs::create_dir(self.other.join("incoming")).unwrap();
+        std::fs::write(self.other.join("incoming/added.txt"), "new tracked path\n").unwrap();
+        git(&self.other, &["add", "-A"]);
+        git(
+            &self.other,
+            &["commit", "-q", "-m", "modify add and remove paths"],
+        );
+        git(&self.other, &["push", "-q", "origin", "main"]);
+        output(&self.other, &["rev-parse", "HEAD"])
+    }
+
     fn make_unreachable(&self, repo: &Path) {
         // Keep origin/main intact. A cached-zero planner would still claim latest.
         let missing = self._root.path().join("missing.git");
@@ -140,14 +154,27 @@ impl Checkout {
     }
 }
 
-fn auto_stash_identity_drift(cx: &mut VisualTestAppContext, different_remote: bool) {
+#[derive(Clone, Copy)]
+enum AutoStashGuardDrift {
+    Tracking,
+    Remote,
+    DirtyPaths,
+    RestorePreview,
+}
+
+fn auto_stash_guard_drift(
+    cx: &mut VisualTestAppContext,
+    drift: AutoStashGuardDrift,
+    language: Lang,
+) {
     let _settings = SettingsGuard::install();
+    i18n::set_lang(language);
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let origin = Origin::new(&repo);
     let upstream = origin.advance();
     git(&origin.other, &["push", "-q", "origin", "main:alternate"]);
-    if different_remote {
+    if matches!(drift, AutoStashGuardDrift::Remote) {
         let url = output(&repo, &["remote", "get-url", "origin"]);
         git(&repo, &["remote", "add", "mirror", &url]);
         git(&repo, &["fetch", "-q", "mirror"]);
@@ -184,32 +211,80 @@ fn auto_stash_identity_drift(cx: &mut VisualTestAppContext, different_remote: bo
     let approved_plan = backend.plan_pull().unwrap();
     drop(backend);
     assert_eq!(output(&repo, &["rev-parse", "origin/main"]), upstream);
-    let target = if different_remote {
-        "mirror/main"
-    } else {
-        "origin/alternate"
-    };
-    assert_eq!(output(&repo, &["rev-parse", target]), upstream);
-    git(
-        &repo,
-        &["branch", &format!("--set-upstream-to={target}"), "main"],
-    );
-    let backend = kagi_git::Backend::open(&repo).expect("open changed mapping");
+    match drift {
+        AutoStashGuardDrift::Tracking | AutoStashGuardDrift::Remote => {
+            let target = if matches!(drift, AutoStashGuardDrift::Remote) {
+                "mirror/main"
+            } else {
+                "origin/alternate"
+            };
+            assert_eq!(output(&repo, &["rev-parse", target]), upstream);
+            git(
+                &repo,
+                &["branch", &format!("--set-upstream-to={target}"), "main"],
+            );
+        }
+        AutoStashGuardDrift::DirtyPaths => {
+            std::fs::write(repo.join("new-dirty-path.txt"), "new unapproved content\n").unwrap();
+        }
+        AutoStashGuardDrift::RestorePreview => {
+            // Move only the captured upstream's commit, not its identity or
+            // the local dirty contents. Its new README edit changes restore.
+            std::fs::write(
+                origin.other.join("README.md"),
+                "new upstream conflicting content\n",
+            )
+            .unwrap();
+            git(&origin.other, &["add", "README.md"]);
+            git(
+                &origin.other,
+                &["commit", "-qm", "change the stash restore preview"],
+            );
+            git(&origin.other, &["push", "-q", "origin", "main"]);
+            git(&repo, &["fetch", "-q", "origin"]);
+        }
+    }
+    let backend = kagi_git::Backend::open(&repo).expect("open changed promise");
     let fresh = backend.plan_pull().unwrap();
-    assert_eq!(
-        backend.working_tree_status().unwrap().digest(),
-        approved_digest
-    );
-    assert_eq!(
-        fresh.warnings, approved_plan.warnings,
-        "restore predictions stay identical"
-    );
-    assert_eq!(
-        fresh.current, approved_plan.current,
-        "HEAD and dirty counts stay identical"
-    );
+    if matches!(drift, AutoStashGuardDrift::DirtyPaths) {
+        assert_ne!(
+            backend.working_tree_status().unwrap().digest(),
+            approved_digest
+        );
+        assert_eq!(fresh.pull_identity.as_ref(), Some(&approved_identity));
+    } else if matches!(drift, AutoStashGuardDrift::RestorePreview) {
+        use kagi_domain::plan_note::{PlanNote, PullNote};
+        assert_eq!(
+            backend.working_tree_status().unwrap().digest(),
+            approved_digest
+        );
+        assert_eq!(fresh.pull_identity.as_ref(), Some(&approved_identity));
+        assert_eq!(fresh.current, approved_plan.current);
+        assert!(!approved_plan.warnings.iter().any(|note| matches!(
+            note,
+            PlanNote::Pull(
+                PullNote::RestoreConflict { .. } | PullNote::RestoreConflictPossible { .. }
+            )
+        )));
+        assert!(fresh.warnings.iter().any(|note| matches!(
+            note, PlanNote::Pull(PullNote::RestoreConflict { paths }) if paths.iter().any(|path| path == "README.md")
+        )));
+    } else {
+        assert_eq!(
+            backend.working_tree_status().unwrap().digest(),
+            approved_digest
+        );
+        assert_eq!(
+            fresh.warnings, approved_plan.warnings,
+            "restore predictions stay identical"
+        );
+        assert_eq!(
+            fresh.current, approved_plan.current,
+            "HEAD and dirty counts stay identical"
+        );
+        assert_ne!(fresh.pull_identity.as_ref(), Some(&approved_identity));
+    }
     assert_eq!(fresh.head_at_plan, approved_plan.head_at_plan);
-    assert_ne!(fresh.pull_identity.as_ref(), Some(&approved_identity));
     drop(backend);
 
     let before = Checkout::read(&repo);
@@ -250,20 +325,184 @@ fn auto_stash_identity_drift(cx: &mut VisualTestAppContext, different_remote: bo
     );
     let pulls = records(&repo, "pull");
     assert_eq!(pulls.len(), 1, "one actual Pull refusal receipt");
-    assert!(matches!(pulls[0].outcome, OpOutcome::Refused { .. }));
+    let OpOutcome::Refused { blockers } = &pulls[0].outcome else {
+        panic!(
+            "the real Stash & Pull consumer must refuse: {:?}",
+            pulls[0].outcome
+        );
+    };
+    assert_eq!(blockers.len(), 1);
+    let reason = &blockers[0];
+    let expected_reason = match drift {
+        AutoStashGuardDrift::Tracking | AutoStashGuardDrift::Remote => {
+            Msg::PullAutoStashIdentityChanged
+        }
+        AutoStashGuardDrift::DirtyPaths => Msg::PullAutoStashPlanStale,
+        AutoStashGuardDrift::RestorePreview => Msg::PullAutoStashRestoreChanged,
+    };
+    assert_eq!(
+        reason,
+        expected_reason.t(),
+        "the real changed promise must select its typed cause"
+    );
+    cx.read(|cx| {
+        let state = app.read(cx);
+        assert!(matches!(&state.status_footer, FooterStatus::Failed(message) if message.contains(reason.as_str())));
+        let toasts = state.toast_stack.as_ref().expect("actual toast stack").read(cx).toasts();
+        assert_eq!(toasts.iter().filter(|toast| toast.kind == ToastKind::Error && toast.message.contains(reason.as_str())).count(), 1);
+        let visible = state.op_log.as_ref().expect("visible Operation Log").read(cx);
+        assert_eq!(visible.entries().iter().filter(|entry| entry.id == pulls[0].id).count(), 1);
+        assert!(kagi::ui::oplog_panel::detail_lines(&pulls[0]).join("\n").contains(reason.as_str()));
+    });
     unmount(cx, app, window);
 }
 
 /// Same commit and dirty promise, but a different full tracking ref.
 pub fn scenario_pull_auto_stash_tracking_identity_drift(cx: &mut VisualTestAppContext) {
-    auto_stash_identity_drift(cx, false);
+    for language in [Lang::En, Lang::Ja] {
+        auto_stash_guard_drift(cx, AutoStashGuardDrift::Tracking, language);
+    }
     eprintln!("[gui-e2e] PASS pull_auto_stash_tracking_identity_drift");
 }
 
 /// Same commit and dirty promise, but a different configured remote.
 pub fn scenario_pull_auto_stash_remote_identity_drift(cx: &mut VisualTestAppContext) {
-    auto_stash_identity_drift(cx, true);
+    for language in [Lang::En, Lang::Ja] {
+        auto_stash_guard_drift(cx, AutoStashGuardDrift::Remote, language);
+    }
     eprintln!("[gui-e2e] PASS pull_auto_stash_remote_identity_drift");
+}
+
+/// A new dirty path changes the stash promise, not the approved Pull identity.
+pub fn scenario_pull_auto_stash_dirty_plan_drift(cx: &mut VisualTestAppContext) {
+    for language in [Lang::En, Lang::Ja] {
+        auto_stash_guard_drift(cx, AutoStashGuardDrift::DirtyPaths, language);
+    }
+    eprintln!("[gui-e2e] PASS pull_auto_stash_dirty_plan_drift");
+}
+
+/// Same approved identity and dirty bytes, but newer incoming edits change restore.
+pub fn scenario_pull_auto_stash_restore_preview_drift(cx: &mut VisualTestAppContext) {
+    for language in [Lang::En, Lang::Ja] {
+        auto_stash_guard_drift(cx, AutoStashGuardDrift::RestorePreview, language);
+    }
+    eprintln!("[gui-e2e] PASS pull_auto_stash_restore_preview_drift");
+}
+
+/// A newer commit on the same full upstream must not become identity drift.
+pub fn scenario_pull_auto_stash_same_upstream_advancement(cx: &mut VisualTestAppContext) {
+    for language in [Lang::En, Lang::Ja] {
+        let _settings = SettingsGuard::install();
+        i18n::set_lang(language);
+        let fixture = build_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        let origin = Origin::new(&repo);
+        let cached = origin.advance();
+        std::fs::write(repo.join("README.md"), "older stash content\n").unwrap();
+        git(&repo, &["stash", "push", "-q", "-m", "keep existing stash"]);
+        std::fs::write(repo.join("README.md"), "approved staged content\n").unwrap();
+        git(&repo, &["add", "README.md"]);
+        std::fs::write(repo.join("README.md"), "approved unstaged content\n").unwrap();
+        std::fs::write(
+            repo.join("identity-untracked.txt"),
+            "approved untracked content\n",
+        )
+        .unwrap();
+        let (app, window) = mount(cx, &repo);
+        app.update(cx, |app, cx| app.open_pull_modal(cx));
+        cx.run_until_parked();
+        let (approved_identity, approved_digest) = cx.read(|cx| {
+            let modal = app
+                .read(cx)
+                .pull_modal()
+                .expect("actual Stash & Pull confirmation");
+            assert!(modal.auto_stash && modal.plan.blockers.is_empty());
+            (
+                modal.plan.pull_identity.clone().unwrap(),
+                modal.dirty_digest.unwrap(),
+            )
+        });
+        let backend = kagi_git::Backend::open(&repo).unwrap();
+        let approved_backend_plan = backend.plan_pull().unwrap();
+        drop(backend);
+        assert_eq!(output(&repo, &["rev-parse", "origin/main"]), cached);
+        std::fs::write(
+            origin.other.join("later-upstream.txt"),
+            "newer same upstream content\n",
+        )
+        .unwrap();
+        git(&origin.other, &["add", "later-upstream.txt"]);
+        git(
+            &origin.other,
+            &["commit", "-qm", "newer commit on the approved upstream"],
+        );
+        git(&origin.other, &["push", "-q", "origin", "main"]);
+        git(&repo, &["fetch", "-q", "origin"]);
+        let incoming = output(&origin.other, &["rev-parse", "HEAD"]);
+        assert_ne!(incoming, cached);
+        let backend = kagi_git::Backend::open(&repo).unwrap();
+        let fresh = backend.plan_pull().unwrap();
+        assert_eq!(fresh.pull_identity.as_ref(), Some(&approved_identity));
+        assert_eq!(
+            backend.working_tree_status().unwrap().digest(),
+            approved_digest
+        );
+        assert_eq!(fresh.warnings, approved_backend_plan.warnings);
+        drop(backend);
+        let before = Checkout::read(&repo);
+        let stash = output(&repo, &["stash", "list", "--format=%H"]);
+        press_enter(cx, &app, window);
+        wait_idle(cx, &app);
+        cx.run_until_parked();
+        let after = Checkout::read(&repo);
+        assert_eq!(after.head, incoming);
+        for path in ["README.md", "identity-untracked.txt"] {
+            assert_eq!(
+                after.files.get(Path::new(path)),
+                before.files.get(Path::new(path))
+            );
+        }
+        assert_eq!(
+            output(&repo, &["show", ":later-upstream.txt"]),
+            "newer same upstream content"
+        );
+        assert_eq!(output(&repo, &["stash", "list", "--format=%H"]), stash);
+        let pulls = records(&repo, "pull");
+        assert_eq!(pulls.len(), 1);
+        assert!(
+            matches!(pulls[0].outcome, OpOutcome::Success { .. }),
+            "{:?}",
+            pulls[0].outcome
+        );
+        assert_eq!(records(&repo, "stash-push").len(), 1);
+        assert_eq!(records(&repo, "stash-pop").len(), 1);
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert!(!matches!(state.status_footer, FooterStatus::Failed(_)));
+            assert!(!state
+                .toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .iter()
+                .any(|toast| toast.kind == ToastKind::Error));
+            assert_eq!(
+                state
+                    .op_log
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.id == pulls[0].id)
+                    .count(),
+                1
+            );
+        });
+        unmount(cx, app, window);
+    }
+    eprintln!("[gui-e2e] PASS pull_auto_stash_same_upstream_advancement");
 }
 
 fn records(repo: &Path, op: &str) -> Vec<OpLogEntry> {
@@ -1082,6 +1321,13 @@ pub fn scenario_pull_freshness_branch_entries(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS pull_freshness_branch_entries");
 }
 
+/// Current strict FF must synchronize the actual checkout, not only its ref.
+pub fn scenario_pull_ff_only_current_tree_consistency(cx: &mut VisualTestAppContext) {
+    let _settings = SettingsGuard::install();
+    branch_ref_updates(cx, true, true, false);
+    eprintln!("[gui-e2e] PASS pull_ff_only_current_tree_consistency");
+}
+
 fn assert_fresh_branch_confirm(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
@@ -1125,6 +1371,11 @@ fn branch_ref_updates(
 ) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
+    if current {
+        std::fs::write(repo.join("pull-remove.txt"), "remove this tracked path\n").unwrap();
+        git(&repo, &["add", "pull-remove.txt"]);
+        git(&repo, &["commit", "-q", "-m", "tracked removal baseline"]);
+    }
     let origin = Origin::new(&repo);
     let alternate = different_remote.then(|| Origin::new_named(&repo, "alternate"));
     if different_remote {
@@ -1147,7 +1398,13 @@ fn branch_ref_updates(
     }
     let target_ref = format!("refs/heads/{branch}");
     let (app, window) = mount(cx, &repo);
-    let expected = alternate.as_ref().unwrap_or(&origin).advance();
+    let upstream = alternate.as_ref().unwrap_or(&origin);
+    let expected = if current {
+        upstream.advance_tree()
+    } else {
+        upstream.advance()
+    };
+    let expected_checkout = Checkout::read(&upstream.other);
     assert_cached_zero(cx, &app, &repo);
     let before = Checkout::read(&repo);
     let target_before = output(&repo, &["rev-parse", &target_ref]);
@@ -1208,14 +1465,27 @@ fn branch_ref_updates(
             before.head.clone()
         }
     );
-    assert_eq!(
-        after.index, before.index,
-        "branch ff-only is a ref-only operation"
-    );
-    assert_eq!(
-        after.files, before.files,
-        "checkout contents are not updated"
-    );
+    if current {
+        assert_eq!(
+            after.index, expected_checkout.index,
+            "every staged path/OID/mode must equal the committed upstream tree"
+        );
+        assert_eq!(
+            after.files, expected_checkout.files,
+            "modified, added and removed paths must match the new HEAD tree"
+        );
+        assert!(
+            output(&repo, &["diff", "--cached", "--name-status"]).is_empty(),
+            "ref-only advancement must not manufacture staged reverse changes"
+        );
+        assert!(output(&repo, &["status", "--porcelain"]).is_empty());
+    } else {
+        assert_eq!(after.index, before.index, "unoccupied pull is ref-only");
+        assert_eq!(
+            after.files, before.files,
+            "active checkout remains untouched"
+        );
+    }
     let durable = records(&repo, "pull");
     assert_eq!(durable.len(), 1);
     assert!(matches!(durable[0].outcome, OpOutcome::Success { .. }));
@@ -1232,6 +1502,18 @@ fn branch_ref_updates(
             .collect();
         assert_eq!(shown.len(), 1);
         assert_eq!(shown[0].id, durable[0].id);
+        let toasts = app.toast_stack.as_ref().expect("toast stack").read(cx);
+        assert_eq!(
+            toasts
+                .toasts()
+                .iter()
+                .filter(|toast| {
+                    toast.kind == ToastKind::Success && toast.message.starts_with("pull:")
+                })
+                .count(),
+            1,
+            "one confirmed Pull delivers one success toast"
+        );
     });
     unmount(cx, app, window);
 }

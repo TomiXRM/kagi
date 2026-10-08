@@ -1479,8 +1479,75 @@ impl Backend {
         &self,
         plan: &OperationPlan,
         branch_name: &str,
+        partial_after: &mut Option<ops::StateSummary>,
     ) -> Result<PullOutcome, GitError> {
-        ops::execute_pull_branch_ff(&self.repo, &self.path, plan, branch_name)
+        let current =
+            matches!(&plan.head_at_plan, Head::Attached { branch, .. } if branch == branch_name);
+        let index_before = if current {
+            Some(self.staged_set_digest()?)
+        } else {
+            None
+        };
+        let mut checkout_target = None;
+        let result = ops::execute_pull_branch_ff(
+            &self.repo,
+            &self.path,
+            plan,
+            branch_name,
+            &mut checkout_target,
+        );
+        if let (Err(original), Some(index_before), Some(checkout_target)) =
+            (&result, index_before, checkout_target)
+        {
+            let observe = || -> Result<Option<ops::StateSummary>, GitError> {
+                let index_after = self.staged_set_digest();
+                let head_after = resolve_head(&self.repo);
+                let status_after = self.working_tree_status();
+                let index_changed = index_after
+                    .as_ref()
+                    .is_ok_and(|after| after != &index_before);
+                let head_changed = head_after
+                    .as_ref()
+                    .is_ok_and(|after| after != &plan.head_at_plan);
+                let status_changed = status_after.as_ref().is_ok_and(|after| {
+                    plan.worktree_digest
+                        .is_some_and(|before| before != after.digest())
+                });
+                if !index_changed && !head_changed && !status_changed {
+                    index_after?;
+                    head_after?;
+                    status_after?;
+                    return Ok(None);
+                }
+                // A later observation failure cannot erase an already
+                // observed mutation. Missing fields stay explicitly unknown.
+                let head = head_after
+                    .map(|head| head.display())
+                    .unwrap_or_else(|error| format!("HEAD unavailable: {error}"));
+                let mut dirty = status_after
+                    .map(|status| ops::status_summary_display(&status))
+                    .unwrap_or_else(|error| format!("status unavailable: {error}"));
+                if let Err(error) = index_after {
+                    dirty.push_str(&format!("; index observation failed: {error}"));
+                }
+                dirty.push_str(&format!(
+                    "; checkout_target={}; checkout_changed=true",
+                    checkout_target.0
+                ));
+                Ok(Some(ops::StateSummary { head, dirty }))
+            };
+            // Do not call an empty-tree checkout or a pre-checkout refusal
+            // Partial. A changed index/HEAD/status is observed, not predicted.
+            match observe() {
+                Ok(after) => *partial_after = after,
+                Err(observation_error) => {
+                    return Err(GitError::Other(format!(
+                        "{original}; unable to observe checkout after failure: {observation_error}"
+                    )));
+                }
+            }
+        }
+        result
     }
 
     pub fn plan_push_branch(

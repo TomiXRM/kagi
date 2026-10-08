@@ -140,6 +140,132 @@ impl Checkout {
     }
 }
 
+fn auto_stash_identity_drift(cx: &mut VisualTestAppContext, different_remote: bool) {
+    let _settings = SettingsGuard::install();
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let origin = Origin::new(&repo);
+    let upstream = origin.advance();
+    git(&origin.other, &["push", "-q", "origin", "main:alternate"]);
+    if different_remote {
+        let url = output(&repo, &["remote", "get-url", "origin"]);
+        git(&repo, &["remote", "add", "mirror", &url]);
+        git(&repo, &["fetch", "-q", "mirror"]);
+    }
+
+    // A pre-existing stash must survive as well as the split index/worktree.
+    std::fs::write(repo.join("README.md"), "older stash content\n").unwrap();
+    git(&repo, &["stash", "push", "-q", "-m", "keep existing stash"]);
+    std::fs::write(repo.join("README.md"), "approved staged content\n").unwrap();
+    git(&repo, &["add", "README.md"]);
+    std::fs::write(repo.join("README.md"), "approved unstaged content\n").unwrap();
+    std::fs::write(
+        repo.join("identity-untracked.txt"),
+        "approved untracked content\n",
+    )
+    .unwrap();
+
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.open_pull_modal(cx));
+    cx.run_until_parked();
+    let approved_identity = cx.read(|cx| {
+        let modal = app.read(cx).pull_modal().expect("dirty Pull confirmation");
+        assert!(modal.auto_stash);
+        assert!(modal.plan.blockers.is_empty());
+        assert!(modal.error.is_none());
+        modal
+            .plan
+            .pull_identity
+            .clone()
+            .expect("approved Pull identity")
+    });
+    let backend = kagi_git::Backend::open(&repo).expect("open approved checkout");
+    let approved_digest = backend.working_tree_status().unwrap().digest();
+    let approved_plan = backend.plan_pull().unwrap();
+    drop(backend);
+    assert_eq!(output(&repo, &["rev-parse", "origin/main"]), upstream);
+    let target = if different_remote {
+        "mirror/main"
+    } else {
+        "origin/alternate"
+    };
+    assert_eq!(output(&repo, &["rev-parse", target]), upstream);
+    git(
+        &repo,
+        &["branch", &format!("--set-upstream-to={target}"), "main"],
+    );
+    let backend = kagi_git::Backend::open(&repo).expect("open changed mapping");
+    let fresh = backend.plan_pull().unwrap();
+    assert_eq!(
+        backend.working_tree_status().unwrap().digest(),
+        approved_digest
+    );
+    assert_eq!(
+        fresh.warnings, approved_plan.warnings,
+        "restore predictions stay identical"
+    );
+    assert_eq!(
+        fresh.current, approved_plan.current,
+        "HEAD and dirty counts stay identical"
+    );
+    assert_eq!(fresh.head_at_plan, approved_plan.head_at_plan);
+    assert_ne!(fresh.pull_identity.as_ref(), Some(&approved_identity));
+    drop(backend);
+
+    let before = Checkout::read(&repo);
+    let refs = output(&repo, &["show-ref"]);
+    let stash = output(&repo, &["stash", "list", "--format=%H"]);
+    assert!(!stash.is_empty(), "fixture retains a real older stash");
+    assert_eq!(
+        output(&repo, &["show", ":README.md"]),
+        "approved staged content"
+    );
+    assert_eq!(records(&repo, "pull").len(), 0);
+    press_enter(cx, &app, window);
+    wait_idle(cx, &app);
+    cx.run_until_parked();
+
+    assert_eq!(
+        Checkout::read(&repo),
+        before,
+        "identity refusal must preserve staged OID/mode and every working file"
+    );
+    assert_eq!(
+        output(&repo, &["show-ref"]),
+        refs,
+        "no relevant ref may move"
+    );
+    assert_eq!(
+        output(&repo, &["stash", "list", "--format=%H"]),
+        stash,
+        "stash OID stack is unchanged"
+    );
+    assert!(
+        records(&repo, "stash-push").is_empty(),
+        "refusal must precede any stash write"
+    );
+    assert!(
+        records(&repo, "stash-pop").is_empty(),
+        "refusal must not need restoration"
+    );
+    let pulls = records(&repo, "pull");
+    assert_eq!(pulls.len(), 1, "one actual Pull refusal receipt");
+    assert!(matches!(pulls[0].outcome, OpOutcome::Refused { .. }));
+    unmount(cx, app, window);
+}
+
+/// Same commit and dirty promise, but a different full tracking ref.
+pub fn scenario_pull_auto_stash_tracking_identity_drift(cx: &mut VisualTestAppContext) {
+    auto_stash_identity_drift(cx, false);
+    eprintln!("[gui-e2e] PASS pull_auto_stash_tracking_identity_drift");
+}
+
+/// Same commit and dirty promise, but a different configured remote.
+pub fn scenario_pull_auto_stash_remote_identity_drift(cx: &mut VisualTestAppContext) {
+    auto_stash_identity_drift(cx, true);
+    eprintln!("[gui-e2e] PASS pull_auto_stash_remote_identity_drift");
+}
+
 fn records(repo: &Path, op: &str) -> Vec<OpLogEntry> {
     read_oplog_tail_for_repo(repo, 100)
         .into_iter()

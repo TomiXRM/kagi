@@ -1239,6 +1239,14 @@ mod macos {
                 Box::new(crate::pull_freshness::scenario_pull_freshness_captured_reload_drift),
             ),
             (
+                "pull_auto_stash_tracking_identity_drift",
+                Box::new(crate::pull_freshness::scenario_pull_auto_stash_tracking_identity_drift),
+            ),
+            (
+                "pull_auto_stash_remote_identity_drift",
+                Box::new(crate::pull_freshness::scenario_pull_auto_stash_remote_identity_drift),
+            ),
+            (
                 "pull_fetch_preserves_conflict_blocker",
                 Box::new(
                     crate::pull_fetch_blocker::scenario_pull_fetch_preserves_conflict_blocker,

@@ -190,7 +190,10 @@ pub(crate) fn pull_blocking(
                     ))
                 }
             };
-            if promised_dirty != Some(now) || restore_notes(&fresh) != restore_notes(plan) {
+            if promised_dirty != Some(now)
+                || restore_notes(&fresh) != restore_notes(plan)
+                || fresh.pull_identity != plan.pull_identity
+            {
                 let refusal = i18n::auto_stash_plan_stale().to_string();
                 return Ok(not_started(
                     repo_path,

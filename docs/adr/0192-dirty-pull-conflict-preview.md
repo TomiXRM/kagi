@@ -199,10 +199,23 @@ admit できなければ stale なローカル知識で Ready / 最新を案内�
 も**空の tree** を見て素通りし、復元だけが事前表示なしで conflict していた。
 
 `PullPlanModal::dirty_digest`（表示時の `WorktreeDigest`）を確認に束縛し、stash の**前**に
-再取得した digest と再 plan した restore note 集合を照合する。どちらかが動いていれば
-`auto_stash_plan_stale`（EN/JA）で拒否し、stash も pull もしない。plan 側の
-`worktree_digest` は使わない — あれは「execute 時に tree が動いていたら拒否」の意味で、
-stash-first の pull は意図的に tree を空にするため（checkout の preflight が誤発火した）。
+再取得した digest、再 plan した restore note 集合、承認済み `PullIdentity` を照合する。
+いずれかが動いていれば `auto_stash_plan_stale`（EN/JA）で既存の `not_started` /
+Refused receipt を一件残し、stash も pull もしない。fresh identity で承認を書き換えない。
+identity は branch / local OID / remote 名 / 完全な tracking ref を比較し、upstream OID は
+固定しないため同じ upstream の新しい commit は許容する。dirty が clean になった場合は
+stash を行わず、既存の `Backend::run` preflight が承認済み identity を照合する。
+plan 側の `worktree_digest` は使わない — あれは「execute 時に tree が動いていたら拒否」の
+意味で、stash-first の pull は意図的に tree を空にするため（checkout の preflight が誤発火した）。
+
+2026-10-09 の native consumer 回帰検証では、同じ OID の別 tracking ref と同内容の別 remote
+の二ケースで、dirty digest / count / restore note を維持して実 UI の auto-stash 確認を
+Enter で実行した。修正前は両方 FAIL：backend の identity 拒否より前に stash が走り、
+復元後の staged OID が変わった（HEAD / working files は不変）。上記の pre-stash identity
+比較後は両方 PASS：HEAD、index の path / OID / mode / stage、全 working files、
+全 `show-ref`、既存 stash の OID stack が不変で、stash-push / pop receipt はなく、
+Pull Refused receipt は一件。通常 auto-stash 成功・overlap preview・失敗時の復元と
+dirty-set drift 拒否も PASS。restore 自体の policy は変更していない。
 
 ### 2d. reload は plan を無効化するが、入力は無効化しない（#626 review 3 周目）
 

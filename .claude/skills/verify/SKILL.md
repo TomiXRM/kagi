@@ -368,6 +368,17 @@ The current suite covers:
   Escape and by ×; the next raw ↓/↑ must step File History. Tier B measured
   on 2026-10-01 that the terminal-focus case is what left Escape unmatched
   (`key: "escape"` printed, modal open) while Enter still reached the slot.
+- Command Palette selection scroll (`KAGI_GUI_E2E_ONLY=palette_selection_scroll`,
+  `tests/recovery/overlay_focus.rs`): #1069. Real arrow and wheel input checks
+  the selected row's drawn bounds and preserves manual scroll until the next
+  selection input. The gui-e2e-only scroll accessor observes the existing
+  production `ScrollHandle`; it does not drive selection or replace the list.
+  Pair with `palette_push_modal_keys,settings_close_returns_focus` for overlay
+  ownership. Tier B: open Cmd+P, move beyond the first viewport, wheel away,
+  then press Down and inspect the visible selection. Filter a custom-theme
+  list with 100 entries in JA at 70% and 167%, inspect its last result, and
+  check empty-result Enter and Escape/reopen. Use only safe View commands
+  for live Enter verification; do not execute Pull/Push to test list scrolling.
 - Settings' switches (`KAGI_GUI_E2E_ONLY=settings_switches`,
   `tests/recovery/settings_switches.rs`, #970): every switch is a
   `keyboard_nav::switch`. The scenario opens Settings through `app.settings`,
@@ -1555,6 +1566,16 @@ WindowServer never shows its window, so there is nothing to click. And with
 lists on-screen windows only) prints nothing even though the window exists;
 clicks, keys and `screencapture -l` address the window by ID and still work, so
 take the ID from `CGWindowListCopyWindowInfo([.optionAll], …)` for that PID.
+
+**README images** (`docs/images/*.png`, #1049 / #1062) are 3104×2064: a
+1440×920 pt window (`KAGI_WINDOW=1440x920`) plus the active-window shadow, on
+the 2× built-in display. Three things change that size: a window opened on a
+1× external display (1552×1032 — move it with System Events `set position`), a
+window that is not frontmost (smaller shadow: 3016×1976 — activate it after
+placing, then capture), and a locked screen, during which the window opens at
+0.9× (`KAGI_WINDOW=1440x920` gave 1296×830 pt) and `screencapture -l` fails
+with "could not create image from window". Check the size with `sips` after
+every capture.
 
 **Drop `KAGI_NO_ACTIVATE=1` when the scenario clicks the tab strip.** The tabs
 live in the window's title bar, and macOS hands a title-bar click on a *non-key*

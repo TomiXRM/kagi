@@ -118,6 +118,158 @@ pub fn scenario_palette_push_modal_keys(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS palette_push_modal_keys");
 }
 
+/// #1069: one-shot, child-bound reveals survive mouse/keyboard interleaving,
+/// filtering and empty results without assuming equal-height command rows.
+pub fn scenario_palette_selection_scroll(cx: &mut VisualTestAppContext) {
+    use kagi::ui::command_palette::{rows_for, PaletteAction};
+
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let before = repo_fingerprint(&repo);
+    let (app, window) = mount(cx, &repo);
+    keys(cx, window, "cmd-p");
+    draw(cx, window);
+    let scroll = cx.read(|cx| e2e::command_palette_scroll(app.read(cx)).unwrap());
+    let rows = cx.read(|cx| rows_for(app.read(cx), ""));
+    assert!(rows.len() > 20, "fixture must overflow the palette");
+    assert!(rows.iter().any(|row| row.disabled_reason.is_some()));
+    let heights: Vec<_> = (0..rows.len())
+        .map(|i| scroll.bounds_for_item(i).unwrap().size.height)
+        .collect();
+    assert_ne!(
+        heights.iter().min(),
+        heights.iter().max(),
+        "fixture must exercise unequal row heights"
+    );
+
+    let visible = |cx: &mut VisualTestAppContext| {
+        draw(cx, window);
+        let selected = cx.read(|cx| app.read(cx).command_palette_selected);
+        let child = scroll
+            .bounds_for_item(selected)
+            .expect("selected row laid out");
+        let viewport = scroll.bounds();
+        let top = child.top() + scroll.offset().y;
+        let bottom = child.bottom() + scroll.offset().y;
+        assert!(
+            top >= viewport.top() - gpui::px(1.),
+            "row {selected} above viewport"
+        );
+        assert!(
+            bottom <= viewport.bottom() + gpui::px(1.),
+            "row {selected} below viewport"
+        );
+    };
+    let wheel = |cx: &mut VisualTestAppContext, dy| {
+        cx.simulate_event(
+            window,
+            gpui::ScrollWheelEvent {
+                position: scroll.bounds().center(),
+                delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(dy))),
+                touch_phase: gpui::TouchPhase::Moved,
+                ..Default::default()
+            },
+        );
+        draw(cx, window);
+    };
+    let query = |cx: &mut VisualTestAppContext, text: &str| {
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                let input = app.command_palette_input.clone().unwrap();
+                input.update(cx, |state, cx| state.set_value(text, window, cx));
+            });
+        })
+        .unwrap();
+        draw(cx, window);
+    };
+
+    // Every destination, including tall disabled rows, is fully revealed.
+    for _ in 1..rows.len() {
+        keys(cx, window, "down");
+        visible(cx);
+    }
+    assert_eq!(
+        cx.read(|cx| app.read(cx).command_palette_selected),
+        rows.len() - 1
+    );
+    wheel(cx, 100_000.);
+    assert_eq!(scroll.offset().y, gpui::px(0.));
+    draw(cx, window);
+    assert_eq!(
+        scroll.offset().y,
+        gpui::px(0.),
+        "passive redraw must not reveal"
+    );
+    keys(cx, window, "down");
+    visible(cx); // Last boundary must reveal even though the index did not move.
+
+    for _ in 1..rows.len() {
+        keys(cx, window, "up");
+        visible(cx);
+    }
+    wheel(cx, -100_000.);
+    let mouse_offset = scroll.offset();
+    assert!(mouse_offset.y < gpui::px(0.));
+    draw(cx, window);
+    assert_eq!(
+        scroll.offset(),
+        mouse_offset,
+        "mouse offset must survive repaint"
+    );
+    keys(cx, window, "up");
+    visible(cx); // The corresponding first-boundary case.
+
+    wheel(cx, -100_000.);
+    query(cx, "zzzzzzzzzzzzzzzzzzzz");
+    assert!(cx.read(|cx| rows_for(app.read(cx), "zzzzzzzzzzzzzzzzzzzz").is_empty()));
+    keys(cx, window, "up down enter");
+    assert!(cx.read(|cx| app.read(cx).menu_overlay.is_some()));
+    query(cx, "");
+    assert_eq!(cx.read(|cx| app.read(cx).command_palette_selected), 0);
+    visible(cx);
+    wheel(cx, -100_000.);
+    // A nonempty result set rebuilt after a mouse scroll must reveal its top hit.
+    let toggle = rows
+        .iter()
+        .find(|row| row.action == PaletteAction::Command("view.toggleSidebar"))
+        .unwrap();
+    query(cx, &toggle.label);
+    visible(cx);
+    assert_eq!(
+        cx.read(|cx| rows_for(app.read(cx), &toggle.label)[0].action.clone()),
+        toggle.action
+    );
+    let sidebar = cx.read(|cx| app.read(cx).sidebar.visible);
+    keys(cx, window, "enter");
+    assert_eq!(cx.read(|cx| app.read(cx).sidebar.visible), !sidebar);
+
+    keys(cx, window, "cmd-p");
+    draw(cx, window);
+    let reopened = cx.read(|cx| e2e::command_palette_scroll(app.read(cx)).unwrap());
+    assert_eq!(cx.read(|cx| app.read(cx).command_palette_selected), 0);
+    assert_eq!(
+        reopened.offset().y,
+        gpui::px(0.),
+        "reopen resets old scroll"
+    );
+    // Disabled Enter remains a no-op after navigating/revealing its subtitle.
+    let disabled = rows.iter().position(|row| !row.enabled).unwrap();
+    for _ in 0..disabled {
+        keys(cx, window, "down");
+    }
+    keys(cx, window, "enter");
+    assert!(cx.read(|cx| app.read(cx).menu_overlay.is_some()));
+    keys(cx, window, "escape");
+    assert!(cx.read(|cx| app.read(cx).menu_overlay.is_none()));
+    assert_eq!(
+        repo_fingerprint(&repo),
+        before,
+        "palette navigation never writes Git"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS palette_selection_scroll");
+}
+
 pub fn scenario_settings_close_returns_focus(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();

@@ -99,6 +99,27 @@ Select a commit to open the inspector: author, co-authors, and full message; a c
 
 Open **File History** on any file to walk every commit that touched it: the per-file commit list on the left, the selected entry's diff for that file on the right. Step through entries with the arrow keys, **follow renames** back through the file's past, copy its path or open it, and return to the full graph when you're done.
 
+## Pull requests and issues, without leaving the graph
+
+<div align="center">
+<img src="docs/images/pr-list.png" width="900" alt="PRs workspace on the Zed repository — the most recently updated open pull requests with state, label, author, draft, checks, title and sort filters, attention tiles, and an Inbox / My PRs / Review / Assigned navigator" />
+<img src="docs/images/pr-detail.png" width="900" alt="A pull request page — the PR's commits highlighted in a swimlane of the repository graph, Overview / Review / Files / Commits tabs, reviewers, assignees and labels, the checks and merge status cards, the description, and the request changes / approve / comment composer with Merge in the header" />
+</div>
+
+The **PRs** and **Issues** workspaces sit next to **Graph**, so a pull request is one click from the commits it touches. Everything goes through the `gh` CLI with your existing `gh auth login`; Kagi never reads or stores a token, and a repository on GitHub Enterprise uses its own host.
+
+- **PR list** — open, closed or all PRs, sorted into Inbox / My PRs / Review / Assigned, with label, author, draft, checks and title filters. Your own PRs say what they are waiting on: changes requested, conflicts, failing CI, ready to merge.
+- **PR page** — conversation, review threads on the diff, per-file "viewed" marks, commits, and a Conflicts tab computed locally; the PR's commits are highlighted in a swimlane of the repository graph, and its refs are fetched for you.
+- **Review and merge** — approve, request changes or comment; edit reviewers, assignees and labels. **Merge** (squash) and **Apply suggestion** open a plan card first, like every other write, and land in the operation log.
+- **Issues** — assigned to you, created by you, mentioning you, or recently updated, with filters and paging; read a thread, reply, or open a new issue with labels and assignees. Drafts are saved on disk.
+
+<div align="center">
+<img src="docs/images/issues.png" width="900" alt="Issues workspace on the Zed repository — an Assigned to me / Created by me / Mentioning me / Recently updated navigator and the selected issue's thread rendered as GitHub Markdown" />
+<img src="docs/images/home-github.png" width="900" alt="Home's Pull requests switch, filtered to the user's own repositories — the open pull requests you created, each with its repository, number, date and an Open button" />
+</div>
+
+**Home** gathers your work across every repository: the PRs you opened, the PRs where your review is requested, and the issues assigned to you. A row opens in your local clone as a tab, or on GitHub when you have no clone yet.
+
 ## See where change concentrates
 
 <div align="center">

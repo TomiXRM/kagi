@@ -39,8 +39,8 @@ fn tab_to_header(
     .unwrap()
 }
 
-/// A sidebar too short to draw any pane's rows (#987 review): a 300px-high
-/// window. LOCAL has rows, none drawn, so its header is its Tab stop.
+/// An expanded LOCAL pane with data but a header-only share of a short window:
+/// its header, rather than an undrawn row, is the pane's Tab stop.
 pub fn scenario_sidebar_rows_short(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     crate::gui_evidence::fixture(fixture.path());
@@ -53,6 +53,21 @@ pub fn scenario_sidebar_rows_short(cx: &mut VisualTestAppContext) {
     let app = captured.borrow().clone().expect("mounted KagiApp");
     let window: AnyWindowHandle = window.into();
     cx.run_until_parked();
+    // A short viewport alone can still draw part of a row. Use the same
+    // header-only divider state as sidebar_rows_open_short instead.
+    app.update(cx, |app, cx| {
+        app.sidebar.pane_weights = [1, 10_000, 10_000, 10_000, 10_000];
+        cx.notify();
+    });
+    cx.run_until_parked();
+    assert!(
+        !app.read_with(cx, |app, _| app.sidebar.collapsed.contains("local")),
+        "precondition: LOCAL is expanded"
+    );
+    assert!(
+        !drawn(cx, window, "sidebar-local-main"),
+        "precondition: LOCAL has no drawn row"
+    );
     assert!(
         app.read_with(cx, |app, _| app
             .sidebar

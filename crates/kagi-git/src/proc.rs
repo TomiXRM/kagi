@@ -461,12 +461,107 @@ pub(crate) fn wait_or_kill(
     }
 }
 
+#[cfg(all(test, target_os = "macos"))]
+#[path = "../../../tests/support/proc_identity.rs"]
+mod test_proc_identity;
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::process::{Command, Stdio};
 
+    /// A direct child handle pins its PID until it is reaped. Match the
+    /// existing test `LiveGroup` pattern: even a panicking test collects it.
+    struct OwnedChild {
+        child: std::process::Child,
+        group_owned: bool,
+    }
+
+    impl OwnedChild {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+            let result = self.child.wait();
+            if result.is_ok() {
+                self.group_owned = false;
+            }
+            result
+        }
+
+        fn wait_or_kill(
+            &mut self,
+            timeout: Duration,
+        ) -> Result<std::process::ExitStatus, ProcStop> {
+            let pid = self.child.id();
+            let result = super::wait_or_kill(&mut self.child, timeout, pid);
+            if result.as_ref().map_or_else(|stop| stop.reaped(), |_| true) {
+                self.group_owned = false;
+            }
+            result
+        }
+    }
+
+    impl Drop for OwnedChild {
+        fn drop(&mut self) {
+            if self.group_owned {
+                // Still unreaped: the Child pins the group even on a panic
+                // before the fixture could publish its descendant identity.
+                #[cfg(unix)]
+                kill_group(self.child.id());
+            }
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn fixture_supervisor(_test: &str) -> bool {
+        true
+    }
+
+    /// Linux orphan reaping belongs to a single re-executed fixture test,
+    /// never the shared harness. Its reaper stays outside the stopped group.
+    #[cfg(target_os = "linux")]
+    fn fixture_supervisor(test: &str) -> bool {
+        if std::env::var("KAGI_PROC_FIXTURE_SUPERVISOR").as_deref() == Ok(test) {
+            // SAFETY: this dedicated subprocess runs exactly one fixture test.
+            assert_eq!(
+                unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) },
+                0,
+                "enable fixture-owned orphan adoption: {}",
+                std::io::Error::last_os_error()
+            );
+            return true;
+        }
+
+        use std::os::unix::process::CommandExt;
+        let mut command = Command::new(std::env::current_exe().expect("test executable"));
+        command
+            .args(["--exact", test, "--nocapture", "--test-threads=1"])
+            .env("KAGI_PROC_FIXTURE_SUPERVISOR", test)
+            .process_group(0);
+        let mut supervisor = OwnedChild {
+            child: command.spawn().expect("spawn private fixture supervisor"),
+            group_owned: true,
+        };
+        assert!(
+            supervisor
+                .wait()
+                .expect("reap private fixture supervisor")
+                .success(),
+            "private fixture test failed: {test}"
+        );
+        false
+    }
+
     /// True if `pid` is still a live (un-reaped) process.
+    #[cfg(unix)]
+    fn pid_alive(pid: u32) -> bool {
+        // SAFETY: signal 0 only probes this exact PID; it never sends a signal.
+        let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+
+    #[cfg(not(unix))]
     fn pid_alive(pid: u32) -> bool {
         Command::new("kill")
             .args(["-0", &pid.to_string()])
@@ -488,34 +583,42 @@ mod tests {
     /// only a group signal sent while the leader still held the pgid can have
     /// removed it.
     #[cfg(unix)]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn wait_or_kill_stops_the_group_before_it_reaps_the_leader() {
+        if !fixture_supervisor(
+            "proc::tests::wait_or_kill_stops_the_group_before_it_reaps_the_leader",
+        ) {
+            return;
+        }
         use std::os::unix::process::CommandExt;
-        let mut cmd = Command::new("sh");
-        cmd.args(["-c", "sleep 3071 & wait"])
-            .process_group(0)
+        let fixture = DescendantFixture::new();
+        let mut cmd = fixture.command(false);
+        cmd.process_group(0)
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        let mut child = cmd.spawn().expect("spawn sh");
-        let pgid = child.id();
+        let mut child = OwnedChild {
+            child: cmd.spawn().expect("spawn fixture"),
+            group_owned: true,
+        };
+        let pgid = child.child.id();
+        let descendant = fixture.wait_for_descendant();
 
         // On unix the stop key is the group id, which is the leader's pid.
-        let stop = wait_or_kill(&mut child, Duration::from_millis(200), pgid)
-            .expect_err("the shell waits, so the deadline must expire");
+        let stop = child
+            .wait_or_kill(Duration::from_millis(200))
+            .expect_err("the fixture waits, so the deadline must expire");
         assert!(stop.reaped(), "the leader is reaped: {stop:?}");
 
-        // The sleeper is reparented and reaped by init; give that a bounded
-        // moment. Nothing here waits on a *living* process — under the
-        // reap-then-signal ordering the sleeper survives its full 3071s and
-        // this loop runs out.
-        for _ in 0..200 {
-            if !group_alive(pgid) {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        pkill("sleep 3071");
-        panic!("the group outlived the reap: the pgid was signalled too late, or not at all");
+        // Probe only this fixture. Its RAII guard owns cleanup even if this
+        // assertion fails; never signal the numeric group after its reap.
+        assert!(
+            descendant
+                .wait_until_gone()
+                .expect("probe fixture identity"),
+            "the descendant outlived the reap: the group was signalled too late, or not at all"
+        );
+        assert!(!group_alive(pgid), "the fixture's group must be gone");
     }
 
     /// Every child leads its own process group, so the stop proof can be about
@@ -545,15 +648,18 @@ mod tests {
         // A child that would otherwise run for 5 minutes: the margins below are
         // loose on purpose (a loaded machine must not fail this), and still
         // nowhere near "waited the child out".
-        let mut child = Command::new("sleep")
-            .arg("300")
-            .spawn()
-            .expect("spawn sleep");
-        let pid = child.id();
+        let mut child = OwnedChild {
+            child: Command::new("sleep")
+                .arg("300")
+                .spawn()
+                .expect("spawn sleep"),
+            group_owned: false,
+        };
+        let pid = child.child.id();
         assert!(pid_alive(pid), "sleep should be running before the timeout");
 
         let start = Instant::now();
-        let result = wait_or_kill(&mut child, Duration::from_millis(200), pid);
+        let result = child.wait_or_kill(Duration::from_millis(200));
 
         assert!(
             matches!(result, Err(ProcStop::Deadline { reaped: true, .. })),
@@ -572,45 +678,446 @@ mod tests {
 
     #[test]
     fn wait_or_kill_returns_status_for_fast_child() {
-        let mut child = Command::new("true").spawn().expect("spawn true");
-        let pid = child.id();
-        let status = wait_or_kill(&mut child, Duration::from_secs(5), pid);
+        let mut child = OwnedChild {
+            child: Command::new("true").spawn().expect("spawn true"),
+            group_owned: false,
+        };
+        let status = child.wait_or_kill(Duration::from_secs(5));
         assert_eq!(status.ok().and_then(|s| s.code()), Some(0));
     }
 
     // ── issue #507: one runner owning the child, its pipes and its deadline ──
 
-    /// True while any process on the machine has `token` in its command line.
-    #[cfg(unix)]
-    fn any_process_matching(token: &str) -> bool {
-        let out = Command::new("ps")
-            .args(["-A", "-o", "args="])
-            .output()
-            .expect("ps");
-        String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .any(|l| l.contains(token))
+    #[cfg(target_os = "macos")]
+    type FixtureStarted = test_proc_identity::Started;
+    #[cfg(target_os = "linux")]
+    type FixtureStarted = u64;
+
+    /// A PID is never a cleanup handle after the direct parent reaps it.
+    /// Record the kernel start identity while our fixture still owns its child.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[derive(Clone, Copy)]
+    struct FixtureProcess {
+        pid: u32,
+        started: FixtureStarted,
     }
 
-    /// Wait (briefly) for `token` to leave the process table. Keyed on the
-    /// observable event rather than on a wall-clock margin, so a loaded machine
-    /// cannot make this flap.
-    #[cfg(unix)]
-    fn wait_until_gone(token: &str) -> bool {
-        for _ in 0..100 {
-            if !any_process_matching(token) {
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(50));
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    impl FixtureProcess {
+        fn record(pid: u32) -> Result<Self, String> {
+            Ok(Self {
+                pid,
+                started: fixture_started(pid)?.ok_or("fixture exited before recording")?,
+            })
         }
-        false
+
+        fn alive(self) -> Result<bool, String> {
+            #[cfg(target_os = "macos")]
+            {
+                match test_proc_identity::identity(self.pid, self.started) {
+                    test_proc_identity::Identity::Same => Ok(true),
+                    test_proc_identity::Identity::Gone => Ok(false),
+                    test_proc_identity::Identity::Unknown(error) => Err(error),
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                Ok(fixture_started(self.pid)? == Some(self.started))
+            }
+        }
+
+        fn wait_until_gone(self) -> Result<bool, String> {
+            for _ in 0..100 {
+                if !self.alive()? {
+                    return Ok(true);
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Ok(false)
+        }
+
+        fn stop(
+            self,
+            #[cfg(target_os = "linux")] ownership: &std::sync::Mutex<()>,
+        ) -> Result<(), String> {
+            {
+                // Serialize with our exact-PID reaper: it must not release the
+                // old PID between this identity check and the signal.
+                #[cfg(target_os = "linux")]
+                let _ownership = ownership
+                    .lock()
+                    .map_err(|_| "fixture signal/reap ownership poisoned".to_string())?;
+                if self.alive()? {
+                    #[cfg(target_os = "macos")]
+                    test_proc_identity::sigkill(self.pid as i32)?;
+                    #[cfg(target_os = "linux")]
+                    {
+                        // SAFETY: the private fixture published this identity,
+                        // rechecked while its reaper cannot release the PID.
+                        if unsafe { libc::kill(self.pid as libc::pid_t, libc::SIGKILL) } != 0 {
+                            let error = std::io::Error::last_os_error();
+                            if error.raw_os_error() != Some(libc::ESRCH) {
+                                return Err(error.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            if self.wait_until_gone()? {
+                Ok(())
+            } else {
+                Err(format!("fixture process {} did not stop", self.pid))
+            }
+        }
     }
 
-    /// Stop a descendant a test deliberately left holding the pipes. It is not
-    /// the runner's to kill — but it is the test's to clean up.
+    #[cfg(target_os = "macos")]
+    fn fixture_started(pid: u32) -> Result<Option<FixtureStarted>, String> {
+        test_proc_identity::started(pid)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn fixture_started(pid: u32) -> Result<Option<FixtureStarted>, String> {
+        let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(stat) => stat,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.to_string()),
+        };
+        // The parenthesized command (field 2) may itself contain spaces or ')'.
+        // Fields after its last ')' begin with state (3); starttime is field 22.
+        let end = stat.rfind(')').ok_or("malformed fixture /proc stat")?;
+        let mut fields = stat[end + 1..].split_whitespace();
+        // Keep zombies in the identity probe: fixture completion on Linux
+        // requires the private supervisor to reap them, not just stop them.
+        fields.next().ok_or("fixture /proc stat omitted state")?;
+        fields
+            .nth(18)
+            .ok_or_else(|| "fixture /proc stat omitted starttime".to_string())?
+            .parse()
+            .map(Some)
+            .map_err(|error| format!("fixture starttime: {error}"))
+    }
+
+    /// The runner's deliberately abandoned descendant is the fixture's to
+    /// clean up, not a globally named process and not a reap-released group.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    struct DescendantFixture {
+        directory: tempfile::TempDir,
+        cleaned: bool,
+        #[cfg(target_os = "linux")]
+        reaper: FixtureReaper,
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    impl DescendantFixture {
+        fn new() -> Self {
+            let directory = tempfile::tempdir().expect("private descendant fixture");
+            #[cfg(target_os = "linux")]
+            let reaper = FixtureReaper::start(directory.path());
+            Self {
+                directory,
+                cleaned: false,
+                #[cfg(target_os = "linux")]
+                reaper,
+            }
+        }
+
+        fn command(&self, exit: bool) -> Command {
+            let mut cmd = Command::new(std::env::current_exe().expect("test executable"));
+            cmd.args([
+                "--exact",
+                "proc::tests::owned_descendant_fixture_process",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("KAGI_PROC_FIXTURE_DIR", self.directory.path())
+            .env("KAGI_PROC_FIXTURE_EXIT", if exit { "1" } else { "0" });
+            cmd
+        }
+
+        fn descendant(&self) -> Result<Option<FixtureProcess>, String> {
+            Self::read_descendant(self.directory.path())
+        }
+
+        fn read_descendant(directory: &std::path::Path) -> Result<Option<FixtureProcess>, String> {
+            let record = match std::fs::read_to_string(directory.join("descendant")) {
+                Ok(record) => record,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(error.to_string()),
+            };
+            let mut fields = record.split_whitespace();
+            let pid = fields
+                .next()
+                .ok_or("fixture record omitted PID")?
+                .parse()
+                .map_err(|error| format!("fixture PID: {error}"))?;
+            let started = fields
+                .next()
+                .ok_or("fixture record omitted start identity")?
+                .parse()
+                .map_err(|error| format!("fixture start identity: {error}"))?;
+            #[cfg(target_os = "macos")]
+            let started = test_proc_identity::Started {
+                sec: started,
+                usec: fields
+                    .next()
+                    .ok_or("fixture record omitted microseconds")?
+                    .parse()
+                    .map_err(|error| format!("fixture start microseconds: {error}"))?,
+            };
+            Ok(Some(FixtureProcess { pid, started }))
+        }
+
+        fn wait_for_descendant(&self) -> FixtureProcess {
+            for _ in 0..100 {
+                if let Some(process) = self.descendant().expect("read private fixture identity") {
+                    return process;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            panic!("fixture did not publish its owned descendant");
+        }
+
+        fn cleanup(&mut self) -> Result<(), String> {
+            if !self.cleaned {
+                #[cfg(target_os = "macos")]
+                let stopped = self
+                    .descendant()
+                    .and_then(|process| process.map_or(Ok(()), FixtureProcess::stop));
+                #[cfg(target_os = "linux")]
+                let stopped = self.descendant().and_then(|process| {
+                    process.map_or(Ok(()), |process| process.stop(&self.reaper.ownership))
+                });
+                #[cfg(target_os = "linux")]
+                let reaped = self.reaper.finish();
+                stopped?;
+                #[cfg(target_os = "linux")]
+                reaped?;
+                self.cleaned = true;
+            }
+            Ok(())
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    impl Drop for DescendantFixture {
+        fn drop(&mut self) {
+            if let Err(error) = self.cleanup() {
+                if std::thread::panicking() {
+                    eprintln!("descendant fixture cleanup failed: {error}");
+                } else {
+                    panic!("descendant fixture cleanup failed: {error}");
+                }
+            }
+        }
+    }
+
+    /// Reap only the privately published descendant, after Linux adopts it.
+    /// In particular, never waitpid(-1): run_child owns its direct Child.
+    #[cfg(target_os = "linux")]
+    struct FixtureReaper {
+        finished: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        ownership: std::sync::Arc<std::sync::Mutex<()>>,
+        thread: Option<std::thread::JoinHandle<Result<(), String>>>,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl FixtureReaper {
+        fn start(directory: &std::path::Path) -> Self {
+            use std::sync::atomic::Ordering;
+            let mut enabled: libc::c_int = 0;
+            // SAFETY: prctl writes one c_int into our valid local buffer.
+            assert_eq!(
+                unsafe { libc::prctl(libc::PR_GET_CHILD_SUBREAPER, &mut enabled, 0, 0, 0) },
+                0,
+                "query fixture supervisor"
+            );
+            assert_eq!(enabled, 1, "fixture must run in its private supervisor");
+
+            let directory = directory.to_path_buf();
+            let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let done = finished.clone();
+            let ownership = std::sync::Arc::new(std::sync::Mutex::new(()));
+            let thread_ownership = ownership.clone();
+            let thread = std::thread::spawn(move || {
+                let process = loop {
+                    if let Some(process) = DescendantFixture::read_descendant(&directory)? {
+                        break process;
+                    }
+                    if done.load(Ordering::Acquire) {
+                        return Ok(());
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                };
+                let mut closing = None;
+                loop {
+                    if done.load(Ordering::Acquire) {
+                        let deadline =
+                            closing.get_or_insert_with(|| Instant::now() + Duration::from_secs(5));
+                        if Instant::now() >= *deadline {
+                            return Err("private fixture descendant was not reaped".into());
+                        }
+                    }
+                    let ownership = thread_ownership
+                        .lock()
+                        .map_err(|_| "fixture signal/reap ownership poisoned".to_string())?;
+                    if fixture_started(process.pid)? != Some(process.started) {
+                        return Ok(());
+                    }
+                    let mut status = 0;
+                    // SAFETY: only this recorded descendant PID is collected.
+                    // Its original parent may still own it, in which case
+                    // ECHILD leaves it alone.
+                    let reaped = unsafe {
+                        libc::waitpid(process.pid as libc::pid_t, &mut status, libc::WNOHANG)
+                    };
+                    if reaped == process.pid as libc::pid_t {
+                        return Ok(());
+                    }
+                    if reaped < 0 {
+                        let error = std::io::Error::last_os_error();
+                        if !matches!(error.raw_os_error(), Some(libc::ECHILD) | Some(libc::EINTR)) {
+                            return Err(format!("reap fixture {}: {error}", process.pid));
+                        }
+                    }
+                    drop(ownership);
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            });
+            Self {
+                finished,
+                ownership,
+                thread: Some(thread),
+            }
+        }
+
+        fn finish(&mut self) -> Result<(), String> {
+            self.finished
+                .store(true, std::sync::atomic::Ordering::Release);
+            match self.thread.take() {
+                Some(thread) => thread
+                    .join()
+                    .map_err(|_| "fixture reaper panicked".to_string())?,
+                None => Ok(()),
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for FixtureReaper {
+        fn drop(&mut self) {
+            if let Err(error) = self.finish() {
+                if std::thread::panicking() {
+                    eprintln!("fixture reaper failed: {error}");
+                } else {
+                    panic!("fixture reaper failed: {error}");
+                }
+            }
+        }
+    }
+
+    /// Re-execution keeps start-identity recording on the side holding the
+    /// unreaped Child. This is a real inherited-pipe sleep, not a runner mock.
     #[cfg(unix)]
-    fn pkill(token: &str) {
-        let _ = Command::new("pkill").args(["-f", token]).status();
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    #[ignore = "launched only by DescendantFixture with a private fixture directory"]
+    fn owned_descendant_fixture_process() {
+        let directory =
+            std::env::var_os("KAGI_PROC_FIXTURE_DIR").expect("private fixture directory");
+        let directory = std::path::Path::new(&directory);
+        let mut child = OwnedChild {
+            child: Command::new("sleep")
+                .arg("300")
+                .spawn()
+                .expect("spawn fixture sleep"),
+            group_owned: false,
+        };
+        let process =
+            FixtureProcess::record(child.child.id()).expect("record owned fixture identity");
+        #[cfg(target_os = "macos")]
+        let record = format!(
+            "{} {} {}",
+            process.pid, process.started.sec, process.started.usec
+        );
+        #[cfg(not(target_os = "macos"))]
+        let record = format!("{} {}", process.pid, process.started);
+        std::fs::write(directory.join("publishing"), record).expect("write fixture identity");
+        std::fs::rename(directory.join("publishing"), directory.join("descendant"))
+            .expect("publish fixture identity atomically");
+
+        if std::env::var_os("KAGI_PROC_FIXTURE_EXIT").as_deref() == Some(std::ffi::OsStr::new("1"))
+        {
+            // Ownership of this exact descendant transfers to the caller's
+            // pre-existing guard. It must remain alive and holding both pipes.
+            std::process::exit(0);
+        }
+        child.wait().expect("reap owned fixture sleep");
+    }
+
+    #[cfg(unix)]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn fixture_cleanup_does_not_stop_another_same_marker_child() {
+        if !fixture_supervisor(
+            "proc::tests::fixture_cleanup_does_not_stop_another_same_marker_child",
+        ) {
+            return;
+        }
+        use std::os::unix::process::CommandExt;
+        let mut first = DescendantFixture::new();
+        let mut second = DescendantFixture::new();
+        // Linux also exercises exact reaping after both parents exit:
+        // the supervisor adopts two live descendants with the same marker.
+        let mut first_command = first.command(cfg!(target_os = "linux"));
+        first_command
+            .process_group(0)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut first_child = OwnedChild {
+            child: first_command.spawn().expect("spawn first fixture"),
+            group_owned: true,
+        };
+        let mut second_command = second.command(cfg!(target_os = "linux"));
+        second_command
+            .process_group(0)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut second_child = OwnedChild {
+            child: second_command.spawn().expect("spawn second fixture"),
+            group_owned: true,
+        };
+        let first_process = first.wait_for_descendant();
+        let second_process = second.wait_for_descendant();
+        #[cfg(target_os = "linux")]
+        {
+            assert!(first_child
+                .wait()
+                .expect("reap first fixture parent")
+                .success());
+            assert!(second_child
+                .wait()
+                .expect("reap second fixture parent")
+                .success());
+        }
+        assert_ne!(first_process.pid, second_process.pid);
+        assert!(first_process.alive().expect("probe first fixture"));
+        assert!(second_process.alive().expect("probe second fixture"));
+
+        first.cleanup().expect("clean first fixture");
+        #[cfg(target_os = "macos")]
+        assert!(first_child.wait().expect("reap first fixture").success());
+        assert!(
+            second_process
+                .alive()
+                .expect("probe second fixture after first cleanup"),
+            "cleaning one sleep 300 must not stop the other sleep 300"
+        );
+        second.cleanup().expect("clean second fixture");
+        #[cfg(target_os = "macos")]
+        assert!(second_child.wait().expect("reap second fixture").success());
+        assert!(!first_process.alive().expect("first fixture is gone"));
+        assert!(!second_process.alive().expect("second fixture is gone"));
     }
 
     #[test]
@@ -636,7 +1143,7 @@ mod tests {
             other => panic!("expected a Deadline stop, got {other:?}"),
         }
         assert!(
-            wait_until_gone("sleep 3071"),
+            !pid_alive(run.pid),
             "the child leaked: it is still running after the deadline (issue #507)"
         );
     }
@@ -645,19 +1152,23 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn run_child_deadline_reaches_the_caller_despite_a_grandchild_on_the_pipes() {
-        // The shell stays alive (`wait`) and its grandchild inherited
-        // stdout/stderr, so joining the readers would hang here forever. The
-        // deadline kills the whole *group* (#702 re-review), which is what
-        // frees both the caller and the pipes — and what makes the stop
-        // provable: nothing this command started is left running.
-        let mut cmd = Command::new("sh");
-        cmd.args(["-c", "sleep 3072 & wait"]);
+        if !fixture_supervisor(
+            "proc::tests::run_child_deadline_reaches_the_caller_despite_a_grandchild_on_the_pipes",
+        ) {
+            return;
+        }
+        // The fixture waits for its real sleep child, which inherits both
+        // output pipes. A direct-child-only stop would leave that child alive
+        // and an unbounded reader join would never return.
+        let fixture = DescendantFixture::new();
+        let mut cmd = fixture.command(false);
 
         let start = Instant::now();
-        let run = run_child(&mut cmd, Duration::from_millis(300), None).expect("spawn");
+        let run = run_child(&mut cmd, Duration::from_secs(1), None).expect("spawn");
         let elapsed = start.elapsed();
-        pkill("sleep 3072");
+        let descendant = fixture.wait_for_descendant();
 
         assert!(
             elapsed < Duration::from_secs(60),
@@ -673,19 +1184,40 @@ mod tests {
             "killing the group is the stop proof: nothing the command started \
              may be left running"
         );
+        assert!(
+            descendant
+                .wait_until_gone()
+                .expect("probe fixture identity"),
+            "the pipe-holding descendant survived the group deadline"
+        );
     }
 
     // ── #507 review P2-4: exit 0 does not mean the capture is complete ──
 
     #[test]
     #[cfg(unix)]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn run_child_clean_exit_with_unfinished_output_is_not_a_clean_capture() {
-        // The shell exits 0 immediately; its background child keeps the pipes.
-        let mut cmd = Command::new("sh");
-        cmd.args(["-c", "sleep 3073 & exit 0"]);
+        if !fixture_supervisor(
+            "proc::tests::run_child_clean_exit_with_unfinished_output_is_not_a_clean_capture",
+        ) {
+            return;
+        }
+        // The direct child exits 0; the fixture-owned sleep keeps both pipes.
+        let fixture = DescendantFixture::new();
+        let mut cmd = fixture.command(true);
 
         let run = run_child(&mut cmd, Duration::from_secs(30), None).expect("spawn");
-        pkill("sleep 3073");
+        let descendant = fixture.wait_for_descendant();
+
+        assert!(
+            descendant.alive().expect("probe fixture identity"),
+            "the fixture must still be holding the capture pipes"
+        );
+        assert!(
+            !run.group_stopped,
+            "exit 0 cannot prove a stop for the descendant the runner did not collect"
+        );
 
         assert_eq!(run.status, Ok(0), "the process really did exit 0");
         assert_eq!(

@@ -9,6 +9,9 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 
+[features]
+gui-e2e = []
+
 [dependencies]
 kagi-domain = { path = "../kagi-domain" }
 kagi-ui-core = { path = "../kagi-ui-core" }

@@ -42,7 +42,7 @@ pipeline does not apply.
 dependency ("status/diff types... never the Git backend crate"). Since
 `FileHistory`/`FileHistoryEntry`/`CommitSummary`/`FileSnapshotContent` are all
 pure `kagi_domain` types, the crate names and renders them directly —
-`history: Option<FileHistory>` and `snapshot: Option<FileSnapshotContent>` are
+`history: Option<Arc<FileHistory>>` and `snapshot: Option<FileSnapshotContent>` are
 typed fields, not `Box<dyn Any>`. Only the *diff* view needs the existing
 opacity trick: `history_diff: Option<Box<dyn Any>>` holds a bin-owned
 `MainDiffView`, downcast by a new `EditorHooks::render_history_diff` hook —
@@ -87,6 +87,13 @@ does. `MainDiffSource::Unstaged { path }` is reused for the historical
 commit diff (not a new `Commit`-shaped variant) — the same choice
 `FileHistoryView::load_diff` already made for its own per-commit diff, since
 neither embedding wires up `MainDiffSource`'s image-preview stepping context.
+
+The accepted file-history read owns one immutable `Arc<FileHistory>`. Rendering
+retains that same snapshot in the visible-range callback rather than cloning
+all entries, commit messages and bodies on each redraw. Replacing or clearing
+the file read replaces or clears the snapshot; the domain `FileHistory` remains
+a plain owned value, and the existing file/request ownership guards still
+control publication.
 
 ## What ended up shared with File History (revised after review)
 

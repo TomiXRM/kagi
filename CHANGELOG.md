@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- Apple Light のサイドバーと hover の灰色を中立色にし、見出し・更新時刻・フォーム label などの補助文字を読みやすくしました。白い本文との階層、Git の状態色・レイアウト・Apple Dark は維持します。(#1065、#1066)
+
 ## [0.44.0] - 2026-10-06
 
 ### Added

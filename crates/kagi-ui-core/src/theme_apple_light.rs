@@ -9,20 +9,21 @@ pub const APPLE_LIGHT: Theme = Theme {
     name: Cow::Borrowed("Apple Light"),
     dark: false,
 
-    // systemBackground / systemGray6 / systemGray5 ramp.
+    // Neutral macOS chrome; keep navigation separate from the white content.
     bg_base: 0xffffff,
-    bg_row_alt: 0xf4f5f5,
-    surface: 0xe5e5ea,  // systemGray5
+    bg_row_alt: 0xf5f5f5,
+    surface: 0xe5e5e5,
     selected: 0xd9edff, // systemBlue 15% on white
-    panel: 0xf9f9f9,    // systemGray6
-    sidebar: 0xf2f2f7,  // systemGray6 (increased contrast)
+    panel: 0xf9f9f9,
+    sidebar: 0xeeeeee,
     modal: 0xffffff,
     modal_overlay: 0x000000,
 
-    text_main: 0x000000,  // label
-    text_sub: 0x6c6c70,   // systemGray (increased contrast)
-    text_muted: 0xaeaeb2, // systemGray2
-    text_label: 0x8a8a8e, // secondaryLabel composited on white
+    text_main: 0x000000,
+    text_sub: 0x606060,
+    // Readable metadata/labels, including on the darker hover surface.
+    text_muted: 0x666666,
+    text_label: 0x606060,
 
     // Ref chips render solid with white text → vivid Default (light) set.
     color_head: 0xff2d55,   // pink

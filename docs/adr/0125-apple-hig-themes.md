@@ -45,3 +45,29 @@ HIG のシステムカラーは 2025-06-09(Liquid Glass 対応)で**値が更新
   slug ベースなので挿入位置の影響なし。
 - HIG の値が再改訂された場合は `theme_apple.rs` の定数を更新する
   (取得手順はこの ADR の Context に記載)。
+
+## Amendment (2026-10-08): neutral macOS chrome and readable labels
+
+Issues #1065 / #1066: Apple Light の灰色に色味があり、sidebar の見出し・更新時刻や
+フォームの label が薄い。実ウィンドウの before / after と
+[Apple 公式の Finder sidebar](https://support.apple.com/guide/mac-help/customize-the-finder-sidebar-on-mac-mchl83c9e8b8/mac)
+を比較し、macOS の navigation chrome と白い content の階層を参照する。
+Finder の操作モデルや material を再実装するものではない。
+
+Apple Light の背景は iOS の `systemGray` 表の転記ではなく中立色にする:
+sidebar `#eeeeee`、hover / divider surface `#e5e5e5`、alternate row `#f5f5f5`。
+白い content と `#f9f9f9` の panel は維持する。更新先は現在の
+`crates/kagi-ui-core/src/theme_apple_light.rs` の既存 token のみ。
+
+読む必要がある補助文字は `text_muted = #666666`、
+`text_sub = text_label = #606060` とする。palette 値の sRGB relative
+luminance から計算した contrast は、最も暗い対象 surface `#e5e5e5` でも
+それぞれ 4.558:1 / 4.992:1、sidebar では 4.949:1 / 5.420:1。
+disabled の opacity と装飾には通常文字と同じ要件を適用しない。
+
+Apple Dark、ほかの built-in preset、Git の状態色・ref chip・lane palette、
+font、geometry と操作契約は変更しない。custom theme の明示値は保持され、
+`extends: "apple-light"` で省略した token だけは更新後の値を継承する。
+これは静的 preset の調整であり、OS の dynamic semantic color や vibrancy を
+導入したとは扱わない。
+

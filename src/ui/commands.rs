@@ -1953,9 +1953,9 @@ impl KagiApp {
 
     /// Background fetch of the upstream remote, then reload on success. Runs the
     /// network `git fetch` off the UI thread (`background_spawn`) and applies the
-    /// result on the main thread. `silent` suppresses the success/failure toast +
-    /// footer (used by auto-fetch) — the commit graph still updates on success via
-    /// `reload()` (and the FS watcher would catch the ref change anyway). Never
+    /// result on the main thread. `silent` suppresses ordinary toast + footer
+    /// feedback (auto-fetch), but a current Pull waiter still receives failure.
+    /// The graph updates on success via `reload()` or the ref watcher. Never
     /// stacks: a no-op while another fetch is in flight or an operation is busy.
     pub fn fetch_async(&mut self, silent: bool, cx: &mut Context<Self>) {
         let _ = self.fetch_async_for(silent, None, cx);
@@ -2103,14 +2103,14 @@ impl KagiApp {
                 // A visit is a stay in the same tab, not merely its session.
                 // The flight owns one receipt; only waiters on the current
                 // visit may receive a result from an earlier visit's flight.
+                let current_waiter = flight.waiters.iter().any(|(session, visit)| {
+                    app.active_session() == Some(*session)
+                        && app.app_sessions.visit(*session) == Some(*visit)
+                });
                 if app.active_session() != Some(flight.owner)
                     || app.app_sessions.attachment(flight.owner).map(|a| a.visit)
                         != Some(flight.visit)
                 {
-                    let current_waiter = flight.waiters.iter().any(|(session, visit)| {
-                        app.active_session() == Some(*session)
-                            && app.app_sessions.visit(*session) == Some(*visit)
-                    });
                     // The auto-fetch contract lines are emitted whatever the
                     // visit: only the presentation is withheld (#992 review).
                     if silent {
@@ -2197,7 +2197,8 @@ impl KagiApp {
                         );
                         if silent {
                             klog!("auto-fetch: failed (silent): {e}");
-                        } else {
+                        }
+                        if !silent || current_waiter {
                             app.status_footer = FooterStatus::Failed(SharedString::from(format!(
                                 "Fetch failed: {e}"
                             )));

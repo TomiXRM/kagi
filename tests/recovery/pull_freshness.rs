@@ -227,7 +227,6 @@ fn assert_waiting(
             .as_ref()
             .expect("Pull waits on an admitted real fetch");
         assert_eq!(Some(flight.owner), app.active_session());
-        assert_eq!(flight.waiters, vec![(flight.owner, flight.visit)]);
         assert!(app.app_sessions.has_leases());
         assert!(
             app.pull_modal().is_none(),
@@ -437,50 +436,65 @@ pub fn scenario_pull_freshness_synced_waits(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS pull_freshness_synced_waits");
 }
 
-/// A real transport failure cannot downgrade freshness into cached-zero certainty.
+/// A real transport failure cannot become cached-zero certainty or disappear
+/// when the user's Pull joins a previously silent background fetch.
 pub fn scenario_pull_freshness_fetch_failure(cx: &mut VisualTestAppContext) {
     let _settings = SettingsGuard::install();
-    let fixture = build_fixture();
-    let repo = fixture.path().canonicalize().unwrap();
-    let origin = Origin::new(&repo);
-    let (app, window) = mount(cx, &repo);
-    origin.advance();
-    origin.make_unreachable(&repo);
-    assert_cached_zero(cx, &app, &repo);
-    let before = Checkout::read(&repo);
-    let (hold, release) = deferred::<()>(cx);
-    KagiApp::hold_next_fetch_for_e2e(hold);
-    click_pull(cx, window);
-    assert_waiting(cx, &app, &repo, &before);
-    release.send(());
-    cx.run_until_parked();
-    assert_eq!(
-        latest_count(cx, &app),
-        0,
-        "failed fetch must never report latest"
-    );
-    let failures = records(&repo, "fetch");
-    assert_eq!(
-        failures.len(),
-        1,
-        "the failed fetch has exactly one durable receipt"
-    );
-    assert!(matches!(failures[0].outcome, OpOutcome::Failed { .. }));
-    cx.read(|cx| {
-        let app = app.read(cx);
-        assert!(app.fetch_in_flight.is_none());
-        assert!(!app.app_sessions.has_leases());
-        assert!(!e2e::active_modal_present(app), "failed freshness cannot offer any executable modal");
-        assert!(matches!(&app.status_footer, FooterStatus::Failed(text) if text.contains("Fetch failed")));
-        let toast = app.toast_stack.as_ref().unwrap().read(cx).toasts().last().expect("fetch error toast");
-        assert_eq!(toast.kind, ToastKind::Error);
-        assert!(toast.message.contains("Fetch failed"));
-        let panel = app.op_log.as_ref().unwrap().read(cx);
-        assert!(panel.entries().iter().any(|entry| entry.id == failures[0].id), "failure shown in Operation Log is durable");
-    });
-    assert_eq!(Checkout::read(&repo), before);
-    assert!(records(&repo, "pull").is_empty());
-    unmount(cx, app, window);
+    for join_silent in [false, true] {
+        let fixture = build_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        let origin = Origin::new(&repo);
+        let (app, window) = mount(cx, &repo);
+        origin.advance();
+        origin.make_unreachable(&repo);
+        assert_cached_zero(cx, &app, &repo);
+        let before = Checkout::read(&repo);
+        let (hold, release) = deferred::<()>(cx);
+        KagiApp::hold_next_fetch_for_e2e(hold);
+        if join_silent {
+            app.update(cx, |app, cx| assert!(app.fetch_async_for(true, None, cx)));
+            cx.run_until_parked();
+            // The busy toolbar is disabled; an already admitted menu intent joins.
+            cx.update_window(window, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    app.handle_menu_command("repo.pull", window, cx)
+                });
+            })
+            .unwrap();
+        } else {
+            click_pull(cx, window);
+        }
+        assert_waiting(cx, &app, &repo, &before);
+        release.send(());
+        cx.run_until_parked();
+        assert_eq!(
+            latest_count(cx, &app),
+            0,
+            "failed fetch must never report latest"
+        );
+        let failures = records(&repo, "fetch");
+        assert_eq!(failures.len(), 1, "one flight owns one durable receipt");
+        assert!(matches!(failures[0].outcome, OpOutcome::Failed { .. }));
+        cx.read(|cx| {
+            let app = app.read(cx);
+            assert!(app.fetch_in_flight.is_none());
+            assert!(!app.app_sessions.has_leases());
+            assert!(!e2e::active_modal_present(app), "failed freshness cannot offer an executable modal");
+            assert!(
+                matches!(&app.status_footer, FooterStatus::Failed(text) if text.contains("Fetch failed")),
+                "Pull must see its fetch failure (joined silent={join_silent})"
+            );
+            let toast = app.toast_stack.as_ref().unwrap().read(cx)
+                .toasts().last().expect("Pull's fetch error toast");
+            assert_eq!(toast.kind, ToastKind::Error);
+            assert!(toast.message.contains("Fetch failed"));
+            let panel = app.op_log.as_ref().unwrap().read(cx);
+            assert!(panel.entries().iter().any(|entry| entry.id == failures[0].id));
+        });
+        assert_eq!(Checkout::read(&repo), before);
+        assert!(records(&repo, "pull").is_empty());
+        unmount(cx, app, window);
+    }
     eprintln!("[gui-e2e] PASS pull_freshness_fetch_failure");
 }
 

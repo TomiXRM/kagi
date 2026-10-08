@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Pull 前の remote-tracking refs が古い場合に、未取得の更新があるのに「すでに最新です」と表示していた問題を修正しました。clean / dirty の両方で既存の安全な fetch を完了してから確認または最新の案内を出し、fetch 失敗時は最新と判断しません。fetch 由来の未変更 checkout の確認は watcher の reload で消えず、外部の HEAD / 作業ファイル変更や後から始めた別の操作には古い確認を押し付けません。(#1087)
+- Pull が進行中の silent auto-fetch に参加した場合も、fetch 失敗を現在の tab の footer と error toast に表示するようにしました。ユーザーの Pull 要求を持たない background fetch と離れた tab は静かなままにします。(#1087)
 
 ## [0.44.0] - 2026-10-06
 

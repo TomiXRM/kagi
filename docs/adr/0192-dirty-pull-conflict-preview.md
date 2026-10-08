@@ -73,6 +73,9 @@ fetch は remote-tracking refs を変更する **write** である。既存の a
 
 **fetch 失敗時はモーダルを出さない。** footer の `Fetch failed: …`（既存表示）が答えで、
 「たった今更新に失敗した知識」に対して確定させるのは、この遅延が避けようとしている驚きそのもの。
+保留中の Pull が silent auto-fetch に参加した場合も、現在の session / visit の waiter には
+同じ失敗 footer と bounded Error toast を届ける。通常の background auto-fetch は静かなままで、
+古い visit・別 tab へ通知を流さず、flight の durable receipt は一件だけとする。
 
 **fetch 由来の確認を、同じ checkout の reload で消さない。**
 fetch と watcher は複数の reload を届けるため、配送後の clean 確認にも

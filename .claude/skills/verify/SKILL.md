@@ -1809,14 +1809,43 @@ uses two privately owned real `sleep 300` descendants: cleaning and reaping the
 first leaves the second identity alive, then the second is cleaned and reaped.
 The fixture publishes its PID + kernel start record atomically in a private
 directory while the parent still owns its Child.
+On Linux the regression first exits and reaps both direct fixture parents,
+leaving two live descendants adopted by its private supervisor. Each cleanup
+must reap only its own descendant, and the direct parents must remain available
+to their owning Child handles. macOS keeps the original parent-owned child reap.
 
 `proc::tests::owned_descendant_fixture_process` is an ignored, subprocess-only
 helper requiring the private fixture environment; never select it manually or
 run it with `--ignored`. Run the parent regression instead.
-On Linux, a container PID 1 that does not reap orphan zombies can keep group-stop
-proof conservatively unknown; do not rewrite that as success. MacOS evidence
-alone is not Linux runtime evidence. Record checks only after execution; neither
-fixture isolation nor the clipboard deletion establishes a measured speedup.
+On Linux these four helper-backed cases re-execute individually in a dedicated
+exact-test subprocess. Only that private subprocess enables
+`PR_SET_CHILD_SUBREAPER`; the shared root harness is never made a subreaper.
+Each fixture's reaper thread is outside the group being stopped and collects
+only its privately published descendant PID with `waitpid(WNOHANG)`, after
+checking the recorded start identity. It never uses `waitpid(-1)` or reaps the
+direct Child owned by `run_child` / `wait_or_kill`. Linux identity probes retain
+zombies until actual reap. Cleanup joins the reaper before deleting its private
+directory. macOS keeps its existing inline fixture behavior.
+
+The fixture's cleanup and reaper share one ownership mutex. Hold it across
+kernel identity recheck + `SIGKILL`, and across kernel identity recheck +
+exact-PID `waitpid`, so the reaper cannot release the old PID between a successful
+identity check and the signal. Release it before `wait_until_gone`, poll sleeps,
+finish or join. Panic/Drop cleanup must use the same guarded signal path.
+
+Run `cargo test -p kagi-git --lib -- proc::tests::` for the scoped production
+runner oracles and ownership regression. Linux runtime proof must additionally
+run the same compiled test binary under a private Docker PID namespace with a
+deliberately non-reaping PID 1: PID 1 waits only for its direct test-binary child,
+not adopted descendants, and the container must not use `--init`. Compare the
+original review head `8853fcff4e1b5e7e4653ce779a2f0f479c6d412a` with the fix,
+recording test exit/assertions and exact adopted PID leftovers. The fixture
+must reap its own descendants; do not skip Linux, accept a false failure, ignore
+zombies in group proof, or weaken production `group_alive` / `group_stopped`.
+Use private disposable containers, not a host service or global process match.
+
+macOS evidence alone is not Linux runtime evidence. Record checks only after
+execution; fixture isolation and clipboard deletion establish no measured speedup.
 
 ### Host clipboard safety
 

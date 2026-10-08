@@ -7,7 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
-- Editor の file tree は、受理した file 一覧と folder の開閉が変わるときだけ可視行・accessibility の階層／同列位置・keyboard 選択の対応を更新するようにしました。再描画で全 file tree を作り直さず、同じ件数の一覧置換でも新しい file に選択を対応させます。(#1073)
+- Editor の file tree は、受理した file 一覧と folder の開閉が変わるときだけ可視行・accessibility の階層／同列位置・keyboard 選択の対応を更新するようにしました。再描画で全 file tree を作り直さず、同じ件数の一覧置換でも新しい file に選択を対応させます。folder の折りたたみで選択 file が隠れても開いている buffer は保持し、表示モード切替や file 一覧の更新後も選択と実際に開く file を対応させます。(#1073)
 - PR／Issuesのサイドバーで大量のcardを展開すると、行がwindow内に縦圧縮されてtitleが見えなくなる問題を修正しました。各cardとsection見出しの自然な高さを維持し、親のscrollで末尾まで辿れます。(#1089)
 - Command Palette で矢印キー・検索変更による選択行が画面内へ追従するようにしました。マウスでのスクロールは再描画で巻き戻さず、次のキー操作で選択先を再表示します。disabled 理由の可変行高と、表示中の highlight / Enter の実行対象も維持します。(#1069)
 - Editor の History 一覧は読み込み済みの履歴を不変 snapshot として保持し、再描画のたびに全 commit の message・body を複製しないようにしました。表示範囲の仮想化、選択 commit の Diff / Snapshot と作業中 buffer の分離は維持します。(#1074)

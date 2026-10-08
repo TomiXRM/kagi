@@ -36,6 +36,73 @@ fn wait_editor(
     }
 }
 
+fn editor_hidden_selection_transitions(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    editor: &Entity<kagi_ui_editor::EditorWorkspaceView>,
+    window: gpui::AnyWindowHandle,
+) {
+    wait_editor(cx, app, editor, window);
+    let (selected, src_dir) = cx.read(|cx| {
+        let view = editor.read(cx);
+        (
+            view.files
+                .iter()
+                .position(|file| file.path == Path::new("src/Fix {}.txt"))
+                .unwrap(),
+            view.tree
+                .iter()
+                .position(|row| matches!(row, TreeRow::Dir { name, .. } if name.as_ref() == "src"))
+                .unwrap(),
+        )
+    });
+    for (delta, expected_path, expected_label) in [
+        (-1, "docs/report.md", "report.md"),
+        (1, "Cargo.lock", "Cargo.lock"),
+    ] {
+        editor.update(cx, |view, cx| {
+            view.select(selected, cx);
+            view.toggle_dir(src_dir, cx);
+            // Navigation must see the new mapping even before the next render.
+            view.step_selection(delta, cx);
+        });
+        wait_editor(cx, app, editor, window);
+        cx.read(|cx| {
+            let view = editor.read(cx);
+            assert_eq!(
+                view.files[view.selected.unwrap()].path,
+                Path::new(expected_path)
+            );
+            assert_eq!(view.open_path.as_deref(), Some(Path::new(expected_path)));
+        });
+        let tree = recorded_tree("ews-file-tree").unwrap();
+        let src = item(&tree, "Folder src");
+        assert_eq!(
+            (src.level, src.position, src.size, src.expanded),
+            (1, 2, 3, Some(false))
+        );
+        assert!(!tree
+            .rows
+            .values()
+            .any(|row| row.label.contains("Fix {}.txt")));
+        assert_eq!(item(&tree, expected_label).selected, Some(true));
+        let warm = cx.read(|cx| editor.read(cx).tree_layout_derivations());
+        draw(cx, app, window);
+        assert_eq!(
+            cx.read(|cx| editor.read(cx).tree_layout_derivations()),
+            warm
+        );
+        editor.update(cx, |view, cx| view.toggle_dir(src_dir, cx));
+        draw(cx, app, window);
+    }
+    editor.update(cx, |view, cx| view.select(selected, cx));
+    wait_editor(cx, app, editor, window);
+    assert_eq!(
+        item(&recorded_tree("ews-file-tree").unwrap(), "Fix {}.txt").selected,
+        Some(true)
+    );
+}
+
 fn editor_layout_transitions(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
@@ -46,6 +113,23 @@ fn editor_layout_transitions(
     use kagi_ui_editor::TreeSource;
     wait_editor(cx, app, editor, window);
     let warm = cx.read(|cx| editor.read(cx).tree_layout_derivations());
+    editor.update(cx, |view, cx| {
+        // No request in this mounted workspace has generation zero. A late
+        // completion must not replace the accepted rows or their AX mapping.
+        view.seed_files(0, Ok(Vec::new()), cx);
+        view.seed_files(0, Err("superseded read".into()), cx);
+        view.set_source(TreeSource::Changes, cx);
+    });
+    draw(cx, app, window);
+    assert_eq!(
+        item(&recorded_tree("ews-file-tree").unwrap(), "Fix {}.txt").selected,
+        Some(true)
+    );
+    assert!(cx.read(|cx| editor.read(cx).error.is_none()));
+    assert_eq!(
+        cx.read(|cx| editor.read(cx).tree_layout_derivations()),
+        warm
+    );
     cx.update_window(window, |_, window, cx| {
         let input = editor.read(cx).editor.clone().unwrap();
         window.focus(&input.read(cx).focus_handle(cx), cx);
@@ -162,6 +246,61 @@ fn editor_layout_transitions(
         item(&recorded_tree("ews-file-tree").unwrap(), "Fix {}.txt").size,
         2
     );
+
+    editor.update(cx, |view, cx| view.set_source(TreeSource::All, cx));
+    wait_editor(cx, app, editor, window);
+    editor.update(cx, |view, cx| {
+        let readme = view
+            .files
+            .iter()
+            .position(|file| file.path == Path::new("README.md"))
+            .unwrap();
+        view.select(readme, cx);
+    });
+    wait_editor(cx, app, editor, window);
+    assert_eq!(
+        item(&recorded_tree("ews-file-tree").unwrap(), "README.md").selected,
+        Some(true)
+    );
+    editor.update(cx, |view, cx| view.set_source(TreeSource::Changes, cx));
+    wait_editor(cx, app, editor, window);
+    cx.read(|cx| {
+        let view = editor.read(cx);
+        assert_eq!(view.selected, None, "Changes omits the clean open file");
+        assert_eq!(view.open_path.as_deref(), Some(Path::new("README.md")));
+        assert!(
+            view.any_dirty(),
+            "the edited tab survives the source switch"
+        );
+    });
+    assert!(!recorded_tree("ews-file-tree")
+        .unwrap()
+        .rows
+        .values()
+        .any(|row| row.label.contains("README.md")));
+    editor.update(cx, |view, cx| view.step_selection(1, cx));
+    wait_editor(cx, app, editor, window);
+    assert_eq!(
+        item(&recorded_tree("ews-file-tree").unwrap(), "report.md").selected,
+        Some(true)
+    );
+    cx.read(|cx| {
+        let view = editor.read(cx);
+        assert_eq!(
+            view.files[view.selected.unwrap()].path,
+            Path::new("docs/report.md")
+        );
+    });
+    editor.update(cx, |view, cx| {
+        let edited = view
+            .files
+            .iter()
+            .position(|file| file.path == Path::new("src/Fix {}.txt"))
+            .unwrap();
+        view.select(edited, cx);
+    });
+    wait_editor(cx, app, editor, window);
+    assert!(cx.read(|cx| editor.read(cx).dirty));
 }
 
 fn fixture_files(repo: &Path) {
@@ -279,6 +418,7 @@ pub fn scenario_file_tree_roles(cx: &mut VisualTestAppContext) {
     assert_eq!(item(&tree, "Fix {}.txt").label, "ファイル Fix {}.txt、変更");
     assert_eq!(item(&tree, "Fix {}.txt").selected, Some(true));
     i18n::set_lang(Lang::En);
+    editor_hidden_selection_transitions(cx, &app, &editor, window);
     editor_layout_transitions(cx, &app, &editor, window, &repo);
     i18n::set_lang(Lang::Ja);
     // The center pane is exclusive: close the editor to display the panel.

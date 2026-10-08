@@ -147,18 +147,81 @@ mod tests {
         assert_eq!(cache.visible, vec![0, 1, 2, 4]);
         assert_eq!(cache.file_rows, vec![(1, 0), (3, 2)]);
         assert_eq!(cache.a11y[2].position, (2, 2));
+        assert_eq!(cache.file_row_indices[..3], [Some(0), None, Some(1)]);
         assert_eq!(cache.file_base_indices[1], Some(3));
         collapsed.insert(0);
         cache.collapse_changed();
         cache.refresh(&tree, &collapsed);
         assert_eq!(cache.visible, vec![0, 4]);
         assert_eq!(cache.file_rows, vec![(1, 2)]);
+        assert_eq!(cache.file_row_indices[..3], [None, None, Some(0)]);
         assert_eq!(cache.a11y[1].position, (2, 2));
         collapsed.clear();
         cache.collapse_changed();
         cache.refresh(&tree, &collapsed);
         assert_eq!(cache.visible, vec![0, 1, 2, 3, 4]);
         assert_eq!(cache.file_rows, vec![(1, 0), (3, 1), (4, 2)]);
+        assert_eq!(cache.file_row_indices[..3], [Some(0), Some(1), Some(2)]);
         assert_eq!(cache.derivations, (4, 4));
+    }
+
+    #[test]
+    fn reopening_parent_preserves_nested_collapse_and_file_navigation() {
+        let mut cache = TreeLayoutCache::default();
+        let tree = sample_tree();
+        let mut collapsed: HashSet<usize> = [0, 2].into_iter().collect();
+        cache.refresh(&tree, &collapsed);
+        assert_eq!(cache.visible, vec![0, 4]);
+        collapsed.remove(&0);
+        cache.collapse_changed();
+        cache.refresh(&tree, &collapsed);
+        assert_eq!(cache.visible, vec![0, 1, 2, 4]);
+        assert_eq!(cache.a11y[2].level, 2);
+        assert_eq!(cache.a11y[2].position, (2, 2));
+        assert_eq!(cache.file_row_indices[..3], [Some(0), None, Some(1)]);
+        assert_eq!(
+            crate::nearest_visible_file_row(
+                &cache.visible,
+                &cache.file_rows,
+                cache.file_base_indices[1].expect("hidden file retains its base index"),
+                1,
+            ),
+            1
+        );
+        collapsed.remove(&2);
+        cache.collapse_changed();
+        cache.refresh(&tree, &collapsed);
+        assert_eq!(cache.visible, vec![0, 1, 2, 3, 4]);
+        assert_eq!(cache.a11y[3].level, 3);
+        assert_eq!(cache.a11y[3].position, (1, 1));
+        assert_eq!(cache.file_row_indices[..3], [Some(0), Some(1), Some(2)]);
+    }
+
+    #[test]
+    fn empty_replacement_clears_mapping_before_new_tree_is_accepted() {
+        let mut cache = TreeLayoutCache::default();
+        let tree = sample_tree();
+        let collapsed = HashSet::new();
+        cache.refresh(&tree, &collapsed);
+        cache.tree_changed();
+        cache.refresh(&[], &collapsed);
+        assert!(cache.visible.is_empty());
+        assert!(cache.a11y.is_empty());
+        assert!(cache.file_rows.is_empty());
+        assert!(cache.file_base_indices.is_empty());
+        assert!(cache.file_row_indices.is_empty());
+        cache.refresh(&[], &collapsed);
+        assert_eq!(cache.derivations, (2, 2));
+
+        let replacement = vec![file(0, "Fix {}.txt", 0)];
+        cache.tree_changed();
+        cache.refresh(&replacement, &collapsed);
+        assert_eq!(cache.visible, vec![0]);
+        assert_eq!(cache.file_rows, vec![(0, 0)]);
+        assert_eq!(cache.file_base_indices, vec![Some(0)]);
+        assert_eq!(cache.file_row_indices, vec![Some(0)]);
+        assert_eq!(cache.a11y[0].level, 1);
+        assert_eq!(cache.a11y[0].position, (1, 1));
+        assert_eq!(cache.derivations, (3, 3));
     }
 }

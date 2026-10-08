@@ -1761,6 +1761,108 @@ KAGI_LOG_DIR="$(mktemp -d)" CARGO_TARGET_DIR="$PWD/target" cargo test -j 8 --wor
 not use `RUST_TEST_THREADS=1` to mask a race. GUI runner execution is a separate
 lane and is not part of this fixture check.
 
+### Process fixture ownership
+
+Test cleanup must target only processes created by that fixture. Never use
+name-based or command-line-pattern cleanup such as `pkill -f 'sleep …'`: a
+matching process may belong to the user or another concurrent test. Keep real
+deadline, group-stop and incomplete-I/O assertions; replacing the subprocess
+with a mock or dropping those oracles does not prove the production boundary.
+
+Own each fixture's privately published descendant PID and kernel start identity
+for RAII cleanup. On macOS reuse `tests/support/proc_identity.rs`; Linux start
+identity comes from `/proc/<pid>/stat`. The identity helper and helper-backed
+cases retain their Unix guard and are explicitly restricted to macOS / Linux;
+there is no always-failing other-Unix or PID-only cleanup fallback. Existing
+broader Unix group-leadership, direct deadline and input / output tests remain.
+The parent owns its root group only while its Child is unreaped; panic cleanup
+can signal that group then, but after reap only a recorded descendant identity
+may be signaled. Recheck kernel identity immediately before descendant cleanup.
+
+Retain these real `proc::tests` oracles in `crates/kagi-git/src/proc.rs`:
+
+- `wait_or_kill_stops_the_group_before_it_reaps_the_leader`;
+- `run_child_deadline_is_not_an_exit_and_reaps_the_child`;
+- `run_child_deadline_reaches_the_caller_despite_a_grandchild_on_the_pipes`;
+- `run_child_clean_exit_with_unfinished_output_is_not_a_clean_capture`;
+- `run_child_clean_exit_with_undelivered_input_is_not_a_clean_capture`.
+
+A clean exit while a held-pipe descendant is alive must not claim group-stopped
+proof. `proc::tests::fixture_cleanup_does_not_stop_another_same_marker_child`
+uses two privately owned real `sleep 300` descendants: cleaning and reaping the
+first leaves the second identity alive, then the second is cleaned and reaped.
+The fixture publishes its PID + kernel start record atomically in a private
+directory while the parent still owns its Child.
+On Linux the regression first exits and reaps both direct fixture parents,
+leaving two live descendants adopted by its private supervisor. Each cleanup
+must reap only its own descendant, and the direct parents must remain available
+to their owning Child handles. macOS keeps the original parent-owned child reap.
+
+`proc::tests::owned_descendant_fixture_process` is an ignored, subprocess-only
+helper requiring the private fixture environment; never select it manually or
+run it with `--ignored`. Run the parent regression instead.
+On Linux these four helper-backed cases re-execute individually in a dedicated
+exact-test subprocess. Only that private subprocess enables
+`PR_SET_CHILD_SUBREAPER`; the shared root harness is never made a subreaper.
+Each fixture's reaper thread is outside the group being stopped and collects
+only its privately published descendant PID with `waitpid(WNOHANG)`, after
+checking the recorded start identity. It never uses `waitpid(-1)` or reaps the
+direct Child owned by `run_child` / `wait_or_kill`. Linux identity probes retain
+zombies until actual reap. Cleanup joins the reaper before deleting its private
+directory. macOS keeps its existing inline fixture behavior.
+
+The fixture's cleanup and reaper share one ownership mutex. Hold it across
+kernel identity recheck + `SIGKILL`, and across kernel identity recheck +
+exact-PID `waitpid`, so the reaper cannot release the old PID between a successful
+identity check and the signal. Release it before `wait_until_gone`, poll sleeps,
+finish or join. Panic/Drop cleanup must use the same guarded signal path.
+
+Run `cargo test -p kagi-git --lib -- proc::tests::` for the scoped production
+runner oracles and ownership regression. Linux runtime proof must additionally
+run the same compiled test binary under a private Docker PID namespace with a
+deliberately non-reaping PID 1: PID 1 waits only for its direct test-binary child,
+not adopted descendants, and the container must not use `--init`. Compare the
+original review head `8853fcff4e1b5e7e4653ce779a2f0f479c6d412a` with the fix,
+recording test exit/assertions and exact adopted PID leftovers. The fixture
+must reap its own descendants; do not skip Linux, accept a false failure, ignore
+zombies in group proof, or weaken production `group_alive` / `group_stopped`.
+Use private disposable containers, not a host service or global process match.
+
+macOS evidence alone is not Linux runtime evidence. Record checks only after
+execution; fixture isolation and clipboard deletion establish no measured speedup.
+
+### Host clipboard safety
+
+Never run the legacy `gpui-terminal` clipboard smoke tests on the host, including
+from an older checkout to reproduce timings. Their creation / copy-paste / clear
+tests connected to the shared OS clipboard, could overwrite or clear the user's
+contents, and accepted failures or mismatches as success. All three tests and their
+module are removed, not skipped or replaced with mocks; the production `Clipboard`
+API and event proxy are unchanged. The two clipboard event-forwarding echo tests
+are also removed: repeating an injected payload / event is not consumer selection
+or Copy coverage. The default package lib suite is expected to contain 82 tests
+instead of 87. It no longer attempts those host clipboard operations; this is not
+a claim that every workspace test has been audited for host non-interference.
+
+For app selection / Copy assertions, reuse GPUI's existing private
+`TestAppContext` clipboard. The locked GPUI `VisualTestPlatform` used by Tier A
+also stores clipboard items privately rather than forwarding them to the OS.
+Existing consumer-visible coverage remains:
+
+- `vendor/gpui-terminal/src/terminal.rs`:
+  `test_bounds_to_string_extracts_selection` asserts selected grid text.
+- `tests/gui_e2e_runner.rs`: `scenario_graph_copy` asserts the full commit SHA
+  and local branch name through the app's Copy action.
+- `tests/recovery/oplog_select.rs`: `scenario_oplog_detail_select_copy` drives
+  a rendered text drag and ⌘C, then asserts before / after, the recovery command
+  and recorded ref in the private clipboard; the expanded row must stay open.
+
+The GPUI scenarios remain opt-in Tier A coverage, not default package tests.
+None of these assertions prove arboard / OS clipboard integration. Exercise actual
+system integration only in an isolated VM with no host clipboard bridge, using
+assertions on the real outcome; do not introduce another fake clipboard or a new
+GUI runner feature for this deletion.
+
 ## Other runtime seams
 
 Use a real filesystem change to test the watcher and wait through its debounce:

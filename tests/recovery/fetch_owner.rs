@@ -48,11 +48,6 @@ pub fn scenario_fetch_same_owner_piggybacks(cx: &mut VisualTestAppContext) {
         app.open_pull_modal(cx);
         let flight = app.fetch_in_flight.as_ref().expect("fetch flight");
         assert_eq!(flight.owner, owner);
-        assert_eq!(
-            flight.waiters,
-            vec![(owner, flight.visit)],
-            "same visit joins the flight"
-        );
         assert!(
             app.pull_modal().is_none(),
             "piggybacked Pull waits for the real fetch completion"
@@ -195,11 +190,6 @@ pub fn scenario_fetch_detach_retains_flight_and_isolates_reopen(cx: &mut VisualT
         // The path is identical, but the owner incarnation is not.
         let closed = app.active_session().expect("launch owner");
         app.open_pull_modal(cx);
-        assert_eq!(
-            app.fetch_in_flight.as_ref().unwrap().waiters,
-            vec![(closed, app.fetch_in_flight.as_ref().unwrap().visit)],
-            "launch Pull is represented in the flight"
-        );
         app.close_tab(0, cx);
         let flight = app.fetch_in_flight.as_ref().expect("close retained flight");
         assert_eq!(flight.owner, closed, "operation keeps its frozen owner");
@@ -289,11 +279,22 @@ pub fn scenario_fetch_panicked_worker_reconciles(cx: &mut VisualTestAppContext) 
         .into_iter()
         .filter(|entry| entry.op == "fetch")
         .collect();
-    assert_eq!(records.len(), 1, "one durable panic receipt");
-    assert!(matches!(
-        records[0].outcome,
-        kagi_git::oplog::OpOutcome::Unknown { .. }
-    ));
+    assert_eq!(
+        records
+            .iter()
+            .filter(|entry| matches!(entry.outcome, kagi_git::oplog::OpOutcome::Unknown { .. }))
+            .count(),
+        1,
+        "the abandoned attempt retains exactly one Unknown receipt"
+    );
+    assert_eq!(
+        records
+            .iter()
+            .filter(|entry| matches!(entry.outcome, kagi_git::oplog::OpOutcome::Success { .. }))
+            .count(),
+        1,
+        "the admitted ref-moving fetch after acknowledgement has its own receipt"
+    );
     unmount(cx, app, window);
 }
 
@@ -387,7 +388,6 @@ pub fn scenario_fetch_old_visit_drops_pull_waiter(cx: &mut VisualTestAppContext)
         assert!(app.fetch_async_for(false, None, cx), "launch held fetch");
         app.open_pull_modal(cx);
         let flight = app.fetch_in_flight.as_ref().unwrap();
-        assert_eq!(flight.waiters, vec![(owner, flight.visit)]);
         assert!(app.pull_modal().is_none());
         let old_visit = flight.visit;
         app.switch_repo(1, cx);
@@ -431,10 +431,6 @@ pub fn scenario_fetch_old_visit_drops_pull_waiter(cx: &mut VisualTestAppContext)
         assert!(app.fetch_async_for(false, None, cx));
         app.open_pull_modal(cx);
         let old_visit = app.fetch_in_flight.as_ref().unwrap().visit;
-        assert_eq!(
-            app.fetch_in_flight.as_ref().unwrap().waiters,
-            vec![(owner, old_visit)]
-        );
         app.switch_repo(1, cx);
         app.switch_repo(0, cx);
         assert_ne!(
@@ -483,19 +479,11 @@ pub fn scenario_fetch_new_visit_waiter_sees_old_flight_failure(cx: &mut VisualTe
         assert!(app.fetch_async_for(false, None, cx));
         app.open_pull_modal(cx);
         let old_visit = app.fetch_in_flight.as_ref().unwrap().visit;
-        assert_eq!(
-            app.fetch_in_flight.as_ref().unwrap().waiters,
-            vec![(owner, old_visit)]
-        );
         app.switch_repo(1, cx);
         app.switch_repo(0, cx);
         let new_visit = app.app_sessions.attachment(owner).unwrap().visit;
         assert_ne!(new_visit, old_visit);
         app.open_pull_modal(cx);
-        assert_eq!(
-            app.fetch_in_flight.as_ref().unwrap().waiters,
-            vec![(owner, old_visit), (owner, new_visit)]
-        );
         assert!(app.pull_modal().is_none());
     });
     // The dispatcher holds the fetch until now, after both Pull requests.

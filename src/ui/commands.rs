@@ -1485,6 +1485,13 @@ pub enum MenuOverlay {
 const GITHUB_URL: &str = "https://github.com/TomiXRM/kagi";
 const ISSUES_URL: &str = "https://github.com/TomiXRM/kagi/issues";
 
+/// The confirmation requested after a successful, admitted upstream fetch.
+#[derive(Clone, PartialEq, Eq)]
+pub enum PullTarget {
+    Current,
+    BranchFfOnly(String),
+}
+
 /// One fetch operation and the Pull confirmations attached to its frozen owner.
 ///
 /// The flight outlives its tab so closing a tab never cancels the write lease.
@@ -1495,7 +1502,10 @@ pub struct FetchFlight {
     /// Frozen before dispatch: an earlier visit's failure is recorded even
     /// when the tab is no longer the display owner.
     pub before: kagi_git::StateSummary,
-    pub waiters: Vec<(crate::app::SessionId, u64)>,
+    pub waiters: Vec<(crate::app::SessionId, u64, PullTarget)>,
+    /// `None` uses the ordinary current-upstream fetch; a named branch owns its
+    /// own live upstream scope and must not join a different fetch.
+    pub upstream_branch: Option<String>,
     /// A later user modal superseded the waiting Pull intent, even if that
     /// modal closed before the fetch finished. A new explicit Pull re-arms it.
     pub pull_confirm_displaced: bool,
@@ -1973,22 +1983,35 @@ impl KagiApp {
     pub fn fetch_async_for(
         &mut self,
         silent: bool,
-        pull_confirm: Option<crate::app::SessionId>,
+        pull_confirm: Option<PullTarget>,
         cx: &mut Context<Self>,
     ) -> bool {
         self.refresh_write_busy();
+        let requested_session = self.active_session();
+        let upstream_branch = match pull_confirm.as_ref() {
+            Some(PullTarget::BranchFfOnly(branch)) => Some(branch.clone()),
+            _ => None,
+        };
         if let Some(flight) = self.fetch_in_flight.as_mut() {
-            // Only this incarnation can join; its request retains the visit
-            // even if the user leaves and returns before completion.
-            if let Some(session) = pull_confirm.filter(|session| *session == flight.owner) {
-                if let Some(visit) = self.app_sessions.visit(session) {
-                    let waiter = (session, visit);
-                    if !flight.waiters.contains(&waiter) {
-                        flight.waiters.push(waiter);
+            // A same-owner visit can only join the scope it actually requested.
+            if flight.upstream_branch.as_deref() == upstream_branch.as_deref() {
+                if let (Some(target), Some(session)) = (pull_confirm, requested_session) {
+                    if session == flight.owner {
+                        if let Some(visit) = self.app_sessions.visit(session) {
+                            if let Some(waiter) =
+                                flight.waiters.iter_mut().find(|(owner, incarnation, _)| {
+                                    *owner == session && *incarnation == visit
+                                })
+                            {
+                                waiter.2 = target;
+                            } else {
+                                flight.waiters.push((session, visit, target));
+                            }
+                            flight.pull_confirm_displaced = false;
+                            klog!("pull-confirm: waiting on the fetch already in flight");
+                            return true;
+                        }
                     }
-                    flight.pull_confirm_displaced = false;
-                    klog!("pull-confirm: waiting on the fetch already in flight");
-                    return true;
                 }
             }
             return false;
@@ -2031,8 +2054,9 @@ impl KagiApp {
             owner,
             visit,
             before,
+            upstream_branch,
             waiters: pull_confirm
-                .map(|session| (session, visit))
+                .map(|target| (owner, visit, target))
                 .into_iter()
                 .collect(),
             pull_confirm_displaced: false,
@@ -2047,6 +2071,10 @@ impl KagiApp {
         let supervision = abandonment.supervision();
         #[cfg(feature = "gui-e2e")]
         let hold = super::busy::take_fetch_hold();
+        let upstream_branch = self
+            .fetch_in_flight
+            .as_ref()
+            .and_then(|flight| flight.upstream_branch.clone());
         let task = cx.background_spawn(async move {
             let _supervised = kagi_git::proc::supervisor::enter(supervision);
             #[cfg(feature = "gui-e2e")]
@@ -2065,7 +2093,11 @@ impl KagiApp {
                 // Nothing ran: nothing moved.
                 Err(error) => (Err(error), Some(Vec::new()), true),
                 Ok(backend) => {
-                    let (result, moves) = backend.observe_ref_moves(|b| b.fetch_remote());
+                    let (result, moves) =
+                        backend.observe_ref_moves(|b| match upstream_branch.as_deref() {
+                            Some(branch) => b.fetch_branch_upstream(branch),
+                            None => b.fetch_remote(),
+                        });
                     (result, moves, false)
                 }
             };
@@ -2075,15 +2107,18 @@ impl KagiApp {
             // as `Unknown` and never as a retryable `Failed` (ADR-0177). The
             // previous `format!` flattened both into a string here, which is
             // why the distinction could not be made at the call site (#646).
-            Some(result.map_err(|error| FetchFailure {
-                termination_unknown: matches!(error, kagi_git::GitError::TerminationUnknown(_)),
-                ref_moves,
-                message: if open_failed {
-                    format!("repo open error: {error}")
-                } else {
-                    format!("{error}")
-                },
-            }))
+            Some(match result {
+                Ok(outcome) => Ok((outcome, ref_moves)),
+                Err(error) => Err(FetchFailure {
+                    termination_unknown: matches!(error, kagi_git::GitError::TerminationUnknown(_)),
+                    ref_moves,
+                    message: if open_failed {
+                        format!("repo open error: {error}")
+                    } else {
+                        format!("{error}")
+                    },
+                }),
+            })
         });
         cx.spawn(async move |this, acx| {
             let mut result = task.fallible().await.flatten().unwrap_or_else(|| {
@@ -2100,10 +2135,28 @@ impl KagiApp {
                 };
                 app.poll_app_jobs(cx);
                 app.present_app_notice();
+                if let Ok((outcome, ref_moves)) = &mut result {
+                    if outcome.changed {
+                        // Fetch changes tracking refs even when its owner departs.
+                        // Persist once, without adding a second success toast or
+                        // presenting a quiet auto-fetch on the active tab.
+                        app.record_operation_completion(
+                            "fetch",
+                            flight.before.clone(),
+                            kagi_git::oplog::OpOutcome::Success {
+                                after: flight.before.clone(),
+                            },
+                            ref_moves.take(),
+                            &repo_path_guard,
+                            false,
+                            cx,
+                        );
+                    }
+                }
                 // A visit is a stay in the same tab, not merely its session.
                 // The flight owns one receipt; only waiters on the current
                 // visit may receive a result from an earlier visit's flight.
-                let current_waiter = flight.waiters.iter().any(|(session, visit)| {
+                let current_waiter = flight.waiters.iter().any(|(session, visit, _)| {
                     app.active_session() == Some(*session)
                         && app.app_sessions.visit(*session) == Some(*visit)
                 });
@@ -2115,7 +2168,7 @@ impl KagiApp {
                     // visit: only the presentation is withheld (#992 review).
                     if silent {
                         match &result {
-                            Ok(outcome) => klog!("auto-fetch: ok remote={}", outcome.remote),
+                            Ok((outcome, _)) => klog!("auto-fetch: ok remote={}", outcome.remote),
                             Err(e) => klog!("auto-fetch: failed (silent): {e}"),
                         }
                     }
@@ -2143,11 +2196,21 @@ impl KagiApp {
                                 );
                             }
                         }
-                        Ok(_) if current_waiter => app.deliver_pull_confirm(
-                            flight.owner,
-                            flight.pull_confirm_displaced,
-                            cx,
-                        ),
+                        Ok((outcome, _)) if current_waiter => {
+                            for (session, visit, target) in flight.waiters {
+                                if app.active_session() == Some(session)
+                                    && app.app_sessions.visit(session) == Some(visit)
+                                {
+                                    app.deliver_pull_confirm(
+                                        session,
+                                        flight.pull_confirm_displaced,
+                                        target,
+                                        &outcome.remote,
+                                        cx,
+                                    );
+                                }
+                            }
+                        }
                         Ok(_) => {}
                     }
                     // A delivered Pull confirmation (or failure preview) must
@@ -2155,12 +2218,12 @@ impl KagiApp {
                     cx.notify();
                     return;
                 }
-                let fetch_succeeded = result.is_ok();
-                if flight.superseded_read && !result.as_ref().is_ok_and(|o| o.changed) {
+                let mut fetched_remote = None;
+                if flight.superseded_read && !result.as_ref().is_ok_and(|(o, _)| o.changed) {
                     app.reload(cx);
                 }
                 match result {
-                    Ok(outcome) => {
+                    Ok((outcome, _)) => {
                         // ADR-0127: a no-op fetch skips the reload below, so the
                         // snapshot-derived fetch timestamp would go stale and the
                         // age indicator would falsely warn — stamp it in place.
@@ -2186,6 +2249,7 @@ impl KagiApp {
                                 cx,
                             );
                         }
+                        fetched_remote = Some(outcome.remote);
                     }
                     Err(mut e) => {
                         // Record even a silent auto-fetch failure. A stopped
@@ -2223,12 +2287,18 @@ impl KagiApp {
                 }
                 // Failed fetches already own one durable receipt. A waiter
                 // only offers a confirmation after a successful fetch.
-                if fetch_succeeded {
-                    for (session, visit) in flight.waiters {
+                if let Some(fetched_remote) = fetched_remote {
+                    for (session, visit, target) in flight.waiters {
                         if app.active_session() == Some(session)
                             && app.app_sessions.visit(session) == Some(visit)
                         {
-                            app.deliver_pull_confirm(session, flight.pull_confirm_displaced, cx);
+                            app.deliver_pull_confirm(
+                                session,
+                                flight.pull_confirm_displaced,
+                                target,
+                                &fetched_remote,
+                                cx,
+                            );
                         }
                     }
                 }

@@ -1330,8 +1330,8 @@ impl Backend {
         ops::plan_pull(&self.repo)
     }
 
-    pub(crate) fn execute_pull(&self) -> Result<PullOutcome, GitError> {
-        ops::execute_pull(&self.repo, &self.path)
+    pub(crate) fn execute_pull(&self, plan: &OperationPlan) -> Result<PullOutcome, GitError> {
+        ops::execute_pull(&self.repo, &self.path, plan)
     }
 
     pub fn fetch_remote(&self) -> Result<FetchOutcome, GitError> {
@@ -1343,6 +1343,12 @@ impl Backend {
             let _ = self.refresh_ruleset(&branch);
         }
         Ok(outcome)
+    }
+
+    /// Fetch only, using the selected local branch's live upstream configuration.
+    pub fn fetch_branch_upstream(&self, branch: &str) -> Result<FetchOutcome, GitError> {
+        self.require_trust()?;
+        ops::fetch_branch_upstream(&self.repo, &self.path, branch)
     }
 
     /// The current branch's short name (`None` when detached/unborn) — used to
@@ -1427,6 +1433,46 @@ impl Backend {
 
     pub fn plan_pull_branch_ff(&self, branch_name: &str) -> Result<OperationPlan, GitError> {
         ops::plan_pull_branch_ff(&self.repo, branch_name)
+    }
+
+    /// Freeze the preview's status without a second working-tree walk.
+    pub fn plan_pull_branch_ff_preview(
+        &self,
+        branch_name: &str,
+    ) -> Result<(OperationPlan, kagi_domain::status::WorktreeDigest), GitError> {
+        let (plan, status) = ops::plan_pull_branch_ff_with_status(&self.repo, branch_name)?;
+        Ok((plan, status.digest()))
+    }
+
+    /// Ref identities used to retain a fetched ff-only preview across unchanged reads.
+    pub fn pull_branch_ref_state(
+        &self,
+        name: &str,
+    ) -> Result<(CommitId, String, CommitId), GitError> {
+        let branch = self
+            .repo
+            .find_branch(name, git2::BranchType::Local)
+            .map_err(|error| GitError::Other(error.to_string()))?;
+        let upstream = branch
+            .upstream()
+            .map_err(|error| GitError::Other(error.to_string()))?;
+        let target = branch
+            .get()
+            .target()
+            .ok_or_else(|| GitError::Other("branch has no target".into()))?;
+        let upstream_target = upstream
+            .get()
+            .target()
+            .ok_or_else(|| GitError::Other("upstream has no target".into()))?;
+        let upstream_name = upstream
+            .name()
+            .map_err(|error| GitError::Other(error.to_string()))?
+            .ok_or_else(|| GitError::Other("upstream has no name".into()))?;
+        Ok((
+            CommitId(target.to_string()),
+            upstream_name.to_owned(),
+            CommitId(upstream_target.to_string()),
+        ))
     }
 
     pub(crate) fn execute_pull_branch_ff(

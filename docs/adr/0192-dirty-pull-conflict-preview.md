@@ -60,7 +60,7 @@ async: pull partially applied — Pull completed, but auto-stash restoration
 
 ### 2. clean / dirty の両方で確認前に fetch する（#1087）
 
-`plan_pull` の予測はローカルが知っている origin に基づく。auto-fetch は 180s 間隔なので、
+`plan_pull` の予測はローカルが知っている **設定済み upstream** に基づく。auto-fetch は 180s 間隔なので、
 直前に upstream が動いていれば dirty path の予測が漏れるだけでなく、clean な Pull でも
 古い `behind=0` を根拠に「すでに最新です」と誤表示する。確認または最新の案内を出す前に、
 **その要求を所有する session の fetch 成功を待つ**。バックエンドの `plan_pull` は純粋な
@@ -69,14 +69,22 @@ async: pull partially applied — Pull completed, but auto-stash restoration
 sidebar の branch context menu も同じ freshness の入口である。最後に取得した
 `behind=0` / unknown は Pull / Pull ff-only の admission を閉じる根拠にしない。
 未確認の zero に「最新」の label を付けず、busy・detached HEAD・remote branch・
-upstream 未設定の既存 guard は維持する。current branch の通常 Pull は既存の
-fetch-first 経路へ入り、非 current branch の ff-only 操作の対象・確認の意味は変えない。
+upstream 未設定の既存 guard は維持する。current branch の通常 Pull / ff-only、
+非 current branch の通常 Pull / ff-only の全入口で fetch 成功後に計画する。
+非 current branch はその branch の live config にある remote を取得し、HEAD の
+remote と同一とは仮定しない。確認中も対象は ref-only ff とし、checkout はしない。
 
 fetch は remote-tracking refs を変更する **write** である。既存の admitted
 `fetch_async_for` の lease・実行・verify・oplog 経路を使い、新しい UI 直書き経路を作らない。
 確認前の fetch は HEAD、index の staged content、working tree を変更しない。
 保留中の要求は `FetchFlight` の owner / visit 付き waiter が持つ。global flag は持たない。
 
+
+quiet fetch は成功結果の `changed=true` なら、remote-tracking refs だけの更新でも
+同じ flight の frozen owner に一件の Success receipt を残す。`observe_ref_moves` の観測範囲は
+**local heads / tags** に限られ、tracking-only の成功 receipt は `ref_moves` が空になりうる。
+空の `ref_moves` は記録を抑止しない。no-op の `changed=false` は成功 receipt を増やさない。
+manual fetch の既存 toast は一つ、auto-fetch は quiet のままにし、別 tab の footer や bottom panel を開かない。
 **fetch 失敗時はモーダルを出さない。** 記録済みの失敗を示す footer が答えで、
 「たった今更新に失敗した知識」に対して確定させるのは、この遅延が避けようとしている驚きそのもの。
 保留中の Pull が silent auto-fetch に参加した場合も、現在の session / visit の waiter には
@@ -91,9 +99,23 @@ fetch と watcher は複数の reload を届けるため、配送後の clean �
 `PullPlanModal::fetch_owner` として session / visit の provenance を付ける。
 同じ所有者・visit、同じ HEAD と working-tree digest、未実行・エラー無しの local 確認だけを
 `apply_reload_data` が `replan_pull_modal` で更新して残す。snapshot が一致していても、その採取後に
-live checkout が変わりうるため、**再計画した plan / digest も旧確認と照合する**。HEAD / digest
-の不一致や clean → auto-stash への変化では置き換えず無効化する。replan が NoOp / 失敗の場合も
-clean 確認を消す。
+live checkout / branch config が変わりうるため、**再計画した `PullIdentity` / HEAD / digest も
+旧確認と照合する**。captured-old-snapshot を適用した場合も live identity の変更を見逃さない。
+identity / HEAD / digest の不一致や clean → auto-stash への変化では置き換えず無効化する。
+replan が NoOp / 失敗の場合も clean 確認を消す。
+
+実行可能な local Pull / branch ff-only の確認は typed `PullIdentity` として **branch 名、
+local OID、remote 名、完全な tracking ref 名**を凍結する。upstream の OID 自体は凍結しない。
+branch ff-only は加えて working-tree digest と owner / visit を保持する。同じ identity / digest
+での watcher reload は確認を維持し、upstream の再設定・対象 local tip の移動・dirty の変更では
+確認を失効させる。backend の既存 preflight に identity 照合を追加し、`Backend::run` の fresh plan
+との比較でも identity の一致を要求する。非 current branch の ref 更新は承認済み local OID を
+期待値にした CAS とし、途中の移動を上書きしない。
+
+fetch 成功後の remote 名照合は **blockers が空の実行可能な plan だけ**に行う。
+実際に `ConflictedFiles` 等で止まる plan は `pull_identity=None` なので upstream 変更と
+取り違えず、元の blocker と無効な確定ボタンを持つ確認を表示し、実行しない。
+fetch 失敗はこの確認にも「最新」の案内にも進めず、owner / visit の配送 guard は維持する。
 
 既存の auto-stash 確認と error 状態の保持は維持する。auto-stash の再計画が NoOp / 失敗を
 返した場合は既存確認を残し、実行時の `Backend::run` の preflight が安全を担保する。
@@ -103,10 +125,11 @@ direct な blocker 確認・remote 確認には local fetch の provenance を�
 古い Pull 要求を復活させない。`FetchFlight` が displacement を保持し、完了時は確認を
 押し付けず再試行の案内にする。改めて明示した Pull だけが同じ owner の flight に再参加できる。
 
-**incoming の定義は `merge-base..upstream`。** HEAD の tree を upstream の tree に直接 diff すると、
-diverged 時に「local commit だけが変えたパス」（逆方向の差分）も incoming として数え、upstream が
-持ち込んでいない衝突を警告してしまう（実測: `RestoreConflict { paths: ["mine.txt"] }`)。fast-forward
-では merge-base == HEAD なので挙動は同じ。merge-base が無い（無関係な履歴）場合は HEAD に落とす。
+**restore 予測の incoming は `HEAD..post-pull`。** fast-forward は設定済み upstream の tree、
+diverged は HEAD と設定済み upstream の in-memory merge index を post-pull とする。
+HEAD の tree を生の upstream tree と直接比較して local commit だけの変更を逆差分として
+数えたり、実際には置かれない content への復元を予測したりしない。commit 同士の merge が
+衝突する場合は pull 自体が止まるので restore 予測は空とし、merge の警告を使う。
 
 **表示は `note_path_list` + localized summary。** パスは prose のカンマ列ではなく行として描く
 （#454 が checkout overlap で入れた仕組みに合流）。warning 側の描画も blocker と同じ分岐にした。
@@ -119,8 +142,8 @@ conflict ではない。upstream が先頭行、ローカルが末尾行を触�
 警告になり、ユーザーは警告を読まなくなる — #625 で直した信頼が別の形で壊れる。
 
 重なった各パスについて `git2::merge_file` で 3-way content merge を実行する。
-ancestor = HEAD の blob（ユーザーの編集の基準）、ours = upstream tip の blob
-（pull が working tree に置くもの）、theirs = working tree のバイト列。`merge_file` は
+ancestor = HEAD の blob（ユーザーの編集の基準）、ours = post-pull の blob
+（fast-forward なら upstream、diverged なら merge index）、theirs = working tree のバイト列。`merge_file` は
 メモリ上で完結し、loose object も ref も書かない — plan が object を書くと watcher が
 発火し、今回直した「モーダルが消える」を再発させる。
 
@@ -202,6 +225,15 @@ blast radius を抑える判断である。理由:
   upstream」を見る最後の関門で、plan の予測は表示の鮮度、execute の fetch は実行の正しさを
   担保する別の役割である。
 - 冗長な fetch のコストは、no-op fetch 1 回分（ref 更新なし）。
+
+実行は承認済み remote 名だけを fetch し、凍結した完全な tracking ref から tip を読む。
+同じ承認済み upstream に後から届いた新しい commit は許容するが、branch / local OID /
+remote 名 / tracking ref の差し替えは preflight で拒否する。merge 予測、restore 予測、
+ff-only 計画、auto-stash 前の fresh plan はすべて `branch.upstream().get().target()` に
+基づき、`refs/remotes/<remote>/<local branch 名>` を優先しない。例えば `main` が
+`origin/alternate` に追従するとき、別の `origin/main` の存在で予測をすり替えない。
+Push / force-lease の既存 resolver は変えない。remote URL / fetch refspec の変更を承認に
+束縛する policy はこの変更の対象外とする。
 
 ## Consequences
 

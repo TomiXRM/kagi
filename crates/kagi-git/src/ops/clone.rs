@@ -95,6 +95,7 @@ pub fn plan_clone(request: &CloneRequest) -> OperationPlan {
         },
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         destructive: false,
         equivalent_command: command,

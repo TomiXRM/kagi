@@ -54,6 +54,10 @@ struct Origin {
 
 impl Origin {
     fn new(repo: &Path) -> Self {
+        Self::new_named(repo, "origin")
+    }
+
+    fn new_named(repo: &Path, remote: &str) -> Self {
         let root = tempfile::tempdir().expect("origin root");
         let bare = root.path().join("origin.git");
         let other = root.path().join("other");
@@ -61,8 +65,8 @@ impl Origin {
             repo,
             &["init", "--bare", "-q", "-b", "main", bare.to_str().unwrap()],
         );
-        git(repo, &["remote", "add", "origin", bare.to_str().unwrap()]);
-        git(repo, &["push", "-q", "-u", "origin", "main"]);
+        git(repo, &["remote", "add", remote, bare.to_str().unwrap()]);
+        git(repo, &["push", "-q", "-u", remote, "main"]);
         git(
             root.path(),
             &[
@@ -177,9 +181,18 @@ fn click_pull(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
 }
 
 fn click_branch_pull(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    click_branch_sync(cx, window, "main", false);
+}
+
+fn click_branch_sync(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    branch: &str,
+    ff_only: bool,
+) {
     draw(cx, window);
-    let row = e2e::control_bounds(window.window_id(), "sidebar-local-main")
-        .expect("current branch row is drawn");
+    let row = e2e::control_bounds(window.window_id(), &format!("sidebar-local-{branch}"))
+        .expect("selected branch row is drawn");
     cx.simulate_mouse_down(
         window,
         row.center(),
@@ -193,8 +206,13 @@ fn click_branch_pull(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
         gpui::Modifiers::none(),
     );
     draw(cx, window);
-    let pull = e2e::control_bounds(window.window_id(), "branch-menu-item-1-1")
-        .expect("branch context-menu Pull is drawn");
+    let id = if ff_only {
+        "branch-menu-item-1-2"
+    } else {
+        "branch-menu-item-1-1"
+    };
+    let pull = e2e::control_bounds(window.window_id(), id)
+        .expect("branch context-menu Pull action is drawn");
     cx.simulate_click(window, pull.center(), gpui::Modifiers::none());
 }
 
@@ -253,6 +271,10 @@ fn assert_waiting(
         assert!(
             app.pull_modal().is_none(),
             "no executable plan before freshness succeeds"
+        );
+        assert!(
+            app.branch_plan_modal().is_none(),
+            "no executable branch plan before freshness succeeds"
         );
     });
     assert_eq!(
@@ -794,87 +816,296 @@ pub fn scenario_pull_freshness_closed_modal_displaces(cx: &mut VisualTestAppCont
 /// A captured unchanged snapshot cannot authorize a replan of a changed checkout.
 pub fn scenario_pull_freshness_captured_reload_drift(cx: &mut VisualTestAppContext) {
     let _settings = SettingsGuard::install();
-    for head_change in [true, false] {
-        let fixture = build_fixture();
-        let repo = fixture.path().canonicalize().unwrap();
-        let origin = Origin::new(&repo);
-        let (app, window) = mount(cx, &repo);
-        let expected = origin.advance();
-        let before = Checkout::read(&repo);
-        fetch_and_confirm(cx, &app, window, &repo, &before);
+    #[derive(Clone, Copy)]
+    enum Drift {
+        Head,
+        Worktree,
+        Upstream,
+    }
+    for branch_ff in [false, true] {
+        for drift in [Drift::Head, Drift::Worktree, Drift::Upstream] {
+            let fixture = build_fixture();
+            let repo = fixture.path().canonicalize().unwrap();
+            let origin = Origin::new(&repo);
+            if branch_ff {
+                git(&repo, &["branch", "feature"]);
+                git(
+                    &repo,
+                    &["branch", "--set-upstream-to=origin/main", "feature"],
+                );
+            }
+            let (app, window) = mount(cx, &repo);
+            let expected = origin.advance();
+            if matches!(drift, Drift::Upstream) {
+                git(&origin.other, &["push", "-q", "origin", "main:alternate"]);
+            }
+            let before = Checkout::read(&repo);
+            if branch_ff {
+                click_branch_sync(cx, window, "feature", true);
+                assert_fresh_branch_confirm(cx, &app, window, "feature");
+            } else {
+                fetch_and_confirm(cx, &app, window, &repo, &before);
+            }
 
-        let (owner, revision) = app.update(cx, |app, cx| {
-            let owner = app.active_session().unwrap();
-            app.reload_external(cx);
-            (owner, app.reads.revision(owner))
-        });
-        // Existing GPUI scheduler control: finish the real synchronous snapshot
-        // worker, but do not let its foreground acceptance closure run yet.
-        let dispatcher = cx.background_executor.dispatcher().as_test().unwrap();
-        let mut ticks = 0;
-        while dispatcher.tick(true) {
-            ticks += 1;
+            let (owner, revision) = app.update(cx, |app, cx| {
+                let owner = app.active_session().unwrap();
+                app.reload_external(cx);
+                (owner, app.reads.revision(owner))
+            });
+            // Existing GPUI scheduler control: finish the real synchronous snapshot
+            // worker, but do not let its foreground acceptance closure run yet.
+            let dispatcher = cx.background_executor.dispatcher().as_test().unwrap();
+            let mut ticks = 0;
+            while dispatcher.tick(true) {
+                ticks += 1;
+            }
+            assert!(ticks > 0, "the real snapshot worker ran");
+            cx.read(|cx| {
+                let app = app.read(cx);
+                assert!(
+                    app.reads.is_loading(owner),
+                    "captured read is not yet accepted"
+                );
+                assert!(
+                    if branch_ff {
+                        app.branch_plan_modal().is_some()
+                    } else {
+                        app.pull_modal().is_some()
+                    },
+                    "original approval is still shown"
+                );
+            });
+            if matches!(drift, Drift::Head) {
+                git(
+                    &repo,
+                    &[
+                        "commit",
+                        "-q",
+                        "--allow-empty",
+                        "-m",
+                        "drift after snapshot",
+                    ],
+                );
+            } else if matches!(drift, Drift::Worktree) {
+                std::fs::write(repo.join("README.md"), "edit after captured snapshot\n").unwrap();
+            } else {
+                let branch = if branch_ff { "feature" } else { "main" };
+                git(
+                    &repo,
+                    &["branch", "--set-upstream-to=origin/alternate", branch],
+                );
+            }
+            let changed = Checkout::read(&repo);
+            if matches!(drift, Drift::Upstream) {
+                assert_eq!(changed, before, "upstream drift changes only config");
+            } else {
+                assert_ne!(changed, before);
+            }
+            assert_eq!(changed.index, before.index);
+            cx.run_until_parked();
+            cx.read(|cx| {
+                let app = app.read(cx);
+                assert_eq!(app.reads.revision(owner), revision, "the captured read won");
+                assert!(
+                    !app.reads.is_loading(owner),
+                    "the captured read was accepted"
+                );
+                assert!(
+                    !app.view().is_dirty,
+                    "accepted snapshot predates the live edit"
+                );
+                assert_eq!(app.view().status_summary.ahead, Some(0));
+                assert_eq!(app.view().status_summary.behind, Some(1));
+                assert!(
+                    if branch_ff {
+                        app.branch_plan_modal().is_none()
+                    } else {
+                        app.pull_modal().is_none()
+                    },
+                    "live replan must invalidate, not rewrite the old clean approval"
+                );
+            });
+            e2e::clear_control_bounds(window.window_id(), "plan-cancel");
+            draw(cx, window);
+            assert!(e2e::control_bounds(window.window_id(), "plan-cancel").is_none());
+            press_enter(cx, &app, window);
+            wait_idle(cx, &app);
+            cx.run_until_parked();
+            assert_eq!(Checkout::read(&repo), changed);
+            assert_eq!(output(&repo, &["rev-parse", "origin/main"]), expected);
+            assert_eq!(latest_count(cx, &app), 0);
+            assert!(records(&repo, "pull").is_empty());
+            assert!(output(&repo, &["stash", "list"]).is_empty());
+            unmount(cx, app, window);
         }
-        assert!(ticks > 0, "the real snapshot worker ran");
-        cx.read(|cx| {
-            let app = app.read(cx);
-            assert!(
-                app.reads.is_loading(owner),
-                "captured read is not yet accepted"
-            );
-            assert!(
-                app.pull_modal().is_some(),
-                "original approval is still shown"
-            );
-        });
-        if head_change {
-            git(
-                &repo,
-                &[
-                    "commit",
-                    "-q",
-                    "--allow-empty",
-                    "-m",
-                    "drift after snapshot",
-                ],
-            );
-        } else {
-            std::fs::write(repo.join("README.md"), "edit after captured snapshot\n").unwrap();
-        }
-        let changed = Checkout::read(&repo);
-        assert_ne!(changed, before);
-        assert_eq!(changed.index, before.index);
-        cx.run_until_parked();
-        cx.read(|cx| {
-            let app = app.read(cx);
-            assert_eq!(app.reads.revision(owner), revision, "the captured read won");
-            assert!(
-                !app.reads.is_loading(owner),
-                "the captured read was accepted"
-            );
-            assert!(
-                !app.view().is_dirty,
-                "accepted snapshot predates the live edit"
-            );
-            assert_eq!(app.view().status_summary.ahead, Some(0));
-            assert_eq!(app.view().status_summary.behind, Some(1));
-            assert!(
-                app.pull_modal().is_none(),
-                "live replan must invalidate, not rewrite the old clean approval"
-            );
-        });
-        e2e::clear_control_bounds(window.window_id(), "plan-cancel");
-        draw(cx, window);
-        assert!(e2e::control_bounds(window.window_id(), "plan-cancel").is_none());
-        press_enter(cx, &app, window);
-        wait_idle(cx, &app);
-        cx.run_until_parked();
-        assert_eq!(Checkout::read(&repo), changed);
-        assert_eq!(output(&repo, &["rev-parse", "origin/main"]), expected);
-        assert_eq!(latest_count(cx, &app), 0);
-        assert!(records(&repo, "pull").is_empty());
-        assert!(output(&repo, &["stash", "list"]).is_empty());
-        unmount(cx, app, window);
     }
     eprintln!("[gui-e2e] PASS pull_freshness_captured_reload_drift");
+}
+
+/// Every branch-menu variant must refresh its selected branch's live upstream.
+/// The noncurrent legs deliberately leave main on origin while feature tracks
+/// either origin/main or a distinct remote: fetching main's remote is insufficient.
+pub fn scenario_pull_freshness_branch_entries(cx: &mut VisualTestAppContext) {
+    let _settings = SettingsGuard::install();
+    branch_ref_updates(cx, true, true, false);
+    for ff_only in [false, true] {
+        for different_remote in [false, true] {
+            branch_ref_updates(cx, false, ff_only, different_remote);
+        }
+    }
+    eprintln!("[gui-e2e] PASS pull_freshness_branch_entries");
+}
+
+fn assert_fresh_branch_confirm(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    branch: &str,
+) {
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.fetch_in_flight.is_none());
+        assert!(!app.app_sessions.has_leases());
+        assert!(app.pull_modal().is_none());
+        let modal = app
+            .branch_plan_modal()
+            .expect("fetched branch opens confirmation");
+        assert_eq!(modal.branch_name, branch);
+        assert!(modal.error.is_none());
+        assert!(
+            modal.plan.blockers.is_empty(),
+            "fetched branch can fast-forward"
+        );
+        assert!(
+            !matches!(
+                modal.plan.disposition,
+                kagi_git::ops::PlanDisposition::NoOp(_)
+            ),
+            "stale tracking equality must not survive the fetch"
+        );
+    });
+    e2e::clear_control_bounds(window.window_id(), "plan-cancel");
+    draw(cx, window);
+    assert!(e2e::control_bounds(window.window_id(), "plan-cancel").is_some());
+    assert_eq!(latest_count(cx, app), 0);
+}
+
+fn branch_ref_updates(
+    cx: &mut VisualTestAppContext,
+    current: bool,
+    ff_only: bool,
+    different_remote: bool,
+) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let origin = Origin::new(&repo);
+    let alternate = different_remote.then(|| Origin::new_named(&repo, "alternate"));
+    if different_remote {
+        // new_named's push -u must not change the checked-out branch's upstream.
+        git(&repo, &["branch", "--set-upstream-to=origin/main", "main"]);
+    }
+    let branch = if current { "main" } else { "feature" };
+    let remote = if different_remote {
+        "alternate"
+    } else {
+        "origin"
+    };
+    let tracking = format!("{remote}/main");
+    if !current {
+        git(&repo, &["branch", branch]);
+        git(
+            &repo,
+            &["branch", &format!("--set-upstream-to={tracking}"), branch],
+        );
+    }
+    let target_ref = format!("refs/heads/{branch}");
+    let (app, window) = mount(cx, &repo);
+    let expected = alternate.as_ref().unwrap_or(&origin).advance();
+    assert_cached_zero(cx, &app, &repo);
+    let before = Checkout::read(&repo);
+    let target_before = output(&repo, &["rev-parse", &target_ref]);
+    let origin_before = output(&repo, &["rev-parse", "origin/main"]);
+    assert_eq!(target_before, output(&repo, &["rev-parse", &tracking]));
+    assert_ne!(target_before, expected);
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_fetch_for_e2e(hold);
+    click_branch_sync(cx, window, branch, ff_only);
+    assert_waiting(cx, &app, &repo, &before);
+    assert_eq!(output(&repo, &["rev-parse", &target_ref]), target_before);
+    assert_eq!(output(&repo, &["rev-parse", &tracking]), target_before);
+    release.send(());
+    assert_fresh_branch_confirm(cx, &app, window, branch);
+    assert_eq!(output(&repo, &["rev-parse", &tracking]), expected);
+    if different_remote {
+        assert_eq!(output(&repo, &["rev-parse", "origin/main"]), origin_before);
+    }
+    assert_eq!(Checkout::read(&repo), before);
+    assert_eq!(output(&repo, &["rev-parse", &target_ref]), target_before);
+    assert!(records(&repo, "pull").is_empty());
+    let fetches = records(&repo, "fetch");
+    assert_eq!(fetches.len(), 1, "one admitted real fetch");
+    assert!(matches!(fetches[0].outcome, OpOutcome::Success { .. }));
+
+    for _ in 0..2 {
+        let (owner, revision) = cx.read(|cx| {
+            let app = app.read(cx);
+            let owner = app.active_session().unwrap();
+            (owner, app.reads.revision(owner))
+        });
+        app.update(cx, |app, cx| app.reload_external(cx));
+        cx.advance_clock(Duration::from_secs(1));
+        assert_fresh_branch_confirm(cx, &app, window, branch);
+        cx.read(|cx| {
+            let app = app.read(cx);
+            assert!(app.reads.revision(owner) > revision);
+            assert!(
+                !app.reads.is_loading(owner),
+                "own watcher read was accepted"
+            );
+        });
+        assert_eq!(Checkout::read(&repo), before);
+        assert_eq!(output(&repo, &["rev-parse", &target_ref]), target_before);
+    }
+
+    press_enter(cx, &app, window);
+    wait_idle(cx, &app);
+    cx.run_until_parked();
+    assert_eq!(output(&repo, &["rev-parse", &target_ref]), expected);
+    assert_eq!(output(&repo, &["symbolic-ref", "--short", "HEAD"]), "main");
+    let after = Checkout::read(&repo);
+    assert_eq!(
+        after.head,
+        if current {
+            expected
+        } else {
+            before.head.clone()
+        }
+    );
+    assert_eq!(
+        after.index, before.index,
+        "branch ff-only is a ref-only operation"
+    );
+    assert_eq!(
+        after.files, before.files,
+        "checkout contents are not updated"
+    );
+    let durable = records(&repo, "pull");
+    assert_eq!(durable.len(), 1);
+    assert!(matches!(durable[0].outcome, OpOutcome::Success { .. }));
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.branch_plan_modal().is_none());
+        assert!(app.pull_modal().is_none());
+        assert!(!app.app_sessions.has_leases());
+        let panel = app.op_log.as_ref().expect("Operation Log").read(cx);
+        let shown: Vec<_> = panel
+            .entries()
+            .iter()
+            .filter(|entry| entry.op == "pull" && entry.repo == durable[0].repo)
+            .collect();
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].id, durable[0].id);
+    });
+    unmount(cx, app, window);
 }

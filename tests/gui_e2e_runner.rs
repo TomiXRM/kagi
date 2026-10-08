@@ -103,6 +103,10 @@ mod recovery_pull;
 mod pull_freshness;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pull_fetch_blocker.rs"]
+mod pull_fetch_blocker;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/cli_capability.rs"]
 mod recovery_cli_capability;
 
@@ -1201,6 +1205,10 @@ mod macos {
                 Box::new(crate::pull_freshness::scenario_pull_freshness_clean_updates),
             ),
             (
+                "pull_freshness_branch_entries",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_branch_entries),
+            ),
+            (
                 "pull_freshness_synced_waits",
                 Box::new(crate::pull_freshness::scenario_pull_freshness_synced_waits),
             ),
@@ -1229,6 +1237,12 @@ mod macos {
             (
                 "pull_freshness_captured_reload_drift",
                 Box::new(crate::pull_freshness::scenario_pull_freshness_captured_reload_drift),
+            ),
+            (
+                "pull_fetch_preserves_conflict_blocker",
+                Box::new(
+                    crate::pull_fetch_blocker::scenario_pull_fetch_preserves_conflict_blocker,
+                ),
             ),
             (
                 "pull_auto_stash_success",

@@ -317,6 +317,7 @@ pub enum Msg {
     // driven by `busy_op` with a spinning sync icon — now signals progress.)
     AlreadyUpToDatePull,
     AlreadyUpToDatePush,
+    PullUpstreamChangedDuringFetch,
 
     // ── Toolbar guard reasons (domain words kept English) ───────────
     PullBusy,
@@ -2227,6 +2228,8 @@ impl Msg {
             (Ja, AlreadyUpToDatePull) => "すでに最新です。pull するものはありません",
             (En, AlreadyUpToDatePush) => "Already up to date — nothing to push",
             (Ja, AlreadyUpToDatePush) => "すでに最新です。push するものはありません",
+            (En, PullUpstreamChangedDuringFetch) => "Pull upstream changed during fetch; request Pull again",
+            (Ja, PullUpstreamChangedDuringFetch) => "fetch 中に Pull の upstream が変わりました。もう一度 Pull してください。",
 
             // ── Toolbar guards ──────────────────────────────────────
             (En, PullBusy) => "Pull: another operation is in progress",

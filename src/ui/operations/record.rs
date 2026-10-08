@@ -72,10 +72,10 @@ impl KagiApp {
             .with_ref_moves(ref_moves);
         self.record_op_impl(entry, cx, true, None);
     }
-    /// Persist a conflict completion even after its owner departs, without
-    /// routing its footer/toast to the tab that replaced it.
+    /// Persist an async operation for its frozen owner. Quiet completions keep
+    /// the live footer/toast and bottom panel with their current presentation owner.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::ui) fn record_conflict_completion(
+    pub(in crate::ui) fn record_operation_completion(
         &mut self,
         op: &str,
         before: StateSummary,

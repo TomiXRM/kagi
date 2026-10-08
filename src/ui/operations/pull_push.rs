@@ -30,7 +30,7 @@ impl KagiApp {
         // Attaching a waiter is not admitting another plan or write.
         if self.remote_view.is_none()
             && self.fetch_in_flight.is_some()
-            && self.fetch_async_for(false, self.active_session(), cx)
+            && self.fetch_async_for(false, Some(crate::ui::commands::PullTarget::Current), cx)
         {
             return;
         }
@@ -156,7 +156,7 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        let Some(session) = self.active_session() else {
+        let Some(_) = self.active_session() else {
             return;
         };
         // Verify cached structural blockers locally without doing an extra full
@@ -165,7 +165,7 @@ impl KagiApp {
         let status = &self.view().status_summary;
         if status.is_detached || status.is_unborn || status.no_upstream || status.conflict_count > 0
         {
-            match self.build_pull_modal() {
+            match self.build_pull_modal(None) {
                 Ok(Some(modal)) if !modal.plan.blockers.is_empty() => {
                     klog!(
                         "plan: pull blockers={} warnings={}",
@@ -185,7 +185,9 @@ impl KagiApp {
         // Neither an executable preview nor an up-to-date claim may rely on
         // cached tracking refs, regardless of working-tree dirtiness. Admission
         // refusal is not freshness: never fall back to the stale local plan.
-        let _ = self.fetch_async_for(false, Some(session), cx);
+        if !self.fetch_async_for(false, Some(crate::ui::commands::PullTarget::Current), cx) {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+        }
     }
 
     /// Deliver a successful fetch's confirmation only to the visit that
@@ -195,19 +197,32 @@ impl KagiApp {
         &mut self,
         session: crate::app::SessionId,
         displaced: bool,
+        target: crate::ui::commands::PullTarget,
+        fetched_remote: &str,
         cx: &mut Context<Self>,
     ) {
         if self.active_session() == Some(session) {
             if displaced || self.has_active_modal() || self.op_latched() {
                 self.discard_contended_plan_from_async(i18n::Op::Pull, AsyncPlanToken::None);
             } else {
-                self.plan_and_offer_pull_modal_from_async(cx);
+                match target {
+                    crate::ui::commands::PullTarget::Current => {
+                        self.plan_and_offer_pull_modal_from_async(fetched_remote, cx);
+                    }
+                    crate::ui::commands::PullTarget::BranchFfOnly(branch) => {
+                        self.offer_fetched_branch_pull(branch, fetched_remote);
+                    }
+                }
             }
         }
     }
 
-    fn plan_and_offer_pull_modal_from_async(&mut self, cx: &mut Context<Self>) -> bool {
-        match self.build_pull_modal() {
+    fn plan_and_offer_pull_modal_from_async(
+        &mut self,
+        fetched_remote: &str,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        match self.build_pull_modal(Some(fetched_remote)) {
             Ok(Some(mut modal)) => {
                 klog!(
                     "plan: pull blockers={} warnings={}",
@@ -249,16 +264,18 @@ impl KagiApp {
     /// replanning fails. A clean fetch-origin confirmation is invalidated
     /// instead: it must not retain an executable plan that cannot be refreshed.
     pub(crate) fn replan_pull_modal(&mut self) {
-        match self.build_pull_modal() {
+        match self.build_pull_modal(None) {
             Ok(Some(mut modal)) => {
                 // The accepted snapshot may predate a live checkout change.
                 // Do not rewrite a clean approval to that different checkout.
                 if self.pull_modal().is_some_and(|current| {
-                    !current.auto_stash
-                        && current.fetch_owner.is_some()
-                        && (modal.auto_stash
-                            || current.plan.head_at_plan != modal.plan.head_at_plan
-                            || current.dirty_digest.as_ref() != modal.dirty_digest.as_ref())
+                    current.fetch_owner.is_some()
+                        && (current.plan.pull_identity != modal.plan.pull_identity
+                            || (!current.auto_stash
+                                && (modal.auto_stash
+                                    || current.plan.head_at_plan != modal.plan.head_at_plan
+                                    || current.dirty_digest.as_ref()
+                                        != modal.dirty_digest.as_ref())))
                 }) {
                     self.clear_pull_modal();
                     return;
@@ -295,7 +312,10 @@ impl KagiApp {
 
     /// The confirmation a local pull would show: `Ok(None)` when there is
     /// nothing to pull, `Err` when the plan could not be built.
-    fn build_pull_modal(&mut self) -> Result<Option<PullPlanModal>, String> {
+    fn build_pull_modal(
+        &mut self,
+        expected_fetched_remote: Option<&str>,
+    ) -> Result<Option<PullPlanModal>, String> {
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
         let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
@@ -304,6 +324,18 @@ impl KagiApp {
         let mut plan = repo
             .plan_pull()
             .map_err(|e| i18n::op_plan_failed(i18n::Op::Pull, e))?;
+        // A blocked plan has no executable identity: preserve its actual blocker
+        // instead of turning it into an upstream-change error after a successful fetch.
+        if plan.blockers.is_empty()
+            && expected_fetched_remote.is_some_and(|expected| {
+                plan.pull_identity
+                    .as_ref()
+                    .map(|identity| identity.remote.as_str())
+                    != Some(expected)
+            })
+        {
+            return Err(Msg::PullUpstreamChangedDuringFetch.t().to_string());
+        }
         let auto_stash = plan.blockers.is_empty() && self.view().is_dirty;
         if auto_stash {
             let status = &self.view().status_summary;

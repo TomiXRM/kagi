@@ -216,6 +216,53 @@ impl KagiApp {
                     && modal.plan.head_at_plan == snap.head
                     && modal.dirty_digest.as_ref() == Some(&snap.status.digest())
             });
+        let keep_fetched_branch_pull = !self.op_latched()
+            && self.branch_plan_modal().is_some_and(|modal| {
+                modal.kind == crate::ui::BranchPlanKind::PullFfOnly
+                    && modal.error.is_none()
+                    && modal.fetch_owner.is_some()
+                    && modal.fetch_owner
+                        == self
+                            .app_sessions
+                            .visit(session)
+                            .map(|visit| (session, visit))
+                    && modal.plan.head_at_plan == snap.head
+                    && modal.dirty_digest.as_ref() == Some(&snap.status.digest())
+                    && modal.fetched_refs.as_ref().is_some_and(
+                        |(target, upstream_name, upstream_target)| {
+                            snap.branches.iter().any(|branch| {
+                                branch.name == modal.branch_name
+                                    && &branch.target == target
+                                    && branch.upstream.as_ref().is_some_and(|upstream| {
+                                        &upstream.remote_branch == upstream_name
+                                    })
+                            }) && modal.plan.pull_identity.as_ref().is_some_and(|identity| {
+                                upstream_name
+                                    .strip_prefix(identity.remote.as_str())
+                                    .and_then(|name| name.strip_prefix('/'))
+                                    .is_some_and(|name| {
+                                        snap.remote_branches.iter().any(|branch| {
+                                            branch.remote == identity.remote
+                                                && branch.name == name
+                                                && &branch.target == upstream_target
+                                        })
+                                    })
+                            })
+                        },
+                    )
+                    && self.ui().repo_session.as_ref().is_some_and(|session| {
+                        let backend = session.backend();
+                        backend.preflight_check(&modal.plan).is_ok()
+                            && backend
+                                .pull_branch_ref_state(&modal.branch_name)
+                                .ok()
+                                .as_ref()
+                                == modal.fetched_refs.as_ref()
+                            && backend.working_tree_status().is_ok_and(|status| {
+                                modal.dirty_digest.as_ref() == Some(&status.digest())
+                            })
+                    })
+            });
         self.clear_plan_modal();
         if !keep_pull_error && !replan_dirty_pull && !replan_fetch_pull {
             self.clear_pull_modal();
@@ -223,7 +270,9 @@ impl KagiApp {
         self.clear_amend_modal();
         self.clear_pop_modal();
         self.clear_stash_drop_modal();
-        self.clear_branch_plan_modal();
+        if !keep_fetched_branch_pull {
+            self.clear_branch_plan_modal();
+        }
         self.clear_set_upstream_modal();
         self.clear_rename_branch_modal();
         self.clear_discard_modal();

@@ -13,7 +13,8 @@ use super::pull_conflict::{
     ensure_pull_does_not_touch_dirty_paths, plan_pull_restore_conflicts, predict_merge_conflict,
 };
 use super::remote_common::{
-    local_branch_oid, resolve_upstream_info, resolve_upstream_oid, short_oid_string,
+    capture_pull_identity, local_branch_oid, resolve_configured_upstream_oid,
+    resolve_upstream_info, short_oid_string,
 };
 use super::*;
 use kagi_domain::plan_note::{CommonNote, DirtyParts, OpPhrase, PlanOp, UntrackedCtx};
@@ -83,6 +84,7 @@ pub fn plan_pull_remote(
         },
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -215,7 +217,7 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
     // ── 5. Plan-time in-memory conflict prediction ───────────
     // Only if we have no blockers yet and upstream is resolvable.
     if blockers.is_empty() && !branch_name.is_empty() {
-        if let Ok(has_conflict) = predict_merge_conflict(repo, &branch_name, &remote_name) {
+        if let Ok(has_conflict) = predict_merge_conflict(repo, &branch_name) {
             if has_conflict {
                 warnings.push(PlanNote::Pull(PullNote::MergePrediction));
             }
@@ -232,7 +234,7 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         // three-way merge is asserted, what it could not decide only *may*
         // conflict. A warning that does not come true is how a prediction
         // feature loses the user.
-        if let Ok(prediction) = plan_pull_restore_conflicts(repo, &branch_name, &remote_name) {
+        if let Ok(prediction) = plan_pull_restore_conflicts(repo, &branch_name) {
             if !prediction.conflicting.is_empty() {
                 warnings.push(PlanNote::Pull(PullNote::RestoreConflict {
                     paths: prediction.conflicting,
@@ -256,6 +258,11 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
     let recovery = PlanRecovery {
         kind: RecoveryKind::Pull(PullRecovery::Pull),
         commands: vec!["git revert -m 1 HEAD".to_string(), "git reflog".to_string()],
+    };
+    let pull_identity = if blockers.is_empty() {
+        Some(capture_pull_identity(repo, &branch_name)?)
+    } else {
+        None
     };
     Ok(OperationPlan {
         // ADR-0129 F-1: the UI's pull no-op detection keyed on the title text
@@ -281,6 +288,7 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity,
         // Deliberately None: `worktree_digest` on a plan means "refuse at
         // execute if the tree moved" (see `preflight_check`), and a dirty pull
         // empties the tree on purpose by stashing first. The confirmation's own
@@ -324,22 +332,25 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
 ///
 /// Returns [`GitError::Other`] on any failure.  The repo is **never** left in a
 /// partial state: conflicts are detected before any write occurs.
-pub(crate) fn execute_pull(repo: &Repository, repo_path: &Path) -> Result<PullOutcome, GitError> {
-    // ── 1. Resolve current branch + upstream ─────────────────
+pub(crate) fn execute_pull(
+    repo: &Repository,
+    repo_path: &Path,
+    plan: &OperationPlan,
+) -> Result<PullOutcome, GitError> {
+    preflight_check(repo, plan)?;
+    let identity = plan
+        .pull_identity
+        .as_ref()
+        .ok_or_else(|| GitError::Other("missing approved Pull identity".into()))?;
+    let branch_name = identity.branch.as_str();
+    let remote_name = identity.remote.as_str();
     let head_ref = repo
         .head()
         .map_err(|e| GitError::Other(format!("HEAD lookup failed: {}", e.message())))?;
 
-    let branch_name = head_ref
-        .shorthand()
-        .map_err(|e| GitError::Other(format!("HEAD shorthand failed: {}", e.message())))?
-        .to_string();
-
-    let (_, remote_name, _) = resolve_upstream_info(repo, &branch_name)?;
-
     // ── 2. git fetch <remote> via CLI ─────────────────────────
-    check_operand("remote", &remote_name)?;
-    let fetch_out = run_git(repo_path, &["fetch", "--prune", "--", &remote_name])
+    check_operand("remote", remote_name)?;
+    let fetch_out = run_git(repo_path, &["fetch", "--prune", "--", remote_name])
         .map_err(|e| crate::cli::context("fetch failed", e))?;
 
     if fetch_out.status != 0 {
@@ -350,8 +361,11 @@ pub(crate) fn execute_pull(repo: &Repository, repo_path: &Path) -> Result<PullOu
         )));
     }
 
-    // ── 3. Re-resolve upstream tip after fetch ────────────────
-    let upstream_oid = resolve_upstream_oid(repo, &branch_name, &remote_name)?;
+    // Fetch may discover newer commits, but only from the approved upstream.
+    preflight_check(repo, plan)?;
+    let upstream_oid = repo
+        .refname_to_id(&identity.upstream_ref)
+        .map_err(|error| GitError::Other(error.to_string()))?;
 
     let head_oid = head_ref
         .target()
@@ -481,9 +495,7 @@ pub(crate) fn execute_pull(repo: &Repository, repo_path: &Path) -> Result<PullOu
     let committer = build_signature(repo)?;
     let author = committer.clone();
 
-    // Upstream tracking branch name for the commit message.
-    let upstream_ref_name = format!("refs/remotes/{}/{}", remote_name, branch_name);
-    let merge_message = format!("Merge remote-tracking branch '{}'", upstream_ref_name);
+    let merge_message = format!("Merge remote-tracking branch '{}'", identity.upstream_ref);
 
     // Create the merge commit WITHOUT moving any ref yet (update_ref=None):
     // the WT/index must be synced while HEAD still points at the old tree so
@@ -538,6 +550,13 @@ pub fn plan_pull_branch_ff(
     repo: &Repository,
     branch_name: &str,
 ) -> Result<OperationPlan, GitError> {
+    plan_pull_branch_ff_with_status(repo, branch_name).map(|(plan, _)| plan)
+}
+
+pub(crate) fn plan_pull_branch_ff_with_status(
+    repo: &Repository,
+    branch_name: &str,
+) -> Result<(OperationPlan, kagi_domain::status::WorkingTreeStatus), GitError> {
     let head = resolve_head(repo)?;
     let status = working_tree_status(repo)?;
     let current = StateSummary {
@@ -567,7 +586,7 @@ pub fn plan_pull_branch_ff(
 
     let (remote_name, upstream_oid, behind_count) = match resolve_upstream_info(repo, branch_name) {
         Ok((_, remote, behind)) => {
-            let oid = resolve_upstream_oid(repo, branch_name, &remote).ok();
+            let oid = resolve_configured_upstream_oid(repo, branch_name).ok();
             (remote, oid, behind)
         }
         Err(e) => {
@@ -612,38 +631,47 @@ pub fn plan_pull_branch_ff(
         current.head.clone()
     };
 
-    Ok(OperationPlan {
-        disposition: PlanDisposition::for_blockers(&blockers),
-        title: PlanTitle::Pull(PullTitle::PullBranchFf {
-            branch: branch_name.to_string(),
-            remote: remote_name,
-            behind: behind_count,
-        }),
-        current,
-        predicted: StateSummary {
-            head: predicted_head,
-            dirty: "working tree unchanged".to_string(),
-        },
-        warnings,
-        blockers,
-        recovery: Some(PlanRecovery {
-            kind: RecoveryKind::Pull(PullRecovery::PullBranchFf {
+    let pull_identity = if blockers.is_empty() {
+        Some(capture_pull_identity(repo, branch_name)?)
+    } else {
+        None
+    };
+    Ok((
+        OperationPlan {
+            disposition: PlanDisposition::for_blockers(&blockers),
+            title: PlanTitle::Pull(PullTitle::PullBranchFf {
                 branch: branch_name.to_string(),
+                remote: remote_name,
+                behind: behind_count,
             }),
-            commands: vec![format!(
-                "git branch -f {} <old-sha>",
-                shell_quote(branch_name)
-            )],
-        }),
-        head_at_plan: head,
-        stash_count_at_plan: 0,
-        stash_identity: None,
-        worktree_digest: None,
-        preview_files: Vec::new(),
-        preview_commits: Vec::new(),
-        destructive: false,
-        equivalent_command: None,
-    })
+            current,
+            predicted: StateSummary {
+                head: predicted_head,
+                dirty: "working tree unchanged".to_string(),
+            },
+            warnings,
+            blockers,
+            recovery: Some(PlanRecovery {
+                kind: RecoveryKind::Pull(PullRecovery::PullBranchFf {
+                    branch: branch_name.to_string(),
+                }),
+                commands: vec![format!(
+                    "git branch -f {} <old-sha>",
+                    shell_quote(branch_name)
+                )],
+            }),
+            head_at_plan: head,
+            stash_count_at_plan: 0,
+            stash_identity: None,
+            pull_identity,
+            worktree_digest: None,
+            preview_files: Vec::new(),
+            preview_commits: Vec::new(),
+            destructive: false,
+            equivalent_command: None,
+        },
+        status,
+    ))
 }
 
 pub(crate) fn execute_pull_branch_ff(
@@ -653,11 +681,21 @@ pub(crate) fn execute_pull_branch_ff(
     branch_name: &str,
 ) -> Result<PullOutcome, GitError> {
     preflight_check(repo, plan)?;
-    let local_oid = local_branch_oid(repo, branch_name)?;
-    let (_, remote_name, _) = resolve_upstream_info(repo, branch_name)?;
+    let identity = plan
+        .pull_identity
+        .as_ref()
+        .ok_or_else(|| GitError::Other("missing approved Pull identity".into()))?;
+    if identity.branch != branch_name {
+        return Err(GitError::Other(
+            "Pull branch differs from the approved plan".into(),
+        ));
+    }
+    let local_oid = git2::Oid::from_str(&identity.local_oid.0)
+        .map_err(|error| GitError::Other(error.to_string()))?;
+    let remote_name = identity.remote.as_str();
 
-    check_operand("remote", &remote_name)?;
-    let fetch_out = run_git(repo_path, &["fetch", "--prune", "--", &remote_name])
+    check_operand("remote", remote_name)?;
+    let fetch_out = run_git(repo_path, &["fetch", "--prune", "--", remote_name])
         .map_err(|e| crate::cli::context("fetch failed", e))?;
     if fetch_out.status != 0 {
         return Err(GitError::Other(format!(
@@ -667,7 +705,10 @@ pub(crate) fn execute_pull_branch_ff(
         )));
     }
 
-    let upstream_oid = resolve_upstream_oid(repo, branch_name, &remote_name)?;
+    preflight_check(repo, plan)?;
+    let upstream_oid = repo
+        .refname_to_id(&identity.upstream_ref)
+        .map_err(|error| GitError::Other(error.to_string()))?;
     if local_oid == upstream_oid
         || repo
             .graph_descendant_of(local_oid, upstream_oid)
@@ -686,10 +727,11 @@ pub(crate) fn execute_pull_branch_ff(
     }
 
     let refname = format!("refs/heads/{}", branch_name);
-    repo.reference(
+    repo.reference_matching(
         &refname,
         upstream_oid,
         true,
+        local_oid,
         &format!(
             "pull: fast-forward {} to {}",
             branch_name,

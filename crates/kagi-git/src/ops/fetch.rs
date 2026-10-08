@@ -23,10 +23,27 @@ use super::*;
 /// Returns [`GitError::Other`] when the git CLI fails to start or exits
 /// non-zero.
 pub(crate) fn fetch_remote(repo: &Repository, repo_path: &Path) -> Result<FetchOutcome, GitError> {
-    // Resolve the upstream remote for the current branch, falling back to
-    // fetching every remote when no single upstream can be determined.
-    let remote = resolve_fetch_remote(repo);
+    fetch_remote_with(repo, repo_path, resolve_fetch_remote(repo))
+}
 
+/// Fetch the clicked local branch's live upstream, not the checked-out branch's.
+pub(crate) fn fetch_branch_upstream(
+    repo: &Repository,
+    repo_path: &Path,
+    branch: &str,
+) -> Result<FetchOutcome, GitError> {
+    let remote = repo
+        .config()
+        .and_then(|config| config.get_string(&format!("branch.{branch}.remote")))
+        .map_err(|error| GitError::Other(error.to_string()))?;
+    fetch_remote_with(repo, repo_path, Some(remote))
+}
+
+fn fetch_remote_with(
+    repo: &Repository,
+    repo_path: &Path,
+    remote: Option<String>,
+) -> Result<FetchOutcome, GitError> {
     // `--prune` (ADR-0128): remote-tracking refs whose upstream branch is gone
     // are dropped. Without it, branches deleted on the hoster (e.g. after a PR
     // merge) linger locally forever as ghost `origin/*` refs — which the

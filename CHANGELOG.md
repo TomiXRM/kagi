@@ -10,6 +10,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Pull 前の remote-tracking refs が古い場合に、未取得の更新があるのに「すでに最新です」と表示していた問題を修正しました。clean / dirty の両方で既存の安全な fetch を完了してから確認または最新の案内を出し、fetch 失敗時は最新と判断しません。fetch 由来の未変更 checkout の確認は watcher の reload で消えず、外部の HEAD / 作業ファイル変更や後から始めた別の操作には古い確認を押し付けません。(#1087)
 - Pull が進行中の silent auto-fetch に参加した場合も、fetch 失敗を現在の tab の footer と error toast に一度だけ表示するようにしました。通知は既存の Operation Log の記録・表示 owner に集約し、ユーザーの Pull 要求を持たない background fetch と離れた tab は静かなまま、一つの durable receipt を残します。(#1087)
 - Branch の右クリックメニューも、未fetchの `behind=0` だけで Pull / Pull ff-only を無効化したり「最新」と表示したりしないようにしました。busy・detached HEAD・upstream 未設定などの構造的な制約は維持します。(#1087)
+- Pull の確認・実行は branch 名・local OID・remote 名・完全な tracking ref を承認済み identity として照合し、確認後の checkout / upstream 差し替えを拒否するようにしました。同じ upstream の新しい commit は取得できます。ローカル branch と追従先の名前が異なる場合も merge / auto-stash 復元の予測と ff-only 計画は設定済み upstream を使い、fetch 後に実際の競合 blocker がある場合は upstream 変更エラーで置き換えず、その blocker を表示して実行を止めます。(#1087)
+- current branch の Pull ff-only と非 current branch の Pull / Pull ff-only も、対象 branch の実際の upstream remote を fetch してから確認するようにしました。別 remote に追従する branch を HEAD の remote と取り違えず、確認まで HEAD・index・working tree を維持します。quiet fetch は remote-tracking refs だけの更新も `changed=true` なら一件の成功 receipt を残します。ref 移動の詳細は既存の local heads / tags の観測範囲なので空になりうる一方、変更のない fetch は成功 receipt を増やしません。成功 toast は増やしません。(#1087)
 - Command Palette で矢印キー・検索変更による選択行が画面内へ追従するようにしました。マウスでのスクロールは再描画で巻き戻さず、次のキー操作で選択先を再表示します。disabled 理由の可変行高と、表示中の highlight / Enter の実行対象も維持します。(#1069)
 - Editor の History 一覧は読み込み済みの履歴を不変 snapshot として保持し、再描画のたびに全 commit の message・body を複製しないようにしました。表示範囲の仮想化、選択 commit の Diff / Snapshot と作業中 buffer の分離は維持します。(#1074)
 

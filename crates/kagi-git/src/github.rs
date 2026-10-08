@@ -506,6 +506,7 @@ pub(crate) fn plan_pr_merge(
         },
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         // Local cleanup uses its own guarded ref-only deletion and mandatory
         // backup root, and only follows server confirmation of the PR merge.

@@ -208,6 +208,7 @@ impl Backend {
                 || ops::plan_worktree_config_sha(&fresh) != ops::plan_worktree_config_sha(plan)
                 || fresh.destructive != plan.destructive
                 || fresh.worktree_digest.is_some() != plan.worktree_digest.is_some()
+                || fresh.pull_identity != plan.pull_identity
             {
                 return Err(GitError::Other(
                     "plan safety requirements differ; please re-plan".into(),
@@ -396,7 +397,7 @@ impl Backend {
                 .execute_switch_to_latest(plan, branch_name, remote_branch)
                 .map(|()| OperationOutcome::Unit),
             Operation::Revert { id } => self.execute_revert(id).map(OperationOutcome::Commit),
-            Operation::Pull => self.execute_pull().map(OperationOutcome::Pull),
+            Operation::Pull => self.execute_pull(plan).map(OperationOutcome::Pull),
             Operation::Push => self.execute_push().map(OperationOutcome::Push),
             Operation::PullBranchFf { branch_name } => self
                 .execute_pull_branch_ff(plan, branch_name)

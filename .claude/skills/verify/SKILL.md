@@ -368,6 +368,17 @@ The current suite covers:
   Escape and by ×; the next raw ↓/↑ must step File History. Tier B measured
   on 2026-10-01 that the terminal-focus case is what left Escape unmatched
   (`key: "escape"` printed, modal open) while Enter still reached the slot.
+- Command Palette selection scroll (`KAGI_GUI_E2E_ONLY=palette_selection_scroll`,
+  `tests/recovery/overlay_focus.rs`): #1069. Real arrow and wheel input checks
+  the selected row's drawn bounds and preserves manual scroll until the next
+  selection input. The gui-e2e-only scroll accessor observes the existing
+  production `ScrollHandle`; it does not drive selection or replace the list.
+  Pair with `palette_push_modal_keys,settings_close_returns_focus` for overlay
+  ownership. Tier B: open Cmd+P, move beyond the first viewport, wheel away,
+  then press Down and inspect the visible selection. Filter a custom-theme
+  list with 100 entries in JA at 70% and 167%, inspect its last result, and
+  check empty-result Enter and Escape/reopen. Use only safe View commands
+  for live Enter verification; do not execute Pull/Push to test list scrolling.
 - Settings' switches (`KAGI_GUI_E2E_ONLY=settings_switches`,
   `tests/recovery/settings_switches.rs`, #970): every switch is a
   `keyboard_nav::switch`. The scenario opens Settings through `app.settings`,

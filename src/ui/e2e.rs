@@ -739,6 +739,12 @@ pub fn seed_modal_list_scroll(app: &KagiApp, item: usize) {
         .scroll_to_item(item, gpui::ScrollStrategy::Center);
 }
 
+/// #1069: the actual palette list handle, for native geometry/scroll assertions.
+#[cfg(feature = "gui-e2e")]
+pub fn command_palette_scroll(app: &KagiApp) -> Option<gpui::ScrollHandle> {
+    app.command_palette_scroll.clone()
+}
+
 #[cfg(feature = "gui-e2e")]
 pub fn modal_list_scroll_top(app: &KagiApp) -> usize {
     app.modal_list_scroll.logical_scroll_top_index()

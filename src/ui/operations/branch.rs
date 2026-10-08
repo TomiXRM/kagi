@@ -104,9 +104,9 @@ impl KagiApp {
         }
     }
 
-    /// Confirm the create-branch plan: run preflight, execute, then reload.
+    /// Confirm the create-branch plan: run preflight, execute, verify, then reload.
     ///
-    /// On failure the modal remains open and shows the error text.
+    /// Only verified success dismisses the form; failures retain its input.
     pub fn confirm_create_branch(&mut self, cx: &mut Context<Self>) {
         // The live plan is debounced; rebuild it from the latest input so a
         // fast type-then-click can never execute a stale plan.
@@ -188,6 +188,10 @@ impl KagiApp {
             Ok(r) => r,
             Err(e) => {
                 klog!("verify: repo open error: {}", e);
+                self.present_report("create-branch", &report, &repo_path, cx);
+                if let Some(m) = self.create_branch_modal_mut() {
+                    m.error = Some(i18n::op_failed(i18n::Op::RepoOpen, e).into());
+                }
                 self.reload(cx);
                 return;
             }
@@ -199,6 +203,21 @@ impl KagiApp {
             eprintln!(
                 "[kagi] verify: branch '{}' NOT found after create",
                 modal.input
+            );
+        }
+        if branch_exists {
+            self.clear_create_branch_modal();
+            // The input-confirm and root Enter paths have no Window. Reuse
+            // the existing next-render handoff so an undrawn input cannot
+            // swallow subsequent root actions.
+            self.focus_root_for_modal();
+        } else if let Some(m) = self.create_branch_modal_mut() {
+            m.error = Some(
+                i18n::op_failed(
+                    i18n::Op::CreateBranch,
+                    format!("branch '{}' not found after create", modal.input),
+                )
+                .into(),
             );
         }
 

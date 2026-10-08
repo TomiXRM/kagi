@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- PR dashboard は title / branch の最小幅を確保し、狭いウィンドウや UI 拡大時に列見出しが 1 文字ずつ縦に潰れて検索・行へ重なる問題を修正しました。見出しと行を同じ横スクロール領域に置き、state / author / checks / files / age に到達できます。縦の仮想化と表示範囲だけの PR 詳細取得は維持します。(#1095)
 - Command Palette で矢印キー・検索変更による選択行が画面内へ追従するようにしました。マウスでのスクロールは再描画で巻き戻さず、次のキー操作で選択先を再表示します。disabled 理由の可変行高と、表示中の highlight / Enter の実行対象も維持します。(#1069)
 - Editor の History 一覧は読み込み済みの履歴を不変 snapshot として保持し、再描画のたびに全 commit の message・body を複製しないようにしました。表示範囲の仮想化、選択 commit の Diff / Snapshot と作業中 buffer の分離は維持します。(#1074)
 

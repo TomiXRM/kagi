@@ -513,6 +513,46 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    fn fixture_supervisor(_test: &str) -> bool {
+        true
+    }
+
+    /// Linux orphan reaping belongs to a single re-executed fixture test,
+    /// never the shared harness. Its reaper stays outside the stopped group.
+    #[cfg(target_os = "linux")]
+    fn fixture_supervisor(test: &str) -> bool {
+        if std::env::var("KAGI_PROC_FIXTURE_SUPERVISOR").as_deref() == Ok(test) {
+            // SAFETY: this dedicated subprocess runs exactly one fixture test.
+            assert_eq!(
+                unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) },
+                0,
+                "enable fixture-owned orphan adoption: {}",
+                std::io::Error::last_os_error()
+            );
+            return true;
+        }
+
+        use std::os::unix::process::CommandExt;
+        let mut command = Command::new(std::env::current_exe().expect("test executable"));
+        command
+            .args(["--exact", test, "--nocapture", "--test-threads=1"])
+            .env("KAGI_PROC_FIXTURE_SUPERVISOR", test)
+            .process_group(0);
+        let mut supervisor = OwnedChild {
+            child: command.spawn().expect("spawn private fixture supervisor"),
+            group_owned: true,
+        };
+        assert!(
+            supervisor
+                .wait()
+                .expect("reap private fixture supervisor")
+                .success(),
+            "private fixture test failed: {test}"
+        );
+        false
+    }
+
     /// True if `pid` is still a live (un-reaped) process.
     #[cfg(unix)]
     fn pid_alive(pid: u32) -> bool {
@@ -546,6 +586,11 @@ mod tests {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn wait_or_kill_stops_the_group_before_it_reaps_the_leader() {
+        if !fixture_supervisor(
+            "proc::tests::wait_or_kill_stops_the_group_before_it_reaps_the_leader",
+        ) {
+            return;
+        }
         use std::os::unix::process::CommandExt;
         let fixture = DescendantFixture::new();
         let mut cmd = fixture.command(false);
@@ -691,18 +736,29 @@ mod tests {
             Ok(false)
         }
 
-        fn stop(self) -> Result<(), String> {
-            if self.alive()? {
-                #[cfg(target_os = "macos")]
-                test_proc_identity::sigkill(self.pid as i32)?;
-                #[cfg(not(target_os = "macos"))]
-                {
-                    // SAFETY: the private fixture published this PID together
-                    // with its kernel start identity, rechecked just above.
-                    if unsafe { libc::kill(self.pid as libc::pid_t, libc::SIGKILL) } != 0 {
-                        let error = std::io::Error::last_os_error();
-                        if error.raw_os_error() != Some(libc::ESRCH) {
-                            return Err(error.to_string());
+        fn stop(
+            self,
+            #[cfg(target_os = "linux")] ownership: &std::sync::Mutex<()>,
+        ) -> Result<(), String> {
+            {
+                // Serialize with our exact-PID reaper: it must not release the
+                // old PID between this identity check and the signal.
+                #[cfg(target_os = "linux")]
+                let _ownership = ownership
+                    .lock()
+                    .map_err(|_| "fixture signal/reap ownership poisoned".to_string())?;
+                if self.alive()? {
+                    #[cfg(target_os = "macos")]
+                    test_proc_identity::sigkill(self.pid as i32)?;
+                    #[cfg(target_os = "linux")]
+                    {
+                        // SAFETY: the private fixture published this identity,
+                        // rechecked while its reaper cannot release the PID.
+                        if unsafe { libc::kill(self.pid as libc::pid_t, libc::SIGKILL) } != 0 {
+                            let error = std::io::Error::last_os_error();
+                            if error.raw_os_error() != Some(libc::ESRCH) {
+                                return Err(error.to_string());
+                            }
                         }
                     }
                 }
@@ -731,9 +787,9 @@ mod tests {
         // Fields after its last ')' begin with state (3); starttime is field 22.
         let end = stat.rfind(')').ok_or("malformed fixture /proc stat")?;
         let mut fields = stat[end + 1..].split_whitespace();
-        if matches!(fields.next(), Some("Z") | Some("X")) {
-            return Ok(None);
-        }
+        // Keep zombies in the identity probe: fixture completion on Linux
+        // requires the private supervisor to reap them, not just stop them.
+        fields.next().ok_or("fixture /proc stat omitted state")?;
         fields
             .nth(18)
             .ok_or_else(|| "fixture /proc stat omitted starttime".to_string())?
@@ -748,14 +804,21 @@ mod tests {
     struct DescendantFixture {
         directory: tempfile::TempDir,
         cleaned: bool,
+        #[cfg(target_os = "linux")]
+        reaper: FixtureReaper,
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     impl DescendantFixture {
         fn new() -> Self {
+            let directory = tempfile::tempdir().expect("private descendant fixture");
+            #[cfg(target_os = "linux")]
+            let reaper = FixtureReaper::start(directory.path());
             Self {
-                directory: tempfile::tempdir().expect("private descendant fixture"),
+                directory,
                 cleaned: false,
+                #[cfg(target_os = "linux")]
+                reaper,
             }
         }
 
@@ -773,7 +836,11 @@ mod tests {
         }
 
         fn descendant(&self) -> Result<Option<FixtureProcess>, String> {
-            let record = match std::fs::read_to_string(self.directory.path().join("descendant")) {
+            Self::read_descendant(self.directory.path())
+        }
+
+        fn read_descendant(directory: &std::path::Path) -> Result<Option<FixtureProcess>, String> {
+            let record = match std::fs::read_to_string(directory.join("descendant")) {
                 Ok(record) => record,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
                 Err(error) => return Err(error.to_string()),
@@ -813,9 +880,19 @@ mod tests {
 
         fn cleanup(&mut self) -> Result<(), String> {
             if !self.cleaned {
-                if let Some(process) = self.descendant()? {
-                    process.stop()?;
-                }
+                #[cfg(target_os = "macos")]
+                let stopped = self
+                    .descendant()
+                    .and_then(|process| process.map_or(Ok(()), FixtureProcess::stop));
+                #[cfg(target_os = "linux")]
+                let stopped = self.descendant().and_then(|process| {
+                    process.map_or(Ok(()), |process| process.stop(&self.reaper.ownership))
+                });
+                #[cfg(target_os = "linux")]
+                let reaped = self.reaper.finish();
+                stopped?;
+                #[cfg(target_os = "linux")]
+                reaped?;
                 self.cleaned = true;
             }
             Ok(())
@@ -830,6 +907,110 @@ mod tests {
                     eprintln!("descendant fixture cleanup failed: {error}");
                 } else {
                     panic!("descendant fixture cleanup failed: {error}");
+                }
+            }
+        }
+    }
+
+    /// Reap only the privately published descendant, after Linux adopts it.
+    /// In particular, never waitpid(-1): run_child owns its direct Child.
+    #[cfg(target_os = "linux")]
+    struct FixtureReaper {
+        finished: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        ownership: std::sync::Arc<std::sync::Mutex<()>>,
+        thread: Option<std::thread::JoinHandle<Result<(), String>>>,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl FixtureReaper {
+        fn start(directory: &std::path::Path) -> Self {
+            use std::sync::atomic::Ordering;
+            let mut enabled: libc::c_int = 0;
+            // SAFETY: prctl writes one c_int into our valid local buffer.
+            assert_eq!(
+                unsafe { libc::prctl(libc::PR_GET_CHILD_SUBREAPER, &mut enabled, 0, 0, 0) },
+                0,
+                "query fixture supervisor"
+            );
+            assert_eq!(enabled, 1, "fixture must run in its private supervisor");
+
+            let directory = directory.to_path_buf();
+            let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let done = finished.clone();
+            let ownership = std::sync::Arc::new(std::sync::Mutex::new(()));
+            let thread_ownership = ownership.clone();
+            let thread = std::thread::spawn(move || {
+                let process = loop {
+                    if let Some(process) = DescendantFixture::read_descendant(&directory)? {
+                        break process;
+                    }
+                    if done.load(Ordering::Acquire) {
+                        return Ok(());
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                };
+                let mut closing = None;
+                loop {
+                    if done.load(Ordering::Acquire) {
+                        let deadline =
+                            closing.get_or_insert_with(|| Instant::now() + Duration::from_secs(5));
+                        if Instant::now() >= *deadline {
+                            return Err("private fixture descendant was not reaped".into());
+                        }
+                    }
+                    let ownership = thread_ownership
+                        .lock()
+                        .map_err(|_| "fixture signal/reap ownership poisoned".to_string())?;
+                    if fixture_started(process.pid)? != Some(process.started) {
+                        return Ok(());
+                    }
+                    let mut status = 0;
+                    // SAFETY: only this recorded descendant PID is collected.
+                    // Its original parent may still own it, in which case
+                    // ECHILD leaves it alone.
+                    let reaped = unsafe {
+                        libc::waitpid(process.pid as libc::pid_t, &mut status, libc::WNOHANG)
+                    };
+                    if reaped == process.pid as libc::pid_t {
+                        return Ok(());
+                    }
+                    if reaped < 0 {
+                        let error = std::io::Error::last_os_error();
+                        if !matches!(error.raw_os_error(), Some(libc::ECHILD) | Some(libc::EINTR)) {
+                            return Err(format!("reap fixture {}: {error}", process.pid));
+                        }
+                    }
+                    drop(ownership);
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            });
+            Self {
+                finished,
+                ownership,
+                thread: Some(thread),
+            }
+        }
+
+        fn finish(&mut self) -> Result<(), String> {
+            self.finished
+                .store(true, std::sync::atomic::Ordering::Release);
+            match self.thread.take() {
+                Some(thread) => thread
+                    .join()
+                    .map_err(|_| "fixture reaper panicked".to_string())?,
+                None => Ok(()),
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for FixtureReaper {
+        fn drop(&mut self) {
+            if let Err(error) = self.finish() {
+                if std::thread::panicking() {
+                    eprintln!("fixture reaper failed: {error}");
+                } else {
+                    panic!("fixture reaper failed: {error}");
                 }
             }
         }
@@ -878,10 +1059,17 @@ mod tests {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn fixture_cleanup_does_not_stop_another_same_marker_child() {
+        if !fixture_supervisor(
+            "proc::tests::fixture_cleanup_does_not_stop_another_same_marker_child",
+        ) {
+            return;
+        }
         use std::os::unix::process::CommandExt;
         let mut first = DescendantFixture::new();
         let mut second = DescendantFixture::new();
-        let mut first_command = first.command(false);
+        // Linux also exercises exact reaping after both parents exit:
+        // the supervisor adopts two live descendants with the same marker.
+        let mut first_command = first.command(cfg!(target_os = "linux"));
         first_command
             .process_group(0)
             .stdout(Stdio::null())
@@ -890,7 +1078,7 @@ mod tests {
             child: first_command.spawn().expect("spawn first fixture"),
             group_owned: true,
         };
-        let mut second_command = second.command(false);
+        let mut second_command = second.command(cfg!(target_os = "linux"));
         second_command
             .process_group(0)
             .stdout(Stdio::null())
@@ -901,11 +1089,23 @@ mod tests {
         };
         let first_process = first.wait_for_descendant();
         let second_process = second.wait_for_descendant();
+        #[cfg(target_os = "linux")]
+        {
+            assert!(first_child
+                .wait()
+                .expect("reap first fixture parent")
+                .success());
+            assert!(second_child
+                .wait()
+                .expect("reap second fixture parent")
+                .success());
+        }
         assert_ne!(first_process.pid, second_process.pid);
         assert!(first_process.alive().expect("probe first fixture"));
         assert!(second_process.alive().expect("probe second fixture"));
 
         first.cleanup().expect("clean first fixture");
+        #[cfg(target_os = "macos")]
         assert!(first_child.wait().expect("reap first fixture").success());
         assert!(
             second_process
@@ -914,6 +1114,7 @@ mod tests {
             "cleaning one sleep 300 must not stop the other sleep 300"
         );
         second.cleanup().expect("clean second fixture");
+        #[cfg(target_os = "macos")]
         assert!(second_child.wait().expect("reap second fixture").success());
         assert!(!first_process.alive().expect("first fixture is gone"));
         assert!(!second_process.alive().expect("second fixture is gone"));
@@ -953,6 +1154,11 @@ mod tests {
     #[cfg(unix)]
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn run_child_deadline_reaches_the_caller_despite_a_grandchild_on_the_pipes() {
+        if !fixture_supervisor(
+            "proc::tests::run_child_deadline_reaches_the_caller_despite_a_grandchild_on_the_pipes",
+        ) {
+            return;
+        }
         // The fixture waits for its real sleep child, which inherits both
         // output pipes. A direct-child-only stop would leave that child alive
         // and an unbounded reader join would never return.
@@ -992,6 +1198,11 @@ mod tests {
     #[cfg(unix)]
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn run_child_clean_exit_with_unfinished_output_is_not_a_clean_capture() {
+        if !fixture_supervisor(
+            "proc::tests::run_child_clean_exit_with_unfinished_output_is_not_a_clean_capture",
+        ) {
+            return;
+        }
         // The direct child exits 0; the fixture-owned sleep keeps both pipes.
         let fixture = DescendantFixture::new();
         let mut cmd = fixture.command(true);

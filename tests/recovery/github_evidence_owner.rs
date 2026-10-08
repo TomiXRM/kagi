@@ -136,10 +136,8 @@ pub fn scenario_github_evidence_restores(cx: &mut VisualTestAppContext) {
         "the PRs tab did not restore A's PR row after equal-epoch B",
     );
 
-    // ADR-0200: the navigator row holds two lines (18px title + 15px meta)
-    // inside 6px of padding above and below. A row shorter than that draws its
-    // own text across the hairline under it (user report), so the row must be
-    // at least as tall as what it contains.
+    // The navigator row must retain its natural two-line height when the
+    // collection overflows the pane; the pane scrolls, not the cards' text.
     // INBOX keeps what is broken or ready *for the viewer*, so the row only
     // exists once the app knows whose PRs these are - the fixture's author,
     // as the login on the PR's own host (#906).
@@ -153,14 +151,23 @@ pub fn scenario_github_evidence_restores(cx: &mut VisualTestAppContext) {
         .expect("draw the PR navigator");
     let card = e2e::control_bounds(window.window_id(), "pr-mode-card-101")
         .expect("PR 101's navigator row is drawn");
-    let height = f32::from(card.size.height);
-    assert!(
-        height >= 45.0,
-        "a navigator row must fit its two lines and padding, got {height}"
-    );
-    assert!(
-        height < 80.0,
-        "a navigator row must stay two lines tall, got {height}"
+    let natural_size = card.size;
+    let mut many = vec![pull_request(101, "A evidence", "a-pr")];
+    many.extend((1..100).map(|n| pull_request(n, "Synthetic overflow row", "a-pr")));
+    queue_ready(cx, Ok(many));
+    app.update(cx, |app, cx| app.refresh_github_prs(cx));
+    cx.run_until_parked();
+    e2e::clear_control_bounds(window.window_id(), "pr-mode-card-101");
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .expect("draw overflowing PR navigator");
+    let overflow_card = e2e::control_bounds(window.window_id(), "pr-mode-card-101")
+        .expect("first PR card remains visible");
+    assert_eq!(
+        overflow_card.size, natural_size,
+        "100 cards must scroll without compressing their title and metadata"
     );
 
     unmount(cx, app, window);

@@ -61,7 +61,7 @@ pub fn scenario_issues_pagination(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (app, win) = mount(cx, &repo);
-    KagiApp::queue_issue_list_fetch_for_e2e(gpui::Task::ready(Ok(page(1..101, Some("page-2")))));
+    KagiApp::queue_issue_list_fetch_for_e2e(gpui::Task::ready(Ok(page(1..2, None))));
     app.update(cx, |app, cx| {
         app.seed_issue_composer_for_e2e(cx);
         app.show_issues_mode(cx);
@@ -70,6 +70,23 @@ pub fn scenario_issues_pagination(cx: &mut VisualTestAppContext) {
     let recent = measure(cx, win, "issue-filter-tab-3");
     cx.simulate_click(win, recent.center(), gpui::Modifiers::none());
     cx.run_until_parked();
+    // Compare the same production row and header before/after overflow rather
+    // than encoding a pixel height: title, metadata and padding own the height.
+    let natural_card = measure(cx, win, "issue-mode-card-1").size;
+    let natural_header = measure(cx, win, "issue-filter-tab-3").size;
+    KagiApp::queue_issue_list_fetch_for_e2e(gpui::Task::ready(Ok(page(1..101, Some("page-2")))));
+    app.update(cx, |app, cx| app.refresh_github_issues(cx));
+    cx.run_until_parked();
+    assert_eq!(
+        measure(cx, win, "issue-mode-card-1").size.height,
+        natural_card.height,
+        "100 Issue cards must scroll without compressing title and metadata"
+    );
+    assert_eq!(
+        measure(cx, win, "issue-filter-tab-3").size.height,
+        natural_header.height,
+        "an expanded Issue section must retain its natural header height"
+    );
     let owner = cx.read(|cx| *app.read(cx).ui.keys().next().expect("fixture owner"));
     let (task, failed_page) = deferred(cx);
     KagiApp::queue_issue_list_fetch_for_e2e(task);

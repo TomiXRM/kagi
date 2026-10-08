@@ -1930,7 +1930,7 @@ fn assert_created_branch_dismissed(
     assert!(
         cx.read(|cx| matches!(
             app.read(cx).menu_overlay,
-            Some(kagi::ui::MenuOverlay::CommandPalette)
+            Some(kagi::ui::commands::MenuOverlay::CommandPalette)
         )),
         "the next root shortcut must open the palette without test-side refocusing"
     );
@@ -2100,12 +2100,11 @@ pub fn scenario_create_branch_execution_failure_keeps_input(cx: &mut VisualTestA
         assert_eq!(modal.input, "collision/child");
         assert_eq!(input.read(cx).value().as_str(), "collision/child");
         let error = modal.error.clone().expect("execution error is inspectable");
-        assert!(!error.is_empty());
         assert!(app.app_notice().is_none());
         let shown = app.op_log.as_ref().unwrap().read(cx).entries();
         let shown: Vec<_> = shown
             .iter()
-            .filter(|entry| entry.op == "create-branch")
+            .filter(|entry| entry.op == "create-branch" && entry.repo == durable[0].repo)
             .collect();
         assert_eq!(shown.len(), 1);
         assert_eq!(

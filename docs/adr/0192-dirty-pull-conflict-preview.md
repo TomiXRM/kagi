@@ -71,11 +71,14 @@ fetch は remote-tracking refs を変更する **write** である。既存の a
 確認前の fetch は HEAD、index の staged content、working tree を変更しない。
 保留中の要求は `FetchFlight` の owner / visit 付き waiter が持つ。global flag は持たない。
 
-**fetch 失敗時はモーダルを出さない。** footer の `Fetch failed: …`（既存表示）が答えで、
+**fetch 失敗時はモーダルを出さない。** 記録済みの失敗を示す footer が答えで、
 「たった今更新に失敗した知識」に対して確定させるのは、この遅延が避けようとしている驚きそのもの。
 保留中の Pull が silent auto-fetch に参加した場合も、現在の session / visit の waiter には
-同じ失敗 footer と bounded Error toast を届ける。通常の background auto-fetch は静かなままで、
+失敗 footer と bounded Error toast を一度だけ届ける。`record_op_persist_moves` →
+`record_op_impl` を唯一の記録・表示 owner とし、fetch 完了 callback から通知を追加しない。
+通常の background auto-fetch は presentation owner を持たない既存の scoped recorder を使い、
 古い visit・別 tab へ通知を流さず、flight の durable receipt は一件だけとする。
+記録自体が失敗した場合の repository 名付き app notice は既存経路で保持する。
 
 **fetch 由来の確認を、同じ checkout の reload で消さない。**
 fetch と watcher は複数の reload を届けるため、配送後の clean 確認にも

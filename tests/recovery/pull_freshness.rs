@@ -440,11 +440,26 @@ pub fn scenario_pull_freshness_synced_waits(cx: &mut VisualTestAppContext) {
 /// when the user's Pull joins a previously silent background fetch.
 pub fn scenario_pull_freshness_fetch_failure(cx: &mut VisualTestAppContext) {
     let _settings = SettingsGuard::install();
-    for join_silent in [false, true] {
+    for (join_silent, pull_requested) in [(false, true), (true, true), (true, false)] {
         let fixture = build_fixture();
         let repo = fixture.path().canonicalize().unwrap();
         let origin = Origin::new(&repo);
         let (app, window) = mount(cx, &repo);
+        let presentation = |app: &KagiApp| {
+            let message = match &app.status_footer {
+                FooterStatus::Success(message)
+                | FooterStatus::Failed(message)
+                | FooterStatus::Idle(message)
+                | FooterStatus::Busy(message) => message.clone(),
+            };
+            (
+                std::mem::discriminant(&app.status_footer),
+                message,
+                app.bottom_panel_open,
+                std::mem::discriminant(&app.bottom_tab),
+            )
+        };
+        let presentation_before = cx.read(|cx| presentation(app.read(cx)));
         origin.advance();
         origin.make_unreachable(&repo);
         assert_cached_zero(cx, &app, &repo);
@@ -454,17 +469,21 @@ pub fn scenario_pull_freshness_fetch_failure(cx: &mut VisualTestAppContext) {
         if join_silent {
             app.update(cx, |app, cx| assert!(app.fetch_async_for(true, None, cx)));
             cx.run_until_parked();
-            // The busy toolbar is disabled; an already admitted menu intent joins.
-            cx.update_window(window, |_, window, cx| {
-                app.update(cx, |app, cx| {
-                    app.handle_menu_command("repo.pull", window, cx)
-                });
-            })
-            .unwrap();
+            if pull_requested {
+                // The busy toolbar is disabled; an already admitted menu intent joins.
+                cx.update_window(window, |_, window, cx| {
+                    app.update(cx, |app, cx| {
+                        app.handle_menu_command("repo.pull", window, cx)
+                    });
+                })
+                .unwrap();
+            }
         } else {
             click_pull(cx, window);
         }
-        assert_waiting(cx, &app, &repo, &before);
+        if pull_requested {
+            assert_waiting(cx, &app, &repo, &before);
+        }
         release.send(());
         cx.run_until_parked();
         assert_eq!(
@@ -479,17 +498,34 @@ pub fn scenario_pull_freshness_fetch_failure(cx: &mut VisualTestAppContext) {
             let app = app.read(cx);
             assert!(app.fetch_in_flight.is_none());
             assert!(!app.app_sessions.has_leases());
-            assert!(!e2e::active_modal_present(app), "failed freshness cannot offer an executable modal");
             assert!(
-                matches!(&app.status_footer, FooterStatus::Failed(text) if text.contains("Fetch failed")),
-                "Pull must see its fetch failure (joined silent={join_silent})"
+                !e2e::active_modal_present(app),
+                "failed freshness cannot offer an executable modal"
             );
-            let toast = app.toast_stack.as_ref().unwrap().read(cx)
-                .toasts().last().expect("Pull's fetch error toast");
-            assert_eq!(toast.kind, ToastKind::Error);
-            assert!(toast.message.contains("Fetch failed"));
+            if pull_requested {
+                assert!(
+                    matches!(&app.status_footer, FooterStatus::Failed(_)),
+                    "Pull must see its fetch failure (joined silent={join_silent})"
+                );
+            } else {
+                assert_eq!(presentation(app), presentation_before,
+                    "a silent fetch without Pull must not replace the footer or open a panel");
+            }
+            let stack = app.toast_stack.as_ref().unwrap().read(cx);
+            let errors = stack
+                .toasts()
+                .iter()
+                .filter(|toast| toast.kind == ToastKind::Error)
+                .count();
+            assert_eq!(
+                errors, usize::from(pull_requested),
+                "one failed Pull-owned fetch must emit one notification; background failure stays quiet"
+            );
             let panel = app.op_log.as_ref().unwrap().read(cx);
-            assert!(panel.entries().iter().any(|entry| entry.id == failures[0].id));
+            assert!(panel
+                .entries()
+                .iter()
+                .any(|entry| entry.id == failures[0].id));
         });
         assert_eq!(Checkout::read(&repo), before);
         assert!(records(&repo, "pull").is_empty());

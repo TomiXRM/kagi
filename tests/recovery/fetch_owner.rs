@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use gpui::{SharedString, VisualTestAppContext};
-use kagi::ui::FooterStatus;
+use kagi::ui::{FooterStatus, ToastKind};
 
 use crate::macos::{build_fixture, git, mount, unmount};
 
@@ -503,17 +503,23 @@ pub fn scenario_fetch_new_visit_waiter_sees_old_flight_failure(cx: &mut VisualTe
     cx.read(|cx| {
         let app = app.read(cx);
         assert!(app.fetch_in_flight.is_none());
-        assert!(app.pull_modal().is_none(), "a failed fetch must not open Pull");
         assert!(
-            matches!(&app.status_footer, FooterStatus::Failed(text) if text.as_ref().starts_with("Fetch failed:")),
+            app.pull_modal().is_none(),
+            "a failed fetch must not open Pull"
+        );
+        assert!(
+            matches!(&app.status_footer, FooterStatus::Failed(_)),
             "the new visit's Pull did not receive the failure: {:?}",
             app.status_footer
         );
         let toast_stack = app.toast_stack.as_ref().expect("mounted toast stack");
         assert_eq!(
-            toast_stack.read(cx).toasts().iter().filter(|toast| {
-                toast.message.as_ref().starts_with("Fetch failed:")
-            }).count(),
+            toast_stack
+                .read(cx)
+                .toasts()
+                .iter()
+                .filter(|toast| toast.kind == ToastKind::Error)
+                .count(),
             1,
             "only the current waiter receives one failure preview"
         );

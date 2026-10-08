@@ -2121,22 +2121,26 @@ impl KagiApp {
                     }
                     match &mut result {
                         Err(failure) => {
-                            app.record_ref_fetch_failure(
-                                "fetch",
-                                Some(flight.owner),
-                                Some(flight.visit),
-                                flight.before,
-                                failure.outcome(),
-                                failure.ref_moves.take(),
-                                &repo_path_guard,
-                                cx,
-                            );
                             if current_waiter {
-                                let preview = format!("Fetch failed: {}", failure.message);
-                                app.status_footer =
-                                    FooterStatus::Failed(SharedString::from(preview.clone()));
-                                app.push_toast(ToastKind::Error, preview, cx);
-                                cx.notify();
+                                app.record_op_persist_moves(
+                                    "fetch",
+                                    flight.before,
+                                    failure.outcome(),
+                                    failure.ref_moves.take(),
+                                    &repo_path_guard,
+                                    cx,
+                                );
+                            } else {
+                                app.record_ref_fetch_failure(
+                                    "fetch",
+                                    Some(flight.owner),
+                                    Some(flight.visit),
+                                    flight.before,
+                                    failure.outcome(),
+                                    failure.ref_moves.take(),
+                                    &repo_path_guard,
+                                    cx,
+                                );
                             }
                         }
                         Ok(_) if current_waiter => app.deliver_pull_confirm(
@@ -2187,22 +2191,33 @@ impl KagiApp {
                         // Record even a silent auto-fetch failure. A stopped
                         // child with an uncertain effect is Unknown, not Failed.
                         let outcome = e.outcome();
-                        app.record_op_persist_moves(
-                            "fetch",
-                            flight.before,
-                            outcome,
-                            e.ref_moves.take(),
-                            &repo_path_guard,
-                            cx,
-                        );
+                        if !silent || current_waiter {
+                            // The receipt presenter owns the single failure
+                            // toast and footer, including joined Pull waiters.
+                            app.record_op_persist_moves(
+                                "fetch",
+                                flight.before,
+                                outcome,
+                                e.ref_moves.take(),
+                                &repo_path_guard,
+                                cx,
+                            );
+                        } else {
+                            // No presentation owner: preserve the receipt and
+                            // recording-failure notice without changing the UI.
+                            app.record_ref_fetch_failure(
+                                "fetch",
+                                None,
+                                None,
+                                flight.before,
+                                outcome,
+                                e.ref_moves.take(),
+                                &repo_path_guard,
+                                cx,
+                            );
+                        }
                         if silent {
                             klog!("auto-fetch: failed (silent): {e}");
-                        }
-                        if !silent || current_waiter {
-                            app.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                                "Fetch failed: {e}"
-                            )));
-                            app.push_toast(ToastKind::Error, format!("Fetch failed: {e}"), cx);
                         }
                     }
                 }

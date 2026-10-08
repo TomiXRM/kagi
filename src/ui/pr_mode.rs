@@ -19,7 +19,8 @@
 //! (creating / editing a PR) deliberately go to GitHub's own UI.
 
 use gpui::{
-    div, prelude::*, px, relative, rgb, Context, ListState, SharedString, UniformListScrollHandle,
+    div, prelude::*, px, relative, rgb, Context, ListState, ScrollHandle, SharedString,
+    UniformListScrollHandle,
 };
 use kagi_domain::github::{
     Comment, Mergeable, PrKey, PullRequest, Review, ReviewComment, ReviewState,
@@ -160,6 +161,8 @@ pub struct PrModeState {
     /// The PR home table is virtualized so its layout processor can report the
     /// visible PR-number set to the lazy detail controller.
     pub dashboard_scroll: UniformListScrollHandle,
+    /// Shared horizontal viewport for the dashboard's header and virtual rows.
+    pub dashboard_horizontal_scroll: ScrollHandle,
     /// Which navigator sections are unfolded, indexed by
     /// [`PrSection::index`]. The Inbox opens with the mode; the rest are the
     /// viewer's own lists and stay folded until asked for.
@@ -185,6 +188,7 @@ impl Default for PrModeState {
             feed_anchor: None,
             view: PrView::Overview,
             dashboard_scroll: UniformListScrollHandle::new(),
+            dashboard_horizontal_scroll: ScrollHandle::new(),
             sections_open: [true, false, false, false],
             lane_scroll_x: None,
         }

@@ -1007,6 +1007,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_pr_list_roles),
             ),
             (
+                "pr_dashboard_responsive",
+                Box::new(crate::recovery_layout::scenario_pr_dashboard_responsive),
+            ),
+            (
                 "color_vision_theme",
                 Box::new(crate::recovery_operations::scenario_color_vision_theme),
             ),

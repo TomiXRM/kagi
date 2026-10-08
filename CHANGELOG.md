@@ -7,7 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Changed
 
-- Apple Light のサイドバーと hover の灰色を中立色にし、見出し・更新時刻・フォーム label などの補助文字を読みやすくしました。白い本文との階層、Git の状態色・レイアウト・Apple Dark は維持します。(#1065、#1066)
+- Apple Light のサイドバーと toolbar の明度を同じ Mac の実 Finder ウィンドウと比較して揃え、hover の灰色を中立色にしました。見出し・更新時刻・フォーム label などの補助文字も読みやすくしました。白い本文、Git の状態色・レイアウト・Apple Dark は維持します。(#1065、#1066)
 
 ## [0.44.0] - 2026-10-06
 

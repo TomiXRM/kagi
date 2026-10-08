@@ -9,13 +9,13 @@ pub const APPLE_LIGHT: Theme = Theme {
     name: Cow::Borrowed("Apple Light"),
     dark: false,
 
-    // Neutral macOS chrome; keep navigation separate from the white content.
+    // Opaque chrome tuned against the same Mac's Finder window (ADR-0125).
     bg_base: 0xffffff,
     bg_row_alt: 0xf5f5f5,
     surface: 0xe5e5e5,
     selected: 0xd9edff, // systemBlue 15% on white
-    panel: 0xf9f9f9,
-    sidebar: 0xeeeeee,
+    panel: 0xf7f7f7,
+    sidebar: 0xf7f7f7,
     modal: 0xffffff,
     modal_overlay: 0x000000,
 

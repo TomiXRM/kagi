@@ -50,6 +50,28 @@ thread_local! {
     static BUSY_ADVICE: RefCell<Option<String>> = const { RefCell::new(None) };
     static SETTINGS_ZOOM_LABEL: RefCell<Option<String>> = const { RefCell::new(None) };
 }
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static PR_MENU_COPY_HOVERED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn pr_menu_copy_hovered() -> bool {
+    PR_MENU_COPY_HOVERED.with(std::cell::Cell::get)
+}
+
+pub(crate) fn probe_pr_menu_copy(control: gpui::Stateful<gpui::Div>) -> gpui::Stateful<gpui::Div> {
+    #[cfg(feature = "gui-e2e")]
+    {
+        use gpui::StatefulInteractiveElement as _;
+        control.on_hover(|hovered, _, _| {
+            PR_MENU_COPY_HOVERED.with(|value| value.set(*hovered));
+        })
+    }
+    #[cfg(not(feature = "gui-e2e"))]
+    control
+}
 /// #354: the toolbar's AccessKit-disabled inputs, for the GUI E2E oracle.
 #[cfg(feature = "gui-e2e")]
 pub use super::render_header::toolbar_a11y::{

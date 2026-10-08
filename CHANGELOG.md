@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- PR の右クリックメニューがウィンドウ下端・右端で切れ、Open on GitHub / Copy URL を選べなくなる問題を修正しました。4 項目・拡大率に応じた文字と余白・border の実際の描画サイズで位置を合わせます。Peek / Jump / Open / Copy の操作内容は変更しません。(#1098)
 - PR／Issuesのサイドバーで大量のcardを展開すると、行がwindow内に縦圧縮されてtitleが見えなくなる問題を修正しました。各cardとsection見出しの自然な高さを維持し、親のscrollで末尾まで辿れます。(#1089)
 - Command Palette で矢印キー・検索変更による選択行が画面内へ追従するようにしました。マウスでのスクロールは再描画で巻き戻さず、次のキー操作で選択先を再表示します。disabled 理由の可変行高と、表示中の highlight / Enter の実行対象も維持します。(#1069)
 - Editor の History 一覧は読み込み済みの履歴を不変 snapshot として保持し、再描画のたびに全 commit の message・body を複製しないようにしました。表示範囲の仮想化、選択 commit の Diff / Snapshot と作業中 buffer の分離は維持します。(#1074)

@@ -1950,10 +1950,10 @@ impl KagiApp {
         let deselect = self.ui().selected == Some(index);
         self.with_ui(|ui| {
             ui.selected = if deselect { None } else { Some(index) };
-            // Clear any open main diff when the commit selection changes.
-            ui.main_diff = None;
             ui.compare_view = None;
         });
+        // Invalidate the previous selection's read even on A → B → A.
+        self.close_main_diff();
         if deselect {
             return;
         }
@@ -2368,8 +2368,8 @@ impl KagiApp {
     pub fn close_compare_view(&mut self) {
         self.with_ui(|ui| {
             ui.compare_view = None;
-            ui.main_diff = None;
         });
+        self.close_main_diff();
         // ADR-0121 B2: also drop a not-yet-promoted headless staging view.
         self.pending_headless_compare = None;
     }
@@ -2434,7 +2434,7 @@ impl KagiApp {
                     target.short(),
                     files.len()
                 );
-                self.with_ui(|ui| ui.main_diff = None);
+                self.close_main_diff();
                 let view = CompareView {
                     base: target,
                     target: CompareTarget::Head,
@@ -2487,7 +2487,7 @@ impl KagiApp {
                         self.select(row);
                     }
                 }
-                self.with_ui(|ui| ui.main_diff = None);
+                self.close_main_diff();
                 let title = SharedString::from(format!("stash@{{{}}}", index));
                 let view = CompareView {
                     base: parent_id,
@@ -2552,7 +2552,7 @@ impl KagiApp {
                     target.short(),
                     files.len()
                 );
-                self.with_ui(|ui| ui.main_diff = None);
+                self.close_main_diff();
                 let view = CompareView {
                     base: target,
                     target: CompareTarget::WorkingTree,

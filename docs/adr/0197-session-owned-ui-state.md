@@ -145,6 +145,30 @@ rehydrate 案（plain data から entity を作り直す）を採らない理由
 undo / 選択、list handle、未保存 buffer、pane の request token まで lossless に表す必要があり、
 entity と seed の二重 owner を作る。A4 の決定文とも衝突する。
 
+### Main Diff の image read と retained refresh（#1075）
+
+- `MainDiffRead` は既存の background read 内で text と画像の file / blob bytes、
+  形式判定、encoded bytes を包む GPUI Image を準備する。cached binary commit は
+  不変の `Arc<FileDiff>` を再利用する。GPUI の pixel decode は変更・検証対象に含めない。
+- foreground は起動時に固定した session / visit、request、必要な published-model
+  generation と source owner を照合して prepared view を適用する。Compare は entity
+  と revision、WIP の通常 open は panel entity、retained refresh は main-diff entity
+  に属する。commit の OID は固定し、row 再採番後の旧 key には cache を書き込まない。
+- linked worktree の retained refresh は、pane 復元時に捕捉した repository から読む。
+  revalidation がその後に空の Commit Panel を削除しても、同じ request / main-diff
+  entity / staged・unstaged side / path の結果は受理し、`Nothing` なら差分を閉じる。
+  消えた panel から tab repository を再解決して、この結果を拒否してはならない。
+  通常の WIP open は引き続き現在の panel・repository・file を照合する。
+- 2026-10-09 の最終 native Tier A は `binary_diff_prepared`、
+  `binary_diff_owner_transitions`、`binary_diff_worktree_owner`、
+  `binary_diff_linked_empty_revisit` の 4 ケースで PASS。build / full workspace
+  （3,082 passed、0 failed、40 ignored）/ clippy / fmt / 22 gates も PASS。
+- default build の実ウィンドウでは、各 6,532,139 bytes の変更前・変更後 PNG、
+  unsupported binary への切り替え、追加 PNG の After のみ、staged 削除 PNG の
+  Before のみを確認した。閲覧後も HEAD、全 index entry の path / OID / mode /
+  stage、全 working file の SHA256 は不変。表示確認を FPS や read/decode 時間の
+  計測とは扱わない。
+
 ## 決定 4 — 受け入れ oracle
 
 | | 内容 | 位置付け |

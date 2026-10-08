@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - PR dashboard は title / branch の最小幅を確保し、狭いウィンドウや UI 拡大時に列見出しが 1 文字ずつ縦に潰れて検索・行へ重なる問題を修正しました。見出しと行を同じ横スクロール領域に置き、state / author / checks / files / age に到達できます。縦の仮想化と表示範囲だけの PR 詳細取得は維持します。(#1095)
+- Binary image diff の file / blob bytes と形式判定を、text diff と同じ background read 内で準備するようにしました。cached commit、Compare、staged / unstaged と linked worktree の読み込み先を固定し、閉じた pane、古いタブ滞在・選択・Compare からの結果は表示も row cache も更新しません。linked worktree の変更を解消してタブへ戻ったとき、空の Commit Panel が更新中に消えても、保持中の差分が自身の読み込み結果を受け取り、変更がなければ閉じます。片側だけの画像と未対応 binary の placeholder は維持し、GPUI の pixel decode は変更していません。(#1075)
 - PR／Issuesのサイドバーで大量のcardを展開すると、行がwindow内に縦圧縮されてtitleが見えなくなる問題を修正しました。各cardとsection見出しの自然な高さを維持し、親のscrollで末尾まで辿れます。(#1089)
 - Command Palette で矢印キー・検索変更による選択行が画面内へ追従するようにしました。マウスでのスクロールは再描画で巻き戻さず、次のキー操作で選択先を再表示します。disabled 理由の可変行高と、表示中の highlight / Enter の実行対象も維持します。(#1069)
 - Editor の History 一覧は読み込み済みの履歴を不変 snapshot として保持し、再描画のたびに全 commit の message・body を複製しないようにしました。表示範囲の仮想化、選択 commit の Diff / Snapshot と作業中 buffer の分離は維持します。(#1074)

@@ -168,6 +168,9 @@ impl KagiApp {
             .text_xs()
             .text_color(rgb(theme().text_muted))
             .overflow_hidden()
+            .when(cfg!(feature = "gui-e2e"), |bar| {
+                bar.child(super::e2e::measure_inside("pr-menu-footer"))
+            })
             // Branch label
             .child(
                 div()

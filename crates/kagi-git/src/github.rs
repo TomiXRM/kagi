@@ -13,6 +13,7 @@ pub use crate::github_issue_write::{
 use std::path::Path;
 use std::sync::OnceLock;
 
+pub use kagi_domain::github::PrListSnapshot;
 use kagi_domain::github::{
     fold_ci, Check, Comment, IssueLabel, Mergeable, PrBodyDetail, PrStatusDetail, PullRequest,
     Review,

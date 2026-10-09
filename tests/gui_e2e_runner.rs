@@ -378,6 +378,10 @@ mod toolbar_keyboard;
 mod issues_pagination;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_pagination.rs"]
+mod pr_pagination;
+
+#[cfg(target_os = "macos")]
 #[path = "perf/oplog_detail.rs"]
 mod perf_oplog_detail;
 
@@ -2309,6 +2313,40 @@ mod macos {
             (
                 "issues_pagination",
                 Box::new(crate::issues_pagination::scenario_issues_pagination),
+            ),
+            (
+                "pr_pagination",
+                Box::new(crate::pr_pagination::scenario_pr_pagination),
+            ),
+            (
+                "pr_pagination_races",
+                Box::new(crate::pr_pagination::scenario_pr_pagination_races),
+            ),
+            (
+                "pr_pagination_closed_tab_retention",
+                Box::new(crate::pr_pagination::scenario_pr_pagination_closed_tab_retention),
+            ),
+            (
+                "pr_pagination_all_tab_retention",
+                Box::new(crate::pr_pagination::scenario_pr_pagination_all_tab_retention),
+            ),
+            (
+                "pr_pagination_pending_closed_tab_return",
+                Box::new(crate::pr_pagination::scenario_pr_pagination_pending_closed_tab_return),
+            ),
+            (
+                "pr_pagination_pending_all_tab_return",
+                Box::new(crate::pr_pagination::scenario_pr_pagination_pending_all_tab_return),
+            ),
+            (
+                "pr_paging_survives_periodic_tick",
+                Box::new(crate::pr_pagination::scenario_pr_paging_survives_periodic_tick),
+            ),
+            (
+                "pr_periodic_pending_sidebar_and_other_collections",
+                Box::new(
+                    crate::pr_pagination::scenario_pr_periodic_pending_sidebar_and_other_collections,
+                ),
             ),
             ("bottom_panel", Box::new(scenario_bottom_panel)),
             (

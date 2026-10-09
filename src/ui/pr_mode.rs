@@ -887,7 +887,11 @@ impl KagiApp {
         if let Some(mode) = self.pr_mode_of(owner) {
             mode.settle_composer_for(pr);
         }
-        if self.pr_comment_for.as_ref() == Some(pr) {
+        if self
+            .pr_comment_for
+            .as_ref()
+            .is_some_and(|(held_owner, held_pr)| Some(*held_owner) == owner && held_pr == pr)
+        {
             // `InputState::set_value` needs a `&mut Window`, which a completion
             // callback has none of. Dropping the entity is what the next
             // window-bearing frame rebuilds from the (now empty) draft.
@@ -910,13 +914,20 @@ impl KagiApp {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        // The composer follows the PR by repository and number: two tabs
-        // numbered 7 from two repositories are two drafts (#940 review).
-        // Compared in place every frame; the key is cloned only on a switch.
+        // A PR's draft belongs to its session too: two sessions reading the
+        // exact same repository and number must not share the box's text.
+        // Compare in place every frame; clone the key only on a switch.
+        let Some(owner) = self.active_session() else {
+            return;
+        };
         let Some(same_pr) = self
             .pr_mode()
             .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
-            .map(|t| self.pr_comment_for.as_ref().is_some_and(|k| t.pr.is(k)))
+            .map(|t| {
+                self.pr_comment_for
+                    .as_ref()
+                    .is_some_and(|(held_owner, key)| *held_owner == owner && t.pr.is(key))
+            })
         else {
             return;
         };
@@ -934,13 +945,13 @@ impl KagiApp {
         };
         if same_pr {
             // Same PR: the box is the truth, the tab keeps the copy.
-            let text = input.read(cx).value().to_string();
+            let text = input.read(cx).value();
             if let Some(tab) = self
                 .pr_mode_mut()
                 .and_then(|m| m.active.and_then(|ix| m.tabs.get_mut(ix)))
             {
-                if tab.comment_draft != text {
-                    tab.comment_draft = text;
+                if tab.comment_draft.as_str() != text.as_str() {
+                    tab.comment_draft = text.to_string();
                 }
             }
             return;
@@ -951,13 +962,15 @@ impl KagiApp {
         if let Some(mode) = self.pr_mode_mut() {
             mode.comment_preview = false;
         }
-        let parked = input.read(cx).value().to_string();
-        if let Some(previous) = self.pr_comment_for.take() {
+        let parked = input.read(cx).value();
+        if let Some((previous_owner, previous)) = self.pr_comment_for.take() {
             if let Some(tab) = self
-                .pr_mode_mut()
+                .pr_mode_of(Some(previous_owner))
                 .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.is(&previous)))
             {
-                tab.comment_draft = parked;
+                if tab.comment_draft.as_str() != parked.as_str() {
+                    tab.comment_draft = parked.to_string();
+                }
             }
         }
         let Some((open, draft)) = self
@@ -968,7 +981,7 @@ impl KagiApp {
             return;
         };
         input.update(cx, |state, cx| state.set_value(draft, window, cx));
-        self.pr_comment_for = Some(open);
+        self.pr_comment_for = Some((owner, open));
     }
 
     pub(super) fn pr_mode_focus(&mut self, f: PrFocus, cx: &mut Context<Self>) {
@@ -1083,13 +1096,10 @@ pub fn render_pr_mode(
     // Faces for the logins on this page (ADR-0200). One attempt per login per
     // process; the pass is a set lookup once they are in hand.
     app.ensure_pr_avatars(cx);
-    let left = super::e2e::measure_control(
-        "pr-mode-left-pane",
-        super::workspace_mode::render_sidebar_pages(
-            app,
-            super::workspace_mode::WorkspaceMode::Prs,
-            cx,
-        ),
+    let left = super::workspace_mode::render_sidebar_pages(
+        app,
+        super::workspace_mode::WorkspaceMode::Prs,
+        cx,
     );
     // Measured from inside, not wrapped: the body's height chain (`h_full`,
     // `flex_1`) must reach the virtualized feed unbroken.

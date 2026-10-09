@@ -250,8 +250,9 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                     .py_3()
                     .text_xs()
                     .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(Msg::PrPaneEmpty.t())),
+                    .child(SharedString::from(Msg::HomeWorkNoMatch.t())),
             );
+            table = table.child(super::github_pr_strip::render_pr_page_tail(app, true, cx));
         } else {
             let rows: Rc<Vec<(usize, PrAttention, PrReason)>> = Rc::new(
                 rows.into_iter()
@@ -282,7 +283,7 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                 super::list_a11y::plain_list("pr-list", list, Msg::A11yPrList.t()).child(
                     uniform_list(
                         "pr-home-list",
-                        row_count,
+                        row_count + 1,
                         cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
                             if this.active_session() != owner
                                 || this.ui().pr_list_revision() != generation
@@ -291,23 +292,21 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                             }
                             let start = range.start.saturating_sub(2);
                             let end = (range.end + 2).min(render_rows.len());
-                            let visible: BTreeSet<kagi_domain::github::PrKey> = render_rows
-                                [start..end]
-                                .iter()
-                                .filter_map(|(index, _, _)| {
-                                    this.ui().pr_list_rows().get(*index).map(|pr| pr.key())
-                                })
-                                .collect();
-                            this.observe_visible_prs(visible, cx);
+                            let first = range.start;
                             range
                                 .filter_map(|index| {
+                                    if index == render_rows.len() {
+                                        return Some(super::github_pr_strip::render_pr_page_tail(
+                                            this, true, cx,
+                                        ));
+                                    }
                                     render_rows.get(index).and_then(|(source, bucket, why)| {
                                         let pr = this.ui().pr_list_rows().get(*source)?;
                                         // Borrowed, not cloned: a `clone()` here
                                         // copied the whole avatar map for every
                                         // visible row, every frame (#750 review).
                                         let status = this.pr_status_availability(pr);
-                                        Some(render_table_row(
+                                        let row = render_table_row(
                                             pr,
                                             *bucket,
                                             why,
@@ -316,7 +315,48 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                                             &this.avatars.images,
                                             (index, render_rows.len()),
                                             cx,
-                                        ))
+                                        );
+                                        let row = if index == first {
+                                            let entity = cx.entity().downgrade();
+                                            let rows = render_rows.clone();
+                                            row.child(
+                                                gpui::canvas(
+                                                    move |bounds, window, cx| {
+                                                        // Measurement also calls this processor
+                                                        // for item zero, but never prepaints it.
+                                                        if !bounds.intersects(&window.content_mask().bounds) {
+                                                            return;
+                                                        }
+                                                        let entity = entity.clone();
+                                                        let rows = rows.clone();
+                                                        cx.defer(move |cx| {
+                                                            let _ = entity.update(cx, |app, cx| {
+                                                                if app.active_session() != owner
+                                                                    || app.ui().pr_list_revision() != generation
+                                                                    || app.workspace_mode() != super::workspace_mode::WorkspaceMode::Prs
+                                                                    || !app.pr_mode().is_some_and(|mode| mode.active.is_none())
+                                                                {
+                                                                    return;
+                                                                }
+                                                                let visible: BTreeSet<_> = rows[start..end]
+                                                                    .iter()
+                                                                    .filter_map(|(index, _, _)| app.ui().pr_list_rows().get(*index).map(|pr| pr.key()))
+                                                                    .collect();
+                                                                app.observe_visible_prs(visible, cx);
+                                                            });
+                                                        });
+                                                    },
+                                                    |_, _, _, _| {},
+                                                )
+                                                .absolute()
+                                                .top_0()
+                                                .left_0()
+                                                .size_full(),
+                                            )
+                                        } else {
+                                            row
+                                        };
+                                        Some(row.into_any_element())
                                     })
                                 })
                                 .collect::<Vec<_>>()
@@ -499,7 +539,7 @@ fn render_table_row(
     // #354: position (0-based) and size within the PR list.
     (position, size): (usize, usize),
     cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
+) -> gpui::Stateful<gpui::Div> {
     let open = pr.clone();
     let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
         this.pr_mode_open(&open, cx);
@@ -676,7 +716,6 @@ fn render_table_row(
     .on_click(click)
     .on_mouse_down(gpui::MouseButton::Right, menu)
     .when(pr.is_draft, |el| el.opacity(0.75))
-    .into_any_element()
 }
 
 /// One badge per non-empty attention bucket — dot, count, label, all on one

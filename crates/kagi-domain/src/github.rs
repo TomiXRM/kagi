@@ -167,6 +167,16 @@ impl Default for PullRequest {
     }
 }
 
+/// One bounded, successful PR-list page from a resolved base repository.
+/// `next_cursor` is opaque and is present only when the server proves another
+/// page exists. Rows and page metadata belong to the same request generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrListSnapshot {
+    pub prs: Vec<PullRequest>,
+    pub base_repo: String,
+    pub next_cursor: Option<String>,
+}
+
 /// Which pull request: the repository it targets (`base_repo`,
 /// `<host>/<owner>/<repo>`) and its number there. A number alone names a
 /// different PR in every repository, and one session can hold tabs from two

@@ -415,6 +415,7 @@ pub(super) fn render_sidebar_pages(
     }
 
     div()
+        .relative()
         // `sidebar.width` is the unscaled, persisted width; scale at render so
         // it tracks zoom uniformly with the text. The resize/drag math in
         // `render_divider` interprets cursor deltas in the same scaled space.
@@ -427,6 +428,9 @@ pub(super) fn render_sidebar_pages(
         .on_scroll_wheel(cx.listener(KagiApp::sidebar_scroll))
         .child(render_sidebar_mode_nav(app, mode, cx))
         .child(viewport)
+        .when(mode == WorkspaceMode::Prs, |pane| {
+            pane.child(super::e2e::measure_inside("pr-mode-left-pane"))
+        })
         .into_any_element()
 }
 

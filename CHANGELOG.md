@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- PR 一覧を 1 回最大 100 件の cursor paging にし、表示中の末尾や「続きを読み込む」から次のページへ進めるようにしました。Open の共有情報と選択中の Closed / All を分離したまま、絞り込みで 0 件でも続きを取得でき、追加取得の失敗時は読み込み済みの行と cursor を保持して再試行できます。repository タブを往復しても選択 state・開いている PR・入力中の下書きを保持し、古い読み込み結果を採用しません。同じ head の実際の詳細 payload と Fresh 判定を対応させ、詳細取得は表示範囲と既存の同時実行上限を維持します。PR workspace で Open の追加ページを閲覧中・追加取得中は自動 tick による先頭ページへの置換を延期し、表示中／開いている PR の checks 等は更新します。保持する一覧は最後に受理した membership であり、新規・Closed・削除の反映には手動 Refresh が必要です。手動更新・Closed / All・workspace 離脱時の通常更新は維持し、table の layout 計測を可視行と誤認せず実際の clipped prepaint から詳細取得範囲を報告します。(#1104, #1107)
 - PR の右クリックメニューがウィンドウ下端・右端で切れ、Open on GitHub / Copy URL を選べなくなる問題を修正しました。4 項目・拡大率に応じた文字と余白・border の実際の描画サイズで位置を合わせ、popup / modal 層を footer の後に描いて末尾が上書きされないようにしました。Peek / Jump / Open / Copy の操作内容は変更しません。(#1098)
 - Editor の file tree は、受理した file 一覧と folder の開閉が変わるときだけ可視行・accessibility の階層／同列位置・keyboard 選択の対応を更新するようにしました。再描画で全 file tree を作り直さず、同じ件数の一覧置換でも新しい file に選択を対応させます。folder の折りたたみで選択 file が隠れても開いている buffer は保持し、表示モード切替や file 一覧の更新後も選択と実際に開く file を対応させます。(#1073)
 - PR dashboard は title / branch の最小幅を確保し、狭いウィンドウや UI 拡大時に列見出しが 1 文字ずつ縦に潰れて検索・行へ重なる問題を修正しました。見出しと行を同じ横スクロール領域に置き、state / author / checks / files / age に到達できます。縦の仮想化と表示範囲だけの PR 詳細取得は維持します。(#1095)

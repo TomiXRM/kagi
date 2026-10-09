@@ -52,6 +52,7 @@ mod github;
 mod github_issue_state;
 mod github_issues;
 mod github_pr_detail;
+mod github_pr_state;
 mod github_pr_strip;
 mod issue_fields;
 mod issues_composer;
@@ -1154,8 +1155,8 @@ pub struct KagiApp {
     /// text belongs to the PR being read and is parked in that tab's
     /// `comment_draft` when another PR takes the box over.
     pub pr_comment_input: Option<Entity<InputState>>,
-    /// Which PR (repository and number) the composer holds the text of.
-    pub pr_comment_for: Option<kagi_domain::github::PrKey>,
+    /// Which session and PR (repository and number) own the composer's text.
+    pub pr_comment_for: Option<(crate::app::SessionId, kagi_domain::github::PrKey)>,
     /// Counter behind `PrFieldsModal::generation`.
     pub pr_fields_generation: u64,
     /// The field picker's fuzzy filter box; exists only while the picker is

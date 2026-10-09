@@ -1221,6 +1221,14 @@ mod macos {
                 Box::new(crate::pull_freshness::scenario_pull_freshness_clean_updates),
             ),
             (
+                "pull_current_slash_remote",
+                Box::new(crate::pull_freshness::scenario_pull_current_slash_remote),
+            ),
+            (
+                "pull_current_local_upstream",
+                Box::new(crate::pull_freshness::scenario_pull_current_local_upstream),
+            ),
+            (
                 "pull_freshness_branch_entries",
                 Box::new(crate::pull_freshness::scenario_pull_freshness_branch_entries),
             ),

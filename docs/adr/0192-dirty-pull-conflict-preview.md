@@ -176,6 +176,21 @@ backend の既存 preflight と `Backend::run` の fresh plan 比較は identity
 branch ref の更新は lock 内で承認済み local OID との一致を再検査してから transaction を
 commit し、CAS と同じく途中の移動を上書きしない。
 
+ordinary current Pull の toolbar / current branch menu も、表示 shorthand から remote を
+推定せず、live HEAD の branch を fetch scope に凍結して既存の configured-upstream fetch を使う。
+manual / silent fetch と `PullTarget::Current` は同じ upstream 解決条件で scope を共有する。
+upstream 未設定・detached / unborn の implicit scope は従来の ordinary fetch fallback とし、
+別 branch scope は join させない。ordinary fetch 成功後の ruleset refresh、
+owner / visit・quiet notification・一 flight 一 receipt の契約は維持する。
+Parent はこの exact config 経路で local Pull 二十五 native ケースの PASS と、
+default 実アプリの ordinary toolbar Pull（`team/origin`）による generic 確認から
+承認済み HEAD・全 index・全ファイル・receipt の一致を観測した。
+upstream 未設定の held manual fetch に新 visit の Current 要求が join できない回帰は、
+既存 `fetch_new_visit_waiter_sees_old_flight_failure` で Failed footer が busy のままになる
+failing-before を確認した。Current と implicit request の scope 条件を揃えた後、
+同 consumer を含む fetch owner / quiet queue / slow-write と二十五 local Pull ケース、
+統合 UI の native 選択実行、workspace 全体、Clippy、format、invariant、default build は全て通った。
+
 fetch 成功後の remote 名照合は **blockers が空の実行可能な plan だけ**に行う。
 実際に `ConflictedFiles` 等で止まる plan は `pull_identity=None` なので upstream 変更と
 取り違えず、元の blocker と無効な確定ボタンを持つ確認を表示し、実行しない。

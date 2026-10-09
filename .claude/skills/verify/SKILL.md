@@ -1175,6 +1175,53 @@ The current suite covers:
   update cannot replace the visible Closed collection, and a late response after
   leaving PR mode cannot restore that collection. Pair with
   `KAGI_GUI_E2E_ONLY=github_evidence_` for session restore/background/detach.
+- PR parent render borrowing (#1108 / ADR-0200 §7):
+  scope Tier A to
+  `KAGI_GUI_E2E_ONLY=pr_same_number,workspace_mode_toolbar,pr_threads_via_gh`
+  with `KAGI_GUI_E2E=1`, `--features gui-e2e --test gui_e2e_runner` and an
+  isolated log/target directory; PM owns execution when assigned.
+  `pr_same_number` uses two private bare Git remotes with genuine PR refs and
+  the existing repository-qualified fixture `gh` subprocess/parser. Its held
+  list refresh is admitted before switching B#7 → A#7; release must accept
+  the same generation and draw B's distinct refreshed title in the real
+  dashboard row while retaining A's exact multiline UTF-8 composer text and
+  both parked drafts. Input uses the real `InputState::replace`, not keyboard
+  typing or IME. Existing body/count/feed geometry, reload and normal unmount
+  assertions remain. This is not an authenticated GitHub or allocation-counter
+  oracle. Require `workspace_mode_toolbar: PR section exercised`; overall
+  PASS with its PR section skipped is insufficient. `pr_threads_via_gh`
+  supplies the independent real-ref/production-parser badge witness.
+  Do not invent a separate scenario PASS marker or case count from a final
+  `PASS filtered scenarios`.
+  The subsequent PM final lane passed all seven stages: build, this scoped
+  native selection, workspace tests, Clippy, fmt check, invariant checks and
+  default build (all exit 0; total wall 429.369851 s, native 23.138066 s).
+  Production hashes remained unchanged; the formatting-only final
+  `tests/recovery/pr_same_number.rs` SHA-256 is
+  `098376339bb864ee7f69fcaf041fc15ef6e4d945157160ebb6e0170d45906f01`.
+  This records local gate completion, not public CI/external review or a
+  runtime performance result; the Tier B limits below remain.
+  Tier B: use the exact default binary, source hashes, one named owned window,
+  unique USER, `KAGI_NO_ACTIVATE=1`, `KAGI_NO_RESTORE=1` and a retained private
+  log directory. Read actual PR12 / small PR280 producer counts first; Review
+  counts raw reviews + issue comments + line comments, not description or
+  only nonempty posts. Witness description first/terminal sections, review
+  first/middle/final posts, anchored thread open/close, whole-PR versus selected
+  commit files, return navigation and exact unsent draft restoration without
+  Submit. Ordinary commit element IDs are not measured-control selectors.
+  For the 2026-10-10 PM run, accepted evidence is EN / Apple Light / 100% at
+  1392×883: PR12 description 0001 → 0140, Review 66 and large-comment
+  paragraphs 26–28, a real line-2 thread, the 20005-line file's rows 72–102,
+  selected-commit Files 1 / +1980, and PR280's empty conversation / ASCII
+  draft return. Final Review tail, large-diff terminal row, split, JA / 167%
+  and same-key two-session default smoke remain unaccepted. A -50000 wheel
+  returned to the top, so it proves neither the tail nor a product cause.
+  No matched input-overlapping before/after sample was accepted: compile/run
+  duration, driver duration and source copy removal are not FPS/CPU/latency
+  or smoothness evidence. Measure performance separately with the same
+  warmed workload and monotonic sample-ready/input overlap. Preserve historical
+  compile-contamination and fixture-generation/readiness failures as failed
+  attempts, never relabel them as a production performance Before.
 - Issues cursor pagination (`KAGI_GUI_E2E_ONLY=issues_pagination`,
   `tests/recovery/issues_pagination.rs`): the production virtual viewport loads
   100 → 200 → final-page rows without resetting the scroll anchor; an offline

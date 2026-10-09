@@ -23,6 +23,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - PR／Issuesのサイドバーで大量のcardを展開すると、行がwindow内に縦圧縮されてtitleが見えなくなる問題を修正しました。各cardとsection見出しの自然な高さを維持し、親のscrollで末尾まで辿れます。(#1089)
 - Command Palette で矢印キー・検索変更による選択行が画面内へ追従するようにしました。マウスでのスクロールは再描画で巻き戻さず、次のキー操作で選択先を再表示します。disabled 理由の可変行高と、表示中の highlight / Enter の実行対象も維持します。(#1069)
 - Editor の History 一覧は読み込み済みの履歴を不変 snapshot として保持し、再描画のたびに全 commit の message・body を複製しないようにしました。表示範囲の仮想化、選択 commit の Diff / Snapshot と作業中 buffer の分離は維持します。(#1074)
+- PR の header・Review 件数を描くためだけに、description や reviews / comments / line comments 全体を毎回複製しないようにしました。既存 tab の情報を参照し、Commits の要素と Files / Conflicts の差分 snapshot は選択した画面だけで用意します。概要の card も同じ PR と本文を参照し、会話の仮想化・Markdown の内容・選択 / Copy・PR ごとの draft / scroll は維持します。header の GitHub / merge 操作は session と repository + PR 番号を保持してクリック時に対応する PR を取り出します。実 fixture の本文・件数・thread・commit 切替・draft 復元を確認しましたが、速度向上の before / after 計測結果ではありません。(#1108)
 
 ### Changed
 

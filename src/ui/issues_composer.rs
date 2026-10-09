@@ -258,6 +258,7 @@ impl KagiApp {
 pub(super) fn render_composer(
     app: &KagiApp,
     number: Option<u64>,
+    window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
     let state = &app.ui().issue_composer;
@@ -401,7 +402,10 @@ pub(super) fn render_composer(
                 super::timeline_row::body_markdown(
                     ("issue-preview", number.unwrap_or(0) as usize),
                     &editor.draft.body,
+                    super::timeline_row::BodyMarkdownFormat::Original,
                     super::timeline_row::markdown_style(15., cx),
+                    window,
+                    cx,
                 ),
             ))
             .into_any_element()

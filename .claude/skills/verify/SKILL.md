@@ -1175,6 +1175,57 @@ The current suite covers:
   update cannot replace the visible Closed collection, and a late response after
   leaving PR mode cannot restore that collection. Pair with
   `KAGI_GUI_E2E_ONLY=github_evidence_` for session restore/background/detach.
+- GitHub Markdown preparation reuse (#1091 bounded slice, ADR-0142 amendment 3):
+  `KAGI_GUI_E2E_ONLY=markdown_preparation_edges`
+  (`tests/recovery/markdown_preparation_edges.rs`, a child of
+  `tests/recovery/workspace_mode_toolbar.rs`) keeps one production Issue Thread
+  body/window/owner/Markdown ID across frame replacements. It reuses the
+  existing measured-body physical drag (down/move/up) and ⌘C helper, poisoning
+  only `VisualTestPlatform`'s private clipboard before every copy; do not replace
+  that platform with the default real-app clipboard or access the OS clipboard.
+  Equal-byte-length different GFM raw bodies must copy exactly the new rendered
+  text, excluding the old sentinel. The raw body then stays empty while EN → JA
+  → EN must copy the current typed `Msg::IssueNoDescription` placeholder and
+  exclude the prior locale. Bounds must fit inside the viewport; settings and
+  process-global language are restored, the repository fingerprint is unchanged,
+  and the shared `unmount` closes the window. This is painted-text consumer
+  evidence, not a cache-counter, source-text, mock-copy or nonempty assertion.
+  The preparation payload is existing window-keyed state under the body ID in a
+  separate namespace: one raw snapshot + format + prepared `SharedString`, replaced
+  on exact raw-byte or format changes. Current style, literal font features and
+  the existing privacy preparation path are supplied to the same renderer.
+  At the 2026-10-09 checkpoint, `conversation_markdown_test` passed 10 semantic
+  tests; one native run separately passed the four existing consumers
+  `pr_same_number`, `pr_threads`, `pr_threads_via_gh`, `workspace_mode_toolbar`;
+  a later native run passed `markdown_preparation_edges` alone (4 PASS and
+  1 PASS from separate runs, not one five-scenario run). The default build also
+  completed. The default app's real warm PR #12 After sample had 6,021 main-thread
+  stack observations and none for `prepare_github_markdown`, `images_as_links`,
+  `flatten_html_blocks`, `pad_inline_code`, `sanitize_github_markdown` or `to_mdast`;
+  baseline had 549 preparation observations
+  under 5,893 main-thread observations. Corpus and Apple Light/EN/100% v2/1392×883
+  logical viewport matched; baseline `adf3ade12d9786b198d4821f30dd4f629c12cca4`
+  differs from implementation base `94cf1849dc7af265995a58ee1d2c2c546aa7fc06`
+  by a Pull-label change outside this UI surface. All eight requested −80 wheel
+  events landed within each eight-second sample; After PR #12 delivery completed
+  1.709031 seconds after readiness. Screenshots show section 001 → 49/50/51,
+  not full-conversation traversal. The short real PR #280 control showed its
+  complete one-line body, no reviews, one commit and one file (+2), with eight
+  events delivered in 1.733571 seconds at the same settings. The owned original
+  app exited normally through ⌘Q (exit 0, process gone).
+  Zero observations in this one After sample are not proof of zero calls.
+  Raw sample observations/input delivery do not establish CPU%, FPS, latency,
+  speedup or actual scroll distance. Cold huge-post preparation/layout, PR clones,
+  the Issues all-post column, full conversation reachability/virtualization with
+  one outer scrollbar, offscreen selection/copy, accepted session generations
+  and theme/width/zoom/semantic-refresh anchors remain #1091 work.
+  The later final required gate passed build, native, workspace tests, Clippy,
+  format check, invariants and default build, all exit 0. Its single native
+  run passed the four consumers above plus `markdown_preparation_edges`,
+  five of five. Whole gate wall was 406.020904 s; workspace process wall was
+  351.394085 s, including compilation/process overhead, not isolated test-body
+  timing or speedup. This does not complete the full issue or imply hosted
+  CI, exact-head review or dev merge. Publish as `Refs #1091`, not `Closes`.
 - Issues cursor pagination (`KAGI_GUI_E2E_ONLY=issues_pagination`,
   `tests/recovery/issues_pagination.rs`): the production virtual viewport loads
   100 → 200 → final-page rows without resetting the scroll anchor; an offline

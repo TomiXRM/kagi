@@ -1229,6 +1229,22 @@ mod macos {
                 Box::new(crate::pull_freshness::scenario_pull_ff_only_current_tree_consistency),
             ),
             (
+                "pull_branch_slash_remote_current",
+                Box::new(crate::pull_freshness::scenario_pull_branch_slash_remote_current),
+            ),
+            (
+                "pull_branch_slash_remote_noncurrent",
+                Box::new(crate::pull_freshness::scenario_pull_branch_slash_remote_noncurrent),
+            ),
+            (
+                "pull_branch_local_upstream_current",
+                Box::new(crate::pull_freshness::scenario_pull_branch_local_upstream_current),
+            ),
+            (
+                "pull_branch_local_upstream_noncurrent",
+                Box::new(crate::pull_freshness::scenario_pull_branch_local_upstream_noncurrent),
+            ),
+            (
                 "pull_freshness_synced_waits",
                 Box::new(crate::pull_freshness::scenario_pull_freshness_synced_waits),
             ),

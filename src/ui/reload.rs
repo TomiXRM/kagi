@@ -237,16 +237,29 @@ impl KagiApp {
                                         &upstream.remote_branch == upstream_name
                                     })
                             }) && modal.plan.pull_identity.as_ref().is_some_and(|identity| {
-                                upstream_name
-                                    .strip_prefix(identity.remote.as_str())
-                                    .and_then(|name| name.strip_prefix('/'))
-                                    .is_some_and(|name| {
-                                        snap.remote_branches.iter().any(|branch| {
-                                            branch.remote == identity.remote
-                                                && branch.name == name
-                                                && &branch.target == upstream_target
-                                        })
+                                // Snapshot remote/name fields partition a display
+                                // shorthand, not the configured remote identity.
+                                // Match the approved full ref in its namespace.
+                                if let Some(name) =
+                                    identity.upstream_ref.strip_prefix("refs/heads/")
+                                {
+                                    snap.branches.iter().any(|branch| {
+                                        branch.name == name && &branch.target == upstream_target
                                     })
+                                } else {
+                                    identity
+                                        .upstream_ref
+                                        .strip_prefix("refs/remotes/")
+                                        .is_some_and(|upstream| {
+                                            snap.remote_branches.iter().any(|branch| {
+                                                upstream
+                                                    .strip_prefix(branch.remote.as_str())
+                                                    .and_then(|name| name.strip_prefix('/'))
+                                                    .is_some_and(|name| name == branch.name)
+                                                    && &branch.target == upstream_target
+                                            })
+                                        })
+                                }
                             })
                         },
                     )

@@ -231,12 +231,17 @@ impl KagiApp {
         let Some(modal) = self.branch_plan_modal() else {
             return;
         };
+        // The title's upstream shorthand is display-only; admission uses the
+        // exact configured remote. Blocked plans have no executable identity.
         let matches_remote = matches!(
             &modal.plan.title,
             kagi_domain::plan_note::PlanTitle::Pull(
-                kagi_domain::plan_note::PullTitle::PullBranchFf { remote: planned, .. }
-            ) if planned == remote
-        );
+                kagi_domain::plan_note::PullTitle::PullBranchFf { branch: planned, .. }
+            ) if planned == &modal.branch_name
+        ) && (!modal.plan.blockers.is_empty()
+            || modal.plan.pull_identity.as_ref().is_some_and(|identity| {
+                identity.branch == modal.branch_name && identity.remote == remote
+            }));
         if !matches_remote {
             self.clear_branch_plan_modal();
             self.report_plan_failure(i18n::Op::Pull, Msg::PullUpstreamChangedDuringFetch.t());

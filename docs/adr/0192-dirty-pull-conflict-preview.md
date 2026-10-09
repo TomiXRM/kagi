@@ -164,9 +164,17 @@ HEAD・staged 内容・全作業ファイル・refs・既存 stash を維持し�
 
 branch ff-only は加えて working-tree digest と owner / visit を保持する。同じ identity / digest
 での watcher reload は確認を維持し、upstream の再設定・対象 local tip の移動・dirty の変更では
-確認を失効させる。backend の既存 preflight に identity 照合を追加し、`Backend::run` の fresh plan
-との比較でも identity の一致を要求する。branch ref の更新は lock 内で承認済み local OID
-との一致を再検査してから transaction を commit し、CAS と同じく途中の移動を上書きしない。
+確認を失効させる。fetch 後の remote 照合は表示 title の upstream shorthand ではなく、
+typed `PullIdentity.remote` の完全な config 値を使う。reload 時の upstream OID は
+`PullIdentity.upstream_ref` の完全な ref 名で照合し、`refs/heads/` は local branch、
+`refs/remotes/` は remote-tracking branch の namespace として扱う。
+snapshot の表示用 remote / name 分割を config の remote identity と取り違えないため、
+slash を含む remote 名と local upstream `.` でも確認を維持する。
+native の current / non-current 回帰は実 menu・fetch・reload・確認から実際の ff-only 更新まで
+通り、current の HEAD・index・作業ファイル整合性と non-current の active checkout 不変を検査する。
+backend の既存 preflight と `Backend::run` の fresh plan 比較は identity 一致を要求し続ける。
+branch ref の更新は lock 内で承認済み local OID との一致を再検査してから transaction を
+commit し、CAS と同じく途中の移動を上書きしない。
 
 fetch 成功後の remote 名照合は **blockers が空の実行可能な plan だけ**に行う。
 実際に `ConflictedFiles` 等で止まる plan は `pull_identity=None` なので upstream 変更と

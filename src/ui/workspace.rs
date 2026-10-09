@@ -38,7 +38,9 @@
 //! into `TabUiState`; this registry renders but never disposes them on a switch.
 
 use gpui::prelude::FluentBuilder as _;
-use gpui::{div, px, AnyElement, Context, IntoElement, ParentElement, SharedString, Styled};
+use gpui::{
+    div, px, AnyElement, Context, IntoElement, ParentElement, SharedString, Styled, Window,
+};
 use std::sync::Arc;
 
 use super::inspector_model::{FilesSource, InspectorFiles};
@@ -82,6 +84,7 @@ pub trait WorkspaceItem {
         app: &mut KagiApp,
         layout: &WorkspaceLayout,
         panel: Option<AnyElement>,
+        window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement>;
 }
@@ -107,6 +110,7 @@ impl WorkspaceItem for FileHistoryItem {
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
         _panel: Option<AnyElement>,
+        _window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         let ev = app.ui().file_history.clone()?;
@@ -146,6 +150,7 @@ impl WorkspaceItem for EcosystemItem {
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
         _panel: Option<AnyElement>,
+        _window: &mut Window,
         _cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         let eco = app.ui().ecosystem.clone()?;
@@ -173,9 +178,10 @@ impl WorkspaceItem for PrModeItem {
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
         panel: Option<AnyElement>,
+        window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
-        Some(super::pr_mode::render_pr_mode(app, panel, cx))
+        Some(super::pr_mode::render_pr_mode(app, panel, window, cx))
     }
 }
 
@@ -198,9 +204,12 @@ impl WorkspaceItem for IssuesModeItem {
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
         panel: Option<AnyElement>,
+        window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
-        Some(super::issues_mode::render_issues_mode(app, panel, cx))
+        Some(super::issues_mode::render_issues_mode(
+            app, panel, window, cx,
+        ))
     }
 }
 
@@ -225,6 +234,7 @@ impl WorkspaceItem for BranchCleanupItem {
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
         _panel: Option<AnyElement>,
+        _window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         Some(
@@ -270,6 +280,7 @@ impl WorkspaceItem for EditorWorkspaceItem {
         app: &mut KagiApp,
         layout: &WorkspaceLayout,
         panel: Option<AnyElement>,
+        _window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         let ev = app.ui().editor_workspace.clone()?;
@@ -325,6 +336,7 @@ impl WorkspaceItem for MainDiffItem {
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
         _panel: Option<AnyElement>,
+        _window: &mut Window,
         _cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         Some(app.ui().main_diff.clone()?.into_any_element())
@@ -376,6 +388,7 @@ impl WorkspaceItem for CommitPanelItem {
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
         _panel: Option<AnyElement>,
+        _window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         let entity = app.ui().commit_panel.clone()?;
@@ -500,6 +513,7 @@ impl WorkspaceItem for InspectorItem {
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
         _panel: Option<AnyElement>,
+        _window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         // Changed files + diffstat for the selected commit (vs parent). A cache
@@ -532,6 +546,7 @@ impl WorkspaceItem for CompareItem {
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
         _panel: Option<AnyElement>,
+        _window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         // No per-file diffstat — W16-DIFFSTAT keeps compare out of scope.

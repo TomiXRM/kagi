@@ -23,6 +23,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - PR／Issuesのサイドバーで大量のcardを展開すると、行がwindow内に縦圧縮されてtitleが見えなくなる問題を修正しました。各cardとsection見出しの自然な高さを維持し、親のscrollで末尾まで辿れます。(#1089)
 - Command Palette で矢印キー・検索変更による選択行が画面内へ追従するようにしました。マウスでのスクロールは再描画で巻き戻さず、次のキー操作で選択先を再表示します。disabled 理由の可変行高と、表示中の highlight / Enter の実行対象も維持します。(#1069)
 - Editor の History 一覧は読み込み済みの履歴を不変 snapshot として保持し、再描画のたびに全 commit の message・body を複製しないようにしました。表示範囲の仮想化、選択 commit の Diff / Snapshot と作業中 buffer の分離は維持します。(#1074)
+- GitHub の PR／Issue 本文は、同じ描画 ID の raw bytes と表示 format が変わらない再描画で、既存の Markdown 準備結果を再利用するようにしました。同じ byte 数の本文置換と、空本文の EN／JA placeholder 切替でも現在の表示をドラッグ・⌘C でコピーでき、古い本文を残しません。現在の style、literal code の文字、画像をリンクとして表示する privacy policy は維持します。実 PR の warm sample では繰り返しの準備 stack を観測しなくなりましたが、CPU／FPS／速度倍率の測定ではありません。cold な巨大本文の parse／layout、会話全体の仮想化・末尾到達・画面外の選択／コピーは未解決で、#1091 全体は継続中です。(#1091 の準備処理 slice)
 
 ### Changed
 

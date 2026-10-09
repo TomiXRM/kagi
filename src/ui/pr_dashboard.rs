@@ -283,7 +283,7 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                 super::list_a11y::plain_list("pr-list", list, Msg::A11yPrList.t()).child(
                     uniform_list(
                         "pr-home-list",
-                        row_count + 1,
+                        row_count + usize::from(ui.pr_list_has_more()),
                         cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
                             if this.active_session() != owner
                                 || this.ui().pr_list_revision() != generation

@@ -543,6 +543,20 @@ Issues（thread / home 一覧 / composer）と PR（feed / composer / home 表�
   and PR-workspace/home guards. Measurement never prepaints that canvas.
   The existing two-row overdraw and detail budgets remain unchanged; this adds
   no payload cache, controller or independent state.
+- **Exhaustion removes the terminal slot.** The virtual table's item count is
+  `rowcount + usize::from(has_more)`: only a selected collection with a cursor
+  reserves a continuation row. Loading/retry and pending demand are unchanged.
+  Keeping a blank full-height slot after `cursor=None` displaced the last real
+  PR completely above its paint clip in the 940×660, 167% one-row viewport.
+  The existing `pr_dashboard_responsive` consumer failed before this count fix
+  and passed afterward across its eight width/locale/zoom cells; paging consumer
+  assertions and the responsive matrix were not repinned or weakened.
+  PM's local post-repair gate recorded seven passing stages (build, scoped
+  native, workspace, clippy, format check, invariants and default build) in
+  `/tmp/kagi-hig-audit-20261008/pr-paging-terminal-row-final-gates/manifest.json`.
+  Its native selection covered PR list roles, dashboard responsiveness, Issues
+  pagination, the six paging cases and both periodic cases. This records local
+  acceptance of that source, not hosted CI, merge or subsequent documentation.
 - **Consumer evidence.** Domain/transport/receiver/detail tests cover page
   metadata, frozen cursors, races, retry, dedupe and payload ownership. The nine
   scoped native scenarios are the six `pr_pagination` cases, `pr_same_number`,
@@ -556,8 +570,8 @@ Issues（thread / home 一覧 / composer）と PR（feed / composer / home 表�
   and departure are positive controls. Measurement must not steal demand from
   the actually prepainted tail. These fixture assertions are not screenshots,
   live GitHub evidence, FPS or timing improvements.
-- **Separate Tier B retention evidence and limits.** The default-build run
-  recorded in
+- **Historical Tier B retention evidence and limits.** The earlier default-build
+  run recorded in
   `/tmp/kagi-hig-audit-20261008/pr-periodic-after-native/proof.json` used genuine
   first100 → explicit Load more → 120 membership and the server-ordered tail
   PR #28. An actual 65.26914-second no-input interval retained that membership,
@@ -568,6 +582,58 @@ Issues（thread / home 一覧 / composer）と PR（feed / composer / home 表�
   volatile refresh, not newest authoritative membership or FPS/latency/CPU
   improvement. The earlier CPU sample did not overlap input. The proof records
   the source after the true-prepaint fix and nine-scenario run; temporary
-  diagnostic reads were subsequently removed. Final cleaned-source gate,
-  CI and merge acceptance are separate and are not claimed here.
+  diagnostic reads were subsequently removed. It predates the terminal-slot
+  repair and is not fresh evidence for that repair.
+- **Fresh narrow default-build terminal evidence.**
+  `/tmp/kagi-hig-audit-20261008/pr-paging-terminal-tierb/narrow/observed.json`
+  records source hashes and exact owned PID 61715/window 6182. Startup at logical
+  940×660, zoom 1667, Apple Light/English produced 1880×1320 window-only
+  photographs (capture-to-bounds ratio 2, not an independently queried backing
+  scale). Explicit visible Load more accepted 100 → 120 with `has_more=false`;
+  eight wheel inputs reached the actual last PR #28 fully painted in the tiny
+  table body, without an empty reserved continuation slot. A fresh periodic
+  photograph still showed 120 and #28, with readiness changing 5 → 6 and no new
+  list GraphQL after extension in the observed timeline. Its 176.033609 seconds
+  is page-request-to-capture, not response-acceptance retention duration.
+  An initial tick before explicit append added a third list GraphQL call;
+  this run does not establish two total list calls. The #28 opening showed
+  one commit, one file and conversation counts 0/0/0, but its photograph was
+  swimlane-only and does not accept narrow Overview visibility. Original
+  Cmd-Q/Popen exit was 0, with no remaining exact executable PID or owned app.
+  This is narrow-startup and terminal-paint evidence only: no dynamic resize,
+  wide-window, Copy/Paste/clipboard, CPU, FPS or latency claim is made.
+- **Fresh wide default-build paging and ownership evidence.**
+  `/tmp/kagi-hig-audit-20261008/pr-paging-terminal-tierb/wide/observed.json`
+  records the same frozen source hashes, exact owned PID 69326/window 6200 and
+  logical 1392×883/100%, Apple Light/English window-only captures (ratio 2).
+  Eight table wheels caused natural clipped-tail/prepaint demand, without
+  explicit Load more, accepting 100 → 120; four further wheels reached last
+  PR #28. The settled 120-row tail photograph and a photograph 155.08867 seconds
+  later retained the same #80..#28 viewport while Ready changed 15 → 13. Actual
+  `pr view` receipts continued at roughly 60-second cadence; no list GraphQL
+  occurred after extension through that periodic capture. There were four list
+  GraphQL calls through extension: initial, two legitimate pre-extension ticks
+  and one non-null cursor request. The 229.741505 seconds from cursor request
+  to periodic capture is not exact response-acceptance timing.
+  Real PR #12 Overview displayed its 48,002-byte body, with accepted transport
+  data of 24 comments/288,048 comment-body bytes, two reviews/268 review-body
+  bytes and 40 line comments (visible Review count 66), three commits and two
+  files. Visible additions were 22,010; this does not accept full body/comment
+  tails, diff/thread interaction or performance. Settled All PRs returned to
+  the same 120-row tail; immediate capture preceded settlement and navigation
+  latency was not measured. PR #28's 102-byte Overview was visible with no
+  comments/reviews, one commit and one file. Physically typed unsent ASCII
+  `PM_PR28_DRAFT` did not appear after switching to PR #12; six independent
+  sidebar wheels reached #28 while #12 Overview remained, and clicking #28
+  restored the exact draft. This is one session/two PrKeys, not the same PrKey
+  across two sessions. No Submit, Copy/Paste, clipboard or foreground action
+  was exercised. Cmd-Q/original Popen exited 0 with no exact executable PID or
+  owned apps left.
+  Matched same-PR #28 narrow/wide photographs and source triage identify a
+  separate detail-geometry issue [#1118](https://github.com/TomiXRM/kagi/issues/1118):
+  the narrow Overview body is missing while wide shows it. This does not accept
+  narrow-detail #1095 behavior; independent baseline-dev reproduction is unrun.
+  Same-PrKey/two-session default-click acceptance remains dependent on the
+  separate overlay-baseline fix/integration. No dynamic resize, matched CPU/FPS
+  sample, full diff/thread acceptance, hosted review/CI or merge is claimed.
 

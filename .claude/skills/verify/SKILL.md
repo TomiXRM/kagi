@@ -1256,7 +1256,18 @@ The current suite covers:
   actual server-ordered remainder; compare unique loaded identities and
   `[kagi] github: prs page=N loaded=M has_more=true|false`. Do not infer which
   PR is absent from its number or alter the limit to make the check pass.
-  Separate observed Tier B #1107 evidence:
+  Exhausted-table regression: item count must be
+  `rowcount + usize::from(has_more)`, not an unconditional full-height terminal
+  slot. With `cursor=None`, the final real row must actually paint inside the
+  tiny body at 940×660/167%; loading/retry and pending continuation remain.
+  Pair with `pr_dashboard_responsive`'s eight width/locale/zoom cells and
+  `pr_list_roles,issues_pagination` without repinning assertions. PM's local
+  seven-stage post-repair gate passed; its scoped native selection included
+  these three consumers, all six original paging cases and both periodic cases.
+  The gate manifest is
+  `/tmp/kagi-hig-audit-20261008/pr-paging-terminal-row-final-gates/manifest.json`;
+  this is local source acceptance, not hosted CI or merge acceptance.
+  Historical Tier B #1107 evidence (before the terminal-slot repair):
   `/tmp/kagi-hig-audit-20261008/pr-periodic-after-native/proof.json` records the
   default app PID 45189/window 4156 and source after the true-prepaint fix and
   nine native PASS scenarios. Genuine first100 → explicit Load more → 120
@@ -1269,8 +1280,58 @@ The current suite covers:
   automatic retention with volatile refresh, not newest membership, all future
   tick behavior, FPS, latency or CPU improvement. The earlier CPU sample did
   not overlap input. Temporary diagnostic reads were removed after that build;
-  this evidence does not claim the cleaned-source final gate, CI or merge has
-  passed. Parent runs the final gate separately after integration.
+  this historical evidence does not accept the later terminal-slot repair.
+  Fresh narrow default-build evidence is separately recorded in
+  `/tmp/kagi-hig-audit-20261008/pr-paging-terminal-tierb/narrow/observed.json`,
+  with frozen-source SHA-256s and exact owned PID 61715/window 6182. Logical
+  940×660, zoom 1667, Apple Light/English window-only captures are 1880×1320
+  (ratio 2 from capture/bounds, not a backingScaleFactor query). A real visible
+  Load more accepted 100 → 120, `has_more=false`; eight wheel events reached
+  actual last PR #28 fully visible in the tiny body with no empty terminal slot.
+  The fresh periodic photograph retained 120 and #28, while readiness changed
+  5 → 6; the observed timeline had no new list GraphQL after extension.
+  The recorded 176.033609 seconds is page-request-to-capture, not exact
+  response-acceptance-to-capture. An initial tick before append added a third
+  list GraphQL call, so do not report two total list calls for this run.
+  Real #28 opening showed commits1/files1 and conversation counts0/0/0, but its
+  photograph is swimlane-only, not acceptance of the narrow Overview body.
+  Cmd-Q/original Popen exited 0, exact executable PID path and owned apps were
+  absent afterward. This establishes narrow startup/terminal paint only:
+  wide-window, dynamic resize, Copy/Paste/host clipboard, CPU, FPS and latency
+  were not accepted by these observations; driver delivery time is not FPS.
+  Fresh wide default-build evidence:
+  `/tmp/kagi-hig-audit-20261008/pr-paging-terminal-tierb/wide/observed.json`
+  records unchanged frozen-source hashes, exact owned PID 69326/window 6200,
+  logical 1392×883/100%, Apple Light/English and window-only captures, ratio 2.
+  Eight table wheels caused natural clipped-prepaint continuation (no explicit
+  Load more), 100 → 120; four further wheels reached last PR #28. A settled-tail
+  photograph and the periodic photograph 155.08867 seconds later retained
+  Loaded120 and the same #80..#28 viewport, while Ready15 → 13 and real
+  `pr view` receipts at roughly 60-second cadence witnessed ongoing checks.
+  No list GraphQL occurred after extension through the periodic photograph,
+  but four occurred through extension: initial + two legitimate pre-extension
+  ticks + one non-null cursor read. Do not report two total list calls.
+  Cursor-request-to-periodic-capture 229.741505 seconds is not exact acceptance
+  timing. Actual large PR #12 Overview displayed a 48,002-byte body with real
+  transport 24 comments/288,048 body bytes, two reviews/268 body bytes and
+  accepted 40 line comments (visible Review66), commits3/files2, additions22,010.
+  This does not prove complete body/comment-tail, diff or thread interaction,
+  or performance. Settled All PRs returned to the same120/tail28; the immediate
+  capture preceded that state and supplies no navigation latency.
+  Small #28 Overview body102 bytes was visible, comments/reviews0, commits1/files1.
+  Physical unsent ASCII `PM_PR28_DRAFT` stayed out of #12's composer; six sidebar
+  wheels reached #28 independently while #12 Overview remained, and clicking
+  #28 restored the exact draft. This accepts one-session/two-PrKeys only;
+  same-PrKey/two-session default clicks remain dependent on separate overlay
+  baseline repair/integration, not proven by this run. No Submit/Copy/Paste,
+  host clipboard or foreground action occurred; original Cmd-Q/Popen exit0,
+  exact executable PID path absent and owned apps0 establish cleanup.
+  The matched same-PR narrow/wide photographs corroborate separate
+  [#1118](https://github.com/TomiXRM/kagi/issues/1118) detail geometry: narrow
+  #28 Overview body missing, wide present. Do not call this narrow-detail #1095
+  acceptance or independent baseline-dev reproduction. Dynamic resize,
+  matched CPU/FPS sampling, full diff/thread acceptance and external review/CI
+  remain unobserved; no future post-doc gate or merge is implied.
 - Issues cursor pagination (`KAGI_GUI_E2E_ONLY=issues_pagination`,
   `tests/recovery/issues_pagination.rs`): the production virtual viewport loads
   100 → 200 → final-page rows without resetting the scroll anchor; an offline

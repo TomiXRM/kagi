@@ -39,8 +39,8 @@ fn assert_periodic_status(
             .tabs
             .iter()
             .filter(|tab| tab.pr.is(&shared.key()));
-        for (consumer, pr) in std::iter::once(("shared", shared))
-            .chain(opened.map(|tab| ("opened", &tab.pr)))
+        for (consumer, pr) in
+            std::iter::once(("shared", shared)).chain(opened.map(|tab| ("opened", &tab.pr)))
         {
             let expected = if after {
                 CiState::Failure
@@ -48,7 +48,8 @@ fn assert_periodic_status(
                 CiState::Success
             };
             assert_eq!(
-                pr.ci, expected,
+                pr.ci,
+                expected,
                 "periodic status consumer={consumer} key={:?} head={}",
                 pr.key(),
                 pr.head_sha,

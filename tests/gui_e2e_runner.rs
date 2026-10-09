@@ -191,6 +191,10 @@ mod refusal_reasons;
 mod diff_highlight;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/binary_diff_owner.rs"]
+mod binary_diff_owner;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/remote_browse_focus.rs"]
 mod remote_browse_focus;
 
@@ -1585,6 +1589,22 @@ mod macos {
             (
                 "commit_diff_off_thread",
                 Box::new(crate::diff_highlight::scenario_commit_diff_off_thread),
+            ),
+            (
+                "binary_diff_prepared",
+                Box::new(crate::diff_highlight::scenario_binary_diff_prepared),
+            ),
+            (
+                "binary_diff_owner_transitions",
+                Box::new(crate::binary_diff_owner::scenario_binary_diff_owner_transitions),
+            ),
+            (
+                "binary_diff_worktree_owner",
+                Box::new(crate::binary_diff_owner::scenario_binary_diff_worktree_owner),
+            ),
+            (
+                "binary_diff_linked_empty_revisit",
+                Box::new(crate::binary_diff_owner::scenario_binary_diff_linked_empty_revisit),
             ),
             (
                 "conflict_save_boundary",

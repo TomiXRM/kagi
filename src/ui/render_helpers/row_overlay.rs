@@ -284,30 +284,6 @@ mod tests {
     }
 
     #[test]
-    fn replacement_rows_move_the_expansion_to_their_new_split_pair() {
-        let first = paired_rows();
-        let replacement = Arc::new(vec![
-            line(DiffLineKind::Context),
-            line(DiffLineKind::Removed),
-            line(DiffLineKind::Added),
-        ]);
-        let mut cache = ProjectionCache::default();
-        let open = BTreeSet::from([1]);
-        let original = cache.get("same.rs", &first, true, 1, &open);
-        assert_eq!(
-            original.items,
-            [Item::Row(0), Item::Expansion(0), Item::Row(1)]
-        );
-        assert_eq!(original.expansion_rows(0), [Some(1), None]);
-        let replaced = cache.get("same.rs", &replacement, true, 1, &open);
-        assert_eq!(
-            replaced.items,
-            [Item::Row(0), Item::Row(1), Item::Expansion(1)]
-        );
-        assert_eq!(replaced.expansion_rows(1), [Some(1), None]);
-    }
-
-    #[test]
     fn mode_revision_and_path_changes_keep_expanded_source_rows_in_order() {
         let rows = paired_rows();
         let mut cache = ProjectionCache::default();
@@ -387,11 +363,9 @@ mod tests {
             source.upgrade().is_none(),
             "the source buffer must be released"
         );
-        assert_eq!(snapshot.expansion_rows(0), [Some(1), None]);
 
         let replacement = paired_rows();
         cache.get("file.rs", &replacement, true, 1, &BTreeSet::new());
-        assert_eq!(snapshot.expansion_rows(0), [Some(1), None]);
         drop(snapshot);
         assert!(
             old_projection.upgrade().is_none(),

@@ -637,3 +637,94 @@ Issues（thread / home 一覧 / composer）と PR（feed / composer / home 表�
   separate overlay-baseline fix/integration. No dynamic resize, matched CPU/FPS
   sample, full diff/thread acceptance, hosted review/CI or merge is claimed.
 
+## #1072: review-thread overlay projection ownership and acceptance
+
+ADR-0209's markers and folded bodies remain consumers of the real
+`MainDiffView`/`render_diff_list`; no second renderer or thread store is added.
+`PrThreads` owns one last placement/projection cache per PR tab, not a
+process-wide collection of diff snapshots.
+
+- Placement is keyed by path and a live `Weak<Vec<DiffRow>>` source identity,
+  never by title or row count. Same-path, same-count replacement with different
+  old/new line coordinates must re-anchor the markers. Weak ownership also
+  prevents address reuse and invalidates the old source after `Arc::make_mut`.
+- The projection's key includes source identity, path, unified/split mode and
+  the expansion revision. Opening/closing uses the existing `ListState::splice`
+  and advances that revision; unchanged layout indices can be reused without
+  retaining the source rows. Another file starts closed, and another PR/session
+  has its own `PrThreads` owner.
+- Accepted `PrThreads::set` replaces the thread snapshot and clears placement
+  and projection even when the note count is unchanged. Render snapshots retain
+  their own immutable thread/derived-index data; a new frame must show the
+  accepted bodies and sides rather than a stale body or gutter.
+
+### Observed acceptance checkpoint (2026-10-10)
+
+The two independent native selectors in `tests/recovery/pr_threads.rs` are
+`pr_threads_projection_invalidation` and `pr_threads_projection_session_owner`.
+The first uses real private Git commits, a bare PR-ref remote and registered
+repository identities. Eight separated hunks remain 72 unified / 64 split rows
+when the first edit moves from line 40 to 41: the line-40 markers must move from
+removed/added rows 4/5 to context row 3. Four accepted notes replace four notes:
+the exact five-paragraph body replaces the short body, its freshly painted
+height is more than twice the old height, and RIGHT-to-LEFT replacement removes
+the old right gutter marker. Open/close, file/PrKey changes and bounded native
+wheel delivery to line 400 retain their consumer coordinate/viewport assertions.
+The forwarding seam is `gui-e2e`-only and calls the actual owner/key-bound
+conversation loader; it does not assign test thread state.
+
+The independent same-PrKey/two-session oracle observed a genuine Before failure
+(PM `bg671`: destination composer contained the original session's draft rather
+than empty text). The existing `(SessionId, PrKey)` composer implementation from
+[PR #1119](https://github.com/TomiXRM/kagi/pull/1119), exact
+`9fd6c8db79ead6c6a392a921c9eecca6e948460e`, was privately integrated, not duplicated.
+PM `bg705` passed the two exact selectors with the owner assertions unchanged;
+formatting and the existing `pr_page`/`PrListSnapshot` producer adapter changed
+test delivery, not the expected oracle. This is not a same-source cache timing
+Before/After comparison, nor hosted review/CI or a dev merge of the dependency.
+
+PM's default build `bg707` passed. The real default-app receipt is
+`/tmp/kagi-hig-audit-20261008/pr-overlay-projection-tierb/observed.json`: owned
+PID 14926/window 6311, English/Apple Light/100%, logical 1392×883 and a
+2784×1766 window capture (ratio 2, not an independent backing-scale query).
+Real PR #12 loaded three commits/two files and conversation counts 2/24/40
+(visible Review 66). In the +2,005-line file, line 2 opened in unified,
+survived split and closed; real wheel input reached later rows and returned.
+At first-visible row 15, line 16 opened the actual Review 15 body and retained
+row 15 through split open → unified → close. The other +20,005-line file showed
+rows 1..29 without leaked badges in that captured viewport; real PR #280's
+one-file/+2-line view had conversation 0/0/0 and no leaked overlay in its viewport.
+No Submit, GitHub write, clipboard or foreground action was exercised. Cmd-Q
+driver and original Popen exited 0; exact executable lookup and owned app count
+were zero afterward.
+
+The first full lane, PM `bg710`, stopped at two unit assertions that expected
+an Added source row in the old/left slot. Domain `split_pairs` correctly puts
+Added on new/right; the fixtures had no line coordinates and identical text.
+The implementation-index replacement test was deliberately removed, not
+re-pinned. The two incidental slot assertions in the snapshot-lifetime test
+were removed while retaining both meaningful Weak source/derived-allocation
+release assertions. Native replacement/body/side/order/viewport assertions and
+the session oracle were not changed; production code was not changed.
+
+PM `bg711` then completed all seven serial stages with exit 0: build, scoped
+native, workspace tests, Clippy, formatting, invariants and default build.
+The completed manifest is
+`/tmp/kagi-hig-audit-20261008/pr-overlay-projection-causal-final-gates/manifest.json`
+(`wall_seconds`: 418.105261, not a rendering-performance measurement).
+The native filter was exactly
+`pr_threads_projection_invalidation,pr_threads_projection_session_owner,pr_threads_via_gh,pr_same_number`.
+`native.raw` records the real-gh producer's `PASS pr_threads_via_gh` and final
+`PASS filtered scenarios`; no additional individual PASS-marker count is
+inferred. The final `row_overlay.rs` hash is
+`189fcedad9a13b51187b89ec7ddab41232bc715dd19455b3f753e9e8ca6f8ecc`;
+the difference from the smoke source is only the described unit cleanup.
+
+These are scoped native/default-app observations and seven-stage validation,
+not CPU/FPS, warm speedup, full 20k-row tail, JA/167%, full Copy or IME evidence.
+Same-PrKey/two-session default clicks remain unexercised; the independent
+native oracle covers that boundary. Standalone dev-PR publication remains
+dependent on PR #1119 landing on dev. Internal read-only reviews are not
+external approval, hosted CI or reviewer verification of these hashes.
+No release, external approval or publication of this overlay change is claimed.
+

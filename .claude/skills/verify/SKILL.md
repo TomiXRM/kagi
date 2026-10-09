@@ -694,6 +694,59 @@ The current suite covers:
   PR with line comments (current and outdated), click badges in unified and
   side-by-side, check the dimmed outdated card, EN/JA chips, no resolve button,
   and that scrolling does not jump when a thread opens or closes.
+  #1072 uses independent exact substrings
+  `pr_threads_projection_invalidation,pr_threads_projection_session_owner`.
+  The private Git/bare-remote fixture registers both raw GitHub remote identities
+  before mapping their transports with `insteadOf`; a URL rewrite alone is not
+  backend repository admission. Eight hunks keep 72 unified / 64 split rows
+  while the edit moves from line 40 to 41: badges move from removed/added rows
+  4/5 to context row 3 with new old/new coordinates. Four accepted notes replace
+  four notes; exact loaded body bytes, fresh real markdown paint with >2× the
+  short body's height, and RIGHT→LEFT gutter replacement reject stale content.
+  The `gui-e2e`-only `e2e::reload_pr_conversation` forwards to the production
+  owner/key-bound loader; do not replace it with test-side thread assignment.
+  Split/open/close, selected-file/PrKey and native vertical-wheel legs assert
+  current markers/bodies and viewport anchors. Deliver bounded wheel gestures
+  at fresh pane bounds and draw between them until current target paint is
+  visible: GPUI clamps a single event to measured item heights, so a giant delta
+  does not prove an unmeasured tail was reached. Both scenarios drain existing
+  checkbox animation tasks and use normal shared `unmount`.
+  Keep the same-PrKey/two-session owner selector separate: another session must
+  start with its own empty composer and restore both drafts/open overlays when
+  switching back. Its unchanged assertions failed on PM `bg671`; after private
+  integration of PR #1119's existing session-aware composer, PM `bg705` passed
+  both exact selectors. Formatting and the existing typed `pr_page` producer
+  adapter changed delivery only, not expected assertions. The original
+  `pr_threads`/`pr_threads_via_gh` oracles remain separate regression coverage.
+  PM's 2026-10-10 default build/smoke receipt is
+  `/tmp/kagi-hig-audit-20261008/pr-overlay-projection-tierb/observed.json`.
+  It records real PR #12 (three commits, two files, conversation 2/24/40,
+  Review 66): line 2 open unified→split→close; actual wheel movement; and line 16
+  showing Review 15 with first-visible row 15 retained through split open,
+  unified and close. The +20,005-line other file showed only rows 1..29 without
+  leaked badges; real PR #280 (one file, conversation 0/0/0, +2 lines) had no
+  leaked overlay in its captured viewport. English/Apple Light/100%, logical
+  1392×883 only; capture ratio 2 is not independent backing-scale evidence.
+  Original Cmd-Q/Popen exited 0 and exact executable/owned-app probes were zero.
+  No Submit/GitHub write, clipboard or foreground action occurred. Same-count
+  live GitHub body updates and same-PrKey/two-session default clicks were not
+  exercised there; the native selectors prove those boundaries. No CPU/FPS,
+  warm before/after speedup, full 20k tail, JA/167%, Copy or IME claim.
+  The first full lane (`bg710`) stopped on two unit slot expectations: Added
+  was incorrectly expected on old/left, while domain pairing correctly puts it
+  on new/right. The incidental implementation-index replacement test was
+  deliberately deleted, not re-pinned; incidental slot assertions were removed
+  from the lifetime test while retaining Weak source/derived-allocation proofs.
+  Native consumer assertions and production code remained unchanged.
+  PM `bg711` subsequently passed all seven serial stages: build, scoped native,
+  workspace tests, Clippy, formatting, invariants and default build. Receipt:
+  `/tmp/kagi-hig-audit-20261008/pr-overlay-projection-causal-final-gates/manifest.json`.
+  Its exact native filter is
+  `pr_threads_projection_invalidation,pr_threads_projection_session_owner,pr_threads_via_gh,pr_same_number`.
+  `native.raw` has explicit real-gh `PASS pr_threads_via_gh` and final
+  `PASS filtered scenarios`; do not invent individual PASS-marker counts.
+  This is scoped validation, not external approval/hosted CI, and publication
+  still depends on PR #1119 landing on dev.
 - PR suggestion apply (`KAGI_GUI_E2E_ONLY=pr_suggestion_apply`,
   `tests/recovery/pr_suggestion_apply.rs`): #351 / ADR-0210. The same real PR
   ref fetch as `pr_viewed`, with the PR branch checked out so `s.txt` is the

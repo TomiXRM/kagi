@@ -602,7 +602,11 @@ pub fn scenario_pr_threads_projection_invalidation(cx: &mut VisualTestAppContext
         &[("c.txt", &text), ("d.txt", &text)],
     );
     pr = pr_at(&head2);
-    e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(vec![pr.clone()])));
+    e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(crate::evidence_support::pr_page(
+        vec![pr.clone()],
+        "",
+        None,
+    ))));
     app.update(cx, |app, cx| app.refresh_github_prs(cx));
     wait_loaded(cx, &app, &head2);
     app.update(cx, |app, cx| app.pr_mode_select_file(0, cx));

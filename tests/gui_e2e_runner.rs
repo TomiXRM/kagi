@@ -318,6 +318,10 @@ mod platform_menu_scroll;
 mod platform_menu_focus;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_menu_bounds.rs"]
+mod pr_menu_bounds;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/field_picker_owner.rs"]
 mod field_picker_owner;
 
@@ -1141,6 +1145,10 @@ mod macos {
             (
                 "context_menu_keys_last_tab",
                 Box::new(crate::context_menu_keys::scenario_context_menu_keys_last_tab),
+            ),
+            (
+                "pr_menu_bounds",
+                Box::new(crate::pr_menu_bounds::scenario_pr_menu_bounds),
             ),
             (
                 "home_list_place",

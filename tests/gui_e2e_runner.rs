@@ -160,6 +160,9 @@ mod home_p2;
 #[path = "recovery/home_rows.rs"]
 mod home_rows;
 #[cfg(target_os = "macos")]
+#[path = "recovery/home_search_incomplete.rs"]
+mod home_search_incomplete;
+#[cfg(target_os = "macos")]
 #[path = "recovery/home_work.rs"]
 mod home_work;
 #[cfg(target_os = "macos")]
@@ -1161,6 +1164,18 @@ mod macos {
             (
                 "home_list_place",
                 Box::new(crate::home_list_place::scenario_home_list_place),
+            ),
+            (
+                "home_search_incomplete_repos",
+                Box::new(crate::home_search_incomplete::scenario_home_search_incomplete_repos),
+            ),
+            (
+                "home_search_incomplete_refreshing",
+                Box::new(crate::home_search_incomplete::scenario_home_search_incomplete_refreshing),
+            ),
+            (
+                "home_search_incomplete_work",
+                Box::new(crate::home_search_incomplete::scenario_home_search_incomplete_work),
             ),
             (
                 "home_review_avatar_host",

@@ -23,10 +23,11 @@ use super::KagiApp;
 /// Everything the list's entries are built from (#937): the filter, the
 /// pane and what that pane shows — the repositories / local clones, the clone
 /// running and whether organizations are still being read for Repositories;
-/// the pull request / issue lists for the other two — and the language their
-/// text is in. The entries are built again only when it changes. The panes
-/// not on screen are not part of it: a read landing for one of them must not
-/// rebuild (and so scroll back to the top) the list being read (#942 review).
+/// the pull request / issue lists for the other two — whether that pane's
+/// read is running, and the language their text is in. The entries are
+/// built again only when it changes. The panes not on screen are not part
+/// of it: a read landing for one of them must not rebuild (and so scroll
+/// back to the top) the list being read (#942 review).
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct ListKey {
     query: String,
@@ -36,6 +37,10 @@ pub(super) struct ListKey {
     version: u64,
     cloning: Option<String>,
     orgs_loading: bool,
+    /// The pane's lists are being read again (Repositories: `refreshing`;
+    /// the others: the work lists' `reading`): a search over them is not
+    /// current until the read lands (#1070).
+    reading: bool,
 }
 
 /// One entry of the virtualized list.
@@ -49,6 +54,9 @@ pub(super) enum HomeItem {
     Loading(&'static str, &'static str),
     /// The organizations could not be listed at all, and why.
     OrgsFailed(String),
+    /// The user's own list could not be read again: the list shown is the
+    /// last one read, and why (#1070).
+    RefreshFailed(SharedString),
     /// A pull request or issue (#928), and what a click on it does.
     Work(WorkKind, WorkItem, WorkRowState),
     /// A pull request / issue list could not be read, and why.
@@ -90,6 +98,11 @@ impl KagiApp {
                 })
                 .flatten(),
             orgs_loading: repos && self.home_github.orgs_loading,
+            reading: if repos {
+                self.home_github.refreshing
+            } else {
+                self.home_github.work.reading
+            },
         };
         let state = self
             .home_github
@@ -153,9 +166,12 @@ impl KagiApp {
         let list_rows = rows.clone();
         let list = gpui::list(state, move |i, _window, _cx| match items.get(i) {
             Some(HomeItem::Heading(title)) => section_heading(title).into_any_element(),
-            Some(HomeItem::Note(text)) => muted(text.clone()),
+            Some(HomeItem::Note(text)) => note_row(text),
             Some(HomeItem::OrgsFailed(text)) => {
                 super::e2e::measure_control("home-github-orgs-failed", muted(text.clone()))
+            }
+            Some(HomeItem::RefreshFailed(text)) => {
+                super::e2e::measure_control("home-github-refresh-failed", muted(text.clone()))
             }
             Some(HomeItem::Loading(text, spinner)) => super::e2e::measure_control(
                 *spinner,
@@ -235,8 +251,15 @@ impl KagiApp {
                     orgs_error,
                 },
             ) => {
-                let mut items =
-                    github_items(sections, orgs_error.as_deref(), &home.local, query, cloning);
+                let mut items = github_items(
+                    sections,
+                    orgs_error.as_deref(),
+                    home.refresh_error.as_deref(),
+                    key.orgs_loading || key.reading,
+                    &home.local,
+                    query,
+                    cloning,
+                );
                 if key.orgs_loading {
                     items.push(HomeItem::Loading(
                         Msg::HomeGithubOrgsLoading.t(),
@@ -253,19 +276,33 @@ impl KagiApp {
 /// The list's id, which its rows name as theirs.
 pub(super) const HOME_LIST: &str = "home-list";
 
-/// The list's entries: per owner a heading, its notes (empty, unreadable,
-/// truncated) and the repositories matching `query`; an owner without a
-/// match is left out while filtering. When the organizations could not be
-/// listed at all, a section says so instead of there being none.
+/// The list's entries: why the user's own list could not be read again (the
+/// list shown is the last one read), then per owner a heading, its notes
+/// (empty, unreadable, truncated) and the repositories matching `query`.
+/// While filtering, an owner without a match is left out only when its list
+/// was read in full; one that could not be read or was cut at the limit
+/// keeps its note, as its missing repositories might match (#1070). When
+/// the organizations could not be listed at all, a section says so instead
+/// of there being none. "No match" is said only for a current, complete
+/// read: every list read in full, nothing failed and nothing still being
+/// read (`reading`: the organizations, or a refresh).
 fn github_items(
     sections: &[OwnerRepos],
     orgs_error: Option<&str>,
+    refresh_error: Option<&str>,
+    reading: bool,
     local: &HashMap<String, PathBuf>,
     query: &str,
     cloning: Option<&str>,
 ) -> Vec<HomeItem> {
     let mut items = Vec::new();
     let mut shown = 0usize;
+    let mut complete = !reading && orgs_error.is_none() && refresh_error.is_none();
+    if let Some(error) = refresh_error {
+        items.push(HomeItem::RefreshFailed(
+            Msg::HomeGithubRefreshFailed.t().replace("{}", error).into(),
+        ));
+    }
     for section in sections {
         let title = section
             .owner
@@ -274,12 +311,11 @@ fn github_items(
         let list = match &section.list {
             Ok(list) => list,
             Err(error) => {
-                if query.is_empty() {
-                    items.push(HomeItem::Heading(title));
-                    items.push(HomeItem::Note(
-                        Msg::HomeGithubOwnerFailed.t().replace("{}", error),
-                    ));
-                }
+                complete = false;
+                items.push(HomeItem::Heading(title));
+                items.push(HomeItem::Note(
+                    Msg::HomeGithubOwnerFailed.t().replace("{}", error),
+                ));
                 continue;
             }
         };
@@ -302,7 +338,7 @@ fn github_items(
                 HomeItem::Repo(l.clone(), state)
             })
             .collect();
-        if rows.is_empty() && !query.is_empty() {
+        if rows.is_empty() && !query.is_empty() && !list.truncated {
             continue;
         }
         shown += rows.len();
@@ -312,6 +348,7 @@ fn github_items(
         }
         items.extend(rows);
         if list.truncated {
+            complete = false;
             items.push(HomeItem::Note(
                 Msg::HomeGithubTruncated
                     .t()
@@ -319,13 +356,13 @@ fn github_items(
             ));
         }
     }
-    if let Some(error) = orgs_error.filter(|_| query.is_empty()) {
+    if let Some(error) = orgs_error {
         items.push(HomeItem::Heading(Msg::HomeGithubOrgs.t().to_string()));
         items.push(HomeItem::OrgsFailed(
             Msg::HomeGithubOrgsFailed.t().replace("{}", error),
         ));
     }
-    if shown == 0 && !query.is_empty() {
+    if shown == 0 && !query.is_empty() && complete {
         items.push(HomeItem::Note(Msg::HomeGithubNoMatch.t().to_string()));
     }
     items
@@ -373,14 +410,49 @@ fn section_heading(title: &str) -> impl IntoElement {
         .child(SharedString::from(title.to_string()))
 }
 
-pub(super) fn muted(text: String) -> AnyElement {
+pub(super) fn muted(text: impl Into<SharedString>) -> AnyElement {
+    let text: SharedString = text.into();
     div()
         .px_3()
         .py_1()
         .text_sm()
         .text_color(rgb(theme().text_muted))
-        .child(SharedString::from(text))
+        .child(text)
         .into_any_element()
+}
+
+/// A note row: `muted`, unchanged. Tier A builds (#1070) also measure the
+/// notes a search has to keep apart, named after the message they show.
+fn note_row(text: &str) -> AnyElement {
+    #[cfg(feature = "gui-e2e")]
+    if let Some(name) = note_probe(text) {
+        return super::e2e::measure_control(name, muted(text.to_string()));
+    }
+    muted(text.to_string())
+}
+
+/// Which of the list's notes `text` is: no match, a list cut at its limit,
+/// or an owner that could not be read. Tier A only; the message decides,
+/// in the language on screen.
+#[cfg(feature = "gui-e2e")]
+fn note_probe(text: &str) -> Option<&'static str> {
+    let filled = |msg: Msg| {
+        let (before, after) = msg.t().split_once("{}").unwrap_or((msg.t(), ""));
+        text.len() >= before.len() + after.len()
+            && text.starts_with(before)
+            && text.ends_with(after)
+    };
+    if text == Msg::HomeGithubNoMatch.t() || text == Msg::HomeWorkNoMatch.t() {
+        Some("home-list-no-match")
+    } else if text == Msg::HomeWorkTruncated.t() {
+        Some("home-work-truncated")
+    } else if filled(Msg::HomeGithubTruncated) {
+        Some("home-github-truncated")
+    } else if filled(Msg::HomeGithubOwnerFailed) {
+        Some("home-github-owner-failed")
+    } else {
+        None
+    }
 }
 
 /// Muted text without its own padding, for use beside a spinner.

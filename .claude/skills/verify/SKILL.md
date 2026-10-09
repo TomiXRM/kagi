@@ -988,6 +988,87 @@ The current suite covers:
   (drafts are keyed by the repository written to; `drafts_test` covers the
   hand-over of pre-#940 drafts). For Tier B use a real `gh`
   login, click each switch cell and one PR / issue row of a local clone.
+- Home search over incomplete or stale lists (`KAGI_GUI_E2E_ONLY=home_search_incomplete`,
+  `tests/recovery/home_search_incomplete.rs`, #1070 / ADR-0219 decisions 2 and 8;
+  the filter selects three scenarios: `home_search_incomplete_repos`,
+  `home_search_incomplete_refreshing`, `home_search_incomplete_work`): a
+  strict offline `gh` answers only the command lines Home's producers build
+  (`repo_list_args`, `org_list_args`, `search_args`, `config get user -h
+  github.com`) and, with `[]`, Branch Cleanup's `pr list --state merged …`
+  read of the PR-less fixture; every other line exits 1. The stub's call
+  counts prove each Refresh read again.
+  - `home_search_incomplete_repos`: with the organizations unlisted
+    (`home-github-orgs-failed`), the user's list cut at `REPO_LIST_LIMIT`
+    (`home-github-truncated`) and an organization refusing
+    (`home-github-owner-failed`), a search matching nothing keeps those rows
+    and draws no `home-list-no-match`; a matching row (`home-gh-acme/needle`)
+    stays beside them. Then, over a complete list, the next own-list read
+    fails: the list read before stays with its matching row, and
+    `home-github-refresh-failed` (the existing `HomeGithubRefreshFailed`
+    text, measured directly, not through `note_probe`) is drawn instead of
+    no match — also after the search text changes and after a round trip
+    through the PRs pane. The next accepted read clears it, and the same
+    search is then a plain no match. (A `gh` account change also clears it,
+    in `show_saved_list`; this scenario does not exercise that.)
+  - `home_search_incomplete_refreshing` and the last step of
+    `home_search_incomplete_work`: while a Refresh is still reading
+    (Repositories `refreshing`, PRs / Issues `work.reading`), the list on
+    screen keeps its matching rows (`home-gh-acme/needle`,
+    `home-work-acme/local-4`) beside `home-github-updating` and draws no
+    `home-list-no-match`; once the read lands, the complete search says no
+    match again.
+  - `home_search_incomplete_work`: a failed review / assignee search keeps
+    `home-work-failed` and the matching row read before; a list cut at
+    `WORK_LIST_LIMIT` keeps `home-work-truncated`. Once every list is read
+    in full, Refresh keeps the search text and the complete search draws
+    `home-list-no-match` — per pane: the PRs, read in full, say no match
+    while the Issues are still cut.
+
+  Two ways of refreshing, on purpose. Every Refresh that must *finish* is a
+  real click on `home-github-refresh`. The "still reading" frames instead
+  call the button's handler, `reload_home_github`, and draw before
+  `run_until_parked`: a simulated click parks the executor, which runs the
+  `gh` reads to their end, while the test dispatcher only runs them inside
+  its pump — so the frame drawn first is deterministically the one with the
+  read running. No sleeps and no hold seam. The note names
+  (`home-list-no-match`, `home-github-truncated`, `home-github-owner-failed`,
+  `home-work-truncated`) come from a `gui-e2e`-only seam (`note_row` /
+  `note_probe` in `src/ui/home_github_list.rs`) that names a `Note` row by
+  the `Msg` it shows; default builds draw the same `muted` row without the
+  wrapper.
+
+  Two barriers, recorded separately. First: `home_search_incomplete_repos`
+  and `home_search_incomplete_work` failed before the fix (the
+  organizations row and the review-search failure hidden while searching);
+  after it, `home_tab,home_github,home_work,keyboard_nav,home_rows,home_list_place`
+  plus the two passed 8 of 8 (KEEP_GOING). Review follow-up: the
+  own-refresh-failure step, the refreshing scenario and the work reading
+  step failed 3 of 3 before the second fix; after it the same six plus the
+  three passed 9 of 9. The final source (with the `SharedString` ownership
+  correction of the refresh-failure row and `cargo fmt`) passed the same 9
+  and all seven final gates again.
+
+  Tier B (done for #1070, default build, two separate launches, no UI test
+  seam): a private strict offline `gh` — synthetic account, rows and
+  deliberate failures, not a real GitHub outage, SAML enforcement or
+  account switch — and the app's own cache. In the first launch, all three
+  panes showed failed reads, filtering, matching cached rows, the "Updating"
+  read and accepted recovery; Repositories and Issues also showed cut lists.
+  Each pane decided "no match" on its own lists (PRs said no match beside a Repositories
+  failure and beside cut Issues); a second own-list failure replaced the
+  reason's detail on screen (502 → 503). Holding the own-list read there
+  ran into the existing 60 s read timeout, so its frame is a timeout with
+  the reason kept, not a recovery; the recovery was the explicit Refresh
+  after it. The second launch started on the complete list the first had
+  saved, held only the own-list read, and showed the saved rows with
+  "Updating" and no "no match" for a query typed meanwhile; after the
+  release (about 40 s after launch, driver time, not latency) the accepted
+  read turned the same query into a plain no match. Both quit with ⌘Q
+  (exit 0, no process left). Not exercised anywhere: clearing the reason on
+  a `gh` account change (reviewed in source only). To repeat it, drive the
+  same states with a stand-in `gh` on `PATH` in an isolated launch (`USER`,
+  `KAGI_NO_RESTORE=1`, `KAGI_LOG_DIR`); images go to the PR through
+  `gh --attach`, never into the branch.
 - Home's display leftovers of #960 (`KAGI_GUI_E2E_ONLY=home_review_avatar_host,clone_card_ticker`,
   `tests/recovery/home_p2.rs`, #968): a review request whose Enterprise host
   is spelt `GHE.example.com` gets its author's avatar from the fetcher's disk
@@ -1468,7 +1549,7 @@ paste actions, not marked text (use Tier B for IME).
 |---|---|---|
 | Typed keystrokes into the focused real `InputState` (`simulate_keystrokes` with characters) | `conflict_save_boundary`, `editor_save_admission`, `editor_save_buffer_identity`, `editor_external_change_banner`, `editor_banner_rename_and_save`, `remote_connect_keeps_dirty_editor`, `cross_worktree_merge` (Editor buffer); `create_branch_presents_backend_receipt`, `create_branch_replan_error` (branch name); `issues_pagination` (list filter); `palette_push_modal_keys` (command palette); `workspace_mode_toolbar` (Issue title) | The key path: focus, the input's key handling, its change event and the product's sync from it. |
 | Paste into the focused real `InputState` (`write_to_clipboard`, then `cmd-v` or `input::Paste`) | `remote_browse_escape_focus` (host), `worktree_lock_reason` (lock reason, after `cmd-a backspace`), `pr_fields_escape_focus` (picker filter), `workspace_mode_toolbar` (Issue title / body) | The paste path into the field the product focused, and the sync from it. |
-| `InputState::set_value` on the real input (no key or paste event) | `conflict_continue_cache` (Result pane), `home_github` (Home search), `theme_custom` (palette query) | The input's change event and the product's handling of the value; not focus or key handling. |
+| `InputState::set_value` on the real input (no key or paste event) | `conflict_continue_cache` (Result pane), `home_github`, `home_search_incomplete_repos`, `home_search_incomplete_refreshing`, `home_search_incomplete_work` (Home search), `theme_custom` (palette query) | The input's change event and the product's handling of the value; not focus or key handling. |
 | `InputState::replace` / `replace_all` on the real input (no key or paste event) | `issue_create_fields` (Issue body, via `insert_issue_body_for_e2e` / `replace_issue_body_for_e2e`), `home_work` (Reply body, via `insert_issue_reply_body_for_e2e`), `pr_same_number`, `workspace_mode_toolbar` (PR composer; Issue body via `insert_issue_body_for_e2e` / `replace_issue_body_for_e2e`; Reply body via `insert_issue_reply_body_for_e2e`) | The input's change event and the product's handling of the replaced text (the Composer / Reply draft subscription included); not focus, key or paste handling. |
 | `e2e::set_remote_browse_host_input`: `set_value` on the host input **and** a direct write of `host_input` | `merge_plan_latch`, `delete_branch_plan_latch`, `remote_browse_modal_routing`, `push_failure_keeps_modal` | Remote Browse holding its slot and input; not the form's own sync from the field (that is `remote_browse_escape_focus`). |
 | No `InputState` at all: `e2e::open_local_panel_no_inputs` / `open_worktree_panel_no_inputs`, message from the `commit_msg` fallback (`e2e::set_commit_message`, as headless `KAGI_COMMIT_MSG`) | `wip_diff_survives_reload`, `commit_panel_survives_reload`, `worktree_wip_inline`, `worktree_panel_commit`, `worktree_panel_amend_discard`, `worktree_panel_discard_recording_failure`, `diff_highlight_once`, `diff_highlight_stale`, `file_menu_freezes_path`, `file_menu_rejects_stale_owner`, `file_tree_roles`, `hunk_staging`, `modal_compact`, `smart_commit_generation_owner`, `smart_commit_modal_and_probe`, `stage_failure_notice`, `dialog_a11y_roles`, `commit_stage_deferred_owner`, `commit_panel_revalidates_on_activation`, `smart_generation_close_drops_panel`, `commit_panel_refuses_during_activation`, `commit_close_drops_panel`, `manual_reload_releases_revalidation`, `commit_row_layout_wip` | The commit panel's ownership, staging and write paths. Nothing about the message or description inputs: these were built without them because each `InputState` registers an App-level observer that keeps it alive past its window (see `open_worktree_panel_no_inputs`). |

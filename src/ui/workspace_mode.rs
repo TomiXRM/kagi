@@ -568,6 +568,9 @@ impl KagiApp {
             // Invalidate completions as well as hiding the mode: a request that
             // lands after Graph was selected must not reopen the workspace.
             self.with_ui(|ui| {
+                // Selection and its list belong to the session, not this visit.
+                // Retire only the activation so returning can show the cache.
+                ui.retire_issue_conversation_scope();
                 ui.github_issues_gen = ui.github_issues_gen.wrapping_add(1);
                 ui.github_issue_detail_gen = ui.github_issue_detail_gen.wrapping_add(1);
                 ui.github_issues_loading = false;
@@ -577,7 +580,6 @@ impl KagiApp {
                 ui.github_issues_error = None;
                 ui.github_issue_detail_loading = None;
                 ui.github_issue_detail_error = None;
-                ui.selected_github_issue = None;
             });
         }
     }
@@ -641,6 +643,7 @@ impl KagiApp {
         if !self.issues_mode_open() {
             self.refresh_github_issues(cx);
         }
+        self.activate_issue_conversation(cx);
         klog!("mode: issues");
         cx.notify();
     }

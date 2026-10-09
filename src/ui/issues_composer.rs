@@ -55,6 +55,7 @@ impl KagiApp {
         if !self.issues_mode_open() {
             return;
         }
+        self.sync_issue_conversation_activation(window, cx);
         let (Some(owner), Some(repo)) = (self.active_session(), self.repo_path.clone()) else {
             return;
         };
@@ -250,6 +251,11 @@ impl KagiApp {
         let input = editor.body_input.clone();
         if let Some(input) = input {
             input.update(cx, |st, cx| st.focus(window, cx));
+        }
+        if focused {
+            self.retire_issue_conversation(cx);
+        } else {
+            self.activate_issue_conversation(cx);
         }
         cx.notify();
     }

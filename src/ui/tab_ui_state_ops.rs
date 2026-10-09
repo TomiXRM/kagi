@@ -135,6 +135,13 @@ impl TabUiState {
             github_issue_detail_loading: _,
             github_issue_detail_error: _,
             github_issue_detail_gen: _,
+            // Accepted conversation caches, read revisions and viewport state
+            // belong to this session; opening a thread is classified above by
+            // selected_github_issue, just like the existing detail/composer cache.
+            issue_conversations: _,
+            issue_conversation_gen: _,
+            issue_conversation_scope: _,
+            issue_thread_pending_list: _,
             issue_composer: _,
             cleanup_scanning: _,
             cleanup_prs: _,

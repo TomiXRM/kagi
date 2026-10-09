@@ -378,6 +378,22 @@ mod worktree_graph;
 mod workspace_mode_toolbar;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/issue_conversation_selection.rs"]
+mod issue_conversation_selection;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/issue_conversation_lifecycle.rs"]
+mod issue_conversation_lifecycle;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/issue_enabled_input_copy.rs"]
+mod issue_enabled_input_copy;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/issue_offscreen_select_all.rs"]
+mod issue_offscreen_select_all;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/toolbar_keyboard.rs"]
 mod toolbar_keyboard;
 
@@ -2403,6 +2419,50 @@ mod macos {
                 Box::new(
                     crate::workspace_mode_toolbar::markdown_preparation_edges::scenario_markdown_preparation_edges,
                 ),
+            ),
+            (
+                "issue_conversation_offscreen_copy",
+                Box::new(crate::issue_conversation_selection::scenario_issue_conversation_offscreen_copy),
+            ),
+            (
+                "issue_conversation_giant_copy",
+                Box::new(crate::issue_conversation_selection::scenario_issue_conversation_giant_copy),
+            ),
+            (
+                "issue_conversation_accepted_identity",
+                Box::new(crate::issue_conversation_selection::scenario_issue_conversation_accepted_identity),
+            ),
+            (
+                "issue_conversation_refresh_anchor",
+                Box::new(crate::issue_conversation_selection::scenario_issue_conversation_refresh_anchor),
+            ),
+            (
+                "issue_conversation_geometry",
+                Box::new(crate::issue_conversation_selection::scenario_issue_conversation_geometry),
+            ),
+            (
+                "issue_conversation_edge_drag",
+                Box::new(crate::issue_conversation_selection::scenario_issue_conversation_edge_drag),
+            ),
+            (
+                "issue_conversation_delayed_rejected",
+                Box::new(crate::issue_conversation_lifecycle::scenario_issue_conversation_delayed_rejected),
+            ),
+            (
+                "issue_conversation_two_owners",
+                Box::new(crate::issue_conversation_lifecycle::scenario_issue_conversation_two_owners),
+            ),
+            (
+                "issue_conversation_copy_priority",
+                Box::new(crate::issue_conversation_lifecycle::scenario_issue_conversation_copy_priority),
+            ),
+            (
+                "issue_conversation_enabled_input_copy",
+                Box::new(crate::issue_enabled_input_copy::scenario_issue_conversation_enabled_input_copy),
+            ),
+            (
+                "issue_conversation_offscreen_select_all",
+                Box::new(crate::issue_offscreen_select_all::scenario_issue_conversation_offscreen_select_all),
             ),
             (
                 "toolbar_a11y_disabled",

@@ -77,3 +77,12 @@ remote's reflog and from the PR page.
   silently degrades to "no chip" (prose still renders), which is the right
   failure mode.
 - `gh` remains the only GitHub transport. No token handling, no HTTP client.
+
+## #1091 scope note (2026-10-09)
+
+The accepted Issue Thread ownership/virtualization and SDK managed-selection
+cutover is recorded in [ADR-0198](0198-read-only-issues-workspace.md#1091-2026-10-09-accepted-issue-conversation-and-managed-selection).
+Its Issue-only native consumer results do not prove PR conversation
+virtualization, remove PR data-cloning costs, or change this ADR's review/merge
+boundary. Shared GitHub Markdown preparation/privacy policy remains ADR-0142.
+

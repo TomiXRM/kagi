@@ -128,14 +128,14 @@ pub(super) enum BodyMarkdownFormat {
     Placeholder { text: &'static str, italic: bool },
 }
 
-struct PreparedBody {
-    raw: String,
-    format: BodyMarkdownFormat,
-    text: SharedString,
+pub(super) struct PreparedBody {
+    pub(super) raw: String,
+    pub(super) format: BodyMarkdownFormat,
+    pub(super) text: SharedString,
 }
 
 impl PreparedBody {
-    fn new(body: &str, format: BodyMarkdownFormat) -> Self {
+    pub(super) fn new(body: &str, format: BodyMarkdownFormat) -> Self {
         let placeholder;
         let source = match format {
             BodyMarkdownFormat::Original => body,

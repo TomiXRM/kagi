@@ -236,7 +236,10 @@ impl KagiApp {
             // bottom terminal panel would eat a third of it. Collapse it on
             // entry — Cmd-J still brings it back (user request).
             self.bottom_panel_open = false;
-            self.with_ui(|ui| ui.pr_mode = Some(PrModeState::default()));
+            self.with_ui(|ui| {
+                ui.retire_issue_conversation_scope();
+                ui.pr_mode = Some(PrModeState::default());
+            });
             klog!("pr-mode: opened");
         }
         cx.notify();

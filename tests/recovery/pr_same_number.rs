@@ -54,6 +54,27 @@ fn composer(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> String {
     })
 }
 
+fn type_comment(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    text: &str,
+) {
+    let input = cx.read(|cx| {
+        app.read(cx)
+            .pr_comment_input
+            .clone()
+            .expect("the composer's box exists once drawn")
+    });
+    cx.update_window(window, |_, window, cx| {
+        input.update(cx, |state, cx| {
+            state.set_value("", window, cx);
+            state.replace(text.to_owned(), window, cx);
+        })
+    })
+    .expect("type into the real composer");
+}
+
 const A: &str = "github.com/acme/a";
 const B: &str = "github.com/acme/b";
 
@@ -195,18 +216,7 @@ pub fn scenario_pr_same_number(cx: &mut VisualTestAppContext) {
     // A draft typed on B#7 (open, as it was opened last) is not carried to
     // A#7 when A's tab comes forward, and comes back with B's tab.
     paint(cx, window);
-    cx.update_window(window, |_, window, cx| {
-        app.update(cx, |app, cx| {
-            let input = app
-                .pr_comment_input
-                .clone()
-                .expect("the composer's box exists once drawn");
-            input.update(cx, |state, cx| {
-                state.replace("for B".to_owned(), window, cx)
-            });
-        })
-    })
-    .unwrap();
+    type_comment(cx, &app, window, "for B");
     paint(cx, window);
     app.update(cx, |app, cx| app.pr_mode_open(&a7, cx));
     paint(cx, window);
@@ -222,6 +232,63 @@ pub fn scenario_pr_same_number(cx: &mut VisualTestAppContext) {
         "for B",
         "B's draft comes back with B's tab"
     );
+
+    // The exact same PrKey in a second repository session is a separate
+    // composer owner. Exercise real visible text, not a seeded parked draft.
+    let first_owner = cx.read(|cx| app.read(cx).active_session().unwrap());
+    type_comment(cx, &app, window, "first session B");
+    paint(cx, window);
+    assert_eq!(composer(cx, &app), "first session B");
+    assert_eq!(draft(cx, &app, B), "first session B");
+    let other_fixture = build_fixture();
+    let other_repo = other_fixture.path().canonicalize().unwrap();
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(other_repo.clone(), cx));
+    });
+    paint(cx, window);
+    let other_owner = cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.pr_mode().is_none());
+        app.active_session().unwrap()
+    });
+    assert_ne!(first_owner, other_owner);
+    app.update(cx, |app, cx| app.pr_mode_open(&b7, cx));
+    paint(cx, window);
+    assert_eq!(
+        composer(cx, &app),
+        "",
+        "the other session owns an empty draft"
+    );
+    type_comment(cx, &app, window, "other session B");
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    paint(cx, window);
+    assert_eq!(
+        composer(cx, &app),
+        "first session B",
+        "the identical PR key must restore the returning session's draft"
+    );
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let parked = app.ui[&other_owner].pr_mode.as_ref().unwrap();
+        assert_eq!(parked.tabs[0].comment_draft, "other session B");
+    });
+
+    app.update(cx, |app, cx| app.switch_repo(1, cx));
+    paint(cx, window);
+    assert_eq!(composer(cx, &app), "other session B");
+
+    // A closed-and-reopened repository is a new session, not permission to
+    // carry the old session's identical PR-key draft into a new tab.
+    app.update(cx, |app, cx| app.close_tab(1, cx));
+    paint(cx, window);
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(other_repo.clone(), cx));
+        assert_ne!(app.active_session(), Some(other_owner));
+        app.pr_mode_open(&b7, cx);
+    });
+    paint(cx, window);
+    assert_eq!(composer(cx, &app), "");
+    assert_eq!(draft(cx, &app, B), "");
 
     unmount(cx, app, window);
 }

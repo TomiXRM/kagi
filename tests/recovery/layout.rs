@@ -856,7 +856,7 @@ fn pr_table_frame(
     );
 }
 
-fn pr_table_alignment(win: AnyWindowHandle, number: u64) {
+fn pr_table_alignment(win: AnyWindowHandle, number: u64, case: ((f32, f32), &str, f32, &str)) {
     let bounds = |name: &str| {
         e2e::control_bounds(win.window_id(), name)
             .unwrap_or_else(|| panic!("missing table geometry: {name}"))
@@ -876,7 +876,7 @@ fn pr_table_alignment(win: AnyWindowHandle, number: u64) {
         header_title.top() >= header.top() - px(EPS)
             && header_title.bottom() <= header.bottom() + px(EPS)
             && row.top() >= header.bottom() - px(EPS),
-        "the nonwrapping header must not overlap controls or rows"
+        "the nonwrapping header must not overlap controls or rows: header={header:?}, header-title={header_title:?}, row={row:?}, number={number}, case=(dimensions, locale, zoom, phase)={case:?}"
     );
     assert!(
         (title.left() - header_title.left()).abs() <= px(EPS)
@@ -916,7 +916,9 @@ pub fn scenario_pr_dashboard_responsive(cx: &mut VisualTestAppContext) {
                 )
             })
             .collect();
-        e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(prs)));
+        e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(crate::evidence_support::pr_page(
+            prs, "", None,
+        ))));
         app.update(cx, |app, cx| app.refresh_github_prs(cx));
         cx.run_until_parked();
         app.update(cx, |app, cx| app.show_pr_mode(cx));
@@ -945,7 +947,7 @@ pub fn scenario_pr_dashboard_responsive(cx: &mut VisualTestAppContext) {
                 horizontal.set_offset(point(px(0.), px(0.)));
                 vertical.scroll_to_item_strict(0, ScrollStrategy::Top);
                 pr_table_frame(cx, &app, win, dimensions);
-                pr_table_alignment(win, first);
+                pr_table_alignment(win, first, (dimensions, locale, zoom, "initial"));
                 let viewport = e2e::control_bounds(win.window_id(), "pr-home-table-viewport")
                     .expect("horizontal viewport");
                 let center = e2e::control_bounds(win.window_id(), "pr-mode-center-pane")
@@ -977,7 +979,7 @@ pub fn scenario_pr_dashboard_responsive(cx: &mut VisualTestAppContext) {
                 if horizontal.max_offset().x > px(EPS) {
                     assert!(after_title.left() < before_title.left() - px(EPS));
                 }
-                pr_table_alignment(win, first);
+                pr_table_alignment(win, first, (dimensions, locale, zoom, "horizontal-wheel"));
                 let age = e2e::control_bounds(win.window_id(), &format!("pr-home-age-{first}"))
                     .expect("last metadata column");
                 assert!(
@@ -1001,7 +1003,7 @@ pub fn scenario_pr_dashboard_responsive(cx: &mut VisualTestAppContext) {
                 let tail = e2e::control_bounds(win.window_id(), &format!("pr-home-row-{last}"))
                     .expect("vertical wheel reaches the last PR");
                 assert!(tail.bottom() <= viewport.bottom() + px(EPS));
-                pr_table_alignment(win, last);
+                pr_table_alignment(win, last, (dimensions, locale, zoom, "vertical-tail"));
                 let list = kagi::ui::list_a11y::recorded_list("pr-list").unwrap();
                 assert!(list.rows[&99].0.contains(&format!("#{last}")));
             }

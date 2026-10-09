@@ -8,7 +8,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use kagi_domain::github::{Issue, IssueListSnapshot, PullRequest};
+use kagi_domain::github::{Issue, IssueListSnapshot, PrListSnapshot, PullRequest};
 use kagi_domain::list_filter::StateFilter;
 
 use crate::github::{
@@ -253,15 +253,30 @@ pub(crate) fn fetch_json<T>(
 /// chip has to change *which collection is fetched*, never merely which rows
 /// are drawn.
 ///
-/// `Ok(vec![])` means the repository really has no pull requests in that
-/// collection — the only answer that may replace a cached list. Every failure
-/// is classified ([`PrFetchError`]) so an expired token or an offline machine
-/// keeps the last good data instead of being shown as an empty inbox (#506).
-pub fn list_prs(workdir: &Path, state: StateFilter) -> Result<Vec<PullRequest>, PrFetchError> {
-    // gh's default-repository rules decide which repository this is, for the
-    // reason the Issue list resolves it the same way: on a fork, `origin` is
-    // not the repository the pull requests live in.
-    let base_repo = repository_identity(workdir)?;
+/// Each call returns only one page. Continuations must carry the first page's
+/// resolved repository, exact opaque cursor and server-side state; they never
+/// re-resolve gh's default destination. Failures preserve the last good data.
+pub fn list_prs(
+    workdir: &Path,
+    frozen_base_repo: Option<&str>,
+    cursor: Option<&str>,
+    state: StateFilter,
+) -> Result<PrListSnapshot, PrFetchError> {
+    if cursor.is_some_and(|cursor| cursor.trim().is_empty()) {
+        return Err(PrFetchError::Invalid(
+            "empty pull request page cursor".into(),
+        ));
+    }
+    let base_repo = match frozen_base_repo {
+        Some(repo) if !repo.trim().is_empty() => repo.to_string(),
+        Some(_) => return Err(PrFetchError::Invalid("empty repository identity".into())),
+        None if cursor.is_some() => {
+            return Err(PrFetchError::Invalid(
+                "pull request continuation requires a frozen repository".into(),
+            ));
+        }
+        None => repository_identity(workdir)?,
+    };
     let (host, owner, name) = split_identity(&base_repo)?;
     let owner_field = format!("owner={owner}");
     let name_field = format!("name={name}");
@@ -270,6 +285,12 @@ pub fn list_prs(workdir: &Path, state: StateFilter) -> Result<Vec<PullRequest>, 
         .iter()
         .map(|state| format!("states[]={state}"))
         .collect();
+    // Typed null starts a page run; opaque strings must never use gh's typed
+    // field conversion (a cursor can itself look like a number or `null`).
+    let (cursor_flag, cursor_field) = match cursor {
+        Some(cursor) => ("-f", format!("cursor={cursor}")),
+        None => ("-F", "cursor=null".to_string()),
+    };
     let mut args = vec![
         "api",
         "graphql",
@@ -279,15 +300,21 @@ pub fn list_prs(workdir: &Path, state: StateFilter) -> Result<Vec<PullRequest>, 
         owner_field.as_str(),
         "-F",
         name_field.as_str(),
+        cursor_flag,
+        cursor_field.as_str(),
     ];
     for state in &states {
         args.extend(["-f", state.as_str()]);
     }
     args.extend(["-f", query_field.as_str()]);
-    let first = fetch_json(workdir, &args, parse_pr_list_page);
+    let first = fetch_json(workdir, &args, |json| {
+        parse_pr_list_page(json, &base_repo, cursor)
+    });
     if first.as_ref().is_err_and(PrFetchError::is_gateway_timeout) {
         std::thread::sleep(l1_retry_delay());
-        fetch_json(workdir, &args, parse_pr_list_page)
+        fetch_json(workdir, &args, |json| {
+            parse_pr_list_page(json, &base_repo, cursor)
+        })
     } else {
         first
     }

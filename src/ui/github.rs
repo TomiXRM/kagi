@@ -13,7 +13,7 @@ use super::modals::{ActiveModal, PrMergeModal};
 use super::operations::modal_state::{AsyncPlanOffer, PlanningPresentation};
 use super::operations::RunPresentation;
 use super::types::ToastKind;
-use super::{CompareTarget, CompareView, FooterStatus, KagiApp};
+use super::{CompareTarget, CompareView, EditorPendingIntent, FooterStatus, KagiApp};
 
 /// Refresh cadence for shared open-PR evidence and visible volatile status.
 /// Strip-only Closed/All collections are refreshed explicitly, not by this ticker.
@@ -272,6 +272,19 @@ impl KagiApp {
     /// Read-only PR peek: Compare pane over merge-base(base, head) → head using
     /// the fetched remote tips. Both branches must exist as `origin/…`.
     pub fn open_pr_peek(&mut self, pr: &PullRequest, cx: &mut Context<Self>) {
+        // A newer Peek owns this navigation, even when its refs cannot be read.
+        if self
+            .editor_dirty_guard_modal()
+            .is_some_and(|modal| matches!(&modal.intent, EditorPendingIntent::PrPeek { .. }))
+        {
+            self.cancel_editor_dirty_guard();
+        }
+        let Some(owner) = self
+            .active_session()
+            .and_then(|session| self.app_sessions.attachment(session))
+        else {
+            return;
+        };
         let tip = |name: &str| {
             self.view()
                 .remote_branches
@@ -300,21 +313,36 @@ impl KagiApp {
         match repo.compare_commits(&base, &head_tip) {
             Ok(files) => {
                 klog!("pr-peek: #{} files={}", pr.number, files.len());
-                if let Some(row) = self.row_for_commit_id(&head_tip) {
-                    if self.ui().selected != Some(row) {
-                        self.select(row);
-                    }
-                }
-                if let Some(ui) = self.ui_mut() {
-                    ui.main_diff = None;
-                }
+                // Freeze the successful read before asking to discard an
+                // editor hidden under the PR takeover. Cancel changes neither.
                 let view = CompareView {
                     base,
                     target: CompareTarget::Commit(head_tip),
                     files,
                     title: SharedString::from(format!("#{} {}", pr.number, pr.head)),
                 };
-                self.show_compare(view, cx);
+                if let Some(editor) = self.ui().editor_workspace.as_ref() {
+                    if editor.read(cx).any_dirty() {
+                        let input = editor
+                            .read(cx)
+                            .editor
+                            .as_ref()
+                            .map(|input| input.entity_id());
+                        let path = editor.read(cx).open_path.clone();
+                        self.open_editor_dirty_guard(
+                            EditorPendingIntent::PrPeek {
+                                owner,
+                                editor: editor.entity_id(),
+                                input,
+                                path,
+                                view,
+                            },
+                            cx,
+                        );
+                        return;
+                    }
+                }
+                self.finish_pr_peek(owner, view, cx);
             }
             Err(e) => {
                 klog!("pr-peek: error: {}", e);
@@ -322,6 +350,37 @@ impl KagiApp {
                     FooterStatus::Failed(SharedString::from(i18n::op_failed(i18n::Op::PrPeek, e)));
             }
         }
+    }
+
+    /// Publish only to the attachment that requested this immutable Compare.
+    pub(crate) fn finish_pr_peek(
+        &mut self,
+        owner: crate::app::Attachment,
+        view: CompareView,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_session() != Some(owner.session)
+            || self.app_sessions.attachment(owner.session).as_ref() != Some(&owner)
+        {
+            return;
+        }
+        self.show_graph_mode(cx);
+        self.inspector_visible = true;
+        if let CompareTarget::Commit(head) = &view.target {
+            if let Some(row) = self.row_for_commit_id(head) {
+                if self.ui().selected != Some(row) {
+                    self.select(row);
+                }
+            }
+        }
+        // CommitPanel outranks Compare in the right slot. Hide its gate, not
+        // its retained entity or draft, even when no Graph row was selected.
+        self.with_ui(|ui| {
+            ui.commit_panel_open = false;
+            ui.main_diff = None;
+        });
+        self.show_compare(view, cx);
+        cx.notify();
     }
 
     pub fn open_pr_in_browser(&mut self, pr: &PullRequest) {

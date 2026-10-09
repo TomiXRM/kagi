@@ -330,6 +330,10 @@ mod evidence_support;
 mod github_evidence_owner;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_peek_visible.rs"]
+mod pr_peek_visible;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/cleanup_evidence_owner.rs"]
 mod cleanup_evidence_owner;
 
@@ -2103,6 +2107,22 @@ mod macos {
             (
                 "file_menu_focus_after_open_repository",
                 Box::new(crate::file_menu_owner::scenario_file_menu_focus_after_open_repository),
+            ),
+            (
+                "pr_peek_visible_table",
+                Box::new(crate::pr_peek_visible::scenario_pr_peek_visible_table),
+            ),
+            (
+                "pr_peek_visible_edges",
+                Box::new(crate::pr_peek_visible::scenario_pr_peek_visible_edges),
+            ),
+            (
+                "pr_peek_dirty_guard",
+                Box::new(crate::pr_peek_visible::scenario_pr_peek_dirty_guard),
+            ),
+            (
+                "pr_peek_read_failure_context",
+                Box::new(crate::pr_peek_visible::scenario_pr_peek_read_failure_context),
             ),
             (
                 "github_evidence_restores",

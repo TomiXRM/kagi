@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- PR table／sidebar の Peek が成功しても PR workspace や WIP の Commit Panel に隠れ、比較した変更ファイルが見えない問題を修正しました。既存の Graph／Inspector の Compare を表示し、graph 未取得の PR head でもファイルから main diff を開けます。dirty Editor は既存の確認を経由し、Cancel・古い tab／editor／input の承認では buffer を捨てません。保持中の Commit Panel と未送信 draft、read failure 時の表示文脈は維持し、fetch・checkout・repository write は行いません。(#1102)
 - Editor の file tree は、受理した file 一覧と folder の開閉が変わるときだけ可視行・accessibility の階層／同列位置・keyboard 選択の対応を更新するようにしました。再描画で全 file tree を作り直さず、同じ件数の一覧置換でも新しい file に選択を対応させます。folder の折りたたみで選択 file が隠れても開いている buffer は保持し、表示モード切替や file 一覧の更新後も選択と実際に開く file を対応させます。(#1073)
 - PR dashboard は title / branch の最小幅を確保し、狭いウィンドウや UI 拡大時に列見出しが 1 文字ずつ縦に潰れて検索・行へ重なる問題を修正しました。見出しと行を同じ横スクロール領域に置き、state / author / checks / files / age に到達できます。縦の仮想化と表示範囲だけの PR 詳細取得は維持します。(#1095)
 - PR／Issuesのサイドバーで大量のcardを展開すると、行がwindow内に縦圧縮されてtitleが見えなくなる問題を修正しました。各cardとsection見出しの自然な高さを維持し、親のscrollで末尾まで辿れます。(#1089)

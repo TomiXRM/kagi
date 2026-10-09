@@ -407,8 +407,8 @@ impl WorkspaceItem for CommitPanelItem {
 /// selected commit's detail + badges + active-file highlight, sync the
 /// message slot of the derived model, and render `inspector::render_inspector`
 /// from it. The caller has already synced the files slot to its own source
-/// (issue #512); `compare_title` is the one other input that differs between
-/// the normal and compare modes.
+/// (issue #512). Compare can render its files with no selected commit; only
+/// the normal Inspector requires the commit-specific header/message.
 pub(super) fn render_inspector_body(
     app: &mut KagiApp,
     selected: Option<usize>,
@@ -417,30 +417,40 @@ pub(super) fn render_inspector_body(
 ) -> Option<AnyElement> {
     // During the exit clip `selected` is the last drawn row; the app's active
     // selection has already been cleared by Escape.
-    let d = selected.and_then(|i| app.view().details.get(i)).cloned()?;
-    let at = CommitId(d.full_sha.as_ref().to_string());
+    let d = selected.and_then(|i| app.view().details.get(i)).cloned();
+    if d.is_none() && compare_title.is_none() {
+        return None;
+    }
+    let at = d
+        .as_ref()
+        .map(|d| CommitId(d.full_sha.as_ref().to_string()));
     let selected_badges: Vec<commit_list::RefBadge> = selected
+        .filter(|_| d.is_some())
         .and_then(|i| app.view().rows.get(i))
         .map(|r| r.badges.clone())
         .unwrap_or_default();
     // GitHub Phase 1: PRs whose head branch (local or origin/) points at this
     // commit — rendered as clickable `#N ✓` chips next to the ref badges.
-    let prs_here: Vec<kagi_domain::github::PullRequest> = app
-        .ui()
-        .github_prs
-        .iter()
-        .filter(|pr| {
-            let local_tip = app.view().branch_targets.get(&pr.head);
-            let remote_tip = app
-                .view()
-                .remote_branches
+    let prs_here: Vec<kagi_domain::github::PullRequest> = at
+        .as_ref()
+        .map(|at| {
+            app.ui()
+                .github_prs
                 .iter()
-                .find(|rb| rb.name == pr.head)
-                .map(|rb| &rb.target);
-            local_tip == Some(&at) || remote_tip == Some(&at)
+                .filter(|pr| {
+                    let local_tip = app.view().branch_targets.get(&pr.head);
+                    let remote_tip = app
+                        .view()
+                        .remote_branches
+                        .iter()
+                        .find(|rb| rb.name == pr.head)
+                        .map(|rb| &rb.target);
+                    local_tip == Some(at) || remote_tip == Some(at)
+                })
+                .cloned()
+                .collect()
         })
-        .cloned()
-        .collect();
+        .unwrap_or_default();
     // Active file (for list highlight) derived from the open main diff.
     let active_commit_file: Option<usize> = match app
         .ui()
@@ -453,13 +463,14 @@ pub(super) fn render_inspector_body(
         _ => None,
     };
     let generated_expanded = app.inspector_generated_expanded;
-    app.ui_mut()?
-        .inspector_model
-        .sync_message(&d.full_sha, d.full_message.as_ref());
+    if let Some(d) = &d {
+        app.ui_mut()?
+            .inspector_model
+            .sync_message(&d.full_sha, d.full_message.as_ref());
+    }
     Some(
         inspector::render_inspector(
-            d,
-            at,
+            d.zip(at),
             selected_badges,
             prs_here,
             &app.ui().inspector_model,

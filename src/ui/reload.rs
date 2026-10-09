@@ -192,26 +192,100 @@ impl KagiApp {
         // presenting its error. Preserve only the error state; an ordinary
         // confirmation plan is still invalidated by repository reload.
         //
-        // #625 is the one exception, and it is not an exemption: a dirty Pull
-        // fetches *before* confirming, so the reload landing here is the one
-        // that fetch caused, and clearing the modal made Pull look dead — the
-        // user pressed it and nothing appeared. Such a confirmation is
-        // re-planned below (`replan_pull_modal`) instead, which keeps both
-        // halves of the rule: the modal the user asked for stays until they act
-        // on it, and what they confirm is never the stale plan.
+        // Dirty Pull confirmations are re-planned (#625). Clean confirmations
+        // only get the same treatment when they came from a successful fetch
+        // for this visit and HEAD + working tree still match what was offered.
+        // A fetch can wake several watcher reads; those unchanged reads must
+        // not erase its newly offered confirmation. Unrelated clean previews
+        // and confirmations invalidated by HEAD/worktree changes stay swept.
         let keep_pull_error = self.pull_modal().is_some_and(|modal| modal.error.is_some());
         let replan_dirty_pull = !self.op_latched()
             && self
                 .pull_modal()
                 .is_some_and(|modal| modal.error.is_none() && modal.auto_stash);
+        let replan_fetch_pull = !self.op_latched()
+            && self.remote_view.is_none()
+            && self.pull_modal().is_some_and(|modal| {
+                modal.error.is_none()
+                    && modal.fetch_owner
+                        == self
+                            .app_sessions
+                            .visit(session)
+                            .map(|visit| (session, visit))
+                    && modal.fetch_owner.is_some()
+                    && modal.plan.head_at_plan == snap.head
+                    && modal.dirty_digest.as_ref() == Some(&snap.status.digest())
+            });
+        let keep_fetched_branch_pull = !self.op_latched()
+            && self.branch_plan_modal().is_some_and(|modal| {
+                modal.kind == crate::ui::BranchPlanKind::PullFfOnly
+                    && modal.error.is_none()
+                    && modal.fetch_owner.is_some()
+                    && modal.fetch_owner
+                        == self
+                            .app_sessions
+                            .visit(session)
+                            .map(|visit| (session, visit))
+                    && modal.plan.head_at_plan == snap.head
+                    && modal.dirty_digest.as_ref() == Some(&snap.status.digest())
+                    && modal.fetched_refs.as_ref().is_some_and(
+                        |(target, upstream_name, upstream_target)| {
+                            snap.branches.iter().any(|branch| {
+                                branch.name == modal.branch_name
+                                    && &branch.target == target
+                                    && branch.upstream.as_ref().is_some_and(|upstream| {
+                                        &upstream.remote_branch == upstream_name
+                                    })
+                            }) && modal.plan.pull_identity.as_ref().is_some_and(|identity| {
+                                // Snapshot remote/name fields partition a display
+                                // shorthand, not the configured remote identity.
+                                // Match the approved full ref in its namespace.
+                                if let Some(name) =
+                                    identity.upstream_ref.strip_prefix("refs/heads/")
+                                {
+                                    snap.branches.iter().any(|branch| {
+                                        branch.name == name && &branch.target == upstream_target
+                                    })
+                                } else {
+                                    identity
+                                        .upstream_ref
+                                        .strip_prefix("refs/remotes/")
+                                        .is_some_and(|upstream| {
+                                            snap.remote_branches.iter().any(|branch| {
+                                                upstream
+                                                    .strip_prefix(branch.remote.as_str())
+                                                    .and_then(|name| name.strip_prefix('/'))
+                                                    .is_some_and(|name| name == branch.name)
+                                                    && &branch.target == upstream_target
+                                            })
+                                        })
+                                }
+                            })
+                        },
+                    )
+                    && self.ui().repo_session.as_ref().is_some_and(|session| {
+                        let backend = session.backend();
+                        backend.preflight_check(&modal.plan).is_ok()
+                            && backend
+                                .pull_branch_ref_state(&modal.branch_name)
+                                .ok()
+                                .as_ref()
+                                == modal.fetched_refs.as_ref()
+                            && backend.working_tree_status().is_ok_and(|status| {
+                                modal.dirty_digest.as_ref() == Some(&status.digest())
+                            })
+                    })
+            });
         self.clear_plan_modal();
-        if !keep_pull_error && !replan_dirty_pull {
+        if !keep_pull_error && !replan_dirty_pull && !replan_fetch_pull {
             self.clear_pull_modal();
         }
         self.clear_amend_modal();
         self.clear_pop_modal();
         self.clear_stash_drop_modal();
-        self.clear_branch_plan_modal();
+        if !keep_fetched_branch_pull {
+            self.clear_branch_plan_modal();
+        }
         self.clear_set_upstream_modal();
         self.clear_rename_branch_modal();
         self.clear_discard_modal();
@@ -219,10 +293,10 @@ impl KagiApp {
         // input — a name, a start point, a path — with no plan preview to go
         // stale, so a repository reload does not invalidate them and clearing
         // them threw away what the user was typing. That mattered little while
-        // reloads followed the user's own actions; a dirty Pull now fetches
+        // reloads followed the user's own actions; Pull now fetches
         // before confirming, so kagi's own fetch (and the watcher it wakes)
         // would delete a branch name typed while it ran. What a reload
-        // invalidates is a *plan*: every plan-carrying modal above is still
+        // invalidates is a *plan*: those not explicitly re-planned above are
         // swept, and confirming an input modal re-plans and re-preflights
         // through `Backend::run` anyway. Tab departure still drops these (repo-scoped
         // modals), where the input no longer applies.
@@ -350,14 +424,9 @@ impl KagiApp {
         // modal — no further reload.
         self.present_stash_followup(cx);
 
-        // #625 / ADR-0192: an open dirty-Pull confirmation was spared by the
-        // sweep above (`replan_dirty_pull`); refresh its contents against the
-        // state this reload just installed. The fetch such a confirmation was
-        // planned from wakes the watcher, so this reload is usually that
-        // fetch's own — clearing the modal here is what made Pull look dead.
-        // Every later reload (the watcher firing again, a manual Cmd+R) takes
-        // this path too, so the modal cannot be outrun.
-        if replan_dirty_pull {
+        // Refresh only the confirmation retained by the provenance/freshness
+        // checks above. Async updates cannot replace a displaced modal.
+        if replan_dirty_pull || replan_fetch_pull {
             self.replan_pull_modal();
         }
 

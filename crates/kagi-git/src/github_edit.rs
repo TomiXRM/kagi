@@ -208,6 +208,7 @@ pub fn plan_pr_edit(pr: &PullRequest, edit: &PrFieldEdit) -> OperationPlan {
         },
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         // Nothing local is rewritten or dropped.
         destructive: false,

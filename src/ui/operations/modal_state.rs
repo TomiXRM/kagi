@@ -436,6 +436,13 @@ impl KagiApp {
         }
     }
     #[inline]
+    pub fn branch_plan_modal_mut(&mut self) -> Option<&mut BranchPlanModal> {
+        match &mut self.active_modal {
+            Some(ActiveModal::BranchPlan(m)) => Some(m),
+            _ => None,
+        }
+    }
+    #[inline]
     pub fn set_branch_plan_modal(&mut self, m: BranchPlanModal) {
         self.replace_modal_from_user(ActiveModal::BranchPlan(m));
     }

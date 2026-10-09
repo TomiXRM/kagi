@@ -169,6 +169,7 @@ pub(crate) use ops::{
 };
 pub use proc::{run_child, ProcIo, ProcRun, ProcStop};
 // PR review "suggested change" local apply (#351, ADR-0172).
+pub use kagi_domain::plan::PullIdentity;
 pub use kagi_domain::plan::SuggestionOutcome;
 pub use kagi_domain::suggestion::{parse_suggestion, Suggestion};
 #[allow(unused_imports)]

@@ -158,7 +158,7 @@ pub fn title_ja(title: &PullTitle) -> String {
             remote,
             behind,
         } => format!(
-            "`{}` を `{}` から pull(ff-only, ref-only, {} 遅れ)",
+            "`{}` を `{}` から pull(ff-only, {} 遅れ)",
             branch, remote, behind
         ),
     }
@@ -184,6 +184,13 @@ pub fn recovery_ja(recovery: &PullRecovery) -> String {
             "ホスト上でホストの認証情報を使い `git pull` を実行します。conflict はホスト側で解決します。"
                 .to_string()
         }
+        PullRecovery::PullCurrentFf { branch } => format!(
+            "refs/heads/{} を fast-forward し、この checkout の index と作業ツリーを安全に更新します。\
+             履歴が乖離している場合は拒否し、merge commit は作成しません。更新が未 commit の変更パスに触れる場合は pull を拒否して変更を保持します。\n\
+             Partial では、branch が以前の先端のままで index とファイルだけ更新された可能性があります。再試行前に操作ログの実行後状態とエラーを確認し、incoming の stage 済み変更をローカルの作業として commit しないでください。\n\
+             以前の先端は git reflog show refs/heads/{} で確認できます。不要な incoming commit は履歴を書き換えず git revert で取り消せます。",
+            branch, branch
+        ),
         PullRecovery::PullBranchFf { branch } => format!(
             "fast-forward を確認後、refs/heads/{} のみを更新します。作業ツリーは変更されません。\n\
              以前の先端に戻すには:\n  git branch -f {} <old-sha>",
@@ -235,5 +242,18 @@ mod tests {
         let text = recovery_ja(&PullRecovery::Pull);
         assert!(text.contains("git revert -m 1 HEAD"));
         assert!(!text.contains("reset --hard"));
+    }
+
+    #[test]
+    fn current_pull_ff_recovery_names_checkout_and_strict_policy() {
+        let text = recovery_ja(&PullRecovery::PullCurrentFf {
+            branch: "main".into(),
+        });
+        assert!(text.contains("index と作業ツリー"));
+        assert!(text.contains("merge commit は作成しません"));
+        assert!(text.contains("git reflog show refs/heads/main"));
+        assert!(text.contains("Partial"));
+        assert!(text.contains("branch が以前の先端のまま"));
+        assert!(!text.contains("git branch -f"));
     }
 }

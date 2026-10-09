@@ -58,51 +58,157 @@ async: pull partially applied — Pull completed, but auto-stash restoration
 `pull_dirty_overlap` を読む。同じ判断が二箇所で drift しないことが要点で、`ops/pull.rs` が
 既に 800 行の目安を超えていた問題も feature 境界での分割で同時に解消する。
 
-### 2. dirty Pull はモーダルを出す前に fetch する
+### 2. clean / dirty の両方で確認前に fetch する（#1087）
 
-`plan_pull` の予測はローカルが知っている origin に基づく。auto-fetch は 180s 間隔なので、
-直前に upstream が動いていれば予測は漏れ、「復元は綺麗に済む」と約束したモーダルが
-そのまま失敗しうる。**確認の後に驚かせない**を厳密に満たすのは確認前の fetch だけである。
-fetch は working tree を変更しない読み取りなので、確認前に走らせても安全。
+`plan_pull` の予測はローカルが知っている **設定済み upstream** に基づく。auto-fetch は 180s 間隔なので、
+直前に upstream が動いていれば dirty path の予測が漏れるだけでなく、clean な Pull でも
+古い `behind=0` を根拠に「すでに最新です」と誤表示する。確認または最新の案内を出す前に、
+**その要求を所有する session の fetch 成功を待つ**。バックエンドの `plan_pull` は純粋な
+ローカル計画のままにし、ネットワークアクセスを隠して追加しない。
 
-実装は既存の `fetch_async` をそのまま使う（新しい fetch 経路は作らない）。`KagiApp` の
-`pull_modal_after_fetch` が「この fetch は Pull の確認のためだ」という 1 bit で、完了後に
-`plan_and_open_pull_modal` へ繋ぐ。dirty でない Pull は従来どおり同期でモーダルを開く。
+sidebar の branch context menu も同じ freshness の入口である。最後に取得した
+`behind=0` / unknown は Pull / Pull ff-only の admission を閉じる根拠にしない。
+未確認の zero に「最新」の label を付けず、busy・detached HEAD・remote branch・
+upstream 未設定の既存 guard は維持する。current branch の通常 Pull / ff-only、
+非 current branch の通常 Pull / ff-only の全入口で fetch 成功後に計画する。
+非 current branch はその branch の live config にある remote を取得し、HEAD の
+remote と同一とは仮定しない。非 current branch は、どの worktree にも checkout
+されていない場合だけ ref-only ff とし、現在の checkout は変更しない。
 
-**fetch 失敗時はモーダルを出さない。** footer の `Fetch failed: …`（既存表示）が答えで、
+**current branch の ff-only は checkout も整合させる（PR #1088 review）。**
+`Operation::PullBranchFf` の strict policy は維持し、通常の merge 可能な Pull には
+切り替えない。current branch の計画は backend でも working-tree digest を凍結し、
+conflict は blocker、dirty は実際の checkout に対応した warning として示す。
+実行時は取得した tree が dirty path に触れないことを既存の guard で検査し、
+HEAD が旧 tree を指す間に `checkout_tree(safe)` で index と tracked files を更新してから
+branch ref を進める。成功時は変更・追加・削除が新しい HEAD と一致し、ref だけが先に進んで
+逆向きの staged diff を作ることはない。乖離した履歴は拒否し、merge commit は作らない。
+current 用の EN/JA recovery も index / working tree の更新と strict policy を説明する。
+generic な ff-only title は EN/JA とも `ref-only` と断定しない。current / non-current で
+異なる checkout の扱いは計画の warning と typed recovery で説明し、strict policy は共通に示す。
+
+checkout 後の ref transaction が失敗した場合は、試行したという理由だけで `Partial`
+にはしない。backend が実際の index（path / OID / mode / conflict stage の digest）、
+HEAD、status の変化を観測した場合だけ既存の `partial_after` に実行後状態を渡す。
+durable receipt は `Partial` として承認済み typed recovery を保持し、Operation Log は
+旧 HEAD のまま更新された index / files、取得済み checkout target、元の ref 書込みエラーを
+調べるよう EN/JA で案内する。観測できない項目を predicted state で埋めない。
+empty commit のように tree が同じで変化がない失敗、checkout 前の ref lock 拒否は
+`Failed` のままで、存在しない変更や recovery を捏造しない。
+
+
+別 worktree が checkout 中の branch は、UI だけでなく backend の plan / preflight でも
+拒否する。main / linked checkout と symbolic alias を既存の fail-closed reader で確認し、
+確認後に占有された場合は fetch 前に止める。fetch 中の占有変更も、local write 前の
+再検査で止める。最終検査から書込みまで既存 worktree の checkout が割り込まないよう、
+delete family と同じ HEAD / branch ref lock を取り、登録一覧の変化も検査する。
+通常の current Pull / auto-stash の経路と、非 current・非占有 branch の ref-only 経路は維持する。
+
+fetch は remote-tracking refs を変更する **write** である。既存の admitted
+`fetch_async_for` の lease・実行・verify・oplog 経路を使い、新しい UI 直書き経路を作らない。
+確認前の fetch は HEAD、index の staged content、working tree を変更しない。
+保留中の要求は `FetchFlight` の owner / visit 付き waiter が持つ。global flag は持たない。
+
+
+quiet fetch は成功結果の `changed=true` なら、remote-tracking refs だけの更新でも
+同じ flight の frozen owner に一件の Success receipt を残す。`observe_ref_moves` の観測範囲は
+**local heads / tags** に限られ、tracking-only の成功 receipt は `ref_moves` が空になりうる。
+空の `ref_moves` は記録を抑止しない。no-op の `changed=false` は成功 receipt を増やさない。
+manual fetch の既存 toast は一つ、auto-fetch は quiet のままにし、別 tab の footer や bottom panel を開かない。
+**fetch 失敗時はモーダルを出さない。** 記録済みの失敗を示す footer が答えで、
 「たった今更新に失敗した知識」に対して確定させるのは、この遅延が避けようとしている驚きそのもの。
+保留中の Pull が silent auto-fetch に参加した場合も、現在の session / visit の waiter には
+失敗 footer と bounded Error toast を一度だけ届ける。`record_op_persist_moves` →
+`record_op_impl` を唯一の記録・表示 owner とし、fetch 完了 callback から通知を追加しない。
+通常の background auto-fetch は presentation owner を持たない既存の scoped recorder を使い、
+古い visit・別 tab へ通知を流さず、flight の durable receipt は一件だけとする。
+記録自体が失敗した場合の repository 名付き app notice は既存経路で保持する。
 
-**モーダルを開くのは reload の完了後。** `fetch_async` は ref が動いたとき `reload` を呼び、
-その apply は確認モーダルを掃除する（ADR-0189。fetch が watcher を焼くのが理由）。fetch の
-継続でモーダルを開くと、正しく plan されたモーダルが直後の reload apply で消える —
-E2E で実際に踏んだ。よって ref が動いたときはフラグを残し、`apply_reload_data` の掃除の
-**後**で開く（#309 の stash follow-up と同じ形）。ref が動かなければ reload は来ないので
-その場で開く。tab が切り替わっていたらフラグを捨てる。
+**fetch 由来の確認を、同じ checkout の reload で消さない。**
+fetch と watcher は複数の reload を届けるため、配送後の clean 確認にも
+`PullPlanModal::fetch_owner` として session / visit の provenance を付ける。
+同じ所有者・visit、同じ HEAD と working-tree digest、未実行・エラー無しの local 確認だけを
+`apply_reload_data` が `replan_pull_modal` で更新して残す。snapshot が一致していても、その採取後に
+live checkout / branch config が変わりうるため、**再計画した `PullIdentity` / HEAD / digest も
+旧確認と照合する**。captured-old-snapshot を適用した場合も live identity の変更を見逃さない。
+identity / HEAD / digest の不一致や clean → auto-stash への変化では置き換えず無効化する。
+replan が NoOp / 失敗の場合も clean 確認を消す。
 
-**開いた後の reload では replan して残す。** 上の「掃除の後で開く」だけでは足りなかった。
-watcher は fetch の書き込みを検知して**別の** reload を後から届け、その apply が開いたばかりの
-モーダルを消す。実測（PM の実 GUI 差し戻し、#626 review）:
+実行可能な local Pull / branch ff-only の確認は typed `PullIdentity` として **branch 名、
+local OID、remote 名、完全な tracking ref 名**を凍結する。upstream の OID 自体は凍結しない。
+`behind` は title が明記する「local knowledge」の説明値であり、承認対象にはしない。
+local `PullTitle::Pull` / `PullBranchFf` の fresh title 照合は、同じ variant と厳密に同じ
+branch / remote を要求し、`behind` だけを除外する。ほかの title は従来どおり完全一致、
+`PullIdentity`、blocker、destructive flag、digest の有無等の安全条件も変更しない。
+承認後に同じ upstream の tracker が別の fetch で進んでも、cached count だけで実行を拒否しない。
 
-```
-[kagi] fetch: start
-[kagi] plan: pull blockers=0 warnings=2      ← モーダルはここで開く
-[kagi] refreshed (external change)           ← 約 0.5 秒後にここで消える
-```
+修正前の real consumer では、承認後に同じ upstream を実際に fetch した current normal /
+current strict-FF / non-current の三 backend ケースが title-only Preflight で FAIL し、
+既存ケースと malformed family / branch / remote title の拒否 controls 八件は PASS した。
+実 UI の同条件では、stash 後の Pull がこの count 比較で失敗して復元に回った。
+比較対象から説明 count だけを外すのは、この false refusal を直すためであり、
+承認済み plan の書換えや自動 re-plan / retry は行わない。
 
-押しても何も出ないのは Pull が実行不能なのと同じである。よって **auto-stash 確認が開いている
-間の reload は、掃除せず `replan_pull_modal` で内容を作り直す**。ADR-0189 の意図（無効化された
-plan を confirm させない）は replan で満たす — 消すのではなく最新にする。plan が「もう pull する
-ものが無い」または失敗を返した場合も既存モーダルを**残す**（ユーザーのカーソル下で窓を空に
-しない）。実行時の安全は `Backend::run` の preflight が担保する。ユーザーが Cancel か
-Stash & Pull を押すまで消えない。
+実 Git の回帰では、cached count が増えた current normal / current strict-FF は
+incoming HEAD・全 index entry の OID / mode・作業ファイルを更新し、
+non-current は対象 ref だけを更新して active checkout を維持する。
+family / branch / remote を差し替えた malformed title は typed Preflight と
+Failed receipt 一件を残し、HEAD・index・全ファイル・refs を変更しない。
+native UI の EN/JA 回帰は、freshness、strict-FF の checkout 整合性、
+原因別の拒否、同 upstream advance、既存 auto-stash 復元 policy を検証する。
+default 実アプリでも、未 fetch の cached behind=0 から fetch 後の確認を開き、
+current branch menu の strict-FF 承認で tracked file の変更・追加・削除を
+HEAD・index・working tree に揃えた。dirty な承認後に同じ OID を指す別 upstream へ
+差し替えた実ボタン操作は、正しい承認対象変更の理由で stash 前に拒否し、
+HEAD・staged 内容・全作業ファイル・refs・既存 stash を維持した。
 
-error 状態のモーダル（ADR-0189）はこれまでどおり保持し、clean な Pull の確認は従来どおり
-reload で無効化する（clean な Pull は fetch しないので自分で reload を起こさない）。
+branch ff-only は加えて working-tree digest と owner / visit を保持する。同じ identity / digest
+での watcher reload は確認を維持し、upstream の再設定・対象 local tip の移動・dirty の変更では
+確認を失効させる。fetch 後の remote 照合は表示 title の upstream shorthand ではなく、
+typed `PullIdentity.remote` の完全な config 値を使う。reload 時の upstream OID は
+`PullIdentity.upstream_ref` の完全な ref 名で照合し、`refs/heads/` は local branch、
+`refs/remotes/` は remote-tracking branch の namespace として扱う。
+snapshot の表示用 remote / name 分割を config の remote identity と取り違えないため、
+slash を含む remote 名と local upstream `.` でも確認を維持する。
+native の current / non-current 回帰は実 menu・fetch・reload・確認から実際の ff-only 更新まで
+通り、current の HEAD・index・作業ファイル整合性と non-current の active checkout 不変を検査する。
+backend の既存 preflight と `Backend::run` の fresh plan 比較は identity 一致を要求し続ける。
+branch ref の更新は lock 内で承認済み local OID との一致を再検査してから transaction を
+commit し、CAS と同じく途中の移動を上書きしない。
 
-**incoming の定義は `merge-base..upstream`。** HEAD の tree を upstream の tree に直接 diff すると、
-diverged 時に「local commit だけが変えたパス」（逆方向の差分）も incoming として数え、upstream が
-持ち込んでいない衝突を警告してしまう（実測: `RestoreConflict { paths: ["mine.txt"] }`)。fast-forward
-では merge-base == HEAD なので挙動は同じ。merge-base が無い（無関係な履歴）場合は HEAD に落とす。
+ordinary current Pull の toolbar / current branch menu も、表示 shorthand から remote を
+推定せず、live HEAD の branch を fetch scope に凍結して既存の configured-upstream fetch を使う。
+manual / silent fetch と `PullTarget::Current` は同じ upstream 解決条件で scope を共有する。
+upstream 未設定・detached / unborn の implicit scope は従来の ordinary fetch fallback とし、
+別 branch scope は join させない。ordinary fetch 成功後の ruleset refresh、
+owner / visit・quiet notification・一 flight 一 receipt の契約は維持する。
+Parent はこの exact config 経路で local Pull 二十五 native ケースの PASS と、
+default 実アプリの ordinary toolbar Pull（`team/origin`）による generic 確認から
+承認済み HEAD・全 index・全ファイル・receipt の一致を観測した。
+upstream 未設定の held manual fetch に新 visit の Current 要求が join できない回帰は、
+既存 `fetch_new_visit_waiter_sees_old_flight_failure` で Failed footer が busy のままになる
+failing-before を確認した。Current と implicit request の scope 条件を揃えた後、
+同 consumer を含む fetch owner / quiet queue / slow-write と二十五 local Pull ケース、
+統合 UI の native 選択実行、workspace 全体、Clippy、format、invariant、default build は全て通った。
+
+fetch 成功後の remote 名照合は **blockers が空の実行可能な plan だけ**に行う。
+実際に `ConflictedFiles` 等で止まる plan は `pull_identity=None` なので upstream 変更と
+取り違えず、元の blocker と無効な確定ボタンを持つ確認を表示し、実行しない。
+fetch 失敗はこの確認にも「最新」の案内にも進めず、owner / visit の配送 guard は維持する。
+
+既存の auto-stash 確認と error 状態の保持は維持する。auto-stash の再計画が NoOp / 失敗を
+返した場合は既存確認を残し、実行時の `Backend::run` の preflight が安全を担保する。
+direct な blocker 確認・remote 確認には local fetch の provenance を付けない。
+
+**後から始めたユーザー操作を優先する。** 待機中に別のモーダルを開けば、その後閉じても
+古い Pull 要求を復活させない。`FetchFlight` が displacement を保持し、完了時は確認を
+押し付けず再試行の案内にする。改めて明示した Pull だけが同じ owner の flight に再参加できる。
+
+**restore 予測の incoming は `HEAD..post-pull`。** fast-forward は設定済み upstream の tree、
+diverged は HEAD と設定済み upstream の in-memory merge index を post-pull とする。
+HEAD の tree を生の upstream tree と直接比較して local commit だけの変更を逆差分として
+数えたり、実際には置かれない content への復元を予測したりしない。commit 同士の merge が
+衝突する場合は pull 自体が止まるので restore 予測は空とし、merge の警告を使う。
 
 **表示は `note_path_list` + localized summary。** パスは prose のカンマ列ではなく行として描く
 （#454 が checkout overlap で入れた仕組みに合流）。warning 側の描画も blocker と同じ分岐にした。
@@ -115,8 +221,8 @@ conflict ではない。upstream が先頭行、ローカルが末尾行を触�
 警告になり、ユーザーは警告を読まなくなる — #625 で直した信頼が別の形で壊れる。
 
 重なった各パスについて `git2::merge_file` で 3-way content merge を実行する。
-ancestor = HEAD の blob（ユーザーの編集の基準）、ours = upstream tip の blob
-（pull が working tree に置くもの）、theirs = working tree のバイト列。`merge_file` は
+ancestor = HEAD の blob（ユーザーの編集の基準）、ours = post-pull の blob
+（fast-forward なら upstream、diverged なら merge index）、theirs = working tree のバイト列。`merge_file` は
 メモリ上で完結し、loose object も ref も書かない — plan が object を書くと watcher が
 発火し、今回直した「モーダルが消える」を再発させる。
 
@@ -145,11 +251,11 @@ oplog に永続化する。記録済みの結果を閉じるだけの `AppNotice
 
 3 度「押しても何も起きない」を再発させたので、分岐を塞ぐのをやめて状態を列挙した。
 
-要求は `open_pull_modal` で作られ、**その fetch task のクロージャの中**を旅する
-(`fetch_async_for(silent, pull_confirm, cx)`)。global flag は持たない — 無関係な fetch が
-消費することも、reload が落とすこともできない。fetch が既に走っている場合だけは例外で、
-**同じ repo を更新している in-flight fetch** に相乗りする（別 repo の fetch に相乗りすると
-「fetch してから確認」が嘘になる）。相乗り先が無ければローカル知識で即 plan する。
+要求は `open_pull_modal` で作られ、`fetch_async_for(silent, pull_confirm, cx)` の
+owner / visit 付き waiter としてその fetch flight に配送される。global flag は持たない —
+無関係な fetch が消費することも、reload が落とすこともできない。
+既に走っている **同じ repo の fetch** にだけ相乗りする。相乗り先が無く、新しい fetch を
+admit できなければ stale なローカル知識で Ready / 最新を案内しない。
 
 完了時の配送規則（全ケースを 1 箇所で決める）:
 
@@ -172,10 +278,33 @@ oplog に永続化する。記録済みの結果を閉じるだけの `AppNotice
 も**空の tree** を見て素通りし、復元だけが事前表示なしで conflict していた。
 
 `PullPlanModal::dirty_digest`（表示時の `WorktreeDigest`）を確認に束縛し、stash の**前**に
-再取得した digest と再 plan した restore note 集合を照合する。どちらかが動いていれば
-`auto_stash_plan_stale`（EN/JA）で拒否し、stash も pull もしない。plan 側の
-`worktree_digest` は使わない — あれは「execute 時に tree が動いていたら拒否」の意味で、
-stash-first の pull は意図的に tree を空にするため（checkout の preflight が誤発火した）。
+再取得した digest、再 plan した restore note 集合、承認済み `PullIdentity` を照合する。
+いずれかが動いていれば既存の `not_started` / Refused receipt を一件残し、
+stash も pull もしない。fresh identity で承認を書き換えない。
+拒否理由は既存の EN/JA `Msg` 表で分け、toast / footer と durable oplog に同じ理由を渡す:
+
+- `PullAutoStashIdentityChanged`: 承認済み branch / local tip / remote / full upstream が変わり、
+  最新の Pull 対象を再確認する必要がある。変わっていない working tree を原因にしない。
+- `PullAutoStashPlanStale`: dirty digest が動いた場合は従来の stash 対象変更の説明を維持する。
+- `PullAutoStashRestoreChanged`: identity と dirty digest が同じでも restore note が動いた場合は、
+  変わった復元予測を確認し直すよう案内する。local files が変わったとは説明しない。
+
+identity は branch / local OID / remote 名 / 完全な tracking ref を比較し、upstream OID は
+固定しないため同じ upstream の新しい commit は許容する。dirty が clean になった場合は
+stash を行わず、既存の `Backend::run` preflight が承認済み identity を照合する。
+ただし incoming 更新で restore note が変わる場合は復元予測を再確認する。
+同じ upstream の新 commit を identity 変更扱いにはしない。
+plan 側の `worktree_digest` は使わない — あれは「execute 時に tree が動いていたら拒否」の
+意味で、stash-first の pull は意図的に tree を空にするため（checkout の preflight が誤発火した）。
+
+2026-10-09 の native consumer 回帰検証では、同じ OID の別 tracking ref と同内容の別 remote
+の二ケースで、dirty digest / count / restore note を維持して実 UI の auto-stash 確認を
+Enter で実行した。修正前は両方 FAIL：backend の identity 拒否より前に stash が走り、
+復元後の staged OID が変わった（HEAD / working files は不変）。上記の pre-stash identity
+比較後は両方 PASS：HEAD、index の path / OID / mode / stage、全 working files、
+全 `show-ref`、既存 stash の OID stack が不変で、stash-push / pop receipt はなく、
+Pull Refused receipt は一件。通常 auto-stash 成功・overlap preview・失敗時の復元と
+dirty-set drift 拒否も PASS。restore 自体の policy は変更していない。
 
 ### 2d. reload は plan を無効化するが、入力は無効化しない（#626 review 3 周目）
 
@@ -187,7 +316,7 @@ fetch とそれが起こす watcher reload が「入力中の branch 名」を�
 
 ### 3. execute 側の fetch は残す
 
-`execute_pull` の step 2 の fetch はそのまま。dirty Pull では二重 fetch になるが、
+`execute_pull` の step 2 の fetch はそのまま。実行する local Pull では二重 fetch になるが、
 blast radius を抑える判断である。理由:
 
 - `execute_pull` は UI 以外（CLI / MCP / 他の caller）からも呼ばれ、その安全性は
@@ -199,16 +328,27 @@ blast radius を抑える判断である。理由:
   担保する別の役割である。
 - 冗長な fetch のコストは、no-op fetch 1 回分（ref 更新なし）。
 
+実行は承認済み remote 名だけを fetch し、凍結した完全な tracking ref から tip を読む。
+同じ承認済み upstream に後から届いた新しい commit は許容するが、branch / local OID /
+remote 名 / tracking ref の差し替えは preflight で拒否する。merge 予測、restore 予測、
+ff-only 計画、auto-stash 前の fresh plan はすべて `branch.upstream().get().target()` に
+基づき、`refs/remotes/<remote>/<local branch 名>` を優先しない。例えば `main` が
+`origin/alternate` に追従するとき、別の `origin/main` の存在で予測をすり替えない。
+Push / force-lease の既存 resolver は変えない。remote URL / fetch refspec の変更を承認に
+束縛する policy はこの変更の対象外とする。
+
 ## Consequences
 
 - overlap fixture では確定前のモーダルに `shared.txt` が出る。safe fixture では衝突 note が
   出ない。GUI E2E `pull_auto_stash_overlap_preview` が実 UI で両方を assert する。同 scenario は
   **fetch を一切しない** repository で走るので、パス名が出ること自体が「UI が先に fetch した」
   証拠になる。
-- dirty Pull はモーダル表示までネットワーク往復ぶん遅くなる。ローカル remote では実測 128ms
-  規模、実 remote では回線次第。dirty でない Pull は不変。
-- `ADR-0189` の「確認モーダルは reload で無効化される」は維持する。例外は error 状態と、
-  この fetch 由来の reload が自分で開き直す 1 ケースだけ。
+- clean / dirty ともに、確認または「すでに最新です」の表示までネットワーク往復が必要になる。
+  失敗・admission 拒否・別 owner の flight は最新の証拠にしない。
+- `ADR-0189` の reload 無効化は維持する。例外は既存の error / auto-stash 確認と、
+  同じ session / visit・未変更 checkout に対する local fetch 由来の確認だけ。
+- SSH remote の cached `behind=0` も最新の証拠にしない。既存の live identity probe と
+  明示確認へ進み、確認前に remote fetch / pull を暗黙実行する経路は追加しない。
 - 予測はあくまで予測。plan 時点の upstream と working tree に基づくので、確定までに外部が
   さらに動けば結果は変わりうる。実行の安全は execute 側の再検査が担保する。
 

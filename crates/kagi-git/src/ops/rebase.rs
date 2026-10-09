@@ -111,6 +111,7 @@ pub fn plan_rebase_current_onto(repo: &Repository, onto: &str) -> Result<Operati
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),

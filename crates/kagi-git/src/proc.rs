@@ -572,16 +572,11 @@ mod tests {
             .unwrap_or(false)
     }
 
-    /// The group is stopped **before** the leader is reaped, and the ordering is
-    /// the safety property, not a detail (#702 review 5).
+    /// A deadline stops the fixture's descendant as well as its direct child.
     ///
-    /// An unreaped leader pins the pgid. Reap it first and, if nothing else is
-    /// left in the group, that number goes back to the OS — a `kill(-pgid, …)`
-    /// sent afterwards can land on a stranger's process group. So by the time
-    /// `wait_or_kill` says "reaped", the group it was given must already be
-    /// gone: here the leader's own child outlives a plain `child.kill()`, and
-    /// only a group signal sent while the leader still held the pgid can have
-    /// removed it.
+    /// Check the descendant's recorded identity, not a numeric pgid after the
+    /// leader is reaped. The existence probe is deliberately conservative and
+    /// does not identify this fixture once that numeric handle is released.
     #[cfg(unix)]
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
@@ -601,7 +596,6 @@ mod tests {
             child: cmd.spawn().expect("spawn fixture"),
             group_owned: true,
         };
-        let pgid = child.child.id();
         let descendant = fixture.wait_for_descendant();
 
         // On unix the stop key is the group id, which is the leader's pid.
@@ -618,7 +612,6 @@ mod tests {
                 .expect("probe fixture identity"),
             "the descendant outlived the reap: the group was signalled too late, or not at all"
         );
-        assert!(!group_alive(pgid), "the fixture's group must be gone");
     }
 
     /// Every child leads its own process group, so the stop proof can be about

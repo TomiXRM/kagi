@@ -530,7 +530,7 @@ fn build_local_branch_leaf(
         theme::scaled_px(12.)
     };
 
-    if is_head {
+    let row = if is_head {
         let branch_for_click = branch_name.to_string();
         let branch_for_menu = branch_name.to_string();
         let head_click = cx.listener(move |this: &mut KagiApp, _e: &gpui::ClickEvent, _w, cx| {
@@ -615,7 +615,7 @@ fn build_local_branch_leaf(
                 cx.notify();
             },
         );
-        let row = div()
+        div()
             .id(SharedString::from(format!(
                 "sidebar-branch-{}",
                 branch_name
@@ -665,8 +665,15 @@ fn build_local_branch_leaf(
                     .hover(|s| s.text_color(rgb(theme().color_blocker)))
                     .child(SharedString::from("\u{00d7}")),
             )
-            .into_any();
+            .into_any()
+    };
+    #[cfg(feature = "gui-e2e")]
+    {
         super::e2e::measure_control(format!("sidebar-local-{branch_name}"), row)
+    }
+    #[cfg(not(feature = "gui-e2e"))]
+    {
+        row
     }
 }
 

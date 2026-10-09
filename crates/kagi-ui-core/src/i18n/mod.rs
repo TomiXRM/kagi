@@ -36,11 +36,10 @@ pub mod pr_threads;
 pub mod pr_viewed;
 pub mod queue;
 pub use op::{
-    auto_stash_identity_unverified, auto_stash_missing, auto_stash_plan_stale,
-    auto_stash_restore_conflicted, auto_stash_restore_failed, op_failed, op_plan_failed,
-    op_refused, oplog_write_failed, plan_not_shown_retry, pull_failed_stash_restored,
-    rebase_repository_settings_may_block_start, recorded_outcome_notice,
-    terminal_nonconcurrent_blocked, terminal_ports_exhausted, Op,
+    auto_stash_identity_unverified, auto_stash_missing, auto_stash_restore_conflicted,
+    auto_stash_restore_failed, op_failed, op_plan_failed, op_refused, oplog_write_failed,
+    plan_not_shown_retry, pull_failed_stash_restored, rebase_repository_settings_may_block_start,
+    recorded_outcome_notice, terminal_nonconcurrent_blocked, terminal_ports_exhausted, Op,
 };
 pub use plan::{plan_note_text, plan_recovery_text, plan_title_text};
 pub use queue::{queue_text, QueueText};
@@ -317,6 +316,10 @@ pub enum Msg {
     // driven by `busy_op` with a spinning sync icon — now signals progress.)
     AlreadyUpToDatePull,
     AlreadyUpToDatePush,
+    PullUpstreamChangedDuringFetch,
+    PullAutoStashIdentityChanged,
+    PullAutoStashPlanStale,
+    PullAutoStashRestoreChanged,
 
     // ── Toolbar guard reasons (domain words kept English) ───────────
     PullBusy,
@@ -377,7 +380,6 @@ pub enum Msg {
     BcmDetachedHead,
     BcmCheckedOutElsewhere,
     BcmConflictMode,
-    BcmNothingToPull,
     BcmNothingToPush,
 
     // ── Empty states ────────────────────────────────────────────────
@@ -2232,6 +2234,14 @@ impl Msg {
             (Ja, AlreadyUpToDatePull) => "すでに最新です。pull するものはありません",
             (En, AlreadyUpToDatePush) => "Already up to date — nothing to push",
             (Ja, AlreadyUpToDatePush) => "すでに最新です。push するものはありません",
+            (En, PullUpstreamChangedDuringFetch) => "Pull upstream changed during fetch; request Pull again",
+            (Ja, PullUpstreamChangedDuringFetch) => "fetch 中に Pull の upstream が変わりました。もう一度 Pull してください。",
+            (En, PullAutoStashIdentityChanged) => "The approved Pull target changed (branch, local tip, remote or upstream). Nothing was stashed or pulled; press Pull again for a fresh confirmation.",
+            (Ja, PullAutoStashIdentityChanged) => "確認後に Pull の branch・先端・remote・upstream が変わりました。stash も pull も実行していません。Pull をもう一度押して最新の内容を確認してください。",
+            (En, PullAutoStashPlanStale) => "The working tree changed after this confirmation was shown, so the paths Kagi would stash — and what restoring them would do — are no longer the ones you approved. Nothing was stashed or pulled; press Pull again for a fresh confirmation.",
+            (Ja, PullAutoStashPlanStale) => "確認を表示した後に作業ツリーが変わったため、stash 対象と復元結果が承認内容と一致しません。stash も pull も実行していません。Pull をもう一度押すと最新の確認を表示します。",
+            (En, PullAutoStashRestoreChanged) => "The stash restore preview changed after confirmation. Nothing was stashed or pulled; press Pull again to review the new restore preview.",
+            (Ja, PullAutoStashRestoreChanged) => "確認後に stash の復元予測が変わりました。stash も pull も実行していません。Pull をもう一度押して最新の復元予測を確認してください。",
 
             // ── Toolbar guards ──────────────────────────────────────
             (En, PullBusy) => "Pull: another operation is in progress",
@@ -2331,8 +2341,6 @@ impl Msg {
             (Ja, BcmCheckedOutElsewhere) => "branch は別の worktree で checkout 済みです",
             (En, BcmConflictMode) => "resolve conflicts first",
             (Ja, BcmConflictMode) => "先に conflict を解決してください",
-            (En, BcmNothingToPull) => "nothing to pull",
-            (Ja, BcmNothingToPull) => "pull するものがありません",
             (En, BcmNothingToPush) => "nothing to push",
             (Ja, BcmNothingToPush) => "push するものがありません",
 

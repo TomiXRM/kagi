@@ -29,6 +29,12 @@ the rule names it.
   with another process replacing the repository, a millisecond window) is closed
   with a reply that gives the reason, and the limit is written into the ADR. Aim
   for one review round per PR; Codex keeps finding the next corner otherwise.
+- **User-authorized substitute review**: when GitHub Codex cannot run, an
+  explicitly authorized, fresh independent Codex/Sol reviewer may review the
+  exact head through herdr. Publish its model, agent identity, reviewed SHA,
+  read set, findings and Japanese responses on the PR. State that the GitHub
+  bot did not run; static review is not runtime verification. The reviewed-head,
+  green-CI and unanswered-comment merge gates still apply.
 - **Merge** only the head commit Codex reviewed, with CI green and no unanswered
   Codex comment: `gh pr merge N --merge --match-head-commit <sha>`, then confirm the
   PR reads `MERGED`.
@@ -41,17 +47,27 @@ the rule names it.
 
 When a PM session drives implementation agents in herdr panes:
 
-- **Send = prompt + Enter.** `herdr agent prompt <pane> '<text>'` places the text;
-  `herdr agent send-keys <pane> enter` submits it. Without the second command
-  nothing is sent. `pane send-text` never submits. An `agent_prompted` result is
-  not proof the agent started — read the pane (`herdr agent read`) or wait for its
-  status (`herdr agent wait`).
-- **Replies go the same way**: an implementation agent reports to the PM pane with
-  `herdr agent prompt <pm pane>` + `send-keys enter`, starting with one tag:
-  `[done]` (PR number, remote head SHA checked with `ls-remote`, gates run, for
-  each Codex comment: fixed or answered, and for a UI change the Tier B screenshot
-  links — see "Verifying the GUI" in `AGENTS.md`), `[status]`, `[ask]` (a decision the PM
-  owns — stop and wait), `[info]`.
+- **Mail is the only task transport.** PM assignments, amendments, decisions and
+  agent replies use herdr mail, not `agent prompt`, `pane send-text` or simulated
+  terminal Enter. Read the installed mail command help and verify support in the
+  selected server before dispatch. If unavailable, report the missing capability
+  to the PM and pause dispatch; do not silently fall back or restart/upgrade a
+  shared server.
+- **Every assignment names its contract.** Include a stable task name, sender and
+  reply destination, session/workspace, owned worktree/branch, Issue/PR and exact
+  head when applicable, scope, acceptance criteria and prohibited actions.
+  Resolve addresses from live IDs; do not infer them from pane order.
+- **Replies must also use mail.** A recipient sends `[ack]` before starting, then
+  replies in the same task/thread with `[done]`, `[status]`, `[ask]` or `[info]`.
+  Include the task name and exact head in both receipt and final report.
+  `[done]` names the actual changes or reviewed files, findings/responses,
+  observed checks and evidence links; an implementation report includes remote
+  head verification and UI Tier B links where required. Explicitly distinguish
+  unrun checks and static review from runtime proof. `[ask]` names the blocker
+  or decision and pauses the affected action until the PM replies by mail.
+- **Delivery is not execution.** Retain the mail ID/thread and require the
+  recipient's `[ack]`; queued/sent does not prove work started. Inspect the
+  thread after ambiguous delivery before retrying, avoiding duplicate work.
 - **One agent, one worktree, one branch.** Never edit another agent's worktree or
   push to a branch another agent owns without saying so first. A PM that merges
   `main` into an agent's PR branch tells that agent before it pushes again.

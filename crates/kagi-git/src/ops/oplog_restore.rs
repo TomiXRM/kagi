@@ -348,6 +348,7 @@ fn plan_oplog_restore(
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: ref_restore::to_lines(&planned.restores),

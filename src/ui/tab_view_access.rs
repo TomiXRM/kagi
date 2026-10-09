@@ -160,7 +160,7 @@ impl KagiApp {
         self.reads.forget(session);
         self.ui.remove(&session);
         if let Some(flight) = &mut self.fetch_in_flight {
-            flight.waiters.retain(|(waiter, _)| *waiter != session);
+            flight.waiters.retain(|(waiter, _, _)| *waiter != session);
         }
     }
 

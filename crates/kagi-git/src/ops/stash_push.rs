@@ -138,6 +138,7 @@ pub fn plan_stash_push(
         head_at_plan: head,
         stash_count_at_plan: stash_count,
         stash_identity: Some(identity),
+        pull_identity: None,
         worktree_digest: Some(status.digest()),
         preview_files: Vec::new(),
         preview_commits: Vec::new(),

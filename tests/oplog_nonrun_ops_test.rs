@@ -1384,6 +1384,259 @@ fn pr_merge_reads_the_repository_it_froze_not_a_remote_name() {
     assert!(sessions.reconcile_ids().is_empty());
 }
 
+fn pull_checkout_failure_fixture(empty_commit: bool) -> (Fixture, PathBuf) {
+    let fixture = Fixture::new();
+    fixture.commit_file(
+        "remove.txt",
+        "remove on incoming branch\n",
+        "removal baseline",
+    );
+    let remote = fixture._root.path().join("origin.git");
+    let producer = fixture._root.path().join("producer");
+    git(
+        fixture._root.path(),
+        &[
+            "init",
+            "--bare",
+            "-q",
+            "-b",
+            "main",
+            remote.to_str().unwrap(),
+        ],
+    );
+    git(
+        &fixture.path,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    git(&fixture.path, &["push", "-q", "-u", "origin", "main"]);
+    git(
+        fixture._root.path(),
+        &[
+            "clone",
+            "-q",
+            remote.to_str().unwrap(),
+            producer.to_str().unwrap(),
+        ],
+    );
+    if empty_commit {
+        git(
+            &producer,
+            &[
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "incoming empty commit",
+            ],
+        );
+    } else {
+        std::fs::write(producer.join("base.txt"), "incoming tracked contents\n").unwrap();
+        std::fs::write(producer.join("added.txt"), "incoming addition\n").unwrap();
+        std::fs::remove_file(producer.join("remove.txt")).unwrap();
+        git(&producer, &["add", "-A"]);
+        git(
+            &producer,
+            &["commit", "-qm", "incoming modifies adds and removes"],
+        );
+    }
+    git(&producer, &["push", "-q", "origin", "main"]);
+    git(&fixture.path, &["fetch", "-q", "origin"]);
+    (fixture, producer)
+}
+
+struct ReflogDirectoryFault {
+    path: PathBuf,
+    backup: PathBuf,
+    marker: PathBuf,
+}
+
+impl ReflogDirectoryFault {
+    fn install(path: PathBuf) -> Self {
+        let backup = path.with_file_name("main.kagi-test-original");
+        assert!(!backup.exists());
+        std::fs::rename(&path, &backup).unwrap();
+        let fault = Self {
+            marker: path.join("keep-directory"),
+            path,
+            backup,
+        };
+        std::fs::create_dir(&fault.path).unwrap();
+        // libgit2 removes empty reflog-path directories. A nonempty namespace
+        // collision refuses the later ref commit even when the test is UID0.
+        std::fs::write(&fault.marker, b"preserve this owned directory\n").unwrap();
+        fault
+    }
+
+    fn restore(&self) -> std::io::Result<()> {
+        if self.marker.exists() {
+            std::fs::remove_file(&self.marker)?;
+        }
+        if self.path.is_dir() {
+            std::fs::remove_dir(&self.path)?;
+        }
+        std::fs::rename(&self.backup, &self.path)
+    }
+}
+
+impl Drop for ReflogDirectoryFault {
+    fn drop(&mut self) {
+        if self.backup.exists() {
+            if let Err(error) = self.restore() {
+                eprintln!("failed to restore owned fixture reflog: {error}");
+            }
+        }
+    }
+}
+
+fn pull_with_blocked_reflog(
+    fixture: &Fixture,
+) -> (
+    kagi_git::OperationPlan,
+    kagi_git::backend::recording::RunReport,
+) {
+    let mut backend = Backend::open_with_policy(
+        &fixture.path,
+        kagi_git::backend::ExecutionPolicy::human(false),
+    )
+    .unwrap();
+    let op = Operation::PullBranchFf {
+        branch_name: "main".into(),
+    };
+    let plan = backend.plan(&op).unwrap();
+    assert!(plan.blockers.is_empty());
+    // The real ref transaction checks this reflog namespace after checkout,
+    // before committing the branch ref. No permission or UID assumptions.
+    let reflog = fixture.path.join(".git/logs/refs/heads/main");
+    let original = std::fs::read(&reflog).unwrap();
+    let fault = ReflogDirectoryFault::install(reflog);
+    let report = backend.run_recorded(&op, &plan);
+    fault.restore().unwrap();
+    assert_eq!(std::fs::read(&fault.path).unwrap(), original);
+    (plan, report)
+}
+
+#[test]
+fn current_pull_ff_checkout_ref_failure_records_partial_recovery() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (fixture, producer) = pull_checkout_failure_fixture(false);
+    let before_head = git(&fixture.path, &["rev-parse", "HEAD"]);
+    let incoming = git(&producer, &["rev-parse", "HEAD"]);
+    let (plan, report) = pull_with_blocked_reflog(&fixture);
+    let error = report.result.as_ref().unwrap_err().to_string();
+    assert!(error.contains("branch ref update failed"), "{error}");
+    assert_eq!(git(&fixture.path, &["rev-parse", "HEAD"]), before_head);
+    assert_ne!(before_head, incoming);
+    assert_eq!(
+        git(&fixture.path, &["ls-files", "--stage", "-z"]),
+        git(&producer, &["ls-files", "--stage", "-z"])
+    );
+    assert_eq!(
+        std::fs::read(fixture.path.join("base.txt")).unwrap(),
+        b"incoming tracked contents\n"
+    );
+    assert_eq!(
+        std::fs::read(fixture.path.join("added.txt")).unwrap(),
+        b"incoming addition\n"
+    );
+    assert!(!fixture.path.join("remove.txt").exists());
+    assert!(!git(&fixture.path, &["diff", "--cached", "--name-status"])
+        .trim()
+        .is_empty());
+    let records = fixture.records(1, Actor::Human);
+    let entry = &records[0];
+    let OpOutcome::Partial { after, error } = &entry.outcome else {
+        panic!(
+            "observed changed checkout before ref failure must be Partial: {:?}",
+            entry.outcome
+        );
+    };
+    let backend = Backend::open(&fixture.path).unwrap();
+    let actual_after = backend.current_state().unwrap();
+    assert_eq!(after.head, actual_after.head);
+    assert!(after.dirty.starts_with(&actual_after.dirty));
+    assert!(after
+        .dirty
+        .contains(&format!("checkout_target={}", incoming.trim())));
+    assert!(error.contains("branch ref update failed"));
+    assert_eq!(entry.id, report.recording.entry().id);
+    assert_eq!(entry.recovery_plan.as_ref(), plan.recovery.as_ref());
+    let recovery = kagi::ui::oplog_panel::recovery_lines(entry)
+        .expect("the actual durable Partial must expose its typed recovery");
+    assert!(!recovery.is_empty());
+    assert!(recovery.join("\n").contains("Partial"));
+    for command in plan
+        .recovery
+        .as_ref()
+        .unwrap()
+        .commands_for(kagi_domain::plan_note::ShellKind::current())
+    {
+        assert!(
+            recovery.iter().any(|line| line.contains(command)),
+            "{recovery:?}"
+        );
+    }
+    let details = kagi::ui::oplog_panel::detail_lines(entry).join("\n");
+    assert!(details.contains(error));
+    assert!(details.contains(&after.head));
+    assert!(details.contains(&after.dirty));
+}
+
+#[test]
+fn current_pull_ff_empty_commit_ref_failure_is_failed_without_recovery() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (fixture, _) = pull_checkout_failure_fixture(true);
+    let before = repo_state(&fixture.path);
+    let (_, report) = pull_with_blocked_reflog(&fixture);
+    assert!(report.result.is_err());
+    assert_eq!(
+        repo_state(&fixture.path),
+        before,
+        "an empty incoming commit changed no staged content or files"
+    );
+    let records = fixture.records(1, Actor::Human);
+    assert!(matches!(records[0].outcome, OpOutcome::Failed { .. }));
+    assert!(records[0].recovery_plan.is_none());
+    assert!(kagi::ui::oplog_panel::recovery_lines(&records[0]).is_none());
+}
+
+#[test]
+fn current_pull_ff_ref_lock_failure_before_checkout_is_failed_without_recovery() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (fixture, _) = pull_checkout_failure_fixture(false);
+    let before = repo_state(&fixture.path);
+    let mut backend = Backend::open_with_policy(
+        &fixture.path,
+        kagi_git::backend::ExecutionPolicy::human(false),
+    )
+    .unwrap();
+    let op = Operation::PullBranchFf {
+        branch_name: "main".into(),
+    };
+    let plan = backend.plan(&op).unwrap();
+    assert!(plan.blockers.is_empty());
+    std::fs::write(
+        fixture.path.join(".git/refs/heads/main.lock"),
+        b"owned fixture lock",
+    )
+    .unwrap();
+    let report = backend.run_recorded(&op, &plan);
+    assert!(report.result.is_err());
+    assert_eq!(repo_state(&fixture.path), before);
+    let records = fixture.records(1, Actor::Human);
+    assert!(matches!(records[0].outcome, OpOutcome::Failed { .. }));
+    assert!(records[0].recovery_plan.is_none());
+    assert!(kagi::ui::oplog_panel::recovery_lines(&records[0]).is_none());
+}
+
 #[path = "support/pr_merge_reconcile.rs"]
 mod pr_merge_reconcile;
 

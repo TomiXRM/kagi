@@ -19,18 +19,18 @@ use crate::app::{self, PlanState, Planned};
 use crate::ui::*;
 
 impl KagiApp {
-    /// Build a pull plan and open the confirmation modal.
+    /// Fetch the local upstream before offering a pull confirmation.
     pub fn open_pull_modal(&mut self, cx: &mut Context<Self>) {
-        // A remote identity probe is planning a write. Even a dirty-view
-        // fetch waiter must not start a second probe while it owns the latch.
+        // A remote identity probe owns the planning latch; local fetch waiters
+        // must not start another probe while it is held.
         if self.remote_view.is_some() && self.op_latched() {
             self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
             return;
         }
         // Attaching a waiter is not admitting another plan or write.
-        if self.view().is_dirty
+        if self.remote_view.is_none()
             && self.fetch_in_flight.is_some()
-            && self.fetch_async_for(false, self.active_session(), cx)
+            && self.fetch_async_for(false, Some(crate::ui::commands::PullTarget::Current), cx)
         {
             return;
         }
@@ -46,16 +46,6 @@ impl KagiApp {
             let branch = s.branch.clone();
             let behind = s.behind.unwrap_or(0);
             let ahead = s.ahead.unwrap_or(0);
-            // Nothing to pull by local knowledge → snackbar, no modal (as local).
-            if behind == 0 {
-                self.push_toast(
-                    ToastKind::Sync,
-                    SharedString::from(Msg::AlreadyUpToDatePull.t()),
-                    cx,
-                );
-                self.status_footer = FooterStatus::Idle(SharedString::from(""));
-                return;
-            }
             let upstream = self
                 .view()
                 .branch_upstream_info
@@ -133,6 +123,7 @@ impl KagiApp {
                                                 auto_stash: false,
                                                 error: None,
                                                 dirty_digest: None,
+                                                fetch_owner: None,
                                             }),
                                         )
                                         .with_session_token(),
@@ -165,31 +156,38 @@ impl KagiApp {
             Some(p) => p,
             None => return,
         };
-        // #625 / ADR-0192: a dirty Pull auto-stashes and restores, so its plan
-        // must name the paths whose restore would conflict — and `plan_pull`
-        // only knows the origin refs kagi already has. Auto-fetch runs every
-        // 180s, so the modal could easily be planned against an upstream tip
-        // minutes old and promise a clean restore that then fails. Fetch first
-        // (a read that never touches the working tree), then plan.
-        if self.view().is_dirty {
-            if let Some(session) = self.active_session() {
-                // The request rides *inside* this fetch's task (#626 review):
-                // no global flag, so no unrelated fetch can consume it later
-                // and no reload can drop it. Delivery rules live in
-                // `deliver_pull_confirm`.
-                // `false` means no fetch took the request: nothing started
-                // and nothing in flight is refreshing this repo.
-                if !self.fetch_async_for(false, Some(session), cx) {
-                    // Plan on local knowledge rather than swallowing the
-                    // user's click (no lease, no remote, or a fetch running for
-                    // another repo). The plan is still the honest one — just as
-                    // fresh as kagi's last fetch.
-                    self.plan_and_open_pull_modal(cx);
+        let Some(_) = self.active_session() else {
+            return;
+        };
+        // Verify cached structural blockers locally without doing an extra full
+        // merge prediction on every healthy Pull. A stale cached blocker never
+        // authorizes an executable plan or an up-to-date claim.
+        let status = &self.view().status_summary;
+        if status.is_detached || status.is_unborn || status.no_upstream || status.conflict_count > 0
+        {
+            match self.build_pull_modal(None) {
+                Ok(Some(modal)) if !modal.plan.blockers.is_empty() => {
+                    klog!(
+                        "plan: pull blockers={} warnings={}",
+                        modal.plan.blockers.len(),
+                        modal.plan.warnings.len()
+                    );
+                    self.set_pull_modal(modal);
+                    return;
                 }
-                return;
+                Err(error) => {
+                    self.report_plan_failure(i18n::Op::Pull, error);
+                    return;
+                }
+                _ => {}
             }
         }
-        self.plan_and_open_pull_modal(cx);
+        // Neither an executable preview nor an up-to-date claim may rely on
+        // cached tracking refs, regardless of working-tree dirtiness. Admission
+        // refusal is not freshness: never fall back to the stale local plan.
+        if !self.fetch_async_for(false, Some(crate::ui::commands::PullTarget::Current), cx) {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+        }
     }
 
     /// Deliver a successful fetch's confirmation only to the visit that
@@ -198,55 +196,44 @@ impl KagiApp {
     pub(crate) fn deliver_pull_confirm(
         &mut self,
         session: crate::app::SessionId,
+        displaced: bool,
+        target: crate::ui::commands::PullTarget,
+        fetched_remote: &str,
         cx: &mut Context<Self>,
     ) {
         if self.active_session() == Some(session) {
-            self.plan_and_offer_pull_modal_from_async(cx);
-        }
-    }
-
-    /// Plan a local pull and open (or skip) its confirmation modal. `true` when
-    /// a confirmation is now on screen.
-    ///
-    /// Split from [`Self::open_pull_modal`] so the dirty path can run it after
-    /// its fetch completes (#625) without duplicating the plan handling.
-    pub(crate) fn plan_and_open_pull_modal(&mut self, cx: &mut Context<Self>) -> bool {
-        match self.build_pull_modal() {
-            Ok(Some(modal)) => {
-                eprintln!(
-                    "[kagi] plan: pull blockers={} warnings={}",
-                    modal.plan.blockers.len(),
-                    modal.plan.warnings.len()
-                );
-                self.set_pull_modal(modal);
-                true
-            }
-            // Already-up-to-date pull (nothing to pull by local knowledge)
-            // is not worth a blocking popup (user request): snackbar instead.
-            Ok(None) => {
-                self.push_toast(
-                    ToastKind::Sync,
-                    SharedString::from(Msg::AlreadyUpToDatePull.t()),
-                    cx,
-                );
-                self.status_footer = FooterStatus::Idle(SharedString::from(""));
-                false
-            }
-            Err(error) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(error));
-                false
+            if displaced || self.has_active_modal() || self.op_latched() {
+                self.discard_contended_plan_from_async(i18n::Op::Pull, AsyncPlanToken::None);
+            } else {
+                match target {
+                    crate::ui::commands::PullTarget::Current => {
+                        self.plan_and_offer_pull_modal_from_async(fetched_remote, cx);
+                    }
+                    crate::ui::commands::PullTarget::BranchFfOnly(branch) => {
+                        self.offer_fetched_branch_pull(branch, fetched_remote);
+                    }
+                }
             }
         }
     }
 
-    fn plan_and_offer_pull_modal_from_async(&mut self, cx: &mut Context<Self>) -> bool {
-        match self.build_pull_modal() {
-            Ok(Some(modal)) => {
+    fn plan_and_offer_pull_modal_from_async(
+        &mut self,
+        fetched_remote: &str,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        match self.build_pull_modal(Some(fetched_remote)) {
+            Ok(Some(mut modal)) => {
                 klog!(
                     "plan: pull blockers={} warnings={}",
                     modal.plan.blockers.len(),
                     modal.plan.warnings.len()
                 );
+                modal.fetch_owner = self.active_session().and_then(|session| {
+                    self.app_sessions
+                        .visit(session)
+                        .map(|visit| (session, visit))
+                });
                 self.offer_plan_from_async(AsyncPlanOffer::new(
                     i18n::Op::Pull,
                     ActiveModal::Pull(modal),
@@ -268,38 +255,67 @@ impl KagiApp {
         }
     }
 
-    /// Refresh an open dirty-Pull confirmation against reloaded repository
-    /// state (#625, ADR-0192).
+    /// Refresh a retained local Pull confirmation against reloaded repository
+    /// state (#625, ADR-0192). Successful-fetch confirmations can outlive several
+    /// unchanged watcher reads from that fetch; each read re-plans the contents
+    /// rather than retaining a stale executable plan.
     ///
-    /// A dirty Pull fetches before confirming, and that fetch fires the FS
-    /// watcher — whose reload clears confirmation modals (ADR-0189), because a
-    /// plan invalidated by a repository change must not be confirmable. Both
-    /// halves of that hold here: the confirmation the user asked for **stays on
-    /// screen until they act on it**, and it is re-planned so what they confirm
-    /// is never the stale plan.
-    ///
-    /// A plan that now has nothing to confirm (someone else pulled meanwhile)
-    /// or that fails to build leaves the existing modal in place rather than
-    /// making the window empty under the user's cursor; `Backend::run`'s
-    /// preflight is what refuses a stale confirmation at execute time.
+    /// Legacy dirty confirmations keep their error/recovery surface when
+    /// replanning fails. A clean fetch-origin confirmation is invalidated
+    /// instead: it must not retain an executable plan that cannot be refreshed.
     pub(crate) fn replan_pull_modal(&mut self) {
-        match self.build_pull_modal() {
-            Ok(Some(modal)) => {
+        match self.build_pull_modal(None) {
+            Ok(Some(mut modal)) => {
+                // The accepted snapshot may predate a live checkout change.
+                // Do not rewrite a clean approval to that different checkout.
+                if self.pull_modal().is_some_and(|current| {
+                    current.fetch_owner.is_some()
+                        && (current.plan.pull_identity != modal.plan.pull_identity
+                            || (!current.auto_stash
+                                && (modal.auto_stash
+                                    || current.plan.head_at_plan != modal.plan.head_at_plan
+                                    || current.dirty_digest.as_ref()
+                                        != modal.dirty_digest.as_ref())))
+                }) {
+                    self.clear_pull_modal();
+                    return;
+                }
                 klog!(
                     "replan: pull blockers={} warnings={}",
                     modal.plan.blockers.len(),
                     modal.plan.warnings.len()
                 );
+                modal.fetch_owner = self.pull_modal().and_then(|current| current.fetch_owner);
                 self.update_pull_plan_from_async(modal);
             }
-            Ok(None) => klog!("replan: pull nothing to pull; keeping the confirmation"),
-            Err(error) => klog!("replan: pull failed: {error}"),
+            Ok(None) => {
+                if self
+                    .pull_modal()
+                    .is_some_and(|modal| !modal.auto_stash && modal.fetch_owner.is_some())
+                {
+                    self.clear_pull_modal();
+                } else {
+                    klog!("replan: pull nothing to pull; keeping the confirmation");
+                }
+            }
+            Err(error) => {
+                if self
+                    .pull_modal()
+                    .is_some_and(|modal| !modal.auto_stash && modal.fetch_owner.is_some())
+                {
+                    self.clear_pull_modal();
+                }
+                klog!("replan: pull failed: {error}");
+            }
         }
     }
 
     /// The confirmation a local pull would show: `Ok(None)` when there is
     /// nothing to pull, `Err` when the plan could not be built.
-    fn build_pull_modal(&mut self) -> Result<Option<PullPlanModal>, String> {
+    fn build_pull_modal(
+        &mut self,
+        expected_fetched_remote: Option<&str>,
+    ) -> Result<Option<PullPlanModal>, String> {
         // ADR-0107: use the per-tab RepoSession instead of re-opening.
         let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
@@ -308,6 +324,18 @@ impl KagiApp {
         let mut plan = repo
             .plan_pull()
             .map_err(|e| i18n::op_plan_failed(i18n::Op::Pull, e))?;
+        // A blocked plan has no executable identity: preserve its actual blocker
+        // instead of turning it into an upstream-change error after a successful fetch.
+        if plan.blockers.is_empty()
+            && expected_fetched_remote.is_some_and(|expected| {
+                plan.pull_identity
+                    .as_ref()
+                    .map(|identity| identity.remote.as_str())
+                    != Some(expected)
+            })
+        {
+            return Err(Msg::PullUpstreamChangedDuringFetch.t().to_string());
+        }
         let auto_stash = plan.blockers.is_empty() && self.view().is_dirty;
         if auto_stash {
             let status = &self.view().status_summary;
@@ -339,9 +367,9 @@ impl KagiApp {
                 commands: Vec::new(),
             });
         }
-        // Background auto-fetch keeps the behind count fresh; ops::plan_pull
-        // sets NoOp(PullUpToDate) when behind == 0 (ADR-0129 F-1: no
-        // string-parsing of the title).
+        // No-op is local knowledge only. The Pull entry point must successfully
+        // fetch before presenting it as up to date (ADR-0129 F-1: no title
+        // string parsing).
         if plan.blockers.is_empty()
             && plan.warnings.is_empty()
             && matches!(
@@ -359,6 +387,7 @@ impl KagiApp {
                 .working_tree_status()
                 .ok()
                 .map(|status| status.digest()),
+            fetch_owner: None,
         }))
     }
 

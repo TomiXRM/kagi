@@ -257,21 +257,44 @@ pub fn scenario_context_menu_keys_home(cx: &mut VisualTestAppContext) {
 /// enabled item and scrolls it into the window (#991 review), so Enter can
 /// never press an item the user cannot see.
 pub fn scenario_context_menu_keys_short(cx: &mut VisualTestAppContext) {
-    const HEIGHT: f32 = 420.;
+    let _restore = crate::recovery_layout::GlobalSettings::capture();
+    kagi_ui_core::theme::set_zoom(1.67);
     // "Show changed files", the last enabled item (Reset below it is
     // always disabled).
     const LAST: &str = "commit-menu-item-4-2";
     let fixture = build_fixture();
     crate::gui_evidence::fixture(fixture.path());
-    let state = e2e::app_state(fixture.path()).expect("fixture app state");
-    let captured: Rc<RefCell<Option<Entity<KagiApp>>>> = Rc::default();
-    let output = captured.clone();
-    let window = open_offscreen(cx, size(px(1440.), px(HEIGHT)), move |window, cx| {
-        e2e::mount_root(state, window, cx, &output)
-    });
-    let app = captured.borrow().clone().expect("mounted KagiApp");
-    let window: AnyWindowHandle = window.into();
-    cx.run_until_parked();
+    let mount_at_height = |cx: &mut VisualTestAppContext, height: f32| {
+        let state = e2e::app_state(fixture.path()).expect("fixture app state");
+        let captured: Rc<RefCell<Option<Entity<KagiApp>>>> = Rc::default();
+        let output = captured.clone();
+        let window = open_offscreen(cx, size(px(1440.), px(height)), move |window, cx| {
+            e2e::mount_root(state, window, cx, &output)
+        });
+        let app = captured.borrow().clone().expect("mounted KagiApp");
+        cx.run_until_parked();
+        (app, AnyWindowHandle::from(window))
+    };
+    // Derive the overflow fixture from actual rendered content, not a row-height
+    // default or whatever zoom a preceding scenario happened to leave behind.
+    let (probe, probe_window) = mount_at_height(cx, 1400.);
+    select_head(cx, &probe, probe_window);
+    keys(cx, probe_window, "shift-f10");
+    for row in ["commit-menu-item-0-0", LAST] {
+        e2e::clear_control_bounds(probe_window.window_id(), row);
+    }
+    menu(cx, &probe, probe_window);
+    let first = e2e::control_bounds(probe_window.window_id(), "commit-menu-item-0-0")
+        .expect("first item laid out");
+    let last =
+        e2e::control_bounds(probe_window.window_id(), LAST).expect("last enabled item laid out");
+    let height = f32::from(last.bottom() - first.top()) * 0.65;
+    assert!(
+        height > 120.,
+        "measured menu permits a usable short viewport"
+    );
+    unmount(cx, probe, probe_window);
+    let (app, window) = mount_at_height(cx, height);
     select_head(cx, &app, window);
     keys(cx, window, "shift-f10");
     assert!(cx.read(|cx| app.read(cx).commit_menu.is_some()));
@@ -284,7 +307,7 @@ pub fn scenario_context_menu_keys_short(cx: &mut VisualTestAppContext) {
         f32::from(item.bottom())
     };
     assert!(
-        bottom(cx) > HEIGHT,
+        bottom(cx) > height,
         "precondition: the menu is taller than the window"
     );
     keys(cx, window, "end");
@@ -292,8 +315,8 @@ pub fn scenario_context_menu_keys_short(cx: &mut VisualTestAppContext) {
     assert_eq!(focused, enabled.last().copied());
     let after = bottom(cx);
     assert!(
-        after <= HEIGHT,
-        "End scrolled the focused item into the window (bottom {after} > {HEIGHT})"
+        after <= height,
+        "End scrolled the focused item into the window (bottom {after} > {height})"
     );
     unmount(cx, app, window);
 }

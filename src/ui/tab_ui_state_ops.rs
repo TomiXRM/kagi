@@ -47,6 +47,7 @@ impl TabUiState {
         self.commit_panel_open = true;
         self.selected = None;
         self.main_diff = None;
+        self.main_diff_req = self.main_diff_req.wrapping_add(1);
     }
 
     /// Replace the Smart Commit status line.

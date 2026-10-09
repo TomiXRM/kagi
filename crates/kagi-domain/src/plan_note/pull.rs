@@ -1,8 +1,8 @@
 //! PullNote — ADR-0129 Phase 2 category (appendix §B-4).
 //!
 //! Covers the three pull plan producers in `crates/kagi-git/src/ops/pull.rs`:
-//! `plan_pull` (current-branch pull), `plan_pull_branch_ff` (ref-only
-//! fast-forward pull for a non-current branch), and `plan_pull_remote` (SSH
+//! `plan_pull` (current-branch pull), `plan_pull_branch_ff` (checkout-aware
+//! strict fast-forward pull), and `plan_pull_remote` (SSH
 //! snapshot-only pull plan). Cross-op notes (HEAD state, conflicted files,
 //! untracked-remain) are NOT duplicated here — they map to the existing
 //! `CommonNote` variants (appendix §A) from the ops file directly.
@@ -206,7 +206,7 @@ pub enum PullTitle {
         remote: String,
         behind: usize,
     },
-    /// `plan_pull_branch_ff` (ref-only fast-forward pull).
+    /// `plan_pull_branch_ff` (strict fast-forward pull).
     PullBranchFf {
         branch: String,
         remote: String,
@@ -249,7 +249,7 @@ impl PullTitle {
                 remote,
                 behind,
             } => format!(
-                "Pull '{}' from '{}' (ff-only, ref-only, {} behind)",
+                "Pull '{}' from '{}' (ff-only, {} behind)",
                 branch, remote, behind
             ),
         }
@@ -265,7 +265,9 @@ pub enum PullRecovery {
     PullAutoStash,
     /// `plan_pull_remote` (SSH).
     PullRemote,
-    /// `plan_pull_branch_ff`.
+    /// `plan_pull_branch_ff` for the current checkout.
+    PullCurrentFf { branch: String },
+    /// `plan_pull_branch_ff` for an unoccupied non-current branch.
     PullBranchFf { branch: String },
 }
 
@@ -292,6 +294,13 @@ impl PullRecovery {
                  Conflicts are left for resolution on the host."
                     .to_string()
             }
+            PullRecovery::PullCurrentFf { branch } => format!(
+                "This fast-forwards refs/heads/{} and safely updates this checkout's index and working tree. \
+                 Diverged history is refused; no merge commit is created. Dirty paths that the update would touch are preserved by refusing the pull.\n\
+                 A Partial result can mean the index and files changed while the branch stayed at its old tip. Inspect the Operation Log after-state and error before retrying; do not commit incoming staged changes as local work.\n\
+                 Inspect the previous tip with git reflog show refs/heads/{}; unwanted incoming commits can be undone with git revert without rewriting history.",
+                branch, branch
+            ),
             PullRecovery::PullBranchFf { branch } => format!(
                 "This updates only refs/heads/{} after verifying a fast-forward. \
                  The working tree is not changed. If needed, restore the old tip with git branch -f {} <old-sha>.",
@@ -555,19 +564,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn pull_branch_ff_title() {
-        assert_eq!(
-            PullTitle::PullBranchFf {
-                branch: "feat/x".into(),
-                remote: "origin".into(),
-                behind: 5
-            }
-            .message_en(),
-            "Pull 'feat/x' from 'origin' (ff-only, ref-only, 5 behind)"
-        );
-    }
-
     // ── PullRecovery golden tests ─────────────────────────────────────
 
     #[test]
@@ -600,5 +596,19 @@ mod tests {
             .message_en(),
             "This updates only refs/heads/feat/x after verifying a fast-forward. The working tree is not changed. If needed, restore the old tip with git branch -f feat/x <old-sha>."
         );
+    }
+
+    #[test]
+    fn current_pull_ff_recovery_matches_checkout_effects() {
+        let text = PullRecovery::PullCurrentFf {
+            branch: "main".into(),
+        }
+        .message_en();
+        assert!(text.contains("index and working tree"));
+        assert!(text.contains("no merge commit"));
+        assert!(text.contains("git reflog show refs/heads/main"));
+        assert!(text.contains("A Partial result"));
+        assert!(text.contains("branch stayed at its old tip"));
+        assert!(!text.contains("git branch -f"));
     }
 }

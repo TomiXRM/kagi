@@ -392,6 +392,18 @@ pub struct PrMergeLocalBranch {
     pub keep_reason: Option<crate::plan_note::PrMergeLocalReason>,
 }
 
+/// Local branch and upstream mapping approved for a Pull.
+///
+/// Execution may fetch newer commits from this same upstream, but must never
+/// reinterpret the approval as a different branch or upstream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PullIdentity {
+    pub branch: String,
+    pub local_oid: CommitId,
+    pub remote: String,
+    pub upstream_ref: String,
+}
+
 /// A complete plan describing an operation, its blockers and warnings.
 /// If blockers are non-empty the UI must not offer Execute.
 /// ADR-0129: the display layer localizes structured title/notes/recovery;
@@ -425,6 +437,9 @@ pub struct OperationPlan {
     /// For non-stash operations this is always `0`.
     pub stash_count_at_plan: usize,
     pub stash_identity: Option<StashIdentity>,
+    /// Frozen local Pull operand, checked before and after execution's fetch.
+    /// `None` for non-Pull and remote-snapshot plans.
+    pub pull_identity: Option<PullIdentity>,
     /// Working-tree classification digest at plan time (#295). `Some` for the
     /// operations whose blockers depend on the working tree (discard, merge,
     /// stash apply/pop); `None` where only HEAD matters. `preflight_check`

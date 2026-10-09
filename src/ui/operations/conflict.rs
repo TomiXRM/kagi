@@ -368,7 +368,7 @@ impl KagiApp {
                             && app.app_sessions.visit(owner) == visit;
                         if let Err(e) = &result {
                             klog!("refused: {} stage failed: {}", op_name, e);
-                            app.record_conflict_completion(
+                            app.record_operation_completion(
                                 &op_name,
                                 StateSummary {
                                     head: format!("op={}", session_op),
@@ -497,7 +497,7 @@ impl KagiApp {
                         match result {
                             Ok(result) => {
                                 klog!("executed: {}", op_name);
-                                app.record_conflict_completion(
+                                app.record_operation_completion(
                                     &op_name,
                                     before,
                                     OpOutcome::Success {
@@ -517,7 +517,7 @@ impl KagiApp {
                                 let err_msg = format!("{}", e);
                                 let is_unknown = unknown.is_some();
                                 klog!("{} failed: {}", op_name, err_msg);
-                                app.record_conflict_completion(
+                                app.record_operation_completion(
                                     &op_name,
                                     before,
                                     unknown.unwrap_or_else(|| OpOutcome::Failed {
@@ -627,7 +627,7 @@ impl KagiApp {
                 match result {
                     Ok(result) => {
                         klog!("executed: {}", op_name);
-                        app.record_conflict_completion(
+                        app.record_operation_completion(
                             &op_name,
                             before,
                             OpOutcome::Success {
@@ -656,7 +656,7 @@ impl KagiApp {
                             _ => None,
                         });
                         klog!("{} failed: {}", op_name, err_msg);
-                        app.record_conflict_completion(
+                        app.record_operation_completion(
                             &op_name,
                             before,
                             unknown.unwrap_or_else(|| OpOutcome::Failed {

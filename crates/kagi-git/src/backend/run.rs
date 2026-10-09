@@ -1,5 +1,38 @@
 //! Shared execution pipeline and the single finalization boundary.
 use super::*;
+use kagi_domain::plan_note::{PlanTitle, PullTitle};
+
+/// A local Pull approval names its target and policy, not a cached distance.
+/// Other operation titles retain their exact admission requirements.
+fn execution_titles_match(fresh: &PlanTitle, approved: &PlanTitle) -> bool {
+    match (fresh, approved) {
+        (
+            PlanTitle::Pull(PullTitle::Pull {
+                branch: fresh_branch,
+                remote: fresh_remote,
+                behind: _,
+            }),
+            PlanTitle::Pull(PullTitle::Pull {
+                branch: approved_branch,
+                remote: approved_remote,
+                behind: _,
+            }),
+        )
+        | (
+            PlanTitle::Pull(PullTitle::PullBranchFf {
+                branch: fresh_branch,
+                remote: fresh_remote,
+                behind: _,
+            }),
+            PlanTitle::Pull(PullTitle::PullBranchFf {
+                branch: approved_branch,
+                remote: approved_remote,
+                behind: _,
+            }),
+        ) => fresh_branch == approved_branch && fresh_remote == approved_remote,
+        _ => fresh == approved,
+    }
+}
 
 impl Backend {
     /// The receipt belongs to this invocation, never to a later oplog tail read.
@@ -203,11 +236,12 @@ impl Backend {
                         .join("; "),
                 ));
             }
-            if fresh.title != plan.title
+            if !execution_titles_match(&fresh.title, &plan.title)
                 || ops::remote_source_tip(&fresh) != ops::remote_source_tip(plan)
                 || ops::plan_worktree_config_sha(&fresh) != ops::plan_worktree_config_sha(plan)
                 || fresh.destructive != plan.destructive
                 || fresh.worktree_digest.is_some() != plan.worktree_digest.is_some()
+                || fresh.pull_identity != plan.pull_identity
             {
                 return Err(GitError::Other(
                     "plan safety requirements differ; please re-plan".into(),
@@ -396,10 +430,10 @@ impl Backend {
                 .execute_switch_to_latest(plan, branch_name, remote_branch)
                 .map(|()| OperationOutcome::Unit),
             Operation::Revert { id } => self.execute_revert(id).map(OperationOutcome::Commit),
-            Operation::Pull => self.execute_pull().map(OperationOutcome::Pull),
+            Operation::Pull => self.execute_pull(plan).map(OperationOutcome::Pull),
             Operation::Push => self.execute_push().map(OperationOutcome::Push),
             Operation::PullBranchFf { branch_name } => self
-                .execute_pull_branch_ff(plan, branch_name)
+                .execute_pull_branch_ff(plan, branch_name, partial_after)
                 .map(OperationOutcome::Pull),
             Operation::PushBranch {
                 branch_name,

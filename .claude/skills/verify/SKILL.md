@@ -1254,6 +1254,35 @@ The current suite covers:
   carries its `owner`; Apply only touches that session;
 - dirty Pull auto-stash success and Pull-failure restoration, including a durable
   Operation Log result without a dismiss-only error modal.
+- Pull freshness (`tests/recovery/pull_freshness.rs`):
+  `KAGI_GUI_E2E_ONLY=pull_freshness_` exercises a real held fetch before a clean
+  confirmation, an advanced upstream unknown to the consumer, true synchronization,
+  fetch failure, and same-owner joining. Native toolbar activation follows
+  `keyboard_nav::keys` (keydown **and keyup**); toolbar ids are not bounds-registry
+  controls.
+  `pull_freshness_clean_updates` runs both that toolbar gesture and the actual
+  current-branch context menu: right-click the measured `sidebar-local-main`
+  row, then click its Pull item. Start each with cached zero and a separately
+  advanced real origin; neither gesture may claim latest or change checkout
+  before its held fetch succeeds and the user confirms. Local row measurements
+  cover HEAD and non-HEAD rows only under `gui-e2e`, with no normal-build probe
+  identifier allocation. Cached zero/unknown never disables healthy upstream
+  Pull; busy/detached/remote/no-upstream guardrails remain intact.
+  Compare staged content with `git ls-files --stage -z`, not raw index bytes:
+  opt-in status refresh may repair stat metadata without staging a change
+  (ADR-0193). Tier B uses two isolated clones and normal pushes to a dedicated
+  remote: advance the producer without fetching in the consumer, click Pull in
+  the owned app window, photograph stale `↓0` → fresh confirmation → confirmed
+  new HEAD. Also photograph a genuine no-op only after fetch success and an
+  unreachable-remote fetch error; restore the fixture URL afterward. Before
+  confirmation and on fetch failure, HEAD / staged content / working files must
+  be unchanged. A failed fetch must never produce an up-to-date toast.
+  The external HEAD / working-tree and opened-then-closed modal scenarios exercise
+  confirmation invalidation and displacement. `pull_freshness_captured_reload_drift`
+  drains the existing GPUI test dispatcher in background-only mode (`tick(true)`)
+  to capture a real snapshot before mutating the checkout, then accepts that old
+  read on the foreground dispatcher. Both HEAD-only and working-tree-only drift
+  must invalidate the original clean approval; no new production seam is needed.
 - reload keeping the open views (`KAGI_GUI_E2E_ONLY=survives_reload`): a commit's diff
   re-anchored to its renumbered row, the Compare pane and its file diff re-read, a
   Commit Panel file diff re-read (closed once nothing is left to show), and the

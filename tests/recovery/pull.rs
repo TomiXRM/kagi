@@ -1020,7 +1020,6 @@ pub fn scenario_pull_unknown_notice_survives_a_tab_switch(cx: &mut VisualTestApp
     git(&other, &["push", "-q", "origin", "main"]);
     git(repo, &["fetch", "-q", "origin"]);
     let helper = leaky_helper(remote_root.path(), "upload-pack");
-    git(repo, &["config", "remote.origin.uploadpack", &helper]);
     let other_tab = build_fixture();
 
     let (app, window) = mount(cx, repo);
@@ -1039,6 +1038,11 @@ pub fn scenario_pull_unknown_notice_survives_a_tab_switch(cx: &mut VisualTestApp
             "tab A must have a confirmation to press"
         );
     });
+
+    // Pull now fetches before offering even a clean confirmation. Inject the
+    // pipe fault only after that check: this scenario covers execution's
+    // unknown completion while its owner tab is no longer displayed.
+    git(repo, &["config", "remote.origin.uploadpack", &helper]);
 
     // Confirm and leave in one synchronous turn: the completion certainly
     // arrives while tab B is on screen, so its presentation is dropped.

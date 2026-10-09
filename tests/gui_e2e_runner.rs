@@ -99,6 +99,14 @@ mod reconcile_unobservable;
 mod recovery_pull;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pull_freshness.rs"]
+mod pull_freshness;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/pull_fetch_blocker.rs"]
+mod pull_fetch_blocker;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/cli_capability.rs"]
 mod recovery_cli_capability;
 
@@ -1212,6 +1220,98 @@ mod macos {
                 "backend_cli_capability_observation",
                 Box::new(
                     crate::recovery_cli_capability::scenario_backend_cli_capability_observation,
+                ),
+            ),
+            (
+                "pull_freshness_clean_updates",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_clean_updates),
+            ),
+            (
+                "pull_current_slash_remote",
+                Box::new(crate::pull_freshness::scenario_pull_current_slash_remote),
+            ),
+            (
+                "pull_current_local_upstream",
+                Box::new(crate::pull_freshness::scenario_pull_current_local_upstream),
+            ),
+            (
+                "pull_freshness_branch_entries",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_branch_entries),
+            ),
+            (
+                "pull_ff_only_current_tree_consistency",
+                Box::new(crate::pull_freshness::scenario_pull_ff_only_current_tree_consistency),
+            ),
+            (
+                "pull_branch_slash_remote_current",
+                Box::new(crate::pull_freshness::scenario_pull_branch_slash_remote_current),
+            ),
+            (
+                "pull_branch_slash_remote_noncurrent",
+                Box::new(crate::pull_freshness::scenario_pull_branch_slash_remote_noncurrent),
+            ),
+            (
+                "pull_branch_local_upstream_current",
+                Box::new(crate::pull_freshness::scenario_pull_branch_local_upstream_current),
+            ),
+            (
+                "pull_branch_local_upstream_noncurrent",
+                Box::new(crate::pull_freshness::scenario_pull_branch_local_upstream_noncurrent),
+            ),
+            (
+                "pull_freshness_synced_waits",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_synced_waits),
+            ),
+            (
+                "pull_freshness_fetch_failure",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_fetch_failure),
+            ),
+            (
+                "pull_freshness_joins_held_fetch",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_joins_held_fetch),
+            ),
+            (
+                "pull_freshness_external_head_invalidates",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_external_head_invalidates),
+            ),
+            (
+                "pull_freshness_external_worktree_invalidates",
+                Box::new(
+                    crate::pull_freshness::scenario_pull_freshness_external_worktree_invalidates,
+                ),
+            ),
+            (
+                "pull_freshness_closed_modal_displaces",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_closed_modal_displaces),
+            ),
+            (
+                "pull_freshness_captured_reload_drift",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_captured_reload_drift),
+            ),
+            (
+                "pull_auto_stash_tracking_identity_drift",
+                Box::new(crate::pull_freshness::scenario_pull_auto_stash_tracking_identity_drift),
+            ),
+            (
+                "pull_auto_stash_remote_identity_drift",
+                Box::new(crate::pull_freshness::scenario_pull_auto_stash_remote_identity_drift),
+            ),
+            (
+                "pull_auto_stash_dirty_plan_drift",
+                Box::new(crate::pull_freshness::scenario_pull_auto_stash_dirty_plan_drift),
+            ),
+            (
+                "pull_auto_stash_restore_preview_drift",
+                Box::new(crate::pull_freshness::scenario_pull_auto_stash_restore_preview_drift),
+            ),
+            (
+                "pull_auto_stash_same_upstream_advancement",
+                Box::new(crate::pull_freshness::scenario_pull_auto_stash_same_upstream_advancement),
+            ),
+            (
+                "pull_fetch_preserves_conflict_blocker",
+                Box::new(
+                    crate::pull_fetch_blocker::scenario_pull_fetch_preserves_conflict_blocker,
                 ),
             ),
             (

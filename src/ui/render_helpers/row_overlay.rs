@@ -3,8 +3,9 @@
 //! item right under it. Rows themselves are never split or renumbered; only
 //! the list's item index shifts while something is expanded.
 
+use std::collections::BTreeSet;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use gpui::prelude::*;
 use gpui::{div, px, AnyElement, App, ListState};
@@ -28,14 +29,14 @@ pub(crate) trait RowOverlay {
     /// The marker for `row`: on `side` in the split view, `None` in the
     /// unified view (one gutter for both sides).
     fn marker(&self, row: usize, side: Option<GutterSide>, cx: &mut App) -> Option<AnyElement>;
-    /// `row` is expanded: its expansion follows the list row showing it.
-    fn expanded(&self, row: usize) -> bool;
+    /// The embedding's owned projection for this diff and expansion state.
+    fn projection(&self) -> Rc<Projection>;
     /// What goes under a list row whose expanded rows are `rows`.
     fn expansion(&self, rows: &[usize], cx: &mut App) -> AnyElement;
 }
 
 /// The diff rows each base list row shows: one unified; a pair's two split.
-pub(crate) fn layout(rows: &Arc<Vec<DiffRow>>, split: bool) -> Vec<[Option<usize>; 2]> {
+fn layout(rows: &Arc<Vec<DiffRow>>, split: bool) -> Vec<[Option<usize>; 2]> {
     if !split {
         return (0..rows.len()).map(|ix| [Some(ix), None]).collect();
     }
@@ -56,28 +57,100 @@ pub(crate) enum Item {
     Expansion(usize),
 }
 
-fn expanded_in(base: &[Option<usize>; 2], expanded: &dyn Fn(usize) -> bool) -> Vec<usize> {
-    let mut rows: Vec<usize> = base
-        .iter()
-        .flatten()
-        .copied()
-        .filter(|r| expanded(*r))
-        .collect();
-    rows.dedup();
-    rows
+fn expanded_in(base: &[Option<usize>; 2], expanded: &dyn Fn(usize) -> bool) -> [Option<usize>; 2] {
+    let left = base[0].filter(|&row| expanded(row));
+    let right = base[1].filter(|&row| Some(row) != left && expanded(row));
+    [left, right]
 }
 
 /// The list's items: every base row, each followed by its expansion if any
 /// of its rows is expanded.
-pub(crate) fn items(layout: &[[Option<usize>; 2]], expanded: &dyn Fn(usize) -> bool) -> Vec<Item> {
+fn items(layout: &[[Option<usize>; 2]], expanded: &dyn Fn(usize) -> bool) -> Vec<Item> {
     let mut items = Vec::with_capacity(layout.len());
     for (b, base) in layout.iter().enumerate() {
         items.push(Item::Row(b));
-        if !expanded_in(base, expanded).is_empty() {
+        if expanded_in(base, expanded).iter().any(Option::is_some) {
             items.push(Item::Expansion(b));
         }
     }
     items
+}
+
+/// A render snapshot owns only derived indices, never the source diff rows.
+pub(crate) struct Projection {
+    pub(crate) layout: Rc<Vec<[Option<usize>; 2]>>,
+    pub(crate) items: Vec<Item>,
+    expanded: BTreeSet<usize>,
+}
+
+impl Projection {
+    pub(crate) fn expanded(&self, row: usize) -> bool {
+        self.expanded.contains(&row)
+    }
+
+    pub(crate) fn expansion_rows(&self, base: usize) -> [Option<usize>; 2] {
+        self.layout
+            .get(base)
+            .map(|base| expanded_in(base, &|row| self.expanded.contains(&row)))
+            .unwrap_or([None, None])
+    }
+}
+
+struct ProjectionEntry {
+    source: Weak<Vec<DiffRow>>,
+    path: String,
+    split: bool,
+    expanded_revision: u64,
+    projection: Rc<Projection>,
+}
+
+/// The embedding retains its last source, not a second process-wide diff cache.
+#[derive(Default)]
+pub(crate) struct ProjectionCache {
+    cached: Option<ProjectionEntry>,
+}
+
+impl ProjectionCache {
+    pub(crate) fn clear(&mut self) {
+        self.cached = None;
+    }
+
+    pub(crate) fn get(
+        &mut self,
+        path: &str,
+        rows: &Arc<Vec<DiffRow>>,
+        split: bool,
+        expanded_revision: u64,
+        expanded: &BTreeSet<usize>,
+    ) -> Rc<Projection> {
+        let same_layout = self.cached.as_ref().filter(|entry| {
+            entry.source.strong_count() != 0
+                && entry.source.as_ptr() == Arc::as_ptr(rows)
+                && entry.split == split
+        });
+        if let Some(entry) = same_layout {
+            if entry.path == path && entry.expanded_revision == expanded_revision {
+                return entry.projection.clone();
+            }
+        }
+        let layout = same_layout
+            .map(|entry| entry.projection.layout.clone())
+            .unwrap_or_else(|| Rc::new(layout(rows, split)));
+        let projection = Rc::new(Projection {
+            items: items(&layout, &|row| expanded.contains(&row)),
+            layout,
+            expanded: expanded.clone(),
+        });
+        self.cached = Some(ProjectionEntry {
+            // Weak identity prevents address reuse and detaches Arc::make_mut.
+            source: Arc::downgrade(rows),
+            path: path.to_string(),
+            split,
+            expanded_revision,
+            projection: projection.clone(),
+        });
+        projection
+    }
 }
 
 /// Keep `list` in step with `row`'s expansion changing from `before` to
@@ -95,10 +168,10 @@ pub(crate) fn splice_expansion(
     };
     let item = b + layout[..b]
         .iter()
-        .filter(|base| !expanded_in(base, before).is_empty())
+        .filter(|base| expanded_in(base, before).iter().any(Option::is_some))
         .count();
-    let had = !expanded_in(&layout[b], before).is_empty();
-    let has = !expanded_in(&layout[b], after).is_empty();
+    let had = expanded_in(&layout[b], before).iter().any(Option::is_some);
+    let has = expanded_in(&layout[b], after).iter().any(Option::is_some);
     if had || has {
         list.splice(item + 1..item + 1 + usize::from(had), usize::from(has));
     }
@@ -127,21 +200,28 @@ pub(crate) fn with_gutter(gutter: AnyElement, row: AnyElement) -> AnyElement {
         .into_any_element()
 }
 
-/// The overlay's expanded rows under base row `b`.
-pub(crate) fn expansion_rows(
-    layout: &[[Option<usize>; 2]],
-    b: usize,
-    overlay: &Rc<dyn RowOverlay>,
-) -> Vec<usize> {
-    layout
-        .get(b)
-        .map(|base| expanded_in(base, &|row| overlay.expanded(row)))
-        .unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kagi_git::DiffLineKind;
+
+    fn line(kind: DiffLineKind) -> DiffRow {
+        DiffRow::Line {
+            kind,
+            text: "line".into(),
+            old_lineno: None,
+            new_lineno: None,
+            highlights: Vec::new(),
+        }
+    }
+
+    fn paired_rows() -> Arc<Vec<DiffRow>> {
+        Arc::new(vec![
+            line(DiffLineKind::Removed),
+            line(DiffLineKind::Added),
+            line(DiffLineKind::Context),
+        ])
+    }
 
     const LAYOUT: [[Option<usize>; 2]; 4] = [
         [Some(0), None],
@@ -201,5 +281,121 @@ mod tests {
             splice_expansion(&list, &LAYOUT, row, before, after);
             assert_eq!(list.item_count(), items(&LAYOUT, after).len(), "row {row}");
         }
+    }
+
+    #[test]
+    fn replacement_rows_move_the_expansion_to_their_new_split_pair() {
+        let first = paired_rows();
+        let replacement = Arc::new(vec![
+            line(DiffLineKind::Context),
+            line(DiffLineKind::Removed),
+            line(DiffLineKind::Added),
+        ]);
+        let mut cache = ProjectionCache::default();
+        let open = BTreeSet::from([1]);
+        let original = cache.get("same.rs", &first, true, 1, &open);
+        assert_eq!(
+            original.items,
+            [Item::Row(0), Item::Expansion(0), Item::Row(1)]
+        );
+        assert_eq!(original.expansion_rows(0), [Some(1), None]);
+        let replaced = cache.get("same.rs", &replacement, true, 1, &open);
+        assert_eq!(
+            replaced.items,
+            [Item::Row(0), Item::Row(1), Item::Expansion(1)]
+        );
+        assert_eq!(replaced.expansion_rows(1), [Some(1), None]);
+    }
+
+    #[test]
+    fn mode_revision_and_path_changes_keep_expanded_source_rows_in_order() {
+        let rows = paired_rows();
+        let mut cache = ProjectionCache::default();
+        let both = BTreeSet::from([0, 1]);
+        let unified = cache.get("file.rs", &rows, false, 1, &both);
+        assert_eq!(
+            unified.items,
+            [
+                Item::Row(0),
+                Item::Expansion(0),
+                Item::Row(1),
+                Item::Expansion(1),
+                Item::Row(2),
+            ]
+        );
+        let split = cache.get("file.rs", &rows, true, 1, &both);
+        assert_eq!(
+            split.items,
+            [Item::Row(0), Item::Expansion(0), Item::Row(1)]
+        );
+        assert_eq!(split.expansion_rows(0), [Some(0), Some(1)]);
+
+        let context = BTreeSet::from([2]);
+        let changed = cache.get("file.rs", &rows, true, 2, &context);
+        assert_eq!(
+            changed.items,
+            [Item::Row(0), Item::Row(1), Item::Expansion(1)]
+        );
+        assert_eq!(changed.expansion_rows(1), [Some(2), None]);
+        let other_path = cache.get("other.rs", &rows, true, 2, &BTreeSet::new());
+        assert_eq!(other_path.items, [Item::Row(0), Item::Row(1)]);
+        let closed = cache.get("file.rs", &rows, true, 3, &BTreeSet::new());
+        assert_eq!(closed.items, [Item::Row(0), Item::Row(1)]);
+    }
+
+    #[test]
+    fn cached_expansion_changes_splice_without_losing_the_later_row_anchor() {
+        let rows = paired_rows();
+        let mut cache = ProjectionCache::default();
+        let mut open = BTreeSet::new();
+        let closed = cache.get("file.rs", &rows, true, 0, &open);
+        let list = ListState::new(closed.items.len(), gpui::ListAlignment::Top, px(100.));
+        list.scroll_to(gpui::ListOffset {
+            item_ix: 1,
+            offset_in_item: px(7.),
+        });
+        for (revision, row) in [(1, 0), (2, 1), (3, 0), (4, 1)] {
+            let before = cache.get("file.rs", &rows, true, revision - 1, &open);
+            let previous = open.clone();
+            if !open.remove(&row) {
+                open.insert(row);
+            }
+            splice_expansion(
+                &list,
+                &before.layout,
+                row,
+                &|row| previous.contains(&row),
+                &|row| open.contains(&row),
+            );
+            let after = cache.get("file.rs", &rows, true, revision, &open);
+            assert_eq!(list.item_count(), after.items.len());
+            let top = list.logical_scroll_top();
+            assert_eq!(after.items[top.item_ix], Item::Row(1));
+            assert_eq!(top.offset_in_item, px(7.));
+        }
+    }
+
+    #[test]
+    fn render_snapshots_do_not_keep_source_rows_or_replaced_projections_alive() {
+        let rows = paired_rows();
+        let source = Arc::downgrade(&rows);
+        let mut cache = ProjectionCache::default();
+        let snapshot = cache.get("file.rs", &rows, true, 1, &BTreeSet::from([1]));
+        let old_projection = Rc::downgrade(&snapshot);
+        drop(rows);
+        assert!(
+            source.upgrade().is_none(),
+            "the source buffer must be released"
+        );
+        assert_eq!(snapshot.expansion_rows(0), [Some(1), None]);
+
+        let replacement = paired_rows();
+        cache.get("file.rs", &replacement, true, 1, &BTreeSet::new());
+        assert_eq!(snapshot.expansion_rows(0), [Some(1), None]);
+        drop(snapshot);
+        assert!(
+            old_projection.upgrade().is_none(),
+            "the owner must release the dead source's derived allocation"
+        );
     }
 }

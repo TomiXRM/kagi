@@ -1813,6 +1813,14 @@ mod macos {
                 Box::new(crate::pr_threads::scenario_pr_threads_via_gh),
             ),
             (
+                "pr_threads_projection_invalidation",
+                Box::new(crate::pr_threads::scenario_pr_threads_projection_invalidation),
+            ),
+            (
+                "pr_threads_projection_session_owner",
+                Box::new(crate::pr_threads::scenario_pr_threads_projection_session_owner),
+            ),
+            (
                 "pr_suggestion_apply",
                 Box::new(crate::pr_suggestion_apply::scenario_pr_suggestion_apply),
             ),

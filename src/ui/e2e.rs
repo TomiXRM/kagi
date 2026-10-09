@@ -916,6 +916,17 @@ pub fn queue_github_pr_conversation(task: gpui::Task<PrConversationResult>) {
     GITHUB_PR_CONVERSATION.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
 }
 
+/// Re-read the active PR through its production owner/key-bound loader.
+#[cfg(feature = "gui-e2e")]
+pub fn reload_pr_conversation(app: &mut KagiApp, cx: &mut gpui::Context<KagiApp>) {
+    let pr = app
+        .pr_mode()
+        .and_then(|mode| mode.active.and_then(|ix| mode.tabs.get(ix)))
+        .map(|tab| tab.pr.clone())
+        .expect("an active PR");
+    app.pr_mode_load_conversation(&pr, cx);
+}
+
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn take_github_pr_conversation() -> Option<gpui::Task<PrConversationResult>> {
     GITHUB_PR_CONVERSATION.with(|slot| slot.borrow_mut().take())

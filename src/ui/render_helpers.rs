@@ -541,15 +541,9 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
     let sel_key = super::diff_selection::surface_key(view.title.as_ref(), view.rows.len());
     // #351: an embedding's overlay adds one list item under each expanded row.
     let overlay = header.overlay.take();
-    let layout = overlay
-        .as_ref()
-        .map(|_| Rc::new(row_overlay::layout(&view.rows, split)));
-    let items = overlay
-        .as_ref()
-        .zip(layout.as_ref())
-        .map(|(overlay, layout)| Rc::new(row_overlay::items(layout, &|row| overlay.expanded(row))));
-    let row_count = match &items {
-        Some(items) => items.len(),
+    let overlay_projection = overlay.as_ref().map(|overlay| overlay.projection());
+    let row_count = match &overlay_projection {
+        Some(projection) => projection.items.len(),
         None => projection
             .as_ref()
             .map(|projection| projection.rows.len())
@@ -673,12 +667,19 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
                     "main-diff-list-scroll",
                     &scrollbar_handle,
                     gpui::list(scroll_handle, move |ix, _window, cx| {
-                        let base = match (&items, &overlay, &layout) {
-                            (Some(items), Some(overlay), Some(layout)) => match items.get(ix) {
+                        let base = match (&overlay_projection, &overlay) {
+                            (Some(projection), Some(overlay)) => match projection.items.get(ix) {
                                 Some(row_overlay::Item::Row(b)) => *b,
                                 Some(row_overlay::Item::Expansion(b)) => {
-                                    let rows = row_overlay::expansion_rows(layout, *b, overlay);
-                                    return overlay.expansion(&rows, cx);
+                                    return match projection.expansion_rows(*b) {
+                                        [Some(left), Some(right)] => {
+                                            overlay.expansion(&[left, right], cx)
+                                        }
+                                        [Some(row), None] | [None, Some(row)] => {
+                                            overlay.expansion(&[row], cx)
+                                        }
+                                        [None, None] => div().into_any_element(),
+                                    };
                                 }
                                 None => return div().into_any_element(),
                             },

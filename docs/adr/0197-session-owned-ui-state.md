@@ -162,7 +162,7 @@ entity と seed の二重 owner を作る。A4 の決定文とも衝突する。
 - 2026-10-09 の最終 native Tier A は `binary_diff_prepared`、
   `binary_diff_owner_transitions`、`binary_diff_worktree_owner`、
   `binary_diff_linked_empty_revisit` の 4 ケースで PASS。build / full workspace
-  （3,082 passed、0 failed、40 ignored）/ clippy / fmt / 22 gates も PASS。
+  （最新 dev 統合後 3,086 passed、0 failed、40 ignored）/ clippy / fmt / 22 gates も PASS。
 - default build の実ウィンドウでは、各 6,532,139 bytes の変更前・変更後 PNG、
   unsupported binary への切り替え、追加 PNG の After のみ、staged 削除 PNG の
   Before のみを確認した。閲覧後も HEAD、全 index entry の path / OID / mode /

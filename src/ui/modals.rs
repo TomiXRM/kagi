@@ -84,6 +84,9 @@ pub struct PullPlanModal {
     /// stashing first hides any later change from every downstream guard.
     /// `None` for a remote pull, which stashes nothing.
     pub dirty_digest: Option<kagi_domain::status::WorktreeDigest>,
+    /// Successful-fetch origin, frozen to the requesting tab's visit. Only
+    /// these confirmations may survive their own unchanged repository reload.
+    pub fetch_owner: Option<(crate::app::SessionId, u64)>,
 }
 
 /// State for an in-progress operation-history Undo/Redo confirmation

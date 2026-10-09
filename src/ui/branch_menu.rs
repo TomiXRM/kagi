@@ -78,8 +78,8 @@ pub struct BranchMenuContext {
     pub is_current: bool,
     pub has_upstream: bool,
     pub upstream_name: Option<String>,
-    /// `None` when the count is unknown (skipped, #355): Pull / Push stay
-    /// enabled and the plan counts again.
+    /// Counts reflect the last fetch, not live upstream freshness. Pull stays
+    /// enabled even at zero; an unknown count is re-read during planning (#355).
     pub ahead: Option<usize>,
     pub behind: Option<usize>,
     pub dirty: bool,
@@ -664,8 +664,6 @@ fn pull_state(ctx: &BranchMenuContext) -> ItemState {
         disabled(Msg::BcmNotImplementedYet.t())
     } else if !ctx.has_upstream {
         disabled(Msg::BcmNoUpstream.t())
-    } else if ctx.behind == Some(0) {
-        disabled(Msg::BcmNothingToPull.t())
     } else {
         ItemState::Enabled
     }
@@ -719,9 +717,8 @@ fn no_upstream_info_state(ctx: &BranchMenuContext) -> ItemState {
 
 fn pull_label(ctx: &BranchMenuContext) -> String {
     match (ctx.has_upstream, ctx.behind) {
-        (true, Some(0)) => "Pull (up to date)".to_string(),
-        (true, Some(n)) => format!("Pull ↓{}", n),
-        (true, None) => "Pull".to_string(),
+        (true, Some(n)) if n > 0 => format!("Pull ↓{}", n),
+        (true, _) => "Pull".to_string(),
         (false, _) => "Pull (no upstream)".to_string(),
     }
 }
@@ -973,38 +970,57 @@ mod tests {
     }
 
     #[test]
-    fn upstream_zero_counts_are_noop_disabled() {
-        let mut c = ctx();
-        c.ahead = Some(0);
-        c.behind = Some(0);
-        let groups = branch_context_menu_items(&c);
-
-        assert_eq!(
-            item_for(&groups, BranchAction::Pull).label.as_ref(),
-            "Pull (up to date)"
-        );
-        assert_eq!(
-            item_for(&groups, BranchAction::Push).label.as_ref(),
-            "Push (up to date)"
-        );
-        assert_disabled_contains(&groups, BranchAction::Pull, "nothing");
-        assert_disabled_contains(&groups, BranchAction::Push, "nothing");
+    fn cached_counts_do_not_block_upstream_pull() {
+        for is_current in [false, true] {
+            for behind in [Some(0), None, Some(3)] {
+                let mut c = ctx();
+                c.is_current = is_current;
+                c.behind = behind;
+                let groups = branch_context_menu_items(&c);
+                for action in [BranchAction::Pull, BranchAction::PullFfOnly] {
+                    assert_enabled(&groups, action);
+                }
+            }
+        }
     }
 
-    /// #355: a skipped count is unknown, not zero — Pull and Push stay
-    /// enabled, unlabelled, for the plan to count again.
     #[test]
-    fn unknown_counts_keep_pull_and_push_enabled() {
+    fn cached_zero_and_unknown_pull_keep_structural_guards() {
+        for behind in [Some(0), None] {
+            for guard in 0..4 {
+                let mut c = ctx();
+                c.behind = behind;
+                match guard {
+                    0 => c.busy = true,
+                    1 => c.detached_head = true,
+                    2 => c.kind = BranchKind::Remote,
+                    _ => c.has_upstream = false,
+                }
+                let groups = branch_context_menu_items(&c);
+                for action in [BranchAction::Pull, BranchAction::PullFfOnly] {
+                    assert!(matches!(state_for(&groups, action), ItemState::Disabled(_)));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn zero_ahead_still_disables_push() {
+        let mut c = ctx();
+        c.ahead = Some(0);
+        assert_disabled_contains(
+            &branch_context_menu_items(&c),
+            BranchAction::Push,
+            "nothing",
+        );
+    }
+
+    /// #355: a skipped count is unknown, not zero.
+    #[test]
+    fn unknown_ahead_keeps_push_enabled() {
         let mut c = ctx();
         c.ahead = None;
-        c.behind = None;
-        let groups = branch_context_menu_items(&c);
-
-        for (action, label) in [(BranchAction::Pull, "Pull"), (BranchAction::Push, "Push")] {
-            let item = item_for(&groups, action);
-            assert_eq!(item.label.as_ref(), label);
-            assert!(matches!(item.state, ItemState::Enabled), "{label} disabled");
-        }
+        assert_enabled(&branch_context_menu_items(&c), BranchAction::Push);
     }
 
     #[test]

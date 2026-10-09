@@ -479,6 +479,7 @@ mod tests {
             },
             stash_count_at_plan: 0,
             stash_identity: None,
+            pull_identity: None,
             worktree_digest: None,
             preview_files: Vec::new(),
             preview_commits: Vec::new(),

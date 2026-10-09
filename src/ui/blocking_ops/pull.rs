@@ -166,7 +166,7 @@ pub(crate) fn pull_blocking(
         // to conflict with no warning ever shown (#626 review).
         //
         // So the promise is checked here, before anything is stashed: re-plan
-        // and refuse if the dirty set or the restore prediction moved. Refusing
+        // and refuse if the approved identity, dirty set or restore preview moved. Refusing
         // costs the user one more click on an accurate confirmation; stashing
         // blind costs them the surprise this whole change exists to remove.
         if dirty {
@@ -190,8 +190,17 @@ pub(crate) fn pull_blocking(
                     ))
                 }
             };
-            if promised_dirty != Some(now) || restore_notes(&fresh) != restore_notes(plan) {
-                let refusal = i18n::auto_stash_plan_stale().to_string();
+            let stale_reason = if fresh.pull_identity != plan.pull_identity {
+                Some(i18n::Msg::PullAutoStashIdentityChanged)
+            } else if promised_dirty != Some(now) {
+                Some(i18n::Msg::PullAutoStashPlanStale)
+            } else if restore_notes(&fresh) != restore_notes(plan) {
+                Some(i18n::Msg::PullAutoStashRestoreChanged)
+            } else {
+                None
+            };
+            if let Some(reason) = stale_reason {
+                let refusal = reason.t().to_string();
                 return Ok(not_started(
                     repo_path,
                     plan,

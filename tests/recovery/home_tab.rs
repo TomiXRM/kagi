@@ -235,6 +235,7 @@ pub fn scenario_home_tab(cx: &mut VisualTestAppContext) {
             auto_stash: false,
             error: None,
             dirty_digest: None,
+            fetch_owner: None,
         })
     });
     assert!(

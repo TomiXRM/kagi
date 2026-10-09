@@ -184,6 +184,7 @@ pub fn plan_pr_review(pr: &PullRequest, verdict: ReviewVerdict, body: &str) -> O
         },
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         // Nothing local is rewritten or dropped.
         destructive: false,

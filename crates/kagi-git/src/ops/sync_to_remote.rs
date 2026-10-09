@@ -216,6 +216,7 @@ fn finish(
         head_at_plan: head,
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         // No digest: everything in the working tree is retained whatever its
         // state at execute time; a plan made on a clean tree refuses at
         // preflight if the tree became dirty (no work backup was planned).

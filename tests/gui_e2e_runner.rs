@@ -191,6 +191,10 @@ mod refusal_reasons;
 mod diff_highlight;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/binary_diff_owner.rs"]
+mod binary_diff_owner;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/remote_browse_focus.rs"]
 mod remote_browse_focus;
 
@@ -312,6 +316,10 @@ mod platform_menu_scroll;
 #[cfg(target_os = "macos")]
 #[path = "recovery/platform_menu_focus.rs"]
 mod platform_menu_focus;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/pr_menu_bounds.rs"]
+mod pr_menu_bounds;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/field_picker_owner.rs"]
@@ -1007,6 +1015,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_pr_list_roles),
             ),
             (
+                "pr_dashboard_responsive",
+                Box::new(crate::recovery_layout::scenario_pr_dashboard_responsive),
+            ),
+            (
                 "color_vision_theme",
                 Box::new(crate::recovery_operations::scenario_color_vision_theme),
             ),
@@ -1133,6 +1145,10 @@ mod macos {
             (
                 "context_menu_keys_last_tab",
                 Box::new(crate::context_menu_keys::scenario_context_menu_keys_last_tab),
+            ),
+            (
+                "pr_menu_bounds",
+                Box::new(crate::pr_menu_bounds::scenario_pr_menu_bounds),
             ),
             (
                 "home_list_place",
@@ -1579,6 +1595,22 @@ mod macos {
             (
                 "commit_diff_off_thread",
                 Box::new(crate::diff_highlight::scenario_commit_diff_off_thread),
+            ),
+            (
+                "binary_diff_prepared",
+                Box::new(crate::diff_highlight::scenario_binary_diff_prepared),
+            ),
+            (
+                "binary_diff_owner_transitions",
+                Box::new(crate::binary_diff_owner::scenario_binary_diff_owner_transitions),
+            ),
+            (
+                "binary_diff_worktree_owner",
+                Box::new(crate::binary_diff_owner::scenario_binary_diff_worktree_owner),
+            ),
+            (
+                "binary_diff_linked_empty_revisit",
+                Box::new(crate::binary_diff_owner::scenario_binary_diff_linked_empty_revisit),
             ),
             (
                 "conflict_save_boundary",

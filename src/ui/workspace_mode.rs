@@ -86,6 +86,7 @@ pub(super) fn sidebar_section_header(
 ) -> gpui::AnyElement {
     let header = div()
         .id(id)
+        .flex_shrink_0()
         .flex()
         .flex_row()
         .items_center()
@@ -156,6 +157,7 @@ pub(super) fn sidebar_list_row(active: bool) -> gpui::Div {
     div()
         .flex()
         .flex_row()
+        .flex_shrink_0()
         .overflow_hidden()
         .cursor_pointer()
         .border_b_1()

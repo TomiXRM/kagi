@@ -33,6 +33,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 - `gpui-terminal` の通常テストから、ホストの共有 clipboard に接続・書き込み・消去しながら失敗を判定しない 3 件の smoke test と、consumer の挙動を検証しない clipboard event の転送 echo 2 件を削除しました。製品の `Clipboard` API と event proxy は変更せず、terminal の選択文字列抽出と、GPUI の private clipboard を使う既存の選択 / Copy の検証を維持します。arboard と OS clipboard の実連携を検証したことにはしません。
 - process の deadline / stop / incomplete-I/O テストの後片付けは、ホスト全体の process 名検索・`pkill` ではなく、fixture が公開した子孫 PID と kernel の起動 identity を照合して行う契約にしました。identity helper とそれを使うテストは macOS / Linux に限定し、macOS は既存の `proc_identity` helper、Linux は `/proc/<pid>/stat` を使います。root group を止めるのは所有する Child が未 reap の間だけで、reap 後は記録した子孫 identity だけを照合します。実 subprocess による停止・未完了 I/O の判定と、その他 Unix でも使える既存の direct deadline / I/O テストは維持します。
 - Linux の process fixture は各ケース専用の再実行 subprocess を subreaper にし、停止する group の外にいる thread が private な子孫 PID と起動 identity を照合して、その PID だけを reap します。identity 照合 + signal と identity 照合 + reap は fixture ごとの共有 mutex で排他し、signal 前に reaper が PID を解放する競合を防ぎます。container の PID 1 が orphan zombie を回収しなくても fixture 自身が回収し、共有 test harness の subreaper 設定・runner 所有の direct Child・製品の group-stop proof は変更しません。macOS の fixture 動作は維持します。(#1094 review follow-up)
+- process cleanup の回帰テストは、leader を reap した後の numeric pgid の消滅ではなく、fixture が記録した PID + kernel start identity による実子孫の停止を判定します。macOS CI では identity による停止確認後も保守的な group 存在 probe が true になり、無関係な追加 assertion が失敗しました。未 reap の所有 Child の group を止める製品の順序・writer lease の保守的な停止証明・同名の別 fixture を止めない検証は変更しません。
 
 ## [0.44.0] - 2026-10-06
 

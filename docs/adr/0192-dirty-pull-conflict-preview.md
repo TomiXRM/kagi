@@ -149,17 +149,18 @@ current strict-FF / non-current の三 backend ケースが title-only Preflight
 比較対象から説明 count だけを外すのは、この false refusal を直すためであり、
 承認済み plan の書換えや自動 re-plan / retry は行わない。
 
-修正後の Parent 実行では、修正前 `bg418` の三 FAIL / 八 PASS から、
-`bg422`（出力 `artifact://1439`）の backend 十一件すべて PASS へ変わった。
-cached advance 三件は current normal / current strict-FF の incoming HEAD・index・作業ファイル更新と、
-non-current の対象 ref 更新・active checkout 不変を実際に検査した。
-malformed title 二 control（各 family / branch / remote 差替え）は既存の typed Preflight と
-Failed receipt 一件、HEAD・raw / semantic index・全ファイル・全 refs・FETCH_HEAD の no-write を維持した。
-同じ実行の native 十八件もすべて PASS し、九 freshness、current strict-FF の checkout 整合性、
-四 EN/JA 拒否理由、同 upstream advance の新 HEAD・index・ファイルと stash Pop、
-既存 auto-stash success / overlap preview / failure restore 三件を含む。
-この結果は full workspace、default build、current strict-FF の実画面 Tier B、
-latest dev 統合後の検証を意味しない。
+実 Git の回帰では、cached count が増えた current normal / current strict-FF は
+incoming HEAD・全 index entry の OID / mode・作業ファイルを更新し、
+non-current は対象 ref だけを更新して active checkout を維持する。
+family / branch / remote を差し替えた malformed title は typed Preflight と
+Failed receipt 一件を残し、HEAD・index・全ファイル・refs を変更しない。
+native UI の EN/JA 回帰は、freshness、strict-FF の checkout 整合性、
+原因別の拒否、同 upstream advance、既存 auto-stash 復元 policy を検証する。
+default 実アプリでも、未 fetch の cached behind=0 から fetch 後の確認を開き、
+current branch menu の strict-FF 承認で tracked file の変更・追加・削除を
+HEAD・index・working tree に揃えた。dirty な承認後に同じ OID を指す別 upstream へ
+差し替えた実ボタン操作は、正しい承認対象変更の理由で stash 前に拒否し、
+HEAD・staged 内容・全作業ファイル・refs・既存 stash を維持した。
 
 branch ff-only は加えて working-tree digest と owner / visit を保持する。同じ identity / digest
 での watcher reload は確認を維持し、upstream の再設定・対象 local tip の移動・dirty の変更では

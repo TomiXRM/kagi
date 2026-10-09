@@ -820,6 +820,190 @@ fn clean_updates_from(
     unmount(cx, app, window);
 }
 
+pub fn scenario_pull_current_slash_remote(cx: &mut VisualTestAppContext) {
+    let _settings = SettingsGuard::install();
+    for click in [click_pull, click_branch_pull] {
+        current_configured_upstream_updates(cx, "team/origin", click);
+    }
+    eprintln!("[gui-e2e] PASS pull_current_slash_remote");
+}
+
+pub fn scenario_pull_current_local_upstream(cx: &mut VisualTestAppContext) {
+    let _settings = SettingsGuard::install();
+    for click in [click_pull, click_branch_pull] {
+        current_configured_upstream_updates(cx, ".", click);
+    }
+    eprintln!("[gui-e2e] PASS pull_current_local_upstream");
+}
+
+fn current_configured_upstream_updates(
+    cx: &mut VisualTestAppContext,
+    remote: &str,
+    click: fn(&mut VisualTestAppContext, AnyWindowHandle),
+) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    std::fs::write(repo.join("pull-remove.txt"), "remove this tracked path\n").unwrap();
+    git(&repo, &["add", "pull-remove.txt"]);
+    git(
+        &repo,
+        &["commit", "-q", "-m", "regular Pull removal baseline"],
+    );
+    let origin = Origin::new(&repo);
+    let local_upstream = remote == ".";
+    let alternate = (!local_upstream).then(|| Origin::new_named(&repo, remote));
+    let upstream_ref = if local_upstream {
+        git(&repo, &["branch", "local-upstream"]);
+        git(
+            &repo,
+            &["branch", "--set-upstream-to=local-upstream", "main"],
+        );
+        "refs/heads/local-upstream".to_string()
+    } else {
+        format!("refs/remotes/{remote}/main")
+    };
+    assert_eq!(output(&repo, &["config", "branch.main.remote"]), remote);
+    let (app, window) = mount(cx, &repo);
+    cx.read(|cx| {
+        let summary = &app.read(cx).view().status_summary;
+        assert_eq!(
+            summary.behind,
+            Some(0),
+            "ordinary current Pull starts with cached zero"
+        );
+        assert!(!summary.no_upstream);
+    });
+    let upstream = alternate.as_ref().unwrap_or(&origin);
+    let expected = upstream.advance_tree();
+    let expected_checkout = Checkout::read(&upstream.other);
+    if local_upstream {
+        git(
+            &repo,
+            &[
+                "fetch",
+                "-q",
+                upstream.other.to_str().unwrap(),
+                "main:refs/heads/local-upstream",
+            ],
+        );
+    }
+    let before = Checkout::read(&repo);
+    let refs = || -> BTreeMap<String, String> {
+        output(&repo, &["show-ref"])
+            .lines()
+            .map(|line| {
+                let (oid, name) = line.split_once(' ').unwrap();
+                (name.to_string(), oid.to_string())
+            })
+            .collect()
+    };
+    let before_refs = refs();
+    let fetch_head_before = std::fs::read(repo.join(".git/FETCH_HEAD")).ok();
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_fetch_for_e2e(hold);
+    // The current branch's ordinary menu item and toolbar both request
+    // PullTarget::Current; neither enters the branch ff-only operation.
+    click(cx, window);
+    assert_waiting(cx, &app, &repo, &before);
+    assert_eq!(
+        refs(),
+        before_refs,
+        "ordinary Pull fetch hold leaves all refs intact"
+    );
+    release.send(());
+    cx.run_until_parked();
+    let fetches = records(&repo, "fetch");
+    assert!(
+        fetches
+            .iter()
+            .all(|entry| matches!(entry.outcome, OpOutcome::Success { .. })),
+        "ordinary current Pull must fetch its exact configured remote: {fetches:?}"
+    );
+    assert_ne!(
+        std::fs::read(repo.join(".git/FETCH_HEAD")).ok(),
+        fetch_head_before,
+        "ordinary current Pull completes its real fetch"
+    );
+    assert_eq!(output(&repo, &["rev-parse", &upstream_ref]), expected);
+    let mut expected_refs = refs();
+    let selected_remote_refs = format!("refs/remotes/{remote}/");
+    assert!(
+        expected_refs
+            .iter()
+            .filter(|(name, _)| !name.starts_with(&selected_remote_refs))
+            .eq(before_refs
+                .iter()
+                .filter(|(name, _)| !name.starts_with(&selected_remote_refs))),
+        "fetch leaves all local and other-remote refs unchanged"
+    );
+    assert_fresh_confirm(cx, &app, window);
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            app.branch_plan_modal().is_none(),
+            "ordinary Pull is not branch strict FF"
+        );
+        let modal = app.pull_modal().unwrap();
+        assert!(matches!(
+            &modal.plan.title,
+            kagi_domain::plan_note::PlanTitle::Pull(kagi_domain::plan_note::PullTitle::Pull { .. })
+        ));
+        let identity = modal.plan.pull_identity.as_ref().unwrap();
+        assert_eq!(identity.branch, "main");
+        assert_eq!(identity.local_oid.0, before.head);
+        assert_eq!(identity.remote, remote);
+        assert_eq!(identity.upstream_ref, upstream_ref);
+        assert!(modal.fetch_owner.is_some());
+    });
+    assert_eq!(Checkout::read(&repo), before);
+    assert!(records(&repo, "pull").is_empty());
+    assert_eq!(fetches.len(), usize::from(!local_upstream));
+    for _ in 0..2 {
+        app.update(cx, |app, cx| app.reload_external(cx));
+        cx.advance_clock(Duration::from_secs(1));
+        assert_fresh_confirm(cx, &app, window);
+        assert_eq!(Checkout::read(&repo), before);
+        assert_eq!(refs(), expected_refs);
+    }
+    press_enter(cx, &app, window);
+    wait_idle(cx, &app);
+    cx.run_until_parked();
+    assert_eq!(
+        Checkout::read(&repo),
+        expected_checkout,
+        "ordinary Pull updates HEAD, all index entries and all files"
+    );
+    assert_eq!(output(&repo, &["symbolic-ref", "--short", "HEAD"]), "main");
+    assert!(output(&repo, &["status", "--porcelain"]).is_empty());
+    expected_refs.insert("refs/heads/main".to_string(), expected);
+    assert_eq!(
+        refs(),
+        expected_refs,
+        "ordinary Pull changes only its selected local branch"
+    );
+    let durable = records(&repo, "pull");
+    assert_eq!(durable.len(), 1, "one ordinary Pull durable receipt");
+    assert!(matches!(durable[0].outcome, OpOutcome::Success { .. }));
+    assert_eq!(records(&repo, "fetch").len(), fetches.len());
+    assert!(records(&repo, "stash-push").is_empty());
+    assert!(records(&repo, "stash-pop").is_empty());
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.pull_modal().is_none());
+        assert!(app.branch_plan_modal().is_none());
+        assert!(!app.app_sessions.has_leases());
+        let panel = app.op_log.as_ref().unwrap().read(cx);
+        let shown: Vec<_> = panel
+            .entries()
+            .iter()
+            .filter(|entry| entry.op == "pull" && entry.repo == durable[0].repo)
+            .collect();
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].id, durable[0].id);
+    });
+    unmount(cx, app, window);
+}
+
 /// Even a genuinely synced checkout owes the user a successful freshness check.
 pub fn scenario_pull_freshness_synced_waits(cx: &mut VisualTestAppContext) {
     let _settings = SettingsGuard::install();
@@ -1312,10 +1496,10 @@ pub fn scenario_pull_freshness_captured_reload_drift(cx: &mut VisualTestAppConte
 /// either origin/main or a distinct remote: fetching main's remote is insufficient.
 pub fn scenario_pull_freshness_branch_entries(cx: &mut VisualTestAppContext) {
     let _settings = SettingsGuard::install();
-    branch_ref_updates(cx, true, true, false);
+    branch_ref_updates(cx, true, true, "origin");
     for ff_only in [false, true] {
-        for different_remote in [false, true] {
-            branch_ref_updates(cx, false, ff_only, different_remote);
+        for remote in ["origin", "alternate"] {
+            branch_ref_updates(cx, false, ff_only, remote);
         }
     }
     eprintln!("[gui-e2e] PASS pull_freshness_branch_entries");
@@ -1324,8 +1508,36 @@ pub fn scenario_pull_freshness_branch_entries(cx: &mut VisualTestAppContext) {
 /// Current strict FF must synchronize the actual checkout, not only its ref.
 pub fn scenario_pull_ff_only_current_tree_consistency(cx: &mut VisualTestAppContext) {
     let _settings = SettingsGuard::install();
-    branch_ref_updates(cx, true, true, false);
+    branch_ref_updates(cx, true, true, "origin");
     eprintln!("[gui-e2e] PASS pull_ff_only_current_tree_consistency");
+}
+
+pub fn scenario_pull_branch_slash_remote_current(cx: &mut VisualTestAppContext) {
+    let _settings = SettingsGuard::install();
+    branch_ref_updates(cx, true, true, "team/origin");
+    eprintln!("[gui-e2e] PASS pull_branch_slash_remote_current");
+}
+
+pub fn scenario_pull_branch_slash_remote_noncurrent(cx: &mut VisualTestAppContext) {
+    let _settings = SettingsGuard::install();
+    for ff_only in [false, true] {
+        branch_ref_updates(cx, false, ff_only, "team/origin");
+    }
+    eprintln!("[gui-e2e] PASS pull_branch_slash_remote_noncurrent");
+}
+
+pub fn scenario_pull_branch_local_upstream_current(cx: &mut VisualTestAppContext) {
+    let _settings = SettingsGuard::install();
+    branch_ref_updates(cx, true, true, ".");
+    eprintln!("[gui-e2e] PASS pull_branch_local_upstream_current");
+}
+
+pub fn scenario_pull_branch_local_upstream_noncurrent(cx: &mut VisualTestAppContext) {
+    let _settings = SettingsGuard::install();
+    for ff_only in [false, true] {
+        branch_ref_updates(cx, false, ff_only, ".");
+    }
+    eprintln!("[gui-e2e] PASS pull_branch_local_upstream_noncurrent");
 }
 
 fn assert_fresh_branch_confirm(
@@ -1363,12 +1575,7 @@ fn assert_fresh_branch_confirm(
     assert_eq!(latest_count(cx, app), 0);
 }
 
-fn branch_ref_updates(
-    cx: &mut VisualTestAppContext,
-    current: bool,
-    ff_only: bool,
-    different_remote: bool,
-) {
+fn branch_ref_updates(cx: &mut VisualTestAppContext, current: bool, ff_only: bool, remote: &str) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     if current {
@@ -1377,25 +1584,34 @@ fn branch_ref_updates(
         git(&repo, &["commit", "-q", "-m", "tracked removal baseline"]);
     }
     let origin = Origin::new(&repo);
-    let alternate = different_remote.then(|| Origin::new_named(&repo, "alternate"));
-    if different_remote {
+    let different_remote = remote != "origin" && remote != ".";
+    let alternate = different_remote.then(|| Origin::new_named(&repo, remote));
+    if different_remote && !current {
         // new_named's push -u must not change the checked-out branch's upstream.
         git(&repo, &["branch", "--set-upstream-to=origin/main", "main"]);
     }
     let branch = if current { "main" } else { "feature" };
-    let remote = if different_remote {
-        "alternate"
+    let local_upstream = remote == ".";
+    let tracking = if local_upstream {
+        git(&repo, &["branch", "local-upstream"]);
+        "local-upstream".to_string()
     } else {
-        "origin"
+        format!("{remote}/main")
     };
-    let tracking = format!("{remote}/main");
     if !current {
         git(&repo, &["branch", branch]);
+    }
+    if !current || local_upstream {
         git(
             &repo,
             &["branch", &format!("--set-upstream-to={tracking}"), branch],
         );
     }
+    assert_eq!(
+        output(&repo, &["config", &format!("branch.{branch}.remote")]),
+        remote,
+        "fixture uses the exact configured remote, including slash or dot"
+    );
     let target_ref = format!("refs/heads/{branch}");
     let (app, window) = mount(cx, &repo);
     let upstream = alternate.as_ref().unwrap_or(&origin);
@@ -1405,20 +1621,117 @@ fn branch_ref_updates(
         upstream.advance()
     };
     let expected_checkout = Checkout::read(&upstream.other);
+    if local_upstream {
+        // Import the producer's actual commit into a local upstream branch.
+        // The selected branch and its active checkout remain at the old commit.
+        git(
+            &repo,
+            &[
+                "fetch",
+                "-q",
+                upstream.other.to_str().unwrap(),
+                "main:refs/heads/local-upstream",
+            ],
+        );
+    }
     assert_cached_zero(cx, &app, &repo);
     let before = Checkout::read(&repo);
     let target_before = output(&repo, &["rev-parse", &target_ref]);
     let origin_before = output(&repo, &["rev-parse", "origin/main"]);
-    assert_eq!(target_before, output(&repo, &["rev-parse", &tracking]));
+    if local_upstream {
+        assert_eq!(output(&repo, &["rev-parse", &tracking]), expected);
+    } else {
+        assert_eq!(target_before, output(&repo, &["rev-parse", &tracking]));
+    }
+    let fetch_head_before = std::fs::read(repo.join(".git/FETCH_HEAD")).ok();
+    let refs = || -> BTreeMap<String, String> {
+        output(&repo, &["show-ref"])
+            .lines()
+            .map(|line| {
+                let (oid, name) = line.split_once(' ').unwrap();
+                (name.to_string(), oid.to_string())
+            })
+            .collect()
+    };
+    let mut expected_refs = refs();
     assert_ne!(target_before, expected);
     let (hold, release) = deferred::<()>(cx);
     KagiApp::hold_next_fetch_for_e2e(hold);
     click_branch_sync(cx, window, branch, ff_only);
     assert_waiting(cx, &app, &repo, &before);
     assert_eq!(output(&repo, &["rev-parse", &target_ref]), target_before);
-    assert_eq!(output(&repo, &["rev-parse", &tracking]), target_before);
+    assert_eq!(
+        output(&repo, &["rev-parse", &tracking]),
+        if local_upstream {
+            expected.as_str()
+        } else {
+            target_before.as_str()
+        }
+    );
+    assert_eq!(refs(), expected_refs, "fetch hold preserves every ref");
     release.send(());
+    cx.run_until_parked();
+    assert_ne!(
+        std::fs::read(repo.join(".git/FETCH_HEAD")).ok(),
+        fetch_head_before,
+        "the menu's real fetch must finish before confirmation"
+    );
+    assert!(
+        records(&repo, "fetch")
+            .iter()
+            .all(|entry| matches!(entry.outcome, OpOutcome::Success { .. })),
+        "a dot upstream fetch failure is a different prerequisite, not a title mismatch"
+    );
+    let fetched_refs = refs();
+    let selected_remote_refs = format!("refs/remotes/{remote}/");
+    assert!(
+        fetched_refs
+            .iter()
+            .filter(|(name, _)| !name.starts_with(&selected_remote_refs))
+            .eq(expected_refs
+                .iter()
+                .filter(|(name, _)| !name.starts_with(&selected_remote_refs))),
+        "fetch preserves every local and other-remote ref: before={expected_refs:?}, after={fetched_refs:?}"
+    );
+    assert_eq!(output(&repo, &["rev-parse", &tracking]), expected);
+    expected_refs = fetched_refs;
+    let plan = kagi_git::Backend::open(&repo)
+        .unwrap()
+        .plan(&kagi_git::Operation::PullBranchFf {
+            branch_name: branch.into(),
+        })
+        .unwrap();
+    assert!(
+        plan.blockers.is_empty(),
+        "real upstream is supported by the backend"
+    );
+    let identity = plan
+        .pull_identity
+        .as_ref()
+        .expect("executable typed Pull identity");
+    assert_eq!(identity.branch, branch);
+    assert_eq!(identity.remote, remote);
+    assert_eq!(identity.local_oid.0.as_str(), target_before);
+    assert_eq!(
+        identity.upstream_ref,
+        if local_upstream {
+            "refs/heads/local-upstream".to_string()
+        } else {
+            format!("refs/remotes/{remote}/main")
+        }
+    );
     assert_fresh_branch_confirm(cx, &app, window, branch);
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let modal = app.branch_plan_modal().unwrap();
+        let fresh_identity = modal.plan.pull_identity.as_ref().unwrap();
+        assert_eq!(
+            fresh_identity, identity,
+            "confirmation preserves exact branch/upstream identity"
+        );
+        assert!(modal.fetch_owner.is_some());
+        assert!(modal.fetched_refs.is_some());
+    });
     assert_eq!(output(&repo, &["rev-parse", &tracking]), expected);
     if different_remote {
         assert_eq!(output(&repo, &["rev-parse", "origin/main"]), origin_before);
@@ -1427,8 +1740,14 @@ fn branch_ref_updates(
     assert_eq!(output(&repo, &["rev-parse", &target_ref]), target_before);
     assert!(records(&repo, "pull").is_empty());
     let fetches = records(&repo, "fetch");
-    assert_eq!(fetches.len(), 1, "one admitted real fetch");
-    assert!(matches!(fetches[0].outcome, OpOutcome::Success { .. }));
+    assert_eq!(
+        fetches.len(),
+        usize::from(!local_upstream),
+        "only a changed fetch emits a receipt"
+    );
+    assert!(fetches
+        .iter()
+        .all(|entry| matches!(entry.outcome, OpOutcome::Success { .. })));
 
     for _ in 0..2 {
         let (owner, revision) = cx.read(|cx| {
@@ -1458,11 +1777,11 @@ fn branch_ref_updates(
     assert_eq!(output(&repo, &["symbolic-ref", "--short", "HEAD"]), "main");
     let after = Checkout::read(&repo);
     assert_eq!(
-        after.head,
+        after.head.as_str(),
         if current {
-            expected
+            expected.as_str()
         } else {
-            before.head.clone()
+            before.head.as_str()
         }
     );
     if current {
@@ -1486,9 +1805,22 @@ fn branch_ref_updates(
             "active checkout remains untouched"
         );
     }
+    expected_refs.insert(target_ref.clone(), expected.clone());
+    assert_eq!(
+        refs(),
+        expected_refs,
+        "confirmed Pull moves only the selected local ref"
+    );
     let durable = records(&repo, "pull");
     assert_eq!(durable.len(), 1);
     assert!(matches!(durable[0].outcome, OpOutcome::Success { .. }));
+    assert_eq!(
+        records(&repo, "fetch").len(),
+        fetches.len(),
+        "execution adds no extra fetch receipt"
+    );
+    assert!(records(&repo, "stash-push").is_empty());
+    assert!(records(&repo, "stash-pop").is_empty());
     cx.read(|cx| {
         let app = app.read(cx);
         assert!(app.branch_plan_modal().is_none());

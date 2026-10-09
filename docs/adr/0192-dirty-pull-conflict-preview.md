@@ -164,9 +164,32 @@ HEAD・staged 内容・全作業ファイル・refs・既存 stash を維持し�
 
 branch ff-only は加えて working-tree digest と owner / visit を保持する。同じ identity / digest
 での watcher reload は確認を維持し、upstream の再設定・対象 local tip の移動・dirty の変更では
-確認を失効させる。backend の既存 preflight に identity 照合を追加し、`Backend::run` の fresh plan
-との比較でも identity の一致を要求する。branch ref の更新は lock 内で承認済み local OID
-との一致を再検査してから transaction を commit し、CAS と同じく途中の移動を上書きしない。
+確認を失効させる。fetch 後の remote 照合は表示 title の upstream shorthand ではなく、
+typed `PullIdentity.remote` の完全な config 値を使う。reload 時の upstream OID は
+`PullIdentity.upstream_ref` の完全な ref 名で照合し、`refs/heads/` は local branch、
+`refs/remotes/` は remote-tracking branch の namespace として扱う。
+snapshot の表示用 remote / name 分割を config の remote identity と取り違えないため、
+slash を含む remote 名と local upstream `.` でも確認を維持する。
+native の current / non-current 回帰は実 menu・fetch・reload・確認から実際の ff-only 更新まで
+通り、current の HEAD・index・作業ファイル整合性と non-current の active checkout 不変を検査する。
+backend の既存 preflight と `Backend::run` の fresh plan 比較は identity 一致を要求し続ける。
+branch ref の更新は lock 内で承認済み local OID との一致を再検査してから transaction を
+commit し、CAS と同じく途中の移動を上書きしない。
+
+ordinary current Pull の toolbar / current branch menu も、表示 shorthand から remote を
+推定せず、live HEAD の branch を fetch scope に凍結して既存の configured-upstream fetch を使う。
+manual / silent fetch と `PullTarget::Current` は同じ upstream 解決条件で scope を共有する。
+upstream 未設定・detached / unborn の implicit scope は従来の ordinary fetch fallback とし、
+別 branch scope は join させない。ordinary fetch 成功後の ruleset refresh、
+owner / visit・quiet notification・一 flight 一 receipt の契約は維持する。
+Parent はこの exact config 経路で local Pull 二十五 native ケースの PASS と、
+default 実アプリの ordinary toolbar Pull（`team/origin`）による generic 確認から
+承認済み HEAD・全 index・全ファイル・receipt の一致を観測した。
+upstream 未設定の held manual fetch に新 visit の Current 要求が join できない回帰は、
+既存 `fetch_new_visit_waiter_sees_old_flight_failure` で Failed footer が busy のままになる
+failing-before を確認した。Current と implicit request の scope 条件を揃えた後、
+同 consumer を含む fetch owner / quiet queue / slow-write と二十五 local Pull ケース、
+統合 UI の native 選択実行、workspace 全体、Clippy、format、invariant、default build は全て通った。
 
 fetch 成功後の remote 名照合は **blockers が空の実行可能な plan だけ**に行う。
 実際に `ConflictedFiles` 等で止まる plan は `pull_identity=None` なので upstream 変更と

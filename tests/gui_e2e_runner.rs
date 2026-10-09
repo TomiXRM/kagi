@@ -1221,12 +1221,36 @@ mod macos {
                 Box::new(crate::pull_freshness::scenario_pull_freshness_clean_updates),
             ),
             (
+                "pull_current_slash_remote",
+                Box::new(crate::pull_freshness::scenario_pull_current_slash_remote),
+            ),
+            (
+                "pull_current_local_upstream",
+                Box::new(crate::pull_freshness::scenario_pull_current_local_upstream),
+            ),
+            (
                 "pull_freshness_branch_entries",
                 Box::new(crate::pull_freshness::scenario_pull_freshness_branch_entries),
             ),
             (
                 "pull_ff_only_current_tree_consistency",
                 Box::new(crate::pull_freshness::scenario_pull_ff_only_current_tree_consistency),
+            ),
+            (
+                "pull_branch_slash_remote_current",
+                Box::new(crate::pull_freshness::scenario_pull_branch_slash_remote_current),
+            ),
+            (
+                "pull_branch_slash_remote_noncurrent",
+                Box::new(crate::pull_freshness::scenario_pull_branch_slash_remote_noncurrent),
+            ),
+            (
+                "pull_branch_local_upstream_current",
+                Box::new(crate::pull_freshness::scenario_pull_branch_local_upstream_current),
+            ),
+            (
+                "pull_branch_local_upstream_noncurrent",
+                Box::new(crate::pull_freshness::scenario_pull_branch_local_upstream_noncurrent),
             ),
             (
                 "pull_freshness_synced_waits",

@@ -1503,8 +1503,8 @@ pub struct FetchFlight {
     /// when the tab is no longer the display owner.
     pub before: kagi_git::StateSummary,
     pub waiters: Vec<(crate::app::SessionId, u64, PullTarget)>,
-    /// `None` uses the ordinary current-upstream fetch; a named branch owns its
-    /// own live upstream scope and must not join a different fetch.
+    /// Live branch captured before dispatch; same-scope requests may join.
+    /// `None` retains the detached/no-upstream ordinary fetch fallback.
     pub upstream_branch: Option<String>,
     /// A later user modal superseded the waiting Pull intent, even if that
     /// modal closed before the fetch finished. A new explicit Pull re-arms it.
@@ -1988,10 +1988,23 @@ impl KagiApp {
     ) -> bool {
         self.refresh_write_busy();
         let requested_session = self.active_session();
+        let live_current_branch = || {
+            self.ui()
+                .repo_session
+                .as_ref()
+                .and_then(|session| session.backend().current_branch_name())
+        };
         let upstream_branch = match pull_confirm.as_ref() {
             Some(PullTarget::BranchFfOnly(branch)) => Some(branch.clone()),
-            _ => None,
+            Some(PullTarget::Current) | None => live_current_branch().filter(|branch| {
+                self.ui()
+                    .repo_session
+                    .as_ref()
+                    .is_some_and(|session| session.backend().pull_branch_ref_state(branch).is_ok())
+            }),
         };
+        let refresh_current_ruleset =
+            !matches!(pull_confirm.as_ref(), Some(PullTarget::BranchFfOnly(_)));
         if let Some(flight) = self.fetch_in_flight.as_mut() {
             // A same-owner visit can only join the scope it actually requested.
             if flight.upstream_branch.as_deref() == upstream_branch.as_deref() {
@@ -2095,7 +2108,17 @@ impl KagiApp {
                 Ok(backend) => {
                     let (result, moves) =
                         backend.observe_ref_moves(|b| match upstream_branch.as_deref() {
-                            Some(branch) => b.fetch_branch_upstream(branch),
+                            Some(branch) => {
+                                let result = b.fetch_branch_upstream(branch);
+                                // Preserve ordinary fetch's existing successful
+                                // ruleset refresh when using the exact config route.
+                                if result.is_ok() && refresh_current_ruleset {
+                                    if let Some(current) = b.current_branch_name() {
+                                        let _ = b.refresh_ruleset(&current);
+                                    }
+                                }
+                                result
+                            }
                             None => b.fetch_remote(),
                         });
                     (result, moves, false)

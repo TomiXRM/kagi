@@ -65,12 +65,16 @@ pub fn scenario_pr_menu_bounds(cx: &mut VisualTestAppContext) {
                             cx.notify();
                         });
                         for row in ROWS {
+                            // Clear paint samples as well, so this frame must produce them.
                             e2e::clear_control_bounds(window.window_id(), row);
                         }
+                        e2e::clear_control_bounds(window.window_id(), "pr-menu-footer");
                         draw(cx, window, dimensions);
                         let label =
                             format!("{locale}/{zoom}/{dimensions:?}/table={table}/{anchor:?}");
                         let mut previous_bottom = px(0.);
+                        let footer = e2e::control_paint(window.window_id(), "pr-menu-footer")
+                            .expect("actual footer paint recorded");
                         for row in ROWS {
                             let bounds = e2e::control_bounds(window.window_id(), row)
                                 .unwrap_or_else(|| panic!("{label}/{row}: not rendered"));
@@ -79,6 +83,21 @@ pub fn scenario_pr_menu_bounds(cx: &mut VisualTestAppContext) {
                                 "{label}/{row}: empty row"
                             );
                             contained(viewport, bounds, &format!("{label}/{row}"));
+                            let paint = e2e::control_paint(window.window_id(), row)
+                                .unwrap_or_else(|| panic!("{label}/{row}: not painted"));
+                            contained(
+                                paint.mask,
+                                paint.bounds,
+                                &format!("{label}/{row}/paint-mask"),
+                            );
+                            let covered = paint.bounds.left() < footer.bounds.right()
+                                && paint.bounds.right() > footer.bounds.left()
+                                && paint.bounds.top() < footer.bounds.bottom()
+                                && paint.bounds.bottom() > footer.bounds.top();
+                            assert!(
+                                !covered || paint.order > footer.order,
+                                "{label}/{row}: later opaque footer overpaints row: row={paint:?} footer={footer:?}"
+                            );
                             assert!(
                                 bounds.top() >= previous_bottom,
                                 "{label}/{row}: rows overlap or are out of order"

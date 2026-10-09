@@ -800,20 +800,22 @@ impl Render for KagiApp {
             // ── W5-MENU: menu-driven overlay (branch picker / About / shortcuts) ──
             .children(self.render_menu_overlay(window, cx));
 
-        // The modal layer is read from `self` by the one collector Home also
-        // uses, so the two cannot draw different sets of modals.
-        let root = self.attach_modal_layer(root, true, window, cx);
         // Keep drawing frames while a pane is still sliding (#950, #955).
         if self.panel_motion.animating(super::panel_motion::now()) {
             window.request_animation_frame();
         }
 
-        let content = root
+        let root = root
             // ── Operation queue strip (#355) — the front tab's queued
             //    intents and cancel list, directly above the status bar. ──
             .children(self.render_queue_strip(cx))
             // ── Status bar slot (T017) — last operation result ─
-            .child(self.render_status_bar(status_footer, bottom_panel_open, cx))
+            .child(self.render_status_bar(status_footer, bottom_panel_open, cx));
+        // The one collector Home also uses keeps popup/modal ordering intact.
+        // Attach it after the opaque footer, so window-fitted menus and modals
+        // are not overpainted by workspace chrome.
+        let root = self.attach_modal_layer(root, true, window, cx);
+        let content = root
             // ── W3-NOTIFY: toast stack (above everything) ──────
             .children(self.render_toasts(cx))
             // Linux/FreeBSD in-app menu dropdown (native menu bar is macOS-only).

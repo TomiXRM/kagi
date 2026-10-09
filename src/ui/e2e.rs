@@ -46,6 +46,8 @@ use std::sync::Arc;
 thread_local! {
     static CONFIRM_BOUNDS: RefCell<std::collections::HashMap<gpui::WindowId, gpui::Bounds<gpui::Pixels>>> = RefCell::new(Default::default());
     static CONTROL_BOUNDS: RefCell<std::collections::HashMap<(gpui::WindowId, String), gpui::Bounds<gpui::Pixels>>> = RefCell::new(Default::default());
+    static CONTROL_PAINTS: RefCell<std::collections::HashMap<(gpui::WindowId, String), ControlPaint>> = RefCell::new(Default::default());
+    static CONTROL_PAINT_ORDER: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static TAB_LOAD_LIMITS: RefCell<std::collections::HashMap<crate::app::SessionId, usize>> = RefCell::new(Default::default());
     static BUSY_ADVICE: RefCell<Option<String>> = const { RefCell::new(None) };
     static SETTINGS_ZOOM_LABEL: RefCell<Option<String>> = const { RefCell::new(None) };
@@ -120,10 +122,43 @@ pub fn home_item_builds() -> usize {
 pub fn control_bounds(id: gpui::WindowId, name: &str) -> Option<gpui::Bounds<gpui::Pixels>> {
     CONTROL_BOUNDS.with(|map| map.borrow().get(&(id, name.to_string())).copied())
 }
+
+/// Actual paint-stage coverage and traversal order, independent of layout bounds.
+#[cfg(feature = "gui-e2e")]
+#[derive(Clone, Copy, Debug)]
+pub struct ControlPaint {
+    pub bounds: gpui::Bounds<gpui::Pixels>,
+    pub mask: gpui::Bounds<gpui::Pixels>,
+    pub order: u64,
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn control_paint(id: gpui::WindowId, name: &str) -> Option<ControlPaint> {
+    CONTROL_PAINTS.with(|map| map.borrow().get(&(id, name.to_string())).copied())
+}
+
+#[cfg(feature = "gui-e2e")]
+fn record_control_paint(name: &str, bounds: gpui::Bounds<gpui::Pixels>, window: &Window) {
+    let order = CONTROL_PAINT_ORDER.with(|value| {
+        let next = value.get() + 1;
+        value.set(next);
+        next
+    });
+    let paint = ControlPaint {
+        bounds,
+        mask: window.content_mask().bounds,
+        order,
+    };
+    CONTROL_PAINTS.with(|map| {
+        map.borrow_mut()
+            .insert((window.window_handle().window_id(), name.to_owned()), paint);
+    });
+}
 /// Clear a bound so the next draw proves presence rather than reusing the previous frame.
 #[cfg(feature = "gui-e2e")]
 pub fn clear_control_bounds(id: gpui::WindowId, name: &str) {
     CONTROL_BOUNDS.with(|map| map.borrow_mut().remove(&(id, name.to_string())));
+    CONTROL_PAINTS.with(|map| map.borrow_mut().remove(&(id, name.to_string())));
 }
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn record_busy_advice(text: &str) {
@@ -160,6 +195,7 @@ pub(crate) fn measure_control(
     #[cfg(feature = "gui-e2e")]
     {
         let name = name.into();
+        let paint_name = name.clone();
         gpui::div()
             .relative()
             .child(
@@ -167,7 +203,7 @@ pub(crate) fn measure_control(
                     move |bounds, window, _| {
                         record_control_bounds(window.window_handle().window_id(), &name, bounds);
                     },
-                    |_, _, _, _| {},
+                    move |bounds, _, window, _| record_control_paint(&paint_name, bounds, window),
                 )
                 .absolute()
                 .top_0()
@@ -197,6 +233,7 @@ pub(crate) fn measure_inside(name: impl Into<String>) -> gpui::AnyElement {
     #[cfg(feature = "gui-e2e")]
     {
         let name = name.into();
+        let paint_name = name.clone();
         gpui::canvas(
             move |bounds, window, _| {
                 CONTROL_BOUNDS.with(|map| {
@@ -204,7 +241,7 @@ pub(crate) fn measure_inside(name: impl Into<String>) -> gpui::AnyElement {
                         .insert((window.window_handle().window_id(), name.clone()), bounds);
                 });
             },
-            |_, _, _, _| {},
+            move |bounds, _, window, _| record_control_paint(&paint_name, bounds, window),
         )
         .absolute()
         .top_0()

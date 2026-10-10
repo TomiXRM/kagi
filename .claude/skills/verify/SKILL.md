@@ -379,6 +379,19 @@ The current suite covers:
   list with 100 entries in JA at 70% and 167%, inspect its last result, and
   check empty-result Enter and Escape/reopen. Use only safe View commands
   for live Enter verification; do not execute Pull/Push to test list scrolling.
+- PR Peek visibility (`KAGI_GUI_E2E_ONLY=pr_peek_`,
+  `tests/recovery/pr_peek_visible.rs`, #1102): four scenarios use actual table /
+  sidebar menu actions, then the existing Compare file consumer and Main Diff.
+  EN/JA at 100/167% cover hidden Inspector, an unloaded Graph head and an open
+  Commit Panel whose entity/draft must survive. Dirty Editor Cancel, approval,
+  tab departure, superseded intent and editor/input replacement preserve the
+  correct owner and never discard through an obsolete approval. Missing fetched
+  refs and a real object-database read failure keep the original PR context.
+  Repository HEAD, staged index, working bytes, refs, stash and receipt counts
+  remain unchanged; no fetch/checkout or replacement preview renderer is used.
+  Tier B: Peek a fetched live PR from its actual menu, inspect visible Compare,
+  open a changed file and use Back. Capture only the launched PID's window;
+  a large fixture or sample is not proof of FPS/input latency.
 - Settings' switches (`KAGI_GUI_E2E_ONLY=settings_switches`,
   `tests/recovery/settings_switches.rs`, #970): every switch is a
   `keyboard_nav::switch`. The scenario opens Settings through `app.settings`,

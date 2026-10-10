@@ -189,7 +189,7 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
 
     let recovery = PlanRecovery {
         kind: RecoveryKind::Discard,
-        commands: vec!["git cat-file blob <backup-ref>".to_string()],
+        commands: vec!["git cat-file blob <backup-ref>:file".to_string()],
     };
 
     // ADR-0083: untracked targets are DELETED (after an ODB backup). Surface this
@@ -392,32 +392,100 @@ pub(crate) fn execute_discard(
     // Any failure aborts the whole discard BEFORE the working tree is touched.
     let mut backups: Vec<DiscardBackup> = Vec::with_capacity(rels.len());
     let backup_id = super::backup::operation_id();
+    let backup_index = repo
+        .index()
+        .map_err(|e| GitError::Other(e.message().into()))?;
+    #[cfg(unix)]
+    let trust_filemode = match repo
+        .config()
+        .map_err(|e| GitError::Other(e.message().into()))?
+        .get_bool("core.filemode")
+    {
+        Ok(value) => value,
+        Err(e) if e.code() == git2::ErrorCode::NotFound => true,
+        Err(e) => return Err(GitError::Other(e.message().into())),
+    };
     for rel in &rels {
         let abs = workdir.join(rel);
-        // #324 (mirrors #298): never read the backup THROUGH a symlink. `fs::read`
-        // follows links, so an untracked symlink pointing outside the repo (e.g.
-        // `/etc/…` or `../secret`) would pull repo-external bytes into the ODB
-        // backup blob — and a typechange means the link can't be restored from
-        // those bytes anyway. `symlink_metadata` never follows the link; for a
-        // symlink we back up the LINK TARGET PATH bytes (via `read_link`), not
-        // the dereferenced content. The on-disk delete stays `remove_file`, which
-        // already removes the link itself, not its target.
-        // ponytail: restore re-creates the raw link-path bytes as blob content,
-        // not an actual symlink — recover the target with `git cat-file -p <sha>`
-        // then `ln -s`. Full symlink re-creation on restore is a larger change,
-        // deferred; the security invariant (no outside bytes read/stored) holds.
-        let is_symlink = std::fs::symlink_metadata(&abs)
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false);
-        let content: Vec<u8> = if is_symlink {
-            match std::fs::read_link(&abs) {
-                Ok(target) => target.to_string_lossy().into_owned().into_bytes(),
-                Err(e) => {
-                    return Err(GitError::Other(format!(
-                        "discard aborted: cannot read symlink '{}' for backup: {}",
-                        rel, e
-                    )));
+        // Inspect the entry itself, including dangling links; never ingest an
+        // external target or turn arbitrary metadata failures into regular reads.
+        let metadata = match std::fs::symlink_metadata(&abs) {
+            Ok(metadata) => Some(metadata),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                return Err(GitError::Other(format!(
+                    "discard aborted: cannot inspect '{}' for backup: {}",
+                    rel, e
+                )));
+            }
+        };
+        let is_symlink = metadata
+            .as_ref()
+            .is_some_and(|m| m.file_type().is_symlink());
+        let mode = if is_symlink {
+            0o120000
+        } else {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if trust_filemode {
+                    if metadata
+                        .as_ref()
+                        .is_some_and(|m| m.permissions().mode() & 0o100 != 0)
+                    {
+                        0o100755
+                    } else {
+                        0o100644
+                    }
+                } else {
+                    backup_index
+                        .get_path(Path::new(rel), 0)
+                        .map(|entry| {
+                            if entry.mode == 0o100755 {
+                                0o100755
+                            } else {
+                                0o100644
+                            }
+                        })
+                        .unwrap_or(0o100644)
                 }
+            }
+            #[cfg(not(unix))]
+            {
+                // Platforms without a Unix executable bit retain the index mode.
+                backup_index
+                    .get_path(Path::new(rel), 0)
+                    .map(|entry| {
+                        if entry.mode == 0o100755 {
+                            0o100755
+                        } else {
+                            0o100644
+                        }
+                    })
+                    .unwrap_or(0o100644)
+            }
+        };
+        let content: Vec<u8> = if is_symlink {
+            let target = std::fs::read_link(&abs).map_err(|e| {
+                GitError::Other(format!(
+                    "discard aborted: cannot read symlink '{}' for backup: {}",
+                    rel, e
+                ))
+            })?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::ffi::OsStringExt;
+                target.into_os_string().into_vec()
+            }
+            #[cfg(not(unix))]
+            {
+                // Do not silently substitute U+FFFD for an unrepresentable target.
+                target.to_str().ok_or_else(|| {
+                    GitError::Other(format!(
+                        "discard aborted: non-UTF-8 symlink target '{}' cannot be backed up on this platform",
+                        rel
+                    ))
+                })?.as_bytes().to_vec()
             }
         } else {
             // For an unstaged *deletion* the file is absent from the WT; back up an
@@ -433,12 +501,13 @@ pub(crate) fn execute_discard(
                 }
             }
         };
-        backups.push(super::backup::write_blob(
+        backups.push(super::backup::write_file(
             repo,
             &backup_id,
             backups.len(),
             rel.clone(),
             &content,
+            mode,
         )?);
     }
 

@@ -34,10 +34,37 @@ fn partition_discard_rows(
 }
 
 impl KagiApp {
+    /// Refuse the whole selection before converting path bytes lossily.
+    fn refuse_discard_path(
+        &mut self,
+        path: &Path,
+        origin: worktree_wip::WriteOrigin,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_discard_modal();
+        let note = kagi_domain::plan_note::PlanNote::Discard(
+            kagi_domain::plan_note::DiscardNote::UnsafePath {
+                path: path.display().to_string(),
+            },
+        );
+        if let (Some(repo_path), Some(Ok(current))) = (
+            self.write_repo_path(origin, cx),
+            self.with_write_repo(origin, cx, |repo| repo.current_state()),
+        ) {
+            self.record_refused("discard", current, &[note], &repo_path, cx);
+        }
+        let message = Msg::DiscardUnsafePath
+            .t()
+            .replace("{}", &path.display().to_string());
+        self.status_footer = FooterStatus::Failed(message.clone().into());
+        self.push_toast(ToastKind::Error, message, cx);
+        cx.notify();
+    }
+
     /// Collect the eligible unstaged paths (excluding untracked / conflicted /
     /// submodule) plus the skipped set, from the current commit-panel status.
-    /// Returns `(eligible, skipped)` as repo-relative forward-slash strings.
-    fn discard_partition(&self, cx: &Context<Self>) -> (Vec<String>, Vec<String>) {
+    /// Returns exact repo-relative strings, or the path that cannot be expressed.
+    fn discard_partition(&self, cx: &Context<Self>) -> Result<(Vec<String>, Vec<String>), PathBuf> {
         let rows: Vec<(String, bool)> = self
             .ui()
             .commit_panel
@@ -49,12 +76,12 @@ impl KagiApp {
                     .unstaged
                     .iter()
                     .map(|f| {
-                        let rel = f.path.to_string_lossy().replace('\\', "/");
-                        (rel, panel.is_conflicted(&f.path))
+                        let rel = f.path.to_str().ok_or_else(|| f.path.clone())?.to_owned();
+                        Ok((rel, panel.is_conflicted(&f.path)))
                     })
-                    .collect::<Vec<_>>()
+                    .collect::<Vec<Result<_, PathBuf>>>()
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
         // #476 slice 3: the gitlink check must ask the PANEL's repository — a
         // linked worktree's submodules are its own. (The check lives in the
         // backend: no git2 in the UI, #326.)
@@ -69,7 +96,7 @@ impl KagiApp {
                     .map(|(rel, conflicted)| (rel.clone(), *conflicted, false))
                     .collect()
             });
-        partition_discard_rows(rows)
+        Ok(partition_discard_rows(rows))
     }
 
     /// Per-path change kinds for the discard card's A/M/D badges, from the
@@ -90,10 +117,9 @@ impl KagiApp {
         if let Some(entity) = self.ui().commit_panel.as_ref() {
             let panel = &entity.read(cx).state;
             for f in &panel.unstaged {
-                out.insert(
-                    f.path.to_string_lossy().replace('\\', "/"),
-                    f.change.clone(),
-                );
+                if let Some(path) = f.path.to_str() {
+                    out.insert(path.to_owned(), f.change.clone());
+                }
             }
         }
         out
@@ -124,7 +150,11 @@ impl KagiApp {
         if !self.pane_mutation_admitted(owner) {
             return;
         }
-        let paths = vec![path.to_string_lossy().replace('\\', "/")];
+        let Some(path_str) = path.to_str() else {
+            self.refuse_discard_path(&path, origin, cx);
+            return;
+        };
+        let paths = vec![path_str.to_owned()];
         let planned = match self.with_write_repo(origin, cx, |repo| repo.plan_discard(&paths)) {
             Some(p) => p,
             None => {
@@ -167,7 +197,13 @@ impl KagiApp {
         if !self.pane_mutation_admitted(owner) {
             return;
         }
-        let (eligible, skipped) = self.discard_partition(cx);
+        let (eligible, skipped) = match self.discard_partition(cx) {
+            Ok(paths) => paths,
+            Err(path) => {
+                self.refuse_discard_path(&path, worktree_wip::WriteOrigin::CommitPanel, cx);
+                return;
+            }
+        };
         let planned = match self.with_commit_panel_repo(cx, |repo| repo.plan_discard(&eligible)) {
             Some(p) => p,
             None => {

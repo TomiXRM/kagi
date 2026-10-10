@@ -68,6 +68,158 @@ fn build_repo(tmp: &TempDir) -> std::path::PathBuf {
     d.to_path_buf()
 }
 
+// #1125: a POSIX backslash is a filename byte, not a directory separator.
+#[cfg(unix)]
+fn discard_literal_backslash_fixture(bulk: bool) {
+    let tmp = TempDir::new().unwrap();
+    let d = build_repo(&tmp);
+    for (path, content) in [
+        (r"a\b.txt", "selected base\n"),
+        ("a/b.txt", "neighbor base\n"),
+    ] {
+        write_file(&d, path, content);
+    }
+    git(&d, &["add", "-A"]);
+    git(&d, &["commit", "-qm", "literal path baselines"]);
+    write_file(&d, r"a\b.txt", "selected dirty\n");
+    write_file(&d, "a/b.txt", "neighbor dirty\n");
+    let index_before = std::fs::read(d.join(".git/index")).unwrap();
+    let mut backend =
+        kagi_git::Backend::open_with_policy(&d, kagi_git::backend::ExecutionPolicy::human(false))
+            .unwrap();
+    let mut paths = vec![r"a\b.txt".to_string()];
+    if bulk {
+        paths.push("a/b.txt".to_string());
+    }
+    let plan = backend.plan_discard(&paths).unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    let outcome = backend
+        .run(
+            &kagi_git::Operation::Discard {
+                paths: paths.clone(),
+            },
+            &plan,
+        )
+        .unwrap();
+    let kagi_git::OperationOutcome::Discard(outcome) = outcome else {
+        panic!("unexpected discard outcome");
+    };
+    assert_eq!(
+        read_file(&d, "a/b.txt"),
+        if bulk {
+            "neighbor base\n"
+        } else {
+            "neighbor dirty\n"
+        },
+        "unapproved neighboring file must remain byte-identical"
+    );
+    assert_eq!(read_file(&d, r"a\b.txt"), "selected base\n");
+    assert!(!outcome.is_partial(), "{outcome:?}");
+    assert_eq!(outcome.backups.len(), paths.len());
+    assert_eq!(
+        plan.preview_files
+            .iter()
+            .map(|f| f.path.to_str().unwrap())
+            .collect::<Vec<_>>(),
+        paths.iter().map(String::as_str).collect::<Vec<_>>()
+    );
+    for backup in &outcome.backups {
+        let expected = match backup.path.as_str() {
+            r"a\b.txt" => b"selected dirty\n".as_slice(),
+            "a/b.txt" if bulk => b"neighbor dirty\n".as_slice(),
+            other => panic!("backup for unapproved path: {other}"),
+        };
+        assert_eq!(backend.read_backup(&backup.reference).unwrap(), expected);
+    }
+    assert_eq!(std::fs::read(d.join(".git/index")).unwrap(), index_before);
+}
+
+#[cfg(unix)]
+#[test]
+fn discard_literal_backslash_single() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    discard_literal_backslash_fixture(false);
+}
+
+#[cfg(unix)]
+#[test]
+fn discard_literal_backslash_bulk() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    discard_literal_backslash_fixture(true);
+}
+
+#[test]
+fn discard_unsafe_path_refuses_before_backup() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let d = build_repo(&tmp);
+    write_file(&d, "tracked.txt", "keep dirty\n");
+    let index_before = std::fs::read(d.join(".git/index")).unwrap();
+    let repo = Repository::open(&d).unwrap();
+    for unsafe_path in ["tracked.txt\0", "../tracked.txt", "nested/../tracked.txt"] {
+        let paths = vec![unsafe_path.to_string()];
+        let plan = plan_discard(&repo, &paths).unwrap();
+        assert!(plan
+            .blockers
+            .iter()
+            .any(|note| matches!(note, PlanNote::Discard(DiscardNote::UnsafePath { .. }))));
+        assert!(execute_discard(&repo, &plan, &paths).is_err());
+        // Even an artificially unblocked plan cannot bypass path preflight.
+        let mut unblocked = plan;
+        unblocked.blockers.clear();
+        assert!(execute_discard(&repo, &unblocked, &paths).is_err());
+        assert_eq!(read_file(&d, "tracked.txt"), "keep dirty\n");
+        assert_eq!(std::fs::read(d.join(".git/index")).unwrap(), index_before);
+        assert_eq!(
+            repo.references_glob("refs/kagi/backups/*").unwrap().count(),
+            0
+        );
+    }
+}
+
+#[test]
+fn discard_uses_original_gitdir_with_separate_core_worktree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let d = build_repo(&tmp);
+    let workdir = tempfile::tempdir().unwrap();
+    std::fs::rename(d.join("tracked.txt"), workdir.path().join("tracked.txt")).unwrap();
+    git(
+        &d,
+        &["config", "core.worktree", workdir.path().to_str().unwrap()],
+    );
+    write_file(workdir.path(), "tracked.txt", "separate dirty\n");
+    let index_before = std::fs::read(d.join(".git/index")).unwrap();
+    let mut backend = kagi_git::Backend::open_with_policy(
+        &d.join(".git"),
+        kagi_git::backend::ExecutionPolicy::human(false),
+    )
+    .unwrap();
+    let op = kagi_git::Operation::Discard {
+        paths: vec!["tracked.txt".into()],
+    };
+    let plan = backend.plan(&op).unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    let kagi_git::OperationOutcome::Discard(outcome) = backend.run(&op, &plan).unwrap() else {
+        panic!("unexpected outcome");
+    };
+    assert!(!outcome.is_partial(), "{outcome:?}");
+    assert_eq!(read_file(workdir.path(), "tracked.txt"), "committed\n");
+    assert_eq!(
+        backend.read_backup(&outcome.backups[0].reference).unwrap(),
+        b"separate dirty\n"
+    );
+    assert_eq!(std::fs::read(d.join(".git/index")).unwrap(), index_before);
+}
+
 // ════════════════════════════════════════════════════════════
 // #303 PRIORITY 1 — over-discard sentinel (also the #282 P0 gate).
 //
@@ -117,8 +269,7 @@ fn discard_does_not_touch_non_target_dirty_files() {
     assert_eq!(read_file(&d, "a*b.txt"), "TARGET committed\n");
 
     // ── The sentinels: every bystander UNCHANGED. ──
-    // This is the exact assertion that fails the instant `disable_pathspec_match`
-    // is removed (a glob 'a*b.txt' would revert aXXXb.txt to its committed form).
+    // A glob interpretation or whole-index checkout would revert this sentinel.
     assert_eq!(
         read_file(&d, "aXXXb.txt"),
         "EDIT-victim\n",

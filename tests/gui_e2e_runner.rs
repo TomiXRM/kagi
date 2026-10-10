@@ -83,6 +83,10 @@ mod smart_picker;
 mod recovery_sidebar_panes;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/hairline_dividers.rs"]
+mod recovery_hairline_dividers;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/bottom_panel.rs"]
 mod recovery_bottom_panel;
 
@@ -1083,6 +1087,10 @@ mod macos {
             (
                 "sidebar_panes",
                 Box::new(crate::recovery_sidebar_panes::scenario_sidebar_panes),
+            ),
+            (
+                "hairline_dividers",
+                Box::new(crate::recovery_hairline_dividers::scenario_hairline_dividers),
             ),
             (
                 "pr_list_roles",

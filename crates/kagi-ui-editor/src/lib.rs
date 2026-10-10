@@ -2336,11 +2336,32 @@ fn render_editor_workspace(
     // does the actual width math per `DividerKind`.
     let tree_divider = div()
         .id("ews-divider-tree")
+        .group("ews-divider-tree")
         .w(theme::scaled_px(4.))
         .flex_shrink_0()
         .h_full()
-        .bg(rgb(theme().surface))
+        .bg(rgb(theme().panel))
+        .flex()
+        .justify_center()
+        .child(
+            div()
+                .w(px(1.))
+                .h_full()
+                .flex_shrink_0()
+                .bg(rgb(theme().surface))
+                .group_hover("ews-divider-tree", |s| s.bg(rgb(theme().color_branch)))
+                .group_drag_over::<DividerDrag>("ews-divider-tree", |s| {
+                    s.bg(rgb(theme().color_branch))
+                }),
+        )
         .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+        .drag_over::<DividerDrag>(|style, drag, _, _| {
+            if drag.kind == DividerKind::EditorTree {
+                style.bg(rgb(theme().color_branch))
+            } else {
+                style
+            }
+        })
         .cursor_col_resize()
         .on_drag(
             DividerDrag {
@@ -2350,11 +2371,32 @@ fn render_editor_workspace(
         );
     let hunks_divider = div()
         .id("ews-divider-hunks")
+        .group("ews-divider-hunks")
         .w(theme::scaled_px(4.))
         .flex_shrink_0()
         .h_full()
-        .bg(rgb(theme().surface))
+        .bg(rgb(theme().panel))
+        .flex()
+        .justify_center()
+        .child(
+            div()
+                .w(px(1.))
+                .h_full()
+                .flex_shrink_0()
+                .bg(rgb(theme().surface))
+                .group_hover("ews-divider-hunks", |s| s.bg(rgb(theme().color_branch)))
+                .group_drag_over::<DividerDrag>("ews-divider-hunks", |s| {
+                    s.bg(rgb(theme().color_branch))
+                }),
+        )
         .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+        .drag_over::<DividerDrag>(|style, drag, _, _| {
+            if drag.kind == DividerKind::EditorHunks {
+                style.bg(rgb(theme().color_branch))
+            } else {
+                style
+            }
+        })
         .cursor_col_resize()
         .on_drag(
             DividerDrag {

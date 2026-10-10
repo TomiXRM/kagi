@@ -179,6 +179,9 @@ pub struct PrModeState {
     /// position, because a pane that scrolls back on its own cannot be
     /// scrolled. Opening another PR returns it to following.
     pub lane_scroll_x: Option<f32>,
+    /// Presentation only; the tabs and their list/input owners never move.
+    pub(super) companion: Option<super::pr_layout::Companion>,
+    pub(super) lane_hidden: bool,
 }
 
 impl Default for PrModeState {
@@ -196,6 +199,8 @@ impl Default for PrModeState {
             dashboard_horizontal_scroll: ScrollHandle::new(),
             sections_open: [true, false, false, false],
             lane_scroll_x: None,
+            companion: None,
+            lane_hidden: false,
         }
     }
 }
@@ -1124,11 +1129,15 @@ pub fn render_pr_mode(
     // Faces for the logins on this page (ADR-0200). One attempt per login per
     // process; the pass is a set lookup once they are in hand.
     app.ensure_pr_avatars(cx);
-    let left = super::workspace_mode::render_sidebar_pages(
-        app,
-        super::workspace_mode::WorkspaceMode::Prs,
-        cx,
-    );
+    let layout = super::pr_layout::Layout::for_window(app, window);
+    let companion = app.pr_mode().and_then(|m| m.companion);
+    let left = layout.navigator.then(|| {
+        super::workspace_mode::render_sidebar_pages(
+            app,
+            super::workspace_mode::WorkspaceMode::Prs,
+            cx,
+        )
+    });
     // Measured from inside, not wrapped: the body's height chain (`h_full`,
     // `flex_1`) must reach the virtualized feed unbroken.
     let center = div()
@@ -1140,6 +1149,9 @@ pub fn render_pr_mode(
         .h_full()
         .flex()
         .flex_col()
+        .when(has_tab, |el| {
+            el.child(super::pr_layout::toolbar(app, window, cx))
+        })
         .child(render_center(app, window, cx))
         .child(super::e2e::measure_inside("pr-mode-center-pane"));
     let center = match panel {
@@ -1156,13 +1168,34 @@ pub fn render_pr_mode(
     };
     // The swimlane sits between the navigator and the body: it is about the
     // PRs, not about the file being read, and it is absent with no tab open.
-    let lane = super::pr_lane::render_pr_lane(app, cx)
+    let lane = layout
+        .swimlane
+        .then(|| super::pr_lane::render_pr_lane(app, cx))
+        .flatten()
         .map(|pane| super::e2e::measure_control("pr-mode-lane-pane", pane));
+    let drawer = match companion {
+        Some(super::pr_layout::Companion::Navigator)
+            if !layout.navigator && app.sidebar.visible =>
+        {
+            Some(super::pr_layout::drawer(
+                super::workspace_mode::render_sidebar_pages(
+                    app,
+                    super::workspace_mode::WorkspaceMode::Prs,
+                    cx,
+                ),
+            ))
+        }
+        Some(super::pr_layout::Companion::Swimlane) if !layout.swimlane => {
+            super::pr_lane::render_pr_lane(app, cx).map(super::pr_layout::drawer)
+        }
+        _ => None,
+    };
     // No outer right pane: the checks, the facts and the file list moved
     // inside the PR body, where the mock has them (ADR-0200). Three panes
     // between the navigator and the diff left the diff a sliver.
     div()
         .id("pr-mode-layout")
+        .relative()
         .flex()
         .flex_row()
         .flex_1()
@@ -1170,11 +1203,16 @@ pub fn render_pr_mode(
         .min_h(px(0.))
         .h_full()
         .bg(rgb(theme().bg_base))
-        .child(left)
-        .child(vdivider(DividerKind::PrModeLeft))
+        .children(left)
+        .when(layout.navigator, |el| {
+            el.child(vdivider(DividerKind::PrModeLeft))
+        })
         .children(lane)
-        .when(has_tab, |el| el.child(vdivider(DividerKind::PrModeLeft)))
+        .when(layout.swimlane, |el| {
+            el.child(vdivider(DividerKind::PrModeLeft))
+        })
         .child(center)
+        .children(drawer)
         .into_any_element()
 }
 
@@ -1314,6 +1352,7 @@ fn render_center(
         .flex()
         .flex_row()
         .items_center()
+        .flex_wrap()
         .gap_2()
         .flex_shrink_0()
         .px_3()
@@ -1599,6 +1638,8 @@ fn render_center(
         // A real tab: underline on the active one, no pill background —
         // buttons read as actions, these switch what the pane shows.
         div()
+            .relative()
+            .child(super::e2e::measure_inside(id))
             .id(id)
             .flex()
             .flex_row()
@@ -1637,6 +1678,7 @@ fn render_center(
     let views = div()
         .flex()
         .flex_row()
+        .flex_wrap()
         .items_center()
         .flex_shrink_0()
         .px_2()
@@ -1704,7 +1746,14 @@ fn render_center(
     col = col.child(header).child(views);
 
     // The body below the tabs is the view's own content, full width.
-    let mut content = div().flex_1().min_w(px(0.)).min_h(px(0.)).flex().flex_col();
+    let mut content = div()
+        .relative()
+        .flex_1()
+        .min_w(px(0.))
+        .min_h(px(0.))
+        .flex()
+        .flex_col()
+        .child(super::e2e::measure_inside("pr-mode-body"));
     if local_refs_loading {
         content = content.child(super::pr_conversation::render_loading());
     }

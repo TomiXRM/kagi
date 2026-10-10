@@ -86,6 +86,7 @@ actions!(
         ZoomReset,
         EnterFullScreen,
         ToggleSidebar,
+        TogglePrSwimlane,
         ToggleCommitDetails,
         ToggleDiffView,
         // T-WS-EDITOR-001: Graph ⇄ Editor workspace mode.
@@ -326,6 +327,7 @@ pub const MENU_BAR: &[MenuSection] = &[
             MenuNode::Command("view.fullScreen"),
             MenuNode::Separator,
             MenuNode::Command("view.toggleSidebar"),
+            MenuNode::Command("view.togglePrSwimlane"),
             MenuNode::Command("view.toggleTerminal"),
             MenuNode::Command("view.toggleCommitDetails"),
             MenuNode::Command("view.toggleDiffView"),
@@ -562,6 +564,12 @@ pub const COMMANDS: &[Command] = &[
         id: "view.toggleSidebar",
         label: "Toggle Sidebar",
         keystroke: Some("secondary-b"),
+        dangerous: false,
+    },
+    Command {
+        id: "view.togglePrSwimlane",
+        label: "Toggle PR Swimlane",
+        keystroke: Some("secondary-alt-l"),
         dangerous: false,
     },
     Command {
@@ -844,6 +852,8 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
     let diff_open = app.ui().main_diff.is_some() || app.pending_headless_diff.is_some();
 
     match id {
+        "view.togglePrSwimlane" if app.pr_mode_visible()
+            && app.pr_mode().is_some_and(|m| m.active.is_some()) => Enabled,
         #[cfg(target_os = "macos")]
         "app.hide" | "app.hideOthers" | "app.showAll" => Enabled,
         // ── Always available ────────────────────────────────────────────
@@ -1024,6 +1034,7 @@ fn action_menu_item(id: &str) -> MenuItem {
         "view.zoomReset" => MenuItem::action(label, ZoomReset),
         "view.fullScreen" => MenuItem::action(label, EnterFullScreen),
         "view.toggleSidebar" => MenuItem::action(label, ToggleSidebar),
+        "view.togglePrSwimlane" => MenuItem::action(label, TogglePrSwimlane),
         // Terminal toggle reuses ToggleBottomPanel (cmd-j); registry label is
         // "Toggle Terminal".
         "view.toggleTerminal" => MenuItem::action(label, ToggleBottomPanel),
@@ -1407,6 +1418,7 @@ pub fn register_keybindings(cx: &mut App) {
         "view.zoomReset" => ZoomReset,
         "view.fullScreen" => EnterFullScreen,
         "view.toggleSidebar" => ToggleSidebar,
+        "view.togglePrSwimlane" => TogglePrSwimlane,
         "view.toggleCommitDetails" => ToggleCommitDetails,
         "view.toggleDiffView" => ToggleDiffView,
         // T-WS-EDITOR-001: Graph ⇄ Editor workspace mode (Cmd-Shift-E on
@@ -1821,8 +1833,15 @@ impl KagiApp {
             }
             "view.fullScreen" => window.toggle_fullscreen(),
             "view.toggleSidebar" => {
-                self.sidebar.visible = !self.sidebar.visible;
+                if self.pr_mode_visible() && self.pr_mode().is_some_and(|m| m.active.is_some()) {
+                    self.toggle_pr_companion(super::pr_layout::Companion::Navigator, window);
+                } else {
+                    self.sidebar.visible = !self.sidebar.visible;
+                }
                 klog!("menu: sidebar_visible={}", self.sidebar.visible);
+            }
+            "view.togglePrSwimlane" => {
+                self.toggle_pr_companion(super::pr_layout::Companion::Swimlane, window);
             }
             "view.toggleTerminal" => {
                 self.toggle_bottom_panel(window, cx);

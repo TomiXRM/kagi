@@ -55,6 +55,7 @@ impl KagiApp {
         let el = menu_act!(el, cmds::ZoomReset, "view.zoomReset");
         let el = menu_act!(el, cmds::EnterFullScreen, "view.fullScreen");
         let el = menu_act!(el, cmds::ToggleSidebar, "view.toggleSidebar");
+        let el = menu_act!(el, cmds::TogglePrSwimlane, "view.togglePrSwimlane");
         let el = menu_act!(el, cmds::ToggleCommitDetails, "view.toggleCommitDetails");
         let el = menu_act!(el, cmds::ToggleDiffView, "view.toggleDiffView");
         let el = menu_act!(

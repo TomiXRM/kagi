@@ -13,6 +13,13 @@ impl KagiApp {
             return;
         }
         if self.pr_mode_visible() {
+            if self
+                .pr_mode_mut()
+                .is_some_and(|m| m.companion.take().is_some())
+            {
+                cx.notify();
+                return;
+            }
             if self.pr_mode().is_some_and(|m| m.active.is_some()) {
                 self.pr_mode_home(cx);
             } else {

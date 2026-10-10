@@ -597,6 +597,8 @@ pub enum Msg {
     PrSectionAssigned,
     /// Swimlane pane (ADR-0200).
     PrLaneTitle,
+    PrNavigator,
+    PrSwimlane,
     /// Detail rail facts (ADR-0200).
     PrRailReviewers,
     PrRailAssignees,
@@ -2729,6 +2731,10 @@ impl Msg {
             (Ja, PrSectionAssigned) => "担当",
             (En, PrLaneTitle) => "SWIMLANE",
             (Ja, PrLaneTitle) => "SWIMLANE",
+            (En, PrNavigator) => "Navigator",
+            (Ja, PrNavigator) => "ナビゲーター",
+            (En, PrSwimlane) => "Swimlane / Files",
+            (Ja, PrSwimlane) => "スイムレーン・ファイル",
             (En, PrRailReviewers) => "REVIEWERS",
             (Ja, PrRailReviewers) => "レビュアー",
             (En, PrRailAssignees) => "ASSIGNEES",
@@ -4303,6 +4309,7 @@ pub fn command_label_ja(id: &str) -> Option<&'static str> {
         "view.zoomReset" => "実際のサイズ",
         "view.fullScreen" => "フルスクリーンにする",
         "view.toggleSidebar" => "サイドバーの表示切替",
+        "view.togglePrSwimlane" => "PR スイムレーンの表示切替",
         "view.toggleTerminal" => "ターミナルの表示切替",
         "view.toggleCommitDetails" => "commit 詳細の表示切替",
         "view.toggleDiffView" => "diff 表示の切替",

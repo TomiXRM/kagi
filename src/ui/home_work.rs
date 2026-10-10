@@ -434,15 +434,12 @@ impl KagiApp {
             .p(theme::scaled_px(3.))
             .rounded_lg()
             .bg(rgb(theme().panel));
-        for (slot, (pane, label, count, loading)) in cells.into_iter().enumerate() {
+        for (slot, cell) in cells.into_iter().enumerate() {
             row = row.child(pane_cell(
                 &tabs,
                 slot,
-                pane,
-                label,
-                count,
-                loading,
-                pane == active,
+                cell,
+                cell.0 == active,
                 self.window_active,
             ));
         }
@@ -458,13 +455,11 @@ const PANES: [HomePane; 3] = [HomePane::Repos, HomePane::Prs, HomePane::Issues];
 fn pane_cell(
     tabs: &super::keyboard_nav::TabList,
     slot: usize,
-    pane: HomePane,
-    label: &'static str,
-    count: Option<usize>,
-    loading: bool,
+    cell: (HomePane, &'static str, Option<usize>, bool),
     active: bool,
     window_active: bool,
 ) -> AnyElement {
+    let (pane, label, count, loading) = cell;
     let id = match pane {
         HomePane::Repos => "home-pane-repos",
         HomePane::Prs => "home-pane-prs",

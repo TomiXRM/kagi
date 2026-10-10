@@ -191,6 +191,71 @@ fn dangling_symlink_stage_bulk() {
     }
 }
 
+#[test]
+fn stage_directory_replaced_by_file() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    for bulk in [false, true] {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        init_repo(dir, "main");
+        std::fs::create_dir(dir.join("dir")).unwrap();
+        write_file(dir, "dir/a", "old\n");
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-qm", "base"]);
+        std::fs::remove_file(dir.join("dir/a")).unwrap();
+        std::fs::remove_dir(dir.join("dir")).unwrap();
+        write_file(dir, "dir", "replacement\n");
+        let backend = kagi_git::Backend::open(dir).unwrap();
+        if bulk {
+            backend
+                .stage_files(&["dir/a".into(), "dir".into()])
+                .unwrap();
+        } else {
+            backend.stage_file(Path::new("dir/a")).unwrap();
+            backend.stage_file(Path::new("dir")).unwrap();
+        }
+        let repo = Repository::open(dir).unwrap();
+        let index = repo.index().unwrap();
+        assert_eq!(index.len(), 1);
+        assert!(index.get_path(Path::new("dir/a"), 0).is_none());
+        let entry = index.get_path(Path::new("dir"), 0).unwrap();
+        assert_eq!(
+            repo.find_blob(entry.id).unwrap().content(),
+            b"replacement\n"
+        );
+    }
+}
+
+#[test]
+fn stage_batch_error_does_not_leak_cached_index_edits() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let (dir, _) = build_clean_repo(&tmp);
+    write_file(&dir, "README.md", "aborted batch edit\n");
+    write_file(&dir, "next", "next successful stage\n");
+    std::fs::create_dir(dir.join("not-a-file")).unwrap();
+    let before = std::fs::read(dir.join(".git/index")).unwrap();
+    let backend = kagi_git::Backend::open(&dir).unwrap();
+    assert!(backend
+        .stage_files(&["README.md".into(), "not-a-file".into()])
+        .is_err());
+    assert_eq!(std::fs::read(dir.join(".git/index")).unwrap(), before);
+    backend.stage_file(Path::new("next")).unwrap();
+    let repo = Repository::open(&dir).unwrap();
+    let index = repo.index().unwrap();
+    let entry = index.get_path(Path::new("README.md"), 0).unwrap();
+    assert_eq!(repo.find_blob(entry.id).unwrap().content(), b"# test\n");
+    assert!(index.get_path(Path::new("next"), 0).is_some());
+    assert_eq!(
+        std::fs::read(dir.join("README.md")).unwrap(),
+        b"aborted batch edit\n"
+    );
+}
+
 // ────────────────────────────────────────────────────────────
 // Test 1: stage a modified tracked file
 // ────────────────────────────────────────────────────────────

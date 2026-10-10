@@ -993,6 +993,10 @@ pub struct KagiApp {
     /// default — without a focused element gpui never dispatches key events,
     /// so window-wide actions like cmd-j would silently do nothing.
     pub root_focus: Option<gpui::FocusHandle>,
+    pub(crate) window_activation_subscription: Option<gpui::Subscription>,
+    pub(crate) window_active: bool,
+    #[cfg(feature = "gui-e2e")]
+    pub(crate) window_active_override: Option<bool>,
     /// #482 stage 2 (ADR-0183): every open session's snapshot-derived read
     /// model, owned once. There is no "active copy" and no per-path cache — the
     /// tab on screen is a *key* (`active_session()`), so switching tabs changes
@@ -1389,6 +1393,32 @@ impl KagiApp {
 }
 
 impl KagiApp {
+    pub(crate) fn window_active_for_render(&self, window: &Window) -> bool {
+        #[cfg(feature = "gui-e2e")]
+        if let Some(active) = self.window_active_override {
+            return active;
+        }
+        window.is_window_active()
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn set_window_active_for_e2e(&mut self, active: bool, cx: &mut Context<Self>) {
+        self.window_active_override = Some(active);
+        if let Some(view) = &self.ui().conflict {
+            view.update(cx, |view, cx| {
+                view.window_active_override = Some(active);
+                cx.notify();
+            });
+        }
+        if let Some(view) = &self.ui().commit_panel {
+            view.update(cx, |view, cx| {
+                view.window_active_override = Some(active);
+                cx.notify();
+            });
+        }
+        cx.notify();
+    }
+
     /// The single place a `KagiApp` is constructed: every field default lives
     /// here exactly once, so adding a field means touching one place.  The two
     /// public constructors below differ only in the arguments they pass in.
@@ -1401,6 +1431,10 @@ impl KagiApp {
             ui: HashMap::new(),
             ui_default: TabUiState::default(),
             root_focus: None,
+            window_activation_subscription: None,
+            window_active: true,
+            #[cfg(feature = "gui-e2e")]
+            window_active_override: None,
             view_epoch: 0,
             error: None,
             repo_path: None,

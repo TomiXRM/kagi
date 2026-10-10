@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- 非 key window の Graph commit／WIP（accent bar も減衰）・conflict file・repository/Home tab・toolbar workspace mode・sidebar・CommitPanel・Inspector・PR commit/file list・bottom panel tab・Home/filter/mode 選択を `inactive_selected` で弱調表示します。Apple Light は hover と区別できる中立 `#d3d3d3`、Apple Dark は既存の `#3a3a3c`。全 preset の primary label は4.5:1以上で、selection ID・geometry・Git の意味色を保持します。(#1176)
 - PR-table horizontal scrollbars preserve macOS auto-hide: `Scrolling` overlays without a lane; non-auto-hide settings (gpui-kit `Hover` or `Always`) reserve 16px and use a persistent table scrollbar so its hitbox cannot steal last-row clicks. Header/row X alignment, independent Y scrolling and narrow JA high-zoom reachability are preserved. (#1182)
 - Apple Light's shared `colors.input` boundary uses quieter neutral `#8e8e8e` (3.276:1 on white; 3.058:1 on panel grey): Input, unchecked Checkbox, Default-outline buttons (modal Secondary and inspector/oplog/conflict buttons), Radio, Select, Combobox, NumberInput and DatePicker. Existing outline geometry, focus rings, labels and Apple Dark remain unchanged. (#1183)
 - Toolbar group hairlines, PR feed/table dividers and the command-palette frame now use neutral `surface`, not selection blue or label grey. Selection, focus rings and readable markdown-table borders remain unchanged. (#1175)

@@ -62,6 +62,13 @@ The `gui-e2e` feature forwards `gpui_platform/test-support` as well as GPUI's:
 without the platform feature `Window::render_to_image` returns the default
 not-implemented error. Default application builds keep capture disabled.
 
+`inactive_selection` (#1176) measures selected repository-tab and conflict-row native
+Metal fills across key/non-key/reactivated presentation, with unchanged bounds,
+selected session and selected file. `KagiApp::set_window_active_for_e2e` overrides only the
+activation input under `gui-e2e`; it never activates an OS window or takes the
+user's foreground. Pair it with `inactive_selection_tests` in kagi-ui-core
+for all-preset primary-label contrast.
+
 ```bash
 # One scenario: the substring the scenario name contains.
 KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='bottom_panel' \

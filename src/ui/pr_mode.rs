@@ -1533,7 +1533,9 @@ fn render_center(
                 .px_3()
                 .py_1()
                 .cursor_pointer()
-                .when(selected_commit.is_none(), |el| el.bg(rgb(theme().selected)))
+                .when(selected_commit.is_none(), |el| {
+                    el.bg(theme().selected_for_window(app.window_active))
+                })
                 .hover(|s| s.bg(rgb(theme().surface)))
                 .on_click(all_click)
                 .map(|el| {
@@ -1575,7 +1577,9 @@ fn render_center(
                     .px_3()
                     .text_sm()
                     .cursor_pointer()
-                    .when(sel, |el| el.bg(rgb(theme().selected)))
+                    .when(sel, |el| {
+                        el.bg(theme().selected_for_window(app.window_active))
+                    })
                     .hover(|s| s.bg(rgb(theme().surface)))
                     .on_click(click)
                     // Straight-line "graph": a dot per commit, no lanes — the
@@ -1968,7 +1972,9 @@ fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElemen
                 .px_3()
                 .text_sm()
                 .cursor_pointer()
-                .when(sel, |el| el.bg(rgb(theme().selected)))
+                .when(sel, |el| {
+                    el.bg(theme().selected_for_window(app.window_active))
+                })
                 .hover(|s| s.bg(rgb(theme().surface)))
                 .on_click(click)
                 .map(|el| {

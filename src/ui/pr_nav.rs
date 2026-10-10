@@ -192,6 +192,7 @@ pub(super) fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::
                 row.attention,
                 stacked,
                 active_pr.as_ref(),
+                app.window_active,
                 cx,
             ));
         }
@@ -239,6 +240,7 @@ fn render_pr_card(
     bucket: PrAttention,
     stacked: bool,
     active_pr: Option<&kagi_domain::github::PrKey>,
+    window_active: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let is_active = active_pr.is_some_and(|key| pr.is(key));
@@ -377,7 +379,7 @@ fn render_pr_card(
                         .child(SharedString::from(format!("#{}", pr.number))),
                 ),
         );
-    let row = super::workspace_mode::sidebar_list_row(is_active)
+    let row = super::workspace_mode::sidebar_list_row(is_active, window_active)
         .id(("pr-mode-card", pr.number as usize))
         // The row fits its two lines and its padding - it is not given a fixed
         // height. A fixed 42px did fit two bare line boxes, but not once the

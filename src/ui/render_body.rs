@@ -498,6 +498,7 @@ impl KagiApp {
                                             &this.avatars.images,
                                             commit_range,
                                             selected,
+                                            this.window_active,
                                             this.badge_col_w,
                                             this.graph_col_w,
                                             compact,

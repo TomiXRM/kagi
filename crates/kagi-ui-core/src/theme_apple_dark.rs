@@ -14,6 +14,7 @@ pub const APPLE_DARK: Theme = Theme {
     bg_row_alt: 0x18181a,
     surface: 0x2c2c2e,  // systemGray5 (dark)
     selected: 0x3a3a3c, // systemGray4 (dark) — neutral selection, Notes-style
+    inactive_selected: 0x3a3a3c,
     panel: 0x161618,
     sidebar: 0x101012,
     modal: 0x2c2c2e,

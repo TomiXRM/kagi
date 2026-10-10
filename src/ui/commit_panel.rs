@@ -408,6 +408,10 @@ impl CommitPanelState {
 pub struct CommitPanelView {
     /// The staging lists / stats / trees / selection / plan-modal data.
     pub state: CommitPanelState,
+    pub(crate) window_active: bool,
+    pub(crate) window_activation_subscription: Option<gpui::Subscription>,
+    #[cfg(feature = "gui-e2e")]
+    pub(crate) window_active_override: Option<bool>,
     /// gpui-component `InputState` for the commit subject line (IME/focus).
     /// Created lazily in a `Window` context; kept STABLE across status reloads.
     pub title_input: Option<Entity<InputState>>,
@@ -496,6 +500,10 @@ impl CommitPanelView {
     ) -> Self {
         Self {
             state,
+            window_active: true,
+            window_activation_subscription: None,
+            #[cfg(feature = "gui-e2e")]
+            window_active_override: None,
             title_input: None,
             body_input: None,
             coauthor_menu: None,

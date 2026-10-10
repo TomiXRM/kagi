@@ -315,7 +315,7 @@ impl KagiApp {
         )
         .h(px(row_height(self.graph_compact)));
         row = if is_commit_panel && commit_panel_open {
-            row.bg(rgb(theme().selected))
+            row.bg(theme().selected_for_window(self.window_active))
         } else {
             row.bg(row_wash)
         };

@@ -162,6 +162,7 @@ fn render_cp_file_row(
     is_conflicted: bool,
     is_sel: bool,
     wip_hit: bool,
+    window_active: bool,
     indent: f32,
     stat: Option<&kagi_git::FileDiffStat>,
     convention: bool,
@@ -196,11 +197,11 @@ fn render_cp_file_row(
     });
     // Row background: conflicted files get red tint
     let row_bg = if is_conflicted {
-        theme().diff_removed_bg
-    } else if is_sel {
-        theme().selected
+        rgb(theme().diff_removed_bg).into()
+    } else if is_sel || wip_hit {
+        theme().selected_for_window(window_active)
     } else {
-        theme().panel
+        rgb(theme().panel).into()
     };
     let mut file_row = div()
         .id((row_id, fi))
@@ -214,7 +215,6 @@ fn render_cp_file_row(
             )
         })
         .aria_description(full_path.clone())
-        .when(wip_hit, |el| el.bg(rgb(theme().selected)))
         .w_full()
         .flex()
         .flex_row()
@@ -228,7 +228,7 @@ fn render_cp_file_row(
             }
         })
         .py_px()
-        .bg(rgb(row_bg))
+        .bg(row_bg)
         .hover(|s| s.bg(rgb(theme().surface)))
         .on_click(file_click)
         .child(
@@ -500,6 +500,7 @@ fn cp_unstaged_file_element(
             panel.is_conflicted(&f.path),
             panel.selected_file == Some(CommitPanelFileRef::Unstaged { index: fi }),
             wip_hit,
+            view.window_active,
             0.0,
             panel.unstaged_stat(&f.path),
             is_convention(&f.path),
@@ -539,6 +540,7 @@ fn cp_staged_file_element(
             false,
             panel.selected_file == Some(CommitPanelFileRef::Staged { index: fi }),
             wip_hit,
+            view.window_active,
             0.0,
             panel.staged_stat(&f.path),
             is_convention(&f.path),
@@ -668,6 +670,7 @@ pub(crate) fn render_unstaged_tree_row(
                     path.map(|p| panel.is_conflicted(p)).unwrap_or(false),
                     panel.selected_file == Some(CommitPanelFileRef::Unstaged { index: fi }),
                     wip_hit,
+                    view.window_active,
                     (*depth as f32) * 12.0,
                     path.and_then(|p| panel.unstaged_stat(p)),
                     path.map(|p| is_convention(p)).unwrap_or(false),
@@ -737,6 +740,7 @@ pub(crate) fn render_staged_tree_row(
                     false,
                     panel.selected_file == Some(CommitPanelFileRef::Staged { index: fi }),
                     wip_hit,
+                    view.window_active,
                     (*depth as f32) * 12.0,
                     path.and_then(|p| panel.staged_stat(p)),
                     path.map(|p| is_convention(p)).unwrap_or(false),
@@ -962,6 +966,15 @@ impl CommitPanelView {
 
 impl Render for CommitPanelView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.window_activation_subscription.is_none() {
+            self.window_activation_subscription =
+                Some(cx.observe_window_activation(window, |_, _, cx| cx.notify()));
+        }
+        self.window_active = window.is_window_active();
+        #[cfg(feature = "gui-e2e")]
+        {
+            self.window_active = self.window_active_override.unwrap_or(self.window_active);
+        }
         // Correction #1/#2: input sync + draft autosave run on the entity's own
         // render path (with `&mut Window`), never as a parent per-frame read of
         // the child's input.
@@ -1066,11 +1079,11 @@ impl CommitPanelView {
                 .px_1p5()
                 .py_px()
                 .text_xs()
-                .bg(rgb(if active {
-                    theme().selected
+                .bg(if active {
+                    theme().selected_for_window(self.window_active)
                 } else {
-                    theme().surface
-                }))
+                    rgb(theme().surface).into()
+                })
                 .text_color(rgb(if active {
                     theme().text_main
                 } else {

@@ -455,6 +455,7 @@ pub fn scenario_commit_index_identity_refusal(cx: &mut VisualTestAppContext) {
     let language = i18n::lang();
     for lang in [Lang::En, Lang::Ja] {
         i18n::set_lang(lang);
+        commit_planning_refusal(cx);
         for queued in [false, true] {
             let fixture = branches_fixture();
             let repo = fixture.path().canonicalize().unwrap();
@@ -523,4 +524,46 @@ pub fn scenario_commit_index_identity_refusal(cx: &mut VisualTestAppContext) {
     }
     i18n::set_lang(language);
     eprintln!("[gui-e2e] PASS commit_index_identity_refusal");
+}
+
+/// Planning's final index check and execute preflight produce the same real
+/// typed refusal. Deliver that result through the normal Commit plan-result
+/// boundary, without a fabricated error or a timing-dependent planner race.
+fn commit_planning_refusal(cx: &mut VisualTestAppContext) {
+    use kagi::ui::{FooterStatus, ToastKind};
+    use kagi_ui_core::i18n::{self, Msg, Op};
+    let fixture = branches_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    std::fs::write(repo.join("approved.txt"), "APPROVED\n").unwrap();
+    git(&repo, &["add", "approved.txt"]);
+    let (app, window) = mount(cx, &repo);
+    let repository = git2::Repository::open(&repo).unwrap();
+    let plan = kagi_git::plan_commit(&repository, "approved identity").unwrap();
+    std::fs::write(repo.join("approved.txt"), "NOT_APPROVED\n").unwrap();
+    git(&repo, &["add", "approved.txt"]);
+    let error = kagi_git::preflight_commit(&repository, &plan).unwrap_err();
+    let head = rev_parse(&repo, &["HEAD"]);
+    let index = std::fs::read(repo.join(".git/index")).unwrap();
+    let refs = git_output(&repo, &["show-ref"]);
+    let expected = i18n::op_plan_failed(Op::Commit, Msg::AdviceCommitStagedContentChanged.t());
+    app.update(cx, |app, cx| app.commit_plan_result_for_e2e(Err(error), cx));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(matches!(&app.status_footer, FooterStatus::Failed(message) if message.as_ref() == expected),
+            "planning refusal must reach the localized footer: {:?}", app.status_footer);
+        let toast = app.toast_stack.as_ref().unwrap().read(cx).toasts().last().unwrap();
+        assert!(matches!(toast.kind, ToastKind::Error) && toast.message.as_ref() == expected,
+            "planning refusal must reach the localized error toast: {}", toast.message);
+        assert!(!app.app_sessions.has_leases() && app.write_busy_op.is_none());
+    });
+    assert_eq!(rev_parse(&repo, &["HEAD"]), head);
+    assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+    assert_eq!(git_output(&repo, &["show-ref"]), refs);
+    assert!(
+        kagi_git::oplog::read_oplog_tail_for_repo(&repo, 10).is_empty(),
+        "a planning refusal must not start or record execution"
+    );
+    drop(repository);
+    unmount(cx, app, window);
 }

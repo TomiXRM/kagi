@@ -9,7 +9,7 @@ use tempfile::TempDir;
 
 #[path = "../../../tests/support/git_fixture.rs"]
 mod git_fixture;
-use git_fixture::{commit_all, git, git_output, init_repo, write_file};
+use git_fixture::{commit_all, git, git_output, git_succeeds, init_repo, write_file};
 #[path = "../../../tests/support/isolated.rs"]
 mod test_support;
 
@@ -26,7 +26,10 @@ fn fixture() -> TempDir {
 }
 
 fn refuse_drift(op: Operation, drift: impl FnOnce(&Path)) {
-    let dir = fixture();
+    refuse_drift_in(fixture(), op, drift);
+}
+
+fn refuse_drift_in(dir: TempDir, op: Operation, drift: impl FnOnce(&Path)) {
     let path = dir.path();
     let mut backend = Backend::open(path).unwrap();
     let plan = backend.plan(&op).unwrap();
@@ -36,6 +39,7 @@ fn refuse_drift(op: Operation, drift: impl FnOnce(&Path)) {
     let index = std::fs::read(path.join(".git/index")).unwrap();
     let worktree = std::fs::read(path.join("a")).unwrap();
     let refs = git_output(path, &["show-ref"]);
+    let merge_head = std::fs::read(path.join(".git/MERGE_HEAD")).ok();
     let report = backend.run_recorded(&op, &plan);
     let error = report
         .result
@@ -53,6 +57,7 @@ fn refuse_drift(op: Operation, drift: impl FnOnce(&Path)) {
         refs,
         "no amend savepoint on refusal"
     );
+    assert_eq!(std::fs::read(path.join(".git/MERGE_HEAD")).ok(), merge_head);
     let tail = read_oplog_tail_for_repo(path, 10);
     assert_eq!(tail.len(), 1, "one durable refusal receipt");
     assert_eq!(tail[0].id, report.recording.entry().id);
@@ -228,4 +233,31 @@ fn commit_index_identity_message_only_amend_keeps_old_tree() {
     backend.run(&op, &plan).unwrap();
     assert_eq!(git_output(path, &["rev-parse", "HEAD^{tree}"]), old_tree);
     assert_eq!(std::fs::read(path.join(".git/index")).unwrap(), index);
+}
+
+#[test]
+fn commit_index_identity_rejects_resolved_merge_blob_swap() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let dir = fixture();
+    let path = dir.path();
+    commit_all(path, "approved base");
+    git(path, &["checkout", "-q", "-b", "side"]);
+    write_file(path, "a", "SIDE\n");
+    commit_all(path, "side");
+    git(path, &["checkout", "-q", "main"]);
+    write_file(path, "a", "MAIN\n");
+    commit_all(path, "main");
+    assert!(!git_succeeds(path, &["merge", "--no-commit", "side"]));
+    write_file(path, "a", "APPROVED\n");
+    git(path, &["add", "a"]);
+    assert!(path.join(".git/MERGE_HEAD").exists());
+    refuse_drift_in(
+        dir,
+        Operation::MergeCommit {
+            message: "approved merge".into(),
+        },
+        swap_blob,
+    );
 }

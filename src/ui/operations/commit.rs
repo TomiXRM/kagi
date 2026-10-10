@@ -836,6 +836,14 @@ impl KagiApp {
                 return;
             }
         };
+        self.accept_commit_plan(planned, cx);
+    }
+
+    fn accept_commit_plan(
+        &mut self,
+        planned: Result<kagi_git::OperationPlan, kagi_git::GitError>,
+        cx: &mut Context<Self>,
+    ) {
         match planned {
             Ok(plan) => {
                 let has_blockers = !plan.blockers.is_empty();
@@ -868,8 +876,28 @@ impl KagiApp {
             }
             Err(e) => {
                 klog!("plan_commit error: {}", e);
+                let detail = e
+                    .blocker()
+                    .map(i18n::plan_note_text)
+                    .unwrap_or_else(|| e.to_string());
+                let message = i18n::op_plan_failed(i18n::Op::Commit, detail);
+                // Failed planning cannot leave a previous approval executable.
+                self.cancel_commit_plan_modal(cx);
+                self.status_footer = FooterStatus::Failed(SharedString::from(message.clone()));
+                self.push_toast(ToastKind::Error, SharedString::from(message), cx);
+                cx.notify();
             }
         }
+    }
+
+    /// Exercise the same planning-result boundary with a real backend refusal.
+    #[cfg(feature = "gui-e2e")]
+    pub fn commit_plan_result_for_e2e(
+        &mut self,
+        planned: Result<kagi_git::OperationPlan, kagi_git::GitError>,
+        cx: &mut Context<Self>,
+    ) {
+        self.accept_commit_plan(planned, cx);
     }
 
     /// Cancel the commit plan modal.

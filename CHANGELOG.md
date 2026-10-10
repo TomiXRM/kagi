@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Commit／fixup と staged／both Amend は、承認時の index のパス・blob OID・mode を固定して実行前に照合するようにしました。同じパスの内容差替えや mode／対象ファイルの変更は HEAD・index・作業ファイルを書き換えず拒否し、見直しを促す EN／JA の理由と操作記録を残します。未 stage の編集は commit に混ぜず、変更のない承認は従来どおり実行できます。(#1126)
+- Commit の計画中にステージ済みの内容が変わって拒否された場合も、log だけで終わらず、EN／JA の失敗 footer と error toast に見直しの理由を表示するようにしました。以前の承認は解除し、実行は開始しません。解決済み merge の確定 Commit でも、承認後の blob 差替えを拒否して HEAD・MERGE_HEAD・index・refs を保持する backend 回帰を追加しました。(#1126)
 - Toolbar の件数 badge は固定 9px をやめ、100% で 11.7pt の文字・行高・chip 寸法を UI zoom に揃えました。70%／167% でも 1・99・99+ が切れず、primary button と同じ読みやすい foreground を使います。拡大した chip は矢印を覆わないよう外側へ伸ばし、操作できない button では件数も淡く表示します。(#1067)
 - 大きな diff の未計測行を高さ 0 として扱い、scrollbar の範囲が誤ったり末尾に届かなかったりする問題を修正しました。末尾方向への大きなホイール入力 1 回で実際の最終行に到達し、thread の開閉、同じファイルの再クリック、Editor の未変更 reload、幅変更でも読んでいる位置を保ちます。(#1122)
 - `gh` が未導入の場合は PR の共有 Open 情報と Closed / All 一覧の読み込みを開始せず、repository の切替や一覧を開くたびに不要な GitHub error を表示・記録しないようにしました。native E2E の注入済み読み込みは `gh` の有無にかかわらず維持します。(PR #1119 review)

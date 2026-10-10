@@ -246,15 +246,18 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
 /// Windows cannot express a literal Git backslash filename without treating it
 /// as a separator, so do not reinterpret it as a neighboring path.
 fn discard_path_is_safe(rel: &str) -> bool {
-    !rel.is_empty()
-        && !rel.contains('\0')
-        && !(cfg!(windows) && rel.contains('\\'))
-        && Path::new(rel).components().all(|c| {
-            matches!(
-                c,
-                std::path::Component::Normal(_) | std::path::Component::CurDir
-            )
-        })
+    if rel.is_empty() || rel.contains('\0') {
+        return false;
+    }
+    if cfg!(windows) && rel.contains('\\') {
+        return false;
+    }
+    Path::new(rel).components().all(|c| {
+        matches!(
+            c,
+            std::path::Component::Normal(_) | std::path::Component::CurDir
+        )
+    })
 }
 
 fn preflight_discard(

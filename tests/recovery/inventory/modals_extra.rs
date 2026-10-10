@@ -188,6 +188,7 @@ modal!(trust_repo, trust_repo_modal, |f, app, window, cx| {
     app.update(cx, |app, _| {
         app.set_trust_repo_modal(TrustRepoModal {
             repo_path: f.repo.clone(),
+            error: None,
         })
     });
 });

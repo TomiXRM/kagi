@@ -231,6 +231,8 @@ pub struct PushTagModal {
 pub struct TrustRepoModal {
     /// Workdir path of the untrusted repository.
     pub repo_path: std::path::PathBuf,
+    /// Complete failure detail, retained until retry succeeds or the user cancels.
+    pub error: Option<String>,
 }
 
 /// State for a stash-drop confirmation.

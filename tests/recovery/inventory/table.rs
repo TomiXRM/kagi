@@ -76,6 +76,7 @@ pub(super) const INVENTORY: &[Entry] = &[
     capture!("48-EditorFsPrompt", "Editor tree menu Rename", Basic, modals::editor_fs_prompt),
     capture!("49-EditorDeleteConfirm", "Editor tree menu Delete", Basic, modals::editor_delete_confirm),
     capture!("50-TrustRepo", "Foreign-owned repo → trust prompt (test-only state setter)", Basic, modals::trust_repo),
+    capture!("50b-TrustRepoSaveError", "Trust prompt → real directory trust-store save failure (Retry/Cancel and Copy detail)", Basic, modals::trust_repo_save_error),
     capture!("51-BranchPicker-checkout", "branch.checkout command → branch picker", Branches, popups::branch_picker_checkout),
     capture!("52-BranchPicker-delete", "branch.delete command → branch picker", Branches, popups::branch_picker_delete),
     capture!("53-Info-About", "app.about command → About overlay", Basic, popups::info_about),

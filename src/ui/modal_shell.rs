@@ -101,6 +101,31 @@ pub(crate) const MODAL_W_SM: f32 = 504.;
 pub(crate) const MODAL_W_MD: f32 = 640.;
 pub(crate) const MODAL_W_LG: f32 = 648.;
 
+/// Shared viewport cap for top-aligned search cards; design values scale once.
+pub(crate) fn search_card_geometry(
+    width: f32,
+    height: f32,
+    top: f32,
+) -> (gpui::Pixels, gpui::Pixels, gpui::Pixels) {
+    let gutter = theme::scaled_px(16.);
+    let width = theme::scaled_px(width).min(
+        theme::viewport_w()
+            .map(|w| (gpui::px(w) - gutter * 2.).max(gpui::px(0.)))
+            .unwrap_or_else(|| theme::scaled_px(width)),
+    );
+    let top = theme::scaled_px(top).min(
+        theme::viewport_h()
+            .map(|h| gpui::px(h * 0.1))
+            .unwrap_or_else(|| theme::scaled_px(top)),
+    );
+    let height = theme::scaled_px(height).min(
+        theme::viewport_h()
+            .map(|h| (gpui::px(h) - top - gutter).max(gpui::px(0.)))
+            .unwrap_or_else(|| theme::scaled_px(height)),
+    );
+    (width, height, top)
+}
+
 pub(crate) fn modal_card(width: f32) -> gpui::Div {
     // Spend spare horizontal space before shrinking safety prose vertically.
     let width = if modal_compact() {

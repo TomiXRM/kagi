@@ -1424,6 +1424,9 @@ pub enum Msg {
     TrustRepoBody,
     /// Trust-confirmation: the "trust this repository" confirm button.
     TrustRepoConfirm,
+    TrustRepoSaveFailed,
+    TrustRepoReopenFailed,
+    TrustRepoRetry,
 
     // ── Editor Workspace History/Snapshot tabs (T-WS-EDITOR-008) ─
     /// Right-pane tab: the open file's WIP hunks (default, unchanged v1
@@ -3646,6 +3649,12 @@ impl Msg {
             }
             (En, TrustRepoConfirm) => "Trust this repository",
             (Ja, TrustRepoConfirm) => "このリポジトリを信頼する",
+            (En, TrustRepoSaveFailed) => "Could not save trust for repository {}.",
+            (Ja, TrustRepoSaveFailed) => "リポジトリ {} の信頼設定を保存できませんでした。",
+            (En, TrustRepoReopenFailed) => "Trust was saved, but repository {} could not be reopened. The existing session was kept.",
+            (Ja, TrustRepoReopenFailed) => "信頼設定は保存されましたが、リポジトリ {} を開き直せませんでした。既存のセッションは保持しています。",
+            (En, TrustRepoRetry) => "Retry",
+            (Ja, TrustRepoRetry) => "再試行",
 
             // ── Editor Workspace History/Snapshot tabs (T-WS-EDITOR-008) ──
             (En, EditorRightTabDiff) => "Diff",

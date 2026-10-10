@@ -5084,9 +5084,9 @@ mod macos {
         eprintln!("[gui-e2e] PASS worktree_panel_discard_recording_failure current + stale owner");
     }
 
-    /// Try to capture a PNG; tolerate the locked gpui rev's unimplemented
-    /// `render_to_image` for the real Mac window. When capture works, assert the
-    /// frame is non-blank and save it to `$CARGO_TARGET_DIR/gui_e2e_poc/<tag>.png`.
+    /// Try to capture a native Metal PNG. Capture remains best-effort for
+    /// platforms without image support; successful frames must be non-blank
+    /// and are saved to `$CARGO_TARGET_DIR/gui_e2e_poc/<tag>.png`.
     pub(super) fn capture_screenshot_best_effort(
         cx: &mut VisualTestAppContext,
         win: gpui::AnyWindowHandle,
@@ -5106,10 +5106,7 @@ mod macos {
                 img.save(&path).expect("save png");
                 eprintln!("[gui-e2e] screenshot {tag}: {}", path.display());
             }
-            Err(e) => eprintln!(
-                "[gui-e2e] screenshot {tag}: skipped (gpui render_to_image \
-                 unavailable on this platform: {e})"
-            ),
+            Err(e) => eprintln!("[gui-e2e] screenshot {tag}: skipped (native capture failed: {e})"),
         }
     }
 }

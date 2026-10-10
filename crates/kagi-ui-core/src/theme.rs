@@ -1018,15 +1018,23 @@ fn primary_button_interaction_colors(theme: &Theme, foreground: u32) -> (u32, Hs
     let light_label = relative_luminance(foreground) > relative_luminance(theme.color_branch);
     let away = if light_label { 0x000000 } else { 0xffffff };
     let toward = away ^ 0xffffff;
-    let near_endpoint =
-        (light_label && background.l < 0.15) || (!light_label && background.l > 0.85);
-    // Black/white accents have no room to move away from their label, so
-    // shade inward more gently instead.
-    let (target, strength) = if near_endpoint {
-        (toward, 0.16)
+    let channels = background.to_rgb();
+    let channel_sum = (channels.r + channels.g + channels.b) * 255.0;
+    let away_headroom = if light_label {
+        channel_sum
     } else {
-        (away, 0.32)
+        765.0 - channel_sum
     };
+    // Measure actual sRGB blend headroom, not HSL lightness: saturated navy
+    // can have middling HSL lightness but almost no distance toward black.
+    // Reserve at least 25 channel steps per transition (one step above the
+    // regression floor). Near an endpoint, move inward instead.
+    let (target, headroom, preferred_strength) = if away_headroom < 160.0 {
+        (toward, 765.0 - away_headroom, 0.16_f32)
+    } else {
+        (away, away_headroom, 0.32_f32)
+    };
+    let strength = preferred_strength.max(50.0 / headroom);
     let target = to_hsla(target);
     // Blend into an opaque fill, rather than fading the button onto an
     // arbitrary Commit-panel/modal surface.
@@ -1808,7 +1816,8 @@ mod tests {
         for base in THEMES {
             for accent in [
                 0x000000, 0x010101, 0x202020, 0x808080, 0xe0e0e0, 0xfefefe, 0xffffff, 0xff0000,
-                0x00ff00, 0x0000ff, 0xffff00, 0x00ffff, 0xff00ff,
+                0x00ff00, 0x0000ff, 0xffff00, 0x00ffff, 0xff00ff, 0x000080, 0x800000, 0x006400,
+                0x303030, 0xffff80, 0x80ffff, 0x00004d, 0xb3ffff,
             ] {
                 let mut custom = base.clone();
                 custom.color_branch = accent;

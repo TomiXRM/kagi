@@ -138,3 +138,9 @@ Selected/loading/error/empty states are not applicable to visibility actions.
 No Kagi colours, zoom geometry, modal slot, Git operation or oplog is touched.
 The isolated PID AX baseline showed only About kagi, Settings…, Quit kagi;
 AppKit did not insert the missing standard groups.
+
+Review amendment: registry-based palette/dropdown invocations route visibility
+IDs through the same platform API selection before ordinary command dispatch.
+Native visibility labels use the palette's registry label path; Japanese
+registry translations resolve the corresponding `Msg` values rather than
+maintaining another translation table.

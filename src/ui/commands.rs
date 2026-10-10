@@ -147,6 +147,17 @@ actions!(
 #[cfg(target_os = "macos")]
 actions!(kagi_menu, [HideApp, HideOtherApps, ShowAllApps]);
 
+/// Shared dispatch for native actions and registry-based palette/dropdown calls.
+#[cfg(target_os = "macos")]
+fn visibility_command_handler(id: &str) -> Option<fn(&App)> {
+    match id {
+        "app.hide" => Some(App::hide),
+        "app.hideOthers" => Some(App::hide_other_apps),
+        "app.showAll" => Some(App::unhide_other_apps),
+        _ => None,
+    }
+}
+
 /// Switch to the registered theme with this slug, built-in or custom (#922).
 ///
 /// The View → Theme menus list every theme in [`theme::themes_by_name`], and
@@ -985,11 +996,20 @@ fn action_menu_item(id: &str) -> MenuItem {
         "app.settings" => MenuItem::action(label, OpenSettings),
         "app.quit" => MenuItem::action(label, Quit),
         #[cfg(target_os = "macos")]
-        "app.hide" => MenuItem::action(Msg::MenuHideApp.t(), HideApp),
+        "app.hide" => MenuItem::action(
+            super::command_palette::command_label(id, i18n::lang()),
+            HideApp,
+        ),
         #[cfg(target_os = "macos")]
-        "app.hideOthers" => MenuItem::action(Msg::MenuHideOthers.t(), HideOtherApps),
+        "app.hideOthers" => MenuItem::action(
+            super::command_palette::command_label(id, i18n::lang()),
+            HideOtherApps,
+        ),
         #[cfg(target_os = "macos")]
-        "app.showAll" => MenuItem::action(Msg::MenuShowAll.t(), ShowAllApps),
+        "app.showAll" => MenuItem::action(
+            super::command_palette::command_label(id, i18n::lang()),
+            ShowAllApps,
+        ),
         // File
         "file.newTab" => MenuItem::action(label, NewTab),
         "file.closeTab" => MenuItem::action(label, CloseTab),
@@ -1728,6 +1748,11 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         klog!("menu: invoke {}", id);
+        #[cfg(target_os = "macos")]
+        if let Some(handler) = visibility_command_handler(id) {
+            handler(cx);
+            return;
+        }
         match id {
             // ── kagi ────────────────────────────────────────────────
             "app.about" => self.open_about_overlay(),
@@ -2837,6 +2862,39 @@ mod standard_app_menu_tests {
 mod standard_app_action_tests {
     use super::*;
     use gpui::Action;
+
+    #[test]
+    fn registry_visibility_commands_have_platform_handlers_and_localized_labels() {
+        for (id, handler, en, ja) in [
+            ("app.hide", App::hide as fn(&App), "Hide Kagi", "Kagiを隠す"),
+            (
+                "app.hideOthers",
+                App::hide_other_apps as fn(&App),
+                "Hide Others",
+                "ほかを隠す",
+            ),
+            (
+                "app.showAll",
+                App::unhide_other_apps as fn(&App),
+                "Show All",
+                "すべてを表示",
+            ),
+        ] {
+            assert!(std::ptr::fn_addr_eq(
+                visibility_command_handler(id).unwrap(),
+                handler
+            ));
+            assert_eq!(
+                super::super::command_palette::command_label(id, Lang::En),
+                en
+            );
+            assert_eq!(
+                super::super::command_palette::command_label(id, Lang::Ja),
+                ja
+            );
+        }
+        assert!(visibility_command_handler("app.quit").is_none());
+    }
 
     #[test]
     fn visibility_actions_and_standard_keystrokes() {

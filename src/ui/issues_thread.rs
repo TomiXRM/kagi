@@ -62,10 +62,12 @@ fn detail_status(app: &KagiApp) -> Option<AnyElement> {
     } else {
         None
     }
+
 }
 
 pub(super) fn render_thread(
     app: &KagiApp,
+
     window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {

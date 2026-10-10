@@ -634,6 +634,22 @@ The current suite covers:
   blocked Create measure 32px in `create_branch_input_confirm_ime`, and
   mapping Prune to Repair in `plan_confirm_kind` failed the destructive
   variant unit test. Each source was restored byte-for-byte from a backup.
+- Create Branch の成功後終了（#1092）は
+  `KAGI_GUI_E2E_ONLY=create_branch_presents_backend_receipt,create_branch_input_confirm_ime,create_branch_execution_failure_keeps_input`
+  （`tests/recovery/operations.rs`）。未送信の `feat` と同じ InputState が
+  accepted reload 後も残り、unchecked の作成は HEAD を変えず、checked の作成は
+  新 branch を checkout する。成功後は modal が消え、保持した旧 InputState から
+  root へ focus が戻り、再 Enter は 2 件目の作成を記録しない。続く実キー
+  Cmd+P / Escape が palette を開閉する（test 側で focus を戻さない）。
+  実 ref `collision` を先に作り、blocker のない `collision/child` を Create
+  ボタンで実行すると Failed 1 件となる。名前・同じ input・exact error は
+  accepted reload 後も保持され、再読込は再実行せず、Escape で閉じる。
+  receipt と Operation Log 行の ID 同一性は成功・失敗の両方で確認する。
+  marked-text Enter は ref も receipt も作らず、unmark 後の input Enter だけが
+  作成する。これは deterministic dispatch / 状態の検証であり、実 macOS IME と
+  ウィンドウの focus の証拠は Tier B で別途取得する。Tier B は成功前後を同じ
+  viewport / theme / language / zoom で撮影し、続く root shortcut、失敗時の
+  名前・エラー保持、未送信 reload、IME 1 回目 / 2 回目の Enter を実入力で確認する。
 - Input-confirm cards (`KAGI_GUI_E2E_ONLY=create_branch_input_confirm_ime,input_confirm_disabled_cards,stash_push_stacked_preview`,
   `tests/recovery/operations.rs`): #956, #1017. The real Create Branch and
   Stash Push cards measure `plan-state-current` above `plan-state-after`,
@@ -1434,7 +1450,6 @@ The current suite covers:
   simulation is not hardware/IME proof. Broader#1091 performance/width/
   comparison and PR-conversation scope, hosted CI, independent exact-head review,
   Kagi PR publication/merge remain pending. Keep `Refs #1091`, not `Closes`.
-
 - Issues cursor pagination (`KAGI_GUI_E2E_ONLY=issues_pagination`,
   `tests/recovery/issues_pagination.rs`): the production virtual viewport loads
   100 → 200 → final-page rows without resetting the scroll anchor; an offline

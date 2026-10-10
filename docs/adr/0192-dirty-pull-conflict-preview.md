@@ -176,6 +176,15 @@ backend の既存 preflight と `Backend::run` の fresh plan 比較は identity
 branch ref の更新は lock 内で承認済み local OID との一致を再検査してから transaction を
 commit し、CAS と同じく途中の移動を上書きしない。
 
+確認 title の remote 説明も `branch.<name>.remote` の完全な設定値を使う（#1105）。
+Pull 専用の private upstream 読み取りは branch/upstream の name/target 検証と
+同じ OID に対する behind 計算を保持し、通常 Pull と selected ff-only の両方へ渡す。
+fetch/push 用の共有 shorthand parser と実行 identity の契約は変更しない。
+public Backend の実 Git 回帰で `origin` / `team` / `team/origin` / `.` と別名 upstream、
+missing-upstream の blocker・identity 不在・plan の読み取り専用性を検査した。
+default 実アプリの EN/JA でも slash remote と local upstream の四確認を実ボタンで表示し、
+Cancel 後の HEAD・全 index・全作業 bytes の不変と Pull receipt が無いことを確認した。
+
 ordinary current Pull の toolbar / current branch menu も、表示 shorthand から remote を
 推定せず、live HEAD の branch を fetch scope に凍結して既存の configured-upstream fetch を使う。
 manual / silent fetch と `PullTarget::Current` は同じ upstream 解決条件で scope を共有する。

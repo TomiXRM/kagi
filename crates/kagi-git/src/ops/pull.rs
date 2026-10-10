@@ -12,14 +12,57 @@
 use super::pull_conflict::{
     ensure_pull_does_not_touch_dirty_paths, plan_pull_restore_conflicts, predict_merge_conflict,
 };
-use super::remote_common::{
-    capture_pull_identity, local_branch_oid, resolve_configured_upstream_oid,
-    resolve_upstream_info, short_oid_string,
-};
+use super::remote_common::{capture_pull_identity, local_branch_oid, short_oid_string};
 use super::*;
 use kagi_domain::plan_note::{CommonNote, DirtyParts, OpPhrase, PlanOp, UntrackedCtx};
 use kagi_domain::plan_note::{PullNote, PullRecovery, PullTitle, WorktreeNote};
 use kagi_domain::remote::shell_quote;
+
+// Pull titles name the configured remote, not a prefix of the upstream's
+// shorthand: remote names may contain '/', and '.' denotes a local upstream.
+fn resolve_pull_upstream_info(
+    repo: &Repository,
+    branch_name: &str,
+) -> Result<(String, git2::Oid, usize), GitError> {
+    let branch = repo
+        .find_branch(branch_name, BranchType::Local)
+        .map_err(|error| {
+            GitError::Other(format!(
+                "branch '{}' not found: {}",
+                branch_name,
+                error.message()
+            ))
+        })?;
+    let upstream = branch.upstream().map_err(|error| {
+        GitError::Other(format!(
+            "no upstream for '{}': {}",
+            branch_name,
+            error.message()
+        ))
+    })?;
+    // Preserve upstream-name validation without deriving a display remote.
+    upstream
+        .name()
+        .map_err(|error| GitError::Other(format!("upstream name error: {}", error.message())))?
+        .ok_or_else(|| GitError::Other("upstream has no name".to_string()))?;
+    let head_oid = branch
+        .get()
+        .target()
+        .ok_or_else(|| GitError::Other("branch has no target".to_string()))?;
+    let upstream_oid = upstream
+        .get()
+        .target()
+        .ok_or_else(|| GitError::Other("upstream has no target".to_string()))?;
+    let (_, behind) = repo
+        .graph_ahead_behind(head_oid, upstream_oid)
+        .unwrap_or((0, 0));
+    let remote = repo
+        .config()
+        .map_err(|error| GitError::Other(error.to_string()))?
+        .get_string(&format!("branch.{branch_name}.remote"))
+        .map_err(|error| GitError::Other(error.to_string()))?;
+    Ok((remote, upstream_oid, behind))
+}
 
 /// Build the confirm plan for pulling a **remote** branch over SSH (ADR-0089
 /// Phase 3 / ADR-0097). There is no local `Repository`, so this synthesises the
@@ -199,8 +242,8 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
 
     // ── 4. Resolve upstream (only when HEAD is attached) ─────
     let (branch_name, remote_name, behind_count) = if let Head::Attached { branch, .. } = &head {
-        match resolve_upstream_info(repo, branch) {
-            Ok(info) => info,
+        match resolve_pull_upstream_info(repo, branch) {
+            Ok((remote, _, behind)) => (branch.clone(), remote, behind),
             Err(e) => {
                 blockers.push(PlanNote::Pull(PullNote::NoUpstreamWithHint {
                     branch: branch.clone(),
@@ -609,19 +652,17 @@ pub(crate) fn plan_pull_branch_ff_with_status(
         }
     };
 
-    let (remote_name, upstream_oid, behind_count) = match resolve_upstream_info(repo, branch_name) {
-        Ok((_, remote, behind)) => {
-            let oid = resolve_configured_upstream_oid(repo, branch_name).ok();
-            (remote, oid, behind)
-        }
-        Err(e) => {
-            blockers.push(PlanNote::Pull(PullNote::NoUpstream {
-                branch: branch_name.to_string(),
-                err: e.to_string(),
-            }));
-            (String::new(), None, 0)
-        }
-    };
+    let (remote_name, upstream_oid, behind_count) =
+        match resolve_pull_upstream_info(repo, branch_name) {
+            Ok((remote, oid, behind)) => (remote, Some(oid), behind),
+            Err(e) => {
+                blockers.push(PlanNote::Pull(PullNote::NoUpstream {
+                    branch: branch_name.to_string(),
+                    err: e.to_string(),
+                }));
+                (String::new(), None, 0)
+            }
+        };
 
     if blockers.is_empty() {
         if let Some(upstream_oid) = upstream_oid {

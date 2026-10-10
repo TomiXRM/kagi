@@ -686,3 +686,58 @@ Issues（thread / home 一覧 / composer）と PR（feed / composer / home 表�
   separate overlay-baseline fix/integration. No dynamic resize, matched CPU/FPS
   sample, full diff/thread acceptance, hosted review/CI or merge is claimed.
 
+## #1118: width-aware detail companions
+
+The dense navigator and swimlane remain companions, not the reader's minimum
+width. Reserve `scaled_px(420)` for the center; first remove the swimlane
+when the center plus the navigator and bounded graph rail cannot fit, then
+remove the navigator if the center plus its persisted width cannot fit.
+The rail bound comes from `MAX_RAIL_LANES` and `LANE_W`, not a second graph
+layout or a render-time traversal. Header facts and view tabs wrap as needed.
+
+The center's toolbar uses existing small `KagiButton` controls, with selected
+state and localized names/tooltips. Navigator uses View → Toggle Sidebar /
+⌘B; Swimlane / Files uses View → Toggle PR Swimlane / ⌘⌥L. Both commands
+remain in the shared palette/shortcut registry (Ctrl replaces ⌘ off macOS).
+In compact mode one companion reveals over the center, without shrinking
+or reconstructing it; Escape dismisses the revealed pane before leaving the
+PR. The global sidebar preference remains authoritative: revealing a compact
+navigator enables it and hiding it disables it. Automatic width adaptation
+never changes that preference.
+
+Presentation flags belong to the existing session-owned `PrModeState`.
+Transitions do not request data, rebuild a PR tab, recreate its composer
+input, change the selected file, reset its thread expansion, or reset a list.
+The native regression measures Overview/Review/Files, All PRs, body and
+composer at 940×660 and 1392×883 in EN/JA at 100% and 167%, and compares
+selection, typed draft/input identity, opened threads and nonzero logical
+scroll before and after toolbar/keyboard reveal and native resize round trips.
+The reference remains GitHub's PR reader; the role is a dense companion
+beside an open reading/composer surface. Loading/error/empty read states and
+all write safety paths are unchanged. Tier B is PM-owned: real 940×660 @167%
+JA window with a real PR, including pointer, keyboard, focus and screenshots.
+
+Native evidence: the unchanged reader-minimum oracle failed before the layout
+fix at 940×660 @100% EN (center width 158.5px, scaled minimum 378px).
+`pr_detail_adaptive` now passes all eight width/zoom/locale cells, including
+native resize delivery via the runner's existing `drain_native_events`.
+The scoped neighboring run also passed `pr_dashboard_responsive`,
+`pr_same_number`, `github_evidence_background_owner`, and all six
+`pr_pagination*` scenarios. No full workspace/Clippy or Tier B run is claimed.
+
+Review follow-up: width collapse is detail-only; the dashboard keeps its
+ordinary navigator and Sidebar keyboard preference. A revealed companion is
+anchored inside the reader, above neither the navigator nor the bottom panel.
+Inline/undrawn reveals are normalized away, and Escape consumes only a
+currently drawn drawer. The regression additionally checks dashboard Sidebar
+toggle, desktop inline panes before any toggle, Swimlane-specific keyboard
+reveal, Escape-only dismissal, and widening/narrowing without stale reveal.
+The command's unavailable reason is localized; new gap-bearing bounds probes
+are GUI-E2E-only and add no release-build spacer.
+
+The dashboard Sidebar and disabled-reason checks stay in the fixed-window
+`pr_dashboard_responsive` fixture. Combining dashboard input creation, detail
+reads, native width/zoom transitions and Escape/Home leaks eight `InputState`
+handles on unchanged `origin/dev` too. That independent lifecycle defect is
+excluded from this layout regression; its leak assertion was not suppressed.
+

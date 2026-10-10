@@ -40,6 +40,11 @@ pub struct PrThreads {
 }
 
 impl PrThreads {
+    #[cfg(feature = "gui-e2e")]
+    pub fn opened_rows_for_e2e(&self) -> (&str, &BTreeSet<usize>) {
+        (&self.open_path, &self.open)
+    }
+
     pub(crate) fn set(
         &mut self,
         threads: Vec<ReviewThread>,

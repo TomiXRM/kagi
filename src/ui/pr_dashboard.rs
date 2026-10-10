@@ -62,6 +62,10 @@ fn bar_button(
 ) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
+        .relative()
+        .when(cfg!(feature = "gui-e2e"), |el| {
+            el.child(super::e2e::measure_inside(id))
+        })
         .flex()
         .flex_row()
         .items_center()

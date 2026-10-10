@@ -509,15 +509,40 @@ pub fn scenario_pr_diff_extent_threads(cx: &mut VisualTestAppContext) {
                 && narrowed_body.size.height >= body.size.height,
             "initial narrowing must reduce body width without losing comment height"
         );
-        // A 100px change can keep the same discrete wrap count. The product
-        // zoom step also enlarges sibling panes, producing a decisive narrower
-        // comment column without changing its content or synthetic geometry.
+        // Zoom may collapse companions and widen the reader. Resize the actual
+        // native window as well, reserving under half the original body's width
+        // even when every companion collapses. Keep the measured reflow oracle.
         let before_zoom = reading(cx, app);
         zoom_to(cx, app, window, 1.667);
+        let wanted = cx
+            .update_window(window, |_, window, _| {
+                let mut size = window.viewport_size();
+                size.width = gpui::px(f32::from(body.size.width * 0.45).floor());
+                window.resize(size);
+                size
+            })
+            .expect("resize real thread viewport");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            crate::macos::drain_native_events();
+            cx.run_until_parked();
+            if cx
+                .update_window(window, |_, window, _| window.viewport_size())
+                .unwrap()
+                == wanted
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "native thread resize did not reach {wanted:?}"
+            );
+        }
+        paint(cx, window);
         anchor(
             before_zoom,
             reading(cx, app),
-            "open-thread product zoom reflow",
+            "open-thread product zoom and native resize reflow",
         );
         reveal_current_thread(cx, app, window);
         let resized_body =
@@ -526,7 +551,7 @@ pub fn scenario_pr_diff_extent_threads(cx: &mut VisualTestAppContext) {
             control(cx, window, "pr-thread-8-0").expect("card after decisive reflow");
         assert!(
             resized_body.size.width < body.size.width / 2.,
-            "decisive product reflow must reduce actual body width below half"
+            "decisive native reflow must reduce actual body width below half",
         );
         assert!(
             resized_body.size.height > body.size.height,

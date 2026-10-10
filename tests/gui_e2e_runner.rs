@@ -1835,6 +1835,10 @@ mod macos {
                 Box::new(crate::overlay_focus::scenario_palette_selection_scroll),
             ),
             (
+                "palette_viewport",
+                Box::new(crate::overlay_focus::scenario_palette_viewport),
+            ),
+            (
                 "settings_close_returns_focus",
                 Box::new(crate::overlay_focus::scenario_settings_close_returns_focus),
             ),

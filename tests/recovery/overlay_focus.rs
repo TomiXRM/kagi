@@ -118,6 +118,114 @@ pub fn scenario_palette_push_modal_keys(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS palette_push_modal_keys");
 }
 
+/// #1084: measure the actual palette card, not a predicted geometry.
+pub fn scenario_palette_viewport(cx: &mut VisualTestAppContext) {
+    use crate::recovery_layout::{contained, GlobalSettings};
+    use gpui::{point, px, size, Bounds};
+    use kagi_ui_core::{i18n, theme};
+    let _restore = GlobalSettings::capture();
+    let fixture = build_fixture();
+    struct RestoreThemes;
+    impl Drop for RestoreThemes {
+        fn drop(&mut self) {
+            theme::install_custom_themes(Vec::new());
+        }
+    }
+    let _themes = RestoreThemes;
+    let mut long = theme::THEMES[0].clone();
+    long.slug = "palette-long-name".into();
+    long.name = "A very long custom theme name 日本語の長いテーマ名 "
+        .repeat(12)
+        .into();
+    theme::install_custom_themes(vec![long]);
+    for (width, height, zoom) in [(700., 500., 1.67), (700., 500., 1.), (900., 600., 1.67)] {
+        for locale in ["en", "ja"] {
+            std::env::set_var("KAGI_LANG", locale);
+            i18n::init_lang();
+            theme::set_zoom(zoom);
+            let state = e2e::app_state(fixture.path()).unwrap();
+            let captured = std::rc::Rc::new(std::cell::RefCell::new(None));
+            let output = captured.clone();
+            let win =
+                crate::macos::open_offscreen(cx, size(px(width), px(height)), move |window, cx| {
+                    e2e::mount_root(state, window, cx, &output)
+                });
+            let window: AnyWindowHandle = win.into();
+            let app = captured.borrow().clone().unwrap();
+            keys(cx, window, "cmd-p");
+            draw(cx, window);
+            let viewport = Bounds::new(point(px(0.), px(0.)), size(px(width), px(height)));
+            let card = e2e::control_bounds(window.window_id(), "palette-card").unwrap();
+            eprintln!("[gui-e2e] palette {locale}/{width}x{height}@{zoom}: card={card:?} window={viewport:?}");
+            contained(viewport, card, "palette card");
+            let input = e2e::control_bounds(window.window_id(), "palette-input").unwrap();
+            contained(card, input, "palette input");
+            let scroll = cx.read(|cx| e2e::command_palette_scroll(app.read(cx)).unwrap());
+            contained(card, scroll.bounds(), "palette results");
+            let rows = cx.read(|cx| kagi::ui::command_palette::rows_for(app.read(cx), ""));
+            assert!(
+                rows.iter().any(|row| row.label.len() > 300),
+                "long theme fixture is drawn"
+            );
+            for (index, row) in rows.iter().enumerate() {
+                if row.keystroke.is_some() {
+                    let shortcut = e2e::control_bounds(
+                        window.window_id(),
+                        &format!("palette-shortcut-{index}"),
+                    )
+                    .unwrap();
+                    assert!(shortcut.size.width > px(0.));
+                    assert!(
+                        shortcut.left() >= card.left() && shortcut.right() <= card.right(),
+                        "shortcut stays in card"
+                    );
+                }
+            }
+            cx.simulate_event(
+                window,
+                gpui::ScrollWheelEvent {
+                    position: scroll.bounds().center(),
+                    delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-100_000.))),
+                    touch_phase: gpui::TouchPhase::Moved,
+                    ..Default::default()
+                },
+            );
+            draw(cx, window);
+            assert!(scroll.offset().y < px(0.), "many results must scroll");
+            assert_eq!(
+                e2e::control_bounds(window.window_id(), "palette-input").unwrap(),
+                input,
+                "only results scroll"
+            );
+            for query in ["A very long custom theme name", "zzzzzzzzzzzzzzzzzz"] {
+                cx.update_window(window, |_, window, cx| {
+                    app.update(cx, |app, cx| {
+                        let input = app.command_palette_input.clone().unwrap();
+                        input.update(cx, |state, cx| state.set_value(query, window, cx));
+                    });
+                })
+                .unwrap();
+                draw(cx, window);
+                let filtered_card =
+                    e2e::control_bounds(window.window_id(), "palette-card").unwrap();
+                contained(viewport, filtered_card, "filtered palette card");
+                contained(
+                    filtered_card,
+                    e2e::control_bounds(window.window_id(), "palette-input").unwrap(),
+                    "filtered input",
+                );
+                contained(filtered_card, scroll.bounds(), "filtered results");
+                let filtered =
+                    cx.read(|cx| kagi::ui::command_palette::rows_for(app.read(cx), query));
+                assert!(filtered.len() <= 1, "few/empty result fixture");
+            }
+            drop(scroll);
+            unmount(cx, app, window);
+        }
+    }
+    eprintln!("[gui-e2e] PASS palette_viewport");
+}
+
 /// #1069: one-shot, child-bound reveals survive mouse/keyboard interleaving,
 /// filtering and empty results without assuming equal-height command rows.
 pub fn scenario_palette_selection_scroll(cx: &mut VisualTestAppContext) {

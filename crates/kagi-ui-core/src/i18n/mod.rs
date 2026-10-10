@@ -166,6 +166,10 @@ pub fn init_lang() {
 /// inside both arms; only the surrounding explanatory prose is localized.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Msg {
+    MenuHideApp,
+    MenuHideOthers,
+    MenuShowAll,
+    MenuServices,
     AppNoticeDismiss,
     /// Title row of the shared app-notice card (#792). One neutral title for
     /// every notice: `AppNotice` carries no outcome kind, so a card that named
@@ -1638,6 +1642,14 @@ impl Msg {
         use Lang::{En, Ja};
         use Msg::*;
         match (language, self) {
+            (En, MenuHideApp) => "Hide Kagi",
+            (Ja, MenuHideApp) => "Kagiを隠す",
+            (En, MenuHideOthers) => "Hide Others",
+            (Ja, MenuHideOthers) => "ほかを隠す",
+            (En, MenuShowAll) => "Show All",
+            (Ja, MenuShowAll) => "すべてを表示",
+            (En, MenuServices) => "Services",
+            (Ja, MenuServices) => "サービス",
             (language, OplogPanel(key)) => key.t_for(language),
             (En, RestoreRepoSessionUnavailable) => "repo session unavailable",
             (Ja, RestoreRepoSessionUnavailable) => "リポジトリのセッションを利用できません",
@@ -4311,3 +4323,21 @@ pub fn command_label_ja(id: &str) -> Option<&'static str> {
 #[cfg(test)]
 #[path = "i18n_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod standard_app_menu_tests {
+    use super::*;
+
+    #[test]
+    fn standard_app_menu_labels_en_ja() {
+        for (message, en, ja) in [
+            (Msg::MenuHideApp, "Hide Kagi", "Kagiを隠す"),
+            (Msg::MenuHideOthers, "Hide Others", "ほかを隠す"),
+            (Msg::MenuShowAll, "Show All", "すべてを表示"),
+            (Msg::MenuServices, "Services", "サービス"),
+        ] {
+            assert_eq!(message.t_for(Lang::En), en);
+            assert_eq!(message.t_for(Lang::Ja), ja);
+        }
+    }
+}

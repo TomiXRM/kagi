@@ -118,3 +118,23 @@ pub const MENU_BAR: &[MenuSection] = &[ /* kagi, File, Edit(mac_only), View, Rep
   を検証する単体テストでガードする。
 - 既存の keystroke 表示・disabled 灰色化(dispatch tree 方式・ADR-0029)・`handle_menu_command` の
   挙動は不変。`.occlude()` 修正も不変。
+
+## Amendment — 2026-10-11: standard macOS application menu (#1083)
+
+The native application menu uses Finder's grouping: About, separator,
+Settings, separator, Services, separator, Hide Kagi, Hide Others, Show All,
+separator, Quit. The entries remain in `MENU_BAR`, guarded by
+`cfg(target_os = "macos")`; no separate menu definition is introduced.
+Services uses `MenuItem::os_submenu` with `SystemMenuType::Services`.
+Both issue-audit GPUI `90b3aa0` and the current fork pin `caf5007` expose only Edit variants of `OsAction`, so visibility
+uses application-wide GPUI actions delegating to `App::hide`,
+`hide_other_apps`, and `unhide_other_apps`, with standard ⌘H / ⌥⌘H bindings.
+These platform delegates do not remove a window or mutate Kagi entities.
+Quit and its existing settings flush path are unchanged.
+
+Role/density/reference: native macOS application menu / OS-owned / Finder.
+AppKit owns rest, hover, pressed, keyboard focus and Services availability.
+Selected/loading/error/empty states are not applicable to visibility actions.
+No Kagi colours, zoom geometry, modal slot, Git operation or oplog is touched.
+The isolated PID AX baseline showed only About kagi, Settings…, Quit kagi;
+AppKit did not insert the missing standard groups.

@@ -202,6 +202,7 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
     }
 
     Ok(OperationPlan {
+        tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title,

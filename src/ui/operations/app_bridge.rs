@@ -108,8 +108,16 @@ impl KagiApp {
             OpOutcome::Refused { .. } => display_override
                 .or_else(|| super::record::refused_display(op, outcome))
                 .map_or_else(|| contract.clone(), Into::into),
-            OpOutcome::Failed { .. } => {
-                display_override.map_or_else(|| contract.clone(), Into::into)
+            OpOutcome::Failed { error } => {
+                let commit_op = match op {
+                    "commit" => Some(i18n::Op::Commit),
+                    "amend" => Some(i18n::Op::Amend),
+                    "merge-commit" => Some(i18n::Op::MergeCommit),
+                    _ => None,
+                };
+                display_override
+                    .or_else(|| commit_op.map(|op| i18n::op_failed(op, error)))
+                    .map_or_else(|| contract.clone(), Into::into)
             }
             _ => contract.clone(),
         }

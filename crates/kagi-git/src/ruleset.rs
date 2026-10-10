@@ -457,6 +457,7 @@ mod tests {
         use kagi_domain::plan::StateSummary;
         use kagi_domain::plan_note::{PlanTitle, PushTitle};
         OperationPlan {
+            tag_push_identity: None,
             approved_index_digest: None,
             title: PlanTitle::Push(PushTitle::Push {
                 branch: "main".into(),

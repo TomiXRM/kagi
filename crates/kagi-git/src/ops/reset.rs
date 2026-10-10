@@ -123,6 +123,7 @@ pub fn plan_reset_current_to_head(
     });
 
     Ok(OperationPlan {
+        tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Reset(ResetTitle::ResetCurrentToHead {

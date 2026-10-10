@@ -93,6 +93,7 @@ fn health_plan(
         dirty: format!("{after}; working tree unchanged"),
     };
     Ok(OperationPlan {
+        tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Maintenance(title),

@@ -223,6 +223,9 @@ impl Backend {
             _ => self.preflight_check(plan),
         }
         .and_then(|()| match op {
+            Operation::PushTag { name, remote } => {
+                ops::preflight_push_tag(&self.repo, plan, remote, name)
+            }
             Operation::Commit { .. } | Operation::MergeCommit { .. } => {
                 ops::preflight_commit(&self.repo, plan)
             }
@@ -369,9 +372,9 @@ impl Backend {
             Operation::CreateTag { name, at } => self
                 .execute_create_tag(name, at)
                 .map(|()| OperationOutcome::Unit),
-            Operation::PushTag { name, remote } => self
-                .execute_push_tag(remote, name)
-                .map(|()| OperationOutcome::Unit),
+            Operation::PushTag { .. } => {
+                self.execute_push_tag(plan).map(|()| OperationOutcome::Unit)
+            }
             Operation::CreateWorktree {
                 branch,
                 path,

@@ -44,3 +44,64 @@ ADR-0023(Dangerous Operations Policy)との責務分担も明確にする。
 - 既存 `plan_commit` の blocker(staged 空 / message 空 / conflict 状態)は本方針に既に整合 → 再分類不要
 - 新ルール(conflict marker / secret / large binary)は本方針に従い前2つを block・後1つを warn(ADR-0043)
 - checklist を純関数 + 別 module(`checklist.rs`)に切り出すことで、commit と amend の両 plan から再利用できる
+
+## Amendment — 2026-10-10: user's commit hooks and signing (#1132, #1133)
+
+Commit/fixup, Amend (all modes), and the resolved merge Commit button use
+the system `git commit`, not libgit2's unsigned commit constructor. This is
+an explicit, user-approved write behind Backend's trust and preflight gates.
+Only this commit invocation honors `core.hooksPath`; background/read/network
+commands retain their existing hook suppression and executable-config hardening.
+Git runs pre-commit, prepare-commit-msg, commit-msg and post-commit, and owns
+message cleanup/rewriting, author preservation for amend, merge parents, and
+`commit.gpgsign` / `gpg.format` (OpenPGP, SSH, X.509). Kagi never injects
+`--no-verify` or `--no-gpg-sign`, and never falls back to an unsigned commit.
+`tag.gpgsign` is a tag policy, not a request to sign ordinary commits.
+
+Approval still fixes the raw staged path/OID/mode/stage digest (#1126). The
+executor rechecks the disk index, writes the tree from that same in-memory
+snapshot, and gives Git a private index for that tree. A concurrent writer of
+the real index cannot swap the approved blobs; Kagi does not overwrite that
+index, even after a hook/signing failure. Message-only amend uses the old HEAD
+tree, retaining staged edits outside the amend. Successful CLI execution must
+read back a new HEAD with the expected tree and parents. Hook-driven changes
+to the private index or HEAD are not silently accepted: a mismatching result
+is Unknown with durable detail, requiring inspection, not a success receipt.
+Hooks are arbitrary user code and can modify working files/refs themselves;
+Kagi does not claim to roll back those side effects.
+
+A nonzero Git exit with unchanged HEAD is Failed and retains Git/hook stderr
+in the operation log; the existing localized operation-failed footer/error
+toast shows its bounded preview in EN/JA. Missing signing keys fail the same
+way. Process timeout/incomplete output retains the existing Unknown/termination
+contract and is not retried. Amend's guards, pre-execution savepoint and author/
+parent preservation remain; Git performs the final ref update. Resolved merge
+state is cleaned up by Git only after commit succeeds.
+
+### Signing read-back (#1133)
+
+The executor queries `commit.gpgsign` through the same Git CLI/environment
+immediately before committing, including Git's conditional config includes.
+If true, it also requires a signature header in the resulting HEAD. A post-commit
+hook replacing the new signed commit with an unsigned commit of the same tree
+and parents therefore cannot produce a success receipt. Signature extraction
+errors remain in Unknown detail. This is presence verification, not a claim of
+cryptographic validity: Git creates the signature, and the regression suite
+uses a generated, unencrypted throwaway SSH key plus allowed-signers and
+`git verify-commit` for Commit, every Amend mode and resolved MergeCommit.
+Real OpenPGP/X.509 keys and interactive signer agents are not exercised here;
+their configured format/program is passed through to the user's Git.
+
+### Private-index metadata and empty Amend (review amendment)
+
+The private index copies the rechecked in-memory entries, including stat-cache
+and extended flags such as skip-worktree; it is not rebuilt from a bare tree.
+This keeps absent sparse-checkout files absent for hooks and avoids re-hashing
+every matching tracked file just to commit. MessageOnly first reads the real
+index, then loads the old HEAD tree in-memory so matching entries retain their
+metadata while staged content stays excluded. Every CLI Amend uses
+`--allow-empty`: rewording an existing empty commit and folding staged changes
+that remove HEAD's diff are valid under the existing approval rules. Tree and
+parent verification remain mandatory. Regression fixtures pin signing off for
+hook tests and `gpg.ssh.program=ssh-keygen` for throwaway-key tests rather than
+depending on the developer's signer.

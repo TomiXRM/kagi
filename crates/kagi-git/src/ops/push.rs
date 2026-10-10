@@ -138,6 +138,7 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
                 dirty: current.dirty.clone(),
             };
             return Ok(OperationPlan {
+                tag_push_identity: None,
                 approved_index_digest: None,
                 disposition: PlanDisposition::for_blockers(&blockers),
                 title: PlanTitle::Push(PushTitle::PushBlocked),
@@ -289,6 +290,7 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
     };
 
     Ok(OperationPlan {
+        tag_push_identity: None,
         approved_index_digest: None,
         disposition: if nothing_to_push {
             PlanDisposition::NoOp(NoOpKind::PushUpToDate)
@@ -687,6 +689,7 @@ pub fn plan_push_branch(
     });
 
     Ok(OperationPlan {
+        tag_push_identity: None,
         approved_index_digest: None,
         disposition: if nothing_to_push {
             PlanDisposition::NoOp(NoOpKind::PushUpToDate)

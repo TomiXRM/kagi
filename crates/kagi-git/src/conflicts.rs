@@ -966,6 +966,7 @@ pub fn plan_conflict_continue(
     };
 
     Ok(OperationPlan {
+        tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Conflicts(ConflictsTitle::Continue { op }),
@@ -1039,8 +1040,6 @@ pub(crate) fn execute_conflict_continue(
             .index()
             .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
         let oid = create_merge_commit(repo, &mut index, None)?;
-        repo.cleanup_state()
-            .map_err(|e| GitError::Other(format!("cleanup_state failed: {}", e.message())))?;
         return Ok(ContinueResult {
             outcome: ContinueOutcome::Committed(oid),
             after: read_after()?,
@@ -1380,24 +1379,8 @@ fn create_merge_commit(
     let tree_oid = index
         .write_tree_to(repo)
         .map_err(|e| GitError::Other(format!("write_tree failed: {}", e.message())))?;
-    let tree = repo
-        .find_tree(tree_oid)
-        .map_err(|e| GitError::Other(format!("find_tree failed: {}", e.message())))?;
-
-    let head_commit = repo
-        .head()
-        .ok()
-        .and_then(|h| h.target())
-        .and_then(|oid| repo.find_commit(oid).ok())
-        .ok_or_else(|| GitError::Other("HEAD commit lookup failed".to_string()))?;
-
-    let merge_head_oid = std::fs::read_to_string(repo.path().join("MERGE_HEAD"))
-        .ok()
-        .and_then(|s| git2::Oid::from_str(s.trim()).ok())
-        .ok_or_else(|| GitError::Other("MERGE_HEAD missing or unreadable".to_string()))?;
-    let merge_commit = repo.find_commit(merge_head_oid).map_err(|e| {
-        GitError::Other(format!("MERGE_HEAD commit lookup failed: {}", e.message()))
-    })?;
+    let merge_head_oid = read_head_oid(repo, "MERGE_HEAD")
+        .ok_or_else(|| GitError::Other("MERGE_HEAD missing or unreadable".into()))?;
 
     let message = match message_override {
         Some(m) => m.to_string(),
@@ -1405,19 +1388,21 @@ fn create_merge_commit(
             .unwrap_or_else(|_| format!("Merge commit {}", short_sha(&merge_head_oid.to_string()))),
     };
 
-    let sig = super::ops::build_signature(repo)?;
-    let oid = repo
-        .commit(
-            Some("HEAD"),
-            &sig,
-            &sig,
-            &message,
-            &tree,
-            &[&head_commit, &merge_commit],
-        )
-        .map_err(|e| GitError::Other(format!("merge commit failed: {}", e.message())))?;
-
-    Ok(CommitId(oid.to_string()))
+    crate::ops::execute_git_commit(
+        repo,
+        index,
+        tree_oid,
+        &[
+            repo.head()
+                .and_then(|head| head.peel_to_commit())
+                .map_err(|e| GitError::Other(format!("HEAD commit lookup failed: {e}")))?
+                .id(),
+            merge_head_oid,
+        ],
+        &message,
+        None,
+    )
+    .map(|oid| CommitId(oid.to_string()))
 }
 
 // ────────────────────────────────────────────────────────────
@@ -1606,7 +1591,7 @@ fn prefilled_merge_message(repo: &Repository, op: &ConflictOp, current_branch: &
 ///
 /// Stages no files (Save already staged them); writes the current index as the
 /// tree and commits with **two parents** (HEAD + MERGE_HEAD), then cleans up the
-/// merge state (`cleanup_state` removes MERGE_HEAD / MERGE_MSG).  Refuses if the
+/// merge state through Git. Refuses if the
 /// index still has unmerged entries (a defensive re-check of the gate).
 ///
 /// Returns the new merge commit's [`CommitId`].
@@ -1628,10 +1613,7 @@ pub(crate) fn execute_merge_commit(
         ));
     }
 
-    let oid = create_merge_commit(repo, &mut index, Some(message))?;
-    repo.cleanup_state()
-        .map_err(|e| GitError::Other(format!("cleanup_state failed: {}", e.message())))?;
-    Ok(oid)
+    create_merge_commit(repo, &mut index, Some(message))
 }
 
 /// Read a commit-oid sidecar file under `.git` (e.g. `MERGE_HEAD`,
@@ -1695,6 +1677,7 @@ pub fn plan_conflict_skip(
     };
 
     Ok(OperationPlan {
+        tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::Ready,
         title: PlanTitle::Conflicts(ConflictsTitle::Skip { op }),

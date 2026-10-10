@@ -152,7 +152,9 @@ pub use branch_cleanup::*;
 pub use checkout::*;
 pub use cherry_revert::*;
 pub use clone::*;
-pub(crate) use commit::{approved_commit_index, execute_commit, staged_set_digest};
+pub(crate) use commit::{
+    approved_commit_index, execute_commit, execute_git_commit, staged_set_digest,
+};
 pub use commit::{plan_commit, preflight_commit};
 pub use dir_file_conflict::*;
 pub use discard::*;

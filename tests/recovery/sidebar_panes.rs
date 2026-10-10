@@ -28,10 +28,10 @@ const HEADERS: [&str; 5] = ["local", "remote", "worktrees", "tags", "stashes"];
 const LOCAL: usize = 0;
 const REMOTE: usize = 1;
 const WORKTREES: usize = 2;
-/// Unscaled uniform slots: section headers, group headings and ordinary
-/// leaves share one row; the worktree-only list is taller.
+/// Body slots stay dense; pinned section headers have their own height.
 const ROW: f32 = 20.;
 const WORKTREE_ROW: f32 = 24.;
+const HEADER: f32 = 28.;
 /// #1019: new 100% renders the old 90% logical row dimensions.
 const BASE_SCALE: f32 = 0.9;
 /// The unreleased six-pane encoding (PR first). The five-pane parser must
@@ -224,8 +224,8 @@ fn assert_row_density(
     let wt_row = WORKTREE_ROW * BASE_SCALE * zoom;
     for (name, measured) in [(&names[0], header), (&names[3], wt_header)] {
         assert!(
-            near(tall(measured), row),
-            "{zoom}x {name} header is one {row}px row: {measured:?}"
+            near(tall(measured), HEADER * BASE_SCALE * zoom),
+            "{zoom}x {name} header is {HEADER}px before zoom: {measured:?}"
         );
     }
     assert!(
@@ -286,7 +286,8 @@ fn drag_divider(
 
 pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
     // #899 guard: the scenario saves and corrupts `sidebar_panes` and zooms.
-    let _saved = crate::gui_isolation::SavedKeys::keep(&["sidebar_panes", "ui_zoom"]);
+    let _saved =
+        crate::gui_isolation::SavedKeys::keep(&["sidebar_panes", "ui_zoom", "lang", "theme"]);
     let fixture = build_fixture();
     let repo = fixture.path();
     let previous_setting = settings::read_setting("sidebar_panes");
@@ -337,6 +338,85 @@ pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
 
     let (app, window) = mount_at(cx, repo, 900.);
     redraw(cx, &app, window);
+    let previous_lang = kagi::ui::i18n::lang();
+    let previous_theme = theme::theme().slug.clone();
+    for slug in ["apple-light", "apple-dark"] {
+        theme::set_active(slug);
+        for language in [kagi::ui::i18n::Lang::En, kagi::ui::i18n::Lang::Ja] {
+            kagi::ui::i18n::set_lang(language);
+            for zoom in [1., 1.67] {
+                theme::set_zoom(zoom);
+                redraw(cx, &app, window);
+                let scale = BASE_SCALE * zoom;
+                for (index, header) in HEADERS.into_iter().enumerate() {
+                    let paint =
+                        e2e::control_paint(window.window_id(), header).expect("header painted");
+                    assert!(
+                        near(tall(paint.bounds), HEADER * scale),
+                        "{slug}/{language:?}/{zoom} {header}: {paint:?}"
+                    );
+                    assert!(
+                        near(f32::from(paint.font_size), 12. * scale),
+                        "{header}: {paint:?}"
+                    );
+                    assert_eq!(paint.font_weight, gpui::FontWeight::SEMIBOLD);
+                    assert_eq!(
+                        paint.text_color,
+                        gpui::Hsla::from(gpui::rgb(theme::theme().text_sub))
+                    );
+                    let label_name = format!("sidebar-{header}-heading-label");
+                    let label = e2e::control_paint(window.window_id(), &label_name)
+                        .expect("heading label painted");
+                    assert!(near(tall(label.bounds), 12. * scale), "{label:?}");
+                    assert!(
+                        near(top(label.bounds) - top(paint.bounds), 8. * scale),
+                        "top padding: {paint:?} {label:?}"
+                    );
+                    assert!(
+                        near(
+                            top(paint.bounds) + tall(paint.bounds)
+                                - top(label.bounds)
+                                - tall(label.bounds),
+                            8. * scale
+                        ),
+                        "bottom padding: {paint:?} {label:?}"
+                    );
+                    let titles = if language == kagi::ui::i18n::Lang::En {
+                        [
+                            "Local Branches",
+                            "Remote Branches",
+                            "Worktrees",
+                            "Tags",
+                            "Stashes",
+                        ]
+                    } else {
+                        [
+                            "ローカル branch",
+                            "remote branch",
+                            "worktree",
+                            "tag",
+                            "stash",
+                        ]
+                    };
+                    let tree = list_a11y::recorded_list(PANES[index]).expect("pane Tree");
+                    let (_, (name, _)) = tree
+                        .rows
+                        .iter()
+                        .find(|(row, _)| tree.tree[row].0 == 1)
+                        .expect("section AX row");
+                    assert!(name.contains(titles[index]), "{name}");
+                    assert_eq!(
+                        tree.tree.values().find(|item| item.0 == 1).unwrap().1,
+                        Some(true)
+                    );
+                }
+            }
+        }
+    }
+    kagi::ui::i18n::set_lang(previous_lang);
+    theme::set_active(&previous_theme);
+    theme::set_zoom(1.);
+    redraw(cx, &app, window);
     assert_eq!(
         disk_layout(),
         SIX_PANE_V1,
@@ -361,7 +441,7 @@ pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
     let initial = bounds(cx, &app);
     for (index, &pane) in initial.iter().enumerate() {
         assert!(
-            height(pane) >= ROW * BASE_SCALE - 0.5,
+            height(pane) >= HEADER * BASE_SCALE - 0.5,
             "pane {index} header fits: {initial:?}"
         );
         if index > 0 {
@@ -389,7 +469,7 @@ pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
     assert_eq!(repaired.weights, defaults);
     assert_eq!(repaired.collapsed_mask, 1);
     assert!(
-        near(height(bounds(cx, &app)[LOCAL]), ROW * BASE_SCALE),
+        near(height(bounds(cx, &app)[LOCAL]), HEADER * BASE_SCALE),
         "collapsed LOCAL keeps only its header: {:?}",
         bounds(cx, &app)
     );
@@ -495,7 +575,7 @@ pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
     click_header(cx, &app, window, REMOTE);
     let collapsed_bounds = bounds(cx, &app);
     assert!(
-        near(height(collapsed_bounds[REMOTE]), ROW * BASE_SCALE),
+        near(height(collapsed_bounds[REMOTE]), HEADER * BASE_SCALE),
         "collapsed REMOTE is one header row: {collapsed_bounds:?}"
     );
     drag_divider(cx, &app, window, divider, &[8., 24.], |_| {});
@@ -528,8 +608,8 @@ pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
     assert!(
         headers
             .iter()
-            .all(|&measured| near(measured, ROW * BASE_SCALE)),
-        "five 18px headers at 600px: {headers:?}"
+            .all(|&measured| near(measured, HEADER * BASE_SCALE)),
+        "five 25.2px headers at 600px: {headers:?}"
     );
     let compact = bounds(cx, &reopened);
     let sidebar = e2e::control_bounds(compact_window.window_id(), "worktree-sidebar").unwrap();
@@ -539,7 +619,7 @@ pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
         "five panes fit 600px: {compact:?}, sidebar={sidebar:?}"
     );
     assert!(
-        near(height(compact[REMOTE]), ROW * BASE_SCALE),
+        near(height(compact[REMOTE]), HEADER * BASE_SCALE),
         "{compact:?}"
     );
 
@@ -548,14 +628,14 @@ pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
     assert!(
         headers
             .iter()
-            .all(|&measured| near(measured, ROW * BASE_SCALE * 1.25)),
+            .all(|&measured| near(measured, HEADER * BASE_SCALE * 1.25)),
         "five scaled headers at 600px/125%: {headers:?}"
     );
     let scaled = bounds(cx, &reopened);
     assert!(
         scaled
             .iter()
-            .all(|&pane| height(pane) >= ROW * BASE_SCALE * 1.25 - 0.5),
+            .all(|&pane| height(pane) >= HEADER * BASE_SCALE * 1.25 - 0.5),
         "all five scaled panes retain their header: {scaled:?}"
     );
     let sidebar = e2e::control_bounds(compact_window.window_id(), "worktree-sidebar").unwrap();
@@ -591,5 +671,5 @@ pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
     settings::flush();
     theme::set_zoom(previous_zoom);
     drop(linked_root);
-    eprintln!("[gui-e2e] PASS sidebar_panes: five panes without PULL REQUESTS, 18px rows / 21.6px worktree rows at new 100% and 125%, six-pane v1 raw fallback and first-edit repair via LOCAL, LOCAL/REMOTE pointer-tracking drag, independent LOCAL/REMOTE scroll, collapsed REMOTE skip to WORKTREES, remount at 600px and 125% zoom");
+    eprintln!("[gui-e2e] PASS sidebar_panes: five localized 28px semibold secondary headers with 8px vertical padding, Apple Light/Dark EN/JA at 100%/167%; unchanged 20/24px body slots, six-pane settings fallback, collapse persistence, divider drag, independent scroll and compact remount");
 }

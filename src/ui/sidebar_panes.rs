@@ -11,7 +11,7 @@ use gpui_component::Sizable as _;
 
 use super::sidebar::{
     build_sidebar_row, SidebarRow, SidebarState, SECTION_WORKTREES, SIDEBAR_ROW_H,
-    SIDEBAR_WORKTREE_ROW_H,
+    SIDEBAR_SECTION_HEADER_H, SIDEBAR_WORKTREE_ROW_H,
 };
 use super::theme::{self, theme};
 use super::{DividerDrag, DividerGhost, DividerKind, KagiApp, Msg};
@@ -126,12 +126,14 @@ impl SidebarState {
         let (top, first_bottom) = self.pane_geom[index].get();
         let (second_top, bottom) = self.pane_geom[next].get();
         let pair_height = (first_bottom - top) + (bottom - second_top);
-        if pair_height <= 2. * SIDEBAR_ROW_H * zoom + 1. || second_top < first_bottom {
+        if pair_height <= 2. * SIDEBAR_SECTION_HEADER_H * zoom + 1. || second_top < first_bottom {
             return false;
         }
         // Each pane keeps its header plus one of its own body rows visible.
-        let first_minimum = ((SIDEBAR_ROW_H + body_row_h(index)) * zoom).min(pair_height / 2.);
-        let second_minimum = ((SIDEBAR_ROW_H + body_row_h(next)) * zoom).min(pair_height / 2.);
+        let first_minimum =
+            ((SIDEBAR_SECTION_HEADER_H + body_row_h(index)) * zoom).min(pair_height / 2.);
+        let second_minimum =
+            ((SIDEBAR_SECTION_HEADER_H + body_row_h(next)) * zoom).min(pair_height / 2.);
         let first_height =
             (cursor_y - top - 2. * zoom).clamp(first_minimum, pair_height - second_minimum);
         let total_weight = u32::from(self.pane_weights[index]) + u32::from(self.pane_weights[next]);
@@ -261,9 +263,10 @@ fn render_pane(app: &KagiApp, index: usize, cx: &mut Context<KagiApp>) -> gpui::
         .w_full()
         .flex()
         .flex_col()
-        .min_h(theme::scaled_px(SIDEBAR_ROW_H))
+        .min_h(theme::scaled_px(SIDEBAR_SECTION_HEADER_H))
         .when(collapsed, |el| {
-            el.h(theme::scaled_px(SIDEBAR_ROW_H)).flex_shrink_0()
+            el.h(theme::scaled_px(SIDEBAR_SECTION_HEADER_H))
+                .flex_shrink_0()
         })
         .when(!collapsed, |el| {
             el.flex_basis(px(0.))

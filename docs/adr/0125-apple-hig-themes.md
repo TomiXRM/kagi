@@ -95,3 +95,21 @@ foreground. A separate `link = #0066cc` maps to TextView's `colors.link` and
 gives 5.567:1 on white. Apple Dark's existing yellow link is already readable
 and remains unchanged. Underline, activation, selection and geometry are not
 altered.
+
+## Amendment — 2026-10-11: quiet Graph navigator group headers (#1177)
+
+The five pinned section headers use localized title-style labels (English
+Title Case, existing Japanese terminology), `text_sub`, 12 reference-px
+semibold text, a separate small chevron and a neutral `surface` count pill
+retaining `(N)`. Their 28 reference-px height is a 12px line with 8px padding
+above and below. This changes only top-level header geometry: virtualized
+body slots remain 20px (ordinary/group rows) and 24px (worktrees).
+Collapsed panes and divider minimums use the header height rather than a body
+slot. Apple Dark and other presets reuse their existing secondary-label and
+neutral-surface tokens; no palette, global border, Git-state or accent changes.
+The existing collapse owner, focus wrappers, persisted mask and AX expanded
+state remain in place. This is hierarchy/geometry, not native material parity.
+Token-derived sRGB contrast for the heading is 5.870:1 on Apple Light's
+sidebar and 4.992:1 on hover; Apple Dark is 6.631:1 and 4.863:1 respectively.
+Native `sidebar_panes` records inherited size/weight/colour at paint, plus
+header/label bounds to assert the vertical inset at 100%/167% in EN/JA.

@@ -435,7 +435,7 @@ impl KagiApp {
         list = super::list_a11y::list_box(
             "command-palette-list",
             list,
-            &i18n::Msg::CommandPalettePlaceholder.t(),
+            i18n::Msg::CommandPalettePlaceholder.t(),
         );
         if let Some(scroll) = &self.command_palette_scroll {
             list = list.track_scroll(scroll);

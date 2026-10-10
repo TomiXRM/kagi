@@ -51,3 +51,11 @@ editor's neutral tint. Reusing an RGB value across theme tokens cannot alter
 the operation's variant. In particular Color Vision's shared blue/orange
 tokens remain intentional; tinted side choices were an inference bug, not a
 colour-vision design exception. See [the role table](../themes.md#button-operation-roles).
+
+## Amendment — 2026-10-11: own filled Info tokens (#1078)
+
+The bridge maps all four `button_info*` tokens from `color_remote`, not the
+upstream mode preset. The resting fill exactly matches Incoming pane/marker;
+foreground and hover/active use the same contrast-preserving opaque-fill
+derivation as Primary. Generic `info` notices keep their prior branch colour,
+and status/destructive tinted actions are unchanged.

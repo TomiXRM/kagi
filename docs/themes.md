@@ -226,12 +226,19 @@ Stage/Discard, not a new palette. Rest, hover, pressed, focus-visible and disabl
 remain the native Button states; side choices have no selected/loading/error
 state of their own. Existing gates, handlers and plan/confirm safety flow remain.
 
+The bridge owns the complete filled Info family (`button_info`, foreground,
+hover, active). Its rest fill is exactly `color_remote`, matching the Incoming
+pane/marker (Apple Light `#34c759`). Its label and opaque interaction shades use
+the same contrast-preserving derivation as Primary; upstream preset Info colours
+cannot leak into side choices. Success/danger tints and generic info notices keep
+their existing token meanings.
+
 ## Token reference
 
 Every token a theme defines. The middle column is the default theme's
 (Catppuccin Mocha, slug `catppuccin`) value; the last column is where kagi
 actually paints it. kagi also derives a few colours itself: filled buttons
-(primary and warning) put `bg_base`, then `text_main`, then black/white on their
+(primary, incoming and warning) put `bg_base`, then `text_main`, then black/white on their
 fill — whichever first reaches WCAG AA contrast; text drawn in the accent is
 lightened or darkened via `accent_text_on` until it reads at 4.5:1; the text
 selection wash is `selection_tint` at 30 % opacity.

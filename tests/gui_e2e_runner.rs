@@ -2349,6 +2349,10 @@ mod macos {
                 Box::new(crate::file_menu_owner::scenario_file_menu_focus_after_open_repository),
             ),
             (
+                "file_menu_unstage_literal",
+                Box::new(crate::file_menu_owner::scenario_file_menu_unstage_literal),
+            ),
+            (
                 "pr_peek_visible_table",
                 Box::new(crate::pr_peek_visible::scenario_pr_peek_visible_table),
             ),

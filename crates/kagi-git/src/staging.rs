@@ -2,20 +2,19 @@
 //!
 //! Provides:
 //! - [`stage_file`]           — stage a single file (index-only, WT unchanged)
-//! - [`unstage_file`]         — unstage a single file (index-only, WT unchanged)
+//! - [`crate::Backend::unstage_file`] — unstage a single file (index-only, WT unchanged)
 //! - [`unstaged_file_diff`]   — diff between index and working tree for a file
 //! - [`staged_file_diff`]     — diff between HEAD tree and index for a file
 //!
 //! # Design notes
 //!
-//! * **Index-only operations** — `stage_file` and `unstage_file` only modify
+//! * **Index-only operations** — stage and unstage only modify
 //!   the git index (`.git/index`).  The working tree file content is **never**
 //!   changed by either function.  Tests assert this invariant.
 //!
-//! * **`unstage_file` implementation** — uses `repo.reset_default(target, [path])`,
-//!   which is the libgit2 equivalent of `git reset HEAD -- <path>`.  When HEAD
-//!   is unborn (no commits), the path is simply removed from the index via
-//!   `index.remove_path`.
+//! * **`unstage_file` implementation** — restores exact index entries from HEAD
+//!   without pathspec matching. When HEAD is unborn (no commits), the selected
+//!   paths are removed from the index via `index.remove_path`.
 //!
 //! * **`stage_file` for deleted files** — if the file no longer exists in the
 //!   working tree, `index.add_path` would fail; we call `index.remove_path`
@@ -116,73 +115,6 @@ pub(crate) fn stage_file(repo: &Repository, path: &Path) -> Result<(), GitError>
     index
         .write()
         .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
-
-    Ok(())
-}
-
-// ────────────────────────────────────────────────────────────
-// unstage_file
-// ────────────────────────────────────────────────────────────
-
-/// Unstage a single file at `path` (relative to the repository root).
-///
-/// This function modifies **only the git index**.  The working tree file
-/// content is never changed.
-///
-/// # Behaviour
-///
-/// * **Normal repo** (HEAD exists): calls
-///   `repo.reset_default(Some(&head_object), [path])`, which is the libgit2
-///   equivalent of `git reset HEAD -- <path>`.  This restores the index entry
-///   for `path` to the HEAD tree content (effectively unstaging the change).
-///   If `path` does not exist in HEAD (new file), the path is removed from the
-///   index so it becomes untracked.
-///
-/// * **Unborn HEAD** (no commits yet): there is no HEAD tree to reset to, so
-///   the path is simply removed from the index via `index.remove_path`.
-///
-/// # Errors
-///
-/// Returns [`GitError::Other`] on any libgit2 failure.
-pub(crate) fn unstage_file(repo: &Repository, path: &Path) -> Result<(), GitError> {
-    let head = resolve_head(repo)?;
-
-    match head {
-        Head::Unborn { .. } => {
-            // No HEAD tree — just remove from index.
-            let mut index = repo
-                .index()
-                .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
-            // remove_path returns an error if the path isn't in the index.
-            // Ignore "not found" errors gracefully.
-            let _ = index.remove_path(path);
-            index
-                .write()
-                .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
-        }
-        _ => {
-            // HEAD exists — use reset_default to restore the index entry.
-            let head_ref = repo
-                .head()
-                .map_err(|e| GitError::Other(format!("repo.head() failed: {}", e.message())))?;
-            let head_oid = head_ref
-                .target()
-                .ok_or_else(|| GitError::Other("HEAD has no target OID".to_string()))?;
-            let head_obj = repo.find_object(head_oid, None).map_err(|e| {
-                GitError::Other(format!("find_object(HEAD) failed: {}", e.message()))
-            })?;
-
-            // reset_default(Some(&head_obj), [path]) is equivalent to
-            // `git reset HEAD -- <path>`:
-            // - If path exists in HEAD tree: restores index entry to HEAD content.
-            // - If path does NOT exist in HEAD tree: removes it from index.
-            // #293: a lossy pathspec would make reset_default a silent no-op
-            // (U+FFFD matches nothing) — bail on a non-UTF-8 path instead.
-            let path_str = super::path_to_pathspec(path)?;
-            repo.reset_default(Some(&head_obj), [path_str])
-                .map_err(|e| GitError::Other(format!("reset_default failed: {}", e.message())))?;
-        }
-    }
 
     Ok(())
 }
@@ -516,53 +448,5 @@ pub(crate) fn stage_files(
     index
         .write()
         .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
-    Ok(paths.len())
-}
-
-/// Unstage every path in `paths`.
-///
-/// Same semantics as [`unstage_file`] (`git reset HEAD -- <paths>`), done in
-/// a single `reset_default` call when HEAD exists.  Returns the number of
-/// paths processed.
-pub(crate) fn unstage_files(
-    repo: &Repository,
-    paths: &[std::path::PathBuf],
-) -> Result<usize, GitError> {
-    if paths.is_empty() {
-        return Ok(0);
-    }
-    let head = resolve_head(repo)?;
-    match head {
-        Head::Unborn { .. } => {
-            let mut index = repo
-                .index()
-                .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
-            for path in paths {
-                let _ = index.remove_path(path);
-            }
-            index
-                .write()
-                .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
-        }
-        _ => {
-            let head_ref = repo
-                .head()
-                .map_err(|e| GitError::Other(format!("repo.head() failed: {}", e.message())))?;
-            let head_oid = head_ref
-                .target()
-                .ok_or_else(|| GitError::Other("HEAD has no target OID".to_string()))?;
-            let head_obj = repo.find_object(head_oid, None).map_err(|e| {
-                GitError::Other(format!("find_object(HEAD) failed: {}", e.message()))
-            })?;
-            // #293: same silent-no-op hazard as unstage_file — a lossy pathspec
-            // matches nothing. Bail on any non-UTF-8 path rather than skipping it.
-            let path_strs: Vec<&str> = paths
-                .iter()
-                .map(|p| super::path_to_pathspec(p))
-                .collect::<Result<_, _>>()?;
-            repo.reset_default(Some(&head_obj), path_strs.iter().copied())
-                .map_err(|e| GitError::Other(format!("reset_default failed: {}", e.message())))?;
-        }
-    }
     Ok(paths.len())
 }

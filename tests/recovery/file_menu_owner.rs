@@ -277,3 +277,108 @@ pub fn scenario_file_menu_focus_after_open_repository(cx: &mut VisualTestAppCont
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS file_menu_focus_after_open_repository");
 }
+
+/// #1130: the real Editor file menu must unstage a literal filename only.
+pub fn scenario_file_menu_unstage_literal(cx: &mut VisualTestAppContext) {
+    use crate::macos::git;
+    use kagi::ui::editor_workspace::TreeMenuTarget;
+    use kagi_ui_core::tree_a11y::{clear_recorded_trees, recorded_tree};
+    use std::path::Path;
+
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    for name in ["a[b].txt", "ab.txt"] {
+        std::fs::write(repo.join(name), "base\n").unwrap();
+    }
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "literal paths"]);
+    for name in ["a[b].txt", "ab.txt"] {
+        std::fs::write(repo.join(name), "staged\n").unwrap();
+    }
+    git(&repo, &["add", "."]);
+    let backend = kagi_git::Backend::open(&repo).unwrap();
+    let git_repo = git2::Repository::open(&repo).unwrap();
+    let index_identity = || {
+        let mut index = git_repo.index().unwrap();
+        index.read(true).unwrap();
+        let entry = index.get_path(Path::new("ab.txt"), 0).unwrap();
+        (entry.id, entry.mode)
+    };
+    let neighbour_before = index_identity();
+    let receipts_before = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100).len();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.open_editor_workspace(cx));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        let editor = app.ui().editor_workspace.as_ref().expect("editor").clone();
+        editor.update(cx, |view, cx| {
+            let file = view
+                .files
+                .iter()
+                .position(|file| file.path == Path::new("a[b].txt"))
+                .expect("literal file in editor tree");
+            view.open_tree_menu(TreeMenuTarget::File(file), point(px(120.), px(120.)), cx);
+        });
+        cx.notify();
+    });
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    // For a staged .txt file, Git group 2 contains History then Unstage.
+    let bounds = e2e::control_bounds(window.window_id(), "editor-tree-menu-item-2-1")
+        .expect("real Unstage menu item was not painted");
+    cx.simulate_mouse_move(window, bounds.center(), None, Modifiers::none());
+    cx.run_until_parked();
+    cx.simulate_click(window, bounds.center(), Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(
+        index_identity(),
+        neighbour_before,
+        "Unstage changed the unselected neighbour's index OID/mode"
+    );
+    let status = backend.working_tree_status().unwrap();
+    assert_eq!(status.staged.len(), 1);
+    assert_eq!(status.staged[0].path, Path::new("ab.txt"));
+    for name in ["a[b].txt", "ab.txt"] {
+        assert_eq!(std::fs::read(repo.join(name)).unwrap(), b"staged\n");
+    }
+    assert_eq!(
+        kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100).len(),
+        receipts_before,
+        "successful unstage must not append a failure receipt"
+    );
+
+    // Re-open the Commit Panel through the existing UI boundary and prove the
+    // neighbour survives in the rendered staged tree, not just backend status.
+    app.update(cx, |app, cx| {
+        app.close_editor_workspace();
+        e2e::open_local_panel_no_inputs(app, repo.clone(), cx);
+    });
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        let panel = app.ui().commit_panel.as_ref().expect("panel").clone();
+        panel.update(cx, |view, cx| {
+            view.state.tree_view = true;
+            cx.notify();
+        });
+    });
+    cx.run_until_parked();
+    clear_recorded_trees();
+    app.update(cx, |_, cx| cx.notify());
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    let staged = recorded_tree("cp-staged-tree").expect("staged file tree painted");
+    assert!(
+        staged.rows.values().any(|row| row.label.contains("ab.txt")),
+        "neighbour must remain in the painted staged list"
+    );
+    assert!(!staged
+        .rows
+        .values()
+        .any(|row| row.label.contains("a[b].txt")));
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS file_menu_unstage_literal");
+}

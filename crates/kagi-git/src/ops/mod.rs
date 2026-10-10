@@ -136,6 +136,7 @@ mod suggestion;
 mod switch;
 mod sync_to_remote;
 mod tag;
+pub(crate) mod unstage;
 mod worktree;
 mod worktree_lifecycle;
 mod worktree_nested_repo;

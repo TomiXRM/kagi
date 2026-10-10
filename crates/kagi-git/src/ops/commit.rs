@@ -242,65 +242,93 @@ pub fn plan_commit(repo: &Repository, message: &str) -> Result<OperationPlan, Gi
 // execute_commit
 // ────────────────────────────────────────────────────────────
 
-/// Create a commit from the current index state.
-///
-/// # Behaviour
-///
-/// 1. Reads the current index and writes it as a tree object in the ODB.
-/// 2. Resolves the committer/author signature from repo config (falls back to
-///    `"kagi <kagi@local>"`).
-/// 3. Creates the commit:
-///    - **Normal repo** (HEAD exists): one parent — the current HEAD commit.
-///    - **Unborn HEAD** (initial commit): no parents.
-/// 4. The working tree is **not** modified; unstaged changes remain intact.
-///
-/// Returns the new commit's [`CommitId`].
-///
-/// # Errors
-///
-/// Returns [`GitError::Other`] on any libgit2 failure.
+/// Commit the rechecked approved tree through Git, preserving project hooks
+/// and the user's signing configuration. The real index is not passed to Git.
 pub(crate) fn execute_commit(
     repo: &Repository,
     plan: &OperationPlan,
     message: &str,
 ) -> Result<CommitId, GitError> {
-    // ── 1. Write the current index as a tree ─────────────────
     let mut index = approved_commit_index(repo, plan)?;
     let tree_oid = index
-        .write_tree()
+        .write_tree_to(repo)
         .map_err(|e| GitError::Other(format!("index.write_tree() failed: {}", e.message())))?;
-    let tree = repo
-        .find_tree(tree_oid)
-        .map_err(|e| GitError::Other(format!("find_tree failed: {}", e.message())))?;
-
-    // ── 2. Build signature ────────────────────────────────────
-    let sig = build_signature(repo)?;
-
-    // ── 3. Resolve parents ────────────────────────────────────
-    let head = resolve_head(repo)?;
-
-    let new_oid = match head {
-        Head::Unborn { .. } => {
-            // Initial commit — no parents.
-            repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[])
-                .map_err(|e| GitError::Other(format!("commit (initial) failed: {}", e.message())))?
-        }
-        _ => {
-            // Normal commit — one parent (HEAD).
-            let head_ref = repo
-                .head()
-                .map_err(|e| GitError::Other(format!("repo.head() failed: {}", e.message())))?;
-            let head_oid = head_ref
-                .target()
-                .ok_or_else(|| GitError::Other("HEAD has no target OID".to_string()))?;
-            let head_commit = repo.find_commit(head_oid).map_err(|e| {
-                GitError::Other(format!("find_commit(HEAD) failed: {}", e.message()))
-            })?;
-
-            repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&head_commit])
-                .map_err(|e| GitError::Other(format!("commit failed: {}", e.message())))?
+    let parents = match resolve_head(repo)? {
+        Head::Unborn { .. } => Vec::new(),
+        Head::Attached { target, .. } | Head::Detached { target } => {
+            vec![git2::Oid::from_str(&target).map_err(|e| GitError::Other(e.to_string()))?]
         }
     };
+    execute_git_commit(repo, tree_oid, &parents, message, false)
+        .map(|oid| CommitId(oid.to_string()))
+}
 
-    Ok(CommitId(new_oid.to_string()))
+/// All interactive commit variants share one CLI policy and read-back check.
+/// A private index prevents external changes of the real index from replacing
+/// the approved snapshot, and preserves the real index on hook/signing failure.
+pub(crate) fn execute_git_commit(
+    repo: &Repository,
+    tree_oid: git2::Oid,
+    parents: &[git2::Oid],
+    message: &str,
+    amend: bool,
+) -> Result<git2::Oid, GitError> {
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| GitError::Other("commit requires a worktree".into()))?;
+    let before = resolve_head(repo)?;
+    let scratch = tempfile::Builder::new()
+        .prefix("kagi-commit-")
+        .tempdir_in(repo.path())
+        .map_err(|e| GitError::Other(format!("cannot create approved commit index: {e}")))?;
+    let index_path = scratch.path().join("index");
+    let mut index = git2::Index::open(&index_path).map_err(|e| GitError::Other(e.to_string()))?;
+    let tree = repo
+        .find_tree(tree_oid)
+        .map_err(|e| GitError::Other(e.to_string()))?;
+    index
+        .read_tree(&tree)
+        .map_err(|e| GitError::Other(e.to_string()))?;
+    index.write().map_err(|e| GitError::Other(e.to_string()))?;
+    let mut args = vec!["commit", "-m", message];
+    if amend {
+        args.push("--amend");
+    }
+    let output = crate::cli::run_git_commit(workdir, &index_path, &args)?;
+    if output.status != 0 {
+        let detail = format!(
+            "git commit failed (exit {}): {}{}",
+            output.status, output.stderr, output.stdout
+        );
+        if resolve_head(repo).as_ref() != Ok(&before) {
+            return Err(GitError::TerminationUnknown(crate::Termination::stopped(
+                detail,
+            )));
+        }
+        return Err(GitError::Other(detail));
+    }
+    verify_git_commit(repo, &before, tree_oid, parents)
+}
+
+fn verify_git_commit(
+    repo: &Repository,
+    before: &Head,
+    tree: git2::Oid,
+    parents: &[git2::Oid],
+) -> Result<git2::Oid, GitError> {
+    let verification = (|| {
+        let head = repo
+            .head()
+            .and_then(|head| head.peel_to_commit())
+            .map_err(|e| format!("cannot read committed HEAD: {e}"))?;
+        if resolve_head(repo).as_ref() == Ok(before)
+            || head.tree_id() != tree
+            || !head.parent_ids().eq(parents.iter().copied())
+        {
+            return Err("HEAD tree or parents differ from the approved commit; inspect hooks and repository before continuing".into());
+        }
+        Ok(head.id())
+    })();
+    verification
+        .map_err(|reason: String| GitError::TerminationUnknown(crate::Termination::stopped(reason)))
 }

@@ -81,7 +81,7 @@ pub struct GitCliOutput {
 /// reach them. None of them has a legitimate use inside kagi:
 ///
 /// - `core.fsmonitor` — runs on every `git status`; kagi never uses it.
-/// - `core.hooksPath` — kagi runs no repo hooks (it cannot show their output).
+/// - `core.hooksPath` — suppressed except for an approved commit (#1132).
 /// - `core.askPass` — kagi already sets `GIT_TERMINAL_PROMPT=0`; askpass is
 ///   purely an execution vector here.
 /// - `protocol.allow=user` — the CVE-2018-17456 class hardening. Verified not
@@ -431,14 +431,42 @@ pub fn run_git_with_options(
     args: &[&str],
     options: GitCliOptions<'_>,
 ) -> Result<GitCliOutput, GitError> {
+    run_git_internal(repo_dir, args, options, None)
+}
+
+/// Only approved commit executors may opt into the user's hooks. The private
+/// index is supplied by Kagi, never inherited from the launching environment.
+pub(crate) fn run_git_commit(
+    repo_dir: &Path,
+    index: &Path,
+    args: &[&str],
+) -> Result<GitCliOutput, GitError> {
+    run_git_internal(repo_dir, args, GitCliOptions::default(), Some(index))
+}
+
+fn run_git_internal(
+    repo_dir: &Path,
+    args: &[&str],
+    options: GitCliOptions<'_>,
+    commit_index: Option<&Path>,
+) -> Result<GitCliOutput, GitError> {
     let local_overrides = repo_local_overrides(repo_dir)?;
     let mut full = hardening_args(options.fsmonitor);
+    if commit_index.is_some() {
+        // Remove this pair only, retaining fsmonitor, askpass and protocol
+        // hardening. Do not override hooksPath: relative/absolute/disabled
+        // paths keep Git's own configuration semantics.
+        full.drain(3..5);
+    }
     full.extend(local_overrides.args.iter().map(String::as_str));
     full.extend_from_slice(args);
 
     let executable = options.executable.unwrap_or_else(|| Path::new("git"));
     let mut cmd = git_command_with_executable(repo_dir, executable);
     cmd.args(&full);
+    if let Some(index) = commit_index {
+        cmd.env("GIT_INDEX_FILE", index);
+    }
 
     let run = run_child(
         &mut cmd,

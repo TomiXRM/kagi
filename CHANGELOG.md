@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Commit／fixup・Amend・解決済み merge の Commit は user の Git hook を実行し、`core.hooksPath` を尊重するようにしました。拒否 hook の stderr は操作記録と EN／JA の失敗 footer／toast に残し、HEAD と元 index を保持します。承認時の staged identity を再照合した private index で実行し、完了後に HEAD の tree と parents を検証します。(#1132)
 - Discard は POSIX のファイル名に含まれるバックスラッシュを区切り文字へ変換せず、選択・確認・バックアップ・実行・検証で同じパスを保つようにしました。`a\b.txt` の破棄が隣の `a/b.txt` を上書きする問題を修正し、一括破棄でも両者を別の対象として扱います。Windows の既存 absolute / `./` 入力は解決後の component を Git の区切り文字で再結合し、`core.worktree` で分離した working tree も元の Git directory から復元します。安全に表現できないパスは書込み前に理由を表示して拒否します。(#1125)
 - Commit／fixup と staged／both Amend は、承認時の index のパス・blob OID・mode を固定して実行前に照合するようにしました。同じパスの内容差替えや mode／対象ファイルの変更は HEAD・index・作業ファイルを書き換えず拒否し、見直しを促す EN／JA の理由と操作記録を残します。未 stage の編集は commit に混ぜず、変更のない承認は従来どおり実行できます。(#1126)
 - Commit の計画中にステージ済みの内容が変わって拒否された場合も、log だけで終わらず、EN／JA の失敗 footer と error toast に見直しの理由を表示するようにしました。以前の承認は解除し、実行は開始しません。解決済み merge の確定 Commit でも、承認後の blob 差替えを拒否して HEAD・MERGE_HEAD・index・refs を保持する backend 回帰を追加しました。(#1126)

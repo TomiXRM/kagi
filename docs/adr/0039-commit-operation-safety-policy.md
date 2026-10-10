@@ -44,3 +44,36 @@ ADR-0023(Dangerous Operations Policy)との責務分担も明確にする。
 - 既存 `plan_commit` の blocker(staged 空 / message 空 / conflict 状態)は本方針に既に整合 → 再分類不要
 - 新ルール(conflict marker / secret / large binary)は本方針に従い前2つを block・後1つを warn(ADR-0043)
 - checklist を純関数 + 別 module(`checklist.rs`)に切り出すことで、commit と amend の両 plan から再利用できる
+
+## Amendment — 2026-10-10: user's commit hooks and signing (#1132, #1133)
+
+Commit/fixup, Amend (all modes), and the resolved merge Commit button use
+the system `git commit`, not libgit2's unsigned commit constructor. This is
+an explicit, user-approved write behind Backend's trust and preflight gates.
+Only this commit invocation honors `core.hooksPath`; background/read/network
+commands retain their existing hook suppression and executable-config hardening.
+Git runs pre-commit, prepare-commit-msg, commit-msg and post-commit, and owns
+message cleanup/rewriting, author preservation for amend, merge parents, and
+`commit.gpgsign` / `gpg.format` (OpenPGP, SSH, X.509). Kagi never injects
+`--no-verify` or `--no-gpg-sign`, and never falls back to an unsigned commit.
+`tag.gpgsign` is a tag policy, not a request to sign ordinary commits.
+
+Approval still fixes the raw staged path/OID/mode/stage digest (#1126). The
+executor rechecks the disk index, writes the tree from that same in-memory
+snapshot, and gives Git a private index for that tree. A concurrent writer of
+the real index cannot swap the approved blobs; Kagi does not overwrite that
+index, even after a hook/signing failure. Message-only amend uses the old HEAD
+tree, retaining staged edits outside the amend. Successful CLI execution must
+read back a new HEAD with the expected tree and parents. Hook-driven changes
+to the private index or HEAD are not silently accepted: a mismatching result
+is Unknown with durable detail, requiring inspection, not a success receipt.
+Hooks are arbitrary user code and can modify working files/refs themselves;
+Kagi does not claim to roll back those side effects.
+
+A nonzero Git exit with unchanged HEAD is Failed and retains Git/hook stderr
+in the operation log; the existing localized operation-failed footer/error
+toast shows its bounded preview in EN/JA. Missing signing keys fail the same
+way. Process timeout/incomplete output retains the existing Unknown/termination
+contract and is not retried. Amend's guards, pre-execution savepoint and author/
+parent preservation remain; Git performs the final ref update. Resolved merge
+state is cleaned up by Git only after commit succeeds.

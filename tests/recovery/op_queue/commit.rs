@@ -526,6 +526,79 @@ pub fn scenario_commit_index_identity_refusal(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS commit_index_identity_refusal");
 }
 
+/// #1132: a real rejecting hook reaches the localized failure surfaces.
+#[cfg(unix)]
+pub fn scenario_commit_hook_failure(cx: &mut VisualTestAppContext) {
+    use kagi::ui::{FooterStatus, ToastKind};
+    use kagi_git::oplog::{read_oplog_tail_for_repo, OpOutcome};
+    use kagi_ui_core::i18n::{self, Lang};
+    use std::os::unix::fs::PermissionsExt;
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let language = i18n::lang();
+    for lang in [Lang::En, Lang::Ja] {
+        i18n::set_lang(lang);
+        let fixture = branches_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        git(&repo, &["config", "core.hooksPath", ".git/hooks"]);
+        let hook = repo.join(".git/hooks/pre-commit");
+        std::fs::write(
+            &hook,
+            "#!/bin/sh\necho project-policy-rejected >&2\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(repo.join("approved.txt"), "approved\n").unwrap();
+        git(&repo, &["add", "approved.txt"]);
+        let head = rev_parse(&repo, &["HEAD"]);
+        let (app, window) = mount(cx, &repo);
+        let index = std::fs::read(repo.join(".git/index")).unwrap();
+        queue_commit(cx, &app, window, "hook policy", "");
+        tick_until(cx, &app, "hook failure settlement", |app| {
+            !app.app_sessions.has_leases() && app.write_busy_op.is_none()
+        });
+        cx.read(|cx| {
+            let app = app.read(cx);
+            let failure = match lang {
+                Lang::En => "failed",
+                Lang::Ja => "失敗",
+            };
+            assert!(
+                matches!(&app.status_footer, FooterStatus::Failed(message)
+                if message.contains(failure) && message.contains("project-policy-rejected")),
+                "localized failed footer: {:?}",
+                app.status_footer
+            );
+            let toast = app
+                .toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .last()
+                .unwrap();
+            assert!(matches!(toast.kind, ToastKind::Error));
+            assert!(
+                toast.message.contains(failure)
+                    && toast.message.contains("project-policy-rejected"),
+                "localized failed toast: {}",
+                toast.message
+            );
+        });
+        assert_eq!(rev_parse(&repo, &["HEAD"]), head);
+        assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+        let receipts: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+            .into_iter()
+            .filter(|entry| entry.op == "commit")
+            .collect();
+        assert_eq!(receipts.len(), 1);
+        assert!(matches!(&receipts[0].outcome, OpOutcome::Failed { error }
+            if error.contains("project-policy-rejected")));
+        unmount(cx, app, window);
+    }
+    i18n::set_lang(language);
+    eprintln!("[gui-e2e] PASS commit_hook_failure");
+}
+
 /// Planning's final index check and execute preflight produce the same real
 /// typed refusal. Deliver that result through the normal Commit plan-result
 /// boundary, without a fabricated error or a timing-dependent planner race.

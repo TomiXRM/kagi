@@ -357,13 +357,9 @@ pub(crate) fn execute_undo_commit(repo: &Repository) -> Result<UndoOutcome, GitE
 ///
 /// # Design (ADR-0040)
 ///
-/// Amend never uses `commit.amend(...)`.  Instead [`execute_amend`] builds a new
-/// commit object whose **parent is the old HEAD's parent** (HEAD is replaced, so
-/// the parent is left in place) and then moves the branch ref last (ref-order
-/// rule).  The working tree and index are not written to.  The new SHA always
-/// differs from the old one; this is surfaced as `predicted` with an explicit
-/// `旧 <short> → 新 <short>` line and `destructive: true` (ADR-0023 two-stage
-/// confirm).
+/// [`execute_amend`] uses Git's `commit --amend` with a private approved index.
+/// The old parent and author are preserved; the real index is not written.
+/// The predicted old/new SHA and destructive confirmation remain unchanged.
 ///
 /// # Blocker conditions
 ///
@@ -618,19 +614,9 @@ pub fn preflight_amend(repo: &Repository, plan: &OperationPlan) -> Result<(), Gi
     preflight_commit(repo, plan)
 }
 
-/// Execute an amend (ADR-0040): build a new commit and move the branch ref.
-///
-/// # Design (ADR-0040, in-memory + ref-order rule)
-///
-/// 1. parent = the old HEAD commit's **parent** (HEAD is replaced).
-/// 2. tree:
-///    - `MessageOnly` → the old HEAD's tree (unchanged).
-///    - `Staged` / `Both` → `index.write_tree_to(repo)` — an **in-memory** tree
-///      from the current index, without touching the working tree.
-/// 3. `repo.commit(None, ...)` creates the commit object **without** moving any
-///    ref.
-/// 4. Only after the object exists, `repo.reference(...)` moves the branch ref
-///    last (ref-order rule).  The working tree / index are never written.
+/// Execute an amend through Git with hooks/signing (ADR-0039 amendment).
+/// MessageOnly uses the old HEAD tree; Staged/Both use the rechecked index.
+/// Git writes the replacement object before atomically updating the branch.
 ///
 /// The **author is preserved** from the old commit; the **committer is updated**
 /// to the current signature/time (matching git's amend default).
@@ -652,10 +638,6 @@ pub(crate) fn execute_amend(
             "HEAD is not on a branch. Amend requires an attached HEAD.".to_string(),
         ));
     }
-    let branch_refname = head_ref
-        .name()
-        .map_err(|e| GitError::Other(format!("HEAD ref name failed: {}", e.message())))?
-        .to_string();
     let head_oid = head_ref
         .target()
         .ok_or_else(|| GitError::Other("HEAD has no target OID".to_string()))?;
@@ -681,9 +663,6 @@ pub(crate) fn execute_amend(
     let parent_oid = head_commit
         .parent_id(0)
         .map_err(|e| GitError::Other(format!("parent_id failed: {}", e.message())))?;
-    let parent_commit = repo
-        .find_commit(parent_oid)
-        .map_err(|e| GitError::Other(format!("parent commit lookup failed: {}", e.message())))?;
 
     // ── 4. Resolve the tree ──────────────────────────────────
     let tree = if mode.includes_staged() {
@@ -706,10 +685,6 @@ pub(crate) fn execute_amend(
             .map_err(|e| GitError::Other(format!("HEAD tree lookup failed: {}", e.message())))?
     };
 
-    // ── 5. Author preserved / committer updated ──────────────
-    let author = head_commit.author();
-    let committer = build_signature(repo)?;
-
     // ── 6. Message ───────────────────────────────────────────
     let new_message: String = if mode.replaces_message() {
         match message {
@@ -724,29 +699,7 @@ pub(crate) fn execute_amend(
         head_commit.message().unwrap_or("(no message)").to_string()
     };
 
-    // ── 7. Create the commit object WITHOUT moving any ref ───
-    let new_oid = repo
-        .commit(
-            None,
-            &author,
-            &committer,
-            &new_message,
-            &tree,
-            &[&parent_commit],
-        )
-        .map_err(|e| GitError::Other(format!("amend commit creation failed: {}", e.message())))?;
-
-    // ── 8. Move the branch ref LAST (ref-order rule) ─────────
-    let log_msg = format!(
-        "amend: {} {} -> {}",
-        branch_refname,
-        &head_oid.to_string()[..8],
-        &new_oid.to_string()[..8],
-    );
-    repo.reference(&branch_refname, new_oid, true, &log_msg)
-        .map_err(|e| {
-            GitError::Other(format!("branch ref update (amend) failed: {}", e.message()))
-        })?;
+    let new_oid = execute_git_commit(repo, tree.id(), &[parent_oid], &new_message, true)?;
 
     Ok(AmendOutcome {
         old: CommitId(head_oid.to_string()),

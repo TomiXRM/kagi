@@ -67,6 +67,10 @@ mod theme_custom;
 mod primary_button;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/inactive_selection.rs"]
+mod inactive_selection;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/operations.rs"]
 mod recovery_operations;
 
@@ -77,6 +81,10 @@ mod smart_picker;
 #[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_panes.rs"]
 mod recovery_sidebar_panes;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/hairline_dividers.rs"]
+mod recovery_hairline_dividers;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/bottom_panel.rs"]
@@ -1081,6 +1089,10 @@ mod macos {
                 Box::new(crate::recovery_sidebar_panes::scenario_sidebar_panes),
             ),
             (
+                "hairline_dividers",
+                Box::new(crate::recovery_hairline_dividers::scenario_hairline_dividers),
+            ),
+            (
                 "pr_list_roles",
                 Box::new(crate::recovery_operations::scenario_pr_list_roles),
             ),
@@ -1107,6 +1119,10 @@ mod macos {
             (
                 "primary_button_states",
                 Box::new(crate::primary_button::scenario_primary_button_states),
+            ),
+            (
+                "inactive_selection",
+                Box::new(crate::inactive_selection::scenario_inactive_selection),
             ),
             (
                 "dialog_a11y_roles",
@@ -1930,6 +1946,10 @@ mod macos {
             (
                 "pr_detail_adaptive",
                 Box::new(crate::pr_detail_adaptive::scenario_pr_detail_adaptive),
+            ),
+            (
+                "pr_detail_lifecycle",
+                Box::new(crate::pr_detail_adaptive::scenario_pr_detail_lifecycle),
             ),
             (
                 "pr_diff_extent_unified",

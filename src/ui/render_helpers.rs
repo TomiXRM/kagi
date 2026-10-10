@@ -57,6 +57,7 @@ pub(crate) fn render_rows(
     avatar_images: &HashMap<String, std::sync::Arc<gpui::Image>>,
     range: std::ops::Range<usize>,
     selected: Option<usize>,
+    window_active: bool,
     badge_col_w: f32,
     graph_col_w: f32,
     graph_compact: bool,
@@ -85,11 +86,11 @@ pub(crate) fn render_rows(
             // Selected row gets a prominent surface highlight;
             // even/odd stripes apply otherwise.
             let row_bg = if is_selected {
-                theme().selected
+                theme().selected_for_window(window_active)
             } else if ix % 2 == 0 {
-                theme().bg_base
+                rgb(theme().bg_base).into()
             } else {
-                theme().bg_row_alt
+                rgb(theme().bg_row_alt).into()
             };
             // Swimlane lane band (Gitru-style): an inner horizontal strip drawn
             // BEHIND the graph column only and tinted by this row's lane colour.
@@ -223,7 +224,11 @@ pub(crate) fn render_rows(
                         .top_0()
                         .bottom_0()
                         .w(px(2.))
-                        .bg(rgb(theme().color_branch)),
+                        .bg(rgb(if window_active {
+                            theme().color_branch
+                        } else {
+                            theme().text_muted
+                        })),
                 )
                 .child(anchor.probe())
             })
@@ -231,7 +236,7 @@ pub(crate) fn render_rows(
             .when(ix == 0 && cfg!(feature = "gui-e2e"), |el| {
                 el.child(super::e2e::measure_inside("graph-commit-row"))
             })
-            .bg(rgb(row_bg))
+            .bg(row_bg)
             .on_click(click_handler)
             .on_mouse_down(MouseButton::Right, context_click_handler)
             .when(is_dimmed, |el| el.opacity(0.32))

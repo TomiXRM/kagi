@@ -1206,28 +1206,55 @@ pub fn render_pr_mode(
         .bg(rgb(theme().bg_base))
         .children(left)
         .when(layout.navigator, |el| {
-            el.child(vdivider(DividerKind::PrModeLeft))
+            el.child(vdivider(
+                DividerKind::PrModeLeft,
+                theme().sidebar,
+                "pr-navigator-divider",
+            ))
         })
         .children(lane)
         .when(layout.swimlane, |el| {
-            el.child(vdivider(DividerKind::PrModeLeft))
+            el.child(vdivider(
+                DividerKind::PrModeLeft,
+                theme().bg_base,
+                "pr-lane-divider",
+            ))
         })
         .child(center)
         .into_any_element()
 }
 
-fn vdivider(kind: DividerKind) -> gpui::Stateful<gpui::Div> {
+fn vdivider(kind: DividerKind, fill: u32, group: &'static str) -> gpui::Stateful<gpui::Div> {
     let id = match kind {
         DividerKind::PrModeLeft => "pr-mode-div-left",
         _ => "pr-mode-div-right",
     };
     div()
         .id(id)
+        .group(group)
         .w(theme::scaled_px(4.))
         .flex_shrink_0()
         .h_full()
-        .bg(rgb(theme().surface))
+        .bg(rgb(fill))
+        .flex()
+        .justify_center()
+        .child(
+            div()
+                .w(px(1.))
+                .h_full()
+                .flex_shrink_0()
+                .bg(rgb(theme().surface))
+                .group_hover(group, |s| s.bg(rgb(theme().color_branch)))
+                .group_drag_over::<DividerDrag>(group, |s| s.bg(rgb(theme().color_branch))),
+        )
         .hover(|s| s.bg(rgb(theme().color_branch)).cursor_col_resize())
+        .drag_over::<DividerDrag>(move |style, drag, _, _| {
+            if drag.kind == kind {
+                style.bg(rgb(theme().color_branch))
+            } else {
+                style
+            }
+        })
         .cursor_col_resize()
         .on_drag(DividerDrag { kind }, |_drag, _position, _window, cx| {
             cx.new(|_| DividerGhost)
@@ -1533,7 +1560,9 @@ fn render_center(
                 .px_3()
                 .py_1()
                 .cursor_pointer()
-                .when(selected_commit.is_none(), |el| el.bg(rgb(theme().selected)))
+                .when(selected_commit.is_none(), |el| {
+                    el.bg(theme().selected_for_window(app.window_active))
+                })
                 .hover(|s| s.bg(rgb(theme().surface)))
                 .on_click(all_click)
                 .map(|el| {
@@ -1575,7 +1604,9 @@ fn render_center(
                     .px_3()
                     .text_sm()
                     .cursor_pointer()
-                    .when(sel, |el| el.bg(rgb(theme().selected)))
+                    .when(sel, |el| {
+                        el.bg(theme().selected_for_window(app.window_active))
+                    })
                     .hover(|s| s.bg(rgb(theme().surface)))
                     .on_click(click)
                     // Straight-line "graph": a dot per commit, no lanes — the
@@ -1968,7 +1999,9 @@ fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElemen
                 .px_3()
                 .text_sm()
                 .cursor_pointer()
-                .when(sel, |el| el.bg(rgb(theme().selected)))
+                .when(sel, |el| {
+                    el.bg(theme().selected_for_window(app.window_active))
+                })
                 .hover(|s| s.bg(rgb(theme().surface)))
                 .on_click(click)
                 .map(|el| {

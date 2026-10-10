@@ -386,9 +386,15 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                 .min_h(px(0.))
                 .flex()
                 .flex_col()
-                // The pinned scrollbar is 16 logical px, independent of zoom.
-                // Reserve its lane so it never covers the last visible row.
-                .pb(px(16.))
+                .when(cfg!(feature = "gui-e2e"), |area| {
+                    area.child(super::e2e::measure_inside("pr-home-table"))
+                })
+                // Non-auto-hide macOS settings map to Hover in gpui-kit.
+                // Keep its hitbox clear of rows and make that table bar persistent.
+                .when(
+                    gpui_component::Theme::global(cx).scrollbar_show != ScrollbarShow::Scrolling,
+                    |area| area.pb(px(16.)),
+                )
                 .child(
                     div()
                         .id("pr-home-table-scroll")
@@ -408,9 +414,10 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                         })
                         .child(table),
                 )
-                .child(
-                    Scrollbar::horizontal(&horizontal_scroll).scrollbar_show(ScrollbarShow::Always),
-                ),
+                .child(Scrollbar::horizontal(&horizontal_scroll).when(
+                    gpui_component::Theme::global(cx).scrollbar_show != ScrollbarShow::Scrolling,
+                    |bar| bar.scrollbar_show(ScrollbarShow::Always),
+                )),
         );
     }
 
@@ -475,7 +482,8 @@ fn render_column_header() -> gpui::Div {
         .px(theme::scaled_px(super::timeline_row::GUTTER))
         .gap(theme::scaled_px(super::timeline_row::GAP))
         .border_b_1()
-        .border_color(rgb(theme().selected))
+        .border_color(rgb(theme().surface))
+        .map(|header| super::e2e::probe_chrome_border("pr-table-header", header))
         .text_xs()
         .font_weight(gpui::FontWeight::BOLD)
         .text_color(rgb(theme().text_label))

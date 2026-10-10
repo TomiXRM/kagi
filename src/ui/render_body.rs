@@ -112,11 +112,40 @@ impl KagiApp {
         // Build divider 1: sidebar | main.
         let divider1 = div()
             .id("divider-sidebar")
+            .group("divider-sidebar")
             .w(theme::scaled_px(4.))
             .flex_shrink_0()
             .h_full()
-            .bg(rgb(theme().surface))
+            .relative()
+            .when(cfg!(feature = "gui-e2e"), |divider| {
+                divider.child(e2e::measure_inside("divider-sidebar"))
+            })
+            .bg(rgb(theme().sidebar))
+            .flex()
+            .justify_center()
+            .child(
+                div()
+                    .relative()
+                    .w(px(1.))
+                    .h_full()
+                    .flex_shrink_0()
+                    .bg(rgb(theme().surface))
+                    .group_hover("divider-sidebar", |s| s.bg(rgb(theme().color_branch)))
+                    .group_drag_over::<DividerDrag>("divider-sidebar", |s| {
+                        s.bg(rgb(theme().color_branch))
+                    })
+                    .when(cfg!(feature = "gui-e2e"), |line| {
+                        line.child(e2e::measure_inside("divider-sidebar-line"))
+                    }),
+            )
             .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+            .drag_over::<DividerDrag>(|style, drag, _, _| {
+                if drag.kind == DividerKind::Sidebar {
+                    style.bg(rgb(theme().color_branch))
+                } else {
+                    style
+                }
+            })
             .cursor_col_resize()
             .on_drag(
                 DividerDrag {
@@ -498,6 +527,7 @@ impl KagiApp {
                                             &this.avatars.images,
                                             commit_range,
                                             selected,
+                                            this.window_active,
                                             this.badge_col_w,
                                             this.graph_col_w,
                                             compact,
@@ -703,6 +733,7 @@ impl KagiApp {
         // Build divider 2 (shared between both panel modes).
         let divider2 = div()
             .id("divider-panel")
+            .group("divider-panel")
             .w(theme::scaled_px(4.))
             .flex_shrink_0()
             .h_full()
@@ -710,8 +741,32 @@ impl KagiApp {
             .when(cfg!(feature = "gui-e2e"), |divider| {
                 divider.child(e2e::measure_inside("divider-panel"))
             })
-            .bg(rgb(theme().surface))
+            .bg(rgb(theme().panel))
+            .flex()
+            .justify_center()
+            .child(
+                div()
+                    .relative()
+                    .w(px(1.))
+                    .h_full()
+                    .flex_shrink_0()
+                    .bg(rgb(theme().surface))
+                    .group_hover("divider-panel", |s| s.bg(rgb(theme().color_branch)))
+                    .group_drag_over::<DividerDrag>("divider-panel", |s| {
+                        s.bg(rgb(theme().color_branch))
+                    })
+                    .when(cfg!(feature = "gui-e2e"), |line| {
+                        line.child(e2e::measure_inside("divider-panel-line"))
+                    }),
+            )
             .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+            .drag_over::<DividerDrag>(|style, drag, _, _| {
+                if drag.kind == DividerKind::Panel {
+                    style.bg(rgb(theme().color_branch))
+                } else {
+                    style
+                }
+            })
             .cursor_col_resize()
             .on_drag(
                 DividerDrag {

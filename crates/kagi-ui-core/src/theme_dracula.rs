@@ -13,6 +13,7 @@ pub const DRACULA: Theme = Theme {
     bg_row_alt: 0x21222c,
     surface: 0x343746,
     selected: 0x44475a,
+    inactive_selected: 0x484848,
     panel: 0x21222c,
     sidebar: 0x191a21,
     modal: 0x343746,

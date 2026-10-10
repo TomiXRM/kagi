@@ -30,11 +30,41 @@ impl KagiApp {
         // ── Horizontal resize divider at top of panel ──
         let h_divider = div()
             .id("divider-bottom-panel")
+            .group("divider-bottom-panel")
             .w_full()
             .h(theme::scaled_px(BOTTOM_PANEL_DIVIDER_H))
             .flex_shrink_0()
-            .bg(rgb(theme().surface))
+            .relative()
+            .when(cfg!(feature = "gui-e2e"), |divider| {
+                divider.child(e2e::measure_inside("divider-bottom-panel"))
+            })
+            .bg(rgb(theme().panel))
+            .flex()
+            .flex_col()
+            .justify_center()
+            .child(
+                div()
+                    .relative()
+                    .w_full()
+                    .h(px(1.))
+                    .flex_shrink_0()
+                    .bg(rgb(theme().surface))
+                    .group_hover("divider-bottom-panel", |s| s.bg(rgb(theme().color_branch)))
+                    .group_drag_over::<DividerDrag>("divider-bottom-panel", |s| {
+                        s.bg(rgb(theme().color_branch))
+                    })
+                    .when(cfg!(feature = "gui-e2e"), |line| {
+                        line.child(e2e::measure_inside("divider-bottom-panel-line"))
+                    }),
+            )
             .hover(|style| style.bg(rgb(theme().color_branch)).cursor_row_resize())
+            .drag_over::<DividerDrag>(|style, drag, _, _| {
+                if drag.kind == DividerKind::BottomPanel {
+                    style.bg(rgb(theme().color_branch))
+                } else {
+                    style
+                }
+            })
             .cursor_row_resize()
             .on_drag(
                 DividerDrag {
@@ -67,9 +97,9 @@ impl KagiApp {
                     theme().text_muted
                 };
                 let bg_color = if is_active {
-                    theme().selected
+                    theme().selected_for_window(self.window_active)
                 } else {
-                    theme().panel
+                    rgb(theme().panel).into()
                 };
                 div()
                     .px_3()
@@ -77,7 +107,7 @@ impl KagiApp {
                     .flex()
                     .items_center()
                     .flex_shrink_0()
-                    .bg(rgb(bg_color))
+                    .bg(bg_color)
                     .text_sm()
                     .text_color(rgb(text_color))
                     .hover(|s| s.bg(rgb(theme().surface)))
@@ -211,11 +241,11 @@ impl KagiApp {
                 } else {
                     theme().text_muted
                 }))
-                .bg(rgb(if active {
-                    theme().selected
+                .bg(if active {
+                    theme().selected_for_window(self.window_active)
                 } else {
-                    theme().panel
-                }))
+                    rgb(theme().panel).into()
+                })
                 .hover(|s| s.cursor_pointer().bg(rgb(theme().surface)))
                 .on_click(click)
                 .child(SharedString::from(g.label()))

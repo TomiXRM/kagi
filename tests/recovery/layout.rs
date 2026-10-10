@@ -891,8 +891,11 @@ fn pr_table_alignment(win: AnyWindowHandle, number: u64, case: ((f32, f32), &str
 pub fn scenario_pr_dashboard_responsive(cx: &mut VisualTestAppContext) {
     use crate::evidence_support::pull_request;
     use gpui::{point, ScrollDelta, ScrollStrategy, ScrollWheelEvent, TouchPhase};
+    use gpui_component::scroll::ScrollbarShow;
 
     let _restore = GlobalSettings::capture();
+    let _theme_key = crate::gui_isolation::SavedKeys::keep(&["theme"]);
+    let before_theme = theme::theme();
     let fixture = crate::macos::build_fixture();
     assert!(kagi_git::github::gh_available(), "PR mode requires gh");
     for dimensions in [(940., 660.), (1440., 900.)] {
@@ -906,6 +909,10 @@ pub fn scenario_pr_dashboard_responsive(cx: &mut VisualTestAppContext) {
         );
         let win: AnyWindowHandle = win.into();
         let app = captured.borrow_mut().take().expect("captured KagiApp");
+        let saved_scrollbar_policy = cx.read(|cx| gpui_component::Theme::global(cx).scrollbar_show);
+        assert!(theme::set_active("apple-light"));
+        assert_eq!(theme::theme().slug, "apple-light");
+        cx.update(theme::sync_gpui_component_theme);
         cx.run_until_parked();
         let prs = (1..=100)
             .map(|number| {
@@ -942,7 +949,15 @@ pub fn scenario_pr_dashboard_responsive(cx: &mut VisualTestAppContext) {
         for locale in ["en", "ja"] {
             std::env::set_var("KAGI_LANG", locale);
             i18n::init_lang();
-            for zoom in [1., 1.667] {
+            for (zoom, policy) in [
+                (1., ScrollbarShow::Scrolling),
+                (1.667, ScrollbarShow::Scrolling),
+                (1., ScrollbarShow::Hover),
+                (1.667, ScrollbarShow::Hover),
+                (1., ScrollbarShow::Always),
+                (1.667, ScrollbarShow::Always),
+            ] {
+                cx.update(|cx| gpui_component::Theme::global_mut(cx).scrollbar_show = policy);
                 theme::set_zoom(zoom);
                 horizontal.set_offset(point(px(0.), px(0.)));
                 vertical.scroll_to_item_strict(0, ScrollStrategy::Top);
@@ -978,6 +993,27 @@ pub fn scenario_pr_dashboard_responsive(cx: &mut VisualTestAppContext) {
                 let center = e2e::control_bounds(win.window_id(), "pr-mode-center-pane")
                     .expect("PR center pane");
                 contained(center, viewport, "table stays inside its center pane");
+                for name in ["timeline-row", "pr-table-header"] {
+                    assert_eq!(
+                        e2e::chrome_border(name),
+                        Some(gpui::rgb(theme::theme().surface).into()),
+                        "{name}: resting structural boundary must be neutral surface"
+                    );
+                }
+                let table = e2e::control_bounds(win.window_id(), "pr-home-table")
+                    .expect("table outer bounds");
+                assert!(
+                    (viewport.size.width - table.size.width).abs() <= px(EPS),
+                    "overlay scrollbar must not reserve a side lane"
+                );
+                let lane = if policy == ScrollbarShow::Scrolling {
+                    px(0.)
+                } else {
+                    px(16.)
+                };
+                assert!((table.bottom() - viewport.bottom() - lane).abs() <= px(EPS),
+                    "non-auto-hide policies reserve the bottom lane: {policy:?}, {viewport:?}, {table:?}");
+                eprintln!("[gui-e2e] chrome apple-light {dimensions:?}/{locale}@{zoom}/{policy:?}: table={table:?}, viewport={viewport:?}, header-border={:?}", e2e::chrome_border("pr-table-header"));
                 let row = e2e::control_bounds(win.window_id(), &format!("pr-home-row-{first}"))
                     .expect("first row");
                 let position = point(viewport.center().x, row.center().y);
@@ -1033,7 +1069,12 @@ pub fn scenario_pr_dashboard_responsive(cx: &mut VisualTestAppContext) {
                 assert!(list.rows[&99].0.contains(&format!("#{last}")));
             }
         }
+        cx.update(|cx| {
+            gpui_component::Theme::global_mut(cx).scrollbar_show = saved_scrollbar_policy
+        });
         unmount(cx, app, win);
     }
-    eprintln!("[gui-e2e] PASS pr_dashboard_responsive: readable aligned columns, shared X wheel, independent virtualized Y tail, 8 width/locale/zoom cells");
+    theme::set_active(&before_theme.slug);
+    cx.update(theme::sync_gpui_component_theme);
+    eprintln!("[gui-e2e] PASS pr_dashboard_responsive: aligned columns, shared X wheel, independent Y tail, neutral boundaries, Scrolling/Hover/Always lane geometry, 24 width/locale/zoom/policy cells");
 }

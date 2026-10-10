@@ -106,7 +106,6 @@ impl KagiApp {
                 v.body_input = Some(cx.new(|cx| {
                     InputState::new(window, cx)
                         .multi_line(true)
-                        .auto_grow(3, 12)
                         .placeholder(Msg::CommitBody.t())
                 }));
             }

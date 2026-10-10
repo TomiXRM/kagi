@@ -274,6 +274,10 @@ mod recovery_layout;
 mod recovery_header_fit;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/commit_panel_viewport.rs"]
+mod recovery_commit_panel_viewport;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/toolbar_count.rs"]
 mod toolbar_count;
 
@@ -2117,6 +2121,10 @@ mod macos {
             (
                 "header_fit",
                 Box::new(crate::recovery_header_fit::scenario_header_fit),
+            ),
+            (
+                "commit_panel_viewport",
+                Box::new(crate::recovery_commit_panel_viewport::scenario_commit_panel_viewport),
             ),
             (
                 "toolbar_count_scale",

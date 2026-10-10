@@ -166,3 +166,23 @@ now follows `i18n::lang()`; an explicitly saved value still wins.
   right-aligned icon group it pushed the icons sideways as the text appeared.
 - `parse_coauthors` gains a second caller in spirit (the picker writes what the
   inspector reads), so the trailer format is now load-bearing in both directions.
+
+## Amendment — 2026-10-11: adaptive composer (#1167)
+
+The dense composer retains GitHub Desktop's subject/body/action hierarchy and
+the existing Input, KagiButton and icon controls. At 940×660 and 167% zoom,
+the non-shrinking footer plus AutoGrow's twelve-line inner minimum displaced
+both file lists and the actions below the viewport. The panel now shares
+remaining height through flex: the lists retain their section headers and a
+file row each, while the body uses a 3–12 explicit-line preferred height and
+shrinks into a plain multiline Input's internally scrolling viewport. The
+stacked action row does not shrink, following modal_shell's fixed-action-row
+pattern; no panel-wide scrolling or new control is introduced.
+
+Rest/hover/pressed/focus/disabled/loading/error behavior and owner-bound
+generation, drafts, staging, plan confirmation and klog are unchanged. The
+native `commit_panel_viewport` scenario records the pre-fix 1392×883@100%
+bounds of the files, body, Generate and Commit, asserts exact preservation in
+EN/JA, and measures viewport containment, real wheel scrolling and text input
+at 940×660@167%. Real-window IME/AX and the JA Tier B comparison remain
+separate checks owned by the integrating agent.

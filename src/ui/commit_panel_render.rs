@@ -1218,6 +1218,11 @@ impl CommitPanelView {
             .disabled(!can_commit)
             .when(can_commit, |b| b.on_click(commit_click))
             .into_any_element();
+        let commit_btn = div()
+            .relative()
+            .flex_shrink_0()
+            .child(commit_btn)
+            .child(super::e2e::measure_inside("cp-commit-action"));
 
         // ── Footer icon row (ADR-0134) ────────────────────────────
         // Three icon actions replace the old pill toolbar + full-width Amend
@@ -1234,6 +1239,8 @@ impl CommitPanelView {
                         .flex()
                         .items_center()
                         .justify_center()
+                        .relative()
+                        .child(super::e2e::measure_inside(id))
                         .tooltip(move |_w, cx| {
                             gpui_component::tooltip::Tooltip::new(tip.clone()).build(_w, cx)
                         })
@@ -1404,29 +1411,51 @@ impl CommitPanelView {
         // wearing the Input's own border/background, with an unstyled `Input`
         // and the icons stacked in it. Drawn as a real row rather than absolutely
         // positioned so it can never overlap a long body.
+        // AutoGrow's inner minimum prevents flex shrinking at high zoom. Use
+        // the same 3–12-line preferred height with a plain multiline editor.
+        let body_rows = self
+            .last_draft_value
+            .split_once('\n')
+            .map_or(3, |(_, body)| body.lines().take(12).count().clamp(3, 12));
+        let body_height = px(body_rows as f32 * theme::rem_size_px() * 1.25)
+            + gpui_component::Size::Medium.input_py() * 2.;
         let msg_inputs: gpui::AnyElement = match (&title_input, &body_input) {
             (Some(title), Some(body)) => div()
                 .flex()
                 .flex_col()
+                .min_h(px(0.))
+                .flex_shrink(1.)
                 .gap_2()
                 .child(Input::new(title).appearance(true).bordered(true))
                 .child(
                     div()
                         .flex()
                         .flex_col()
+                        .min_h(px(0.))
+                        .flex_shrink(1.)
                         // Same radius the `Input` gives itself, so the two boxes
                         // do not have visibly different corners.
                         .rounded(input_radius)
                         .border_1()
                         .border_color(rgb(theme().text_muted))
                         .bg(rgb(theme().bg_base))
-                        .child(Input::new(body).appearance(false).bordered(false))
+                        .child(
+                            div()
+                                .h(body_height)
+                                .min_h(px(0.))
+                                .flex_shrink(1.)
+                                .overflow_hidden()
+                                .child(Input::new(body).h_full().appearance(false).bordered(false)),
+                        )
+                        .relative()
+                        .child(super::e2e::measure_inside("cp-body"))
                         .child(
                             div()
                                 .flex()
                                 .flex_row()
                                 .items_center()
                                 .justify_between()
+                                .flex_shrink_0()
                                 .px_1()
                                 .pb_1()
                                 .child(template_toggle)
@@ -1489,14 +1518,17 @@ impl CommitPanelView {
                         )
                     }),
             )
-            // T-UI-003: ファイル領域コンテナ (flex_1 + min_h(0)) — diff 廃止でフル高さ
+            // File lists share the remaining height with the shrinking composer.
             .child(
                 div()
                     .id("cp-files-container")
                     .flex_1()
-                    .min_h(px(0.))
+                    // Two section headers and at least one visible file row each.
+                    .min_h(theme::scaled_px(100.))
                     .flex()
                     .flex_col()
+                    .relative()
+                    .child(super::e2e::measure_inside("cp-files"))
                     // Unstaged ヘッダ (固定)
                     .child(unstaged_header)
                     // Unstaged スクロールボックス — PERF: virtualized uniform_list.
@@ -1636,7 +1668,8 @@ impl CommitPanelView {
             // it writes into that worktree.
             .child(
                 div()
-                    .flex_shrink_0()
+                    .flex_shrink(1.)
+                    .min_h(px(0.))
                     .flex()
                     .flex_col()
                     .px_3()

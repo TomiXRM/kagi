@@ -260,7 +260,7 @@ fn special_sync_preflight_refuses_late_sparse_submodule_or_attributes() {
                 Some(PlanNote::Common(
                     CommonNote::SparseCheckoutUnsupported { .. }
                         | CommonNote::SubmoduleCheckoutUnsupported { .. }
-                        | CommonNote::ExternalFilter { .. }
+                        | CommonNote::ExternalFilterSync { .. }
                 ))
             ),
             "late {variant} refusal must remain typed: {error:?}"
@@ -316,5 +316,115 @@ fn special_sync_skip_worktree_without_sparse_config_refuses() {
         dir.path(),
         &["update-index", "--skip-worktree", "plain.txt"],
     );
-    assert_refused(dir.path(), "non-cone sparse-checkout");
+    assert_refused(dir.path(), "skip-worktree entries");
+}
+
+fn assert_sync_allowed(dir: &Path, branch: &str) {
+    let mut backend = backend(dir);
+    let op = Operation::SyncToRemote {
+        branch: branch.into(),
+    };
+    let plan = backend.plan(&op).unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    backend.run(&op, &plan).unwrap();
+    assert_eq!(
+        git_output(dir, &["rev-parse", "HEAD"]),
+        git_output(dir, &["rev-parse", "upstream"])
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("plain.txt")).unwrap(),
+        "base\n"
+    );
+    assert!(git_output(dir, &["diff", "--cached", "--name-only"]).is_empty());
+}
+
+#[test]
+fn special_sync_disabled_sparse_ignores_leftover_cone_and_patterns() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    let dir = fixture();
+    git(dir.path(), &["sparse-checkout", "init", "--cone"]);
+    git(dir.path(), &["sparse-checkout", "disable"]);
+    // Simulate a Git/version configuration that leaves cone mode behind;
+    // disabled sparse-checkout must ignore it, just like leftover patterns.
+    git(
+        dir.path(),
+        &["config", "--worktree", "core.sparseCheckoutCone", "true"],
+    );
+    assert_eq!(
+        git_output(dir.path(), &["config", "--get", "core.sparseCheckout"]),
+        "false"
+    );
+    assert_eq!(
+        git_output(dir.path(), &["config", "--get", "core.sparseCheckoutCone"]),
+        "true"
+    );
+    assert!(dir.path().join(".git/info/sparse-checkout").exists());
+    assert_sync_allowed(dir.path(), "main");
+}
+
+#[test]
+fn special_sync_full_linked_worktree_ignores_sparse_main_patterns() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    let dir = fixture();
+    git(dir.path(), &["sparse-checkout", "init", "--cone"]);
+    let linked = tempfile::tempdir().unwrap();
+    git(
+        dir.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            linked.path().to_str().unwrap(),
+        ],
+    );
+    git(
+        linked.path(),
+        &["config", "--worktree", "core.sparseCheckout", "false"],
+    );
+    git(
+        linked.path(),
+        &["config", "--worktree", "core.sparseCheckoutCone", "false"],
+    );
+    git(linked.path(), &["config", "branch.linked.remote", "."]);
+    git(
+        linked.path(),
+        &["config", "branch.linked.merge", "refs/heads/upstream"],
+    );
+    assert!(dir.path().join(".git/info/sparse-checkout").exists());
+    let main_head = git_output(dir.path(), &["rev-parse", "HEAD"]);
+    let main_index = std::fs::read(dir.path().join(".git/index")).unwrap();
+    assert_sync_allowed(linked.path(), "linked");
+    assert_eq!(git_output(dir.path(), &["rev-parse", "HEAD"]), main_head);
+    assert_eq!(
+        std::fs::read(dir.path().join(".git/index")).unwrap(),
+        main_index
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("plain.txt")).unwrap(),
+        "local\n"
+    );
+}
+
+#[test]
+fn special_sync_filter_advice_names_sync_not_stage_or_discard() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    let dir = fixture();
+    write_file(dir.path(), ".git/info/attributes", "plain.txt filter=lfs\n");
+    let plan = backend(dir.path()).plan(&op()).unwrap();
+    let text = plan
+        .blockers
+        .iter()
+        .find(|n| n.message_en().contains("external filter (lfs)"))
+        .unwrap()
+        .message_en();
+    assert!(text.contains("sync with git"), "{text}");
+    assert!(!text.contains("stage or discard"), "{text}");
 }

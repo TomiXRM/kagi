@@ -80,14 +80,19 @@ repo が大きくなった瞬間に無言で発現することになる。速度
 
 - libgit2 remains the read/plan backend. Kagi never invokes repository-supplied
   clean/smudge commands or git-lfs, even when a driver is configured.
-- Before single/bulk Stage or Stage hunk writes, resolve each target's attributes
-  using libgit2 (`FILE_THEN_INDEX`, including `.git/info/attributes`). Any named
-  `filter=` driver is unsupported; `diff=lfs` / `merge=lfs` also identify LFS
-  paths when `filter` is unset. Built-in text/EOL conversion remains supported.
-- Refuse the entire stage batch before adding any object/index entry. Discard
-  checks at plan and preflight before backup or checkout because a raw LFS pointer
-  is not a safely smudged worktree file. Each operation uses a fresh attribute
-  cache to catch attributes added after approval.
+- Before single/bulk Stage imports an existing worktree entry with `add_path`,
+  or Stage hunk imports content, resolve the target's attributes using libgit2
+  (`FILE_THEN_INDEX`, including `.git/info/attributes`). Any named `filter=`
+  driver is unsupported; `diff=lfs` / `merge=lfs` also identify LFS paths when
+  `filter` is unset. Built-in text/EOL conversion remains supported.
+  Staging a genuine deletion uses `remove_path`, imports no content and remains
+  available even when that path has filter attributes.
+- Classify all batch paths once and validate the entire add-set before adding
+  any object/index entry. Discard checks tracked targets restored from the
+  index at plan and preflight because a raw LFS pointer is not a safely smudged
+  worktree file. Untracked Discard remains available: it backs up raw bytes and
+  deletes the entry without a checkout/filter. Each operation uses a fresh
+  attribute cache to catch attributes added after approval.
 - The typed EN/JA blocker names the path and driver and directs the user to Git.
   Whole-file Unstage and Unstage hunk remain available: they restore approved
   HEAD/index content without importing worktree bytes or executing filters.

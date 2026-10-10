@@ -98,7 +98,6 @@ fn worktree_entry_present(path: &Path) -> Result<bool, GitError> {
 }
 
 pub(crate) fn stage_file(repo: &Repository, path: &Path) -> Result<(), GitError> {
-    crate::special_repo::FilterCheck::new(repo)?.require_supported(path)?;
     let workdir = repo
         .workdir()
         .ok_or_else(|| GitError::Other("repository has no working tree".to_string()))?;
@@ -109,6 +108,7 @@ pub(crate) fn stage_file(repo: &Repository, path: &Path) -> Result<(), GitError>
         .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
 
     if worktree_entry_present(&abs_path)? {
+        crate::special_repo::FilterCheck::new(repo)?.require_supported(path)?;
         // libgit2 stages symlinks as mode 120000 with raw read_link bytes,
         // without following the target (even when it is missing).
         index
@@ -427,33 +427,33 @@ pub(crate) fn stage_files(
     if paths.is_empty() {
         return Ok(0);
     }
-    let filters = crate::special_repo::FilterCheck::new(repo)?;
-    for path in paths {
-        filters.require_supported(path)?;
-    }
     let workdir = repo
         .workdir()
         .ok_or_else(|| GitError::Other("repository has no working tree".to_string()))?;
     let mut index = repo
         .index()
         .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+    let present: Vec<bool> = paths
+        .iter()
+        .map(|path| worktree_entry_present(&workdir.join(path)))
+        .collect::<Result<_, _>>()?;
+    let filters = crate::special_repo::FilterCheck::new(repo)?;
+    // Validate the whole add-set before libgit2 creates any blob or index edit.
+    // Removing an absent tracked path never imports filtered worktree content.
+    for (path, present) in paths.iter().zip(&present) {
+        if *present {
+            filters.require_supported(path)?;
+        } else if is_sparse_excluded(&index, path) {
+            return Err(GitError::Blocked(Box::new(PlanNote::Common(
+                CommonNote::SparseExcludedPath {
+                    path: path.display().to_string(),
+                },
+            ))));
+        }
+    }
 
     let result = (|| {
-        for path in paths {
-            // Same rule as `stage_file`: absent from the working tree is not the
-            // same as deleted. This is the path "stage everything" takes, so it is
-            // the one a user in a sparse-checkout repository actually reaches
-            // (#675). Refuse the whole batch rather than skipping the offending
-            // paths — a partially applied stage is harder to reason about than one
-            // that did not happen.
-            let present = worktree_entry_present(&workdir.join(path))?;
-            if !present && is_sparse_excluded(&index, path) {
-                return Err(GitError::Blocked(Box::new(PlanNote::Common(
-                    CommonNote::SparseExcludedPath {
-                        path: path.display().to_string(),
-                    },
-                ))));
-            }
+        for (path, present) in paths.iter().zip(present) {
             if present {
                 index.add_path(path).map_err(|e| {
                     GitError::Other(format!(

@@ -53,7 +53,7 @@ pub use cherry_revert::{CherryRevertNote, CherryRevertRecovery, CherryRevertTitl
 pub use cleanup::{CleanupNote, CleanupRecovery, CleanupTitle};
 pub use clone::{CloneNote, CloneTitle};
 pub use commit::{CommitNote, CommitRecovery, CommitTitle};
-pub use common::{CommonNote, DirtyParts, OpPhrase, PlanOp, UntrackedCtx};
+pub use common::{CommonNote, DirtyParts, OpPhrase, PlanOp, SparseCheckoutKind, UntrackedCtx};
 pub use conflicts::{ConflictsNote, ConflictsRecovery, ConflictsTitle};
 pub use discard::DiscardNote;
 pub use force_lease::{ForceLeaseNote, ForceLeaseRecovery, ForceLeaseTitle};

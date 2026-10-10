@@ -145,9 +145,6 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
     let mut untracked_targets = 0usize;
     let filters = crate::special_repo::FilterCheck::new(repo)?;
     for (raw, rel) in paths.iter().zip(&rels) {
-        if let Some(note) = filters.blocker(Path::new(rel))? {
-            blockers.push(note);
-        }
         if !discard_path_is_safe(rel)
             || Path::new(raw)
                 .components()
@@ -173,6 +170,10 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
             blockers.push(PlanNote::Discard(DiscardNote::NoUnstagedChanges {
                 path: rel.clone(),
             }));
+        } else if let Some(note) = filters.blocker(Path::new(rel))? {
+            // Only tracked targets are restored through checkout. Untracked
+            // targets are retained as raw bytes and deleted without filters.
+            blockers.push(note);
         }
     }
 
@@ -282,6 +283,9 @@ fn preflight_discard(
         return Err(GitError::Other("discard: no target paths".to_string()));
     }
     let filters = crate::special_repo::FilterCheck::new(repo)?;
+    let index = repo
+        .index()
+        .map_err(|e| GitError::Other(e.message().to_owned()))?;
     for (raw, rel) in paths.iter().zip(&rels) {
         if !discard_path_is_safe(rel)
             || Path::new(raw)
@@ -292,7 +296,9 @@ fn preflight_discard(
                 DiscardNote::UnsafePath { path: raw.clone() }.message_en(),
             ));
         }
-        filters.require_supported(Path::new(rel))?;
+        if index.get_path(Path::new(rel), 0).is_some() {
+            filters.require_supported(Path::new(rel))?;
+        }
     }
     let planned: std::collections::HashSet<&Path> = plan
         .preview_files

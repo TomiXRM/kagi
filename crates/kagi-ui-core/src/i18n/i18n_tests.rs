@@ -236,25 +236,28 @@ fn stash_identity_advice_preserves_git_braces_and_identifier_data() {
 
 #[test]
 fn special_repo_blockers_name_variants_in_english_and_japanese() {
-    use kagi_domain::plan_note::{CommonNote, PlanNote};
+    use kagi_domain::plan_note::{CommonNote, PlanNote, SparseCheckoutKind};
 
     let _guard = LOCK.lock();
     let previous = lang();
     let path = "module-{}-日本語";
     for language in [Lang::En, Lang::Ja] {
         set_lang_no_persist(language);
-        for cone in [true, false] {
+        for kind in [
+            SparseCheckoutKind::Cone,
+            SparseCheckoutKind::NonCone,
+            SparseCheckoutKind::SkipWorktree,
+        ] {
             let text = plan_note_text(&PlanNote::Common(CommonNote::SparseCheckoutUnsupported {
-                cone,
+                kind,
             }));
-            assert!(
-                text.contains(if cone {
-                    "cone sparse-checkout"
-                } else {
-                    "non-cone sparse-checkout"
-                }),
-                "{text}"
-            );
+            let expected = match kind {
+                SparseCheckoutKind::Cone => "cone sparse-checkout",
+                SparseCheckoutKind::NonCone => "non-cone sparse-checkout",
+                SparseCheckoutKind::SkipWorktree if language == Lang::En => "skip-worktree entries",
+                SparseCheckoutKind::SkipWorktree => "skip-worktree エントリー",
+            };
+            assert!(text.contains(expected), "{text}");
             assert!(
                 text.contains(if language == Lang::En {
                     "Nothing was written"
@@ -264,6 +267,26 @@ fn special_repo_blockers_name_variants_in_english_and_japanese() {
                 "{text}"
             );
         }
+        let filter_text = plan_note_text(&PlanNote::Common(CommonNote::ExternalFilterSync {
+            path: path.into(),
+            filter: "lfs".into(),
+        }));
+        assert!(
+            filter_text.contains(path) && filter_text.contains("(lfs)"),
+            "{filter_text}"
+        );
+        assert!(
+            filter_text.contains(if language == Lang::En {
+                "sync with git"
+            } else {
+                "git で sync"
+            }),
+            "{filter_text}"
+        );
+        assert!(
+            !filter_text.contains("stage") && !filter_text.contains("discard"),
+            "{filter_text}"
+        );
         for uninitialized in [true, false] {
             let text = plan_note_text(&PlanNote::Common(
                 CommonNote::SubmoduleCheckoutUnsupported {

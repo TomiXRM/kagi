@@ -60,9 +60,12 @@ submodule work, or externally filtered worktree content. When Sync replaces HEAD
 worktree, its plan and preflight must therefore refuse before *any* backup ref,
 object/index write, checkout, or branch update:
 
-- `core.sparseCheckout` / `core.sparseCheckoutCone`, a sparse-checkout patterns
-  file in the worktree/common Git directory, or a skip-worktree index entry.
-  The typed EN/JA blocker identifies cone versus non-cone sparse-checkout.
+- Active sparse-checkout configuration/patterns in this worktree, or any
+  skip-worktree index entry. When `core.sparseCheckout` is explicitly false,
+  Git ignores leftover cone config and patterns; so does Kagi. A linked
+  worktree never inherits the main worktree's common-dir patterns.
+  The typed EN/JA blocker distinguishes cone, non-cone and skip-worktree-only
+  detection rather than labeling a manual skip-worktree bit as sparse-checkout.
 - Submodules discovered by `repo.submodules()` whose worktree is uninitialized
   or dirty (staged, unstaged, untracked, or checked out at a different commit).
   Repository `submodule.*.ignore` must not hide work from this safety check.
@@ -70,6 +73,8 @@ object/index write, checkout, or branch update:
   work being preserved. Resolve current, HEAD and incoming tree attributes:
   an incoming `.gitattributes` is authoritative even before it is checked out.
   LFS is detected by attributes, not git-lfs availability or pointer heuristics.
+  The Sync-specific EN/JA note explains that force checkout cannot execute the
+  filter and directs users to sync with Git, not to Stage/Discard.
 
 Ordinary repositories keep the existing round-trip behavior. Ref-only Sync of a
 non-HEAD branch is unchanged. The read-only detection helper is reusable by other

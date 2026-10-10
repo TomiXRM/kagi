@@ -1,6 +1,8 @@
 //! JA strings for the cross-op `CommonNote` templates (ADR-0129 §A).
 
-use kagi_domain::plan_note::{CommonNote, DirtyParts, OpPhrase, PlanOp, UntrackedCtx};
+use kagi_domain::plan_note::{
+    CommonNote, DirtyParts, OpPhrase, PlanOp, SparseCheckoutKind, UntrackedCtx,
+};
 
 use crate::i18n::{branch_name_error, worktree_path_error, Msg};
 
@@ -40,8 +42,11 @@ pub(crate) const ADVICE_COMMON_SPARSE_EXCLUDED_PATH: &str =
 pub(crate) const ADVICE_COMMON_EXTERNAL_FILTER: &str =
     "'{}' は外部 filter ({}) を使用しています。Kagi はまだ filter 後の内容を保全できないため、filter に対応するまで git で stage / discard してください。書込みは行っていません。";
 
+pub(crate) const ADVICE_COMMON_EXTERNAL_FILTER_SYNC: &str =
+    "'{}' は外部 filter ({}) を使用しています。Kagi は強制 checkout でその filter を実行できないため、まだ sync できません。書込みは行っていません。filter に対応するまで git で sync してください。";
+
 pub(crate) const ADVICE_COMMON_SPARSE_CHECKOUT_UNSUPPORTED: &str =
-    "この repository は {} sparse-checkout を使用しています。sparse path と index flag を保全できないため、Kagi では強制 checkout できません。git で操作してください。書込みは行っていません。";
+    "この repository は {} を使用しています。sparse path と index flag を保全できないため、Kagi では強制 checkout できません。git で操作してください。書込みは行っていません。";
 
 pub(crate) const ADVICE_COMMON_SUBMODULE_CHECKOUT_UNSUPPORTED: &str =
     "'{}' は{}の submodule です。内部の作業ツリーを保全できないため、Kagi では強制 checkout できません。先に git で submodule を初期化するか変更を保存してください。書込みは行っていません。";
@@ -145,9 +150,16 @@ pub fn note_ja(note: &CommonNote) -> String {
         CommonNote::ExternalFilter { path, filter } => {
             super::advice_text(Msg::AdviceCommonExternalFilter, &[path, filter])
         }
-        CommonNote::SparseCheckoutUnsupported { cone } => super::advice_text(
+        CommonNote::ExternalFilterSync { path, filter } => {
+            super::advice_text(Msg::AdviceCommonExternalFilterSync, &[path, filter])
+        }
+        CommonNote::SparseCheckoutUnsupported { kind } => super::advice_text(
             Msg::AdviceCommonSparseCheckoutUnsupported,
-            &[&if *cone { "cone" } else { "non-cone" }],
+            &[&match kind {
+                SparseCheckoutKind::Cone => "cone sparse-checkout",
+                SparseCheckoutKind::NonCone => "non-cone sparse-checkout",
+                SparseCheckoutKind::SkipWorktree => "skip-worktree エントリー",
+            }],
         ),
         CommonNote::SubmoduleCheckoutUnsupported {
             path,

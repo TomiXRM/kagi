@@ -198,3 +198,62 @@ fn external_filter_unstage_restores_pointer_without_importing_worktree() {
         "full worktree content, not a pointer\n"
     );
 }
+
+#[test]
+fn external_filter_deletion_stages_without_importing_content() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    for bulk in [false, true] {
+        let dir = fixture();
+        std::fs::remove_file(dir.path().join("asset.bin")).unwrap();
+        let backend = Backend::open(dir.path()).unwrap();
+        if bulk {
+            assert_eq!(
+                backend
+                    .stage_files(&["plain.txt".into(), "asset.bin".into()])
+                    .unwrap(),
+                2
+            );
+            assert_eq!(git_output(dir.path(), &["show", ":plain.txt"]), "changed");
+        } else {
+            backend.stage_file(Path::new("asset.bin")).unwrap();
+            assert_eq!(git_output(dir.path(), &["show", ":plain.txt"]), "base");
+        }
+        assert_eq!(
+            git_output(
+                dir.path(),
+                &["diff", "--cached", "--name-status", "--", "asset.bin"]
+            ),
+            "D\tasset.bin"
+        );
+        assert!(!dir.path().join("asset.bin").exists());
+    }
+}
+
+#[test]
+fn external_filter_untracked_discard_preserves_raw_backup() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    let dir = fixture();
+    write_file(dir.path(), "untracked.bin", "precious raw content\n");
+    let mut backend = Backend::open(dir.path()).unwrap();
+    let op = Operation::Discard {
+        paths: vec!["untracked.bin".into()],
+    };
+    let plan = backend.plan(&op).unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    let index = std::fs::read(dir.path().join(".git/index")).unwrap();
+    let outcome = backend.run(&op, &plan).unwrap();
+    let kagi_git::OperationOutcome::Discard(outcome) = outcome else {
+        panic!("discard outcome")
+    };
+    assert_eq!(outcome.backups.len(), 1);
+    assert_eq!(
+        git_output(dir.path(), &["cat-file", "-p", &outcome.backups[0].blob]),
+        "precious raw content"
+    );
+    assert!(!dir.path().join("untracked.bin").exists());
+    assert_eq!(std::fs::read(dir.path().join(".git/index")).unwrap(), index);
+}

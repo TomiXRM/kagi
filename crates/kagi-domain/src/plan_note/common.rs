@@ -118,6 +118,14 @@ pub enum UntrackedCtx {
     Untouched,
 }
 
+/// The worktree semantics that a force checkout cannot preserve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SparseCheckoutKind {
+    Cone,
+    NonCone,
+    SkipWorktree,
+}
+
 /// Cross-op notes (ADR-0129 appendix §A).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommonNote {
@@ -141,8 +149,10 @@ pub enum CommonNote {
     SparseExcludedPath { path: String },
     /// #1136: named clean/smudge filters are not executed by libgit2.
     ExternalFilter { path: String, filter: String },
+    /// #1137: filter refusal for Sync, with checkout-specific guidance.
+    ExternalFilterSync { path: String, filter: String },
     /// #1137: force checkout does not preserve sparse index/worktree semantics.
-    SparseCheckoutUnsupported { cone: bool },
+    SparseCheckoutUnsupported { kind: SparseCheckoutKind },
     /// #1137: nested work cannot be retained by a superproject blob backup.
     SubmoduleCheckoutUnsupported { path: String, uninitialized: bool },
     /// blocker (#842, #1131): the displayed hunk's range or raw patch content
@@ -237,10 +247,20 @@ impl CommonNote {
                     path, filter
                 )
             }
-            CommonNote::SparseCheckoutUnsupported { cone } => {
+            CommonNote::ExternalFilterSync { path, filter } => {
+                format!(
+                    crate::advice_template_en!(CommonExternalFilterSync),
+                    path, filter
+                )
+            }
+            CommonNote::SparseCheckoutUnsupported { kind } => {
                 format!(
                     crate::advice_template_en!(CommonSparseCheckoutUnsupported),
-                    if *cone { "cone" } else { "non-cone" }
+                    match kind {
+                        SparseCheckoutKind::Cone => "cone sparse-checkout",
+                        SparseCheckoutKind::NonCone => "non-cone sparse-checkout",
+                        SparseCheckoutKind::SkipWorktree => "skip-worktree entries",
+                    }
                 )
             }
             CommonNote::SubmoduleCheckoutUnsupported {

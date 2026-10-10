@@ -91,8 +91,11 @@ macro_rules! advice_template_en {
     (CommonExternalFilter) => {
         "'{}' uses an external filter ({}). Kagi cannot preserve its filtered content yet; stage or discard it with git until Kagi supports filters. Nothing was written."
     };
+    (CommonExternalFilterSync) => {
+        "Kagi cannot force-checkout '{}' because it uses an external filter ({}), which Kagi cannot run. Nothing was written; sync with git until Kagi supports filters."
+    };
     (CommonSparseCheckoutUnsupported) => {
-        "Kagi cannot safely force-checkout a repository using {} sparse-checkout: sparse paths and index flags cannot yet be preserved. Use git to manage this repository. Nothing was written."
+        "Kagi cannot safely force-checkout a repository using {}: sparse paths and index flags cannot yet be preserved. Use git to manage this repository. Nothing was written."
     };
     (CommonSubmoduleCheckoutUnsupported) => {
         "Kagi cannot safely force-checkout a repository with {} submodule ('{}'): its nested worktree cannot be preserved. Initialize or save the submodule with git first. Nothing was written."

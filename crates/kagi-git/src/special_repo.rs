@@ -2,7 +2,7 @@
 use std::{collections::BTreeSet, path::Path};
 
 use git2::{AttrCheckFlags, AttrValue, Repository, SubmoduleIgnore, SubmoduleStatus, Tree};
-use kagi_domain::plan_note::{CommonNote, PlanNote};
+use kagi_domain::plan_note::{CommonNote, PlanNote, SparseCheckoutKind};
 
 use crate::GitError;
 
@@ -79,10 +79,10 @@ fn git_error(error: git2::Error) -> GitError {
     ))
 }
 
-fn config_bool(config: &git2::Config, key: &str) -> Result<bool, GitError> {
+fn config_bool(config: &git2::Config, key: &str) -> Result<Option<bool>, GitError> {
     match config.get_bool(key) {
-        Ok(value) => Ok(value),
-        Err(error) if error.code() == git2::ErrorCode::NotFound => Ok(false),
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.code() == git2::ErrorCode::NotFound => Ok(None),
         Err(error) => Err(git_error(error)),
     }
 }
@@ -99,19 +99,32 @@ fn patterns_present(gitdir: &Path) -> Result<bool, GitError> {
 
 fn sparse_blocker(repo: &Repository) -> Result<Option<PlanNote>, GitError> {
     let config = repo.config().map_err(git_error)?;
-    let cone = config_bool(&config, "core.sparseCheckoutCone")?;
     let enabled = config_bool(&config, "core.sparseCheckout")?;
-    let sparse = enabled
-        || cone
-        || patterns_present(repo.path())?
-        || (repo.commondir() != repo.path() && patterns_present(repo.commondir())?);
-    // Do not scan a large index when config/patterns already prove this variant.
-    let sparse = sparse
-        || repo.index().map_err(git_error)?.iter().any(|entry| {
-            git2::IndexEntryExtendedFlag::from_bits_truncate(entry.flags_extended)
-                .contains(git2::IndexEntryExtendedFlag::SKIP_WORKTREE)
-        });
-    Ok(sparse.then(|| PlanNote::Common(CommonNote::SparseCheckoutUnsupported { cone })))
+    // Git ignores cone config and leftover patterns after sparse is disabled.
+    // Patterns are worktree-local; the main worktree's common-dir patterns do
+    // not describe a linked worktree.
+    if enabled != Some(false) {
+        let cone = config_bool(&config, "core.sparseCheckoutCone")?.unwrap_or(false);
+        if enabled == Some(true) || cone || patterns_present(repo.path())? {
+            let kind = if cone {
+                SparseCheckoutKind::Cone
+            } else {
+                SparseCheckoutKind::NonCone
+            };
+            return Ok(Some(PlanNote::Common(
+                CommonNote::SparseCheckoutUnsupported { kind },
+            )));
+        }
+    }
+    let skip_worktree = repo.index().map_err(git_error)?.iter().any(|entry| {
+        git2::IndexEntryExtendedFlag::from_bits_truncate(entry.flags_extended)
+            .contains(git2::IndexEntryExtendedFlag::SKIP_WORKTREE)
+    });
+    Ok(skip_worktree.then(|| {
+        PlanNote::Common(CommonNote::SparseCheckoutUnsupported {
+            kind: SparseCheckoutKind::SkipWorktree,
+        })
+    }))
 }
 
 fn submodule_blockers(repo: &Repository, blockers: &mut Vec<PlanNote>) -> Result<(), GitError> {
@@ -196,7 +209,12 @@ pub(crate) fn force_checkout_blockers(
     for path in paths {
         for check in [&current, &original].into_iter().chain(incoming.as_ref()) {
             if let Some(note) = check.blocker(path)? {
-                blockers.push(note);
+                blockers.push(match note {
+                    PlanNote::Common(CommonNote::ExternalFilter { path, filter }) => {
+                        PlanNote::Common(CommonNote::ExternalFilterSync { path, filter })
+                    }
+                    note => note,
+                });
                 break;
             }
         }

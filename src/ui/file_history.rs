@@ -225,6 +225,7 @@ impl KagiApp {
         // in place when HEAD actually moves (see `refresh_overlays_after_reload`).
         let head = self.view().head_oid.clone();
         if let Some(ui) = self.ui_mut() {
+            ui.retire_issue_conversation_scope();
             ui.file_history = Some(view);
             ui.file_history_head = head;
         }

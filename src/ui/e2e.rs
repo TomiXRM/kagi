@@ -880,12 +880,12 @@ pub fn dispatch_file_menu_discard(
 }
 
 #[cfg(feature = "gui-e2e")]
-type PrFetchResult = Result<Vec<kagi_domain::github::PullRequest>, kagi_git::github::PrFetchError>;
+type PrFetchResult = Result<kagi_domain::github::PrListSnapshot, kagi_git::github::PrFetchError>;
 #[cfg(feature = "gui-e2e")]
 type CleanupScanResult = Result<
     (
         Vec<kagi_domain::branch_cleanup::BranchCleanupRow>,
-        PrFetchResult,
+        Result<Vec<kagi_domain::github::PullRequest>, kagi_git::github::PrFetchError>,
     ),
     String,
 >;
@@ -942,6 +942,69 @@ pub fn queue_github_pr_fetch(task: gpui::Task<PrFetchResult>) {
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn take_github_pr_fetch() -> Option<gpui::Task<PrFetchResult>> {
     GITHUB_PR_FETCH.with(|slot| slot.borrow_mut().take())
+}
+
+/// Inspect the collection the production PR consumers currently read.
+#[cfg(feature = "gui-e2e")]
+pub fn pr_page_info(
+    app: &KagiApp,
+) -> (
+    Vec<kagi_domain::github::PrKey>,
+    Option<String>,
+    Option<String>,
+    bool,
+) {
+    let ui = app.ui();
+    let paging = if ui.github_prs_strip.rows.is_some() {
+        &ui.github_prs_strip.paging
+    } else {
+        &ui.github_prs_paging
+    };
+    (
+        ui.pr_list_rows().iter().map(|pr| pr.key()).collect(),
+        paging.base_repo.clone(),
+        paging.cursor.clone(),
+        ui.pr_list_loading_more(),
+    )
+}
+
+/// First-page authority/error shown by the actual selected-list consumer.
+/// This is inspection only; it neither delivers nor schedules a transport.
+#[cfg(feature = "gui-e2e")]
+pub fn pr_list_read_status(app: &KagiApp) -> (bool, Option<String>) {
+    let ui = app.ui();
+    (ui.pr_list_loading(), ui.pr_list_error().map(str::to_owned))
+}
+
+/// Use the same owner-targeted continuation boundary as the tail and buttons.
+#[cfg(feature = "gui-e2e")]
+pub fn load_more_prs(app: &mut KagiApp, cx: &mut gpui::Context<KagiApp>) {
+    if let (Some(owner), Some(repo)) = (app.active_session(), app.repo_path.clone()) {
+        app.load_more_github_prs_for(owner, repo, cx);
+    }
+}
+
+/// Actual lazy-controller targets, not an echo of a fixture or rendered rows.
+/// The pending tuple's boolean distinguishes opened-body work from status work.
+#[cfg(feature = "gui-e2e")]
+pub fn pr_detail_demand(
+    app: &KagiApp,
+) -> (
+    std::collections::BTreeSet<kagi_domain::github::PrKey>,
+    std::collections::BTreeSet<kagi_domain::github::PrKey>,
+    Vec<(kagi_domain::github::PrKey, bool)>,
+    usize,
+) {
+    let (visible, opened, pending, active) = app.ui().pr_details.paging_demand_for_e2e();
+    (
+        visible,
+        opened,
+        pending
+            .into_iter()
+            .map(|(key, stage)| (key, stage == super::github_pr_detail::PrDetailStage::Body))
+            .collect(),
+        active,
+    )
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -1065,4 +1128,59 @@ pub(crate) fn mark_fetch_completion_returned() {
 #[cfg(feature = "gui-e2e")]
 pub fn fetch_completions_returned() -> u64 {
     FETCH_COMPLETIONS_RETURNED.with(std::cell::Cell::get)
+}
+
+/// Transport-only hold for the real Issue detail loader. The loader still
+/// freezes session/base repository/generation and owns acceptance/rejection.
+#[cfg(feature = "gui-e2e")]
+pub type IssueDetailResult = Result<kagi_domain::github::Issue, kagi_git::github::PrFetchError>;
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static ISSUE_DETAIL_READ: RefCell<Option<(u64, gpui::Task<IssueDetailResult>)>> =
+        const { RefCell::new(None) };
+    static ISSUE_DETAIL_READ_SERIAL: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// Clears an unconsumed task on unwind without disturbing a later request.
+#[cfg(feature = "gui-e2e")]
+pub struct IssueDetailReadGuard(u64);
+
+#[cfg(feature = "gui-e2e")]
+impl Drop for IssueDetailReadGuard {
+    fn drop(&mut self) {
+        ISSUE_DETAIL_READ.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            if slot.as_ref().is_some_and(|(serial, _)| *serial == self.0) {
+                slot.take();
+            }
+        });
+    }
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn queue_github_issue_detail(task: gpui::Task<IssueDetailResult>) -> IssueDetailReadGuard {
+    let serial = ISSUE_DETAIL_READ_SERIAL.with(|serial| {
+        let next = serial.get().wrapping_add(1);
+        serial.set(next);
+        next
+    });
+    ISSUE_DETAIL_READ.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        assert!(slot.is_none(), "unconsumed Issue detail task");
+        *slot = Some((serial, task));
+    });
+    IssueDetailReadGuard(serial)
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(super) fn take_github_issue_detail() -> Option<gpui::Task<IssueDetailResult>> {
+    ISSUE_DETAIL_READ.with(|slot| slot.borrow_mut().take().map(|(_, task)| task))
+}
+
+/// Enter the existing accepted repository-address transition, not a test owner.
+#[cfg(feature = "gui-e2e")]
+pub fn retarget_github_issues(app: &mut KagiApp, identity: &str, cx: &mut gpui::Context<KagiApp>) {
+    app.address_issues_to(identity, cx);
 }

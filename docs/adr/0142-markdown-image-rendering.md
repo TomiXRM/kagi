@@ -121,3 +121,68 @@ client, code that does not say what the author typed is a defect.
   places to change is how the Issues side and the PR side drift apart.
 - The Editor preview keeps its own typography, as it keeps its own image
   policy above.
+
+## Amendment 3 (#1091, 2026-10-09): unchanged GitHub body preparation reuse
+
+`timeline_row::body_markdown` retains one original raw body, its
+`BodyMarkdownFormat`, and the resulting prepared `SharedString` in the existing
+window-keyed state, under the body element ID in a separate
+`github-markdown-preparation` namespace. A different raw byte sequence or format
+replaces that payload; equal byte length is not equality. The format includes
+original/trimmed presentation and the localized placeholder text/italic choice.
+This is not a global cache, a history of body versions, or a second parser.
+
+An unchanged body reuses prepared text without repeating the GitHub preparation
+pipeline. The caller still supplies the current `TextViewStyle` each frame;
+selection, `literal_text_features` and the existing image-to-link/HTML
+normalization privacy path remain unchanged. First preparation and changed-body
+preparation still run synchronously. Reuse does not eliminate layout or rendering.
+
+### Observed evidence and limits
+
+- `conversation_markdown_test`: 10 semantic tests passed. A separate native run
+  passed the four existing consumers `pr_same_number`, `pr_threads`,
+  `pr_threads_via_gh`, and `workspace_mode_toolbar`.
+- A later, separately executed native run passed `markdown_preparation_edges`.
+  One production Issue Thread body keeps the same window, owner and Markdown ID.
+  A physical drag and ⌘C into `VisualTestPlatform`'s private clipboard copies the
+  new rendered GFM sentinel after a same-byte-length raw replacement, excluding
+  the old sentinel. With the same empty raw body, EN → JA → EN copies the current
+  typed `Msg::IssueNoDescription` placeholder, excluding the prior locale.
+  Neither source equality nor cache counters are the consumer oracle.
+- The final required gate run passed build, native consumers, workspace tests,
+  Clippy, format check, invariants and default build, all exit 0. That native
+  run passed the four consumers above plus `markdown_preparation_edges` together,
+  five of five. Whole gate wall time was 406.020904 seconds; workspace process
+  wall time was 351.394085 seconds, including compilation and process overhead,
+  not isolated test-body timing or a performance speedup.
+- The default app's warm real PR #12 sample used the same corpus and Apple Light,
+  EN, 100% v2, 1392×883 logical viewport as the baseline. Baseline source
+  `adf3ade12d9786b198d4821f30dd4f629c12cca4` differs from the implementation base
+  `94cf1849dc7af265995a58ee1d2c2c546aa7fc06` by a Pull-label change outside this
+  surface. Baseline recorded 549 preparation stack observations under 5,893
+  main-thread observations; After recorded 6,021 main-thread observations and no
+  observations of `prepare_github_markdown`, `images_as_links`,
+  `flatten_html_blocks`, `pad_inline_code`, `sanitize_github_markdown` or
+  `to_mdast`. Both eight-second samples included all
+  eight requested −80 wheel events; After delivery completed 1.709031 seconds
+  after sampler readiness. The screenshot moved from section 001 to 49/50/51,
+  not through the entire conversation.
+- The short real PR #280 control showed its complete one-line body, no reviews,
+  one commit and one file (+2). Its eight wheel events completed 1.733571 seconds
+  after readiness within the eight-second sample at the same settings. The
+  owned app exited normally through ⌘Q, exit 0, with its original process gone.
+  These are raw sampled stack observations and input-delivery evidence, not
+  CPU percentages, FPS, render latency, speedup, or measured scroll distance.
+  Zero observations in this one After sample do not prove zero calls.
+
+At the preparation-only checkpoint, this bounded fix did **not** complete #1091:
+cold huge-post parse/layout, PR data cloning, the Issues all-post column and
+unpainted selection/copy still required their own work and proof. The subsequent
+Issue Thread ownership/virtualization and SDK logical-selection design, its
+actual native results and remaining gates are recorded in
+[ADR-0198's #1091 amendment](0198-read-only-issues-workspace.md#1091-2026-10-09-accepted-issue-conversation-and-managed-selection).
+That cutover preserves this preparation/privacy policy; it does not extend
+Issue-only evidence to PR conversation virtualization. The earlier all-green
+preparation gates above are not latest-source full SDK/native/default-app
+acceptance, a public SDK pin, hosted CI, exact-head review or dev merge.

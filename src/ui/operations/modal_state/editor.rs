@@ -30,6 +30,15 @@ impl KagiApp {
             self.active_modal = None;
         }
     }
+    pub(crate) fn take_editor_dirty_guard_modal(&mut self) -> Option<EditorDirtyGuardModal> {
+        if !matches!(self.active_modal, Some(ActiveModal::EditorDirtyGuard(_))) {
+            return None;
+        }
+        match self.active_modal.take() {
+            Some(ActiveModal::EditorDirtyGuard(modal)) => Some(modal),
+            _ => unreachable!("the dirty guard variant was checked"),
+        }
+    }
     #[inline]
     pub fn editor_fs_prompt_modal(&self) -> Option<&EditorFsPromptModal> {
         match &self.active_modal {

@@ -670,13 +670,13 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
                 .child(with_vertical_scrollbar(
                     "main-diff-list-scroll",
                     &scrollbar_handle,
-                    gpui::list(scroll_handle, move |ix, _window, cx| {
+                    gpui::list(scroll_handle, move |ix, window, cx| {
                         let base = match (&items, &overlay, &layout) {
                             (Some(items), Some(overlay), Some(layout)) => match items.get(ix) {
                                 Some(row_overlay::Item::Row(b)) => *b,
                                 Some(row_overlay::Item::Expansion(b)) => {
                                     let rows = row_overlay::expansion_rows(layout, *b, overlay);
-                                    return overlay.expansion(&rows, cx);
+                                    return overlay.expansion(&rows, window, cx);
                                 }
                                 None => return div().into_any_element(),
                             },

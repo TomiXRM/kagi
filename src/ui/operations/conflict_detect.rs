@@ -284,6 +284,9 @@ impl KagiApp {
                 }
             }
             ConflictDetectOutcome::Detected(detected) => {
+                if let Some(ui) = self.ui.get_mut(&owner.session) {
+                    ui.retire_issue_conversation_scope();
+                }
                 let ConflictDetected {
                     stash_identity: _,
                     session,

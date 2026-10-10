@@ -676,10 +676,9 @@ impl KagiApp {
     /// reset `dirty` as part of navigating/reloading, so no separate
     /// "discard" step is needed here.
     pub fn confirm_editor_dirty_guard(&mut self, cx: &mut Context<Self>) {
-        let Some(modal) = self.editor_dirty_guard_modal().cloned() else {
+        let Some(modal) = self.take_editor_dirty_guard_modal() else {
             return;
         };
-        self.clear_editor_dirty_guard_modal();
         match modal.intent {
             EditorPendingIntent::Reload => {
                 if let Some(ev) = self.ui().editor_workspace.clone() {
@@ -701,6 +700,25 @@ impl KagiApp {
                     ui.editor_workspace = None;
                 }
                 self.close_tab_by_session(session, cx);
+            }
+            EditorPendingIntent::PrPeek {
+                owner,
+                editor,
+                input,
+                path,
+                view,
+            } => {
+                let current = self.active_session() == Some(owner.session)
+                    && self.app_sessions.attachment(owner.session).as_ref() == Some(&owner)
+                    && self.ui().editor_workspace.as_ref().is_some_and(|pane| {
+                        pane.entity_id() == editor
+                            && pane.read(cx).editor.as_ref().map(|input| input.entity_id()) == input
+                            && pane.read(cx).open_path == path
+                    });
+                if current {
+                    self.close_editor_workspace();
+                    self.finish_pr_peek(owner, view, cx);
+                }
             }
         }
         cx.notify();

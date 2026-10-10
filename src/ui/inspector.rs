@@ -69,8 +69,7 @@ pub(super) const INSPECTOR_SPLIT_DIVIDER_H: f32 = 4.0;
 /// paths. `inspector_split` — message:files height ratio (0.5 = 1:1).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_inspector(
-    d: CommitDetail,
-    at: CommitId,
+    detail: Option<(CommitDetail, CommitId)>,
     badges: Vec<RefBadge>,
     // GitHub Phase 1: open PRs whose head branch tip is this commit.
     prs_here: Vec<kagi_domain::github::PullRequest>,
@@ -92,29 +91,6 @@ pub(super) fn render_inspector(
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     let files = model.files();
-
-    // ── Short SHA (first 8 hex chars) ────────────────────────────────────
-    let short_sha: SharedString =
-        SharedString::from(d.full_sha.chars().take(8).collect::<String>());
-
-    // ── Copy SHA handler (full raw SHA — no ZWSP) ─────────────────────────
-    let copy_target1 = at.clone();
-    let copy_sha_click1 = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.dispatch_commit_action(CommitAction::CopySha, copy_target1.clone(), _window, cx);
-    });
-
-    // ── Author name + email (parsed from `author_line`) ───────────────────
-    // `author_line` format: "name  <email>  YYYY-MM-DD HH:MM" (detail_panel).
-    // We only need the display name (meta row) and email (avatar colour).
-    let (author_name, author_email) = parse_author(d.author_line.as_ref());
-
-    // ── Message (single wrapped text element) ─────────────────────────────
-    // One text run, not per-line divs: gpui's text layout handles '\n' and
-    // soft-wrapping itself. Rendered as escaped HTML through a selectable
-    // `TextView`, not as a plain text run: GPUI has no text selection for a
-    // plain run, and `TextView` — the one element that does — parses only
-    // Markdown or HTML. The reflow + escape is derived per commit in the model.
-    let message_html = model.message_html();
 
     // ── Changed-file rows (generated files folded separately below) ───────
     let mut tree_element_rows: Vec<gpui::AnyElement> = match files {
@@ -257,37 +233,6 @@ pub(super) fn render_inspector(
         }
     }
 
-    // ── "Create branch here" button ──────────────────────────────────────
-    let at_for_create = at.clone();
-    let at_for_cherry = at.clone();
-    let create_branch_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.dispatch_commit_action(
-            CommitAction::CreateBranchHere,
-            at_for_create.clone(),
-            _window,
-            cx,
-        );
-        cx.notify();
-    });
-    let create_branch_button = action_button(
-        "create-branch-btn",
-        "+ Branch here",
-        theme().color_branch,
-        create_branch_click,
-    );
-
-    // ── "Cherry-pick onto HEAD" button (T016) ────────────────────────────
-    let cherry_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.dispatch_commit_action(CommitAction::CherryPick, at_for_cherry.clone(), _window, cx);
-        cx.notify();
-    });
-    let cherry_pick_button = action_button(
-        "cherry-pick-btn",
-        "\u{1f352} Cherry-pick",
-        theme::theme().accent, // accent (cherry-pick)
-        cherry_click,
-    );
-
     // ── Path⇄Tree toggle ─────────────────────────────────────────────────
     // Each button sets its mode explicitly (a shared toggle would make the
     // active button flip the view to the other mode on click).
@@ -392,6 +337,12 @@ pub(super) fn render_inspector(
         div()
             .id("compare-banner")
             .flex()
+            .when(cfg!(feature = "gui-e2e"), |banner| {
+                banner.relative().child(super::e2e::measure_inside(format!(
+                    "compare-banner-{}",
+                    title.as_ref()
+                )))
+            })
             .flex_row()
             .items_center()
             .justify_between()
@@ -475,6 +426,73 @@ pub(super) fn render_inspector(
         .children(counts_row)
         .child(files_header)
         .child(files_list);
+
+    // Compare files are meaningful without a selected/loaded Graph commit.
+    let panel = div()
+        // The persisted width is unscaled; render it at the active zoom.
+        .w(theme::scaled_px(panel_width))
+        .flex_shrink_0()
+        .h_full()
+        .flex()
+        .flex_col()
+        .bg(rgb(theme().panel));
+    let Some((d, at)) = detail else {
+        return panel.child(files_box.flex_1().flex_basis(relative(1.)).pt_2());
+    };
+
+    // ── Short SHA (first 8 hex chars) ────────────────────────────────────
+    let short_sha: SharedString =
+        SharedString::from(d.full_sha.chars().take(8).collect::<String>());
+
+    // ── Copy SHA handler (full raw SHA — no ZWSP) ─────────────────────────
+    let copy_target1 = at.clone();
+    let copy_sha_click1 = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+        this.dispatch_commit_action(CommitAction::CopySha, copy_target1.clone(), _window, cx);
+    });
+
+    // ── Author name + email (parsed from `author_line`) ───────────────────
+    // `author_line` format: "name  <email>  YYYY-MM-DD HH:MM" (detail_panel).
+    // We only need the display name (meta row) and email (avatar colour).
+    let (author_name, author_email) = parse_author(d.author_line.as_ref());
+
+    // ── Message (single wrapped text element) ─────────────────────────────
+    // One text run, not per-line divs: gpui's text layout handles '\n' and
+    // soft-wrapping itself. Rendered as escaped HTML through a selectable
+    // `TextView`, not as a plain text run: GPUI has no text selection for a
+    // plain run, and `TextView` — the one element that does — parses only
+    // Markdown or HTML. The reflow + escape is derived per commit in the model.
+    let message_html = model.message_html();
+
+    // ── "Create branch here" button ──────────────────────────────────────
+    let at_for_create = at.clone();
+    let at_for_cherry = at.clone();
+    let create_branch_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+        this.dispatch_commit_action(
+            CommitAction::CreateBranchHere,
+            at_for_create.clone(),
+            _window,
+            cx,
+        );
+        cx.notify();
+    });
+    let create_branch_button = action_button(
+        "create-branch-btn",
+        "+ Branch here",
+        theme().color_branch,
+        create_branch_click,
+    );
+
+    // ── "Cherry-pick onto HEAD" button (T016) ────────────────────────────
+    let cherry_click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+        this.dispatch_commit_action(CommitAction::CherryPick, at_for_cherry.clone(), _window, cx);
+        cx.notify();
+    });
+    let cherry_pick_button = action_button(
+        "cherry-pick-btn",
+        "\u{1f352} Cherry-pick",
+        theme::theme().accent, // accent (cherry-pick)
+        cherry_click,
+    );
 
     // ── Title (commit summary, up to 2 wrapped lines + truncate) ──────────
     let title_text: SharedString = SharedString::from(
@@ -992,18 +1010,7 @@ pub(super) fn render_inspector(
         .child(files_box);
 
     // ── Outer panel: header │ split region ────────────────────────────────
-    div()
-        // `panel_width` is the unscaled, persisted inspector width; scale at
-        // render so it tracks zoom. The drag/resize math in mod.rs works in the
-        // same scaled space (see render_body resize handler).
-        .w(theme::scaled_px(panel_width))
-        .flex_shrink_0()
-        .h_full()
-        .flex()
-        .flex_col()
-        .bg(rgb(theme().panel))
-        .child(header_region)
-        .child(split_region)
+    panel.child(header_region).child(split_region)
 }
 
 /// Parse `name  <email>  date` (detail_panel format) into `(name, email)`.
@@ -1065,11 +1072,12 @@ fn action_button(
         .on_click(click);
     // `color_branch` is the only "primary" action here; the cherry-pick accent
     // keeps the default (neutral) Button look.
-    if color == theme().color_branch {
+    let btn = if color == theme().color_branch {
         btn.primary()
     } else {
         btn
-    }
+    };
+    super::e2e::measure_control(id, btn)
 }
 
 /// One flat changed-file row (badge + path + diffstat), clickable to open the

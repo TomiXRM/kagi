@@ -142,6 +142,8 @@ pub enum PrFocus {
 }
 
 pub struct PrModeState {
+    /// Peek hides the workspace without dropping its tabs or parked drafts.
+    pub(crate) visible: bool,
     pub tabs: Vec<PrTab>,
     pub active: Option<usize>,
     /// Keyboard focus target for ↑/↓; ←/→ cycle it. Set by clicking a pane.
@@ -182,6 +184,7 @@ pub struct PrModeState {
 impl Default for PrModeState {
     fn default() -> Self {
         Self {
+            visible: true,
             tabs: Vec::new(),
             active: None,
             focus: PrFocus::List,
@@ -223,7 +226,7 @@ impl PrModeState {
 pub(super) const COMMIT_LIMIT: usize = 500;
 impl KagiApp {
     pub fn toggle_pr_mode(&mut self, cx: &mut Context<Self>) {
-        if self.pr_mode().is_some() {
+        if self.pr_mode_visible() {
             self.with_ui(|ui| ui.leave_pr_mode());
             klog!("pr-mode: closed");
         } else {
@@ -238,7 +241,12 @@ impl KagiApp {
             // bottom terminal panel would eat a third of it. Collapse it on
             // entry — Cmd-J still brings it back (user request).
             self.bottom_panel_open = false;
-            self.with_ui(|ui| ui.pr_mode = Some(PrModeState::default()));
+            self.with_ui(|ui| ui.retire_issue_conversation_scope());
+            if let Some(mode) = self.pr_mode_mut() {
+                mode.visible = true;
+            } else {
+                self.with_ui(|ui| ui.pr_mode = Some(PrModeState::default()));
+            }
             klog!("pr-mode: opened");
         }
         cx.notify();
@@ -246,7 +254,7 @@ impl KagiApp {
 
     /// Open (or activate) a tab for `pr` and load its content.
     pub fn pr_mode_open(&mut self, pr: &PullRequest, cx: &mut Context<Self>) {
-        if self.pr_mode().is_none() {
+        if !self.pr_mode_visible() {
             self.toggle_pr_mode(cx);
         }
         if let Some(ix) = self.pr_mode().and_then(|m| {
@@ -905,7 +913,11 @@ impl KagiApp {
         if let Some(mode) = self.pr_mode_of(owner) {
             mode.settle_composer_for(pr);
         }
-        if self.pr_comment_for.as_ref() == Some(pr) {
+        if self
+            .pr_comment_for
+            .as_ref()
+            .is_some_and(|(held_owner, held_pr)| Some(*held_owner) == owner && held_pr == pr)
+        {
             // `InputState::set_value` needs a `&mut Window`, which a completion
             // callback has none of. Dropping the entity is what the next
             // window-bearing frame rebuilds from the (now empty) draft.
@@ -928,13 +940,20 @@ impl KagiApp {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        // The composer follows the PR by repository and number: two tabs
-        // numbered 7 from two repositories are two drafts (#940 review).
-        // Compared in place every frame; the key is cloned only on a switch.
+        // A PR's draft belongs to its session too: two sessions reading the
+        // exact same repository and number must not share the box's text.
+        // Compare in place every frame; clone the key only on a switch.
+        let Some(owner) = self.active_session() else {
+            return;
+        };
         let Some(same_pr) = self
             .pr_mode()
             .and_then(|m| m.active.and_then(|ix| m.tabs.get(ix)))
-            .map(|t| self.pr_comment_for.as_ref().is_some_and(|k| t.pr.is(k)))
+            .map(|t| {
+                self.pr_comment_for
+                    .as_ref()
+                    .is_some_and(|(held_owner, key)| *held_owner == owner && t.pr.is(key))
+            })
         else {
             return;
         };
@@ -952,13 +971,13 @@ impl KagiApp {
         };
         if same_pr {
             // Same PR: the box is the truth, the tab keeps the copy.
-            let text = input.read(cx).value().to_string();
+            let text = input.read(cx).value();
             if let Some(tab) = self
                 .pr_mode_mut()
                 .and_then(|m| m.active.and_then(|ix| m.tabs.get_mut(ix)))
             {
-                if tab.comment_draft != text {
-                    tab.comment_draft = text;
+                if tab.comment_draft.as_str() != text.as_str() {
+                    tab.comment_draft = text.to_string();
                 }
             }
             return;
@@ -969,13 +988,15 @@ impl KagiApp {
         if let Some(mode) = self.pr_mode_mut() {
             mode.comment_preview = false;
         }
-        let parked = input.read(cx).value().to_string();
-        if let Some(previous) = self.pr_comment_for.take() {
+        let parked = input.read(cx).value();
+        if let Some((previous_owner, previous)) = self.pr_comment_for.take() {
             if let Some(tab) = self
-                .pr_mode_mut()
+                .pr_mode_of(Some(previous_owner))
                 .and_then(|m| m.tabs.iter_mut().find(|t| t.pr.is(&previous)))
             {
-                tab.comment_draft = parked;
+                if tab.comment_draft.as_str() != parked.as_str() {
+                    tab.comment_draft = parked.to_string();
+                }
             }
         }
         let Some((open, draft)) = self
@@ -986,7 +1007,7 @@ impl KagiApp {
             return;
         };
         input.update(cx, |state, cx| state.set_value(draft, window, cx));
-        self.pr_comment_for = Some(open);
+        self.pr_comment_for = Some((owner, open));
     }
 
     pub(super) fn pr_mode_focus(&mut self, f: PrFocus, cx: &mut Context<Self>) {
@@ -1096,19 +1117,17 @@ const ROW_H: f32 = 24.0;
 pub fn render_pr_mode(
     app: &mut KagiApp,
     panel: Option<gpui::AnyElement>,
+    window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let has_tab = app.pr_mode().is_some_and(|m| m.active.is_some());
     // Faces for the logins on this page (ADR-0200). One attempt per login per
     // process; the pass is a set lookup once they are in hand.
     app.ensure_pr_avatars(cx);
-    let left = super::e2e::measure_control(
-        "pr-mode-left-pane",
-        super::workspace_mode::render_sidebar_pages(
-            app,
-            super::workspace_mode::WorkspaceMode::Prs,
-            cx,
-        ),
+    let left = super::workspace_mode::render_sidebar_pages(
+        app,
+        super::workspace_mode::WorkspaceMode::Prs,
+        cx,
     );
     // Measured from inside, not wrapped: the body's height chain (`h_full`,
     // `flex_1`) must reach the virtualized feed unbroken.
@@ -1121,7 +1140,7 @@ pub fn render_pr_mode(
         .h_full()
         .flex()
         .flex_col()
-        .child(render_center(app, cx))
+        .child(render_center(app, window, cx))
         .child(super::e2e::measure_inside("pr-mode-center-pane"));
     let center = match panel {
         None => center.into_any_element(),
@@ -1219,7 +1238,11 @@ pub(super) fn focus_border<E: gpui::Styled>(el: E, focused: bool) -> E {
 }
 
 // ── Center: header + view tabs + commits + body ──────────────
-fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+fn render_center(
+    app: &mut KagiApp,
+    window: &mut gpui::Window,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
     let active: Option<usize> = app.pr_mode().and_then(|m| m.active);
     // No tab strip: the left PR list already highlights the active PR and
     // switching is one click there, so a second row of #N chips was pure
@@ -1241,48 +1264,20 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
             .child(super::pr_dashboard::render_dashboard(app, cx))
             .into_any_element();
     };
-    // Snapshot what the renderers need from the active tab.
-    let (pr, commits, selected_commit, diff, scroll, files_n) = {
-        let m = app.pr_mode().unwrap();
-        let t = &m.tabs[ix];
-        (
-            t.pr.clone(),
-            t.commits.clone(),
-            t.selected_commit,
-            t.diff.clone(),
-            t.diff_scroll.clone(),
-            t.files.len(),
-        )
-    };
-    let (
-        view,
-        reviews,
-        comments,
-        line_comments,
-        conflicts,
-        conflict_selected,
-        conflict_scroll,
-        conflict_at,
-        conversation_loaded,
-        merge_status_loaded,
-        local_refs_loading,
-    ) = {
-        let m = app.pr_mode().unwrap();
-        let t = &m.tabs[ix];
-        (
-            m.view,
-            t.reviews.clone(),
-            t.comments.clone(),
-            t.line_comments.clone(),
-            t.conflicts.clone(),
-            t.conflict_selected,
-            t.conflict_scroll.clone(),
-            t.conflict_at,
-            t.conversation_loaded,
-            t.merge_status_loaded,
-            t.local_refs_loading,
-        )
-    };
+    // Header facts and counts borrow the tab; owning snapshots are taken only
+    // by the selected view or when an action actually runs.
+    let mode = app.pr_mode().unwrap();
+    let tab = &mode.tabs[ix];
+    let pr = &tab.pr;
+    let commits = &tab.commits;
+    let selected_commit = tab.selected_commit;
+    let files_n = tab.files.len();
+    let convo_n = tab.reviews.len() + tab.comments.len() + tab.line_comments.len();
+    let view = mode.view;
+    let conversation_loaded = tab.conversation_loaded;
+    let merge_status_loaded = tab.merge_status_loaded;
+    let local_refs_loading = tab.local_refs_loading;
+    let owner = app.active_session();
     // 概要 and レビュー are two sections of one page, so both tabs draw it;
     // which chip is lit is which section the reader last jumped to.
     let show_feed = matches!(view, PrView::Overview | PrView::Review);
@@ -1301,9 +1296,18 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         app.transport_holds
             .contains(owner, &format!("pr-merge #{}", pr.number))
     });
-    let pr_open = pr.clone();
+    let open_key = pr.key();
     let open_gh = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        this.open_pr_in_browser(&pr_open);
+        if this.active_session() != owner {
+            return;
+        }
+        let pr = this
+            .pr_mode_of(owner)
+            .and_then(|mode| mode.tabs.iter().find(|tab| tab.pr.is(&open_key)))
+            .map(|tab| tab.pr.clone());
+        if let Some(pr) = pr {
+            this.open_pr_in_browser(&pr);
+        }
         cx.notify();
     });
     let header = div()
@@ -1371,9 +1375,19 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         // Merge — only for a mergeable, non-draft PR; the confirm modal
         // states the CI / review caveats before anything happens.
         .when(!pr.is_draft && !merge_held, |el| {
-            let pr_merge = pr.clone();
+            let merge_key = pr.key();
             let merge_click =
                 cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+                    if this.active_session() != owner {
+                        return;
+                    }
+                    let Some(pr_merge) = this
+                        .pr_mode_of(owner)
+                        .and_then(|mode| mode.tabs.iter().find(|tab| tab.pr.is(&merge_key)))
+                        .map(|tab| tab.pr.clone())
+                    else {
+                        return;
+                    };
                     // Squash is kagi's own default (its history is squash-merged);
                     // the modal names the method it will use.
                     this.open_pr_merge_modal(
@@ -1441,136 +1455,138 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         );
 
     // Commit strip
-    let all_click = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        this.pr_mode_select_commit(None, cx);
-    });
-    let now = kagi_ui_core::time::now_unix_secs();
-    let commits_focused = app.pr_mode().map(|m| m.focus) == Some(PrFocus::Commits);
-    let commits_focus_click =
-        cx.listener(|this: &mut KagiApp, _: &gpui::MouseDownEvent, _w, cx| {
-            this.pr_mode_focus(PrFocus::Commits, cx);
+    let strip = (view == PrView::Commits).then(|| {
+        let all_click = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+            this.pr_mode_select_commit(None, cx);
         });
-    // The strip is its own panel (panel bg, section header) so where it ends
-    // and the description / diff begins is unmistakable (user request).
-    let mut strip = focus_border(
-        div()
-            .id("pr-mode-commits")
-            .flex_shrink_0()
-            .max_h(theme::scaled_px(COMMIT_STRIP_MAX_H))
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .bg(rgb(theme().panel))
-            .border_b_1()
-            .border_color(rgb(theme().selected))
-            .on_mouse_down(gpui::MouseButton::Left, commits_focus_click),
-        commits_focused,
-    )
-    // The COMMITS header IS the "whole PR" selector: a separate "All changes"
-    // row said the same thing one line below it (user request). Clicking the
-    // header clears the per-commit selection; it highlights while active.
-    .child(
-        div()
-            .id("pr-mode-commits-all")
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_1()
-            .px_3()
-            .py_1()
-            .cursor_pointer()
-            .when(selected_commit.is_none(), |el| el.bg(rgb(theme().selected)))
-            .hover(|s| s.bg(rgb(theme().surface)))
-            .on_click(all_click)
-            .map(|el| {
-                #[cfg(feature = "gui-e2e")]
-                let el = el
-                    .relative()
-                    .child(super::e2e::measure_inside("pr-mode-commits-all"));
-                el
-            })
-            .child(
-                div()
-                    .text_xs()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(rgb(if selected_commit.is_none() {
-                        theme().text_main
-                    } else {
-                        theme().text_muted
-                    }))
-                    .child(SharedString::from(format!(
-                        "{} ({})",
-                        Msg::PrModeCommits.t(),
-                        commits.len()
-                    ))),
-            ),
-    );
-    for (i, cmt) in commits.iter().enumerate() {
-        let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-            this.pr_mode_select_commit(Some(i), cx);
-        });
-        let sel = selected_commit == Some(i);
-        strip = strip.child(
+        let now = kagi_ui_core::time::now_unix_secs();
+        let commits_focused = app.pr_mode().map(|m| m.focus) == Some(PrFocus::Commits);
+        let commits_focus_click =
+            cx.listener(|this: &mut KagiApp, _: &gpui::MouseDownEvent, _w, cx| {
+                this.pr_mode_focus(PrFocus::Commits, cx);
+            });
+        // The strip is its own panel (panel bg, section header) so where it ends
+        // and the description / diff begins is unmistakable (user request).
+        let mut strip = focus_border(
             div()
-                .id(("pr-mode-commit", i))
-                .h(theme::scaled_px(ROW_H))
+                .id("pr-mode-commits")
+                .flex_shrink_0()
+                .max_h(theme::scaled_px(COMMIT_STRIP_MAX_H))
+                .overflow_y_scroll()
+                .flex()
+                .flex_col()
+                .bg(rgb(theme().panel))
+                .border_b_1()
+                .border_color(rgb(theme().selected))
+                .on_mouse_down(gpui::MouseButton::Left, commits_focus_click),
+            commits_focused,
+        )
+        // The COMMITS header IS the "whole PR" selector: a separate "All changes"
+        // row said the same thing one line below it (user request). Clicking the
+        // header clears the per-commit selection; it highlights while active.
+        .child(
+            div()
+                .id("pr-mode-commits-all")
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap_2()
+                .gap_1()
                 .px_3()
-                .text_sm()
+                .py_1()
                 .cursor_pointer()
-                .when(sel, |el| el.bg(rgb(theme().selected)))
+                .when(selected_commit.is_none(), |el| el.bg(rgb(theme().selected)))
                 .hover(|s| s.bg(rgb(theme().surface)))
-                .on_click(click)
-                // Straight-line "graph": a dot per commit, no lanes — the
-                // user asked for focus on this change, not the whole repo.
+                .on_click(all_click)
+                .map(|el| {
+                    #[cfg(feature = "gui-e2e")]
+                    let el = el
+                        .relative()
+                        .child(super::e2e::measure_inside("pr-mode-commits-all"));
+                    el
+                })
                 .child(
                     div()
-                        .flex_shrink_0()
-                        .text_color(rgb(theme().color_branch))
-                        .child(SharedString::from("\u{25CF}")),
-                )
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .font_family(super::MONO_FONT)
                         .text_xs()
-                        .text_color(rgb(theme().text_muted))
-                        .child(SharedString::from(cmt.id.short())),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .truncate()
-                        .text_color(rgb(theme().text_main))
-                        .child(safe_text(&cmt.summary)),
-                )
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .text_xs()
-                        .text_color(rgb(theme().text_sub))
-                        .child(safe_text(&cmt.author.name)),
-                )
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .text_xs()
-                        .text_color(rgb(theme().text_muted))
-                        .child(SharedString::from(kagi_ui_core::time::relative_time(
-                            cmt.author.time,
-                            now,
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(rgb(if selected_commit.is_none() {
+                            theme().text_main
+                        } else {
+                            theme().text_muted
+                        }))
+                        .child(SharedString::from(format!(
+                            "{} ({})",
+                            Msg::PrModeCommits.t(),
+                            commits.len()
                         ))),
                 ),
         );
-    }
+        for (i, cmt) in commits.iter().enumerate() {
+            let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+                this.pr_mode_select_commit(Some(i), cx);
+            });
+            let sel = selected_commit == Some(i);
+            strip = strip.child(
+                div()
+                    .id(("pr-mode-commit", i))
+                    .h(theme::scaled_px(ROW_H))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .px_3()
+                    .text_sm()
+                    .cursor_pointer()
+                    .when(sel, |el| el.bg(rgb(theme().selected)))
+                    .hover(|s| s.bg(rgb(theme().surface)))
+                    .on_click(click)
+                    // Straight-line "graph": a dot per commit, no lanes — the
+                    // user asked for focus on this change, not the whole repo.
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_color(rgb(theme().color_branch))
+                            .child(SharedString::from("\u{25CF}")),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .font_family(super::MONO_FONT)
+                            .text_xs()
+                            .text_color(rgb(theme().text_muted))
+                            .child(SharedString::from(cmt.id.short())),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .truncate()
+                            .text_color(rgb(theme().text_main))
+                            .child(safe_text(&cmt.summary)),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(rgb(theme().text_sub))
+                            .child(safe_text(&cmt.author.name)),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(rgb(theme().text_muted))
+                            .child(SharedString::from(kagi_ui_core::time::relative_time(
+                                cmt.author.time,
+                                now,
+                            ))),
+                    ),
+            );
+        }
+        strip
+    });
 
     // Overview | Review | Diff — one place to say what the body shows, so
     // the title click is a shortcut rather than the only route.
-    let convo_n = reviews.len() + comments.len() + line_comments.len();
     let tab_btn = |id: &'static str,
                    icon: &'static str,
                    label: String,
@@ -1694,7 +1710,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
     }
     // The commits are their own tab now, at full height, instead of a strip
     // pinned above every other view (ADR-0200).
-    if view == PrView::Commits {
+    if let Some(strip) = strip {
         content = content.child(strip.flex_1().max_h(relative(1.)));
     } else if show_feed {
         // #347: the merge-status card rides at the top of the feed - the four
@@ -1706,6 +1722,11 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         }
         content = content.child(super::pr_conversation::render_feed(app, ix, cx));
     } else if view == PrView::Conflicts {
+        let tab = &mut app.pr_mode_mut().unwrap().tabs[ix];
+        let conflicts = &tab.conflicts;
+        let conflict_selected = tab.conflict_selected;
+        let conflict_scroll = tab.conflict_scroll.clone();
+        let conflict_at = tab.conflict_at;
         let body: gpui::AnyElement = match conflicts.as_ref() {
             None => pr_center_note(SharedString::from("\u{2026}")),
             Some(Err(e)) => pr_center_note(SharedString::from(e.clone())),
@@ -1716,10 +1737,9 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
                 let file_index = conflict_selected.unwrap_or(0).min(files.len() - 1);
                 // Loaded rows belong to the tab. A loading shell is just one
                 // explanatory row; it must not borrow another file's content.
-                let (dv, jumps) = app
-                    .pr_mode_mut()
-                    .and_then(|mode| mode.tabs.get_mut(ix))
-                    .and_then(|tab| tab.conflict_preview.as_mut())
+                let (dv, jumps) = tab
+                    .conflict_preview
+                    .as_mut()
                     .filter(|preview| preview.path() == files[file_index].path)
                     .map(|preview| preview.snapshot())
                     .unwrap_or_else(|| {
@@ -1755,6 +1775,9 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         content = content.child(body);
     } else {
         // Diff
+        let tab = &app.pr_mode().unwrap().tabs[ix];
+        let diff = tab.diff.clone();
+        let scroll = tab.diff_scroll.clone();
         let diff_el: gpui::AnyElement = match diff {
             Some(dv) => {
                 let header = threads::diff_header(app, ix, &dv, cx);
@@ -1793,7 +1816,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
     col.child(content)
         .children(
             show_feed
-                .then(|| super::pr_page::render_composer(app, cx))
+                .then(|| super::pr_page::render_composer(app, window, cx))
                 .flatten(),
         )
         .into_any_element()

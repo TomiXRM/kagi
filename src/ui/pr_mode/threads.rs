@@ -13,7 +13,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::prelude::*;
-use gpui::{div, px, rgb, AnyElement, App, Context, Entity, SharedString};
+use gpui::{div, px, rgb, AnyElement, App, Context, Entity, SharedString, Window};
 use kagi_domain::review_thread::{anchor_rows, DiffSide, ReviewThread};
 
 use super::{KagiApp, PrView};
@@ -170,12 +170,12 @@ impl RowOverlay for ThreadOverlay {
         self.open.contains(&row)
     }
 
-    fn expansion(&self, rows: &[usize], cx: &mut App) -> AnyElement {
+    fn expansion(&self, rows: &[usize], window: &mut Window, cx: &mut App) -> AnyElement {
         let style = crate::ui::timeline_row::markdown_style(14., cx);
         let mut column = div().w_full().flex().flex_col().gap_1().py_1();
         for &row in rows {
             for (k, (_, thread)) in self.threads_at(row).enumerate() {
-                column = column.child(thread_card(row, k, thread, &style));
+                column = column.child(thread_card(row, k, thread, &style, window, cx));
             }
         }
         column.into_any_element()
@@ -187,6 +187,8 @@ fn thread_card(
     k: usize,
     thread: &ReviewThread,
     style: &gpui_component::text::TextViewStyle,
+    window: &mut Window,
+    cx: &mut App,
 ) -> AnyElement {
     let is_outdated = outdated(thread);
     let line = thread.anchor().map(|(line, _)| line).unwrap_or(0);
@@ -247,7 +249,10 @@ fn thread_card(
                     crate::ui::timeline_row::body_markdown(
                         SharedString::from(body_id),
                         &comment.body,
+                        crate::ui::timeline_row::BodyMarkdownFormat::Original,
                         style.clone(),
+                        window,
+                        cx,
                     ),
                 )),
         );

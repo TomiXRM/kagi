@@ -1893,6 +1893,53 @@ pub fn scenario_cherry_pick_presents_backend_receipt(cx: &mut VisualTestAppConte
     );
 }
 
+/// #1092: deliver every post-dismissal key where the product left focus.
+/// Keeping the old InputState alive makes hidden-input focus observable.
+fn assert_created_branch_dismissed(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    repo: &Path,
+) {
+    wait_painted(cx, app, window, |app| {
+        app.view().branch_targets.contains_key("feat")
+    });
+    assert!(cx.read(|cx| app.read(cx).create_branch_modal().is_none()));
+    assert!(
+        cx.update_window(window, |_, window, cx| {
+            app.read(cx).root_focus.as_ref().unwrap().is_focused(window)
+        })
+        .unwrap(),
+        "verified creation must return focus from the removed input to the root"
+    );
+    let receipt = records(repo, "create-branch");
+    assert_eq!(receipt.len(), 1);
+    cx.simulate_keystrokes(window, "enter");
+    cx.run_until_parked();
+    paint(cx, window);
+    let after_enter = records(repo, "create-branch");
+    assert_eq!(
+        after_enter.len(),
+        1,
+        "second Enter must not attempt creation again"
+    );
+    assert_eq!(after_enter[0].id, receipt[0].id);
+    cx.simulate_keystrokes(window, "cmd-p");
+    cx.run_until_parked();
+    paint(cx, window);
+    assert!(
+        cx.read(|cx| matches!(
+            app.read(cx).menu_overlay,
+            Some(kagi::ui::commands::MenuOverlay::CommandPalette)
+        )),
+        "the next root shortcut must open the palette without test-side refocusing"
+    );
+    cx.simulate_keystrokes(window, "escape");
+    cx.run_until_parked();
+    paint(cx, window);
+    assert!(cx.read(|cx| app.read(cx).menu_overlay.is_none()));
+}
+
 /// ADR-0196 Wave 2: the synchronous inline sites (create-branch, create-tag,
 /// the auto-stash before a checkout, the continued-merge commit) present the
 /// receipt through `present_report`. Create-branch stands in for the four.
@@ -1902,6 +1949,7 @@ pub fn scenario_create_branch_presents_backend_receipt(cx: &mut VisualTestAppCon
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let head = CommitId(output(&repo, &["rev-parse", "HEAD"]));
+    let original_branch = output(&repo, &["symbolic-ref", "--short", "HEAD"]);
     let seed = OpLogEntry::new(
         "seed",
         repo.display().to_string(),
@@ -1938,14 +1986,46 @@ pub fn scenario_create_branch_presents_backend_receipt(cx: &mut VisualTestAppCon
             .is_some_and(|plan| plan.blockers.is_empty())
     });
 
+    // Ordinary accepted reloads preserve unsent text and the same live input.
+    git(&repo, &["branch", "reload-marker"]);
+    app.update(cx, |app, cx| app.reload(cx));
+    wait_painted(cx, &app, window, |app| {
+        app.view().branch_targets.contains_key("reload-marker")
+    });
+    cx.read(|cx| {
+        let modal = app
+            .read(cx)
+            .create_branch_modal()
+            .expect("unsent form survives reload");
+        assert_eq!(modal.input, "feat");
+        assert_eq!(
+            modal.input_state.as_ref().unwrap().entity_id(),
+            input.entity_id()
+        );
+        assert_eq!(input.read(cx).value().as_str(), "feat");
+        assert!(!modal.checkout_after);
+        assert!(modal.error.is_none());
+    });
+    assert!(
+        records(&repo, "create-branch").is_empty(),
+        "reload never submits unsent input"
+    );
+
     press_enter(cx, &app, window);
     cx.run_until_parked();
     assert!(
         !output(&repo, &["branch", "--list", "feat"]).is_empty(),
         "Enter on a clean plan creates the branch"
     );
+    assert_eq!(
+        output(&repo, &["symbolic-ref", "--short", "HEAD"]),
+        original_branch,
+        "unchecked checkout leaves HEAD on the original branch"
+    );
+    assert_created_branch_dismissed(cx, &app, window, &repo);
     let durable = records(&repo, "create-branch");
     assert_eq!(durable.len(), 1, "one attempt, one durable entry");
+    assert!(matches!(durable[0].outcome, OpOutcome::Success { .. }));
     assert!(
         durable[0].id >= 1,
         "the seeded log puts the receipt past entry 0"
@@ -1964,10 +2044,113 @@ pub fn scenario_create_branch_presents_backend_receipt(cx: &mut VisualTestAppCon
         );
     });
 
+    drop(input);
     unmount(cx, app, window);
     eprintln!(
         "[gui-e2e] PASS create_branch_presents_backend_receipt: panel shows the recorded receipt"
     );
+}
+
+/// #1092: a valid ref name can still fail at the real execution boundary:
+/// an existing `collision` ref prevents creation of `collision/child`.
+pub fn scenario_create_branch_execution_failure_keeps_input(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    git(&repo, &["branch", "collision"]);
+    let head = CommitId(output(&repo, &["rev-parse", "HEAD"]));
+    let before = repo_fingerprint(&repo);
+    let refs_before = output(&repo, &["show-ref", "--heads"]);
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| app.open_create_branch_modal(head, cx));
+    paint(cx, window);
+    let input = cx
+        .read(|cx| {
+            app.read(cx)
+                .create_branch_modal()
+                .unwrap()
+                .input_state
+                .clone()
+        })
+        .expect("branch input is mounted");
+    cx.simulate_keystrokes(window, "c o l l i s i o n / c h i l d");
+    wait_painted(cx, &app, window, |app| {
+        app.create_branch_modal()
+            .and_then(|modal| modal.plan.plan())
+            .is_some_and(|plan| plan.blockers.is_empty())
+    });
+    let confirm = kagi::ui::e2e::confirm_bounds(window.window_id())
+        .expect("valid collision/child plan offers Create");
+    cx.simulate_click(window, confirm.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    paint(cx, window);
+    let durable = records(&repo, "create-branch");
+    assert_eq!(
+        durable.len(),
+        1,
+        "the failed execution has exactly one receipt"
+    );
+    assert!(
+        matches!(durable[0].outcome, OpOutcome::Failed { .. }),
+        "namespace collision must fail execution, not planning: {:?}",
+        durable[0].outcome
+    );
+    let error = cx.read(|cx| {
+        let app = app.read(cx);
+        let modal = app.create_branch_modal().expect("failed form stays open");
+        assert_eq!(modal.input, "collision/child");
+        assert_eq!(input.read(cx).value().as_str(), "collision/child");
+        let error = modal.error.clone().expect("execution error is inspectable");
+        assert!(app.app_notice().is_none());
+        let shown = app.op_log.as_ref().unwrap().read(cx).entries();
+        let shown: Vec<_> = shown
+            .iter()
+            .filter(|entry| entry.op == "create-branch" && entry.repo == durable[0].repo)
+            .collect();
+        assert_eq!(shown.len(), 1);
+        assert_eq!(
+            shown[0].id, durable[0].id,
+            "failure presents the backend receipt"
+        );
+        error
+    });
+    assert_eq!(repo_fingerprint(&repo), before);
+    assert_eq!(output(&repo, &["show-ref", "--heads"]), refs_before);
+    assert!(output(&repo, &["branch", "--list", "collision/child"]).is_empty());
+
+    git(&repo, &["branch", "reload-marker"]);
+    app.update(cx, |app, cx| app.reload(cx));
+    wait_painted(cx, &app, window, |app| {
+        app.view().branch_targets.contains_key("reload-marker")
+    });
+    cx.read(|cx| {
+        let modal = app
+            .read(cx)
+            .create_branch_modal()
+            .expect("failed form survives reload");
+        assert_eq!(modal.input, "collision/child");
+        assert_eq!(
+            modal.error.as_ref(),
+            Some(&error),
+            "reload retains the exact error"
+        );
+        assert_eq!(
+            modal.input_state.as_ref().unwrap().entity_id(),
+            input.entity_id()
+        );
+        assert_eq!(input.read(cx).value().as_str(), "collision/child");
+    });
+    assert_eq!(
+        records(&repo, "create-branch").len(),
+        1,
+        "reload never retries"
+    );
+    cx.simulate_keystrokes(window, "escape");
+    cx.run_until_parked();
+    paint(cx, window);
+    assert!(cx.read(|cx| app.read(cx).create_branch_modal().is_none()));
+    drop(input);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS create_branch_execution_failure_keeps_input");
 }
 
 /// ADR-0196 Wave 3 / #501: a write that happened but could not be recorded is
@@ -2080,7 +2263,10 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
     let head = CommitId(output(&repo, &["rev-parse", "HEAD"]));
     let (app, window) = mount(cx, &repo);
 
-    app.update(cx, |app, cx| app.open_create_branch_modal(head, cx));
+    app.update(cx, |app, cx| {
+        app.open_create_branch_modal(head, cx);
+        app.create_branch_modal_mut().unwrap().checkout_after = true;
+    });
     paint(cx, window);
     wait_painted(cx, &app, window, |app| {
         app.create_branch_modal()
@@ -2249,6 +2435,16 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
         output(&repo, &["branch", "--list", "feat"]).is_empty(),
         "composition Enter must not create a Git ref"
     );
+    assert!(
+        records(&repo, "create-branch").is_empty(),
+        "composition Enter must not record any create attempt"
+    );
+    cx.read(|cx| {
+        let modal = app.read(cx).create_branch_modal().unwrap();
+        assert_eq!(modal.input, "feat");
+        assert!(modal.checkout_after);
+        assert!(modal.error.is_none());
+    });
 
     cx.update_window(window, |_, window, cx| {
         input.update(cx, |state, cx| {
@@ -2256,12 +2452,21 @@ pub fn scenario_create_branch_input_confirm_ime(cx: &mut VisualTestAppContext) {
         });
     })
     .unwrap();
-    press_enter(cx, &app, window);
+    // Do not use press_enter: it forcibly focuses root and would conceal a
+    // broken input → confirmation → root handoff.
+    paint(cx, window);
+    cx.simulate_keystrokes(window, "enter");
     cx.run_until_parked();
     assert!(
         !output(&repo, &["branch", "--list", "feat"]).is_empty(),
         "ordinary Enter after composition still creates the branch"
     );
+    assert_eq!(output(&repo, &["symbolic-ref", "--short", "HEAD"]), "feat");
+    let durable = records(&repo, "create-branch");
+    assert_eq!(durable.len(), 1);
+    assert!(matches!(durable[0].outcome, OpOutcome::Success { .. }));
+    assert_created_branch_dismissed(cx, &app, window, &repo);
+    drop(input);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS create_branch_input_confirm_ime");
 }
@@ -4115,7 +4320,9 @@ pub fn scenario_pr_list_roles(cx: &mut VisualTestAppContext) {
             ..pull_request(7, "cached", "main")
         },
     ];
-    kagi::ui::e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(prs)));
+    kagi::ui::e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(crate::evidence_support::pr_page(
+        prs, "", None,
+    ))));
     app.update(cx, |app, cx| app.refresh_github_prs(cx));
     cx.run_until_parked();
     app.update(cx, |app, cx| app.show_pr_mode(cx));

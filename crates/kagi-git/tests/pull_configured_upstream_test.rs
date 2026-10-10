@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use kagi_domain::plan_note::{PlanNote, PullNote};
+use kagi_domain::plan_note::{PlanNote, PlanTitle, PullNote, PullTitle};
 use kagi_git::{Backend, OpOutcome, Operation, OperationOutcome, PullOutcome};
 
 #[path = "../../../tests/support/git_fixture.rs"]
@@ -111,6 +111,102 @@ fn checkout_state(local: &Path) -> CheckoutState {
         index: std::fs::read(local.join(".git/index")).unwrap(),
         entries: git_output(local, &["ls-files", "--stage"]),
         worktree,
+    }
+}
+
+#[test]
+fn public_pull_plans_preserve_exact_configured_remote_and_upstream() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for remote in ["origin", "team", "team/origin", "."] {
+        let fixture = Fixture::new();
+        let upstream_ref = if remote == "." {
+            git(
+                fixture.local(),
+                &["branch", "alternate", &fixture.alternate],
+            );
+            git(fixture.local(), &["config", "branch.main.remote", "."]);
+            git(
+                fixture.local(),
+                &["config", "branch.main.merge", "refs/heads/alternate"],
+            );
+            "refs/heads/alternate".to_string()
+        } else {
+            if remote != "origin" {
+                git(fixture.local(), &["remote", "rename", "origin", remote]);
+            }
+            format!("refs/remotes/{remote}/alternate")
+        };
+        let before = checkout_state(fixture.local());
+        let refs = git_output(fixture.local(), &["show-ref"]);
+        let backend = fixture.backend();
+        for op in [
+            Operation::Pull,
+            Operation::PullBranchFf {
+                branch_name: "main".into(),
+            },
+        ] {
+            let plan = backend.plan(&op).expect("plan exact upstream");
+            assert!(plan.blockers.is_empty(), "{remote}: {:?}", plan.blockers);
+            let (branch, title_remote, behind) = match &plan.title {
+                PlanTitle::Pull(PullTitle::Pull {
+                    branch,
+                    remote,
+                    behind,
+                })
+                | PlanTitle::Pull(PullTitle::PullBranchFf {
+                    branch,
+                    remote,
+                    behind,
+                }) => (branch, remote, behind),
+                other => panic!("unexpected pull title: {other:?}"),
+            };
+            assert_eq!(branch, "main");
+            assert_eq!(title_remote, remote);
+            assert_eq!(*behind, 1);
+            let identity = plan.pull_identity.as_ref().expect("approved identity");
+            assert_eq!(identity.branch, "main");
+            assert_eq!(identity.remote, remote);
+            assert_eq!(identity.upstream_ref, upstream_ref);
+            assert_eq!(identity.local_oid.0, fixture.base);
+            assert_eq!(checkout_state(fixture.local()), before);
+            assert_eq!(git_output(fixture.local(), &["show-ref"]), refs);
+        }
+    }
+}
+
+#[test]
+fn public_pull_plans_keep_missing_upstream_blocked_without_identity() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let fixture = Fixture::new();
+    git(
+        fixture.local(),
+        &["remote", "rename", "origin", "team/origin"],
+    );
+    git(
+        fixture.local(),
+        &["update-ref", "-d", "refs/remotes/team/origin/alternate"],
+    );
+    let before = checkout_state(fixture.local());
+    let backend = fixture.backend();
+    for op in [
+        Operation::Pull,
+        Operation::PullBranchFf {
+            branch_name: "main".into(),
+        },
+    ] {
+        let plan = backend.plan(&op).expect("blocked upstream plan");
+        assert!(plan.pull_identity.is_none());
+        assert!(plan.blockers.iter().any(|note| matches!(
+            note,
+            PlanNote::Pull(PullNote::NoUpstream { branch, err })
+                | PlanNote::Pull(PullNote::NoUpstreamWithHint { branch, err })
+                if branch == "main" && !err.is_empty()
+        )));
+        assert_eq!(checkout_state(fixture.local()), before);
     }
 }
 

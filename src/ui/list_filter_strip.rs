@@ -198,8 +198,21 @@ pub(super) fn render_strip(
 ) -> AnyElement {
     let filter = common(app, kind);
     let order = sort(app, kind);
-    let more = kind == ListKind::Issues && app.ui().github_issues_cursor.is_some() && count > 0;
-    let count = if more {
+    let more = match kind {
+        ListKind::Issues => app.ui().github_issues_cursor.is_some(),
+        ListKind::Prs => app.ui().pr_list_has_more(),
+    };
+    let count = if kind == ListKind::Prs {
+        let loaded = app.ui().pr_list_rows().len();
+        let mut label = Msg::ListLoadedCount
+            .t()
+            .replace("{}", &format!("{loaded}{}", if more { "+" } else { "" }));
+        if count != loaded {
+            label.push_str(" · ");
+            label.push_str(&Msg::ListMatchesCount.t().replace("{}", &count.to_string()));
+        }
+        label
+    } else if more && count > 0 {
         format!("({count}+)")
     } else {
         count.to_string()
@@ -360,6 +373,28 @@ pub(super) fn render_strip(
                 })),
         );
     strip.into_any_element()
+}
+
+/// The explicit continuation/retry action shared by both GitHub list tails.
+pub(super) fn page_button(
+    id: &'static str,
+    label: &'static str,
+    cx: &mut Context<KagiApp>,
+    click: impl Fn(&mut KagiApp, &gpui::ClickEvent, &mut Window, &mut Context<KagiApp>) + 'static,
+) -> AnyElement {
+    // Keep the measured control shrink-wrapped to the native button. A block
+    // wrapper in a table tail otherwise measures the whole row, whose center
+    // need not hit the button at all.
+    div()
+        .flex()
+        .items_start()
+        .child(super::e2e::measure_control(
+            id,
+            super::button_style::KagiButton::accent(id, label, theme().text_sub, cx)
+                .small()
+                .on_click(cx.listener(click)),
+        ))
+        .into_any_element()
 }
 
 #[derive(Clone)]

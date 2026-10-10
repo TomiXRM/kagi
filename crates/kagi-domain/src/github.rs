@@ -543,6 +543,8 @@ pub struct IssueLabel {
 /// One comment in an issue conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssueComment {
+    /// Opaque GraphQL node ID returned by GitHub for this comment.
+    pub id: String,
     pub author: String,
     pub body: String,
     pub created_at: String,

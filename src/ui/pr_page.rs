@@ -520,12 +520,12 @@ pub(super) fn render_checks_card(
 /// is amber only while it can be pressed.
 ///
 /// `None` until the window-bearing render pass has built the input
-/// (`sync_pr_comment_input`): `InputState::new` needs a `&mut Window`, and this
-/// renderer has none. POST is disabled while the box is empty and while a
-/// transport hold is parked on this PR's comment - an unproven post must not be
-/// retried blindly.
+/// (`sync_pr_comment_input`). POST is disabled while the box is empty and
+/// while a transport hold is parked on this PR's comment - an unproven post
+/// must not be retried blindly.
 pub(super) fn render_composer(
     app: &KagiApp,
+    window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> Option<gpui::AnyElement> {
     use gpui_component::{Disableable as _, Sizable as _};
@@ -567,7 +567,10 @@ pub(super) fn render_composer(
                 .child(super::timeline_row::body_markdown(
                     ("pr-comment-preview", number as usize),
                     typed.as_ref(),
+                    super::timeline_row::BodyMarkdownFormat::Original,
                     super::timeline_row::markdown_style(15., cx),
+                    window,
+                    cx,
                 )),
         )
     } else {

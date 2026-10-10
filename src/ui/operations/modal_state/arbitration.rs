@@ -45,6 +45,7 @@ impl KagiApp {
     /// Callers are synchronous user intents; async producers use the typed
     /// offer/update/notice seams below (#718 / ADR-0196).
     pub(super) fn replace_modal_from_user(&mut self, modal: ActiveModal) {
+        self.with_ui(|ui| ui.retire_issue_conversation_scope());
         if let Some(flight) = self.fetch_in_flight.as_mut() {
             if !flight.waiters.is_empty() {
                 flight.pull_confirm_displaced = true;
@@ -62,6 +63,7 @@ impl KagiApp {
 
     pub(crate) fn offer_plan_from_async(&mut self, offer: AsyncPlanOffer) -> bool {
         if self.active_modal.is_none() {
+            self.with_ui(|ui| ui.retire_issue_conversation_scope());
             if let Some(flight) = self.fetch_in_flight.as_mut() {
                 if !flight.waiters.is_empty() {
                     flight.pull_confirm_displaced = true;

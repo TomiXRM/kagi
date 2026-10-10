@@ -16,7 +16,7 @@ use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::KagiApp;
 
 use crate::evidence_support::pull_request;
-use crate::macos::{build_fixture, mount, unmount};
+use crate::macos::{build_fixture, git, mount, unmount};
 use crate::pr_fields_focus::OfflineGh;
 
 fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
@@ -166,24 +166,60 @@ pub fn scenario_pr_same_number(cx: &mut VisualTestAppContext) {
     let state = tempfile::tempdir().unwrap();
     let log = state.path().join("calls");
     let _gh = OfflineGh::with_script(&gh_script(&log));
+    // This boundary needs successful local PR loads: a failed ref fetch
+    // legitimately starts a newer shared-list read and supersedes a held one.
+    // Keep the GitHub identities raw; only their private fixture transport is
+    // rewritten, as in pr_viewed.
+    let remotes = tempfile::tempdir().unwrap();
+    let remote_a = remotes.path().join("a.git");
+    let remote_b = remotes.path().join("b.git");
+    for (name, base_repo, remote) in [("a", A, &remote_a), ("b", B, &remote_b)] {
+        git(
+            remotes.path(),
+            &["init", "-q", "--bare", &format!("{name}.git")],
+        );
+        git(
+            &repo,
+            &[
+                "push",
+                "-q",
+                remote.to_str().unwrap(),
+                "main:refs/heads/main",
+            ],
+        );
+        let url = format!("https://{base_repo}.git");
+        git(&repo, &["remote", "add", name, &url]);
+        let file_url = format!("file://{}", remote.display());
+        git(
+            &repo,
+            &["config", &format!("url.{file_url}.insteadOf"), &url],
+        );
+    }
+    let head_a =
+        crate::pr_viewed::push_pr_head(&repo, &remote_a, "main", &[("a.rs", "A's PR content\n")]);
+    let head_b =
+        crate::pr_viewed::push_pr_head(&repo, &remote_b, "main", &[("b.rs", "B's PR content\n")]);
     let (app, window) = mount(cx, &repo);
 
-    let pr = |base_repo: &str, head: char| {
+    let pr = |base_repo: &str, head: &str| {
         let mut pr = pull_request(7, &format!("{base_repo} #7"), "fix");
         pr.base_repo = base_repo.to_string();
         pr.url = format!("https://{base_repo}/pull/7");
-        pr.head_sha = head.to_string().repeat(40);
+        pr.head_sha = head.to_owned();
         pr
     };
-    let (a7, b7) = (pr(A, 'a'), pr(B, 'b'));
+    let (a7, b7) = (pr(A, &head_a), pr(B, &head_b));
     // The session's list is A's (its `gh repo set-default`).
     app.update(cx, |app, _| {
         app.ui_mut().expect("a repository session").github_prs = vec![a7.clone()];
     });
-    app.update(cx, |app, cx| {
-        app.pr_mode_open(&a7, cx);
-        app.pr_mode_open(&b7, cx);
-    });
+    // Admit the real Git fetches serially. The existing wait_loaded helper
+    // pumps completions but does not advance the TestDispatcher's retry timer
+    // for a second fetch behind a writer; that admission is not this boundary.
+    app.update(cx, |app, cx| app.pr_mode_open(&a7, cx));
+    crate::pr_viewed::wait_loaded(cx, &app, &head_a);
+    app.update(cx, |app, cx| app.pr_mode_open(&b7, cx));
+    crate::pr_viewed::wait_loaded(cx, &app, &head_b);
     wait_reads(cx, &log);
 
     let (a_reviews, a_merge, a_threads) = landed(cx, &app, A);
@@ -233,6 +269,155 @@ pub fn scenario_pr_same_number(cx: &mut VisualTestAppContext) {
         "B's draft comes back with B's tab"
     );
 
+    // A successful list refresh replaces the PR facts, not either PR's
+    // composer. Hold it across a PR switch so B's accepted background
+    // update cannot overwrite the live box now belonging to A.
+    let (refresh, answer) = crate::evidence_support::deferred(cx);
+    kagi::ui::e2e::queue_github_pr_fetch(refresh);
+    let refresh_generation = app.update(cx, |app, cx| {
+        app.refresh_github_prs(cx);
+        assert!(app.ui().github_prs_loading, "the held read is admitted");
+        app.ui().github_prs_gen
+    });
+    app.update(cx, |app, cx| app.pr_mode_open(&a7, cx));
+    paint(cx, window);
+    let a_text = "for A\n日本語\n";
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            let input = app.pr_comment_input.clone().expect("A's composer");
+            input.update(cx, |state, cx| state.replace(a_text.to_owned(), window, cx));
+        });
+    })
+    .unwrap();
+    paint(cx, window);
+    cx.read(|cx| {
+        let ui = app.read(cx).ui();
+        assert_eq!(
+            ui.github_prs_gen, refresh_generation,
+            "the held producer must not be superseded before delivery"
+        );
+        assert!(ui.github_prs_loading, "the producer is still held");
+    });
+    let mut refreshed_b = b7.clone();
+    refreshed_b.title = "B refreshed while A composes".into();
+    answer.send(Ok(vec![a7.clone(), refreshed_b]));
+    paint(cx, window);
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let mode = app.pr_mode().expect("PR mode after refresh");
+        assert_eq!(mode.tabs[mode.active.unwrap()].pr.key(), a7.key());
+        let ui = app.ui();
+        assert_eq!(ui.github_prs_gen, refresh_generation);
+        assert!(!ui.github_prs_loading, "the held completion was accepted");
+        assert!(ui.github_error.is_none(), "the refresh succeeded");
+        let b = ui.github_prs.iter().find(|pr| pr.is(&b7.key())).unwrap();
+        assert_eq!(
+            b.title, "B refreshed while A composes",
+            "the accepted Open collection carries the distinct refreshed title"
+        );
+    });
+    assert_eq!(
+        (draft(cx, &app, A), draft(cx, &app, B), composer(cx, &app)),
+        (a_text.to_owned(), "for B".to_owned(), a_text.to_owned()),
+        "accepted background PR facts must preserve both drafts and A's live box"
+    );
+
+    // Read the title through the actual dashboard renderer as well as the
+    // accepted collection. Open-tab facts may follow a different strip; they
+    // are not an observer of shared Open-list acceptance.
+    app.update(cx, |app, cx| app.pr_mode_home(cx));
+    kagi::ui::list_a11y::clear_recorded_lists();
+    kagi::ui::e2e::clear_control_bounds(window.window_id(), "pr-home-title-7");
+    paint(cx, window);
+    paint(cx, window);
+    let list = kagi::ui::list_a11y::recorded_list("pr-list")
+        .expect("the accepted PR collection is rendered as a list");
+    assert!(
+        list.rows
+            .values()
+            .any(|(label, _)| { label.contains("B refreshed while A composes") }),
+        "a freshly drawn PR row exposes the distinct refreshed title"
+    );
+    let title = kagi::ui::e2e::control_bounds(window.window_id(), "pr-home-title-7")
+        .expect("the PR title cell is drawn");
+    assert!(title.size.width > gpui::px(0.) && title.size.height > gpui::px(0.));
+    app.update(cx, |app, cx| app.pr_mode_open(&a7, cx));
+    paint(cx, window);
+    assert_eq!(
+        composer(cx, &app),
+        a_text,
+        "A's box survives list inspection"
+    );
+
+    // The repository's actual snapshot reload also keeps the open PR state.
+    app.update(cx, |app, cx| app.reload(cx));
+    paint(cx, window);
+    assert_eq!(
+        composer(cx, &app),
+        a_text,
+        "reload preserves A's live draft"
+    );
+    app.update(cx, |app, cx| app.pr_mode_open(&b7, cx));
+    paint(cx, window);
+    assert_eq!(
+        (draft(cx, &app, A), composer(cx, &app)),
+        (a_text.to_owned(), "for B".to_owned()),
+        "reload preserves the parked draft as well as the active draft"
+    );
+
+    // The refresh/reload must preserve the conversation the production gh
+    // subprocess and parser delivered, not just the composer. Draw its real
+    // review anchor and first row on each PR after restoring that PR's box.
+    for (pr, author) in [(&a7, "a-reviewer"), (&b7, "b-reviewer")] {
+        app.update(cx, |app, cx| {
+            app.pr_mode_open(pr, cx);
+            app.pr_mode_show(kagi::ui::pr_mode::PrView::Review, cx);
+        });
+        for control in ["pr-feed-review", "pr-feed-entry-0"] {
+            kagi::ui::e2e::clear_control_bounds(window.window_id(), control);
+        }
+        paint(cx, window);
+        paint(cx, window);
+        cx.read(|cx| {
+            let mode = app.read(cx).pr_mode().expect("restored PR page");
+            let tab = &mode.tabs[mode.active.unwrap()];
+            assert_eq!(tab.pr.key(), pr.key());
+            assert!(tab.conversation_loaded);
+            assert_eq!(
+                (
+                    tab.reviews.len(),
+                    tab.comments.len(),
+                    tab.line_comments.len()
+                ),
+                (1, 0, 1),
+                "refresh/reload must retain the exact conversation counts"
+            );
+            assert_eq!(tab.feed_entries.len(), 2);
+            assert_eq!(tab.reviews[0].author, author);
+            assert_eq!(
+                tab.reviews[0].body,
+                if pr.base_repo == A {
+                    "from a"
+                } else {
+                    "from b"
+                }
+            );
+            assert_eq!(tab.line_comments[0].body, "x");
+        });
+        let heading = kagi::ui::e2e::control_bounds(window.window_id(), "pr-feed-review")
+            .expect("the restored review heading is drawn");
+        let entry = kagi::ui::e2e::control_bounds(window.window_id(), "pr-feed-entry-0")
+            .expect("the restored conversation row is drawn");
+        assert!(
+            entry.top() >= heading.top(),
+            "the row follows its review heading"
+        );
+        assert_eq!(
+            composer(cx, &app),
+            if pr.base_repo == A { a_text } else { "for B" },
+            "the rendered conversation and composer must have the same PR owner"
+        );
+    }
     // The exact same PrKey in a second repository session is a separate
     // composer owner. Exercise real visible text, not a seeded parked draft.
     let first_owner = cx.read(|cx| app.read(cx).active_session().unwrap());

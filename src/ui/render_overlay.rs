@@ -241,7 +241,7 @@ impl KagiApp {
             self.rebase_current_onto_modal().cloned(),
             self.branch_cleanup_modal().cloned(),
             self.discard_modal().cloned(),
-            self.editor_dirty_guard_modal().cloned(),
+            self.editor_dirty_guard_modal().is_some(),
             self.editor_fs_prompt_modal().cloned(),
             self.editor_delete_confirm_modal().cloned(),
             file_menu,
@@ -293,7 +293,7 @@ impl KagiApp {
         mut rebase_current_onto_modal: Option<RebaseCurrentOntoModal>,
         mut branch_cleanup_modal: Option<BranchCleanupModal>,
         mut discard_modal: Option<DiscardModal>,
-        mut editor_dirty_guard_modal: Option<EditorDirtyGuardModal>,
+        editor_dirty_guard_open: bool,
         mut editor_fs_prompt_modal: Option<EditorFsPromptModal>,
         mut editor_delete_confirm_modal: Option<EditorDeleteConfirmModal>,
         mut file_menu: Option<file_menu::FileMenu>,
@@ -620,8 +620,8 @@ impl KagiApp {
                         ))
                     })
                     // ── Editor Workspace unsaved-changes modal (T-WS-EDITOR-002) ──
-                    .when_some(editor_dirty_guard_modal.take(), |el, modal| {
-                        el.child(render_editor_dirty_guard_modal(modal, cx))
+                    .when(editor_dirty_guard_open, |el| {
+                        el.child(render_editor_dirty_guard_modal(cx))
                     })
                     // ── Editor Workspace tree fs-prompt (Rename/New File/New Folder) ──
                     .when_some(editor_fs_prompt_modal.take(), |el, modal| {

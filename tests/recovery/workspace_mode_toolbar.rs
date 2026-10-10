@@ -7,6 +7,9 @@ use kagi::ui::e2e;
 use kagi::ui::i18n::{self, Lang};
 use kagi::ui::workspace_mode::WorkspaceMode;
 
+#[path = "markdown_preparation_edges.rs"]
+pub(crate) mod markdown_preparation_edges;
+
 const REPO_ACTIONS: &str = "tb-repo-actions";
 
 /// Draw one fresh frame and report whether it laid out the repo actions.

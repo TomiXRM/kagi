@@ -572,6 +572,9 @@ impl KagiApp {
             // Invalidate completions as well as hiding the mode: a request that
             // lands after Graph was selected must not reopen the workspace.
             self.with_ui(|ui| {
+                // Selection and its list belong to the session, not this visit.
+                // Retire only the activation so returning can show the cache.
+                ui.retire_issue_conversation_scope();
                 ui.github_issues_gen = ui.github_issues_gen.wrapping_add(1);
                 ui.github_issue_detail_gen = ui.github_issue_detail_gen.wrapping_add(1);
                 ui.github_issues_loading = false;
@@ -581,7 +584,6 @@ impl KagiApp {
                 ui.github_issues_error = None;
                 ui.github_issue_detail_loading = None;
                 ui.github_issue_detail_error = None;
-                ui.selected_github_issue = None;
             });
         }
     }
@@ -595,7 +597,7 @@ impl KagiApp {
             || self.ui().branch_cleanup_open
         {
             WorkspaceMode::Takeover
-        } else if self.pr_mode().is_some() {
+        } else if self.pr_mode_visible() {
             WorkspaceMode::Prs
         } else if self.issues_mode_open() {
             WorkspaceMode::Issues
@@ -611,6 +613,20 @@ impl KagiApp {
     pub fn show_graph_mode(&mut self, cx: &mut Context<Self>) {
         self.sidebar.swipe.cancel();
         self.leave_takeovers(WorkspaceMode::Graph);
+        self.finish_show_graph_mode(cx);
+    }
+
+    /// Read-only Peek borrows Graph; PRs restores the retained workspace.
+    pub(crate) fn show_graph_for_pr_peek(&mut self, cx: &mut Context<Self>) {
+        self.sidebar.swipe.cancel();
+        self.leave_takeovers(WorkspaceMode::Prs);
+        if let Some(mode) = self.pr_mode_mut() {
+            mode.visible = false;
+        }
+        self.finish_show_graph_mode(cx);
+    }
+
+    fn finish_show_graph_mode(&mut self, cx: &mut Context<Self>) {
         if let Some(ev) = self.ui().editor_workspace.clone() {
             if ev.read(cx).any_dirty() {
                 self.open_editor_dirty_guard(EditorPendingIntent::Close, cx);
@@ -631,7 +647,7 @@ impl KagiApp {
     pub fn show_pr_mode(&mut self, cx: &mut Context<Self>) {
         self.sidebar.swipe.cancel();
         self.leave_takeovers(WorkspaceMode::Prs);
-        if self.pr_mode().is_none() {
+        if !self.pr_mode_visible() {
             self.toggle_pr_mode(cx);
         }
         klog!("mode: prs");
@@ -640,11 +656,35 @@ impl KagiApp {
 
     /// Issues: open the session-owned read-only list and refresh it once.
     pub fn show_issues_mode(&mut self, cx: &mut Context<Self>) {
+        self.show_issues_mode_opening(None, cx);
+    }
+
+    /// Home supplies its destination and owns the following detail read.
+    pub(super) fn show_issues_mode_opening(
+        &mut self,
+        opening_issue: Option<u64>,
+        cx: &mut Context<Self>,
+    ) {
         self.sidebar.swipe.cancel();
         self.leave_takeovers(WorkspaceMode::Issues);
         if !self.issues_mode_open() {
             self.refresh_github_issues(cx);
+            // Departure invalidates pending detail reads but retains selection.
+            // A cache miss must resume through the owner/generation boundary,
+            // rather than expose an empty conversation with only its composer.
+            let ui = self.ui();
+            let unaccepted = ui.selected_github_issue.filter(|number| {
+                opening_issue.is_none()
+                    && !ui.github_issue_details.contains_key(number)
+                    && ui.github_issue_detail_loading != Some(*number)
+            });
+            if let Some(number) = unaccepted {
+                if let (Some(owner), Some(repo)) = (self.active_session(), self.repo_path.clone()) {
+                    self.load_github_issue_detail_for(owner, repo, number, cx);
+                }
+            }
         }
+        self.activate_issue_conversation(cx);
         klog!("mode: issues");
         cx.notify();
     }

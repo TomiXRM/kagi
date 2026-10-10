@@ -667,6 +667,7 @@ impl KagiApp {
                 self,
                 &layout,
                 if nested { bottom_panel.take() } else { None },
+                window,
                 cx,
             ) {
                 Some(el) => center_content.child(el),
@@ -744,7 +745,7 @@ impl KagiApp {
         } else {
             right_pane
                 .and_then(workspace::right_item)
-                .and_then(|item| item.render(self, &layout, None, cx))
+                .and_then(|item| item.render(self, &layout, None, window, cx))
         };
         if let Some(el) = right_element {
             let pane = div()

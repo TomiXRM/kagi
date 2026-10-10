@@ -161,6 +161,7 @@ impl KagiApp {
                 self.file_menu = None;
             }
             if let Some(ui) = self.ui.get_mut(&session) {
+                ui.retire_issue_conversation_scope();
                 ui.worktree_inspections.cancel();
                 if ui.pr_mode.is_some() {
                     ui.invalidate_pr_list_visit();

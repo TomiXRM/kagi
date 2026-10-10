@@ -5,9 +5,12 @@
 //! controls — so the Issues feed, the PR feed and the PR home table cannot
 //! drift apart by a padding value.
 //!
-//! Renderers only: no state, no I/O. What a row *says* stays with the caller.
+//! Renderers only: no application state or I/O. Body preparation is memoized
+//! for consecutive rendered frames; what a row *says* stays with the caller.
 
-use gpui::{div, prelude::*, px, rgb, AnyElement, Div, ElementId, SharedString, Stateful};
+use gpui::{
+    div, prelude::*, px, rgb, AnyElement, App, Div, ElementId, SharedString, Stateful, Window,
+};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::text::{TextView, TextViewStyle};
@@ -117,6 +120,43 @@ pub(super) fn markdown_style(heading_base: f32, cx: &gpui::App) -> TextViewStyle
     }
 }
 
+/// Preserve the caller's source presentation without copying it per frame.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum BodyMarkdownFormat {
+    Original,
+    Trimmed,
+    Placeholder { text: &'static str, italic: bool },
+}
+
+pub(super) struct PreparedBody {
+    pub(super) raw: String,
+    pub(super) format: BodyMarkdownFormat,
+    pub(super) text: SharedString,
+}
+
+impl PreparedBody {
+    pub(super) fn new(body: &str, format: BodyMarkdownFormat) -> Self {
+        let placeholder;
+        let source = match format {
+            BodyMarkdownFormat::Original => body,
+            BodyMarkdownFormat::Trimmed => body.trim(),
+            BodyMarkdownFormat::Placeholder { text, italic } => {
+                if italic {
+                    placeholder = format!("_{text}_");
+                    &placeholder
+                } else {
+                    text
+                }
+            }
+        };
+        Self {
+            raw: body.to_owned(),
+            format,
+            text: kagi_ui_editor::markdown::prepare_github_markdown(source).into(),
+        }
+    }
+}
+
 /// A body through the GitHub-markdown pipeline the feeds share
 /// (`kagi_ui_editor::markdown::prepare_github_markdown`): normalise the text,
 /// turn images into links so a remote-origin comment cannot make the app
@@ -127,16 +167,30 @@ pub(super) fn markdown_style(heading_base: f32, cx: &gpui::App) -> TextViewStyle
 pub(super) fn body_markdown(
     id: impl Into<ElementId>,
     body: &str,
+    format: BodyMarkdownFormat,
     style: TextViewStyle,
+    window: &mut Window,
+    cx: &mut App,
 ) -> AnyElement {
-    TextView::markdown(
-        id,
-        SharedString::from(kagi_ui_editor::markdown::prepare_github_markdown(body)),
-    )
-    .selectable(true)
-    .style(style)
-    .font_features(kagi_ui_editor::markdown::literal_text_features())
-    .into_any_element()
+    let id = id.into();
+    // A direct ElementId in a separate namespace avoids formatted cache keys
+    // and cannot alias the SDK's "{id}/state" TextViewState entity.
+    let prepared = window.with_element_namespace("github-markdown-preparation", |window| {
+        window.use_keyed_state(id.clone(), cx, |_, _| PreparedBody::new(body, format))
+    });
+    let text = prepared.update(cx, |prepared, _| {
+        // Compare the original bytes, not their length, hash or normalized
+        // output: edits and reused/reordered row identities replace one payload.
+        if prepared.raw != body || prepared.format != format {
+            *prepared = PreparedBody::new(body, format);
+        }
+        prepared.text.clone()
+    });
+    TextView::markdown(id, text)
+        .selectable(true)
+        .style(style)
+        .font_features(kagi_ui_editor::markdown::literal_text_features())
+        .into_any_element()
 }
 
 /// The composer's text box: borderless, at the feed's reading size. The

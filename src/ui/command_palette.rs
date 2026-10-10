@@ -414,8 +414,10 @@ impl KagiApp {
                 div()
                     .p(theme::scaled_px(8.0))
                     .flex_shrink_0()
-                    .relative()
-                    .child(super::e2e::measure_inside("palette-input"))
+                    .when(cfg!(feature = "gui-e2e"), |el| {
+                        el.relative()
+                            .child(super::e2e::measure_inside("palette-input"))
+                    })
                     .border_b_1()
                     .border_color(rgb(theme().selected))
                     .child(Input::new(input).appearance(true)),
@@ -430,6 +432,11 @@ impl KagiApp {
             .overflow_y_scroll()
             .min_h(gpui::px(0.))
             .flex_shrink(1.);
+        list = super::list_a11y::list_box(
+            "command-palette-list",
+            list,
+            &i18n::Msg::CommandPalettePlaceholder.t(),
+        );
         if let Some(scroll) = &self.command_palette_scroll {
             list = list.track_scroll(scroll);
         }
@@ -446,7 +453,7 @@ impl KagiApp {
         }
 
         for (i, row) in rows.iter().enumerate() {
-            list = list.child(self.render_palette_row(i, row, i == selected, cx));
+            list = list.child(self.render_palette_row(i, rows.len(), row, i == selected, cx));
         }
 
         let panel_el = panel.child(list).into_any_element();
@@ -456,6 +463,7 @@ impl KagiApp {
     fn render_palette_row(
         &self,
         index: usize,
+        count: usize,
         row: &PaletteRow,
         is_selected: bool,
         cx: &mut Context<Self>,
@@ -487,6 +495,10 @@ impl KagiApp {
         let mut left = div().flex_1().min_w(gpui::px(0.)).flex().flex_col().child(
             div()
                 .truncate()
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    el.relative()
+                        .child(super::e2e::measure_inside(format!("palette-label-{index}")))
+                })
                 .text_sm()
                 .text_color(rgb(label_color))
                 .child(label.clone()),
@@ -500,21 +512,29 @@ impl KagiApp {
             );
         }
 
-        let mut r = div()
-            .id(("palette-row", index))
-            .aria_label(label)
-            .tooltip(move |window, cx| {
-                gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
-            })
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .px_4()
-            .py(theme::scaled_px(6.0))
-            .cursor_pointer()
-            .on_mouse_down(MouseButton::Left, click);
+        let mut r = super::list_a11y::list_option(
+            "command-palette-list",
+            div().id(("palette-row", index)),
+            index,
+            count,
+            row.label.clone(),
+            is_selected,
+        )
+        .when_some(row.disabled_reason.clone(), |el, reason| {
+            el.aria_description(reason)
+        })
+        .tooltip(move |window, cx| {
+            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+        })
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_3()
+        .px_4()
+        .py(theme::scaled_px(6.0))
+        .cursor_pointer()
+        .on_mouse_down(MouseButton::Left, click);
         if is_selected {
             r = r.bg(rgb(theme().selected));
         }
@@ -524,10 +544,11 @@ impl KagiApp {
             r = r.child(
                 div()
                     .flex_shrink_0()
-                    .relative()
-                    .child(super::e2e::measure_inside(format!(
-                        "palette-shortcut-{index}"
-                    )))
+                    .when(cfg!(feature = "gui-e2e"), |el| {
+                        el.relative().child(super::e2e::measure_inside(format!(
+                            "palette-shortcut-{index}"
+                        )))
+                    })
                     .text_xs()
                     .text_color(rgb(theme().text_muted))
                     .child(SharedString::from(ks.clone())),

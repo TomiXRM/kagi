@@ -78,6 +78,10 @@ Role は dense search/command overlay。Reference は Spotlight の検索欄を�
 min(480 scaled px, viewport − top − 16 scaled px)。top は 80 scaled px を
 上限に window 高の 10% へ縮む。検索欄は shrink せず、結果だけが独立して scroll する。
 long label は truncate し完全な名前を tooltip／AX に保持、shortcut は shrink しない。
+結果は既存 `list_a11y` の ListBox／ListBoxOption とし、selected・全 label・
+disabled reason の description を設定する。role のない div の name には依存しない。
+native recorder は長い option の AX name、実 label bounds と single-line 高さを検証する。
+measurement probe は gui-e2e のときだけ生成し、release render では名前を format しない。
 
 rest／hover／selected／disabled／empty／many results と既存 Arrow／Enter／Escape
 は維持する。loading／新しい error state は本変更にはない。IME と real-window

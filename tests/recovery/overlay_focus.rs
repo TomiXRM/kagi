@@ -218,6 +218,26 @@ pub fn scenario_palette_viewport(cx: &mut VisualTestAppContext) {
                 let filtered =
                     cx.read(|cx| kagi::ui::command_palette::rows_for(app.read(cx), query));
                 assert!(filtered.len() <= 1, "few/empty result fixture");
+                if let Some(row) = filtered.first() {
+                    let ax = kagi::ui::list_a11y::recorded_list("command-palette-list").unwrap();
+                    assert_eq!(ax.role, Some(gpui::Role::ListBox));
+                    assert_eq!(
+                        ax.rows.get(&0).unwrap().0,
+                        row.label,
+                        "drawn long option retains its full AX name"
+                    );
+                    let label_bounds =
+                        e2e::control_bounds(window.window_id(), "palette-label-0").unwrap();
+                    contained(filtered_card, label_bounds, "drawn long theme label");
+                    assert!(
+                        label_bounds.size.height <= theme::scaled_px(24.),
+                        "long theme label must occupy one line, not wrap"
+                    );
+                    assert!(
+                        scroll.bounds_for_item(0).unwrap().size.height <= theme::scaled_px(40.),
+                        "long theme option must retain single-line row height"
+                    );
+                }
             }
             drop(scroll);
             unmount(cx, app, window);

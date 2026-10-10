@@ -150,3 +150,11 @@ with the fixed keyboard-ring width removed from the text's line box; one
 model therefore fits completely rather than receiving an 18px viewport for
 an independently padded taller row.
 
+## Amendment — 2026-10-11: generation status language (#1168)
+
+All transient generation statuses use EN/JA `Msg` in the current UI language:
+local LLM / named CLI loading, successful generation, rule-based fallback after
+provider failure (including HTTP errors and timeouts), and manual-edit failure.
+The generated commit message retains its independently chosen language.
+Provider failure diagnostics remain unchanged in the English klog contract;
+the existing session-owned completion and quiet fallback policy are unchanged.

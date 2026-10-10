@@ -1351,7 +1351,8 @@ pub fn scenario_smart_commit_generation_owner(cx: &mut VisualTestAppContext) {
         assert_eq!(app.active_session(), Some(session_a));
         assert!(
             !app.ui().smart_commit_generating
-                && app.ui().smart_commit_status.as_deref() == Some("Generated with local LLM"),
+                && app.ui().smart_commit_status.as_deref()
+                    == Some(kagi_ui_core::i18n::Msg::SmartGeneratedLocal.t()),
             "smart-owner-a-restores-result: A must retain its own completed status"
         );
     });

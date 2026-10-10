@@ -12,10 +12,11 @@
 
 Discard and remove previously wrote naked ODB blobs. An oplog string containing
 an OID is not a Git reachability root; even automatic Git GC can prune it.
-Both existing executors now call the same small `ops::backup` helper, which
-writes the blob and creates an exclusive direct ref before returning a backup:
-`refs/kagi/backups/<attempt-id>/<file-ordinal>`. A direct blob ref is a GC root;
-a new commit/tree or mutation of the index is not required for byte recovery.
+Both executors use `ops::backup` to create an exclusive recovery ref before
+returning a backup: `refs/kagi/backups/<attempt-id>/<file-ordinal>`. Remove
+retains a direct blob root. Discard now retains a single-entry tree with the
+fixed entry name `file`, its blob OID and Git mode (120000/100644/100755, #1138).
+Both shapes are GC roots without changing the index.
 The attempt id combines nanosecond time, process id and a process-local counter.
 It is independent of the post-execution oplog sequence id and the application
 OperationId. Ref creation never overwrites: a collision stops before deletion.
@@ -45,14 +46,57 @@ any deletion may leave extra pinned objects; preserving bytes takes priority.
 
 ## Recovery
 
-Use the receipt's exact ref in `git cat-file blob <backup-ref>` or
-`Backend::read_backup(reference)`. The latter returns bytes and never writes a
-working-tree file; a future overwrite UI still needs a separate approved write
-plan. The reader accepts only exact refs in the backup namespace, not revision
-expressions or bare OIDs. Symlink backups still contain link-target bytes, not
-a recreated filesystem symlink. This preserves the existing discard contract.
-Legacy naked-OID receipts remain readable, but are not retroactively pinned or
-claimed GC-safe; objects already pruned cannot be reconstructed by this change.
+Use the receipt's exact ref with `Backend::read_backup(reference)`. This
+content-only reader accepts both legacy direct blob roots and discard's new
+single-entry tree roots. It never writes a working-tree file. For tree roots,
+`git cat-file blob <backup-ref>:file` exports the bytes; `git ls-tree <backup-ref>`
+shows the type/mode. The recorded blob OID and existing oplog summaries/typed
+handles remain unchanged. Old direct blob roots still support
+`git cat-file blob <backup-ref>`; their absent type information is not guessed.
+Legacy naked-OID receipts are not retroactively pinned or claimed GC-safe.
+
+Symlink blobs contain the exact Unix `read_link` target bytes, including
+non-UTF-8 and dangling targets; they never contain dereferenced target content.
+On other platforms unrepresentable targets refuse before discard rather than
+substituting replacement characters. Regular entries use Git's executable
+policy: only Unix owner-execute (0100) sets 100755 when `core.fileMode=true`;
+with `core.fileMode=false` or on non-Unix platforms the index mode is retained
+(new regular files default to 100644). The reader validates the single-entry
+tree format and allowed file modes.
+
+Discard restores only approved entries through an isolated repository handle
+with an in-memory index; the real index is never written. After every backup
+is pinned, a worktree entry whose type differs from the selected index entry
+is unlinked before forced checkout (respecting `core.symlinks=false` emulation).
+This is required even with `force()`: libgit2's empty-baseline checkout treats
+these entries as additions. A 100644 regular-file target gets UPDATE_BLOB
+without REMOVE; 100755 and LINK targets also get REMOVE. The regular-file
+writer only removes an existing destination automatically when
+`core.ignorecase=true`. With `core.ignorecase=false` (Linux's usual default,
+or explicitly configured on macOS), it otherwise opens through an existing
+symlink, truncates its target, and overwrites it with the index blob content.
+No recursive deletion is used.
+
+Verification reads directory-entry metadata and exact symlink target bytes,
+not the real index's potentially stale status/stat cache. Regular content is
+compared through libgit2's clean/EOL rules against a fresh stat-less in-memory
+index, preserving normalization checks without trusting size or timestamps.
+Untracked entries must be absent according to `symlink_metadata`, including
+dangling links. Every failure after unlink/checkout retains the backups in a
+Partial outcome and the operation still owns one receipt.
+
+There is currently **no filesystem file-backup restore consumer** in the
+UI/MCP/CLI/backend: this correction does not add a restore API. Manual Unix Git
+recovery can export the tree into an empty directory using a private
+`GIT_INDEX_FILE` (`git read-tree <backup-ref>`, then
+`git -c core.symlinks=true checkout-index --all --prefix=<empty-directory>/`).
+The exported `file` entry has the saved type and mode; rename that entry onto
+the selected destination, without writing through any existing symlink. A future
+Kagi restore executor must use a confirmed plan, recreate links only on supported
+platforms (with a typed unsupported-platform error elsewhere), and never write
+symlink target bytes as a regular file or dereference an existing destination.
+This Unix Git recovery route is exercised by the discard backend regressions;
+Windows symlink restoration is not claimed.
 
 ## Retention and cleanup
 
@@ -86,7 +130,7 @@ Append and retirement share a stable sidecar file lock. Append waits at most one
 second for a short competing write, then returns a recording error if still busy;
 retirement preflight refuses immediately. Neither overwrites another writer's
 log. While holding that lock, append validates every named root in the receipt's
-repository as an existing direct blob ref. A queued append cannot acquire
+repository as an existing direct blob/tree/commit/tag ref. A queued append cannot acquire
 ownership after retirement removed the root. This bounded I/O does not introduce an indefinite lock wait.
 The sidecar also reserves the next sequence id before writes so retirement of
 the newest/only entry cannot reuse its id. Failed writes may leave sequence gaps.

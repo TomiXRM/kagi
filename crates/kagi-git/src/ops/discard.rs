@@ -194,7 +194,7 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
 
     let recovery = PlanRecovery {
         kind: RecoveryKind::Discard,
-        commands: vec!["git cat-file blob <backup-ref>".to_string()],
+        commands: vec!["git cat-file blob <backup-ref>:file".to_string()],
     };
 
     // ADR-0083: untracked targets are DELETED (after an ODB backup). Surface this
@@ -314,6 +314,111 @@ fn preflight_discard(
     Ok(rels)
 }
 
+fn discard_uses_symlinks(repo: &Repository) -> Result<bool, git2::Error> {
+    match repo.config()?.get_bool("core.symlinks") {
+        Ok(value) => Ok(value),
+        Err(e) if e.code() == git2::ErrorCode::NotFound => Ok(true),
+        Err(e) => Err(e),
+    }
+}
+
+/// Empty-baseline checkout sees selected entries as additions, not typechanges.
+/// libgit2 only unlinks their old destination when core.ignorecase is true;
+/// otherwise its regular-file writer can follow and truncate a symlink.
+fn remove_discard_typechanges(repo: &Repository, workdir: &Path) -> Result<(), git2::Error> {
+    let index = repo.index()?;
+    let symlinks = discard_uses_symlinks(repo)?;
+    for entry in index.iter() {
+        let rel =
+            std::str::from_utf8(&entry.path).map_err(|e| git2::Error::from_str(&e.to_string()))?;
+        let abs = workdir.join(rel);
+        let metadata = match std::fs::symlink_metadata(&abs) {
+            Ok(metadata) => metadata,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                return Err(git2::Error::from_str(&format!(
+                    "discard: inspect '{rel}': {e}"
+                )))
+            }
+        };
+        let want_symlink = entry.mode == 0o120000 && symlinks;
+        if metadata.file_type().is_symlink() != want_symlink {
+            // No recursive deletion or dereferencing: directories fail closed.
+            std::fs::remove_file(&abs)
+                .map_err(|e| git2::Error::from_str(&format!("discard: unlink '{rel}': {e}")))?;
+        }
+    }
+    Ok(())
+}
+
+/// Verify actual entry types and bytes without consulting the real index cache.
+/// Regular files still use libgit2's clean/EOL rules, but a fresh stat-less
+/// index forces content hashing instead of trusting matching size/timestamps.
+fn verify_discard_tracked(repo: &Repository, workdir: &Path) -> Result<Vec<String>, git2::Error> {
+    let selected = repo.index()?;
+    let symlinks = discard_uses_symlinks(repo)?;
+    let mut regular = git2::Index::new()?;
+    let mut leftover = Vec::new();
+    for mut entry in selected.iter() {
+        let rel =
+            std::str::from_utf8(&entry.path).map_err(|e| git2::Error::from_str(&e.to_string()))?;
+        let abs = workdir.join(rel);
+        let metadata = match std::fs::symlink_metadata(&abs) {
+            Ok(metadata) => metadata,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                leftover.push(rel.to_string());
+                continue;
+            }
+            Err(e) => {
+                return Err(git2::Error::from_str(&format!(
+                    "discard verify: inspect '{rel}': {e}"
+                )))
+            }
+        };
+        let want_symlink = entry.mode == 0o120000 && symlinks;
+        if metadata.file_type().is_symlink() != want_symlink
+            || (!want_symlink && !metadata.is_file())
+        {
+            leftover.push(rel.to_string());
+        } else if want_symlink {
+            let target = std::fs::read_link(&abs).map_err(|e| {
+                git2::Error::from_str(&format!("discard verify: read link '{rel}': {e}"))
+            })?;
+            #[cfg(unix)]
+            let bytes = {
+                use std::os::unix::ffi::OsStrExt;
+                target.as_os_str().as_bytes()
+            };
+            #[cfg(not(unix))]
+            let bytes = target
+                .to_str()
+                .ok_or_else(|| {
+                    git2::Error::from_str(&format!("discard verify: non-UTF-8 link target '{rel}'"))
+                })?
+                .as_bytes();
+            if git2::Oid::hash_object(git2::ObjectType::Blob, bytes)? != entry.id {
+                leftover.push(rel.to_string());
+            }
+        } else {
+            entry.ctime = git2::IndexTime::new(0, 0);
+            entry.mtime = git2::IndexTime::new(0, 0);
+            entry.dev = 0;
+            entry.ino = 0;
+            entry.file_size = 0;
+            regular.add(&entry)?;
+        }
+    }
+    let mut options = git2::DiffOptions::new();
+    options.update_index(false);
+    let diff = repo.diff_index_to_workdir(Some(&regular), Some(&mut options))?;
+    for delta in diff.deltas() {
+        if let Some(path) = delta.old_file().path() {
+            leftover.push(path.to_string_lossy().into_owned());
+        }
+    }
+    Ok(leftover)
+}
+
 /// Execute a discard following the **mandatory** ADR-0046 order:
 ///
 /// 1. **backup** — write each target's CURRENT working-tree content into the ODB
@@ -323,8 +428,8 @@ fn preflight_discard(
 ///    `checkout_index` + `force()` (`git checkout -- <path>` semantics); *untracked*
 ///    targets are DELETED from disk (ADR-0083 — recoverable via the step-1 backup,
 ///    so this is not `git clean`). The index and refs are never touched.
-/// 3. **verify** — re-read status and confirm each target left the unstaged set
-///    (tracked) or is gone from disk (untracked).
+/// 3. **verify** — inspect each target's type and content against the index
+///    (tracked) or confirm its directory entry is absent (untracked).
 ///
 /// Returns the [`DiscardOutcome`] (the path→blob backup list) so the caller can
 /// record it in the oplog as the recovery handle. The caller MUST have rejected
@@ -404,32 +509,100 @@ pub(crate) fn execute_discard(
     // Any failure aborts the whole discard BEFORE the working tree is touched.
     let mut backups: Vec<DiscardBackup> = Vec::with_capacity(rels.len());
     let backup_id = super::backup::operation_id();
+    let backup_index = repo
+        .index()
+        .map_err(|e| GitError::Other(e.message().into()))?;
+    #[cfg(unix)]
+    let trust_filemode = match repo
+        .config()
+        .map_err(|e| GitError::Other(e.message().into()))?
+        .get_bool("core.filemode")
+    {
+        Ok(value) => value,
+        Err(e) if e.code() == git2::ErrorCode::NotFound => true,
+        Err(e) => return Err(GitError::Other(e.message().into())),
+    };
     for rel in &rels {
         let abs = workdir.join(rel);
-        // #324 (mirrors #298): never read the backup THROUGH a symlink. `fs::read`
-        // follows links, so an untracked symlink pointing outside the repo (e.g.
-        // `/etc/…` or `../secret`) would pull repo-external bytes into the ODB
-        // backup blob — and a typechange means the link can't be restored from
-        // those bytes anyway. `symlink_metadata` never follows the link; for a
-        // symlink we back up the LINK TARGET PATH bytes (via `read_link`), not
-        // the dereferenced content. The on-disk delete stays `remove_file`, which
-        // already removes the link itself, not its target.
-        // ponytail: restore re-creates the raw link-path bytes as blob content,
-        // not an actual symlink — recover the target with `git cat-file -p <sha>`
-        // then `ln -s`. Full symlink re-creation on restore is a larger change,
-        // deferred; the security invariant (no outside bytes read/stored) holds.
-        let is_symlink = std::fs::symlink_metadata(&abs)
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false);
-        let content: Vec<u8> = if is_symlink {
-            match std::fs::read_link(&abs) {
-                Ok(target) => target.to_string_lossy().into_owned().into_bytes(),
-                Err(e) => {
-                    return Err(GitError::Other(format!(
-                        "discard aborted: cannot read symlink '{}' for backup: {}",
-                        rel, e
-                    )));
+        // Inspect the entry itself, including dangling links; never ingest an
+        // external target or turn arbitrary metadata failures into regular reads.
+        let metadata = match std::fs::symlink_metadata(&abs) {
+            Ok(metadata) => Some(metadata),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                return Err(GitError::Other(format!(
+                    "discard aborted: cannot inspect '{}' for backup: {}",
+                    rel, e
+                )));
+            }
+        };
+        let is_symlink = metadata
+            .as_ref()
+            .is_some_and(|m| m.file_type().is_symlink());
+        let mode = if is_symlink {
+            0o120000
+        } else {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if trust_filemode {
+                    if metadata
+                        .as_ref()
+                        .is_some_and(|m| m.permissions().mode() & 0o100 != 0)
+                    {
+                        0o100755
+                    } else {
+                        0o100644
+                    }
+                } else {
+                    backup_index
+                        .get_path(Path::new(rel), 0)
+                        .map(|entry| {
+                            if entry.mode == 0o100755 {
+                                0o100755
+                            } else {
+                                0o100644
+                            }
+                        })
+                        .unwrap_or(0o100644)
                 }
+            }
+            #[cfg(not(unix))]
+            {
+                // Platforms without a Unix executable bit retain the index mode.
+                backup_index
+                    .get_path(Path::new(rel), 0)
+                    .map(|entry| {
+                        if entry.mode == 0o100755 {
+                            0o100755
+                        } else {
+                            0o100644
+                        }
+                    })
+                    .unwrap_or(0o100644)
+            }
+        };
+        let content: Vec<u8> = if is_symlink {
+            let target = std::fs::read_link(&abs).map_err(|e| {
+                GitError::Other(format!(
+                    "discard aborted: cannot read symlink '{}' for backup: {}",
+                    rel, e
+                ))
+            })?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::ffi::OsStringExt;
+                target.into_os_string().into_vec()
+            }
+            #[cfg(not(unix))]
+            {
+                // Do not silently substitute U+FFFD for an unrepresentable target.
+                target.to_str().ok_or_else(|| {
+                    GitError::Other(format!(
+                        "discard aborted: non-UTF-8 symlink target '{}' cannot be backed up on this platform",
+                        rel
+                    ))
+                })?.as_bytes().to_vec()
             }
         } else {
             // For an unstaged *deletion* the file is absent from the WT; back up an
@@ -445,18 +618,28 @@ pub(crate) fn execute_discard(
                 }
             }
         };
-        backups.push(super::backup::write_blob(
+        backups.push(super::backup::write_file(
             repo,
             &backup_id,
             backups.len(),
             rel.clone(),
             &content,
+            mode,
         )?);
     }
 
     // ── 2a. checkout only the approved index entries (restore WT). ──
     // update_index(false): the repository's staged content is NEVER modified.
     if let Some(checkout_repo) = &checkout_repo {
+        // All backups are pinned before the first unlink. Treat failures here
+        // like checkout failures: earlier selected entries may already be gone.
+        if let Err(e) = remove_discard_typechanges(checkout_repo, &workdir) {
+            return Ok(DiscardOutcome {
+                backups,
+                unverified: rels.clone(),
+                error: Some(e.to_string()),
+            });
+        }
         let mut cb = git2::build::CheckoutBuilder::new();
         cb.force();
         cb.update_index(false);
@@ -514,27 +697,30 @@ pub(crate) fn execute_discard(
         }
     }
 
-    // ── 3. VERIFY — tracked targets left the unstaged set; untracked are gone. ──
-    let status = working_tree_status(repo)?;
-    let still_unstaged: std::collections::HashSet<&Path> =
-        status.unstaged.iter().map(|f| f.path.as_path()).collect();
-    let still_untracked: std::collections::HashSet<&Path> =
-        status.untracked.iter().map(PathBuf::as_path).collect();
-    let mut leftover: Vec<&String> = tracked_rels
-        .iter()
-        .copied()
-        .filter(|r| still_unstaged.contains(Path::new(r.as_str())))
-        .collect();
-    leftover.extend(
-        untracked_rels
-            .iter()
-            .copied()
-            .filter(|r| still_untracked.contains(Path::new(r.as_str()))),
-    );
-    if !leftover.is_empty() {
+    // ── 3. VERIFY — check types/content, never stale real-index status. ──
+    let mut unverified = if let Some(checkout_repo) = &checkout_repo {
+        match verify_discard_tracked(checkout_repo, &workdir) {
+            Ok(leftover) => leftover,
+            Err(e) => {
+                return Ok(DiscardOutcome {
+                    backups,
+                    unverified: rels.clone(),
+                    error: Some(e.to_string()),
+                });
+            }
+        }
+    } else {
+        Vec::new()
+    };
+    for rel in &untracked_rels {
+        match std::fs::symlink_metadata(workdir.join(rel)) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            _ => unverified.push((*rel).clone()),
+        }
+    }
+    if !unverified.is_empty() {
         // #281: verify runs AFTER the working tree was rewritten — return the
         // partial outcome so the backup blob SHAs reach the oplog.
-        let unverified: Vec<String> = leftover.iter().map(|s| (*s).clone()).collect();
         return Ok(DiscardOutcome {
             backups,
             error: Some(format!(

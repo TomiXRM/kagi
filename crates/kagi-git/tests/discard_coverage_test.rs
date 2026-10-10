@@ -68,6 +68,68 @@ fn build_repo(tmp: &TempDir) -> std::path::PathBuf {
     d.to_path_buf()
 }
 
+#[cfg(unix)]
+#[test]
+fn discard_backup_mode_matches_git_executable_policy() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    use std::os::unix::fs::PermissionsExt;
+    for (filemode, indexed_permissions, worktree_permissions, expected_mode) in [
+        (true, 0o644, 0o654, 0o100644),
+        (false, 0o644, 0o755, 0o100644),
+        (false, 0o755, 0o644, 0o100755),
+    ] {
+        let tmp = TempDir::new().unwrap();
+        let d = build_repo(&tmp);
+        git(&d, &["config", "core.fileMode", "true"]);
+        std::fs::set_permissions(
+            d.join("tracked.txt"),
+            std::fs::Permissions::from_mode(indexed_permissions),
+        )
+        .unwrap();
+        git(&d, &["add", "tracked.txt"]);
+        git(&d, &["commit", "--allow-empty", "-qm", "index mode"]);
+        git(
+            &d,
+            &[
+                "config",
+                "core.fileMode",
+                if filemode { "true" } else { "false" },
+            ],
+        );
+        write_file(&d, "tracked.txt", "dirty content\n");
+        std::fs::set_permissions(
+            d.join("tracked.txt"),
+            std::fs::Permissions::from_mode(worktree_permissions),
+        )
+        .unwrap();
+        let repo = Repository::open(&d).unwrap();
+        let index_before = std::fs::read(d.join(".git/index")).unwrap();
+        let paths = vec!["tracked.txt".into()];
+        let plan = plan_discard(&repo, &paths).unwrap();
+        assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+        let outcome = execute_discard(&repo, &plan, &paths).unwrap();
+        assert!(!outcome.is_partial(), "{outcome:?}");
+        let tree = repo
+            .find_reference(&outcome.backups[0].reference)
+            .unwrap()
+            .peel_to_tree()
+            .unwrap();
+        let entry = tree.get_name("file").unwrap();
+        assert_eq!(
+            entry.filemode(),
+            expected_mode,
+            "fileMode={filemode}, permissions={worktree_permissions:o}"
+        );
+        assert_eq!(
+            repo.find_blob(entry.id()).unwrap().content(),
+            b"dirty content\n"
+        );
+        assert_eq!(std::fs::read(d.join(".git/index")).unwrap(), index_before);
+    }
+}
+
 // #1125: a POSIX backslash is a filename byte, not a directory separator.
 #[cfg(unix)]
 fn discard_literal_backslash_fixture(bulk: bool) {

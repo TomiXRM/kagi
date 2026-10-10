@@ -319,6 +319,21 @@ macro_rules! advice_template_en {
     (BranchRenameRemoteNotRenamed) => {
         "Remote branch names are not renamed automatically; only local branch config is carried over."
     };
+    (BranchRenameConfig) => {
+        "Local branch config keys to move: {}."
+    };
+    (BranchRenameConfigChanged) => {
+        "Local branch config changed after confirmation. Review a new rename plan."
+    };
+    (BranchRenameConfigExternal) => {
+        "Branch config is outside the repository's Git directories. Move these settings into local Git config before renaming.\nConfig: {}"
+    };
+    (BranchRenameConfigConditional) => {
+        "Branch-dependent config may disappear during rename. Remove or update the conditional include before renaming.\nCondition: onbranch:{}"
+    };
+    (BranchRenameConfigHeader) => {
+        "Git cannot safely rename this branch config header. Normalize its section/subsection spelling before renaming.\nConfig: {}"
+    };
     (BranchDeleteCurrentBranch) => {
         "Branch '{}' is the currently checked-out branch. Checkout a different branch before deleting this one."
     };
@@ -492,6 +507,9 @@ macro_rules! advice_template_en {
     };
     (PullRemotePreviewStale) => {
         "Remote pull preview no longer matches the host's branch, upstream, HEAD commit, or working-tree changes. Refresh the remote view and try again."
+    };
+    (StashHeadRequired) => {
+        "Stash push requires a HEAD commit. Create an initial commit before stashing."
     };
     (StashUntrackedIncluded) => {
         "{} untracked file(s) will be included in the stash (equivalent to `git stash push -u`)."

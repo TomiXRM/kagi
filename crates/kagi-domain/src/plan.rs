@@ -242,7 +242,8 @@ pub struct DiscardBackup {
     pub path: String,
     /// ODB blob SHA (40-hex) holding the pre-discard working-tree content.
     pub blob: String,
-    /// GC reachability root; recover bytes with `git cat-file blob <reference>`.
+    /// GC root: new discard refs retain a mode-bearing tree (`<reference>:file`
+    /// reads its bytes); legacy discard and other file-backup refs retain blobs.
     pub reference: String,
 }
 

@@ -6,6 +6,8 @@
 pub enum DiscardNote {
     /// blocker — no files were selected (no-op family).
     NothingSelected,
+    /// blocker — preserving the exact path identity is not supported.
+    UnsafePath { path: String },
     /// blocker — the target file is conflicted.
     TargetConflicted { path: String },
     /// blocker — the target file has no unstaged changes.
@@ -23,6 +25,10 @@ impl DiscardNote {
     pub fn message_en(&self) -> String {
         match self {
             DiscardNote::NothingSelected => "Nothing to discard: no files selected.".to_string(),
+            DiscardNote::UnsafePath { path } => format!(
+                "Cannot discard '{}': this path cannot be represented safely on this platform. No files were changed.",
+                path
+            ),
             DiscardNote::TargetConflicted { path } => {
                 format!(crate::advice_template_en!(DiscardTargetConflicted), path)
             }

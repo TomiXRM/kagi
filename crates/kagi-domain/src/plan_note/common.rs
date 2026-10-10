@@ -139,6 +139,8 @@ pub enum CommonNote {
     /// the working tree on purpose. Staging it would record a deletion the user
     /// never made — Git refuses the same operation.
     SparseExcludedPath { path: String },
+    /// #1136: named clean/smudge filters are not executed by libgit2.
+    ExternalFilter { path: String, filter: String },
     /// blocker (#842, #1131): the displayed hunk's range or raw patch content
     /// no longer matches the live diff. Never substitute new content at the
     /// same range, or a neighbouring hunk the user did not choose.
@@ -224,6 +226,12 @@ impl CommonNote {
             ),
             CommonNote::SparseExcludedPath { path } => {
                 format!(crate::advice_template_en!(CommonSparseExcludedPath), path)
+            }
+            CommonNote::ExternalFilter { path, filter } => {
+                format!(
+                    crate::advice_template_en!(CommonExternalFilter),
+                    path, filter
+                )
             }
             CommonNote::HunkChanged { path } => {
                 format!(crate::advice_template_en!(CommonHunkChanged), path)

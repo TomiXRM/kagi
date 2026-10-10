@@ -143,7 +143,11 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
     // Count untracked targets — they are discarded by DELETING the file (after
     // an ODB backup), not by restoring from the index (ADR-0083).
     let mut untracked_targets = 0usize;
+    let filters = crate::special_repo::FilterCheck::new(repo)?;
     for (raw, rel) in paths.iter().zip(&rels) {
+        if let Some(note) = filters.blocker(Path::new(rel))? {
+            blockers.push(note);
+        }
         if !discard_path_is_safe(rel)
             || Path::new(raw)
                 .components()
@@ -277,6 +281,7 @@ fn preflight_discard(
     if rels.is_empty() {
         return Err(GitError::Other("discard: no target paths".to_string()));
     }
+    let filters = crate::special_repo::FilterCheck::new(repo)?;
     for (raw, rel) in paths.iter().zip(&rels) {
         if !discard_path_is_safe(rel)
             || Path::new(raw)
@@ -287,6 +292,7 @@ fn preflight_discard(
                 DiscardNote::UnsafePath { path: raw.clone() }.message_en(),
             ));
         }
+        filters.require_supported(Path::new(rel))?;
     }
     let planned: std::collections::HashSet<&Path> = plan
         .preview_files

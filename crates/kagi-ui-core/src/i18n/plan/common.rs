@@ -36,6 +36,10 @@ pub(crate) const ADVICE_COMMON_PARTIAL_CLONE_OBJECT_MISSING: &str =
 pub(crate) const ADVICE_COMMON_SPARSE_EXCLUDED_PATH: &str =
     "'{}' は sparse-checkout で除外されているため、削除されたのではなく意図的に作業ツリーに存在しません。stage すると、していない削除を記録することになります。git も同じ操作を拒否します。変更するつもりなら、先に sparse-checkout の定義を広げてください。";
 
+/// JA template for `Msg::AdviceCommonExternalFilter`.
+pub(crate) const ADVICE_COMMON_EXTERNAL_FILTER: &str =
+    "'{}' は外部 filter ({}) を使用しています。Kagi はまだ filter 後の内容を保全できないため、filter に対応するまで git で stage / discard してください。書込みは行っていません。";
+
 /// JA template for `Msg::AdviceCommonHunkChanged`.
 pub(crate) const ADVICE_COMMON_HUNK_CHANGED: &str =
     "diff を表示した後に '{}' の hunk が変わっているため、stage / unstage していません。更新された diff を確認して、hunk を選び直してください。";
@@ -131,6 +135,9 @@ pub fn note_ja(note: &CommonNote) -> String {
         }
         CommonNote::SparseExcludedPath { path } => {
             super::advice_text(Msg::AdviceCommonSparseExcludedPath, &[path])
+        }
+        CommonNote::ExternalFilter { path, filter } => {
+            super::advice_text(Msg::AdviceCommonExternalFilter, &[path, filter])
         }
         CommonNote::HunkChanged { path } => {
             super::advice_text(Msg::AdviceCommonHunkChanged, &[path])

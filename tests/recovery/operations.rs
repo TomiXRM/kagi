@@ -3356,6 +3356,69 @@ pub fn scenario_remote_source_merge_into(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
 }
 
+/// #1136: a filtered Stage refusal reaches the actual Failed footer in EN/JA.
+pub fn scenario_stage_external_filter(cx: &mut VisualTestAppContext) {
+    use kagi::ui::e2e;
+    use kagi_ui_core::i18n::{self, Lang};
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let previous = i18n::lang();
+    for language in [Lang::En, Lang::Ja] {
+        i18n::set_lang(language);
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path();
+        git(repo, &["init", "-q", "-b", "main"]);
+        std::fs::write(
+            repo.join(".gitattributes"),
+            "*.bin filter=lfs diff=lfs merge=lfs -text\n",
+        )
+        .unwrap();
+        std::fs::write(repo.join("asset.bin"), "version https://git-lfs.github.com/spec/v1\noid sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nsize 42\n").unwrap();
+        git(repo, &["add", "."]);
+        git(repo, &["commit", "-qm", "pointer fixture"]);
+        std::fs::write(repo.join("asset.bin"), "not an LFS pointer\n").unwrap();
+        let (app, window) = mount(cx, repo);
+        let index = std::fs::read(repo.join(".git/index")).unwrap();
+        let fingerprint = repo_fingerprint(repo);
+        app.update(cx, |app, cx| {
+            app.do_stage_file_by_path(app.active_session().unwrap(), "asset.bin".into(), cx);
+        });
+        wait_idle(cx, &app);
+        paint(cx, window);
+        let expected = match language {
+            Lang::En => "external filter (lfs)",
+            Lang::Ja => "外部 filter (lfs)",
+        };
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let FooterStatus::Failed(footer) = &state.status_footer else {
+                panic!("filtered Stage must show failure footer")
+            };
+            assert!(footer.contains(expected), "{footer}");
+            assert!(footer.contains("asset.bin") && footer.contains("git"));
+            let toast = state
+                .toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .last()
+                .unwrap();
+            assert_eq!(toast.kind, ToastKind::Error);
+            assert!(toast.message.contains(expected), "{}", toast.message);
+            assert!(e2e::app_notice_message(state).is_none());
+        });
+        assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+        assert_eq!(repo_fingerprint(repo), fingerprint);
+        let entries = records(repo, "stage");
+        assert_eq!(entries.len(), 1);
+        assert!(
+            matches!(&entries[0].outcome, OpOutcome::Refused { blockers } if blockers[0].contains("external filter (lfs)"))
+        );
+        unmount(cx, app, window);
+    }
+    i18n::set_lang(previous);
+}
+
 /// #490: same real index.lock failure from panel indices, batch buttons and
 /// editor paths, including a linked panel while the main tab stays active.
 ///

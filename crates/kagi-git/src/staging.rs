@@ -98,6 +98,7 @@ fn worktree_entry_present(path: &Path) -> Result<bool, GitError> {
 }
 
 pub(crate) fn stage_file(repo: &Repository, path: &Path) -> Result<(), GitError> {
+    crate::special_repo::FilterCheck::new(repo)?.require_supported(path)?;
     let workdir = repo
         .workdir()
         .ok_or_else(|| GitError::Other("repository has no working tree".to_string()))?;
@@ -425,6 +426,10 @@ pub(crate) fn stage_files(
 ) -> Result<usize, GitError> {
     if paths.is_empty() {
         return Ok(0);
+    }
+    let filters = crate::special_repo::FilterCheck::new(repo)?;
+    for path in paths {
+        filters.require_supported(path)?;
     }
     let workdir = repo
         .workdir()

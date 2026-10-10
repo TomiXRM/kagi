@@ -63,50 +63,38 @@ impl KagiApp {
         #[cfg(feature = "gui-e2e")]
         let injected = super::e2e::take_github_pr_fetch();
         #[cfg(not(feature = "gui-e2e"))]
-        let injected: Option<
-            gpui::Task<
-                Result<Vec<kagi_domain::github::PullRequest>, kagi_git::github::PrFetchError>,
-            >,
-        > = None;
+        let injected = None;
         if injected.is_none() && !kagi_git::github::gh_available() {
             return;
         }
-        // Shared evidence is always Open, independent of the workspace strip.
+        // Shared evidence is always Open, independent of workspace strip intent.
         let generation = {
             let Some(ui) = self.ui.get_mut(&owner) else {
                 return;
             };
             ui.begin_github_prs_request()
         };
+        let task = super::github_pr_strip::pr_list_task(
+            repo.clone(),
+            None,
+            None,
+            kagi_domain::list_filter::StateFilter::Open,
+            injected,
+            cx,
+        );
+        cx.notify();
         cx.spawn(async move |this, acx| {
-            let fetch_repo = repo.clone();
-            let result = match injected {
-                Some(task) => task.await,
-                None => {
-                    acx.background_executor()
-                        .spawn(async move {
-                            kagi_git::github::list_prs(
-                                &fetch_repo,
-                                kagi_domain::list_filter::StateFilter::Open,
-                            )
-                        })
-                        .await
-                }
-            };
+            let result = task.await;
             let _ = this.update(acx, |app, cx| {
                 let owner_is_active = app.active_session() == Some(owner);
                 let answered = {
                     let Some(ui) = app.ui.get_mut(&owner) else {
                         return;
                     };
-                    if !ui.accept_github_prs_completion(generation) {
+                    let was_loaded = ui.github_prs_loaded;
+                    let Some(outcome) = ui.finish_github_prs_request(generation, result) else {
                         return;
-                    }
-                    // #506: only a fetch that actually answered may replace the
-                    // list. `apply_pr_fetch` holds that rule for both PR callers —
-                    // an expired token or an offline machine keeps the last good
-                    // data instead of being shown as an empty inbox.
-                    let outcome = kagi_git::github::apply_pr_fetch(&mut ui.github_prs, result);
+                    };
                     let moved = match &outcome.error {
                         None => {
                             ui.github_error = None;
@@ -141,10 +129,8 @@ impl KagiApp {
                             return;
                         }
                     };
-                    if outcome.changed || !ui.github_prs_loaded {
+                    if outcome.changed || !was_loaded {
                         klog!("github: prs={}", ui.github_prs.len());
-                        ui.github_prs_loaded = true;
-                        ui.github_prs_epoch = ui.github_prs_epoch.wrapping_add(1);
                     }
                     // #906: "mine" is the login on the PRs' own host.
                     (moved, distinct_base_repos(&ui.github_prs))
@@ -226,7 +212,25 @@ impl KagiApp {
                     if app.repo_path.is_none() {
                         return false;
                     }
-                    app.refresh_github_prs(cx);
+                    // A first-page replacement would revoke the continuation
+                    // or discard accepted pages the active PR consumer is using.
+                    // Defer only this automatic L1 read; manual/owner refreshes
+                    // still cut over normally. Membership stays last accepted,
+                    // while currently visible/opened volatile details refresh.
+                    let defer_first_page = app.workspace_mode()
+                        == super::workspace_mode::WorkspaceMode::Prs
+                        && app.ui().github_prs_strip.rows.is_none()
+                        && (app.ui().github_prs_paging.page > 1
+                            || app.ui().github_prs_paging.append.is_some());
+                    if defer_first_page {
+                        if let (Some(owner), Some(repo)) =
+                            (app.active_session(), app.repo_path.clone())
+                        {
+                            app.refresh_pr_detail_targets(owner, repo, cx);
+                        }
+                    } else {
+                        app.refresh_github_prs(cx);
+                    }
                     true
                 });
                 if !matches!(keep, Ok(true)) {

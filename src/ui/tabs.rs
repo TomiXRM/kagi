@@ -163,6 +163,9 @@ impl KagiApp {
             if let Some(ui) = self.ui.get_mut(&session) {
                 ui.retire_issue_conversation_scope();
                 ui.worktree_inspections.cancel();
+                if ui.pr_mode.is_some() {
+                    ui.invalidate_pr_list_visit();
+                }
             }
         }
         self.close_window_slots_of_departing_tab();
@@ -253,6 +256,12 @@ impl KagiApp {
         // GitHub Phase 1: refetch PRs for the new repo right away (the
         // ticker alone left the tab at 0 PRs until its next tick).
         self.refresh_github_prs(cx);
+        // A selected Closed/All first read interrupted by departure has no
+        // authoritative empty answer. Reauthorize that retained intent for
+        // this visit through its ordinary owner-bound read.
+        if self.ui().pr_mode.is_some() && self.ui().github_prs_strip.loading {
+            self.refresh_pr_strip(cx);
+        }
 
         // #482 stage 2: "cached" now means "this session already has a read".
         // The swap is the switch itself — `view()` reads a different key — so

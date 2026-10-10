@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- `gh` が未導入の場合は PR の共有 Open 情報と Closed / All 一覧の読み込みを開始せず、repository の切替や一覧を開くたびに不要な GitHub error を表示・記録しないようにしました。native E2E の注入済み読み込みは `gh` の有無にかかわらず維持します。(PR #1119 review)
+- PR 一覧を 1 回最大 100 件の cursor paging にし、表示中の末尾や「続きを読み込む」から次のページへ進めるようにしました。Open の共有情報と選択中の Closed / All を分離したまま、絞り込みで 0 件でも続きを取得でき、追加取得の失敗時は読み込み済みの行と cursor を保持して再試行できます。repository タブを往復しても選択 state・開いている PR・入力中の下書きを保持し、古い読み込み結果を採用しません。同じ head の実際の詳細 payload と Fresh 判定を対応させ、詳細取得は表示範囲と既存の同時実行上限を維持します。PR workspace で Open の追加ページを閲覧中・追加取得中は自動 tick による先頭ページへの置換を延期し、表示中／開いている PR の checks 等は更新します。自動更新では table のスクロール位置を動かさず、先頭ページの更新に失敗した場合は自動更新を再開して回復できるようにしました。保持する一覧は最後に受理した membership であり、新規・Closed・削除の反映には手動 Refresh が必要です。手動更新・Closed / All・workspace 離脱時の通常更新は維持し、table の layout 計測を可視行と誤認せず実際の clipped prepaint から詳細取得範囲を報告します。最終ページでは空の末尾行を残さず、狭幅・167% の画面でも最後の PR を表示し、続きを取得できる場合の loading / retry と横・縦スクロールの契約を維持します。(#1104, #1107)
 - PR table／sidebar の Peek が成功しても PR workspace や WIP の Commit Panel に隠れ、比較した変更ファイルが見えない問題を修正しました。既存の Graph／Inspector の Compare を表示し、graph 未取得の PR head でもファイルから main diff を開けます。PR head が graph 未取得の場合は以前の commit 選択を解除し、別 commit の情報や操作ボタンを表示しません。Peek では開いている PR tab と未送信 comment draft を保持し、PRs に戻るとそのまま復元します。dirty Editor は既存の確認を経由し、Cancel・古い tab／editor／input の承認では buffer を捨てません。保持中の Commit Panel と未送信 draft、read failure 時の表示文脈は維持し、fetch・checkout・repository write は行いません。(#1102)
 - Create Branch は実行に成功して branch の存在を確認したときだけダイアログを閉じ、次のキーボード操作をウィンドウへ戻すようにしました。失敗した名前とエラー、通常の再読み込み中の未送信入力は保持します。チェックアウトの選択、IME の確定 Enter、1 回の作成につき 1 件の操作記録は維持します。(#1092)
 - Pull / Pull ff-only の確認タイトルは upstream の表示名を分割せず、設定済み remote 名をそのまま示すようにしました。`team/origin` を `team` に切らず、local upstream の `.` も正しく表示します。完全な upstream ref / OID・承認照合・fetch / push の既存解決規則は変えません。(#1105)
@@ -37,6 +39,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Apple Light のサイドバーと toolbar の明度を同じ Mac の実 Finder ウィンドウと比較して揃え、hover の灰色を中立色にしました。見出し・更新時刻・フォーム label などの補助文字も読みやすくしました。白い本文、Git の状態色・レイアウト・Apple Dark は維持します。(#1065、#1066)
 
 ### Internal
+
+- Same-path reopen の GitHub evidence native 回帰は、tab の即時 read に加えて ticker の初回 read も offline `gh` fixture の空ページで応答するようにしました。実 `gh` の認証失敗を旧 session の completion による error と誤認せず、新 owner の read 完了を先に検証します。旧 completion が PR・error・availability・UI domain を変えない assertion と製品の read admission は維持します。
 
 - #1091 の SDK を既存 `TomiXRM/gpui-kit` fork の公開 commit `ae37bfd433781abe44e15edd40867fac1b7b3b2c` に固定しました。UI/assets は同じ Git/full rev、TEMP path/commentを完全除去し、実 metadata は UI0.5.2/assets0.5.1/macros0.5.1を各一つ同じ公開revへ解決します。元b004 API/featuresとGPUI90b3aa0 familyを維持し、latest upgrade・追加 macros patch・alias/path shimなし。新revisionは旧941を正常FFで継ぎ、誤ったlocal-cache pushの新refだけをexact conditional削除したので、cache全体不変とは主張しません。SDK post-format lib334/Clippy新規warningなし/scope3 configured2024fmtがPASS（全SDK workspace baseline fmtはFAILのまま）。
 - 画面外 SelectAll の corrected同一GFM/Unicode oracle は public941 Before650でPARTIALのままFAIL、private local After651で元10件を含む全11PASS。旧inline-code fixture647/648は別の歴史的FAILで、padding policy/expected literalをAfterに合わせ直していません。最終public ae37上のRoot全7gateはPASS（557.496848 s、nativeはPASS filtered scenariosでexplicit11countとは別）。default Tier Bは実Issue281の二つの80段落post、full選択→bounded画面外CmdA→戻った元選択とzoom/themeのform/contentを観測しました。partial→full exact bytesはprivate nativeの証拠であり、default Copy/Paste/host clipboard・新width/perf比較・Settings経由の選択維持は未検証です。CI/外部review/mergeと広い#1091は未完了です。

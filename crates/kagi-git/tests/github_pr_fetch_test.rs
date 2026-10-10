@@ -88,17 +88,42 @@ esac
     )
 }
 
+fn pr_page(
+    repo: &str,
+    numbers: std::ops::Range<u64>,
+    state: &str,
+    head: &str,
+    has_next: bool,
+    cursor: Option<&str>,
+) -> String {
+    let nodes: Vec<_> = numbers
+        .map(|number| {
+            serde_json::json!({
+                "number": number, "title": format!("PR {number}"), "state": state,
+                "url": format!("https://{repo}/pull/{number}"), "headRefOid": head,
+                "comments": {"totalCount": number}
+            })
+        })
+        .collect();
+    serde_json::json!({"data": {"repository": {"pullRequests": {
+        "nodes": nodes,
+        "pageInfo": {"hasNextPage": has_next, "endCursor": cursor}
+    }}}})
+    .to_string()
+}
+
 /// Run one open-PR fetch against `script` and fold it into the previous list.
 fn fetch_into_cache(script: &str) -> (Vec<PullRequest>, Option<PrFetchError>) {
     let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let (_root, workdir, _restore) = fixture(&pr_script(script));
     let mut cache = previous();
-    let outcome = apply_pr_fetch(&mut cache, list_prs(&workdir, StateFilter::Open));
+    let fetched = list_prs(&workdir, None, None, StateFilter::Open);
+    let outcome = apply_pr_fetch(&mut cache, fetched.map(|snapshot| snapshot.prs));
     (cache, outcome.error)
 }
 
 /// A page with no pull requests in it — the L1 shape, not gh's flat array.
-const EMPTY_PAGE: &str = r#"echo '{"data":{"repository":{"pullRequests":{"nodes":[]}}}}'"#;
+const EMPTY_PAGE: &str = r#"echo '{"data":{"repository":{"pullRequests":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}'"#;
 /// The flat `gh pr list --json` shape Branch Cleanup's merged evidence reads.
 const EMPTY: &str = "echo '[]'";
 const AUTH: &str =
@@ -116,19 +141,31 @@ case "$*" in
   *statusCheckRollup*|*mergeable*|*body*|*changedFiles*|*additions*|*deletions*)
     echo "heavy field in L1: $*" >&2; exit 1 ;;
 esac
-case "$*" in *"first: 100"*) ;; *) echo "unbounded page: $*" >&2; exit 1 ;; esac
-case "$*" in *"comments { totalCount }"*) ;; *) echo "no comment total: $*" >&2; exit 1 ;; esac
-case "$*" in *"states[]=OPEN"*) ;; *) echo "no state asked for: $*" >&2; exit 1 ;; esac
+case "$*" in
+  *'first: 100, after: $cursor'*) ;;
+  *) echo "missing bounded cursor page: $*" >&2; exit 1 ;;
+esac
+case "$*" in
+  *'pageInfo { hasNextPage endCursor }'*) ;;
+  *) echo "missing page continuation metadata: $*" >&2; exit 1 ;;
+esac
+case "$*" in
+  *'comments { totalCount }'*) ;;
+  *) echo "missing aggregate comment count: $*" >&2; exit 1 ;;
+esac
 cat <<'JSON'
 {"data":{"repository":{"pullRequests":{"nodes":[
   {"number":1,"title":"small","state":"OPEN","headRefName":"h","headRefOid":"sha",
    "baseRefName":"main","isDraft":false,"url":"https://github.com/o/r/pull/1",
    "comments":{"totalCount":3}}
-]}}}}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
 JSON
 "#;
     let (_root, workdir, _restore) = fixture(&pr_script(script));
-    let prs = list_prs(&workdir, StateFilter::Open).expect("lightweight list");
+    let snapshot = list_prs(&workdir, None, None, StateFilter::Open).expect("lightweight list");
+    assert_eq!(snapshot.base_repo, "github.com/o/r");
+    assert_eq!(snapshot.next_cursor, None);
+    let prs = snapshot.prs;
     assert_eq!(prs.len(), 1);
     assert_eq!(prs[0].head_sha, "sha");
     assert_eq!(prs[0].state, kagi_domain::github::IssueState::Open);
@@ -185,21 +222,17 @@ echo "$count" > '{count}'
         &bin,
         &counting("echo 'HTTP 504: Gateway Timeout' >&2\nexit 1"),
     );
-    let error = list_prs(&workdir, StateFilter::Open).expect_err("both attempts fail");
+    let error = list_prs(&workdir, None, None, StateFilter::Open).expect_err("both attempts fail");
     assert!(error.is_gateway_timeout());
     assert_eq!(std::fs::read_to_string(&count).unwrap().trim(), "2");
 
-    std::fs::write(&count, "0\n").unwrap();
-    fake_gh(&bin, &counting(AUTH));
-    assert!(matches!(
-        list_prs(&workdir, StateFilter::Open),
-        Err(PrFetchError::Auth(_))
-    ));
-    assert_eq!(
-        std::fs::read_to_string(&count).unwrap().trim(),
-        "1",
-        "only a gateway timeout is retried"
-    );
+    for body in [AUTH, NETWORK, RATE_LIMITED, INVALID] {
+        std::fs::write(&count, "0\n").unwrap();
+        fake_gh(&bin, &counting(body));
+        let error = list_prs(&workdir, None, None, StateFilter::Open).expect_err("failed page");
+        assert!(!error.is_gateway_timeout());
+        assert_eq!(std::fs::read_to_string(&count).unwrap().trim(), "1");
+    }
 }
 
 /// (b) The one answer that may empty the list: `gh` said there are none.
@@ -211,18 +244,20 @@ fn a_genuine_empty_response_is_the_only_thing_that_empties_the_list() {
 }
 
 #[test]
-fn successful_l1_refresh_preserves_details_for_the_same_head() {
+fn successful_l1_refresh_preserves_details_only_for_the_same_repository_and_head() {
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut cache = kagi_git::github::parse_pr_list(
-        r#"[{"number":7,"title":"old","headRefOid":"sha","body":"kept","changedFiles":4,"additions":9,"deletions":2,"mergeable":"CONFLICTING","statusCheckRollup":[{"name":"ci","conclusion":"FAILURE"}]}]"#,
-    )
-    .unwrap();
-    let listed = kagi_git::github::parse_pr_list(
-        r#"[{"number":7,"title":"new","headRefOid":"sha","updatedAt":"now"}]"#,
-    )
-    .unwrap();
-    let outcome = apply_pr_fetch(&mut cache, Ok(listed));
+        r#"[{"number":7,"url":"https://github.com/o/r/pull/7","title":"old","headRefOid":"sha","body":"kept","changedFiles":4,"additions":9,"deletions":2,"mergeable":"CONFLICTING","statusCheckRollup":[{"name":"ci","conclusion":"FAILURE"}]}]"#,
+    ).unwrap();
+    let page = |repo: &str, head: &str| pr_page(repo, 7..8, "OPEN", head, false, None);
+    let (_root, workdir, _restore) = fixture(&pr_script(&format!(
+        "echo '{}'",
+        page("github.com/o/r", "sha")
+    )));
+    let fetched = list_prs(&workdir, None, None, StateFilter::Open);
+    let outcome = apply_pr_fetch(&mut cache, fetched.map(|snapshot| snapshot.prs));
     assert!(outcome.changed);
-    assert_eq!(cache[0].title, "new");
+    assert_eq!(cache[0].title, "PR 7");
     assert_eq!(cache[0].body, "kept");
     assert_eq!(cache[0].changed_files, 4);
     assert_eq!(cache[0].checks.len(), 1);
@@ -230,6 +265,17 @@ fn successful_l1_refresh_preserves_details_for_the_same_head() {
         cache[0].mergeable,
         kagi_domain::github::Mergeable::Conflicting
     );
+
+    for (repo, head) in [("github.com/o/r", "new-head"), ("ghe.example/o/r", "sha")] {
+        let mut changed = cache.clone();
+        let (_root, workdir, _restore) = fixture(&format!("echo '{}'", page(repo, head)));
+        let fetched = list_prs(&workdir, Some(repo), None, StateFilter::Open);
+        let outcome = apply_pr_fetch(&mut changed, fetched.map(|snapshot| snapshot.prs));
+        assert!(outcome.error.is_none());
+        assert!(changed[0].body.is_empty());
+        assert!(changed[0].checks.is_empty());
+        assert_eq!(changed[0].changed_files, 0);
+    }
 }
 
 /// (c) An expired token keeps the last good list — the #506 bug.
@@ -308,46 +354,36 @@ fn merged_pr_evidence_is_kept_on_failure_and_replaced_only_by_an_answer() {
 #[test]
 fn pr_state_filters_fetch_the_collection_they_name() {
     let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let script = r#"
+    let script = pr_script(&format!(
+        r#"states=""
 for arg in "$@"; do
-  case "$arg" in query=*) ;; *) printf '%s ' "$arg" >> gh-args.log ;; esac
+  case "$arg" in states\[\]=*) states="$states $arg" ;; esac
 done
-printf '\n' >> gh-args.log
-cat <<'JSON'
-{"data":{"repository":{"pullRequests":{"nodes":[
-  {"number":5,"title":"landed","state":"MERGED","headRefName":"h","headRefOid":"s",
-   "url":"https://github.com/o/r/pull/5","comments":{"totalCount":9}}
-]}}}}
-JSON
-"#;
-    let (_root, workdir, _restore) = fixture(&pr_script(script));
-    for (state, expected) in [
-        (StateFilter::Open, "-f states[]=OPEN "),
+case "$states" in
+  " states[]=OPEN") echo '{open}' ;;
+  " states[]=CLOSED states[]=MERGED") echo '{closed}' ;;
+  " states[]=OPEN states[]=CLOSED states[]=MERGED") echo '{all}' ;;
+  *) echo "invalid collection: $states" >&2; exit 1 ;;
+esac"#,
+        open = pr_page("github.com/o/r", 1..2, "OPEN", "s", false, None),
+        closed = pr_page("github.com/o/r", 2..3, "MERGED", "s", false, None),
+        all = pr_page("github.com/o/r", 3..4, "CLOSED", "s", false, None),
+    ));
+    let (_root, workdir, _restore) = fixture(&script);
+    for (state, number, lifecycle) in [
+        (StateFilter::Open, 1, kagi_domain::github::IssueState::Open),
         (
             StateFilter::Closed,
-            "-f states[]=CLOSED -f states[]=MERGED ",
-        ),
-        (
-            StateFilter::All,
-            "-f states[]=OPEN -f states[]=CLOSED -f states[]=MERGED ",
-        ),
-    ] {
-        let prs = list_prs(&workdir, state).expect("page");
-        assert_eq!(prs.len(), 1);
-        assert_eq!(
-            prs[0].state,
+            2,
             kagi_domain::github::IssueState::Closed,
-            "a merged PR reads as closed, the strip has no third state"
-        );
-        assert_eq!(prs[0].comment_count, 9);
-        let recorded =
-            std::fs::read_to_string(workdir.join("gh-args.log")).expect("recorded requests");
-        let last = recorded.lines().last().expect("one request per fetch");
-        assert!(last.contains(expected), "{state:?} asked for: {last}");
-        assert!(
-            last.contains("--hostname github.com") && last.contains("owner=o"),
-            "{last}"
-        );
+        ),
+        (StateFilter::All, 3, kagi_domain::github::IssueState::Closed),
+    ] {
+        let snapshot = list_prs(&workdir, None, None, state).expect("collection page");
+        assert_eq!(snapshot.prs.len(), 1);
+        assert_eq!(snapshot.prs[0].number, number);
+        assert_eq!(snapshot.prs[0].state, lifecycle);
+        assert_eq!(snapshot.prs[0].comment_count, number as usize);
     }
 }
 
@@ -376,7 +412,8 @@ fn an_unresolvable_repository_keeps_the_previous_list() {
     let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let (_root, workdir, _restore) = fixture(AUTH);
     let mut cache = previous();
-    let outcome = apply_pr_fetch(&mut cache, list_prs(&workdir, StateFilter::Open));
+    let fetched = list_prs(&workdir, None, None, StateFilter::Open);
+    let outcome = apply_pr_fetch(&mut cache, fetched.map(|snapshot| snapshot.prs));
     assert!(
         matches!(outcome.error, Some(PrFetchError::Auth(_))),
         "{:?}",
@@ -670,4 +707,284 @@ esac
     let (_root, workdir, _restore) = fixture(script);
     let issue = issue_detail(&workdir, Some("github.com/acme/local"), 4).expect("issue #4");
     assert_eq!(issue.title, "local four");
+}
+
+#[test]
+fn pr_pages_deliver_100_then_20_with_exact_cursor_and_frozen_host_and_state() {
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let repo = "ghe.example/acme/widgets";
+    for (state, states, cursor) in [
+        (StateFilter::Open, " states[]=OPEN", "  opaque+/=  "),
+        (
+            StateFilter::Closed,
+            " states[]=CLOSED states[]=MERGED",
+            "null",
+        ),
+        (
+            StateFilter::All,
+            " states[]=OPEN states[]=CLOSED states[]=MERGED",
+            "001",
+        ),
+    ] {
+        let lifecycle = if state == StateFilter::Open {
+            "OPEN"
+        } else {
+            "MERGED"
+        };
+        let script = format!(
+            r#"case "$*" in
+"repo view --json url")
+  if [ -e resolved ]; then echo "continuation re-resolved destination" >&2; exit 1; fi
+  touch resolved
+  echo '{{"url":"https://{repo}"}}'
+  exit 0 ;;
+esac
+host="" owner="" name="" states="" cursor="" cursor_flag="" previous=""
+for arg in "$@"; do
+  if [ "$previous" = "--hostname" ]; then host="$arg"; fi
+  case "$arg" in
+    owner=*) owner="$arg" ;;
+    name=*) name="$arg" ;;
+    states\[\]=*) states="$states $arg" ;;
+    cursor=*) cursor="${{arg#cursor=}}"; cursor_flag="$previous" ;;
+  esac
+  previous="$arg"
+done
+if [ "$host" != "ghe.example" ] || [ "$owner" != "owner=acme" ] ||
+   [ "$name" != "name=widgets" ] || [ "$states" != "{states}" ]; then
+  echo "wrong destination or collection" >&2; exit 1
+fi
+count=$(cat page-count 2>/dev/null || echo 0)
+count=$((count + 1))
+echo "$count" > page-count
+case "$count" in
+  1)
+    [ "$cursor_flag" = "-F" ] && [ "$cursor" = "null" ] || exit 1
+    echo '{first}' ;;
+  2)
+    [ "$cursor_flag" = "-f" ] && [ "$cursor" = "{cursor}" ] || exit 1
+    echo '{last}' ;;
+  *) echo "unbounded page drain" >&2; exit 1 ;;
+esac"#,
+            first = pr_page(repo, 1..101, lifecycle, "sha", true, Some(cursor)),
+            last = pr_page(repo, 101..121, lifecycle, "sha", false, Some("terminal")),
+        );
+        let (_root, workdir, _restore) = fixture(&script);
+        let first = list_prs(&workdir, None, None, state).expect("first bounded page");
+        assert_eq!(first.prs.len(), 100);
+        assert_eq!(first.base_repo, repo);
+        assert_eq!(first.next_cursor.as_deref(), Some(cursor));
+        assert_eq!(
+            std::fs::read_to_string(workdir.join("page-count"))
+                .unwrap()
+                .trim(),
+            "1"
+        );
+        let last = list_prs(
+            &workdir,
+            Some(&first.base_repo),
+            first.next_cursor.as_deref(),
+            state,
+        )
+        .expect("frozen continuation");
+        assert_eq!(last.prs.len(), 20);
+        assert_eq!(last.base_repo, first.base_repo);
+        assert_eq!(last.next_cursor, None);
+        let numbers: Vec<_> = first
+            .prs
+            .iter()
+            .chain(&last.prs)
+            .map(|pr| pr.number)
+            .collect();
+        assert_eq!(numbers, (1..121).collect::<Vec<_>>());
+        assert_eq!(
+            std::fs::read_to_string(workdir.join("page-count"))
+                .unwrap()
+                .trim(),
+            "2"
+        );
+    }
+}
+
+#[test]
+fn invalid_pr_pages_preserve_last_good_rows_and_allow_same_request_retry() {
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let repo = "github.com/o/r";
+    let cursor = "  opaque  ";
+    let valid: serde_json::Value =
+        serde_json::from_str(&pr_page(repo, 507..508, "OPEN", "sha", false, None)).unwrap();
+    let mut failures = Vec::new();
+    for info in [
+        serde_json::Value::Null,
+        serde_json::json!({"hasNextPage": "true", "endCursor": "next"}),
+        serde_json::json!({"hasNextPage": true, "endCursor": null}),
+        serde_json::json!({"hasNextPage": true, "endCursor": ""}),
+        serde_json::json!({"hasNextPage": true, "endCursor": " \t "}),
+        serde_json::json!({"hasNextPage": true, "endCursor": cursor}),
+        serde_json::json!({"hasNextPage": false, "endCursor": 7}),
+        serde_json::json!({"hasNextPage": false}),
+    ] {
+        let mut page = valid.clone();
+        page["data"]["repository"]["pullRequests"]["pageInfo"] = info;
+        failures.push(page);
+    }
+    let mut missing = valid.clone();
+    missing["data"]["repository"]["pullRequests"]
+        .as_object_mut()
+        .unwrap()
+        .remove("pageInfo");
+    failures.push(missing);
+    for url in [
+        "https://github.com/other/r/pull/507",
+        "https://ghe.example/o/r/pull/507",
+        "",
+    ] {
+        let mut page = valid.clone();
+        page["data"]["repository"]["pullRequests"]["nodes"][0]["url"] = url.into();
+        failures.push(page);
+    }
+    let mut partial = valid.clone();
+    partial["errors"] = serde_json::json!([{"message": "partial failure"}]);
+    failures.push(partial);
+    let mut invalid_node = valid.clone();
+    invalid_node["data"]["repository"]["pullRequests"]["nodes"][0]["number"] = "bad".into();
+    failures.push(invalid_node);
+    for page in failures {
+        let script = format!(
+            r#"count=$(cat page-count 2>/dev/null || echo 0)
+count=$((count + 1))
+echo "$count" > page-count
+case "$count" in 1) echo '{page}' ;; 2) echo '{valid}' ;; *) exit 1 ;; esac"#
+        );
+        let (_root, workdir, _restore) = fixture(&script);
+        let mut cache = previous();
+        let fetched = list_prs(&workdir, Some(repo), Some(cursor), StateFilter::Open);
+        let outcome = apply_pr_fetch(&mut cache, fetched.map(|snapshot| snapshot.prs));
+        assert!(
+            matches!(outcome.error, Some(PrFetchError::Invalid(_))),
+            "{page}"
+        );
+        assert!(!outcome.changed);
+        assert_eq!(cache, previous());
+        assert_eq!(
+            std::fs::read_to_string(workdir.join("page-count"))
+                .unwrap()
+                .trim(),
+            "1"
+        );
+        let retry = list_prs(&workdir, Some(repo), Some(cursor), StateFilter::Open).expect("retry");
+        assert_eq!(retry.prs[0].number, 507);
+        assert_eq!(retry.base_repo, repo);
+        assert_eq!(retry.next_cursor, None);
+        assert_eq!(
+            std::fs::read_to_string(workdir.join("page-count"))
+                .unwrap()
+                .trim(),
+            "2"
+        );
+    }
+}
+
+#[test]
+fn pr_continuations_reject_empty_or_unfrozen_identity_before_transport() {
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (_root, workdir, _restore) = fixture("touch unexpected-transport; exit 1");
+    for (repo, cursor) in [
+        (None, Some("next")),
+        (Some(""), Some("next")),
+        (Some(" \t "), Some("next")),
+        (Some("github.com/o/r"), Some("")),
+        (Some("github.com/o/r"), Some(" \t ")),
+    ] {
+        assert!(matches!(
+            list_prs(&workdir, repo, cursor, StateFilter::Open),
+            Err(PrFetchError::Invalid(_))
+        ));
+    }
+    assert!(!workdir.join("unexpected-transport").exists());
+}
+
+#[test]
+fn a_504_continuation_retries_the_identical_frozen_request_and_delivers_the_page() {
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let repo = "ghe.example/acme/widgets";
+    let cursor = "  opaque+/=  ";
+    let script = format!(
+        r#"case "$*" in
+repo*) echo "frozen continuation re-resolved" >&2; exit 1 ;;
+esac
+count=$(cat page-count 2>/dev/null || echo 0)
+count=$((count + 1))
+echo "$count" > page-count
+printf '%s\n' "$@" > "request-$count"
+case "$count" in
+  1) echo "HTTP 504: Gateway Timeout" >&2; exit 1 ;;
+  2) echo '{page}' ;;
+  *) exit 1 ;;
+esac"#,
+        page = pr_page(repo, 101..121, "MERGED", "sha", false, None),
+    );
+    let (_root, workdir, _restore) = fixture(&script);
+    let page =
+        list_prs(&workdir, Some(repo), Some(cursor), StateFilter::Closed).expect("one retry");
+    assert_eq!(page.prs.len(), 20);
+    assert_eq!(page.prs[0].number, 101);
+    assert_eq!(page.base_repo, repo);
+    assert_eq!(page.next_cursor, None);
+    assert_eq!(
+        std::fs::read_to_string(workdir.join("page-count"))
+            .unwrap()
+            .trim(),
+        "2"
+    );
+    let first = std::fs::read_to_string(workdir.join("request-1")).unwrap();
+    let second = std::fs::read_to_string(workdir.join("request-2")).unwrap();
+    assert_eq!(first, second, "the retry must use the identical request");
+}
+
+#[test]
+fn an_empty_final_pr_continuation_is_a_success_but_a_mixed_repository_page_is_not() {
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let repo = "github.com/o/r";
+    let (_root, workdir, _restore) = fixture(&format!(
+        "echo '{}'",
+        pr_page(repo, 0..0, "OPEN", "sha", false, None)
+    ));
+    let final_page = list_prs(&workdir, Some(repo), Some("after-100"), StateFilter::Open)
+        .expect("a genuine empty final page");
+    assert!(final_page.prs.is_empty());
+    assert_eq!(final_page.base_repo, repo);
+    assert_eq!(final_page.next_cursor, None);
+
+    let mut mixed: serde_json::Value =
+        serde_json::from_str(&pr_page(repo, 507..509, "OPEN", "sha", false, None)).unwrap();
+    mixed["data"]["repository"]["pullRequests"]["nodes"][1]["url"] =
+        "https://github.com/other/r/pull/508".into();
+    let (_root, workdir, _restore) = fixture(&format!("echo '{mixed}'"));
+    let mut cache = previous();
+    let fetched = list_prs(&workdir, Some(repo), Some("after-100"), StateFilter::Open);
+    let outcome = apply_pr_fetch(&mut cache, fetched.map(|snapshot| snapshot.prs));
+    assert!(matches!(outcome.error, Some(PrFetchError::Invalid(_))));
+    assert!(!outcome.changed);
+    assert_eq!(
+        cache,
+        previous(),
+        "do not publish the valid prefix of a mixed page"
+    );
+}
+
+#[test]
+fn an_empty_nonfinal_pr_page_preserves_last_good_rows_as_a_failed_read() {
+    let _serial = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let repo = "github.com/o/r";
+    let (_root, workdir, _restore) = fixture(&format!(
+        "echo '{}'",
+        pr_page(repo, 0..0, "OPEN", "sha", true, Some("advanced"))
+    ));
+    let mut cache = previous();
+    let fetched = list_prs(&workdir, Some(repo), Some("after-100"), StateFilter::Open);
+    let outcome = apply_pr_fetch(&mut cache, fetched.map(|snapshot| snapshot.prs));
+    assert!(matches!(outcome.error, Some(PrFetchError::Invalid(_))));
+    assert!(!outcome.changed);
+    assert_eq!(cache, previous());
 }

@@ -4320,7 +4320,9 @@ pub fn scenario_pr_list_roles(cx: &mut VisualTestAppContext) {
             ..pull_request(7, "cached", "main")
         },
     ];
-    kagi::ui::e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(prs)));
+    kagi::ui::e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(crate::evidence_support::pr_page(
+        prs, "", None,
+    ))));
     app.update(cx, |app, cx| app.refresh_github_prs(cx));
     cx.run_until_parked();
     app.update(cx, |app, cx| app.show_pr_mode(cx));

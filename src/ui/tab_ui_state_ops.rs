@@ -108,6 +108,8 @@ impl TabUiState {
             github_prs_epoch: _,
             github_prs_gen: _,
             github_prs_loading: _,
+            github_prs_paging: _,
+            github_prs_visit: _,
             github_pr_filter,
             github_prs_strip: _,
             pr_details: _,

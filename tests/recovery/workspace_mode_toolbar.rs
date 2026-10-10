@@ -111,7 +111,7 @@ fn assert_pr_state_isolation(
     win: AnyWindowHandle,
     app: &gpui::Entity<kagi::ui::KagiApp>,
 ) {
-    use kagi_domain::{github::IssueState, list_filter::StateFilter};
+    use kagi_domain::github::IssueState;
     let open = cx.read(|cx| app.read(cx).ui().github_prs.clone());
     let (task, closed_reply) = crate::evidence_support::deferred(cx);
     e2e::queue_github_pr_fetch(task);
@@ -121,7 +121,11 @@ fn assert_pr_state_isolation(
     assert_eq!(cx.read(|cx| app.read(cx).ui().github_prs.clone()), open);
     let mut closed = pull_request(77, "closed record", "main");
     closed.state = IssueState::Closed;
-    closed_reply.send(Ok(vec![closed.clone()]));
+    closed_reply.send(Ok(crate::evidence_support::pr_page(
+        vec![closed.clone()],
+        "",
+        None,
+    )));
     cx.run_until_parked();
     assert!(measure(cx, win, "pr-home-row-77").is_some());
     assert!(measure(cx, win, "pr-home-row-7").is_none());
@@ -131,7 +135,11 @@ fn assert_pr_state_isolation(
     // This is the ticker's public entry point, not a strip refresh.
     let mut refreshed = open.clone();
     refreshed[2].title = "ticker refreshed open record".into();
-    e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(refreshed.clone())));
+    e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(crate::evidence_support::pr_page(
+        refreshed.clone(),
+        "",
+        None,
+    ))));
     app.update(cx, |app, cx| app.refresh_github_prs(cx));
     cx.run_until_parked();
     assert!(measure(cx, win, "pr-home-row-77").is_some());
@@ -142,7 +150,9 @@ fn assert_pr_state_isolation(
 
     let mut all = refreshed.clone();
     all.push(closed.clone());
-    e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(all)));
+    e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(crate::evidence_support::pr_page(
+        all, "", None,
+    ))));
     click_control(cx, win, "list-filter-state");
     click_control(cx, win, "list-filter-option-0-2");
     assert!(measure(cx, win, "pr-home-row-77").is_some());
@@ -159,15 +169,11 @@ fn assert_pr_state_isolation(
     click_control(cx, win, "list-filter-state");
     click_control(cx, win, "list-filter-option-0-1");
     app.update(cx, |app, cx| app.show_graph_mode(cx));
-    stale_reply.send(Ok(vec![closed]));
+    stale_reply.send(Ok(crate::evidence_support::pr_page(vec![closed], "", None)));
     cx.run_until_parked();
     assert_eq!(
         cx.read(|cx| app.read(cx).ui().github_prs.clone()),
         refreshed
-    );
-    assert_eq!(
-        cx.read(|cx| app.read(cx).ui().github_pr_filter.common.state),
-        StateFilter::Open
     );
     app.update(cx, |app, cx| app.show_pr_mode(cx));
     assert!(measure(cx, win, "pr-home-row-77").is_none());
@@ -1054,52 +1060,56 @@ pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
         // Cache one PR through the real fetch path, then gesture again.
         app.update(cx, |app, cx| app.show_graph_mode(cx));
         e2e::queue_github_pr_fetch(cx.background_executor.spawn(async move {
-            Ok(vec![
-                kagi_domain::github::PullRequest {
-                    state: kagi_domain::github::IssueState::Open,
-                    labels: vec![kagi_domain::github::IssueLabel {
-                        name: "bug".into(),
-                        color: "aabbcc".into(),
-                        description: String::new(),
-                    }],
-                    updated_at: "2026-09-01T00:00:00Z".into(),
-                    created_at: "2026-09-03T00:00:00Z".into(),
-                    // One check, so the page's checks card exists to fold and
-                    // unfold (mock 7a/7b).
-                    checks: vec![kagi_domain::github::Check {
-                        name: "build".into(),
-                        workflow: "ci".into(),
-                        state: kagi_domain::github::CiState::Success,
-                        url: "https://example.com/run/1".into(),
-                    }],
-                    // `main` is the fixture's only branch, and a head the repository
-                    // actually has is what lets the PR open a tab at all - which is
-                    // what the feed assertions below need.
-                    ..pull_request(7, "cached", "main")
-                },
-                kagi_domain::github::PullRequest {
-                    state: kagi_domain::github::IssueState::Open,
-                    labels: vec![kagi_domain::github::IssueLabel {
-                        name: "docs".into(),
-                        color: "aabbcc".into(),
-                        description: String::new(),
-                    }],
-                    updated_at: "2026-09-02T00:00:00Z".into(),
-                    created_at: "2026-09-02T00:00:00Z".into(),
-                    ..pull_request(8, "documentation", "main")
-                },
-                kagi_domain::github::PullRequest {
-                    state: kagi_domain::github::IssueState::Open,
-                    labels: vec![kagi_domain::github::IssueLabel {
-                        name: "bug".into(),
-                        color: "aabbcc".into(),
-                        description: String::new(),
-                    }],
-                    updated_at: "2026-09-03T00:00:00Z".into(),
-                    created_at: "2026-09-01T00:00:00Z".into(),
-                    ..pull_request(9, "repair", "main")
-                },
-            ])
+            Ok(crate::evidence_support::pr_page(
+                vec![
+                    kagi_domain::github::PullRequest {
+                        state: kagi_domain::github::IssueState::Open,
+                        labels: vec![kagi_domain::github::IssueLabel {
+                            name: "bug".into(),
+                            color: "aabbcc".into(),
+                            description: String::new(),
+                        }],
+                        updated_at: "2026-09-01T00:00:00Z".into(),
+                        created_at: "2026-09-03T00:00:00Z".into(),
+                        // One check, so the page's checks card exists to fold and
+                        // unfold (mock 7a/7b).
+                        checks: vec![kagi_domain::github::Check {
+                            name: "build".into(),
+                            workflow: "ci".into(),
+                            state: kagi_domain::github::CiState::Success,
+                            url: "https://example.com/run/1".into(),
+                        }],
+                        // `main` is the fixture's only branch, and a head the repository
+                        // actually has is what lets the PR open a tab at all - which is
+                        // what the feed assertions below need.
+                        ..pull_request(7, "cached", "main")
+                    },
+                    kagi_domain::github::PullRequest {
+                        state: kagi_domain::github::IssueState::Open,
+                        labels: vec![kagi_domain::github::IssueLabel {
+                            name: "docs".into(),
+                            color: "aabbcc".into(),
+                            description: String::new(),
+                        }],
+                        updated_at: "2026-09-02T00:00:00Z".into(),
+                        created_at: "2026-09-02T00:00:00Z".into(),
+                        ..pull_request(8, "documentation", "main")
+                    },
+                    kagi_domain::github::PullRequest {
+                        state: kagi_domain::github::IssueState::Open,
+                        labels: vec![kagi_domain::github::IssueLabel {
+                            name: "bug".into(),
+                            color: "aabbcc".into(),
+                            description: String::new(),
+                        }],
+                        updated_at: "2026-09-03T00:00:00Z".into(),
+                        created_at: "2026-09-01T00:00:00Z".into(),
+                        ..pull_request(9, "repair", "main")
+                    },
+                ],
+                "",
+                None,
+            ))
         }));
         app.update(cx, |app, cx| app.refresh_github_prs(cx));
         cx.run_until_parked();

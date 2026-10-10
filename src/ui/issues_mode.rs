@@ -639,37 +639,29 @@ fn render_issue_page_tail(
                 tail = tail
                     .text_color(rgb(theme().color_blocker))
                     .child(div().whitespace_normal().child(safe_text(error)))
-                    .child(
-                        div()
-                            .id("issue-main-page-retry")
-                            .cursor_pointer()
-                            .py_2()
-                            .text_color(rgb(theme().text_main))
-                            .child(Msg::IssuesRetryLoadMore.t())
-                            .child(super::e2e::measure_inside("issue-main-page-retry"))
-                            .on_click(cx.listener(move |app, _, _, cx| {
-                                app.load_more_github_issues_for(owner, repo.clone(), cx);
-                            })),
-                    );
+                    .child(super::list_filter_strip::page_button(
+                        "issue-main-page-retry",
+                        Msg::IssuesRetryLoadMore.t(),
+                        cx,
+                        move |app, _, _, cx| {
+                            app.load_more_github_issues_for(owner, repo.clone(), cx);
+                        },
+                    ));
             } else if !ui.github_issues_loading {
                 if filtered_count == 0 || client_membership_active(ui) {
                     // A client-side predicate makes these rows a subset, so
                     // reaching their tail is not evidence that the next page
                     // is wanted. Offer the continuation instead of taking it.
-                    tail = tail.child(
-                        div()
-                            .id("issue-filter-load-more")
-                            .cursor_pointer()
-                            .py_2()
-                            .text_color(rgb(theme().text_main))
-                            .child(Msg::ListLoadMore.t())
-                            .child(super::e2e::measure_inside("issue-filter-load-more"))
-                            .on_click(cx.listener(move |app, _, _, cx| {
-                                if app.active_session() == Some(owner) {
-                                    app.load_more_github_issues_for(owner, repo.clone(), cx);
-                                }
-                            })),
-                    );
+                    tail = tail.child(super::list_filter_strip::page_button(
+                        "issue-filter-load-more",
+                        Msg::ListLoadMore.t(),
+                        cx,
+                        move |app, _, _, cx| {
+                            if app.active_session() == Some(owner) {
+                                app.load_more_github_issues_for(owner, repo.clone(), cx);
+                            }
+                        },
+                    ));
                 } else {
                     // Layout may expose the tail without a wheel event (resize,
                     // scrollbar drag, or a short page). Ignore overdraw outside

@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::KagiApp;
+use kagi_domain::github::PrListSnapshot;
 
 use crate::evidence_support::pull_request;
 use crate::macos::{build_fixture, git, mount, unmount};
@@ -52,6 +53,27 @@ fn composer(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> String {
             .map(|input| input.read(cx).value().to_string())
             .unwrap_or_default()
     })
+}
+
+fn type_comment(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    text: &str,
+) {
+    let input = cx.read(|cx| {
+        app.read(cx)
+            .pr_comment_input
+            .clone()
+            .expect("the composer's box exists once drawn")
+    });
+    cx.update_window(window, |_, window, cx| {
+        input.update(cx, |state, cx| {
+            state.set_value("", window, cx);
+            state.replace(text.to_owned(), window, cx);
+        })
+    })
+    .expect("type into the real composer");
 }
 
 const A: &str = "github.com/acme/a";
@@ -231,18 +253,7 @@ pub fn scenario_pr_same_number(cx: &mut VisualTestAppContext) {
     // A draft typed on B#7 (open, as it was opened last) is not carried to
     // A#7 when A's tab comes forward, and comes back with B's tab.
     paint(cx, window);
-    cx.update_window(window, |_, window, cx| {
-        app.update(cx, |app, cx| {
-            let input = app
-                .pr_comment_input
-                .clone()
-                .expect("the composer's box exists once drawn");
-            input.update(cx, |state, cx| {
-                state.replace("for B".to_owned(), window, cx)
-            });
-        })
-    })
-    .unwrap();
+    type_comment(cx, &app, window, "for B");
     paint(cx, window);
     app.update(cx, |app, cx| app.pr_mode_open(&a7, cx));
     paint(cx, window);
@@ -260,8 +271,9 @@ pub fn scenario_pr_same_number(cx: &mut VisualTestAppContext) {
     );
 
     // A successful list refresh replaces the PR facts, not either PR's
-    // composer. Hold it across a PR switch so B's accepted background
-    // update cannot overwrite the live box now belonging to A.
+    // composer. Hold it across a PR switch while A's live box is edited.
+    // The session's list belongs to A; B's facts cannot arrive through A's
+    // shared page because each page belongs to exactly one repository.
     let (refresh, answer) = crate::evidence_support::deferred(cx);
     kagi::ui::e2e::queue_github_pr_fetch(refresh);
     let refresh_generation = app.update(cx, |app, cx| {
@@ -288,9 +300,13 @@ pub fn scenario_pr_same_number(cx: &mut VisualTestAppContext) {
         );
         assert!(ui.github_prs_loading, "the producer is still held");
     });
-    let mut refreshed_b = b7.clone();
-    refreshed_b.title = "B refreshed while A composes".into();
-    answer.send(Ok(vec![a7.clone(), refreshed_b]));
+    let mut refreshed_a = a7.clone();
+    refreshed_a.title = "A refreshed while A composes".into();
+    answer.send(Ok(PrListSnapshot {
+        base_repo: a7.base_repo.clone(),
+        prs: vec![refreshed_a],
+        next_cursor: None,
+    }));
     paint(cx, window);
     cx.read(|cx| {
         let app = app.read(cx);
@@ -300,9 +316,9 @@ pub fn scenario_pr_same_number(cx: &mut VisualTestAppContext) {
         assert_eq!(ui.github_prs_gen, refresh_generation);
         assert!(!ui.github_prs_loading, "the held completion was accepted");
         assert!(ui.github_error.is_none(), "the refresh succeeded");
-        let b = ui.github_prs.iter().find(|pr| pr.is(&b7.key())).unwrap();
+        let a = ui.github_prs.iter().find(|pr| pr.is(&a7.key())).unwrap();
         assert_eq!(
-            b.title, "B refreshed while A composes",
+            a.title, "A refreshed while A composes",
             "the accepted Open collection carries the distinct refreshed title"
         );
     });
@@ -325,7 +341,7 @@ pub fn scenario_pr_same_number(cx: &mut VisualTestAppContext) {
     assert!(
         list.rows
             .values()
-            .any(|(label, _)| { label.contains("B refreshed while A composes") }),
+            .any(|(label, _)| { label.contains("A refreshed while A composes") }),
         "a freshly drawn PR row exposes the distinct refreshed title"
     );
     let title = kagi::ui::e2e::control_bounds(window.window_id(), "pr-home-title-7")
@@ -408,6 +424,62 @@ pub fn scenario_pr_same_number(cx: &mut VisualTestAppContext) {
             "the rendered conversation and composer must have the same PR owner"
         );
     }
+    // The exact same PrKey in a second repository session is a separate
+    // composer owner. Exercise real visible text, not a seeded parked draft.
+    let first_owner = cx.read(|cx| app.read(cx).active_session().unwrap());
+    type_comment(cx, &app, window, "first session B");
+    paint(cx, window);
+    assert_eq!(composer(cx, &app), "first session B");
+    assert_eq!(draft(cx, &app, B), "first session B");
+    let other_fixture = build_fixture();
+    let other_repo = other_fixture.path().canonicalize().unwrap();
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(other_repo.clone(), cx));
+    });
+    paint(cx, window);
+    let other_owner = cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.pr_mode().is_none());
+        app.active_session().unwrap()
+    });
+    assert_ne!(first_owner, other_owner);
+    app.update(cx, |app, cx| app.pr_mode_open(&b7, cx));
+    paint(cx, window);
+    assert_eq!(
+        composer(cx, &app),
+        "",
+        "the other session owns an empty draft"
+    );
+    type_comment(cx, &app, window, "other session B");
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    paint(cx, window);
+    assert_eq!(
+        composer(cx, &app),
+        "first session B",
+        "the identical PR key must restore the returning session's draft"
+    );
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let parked = app.ui[&other_owner].pr_mode.as_ref().unwrap();
+        assert_eq!(parked.tabs[0].comment_draft, "other session B");
+    });
+
+    app.update(cx, |app, cx| app.switch_repo(1, cx));
+    paint(cx, window);
+    assert_eq!(composer(cx, &app), "other session B");
+
+    // A closed-and-reopened repository is a new session, not permission to
+    // carry the old session's identical PR-key draft into a new tab.
+    app.update(cx, |app, cx| app.close_tab(1, cx));
+    paint(cx, window);
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(other_repo.clone(), cx));
+        assert_ne!(app.active_session(), Some(other_owner));
+        app.pr_mode_open(&b7, cx);
+    });
+    paint(cx, window);
+    assert_eq!(composer(cx, &app), "");
+    assert_eq!(draft(cx, &app, B), "");
 
     unmount(cx, app, window);
 }

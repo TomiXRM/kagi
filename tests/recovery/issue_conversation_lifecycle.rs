@@ -4,6 +4,7 @@ use crate::issue_conversation_selection::support::*;
 use crate::macos::{build_fixture, repo_fingerprint};
 use gpui::{Focusable, VisualTestAppContext};
 use kagi::ui::{e2e, KagiApp};
+use kagi_domain::github::PrListSnapshot;
 
 const BASE_B: &str = "github.com/conversation/owner-b";
 
@@ -212,7 +213,11 @@ pub fn scenario_issue_conversation_two_owners(cx: &mut VisualTestAppContext) {
     let (task, release) = deferred(cx);
     let _hold = e2e::queue_github_issue_detail(task);
     request(cx, &app, win);
-    e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(Vec::new())));
+    e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(PrListSnapshot {
+        prs: Vec::new(),
+        base_repo: "github.com/example/repo".into(),
+        next_cursor: None,
+    })));
     assert_eq!(
         copy_before_paint(cx, win, |_, cx| {
             app.update(cx, |app, cx| {

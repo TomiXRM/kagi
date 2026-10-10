@@ -1285,6 +1285,164 @@ The current suite covers:
   update cannot replace the visible Closed collection, and a late response after
   leaving PR mode cannot restore that collection. Pair with
   `KAGI_GUI_E2E_ONLY=github_evidence_` for session restore/background/detach.
+- PR bounded cursor paging
+  (`KAGI_GUI_E2E_ONLY='pr_pagination,pr_same_number,pr_paging_survives_periodic_tick,pr_periodic_pending_sidebar_and_other_collections,pr_single_page_periodic_scroll_retention'`
+  with `KAGI_GUI_E2E_KEEP_GOING=1`, `tests/recovery/pr_pagination.rs`,
+  `tests/recovery/pr_pagination_periodic.rs` and
+  `tests/recovery/pr_same_number.rs`): run all ten scenarios — `pr_pagination`,
+  `pr_pagination_races`, `pr_pagination_closed_tab_retention`,
+  `pr_pagination_all_tab_retention`, `pr_pagination_pending_closed_tab_return`,
+  `pr_pagination_pending_all_tab_return`, `pr_same_number`,
+  `pr_paging_survives_periodic_tick`,
+  `pr_periodic_pending_sidebar_and_other_collections`, and
+  `pr_single_page_periodic_scroll_retention` (single-page Open list, real wheel to mid-table, 61-s ticker, anchor/offset unchanged). The six original paging
+  cases cover first100 → final120 unique fixture rows, real clipped-tail demand, a failed append's
+  native retry click, dedupe, stable anchor and context-menu identity. After
+  proving the menu survived append, dismiss it through an actual outside click
+  before scrolling to row120: its full-window occlusion correctly blocks the
+  underlying wheel route. Filtered-zero and client-filtered lists keep an
+  explicit continuation; the real sidebar viewport must reach its control.
+  Closed/All actual menu choices survive A→B→A with their rows, selected pane
+  and real composing text, reject old-visit appends, and do not turn an
+  interrupted initial read into authoritative zero.
+  `e2e::queue_github_pr_fetch` substitutes only a page-shaped transport future;
+  parser/receiver state, owner/generation/visit/cursor admission and UI
+  scroll/click handlers are production consumers. Shared evidence stays Open;
+  selected Closed/All belongs to the existing strip. Failed refresh revokes
+  continuation, while failed append retains rows/cursor for retry. Do not
+  replace cleanup's reduced Vec evidence with a PR list page.
+  Opening a fixture PR can legitimately trigger the existing owner-bound L1
+  refresh from real local-ref fetch callbacks. The sidebar leg therefore uses
+  its strict `OfflineGh` script: explicit `repo view --json url` plus the
+  frozen-host/repository Open GraphQL `first: 100` request return a real
+  pageInfo-bearing first page; unsupported calls fail. Do not suppress a
+  production ref-refresh callback to keep a test cursor. Sidebar measurements
+  instrument the existing viewport with gui-e2e-only `measure_inside`, not a
+  layout-changing default-build wrapper.
+  The detail unit consumers (`cargo test -p kagi --lib github_pr_detail`) and
+  receiver consumers (`cargo test -p kagi --lib github_pr_state`) cover
+  shared/strip/opened same-head payload ownership, successful empty payloads,
+  stale heads, lost owners and old answers. Retention must not demand
+  off-screen L2: visibility stays selected-state-only, with concurrency two,
+  200 ms debounce, 500 ms maximum wait and two-row overscan; L3 remains
+  opened-only. Checks filters must retain real Fresh passing payloads without
+  treating dehydrated reappended rows as Fresh.
+  True table visibility comes from clipped prepaint, not `uniform_list`'s
+  layout-only `render_items(0..1)` call. The first actually rendered row's
+  non-layout-affecting canvas defers one visible report guarded by active owner,
+  full list revision and PR-workspace/home; measurement must not publish demand
+  or prune the tail queue. Require page-two tail detail demand after scrolling,
+  as well as the unchanged two-row overdraw and maximum two L2 requests.
+  The two periodic scenarios start `ensure_startup_repo_io` and its real ticker:
+  a strict private gh producer answers real bounded GraphQL/parser and status
+  requests, and receipts distinguish first-page reads from detail refreshes.
+  `pr_paging_survives_periodic_tick` checks the 59-second negative control,
+  advances across the ordinary 60-second tick, and retains all 120 identities,
+  generation, actual tail bounds/scroll anchor, typed filter, parked PR owner
+  and the live composer entity/value. Change only the producer's server status
+  from SUCCESS to FAILURE and assert actual shared/opened/visible-tail `ci` and
+  check payloads transition; an unchanged Fresh flag or query count is not
+  proof of refresh. Manual Refresh must then reset to the authoritative first
+  page, revoke continuation/generation and reject a held old append.
+  `pr_periodic_pending_sidebar_and_other_collections` clicks the sidebar's
+  actually painted Load more, holds its append across a tick, proves no shared
+  L1 replacement while the opened PR's checks change, then accepts 120 rows
+  and retains the reachable sidebar tail across another tick. Real Closed and
+  All menu choices with pending strip appends must allow ordinary shared Open
+  ticker reads without replacing selected strip membership or revoking its
+  append; departure to Graph must resume normal first-page replacement.
+  Retention admission is only active PR workspace + no explicit Closed/All
+  strip + (shared Open pages > 1 or append pending). It preserves last-accepted
+  membership, not the newest authoritative list: use manual Refresh to discover
+  new/closed/deleted PRs. Owner/manual refresh and background consumers retain
+  their ordinary cutover; deferred ticks still refresh visible/opened details.
+  `pr_same_number` binds the live composer by `(SessionId, PrKey)`, parks through
+  the recorded owner, and proves real `InputState::replace`/drawn drafts stay
+  isolated across same-key sessions and close/reopen. The Closed/All producer
+  also edits the live input and verifies the parked value before departure;
+  writing `PrTab::comment_draft` while the input is bound is not an edit.
+  These native fixtures do not prove key/paste delivery, real GitHub default
+  paging, FPS or screenshots. Tier B must separately use the default build,
+  its genuine first100/pageInfo, actual tail/retry/filter controls and the
+  actual server-ordered remainder; compare unique loaded identities and
+  `[kagi] github: prs page=N loaded=M has_more=true|false`. Do not infer which
+  PR is absent from its number or alter the limit to make the check pass.
+  Exhausted-table regression: item count must be
+  `rowcount + usize::from(has_more)`, not an unconditional full-height terminal
+  slot. With `cursor=None`, the final real row must actually paint inside the
+  tiny body at 940×660/167%; loading/retry and pending continuation remain.
+  Pair with `pr_dashboard_responsive`'s eight width/locale/zoom cells and
+  `pr_list_roles,issues_pagination` without repinning assertions. PM's local
+  seven-stage post-repair gate passed; its scoped native selection included
+  these three consumers, all six original paging cases and both periodic cases.
+  The gate manifest is
+  `/tmp/kagi-hig-audit-20261008/pr-paging-terminal-row-final-gates/manifest.json`;
+  this is local source acceptance, not hosted CI or merge acceptance.
+  Historical Tier B #1107 evidence (before the terminal-slot repair):
+  `/tmp/kagi-hig-audit-20261008/pr-periodic-after-native/proof.json` records the
+  default app PID 45189/window 4156 and source after the true-prepaint fix and
+  nine native PASS scenarios. Genuine first100 → explicit Load more → 120
+  reached the actual server-ordered tail PR #28. The actual 65.26914-second
+  no-input interval retained 120 membership and exact tail/viewport, with 23 gh
+  receipts: zero L1 GraphQL replacements, 22 L2 status queries including #28,
+  and one opened #265 body refresh. Viewed before/after photographs showed
+  determining/ready aggregates 75/45 → 107/13 with the anchor retained; no manual
+  refresh or state switch occurred during the interval. This is evidence of
+  automatic retention with volatile refresh, not newest membership, all future
+  tick behavior, FPS, latency or CPU improvement. The earlier CPU sample did
+  not overlap input. Temporary diagnostic reads were removed after that build;
+  this historical evidence does not accept the later terminal-slot repair.
+  Fresh narrow default-build evidence is separately recorded in
+  `/tmp/kagi-hig-audit-20261008/pr-paging-terminal-tierb/narrow/observed.json`,
+  with frozen-source SHA-256s and exact owned PID 61715/window 6182. Logical
+  940×660, zoom 1667, Apple Light/English window-only captures are 1880×1320
+  (ratio 2 from capture/bounds, not a backingScaleFactor query). A real visible
+  Load more accepted 100 → 120, `has_more=false`; eight wheel events reached
+  actual last PR #28 fully visible in the tiny body with no empty terminal slot.
+  The fresh periodic photograph retained 120 and #28, while readiness changed
+  5 → 6; the observed timeline had no new list GraphQL after extension.
+  The recorded 176.033609 seconds is page-request-to-capture, not exact
+  response-acceptance-to-capture. An initial tick before append added a third
+  list GraphQL call, so do not report two total list calls for this run.
+  Real #28 opening showed commits1/files1 and conversation counts0/0/0, but its
+  photograph is swimlane-only, not acceptance of the narrow Overview body.
+  Cmd-Q/original Popen exited 0, exact executable PID path and owned apps were
+  absent afterward. This establishes narrow startup/terminal paint only:
+  wide-window, dynamic resize, Copy/Paste/host clipboard, CPU, FPS and latency
+  were not accepted by these observations; driver delivery time is not FPS.
+  Fresh wide default-build evidence:
+  `/tmp/kagi-hig-audit-20261008/pr-paging-terminal-tierb/wide/observed.json`
+  records unchanged frozen-source hashes, exact owned PID 69326/window 6200,
+  logical 1392×883/100%, Apple Light/English and window-only captures, ratio 2.
+  Eight table wheels caused natural clipped-prepaint continuation (no explicit
+  Load more), 100 → 120; four further wheels reached last PR #28. A settled-tail
+  photograph and the periodic photograph 155.08867 seconds later retained
+  Loaded120 and the same #80..#28 viewport, while Ready15 → 13 and real
+  `pr view` receipts at roughly 60-second cadence witnessed ongoing checks.
+  No list GraphQL occurred after extension through the periodic photograph,
+  but four occurred through extension: initial + two legitimate pre-extension
+  ticks + one non-null cursor read. Do not report two total list calls.
+  Cursor-request-to-periodic-capture 229.741505 seconds is not exact acceptance
+  timing. Actual large PR #12 Overview displayed a 48,002-byte body with real
+  transport 24 comments/288,048 body bytes, two reviews/268 body bytes and
+  accepted 40 line comments (visible Review66), commits3/files2, additions22,010.
+  This does not prove complete body/comment-tail, diff or thread interaction,
+  or performance. Settled All PRs returned to the same120/tail28; the immediate
+  capture preceded that state and supplies no navigation latency.
+  Small #28 Overview body102 bytes was visible, comments/reviews0, commits1/files1.
+  Physical unsent ASCII `PM_PR28_DRAFT` stayed out of #12's composer; six sidebar
+  wheels reached #28 independently while #12 Overview remained, and clicking
+  #28 restored the exact draft. This accepts one-session/two-PrKeys only;
+  same-PrKey/two-session default clicks remain dependent on separate overlay
+  baseline repair/integration, not proven by this run. No Submit/Copy/Paste,
+  host clipboard or foreground action occurred; original Cmd-Q/Popen exit0,
+  exact executable PID path absent and owned apps0 establish cleanup.
+  The matched same-PR narrow/wide photographs corroborate separate
+  [#1118](https://github.com/TomiXRM/kagi/issues/1118) detail geometry: narrow
+  #28 Overview body missing, wide present. Do not call this narrow-detail #1095
+  acceptance or independent baseline-dev reproduction. Dynamic resize,
+  matched CPU/FPS sampling, full diff/thread acceptance and external review/CI
+  remain unobserved; no future post-doc gate or merge is implied.
 - PR parent render borrowing (#1108 / ADR-0200 §7):
   scope Tier A to
   `KAGI_GUI_E2E_ONLY=pr_same_number,workspace_mode_toolbar,pr_threads_via_gh`
@@ -1719,9 +1877,10 @@ The current suite covers:
   fetch) keep their frozen repository receipt visible in the shared Operation
   Log panel without changing the current tab's footer/toast or opening the
   panel. The remote branch success and failure legs inspect `klog::tail()` for
-  the unchanged terminal lines after departure. After PR mode is cleared by
-  activation, reopening that PR admits one current-visit fetch; the old
-  completion cannot clear its loading latch or replace its head/files.
+  the unchanged terminal lines after departure. PR activation retains its
+  owned panes and intent while revoking obsolete visit publication rights;
+  a current-visit ref fetch must reject the old answer without clearing its
+  replacement's loading latch or replacing its head/files.
   `TestDispatcher`
   propagates an uncaught task panic before `Task::fallible()` can deliver `None`;
   the GUI-only seam catches the injected panic inside the worker and returns an
@@ -1884,8 +2043,8 @@ paste actions, not marked text (use Tier B for IME).
 |---|---|---|
 | Typed keystrokes into the focused real `InputState` (`simulate_keystrokes` with characters) | `conflict_save_boundary`, `editor_save_admission`, `editor_save_buffer_identity`, `editor_external_change_banner`, `editor_banner_rename_and_save`, `remote_connect_keeps_dirty_editor`, `cross_worktree_merge` (Editor buffer); `create_branch_presents_backend_receipt`, `create_branch_replan_error` (branch name); `issues_pagination` (list filter); `palette_push_modal_keys` (command palette); `workspace_mode_toolbar` (Issue title) | The key path: focus, the input's key handling, its change event and the product's sync from it. |
 | Paste into the focused real `InputState` (`write_to_clipboard`, then `cmd-v` or `input::Paste`) | `remote_browse_escape_focus` (host), `worktree_lock_reason` (lock reason, after `cmd-a backspace`), `pr_fields_escape_focus` (picker filter), `workspace_mode_toolbar` (Issue title / body) | The paste path into the field the product focused, and the sync from it. |
-| `InputState::set_value` on the real input (no key or paste event) | `conflict_continue_cache` (Result pane), `home_github`, `home_search_incomplete_repos`, `home_search_incomplete_refreshing`, `home_search_incomplete_work` (Home search), `theme_custom` (palette query) | The input's change event and the product's handling of the value; not focus or key handling. |
-| `InputState::replace` / `replace_all` on the real input (no key or paste event) | `issue_create_fields` (Issue body, via `insert_issue_body_for_e2e` / `replace_issue_body_for_e2e`), `home_work` (Reply body, via `insert_issue_reply_body_for_e2e`), `pr_same_number`, `workspace_mode_toolbar` (PR composer; Issue body via `insert_issue_body_for_e2e` / `replace_issue_body_for_e2e`; Reply body via `insert_issue_reply_body_for_e2e`) | The input's change event and the product's handling of the replaced text (the Composer / Reply draft subscription included); not focus, key or paste handling. |
+| `InputState::set_value` on the real input (no key or paste event) | `conflict_continue_cache` (Result pane), `home_github`, `home_search_incomplete_repos`, `home_search_incomplete_refreshing`, `home_search_incomplete_work` (Home search), `theme_custom` (palette query), `pr_pagination` (sidebar composing text) | The input's change event and the product's handling of the value; not focus or key handling. |
+| `InputState::replace` / `replace_all` on the real input (no key or paste event) | `issue_create_fields` (Issue body, via `insert_issue_body_for_e2e` / `replace_issue_body_for_e2e`), `home_work` (Reply body, via `insert_issue_reply_body_for_e2e`), `pr_same_number`, `pr_pagination_closed_tab_retention`, `pr_pagination_all_tab_retention`, `workspace_mode_toolbar` (PR composer; Issue body via `insert_issue_body_for_e2e` / `replace_issue_body_for_e2e`; Reply body via `insert_issue_reply_body_for_e2e`) | The input's change event and the product's handling of the replaced text (the Composer / Reply draft subscription included); not focus, key or paste handling. |
 | `e2e::set_remote_browse_host_input`: `set_value` on the host input **and** a direct write of `host_input` | `merge_plan_latch`, `delete_branch_plan_latch`, `remote_browse_modal_routing`, `push_failure_keeps_modal` | Remote Browse holding its slot and input; not the form's own sync from the field (that is `remote_browse_escape_focus`). |
 | No `InputState` at all: `e2e::open_local_panel_no_inputs` / `open_worktree_panel_no_inputs`, message from the `commit_msg` fallback (`e2e::set_commit_message`, as headless `KAGI_COMMIT_MSG`) | `wip_diff_survives_reload`, `commit_panel_survives_reload`, `worktree_wip_inline`, `worktree_panel_commit`, `worktree_panel_amend_discard`, `worktree_panel_discard_recording_failure`, `diff_highlight_once`, `diff_highlight_stale`, `file_menu_freezes_path`, `file_menu_rejects_stale_owner`, `file_tree_roles`, `hunk_staging`, `modal_compact`, `smart_commit_generation_owner`, `smart_commit_modal_and_probe`, `stage_failure_notice`, `dialog_a11y_roles`, `commit_stage_deferred_owner`, `commit_panel_revalidates_on_activation`, `smart_generation_close_drops_panel`, `commit_panel_refuses_during_activation`, `commit_close_drops_panel`, `manual_reload_releases_revalidation`, `commit_row_layout_wip` | The commit panel's ownership, staging and write paths. Nothing about the message or description inputs: these were built without them because each `InputState` registers an App-level observer that keeps it alive past its window (see `open_worktree_panel_no_inputs`). |
 
@@ -1902,6 +2061,9 @@ real read produces it. Used by `remote_refresh_departed_owner`,
 `pr_fields_escape_focus`, `field_picker_owner`, `ghe_viewer_login`,
 `ghe_viewer_login_closed_only`, `github_evidence_restores`,
 `github_evidence_background_owner`, `github_evidence_detached_owner`,
+`pr_pagination`, `pr_pagination_races`, `pr_pagination_closed_tab_retention`,
+`pr_pagination_all_tab_retention`, `pr_pagination_pending_closed_tab_return`,
+`pr_pagination_pending_all_tab_return`,
 `cleanup_evidence_background_owner`, `cleanup_evidence_superseded`,
 `cleanup_evidence_read_revision`, `cleanup_evidence_publish_generation`,
 `squash_evidence_read_revision`, `squash_evidence_publish_generation`,

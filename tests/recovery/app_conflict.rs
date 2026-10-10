@@ -78,7 +78,7 @@ pub(crate) fn click_control(
     cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
 }
 
-fn wait_idle(cx: &mut VisualTestAppContext, app: &gpui::Entity<kagi::ui::KagiApp>) {
+pub(crate) fn wait_idle(cx: &mut VisualTestAppContext, app: &gpui::Entity<kagi::ui::KagiApp>) {
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         cx.run_until_parked();

@@ -1807,6 +1807,10 @@ mod macos {
                 Box::new(crate::conflict_abort_slot::scenario_conflict_abort_superseded_reload),
             ),
             (
+                "cherry_pick_abort_sequence",
+                Box::new(crate::conflict_abort_slot::scenario_cherry_pick_abort_sequence),
+            ),
+            (
                 "remote_browse_escape_focus",
                 Box::new(crate::remote_browse_focus::scenario_remote_browse_escape_focus),
             ),

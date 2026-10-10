@@ -1206,27 +1206,36 @@ pub fn render_pr_mode(
         .bg(rgb(theme().bg_base))
         .children(left)
         .when(layout.navigator, |el| {
-            el.child(vdivider(DividerKind::PrModeLeft))
+            el.child(vdivider(
+                DividerKind::PrModeLeft,
+                theme().sidebar,
+                "pr-navigator-divider",
+            ))
         })
         .children(lane)
         .when(layout.swimlane, |el| {
-            el.child(vdivider(DividerKind::PrModeLeft))
+            el.child(vdivider(
+                DividerKind::PrModeLeft,
+                theme().bg_base,
+                "pr-lane-divider",
+            ))
         })
         .child(center)
         .into_any_element()
 }
 
-fn vdivider(kind: DividerKind) -> gpui::Stateful<gpui::Div> {
+fn vdivider(kind: DividerKind, fill: u32, group: &'static str) -> gpui::Stateful<gpui::Div> {
     let id = match kind {
         DividerKind::PrModeLeft => "pr-mode-div-left",
         _ => "pr-mode-div-right",
     };
     div()
         .id(id)
+        .group(group)
         .w(theme::scaled_px(4.))
         .flex_shrink_0()
         .h_full()
-        .bg(rgb(theme().panel))
+        .bg(rgb(fill))
         .flex()
         .justify_center()
         .child(
@@ -1234,7 +1243,9 @@ fn vdivider(kind: DividerKind) -> gpui::Stateful<gpui::Div> {
                 .w(px(1.))
                 .h_full()
                 .flex_shrink_0()
-                .bg(rgb(theme().surface)),
+                .bg(rgb(theme().surface))
+                .group_hover(group, |s| s.bg(rgb(theme().color_branch)))
+                .group_drag_over::<DividerDrag>(group, |s| s.bg(rgb(theme().color_branch))),
         )
         .hover(|s| s.bg(rgb(theme().color_branch)).cursor_col_resize())
         .drag_over::<DividerDrag>(move |style, drag, _, _| {

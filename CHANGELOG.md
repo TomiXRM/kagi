@@ -7,7 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
-- Pane resize targets keep their existing scaled 4px geometry, but resting boundaries now paint centered 1 logical-pixel `surface` hairlines over the adjacent sidebar/panel background. Hover retains the existing accent affordance; Apple Dark uses its own unchanged palette. (#1174)
+- Pane resize targets keep their existing scaled 4px geometry, but resting boundaries paint centered 1 logical-pixel `surface` hairlines over the adjacent theme background: Graph sidebar sections, sidebar/content, commit-panel/inspector boundary, bottom panel, inspector message/files split, PR navigator and swimlane, Conflict A/B and Result, Editor tree and hunks, and File History detail and rows/diff. Hover/drag paints a solid accent across the target and line; Apple Dark keeps its own palette. (#1174)
 - PR 詳細は scaled 420px の本文幅を優先し、狭幅・高 zoom では swimlane、必要なら navigator を折り畳みます。toolbar／View menu／palette／⌘B・⌘⌥L から補助 pane を本文内に再表示でき、既存 Sidebar 設定、PR・file 選択、未送信 draft、opened thread、scroll を保持します。dashboard の navigator は維持し、inline に戻った reveal は破棄して Escape を飲み込まないようにしました。Overview／Review／Files・All PRs・composer の native bounds、dashboard toggle、Escape、resize の回帰を追加しました。(#1118)
 - Smart Commit の LLM／CLI 生成中・生成成功・利用不可時のルールベース fallback・生成失敗の status を EN／JA に対応しました。生成メッセージの言語とは独立して UI 言語を使い、既存の診断ログと session 所有権は維持します。(#1168)
 - 本文リンクの `link` token を ref／Primary の塗り色から分離しました。Apple Light の Issue composer preview／Issue・PR 本文リンクは白地で読みやすい青になり、全組み込みテーマで 4.5:1 以上の contrast を保ちます。既に読める Dark の色、ref chip・Primary palette、下線・選択・リンク操作は維持します。自作テーマでは `link` を継承または明示できます。`extends` のない旧 standalone file で `link` を省略した場合は、その file 自身の `color_branch` を使って従来の配色と読込を維持します。(#1077)

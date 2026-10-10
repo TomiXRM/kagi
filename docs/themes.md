@@ -266,11 +266,15 @@ TextView behavior (no separate button/loading state).
 ## Pane separators
 
 Resize targets retain scaled 4px geometry, independently of their resting paint.
-Sidebar sections and outer panes, PR, conflict, Editor and File History panes paint centered
-1 logical-pixel `surface` hairlines over `sidebar` / `panel` backgrounds.
-Hover and same-kind drag-over keep the `color_branch` accent. The line does not scale with
-UI zoom; the hit region does. Apple Light uses its neutral `#e5e5e5` surface;
-Apple Dark and custom themes use their own tokens unchanged.
+Converted boundaries are Graph sidebar sections, sidebar/content, the shared
+commit-panel/inspector boundary, bottom panel, inspector message/files split,
+PR navigator and swimlane, Conflict A/B and Result, Editor tree and hunks,
+and File History detail and rows/diff. All paint centered 1 logical-pixel
+`surface` hairlines over their adjacent `sidebar`, `panel` or `bg_base` token.
+PR navigator uses `sidebar`; its swimlane and Conflict use `bg_base`.
+Hover and same-kind drag-over paint both target and line in `color_branch`.
+The line does not scale with UI zoom; the hit region does. Apple Light uses its
+neutral `#e5e5e5` surface; Apple Dark and custom themes keep their own tokens.
 
 ## Token reference
 

@@ -288,6 +288,7 @@ fn pane_divider(app: &KagiApp, index: usize) -> gpui::AnyElement {
             .any(|key| !app.sidebar.collapsed.contains(key));
     div()
         .id(("sidebar-pane-divider", index))
+        .group(PANE_DIVIDER_IDS[index])
         .relative()
         .child(super::e2e::measure_inside(PANE_DIVIDER_IDS[index]))
         .w_full()
@@ -304,6 +305,12 @@ fn pane_divider(app: &KagiApp, index: usize) -> gpui::AnyElement {
                 .h(px(1.))
                 .flex_shrink_0()
                 .bg(rgb(theme().surface))
+                .when(active, |line| {
+                    line.group_hover(PANE_DIVIDER_IDS[index], |s| s.bg(rgb(theme().color_branch)))
+                        .group_drag_over::<DividerDrag>(PANE_DIVIDER_IDS[index], |s| {
+                            s.bg(rgb(theme().color_branch))
+                        })
+                })
                 .when(cfg!(feature = "gui-e2e"), |line| {
                     line.child(super::e2e::measure_inside(PANE_LINE_IDS[index]))
                 }),

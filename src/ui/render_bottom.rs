@@ -30,11 +30,41 @@ impl KagiApp {
         // ── Horizontal resize divider at top of panel ──
         let h_divider = div()
             .id("divider-bottom-panel")
+            .group("divider-bottom-panel")
             .w_full()
             .h(theme::scaled_px(BOTTOM_PANEL_DIVIDER_H))
             .flex_shrink_0()
-            .bg(rgb(theme().surface))
+            .relative()
+            .when(cfg!(feature = "gui-e2e"), |divider| {
+                divider.child(e2e::measure_inside("divider-bottom-panel"))
+            })
+            .bg(rgb(theme().panel))
+            .flex()
+            .flex_col()
+            .justify_center()
+            .child(
+                div()
+                    .relative()
+                    .w_full()
+                    .h(px(1.))
+                    .flex_shrink_0()
+                    .bg(rgb(theme().surface))
+                    .group_hover("divider-bottom-panel", |s| s.bg(rgb(theme().color_branch)))
+                    .group_drag_over::<DividerDrag>("divider-bottom-panel", |s| {
+                        s.bg(rgb(theme().color_branch))
+                    })
+                    .when(cfg!(feature = "gui-e2e"), |line| {
+                        line.child(e2e::measure_inside("divider-bottom-panel-line"))
+                    }),
+            )
             .hover(|style| style.bg(rgb(theme().color_branch)).cursor_row_resize())
+            .drag_over::<DividerDrag>(|style, drag, _, _| {
+                if drag.kind == DividerKind::BottomPanel {
+                    style.bg(rgb(theme().color_branch))
+                } else {
+                    style
+                }
+            })
             .cursor_row_resize()
             .on_drag(
                 DividerDrag {

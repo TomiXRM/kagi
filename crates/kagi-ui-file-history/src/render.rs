@@ -247,6 +247,7 @@ pub fn render_file_history_view(
     // ── Right detail pane ──────────────────────────────────────────
     let detail_divider = div()
         .id("fh-detail-divider")
+        .group("fh-detail-divider")
         .w(theme::scaled_px(4.))
         .flex_shrink_0()
         .h_full()
@@ -258,7 +259,11 @@ pub fn render_file_history_view(
                 .w(px(1.))
                 .h_full()
                 .flex_shrink_0()
-                .bg(rgb(theme().surface)),
+                .bg(rgb(theme().surface))
+                .group_hover("fh-detail-divider", |s| s.bg(rgb(theme().color_branch)))
+                .group_drag_over::<DividerDrag>("fh-detail-divider", |s| {
+                    s.bg(rgb(theme().color_branch))
+                }),
         )
         .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
         .drag_over::<DividerDrag>(|style, drag, _, _| {
@@ -398,6 +403,7 @@ pub(crate) fn render_fh_list_and_diff(
         .flex_shrink_0()
         .bg(rgb(theme().panel))
         .flex()
+        .group("fh-rows-divider")
         .flex_col()
         .justify_center()
         .child(
@@ -405,7 +411,11 @@ pub(crate) fn render_fh_list_and_diff(
                 .w_full()
                 .h(px(1.))
                 .flex_shrink_0()
-                .bg(rgb(theme().surface)),
+                .bg(rgb(theme().surface))
+                .group_hover("fh-rows-divider", |s| s.bg(rgb(theme().color_branch)))
+                .group_drag_over::<DividerDrag>("fh-rows-divider", |s| {
+                    s.bg(rgb(theme().color_branch))
+                }),
         )
         .hover(|style| style.bg(rgb(theme().color_branch)).cursor_row_resize())
         .drag_over::<DividerDrag>(|style, drag, _, _| {

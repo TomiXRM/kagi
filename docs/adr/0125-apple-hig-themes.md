@@ -100,17 +100,22 @@ altered.
 
 Dense Graph navigation takes Finder's continuous sidebar and quiet separator
 hierarchy, not Finder's material or navigation model. Resting resize boundaries
-paint a centered literal `px(1.)` `surface` line over the adjacent `sidebar` or
-`panel` fill. Existing scaled 4px hit regions, independent pane resizing,
+paint a centered literal `px(1.)` `surface` line over the adjacent `sidebar`,
+`panel` or `bg_base` fill. Existing scaled 4px hit regions, independent pane resizing,
 collapse rules and drag handlers remain intact. Hover retains the accent
 affordance only during interaction; collapsed inactive section handles remain
 neutral. Keyboard focus, empty/loading/error states add no new interaction:
 existing section focus and pane state contracts remain unchanged.
 
 The same paint/target separation applies to PR, conflict, Editor and File
-History pane boundaries. GPUI suppresses ordinary hover styles during a drag,
-so same-kind `drag_over` preserves the accent while dragging over its handle
-without changing the drag handler or highlighting unrelated divider targets.
+History pane boundaries, the bottom panel and the inspector message/files split.
+PR navigator uses `sidebar`; PR swimlane and Conflict dividers use `bg_base`.
+GPUI suppresses ordinary hover styles during a drag, so same-kind `drag_over`
+preserves the target's accent. Group hover/drag-over also colors the line,
+avoiding a grey stripe through the accented handle; unique groups scope each
+handle. The pinned group API cannot inspect `DividerKind`, so crossing another
+handle during a different-kind drag can transiently accent only its 1px line,
+not its full target. Resize handlers and geometry remain unchanged.
 Apple Dark and Color Vision use their own existing tokens, with no palette or
 gpui-component global border change. Native `hairline_dividers` covers Graph
 line bounds and rendered resting/hover/drag colors at 100% and 167% in both Apple

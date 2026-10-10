@@ -112,6 +112,7 @@ impl KagiApp {
         // Build divider 1: sidebar | main.
         let divider1 = div()
             .id("divider-sidebar")
+            .group("divider-sidebar")
             .w(theme::scaled_px(4.))
             .flex_shrink_0()
             .h_full()
@@ -129,6 +130,10 @@ impl KagiApp {
                     .h_full()
                     .flex_shrink_0()
                     .bg(rgb(theme().surface))
+                    .group_hover("divider-sidebar", |s| s.bg(rgb(theme().color_branch)))
+                    .group_drag_over::<DividerDrag>("divider-sidebar", |s| {
+                        s.bg(rgb(theme().color_branch))
+                    })
                     .when(cfg!(feature = "gui-e2e"), |line| {
                         line.child(e2e::measure_inside("divider-sidebar-line"))
                     }),
@@ -727,6 +732,7 @@ impl KagiApp {
         // Build divider 2 (shared between both panel modes).
         let divider2 = div()
             .id("divider-panel")
+            .group("divider-panel")
             .w(theme::scaled_px(4.))
             .flex_shrink_0()
             .h_full()
@@ -744,6 +750,10 @@ impl KagiApp {
                     .h_full()
                     .flex_shrink_0()
                     .bg(rgb(theme().surface))
+                    .group_hover("divider-panel", |s| s.bg(rgb(theme().color_branch)))
+                    .group_drag_over::<DividerDrag>("divider-panel", |s| {
+                        s.bg(rgb(theme().color_branch))
+                    })
                     .when(cfg!(feature = "gui-e2e"), |line| {
                         line.child(e2e::measure_inside("divider-panel-line"))
                     }),

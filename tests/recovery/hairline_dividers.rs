@@ -62,7 +62,11 @@ pub fn scenario_hairline_dividers(cx: &mut VisualTestAppContext) {
     let scale = cx
         .update_window(window, |_, window, _| window.scale_factor())
         .unwrap();
-    assert_eq!(scale, 2., "Retina geometry oracle");
+    if scale != 2. {
+        eprintln!("[gui-e2e] SKIP hairline_dividers: Retina geometry oracle requires scale 2, actual {scale}");
+        unmount(cx, app, window);
+        return;
+    }
     for slug in ["apple-light", "apple-dark"] {
         app.update(cx, |app, cx| app.set_theme(slug, cx));
         for zoom in [1., 1.67] {
@@ -77,6 +81,7 @@ pub fn scenario_hairline_dividers(cx: &mut VisualTestAppContext) {
                 ("sidebar-tags-divider", true),
                 ("divider-sidebar", false),
                 ("divider-panel", false),
+                ("divider-bottom-panel", true),
             ] {
                 let hit = e2e::control_bounds(window.window_id(), id).expect(id);
                 let thickness = if horizontal {
@@ -128,7 +133,7 @@ pub fn scenario_hairline_dividers(cx: &mut VisualTestAppContext) {
                 } else {
                     point(hit.left() + px(0.5), hit.center().y)
                 };
-                let fill = if horizontal || id == "divider-sidebar" {
+                let fill = if id.starts_with("sidebar-") || id == "divider-sidebar" {
                     theme::theme().sidebar
                 } else {
                     theme::theme().panel
@@ -149,6 +154,13 @@ pub fn scenario_hairline_dividers(cx: &mut VisualTestAppContext) {
                     theme::theme().color_branch,
                     "hover accent",
                 );
+                assert_pixel(
+                    cx,
+                    window,
+                    line.center(),
+                    theme::theme().color_branch,
+                    "hover line accent",
+                );
                 cx.simulate_mouse_down(window, hit.center(), MouseButton::Left, Modifiers::none());
                 // Move along the divider, starting a real drag without resizing
                 // either adjacent pane or moving away from the hover target.
@@ -160,6 +172,13 @@ pub fn scenario_hairline_dividers(cx: &mut VisualTestAppContext) {
                 cx.simulate_mouse_move(window, along, Some(MouseButton::Left), Modifiers::none());
                 paint(cx, window);
                 assert_pixel(cx, window, edge, theme::theme().color_branch, "drag accent");
+                assert_pixel(
+                    cx,
+                    window,
+                    line.center(),
+                    theme::theme().color_branch,
+                    "drag line accent",
+                );
                 cx.simulate_mouse_up(window, along, MouseButton::Left, Modifiers::none());
                 cx.simulate_mouse_move(window, point(px(1.), px(1.)), None, Modifiers::none());
                 paint(cx, window);

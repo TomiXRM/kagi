@@ -9,6 +9,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - Stage hunk / Unstage hunk は表示時の range と raw patch（context・改行を含む）の内容を承認対象にし、同じ range でも内容が変わった場合は index・HEAD・作業ファイルを書き換えず拒否します。EN／JA の理由を footer / toast に表示し、diff を再読込し、一件の Refused 操作記録を残します。(#1131)
 - Unstage hunk は逆向きの diff を再計算せず、表示・照合済みの patch を反転するため、行の入替えも変更のない承認で解除できます。操作記録の HEAD は読みやすい branch 表記に揃え、実行失敗も EN／JA の footer / toast を維持します。file↔symlink の型変更は片側 hunk のボタンを出さず、既存のファイル単位 Stage / Unstage を使います。(#1131 review)
+- Hunk 操作の backend 回帰はテストごとの隔離 log directory を使い、外部の環境設定なしでも拒否一件の操作記録を確認できるようにしました。untracked／added／deleted と unborn の whole-file hunk も index だけを Stage / Unstage し、literal 名の隣のファイルや作業ファイルを保持する回帰を追加しました。(#1131 integration)
 - MCP `kagi_commit_show` は graph の 2000 件表示予算から独立して revision を解決します。古い完全 SHA・一意な短縮 SHA・tag を参照でき、曖昧な prefix は候補の完全 SHA と長い prefix の案内を返して拒否します。blob／tree は commit として返しません。(#1134, #1139)
 - Unstage は単体・一括とも選択した literal path の index entry だけを HEAD の OID／mode に戻すようにしました。`[]`・`*`・`?`・先頭 `#`・POSIX の `\` を名前として扱い、未選択ファイルの staged 内容や作業ファイルを書き換えません。対象の index 内容が plan 後に変われば拒否し、conflict stage の解除・directory から file への変更も正しく処理します。一括失敗時の cached index は再読込し、途中の変更が次の Stage に混ざらないようにしました。Editor の実ファイルメニューと backend の回帰を追加しました。(#1130)
 - 複数 commit の cherry-pick を中止すると、先行する成功済み pick が残っていた問題を修正しました。sequencer が記録した開始 HEAD へ index・作業ファイルとともに復元し、開始点が不明な場合や HEAD が sequencer の安全基準から移動した場合は成功扱いせず EN/JA の理由で拒否します。無関係な手動 commit・未追跡ファイル・tracked file の未 stage 編集を保持し、単一 pick の中止と解決バッファーの退避・操作記録は維持します。(#1127)

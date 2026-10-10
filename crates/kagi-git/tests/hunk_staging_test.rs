@@ -10,6 +10,8 @@ use std::path::Path;
 
 #[path = "../../../tests/support/git_fixture.rs"]
 mod git_fixture;
+#[path = "../../../tests/support/isolated.rs"]
+mod isolated;
 use git_fixture::{commit_all, git_command, git_output, init_repo};
 
 use kagi_domain::diff::HunkApproval;
@@ -93,6 +95,9 @@ fn show_index(repo: &Path, file: &str) -> String {
 
 #[test]
 fn staging_one_hunk_stages_exactly_that_edit() {
+    if !isolated::run_isolated() {
+        return;
+    }
     let repo = Repo::new();
     let hunks = repo.unstaged();
     assert_eq!(hunks.len(), 2, "two separate edits diff as two hunks");
@@ -121,6 +126,9 @@ fn staging_one_hunk_stages_exactly_that_edit() {
 
 #[test]
 fn unstaging_one_hunk_takes_exactly_that_edit_out() {
+    if !isolated::run_isolated() {
+        return;
+    }
     let repo = Repo::new();
     let hunks = repo.unstaged();
     let backend = repo.backend();
@@ -157,6 +165,9 @@ fn unstaging_one_hunk_takes_exactly_that_edit_out() {
 
 #[test]
 fn a_hunk_drawn_before_the_file_moved_is_refused() {
+    if !isolated::run_isolated() {
+        return;
+    }
     let repo = Repo::new();
     let drawn = repo.unstaged();
     // Two lines inserted above: both hunks move down, so neither drawn header
@@ -177,6 +188,9 @@ fn a_hunk_drawn_before_the_file_moved_is_refused() {
 
 #[test]
 fn an_unstage_of_a_hunk_no_longer_staged_is_refused() {
+    if !isolated::run_isolated() {
+        return;
+    }
     let repo = Repo::new();
     let hunks = repo.unstaged();
     repo.backend()
@@ -202,6 +216,9 @@ fn an_unstage_of_a_hunk_no_longer_staged_is_refused() {
 
 #[test]
 fn an_untracked_file_is_its_one_hunk() {
+    if !isolated::run_isolated() {
+        return;
+    }
     let repo = Repo::new();
     std::fs::write(repo.path().join("new.txt"), "a\nb\n").unwrap();
     let backend = repo.backend();
@@ -223,6 +240,9 @@ fn an_untracked_file_is_its_one_hunk() {
 
 #[test]
 fn same_range_different_content_is_refused_for_stage() {
+    if !isolated::run_isolated() {
+        return;
+    }
     let repo = Repo::new();
     std::fs::write(repo.path().join(FILE), "one\ntwo\nthree\n").unwrap();
     commit_all(repo.path(), "three-line base");
@@ -271,6 +291,9 @@ fn assert_refusal_unchanged(repo: &Repo, before: (String, Vec<u8>, Vec<u8>, usiz
 
 #[test]
 fn same_range_different_content_is_refused_for_unstage() {
+    if !isolated::run_isolated() {
+        return;
+    }
     let repo = Repo::new();
     std::fs::write(repo.path().join(FILE), "one\ntwo\nthree\n").unwrap();
     commit_all(repo.path(), "three-line base");
@@ -295,6 +318,9 @@ fn same_range_different_content_is_refused_for_unstage() {
 
 #[test]
 fn context_only_changes_are_refused_for_stage_and_unstage() {
+    if !isolated::run_isolated() {
+        return;
+    }
     for staged in [false, true] {
         let repo = Repo::new();
         if staged {
@@ -341,6 +367,9 @@ fn context_only_changes_are_refused_for_stage_and_unstage() {
 
 #[test]
 fn missing_final_newline_approvals_apply_in_both_directions() {
+    if !isolated::run_isolated() {
+        return;
+    }
     let repo = Repo::new();
     std::fs::write(repo.path().join(FILE), "one\nAPPROVED").unwrap();
     let approved = repo.unstaged()[0];
@@ -358,6 +387,9 @@ fn missing_final_newline_approvals_apply_in_both_directions() {
 
 #[test]
 fn raw_byte_and_final_newline_drift_are_refused_in_both_directions() {
+    if !isolated::run_isolated() {
+        return;
+    }
     for (approved, changed) in [
         (
             b"one\nAPPROVED\nthree\n".as_slice(),
@@ -410,6 +442,9 @@ fn raw_byte_and_final_newline_drift_are_refused_in_both_directions() {
 
 #[test]
 fn unchanged_swapped_lines_unstage_without_rediffing_in_reverse() {
+    if !isolated::run_isolated() {
+        return;
+    }
     let repo = Repo::new();
     std::fs::write(repo.path().join(FILE), "x\nA\ny\nz\n").unwrap();
     commit_all(repo.path(), "swap base");
@@ -425,11 +460,15 @@ fn unchanged_swapped_lines_unstage_without_rediffing_in_reverse() {
 
 #[test]
 fn hunk_receipt_uses_human_head_display() {
+    if !isolated::run_isolated() {
+        return;
+    }
     let repo = Repo::new();
     let approved = repo.unstaged()[0];
     let report = repo
         .backend()
         .stage_hunk_recorded(Path::new(FILE), approved, false);
+    assert_receipt_appended(&report);
     report.result.unwrap();
     let entry = report.recording.entry();
     assert_eq!(entry.before.head, "branch: main");
@@ -442,6 +481,9 @@ fn hunk_receipt_uses_human_head_display() {
 #[cfg(unix)]
 #[test]
 fn typechange_hunks_have_no_local_mutation_approval() {
+    if !isolated::run_isolated() {
+        return;
+    }
     for from_symlink in [false, true] {
         let repo = Repo::new();
         if from_symlink {
@@ -474,6 +516,9 @@ fn typechange_hunks_have_no_local_mutation_approval() {
 #[cfg(unix)]
 #[test]
 fn reverse_approval_preserves_quoted_paths_executable_mode_and_missing_lf() {
+    if !isolated::run_isolated() {
+        return;
+    }
     use std::os::unix::fs::PermissionsExt;
     let repo = Repo::new();
     let file = Path::new("quoted \" path.txt");
@@ -505,6 +550,9 @@ fn reverse_approval_preserves_quoted_paths_executable_mode_and_missing_lf() {
 
 #[test]
 fn a_deleted_file_can_be_unstaged_from_its_approved_hunk() {
+    if !isolated::run_isolated() {
+        return;
+    }
     let repo = Repo::new();
     std::fs::remove_file(repo.path().join(FILE)).unwrap();
     let backend = repo.backend();
@@ -521,4 +569,69 @@ fn a_deleted_file_can_be_unstaged_from_its_approved_hunk() {
         !repo.path().join(FILE).exists(),
         "unstaging never restores the worktree file"
     );
+}
+
+#[test]
+fn whole_file_hunks_preserve_literal_neighbours_in_born_and_unborn_repos() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    for unborn in [false, true] {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path();
+        init_repo(repo, "main");
+        if !unborn {
+            std::fs::write(repo.join("base.txt"), "base\n").unwrap();
+            commit_all(repo, "base");
+        }
+        let head = std::fs::read(repo.join(".git/HEAD")).unwrap();
+        let branch = std::fs::read(repo.join(".git/refs/heads/main")).ok();
+        std::fs::write(repo.join("a[b].txt"), "selected\n").unwrap();
+        std::fs::write(repo.join("ab.txt"), "neighbour\n").unwrap();
+        let backend = Backend::open(repo).unwrap();
+        backend.stage_file(Path::new("ab.txt")).unwrap();
+        let neighbour = git_output(repo, &["ls-files", "--stage", "--", "ab.txt"]);
+        let selected = Path::new("a[b].txt");
+        let diff = backend.unstaged_file_diff(selected).unwrap();
+        assert_eq!(diff.change, kagi_domain::status::ChangeKind::Added);
+        let report =
+            backend.stage_hunk_recorded(selected, diff.hunks[0].approval().unwrap(), false);
+        assert_receipt_appended(&report);
+        report.result.unwrap();
+        assert_eq!(show_index(repo, "a[b].txt"), "selected\n");
+        let diff = backend.staged_file_diff(selected).unwrap();
+        assert_eq!(diff.change, kagi_domain::status::ChangeKind::Added);
+        let report = backend.stage_hunk_recorded(selected, diff.hunks[0].approval().unwrap(), true);
+        assert_receipt_appended(&report);
+        report.result.unwrap();
+        assert!(
+            git_output(repo, &["--literal-pathspecs", "ls-files", "--", "a[b].txt"]).is_empty()
+        );
+        assert_eq!(
+            git_output(repo, &["ls-files", "--stage", "--", "ab.txt"]),
+            neighbour
+        );
+        assert_eq!(std::fs::read(repo.join("a[b].txt")).unwrap(), b"selected\n");
+        assert_eq!(std::fs::read(repo.join("ab.txt")).unwrap(), b"neighbour\n");
+        assert_eq!(std::fs::read(repo.join(".git/HEAD")).unwrap(), head);
+        assert_eq!(
+            std::fs::read(repo.join(".git/refs/heads/main")).ok(),
+            branch
+        );
+        let entries = kagi_git::read_oplog_tail_for_repo(repo, 100);
+        assert_eq!(
+            entries.len(),
+            2,
+            "one receipt for stage and one for unstage"
+        );
+        assert!(entries
+            .iter()
+            .all(|entry| matches!(entry.outcome, kagi_git::OpOutcome::Success { .. })));
+    }
+}
+
+fn assert_receipt_appended(report: &kagi_git::backend::HunkReport) {
+    if let kagi_git::backend::recording::Recording::Failed { error, .. } = &report.recording {
+        panic!("hunk receipt append failed: {error}");
+    }
 }

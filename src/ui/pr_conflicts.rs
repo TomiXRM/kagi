@@ -324,6 +324,7 @@ pub(crate) fn conflict_diff_view(f: &PrConflictFile, marker_text: Option<&str>) 
         title: SharedString::from(f.path.display().to_string()),
         stats: SharedString::from(format!("{total} conflict(s)")),
         rows: std::sync::Arc::new(rows),
+        hunk_approvals: Default::default(),
         height_source: Default::default(),
         source: MainDiffSource::Synthetic,
         images: None,

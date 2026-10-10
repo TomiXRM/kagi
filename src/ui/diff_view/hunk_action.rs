@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use gpui::{div, prelude::*, rgb, SharedString, WeakEntity};
-use kagi_domain::diff::HunkRange;
+use kagi_domain::diff::{HunkApproval, HunkRange};
 
 use super::MainDiffSource;
 use crate::ui::{theme, KagiApp, Msg};
@@ -19,6 +19,7 @@ pub(crate) struct HunkAction {
     path: PathBuf,
     /// `true`: the staged diff (Unstage hunk); `false`: unstaged (Stage hunk).
     staged: bool,
+    approvals: std::sync::Arc<Vec<HunkApproval>>,
 }
 
 impl HunkAction {
@@ -27,6 +28,7 @@ impl HunkAction {
         source: &MainDiffSource,
         app: WeakEntity<KagiApp>,
         owner: crate::app::SessionId,
+        approvals: std::sync::Arc<Vec<HunkApproval>>,
     ) -> Option<Self> {
         let (path, staged) = match source {
             MainDiffSource::Unstaged { path } => (path.clone(), false),
@@ -38,6 +40,7 @@ impl HunkAction {
             owner,
             path,
             staged,
+            approvals,
         })
     }
 
@@ -45,6 +48,7 @@ impl HunkAction {
     /// header does not parse as a hunk.
     pub(crate) fn button(&self, row: usize, header: &str) -> Option<gpui::AnyElement> {
         let range = HunkRange::parse(header)?;
+        let approved = *self.approvals.iter().find(|h| h.range == range)?;
         let label = if self.staged {
             Msg::DiffUnstageHunk.t()
         } else {
@@ -71,9 +75,10 @@ impl HunkAction {
                     owner,
                     path,
                     staged,
+                    ..
                 } = action.clone();
                 app.update(cx, |app, cx| {
-                    app.stage_hunk_from_diff(owner, path, range, staged, cx)
+                    app.stage_hunk_from_diff(owner, path, approved, staged, cx)
                 })
                 .ok();
             })

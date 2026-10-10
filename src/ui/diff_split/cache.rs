@@ -159,6 +159,7 @@ mod tests {
             title: "same-file.rs".into(),
             stats: "+2 −2".into(),
             rows: moved_diff(),
+            hunk_approvals: Default::default(),
             height_source: Default::default(),
             source: MainDiffSource::Synthetic,
             images: None,

@@ -46,6 +46,11 @@ pub struct Backend {
     identity_before: std::sync::Mutex<Option<crate::oplog::RepoIdentity>>,
 }
 
+pub struct HunkReport {
+    pub result: Result<(), GitError>,
+    pub recording: recording::Recording,
+}
+
 impl Backend {
     /// Read-only identity for admission, not authorization for Git writes.
     /// Plain editor saves do not require Git owner trust (ADR-0120).
@@ -728,24 +733,73 @@ impl Backend {
         ops::unstage::execute_unstage(&self.repo, &plan)
     }
 
-    /// Stage one unstaged hunk of `path`, named by its header (#842).
+    /// Stage exactly the unstaged hunk approved from the displayed diff.
     pub fn stage_hunk(
         &self,
         path: &Path,
-        range: kagi_domain::diff::HunkRange,
+        approved: kagi_domain::diff::HunkApproval,
     ) -> Result<(), GitError> {
-        self.require_trust()?;
-        crate::hunk_staging::stage_hunk(&self.repo, path, range)
+        self.stage_hunk_recorded(path, approved, false).result
     }
 
-    /// Unstage one staged hunk of `path`, named by its header (#842).
+    /// Unstage exactly the staged hunk approved from the displayed diff.
     pub fn unstage_hunk(
         &self,
         path: &Path,
-        range: kagi_domain::diff::HunkRange,
+        approved: kagi_domain::diff::HunkApproval,
     ) -> Result<(), GitError> {
-        self.require_trust()?;
-        crate::hunk_staging::unstage_hunk(&self.repo, path, range)
+        self.stage_hunk_recorded(path, approved, true).result
+    }
+
+    /// Mutation-owned receipt; callers only present it, never append again.
+    pub fn stage_hunk_recorded(
+        &self,
+        path: &Path,
+        approved: kagi_domain::diff::HunkApproval,
+        staged: bool,
+    ) -> HunkReport {
+        let op = if staged { "unstage" } else { "stage" };
+        let summary = || ops::StateSummary {
+            head: resolve_head(&self.repo)
+                .map(|h| h.display())
+                .unwrap_or_else(|_| "unobserved".into()),
+            dirty: status::working_tree_status(&self.repo)
+                .map(|s| ops::status_summary_display(&s))
+                .unwrap_or_else(|_| "unobserved".into()),
+        };
+        let before = summary();
+        let plan = ops::hunk_staging::plan_hunk(path, approved, staged);
+        let (result, ref_moves) = self.observe_ref_moves(|this| {
+            this.require_trust().and_then(|()| {
+                let diff = ops::hunk_staging::preflight_hunk(&this.repo, &plan)?;
+                ops::hunk_staging::execute_hunk(&this.repo, &plan, &diff)
+            })
+        });
+        let outcome = match &result {
+            Ok(()) => crate::OpOutcome::Success { after: summary() },
+            Err(GitError::Blocked(note)) => crate::OpOutcome::Refused {
+                blockers: vec![note.message_en()],
+            },
+            Err(GitError::Untrusted(error)) => crate::OpOutcome::Refused {
+                blockers: vec![error.to_string()],
+            },
+            Err(error) => crate::OpOutcome::Failed {
+                error: format!("{}: {}: {error}", self.path.display(), path.display()),
+            },
+        };
+        let recording = self.record_receipt(
+            op,
+            &before,
+            outcome,
+            recording::Receipt {
+                backup_refs: Vec::new(),
+                recovery: Vec::new(),
+                recovery_plan: None,
+                failure_code: None,
+                ref_moves,
+            },
+        );
+        HunkReport { result, recording }
     }
 
     pub fn unstaged_file_diff(&self, path: &Path) -> Result<FileDiff, GitError> {

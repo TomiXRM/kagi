@@ -2461,6 +2461,10 @@ mod macos {
                 Box::new(crate::hunk_staging::scenario_hunk_staging),
             ),
             (
+                "hunk_staging_content_identity",
+                Box::new(crate::hunk_staging::scenario_hunk_staging_content_identity),
+            ),
+            (
                 "wip_diffstat_stage_order",
                 Box::new(crate::hunk_staging::scenario_wip_diffstat_stage_order),
             ),

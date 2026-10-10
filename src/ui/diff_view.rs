@@ -202,6 +202,8 @@ pub struct MainDiffView {
     /// frame for the length of a reading session. `render_diff_list` wrapped
     /// this in an `Arc` immediately anyway, so the deep copy bought nothing.
     pub rows: std::sync::Arc<Vec<DiffRow>>,
+    /// Content approvals captured by the backend read, never by a click.
+    pub(crate) hunk_approvals: std::sync::Arc<Vec<kagi_domain::diff::HunkApproval>>,
     /// Preserved across highlight-only row allocation changes.
     pub(crate) height_source: kagi_ui_core::diff_list::DiffListSource,
     /// Where this diff was opened from (for re-load / back navigation).
@@ -454,6 +456,13 @@ pub(crate) fn build_main_diff_view(
         title: fdv.file_name,
         stats: SharedString::from(format!("+{} \u{2212}{}", added, removed)),
         rows: std::sync::Arc::new(fdv.rows),
+        hunk_approvals: std::sync::Arc::new(
+            file_diff
+                .hunks
+                .iter()
+                .filter_map(|h| h.approval())
+                .collect(),
+        ),
         height_source: Default::default(),
         source,
         images: None,
@@ -1169,6 +1178,7 @@ mod unsafe_unicode_tests {
                 old_range: (1, lines.len() as u32),
                 new_range: (1, lines.len() as u32),
                 lines,
+                content_identity: None,
             }],
             is_binary: false,
         }

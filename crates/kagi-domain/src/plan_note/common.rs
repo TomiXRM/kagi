@@ -141,10 +141,9 @@ pub enum CommonNote {
     /// the working tree on purpose. Staging it would record a deletion the user
     /// never made — Git refuses the same operation.
     SparseExcludedPath { path: String },
-    /// blocker (#842): the hunk a Stage / Unstage hunk click named is no
-    /// longer in the re-read diff — the index or the file moved since it was
-    /// drawn. Acting on a neighbouring hunk instead would stage lines the user
-    /// never chose.
+    /// blocker (#842, #1131): the displayed hunk's range or raw patch content
+    /// no longer matches the live diff. Never substitute new content at the
+    /// same range, or a neighbouring hunk the user did not choose.
     HunkChanged { path: String },
     /// §A12 — blocker: HEAD is detached (per-op sentence).
     HeadDetached { op: PlanOp },

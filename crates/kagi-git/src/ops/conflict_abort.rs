@@ -17,13 +17,13 @@ use kagi_domain::plan_note::{
     PlanTitle, RecoveryKind,
 };
 
-use super::conflict_abort_guard::{mid_conflict_edits, op_touched_paths};
-use super::conflicts::{current_state_summary, short_sha, ConflictOp, ConflictSession};
-use super::ops::{OperationPlan, StateSummary};
-use super::resolution::ResolutionBuffer;
-use super::{resolve_head, GitError};
+use crate::conflict_abort_guard::{mid_conflict_edits, op_touched_paths};
+use crate::conflicts::{current_state_summary, short_sha, ConflictOp, ConflictSession};
+use crate::ops::{OperationPlan, StateSummary};
+use crate::resolution::ResolutionBuffer;
+use crate::{resolve_head, GitError};
 
-/// The ref an abort will move back to `ORIG_HEAD`, and where it pointed when
+/// The ref an abort will move back to the recorded start, and where it pointed when
 /// the operation was observed (#707 review).
 ///
 /// A rebase leaves HEAD detached, so nothing else in the conflict fingerprint
@@ -36,7 +36,7 @@ use super::{resolve_head, GitError};
 ///
 /// Crate-private, and so is the executor that takes one: a caller able to name
 /// the ref could hand the abort any branch whose current OID it knows and have
-/// it moved to `ORIG_HEAD` with HEAD attached to it. The destination is the
+/// it moved to the recorded start with HEAD attached to it. The destination is the
 /// *session's* to decide (#707 4th review).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RestoreRef {
@@ -76,14 +76,14 @@ pub(crate) fn restore_ref(repo: &Repository, session: &ConflictSession) -> Optio
 /// Outcome of an executed conflict abort.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AbortOutcome {
-    /// Sha HEAD was restored to (the pre-operation `ORIG_HEAD`), if known.
+    /// Sha HEAD was restored to (the pre-operation or pre-sequence HEAD).
     pub restored_to: Option<String>,
     /// Path the resolution buffer was preserved at, if a buffer was saved.
     pub buffer_preserved_at: Option<PathBuf>,
 }
 
-/// Plan an `abort`: describe restoring the pre-operation state and preserving
-/// the resolution buffer.  Always available (no blockers) per ADR-0056.
+/// Plan an `abort`: restore the pre-operation state and preserve the buffer.
+/// Refuse when the sequencer's starting commit cannot be established.
 pub fn plan_conflict_abort(
     repo: &Repository,
     session: &ConflictSession,
@@ -91,10 +91,19 @@ pub fn plan_conflict_abort(
     let head = resolve_head(repo)?;
     let current = current_state_summary(repo)?;
 
-    let orig = read_orig_head(repo);
+    let (orig, blockers) = match preflight_conflict_abort(repo, session) {
+        Ok(orig) => (orig, Vec::new()),
+        Err(GitError::Blocked(note)) => (None, vec![*note]),
+        Err(error) => return Err(error),
+    };
     let predicted_head = match &orig {
         Some(sha) => format!("restored to {}", short_sha(sha)),
         None => current.head.clone(),
+    };
+    let predicted_dirty = if blockers.is_empty() {
+        "clean".to_string()
+    } else {
+        current.dirty.clone()
     };
 
     let warnings = vec![PlanNote::Conflicts(
@@ -109,15 +118,15 @@ pub fn plan_conflict_abort(
 
     Ok(OperationPlan {
         approved_index_digest: None,
-        disposition: PlanDisposition::Ready,
+        disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Conflicts(ConflictsTitle::Abort { op }),
         current,
         predicted: StateSummary {
             head: predicted_head,
-            dirty: "clean".to_string(),
+            dirty: predicted_dirty,
         },
         warnings,
-        blockers: Vec::new(),
+        blockers,
         recovery: Some(recovery),
         head_at_plan: head,
         stash_count_at_plan: 0,
@@ -131,16 +140,71 @@ pub fn plan_conflict_abort(
     })
 }
 
-/// Execute an `abort`: clean the operation state, restore HEAD's working tree to
-/// the pre-operation `ORIG_HEAD`, and preserve the resolution buffer.
+/// Resolve the operation-specific restoration target before any write.
 ///
-/// Restoration is a `checkout_tree` of the ORIG_HEAD tree **restricted to the
+/// Cherry-pick / revert do not update ORIG_HEAD. A sequence's current HEAD
+/// includes earlier picks, so only sequencer/head establishes its origin.
+/// An absent or invalid origin in a live sequencer is never a single-pick
+/// fallback: refusing preserves the state for inspection.
+pub(crate) fn preflight_conflict_abort(
+    repo: &Repository,
+    session: &ConflictSession,
+) -> Result<Option<String>, GitError> {
+    if !matches!(
+        session.op,
+        ConflictOp::CherryPick { .. } | ConflictOp::Revert { .. }
+    ) {
+        return Ok(read_orig_head(repo));
+    }
+    let unavailable = || {
+        GitError::Blocked(Box::new(PlanNote::Conflicts(
+            ConflictsNote::AbortStartUnavailable,
+        )))
+    };
+    let sequencer = repo.path().join("sequencer");
+    let sequence = sequencer.try_exists().map_err(|_| unavailable())?
+        || matches!(
+            repo.state(),
+            git2::RepositoryState::CherryPickSequence | git2::RepositoryState::RevertSequence
+        );
+    let oid = if sequence {
+        let raw = std::fs::read_to_string(sequencer.join("head")).map_err(|_| unavailable())?;
+        let safety =
+            std::fs::read_to_string(sequencer.join("abort-safety")).map_err(|_| unavailable())?;
+        let safety = git2::Oid::from_str(safety.trim()).map_err(|_| unavailable())?;
+        let head = repo
+            .head()
+            .and_then(|head| head.peel_to_commit())
+            .map_err(|_| unavailable())?
+            .id();
+        if safety != head {
+            return Err(GitError::Blocked(Box::new(PlanNote::Conflicts(
+                ConflictsNote::AbortHeadMoved,
+            ))));
+        }
+        git2::Oid::from_str(raw.trim()).map_err(|_| unavailable())?
+    } else {
+        repo.head()
+            .and_then(|head| head.peel_to_commit())
+            .map_err(|_| unavailable())?
+            .id()
+    };
+    repo.find_commit(oid)
+        .and_then(|commit| commit.tree())
+        .map_err(|_| unavailable())?;
+    Ok(Some(oid.to_string()))
+}
+
+/// Execute an `abort`: clean the operation state, restore HEAD's working tree to
+/// the recorded pre-operation HEAD, and preserve the resolution buffer.
+///
+/// Restoration is a `checkout_tree` of the starting tree **restricted to the
 /// paths the aborted operation itself wrote** (no `reset --hard`, no `clean`):
 /// the index is read back to the pre-op tree, those paths are rewritten from
 /// it (files the operation added are removed), then `cleanup_state` removes the
 /// `MERGE_HEAD` / sequencer metadata.  Paths the operation never touched are
 /// outside the pathspec and are never looked at, so unrelated local work
-/// survives.  The branch ref is moved back to ORIG_HEAD so the aborted commit
+/// survives. The branch ref is moved back to the recorded start so the aborted commit
 /// chain is detached (recoverable via reflog).
 ///
 /// The `buffer` is flushed to the autosave directory first so a partial
@@ -203,6 +267,7 @@ pub(crate) fn execute_conflict_abort_expecting(
             expected.map_or("a detached restore", |expected| expected.name.as_str())
         )));
     }
+    let orig_sha = preflight_conflict_abort(repo, session)?;
     // 1. Preserve the buffer BEFORE touching the repo (never lose partial
     //    work) — but only when there IS live work to preserve.
     //
@@ -217,38 +282,19 @@ pub(crate) fn execute_conflict_abort_expecting(
         buffer.autosave().ok()
     };
 
-    // 2. Resolve ORIG_HEAD (the pre-operation HEAD).
-    //
-    // #369: `git cherry-pick` and `git revert` do NOT write ORIG_HEAD (only
-    // merge / rebase / reset do), yet HEAD has not moved — they fail before
-    // committing — so the pre-op tree is exactly the current HEAD. Fall back to
-    // it for those ops, otherwise the whole restore-and-guard block below is
-    // skipped and a mid-conflict staged edit to a non-conflicted file slips
-    // through unprotected (and the working tree keeps its conflict markers).
-    let orig_sha = read_orig_head(repo).or_else(|| {
-        matches!(
-            session.op,
-            ConflictOp::CherryPick { .. } | ConflictOp::Revert { .. }
-        )
-        .then(|| {
-            repo.head()
-                .ok()
-                .and_then(|h| h.target())
-                .map(|o| o.to_string())
-        })
-        .flatten()
-    });
-
-    // 3. If we know ORIG_HEAD, restore the working tree + index to its tree,
+    // 3. Restore the working tree + index to the recorded starting tree,
     //    then move the branch ref back.
     if let Some(ref sha) = orig_sha {
         let oid = git2::Oid::from_str(sha)
-            .map_err(|e| GitError::Other(format!("bad ORIG_HEAD {}: {}", sha, e.message())))?;
+            .map_err(|e| GitError::Other(format!("bad abort target {}: {}", sha, e.message())))?;
         let commit = repo.find_commit(oid).map_err(|e| {
-            GitError::Other(format!("ORIG_HEAD commit lookup failed: {}", e.message()))
+            GitError::Other(format!(
+                "abort target commit lookup failed: {}",
+                e.message()
+            ))
         })?;
         let tree = commit.tree().map_err(|e| {
-            GitError::Other(format!("ORIG_HEAD tree lookup failed: {}", e.message()))
+            GitError::Other(format!("abort target tree lookup failed: {}", e.message()))
         })?;
 
         if repo.workdir().is_none() {
@@ -311,11 +357,11 @@ pub(crate) fn execute_conflict_abort_expecting(
         checkout_paths_from_tree(repo, &tree, &touched)?;
         progress(ConflictProgress::IndexAndWorktreeWritten);
 
-        // Restore the branch ref back to ORIG_HEAD and reattach HEAD to it.
+        // Restore the branch ref back to the recorded start and reattach HEAD to it.
         // Real `git rebase --abort` returns to the branch rather than leaving
         // the user detached (#302); `restore_ref` is where that branch is
         // decided, for the fingerprint and for here alike.
-        let reflog = format!("abort {}: restore ORIG_HEAD", session.op.slug());
+        let reflog = format!("abort {}: restore starting HEAD", session.op.slug());
         match &destination {
             // The name is the live one; only the OID to swap against came from
             // the plan, and the guard above proved the two name the same ref.
@@ -341,7 +387,7 @@ pub(crate) fn execute_conflict_abort_expecting(
                 };
                 write.map_err(|e| {
                     GitError::Other(format!(
-                        "restore {} to ORIG_HEAD failed: {}",
+                        "restore {} to starting HEAD failed: {}",
                         name,
                         e.message()
                     ))
@@ -352,10 +398,10 @@ pub(crate) fn execute_conflict_abort_expecting(
             }
             None => {
                 // Genuinely detached (no branch to return to): point HEAD at
-                // ORIG_HEAD directly, as before.
+                // the recorded start directly.
                 repo.set_head_detached(oid).map_err(|e| {
                     GitError::Other(format!(
-                        "set detached HEAD to ORIG_HEAD failed: {}",
+                        "set detached HEAD to starting HEAD failed: {}",
                         e.message()
                     ))
                 })?;

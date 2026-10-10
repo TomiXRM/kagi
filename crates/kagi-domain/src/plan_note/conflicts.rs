@@ -1,9 +1,9 @@
 //! Conflict Editor plan notes (ADR-0129 Phase 2) — `crates/kagi-git/src/conflicts.rs`.
 //!
-//! This producer lives **outside** `ops/` (discovered mid-Phase-1, see the
-//! appendix's `conflicts.rs(ops 外)` row) but follows the same pipeline: it
-//! plans `continue` (finish resolving — merge/rebase/cherry-pick/revert),
-//! `abort` (bail out, restoring `ORIG_HEAD`), and `skip` (sequencer-only, drop
+//! Continue / skip are produced by `conflicts.rs`; abort lives in
+//! `ops/conflict_abort.rs`. All follow the same operation pipeline:
+//! `continue` (finish resolving — merge/rebase/cherry-pick/revert),
+//! `abort` (bail out, restoring the recorded start), and `skip` (sequencer-only, drop
 //! the current step). `continue`'s blockers come from the ADR-0067
 //! [`ContinueBlocker`](../../../kagi_git/enum.ContinueBlocker.html) checklist,
 //! rendered here 1:1 (the UI's separate gate-reason `Msg` mapping in
@@ -21,6 +21,10 @@ pub enum ConflictsNote {
     RepositoryIdentityChanged,
     /// blocker (save/resolve/abort) — the observed conflict ended before execution.
     ConflictGone,
+    /// blocker (abort) — the sequencer's pre-operation commit is missing or invalid.
+    AbortStartUnavailable,
+    /// blocker (abort) — HEAD no longer matches the sequencer's safe rollback tip.
+    AbortHeadMoved,
     /// blocker (save) — the resolution draft still contains conflict markers.
     ResolutionMarkers,
     /// blocker (continue) — one or more files have no resolution draft.
@@ -66,6 +70,12 @@ impl ConflictsNote {
                 crate::advice_template_en!(ConflictsRepositoryIdentityChanged).into()
             }
             ConflictsNote::ConflictGone => crate::advice_template_en!(ConflictsConflictGone).into(),
+            ConflictsNote::AbortStartUnavailable => {
+                crate::advice_template_en!(ConflictsAbortStartUnavailable).into()
+            }
+            ConflictsNote::AbortHeadMoved => {
+                crate::advice_template_en!(ConflictsAbortHeadMoved).into()
+            }
             ConflictsNote::ResolutionMarkers => {
                 crate::advice_template_en!(ConflictsResolutionMarkers).into()
             }
@@ -137,7 +147,7 @@ impl ConflictsTitle {
 pub enum ConflictsRecovery {
     /// continue: abort back to the pre-operation state via `git {op} --abort`.
     Continue { op: String },
-    /// abort: restores the pre-`{op}` state from `ORIG_HEAD`.
+    /// abort: restores the pre-`{op}` state from the operation's recorded start.
     Abort { op: String },
     /// skip: drops the current `{op}` step.
     Skip { op: String },
@@ -152,7 +162,7 @@ impl ConflictsRecovery {
                 op
             ),
             ConflictsRecovery::Abort { op } => format!(
-                "Abort restores the pre-{} state from ORIG_HEAD. If you change your mind, the reflog still records every HEAD movement.",
+                "Abort restores the recorded pre-{} state. If you change your mind, the reflog still records every HEAD movement.",
                 op
             ),
             ConflictsRecovery::Skip { op } => format!(
@@ -337,13 +347,13 @@ mod tests {
     }
 
     #[test]
-    fn abort_recovery_matches_legacy_string() {
+    fn abort_recovery_names_recorded_start() {
         assert_eq!(
             ConflictsRecovery::Abort {
                 op: "rebase".to_string()
             }
             .message_en(),
-            "Abort restores the pre-rebase state from ORIG_HEAD. If you change your mind, \
+            "Abort restores the recorded pre-rebase state. If you change your mind, \
              the reflog still records every HEAD movement."
         );
     }

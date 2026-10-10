@@ -369,6 +369,7 @@ fn plan_create_worktree_impl(
             }));
         }
         OperationPlan {
+            approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             // `title`/`recovery` are always overwritten below (both branches
             // of this `if`/`else` converge on the same final assignment) —
@@ -659,6 +660,7 @@ pub fn plan_unlock_worktree(repo: &Repository, name: &str) -> Result<OperationPl
     warnings.extend(lock_leftover_note(repo, name));
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Worktree(WorktreeTitle::UnlockWorktree {
             name: name.to_string(),

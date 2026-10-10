@@ -126,6 +126,7 @@ pub fn plan_stash_push(
     };
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Stash(StashTitle::Push {
             next_count: stash_count + 1,

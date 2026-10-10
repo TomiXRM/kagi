@@ -152,6 +152,7 @@ pub fn plan_stash_apply(repo: &mut Repository, index: usize) -> Result<Operation
     };
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Stash(StashTitle::Apply { index }),
         current,
@@ -354,6 +355,7 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
     };
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Stash(StashTitle::Pop { index }),
         current,
@@ -521,6 +523,7 @@ fn stash_drop_internal(repo: &mut Repository, index: usize) -> Result<(), GitErr
 /// taken from the remote snapshot (e.g. `"branch: master"`) for display only.
 pub fn plan_stash_drop_remote(stash_label: &str, head_summary: String) -> OperationPlan {
     OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::Ready,
         title: PlanTitle::Stash(StashTitle::DropRemote {
             label: stash_label.to_string(),
@@ -604,6 +607,7 @@ pub fn plan_stash_drop(repo: &mut Repository, index: usize) -> Result<OperationP
     };
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Stash(StashTitle::Drop { index }),
         current,

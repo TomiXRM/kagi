@@ -69,6 +69,7 @@ impl RebaseCurrentOntoModal {
     pub fn display_plan(&self) -> std::sync::Arc<OperationPlan> {
         if self.is_replay() && !self.plan.preview_commits.is_empty() {
             std::sync::Arc::new(OperationPlan {
+                approved_index_digest: None,
                 preview_commits: Vec::new(),
                 ..(*self.plan).clone()
             })

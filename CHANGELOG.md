@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Commit／fixup と staged／both Amend は、承認時の index のパス・blob OID・mode を固定して実行前に照合するようにしました。同じパスの内容差替えや mode／対象ファイルの変更は HEAD・index・作業ファイルを書き換えず拒否し、見直しを促す EN／JA の理由と操作記録を残します。未 stage の編集は commit に混ぜず、変更のない承認は従来どおり実行できます。(#1126)
+- Commit の計画中にステージ済みの内容が変わって拒否された場合も、log だけで終わらず、EN／JA の失敗 footer と error toast に見直しの理由を表示するようにしました。以前の承認は解除し、実行は開始しません。解決済み merge の確定 Commit でも、承認後の blob 差替えを拒否して HEAD・MERGE_HEAD・index・refs を保持する backend 回帰を追加しました。(#1126)
 - 有効な Primary ボタンの通常・hover・押下の背景色をアクセントから導出し、全組み込みテーマで操作状態を区別できるようにしました。無効状態・focus ring・確認から実行までの安全フローは変更しません。(#1076)
 - Remote repository の directory picker を1つの keyboard list にし、矢印・Home / End / Page Up / Page Down で選択と表示位置を移動できるようにしました。Enter / Space は directory と親だけを開き、file は開きません。読み込み中の再実行を防ぎ、失敗・閉じる／開き直す際に古い一覧や focus を受け渡しません。Escape 後は window に focus を戻し、空 directory は親 row を残したまま空の案内を表示します。(#1071)
 - Toolbar の件数 badge は固定 9px をやめ、100% で 11.7pt の文字・行高・chip 寸法を UI zoom に揃えました。70%／167% でも 1・99・99+ が切れず、primary button と同じ読みやすい foreground を使います。拡大した chip は矢印を覆わないよう外側へ伸ばし、操作できない button では件数も淡く表示します。(#1067)

@@ -109,6 +109,7 @@ pub fn plan_delete_remote_branch(
     };
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::RemoteBranch(RemoteBranchTitle::DeleteRemoteBranch {
             remote: remote.to_string(),

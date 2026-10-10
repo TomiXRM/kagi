@@ -140,6 +140,7 @@ pub fn plan_merge_branch(
 
     let blocked_plan =
         |blockers: Vec<PlanNote>, warnings: Vec<PlanNote>, current: StateSummary| OperationPlan {
+            approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             title: title.clone(),
             current: current.clone(),
@@ -293,6 +294,7 @@ pub fn plan_merge_branch(
 
     Ok((
         OperationPlan {
+            approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             title,
             current,

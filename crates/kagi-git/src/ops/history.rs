@@ -232,6 +232,7 @@ pub fn plan_undo_commit(repo: &Repository) -> Result<OperationPlan, GitError> {
     });
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title,
         current,
@@ -386,6 +387,11 @@ pub fn plan_amend(
 ) -> Result<OperationPlan, GitError> {
     // ── 1. Resolve HEAD + status ─────────────────────────────
     let head = resolve_head(repo)?;
+    let approved_index_digest = if mode.includes_staged() {
+        Some(staged_set_digest(repo)?)
+    } else {
+        None
+    };
     let status = working_tree_status(repo)?;
     let dirty_display = status_summary_display(&status);
 
@@ -583,7 +589,8 @@ pub fn plan_amend(
         Vec::new()
     };
 
-    Ok(OperationPlan {
+    let plan = OperationPlan {
+        approved_index_digest,
         disposition: PlanDisposition::for_blockers(&blockers),
         title,
         current,
@@ -600,7 +607,15 @@ pub fn plan_amend(
         preview_commits: Vec::new(),
         destructive: true,
         equivalent_command: None,
-    })
+    };
+    if mode.includes_staged() {
+        preflight_amend(repo, &plan)?;
+    }
+    Ok(plan)
+}
+
+pub fn preflight_amend(repo: &Repository, plan: &OperationPlan) -> Result<(), GitError> {
+    preflight_commit(repo, plan)
 }
 
 /// Execute an amend (ADR-0040): build a new commit and move the branch ref.
@@ -624,6 +639,7 @@ pub fn plan_amend(
 /// **before** calling this (ADR-0040).
 pub(crate) fn execute_amend(
     repo: &Repository,
+    plan: &OperationPlan,
     mode: AmendMode,
     message: Option<&str>,
 ) -> Result<AmendOutcome, GitError> {
@@ -672,9 +688,7 @@ pub(crate) fn execute_amend(
     // ── 4. Resolve the tree ──────────────────────────────────
     let tree = if mode.includes_staged() {
         // In-memory tree from the current index — no working-tree write.
-        let mut index = repo
-            .index()
-            .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+        let mut index = approved_commit_index(repo, plan)?;
         if index.has_conflicts() {
             return Err(GitError::Other(
                 "Index has conflicts; resolve them before amending.".to_string(),
@@ -930,6 +944,7 @@ fn plan_history_move(
     };
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::History(HistoryTitle::HistoryMove {
             label: dir,

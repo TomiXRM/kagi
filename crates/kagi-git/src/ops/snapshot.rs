@@ -259,6 +259,7 @@ pub fn plan_restore_snapshot(repo: &Repository, id: &str) -> Result<OperationPla
     };
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Snapshot(SnapshotTitle::Restore { id: id.to_string() }),
         current,

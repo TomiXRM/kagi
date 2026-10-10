@@ -190,6 +190,7 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
     }
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title,
         current,

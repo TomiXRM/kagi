@@ -184,6 +184,7 @@ pub use ops::{
 };
 #[allow(unused_imports)]
 pub use ops::{plan_absorb, preflight_absorb, verify_absorb, DEFAULT_ABSORB_WINDOW};
+pub use ops::{plan_commit, preflight_commit};
 #[allow(unused_imports)]
 pub use refs::{AheadBehind, Branch, RemoteBranch, Stash, Tag, UpstreamInfo, Worktree};
 #[allow(unused_imports)]
@@ -196,11 +197,9 @@ pub use snapshot::{
     snapshot, snapshot_repairing_stat_cache, RepoSnapshot, SnapshotPhase, SnapshotProbe,
 };
 #[allow(unused_imports)]
-pub use staging::{
-    commit_preview, plan_commit, staged_file_diff, unstaged_file_diff, CommitPreview,
-};
+pub use staging::{commit_preview, staged_file_diff, unstaged_file_diff, CommitPreview};
 #[allow(unused_imports)]
-pub(crate) use staging::{execute_commit, stage_file, stage_files, unstage_file, unstage_files};
+pub(crate) use staging::{stage_file, stage_files, unstage_file, unstage_files};
 #[allow(unused_imports)]
 pub use status::{
     working_tree_status, working_tree_status_repairing_stat_cache, ChangeKind, FileStatus,

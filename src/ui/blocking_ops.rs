@@ -359,8 +359,8 @@ pub(crate) fn commit_blocking(
     verified: &std::sync::atomic::AtomicBool,
 ) -> Result<RunReport, String> {
     let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
-    // Commit's plan is a HEAD snapshot; preflight detects a checkout/commit
-    // between plan and execute.
+    // Approval binds HEAD and index content; same-path staged blob/mode drift
+    // is a preflight refusal, not permission to commit the replacement.
     let op = kagi_git::Operation::Commit {
         message: message.to_string(),
     };

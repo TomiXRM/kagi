@@ -615,30 +615,7 @@ impl Backend {
     /// metadata is deliberately excluded; path bytes, object OID, mode, and
     /// conflict stage determine whether the selected content has changed.
     pub fn staged_set_digest(&self) -> Result<String, GitError> {
-        use sha2::{Digest, Sha256};
-
-        let mut index = self
-            .repo
-            .index()
-            .map_err(|e| GitError::Other(e.message().to_string()))?;
-        // `Repository::index` can return its cached snapshot. A queued
-        // commit must observe staging performed after this Backend was opened.
-        index
-            .read(true)
-            .map_err(|e| GitError::Other(e.message().to_string()))?;
-
-        let mut digest = Sha256::new();
-        // libgit2's index is already ordered by path and conflict stage.
-        for entry in index.iter() {
-            // A length prefix separates paths even when their bytes contain
-            // arbitrary delimiters; OID, mode, and stage have fixed lengths.
-            digest.update((entry.path.len() as u64).to_be_bytes());
-            digest.update(&entry.path);
-            digest.update(entry.id.as_bytes());
-            digest.update(entry.mode.to_be_bytes());
-            digest.update((entry.flags & 0x3000).to_be_bytes()); // GIT_INDEX_ENTRY_STAGEMASK
-        }
-        Ok(hex::encode(digest.finalize()))
+        ops::staged_set_digest(&self.repo)
     }
 
     /// Whether this worktree is mid-merge, including a merge whose conflicts
@@ -923,11 +900,15 @@ impl Backend {
     }
 
     pub fn plan_commit(&self, message: &str) -> Result<OperationPlan, GitError> {
-        staging::plan_commit(&self.repo, message)
+        ops::plan_commit(&self.repo, message)
     }
 
-    pub(crate) fn execute_commit(&self, message: &str) -> Result<CommitId, GitError> {
-        staging::execute_commit(&self.repo, message)
+    pub(crate) fn execute_commit(
+        &self,
+        plan: &OperationPlan,
+        message: &str,
+    ) -> Result<CommitId, GitError> {
+        ops::execute_commit(&self.repo, plan, message)
     }
 
     /// Plan a merge-finalize commit (`git commit` with `MERGE_HEAD` present).
@@ -1681,10 +1662,11 @@ impl Backend {
 
     pub(crate) fn execute_amend(
         &self,
+        plan: &OperationPlan,
         mode: AmendMode,
         message: Option<&str>,
     ) -> Result<AmendOutcome, GitError> {
-        ops::execute_amend(&self.repo, mode, message)
+        ops::execute_amend(&self.repo, plan, mode, message)
     }
 
     /// Build the absorb distribution table (issue #345 / ADR-0151). `window` is

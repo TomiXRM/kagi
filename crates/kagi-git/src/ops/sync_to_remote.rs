@@ -192,6 +192,7 @@ fn finish(
         }
     });
     OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Sync(SyncTitle::SyncToRemote {
             branch: branch.to_string(),

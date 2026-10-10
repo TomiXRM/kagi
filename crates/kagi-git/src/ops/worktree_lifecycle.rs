@@ -141,6 +141,7 @@ pub(super) fn admin_plan(
     let status = working_tree_status(repo)?;
     let dirty = status_summary_display(&status);
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Worktree(title),
         current: StateSummary {

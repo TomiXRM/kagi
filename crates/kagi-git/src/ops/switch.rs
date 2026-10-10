@@ -83,6 +83,7 @@ pub fn plan_checkout_tracking_branch(
     };
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Switch(SwitchTitle::CheckoutTracking {
             remote: remote_branch.to_string(),
@@ -296,6 +297,7 @@ pub fn plan_switch_to_latest(
         .unwrap_or_default();
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Switch(SwitchTitle::SwitchToLatest {
             branch: branch_name.to_string(),

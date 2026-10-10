@@ -471,6 +471,7 @@ pub(crate) fn plan_pr_merge(
         warnings.push(PlanNote::Github(GithubNote::RemoteSideEffect));
     }
     OperationPlan {
+        approved_index_digest: None,
         disposition: if blockers.is_empty() {
             PlanDisposition::Ready
         } else {

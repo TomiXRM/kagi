@@ -672,8 +672,12 @@ impl Backend {
         conflicts::stage_conflict_resolution(&self.repo, session, buffer)
     }
 
-    pub(crate) fn execute_merge_commit(&self, message: &str) -> Result<CommitId, GitError> {
-        conflicts::execute_merge_commit(&self.repo, message)
+    pub(crate) fn execute_merge_commit(
+        &self,
+        plan: &OperationPlan,
+        message: &str,
+    ) -> Result<CommitId, GitError> {
+        conflicts::execute_merge_commit(&self.repo, plan, message)
     }
 
     pub fn plan_conflict_abort(

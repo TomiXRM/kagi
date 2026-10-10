@@ -37,6 +37,7 @@ pub fn plan_set_upstream(
     }
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Push(PushTitle::SetUpstream {
             branch: branch_name.to_string(),

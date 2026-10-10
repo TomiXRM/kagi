@@ -1,5 +1,5 @@
 //! JA strings for `CommitNote` / `CommitTitle` / `CommitRecovery`
-//! (ADR-0129 Phase 2 — `staging.rs::plan_commit`, discovered "ops 外").
+//! (ADR-0129 Phase 2 — `ops/commit.rs::plan_commit`).
 
 use kagi_domain::plan_note::{CommitNote, CommitRecovery, CommitTitle};
 
@@ -8,6 +8,10 @@ use crate::i18n::Msg;
 /// JA text for `Msg::AdviceCommitNothingStaged`.
 pub(crate) const ADVICE_COMMIT_NOTHING_STAGED: &str =
     "stage されたファイルがありません。先に変更を stage してください。";
+
+/// JA text for `Msg::AdviceCommitStagedContentChanged`.
+pub(crate) const ADVICE_COMMIT_STAGED_CONTENT_CHANGED: &str =
+    "確認後にステージ済みの内容が変わりました。commit は行っていません。ステージ済みの変更を見直し、新しい計画を確認してください。";
 
 /// JA template for `Msg::AdviceCommitConflictedFiles`.
 pub(crate) const ADVICE_COMMIT_CONFLICTED_FILES: &str =
@@ -22,6 +26,9 @@ pub fn note_ja(note: &CommitNote) -> String {
     match note {
         CommitNote::EmptyMessage => "commit メッセージを空にはできません。".to_string(),
         CommitNote::NothingStaged => super::advice_text(Msg::AdviceCommitNothingStaged, &[]),
+        CommitNote::StagedContentChanged => {
+            super::advice_text(Msg::AdviceCommitStagedContentChanged, &[])
+        }
         CommitNote::ConflictedFiles { count } => {
             super::advice_text(Msg::AdviceCommitConflictedFiles, &[count])
         }

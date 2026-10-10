@@ -126,6 +126,7 @@ pub fn plan_pr_comment(pr: &PullRequest, body: &str) -> OperationPlan {
         blockers.push(PlanNote::Github(GithubNote::CommentBodyEmpty));
     }
     OperationPlan {
+        approved_index_digest: None,
         disposition: if blockers.is_empty() {
             PlanDisposition::Ready
         } else {

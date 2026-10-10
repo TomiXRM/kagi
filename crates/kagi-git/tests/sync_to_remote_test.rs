@@ -70,6 +70,9 @@ fn fixture() -> (TempDir, PathBuf) {
             local.to_str().unwrap(),
         ],
     );
+    // Clone does not copy repository-local identity from the seed.
+    git(&local, &["config", "user.name", "Test"]);
+    git(&local, &["config", "user.email", "test@example.com"]);
     // Upstream advances.
     write_file(&seed, "a.txt", "up2\n");
     write_file(&seed, "c.txt", "up2\n");

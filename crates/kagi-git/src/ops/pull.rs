@@ -197,6 +197,7 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
 
     // ── 3. Early blockers (before touching git objects) ──────
     let mut blockers: Vec<PlanNote> = Vec::new();
+    super::add_git_identity_blocker(repo, &mut blockers)?;
     let mut warnings: Vec<PlanNote> = Vec::new();
 
     // Detached HEAD: no branch to advance.
@@ -384,6 +385,7 @@ pub(crate) fn execute_pull(
     plan: &OperationPlan,
 ) -> Result<PullOutcome, GitError> {
     preflight_check(repo, plan)?;
+    let committer = build_signature(repo)?;
     let identity = plan
         .pull_identity
         .as_ref()
@@ -538,7 +540,6 @@ pub(crate) fn execute_pull(
     ensure_pull_does_not_touch_dirty_paths(repo, &head_tree_for_safety, &new_tree)?;
 
     // ── 7. Build merge commit ─────────────────────────────────
-    let committer = build_signature(repo)?;
     let author = committer.clone();
 
     let merge_message = format!("Merge remote-tracking branch '{}'", identity.upstream_ref);

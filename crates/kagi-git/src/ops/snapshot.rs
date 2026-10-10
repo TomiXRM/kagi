@@ -76,7 +76,7 @@ pub(crate) fn create_snapshot(repo: &Repository, message: &str) -> Result<Snapsh
         .find_tree(tree_oid)
         .map_err(|e| GitError::Other(format!("snapshot: tree lookup failed: {}", e.message())))?;
 
-    let sig = build_signature(repo)?;
+    let sig = internal_signature()?;
 
     // Parent = current HEAD commit if the branch is born; else a root commit.
     let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());

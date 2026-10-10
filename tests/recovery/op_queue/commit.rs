@@ -456,6 +456,7 @@ pub fn scenario_commit_index_identity_refusal(cx: &mut VisualTestAppContext) {
     for lang in [Lang::En, Lang::Ja] {
         i18n::set_lang(lang);
         commit_planning_refusal(cx);
+        commit_identity_unavailable_plan(cx, lang);
         for queued in [false, true] {
             let fixture = branches_fixture();
             let repo = fixture.path().canonicalize().unwrap();
@@ -638,5 +639,80 @@ fn commit_planning_refusal(cx: &mut VisualTestAppContext) {
         "a planning refusal must not start or record execution"
     );
     drop(repository);
+    unmount(cx, app, window);
+}
+
+/// Empty local identity overrides the runner's global fixture identity. The
+/// real Commit Panel backend plan must retain a localized, non-executable card.
+fn commit_identity_unavailable_plan(cx: &mut VisualTestAppContext, lang: kagi_ui_core::i18n::Lang) {
+    use kagi::ui::button_style;
+    use kagi_domain::plan_note::{CommitNote, PlanNote};
+    use kagi_ui_core::i18n::{self, Lang};
+
+    let fixture = branches_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    std::fs::write(repo.join("identity.txt"), "staged without identity\n").unwrap();
+    git(&repo, &["add", "identity.txt"]);
+    git(&repo, &["config", "--local", "user.name", ""]);
+    git(&repo, &["config", "--local", "user.email", ""]);
+    git(&repo, &["config", "--local", "user.useConfigOnly", "true"]);
+    let (app, window) = mount(cx, &repo);
+    let head = rev_parse(&repo, &["HEAD"]);
+    let index = std::fs::read(repo.join(".git/index")).unwrap();
+    let reason = match lang {
+        Lang::En => "Git author or committer identity is unavailable. Set user.name and user.email before committing.",
+        Lang::Ja => "Git の作者またはコミッターの情報が設定されていません。コミットする前に user.name と user.email を設定してください。",
+    };
+    let note = PlanNote::Commit(CommitNote::IdentityUnavailable);
+    assert_eq!(i18n::plan_note_text(&note), reason);
+    queue_commit(cx, &app, window, "missing identity", "");
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let panel = app.ui().commit_panel.as_ref().unwrap().read(cx);
+        let modal = panel
+            .state
+            .plan_modal
+            .as_ref()
+            .expect("blocked commit plan");
+        assert_eq!(modal.plan.blockers, vec![note.clone()]);
+        assert!(
+            modal.error.is_none(),
+            "identity is a plan blocker, not a plan error"
+        );
+        assert!(!app.app_sessions.has_leases() && app.write_busy_op.is_none());
+    });
+    button_style::clear_recorded_modal_buttons();
+    focus_root(cx, &app, window);
+    let confirm = button_style::recorded_modal_button("commit-plan-confirm")
+        .expect("blocked Commit button is rendered");
+    assert!(confirm.disabled);
+    assert_eq!(confirm.description.as_deref(), Some(reason));
+    assert_eq!(rev_parse(&repo, &["HEAD"]), head);
+    assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+    assert!(
+        kagi_git::oplog::read_oplog_tail_for_repo(&repo, 10).is_empty(),
+        "planning a blocked commit must not manufacture an execution receipt"
+    );
+
+    // Enter dispatches to start_commit even though the button is inert; the
+    // backend-derived blocker must also guard this keyboard execution boundary.
+    cx.simulate_keystrokes(window, "enter");
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let panel = app.ui().commit_panel.as_ref().unwrap().read(cx);
+        assert_eq!(
+            panel.state.plan_modal.as_ref().unwrap().plan.blockers,
+            vec![note]
+        );
+        assert!(!app.app_sessions.has_leases() && app.write_busy_op.is_none());
+        assert!(app.queue_strip_for_e2e(std::time::Instant::now()).is_none());
+    });
+    assert_eq!(rev_parse(&repo, &["HEAD"]), head);
+    assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+    assert!(
+        kagi_git::oplog::read_oplog_tail_for_repo(&repo, 10).is_empty(),
+        "a refused start without an admitted run must not record execution"
+    );
     unmount(cx, app, window);
 }

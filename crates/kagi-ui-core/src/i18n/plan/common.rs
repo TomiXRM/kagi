@@ -40,6 +40,12 @@ pub(crate) const ADVICE_COMMON_SPARSE_EXCLUDED_PATH: &str =
 pub(crate) const ADVICE_COMMON_EXTERNAL_FILTER: &str =
     "'{}' は外部 filter ({}) を使用しています。Kagi はまだ filter 後の内容を保全できないため、filter に対応するまで git で stage / discard してください。書込みは行っていません。";
 
+pub(crate) const ADVICE_COMMON_SPARSE_CHECKOUT_UNSUPPORTED: &str =
+    "この repository は {} sparse-checkout を使用しています。sparse path と index flag を保全できないため、Kagi では強制 checkout できません。git で操作してください。書込みは行っていません。";
+
+pub(crate) const ADVICE_COMMON_SUBMODULE_CHECKOUT_UNSUPPORTED: &str =
+    "'{}' は{}の submodule です。内部の作業ツリーを保全できないため、Kagi では強制 checkout できません。先に git で submodule を初期化するか変更を保存してください。書込みは行っていません。";
+
 /// JA template for `Msg::AdviceCommonHunkChanged`.
 pub(crate) const ADVICE_COMMON_HUNK_CHANGED: &str =
     "diff を表示した後に '{}' の hunk が変わっているため、stage / unstage していません。更新された diff を確認して、hunk を選び直してください。";
@@ -139,6 +145,24 @@ pub fn note_ja(note: &CommonNote) -> String {
         CommonNote::ExternalFilter { path, filter } => {
             super::advice_text(Msg::AdviceCommonExternalFilter, &[path, filter])
         }
+        CommonNote::SparseCheckoutUnsupported { cone } => super::advice_text(
+            Msg::AdviceCommonSparseCheckoutUnsupported,
+            &[&if *cone { "cone" } else { "non-cone" }],
+        ),
+        CommonNote::SubmoduleCheckoutUnsupported {
+            path,
+            uninitialized,
+        } => super::advice_text(
+            Msg::AdviceCommonSubmoduleCheckoutUnsupported,
+            &[
+                path,
+                &if *uninitialized {
+                    "未初期化"
+                } else {
+                    "未保存の変更あり"
+                },
+            ],
+        ),
         CommonNote::HunkChanged { path } => {
             super::advice_text(Msg::AdviceCommonHunkChanged, &[path])
         }

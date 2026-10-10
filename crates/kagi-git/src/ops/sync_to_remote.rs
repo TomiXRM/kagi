@@ -115,6 +115,19 @@ pub fn plan_sync_to_remote(repo: &Repository, branch: &str) -> Result<OperationP
             }));
         }
     }
+    if is_head {
+        let target_tree = repo
+            .find_commit(target)
+            .and_then(|commit| commit.tree())
+            .map_err(|e| {
+                GitError::Other(format!("cannot read sync target tree: {}", e.message()))
+            })?;
+        blockers.extend(crate::special_repo::force_checkout_blockers(
+            repo,
+            &target_tree,
+            &status,
+        )?);
+    }
     let work_dirty = is_head && status.is_dirty();
     if from == target && !work_dirty && blockers.is_empty() {
         blockers.push(PlanNote::Sync(SyncNote::AlreadyInSync {
@@ -318,6 +331,21 @@ pub(crate) fn preflight_sync_to_remote(
         ));
     }
     let is_head = matches!(resolve_head(repo)?, Head::Attached { branch: b, .. } if b == branch);
+    if is_head {
+        let target_tree = repo
+            .find_commit(resolved.0.target)
+            .and_then(|commit| commit.tree())
+            .map_err(|e| {
+                GitError::Other(format!("cannot read sync target tree: {}", e.message()))
+            })?;
+        if let Some(note) =
+            crate::special_repo::force_checkout_blockers(repo, &target_tree, &status)?
+                .into_iter()
+                .next()
+        {
+            return Err(GitError::Blocked(Box::new(note)));
+        }
+    }
     if is_head && resolved.2.is_none() && status.is_dirty() {
         return Err(GitError::Other(
             "sync-to-remote refused at preflight: the working tree changed since planning; please re-plan"

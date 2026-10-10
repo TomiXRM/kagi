@@ -234,6 +234,56 @@ fn stash_identity_advice_preserves_git_braces_and_identifier_data() {
     }
 }
 
+#[test]
+fn special_repo_blockers_name_variants_in_english_and_japanese() {
+    use kagi_domain::plan_note::{CommonNote, PlanNote};
+
+    let _guard = LOCK.lock();
+    let previous = lang();
+    let path = "module-{}-日本語";
+    for language in [Lang::En, Lang::Ja] {
+        set_lang_no_persist(language);
+        for cone in [true, false] {
+            let text = plan_note_text(&PlanNote::Common(CommonNote::SparseCheckoutUnsupported {
+                cone,
+            }));
+            assert!(
+                text.contains(if cone {
+                    "cone sparse-checkout"
+                } else {
+                    "non-cone sparse-checkout"
+                }),
+                "{text}"
+            );
+            assert!(
+                text.contains(if language == Lang::En {
+                    "Nothing was written"
+                } else {
+                    "書込みは行っていません"
+                }),
+                "{text}"
+            );
+        }
+        for uninitialized in [true, false] {
+            let text = plan_note_text(&PlanNote::Common(
+                CommonNote::SubmoduleCheckoutUnsupported {
+                    path: path.into(),
+                    uninitialized,
+                },
+            ));
+            assert!(text.contains(path), "{text}");
+            let variant = match (language, uninitialized) {
+                (Lang::En, true) => "uninitialized submodule",
+                (Lang::En, false) => "dirty submodule",
+                (Lang::Ja, true) => "未初期化",
+                (Lang::Ja, false) => "未保存の変更あり",
+            };
+            assert!(text.contains(variant), "{text}");
+        }
+    }
+    set_lang_no_persist(previous);
+}
+
 /// #934: both ignored-content shapes fill every JA slot (a slot mismatch
 /// panics in `advice_text`) and keep the counts and path the user confirms.
 #[test]

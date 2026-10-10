@@ -49,6 +49,30 @@ PM 案は「(3) ref 更新 → (4) checkout」だったが、**checkout を先**
 
 - UI（Advanced / Dangerous menu → card → 二段 confirm）は slice 2。card では `PreservesWork` / `AbandonsCommits` / `KeepsIgnored` の warning と recovery 2 コマンドを表示する。
 - CLI / MCP 露出なし。
-- sparse checkout / skip-worktree / LFS filter / submodule は検査していない（ADR-0203 §Preflight の拒否条件は未実装）。slice 2 以降で blocker を足す。
+- HEAD の Sync は sparse checkout（cone／non-cone、config・patterns・skip-worktree）、dirty／uninitialized submodule、変更対象の外部 filter／LFS を plan と preflight で拒否する（2026-10-11、#1137 amendment）。非 HEAD branch の ref-only Sync は WT に触れないためこの制限を適用しない。
 - 空ディレクトリは untracked 削除後に残る（git も空ディレクトリを扱わない）。
 - git2 の `checkout_tree(force)` が部分適用で失敗したときの WT 状態は「Partial + 復元コマンド」として受領に残すだけで、自動 rollback はしない（ADR-0203 §Verify）。
+
+## Amendment — 2026-10-11: special-repository refusal (#1137)
+
+The stash-shaped backup cannot prove preservation of sparse index flags, nested
+submodule work, or externally filtered worktree content. When Sync replaces HEAD's
+worktree, its plan and preflight must therefore refuse before *any* backup ref,
+object/index write, checkout, or branch update:
+
+- `core.sparseCheckout` / `core.sparseCheckoutCone`, a sparse-checkout patterns
+  file in the worktree/common Git directory, or a skip-worktree index entry.
+  The typed EN/JA blocker identifies cone versus non-cone sparse-checkout.
+- Submodules discovered by `repo.submodules()` whose worktree is uninitialized
+  or dirty (staged, unstaged, untracked, or checked out at a different commit).
+  Repository `submodule.*.ignore` must not hide work from this safety check.
+- Externally filtered paths in HEAD→target deltas or the staged/unstaged/untracked
+  work being preserved. Resolve current, HEAD and incoming tree attributes:
+  an incoming `.gitattributes` is authoritative even before it is checked out.
+  LFS is detected by attributes, not git-lfs availability or pointer heuristics.
+
+Ordinary repositories keep the existing round-trip behavior. Ref-only Sync of a
+non-HEAD branch is unchanged. The read-only detection helper is reusable by other
+force-checkout writers; snapshot restore, conflict abort and directory/file
+resolution do not gain the sparse/submodule guard in this change. Discard's
+target-filter guard is separately implemented by #1136.

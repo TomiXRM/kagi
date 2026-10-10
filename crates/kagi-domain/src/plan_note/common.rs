@@ -141,6 +141,10 @@ pub enum CommonNote {
     SparseExcludedPath { path: String },
     /// #1136: named clean/smudge filters are not executed by libgit2.
     ExternalFilter { path: String, filter: String },
+    /// #1137: force checkout does not preserve sparse index/worktree semantics.
+    SparseCheckoutUnsupported { cone: bool },
+    /// #1137: nested work cannot be retained by a superproject blob backup.
+    SubmoduleCheckoutUnsupported { path: String, uninitialized: bool },
     /// blocker (#842, #1131): the displayed hunk's range or raw patch content
     /// no longer matches the live diff. Never substitute new content at the
     /// same range, or a neighbouring hunk the user did not choose.
@@ -231,6 +235,26 @@ impl CommonNote {
                 format!(
                     crate::advice_template_en!(CommonExternalFilter),
                     path, filter
+                )
+            }
+            CommonNote::SparseCheckoutUnsupported { cone } => {
+                format!(
+                    crate::advice_template_en!(CommonSparseCheckoutUnsupported),
+                    if *cone { "cone" } else { "non-cone" }
+                )
+            }
+            CommonNote::SubmoduleCheckoutUnsupported {
+                path,
+                uninitialized,
+            } => {
+                format!(
+                    crate::advice_template_en!(CommonSubmoduleCheckoutUnsupported),
+                    if *uninitialized {
+                        "an uninitialized"
+                    } else {
+                        "a dirty"
+                    },
+                    path
                 )
             }
             CommonNote::HunkChanged { path } => {

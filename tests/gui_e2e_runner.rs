@@ -71,6 +71,10 @@ mod primary_button;
 mod recovery_operations;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/smart_picker.rs"]
+mod smart_picker;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_panes.rs"]
 mod recovery_sidebar_panes;
 
@@ -1245,6 +1249,14 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_smart_commit_modal_and_probe),
             ),
             (
+                "smart_picker_keyboard",
+                Box::new(crate::smart_picker::keyboard),
+            ),
+            (
+                "smart_picker_empty",
+                Box::new(crate::smart_picker::empty),
+            ),
+            (
                 "update_install_lifecycle",
                 Box::new(crate::recovery_operations::scenario_update_install_lifecycle),
             ),
@@ -1747,6 +1759,10 @@ mod macos {
                 Box::new(crate::modal_polish_b::scenario_modal_polish_stash_after),
             ),
             (
+                "trust_failure_feedback",
+                Box::new(crate::modal_polish_b::scenario_trust_failure_feedback),
+            ),
+            (
                 "worktree_folder_picker",
                 Box::new(crate::worktree_folder_picker::scenario_worktree_folder_picker),
             ),
@@ -1833,6 +1849,10 @@ mod macos {
             (
                 "palette_selection_scroll",
                 Box::new(crate::overlay_focus::scenario_palette_selection_scroll),
+            ),
+            (
+                "palette_viewport",
+                Box::new(crate::overlay_focus::scenario_palette_viewport),
             ),
             (
                 "settings_close_returns_focus",

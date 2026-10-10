@@ -677,7 +677,7 @@ impl KagiApp {
                 LayerKind::SmartCommit => el
                     // ── Smart Commit modal overlay (single ActiveModal slot) ────
                     .when_some(self.smart_commit_modal().cloned(), |el, modal| {
-                        el.child(render_smart_commit_modal(modal, cx))
+                        el.child(render_smart_commit_modal(modal, self, window, cx))
                     }),
                 LayerKind::Update => el
                     // ── Auto-update modal overlay (ADR-0082) ──────────

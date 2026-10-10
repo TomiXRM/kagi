@@ -386,12 +386,13 @@ impl KagiApp {
             }
         });
 
+        let (width, height, top) = super::modal_shell::search_card_geometry(560., 480., 80.);
         let mut panel = div()
             .occlude()
             .id("command-palette")
             .on_key_down(on_key)
-            .w(theme::scaled_px(560.0))
-            .max_h(theme::scaled_px(480.0))
+            .w(width)
+            .max_h(height)
             .flex()
             .flex_col()
             .overflow_hidden()
@@ -400,12 +401,23 @@ impl KagiApp {
             .border_color(rgb(theme().selected))
             .bg(rgb(theme().panel))
             .shadow_lg();
+        #[cfg(feature = "gui-e2e")]
+        {
+            panel = panel
+                .relative()
+                .child(super::e2e::measure_inside("palette-card"));
+        }
 
         // Search input.
         if let Some(input) = &self.command_palette_input {
             panel = panel.child(
                 div()
                     .p(theme::scaled_px(8.0))
+                    .flex_shrink_0()
+                    .when(cfg!(feature = "gui-e2e"), |el| {
+                        el.relative()
+                            .child(super::e2e::measure_inside("palette-input"))
+                    })
                     .border_b_1()
                     .border_color(rgb(theme().selected))
                     .child(Input::new(input).appearance(true)),
@@ -418,7 +430,13 @@ impl KagiApp {
             .flex()
             .flex_col()
             .overflow_y_scroll()
-            .max_h(theme::scaled_px(420.0));
+            .min_h(gpui::px(0.))
+            .flex_shrink(1.);
+        list = super::list_a11y::list_box(
+            "command-palette-list",
+            list,
+            i18n::Msg::CommandPalettePlaceholder.t(),
+        );
         if let Some(scroll) = &self.command_palette_scroll {
             list = list.track_scroll(scroll);
         }
@@ -435,16 +453,17 @@ impl KagiApp {
         }
 
         for (i, row) in rows.iter().enumerate() {
-            list = list.child(self.render_palette_row(i, row, i == selected, cx));
+            list = list.child(self.render_palette_row(i, rows.len(), row, i == selected, cx));
         }
 
         let panel_el = panel.child(list).into_any_element();
-        self.wrap_command_palette(panel_el, cx)
+        self.wrap_command_palette(panel_el, top, cx)
     }
 
     fn render_palette_row(
         &self,
         index: usize,
+        count: usize,
         row: &PaletteRow,
         is_selected: bool,
         cx: &mut Context<Self>,
@@ -471,11 +490,18 @@ impl KagiApp {
         };
 
         // Left: label (+ disabled reason subtitle). Right: keystroke.
-        let mut left = div().flex().flex_col().child(
+        let label: SharedString = row.label.clone().into();
+        let tooltip = label.clone();
+        let mut left = div().flex_1().min_w(gpui::px(0.)).flex().flex_col().child(
             div()
+                .truncate()
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    el.relative()
+                        .child(super::e2e::measure_inside(format!("palette-label-{index}")))
+                })
                 .text_sm()
                 .text_color(rgb(label_color))
-                .child(SharedString::from(row.label.clone())),
+                .child(label.clone()),
         );
         if let Some(reason) = &row.disabled_reason {
             left = left.child(
@@ -486,16 +512,29 @@ impl KagiApp {
             );
         }
 
-        let mut r = div()
-            .id(("palette-row", index))
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .px_4()
-            .py(theme::scaled_px(6.0))
-            .cursor_pointer()
-            .on_mouse_down(MouseButton::Left, click);
+        let mut r = super::list_a11y::list_option(
+            "command-palette-list",
+            div().id(("palette-row", index)),
+            index,
+            count,
+            row.label.clone(),
+            is_selected,
+        )
+        .when_some(row.disabled_reason.clone(), |el, reason| {
+            el.aria_description(reason)
+        })
+        .tooltip(move |window, cx| {
+            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+        })
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_3()
+        .px_4()
+        .py(theme::scaled_px(6.0))
+        .cursor_pointer()
+        .on_mouse_down(MouseButton::Left, click);
         if is_selected {
             r = r.bg(rgb(theme().selected));
         }
@@ -504,6 +543,12 @@ impl KagiApp {
         if let Some(ks) = &row.keystroke {
             r = r.child(
                 div()
+                    .flex_shrink_0()
+                    .when(cfg!(feature = "gui-e2e"), |el| {
+                        el.relative().child(super::e2e::measure_inside(format!(
+                            "palette-shortcut-{index}"
+                        )))
+                    })
                     .text_xs()
                     .text_color(rgb(theme().text_muted))
                     .child(SharedString::from(ks.clone())),
@@ -517,6 +562,7 @@ impl KagiApp {
     fn wrap_command_palette(
         &self,
         panel: gpui::AnyElement,
+        top: gpui::Pixels,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let dismiss = cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
@@ -542,7 +588,7 @@ impl KagiApp {
                     .opacity(0.55)
                     .on_mouse_down(MouseButton::Left, dismiss),
             )
-            .child(div().h(theme::scaled_px(80.0)))
+            .child(div().h(top).flex_shrink_0())
             .child(panel)
             .into_any_element()
     }

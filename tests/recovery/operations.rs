@@ -1411,6 +1411,7 @@ pub fn scenario_smart_commit_generation_owner(cx: &mut VisualTestAppContext) {
 /// #643 S3c: capability detection is process/window-global, while Smart Commit
 /// presentation uses the same ActiveModal slot and key routing as every modal.
 pub fn scenario_smart_commit_modal_and_probe(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["smart_commit_model"]);
     let fixture_a = build_fixture();
     let fixture_b = build_fixture();
     let repo_a = fixture_a.path().canonicalize().expect("canonical A");
@@ -1436,14 +1437,33 @@ pub fn scenario_smart_commit_modal_and_probe(cx: &mut VisualTestAppContext) {
             "modal-list-scroll-resets-on-replacement: each modal must start at the top"
         );
     });
-    press_enter(cx, &app, window);
+    kagi::ui::e2e::queue_smart_generation(
+        cx.background_executor
+            .spawn(async { Some(("fixture draft".to_string(), true)) }),
+    );
+    paint(cx, window);
+    paint(cx, window);
+    cx.simulate_keystrokes(window, "enter");
+    cx.simulate_event(
+        window,
+        gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse("enter").unwrap(),
+        },
+    );
     assert!(
         cx.read(|cx| {
             let app = app.read(cx);
-            app.smart_commit_modal().is_some() && app.plan_modal().is_none()
+            app.smart_commit_modal().is_none()
+                && app.plan_modal().is_none()
+                && app.smart_commit.model.as_deref() == Some("fixture")
         }),
-        "smart-modal-enter-does-not-checkout: Enter must stay in the Smart Commit modal slot"
+        "smart-modal-enter-does-not-checkout: Enter confirms the model, never the graph selection"
     );
+    app.update(cx, |app, _| {
+        app.set_smart_commit_modal(kagi::ui::smart_commit::SmartCommitModal::ModelPicker {
+            models: vec!["fixture".to_string()],
+        });
+    });
     press_key(cx, &app, window, "escape");
     cx.run_until_parked();
     assert!(

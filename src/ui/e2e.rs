@@ -763,6 +763,26 @@ pub fn ensure_smart_commit_detection(app: &mut KagiApp, cx: &mut gpui::Context<K
     app.ensure_smart_commit_detection(cx);
 }
 
+#[cfg(feature = "gui-e2e")]
+pub fn smart_model_row(
+    app: &KagiApp,
+    window: &gpui::Window,
+) -> Option<(
+    usize,
+    gpui::Bounds<gpui::Pixels>,
+    gpui::Bounds<gpui::Pixels>,
+)> {
+    let state = &app.smart_model_focus;
+    let focus = state.focus.borrow();
+    let key = focus.focused(window)?;
+    let (_, ix) = state.keys.iter().find(|(k, _)| k == key)?;
+    Some((
+        *ix,
+        state.scroll.bounds_for_item(*ix)?,
+        state.scroll.viewport_bounds(),
+    ))
+}
+
 /// What the last drawn frame named the switch `id` (`keyboard_nav::switch`)
 /// and the checked state it gave assistive technology (#970).
 #[cfg(feature = "gui-e2e")]

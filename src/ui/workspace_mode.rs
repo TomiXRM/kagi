@@ -638,6 +638,15 @@ impl KagiApp {
 
     /// Issues: open the session-owned read-only list and refresh it once.
     pub fn show_issues_mode(&mut self, cx: &mut Context<Self>) {
+        self.show_issues_mode_opening(None, cx);
+    }
+
+    /// Home supplies its destination and owns the following detail read.
+    pub(super) fn show_issues_mode_opening(
+        &mut self,
+        opening_issue: Option<u64>,
+        cx: &mut Context<Self>,
+    ) {
         self.sidebar.swipe.cancel();
         self.leave_takeovers(WorkspaceMode::Issues);
         if !self.issues_mode_open() {
@@ -647,7 +656,8 @@ impl KagiApp {
             // rather than expose an empty conversation with only its composer.
             let ui = self.ui();
             let unaccepted = ui.selected_github_issue.filter(|number| {
-                !ui.github_issue_details.contains_key(number)
+                opening_issue.is_none()
+                    && !ui.github_issue_details.contains_key(number)
                     && ui.github_issue_detail_loading != Some(*number)
             });
             if let Some(number) = unaccepted {

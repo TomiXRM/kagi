@@ -1020,6 +1020,50 @@ pub fn primary_button_foreground(theme: &Theme) -> u32 {
     filled_button_foreground(theme.color_branch, theme)
 }
 
+fn primary_button_interaction_colors(theme: &Theme, foreground: u32) -> (u32, Hsla, Hsla) {
+    let background = to_hsla(theme.color_branch);
+    // The chosen label, not theme mode, determines which direction preserves
+    // contrast: a dark theme can have a dark custom accent with a light label.
+    let light_label = relative_luminance(foreground) > relative_luminance(theme.color_branch);
+    let away = if light_label { 0x000000 } else { 0xffffff };
+    let toward = away ^ 0xffffff;
+    let channels = background.to_rgb();
+    let channel_sum = (channels.r + channels.g + channels.b) * 255.0;
+    let away_headroom = if light_label {
+        channel_sum
+    } else {
+        765.0 - channel_sum
+    };
+    // Measure actual sRGB blend headroom, not HSL lightness: saturated navy
+    // can have middling HSL lightness but almost no distance toward black.
+    // Reserve at least 25 channel steps per transition (one step above the
+    // regression floor). Near an endpoint, move inward instead.
+    let (target, headroom, preferred_strength) = if away_headroom < 160.0 {
+        (toward, 765.0 - away_headroom, 0.16_f32)
+    } else {
+        (away, away_headroom, 0.32_f32)
+    };
+    let strength = preferred_strength.max(50.0 / headroom);
+    let target = to_hsla(target);
+    // Blend into an opaque fill, rather than fading the button onto an
+    // arbitrary Commit-panel/modal surface.
+    let hover = background.blend(target.alpha(strength / 2.0));
+    let pressed = background.blend(target.alpha(strength));
+    // A custom label can meet AA at rest but fail on the inward shade.
+    // Keep one label for every state, preserving the existing choice wherever
+    // possible; only filled Button needs this stronger accessibility fallback.
+    let foreground = if contrast_ratio(u32::from(pressed.to_rgb()) >> 8, foreground) >= 4.5 {
+        foreground
+    } else if contrast_ratio(theme.color_branch, 0x000000)
+        >= contrast_ratio(theme.color_branch, 0xffffff)
+    {
+        0x000000
+    } else {
+        0xffffff
+    };
+    (foreground, hover, pressed)
+}
+
 /// Push kagi's active [`theme()`] palette into `gpui_component`'s global
 /// `ThemeColor` so every adopted gpui-component widget (Input, Tooltip,
 /// Scrollbar, Checkbox, …) renders with kagi's colours.
@@ -1091,6 +1135,8 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     gc.colors.primary = to_hsla(k.color_branch);
     let primary_foreground = primary_button_foreground(&k);
     gc.colors.primary_foreground = to_hsla(primary_foreground);
+    // Keep these generic tokens unchanged: outline Primary uses their tint;
+    // filled Primary has its own interaction tokens below.
     gc.colors.primary_hover = to_hsla(k.color_branch);
     gc.colors.primary_active = to_hsla(k.color_branch);
     gc.colors.ring = to_hsla(k.color_branch);
@@ -1124,13 +1170,14 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     gc.colors.button_foreground = to_hsla(k.text_main);
     gc.colors.button_hover = to_hsla(k.selected);
     gc.colors.button_active = to_hsla(k.surface);
-    // Primary (including the Commit button): kagi's branch accent. Preserve
-    // the established label colour when it is legible; otherwise use the
-    // theme's accessible primary-button foreground.
+    // Primary (including the Commit button): preserve the branch accent at
+    // rest and the established label when it is legible across every state.
+    let (button_primary_foreground, primary_hover, primary_active) =
+        primary_button_interaction_colors(&k, primary_foreground);
     gc.colors.button_primary = to_hsla(k.color_branch);
-    gc.colors.button_primary_foreground = to_hsla(primary_foreground);
-    gc.colors.button_primary_hover = to_hsla(k.color_branch);
-    gc.colors.button_primary_active = to_hsla(k.color_branch);
+    gc.colors.button_primary_foreground = to_hsla(button_primary_foreground);
+    gc.colors.button_primary_hover = primary_hover;
+    gc.colors.button_primary_active = primary_active;
     gc.colors.button_secondary = to_hsla(k.surface);
     gc.colors.button_secondary_foreground = to_hsla(k.text_main);
     gc.colors.button_secondary_hover = to_hsla(k.selected);
@@ -1715,6 +1762,92 @@ mod tests {
                 t.slug,
                 t.color_branch,
             );
+        }
+    }
+
+    fn assert_primary_button_interaction_states(t: &Theme) {
+        let foreground = primary_button_foreground(t);
+        let (foreground, hover, pressed) = primary_button_interaction_colors(t, foreground);
+        assert!(
+            hover.is_opaque() && pressed.is_opaque(),
+            "{}: filled states",
+            t.slug,
+        );
+        // A channel-sum floor rejects effectively identical fills; native
+        // input/screenshots, not this arithmetic check, judge the appearance.
+        let distance = |a: Hsla, b: Hsla| {
+            let (a, b) = (a.to_rgb(), b.to_rgb());
+            ((a.r - b.r).abs() + (a.g - b.g).abs() + (a.b - b.b).abs()) * 255.0
+        };
+        let rest = to_hsla(t.color_branch);
+        for (a, b) in [(rest, hover), (hover, pressed), (rest, pressed)] {
+            assert!(
+                distance(a, b) >= 24.0,
+                "{}: primary states {a:?} and {b:?} are too close",
+                t.slug,
+            );
+        }
+        let hover = u32::from(hover.to_rgb()) >> 8;
+        let pressed = u32::from(pressed.to_rgb()) >> 8;
+        for (state, background) in [
+            ("rest", t.color_branch),
+            ("hover", hover),
+            ("pressed", pressed),
+        ] {
+            let contrast = contrast_ratio(background, foreground);
+            assert!(
+                contrast >= 4.5,
+                "{}: {state} label is only {contrast:.2}:1 on {background:#08x}",
+                t.slug,
+            );
+        }
+    }
+
+    #[test]
+    fn primary_button_interaction_states_are_distinct_and_legible() {
+        for t in THEMES {
+            assert_primary_button_interaction_states(t);
+            let foreground = primary_button_foreground(t);
+            assert_eq!(
+                primary_button_interaction_colors(t, foreground).0,
+                foreground,
+                "{}: stock foreground must remain unchanged",
+                t.slug,
+            );
+        }
+    }
+
+    #[test]
+    fn primary_button_custom_accent_edges_are_distinct_and_legible() {
+        // Custom themes can inherit either mode and override the accent.
+        // Exercise endpoint, near-endpoint, neutral and saturated colours
+        // against every stock foreground choice, not just default Mocha.
+        for base in THEMES {
+            for accent in [
+                0x000000, 0x010101, 0x202020, 0x808080, 0xe0e0e0, 0xfefefe, 0xffffff, 0xff0000,
+                0x00ff00, 0x0000ff, 0xffff00, 0x00ffff, 0xff00ff, 0x000080, 0x800000, 0x006400,
+                0x303030, 0xffff80, 0x80ffff, 0x00004d, 0xb3ffff,
+            ] {
+                let mut custom = base.clone();
+                custom.color_branch = accent;
+                assert_primary_button_interaction_states(&custom);
+            }
+        }
+    }
+
+    #[test]
+    fn primary_button_boundary_labels_use_one_legible_fallback() {
+        for (accent, label) in [(0xffffff, 0x767676), (0x000000, 0x757575)] {
+            let mut custom = THEMES[0].clone();
+            custom.color_branch = accent;
+            custom.bg_base = label;
+            let established = primary_button_foreground(&custom);
+            let (foreground, _, _) = primary_button_interaction_colors(&custom, established);
+            assert_ne!(
+                foreground, established,
+                "a rest-only AA label cannot suppress endpoint feedback",
+            );
+            assert_primary_button_interaction_states(&custom);
         }
     }
 

@@ -806,6 +806,13 @@ impl RowList {
         }
     }
 
+    /// Select a clicked row through the same focus owner as keyboard movement.
+    pub(crate) fn focus_row(&self, at: usize, window: &mut Window, cx: &mut App) {
+        if let Some(handle) = self.handles.get(at) {
+            handle.focus(window, cx);
+        }
+    }
+
     /// This list as a `uniform_list` draws it this frame, `visible` being
     /// the items its processor was asked for: those are on screen now, so the
     /// stop moves to the first of them when the one picked from last frame's

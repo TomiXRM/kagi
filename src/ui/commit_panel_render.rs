@@ -153,6 +153,7 @@ fn cp_tree_slot(
 /// * element ids keep their per-variant prefixes, and the staged diffstat keeps
 ///   its `fi + 100_000` id seed so the two lists never collide.
 fn render_cp_file_row(
+    view: &CommitPanelView,
     staged: bool,
     tree: bool,
     fi: usize,
@@ -161,6 +162,7 @@ fn render_cp_file_row(
     is_conflicted: bool,
     is_sel: bool,
     wip_hit: bool,
+    window_active: bool,
     indent: f32,
     stat: Option<&kagi_git::FileDiffStat>,
     convention: bool,
@@ -178,6 +180,13 @@ fn render_cp_file_row(
         (true, true) => ("cp-st-file", "cp-st-unstage-btn", ""),
     };
     let (badge, badge_color, _) = status_badge(change, is_conflicted);
+    let state = &view.state;
+    let file = if staged {
+        &state.staged[fi]
+    } else {
+        &state.unstaged[fi]
+    };
+    let full_path = SharedString::from(file.path.to_string_lossy().into_owned());
     let file_ref = if staged {
         CommitPanelFileRef::Staged { index: fi }
     } else {
@@ -188,11 +197,11 @@ fn render_cp_file_row(
     });
     // Row background: conflicted files get red tint
     let row_bg = if is_conflicted {
-        theme().diff_removed_bg
-    } else if is_sel {
-        theme().selected
+        rgb(theme().diff_removed_bg).into()
+    } else if is_sel || wip_hit {
+        theme().selected_for_window(window_active)
     } else {
-        theme().panel
+        rgb(theme().panel).into()
     };
     let mut file_row = div()
         .id((row_id, fi))
@@ -205,7 +214,7 @@ fn render_cp_file_row(
                 Some(is_sel),
             )
         })
-        .when(wip_hit, |el| el.bg(rgb(theme().selected)))
+        .aria_description(full_path.clone())
         .w_full()
         .flex()
         .flex_row()
@@ -219,7 +228,7 @@ fn render_cp_file_row(
             }
         })
         .py_px()
-        .bg(rgb(row_bg))
+        .bg(row_bg)
         .hover(|s| s.bg(rgb(theme().surface)))
         .on_click(file_click)
         .child(
@@ -234,6 +243,11 @@ fn render_cp_file_row(
             div()
                 .flex_1()
                 .min_w(px(0.))
+                .id((if staged { "cp-st-path" } else { "cp-us-path" }, fi))
+                .aria_label(full_path.clone())
+                .tooltip(move |window, cx| {
+                    gpui_component::tooltip::Tooltip::new(full_path.clone()).build(window, cx)
+                })
                 .text_xs()
                 .text_color(rgb(theme().text_main))
                 .overflow_hidden()
@@ -307,6 +321,12 @@ fn render_cp_file_row(
             .xsmall()
             .ml_2()
             .flex_shrink_0()
+            .relative()
+            .child(super::e2e::measure_inside(if staged {
+                "cp-row-unstage"
+            } else {
+                "cp-row-stage"
+            }))
             .on_click(action_click),
     )
 }
@@ -471,6 +491,7 @@ fn cp_unstaged_file_element(
         .is_some_and(|(st, p)| !*st && &f.path == p);
     Some(
         render_cp_file_row(
+            view,
             false,
             false,
             fi,
@@ -479,6 +500,7 @@ fn cp_unstaged_file_element(
             panel.is_conflicted(&f.path),
             panel.selected_file == Some(CommitPanelFileRef::Unstaged { index: fi }),
             wip_hit,
+            view.window_active,
             0.0,
             panel.unstaged_stat(&f.path),
             is_convention(&f.path),
@@ -509,6 +531,7 @@ fn cp_staged_file_element(
         .is_some_and(|(st, p)| *st && &f.path == p);
     Some(
         render_cp_file_row(
+            view,
             true,
             false,
             fi,
@@ -517,6 +540,7 @@ fn cp_staged_file_element(
             false,
             panel.selected_file == Some(CommitPanelFileRef::Staged { index: fi }),
             wip_hit,
+            view.window_active,
             0.0,
             panel.staged_stat(&f.path),
             is_convention(&f.path),
@@ -637,6 +661,7 @@ pub(crate) fn render_unstaged_tree_row(
                 .is_some_and(|((st, p), fp)| !*st && fp == p);
             Some(
                 render_cp_file_row(
+                    view,
                     false,
                     true,
                     fi,
@@ -645,6 +670,7 @@ pub(crate) fn render_unstaged_tree_row(
                     path.map(|p| panel.is_conflicted(p)).unwrap_or(false),
                     panel.selected_file == Some(CommitPanelFileRef::Unstaged { index: fi }),
                     wip_hit,
+                    view.window_active,
                     (*depth as f32) * 12.0,
                     path.and_then(|p| panel.unstaged_stat(p)),
                     path.map(|p| is_convention(p)).unwrap_or(false),
@@ -705,6 +731,7 @@ pub(crate) fn render_staged_tree_row(
                 .is_some_and(|((st, p), fp)| *st && fp == p);
             Some(
                 render_cp_file_row(
+                    view,
                     true,
                     true,
                     fi,
@@ -713,6 +740,7 @@ pub(crate) fn render_staged_tree_row(
                     false,
                     panel.selected_file == Some(CommitPanelFileRef::Staged { index: fi }),
                     wip_hit,
+                    view.window_active,
                     (*depth as f32) * 12.0,
                     path.and_then(|p| panel.staged_stat(p)),
                     path.map(|p| is_convention(p)).unwrap_or(false),
@@ -938,6 +966,15 @@ impl CommitPanelView {
 
 impl Render for CommitPanelView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.window_activation_subscription.is_none() {
+            self.window_activation_subscription =
+                Some(cx.observe_window_activation(window, |_, _, cx| cx.notify()));
+        }
+        self.window_active = window.is_window_active();
+        #[cfg(feature = "gui-e2e")]
+        {
+            self.window_active = self.window_active_override.unwrap_or(self.window_active);
+        }
         // Correction #1/#2: input sync + draft autosave run on the entity's own
         // render path (with `&mut Window`), never as a parent per-frame read of
         // the child's input.
@@ -1037,14 +1074,16 @@ impl CommitPanelView {
         let seg = |id: &'static str, label: &'static str, active: bool| {
             div()
                 .id(id)
+                .relative()
+                .child(super::e2e::measure_inside(id))
                 .px_1p5()
                 .py_px()
                 .text_xs()
-                .bg(rgb(if active {
-                    theme().selected
+                .bg(if active {
+                    theme().selected_for_window(self.window_active)
                 } else {
-                    theme().surface
-                }))
+                    rgb(theme().surface).into()
+                })
                 .text_color(rgb(if active {
                     theme().text_main
                 } else {
@@ -1056,6 +1095,7 @@ impl CommitPanelView {
         let toggle_btn = div()
             .flex()
             .flex_row()
+            .flex_shrink_0()
             .rounded_sm()
             .overflow_hidden()
             .border_1()
@@ -1081,6 +1121,8 @@ impl CommitPanelView {
             .child(
                 div()
                     .flex_1()
+                    .min_w(px(0.))
+                    .truncate()
                     .text_sm()
                     .text_color(rgb(theme().text_label))
                     .child(SharedString::from(format!("Unstaged ({})", unstaged_count))),
@@ -1163,6 +1205,8 @@ impl CommitPanelView {
             .child(
                 div()
                     .flex_1()
+                    .min_w(px(0.))
+                    .truncate()
                     .text_sm()
                     .text_color(rgb(theme().text_label))
                     .child(SharedString::from(format!("Staged ({})", staged_count))),

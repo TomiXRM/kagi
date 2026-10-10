@@ -65,6 +65,8 @@ pub struct Theme {
     pub surface: u32,
     /// Selected-row highlight.
     pub selected: u32,
+    /// Unemphasized selection when the window is not key.
+    pub inactive_selected: u32,
     /// Detail panel / tab strip background (mantle).
     pub panel: u32,
     /// Sidebar background (crust).
@@ -196,6 +198,20 @@ pub struct SyntaxPalette {
 }
 
 impl Theme {
+    /// Active (key-window) selection fill.
+    pub fn ui_selected(&self) -> Hsla {
+        rgb(self.selected).into()
+    }
+
+    /// Selection presentation never changes the selected identity.
+    pub fn selected_for_window(&self, active: bool) -> Hsla {
+        if active {
+            self.ui_selected()
+        } else {
+            rgb(self.inactive_selected).into()
+        }
+    }
+
     /// Name for menus and Settings. Brand names stay as they are; the
     /// descriptive accessibility theme is localized (#354).
     pub fn display_name(&self) -> &str {
@@ -1097,6 +1113,11 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     apply_gpui_component_theme(&k, gc);
 }
 
+/// Resolve the pinned component library's shared list role for this window's frame.
+pub fn sync_window_selection_theme(active: bool, cx: &mut App) {
+    gpui_component::Theme::global_mut(cx).colors.list_active = theme().selected_for_window(active);
+}
+
 fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     // ── Base preset (gpui-component 0.5.2) ──────────────────────
     // 0.5.2 grew ~40 new `ThemeColor` fields (the `button_*` family,
@@ -1164,7 +1185,13 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     gc.colors.secondary_active = to_hsla(k.surface);
 
     // ── Input border (Input, Checkbox unchecked) ────────────────
-    gc.colors.input = to_hsla(k.text_muted);
+    // Apple Light separates identifying control boundaries from readable labels.
+    // Dark and custom palettes retain their established boundary/focus contrast.
+    gc.colors.input = to_hsla(if k.slug == "apple-light" {
+        crate::theme_apple_light::INPUT_BORDER
+    } else {
+        k.text_muted
+    });
     gc.colors.caret = to_hsla(k.text_main);
 
     // ── Buttons (0.5.2 reads `button_*`, not primary/secondary) ─
@@ -1214,7 +1241,7 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
 
     // ── List / sidebar (PopupMenu, ListItem, Sidebar) ───────────
     gc.colors.list = to_hsla(k.bg_base);
-    gc.colors.list_active = to_hsla(k.selected);
+    gc.colors.list_active = k.selected_for_window(true);
     gc.colors.list_hover = to_hsla(k.surface);
     gc.colors.sidebar = to_hsla(k.sidebar);
     gc.colors.sidebar_foreground = to_hsla(k.text_main);
@@ -1439,6 +1466,43 @@ pub(crate) const LANE_PALETTE_LIGHT: [(f32, f32, f32); 8] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apple_inputs_are_quiet_without_losing_identifying_contrast() {
+        for t in THEMES {
+            let mut gc = gpui_component::Theme::default();
+            apply_gpui_component_theme(t, &mut gc);
+            let expected = if t.slug == "apple-light" {
+                0x8e8e8e
+            } else {
+                t.text_muted
+            };
+            assert_eq!(gc.colors.input, to_hsla(expected), "{}", t.slug);
+            assert_eq!(gc.colors.ring, to_hsla(t.color_branch));
+            assert_eq!(gc.colors.border, to_hsla(t.text_muted).alpha(0.85));
+            if t.slug == "apple-light" {
+                assert!(contrast_ratio(expected, t.bg_base) >= 3.0);
+                assert!(contrast_ratio(expected, t.panel) >= 3.0);
+                assert!(
+                    contrast_ratio(expected, t.bg_base) < contrast_ratio(t.text_muted, t.bg_base)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn structural_surfaces_have_a_visible_luminance_step() {
+        for t in THEMES {
+            for background in [t.panel, t.bg_base] {
+                let contrast = contrast_ratio(t.surface, background);
+                assert!(
+                    contrast >= 1.15,
+                    "{} surface contrast {contrast:.3}:1 on {background:#08x}",
+                    t.slug
+                );
+            }
+        }
+    }
 
     #[test]
     fn body_links_meet_wcag_aa_in_every_theme() {
@@ -2204,5 +2268,60 @@ mod registry_tests {
         );
         assert!(take_theme_load_errors().is_empty(), "errors are taken once");
         std::env::remove_var("KAGI_LOG_DIR");
+    }
+}
+
+#[cfg(test)]
+mod inactive_selection_tests {
+    use super::*;
+
+    #[test]
+    fn inactive_selection_primary_label_is_readable_in_every_preset() {
+        for theme in THEMES {
+            assert!(
+                contrast_ratio(theme.text_main, theme.inactive_selected) >= 4.5,
+                "{}: primary label must read on inactive selection",
+                theme.slug
+            );
+            for (role, background) in [
+                ("sidebar", theme.sidebar),
+                ("base", theme.bg_base),
+                ("alternate", theme.bg_row_alt),
+                ("hover", theme.surface),
+            ] {
+                // Latte's unchanged label and hover luminances leave no 4.5:1
+                // label fill reaching 1.15:1 against hover; #c3c3c3 gives 4.531
+                // for the label and 1.142 against hover. Readability wins.
+                let minimum = if theme.slug == "catppuccin-latte" && role == "hover" {
+                    1.14
+                } else {
+                    1.15
+                };
+                assert!(
+                    contrast_ratio(theme.inactive_selected, background) >= minimum,
+                    "{}: inactive selection must differ from {role}",
+                    theme.slug
+                );
+            }
+            assert_eq!(
+                theme.selected_for_window(false),
+                rgb(theme.inactive_selected).into()
+            );
+            assert_eq!(theme.selected_for_window(true), theme.ui_selected());
+        }
+    }
+
+    #[test]
+    fn apple_light_non_key_selection_is_neutral_and_restores_accent() {
+        let theme = THEMES.iter().find(|t| t.slug == "apple-light").unwrap();
+        assert_eq!(
+            u32::from(theme.selected_for_window(false).to_rgb()) >> 8,
+            0xd3d3d3
+        );
+        assert_ne!(
+            theme.selected_for_window(false),
+            theme.selected_for_window(true)
+        );
+        assert_eq!(theme.selected_for_window(true), theme.ui_selected());
     }
 }

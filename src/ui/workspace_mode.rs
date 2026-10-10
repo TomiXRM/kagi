@@ -34,6 +34,7 @@ fn sidebar_mode_nav_cell(
     id: &'static str,
     label: &'static str,
     active: bool,
+    window_active: bool,
 ) -> gpui::AnyElement {
     tabs.cell(slot, label, div().id(id))
         .flex_1()
@@ -44,9 +45,17 @@ fn sidebar_mode_nav_cell(
         .rounded(theme::scaled_px(4.))
         .cursor_pointer()
         .when(active, |el| {
-            el.bg(rgb(theme::theme().surface))
-                .text_color(rgb(theme::theme().accent_text_on(theme::theme().surface)))
-                .font_weight(gpui::FontWeight::MEDIUM)
+            el.bg(rgb(if window_active {
+                theme::theme().surface
+            } else {
+                theme::theme().inactive_selected
+            }))
+            .text_color(rgb(if window_active {
+                theme::theme().accent_text_on(theme::theme().surface)
+            } else {
+                theme::theme().text_main
+            }))
+            .font_weight(gpui::FontWeight::MEDIUM)
         })
         .when(!active, |el| el.text_color(rgb(theme::theme().text_muted)))
         // Measured (GUI E2E) so a scenario can check the padding the ring
@@ -153,7 +162,7 @@ pub(super) fn sidebar_section_header(
 /// Shared selectable row shell for GitHub sidebar lists. Feature renderers
 /// provide only their content and handlers; spacing and selection colors are
 /// intentionally owned here once.
-pub(super) fn sidebar_list_row(active: bool) -> gpui::Div {
+pub(super) fn sidebar_list_row(active: bool, window_active: bool) -> gpui::Div {
     div()
         .flex()
         .flex_row()
@@ -162,7 +171,10 @@ pub(super) fn sidebar_list_row(active: bool) -> gpui::Div {
         .cursor_pointer()
         .border_b_1()
         .border_color(rgb(theme::theme().surface))
-        .when(active, |el| el.bg(rgb(theme::theme().selected)))
+        .when(active, |el| {
+            el.bg(theme::theme().selected_for_window(window_active))
+                .text_color(rgb(theme::theme().text_main))
+        })
         .hover(|s| s.bg(rgb(theme::theme().surface)))
 }
 
@@ -206,8 +218,16 @@ pub(super) fn render_sidebar_mode_nav(
         },
         cx,
     );
-    let cell =
-        |slot: usize, id, label| sidebar_mode_nav_cell(&tabs, slot, id, label, mode == MODES[slot]);
+    let cell = |slot: usize, id, label| {
+        sidebar_mode_nav_cell(
+            &tabs,
+            slot,
+            id,
+            label,
+            mode == MODES[slot],
+            app.window_active,
+        )
+    };
     super::e2e::measure_control(
         "sidebar-mode-nav",
         tabs.list(div().id("sidebar-mode-nav"))

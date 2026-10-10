@@ -371,6 +371,21 @@ pub fn center_item(center: CenterPane) -> Option<&'static dyn WorkspaceItem> {
 /// active owner's `commit_panel` and `commit_panel_open` fields.
 pub struct CommitPanelItem;
 
+impl KagiApp {
+    /// Keep the persisted desktop width, but reserve a readable sliver of graph
+    /// after the actual sidebar and divider footprints at the current zoom.
+    pub(super) fn commit_panel_viewport_width(&self, window: &Window) -> f32 {
+        let scale = f32::from(super::theme::scaled_px(1.));
+        let sidebar = f32::from(super::theme::scaled_px(self.sidebar.width + 4.))
+            * self
+                .panel_motion
+                .sidebar
+                .visible(super::panel_motion::now());
+        let available = (f32::from(window.viewport_size().width) - sidebar - 120.) / scale - 4.;
+        self.panel_width.min(available.max(0.))
+    }
+}
+
 impl WorkspaceItem for CommitPanelItem {
     fn slot(&self) -> Slot {
         Slot::Right
@@ -388,7 +403,7 @@ impl WorkspaceItem for CommitPanelItem {
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
         _panel: Option<AnyElement>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         let entity = app.ui().commit_panel.clone()?;
@@ -404,13 +419,17 @@ impl WorkspaceItem for CommitPanelItem {
         };
         let smart = app.smart_commit.clone();
         let smart_ui = &app.ui[&entity.read(cx).owner];
-        let panel_width = app.panel_width;
+        let panel_width = app.commit_panel_viewport_width(window);
         entity.update(cx, |v, _| {
             v.active_wip = active_wip;
             v.panel_render_width = panel_width;
             v.smart_snapshot = smart;
             v.smart_generating = smart_ui.smart_commit_generating;
             v.smart_status = smart_ui.smart_commit_status.clone();
+            #[cfg(feature = "gui-e2e")]
+            {
+                v.window_active_override = app.window_active_override;
+            }
         });
         Some(entity.into_any_element())
     }
@@ -490,6 +509,7 @@ pub(super) fn render_inspector_body(
             generated_expanded,
             compare_title,
             active_commit_file,
+            app.window_active,
             app.inspector_tree_view,
             app.inspector_split,
             app.inspector_geom.clone(),

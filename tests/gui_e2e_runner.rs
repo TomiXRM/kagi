@@ -67,6 +67,10 @@ mod theme_custom;
 mod primary_button;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/inactive_selection.rs"]
+mod inactive_selection;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/operations.rs"]
 mod recovery_operations;
 
@@ -1117,6 +1121,10 @@ mod macos {
                 Box::new(crate::primary_button::scenario_primary_button_states),
             ),
             (
+                "inactive_selection",
+                Box::new(crate::inactive_selection::scenario_inactive_selection),
+            ),
+            (
                 "dialog_a11y_roles",
                 Box::new(crate::recovery_operations::scenario_dialog_a11y_roles),
             ),
@@ -1938,6 +1946,10 @@ mod macos {
             (
                 "pr_detail_adaptive",
                 Box::new(crate::pr_detail_adaptive::scenario_pr_detail_adaptive),
+            ),
+            (
+                "pr_detail_lifecycle",
+                Box::new(crate::pr_detail_adaptive::scenario_pr_detail_lifecycle),
             ),
             (
                 "pr_diff_extent_unified",

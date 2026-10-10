@@ -13,6 +13,7 @@ pub const IBM_PC: Theme = Theme {
     bg_row_alt: 0x0a0a0a,
     surface: 0x222222,
     selected: 0x0000aa, // the classic DOS blue highlight bar
+    inactive_selected: 0x343434,
     panel: 0x000000,
     sidebar: 0x000000,
     modal: 0x0000aa, // DOS blue dialog

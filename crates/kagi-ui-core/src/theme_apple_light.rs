@@ -4,6 +4,9 @@ use std::borrow::Cow;
 
 use crate::theme::{SyntaxPalette, Theme};
 
+/// Identifying input/unchecked-checkbox boundary: 3:1 on white and panel grey.
+pub const INPUT_BORDER: u32 = 0x8e8e8e;
+
 pub const APPLE_LIGHT: Theme = Theme {
     slug: Cow::Borrowed("apple-light"),
     name: Cow::Borrowed("Apple Light"),
@@ -14,6 +17,7 @@ pub const APPLE_LIGHT: Theme = Theme {
     bg_row_alt: 0xf5f5f5,
     surface: 0xe5e5e5,
     selected: 0xd9edff, // systemBlue 15% on white
+    inactive_selected: 0xd3d3d3,
     panel: 0xf7f7f7,
     sidebar: 0xf7f7f7,
     modal: 0xffffff,

@@ -62,6 +62,13 @@ The `gui-e2e` feature forwards `gpui_platform/test-support` as well as GPUI's:
 without the platform feature `Window::render_to_image` returns the default
 not-implemented error. Default application builds keep capture disabled.
 
+`inactive_selection` (#1176) measures selected repository-tab and conflict-row native
+Metal fills across key/non-key/reactivated presentation, with unchanged bounds,
+selected session and selected file. `KagiApp::set_window_active_for_e2e` overrides only the
+activation input under `gui-e2e`; it never activates an OS window or takes the
+user's foreground. Pair it with `inactive_selection_tests` in kagi-ui-core
+for all-preset primary-label contrast.
+
 ```bash
 # One scenario: the substring the scenario name contains.
 KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='bottom_panel' \
@@ -78,6 +85,17 @@ KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='bottom_panel,graph
 KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='modal_compact,modal_sections' \
   cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
 ```
+
+For #1175/#1182 use `KAGI_GUI_E2E_ONLY='pr_dashboard_responsive,palette_viewport'`.
+The dashboard measures Apple Light table/viewport bounds at two widths, EN/JA,
+100/167% and Scrolling/Hover/Always policies: Scrolling overlays with zero lane;
+non-auto-hide Hover/Always reserve 16 logical px and pin the table bar to Always.
+X/Y routing and trailing-column reachability stay intact. `e2e::chrome_border`
+records explicit rendered border styles for table
+rows/header and palette frame/divider; it is not a screenshot-pixel sample.
+Pair with the existing `palette_selection_scroll`, `palette_push_modal_keys`
+and toolbar scenarios. Real fading, macOS preference changes and JA IME are
+Tier B comparisons, not TestDispatcher assertions.
 
 For #1016 PR B use `KAGI_GUI_E2E_ONLY='modal_polish_'` with
 `KAGI_GUI_E2E_KEEP_GOING=1` (`tests/recovery/modal_polish_b.rs`). The three

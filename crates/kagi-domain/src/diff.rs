@@ -110,17 +110,6 @@ pub struct HunkApproval {
     pub new_digest: [u8; 32],
 }
 
-impl HunkApproval {
-    /// The same approved patch applied in reverse (unstaging).
-    pub fn reversed(self) -> Self {
-        Self {
-            range: self.range.reversed(),
-            old_digest: self.new_digest,
-            new_digest: self.old_digest,
-        }
-    }
-}
-
 /// One row of a side-by-side (split) diff: indices into the source line
 /// sequence for the left (old) and right (new) cells (ADR-0124).
 ///

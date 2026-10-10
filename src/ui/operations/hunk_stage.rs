@@ -69,6 +69,17 @@ impl KagiApp {
                     Err(kagi_git::GitError::Blocked(note)) => {
                         super::record::typed_refusal(op, std::slice::from_ref(note.as_ref()))
                     }
+                    Err(_) => match &report.recording.entry().outcome {
+                        OpOutcome::Failed { error } => {
+                            let label = if staged {
+                                i18n::Op::Unstage
+                            } else {
+                                i18n::Op::Stage
+                            };
+                            Some(i18n::op_failed(label, error))
+                        }
+                        _ => None,
+                    },
                     _ => None,
                 };
                 let entry =

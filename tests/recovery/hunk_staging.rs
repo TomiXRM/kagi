@@ -88,7 +88,8 @@ fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, row: usize) {
 }
 
 pub fn scenario_hunk_staging(cx: &mut VisualTestAppContext) {
-    let _saved = crate::gui_isolation::SavedKeys::keep(&["diff_split"]);
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["diff_split", "lang"]);
+    let language = kagi::ui::i18n::lang();
     let split_before = theme::diff_split();
     theme::set_diff_split(false);
     let temp = tempfile::tempdir().unwrap();
@@ -152,27 +153,52 @@ pub fn scenario_hunk_staging(cx: &mut VisualTestAppContext) {
     );
     theme::set_diff_split(false);
 
-    // #490: a held index.lock fails through the staging failure delivery and
-    // leaves the index alone.
-    open(cx, &app, CommitPanelFileRef::Unstaged { index: 0 });
-    let shown = headers(cx, &app);
-    let lock = repo.join(".git/index.lock");
-    std::fs::write(&lock, "fixture lock").unwrap();
-    click(cx, window, shown[0]);
-    wait_idle(cx, &app);
-    std::fs::remove_file(&lock).unwrap();
-    cx.read(|cx| {
-        let FooterStatus::Failed(footer) = &app.read(cx).status_footer else {
-            panic!("missing staging failure footer")
+    // #490: preserve localized failure delivery, including JA, under a held
+    // index.lock. The same English durable detail appears in both wrappers.
+    for lang in [kagi::ui::i18n::Lang::En, kagi::ui::i18n::Lang::Ja] {
+        kagi::ui::i18n::set_lang(lang);
+        open(cx, &app, CommitPanelFileRef::Unstaged { index: 0 });
+        let shown = headers(cx, &app);
+        let lock = repo.join(".git/index.lock");
+        std::fs::write(&lock, "fixture lock").unwrap();
+        click(cx, window, shown[0]);
+        wait_idle(cx, &app);
+        std::fs::remove_file(&lock).unwrap();
+        let entries = kagi_git::read_oplog_tail_for_repo(&repo, 1);
+        let kagi_git::OpOutcome::Failed { error } = &entries[0].outcome else {
+            panic!("index.lock failure receipt");
         };
-        assert!(footer.contains("lock"), "{footer}");
-        assert!(footer.contains("f.txt"), "{footer}");
-    });
-    assert_eq!(
-        index_text(&repo),
-        text(|_| None),
-        "the failure wrote nothing"
-    );
+        let expected = kagi::ui::i18n::op_failed(kagi::ui::i18n::Op::Stage, error);
+        cx.read(|cx| {
+            let state = app.read(cx);
+            let FooterStatus::Failed(footer) = &state.status_footer else {
+                panic!("missing staging failure footer")
+            };
+            assert!(footer.contains("lock"), "{footer}");
+            assert!(footer.contains("f.txt"), "{footer}");
+            assert_eq!(
+                footer.as_ref(),
+                expected,
+                "{lang:?} failure must be localized"
+            );
+            let toast = state
+                .toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .last()
+                .unwrap();
+            assert!(matches!(toast.kind, kagi::ui::ToastKind::Error));
+            assert!(toast.message.ends_with(&expected));
+        });
+        assert_eq!(
+            index_text(&repo),
+            text(|_| None),
+            "the failure wrote nothing"
+        );
+    }
+    kagi::ui::i18n::set_lang(language);
 
     theme::set_diff_split(split_before);
     if cx.read(|cx| e2e::app_notice_message(app.read(cx)).is_some()) {
@@ -277,10 +303,55 @@ pub fn scenario_hunk_staging_content_identity(cx: &mut VisualTestAppContext) {
             );
             unmount(cx, app, window);
         }
+        typechange_has_no_hunk_button(cx);
     }
     i18n::set_lang(language);
     theme::set_diff_split(split);
     eprintln!("[gui-e2e] PASS hunk_staging_content_identity EN/JA stage/unstage");
+}
+
+fn typechange_has_no_hunk_button(cx: &mut VisualTestAppContext) {
+    for staged in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().canonicalize().unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        std::fs::write(repo.join("f.txt"), "base\n").unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-qm", "base"]);
+        std::fs::remove_file(repo.join("f.txt")).unwrap();
+        std::os::unix::fs::symlink("new-target", repo.join("f.txt")).unwrap();
+        if staged {
+            git(&repo, &["add", "--", "f.txt"]);
+        }
+        let index = std::fs::read(repo.join(".git/index")).unwrap();
+        let (app, window) = mount(cx, &repo);
+        app.update(cx, |app, cx| {
+            e2e::open_local_panel_no_inputs(app, repo.clone(), cx)
+        });
+        cx.run_until_parked();
+        open(
+            cx,
+            &app,
+            if staged {
+                CommitPanelFileRef::Staged { index: 0 }
+            } else {
+                CommitPanelFileRef::Unstaged { index: 0 }
+            },
+        );
+        let shown = headers(cx, &app);
+        assert!(!shown.is_empty(), "typechange diff is displayed");
+        draw(cx, window);
+        for row in shown {
+            assert!(
+                e2e::control_bounds(window.window_id(), &format!("main-diff-hunk-stage-{row}"))
+                    .is_none(),
+                "a typechange half must not offer hunk staging"
+            );
+        }
+        assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+        assert!(kagi_git::read_oplog_tail_for_repo(&repo, 100).is_empty());
+        unmount(cx, app, window);
+    }
 }
 
 fn git_value(repo: &Path, args: &[&str]) -> String {

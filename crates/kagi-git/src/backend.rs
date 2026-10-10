@@ -750,7 +750,7 @@ impl Backend {
         let op = if staged { "unstage" } else { "stage" };
         let summary = || ops::StateSummary {
             head: resolve_head(&self.repo)
-                .map(|h| format!("{h:?}"))
+                .map(|h| h.display())
                 .unwrap_or_else(|_| "unobserved".into()),
             dirty: status::working_tree_status(&self.repo)
                 .map(|s| ops::status_summary_display(&s))

@@ -53,7 +53,6 @@ pub(crate) fn preflight_hunk<'a>(
                     .map_err(|e| other("HEAD tree", e))?,
             ),
         };
-        opts.reverse(true);
         repo.diff_tree_to_index(tree.as_ref(), Some(&index), Some(&mut opts))
             .map_err(|e| other("diff_tree_to_index", e))?
     } else {
@@ -69,19 +68,17 @@ pub(crate) fn preflight_hunk<'a>(
     let mut patch = git2::Patch::from_diff(&diff, 0)
         .map_err(|e| other("Patch::from_diff", e))?
         .ok_or_else(|| hunk_changed(plan.path))?;
-    let want = if plan.staged {
-        plan.approved.reversed()
-    } else {
-        plan.approved
-    };
-    let mut matches = 0;
+    let mut approved_hunk = None;
     for hunk in 0..patch.num_hunks() {
-        if crate::diff::patch_hunk_approval(&patch, hunk)? == want {
-            matches += 1;
+        if crate::diff::patch_hunk_approval(&patch, hunk)? == plan.approved {
+            if approved_hunk.replace(hunk).is_some() {
+                return Err(hunk_changed(plan.path));
+            }
         }
     }
-    if matches != 1 {
-        return Err(hunk_changed(plan.path));
+    let approved_hunk = approved_hunk.ok_or_else(|| hunk_changed(plan.path))?;
+    if plan.staged {
+        return reverse_approved_hunk(&mut patch, approved_hunk, plan.approved.range);
     }
     // Freeze the actual bytes that were validated. A workdir-backed Diff can
     // load content again during apply; a parsed patch cannot. This also turns
@@ -89,6 +86,98 @@ pub(crate) fn preflight_hunk<'a>(
     // second read of the mutable working file.
     let bytes = patch.to_buf().map_err(|e| other("patch.to_buf", e))?;
     Diff::from_buffer(&bytes).map_err(|e| other("Diff::from_buffer", e))
+}
+
+/// Reverse the validated forward hunk itself. Asking xdiff for a reversed
+/// diff can pick a different LCS (e.g. swapped lines), even without drift.
+fn reverse_approved_hunk(
+    patch: &mut git2::Patch<'_>,
+    hunk: usize,
+    range: HunkRange,
+) -> Result<Diff<'static>, GitError> {
+    let bytes = patch.to_buf().map_err(|e| other("patch.to_buf", e))?;
+    let headers = bytes
+        .split_inclusive(|b| *b == b'\n')
+        .take_while(|line| !line.starts_with(b"@@ "));
+    let mut reversed = Vec::with_capacity(bytes.len());
+    for line in headers.clone() {
+        if line.starts_with(b"diff --git ") {
+            reversed.extend_from_slice(line);
+        } else if let Some(rest) = line.strip_prefix(b"new file mode ") {
+            reversed.extend_from_slice(b"deleted file mode ");
+            reversed.extend_from_slice(rest);
+        } else if let Some(rest) = line.strip_prefix(b"deleted file mode ") {
+            reversed.extend_from_slice(b"new file mode ");
+            reversed.extend_from_slice(rest);
+        } else if let Some(rest) = line.strip_prefix(b"index ") {
+            let dots = rest
+                .windows(2)
+                .position(|s| s == b"..")
+                .ok_or_else(|| GitError::Other("patch index header is invalid".into()))?;
+            let end = rest
+                .iter()
+                .position(|b| *b == b' ' || *b == b'\n')
+                .unwrap_or(rest.len());
+            reversed.extend_from_slice(b"index ");
+            reversed.extend_from_slice(&rest[dots + 2..end]);
+            reversed.extend_from_slice(b"..");
+            reversed.extend_from_slice(&rest[..dots]);
+            reversed.extend_from_slice(&rest[end..]);
+        }
+    }
+    // Preserve mode changes and quoted/raw Git paths; do not reconstruct them
+    // from a lossy UI path string.
+    for (from, to) in [
+        (b"new mode ".as_slice(), b"old mode ".as_slice()),
+        (b"old mode ".as_slice(), b"new mode ".as_slice()),
+        (b"+++ ".as_slice(), b"--- ".as_slice()),
+        (b"--- ".as_slice(), b"+++ ".as_slice()),
+    ] {
+        if let Some(rest) = headers.clone().find_map(|line| line.strip_prefix(from)) {
+            reversed.extend_from_slice(to);
+            let prefixes = if from == b"+++ " {
+                Some((b'b', b'a'))
+            } else if from == b"--- " {
+                Some((b'a', b'b'))
+            } else {
+                None
+            };
+            if let Some((old, new)) = prefixes {
+                let prefix = usize::from(rest.starts_with(b"\""));
+                if rest.get(prefix..prefix + 2) == Some([old, b'/'].as_slice()) {
+                    reversed.extend_from_slice(&rest[..prefix]);
+                    reversed.push(new);
+                    reversed.extend_from_slice(&rest[prefix + 1..]);
+                } else {
+                    reversed.extend_from_slice(rest); // /dev/null
+                }
+            } else {
+                reversed.extend_from_slice(rest);
+            }
+        }
+    }
+    let range = range.reversed();
+    reversed.extend_from_slice(
+        format!(
+            "@@ -{},{} +{},{} @@\n",
+            range.old.0, range.old.1, range.new.0, range.new.1,
+        )
+        .as_bytes(),
+    );
+    let (_, count) = patch.hunk(hunk).map_err(|e| other("patch.hunk", e))?;
+    for n in 0..count {
+        let line = patch
+            .line_in_hunk(hunk, n)
+            .map_err(|e| other("patch.line_in_hunk", e))?;
+        match line.origin() {
+            '+' => reversed.push(b'-'),
+            '-' => reversed.push(b'+'),
+            ' ' => reversed.push(b' '),
+            _ => {} // Missing-final-LF markers already include their sigil.
+        }
+        reversed.extend_from_slice(line.content());
+    }
+    Diff::from_buffer(&reversed).map_err(|e| other("Diff::from_buffer", e))
 }
 
 fn pathspec_options(path: &Path) -> Result<DiffOptions, GitError> {

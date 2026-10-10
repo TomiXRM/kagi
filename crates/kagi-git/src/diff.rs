@@ -428,10 +428,25 @@ pub(crate) fn patch_to_file_diff(
         _ => ChangeKind::Modified,
     };
     let is_binary = delta.old_file().is_binary() || delta.new_file().is_binary();
-    let hunks = match patch {
+    let mut hunks = match patch {
         Some(patch) if !is_binary => patch_hunks(&patch)?,
         _ => Vec::new(),
     };
+    // File↔symlink transitions are represented as deletion + addition for
+    // this same path. A displayed half is not approval of the whole change;
+    // keep the existing whole-file controls, but offer no hunk mutation.
+    if diff
+        .deltas()
+        .filter(|delta| {
+            delta.new_file().path() == Some(path) || delta.old_file().path() == Some(path)
+        })
+        .count()
+        != 1
+    {
+        for hunk in &mut hunks {
+            hunk.content_identity = None;
+        }
+    }
     Ok(FileDiff {
         old_path,
         new_path,

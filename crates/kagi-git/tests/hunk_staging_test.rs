@@ -407,3 +407,118 @@ fn raw_byte_and_final_newline_drift_are_refused_in_both_directions() {
         }
     }
 }
+
+#[test]
+fn unchanged_swapped_lines_unstage_without_rediffing_in_reverse() {
+    let repo = Repo::new();
+    std::fs::write(repo.path().join(FILE), "x\nA\ny\nz\n").unwrap();
+    commit_all(repo.path(), "swap base");
+    std::fs::write(repo.path().join(FILE), "x\ny\nA\nz\n").unwrap();
+    git_output(repo.path(), &["add", "--", FILE]);
+    let approved = repo.staged()[0];
+    repo.backend()
+        .unstage_hunk(Path::new(FILE), approved)
+        .expect("unchanged displayed swap is approved");
+    assert_eq!(repo.index_text(), "x\nA\ny\nz\n");
+    assert_eq!(repo.worktree_text(), "x\ny\nA\nz\n");
+}
+
+#[test]
+fn hunk_receipt_uses_human_head_display() {
+    let repo = Repo::new();
+    let approved = repo.unstaged()[0];
+    let report = repo
+        .backend()
+        .stage_hunk_recorded(Path::new(FILE), approved, false);
+    report.result.unwrap();
+    let entry = report.recording.entry();
+    assert_eq!(entry.before.head, "branch: main");
+    let kagi_git::OpOutcome::Success { after } = &entry.outcome else {
+        panic!("success receipt")
+    };
+    assert_eq!(after.head, "branch: main");
+}
+
+#[cfg(unix)]
+#[test]
+fn typechange_hunks_have_no_local_mutation_approval() {
+    for from_symlink in [false, true] {
+        let repo = Repo::new();
+        if from_symlink {
+            std::fs::remove_file(repo.path().join(FILE)).unwrap();
+            std::os::unix::fs::symlink("old-target", repo.path().join(FILE)).unwrap();
+            commit_all(repo.path(), "symlink base");
+            std::fs::remove_file(repo.path().join(FILE)).unwrap();
+            std::fs::write(repo.path().join(FILE), "new file\n").unwrap();
+        } else {
+            std::fs::remove_file(repo.path().join(FILE)).unwrap();
+            std::os::unix::fs::symlink("new-target", repo.path().join(FILE)).unwrap();
+        }
+        let backend = repo.backend();
+        let diff = backend.unstaged_file_diff(Path::new(FILE)).unwrap();
+        assert!(!diff.hunks.is_empty());
+        assert!(
+            diff.hunks.iter().all(|h| h.approval().is_none()),
+            "typechange needs whole-file staging"
+        );
+        git_output(repo.path(), &["add", "--", FILE]);
+        let diff = backend.staged_file_diff(Path::new(FILE)).unwrap();
+        assert!(!diff.hunks.is_empty());
+        assert!(
+            diff.hunks.iter().all(|h| h.approval().is_none()),
+            "typechange needs whole-file unstaging"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn reverse_approval_preserves_quoted_paths_executable_mode_and_missing_lf() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = Repo::new();
+    let file = Path::new("quoted \" path.txt");
+    std::fs::write(repo.path().join(file), "base\n").unwrap();
+    std::fs::set_permissions(
+        repo.path().join(file),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    commit_all(repo.path(), "quoted executable base");
+    std::fs::write(repo.path().join(file), "approved").unwrap();
+    let backend = repo.backend();
+    let approved = backend.unstaged_file_diff(file).unwrap().hunks[0]
+        .approval()
+        .unwrap();
+    backend.stage_hunk(file, approved).unwrap();
+    let approved = backend.staged_file_diff(file).unwrap().hunks[0]
+        .approval()
+        .unwrap();
+    backend.unstage_hunk(file, approved).unwrap();
+    assert_eq!(show_index(repo.path(), file.to_str().unwrap()), "base\n");
+    assert!(git_output(
+        repo.path(),
+        &["ls-files", "--stage", "--", file.to_str().unwrap()]
+    )
+    .starts_with("100755 "));
+    assert_eq!(std::fs::read(repo.path().join(file)).unwrap(), b"approved");
+}
+
+#[test]
+fn a_deleted_file_can_be_unstaged_from_its_approved_hunk() {
+    let repo = Repo::new();
+    std::fs::remove_file(repo.path().join(FILE)).unwrap();
+    let backend = repo.backend();
+    let approved = backend.unstaged_file_diff(Path::new(FILE)).unwrap().hunks[0]
+        .approval()
+        .unwrap();
+    backend.stage_hunk(Path::new(FILE), approved).unwrap();
+    let approved = backend.staged_file_diff(Path::new(FILE)).unwrap().hunks[0]
+        .approval()
+        .unwrap();
+    backend.unstage_hunk(Path::new(FILE), approved).unwrap();
+    assert_eq!(repo.index_text(), original());
+    assert!(
+        !repo.path().join(FILE).exists(),
+        "unstaging never restores the worktree file"
+    );
+}

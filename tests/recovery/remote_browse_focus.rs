@@ -318,6 +318,7 @@ pub fn scenario_remote_browse_keyboard_rows(cx: &mut VisualTestAppContext) {
 
         // Repeated Down must reveal selection beyond the initial viewport,
         // and Enter must use that exact row rather than the current directory.
+        kagi::ui::e2e::clear_control_bounds(window.window_id(), "remote-dir-row-40");
         for _ in 0..40 {
             press(cx, window, "down");
         }
@@ -387,8 +388,26 @@ pub fn scenario_remote_browse_keyboard_rows(cx: &mut VisualTestAppContext) {
         navigate_listing(cx, window, "/home/dev/dir-299", "nested/\n", "enter");
         assert_eq!(focused(cx, &app, window), Some(0));
         press(cx, window, "down");
+        kagi::ui::e2e::clear_control_bounds(window.window_id(), "remote-dir-empty");
+        kagi::ui::e2e::clear_control_bounds(window.window_id(), "remote-dir-row-0");
         navigate_listing(cx, window, "/home/dev/dir-299/nested", "", "space");
         assert_eq!(focused(cx, &app, window), Some(0));
+        let empty = kagi::ui::e2e::control_bounds(window.window_id(), "remote-dir-empty")
+            .expect("an empty nested directory draws its empty notice");
+        let parent = kagi::ui::e2e::control_bounds(window.window_id(), "remote-dir-row-0")
+            .expect("an empty nested directory keeps its parent row");
+        assert!(
+            empty.top() >= parent.bottom(),
+            "empty notice {empty:?} must be below parent {parent:?}"
+        );
+        assert_eq!(
+            kagi::ui::dialog_a11y::recorded_note("remote-dir-empty"),
+            Some((
+                gpui::Role::Note,
+                kagi::ui::i18n::Msg::RemoteDirectoryEmpty.t().to_string()
+            )),
+            "the drawn empty notice carries the current EN/JA text"
+        );
         navigate_listing(cx, window, "/home/dev/dir-299", "nested/\n", "enter");
         cx.read(|cx| {
             assert_eq!(
@@ -405,6 +424,15 @@ pub fn scenario_remote_browse_keyboard_rows(cx: &mut VisualTestAppContext) {
         assert_eq!(focused(cx, &app, window), Some(0));
         press(cx, window, "escape");
         assert!(cx.read(|cx| app.read(cx).remote_browse().is_none()));
+        assert!(
+            cx.update_window(window, |_, window, cx| app
+                .read(cx)
+                .root_focus
+                .as_ref()
+                .is_some_and(|focus| focus.is_focused(window)))
+                .unwrap(),
+            "Escape from a directory row must return focus to the window"
+        );
     }
     i18n::set_lang(language);
     assert_eq!(repo_fingerprint(&repo), before);

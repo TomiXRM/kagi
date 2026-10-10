@@ -165,6 +165,7 @@ impl KagiApp {
     /// Close the remote browse modal without making any changes.
     pub fn cancel_remote_browse(&mut self) {
         self.clear_remote_browse();
+        self.focus_root_for_modal();
     }
 
     /// Confirm the action presented by the current remote-browse stage.
@@ -774,18 +775,27 @@ fn render_directory_list(
     let selected = modal.selected_row.get();
     let wrapper = rows.list(super::list_a11y::list_box(
         "remote-dir-list",
-        div().id("remote-dir-list").w_full(),
+        div().id("remote-dir-list").w_full().flex().flex_col(),
         Msg::RemoteDirectoryList.t(),
     ));
-    if modal.row_keys.is_empty() {
-        return wrapper
-            .child(
+    let empty_notice = || {
+        let text = Msg::RemoteDirectoryEmpty.t();
+        super::e2e::measure_control(
+            "remote-dir-empty",
+            super::dialog_a11y::apply_note(
+                "remote-dir-empty".into(),
                 div()
+                    .id("remote-dir-empty")
                     .text_sm()
                     .text_color(rgb(current_theme().text_muted))
-                    .child(SharedString::from(Msg::RemoteDirectoryEmpty.t())),
-            )
-            .into_any_element();
+                    .child(SharedString::from(text)),
+                false,
+                text,
+            ),
+        )
+    };
+    if modal.row_keys.is_empty() {
+        return wrapper.child(empty_notice()).into_any_element();
     }
     let entries = modal.entries.clone();
     let cwd = modal.cwd.clone();
@@ -874,8 +884,13 @@ fn render_directory_list(
         row.into_any_element()
     })
     .w_full()
-    .h(theme::scaled_px((size as f32 * 28.).min(280.)));
-    wrapper.child(list).into_any_element()
+    .h(theme::scaled_px((size as f32 * 32.).min(280.)));
+    wrapper
+        .child(list)
+        .when(modal.entries.is_empty(), |wrapper| {
+            wrapper.child(empty_notice())
+        })
+        .into_any_element()
 }
 
 // ──────────────────────────────────────────────────────────────

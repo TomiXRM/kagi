@@ -123,8 +123,9 @@ remains read-only; reaching a repo does not stage or write repository state.
 The native `remote_browse_keyboard_rows` regression uses 300 directories in
 EN and JA. Forty consecutive Down presses must select row 40, whose measured
 control bounds must fit wholly inside the list viewport; Enter then navigates
-to `dir-039`, not the current directory. A negative control with the RowList
-action context removed fails with selection still at row 0.
+to `dir-039`, not the current directory. An action-wiring negative control
+with the RowList action context removed fails with selection still at row 0;
+this negative control does not independently prove reveal or activation.
 
 
 ## Alternatives considered

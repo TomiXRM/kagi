@@ -223,7 +223,7 @@ pub(crate) fn render_rows(
                         .top_0()
                         .bottom_0()
                         .w(px(2.))
-                        .bg(rgb(theme().color_branch)),
+                        .bg(rgb(theme().ui_accent())),
                 )
                 .child(anchor.probe())
             })
@@ -467,7 +467,7 @@ pub(crate) fn render_load_more_row(
                 .justify_center()
                 .cursor_pointer()
                 .text_xs()
-                .text_color(rgb(theme().color_branch))
+                .text_color(rgb(theme().ui_accent()))
                 .hover(|s| s.bg(rgb(theme().selected)))
                 .on_click(cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
                     this.load_more_commits(cx);

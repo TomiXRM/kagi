@@ -568,8 +568,8 @@ fn build_local_branch_leaf(
             .on_mouse_down(gpui::MouseButton::Right, menu_click)
             .drag_over::<BranchDrag>(|style, _drag, _window, _cx| {
                 style
-                    .bg(rgb(theme().selected))
-                    .border_color(rgb(theme().color_branch))
+                    .bg(rgb(theme().ui_selected()))
+                    .border_color(rgb(theme().ui_accent()))
             })
             .on_drop::<BranchDrag>(drop_handler)
             .hover(|style| style.bg(rgb(theme().surface)))
@@ -633,8 +633,8 @@ fn build_local_branch_leaf(
             .on_mouse_down(gpui::MouseButton::Right, menu_click)
             .drag_over::<BranchDrag>(|style, _drag, _window, _cx| {
                 style
-                    .bg(rgb(theme().selected))
-                    .border_color(rgb(theme().color_branch))
+                    .bg(rgb(theme().ui_selected()))
+                    .border_color(rgb(theme().ui_accent()))
             })
             .on_drop::<BranchDrag>(drop_handler)
             .on_drag(

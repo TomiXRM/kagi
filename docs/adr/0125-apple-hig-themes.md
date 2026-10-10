@@ -95,3 +95,47 @@ foreground. A separate `link = #0066cc` maps to TextView's `colors.link` and
 gives 5.567:1 on white. Apple Dark's existing yellow link is already readable
 and remains unchanged. Underline, activation, selection and geometry are not
 altered.
+
+## Amendment — 2026-10-11: system chrome accent (#1181)
+
+On macOS, built-in Apple Light and Apple Dark follow the person's accent for
+primary chrome, focus rings and text selection. `Theme::ui_accent()` is distinct
+from the Git `color_branch` role: ref chips, graph lanes, status colours, terminal
+and body links keep their existing palette. This supersedes ADR-0126's decision
+not to separate chrome from branch colour, not its yellow Git palette.
+
+The startup and window-activation seams read `/usr/bin/defaults read -g
+AppleAccentColor` without writing defaults. Cache the detected enum and derived
+colour tokens; no native lookup, subprocess, allocation or colour derivation
+occurs in a row/render. Refresh on activation is deliberately used rather than
+installing an AppKit notification observer or adding an Objective-C dependency.
+Changing Appearance and returning to Kagi updates the existing bridge and redraws.
+
+The standard macOS accent palette ([HIG Color](https://developer.apple.com/design/human-interface-guidelines/color))
+is kept separately from the graph's increased-contrast/2025 system colours:
+
+| Default | Name | Light | Dark |
+|---|---|---|---|
+| -1 | Graphite | `#8e8e93` | `#98989d` |
+| 0 | Red | `#ff3b30` | `#ff453a` |
+| 1 | Orange | `#ff9500` | `#ff9f0a` |
+| 2 | Yellow | `#ffcc00` | `#ffd60a` |
+| 3 | Green | `#34c759` | `#30d158` |
+| 4 | Blue | `#007aff` | `#0a84ff` |
+| 5 | Purple | `#af52de` | `#bf5af2` |
+| 6 | Pink | `#ff2d55` | `#ff375f` |
+
+Missing/unsupported values (including Multicolour) use blue and are labelled
+Default (Blue), rather than falsely identifying an explicit Blue preference. Settings →
+Appearance has an Apple-only System/Blue radio choice persisted as the string
+`accent: system|blue`, with the detected Mac colour name in EN/JA even while Blue
+is selected. Other presets, custom themes including Apple-derived themes, and
+non-macOS platforms retain their explicit colour values.
+
+Primary labels reuse the bridge's contrast-preserving foreground/hover/pressed
+derivation (4.5:1 minimum). Text selection retains the shared 30% alpha; Apple
+Light row selection derives a 15% accent wash on white, while Apple Dark keeps
+its neutral row selection. Ring geometry stays at the existing fixed 2 logical
+px. Unit coverage includes all seven chromatic accents **and** graphite in both
+appearances; Tier A `system_accent_chrome` injects blue/purple/graphite in memory
+and checks native primary/ring pixels and stable control/label bounds.

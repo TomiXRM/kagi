@@ -1507,7 +1507,11 @@ where
 {
     let seg = |label: &str, active: bool| {
         let accent = if active {
-            theme().color_branch
+            if cfg!(target_os = "macos") && matches!(&*theme().slug, "apple-light" | "apple-dark") {
+                theme().accent_text_on(theme().ui_selected())
+            } else {
+                theme().color_branch
+            }
         } else {
             theme().text_sub
         };
@@ -1516,7 +1520,7 @@ where
             .py(theme::scaled_px(2.))
             .text_size(theme::scaled_px(10.))
             .text_color(rgb(accent))
-            .when(active, |s| s.bg(rgb(theme().selected)))
+            .when(active, |s| s.bg(rgb(theme().ui_selected())))
             .child(SharedString::from(label.to_string()))
     };
     div()
@@ -1545,7 +1549,7 @@ fn vertical_divider() -> gpui::Stateful<gpui::Div> {
         .h_full()
         .bg(rgb(theme().selected))
         .cursor_col_resize()
-        .hover(|s| s.bg(rgb(theme().color_branch)))
+        .hover(|s| s.bg(rgb(theme().ui_accent())))
         .on_drag(
             DividerDrag {
                 kind: DividerKind::ConflictAB,
@@ -1563,7 +1567,7 @@ fn horizontal_divider() -> gpui::Stateful<gpui::Div> {
         .h(theme::scaled_px(4.))
         .bg(rgb(theme().selected))
         .cursor_row_resize()
-        .hover(|s| s.bg(rgb(theme().color_branch)))
+        .hover(|s| s.bg(rgb(theme().ui_accent())))
         .on_drag(
             DividerDrag {
                 kind: DividerKind::ConflictResult,

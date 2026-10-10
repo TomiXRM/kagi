@@ -640,7 +640,7 @@ pub fn render_branch_cleanup(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gp
             .flex()
             .justify_center()
             .child(div().w(px(1.)).h_full().bg(rgb(theme().selected)))
-            .hover(|s| s.bg(rgb(theme().color_branch)).cursor_col_resize())
+            .hover(|s| s.bg(rgb(theme().ui_accent())).cursor_col_resize())
             .cursor_col_resize()
             .on_drag(
                 DividerDrag {
@@ -781,7 +781,7 @@ fn build_cleanup_row(
         .text_sm()
         .text_color(rgb(theme().text_main))
         .cursor_pointer()
-        .hover(|s| s.text_color(rgb(theme().color_branch)))
+        .hover(|s| s.text_color(rgb(theme().ui_accent())))
         .tooltip({
             let full = full_name.clone();
             move |window, cx| Tooltip::new(full.clone()).build(window, cx)
@@ -810,7 +810,7 @@ fn build_cleanup_row(
                 .text_xs()
                 .text_color(rgb(theme().text_main))
                 .cursor_pointer()
-                .hover(|s| s.text_color(rgb(theme().color_branch)))
+                .hover(|s| s.text_color(rgb(theme().ui_accent())))
                 .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
                 .on_click(
                     cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {

@@ -190,7 +190,7 @@ fn render_cp_file_row(
     let row_bg = if is_conflicted {
         theme().diff_removed_bg
     } else if is_sel {
-        theme().selected
+        theme().ui_selected()
     } else {
         theme().panel
     };
@@ -205,7 +205,7 @@ fn render_cp_file_row(
                 Some(is_sel),
             )
         })
-        .when(wip_hit, |el| el.bg(rgb(theme().selected)))
+        .when(wip_hit, |el| el.bg(rgb(theme().ui_selected())))
         .w_full()
         .flex()
         .flex_row()
@@ -1041,7 +1041,7 @@ impl CommitPanelView {
                 .py_px()
                 .text_xs()
                 .bg(rgb(if active {
-                    theme().selected
+                    theme().ui_selected()
                 } else {
                     theme().surface
                 }))
@@ -1257,7 +1257,7 @@ impl CommitPanelView {
             let suggest_color = if llm_on {
                 theme().color_success
             } else {
-                theme().color_branch
+                theme().ui_accent()
             };
             let suggest_btn: gpui::AnyElement = if smart_ui.0 {
                 // Spin the same icon rather than swapping in a text spinner, so
@@ -1375,7 +1375,7 @@ impl CommitPanelView {
                 .rounded_sm()
                 .text_xs()
                 .text_color(rgb(if on {
-                    theme().color_branch
+                    theme().ui_accent()
                 } else {
                     theme().text_muted
                 }))

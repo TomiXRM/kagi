@@ -290,7 +290,7 @@ fn pane_divider(app: &KagiApp, index: usize) -> gpui::AnyElement {
         .bg(rgb(theme().surface))
         .when(active, |el| {
             el.cursor_row_resize()
-                .hover(|s| s.bg(rgb(theme().color_branch)).cursor_row_resize())
+                .hover(|s| s.bg(rgb(theme().ui_accent())).cursor_row_resize())
                 .on_drag(
                     DividerDrag {
                         kind: DividerKind::SidebarPane(index as u8),

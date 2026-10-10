@@ -999,7 +999,7 @@ impl KagiApp {
 
             // Accent bar colour: worktree lane colour (every worktree tab), else
             // the blue accent on the active main-repo tab; `None` → no bar.
-            let accent = wt_color.or_else(|| is_active.then(|| rgb(theme().color_branch).into()));
+            let accent = wt_color.or_else(|| is_active.then(|| rgb(theme().ui_accent()).into()));
             let tab_el = strip_tabs
                 .cell(i, &name, div().id(("repo-tab", i)))
                 .relative()
@@ -1119,7 +1119,7 @@ fn render_home_tab(
                     .left(px(-ring))
                     .right(px(-ring))
                     .h(px(2.))
-                    .bg(rgb(theme().color_branch)),
+                    .bg(rgb(theme().ui_accent())),
             )
         })
         .cursor(gpui::CursorStyle::PointingHand)

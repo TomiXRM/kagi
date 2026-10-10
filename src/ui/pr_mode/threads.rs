@@ -158,8 +158,16 @@ impl RowOverlay for ThreadOverlay {
             .rounded_sm()
             .text_xs()
             .cursor_pointer()
-            .bg(rgb(theme().color_branch))
-            .text_color(rgb(theme().bg_base))
+            .bg(rgb(theme().ui_accent()))
+            .text_color(rgb(
+                if cfg!(target_os = "macos")
+                    && matches!(&*theme().slug, "apple-light" | "apple-dark")
+                {
+                    theme::primary_button_foreground(&theme())
+                } else {
+                    theme().bg_base
+                },
+            ))
             .when(all_outdated, |el| el.opacity(0.5))
             .on_click(move |_, _, cx| {
                 app.update(cx, |app, cx| app.pr_mode_toggle_thread(row, cx));

@@ -116,7 +116,7 @@ impl KagiApp {
             .flex_shrink_0()
             .h_full()
             .bg(rgb(theme().surface))
-            .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+            .hover(|style| style.bg(rgb(theme().ui_accent())).cursor_col_resize())
             .cursor_col_resize()
             .on_drag(
                 DividerDrag {
@@ -268,7 +268,7 @@ impl KagiApp {
                                     .py_0p5()
                                     .rounded_md()
                                     .bg(rgb(theme().surface))
-                                    .text_color(rgb(theme().color_branch))
+                                    .text_color(rgb(theme().ui_accent()))
                                     .hover(|st| st.bg(rgb(theme().selected)))
                                     .cursor_pointer()
                                     .child(SharedString::from(format!("← Solo: {name}")))
@@ -305,7 +305,7 @@ impl KagiApp {
                     .flex()
                     .justify_center()
                     .child(div().w(px(1.)).h_full().bg(rgb(theme().selected)))
-                    .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+                    .hover(|style| style.bg(rgb(theme().ui_accent())).cursor_col_resize())
                     .cursor_col_resize()
                     .on_drag(
                         DividerDrag {
@@ -350,11 +350,11 @@ impl KagiApp {
                             .text_xs()
                             .cursor_pointer()
                             .text_color(rgb(if is_compact {
-                                theme().color_branch
+                                theme().ui_accent()
                             } else {
                                 theme().text_muted
                             }))
-                            .hover(|s| s.text_color(rgb(theme().color_branch)))
+                            .hover(|s| s.text_color(rgb(theme().ui_accent())))
                             .on_click(compact_click)
                             .child(SharedString::from(if is_compact { "▥" } else { "▤" })),
                     )
@@ -377,7 +377,7 @@ impl KagiApp {
                     .flex()
                     .justify_center()
                     .child(div().w(px(1.)).h_full().bg(rgb(theme().selected)))
-                    .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+                    .hover(|style| style.bg(rgb(theme().ui_accent())).cursor_col_resize())
                     .cursor_col_resize()
                     .on_drag(
                         DividerDrag {
@@ -711,7 +711,7 @@ impl KagiApp {
                 divider.child(e2e::measure_inside("divider-panel"))
             })
             .bg(rgb(theme().surface))
-            .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+            .hover(|style| style.bg(rgb(theme().ui_accent())).cursor_col_resize())
             .cursor_col_resize()
             .on_drag(
                 DividerDrag {

@@ -192,6 +192,17 @@ The current suite covers:
   selection, or toast IDs. A themes folder that cannot be listed (mode 000)
   keeps the loaded themes and the selection and names the folder in a toast.
   Startup loads before the window exists.
+- system chrome accent (`KAGI_GUI_E2E_ONLY=system_accent_chrome`,
+  `tests/recovery/system_accent.rs`): #1181 uses a scoped thread-local
+  `theme::AccentInjection` to draw blue/purple/graphite under Apple Light/Dark
+  without reading/writing the person's defaults. Native Metal primary and
+  Input/custom keyboard-ring pixels must match the resolved accent; custom
+  keyboard focus keeps control and label bounds fixed. The Blue override is
+  measured too. Unit theme tests cover all seven chromatic accents plus
+  graphite, selection derivation, label contrast and fixed custom/other presets.
+  Tier B: Settings → Appearance displays the detected Mac colour in EN/JA;
+  compare System/Blue and return to Kagi after changing Appearance. No test
+  command may write AppleAccentColor.
 - file tree accessibility (`KAGI_GUI_E2E_ONLY=file_tree_roles`,
   `tests/recovery/file_tree_a11y.rs`): #354 Editor Workspace and Commit Panel
   render named EN/JA Trees with TreeItems carrying file status, selection,

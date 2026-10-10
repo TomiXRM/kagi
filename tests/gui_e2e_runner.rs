@@ -63,6 +63,10 @@ mod proc_identity;
 mod theme_custom;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/system_accent.rs"]
+mod system_accent;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/primary_button.rs"]
 mod primary_button;
 
@@ -1103,6 +1107,10 @@ mod macos {
             (
                 "primary_button_states",
                 Box::new(crate::primary_button::scenario_primary_button_states),
+            ),
+            (
+                "system_accent_chrome",
+                Box::new(crate::system_accent::scenario_system_accent_chrome),
             ),
             (
                 "dialog_a11y_roles",

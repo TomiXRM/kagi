@@ -34,7 +34,7 @@ impl KagiApp {
             .h(theme::scaled_px(BOTTOM_PANEL_DIVIDER_H))
             .flex_shrink_0()
             .bg(rgb(theme().surface))
-            .hover(|style| style.bg(rgb(theme().color_branch)).cursor_row_resize())
+            .hover(|style| style.bg(rgb(theme().ui_accent())).cursor_row_resize())
             .cursor_row_resize()
             .on_drag(
                 DividerDrag {
@@ -420,7 +420,7 @@ impl KagiApp {
                 div()
                     .text_xs()
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(rgb(theme().color_branch))
+                    .text_color(rgb(theme().ui_accent()))
                     .flex_shrink_0()
                     .child(SharedString::from("Top contributors")),
             )

@@ -59,6 +59,9 @@ fn sidebar_mode_nav_cell(
             },
             SharedString::from(label),
         ))
+        .when(cfg!(feature = "gui-e2e"), |cell| {
+            cell.relative().child(super::e2e::measure_inside(id))
+        })
         .into_any_element()
 }
 

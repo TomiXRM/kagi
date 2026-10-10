@@ -4,6 +4,15 @@ kagi ships built-in colour themes (Settings → Appearance, the command palette'
 `Theme: …` entries, and View → Theme). You can add your own as JSON files.
 Design record: [ADR-0220](adr/0220-json-user-themes.md).
 
+On macOS, built-in **Apple Light / Apple Dark** use the Mac's Appearance accent
+for chrome actions, focus rings and selection. Settings → Appearance shows the
+detected accent name and a **System / Blue** override (`"accent": "system"` by
+default, or `"blue"` in `settings.json`). Return to Kagi after changing the Mac
+accent to refresh it. Multicolour uses blue and is labelled Default (Blue).
+Git ref/lane/status colours and body
+links remain unchanged. Custom themes (even ones extending Apple themes), other
+built-in presets and non-macOS platforms keep their own colour tokens.
+
 ## Where theme files live
 
 | Situation | Folder |

@@ -15,6 +15,7 @@ mod test_support;
 fn fixture() -> TempDir {
     let dir = TempDir::new().unwrap();
     init_repo(dir.path(), "main");
+    git(dir.path(), &["config", "commit.gpgsign", "false"]);
     git(dir.path(), &["config", "core.hooksPath", ".git/hooks"]);
     write_file(dir.path(), "a", "base\n");
     commit_all(dir.path(), "base");
@@ -367,4 +368,97 @@ fn commit_hooks_initial_commit_runs_hooks() {
     assert!(repo.join("hook-ran").exists());
     assert_eq!(git_output(repo, &["rev-parse", "HEAD^{tree}"]), tree);
     assert_eq!(git_output(repo, &["log", "-1", "--format=%P"]), "");
+}
+
+#[test]
+fn commit_hooks_message_only_amend_can_reword_an_empty_commit() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let dir = fixture();
+    let repo = dir.path();
+    commit_all(repo, "approved base");
+    git(repo, &["commit", "--allow-empty", "-m", "empty"]);
+    let tree = git_output(repo, &["rev-parse", "HEAD^{tree}"]);
+    let parent = git_output(repo, &["rev-parse", "HEAD^"]);
+    let mut backend = Backend::open(repo).unwrap();
+    let op = Operation::Amend {
+        mode: kagi_git::AmendMode::MessageOnly,
+        message: Some("reworded empty".into()),
+    };
+    let plan = backend.plan(&op).unwrap();
+    backend.run(&op, &plan).unwrap();
+    assert_eq!(
+        git_output(repo, &["log", "-1", "--format=%B"]),
+        "reworded empty"
+    );
+    assert_eq!(git_output(repo, &["rev-parse", "HEAD^{tree}"]), tree);
+    assert_eq!(git_output(repo, &["rev-parse", "HEAD^"]), parent);
+}
+
+#[test]
+fn commit_hooks_private_index_preserves_skip_worktree_entries() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for message_only in [false, true] {
+        let dir = fixture();
+        let repo = dir.path();
+        write_file(repo, "sparse.txt", "outside checkout\n");
+        commit_all(repo, "sparse base");
+        git(repo, &["update-index", "--skip-worktree", "sparse.txt"]);
+        fs::remove_file(repo.join("sparse.txt")).unwrap();
+        write_file(repo, "a", "next approved\n");
+        git(repo, &["add", "a"]);
+        let tree = if message_only {
+            git_output(repo, &["rev-parse", "HEAD^{tree}"])
+        } else {
+            git_output(repo, &["write-tree"])
+        };
+        hook(repo, "pre-commit", "#!/bin/sh\n[ \"$(git ls-files -t sparse.txt)\" = 'S sparse.txt' ] || { echo skip-worktree-lost >&2; exit 1; }\n[ -z \"$(git diff --name-only -- sparse.txt)\" ] || exit 1\n");
+        if message_only {
+            let mut backend = Backend::open(repo).unwrap();
+            let op = Operation::Amend {
+                mode: kagi_git::AmendMode::MessageOnly,
+                message: Some("metadata-preserving amend".into()),
+            };
+            let plan = backend.plan(&op).unwrap();
+            backend.run(&op, &plan).unwrap();
+        } else {
+            commit(repo).result.unwrap();
+        }
+        assert_eq!(git_output(repo, &["rev-parse", "HEAD^{tree}"]), tree);
+        assert_eq!(
+            git_output(repo, &["ls-files", "-t", "sparse.txt"]),
+            "S sparse.txt"
+        );
+        assert!(!repo.join("sparse.txt").exists());
+    }
+}
+
+#[test]
+fn commit_hooks_staged_amend_can_remove_heads_diff() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for mode in [kagi_git::AmendMode::Staged, kagi_git::AmendMode::Both] {
+        let dir = fixture();
+        let repo = dir.path();
+        commit_all(repo, "approved head");
+        let parent = git_output(repo, &["rev-parse", "HEAD^"]);
+        let tree = git_output(repo, &["rev-parse", &format!("{parent}^{{tree}}")]);
+        write_file(repo, "a", "base\n");
+        git(repo, &["add", "a"]);
+        let index = fs::read(repo.join(".git/index")).unwrap();
+        let mut backend = Backend::open(repo).unwrap();
+        let op = Operation::Amend {
+            mode,
+            message: Some("empty amended diff".into()),
+        };
+        let plan = backend.plan(&op).unwrap();
+        backend.run(&op, &plan).unwrap();
+        assert_eq!(git_output(repo, &["rev-parse", "HEAD^{tree}"]), tree);
+        assert_eq!(git_output(repo, &["rev-parse", "HEAD^"]), parent);
+        assert_eq!(fs::read(repo.join(".git/index")).unwrap(), index);
+    }
 }

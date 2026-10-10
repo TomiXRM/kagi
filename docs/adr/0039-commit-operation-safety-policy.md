@@ -80,8 +80,9 @@ state is cleaned up by Git only after commit succeeds.
 
 ### Signing read-back (#1133)
 
-The executor captures `commit.gpgsign` immediately before invoking Git and, if
-true, also requires a signature header in the resulting HEAD. A post-commit
+The executor queries `commit.gpgsign` through the same Git CLI/environment
+immediately before committing, including Git's conditional config includes.
+If true, it also requires a signature header in the resulting HEAD. A post-commit
 hook replacing the new signed commit with an unsigned commit of the same tree
 and parents therefore cannot produce a success receipt. Signature extraction
 errors remain in Unknown detail. This is presence verification, not a claim of
@@ -90,3 +91,17 @@ uses a generated, unencrypted throwaway SSH key plus allowed-signers and
 `git verify-commit` for Commit, every Amend mode and resolved MergeCommit.
 Real OpenPGP/X.509 keys and interactive signer agents are not exercised here;
 their configured format/program is passed through to the user's Git.
+
+### Private-index metadata and empty Amend (review amendment)
+
+The private index copies the rechecked in-memory entries, including stat-cache
+and extended flags such as skip-worktree; it is not rebuilt from a bare tree.
+This keeps absent sparse-checkout files absent for hooks and avoids re-hashing
+every matching tracked file just to commit. MessageOnly first reads the real
+index, then loads the old HEAD tree in-memory so matching entries retain their
+metadata while staged content stays excluded. Every CLI Amend uses
+`--allow-empty`: rewording an existing empty commit and folding staged changes
+that remove HEAD's diff are valid under the existing approval rules. Tree and
+parent verification remain mandatory. Regression fixtures pin signing off for
+hook tests and `gpg.ssh.program=ssh-keygen` for throwaway-key tests rather than
+depending on the developer's signer.

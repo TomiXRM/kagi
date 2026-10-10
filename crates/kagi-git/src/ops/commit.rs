@@ -259,7 +259,7 @@ pub(crate) fn execute_commit(
             Some(git2::Oid::from_str(&target).map_err(|e| GitError::Other(e.to_string()))?)
         }
     };
-    execute_git_commit(repo, tree_oid, parent.as_slice(), message, false)
+    execute_git_commit(repo, &index, tree_oid, parent.as_slice(), message, None)
         .map(|oid| CommitId(oid.to_string()))
 }
 
@@ -268,24 +268,39 @@ pub(crate) fn execute_commit(
 /// the approved snapshot, and preserves the real index on hook/signing failure.
 pub(crate) fn execute_git_commit(
     repo: &Repository,
+    approved_index: &git2::Index,
     tree_oid: git2::Oid,
     parents: &[git2::Oid],
     message: &str,
-    amend: bool,
+    amend: Option<AmendMode>,
 ) -> Result<git2::Oid, GitError> {
     let workdir = repo
         .workdir()
         .ok_or_else(|| GitError::Other("commit requires a worktree".into()))?;
     let before = resolve_head(repo)?;
-    let signing_required = match repo
-        .config()
-        .and_then(|config| config.get_bool("commit.gpgsign"))
-    {
-        Ok(required) => required,
-        Err(error) if error.code() == git2::ErrorCode::NotFound => false,
-        Err(error) => {
+    let signing_policy = crate::cli::run_git(
+        workdir,
+        &[
+            "config",
+            "--type=bool",
+            "--default=false",
+            "--get",
+            "commit.gpgsign",
+        ],
+    )
+    .map_err(|error| crate::cli::context("cannot read commit signing policy", error))?;
+    if signing_policy.status != 0 {
+        return Err(GitError::Other(format!(
+            "cannot read commit signing policy: {}",
+            signing_policy.stderr
+        )));
+    }
+    let signing_required = match signing_policy.stdout.trim() {
+        "true" => true,
+        "false" => false,
+        other => {
             return Err(GitError::Other(format!(
-                "cannot read commit signing policy: {error}"
+                "invalid commit signing policy: {other}"
             )))
         }
     };
@@ -294,16 +309,18 @@ pub(crate) fn execute_git_commit(
         .tempdir_in(repo.path())
         .map_err(|e| GitError::Other(format!("cannot create approved commit index: {e}")))?;
     let index_path = scratch.path().join("index");
-    let mut index = git2::Index::open(&index_path).map_err(|e| GitError::Other(e.to_string()))?;
-    let tree = repo
-        .find_tree(tree_oid)
-        .map_err(|e| GitError::Other(e.to_string()))?;
-    index
-        .read_tree(&tree)
-        .map_err(|e| GitError::Other(e.to_string()))?;
-    index.write().map_err(|e| GitError::Other(e.to_string()))?;
-    let args = ["commit", "-m", message, "--amend"];
-    let args = if amend { &args[..] } else { &args[..3] };
+    write_private_commit_index(
+        repo,
+        &index_path,
+        approved_index,
+        (amend == Some(AmendMode::MessageOnly)).then_some(tree_oid),
+    )?;
+    let args = ["commit", "-m", message, "--amend", "--allow-empty"];
+    let args = if amend.is_some() {
+        &args[..]
+    } else {
+        &args[..3]
+    };
     let output = crate::cli::run_git_commit(workdir, &index_path, args)?;
     if output.status != 0 {
         let detail = format!(
@@ -318,6 +335,60 @@ pub(crate) fn execute_git_commit(
         return Err(GitError::Other(detail));
     }
     verify_git_commit(repo, &before, tree_oid, parents, signing_required)
+}
+
+/// Preserve the approved stat cache and extended flags in the private index.
+/// Rewording replaces content with HEAD's tree, retaining metadata only where
+/// the raw path, OID and mode still match. No disk-index reread is needed.
+fn write_private_commit_index(
+    repo: &Repository,
+    path: &std::path::Path,
+    source: &git2::Index,
+    reword_tree: Option<git2::Oid>,
+) -> Result<(), GitError> {
+    let mut index = git2::Index::open(path).map_err(|e| GitError::Other(e.to_string()))?;
+    index
+        .set_version(source.version())
+        .map_err(|e| GitError::Other(e.to_string()))?;
+    for entry in source.iter() {
+        index
+            .add(&entry)
+            .map_err(|e| GitError::Other(e.to_string()))?;
+    }
+    if let Some(tree_oid) = reword_tree {
+        let tree = repo
+            .find_tree(tree_oid)
+            .map_err(|e| GitError::Other(e.to_string()))?;
+        index
+            .read_tree(&tree)
+            .map_err(|e| GitError::Other(e.to_string()))?;
+        // read_tree drops extended flags even on unchanged entries. Merge the
+        // two raw-path-sorted entry streams to restore the matching metadata.
+        let mut originals = source.iter().peekable();
+        for position in 0..index.len() {
+            let current = index
+                .get(position)
+                .ok_or_else(|| GitError::Other("private commit index entry disappeared".into()))?;
+            while originals
+                .peek()
+                .is_some_and(|entry| entry.path < current.path)
+            {
+                originals.next();
+            }
+            if let Some(entry) = originals.peek() {
+                if entry.path == current.path
+                    && entry.id == current.id
+                    && entry.mode == current.mode
+                    && entry.flags & 0x3000 == 0
+                {
+                    index
+                        .add(entry)
+                        .map_err(|e| GitError::Other(e.to_string()))?;
+                }
+            }
+        }
+    }
+    index.write().map_err(|e| GitError::Other(e.to_string()))
 }
 
 fn verify_git_commit(

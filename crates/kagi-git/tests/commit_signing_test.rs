@@ -23,6 +23,7 @@ fn fixture() -> TempDir {
     git(repo, &["add", "a"]);
     git(repo, &["config", "commit.gpgsign", "true"]);
     git(repo, &["config", "gpg.format", "ssh"]);
+    git(repo, &["config", "gpg.ssh.program", "ssh-keygen"]);
     dir
 }
 
@@ -191,4 +192,48 @@ fn commit_signing_ssh_resolved_merge_is_signed_and_keeps_both_parents() {
         format!("{head} {side}")
     );
     assert!(!repo.join(".git/MERGE_HEAD").exists());
+}
+
+#[test]
+fn commit_signing_hasconfig_include_uses_gits_effective_policy() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let dir = fixture();
+    let repo = dir.path();
+    let included = repo.join(".git/signing-policy");
+    fs::write(&included, "[commit]\n\tgpgsign = false\n").unwrap();
+    git(
+        repo,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://example.invalid/repo.git",
+        ],
+    );
+    git(
+        repo,
+        &[
+            "config",
+            "includeIf.hasconfig:remote.*.url:**.path",
+            included.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(
+        git_output(repo, &["config", "--type=bool", "--get", "commit.gpgsign"]),
+        "false"
+    );
+    let mut backend = Backend::open(repo).unwrap();
+    let op = Operation::Commit {
+        message: "effective unsigned policy".into(),
+    };
+    let plan = backend.plan(&op).unwrap();
+    let report = backend.run_recorded(&op, &plan);
+    report.result.unwrap();
+    assert!(matches!(
+        &report.recording.entry().outcome,
+        OpOutcome::Success { .. }
+    ));
+    assert!(!git_output(repo, &["cat-file", "-p", "HEAD"]).contains("\ngpgsig "));
 }

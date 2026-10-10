@@ -665,24 +665,24 @@ pub(crate) fn execute_amend(
         .map_err(|e| GitError::Other(format!("parent_id failed: {}", e.message())))?;
 
     // ── 4. Resolve the tree ──────────────────────────────────
-    let tree = if mode.includes_staged() {
-        // In-memory tree from the current index — no working-tree write.
-        let mut index = approved_commit_index(repo, plan)?;
-        if index.has_conflicts() {
-            return Err(GitError::Other(
-                "Index has conflicts; resolve them before amending.".to_string(),
-            ));
-        }
-        let tree_oid = index
-            .write_tree_to(repo)
-            .map_err(|e| GitError::Other(format!("index.write_tree_to failed: {}", e.message())))?;
-        repo.find_tree(tree_oid)
-            .map_err(|e| GitError::Other(format!("find_tree failed: {}", e.message())))?
+    let mut index = if mode.includes_staged() {
+        approved_commit_index(repo, plan)?
     } else {
-        // Message-only amend keeps the old HEAD's tree verbatim.
-        head_commit
-            .tree()
-            .map_err(|e| GitError::Other(format!("HEAD tree lookup failed: {}", e.message())))?
+        super::commit::read_commit_index(repo)?
+    };
+    if index.has_conflicts() && mode.includes_staged() {
+        return Err(GitError::Other(
+            "Index has conflicts; resolve them before amending.".into(),
+        ));
+    }
+    let tree_oid = if mode.includes_staged() {
+        index
+            .write_tree_to(repo)
+            .map_err(|e| GitError::Other(format!("index.write_tree_to failed: {}", e.message())))?
+    } else {
+        // The CLI executor loads this tree into its private copy and retains
+        // matching real-index metadata, without including staged content.
+        head_commit.tree_id()
     };
 
     // ── 6. Message ───────────────────────────────────────────
@@ -699,7 +699,14 @@ pub(crate) fn execute_amend(
         head_commit.message().unwrap_or("(no message)").to_string()
     };
 
-    let new_oid = execute_git_commit(repo, tree.id(), &[parent_oid], &new_message, true)?;
+    let new_oid = execute_git_commit(
+        repo,
+        &index,
+        tree_oid,
+        &[parent_oid],
+        &new_message,
+        Some(mode),
+    )?;
 
     Ok(AmendOutcome {
         old: CommitId(head_oid.to_string()),

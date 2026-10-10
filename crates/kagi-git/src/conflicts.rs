@@ -1389,6 +1389,7 @@ fn create_merge_commit(
 
     crate::ops::execute_git_commit(
         repo,
+        index,
         tree_oid,
         &[
             repo.head()
@@ -1398,7 +1399,7 @@ fn create_merge_commit(
             merge_head_oid,
         ],
         &message,
-        false,
+        None,
     )
     .map(|oid| CommitId(oid.to_string()))
 }

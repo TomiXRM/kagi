@@ -296,7 +296,8 @@ often:
   failure stops the push.
 - Read and answer every Codex comment before merge; fix P0/P1 and P2s that can
   cause a wrong write.
-- herdr: `agent prompt` places text, `agent send-keys <pane> enter` sends it.
+- herdr: use mail for assignments and replies; require `[ack]` and `[done]`.
+  No terminal-prompt fallback; see `docs/agents/workflow.md`.
 
 ## Code Review Rules
 

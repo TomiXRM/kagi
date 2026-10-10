@@ -409,7 +409,7 @@ pub struct PullIdentity {
 pub struct TagPushIdentity {
     pub name: String,
     pub remote: String,
-    pub push_url: String,
+    pub push_urls: Vec<String>,
     pub object_oid: String,
     pub peeled_oid: String,
 }

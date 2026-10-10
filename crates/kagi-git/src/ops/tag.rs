@@ -273,13 +273,13 @@ fn resolve_push_tag_identity(
     check_operand("remote", remote)?;
     let transport = run_git(
         repo.workdir().unwrap_or(repo.path()),
-        &["remote", "get-url", "--push", "--", remote],
+        &["remote", "get-url", "--push", "--all", "--", remote],
     )
     .map_err(|e| crate::cli::context("resolve tag push destination", e))?;
     if transport.status != 0 {
         return Err(GitError::Other(transport.stderr.trim().to_string()));
     }
-    let push_url = transport.stdout.trim_end_matches('\n');
+    let push_urls = transport.stdout.lines().map(str::to_owned).collect();
     let reference = repo
         .find_reference(&format!("refs/tags/{name}"))
         .map_err(error)?
@@ -292,7 +292,7 @@ fn resolve_push_tag_identity(
     Ok(kagi_domain::plan::TagPushIdentity {
         name: name.into(),
         remote: remote.into(),
-        push_url: push_url.into(),
+        push_urls,
         object_oid: object_oid.to_string(),
         peeled_oid: peeled_oid.to_string(),
     })
@@ -323,10 +323,12 @@ pub(crate) fn execute_push_tag(repo_path: &Path, plan: &OperationPlan) -> Result
         .tag_push_identity
         .as_ref()
         .ok_or_else(|| GitError::Blocked(Box::new(PlanNote::Tag(TagNote::PushIdentityChanged))))?;
-    check_operand("remote", &approved.push_url)?;
+    let repo = Repository::open(repo_path).map_err(|error| GitError::Other(error.to_string()))?;
+    preflight_push_tag(&repo, plan, &approved.remote, &approved.name)?;
+    check_operand("remote", &approved.remote)?;
     check_operand("tag", &approved.name)?;
     let refspec = format!("{}:refs/tags/{}", approved.object_oid, approved.name);
-    let out = run_git(repo_path, &["push", "--", &approved.push_url, &refspec])
+    let out = run_git(repo_path, &["push", "--", &approved.remote, &refspec])
         .map_err(|e| crate::cli::context("push tag failed", e))?;
     if out.status != 0 {
         return Err(GitError::Other(format!(

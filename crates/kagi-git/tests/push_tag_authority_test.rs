@@ -17,6 +17,8 @@ fn push_tag_authority() {
         "annotated_drift",
         "annotated",
         "happy",
+        "multi",
+        "multi_drift",
     ] {
         let r = repo_with_bare_origin("main");
         let backup = tempfile::TempDir::new().unwrap();
@@ -25,6 +27,26 @@ fn push_tag_authority() {
             &r.local,
             &["remote", "add", "backup", backup.path().to_str().unwrap()],
         );
+        if case.starts_with("multi") {
+            git(
+                &r.local,
+                &[
+                    "config",
+                    "--add",
+                    "remote.origin.pushurl",
+                    r.remote.to_str().unwrap(),
+                ],
+            );
+            git(
+                &r.local,
+                &[
+                    "config",
+                    "--add",
+                    "remote.origin.pushurl",
+                    backup.path().to_str().unwrap(),
+                ],
+            );
+        }
         if case.starts_with("annotated") {
             git(
                 &r.local,
@@ -41,6 +63,10 @@ fn push_tag_authority() {
         };
         let plan = backend.plan(&op).unwrap();
         let identity = plan.tag_push_identity.as_ref().unwrap();
+        assert_eq!(
+            identity.push_urls.len(),
+            if case.starts_with("multi") { 2 } else { 1 }
+        );
         assert_eq!(identity.object_oid, approved);
         assert_eq!(
             identity.peeled_oid,
@@ -98,6 +124,17 @@ fn push_tag_authority() {
                     ],
                 );
             }
+            "multi_drift" => {
+                git(
+                    &r.local,
+                    &[
+                        "config",
+                        "--unset-all",
+                        "remote.origin.pushurl",
+                        backup.path().to_str().unwrap(),
+                    ],
+                );
+            }
             _ => {}
         }
         let receipts_before = kagi_git::oplog::read_oplog_tail(100).len();
@@ -109,7 +146,10 @@ fn push_tag_authority() {
             receipts_before + 1,
             "{case}: exactly one receipt"
         );
-        if matches!(case, "remote" | "object" | "url" | "annotated_drift") {
+        if matches!(
+            case,
+            "remote" | "object" | "url" | "annotated_drift" | "multi_drift"
+        ) {
             let error = result.expect_err("stale approval must be refused");
             assert_eq!(
                 error.blocker(),
@@ -138,9 +178,21 @@ fn push_tag_authority() {
                     .is_ok());
             }
         }
-        assert!(
-            backup_repo.find_reference("refs/tags/release").is_err(),
-            "{case}: backup unchanged"
-        );
+        if case == "multi" {
+            assert_eq!(
+                backup_repo
+                    .find_reference("refs/tags/release")
+                    .unwrap()
+                    .target()
+                    .unwrap()
+                    .to_string(),
+                approved
+            );
+        } else {
+            assert!(
+                backup_repo.find_reference("refs/tags/release").is_err(),
+                "{case}: backup unchanged"
+            );
+        }
     }
 }

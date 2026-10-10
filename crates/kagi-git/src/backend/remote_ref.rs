@@ -492,7 +492,7 @@ impl Backend {
             ("push-tag", _) => {
                 let approved = plan.tag_push_identity.as_ref()?;
                 Some(RemoteExpectation::Ref {
-                    remote: approved.push_url.clone(),
+                    remote: approved.remote.clone(),
                     refname: format!("refs/tags/{}", approved.name),
                     expect: RemoteExpect::Oid(approved.object_oid.clone()),
                 })

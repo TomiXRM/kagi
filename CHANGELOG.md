@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Discard の file→symlink 型変更に、`core.ignorecase=false`（Linux の通常設定、macOS で明示設定した場合も含む）では外部 symlink target を切り詰め、index の内容で上書きし得る潜在的なデータ損失の不具合がありました。全 backup ref の保存後、承認済み entry の型が index と異なる場合は symlink 自体を unlink してから復元するよう修正しました。型・link target bytes・regular content を古い stat-cache に依存せず検証し、実 index・未選択ファイル・外部 target・一件の receipt を保持する backend 回帰を追加しました。(PR #1157 Linux CI follow-up)
 - Discard の backup ref は一件の tree entry に mode（120000／100644／100755）と内容を保持し、symlink の target を lossy UTF-8 に変換せず生の bytes で保存します。外部 target を読み書きせず、Git の tree export で dangling／非 UTF-8 target／tracked typechange も元の型へ回復できる backend 回帰を追加しました。既存の blob ref は従来どおり読め、oplog の blob OID・表示契約・一件の receipt は維持します。Kagi 内の file-backup 復元 UI／executor は追加していません。(#1138)
 - Discard backup の executable mode は Git と同じ owner-execute bit だけで判定し、`core.fileMode=false` の場合は index の mode を保持します。group-only executable と両方向の mode 差替えを回帰で検証し、既存の linked-worktree native 試験も tree entry の mode・blob・内容を検証する形へ更新しました。(#1138 review)
 - Commit／Amend／解決済み MergeCommit と user-visible libgit2 writer は実行と同じ Git CLI で作者・コミッターの identity を確認し、未設定なら user.name／user.email の設定を促す EN／JA の blocker を表示します。承認後も再確認し、checkout 前に identity を確定するため途中変更を残しません。user commit には仮 identity を使わず、内部の `refs/kagi/` snapshot／savepoint／backup だけは専用の application identity で identity 未設定でも復旧情報を保持します。ruleset の作者 email も Git の有効な identity を使い、backend fixture の identity は repo-local に明示します。

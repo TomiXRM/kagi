@@ -69,10 +69,13 @@ with an in-memory index; the real index is never written. After every backup
 is pinned, a worktree entry whose type differs from the selected index entry
 is unlinked before forced checkout (respecting `core.symlinks=false` emulation).
 This is required even with `force()`: libgit2's empty-baseline checkout treats
-these entries as additions, and its regular-file writer only removes an existing
-destination automatically when `core.ignorecase=true`. On case-sensitive
-filesystems it otherwise opens through an existing symlink and truncates its
-target. No recursive deletion is used.
+these entries as additions. A 100644 regular-file target gets UPDATE_BLOB
+without REMOVE; 100755 and LINK targets also get REMOVE. The regular-file
+writer only removes an existing destination automatically when
+`core.ignorecase=true`. With `core.ignorecase=false` (Linux's usual default,
+or explicitly configured on macOS), it otherwise opens through an existing
+symlink, truncates its target, and overwrites it with the index blob content.
+No recursive deletion is used.
 
 Verification reads directory-entry metadata and exact symlink target bytes,
 not the real index's potentially stale status/stat cache. Regular content is

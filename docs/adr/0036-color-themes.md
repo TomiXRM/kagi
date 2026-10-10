@@ -66,6 +66,7 @@ and status/destructive tinted actions are unchanged.
 not inferred from `color_branch`. Built-ins meet 4.5:1 on their body `bg_base`.
 Apple Light uses `#0066cc`; already-legible dark themes keep their prior colour.
 Other insufficient body-link shades change only this token, never the ref-chip
-or Primary palette. Custom themes inherit or explicitly override `link`; full
-standalone files require it. Existing TextView underlining, activation and
-selection remain unchanged. See [the body-link guide](../themes.md#body-links).
+or Primary palette. Custom themes inherit or explicitly override `link`; a
+standalone file that omits it defaults to its own `color_branch` for compatibility
+with pre-link files. Existing TextView underlining, activation and selection
+remain unchanged. See [the body-link guide](../themes.md#body-links).

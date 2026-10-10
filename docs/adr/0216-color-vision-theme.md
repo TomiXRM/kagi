@@ -64,7 +64,9 @@ diff 行の背景は deutan で ΔE 4.3 — 見分けられない。
 
 The shared branch/success blue and remote/blocker orange are palette choices,
 not instructions to use status-tinted conflict side buttons. Callers choose an
-explicit `ButtonRole`: Keep Current remains filled Primary (like Create
-Branch), Take Incoming remains filled Info, while success and destructive
-actions retain their tint. All colours and colour-difference assertions in this
-ADR remain unchanged.
+explicit `ButtonRole`: Color Vision's Keep Current changes from tinted to filled
+Primary (like Create Branch), and Take Incoming / Keep File change from tinted
+to filled Info. In 11 of the other 12 built-ins, Incoming was also tinted due to
+remote=success and now becomes filled Info; Color Vision's collision is
+remote=blocker. Success and destructive actions retain their tint. All palette
+colours and colour-difference assertions in this ADR remain unchanged.

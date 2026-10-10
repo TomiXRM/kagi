@@ -36,7 +36,9 @@
 
 The flat RGB schema now includes `link` for body-link foreground. `extends`
 inherits it independently of `color_branch`; overriding the filled accent does
-not change body links. Standalone complete files require `link`, just like the
-other RGB fields. Explicit custom colours remain authoritative; the 4.5:1
-body-background regression applies to built-in palettes, not a new custom-file
-contrast rejection policy.
+not change body links. For backward compatibility, a standalone file without
+`extends` may omit `link`; it defaults to that file's own `color_branch`, retaining
+the pre-link foreground rather than rejecting a previously valid file. An
+explicit `link` overrides that default. Explicit custom colours remain
+authoritative; the 4.5:1 body-background regression applies to built-in palettes,
+not a new custom-file contrast rejection policy.

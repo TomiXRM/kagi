@@ -56,8 +56,10 @@ A theme file is one JSON object.
   theme cannot extend another custom theme.
 - Every other key is a token from the [token reference](#token-reference) below,
   spelled exactly as listed.
-- **Without `extends`, every token is required** (all keys in the table,
-  including `dark`, all ten `syntax` keys, `lane_hsl` and `term_selection`).
+- **Without `extends`, every token except `link` is required** (including
+  `dark`, all ten `syntax` keys, `lane_hsl` and `term_selection`). An omitted
+  `link` defaults to that file's own `color_branch`, preserving standalone
+  themes written before the independent link token.
 - With `extends`, any subset of tokens may be given. `syntax` may list only the
   code colours you want to change; the rest come from the parent.
 
@@ -188,7 +190,7 @@ themes and kagi itself keep working — when it:
 - is not a single valid JSON object;
 - has a key that is not `slug`, `name`, `extends` or a token below (also inside
   `syntax` and `term_selection`) — typos are errors, not ignored;
-- misses `slug` or `name`, or (without `extends`) misses any token;
+- misses `slug` or `name`, or (without `extends`) misses any token except `link`;
 - has a value of the wrong type, a colour that is not `#rrggbb`, a `lane_hsl`
   that is not exactly 8 triples, a number outside `0`–`1`, or an `alpha`
   outside `0`–`255`;
@@ -221,8 +223,15 @@ handling to the pinned gpui-component Button. No new control is introduced.
 | `Neutral` | `text_sub` | Ghost (Keep Both / paging / external raw-side action). |
 | `NeutralTinted` | `text_sub` | Neutral tinted chip (editor navigation / external editor action). |
 
+Before #1079, Take Incoming / Keep File were tinted in 11 of the 13 built-ins
+because `color_remote == color_success`. Color Vision also tinted those buttons
+because `color_remote == color_blocker`, and tinted Keep Current because
+`color_branch == color_success`. They now become filled Info and filled Primary,
+respectively; this is an intentional presentation change, not preservation of
+the previous tinted appearance. The palette values themselves are unchanged.
+
 These are dense conflict/tool/action-row controls, keeping their current sizes;
-the reference is Kagi's existing Apple-theme filled side choice versus tinted
+the reference is Apple Light's existing filled Current choice versus tinted
 Stage/Discard, not a new palette. Rest, hover, pressed, focus-visible and disabled
 remain the native Button states; side choices have no selected/loading/error
 state of their own. Existing gates, handlers and plan/confirm safety flow remain.
@@ -245,8 +254,10 @@ including Apple Dark, keep their prior link colour. Latte, One Light, Pinky Boo,
 Flower Road and IBM PC also have a separately readable link shade.
 
 Custom themes inherit `link` with `extends`, or set `"link": "#rrggbb"` explicitly.
-Changing only `color_branch` no longer changes body links. A standalone complete
-theme must supply `link`; choose it against your actual body background, since
+Changing only `color_branch` on an inherited theme no longer changes body links.
+For a standalone theme without `extends`, an omitted `link` defaults to the
+file's own `color_branch` to preserve legacy files; explicitly supplying `link`
+separates the two roles. Choose it against your actual body background, since
 explicit custom colours are not silently corrected. Underlining, activation,
 selection tint, typography and geometry are unchanged. Reference: macOS body
 links, not filled ref chips; required rest/selection states keep the existing

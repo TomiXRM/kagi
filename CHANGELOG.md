@@ -7,9 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
-- 本文リンクの `link` token を ref／Primary の塗り色から分離しました。Apple Light の Issue composer preview／Issue・PR 本文リンクは白地で読みやすい青になり、全組み込みテーマで 4.5:1 以上の contrast を保ちます。既に読める Dark の色、ref chip・Primary palette、下線・選択・リンク操作は維持します。自作テーマでは `link` を継承または明示できます。(#1077)
+- 本文リンクの `link` token を ref／Primary の塗り色から分離しました。Apple Light の Issue composer preview／Issue・PR 本文リンクは白地で読みやすい青になり、全組み込みテーマで 4.5:1 以上の contrast を保ちます。既に読める Dark の色、ref chip・Primary palette、下線・選択・リンク操作は維持します。自作テーマでは `link` を継承または明示できます。`extends` のない旧 standalone file で `link` を省略した場合は、その file 自身の `color_branch` を使って従来の配色と読込を維持します。(#1077)
 - Conflict の Take Incoming／Keep File の背景色を全テーマの `color_remote` に合わせました。Apple Light の Incoming pane／marker と同じ緑を使い、文字・hover・押下も Kagi の theme bridge で読みやすく導出します。status／破壊的操作の色は変更しません。(#1078)
-- Conflict の Keep Current／Take Incoming は色値の一致ではなく操作 role で filled Primary／Info を選ぶようにしました。Color Vision と同色を共有する自作テーマでも、Stage／警告／破壊的操作の tint と側選択の階層が混同されません。既存の色覚対応 palette と安全フローは維持します。(#1079)
+- Conflict の Keep Current／Take Incoming は色値の一致ではなく操作 role で filled Primary／Info を選ぶようにしました。従来は13個中11個の組み込みテーマで remote=success の一致により Take Incoming／Keep File が tint になり、Color Vision でも remote=blocker／branch=success により Incoming と Keep Current が tint でした。これらを filled Info／Primary に変更し、Stage／警告／破壊的操作の tint と側選択の階層を分離します。既存の色覚対応 palette と安全フローは維持します。(#1079)
 - 外部 filter の拒否は内容を取り込む Stage と index から復元する Discard に限定し、filter 対象の削除 Stage（単体・一括）と untracked file の raw backup→Discard は維持します。無効化した sparse-checkout の残存設定・patterns と別 worktree の patterns は Sync を妨げず、手動 skip-worktree entry と Sync の filter 拒否には専用の EN／JA 案内を表示します。(#1136／#1137 review)
 - Sync to remote は HEAD の強制 checkout 前に、cone／non-cone sparse-checkout、未初期化／dirty submodule、変更対象の LFS／外部 filter を plan・preflight で EN／JA の理由付きで拒否します。incoming tree の `.gitattributes` と承認後の設定変更も確認し、backup ref・index・作業ファイルを書き換えません。通常 repo の保全と非 HEAD branch の ref-only Sync は維持します。(#1137)
 - Stage（単体・一括・hunk）と Discard は外部 filter 属性を持つ path を書込み前に EN／JA の理由で拒否します。LFS pointer を生の作業ファイルで置換せず、`.gitattributes`／`.git/info/attributes` と `diff=lfs`／`merge=lfs` も確認します。git-lfs や任意の clean／smudge command は実行せず、Git での操作を案内します。HEAD／index の内容だけを使う Unstage は維持します。(#1136)

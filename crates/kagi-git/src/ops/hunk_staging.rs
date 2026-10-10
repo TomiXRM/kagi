@@ -70,10 +70,10 @@ pub(crate) fn preflight_hunk<'a>(
         .ok_or_else(|| hunk_changed(plan.path))?;
     let mut approved_hunk = None;
     for hunk in 0..patch.num_hunks() {
-        if crate::diff::patch_hunk_approval(&patch, hunk)? == plan.approved {
-            if approved_hunk.replace(hunk).is_some() {
-                return Err(hunk_changed(plan.path));
-            }
+        if crate::diff::patch_hunk_approval(&patch, hunk)? == plan.approved
+            && approved_hunk.replace(hunk).is_some()
+        {
+            return Err(hunk_changed(plan.path));
         }
     }
     let approved_hunk = approved_hunk.ok_or_else(|| hunk_changed(plan.path))?;

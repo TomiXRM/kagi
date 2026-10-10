@@ -36,8 +36,8 @@ pub(crate) fn render_smart_commit_modal(
                 let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
                     this.cancel_smart_modal(cx);
                 });
-                let confirm = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-                    this.confirm_smart_consent(cx);
+                let confirm = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+                    this.confirm_smart_consent(window, cx);
                 });
                 let mut lines_col = div().flex().flex_col().gap_1();
                 for line in smart_commit::CONSENT_LINES {

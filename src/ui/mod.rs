@@ -2966,7 +2966,7 @@ impl KagiApp {
             M::Clone(_) => self.start_clone(cx),
             M::Update(_) => {}
             M::SmartCommit(smart_commit::SmartCommitModal::Consent) => {
-                self.confirm_smart_consent(cx)
+                self.confirm_smart_consent(window, cx)
             }
             M::SmartCommit(smart_commit::SmartCommitModal::ModelPicker { .. }) => {
                 self.confirm_smart_model(window, cx)

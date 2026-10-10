@@ -129,3 +129,15 @@ adding rows never generates. Full names remain in AX when visual text truncates.
 The initiating session owns consent and model confirmation: a background or
 closed owner's modal must not apply a draft to the active tab.
 
+
+## Amendment — 2026-10-11: empty-model fallback (#1082)
+
+An empty accepted model list runs the existing owner-bound `smart_suggest`
+once, both from Generate and after first-time consent. Only successful draft
+insertion reports “No local models found — rule-based draft inserted”, through
+EN/JA `Msg`; there is no generation HTTP request and no empty picker.
+Consent carries its initiating session through confirmation; departure cannot
+redirect insertion to another tab. An explicit rule-based suggestion advances
+the panel's existing generation revision and clears a pending draft, preventing
+an older LLM completion from applying a second result.
+

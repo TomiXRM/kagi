@@ -223,3 +223,197 @@ pub fn keyboard(cx: &mut VisualTestAppContext) {
         unmount(cx, app, window);
     }
 }
+
+pub fn empty(cx: &mut VisualTestAppContext) {
+    use kagi_ui_core::i18n::{self, Lang};
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["smart_commit_llm_enabled", "lang"]);
+    let language = i18n::lang();
+    for lang in [Lang::En, Lang::Ja] {
+        i18n::set_lang(lang);
+        let server = Ollama::new(&[]);
+        let fixture = build_fixture();
+        std::fs::write(fixture.path().join("smart.txt"), "staged fixture\n").unwrap();
+        git(fixture.path(), &["add", "smart.txt"]);
+        let repo = fixture.path().canonicalize().unwrap();
+        let backend = kagi_git::Backend::open(&repo).unwrap();
+        let expected = kagi_git::message_gen::rule_based(
+            &kagi_git::message_gen::GenInput {
+                diff: String::new(),
+                lang: if lang == Lang::Ja {
+                    kagi_git::message_gen::Lang::Ja
+                } else {
+                    kagi_git::message_gen::Lang::En
+                },
+                style: kagi_git::message_gen::Style::Plain,
+                want_body: true,
+            },
+            &backend.collect_staged_files(),
+        );
+        let (app, window) = mount(cx, &repo);
+        app.update(cx, |app, cx| {
+            kagi::ui::e2e::open_local_panel_no_inputs(app, repo.clone(), cx);
+            app.smart_commit.provider = kagi::ui::smart_commit::SmartProvider::Ollama;
+            app.smart_commit.model = None;
+            app.smart_commit.detected_models =
+                kagi_git::message_gen::ollama_list_models(&server.host);
+            assert!(app.smart_commit.detected_models.is_empty());
+            app.smart_commit.lang = if lang == Lang::Ja {
+                kagi_git::message_gen::Lang::Ja
+            } else {
+                kagi_git::message_gen::Lang::En
+            };
+        });
+        // Both first-time consent and already-enabled retry replace a nonempty draft.
+        for consent in [true, false] {
+            app.update(cx, |app, cx| {
+                app.smart_commit.llm_enabled = !consent;
+                app.ui()
+                    .commit_panel
+                    .clone()
+                    .unwrap()
+                    .update(cx, |panel, _| {
+                        panel.state.commit_msg = "existing draft must be replaced".to_string();
+                    });
+            });
+            let revision = cx.read(|cx| {
+                app.read(cx)
+                    .ui()
+                    .commit_panel
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .gen
+            });
+            cx.update_window(window, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    app.smart_generate(app.active_session().unwrap(), window, cx)
+                });
+            })
+            .unwrap();
+            if consent {
+                assert!(cx.read(|cx| app.read(cx).smart_commit_modal().is_some()));
+                paint(cx, window);
+                press(cx, window, "enter");
+            }
+            cx.read(|cx| {
+                let state = app.read(cx);
+                assert!(state.smart_commit_modal().is_none());
+                assert_eq!(
+                    state.ui().commit_panel.as_ref().unwrap().read(cx).gen,
+                    revision.wrapping_add(1),
+                    "one request inserts exactly one fallback draft"
+                );
+                assert_eq!(
+                    state
+                        .ui()
+                        .commit_panel
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .state
+                        .commit_msg,
+                    expected,
+                    "empty-model fallback must actually replace the draft"
+                );
+                assert_eq!(
+                    state.ui().smart_commit_status.as_deref(),
+                    Some(if lang == Lang::Ja {
+                        "ローカルモデルがありません — ルールベースの下書きを挿入しました"
+                    } else {
+                        "No local models found — rule-based draft inserted"
+                    })
+                );
+            });
+            assert!(
+                server.generated.lock().is_empty(),
+                "empty fallback sends no generation request"
+            );
+        }
+        // A rule-based fallback supersedes a previously pending LLM response.
+        let timer = cx.background_executor.clone();
+        kagi::ui::e2e::queue_smart_generation(cx.background_executor.spawn(async move {
+            timer.timer(std::time::Duration::from_secs(1)).await;
+            Some(("old LLM response must not reapply".to_string(), true))
+        }));
+        app.update(cx, |app, _| {
+            app.smart_commit.model = Some("previous-model".to_string())
+        });
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                let owner = app.active_session().unwrap();
+                app.smart_generate(owner, window, cx);
+                app.smart_commit.model = None;
+                app.smart_generate(owner, window, cx);
+            });
+        })
+        .unwrap();
+        cx.advance_clock(std::time::Duration::from_secs(1));
+        cx.run_until_parked();
+        cx.read(|cx| {
+            assert_eq!(
+                app.read(cx)
+                    .ui()
+                    .commit_panel
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .state
+                    .commit_msg,
+                expected,
+                "a superseded generation cannot double-apply over the rule-based fallback"
+            )
+        });
+        // A departed consent owner must not replace the background or active draft.
+        app.update(cx, |app, _| app.smart_commit.llm_enabled = false);
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                app.smart_generate(app.active_session().unwrap(), window, cx)
+            });
+        })
+        .unwrap();
+        let owner = cx.read(|cx| app.read(cx).active_session().unwrap());
+        let panel_a = cx.read(|cx| app.read(cx).ui().commit_panel.clone().unwrap());
+        let other = build_fixture();
+        app.update(cx, |app, cx| {
+            assert!(app.open_repository(other.path().canonicalize().unwrap(), cx));
+            kagi::ui::e2e::open_local_panel_no_inputs(
+                app,
+                other.path().canonicalize().unwrap(),
+                cx,
+            );
+            app.ui()
+                .commit_panel
+                .clone()
+                .unwrap()
+                .update(cx, |panel, _| {
+                    panel.state.commit_msg = "B draft".to_string()
+                });
+        });
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                app.smart_generate(owner, window, cx);
+                app.confirm_smart_consent(window, cx);
+            });
+        })
+        .unwrap();
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert_eq!(
+                state
+                    .ui()
+                    .commit_panel
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .state
+                    .commit_msg,
+                "B draft"
+            );
+            assert!(state.ui().smart_commit_status.is_none());
+            assert_eq!(panel_a.read(cx).state.commit_msg, expected);
+        });
+        drop(panel_a);
+        unmount(cx, app, window);
+    }
+    i18n::set_lang(language);
+}

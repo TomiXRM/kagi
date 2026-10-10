@@ -1253,6 +1253,10 @@ mod macos {
                 Box::new(crate::smart_picker::keyboard),
             ),
             (
+                "smart_picker_empty",
+                Box::new(crate::smart_picker::empty),
+            ),
+            (
                 "update_install_lifecycle",
                 Box::new(crate::recovery_operations::scenario_update_install_lifecycle),
             ),

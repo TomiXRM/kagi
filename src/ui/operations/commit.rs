@@ -379,19 +379,19 @@ impl KagiApp {
         owner: crate::app::SessionId,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         // Owner only, not the full mutation seam: composing a draft message
         // writes no repository state, so it is on the seam's allow list even
         // while the panes are revalidating (#722 P2).
         if self.active_session() != Some(owner) {
-            return;
+            return false;
         }
         // #476: the draft describes what is staged in the PANEL's repository.
         // (ADR-0107: the tab's own panel still borrows the per-tab RepoSession
         // rather than re-opening — that is what `with_commit_panel_repo` does.)
         let Some(files) = self.with_commit_panel_repo(cx, |repo| repo.collect_staged_files())
         else {
-            return;
+            return false;
         };
         // ADR-0134: the template mode that used to select Conventional Commits
         // is gone, so generated subjects are plain prose. The panel now always
@@ -406,9 +406,21 @@ impl KagiApp {
         if std::env::var("KAGI_SMART_SUGGEST").as_deref() == Ok("1") {
             klog!("smart-suggest: {}", msg);
         }
+        // This explicit suggestion supersedes a pending LLM draft on the same
+        // panel, so its later completion cannot apply a second draft.
+        if let Some(panel) = self.ui().commit_panel.clone() {
+            panel.update(cx, |panel, _| {
+                panel.gen = panel.gen.wrapping_add(1);
+                panel.pending_smart_msg = None;
+            });
+        }
         self.smart_commit_set_msg(&msg, window, cx);
-        self.with_ui(|ui| ui.set_smart_commit_status("Rule-based suggestion inserted"));
+        self.with_ui(|ui| {
+            ui.smart_commit_generating = false;
+            ui.set_smart_commit_status(Msg::SmartRuleBasedInserted.t());
+        });
         cx.notify();
+        true
     }
 
     /// "Generate with Local LLM" button.
@@ -433,6 +445,9 @@ impl KagiApp {
             self.smart_suggest(owner, window, cx);
             return;
         }
+        // A fresh Generate request owns any replacement consent/picker, even
+        // when an earlier tab's presentation is still awaiting dismissal.
+        self.smart_model_focus.owner = Some(owner);
         // Gate 1: first-time consent.
         if !self.smart_commit.llm_enabled {
             self.set_smart_commit_modal(smart_commit::SmartCommitModal::Consent);
@@ -446,21 +461,26 @@ impl KagiApp {
             smart_commit::SmartProvider::Ollama
         ) && self.smart_commit.model.is_none()
         {
-            self.open_smart_model_picker(cx);
+            self.open_smart_model_picker(owner, window, cx);
             return;
         }
         self.run_smart_generation(window, cx);
     }
 
     /// Show the model picker, listing the detected models (`/api/tags`).
-    fn open_smart_model_picker(&mut self, cx: &mut Context<Self>) {
+    fn open_smart_model_picker(
+        &mut self,
+        owner: crate::app::SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let models = self.smart_commit.detected_models.clone();
         if models.is_empty() {
-            // No models installed → nothing to pick; fall back quietly.
-            self.with_ui(|ui| {
-                ui.set_smart_commit_status("No local models found — using rule-based")
-            });
-            cx.notify();
+            // A completed-action message is only shown after the existing
+            // owner-bound suggestion path has actually inserted the draft.
+            if self.smart_suggest(owner, window, cx) {
+                self.with_ui(|ui| ui.set_smart_commit_status(Msg::SmartNoModelsInserted.t()));
+            }
             return;
         }
         self.set_smart_commit_modal(smart_commit::SmartCommitModal::ModelPicker { models });
@@ -468,9 +488,12 @@ impl KagiApp {
     }
 
     /// Consent dialog confirmed: enable LLM, then proceed to model selection.
-    pub fn confirm_smart_consent(&mut self, cx: &mut Context<Self>) {
-        if self.smart_model_focus.owner.is_none()
-            || self.smart_model_focus.owner != self.active_session()
+    pub fn confirm_smart_consent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(owner) = self.smart_model_focus.owner else {
+            self.cancel_smart_modal(cx);
+            return;
+        };
+        if Some(owner) != self.active_session()
             || !matches!(
                 self.smart_commit_modal(),
                 Some(smart_commit::SmartCommitModal::Consent)
@@ -484,7 +507,7 @@ impl KagiApp {
         klog!("smart-commit: llm enabled (consent given)");
         // Move on to picking a model (always confirm at least once per ADR).
         if self.smart_commit.model.is_none() {
-            self.open_smart_model_picker(cx);
+            self.open_smart_model_picker(owner, window, cx);
         } else {
             cx.notify();
         }

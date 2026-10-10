@@ -120,11 +120,11 @@ fn sparse_blocker(repo: &Repository) -> Result<Option<PlanNote>, GitError> {
         git2::IndexEntryExtendedFlag::from_bits_truncate(entry.flags_extended)
             .contains(git2::IndexEntryExtendedFlag::SKIP_WORKTREE)
     });
-    Ok(skip_worktree.then(|| {
-        PlanNote::Common(CommonNote::SparseCheckoutUnsupported {
+    Ok(
+        skip_worktree.then_some(PlanNote::Common(CommonNote::SparseCheckoutUnsupported {
             kind: SparseCheckoutKind::SkipWorktree,
-        })
-    }))
+        })),
+    )
 }
 
 fn submodule_blockers(repo: &Repository, blockers: &mut Vec<PlanNote>) -> Result<(), GitError> {

@@ -229,9 +229,15 @@ impl Backend {
             Operation::Commit { .. } | Operation::MergeCommit { .. } => {
                 ops::preflight_commit(&self.repo, plan)
             }
-            Operation::Amend { mode, .. } if mode.includes_staged() => {
-                ops::preflight_amend(&self.repo, plan)
-            }
+            Operation::Amend { .. } => ops::preflight_amend(&self.repo, plan),
+            Operation::MergeBranch { .. }
+            | Operation::MergeIntoConflict { .. }
+            | Operation::MergeIntoBranch { .. }
+            | Operation::Pull
+            | Operation::CherryPick { .. }
+            | Operation::Revert { .. }
+            | Operation::StashPush { .. }
+            | Operation::SyncToRemote { .. } => ops::check_git_identity(&self.repo),
             _ => Ok(()),
         })
         .and_then(|()| {

@@ -1077,6 +1077,7 @@ const ROW_H: f32 = 24.0;
 pub fn render_pr_mode(
     app: &mut KagiApp,
     panel: Option<gpui::AnyElement>,
+    window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let has_tab = app.pr_mode().is_some_and(|m| m.active.is_some());
@@ -1102,7 +1103,7 @@ pub fn render_pr_mode(
         .h_full()
         .flex()
         .flex_col()
-        .child(render_center(app, cx))
+        .child(render_center(app, window, cx))
         .child(super::e2e::measure_inside("pr-mode-center-pane"));
     let center = match panel {
         None => center.into_any_element(),
@@ -1200,7 +1201,11 @@ pub(super) fn focus_border<E: gpui::Styled>(el: E, focused: bool) -> E {
 }
 
 // ── Center: header + view tabs + commits + body ──────────────
-fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+fn render_center(
+    app: &mut KagiApp,
+    window: &mut gpui::Window,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
     let active: Option<usize> = app.pr_mode().and_then(|m| m.active);
     // No tab strip: the left PR list already highlights the active PR and
     // switching is one click there, so a second row of #N chips was pure
@@ -1747,7 +1752,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
     col.child(content)
         .children(
             show_feed
-                .then(|| super::pr_page::render_composer(app, cx))
+                .then(|| super::pr_page::render_composer(app, window, cx))
                 .flatten(),
         )
         .into_any_element()

@@ -192,3 +192,35 @@ modal!(trust_repo, trust_repo_modal, |f, app, window, cx| {
         })
     });
 });
+
+modal!(
+    trust_repo_save_error,
+    trust_repo_modal,
+    |f, app, window, cx| {
+        let store =
+            PathBuf::from(std::env::var("KAGI_LOG_DIR").unwrap()).join("trusted_repos.json");
+        let original = std::fs::read(&store).ok();
+        if store.is_file() {
+            std::fs::remove_file(&store).unwrap();
+        }
+        std::fs::create_dir(&store).unwrap();
+        app.update(cx, |app, cx| {
+            app.set_trust_repo_modal(TrustRepoModal {
+                repo_path: f.repo.clone(),
+                error: None,
+            });
+            // Use the production save-stage formatter and the real directory-store
+            // I/O error rather than reproducing either string in the inventory.
+            app.confirm_trust_repo(cx);
+        });
+        std::fs::remove_dir(&store).unwrap();
+        if let Some(original) = original {
+            std::fs::write(&store, original).unwrap();
+        }
+        assert!(cx.read(|cx| app
+            .read(cx)
+            .trust_repo_modal()
+            .and_then(|modal| modal.error.as_ref())
+            .is_some()));
+    }
+);

@@ -25,6 +25,7 @@ pub const DRACULA: Theme = Theme {
 
     color_head: 0xff79c6,   // pink
     color_branch: 0xbd93f9, // purple
+    link: 0xbd93f9,
     selection_tint: 0xbd93f9,
     color_remote: 0x50fa7b, // green
     color_tag: 0xffb86c,    // orange

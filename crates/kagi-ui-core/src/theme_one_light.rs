@@ -25,6 +25,7 @@ pub const ONE_LIGHT: Theme = Theme {
 
     color_head: 0xe45649,   // red
     color_branch: 0x4078f2, // blue
+    link: 0x3068e2,         // deepen body text without changing ref/Primary fill
     selection_tint: 0x4078f2,
     color_remote: 0x50a14f, // green
     color_tag: 0xc18401,    // amber

@@ -61,6 +61,7 @@ pub const FLOWER_ROAD: Theme = Theme {
     // stays deep so HEAD still separates from the branches around it.
     color_head: 0x6f204b,   // deepest — HEAD is the anchor
     color_branch: 0xd698ba, // the supplied pink, verbatim
+    link: 0x9b467d,         // deepen only body-link foreground, not the supplied pink accent
     // Not the pink accent: at 30% over a context line that lands 12 (channel
     // sum) from `diff_removed_bg`, so selecting a context line in a diff looked
     // exactly like a removed line. The palette's olive is the one label colour

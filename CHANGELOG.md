@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- 本文リンクの `link` token を ref／Primary の塗り色から分離しました。Apple Light の Issue composer preview／Issue・PR 本文リンクは白地で読みやすい青になり、全組み込みテーマで 4.5:1 以上の contrast を保ちます。既に読める Dark の色、ref chip・Primary palette、下線・選択・リンク操作は維持します。自作テーマでは `link` を継承または明示できます。`extends` のない旧 standalone file で `link` を省略した場合は、その file 自身の `color_branch` を使って従来の配色と読込を維持します。(#1077)
+- Conflict の Take Incoming／Keep File の背景色を全テーマの `color_remote` に合わせました。Apple Light の Incoming pane／marker と同じ緑を使い、文字・hover・押下も Kagi の theme bridge で読みやすく導出します。status／破壊的操作の色は変更しません。(#1078)
+- Conflict の Keep Current／Take Incoming は色値の一致ではなく操作 role で filled Primary／Info を選ぶようにしました。従来は13個中11個の組み込みテーマで remote=success の一致により Take Incoming／Keep File が tint になり、Color Vision でも remote=blocker／branch=success により Incoming と Keep Current が tint でした。これらを filled Info／Primary に変更し、Stage／警告／破壊的操作の tint と側選択の階層を分離します。既存の色覚対応 palette と安全フローは維持します。(#1079)
 - Smart Commit のモデル一覧は共有 modal body／window 高さに追従する list 上限を使い、低い window でも Cancel 行へはみ出さないようにしました。fake Ollama の試験専用同期には追加 dependency を使いません。(#1080 review)
 - Smart Commit でローカルモデルが0件の場合、Generate／初回同意の後に既存のルールベース生成を実際に1回実行し、EN／JA で下書きの挿入を報告します。開始した tab 以外には適用せず、以前の LLM 応答による二重適用も防ぎます。(#1082)
 - Smart Commit のモデル選択に1つの list Tab stop、矢印／Home／End／Page key と選択先への scroll、focus ring と AX の選択状態を追加しました。Enter／Space だけでモデルを保存して生成を開始でき、Escape・一覧表示だけでは生成しません。(#1080)

@@ -40,3 +40,33 @@ Xcode Dark / Xcode Light / One Dark / One Light / Monokai(実体は tomixrm Warm
 - 全 UI モジュールの `rgb(CONST)` を `rgb(theme().field)` に置換する大規模だが機械的な変更
 - graph の lane_color / avatar_color(hsla 直計算)も theme の lane 配列・dark 判定に寄せる
 - 将来のユーザー定義テーマ(JSON 読込)は THEMES を Vec 化すれば拡張可能(later)
+
+## Amendment — 2026-10-11: operation roles, not RGB inference (#1079)
+
+The token owner is now `crates/kagi-ui-core/src/theme.rs` and the per-theme
+files. `KagiButton` callers pass an explicit `ButtonRole`: Primary/Current use
+filled Primary, Incoming uses filled Info, success/warning/danger actions use
+the existing translucent tint, neutral actions explicitly choose ghost or the
+editor's neutral tint. Reusing an RGB value across theme tokens cannot alter
+the operation's variant. In particular Color Vision's shared blue/orange
+tokens remain intentional; tinted side choices were an inference bug, not a
+colour-vision design exception. See [the role table](../themes.md#button-operation-roles).
+
+## Amendment — 2026-10-11: own filled Info tokens (#1078)
+
+The bridge maps all four `button_info*` tokens from `color_remote`, not the
+upstream mode preset. The resting fill exactly matches Incoming pane/marker;
+foreground and hover/active use the same contrast-preserving opaque-fill
+derivation as Primary. Generic `info` notices keep their prior branch colour,
+and status/destructive tinted actions are unchanged.
+
+## Amendment — 2026-10-11: independent body-link foreground (#1077)
+
+`Theme.link` is a distinct RGB token copied into gpui-component `colors.link`,
+not inferred from `color_branch`. Built-ins meet 4.5:1 on their body `bg_base`.
+Apple Light uses `#0066cc`; already-legible dark themes keep their prior colour.
+Other insufficient body-link shades change only this token, never the ref-chip
+or Primary palette. Custom themes inherit or explicitly override `link`; a
+standalone file that omits it defaults to its own `color_branch` for compatibility
+with pre-link files. Existing TextView underlining, activation and selection
+remain unchanged. See [the body-link guide](../themes.md#body-links).

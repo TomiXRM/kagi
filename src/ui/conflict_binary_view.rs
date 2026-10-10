@@ -303,10 +303,10 @@ pub fn render_raw_preview(
         let p = path.to_path_buf();
         use gpui_component::Sizable as _;
         col = col.child(
-            super::button_style::KagiButton::accent(
+            super::button_style::KagiButton::styled(
                 SharedString::from("conflict-open-both-external"),
                 SharedString::from(Msg::ConflictOpenBothExternal.t()),
-                theme().text_sub,
+                super::button_style::ButtonRole::Neutral,
                 _cx,
             )
             .small()

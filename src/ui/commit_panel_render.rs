@@ -17,8 +17,7 @@
 use super::commit_panel::CommitPanelView;
 use super::render_helpers::*;
 use super::*;
-use crate::ui::button_style::KagiButton;
-use gpui_component::button::{Button, ButtonVariants};
+use crate::ui::button_style::{ButtonRole, KagiButton};
 use gpui_component::Disableable as _;
 
 // ──────────────────────────────────────────────────────────────
@@ -291,10 +290,10 @@ fn render_cp_file_row(
         });
         file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
     }
-    let (label, accent) = if staged {
-        ("Unstage", theme().color_warning)
+    let (label, role) = if staged {
+        ("Unstage", ButtonRole::Warning)
     } else {
-        ("Stage", theme().color_success)
+        ("Stage", ButtonRole::Success)
     };
     let action_click = cx.listener(move |view, _event: &gpui::ClickEvent, window, cx| {
         if staged {
@@ -304,7 +303,7 @@ fn render_cp_file_row(
         }
     });
     file_row.child(
-        KagiButton::accent((btn_id, fi), label, accent, cx)
+        KagiButton::styled((btn_id, fi), label, role, cx)
             .xsmall()
             .ml_2()
             .flex_shrink_0()
@@ -1212,9 +1211,7 @@ impl CommitPanelView {
         // One Button in both states (`.disabled`), so enabling it does not change
         // the footer's height, and the disabled form still reads as a button
         // rather than blending into the footer background.
-        let commit_btn = Button::new("cp-commit-btn")
-            .label(commit_label)
-            .primary()
+        let commit_btn = KagiButton::styled("cp-commit-btn", commit_label, ButtonRole::Primary, cx)
             .small()
             .mt_1()
             .w_full()

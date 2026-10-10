@@ -25,6 +25,7 @@ pub const PINKY_BOO: Theme = Theme {
 
     color_head: 0xff398d,   // hot pink
     color_branch: 0x47b0e6, // blue
+    link: 0x126997,         // readable blue body foreground; chips retain their vivid blue
     selection_tint: 0x47b0e6,
     color_remote: 0x587c0c, // olive green
     color_tag: 0xd56700,    // orange

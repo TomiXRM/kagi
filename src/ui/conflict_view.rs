@@ -40,7 +40,7 @@ use gpui_component::{Disableable as _, Sizable as _};
 
 use kagi_git::conflicts::{ConflictKind, ConflictStatus, SideLabels};
 
-use super::button_style::{apply_accent, KagiButton};
+use super::button_style::{apply_role, ButtonRole, KagiButton};
 use super::context_menu::{ItemState, MenuGroup, MenuItem};
 use super::i18n::Msg;
 use super::menu_overlay;
@@ -1291,7 +1291,7 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
         .gap_2()
         .child(action_button(
             Msg::ConflictContinue.t(),
-            theme().color_success,
+            ButtonRole::Success,
             can_continue,
             if can_continue {
                 Some(continue_handler)
@@ -1304,7 +1304,7 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
             "conflict-abort",
             action_button(
                 Msg::ConflictAbort.t(),
-                theme().color_blocker,
+                ButtonRole::Danger,
                 true,
                 Some(abort_handler),
                 cx,
@@ -1744,7 +1744,7 @@ fn kind_badge(kind: ConflictKind) -> gpui::AnyElement {
 /// click handler (e.g. the Continue gate).
 fn action_button<H>(
     label: &str,
-    accent: u32,
+    role: ButtonRole,
     enabled: bool,
     handler: Option<H>,
     cx: &gpui::App,
@@ -1757,7 +1757,7 @@ where
         .label(SharedString::from(label))
         .small()
         .disabled(!enabled);
-    btn = apply_accent(btn, accent, cx);
+    btn = apply_role(btn, role, cx);
     if enabled {
         if let Some(h) = handler {
             btn = btn.on_click(h);
@@ -1828,7 +1828,7 @@ fn render_dir_file_center(
             "conflict-keep-directory",
             choose_button(
                 Msg::ConflictKeepDirectory.t().to_string(),
-                theme().color_branch,
+                ButtonRole::SideCurrent,
                 keep_dir,
                 cx,
             )
@@ -1838,7 +1838,7 @@ fn render_dir_file_center(
             "conflict-keep-file",
             choose_button(
                 Msg::ConflictKeepFile.t().to_string(),
-                theme().color_remote,
+                ButtonRole::SideIncoming,
                 keep_file,
                 cx,
             )
@@ -1942,13 +1942,13 @@ fn render_center(
         .border_color(rgb(theme().surface))
         .child(choose_button(
             keep_current_label,
-            theme().color_branch,
+            ButtonRole::SideCurrent,
             keep_current,
             cx,
         ))
         .child(choose_button(
             take_incoming_label,
-            theme().color_remote,
+            ButtonRole::SideIncoming,
             take_incoming,
             cx,
         ));
@@ -1956,7 +1956,7 @@ fn render_center(
     if kind == ConflictKind::Content {
         choose_row = choose_row.child(choose_button(
             keep_both_label,
-            theme().text_sub,
+            ButtonRole::Neutral,
             keep_both,
             cx,
         ));
@@ -1974,14 +1974,14 @@ fn render_center(
         .into_any_element()
 }
 
-fn choose_button<H>(label: String, accent: u32, handler: H, cx: &gpui::App) -> Button
+fn choose_button<H>(label: String, role: ButtonRole, handler: H, cx: &gpui::App) -> Button
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    KagiButton::accent(
+    KagiButton::styled(
         SharedString::from(format!("conflict-choose-{}", label)),
         SharedString::from(label),
-        accent,
+        role,
         cx,
     )
     .small()

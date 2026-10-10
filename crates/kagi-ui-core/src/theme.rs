@@ -80,6 +80,8 @@ pub struct Theme {
     pub text_muted: u32,
     /// Field labels in the detail panel.
     pub text_label: u32,
+    /// Body-link foreground, independent of filled ref/Primary accents.
+    pub link: u32,
 
     // ── Ref / decoration colours ─────────────────────────────────
     pub color_head: u32,
@@ -1020,11 +1022,11 @@ pub fn primary_button_foreground(theme: &Theme) -> u32 {
     filled_button_foreground(theme.color_branch, theme)
 }
 
-fn primary_button_interaction_colors(theme: &Theme, foreground: u32) -> (u32, Hsla, Hsla) {
-    let background = to_hsla(theme.color_branch);
+fn filled_button_interaction_colors(fill: u32, foreground: u32) -> (u32, Hsla, Hsla) {
+    let background = to_hsla(fill);
     // The chosen label, not theme mode, determines which direction preserves
     // contrast: a dark theme can have a dark custom accent with a light label.
-    let light_label = relative_luminance(foreground) > relative_luminance(theme.color_branch);
+    let light_label = relative_luminance(foreground) > relative_luminance(fill);
     let away = if light_label { 0x000000 } else { 0xffffff };
     let toward = away ^ 0xffffff;
     let channels = background.to_rgb();
@@ -1054,9 +1056,7 @@ fn primary_button_interaction_colors(theme: &Theme, foreground: u32) -> (u32, Hs
     // possible; only filled Button needs this stronger accessibility fallback.
     let foreground = if contrast_ratio(u32::from(pressed.to_rgb()) >> 8, foreground) >= 4.5 {
         foreground
-    } else if contrast_ratio(theme.color_branch, 0x000000)
-        >= contrast_ratio(theme.color_branch, 0xffffff)
-    {
+    } else if contrast_ratio(fill, 0x000000) >= contrast_ratio(fill, 0xffffff) {
         0x000000
     } else {
         0xffffff
@@ -1094,7 +1094,10 @@ pub fn selection_overlay() -> Hsla {
 pub fn sync_gpui_component_theme(cx: &mut App) {
     let k = theme();
     let gc = gpui_component::Theme::global_mut(cx);
+    apply_gpui_component_theme(&k, gc);
+}
 
+fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     // ── Base preset (gpui-component 0.5.2) ──────────────────────
     // 0.5.2 grew ~40 new `ThemeColor` fields (the `button_*` family,
     // `input_background`, charts, …) that adopted widgets read directly.
@@ -1131,9 +1134,9 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     // accent tint at that alpha is both visible and safe for legibility.
     gc.colors.selection = to_hsla(k.selection_tint).alpha(SELECTION_ALPHA);
 
-    // ── Primary / accent (Checkbox checked, focus ring, links) ──
+    // ── Primary / accent (Checkbox checked, focus ring) ────────
     gc.colors.primary = to_hsla(k.color_branch);
-    let primary_foreground = primary_button_foreground(&k);
+    let primary_foreground = primary_button_foreground(k);
     gc.colors.primary_foreground = to_hsla(primary_foreground);
     // Keep these generic tokens unchanged: outline Primary uses their tint;
     // filled Primary has its own interaction tokens below.
@@ -1152,7 +1155,7 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     // the band `code_chip_is_visible_but_not_a_block` pins.
     gc.colors.accent = to_hsla(k.text_muted).alpha(CODE_CHIP_ALPHA);
     gc.colors.accent_foreground = to_hsla(k.text_main);
-    gc.colors.link = to_hsla(k.color_branch);
+    gc.colors.link = to_hsla(k.link);
 
     // ── Secondary / title-bar controls (gpui-component TitleBar) ──
     gc.colors.secondary = to_hsla(k.surface);
@@ -1173,11 +1176,19 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     // Primary (including the Commit button): preserve the branch accent at
     // rest and the established label when it is legible across every state.
     let (button_primary_foreground, primary_hover, primary_active) =
-        primary_button_interaction_colors(&k, primary_foreground);
+        filled_button_interaction_colors(k.color_branch, primary_foreground);
     gc.colors.button_primary = to_hsla(k.color_branch);
     gc.colors.button_primary_foreground = to_hsla(button_primary_foreground);
     gc.colors.button_primary_hover = primary_hover;
     gc.colors.button_primary_active = primary_active;
+    // Incoming side choices must follow the same remote token as their pane.
+    let info_foreground = filled_button_foreground(k.color_remote, k);
+    let (info_foreground, info_hover, info_active) =
+        filled_button_interaction_colors(k.color_remote, info_foreground);
+    gc.colors.button_info = to_hsla(k.color_remote);
+    gc.colors.button_info_foreground = to_hsla(info_foreground);
+    gc.colors.button_info_hover = info_hover;
+    gc.colors.button_info_active = info_active;
     gc.colors.button_secondary = to_hsla(k.surface);
     gc.colors.button_secondary_foreground = to_hsla(k.text_main);
     gc.colors.button_secondary_hover = to_hsla(k.selected);
@@ -1186,7 +1197,7 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     gc.colors.button_danger_foreground = to_hsla(0xffffff);
     gc.colors.button_danger_hover = to_hsla(k.color_blocker);
     gc.colors.button_danger_active = to_hsla(k.color_blocker);
-    let warning_foreground = filled_button_foreground(k.color_warning, &k);
+    let warning_foreground = filled_button_foreground(k.color_warning, k);
     gc.colors.button_warning = to_hsla(k.color_warning);
     gc.colors.button_warning_foreground = to_hsla(warning_foreground);
     gc.colors.button_warning_hover = to_hsla(k.color_warning);
@@ -1249,7 +1260,7 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     // via [`highlight_theme`] — previously only these five editor surfaces were
     // overridden and `style.syntax` kept gpui-component's bundled palette, so
     // every dark theme highlighted code identically.
-    gc.highlight_theme = highlight_theme(&k);
+    gc.highlight_theme = highlight_theme(k);
 
     // ── Tokens (0.5.2) ──────────────────────────────────────────
     // Widgets increasingly read `theme().tokens.*` (Radio, Select popup, …),
@@ -1428,6 +1439,101 @@ pub(crate) const LANE_PALETTE_LIGHT: [(f32, f32, f32); 8] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn body_links_meet_wcag_aa_in_every_theme() {
+        for t in THEMES {
+            let mut gc = gpui_component::Theme::default();
+            apply_gpui_component_theme(t, &mut gc);
+            assert_eq!(
+                gc.colors.link,
+                to_hsla(t.link),
+                "{}: owned body-link token",
+                t.slug
+            );
+            assert!(
+                contrast_ratio(t.link, t.bg_base) >= 4.5,
+                "{}: link palette",
+                t.slug
+            );
+            let link = u32::from(gc.colors.link.to_rgb()) >> 8;
+            let contrast = contrast_ratio(link, t.bg_base);
+            assert!(
+                contrast >= 4.5,
+                "{}: body link {link:#08x} is only {contrast:.2}:1 on {:#08x}",
+                t.slug,
+                t.bg_base,
+            );
+        }
+    }
+
+    #[test]
+    fn body_link_override_is_independent_of_ref_and_primary_palettes() {
+        let mut custom = crate::theme_apple_light::APPLE_LIGHT.clone();
+        assert_eq!(custom.link, 0x0066cc);
+        assert_eq!(custom.color_branch, 0x0088ff);
+        custom.link = 0x773399;
+        let mut gc = gpui_component::Theme::default();
+        apply_gpui_component_theme(&custom, &mut gc);
+        assert_eq!(gc.colors.link, to_hsla(custom.link));
+        assert_eq!(gc.colors.primary, to_hsla(0x0088ff));
+        assert_eq!(gc.colors.button_primary, to_hsla(0x0088ff));
+        custom.color_branch = 0xff9900;
+        apply_gpui_component_theme(&custom, &mut gc);
+        assert_eq!(gc.colors.link, to_hsla(0x773399));
+        assert_eq!(gc.colors.button_primary, to_hsla(0xff9900));
+    }
+
+    #[test]
+    fn incoming_button_tokens_follow_remote_in_every_theme() {
+        for t in THEMES {
+            let mut gc = gpui_component::Theme::default();
+            apply_gpui_component_theme(t, &mut gc);
+            assert_eq!(
+                gc.colors.button_info,
+                to_hsla(t.color_remote),
+                "{}: Incoming fill must match its pane/marker",
+                t.slug,
+            );
+            let foreground = filled_button_foreground(t.color_remote, t);
+            let (foreground, hover, active) =
+                filled_button_interaction_colors(t.color_remote, foreground);
+            assert_eq!(
+                gc.colors.button_info_foreground,
+                to_hsla(foreground),
+                "{}",
+                t.slug
+            );
+            assert_eq!(gc.colors.button_info_hover, hover, "{}", t.slug);
+            assert_eq!(gc.colors.button_info_active, active, "{}", t.slug);
+            for background in [
+                gc.colors.button_info,
+                gc.colors.button_info_hover,
+                gc.colors.button_info_active,
+            ] {
+                assert!(background.is_opaque(), "{}: filled Incoming state", t.slug);
+                assert!(
+                    contrast_ratio(u32::from(background.to_rgb()) >> 8, foreground) >= 4.5,
+                    "{}: Incoming label must stay readable in every state",
+                    t.slug,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn incoming_button_fill_tracks_custom_remote_without_changing_status() {
+        for base in THEMES {
+            let mut custom = base.clone();
+            custom.color_remote = 0x7a3da9;
+            let mut gc = gpui_component::Theme::default();
+            apply_gpui_component_theme(&custom, &mut gc);
+            assert_eq!(gc.colors.button_info, to_hsla(custom.color_remote));
+            assert_eq!(gc.colors.button_primary, to_hsla(base.color_branch));
+            assert_eq!(gc.colors.success, to_hsla(base.color_success));
+            assert_eq!(gc.colors.danger, to_hsla(base.color_blocker));
+        }
+    }
 
     /// The diff panes paint their own line selection; this is the one colour
     /// they share with gpui-component's text selection. It used to be rebuilt
@@ -1767,7 +1873,8 @@ mod tests {
 
     fn assert_primary_button_interaction_states(t: &Theme) {
         let foreground = primary_button_foreground(t);
-        let (foreground, hover, pressed) = primary_button_interaction_colors(t, foreground);
+        let (foreground, hover, pressed) =
+            filled_button_interaction_colors(t.color_branch, foreground);
         assert!(
             hover.is_opaque() && pressed.is_opaque(),
             "{}: filled states",
@@ -1809,7 +1916,7 @@ mod tests {
             assert_primary_button_interaction_states(t);
             let foreground = primary_button_foreground(t);
             assert_eq!(
-                primary_button_interaction_colors(t, foreground).0,
+                filled_button_interaction_colors(t.color_branch, foreground).0,
                 foreground,
                 "{}: stock foreground must remain unchanged",
                 t.slug,
@@ -1842,7 +1949,8 @@ mod tests {
             custom.color_branch = accent;
             custom.bg_base = label;
             let established = primary_button_foreground(&custom);
-            let (foreground, _, _) = primary_button_interaction_colors(&custom, established);
+            let (foreground, _, _) =
+                filled_button_interaction_colors(custom.color_branch, established);
             assert_ne!(
                 foreground, established,
                 "a rest-only AA label cannot suppress endpoint feedback",

@@ -390,9 +390,14 @@ pub(super) fn page_button(
         .items_start()
         .child(super::e2e::measure_control(
             id,
-            super::button_style::KagiButton::accent(id, label, theme().text_sub, cx)
-                .small()
-                .on_click(cx.listener(click)),
+            super::button_style::KagiButton::styled(
+                id,
+                label,
+                super::button_style::ButtonRole::Neutral,
+                cx,
+            )
+            .small()
+            .on_click(cx.listener(click)),
         ))
         .into_any_element()
 }

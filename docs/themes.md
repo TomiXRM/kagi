@@ -56,8 +56,10 @@ A theme file is one JSON object.
   theme cannot extend another custom theme.
 - Every other key is a token from the [token reference](#token-reference) below,
   spelled exactly as listed.
-- **Without `extends`, every token is required** (all keys in the table,
-  including `dark`, all ten `syntax` keys, `lane_hsl` and `term_selection`).
+- **Without `extends`, every token except `link` is required** (including
+  `dark`, all ten `syntax` keys, `lane_hsl` and `term_selection`). An omitted
+  `link` defaults to that file's own `color_branch`, preserving standalone
+  themes written before the independent link token.
 - With `extends`, any subset of tokens may be given. `syntax` may list only the
   code colours you want to change; the rest come from the parent.
 
@@ -113,6 +115,7 @@ theme from scratch:
   "text_sub": "#a6adc8",
   "text_muted": "#585b70",
   "text_label": "#6c7086",
+  "link": "#89b4fa",
   "color_head": "#f38ba8",
   "color_branch": "#89b4fa",
   "color_remote": "#a6e3a1",
@@ -187,7 +190,7 @@ themes and kagi itself keep working — when it:
 - is not a single valid JSON object;
 - has a key that is not `slug`, `name`, `extends` or a token below (also inside
   `syntax` and `term_selection`) — typos are errors, not ignored;
-- misses `slug` or `name`, or (without `extends`) misses any token;
+- misses `slug` or `name`, or (without `extends`) misses any token except `link`;
 - has a value of the wrong type, a colour that is not `#rrggbb`, a `lane_hsl`
   that is not exactly 8 triples, a number outside `0`–`1`, or an `alpha`
   outside `0`–`255`;
@@ -201,12 +204,71 @@ file: “Couldn't load theme `<filename>`: `<reason>`”.
 VS Code (or other editor) theme files are not read; convert them by mapping their
 colours onto the tokens below.
 
+## Button operation roles
+
+Callers choose `ButtonRole` from the operation, never by matching an RGB value.
+Themes may intentionally reuse colours (Color Vision uses blue for both branch
+and success, orange for both remote and blocker); that cannot change hierarchy.
+The existing `KagiButton` delegates geometry, focus, disabled and interaction
+handling to the pinned gpui-component Button. No new control is introduced.
+
+| Operation role | Theme token | Button presentation |
+|---|---|---|
+| `Primary` | `color_branch` | Filled Primary (for the main confirm/Commit action). |
+| `SideCurrent` | `color_branch` | Filled Primary (Keep Current / Keep Directory). |
+| `SideIncoming` | `color_remote` | Filled Info (Take Incoming / Keep File). |
+| `Success` | `color_success` | Translucent tinted action (Stage / Save / Continue / Approve). |
+| `Warning` | `color_warning` | Translucent tinted action (Unstage / Reset before arming / Request Changes). |
+| `Danger` | `color_blocker` | Translucent tinted action (Abort / armed Reset / destructive modal confirm). |
+| `Neutral` | `text_sub` | Ghost (Keep Both / paging / external raw-side action). |
+| `NeutralTinted` | `text_sub` | Neutral tinted chip (editor navigation / external editor action). |
+
+Before #1079, Take Incoming / Keep File were tinted in 11 of the 13 built-ins
+because `color_remote == color_success`. Color Vision also tinted those buttons
+because `color_remote == color_blocker`, and tinted Keep Current because
+`color_branch == color_success`. They now become filled Info and filled Primary,
+respectively; this is an intentional presentation change, not preservation of
+the previous tinted appearance. The palette values themselves are unchanged.
+
+These are dense conflict/tool/action-row controls, keeping their current sizes;
+the reference is Apple Light's existing filled Current choice versus tinted
+Stage/Discard, not a new palette. Rest, hover, pressed, focus-visible and disabled
+remain the native Button states; side choices have no selected/loading/error
+state of their own. Existing gates, handlers and plan/confirm safety flow remain.
+
+The bridge owns the complete filled Info family (`button_info`, foreground,
+hover, active). Its rest fill is exactly `color_remote`, matching the Incoming
+pane/marker (Apple Light `#34c759`). Its label and opaque interaction shades use
+the same contrast-preserving derivation as Primary; upstream preset Info colours
+cannot leak into side choices. Success/danger tints and generic info notices keep
+their existing token meanings.
+
+## Body links
+
+`link` is a body-text foreground token mapped directly to gpui-component's
+`colors.link` (Issue composer previews, Issue/PR descriptions and conversation
+TextViews). It is not the filled `color_branch` accent. Built-ins target at least
+4.5:1 over `bg_base`; Apple Light uses `#0066cc` (5.567:1 on white), while its
+ref chips and Primary fill stay `#0088ff`. Already-readable dark palettes,
+including Apple Dark, keep their prior link colour. Latte, One Light, Pinky Boo,
+Flower Road and IBM PC also have a separately readable link shade.
+
+Custom themes inherit `link` with `extends`, or set `"link": "#rrggbb"` explicitly.
+Changing only `color_branch` on an inherited theme no longer changes body links.
+For a standalone theme without `extends`, an omitted `link` defaults to the
+file's own `color_branch` to preserve legacy files; explicitly supplying `link`
+separates the two roles. Choose it against your actual body background, since
+explicit custom colours are not silently corrected. Underlining, activation,
+selection tint, typography and geometry are unchanged. Reference: macOS body
+links, not filled ref chips; required rest/selection states keep the existing
+TextView behavior (no separate button/loading state).
+
 ## Token reference
 
 Every token a theme defines. The middle column is the default theme's
 (Catppuccin Mocha, slug `catppuccin`) value; the last column is where kagi
 actually paints it. kagi also derives a few colours itself: filled buttons
-(primary and warning) put `bg_base`, then `text_main`, then black/white on their
+(primary, incoming and warning) put `bg_base`, then `text_main`, then black/white on their
 fill — whichever first reaches WCAG AA contrast; text drawn in the accent is
 lightened or darkened via `accent_text_on` until it reads at 4.5:1; the text
 selection wash is `selection_tint` at 30 % opacity.
@@ -229,8 +291,9 @@ selection wash is `selection_tint` at 30 % opacity.
 | `text_sub` | `#a6adc8` | Secondary text: commit author/stat columns, header text, progress notes; scrollbar thumb hover; active line number. |
 | `text_muted` | `#585b70` | Dimmed text and disabled menu items, divider/input borders, scrollbar thumb, line numbers, inline-code chip tint, unknown change-kind badge. |
 | `text_label` | `#6c7086` | Field and section labels (Unstaged/Staged headers, modal input labels, conflict section titles, issue comment count). |
+| `link` | `#89b4fa` | Body-link foreground in gpui-component TextView (`colors.link`): Issue composer preview and Issue/PR body/conversation links; independent of filled ref/Primary accent. |
 | `color_head` | `#f38ba8` | HEAD branch badge in the graph and inspector, merge line of the activity chart, link values in the commit trailer table. |
-| `color_branch` | `#89b4fa` | Local branch/worktree badges and the main accent: primary buttons, focus ring, links, checkbox, info notices, drag handles, the "current" side of conflicts, loading dots. |
+| `color_branch` | `#89b4fa` | Local branch/worktree badges and the main accent: primary buttons, focus ring, checkbox, info notices, drag handles, the "current" side of conflicts, loading dots. |
 | `color_remote` | `#a6e3a1` | Remote-branch badges, the "incoming" side and its buttons in the conflict views, info-style buttons. |
 | `color_tag` | `#fab387` | Tag badges, icon of the create-tag and push-tag dialogs. |
 | `selection_tint` | `#89b4fa` | Text selection in inputs and selectable text, selected lines in the unified and split diff views (at 30 % opacity). |

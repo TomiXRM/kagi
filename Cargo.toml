@@ -169,3 +169,7 @@ cosmic-text = { git = "https://github.com/TomiXRM/cosmic-text", branch = "fix-ha
 # Cosmetic gpui / gpui-component fork patches (rounded text-run highlight
 # backgrounds; heading_top_gap on TextViewStyle) were dropped in the zed-main
 # migration; re-add by rebasing the forks if the polish is missed.
+
+[patch."https://github.com/longbridge/gpui-component"]
+gpui-component = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "ae37bfd433781abe44e15edd40867fac1b7b3b2c" }
+gpui-component-assets = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "ae37bfd433781abe44e15edd40867fac1b7b3b2c" }

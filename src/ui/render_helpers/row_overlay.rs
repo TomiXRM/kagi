@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::prelude::*;
-use gpui::{div, px, AnyElement, App, ListState};
+use gpui::{div, px, AnyElement, App, ListState, Window};
 
 use crate::ui::diff_split::SplitDiffRow;
 use crate::ui::diff_view::DiffRow;
@@ -31,7 +31,7 @@ pub(crate) trait RowOverlay {
     /// `row` is expanded: its expansion follows the list row showing it.
     fn expanded(&self, row: usize) -> bool;
     /// What goes under a list row whose expanded rows are `rows`.
-    fn expansion(&self, rows: &[usize], cx: &mut App) -> AnyElement;
+    fn expansion(&self, rows: &[usize], window: &mut Window, cx: &mut App) -> AnyElement;
 }
 
 /// The diff rows each base list row shows: one unified; a pair's two split.

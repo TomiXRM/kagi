@@ -4,7 +4,7 @@
 //! Split out of `pr_mode.rs` — these are pure renderers over a `PrTab`, with
 //! no state of their own.
 
-use gpui::{div, prelude::*, px, rgb, Context, SharedString};
+use gpui::{div, prelude::*, px, rgb, Context, SharedString, Window};
 use gpui_component::text::TextViewStyle;
 use kagi_domain::github::{Comment, PullRequest, Review, ReviewComment};
 
@@ -22,14 +22,16 @@ use super::KagiApp;
 fn description_card(
     pr: &PullRequest,
     avatars: &kagi_ui_core::avatar::AvatarImages,
+    window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let empty_body;
-    let body = if pr.body.trim().is_empty() {
-        empty_body = format!("_{}_", Msg::PrModeNoDescription.t());
-        empty_body.as_str()
+    let format = if pr.body.trim().is_empty() {
+        super::timeline_row::BodyMarkdownFormat::Placeholder {
+            text: Msg::PrModeNoDescription.t(),
+            italic: true,
+        }
     } else {
-        pr.body.as_str()
+        super::timeline_row::BodyMarkdownFormat::Original
     };
     // Table borders: gpui-component draws them in `theme().border`, which
     // kagi maps to the near-background `selected` — invisible on the page.
@@ -76,8 +78,11 @@ fn description_card(
         .child(meta)
         .child(super::timeline_row::body_markdown(
             ("pr-mode-description-md", pr.number as usize),
-            body,
+            &pr.body,
+            format,
             style,
+            window,
+            cx,
         ));
     super::timeline_row::row(
         "pr-mode-description",
@@ -217,10 +222,11 @@ fn render_entry(
     e: &Entry,
     host: Option<&str>,
     avatars: &kagi_ui_core::avatar::AvatarImages,
+    window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let style = super::timeline_row::markdown_style(15., cx);
-    let body = e.body.trim().to_string();
+    let body = e.body.trim();
     let meta = super::timeline_row::meta(&e.author, &super::timeline_row::age(&e.at))
         .children(e.tag.as_ref().map(|t| {
             use kagi_domain::github::TagSeverity;
@@ -291,8 +297,11 @@ fn render_entry(
         .when(!body.is_empty(), |el| {
             el.child(super::timeline_row::body_markdown(
                 ("pr-convo-md", number as usize * 1000 + i),
-                &body,
+                &e.body,
+                super::timeline_row::BodyMarkdownFormat::Trimmed,
                 style,
+                window,
+                cx,
             ))
         });
     super::timeline_row::row(
@@ -352,6 +361,7 @@ pub(super) fn render_feed_item(
     app: &mut KagiApp,
     tab_ix: usize,
     ix: usize,
+    window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     // Decide what the item is by borrowing; clone only what that item needs.
@@ -421,7 +431,7 @@ pub(super) fn render_feed_item(
                 .unwrap_or_else(|| div().into_any_element())
         }
         FeedItem::Description => match pr_for_card {
-            Some(pr) => block(description_card(pr, &app.avatars.images, cx)),
+            Some(pr) => block(description_card(pr, &app.avatars.images, window, cx)),
             None => div().into_any_element(),
         },
         FeedItem::Conversation => {
@@ -475,7 +485,7 @@ pub(super) fn render_feed_item(
             match entries.as_ref().and_then(|e| e.get(i)) {
                 Some(entry) => block(super::e2e::measure_control(
                     format!("pr-feed-entry-{i}"),
-                    render_entry(number, i, entry, host, &app.avatars.images, cx),
+                    render_entry(number, i, entry, host, &app.avatars.images, window, cx),
                 )),
                 None => div().into_any_element(),
             }
@@ -530,8 +540,8 @@ pub(super) fn render_feed(
             offset_in_item: px(0.),
         });
     }
-    let render = cx.processor(move |app: &mut KagiApp, ix: usize, _window, cx| {
-        render_feed_item(app, tab_ix, ix, cx)
+    let render = cx.processor(move |app: &mut KagiApp, ix: usize, window, cx| {
+        render_feed_item(app, tab_ix, ix, window, cx)
     });
     // The same shell `render_diff_list` gives its list: a relative flex column
     // that hands the list `flex_1`, plus the theme's scrollbar. Anything

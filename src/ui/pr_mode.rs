@@ -140,6 +140,8 @@ pub enum PrFocus {
 }
 
 pub struct PrModeState {
+    /// Peek hides the workspace without dropping its tabs or parked drafts.
+    pub(crate) visible: bool,
     pub tabs: Vec<PrTab>,
     pub active: Option<usize>,
     /// Keyboard focus target for ↑/↓; ←/→ cycle it. Set by clicking a pane.
@@ -180,6 +182,7 @@ pub struct PrModeState {
 impl Default for PrModeState {
     fn default() -> Self {
         Self {
+            visible: true,
             tabs: Vec::new(),
             active: None,
             focus: PrFocus::List,
@@ -221,7 +224,7 @@ impl PrModeState {
 pub(super) const COMMIT_LIMIT: usize = 500;
 impl KagiApp {
     pub fn toggle_pr_mode(&mut self, cx: &mut Context<Self>) {
-        if self.pr_mode().is_some() {
+        if self.pr_mode_visible() {
             self.with_ui(|ui| ui.leave_pr_mode());
             klog!("pr-mode: closed");
         } else {
@@ -236,7 +239,12 @@ impl KagiApp {
             // bottom terminal panel would eat a third of it. Collapse it on
             // entry — Cmd-J still brings it back (user request).
             self.bottom_panel_open = false;
-            self.with_ui(|ui| ui.pr_mode = Some(PrModeState::default()));
+            self.with_ui(|ui| ui.retire_issue_conversation_scope());
+            if let Some(mode) = self.pr_mode_mut() {
+                mode.visible = true;
+            } else {
+                self.with_ui(|ui| ui.pr_mode = Some(PrModeState::default()));
+            }
             klog!("pr-mode: opened");
         }
         cx.notify();
@@ -244,7 +252,7 @@ impl KagiApp {
 
     /// Open (or activate) a tab for `pr` and load its content.
     pub fn pr_mode_open(&mut self, pr: &PullRequest, cx: &mut Context<Self>) {
-        if self.pr_mode().is_none() {
+        if !self.pr_mode_visible() {
             self.toggle_pr_mode(cx);
         }
         if let Some(ix) = self.pr_mode().and_then(|m| {
@@ -1077,6 +1085,7 @@ const ROW_H: f32 = 24.0;
 pub fn render_pr_mode(
     app: &mut KagiApp,
     panel: Option<gpui::AnyElement>,
+    window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let has_tab = app.pr_mode().is_some_and(|m| m.active.is_some());
@@ -1102,7 +1111,7 @@ pub fn render_pr_mode(
         .h_full()
         .flex()
         .flex_col()
-        .child(render_center(app, cx))
+        .child(render_center(app, window, cx))
         .child(super::e2e::measure_inside("pr-mode-center-pane"));
     let center = match panel {
         None => center.into_any_element(),
@@ -1200,7 +1209,11 @@ pub(super) fn focus_border<E: gpui::Styled>(el: E, focused: bool) -> E {
 }
 
 // ── Center: header + view tabs + commits + body ──────────────
-fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+fn render_center(
+    app: &mut KagiApp,
+    window: &mut gpui::Window,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
     let active: Option<usize> = app.pr_mode().and_then(|m| m.active);
     // No tab strip: the left PR list already highlights the active PR and
     // switching is one click there, so a second row of #N chips was pure
@@ -1747,7 +1760,7 @@ fn render_center(app: &mut KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
     col.child(content)
         .children(
             show_feed
-                .then(|| super::pr_page::render_composer(app, cx))
+                .then(|| super::pr_page::render_composer(app, window, cx))
                 .flatten(),
         )
         .into_any_element()

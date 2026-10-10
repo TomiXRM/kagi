@@ -437,6 +437,11 @@ pub struct TabUiState {
     pub github_issue_detail_loading: Option<u64>,
     pub github_issue_detail_error: Option<String>,
     pub github_issue_detail_gen: u64,
+    pub(super) issue_conversations:
+        HashMap<String, HashMap<u64, Entity<super::issue_conversation::IssueConversation>>>,
+    pub(super) issue_conversation_gen: u64,
+    pub(super) issue_conversation_scope: Option<super::issue_conversation::ConversationActivation>,
+    pub(super) issue_thread_pending_list: gpui::ListState,
     pub(super) issue_composer: super::issues_composer::IssuesComposerState,
     /// Scan revisions reject superseded completions without consulting the active tab.
     pub cleanup_gen: u64,
@@ -560,6 +565,15 @@ impl Default for TabUiState {
             github_issue_detail_loading: None,
             github_issue_detail_error: None,
             github_issue_detail_gen: 0,
+            issue_conversations: HashMap::new(),
+            issue_conversation_gen: 0,
+            issue_conversation_scope: None,
+            issue_thread_pending_list: gpui::ListState::new(
+                2,
+                gpui::ListAlignment::Top,
+                gpui::px(400.),
+            )
+            .with_uniform_item_height(gpui::px(120.)),
             issue_composer: Default::default(),
             cleanup_gen: 0,
             cleanup_scanning: false,

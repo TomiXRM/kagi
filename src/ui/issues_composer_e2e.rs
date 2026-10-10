@@ -168,12 +168,14 @@ impl KagiApp {
     /// caller's: the fixture under `tests/support` is the one document every
     /// surface is checked against.
     pub fn set_issue_body_for_e2e(&mut self, number: u64, body: &str, cx: &mut Context<Self>) {
+        let session = self.active_session().expect("fixture session");
         let ui = self.ui_mut().expect("fixture session");
         let issue = ui
             .github_issue_details
             .get_mut(&number)
             .expect("seeded Issue detail");
         issue.body = body.to_string();
+        self.reconcile_issue_conversation_for(session, number, cx);
         cx.notify();
     }
 

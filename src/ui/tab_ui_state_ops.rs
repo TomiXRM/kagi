@@ -135,6 +135,13 @@ impl TabUiState {
             github_issue_detail_loading: _,
             github_issue_detail_error: _,
             github_issue_detail_gen: _,
+            // Accepted conversation caches, read revisions and viewport state
+            // belong to this session; opening a thread is classified above by
+            // selected_github_issue, just like the existing detail/composer cache.
+            issue_conversations: _,
+            issue_conversation_gen: _,
+            issue_conversation_scope: _,
+            issue_thread_pending_list: _,
             issue_composer: _,
             cleanup_scanning: _,
             cleanup_prs: _,
@@ -230,6 +237,10 @@ impl super::KagiApp {
     /// PR mode of the tab on screen (ADR-0197: a workspace mode is per-session).
     pub fn pr_mode(&self) -> Option<&super::pr_mode::PrModeState> {
         self.ui().pr_mode.as_ref()
+    }
+    /// Retained PR tabs do not take over Graph while Peek is on screen.
+    pub(crate) fn pr_mode_visible(&self) -> bool {
+        self.pr_mode().is_some_and(|mode| mode.visible)
     }
     /// Foreground writer for [`Self::pr_mode`]. A background completion must
     /// write through the owner it froze at spawn, never through this.

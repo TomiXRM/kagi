@@ -75,6 +75,11 @@ pub struct HomeGithub {
     /// The list on screen is the saved one (or the previous read) and a
     /// fresh read is running.
     pub refreshing: bool,
+    /// Why the user's own list could not be read again while a list was on
+    /// screen: that list stays, but a search over it is not current (#1070).
+    /// Kept until a read of the list lands or the account changes; setting
+    /// it bumps [`Self::data_version`], so the note is drawn again.
+    pub(super) refresh_error: Option<String>,
     /// The `gh` account (`<host>/<login>`) the list on screen was read as.
     /// A list read as another account is not kept across a refresh.
     shown_account: Option<String>,
@@ -288,12 +293,14 @@ impl KagiApp {
         }
         // `data_version` moves only when the list on screen does (#942
         // review): a rebuild resets the list's scroll.
-        if self.home_github.shown_account != account
-            && matches!(self.home_github.repos, GithubRepos::Loaded { .. })
-        {
-            self.home_github.repos = GithubRepos::Loading;
-            self.home_github.refreshing = false;
-            self.home_github.data_version += 1;
+        if self.home_github.shown_account != account {
+            // A refresh failure belongs to the account it was read as.
+            self.home_github.refresh_error = None;
+            if matches!(self.home_github.repos, GithubRepos::Loaded { .. }) {
+                self.home_github.repos = GithubRepos::Loading;
+                self.home_github.refreshing = false;
+                self.home_github.data_version += 1;
+            }
         }
         self.home_github.shown_account = account;
         if let Some(sections) =
@@ -337,6 +344,7 @@ impl KagiApp {
                         sections: vec![own.clone()],
                         orgs_error: None,
                     };
+                    self.home_github.refresh_error = None;
                     self.home_github.orgs_loading = true;
                     self.home_github.data_version += 1;
                 }
@@ -352,10 +360,13 @@ impl KagiApp {
                             .replace("{}", &error.to_string()),
                         cx,
                     );
+                    // The list on screen stays, saying why it is not current.
+                    self.home_github.refresh_error = Some(error.to_string());
                 } else {
                     self.home_github.repos = GithubRepos::Failed(error.to_string());
-                    self.home_github.data_version += 1;
+                    self.home_github.refresh_error = None;
                 }
+                self.home_github.data_version += 1;
                 // Still reading until the organizations' `gh` ends.
                 self.home_github.refreshing = true;
                 None
@@ -407,6 +418,7 @@ impl KagiApp {
             sections,
             orgs_error,
         };
+        self.home_github.refresh_error = None;
         self.home_github.orgs_loading = false;
         self.home_github.refreshing = false;
         // A repository opened while the list was read is matched too.

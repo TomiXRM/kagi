@@ -55,6 +55,7 @@ impl KagiApp {
         if !self.issues_mode_open() {
             return;
         }
+        self.sync_issue_conversation_activation(window, cx);
         let (Some(owner), Some(repo)) = (self.active_session(), self.repo_path.clone()) else {
             return;
         };
@@ -251,6 +252,11 @@ impl KagiApp {
         if let Some(input) = input {
             input.update(cx, |st, cx| st.focus(window, cx));
         }
+        if focused {
+            self.retire_issue_conversation(cx);
+        } else {
+            self.activate_issue_conversation(cx);
+        }
         cx.notify();
     }
 }
@@ -258,6 +264,7 @@ impl KagiApp {
 pub(super) fn render_composer(
     app: &KagiApp,
     number: Option<u64>,
+    window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
     let state = &app.ui().issue_composer;
@@ -401,7 +408,10 @@ pub(super) fn render_composer(
                 super::timeline_row::body_markdown(
                     ("issue-preview", number.unwrap_or(0) as usize),
                     &editor.draft.body,
+                    super::timeline_row::BodyMarkdownFormat::Original,
                     super::timeline_row::markdown_style(15., cx),
+                    window,
+                    cx,
                 ),
             ))
             .into_any_element()

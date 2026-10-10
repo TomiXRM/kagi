@@ -45,7 +45,10 @@ impl KagiApp {
         self.close_file_history();
         self.close_ecosystem_view();
         self.with_ui(|ui| ui.leave_pr_mode());
-        self.with_ui(|ui| ui.branch_cleanup_open = true);
+        self.with_ui(|ui| {
+            ui.retire_issue_conversation_scope();
+            ui.branch_cleanup_open = true;
+        });
         klog!("branch-cleanup: opened");
         cx.notify();
     }

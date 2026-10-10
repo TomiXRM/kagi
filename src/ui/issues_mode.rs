@@ -571,12 +571,12 @@ fn render_main_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElemen
     state.set_scroll_handler(move |event, window, cx| {
         on_scroll(event.visible_range.clone(), window, cx);
     });
-    let render = cx.processor(move |app: &mut KagiApp, index: usize, _, cx| {
+    let render = cx.processor(move |app: &mut KagiApp, index: usize, window, cx| {
         if app.active_session() != owner {
             return div().into_any_element();
         }
         match index {
-            0 => super::issues_composer::render_composer(app, None, cx),
+            0 => super::issues_composer::render_composer(app, None, window, cx),
             1 => super::list_filter_strip::render_strip(
                 app,
                 super::list_filter_strip::ListKind::Issues,
@@ -716,7 +716,11 @@ fn render_issue_page_tail(
     tail.into_any_element()
 }
 
-fn render_center(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
+fn render_center(
+    app: &KagiApp,
+    window: &mut gpui::Window,
+    cx: &mut Context<KagiApp>,
+) -> AnyElement {
     let selected = app.ui().selected_github_issue;
     let editors = &app.ui().issue_composer.editors;
     let home_focused = editors.get(&None).is_some_and(|editor| editor.focused);
@@ -744,27 +748,30 @@ fn render_center(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
                 center = center.child(super::issues_composer::render_composer(
                     app,
                     Some(number),
+                    window,
                     cx,
                 ));
             } else {
-                center = center
-                    .child(super::issues_thread::render_thread(app, cx))
-                    .child(super::issues_composer::render_composer(
-                        app,
-                        Some(number),
-                        cx,
-                    ));
+                center = center.child(super::issues_thread::render_thread(app, window, cx));
             }
         }
         None => {
             if home_focused {
-                center = center.child(super::issues_composer::render_composer(app, None, cx));
+                center = center.child(super::issues_composer::render_composer(
+                    app, None, window, cx,
+                ));
             } else {
                 center = center.child(render_main_issue_list(app, cx));
             }
         }
     }
-    if selected.is_some() || home_focused {
+    if home_focused
+        || selected.is_some_and(|number| {
+            editors
+                .get(&Some(number))
+                .is_some_and(|editor| editor.focused)
+        })
+    {
         center.overflow_y_scrollbar().into_any_element()
     } else {
         center.into_any_element()
@@ -778,6 +785,7 @@ fn render_center(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
 pub fn render_issues_mode(
     app: &mut KagiApp,
     panel: Option<AnyElement>,
+    window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
     app.ensure_issue_avatars(cx);
@@ -789,7 +797,7 @@ pub fn render_issues_mode(
             cx,
         ),
     );
-    let center = render_center(app, cx);
+    let center = render_center(app, window, cx);
     let center = match panel {
         None => center,
         Some(panel) => div()

@@ -8,7 +8,7 @@ use super::modal_renderers::{modal_overlay, render_modal_title_row, ModalIcon};
 use super::modal_shell::{
     modal_body, modal_card, modal_card_sized, modal_scroll_body, MODAL_W_MD, MODAL_W_SM,
 };
-use super::modals::{AppNotice, EditorDirtyGuardModal};
+use super::modals::AppNotice;
 use super::theme::{self, theme as current_theme};
 use super::{smart_commit, KagiApp};
 use gpui::{div, prelude::*, px, rgb, Context, SharedString, Window};
@@ -364,10 +364,7 @@ pub(crate) fn render_update_modal(
 /// discard-or-cancel gate before switching file/source or closing the
 /// workspace while its buffer is dirty. Enter/Esc come free from the
 /// existing `confirm_active_modal`/`cancel_active_modal` root plumbing.
-pub(crate) fn render_editor_dirty_guard_modal(
-    _modal: EditorDirtyGuardModal,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
+pub(crate) fn render_editor_dirty_guard_modal(cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let cancel = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.cancel_editor_dirty_guard();
         if let Some(fh) = this.root_focus.clone() {

@@ -79,6 +79,7 @@ impl KagiApp {
         })
         .detach();
         if let Some(ui) = self.ui_mut() {
+            ui.retire_issue_conversation_scope();
             ui.ecosystem = Some(entity);
         }
         klog!("ecosystem: opened");

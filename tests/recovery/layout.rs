@@ -947,6 +947,31 @@ pub fn scenario_pr_dashboard_responsive(cx: &mut VisualTestAppContext) {
                 horizontal.set_offset(point(px(0.), px(0.)));
                 vertical.scroll_to_item_strict(0, ScrollStrategy::Top);
                 pr_table_frame(cx, &app, win, dimensions);
+                assert_eq!(
+                    cx.read(|cx| kagi::ui::commands::command_state(
+                        app.read(cx),
+                        "view.togglePrSwimlane"
+                    )),
+                    kagi::ui::commands::CommandState::Disabled(i18n::Msg::NoPrOpen.t()),
+                    "dashboard must explain the unavailable reveal command"
+                );
+                for visible in [false, true] {
+                    cx.update_window(win, |_, window, cx| {
+                        app.update(cx, |app, cx| {
+                            app.root_focus.as_ref().unwrap().focus(window, cx)
+                        })
+                    })
+                    .unwrap();
+                    cx.simulate_keystrokes(win, "cmd-b");
+                    e2e::clear_control_bounds(win.window_id(), "pr-mode-left-pane");
+                    cx.run_until_parked();
+                    pr_table_frame(cx, &app, win, dimensions);
+                    assert_eq!(
+                        e2e::control_bounds(win.window_id(), "pr-mode-left-pane").is_some(),
+                        visible,
+                        "dashboard must respect Toggle Sidebar at every width/zoom"
+                    );
+                }
                 pr_table_alignment(win, first, (dimensions, locale, zoom, "initial"));
                 let viewport = e2e::control_bounds(win.window_id(), "pr-home-table-viewport")
                     .expect("horizontal viewport");

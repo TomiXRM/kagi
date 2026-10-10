@@ -63,7 +63,9 @@ fn bar_button(
     div()
         .id(id)
         .relative()
-        .child(super::e2e::measure_inside(id))
+        .when(cfg!(feature = "gui-e2e"), |el| {
+            el.child(super::e2e::measure_inside(id))
+        })
         .flex()
         .flex_row()
         .items_center()

@@ -7,16 +7,19 @@
 use super::*;
 
 impl KagiApp {
-    fn cancel_workspace_key_target(&mut self, cx: &mut Context<Self>) {
+    fn cancel_workspace_key_target(&mut self, window: &Window, cx: &mut Context<Self>) {
         if diff_selection::clear() {
             cx.notify();
             return;
         }
         if self.pr_mode_visible() {
-            if self
-                .pr_mode_mut()
-                .is_some_and(|m| m.companion.take().is_some())
+            if super::pr_layout::Layout::for_window(self, window)
+                .drawer
+                .is_some()
             {
+                if let Some(mode) = self.pr_mode_mut() {
+                    mode.companion = None;
+                }
                 cx.notify();
                 return;
             }
@@ -75,9 +78,9 @@ impl KagiApp {
         workspace_fallbacks: bool,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let escape = cx.listener(move |this, _: &CloseMainDiff, _window, cx| {
+        let escape = cx.listener(move |this, _: &CloseMainDiff, window, cx| {
             if !this.cancel_active_modal(cx) && workspace_fallbacks {
-                this.cancel_workspace_key_target(cx);
+                this.cancel_workspace_key_target(window, cx);
             }
         });
         let enter = cx.listener(move |this, e: &KeyDownEvent, window, cx| {

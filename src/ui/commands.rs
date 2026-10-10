@@ -854,6 +854,7 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
     match id {
         "view.togglePrSwimlane" if app.pr_mode_visible()
             && app.pr_mode().is_some_and(|m| m.active.is_some()) => Enabled,
+        "view.togglePrSwimlane" => Disabled(Msg::NoPrOpen.t()),
         #[cfg(target_os = "macos")]
         "app.hide" | "app.hideOthers" | "app.showAll" => Enabled,
         // ── Always available ────────────────────────────────────────────

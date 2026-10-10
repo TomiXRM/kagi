@@ -1130,7 +1130,24 @@ pub fn render_pr_mode(
     // process; the pass is a set lookup once they are in hand.
     app.ensure_pr_avatars(cx);
     let layout = super::pr_layout::Layout::for_window(app, window);
-    let companion = app.pr_mode().and_then(|m| m.companion);
+    // A reveal is transient: an inline/undrawn companion must not reappear
+    // after another resize or consume Escape when there is no drawer.
+    if let Some(mode) = app.pr_mode_mut() {
+        mode.companion = layout.drawer;
+    }
+    let drawer = match layout.drawer {
+        Some(super::pr_layout::Companion::Navigator) => Some(super::pr_layout::drawer(
+            super::workspace_mode::render_sidebar_pages(
+                app,
+                super::workspace_mode::WorkspaceMode::Prs,
+                cx,
+            ),
+            super::pr_layout::Companion::Navigator,
+        )),
+        Some(super::pr_layout::Companion::Swimlane) => super::pr_lane::render_pr_lane(app, cx)
+            .map(|pane| super::pr_layout::drawer(pane, super::pr_layout::Companion::Swimlane)),
+        None => None,
+    };
     let left = layout.navigator.then(|| {
         super::workspace_mode::render_sidebar_pages(
             app,
@@ -1153,6 +1170,7 @@ pub fn render_pr_mode(
             el.child(super::pr_layout::toolbar(app, window, cx))
         })
         .child(render_center(app, window, cx))
+        .children(drawer)
         .child(super::e2e::measure_inside("pr-mode-center-pane"));
     let center = match panel {
         None => center.into_any_element(),
@@ -1173,23 +1191,6 @@ pub fn render_pr_mode(
         .then(|| super::pr_lane::render_pr_lane(app, cx))
         .flatten()
         .map(|pane| super::e2e::measure_control("pr-mode-lane-pane", pane));
-    let drawer = match companion {
-        Some(super::pr_layout::Companion::Navigator)
-            if !layout.navigator && app.sidebar.visible =>
-        {
-            Some(super::pr_layout::drawer(
-                super::workspace_mode::render_sidebar_pages(
-                    app,
-                    super::workspace_mode::WorkspaceMode::Prs,
-                    cx,
-                ),
-            ))
-        }
-        Some(super::pr_layout::Companion::Swimlane) if !layout.swimlane => {
-            super::pr_lane::render_pr_lane(app, cx).map(super::pr_layout::drawer)
-        }
-        _ => None,
-    };
     // No outer right pane: the checks, the facts and the file list moved
     // inside the PR body, where the mock has them (ADR-0200). Three panes
     // between the navigator and the diff left the diff a sliver.
@@ -1212,7 +1213,6 @@ pub fn render_pr_mode(
             el.child(vdivider(DividerKind::PrModeLeft))
         })
         .child(center)
-        .children(drawer)
         .into_any_element()
 }
 
@@ -1639,7 +1639,9 @@ fn render_center(
         // buttons read as actions, these switch what the pane shows.
         div()
             .relative()
-            .child(super::e2e::measure_inside(id))
+            .when(cfg!(feature = "gui-e2e"), |el| {
+                el.child(super::e2e::measure_inside(id))
+            })
             .id(id)
             .flex()
             .flex_row()

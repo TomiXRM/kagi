@@ -49,7 +49,13 @@ fn geometry(
     for name in &names {
         e2e::clear_control_bounds(win.window_id(), name);
     }
-    for name in ["pr-mode-lane-pane", "pr-companion-drawer"] {
+    for name in [
+        "pr-mode-lane-pane",
+        "pr-companion-drawer",
+        "pr-companion-swimlane",
+        "pr-companion-navigator",
+        "pr-mode-left-pane",
+    ] {
         e2e::clear_control_bounds(win.window_id(), name);
     }
     for _ in 0..3 {
@@ -94,6 +100,14 @@ fn open(
     let app = captured.borrow().clone().unwrap();
     cx.run_until_parked();
     (app, win.into())
+}
+
+fn key(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, win: AnyWindowHandle, stroke: &str) {
+    cx.update_window(win, |_, w, cx| {
+        app.update(cx, |a, cx| a.root_focus.as_ref().unwrap().focus(w, cx))
+    })
+    .unwrap();
+    cx.simulate_keystrokes(win, stroke);
 }
 
 #[derive(Debug, PartialEq)]
@@ -197,6 +211,17 @@ fn retained(
         cx.dispatch_action(win, kagi::ui::commands::ToggleSidebar);
         geometry(cx, win, dimensions, false);
     }
+    if e2e::control_bounds(win.window_id(), "pr-companion-drawer").is_some() {
+        key(cx, app, win, "escape");
+        geometry(cx, win, dimensions, false);
+        assert!(e2e::control_bounds(win.window_id(), "pr-companion-drawer").is_none());
+        assert!(cx.read(|cx| app.read(cx).pr_mode().unwrap().active.is_some()));
+        assert_eq!(
+            snapshot(cx, app),
+            before,
+            "Escape closing a drawer resets PR state"
+        );
+    }
     assert!(
         kagi::ui::commands::command("view.togglePrSwimlane").is_some(),
         "palette registry must contain the reveal command"
@@ -211,15 +236,13 @@ fn retained(
     })
     .unwrap();
     if dimensions.0 == 1392. && theme::zoom() < 1.1 {
-        if e2e::control_bounds(win.window_id(), "pr-mode-lane-pane").is_none() {
-            cx.simulate_keystrokes(win, "cmd-alt-l");
-            geometry(cx, win, dimensions, false);
-        }
-        assert!(
-            e2e::control_bounds(win.window_id(), "pr-mode-lane-pane").is_some(),
-            "wide default layout must reveal the swimlane inline"
-        );
+        assert!(e2e::control_bounds(win.window_id(), "pr-mode-lane-pane").is_some());
+        assert!(e2e::control_bounds(win.window_id(), "pr-mode-left-pane").is_some());
     }
+    assert!(
+        e2e::control_bounds(win.window_id(), "pr-companion-drawer").is_none(),
+        "keyboard reveal must start with no drawer"
+    );
     let lane_before = e2e::control_bounds(win.window_id(), "pr-mode-lane-pane").is_some();
     e2e::clear_control_bounds(win.window_id(), "pr-mode-lane-pane");
     e2e::clear_control_bounds(win.window_id(), "pr-companion-drawer");
@@ -230,6 +253,30 @@ fn retained(
             || (lane_before && e2e::control_bounds(win.window_id(), "pr-mode-lane-pane").is_none()),
         "registered keyboard shortcut must actually toggle the companion"
     );
+    if !lane_before {
+        let drawer = bounds(win, "pr-companion-swimlane");
+        assert!(
+            e2e::control_bounds(win.window_id(), "pr-companion-navigator").is_none(),
+            "keyboard opens the Swimlane, not Navigator"
+        );
+        contained(
+            bounds(win, "pr-mode-center-pane"),
+            drawer,
+            "swimlane drawer anchored to center",
+        );
+        key(cx, app, win, "escape");
+        geometry(cx, win, dimensions, false);
+        assert!(e2e::control_bounds(win.window_id(), "pr-companion-drawer").is_none());
+        assert!(cx.read(|cx| app.read(cx).pr_mode().unwrap().active.is_some()));
+        assert_eq!(
+            snapshot(cx, app),
+            before,
+            "Escape dismisses only the drawer"
+        );
+        key(cx, app, win, "cmd-alt-l");
+        geometry(cx, win, dimensions, false);
+        assert!(e2e::control_bounds(win.window_id(), "pr-companion-swimlane").is_some());
+    }
     assert_eq!(snapshot(cx, app), before, "keyboard reveal resets state");
     cx.simulate_keystrokes(win, "cmd-alt-l");
     geometry(cx, win, dimensions, false);
@@ -254,6 +301,23 @@ fn retained(
         before,
         "resize round trip resets PR state"
     );
+    theme::set_zoom(1.);
+    resize(cx, win, (940., 660.));
+    geometry(cx, win, (940., 660.), false);
+    key(cx, app, win, "cmd-alt-l");
+    geometry(cx, win, (940., 660.), false);
+    assert!(e2e::control_bounds(win.window_id(), "pr-companion-swimlane").is_some());
+    resize(cx, win, (1392., 883.));
+    geometry(cx, win, (1392., 883.), false);
+    assert!(e2e::control_bounds(win.window_id(), "pr-companion-drawer").is_none());
+    resize(cx, win, (940., 660.));
+    geometry(cx, win, (940., 660.), false);
+    assert!(
+        e2e::control_bounds(win.window_id(), "pr-companion-drawer").is_none(),
+        "narrowing must not resurrect an inline reveal"
+    );
+    resize(cx, win, (1392., 883.));
+    geometry(cx, win, (1392., 883.), false);
 }
 pub fn scenario_pr_detail_adaptive(cx: &mut VisualTestAppContext) {
     let _restore = GlobalSettings::capture();
@@ -321,6 +385,16 @@ pub fn scenario_pr_detail_adaptive(cx: &mut VisualTestAppContext) {
                     }
                 });
                 geometry(cx, win, dimensions, view != PrView::Diff);
+                if dimensions.0 == 1392. && zoom == 1. {
+                    assert!(
+                        e2e::control_bounds(win.window_id(), "pr-mode-lane-pane").is_some(),
+                        "desktop swimlane must be inline before any toggle"
+                    );
+                    assert!(
+                        e2e::control_bounds(win.window_id(), "pr-mode-left-pane").is_some(),
+                        "desktop navigator must be inline before any toggle"
+                    );
+                }
             }
             retained(cx, &app, win, dimensions);
             unmount(cx, app, win);

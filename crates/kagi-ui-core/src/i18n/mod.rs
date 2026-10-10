@@ -599,6 +599,7 @@ pub enum Msg {
     PrLaneTitle,
     PrNavigator,
     PrSwimlane,
+    NoPrOpen,
     /// Detail rail facts (ADR-0200).
     PrRailReviewers,
     PrRailAssignees,
@@ -2735,6 +2736,8 @@ impl Msg {
             (Ja, PrNavigator) => "ナビゲーター",
             (En, PrSwimlane) => "Swimlane / Files",
             (Ja, PrSwimlane) => "スイムレーン・ファイル",
+            (En, NoPrOpen) => "No PR is open",
+            (Ja, NoPrOpen) => "開いている PR がありません",
             (En, PrRailReviewers) => "REVIEWERS",
             (Ja, PrRailReviewers) => "レビュアー",
             (En, PrRailAssignees) => "ASSIGNEES",

@@ -20,6 +20,7 @@ pub(super) enum Companion {
 pub(super) struct Layout {
     pub navigator: bool,
     pub swimlane: bool,
+    pub drawer: Option<Companion>,
     lane_fits: bool,
 }
 impl Layout {
@@ -28,7 +29,8 @@ impl Layout {
         let center = theme::scaled_px(CENTER_MIN);
         let navigator_width = theme::scaled_px(app.sidebar.width + 4.);
         let lane_width = theme::scaled_px(super::pr_lane::MAX_PANE_WIDTH + 4.);
-        let navigator = app.sidebar.visible && width >= center + navigator_width;
+        let has_tab = app.pr_mode().is_some_and(|m| m.active.is_some());
+        let navigator = app.sidebar.visible && (!has_tab || width >= center + navigator_width);
         let lane_fits = width
             >= center
                 + lane_width
@@ -41,9 +43,17 @@ impl Layout {
             && app
                 .pr_mode()
                 .is_some_and(|m| m.active.is_some() && !m.lane_hidden);
+        let drawer = app.pr_mode().and_then(|m| m.companion).filter(|pane| {
+            has_tab
+                && match pane {
+                    Companion::Navigator => app.sidebar.visible && !navigator,
+                    Companion::Swimlane => !lane_fits,
+                }
+        });
         Self {
             navigator,
             swimlane,
+            drawer,
             lane_fits,
         }
     }
@@ -138,7 +148,7 @@ pub(super) fn toolbar(
         .into_any_element()
 }
 
-pub(super) fn drawer(pane: gpui::AnyElement) -> gpui::AnyElement {
+pub(super) fn drawer(pane: gpui::AnyElement, companion: Companion) -> gpui::AnyElement {
     div()
         .id("pr-companion-drawer")
         .absolute()
@@ -154,5 +164,9 @@ pub(super) fn drawer(pane: gpui::AnyElement) -> gpui::AnyElement {
         .border_color(rgb(theme::theme().selected))
         .child(pane)
         .child(super::e2e::measure_inside("pr-companion-drawer"))
+        .child(super::e2e::measure_inside(match companion {
+            Companion::Navigator => "pr-companion-navigator",
+            Companion::Swimlane => "pr-companion-swimlane",
+        }))
         .into_any_element()
 }

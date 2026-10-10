@@ -725,3 +725,19 @@ The scoped neighboring run also passed `pr_dashboard_responsive`,
 `pr_same_number`, `github_evidence_background_owner`, and all six
 `pr_pagination*` scenarios. No full workspace/Clippy or Tier B run is claimed.
 
+Review follow-up: width collapse is detail-only; the dashboard keeps its
+ordinary navigator and Sidebar keyboard preference. A revealed companion is
+anchored inside the reader, above neither the navigator nor the bottom panel.
+Inline/undrawn reveals are normalized away, and Escape consumes only a
+currently drawn drawer. The regression additionally checks dashboard Sidebar
+toggle, desktop inline panes before any toggle, Swimlane-specific keyboard
+reveal, Escape-only dismissal, and widening/narrowing without stale reveal.
+The command's unavailable reason is localized; new gap-bearing bounds probes
+are GUI-E2E-only and add no release-build spacer.
+
+The dashboard Sidebar and disabled-reason checks stay in the fixed-window
+`pr_dashboard_responsive` fixture. Combining dashboard input creation, detail
+reads, native width/zoom transitions and Escape/Home leaks eight `InputState`
+handles on unchanged `origin/dev` too. That independent lifecycle defect is
+excluded from this layout regression; its leak assertion was not suppressed.
+

@@ -1,4 +1,4 @@
-//! Test-only connect transport for the Remote Browse modal (`gui-e2e` only).
+//! Test-only read transport for the Remote Browse modal (`gui-e2e` only).
 //!
 //! A **child** module of [`super`], not a sibling and not `ui::e2e`: the
 //! connect result type stays private to its owner (a sibling would force
@@ -58,6 +58,7 @@ pub type RemoteConnectTask = gpui::Task<RemoteConnectOutcome>;
 
 thread_local! {
     static REMOTE_CONNECT: RefCell<Option<RemoteConnectTask>> = const { RefCell::new(None) };
+    static REMOTE_NAVIGATE: RefCell<Option<(String, RemoteConnectTask)>> = const { RefCell::new(None) };
 }
 
 /// Queue the result of the next connect; one round-trip at a time, like
@@ -68,4 +69,48 @@ pub fn queue_remote_connect(task: RemoteConnectTask) {
 
 pub(super) fn take_remote_connect() -> Option<RemoteConnectTask> {
     REMOTE_CONNECT.with(|slot| slot.borrow_mut().take())
+}
+
+/// Supply the next directory read. Production navigation, busy admission and
+/// generation-guarded acceptance still run.
+pub fn queue_remote_navigate(path: &str, task: RemoteConnectTask) {
+    REMOTE_NAVIGATE.with(|slot| {
+        assert!(slot
+            .borrow_mut()
+            .replace((path.to_string(), task))
+            .is_none())
+    });
+}
+
+pub(super) fn take_remote_navigate(path: &str) -> Option<RemoteConnectTask> {
+    REMOTE_NAVIGATE.with(|slot| {
+        slot.borrow_mut().take().map(|(expected, task)| {
+            assert_eq!(
+                path, expected,
+                "directory activation must request the selected path"
+            );
+            task
+        })
+    })
+}
+
+/// Read back the actual focused row and laid-out viewport, without refocusing.
+pub fn focused_row(modal: &super::RemoteBrowseModal, window: &gpui::Window) -> Option<usize> {
+    let focus = modal.row_focus.borrow();
+    let key = focus.focused(window)?;
+    modal
+        .row_keys
+        .iter()
+        .position(|(candidate, _)| candidate == key)
+}
+
+pub fn row_bounds(
+    modal: &super::RemoteBrowseModal,
+    row: usize,
+) -> Option<gpui::Bounds<gpui::Pixels>> {
+    modal.row_scroll.bounds_for_item(row)
+}
+
+pub fn viewport(modal: &super::RemoteBrowseModal) -> gpui::Bounds<gpui::Pixels> {
+    modal.row_scroll.viewport_bounds()
 }

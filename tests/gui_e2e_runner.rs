@@ -1800,6 +1800,14 @@ mod macos {
                 Box::new(crate::remote_browse_focus::scenario_remote_browse_escape_focus),
             ),
             (
+                "remote_browse_keyboard_rows",
+                Box::new(crate::remote_browse_focus::scenario_remote_browse_keyboard_rows),
+            ),
+            (
+                "remote_browse_keyboard_read_ownership",
+                Box::new(crate::remote_browse_focus::scenario_remote_browse_keyboard_read_ownership),
+            ),
+            (
                 "palette_push_modal_keys",
                 Box::new(crate::overlay_focus::scenario_palette_push_modal_keys),
             ),

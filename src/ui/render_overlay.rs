@@ -519,7 +519,7 @@ impl KagiApp {
                     })
                     // ── Remote SSH browse modal overlay (ADR-0089) ───
                     .when_some(remote_browse.take(), |el, modal| {
-                        el.child(render_remote_browse(modal, modal_focus.clone(), cx))
+                        el.child(render_remote_browse(modal, modal_focus.clone(), window, cx))
                     })
                     // ── Clone card (opened from Home, #923) ──────────
                     .when_some(self.clone_modal().cloned(), |el, modal| {

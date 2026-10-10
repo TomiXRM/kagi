@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- macOS の Kagi メニューに Services、Hide Kagi（⌘H）、Hide Others（⌥⌘H）、Show All を標準順序で追加しました。Services と application visibility は GPUI の OS API に委譲し、Hide は window／編集中の state を破棄しません。Linux／FreeBSD のメニューと Quit の settings flush は変更しません。(#1083)
+- macOS visibility commands は command palette／in-app dropdown からも platform API に届くよう修正し、native menu と JA palette は同じ registry label path を使います。(#1083 review)
 - Command Palette は狭い／低い window と高 zoom でも検索欄と結果を viewport 内に保ち、結果だけを独立して scroll します。長いテーマ名は省略表示し、完全な名前を tooltip／AX に残して shortcut 欄を保持します。(#1084)
 - Trust Repository の承認保存失敗は modal に repository・失敗段階・理由の全文を保持し、コピーと Retry／Cancel を提供します。保存失敗時は untrusted session を維持し、保存後の reopen 失敗でも既存 session を失いません。EN／JA の native 回帰を追加しました。(#1081)
 - 外部 filter の拒否は内容を取り込む Stage と index から復元する Discard に限定し、filter 対象の削除 Stage（単体・一括）と untracked file の raw backup→Discard は維持します。無効化した sparse-checkout の残存設定・patterns と別 worktree の patterns は Sync を妨げず、手動 skip-worktree entry と Sync の filter 拒否には専用の EN／JA 案内を表示します。(#1136／#1137 review)

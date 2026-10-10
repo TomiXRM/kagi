@@ -202,6 +202,8 @@ pub struct MainDiffView {
     /// frame for the length of a reading session. `render_diff_list` wrapped
     /// this in an `Arc` immediately anyway, so the deep copy bought nothing.
     pub rows: std::sync::Arc<Vec<DiffRow>>,
+    /// Preserved across highlight-only row allocation changes.
+    pub(crate) height_source: kagi_ui_core::diff_list::DiffListSource,
     /// Where this diff was opened from (for re-load / back navigation).
     #[allow(dead_code)]
     pub source: MainDiffSource,
@@ -452,6 +454,7 @@ pub(crate) fn build_main_diff_view(
         title: fdv.file_name,
         stats: SharedString::from(format!("+{} \u{2212}{}", added, removed)),
         rows: std::sync::Arc::new(fdv.rows),
+        height_source: Default::default(),
         source,
         images: None,
         lang: lang_for_path(path),

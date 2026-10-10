@@ -430,6 +430,7 @@ pub struct EditorWorkspaceView {
     /// Scroll state for `history_diff`'s list — separate from `diff_scroll`
     /// (the WIP hunks pane), which the History diff never shares.
     pub history_diff_scroll: gpui::ListState,
+    pub history_diff_layout: kagi_ui_core::diff_list::DiffListLayout,
     /// The selected commit's full file content, seeded by the bin
     /// ([`seed_snapshot`](Self::seed_snapshot)). Plain `kagi_domain` data —
     /// no downcast needed, unlike the diff views above.
@@ -505,10 +506,9 @@ pub struct EditorWorkspaceView {
 
     /// Scroll handle for the virtualized left tree list.
     pub tree_scroll: UniformListScrollHandle,
-    /// T-DIFF-WRAP-001: `ListState` (variable-height) for the right hunks
-    /// list — see `render_helpers::render_diff_list` for the item-count
-    /// sync/reset lifecycle.
+    /// Native variable-height measurements for the right hunks list.
     pub diff_scroll: gpui::ListState,
+    pub diff_layout: kagi_ui_core::diff_list::DiffListLayout,
 
     /// Whether the left tree pane renders (T-WS-EDITOR-005 finding #3).
     /// Pushed by `render_body` from `workspace::resolve_workspace`'s
@@ -591,6 +591,7 @@ impl EditorWorkspaceView {
             history_diff: None,
             history_diff_req: RequestSlot::new(),
             history_diff_scroll: new_diff_list_state(),
+            history_diff_layout: Default::default(),
             snapshot: None,
             snapshot_req: RequestSlot::new(),
             history_scroll: UniformListScrollHandle::new(),
@@ -606,6 +607,7 @@ impl EditorWorkspaceView {
             probe_req: 0,
             tree_scroll: UniformListScrollHandle::new(),
             diff_scroll: new_diff_list_state(),
+            diff_layout: Default::default(),
             show_tree: true,
             tree_menu: None,
             show_blame: kagi_ui_core::settings::Settings::load().blame_inline(),
@@ -1051,20 +1053,20 @@ impl EditorWorkspaceView {
     }
 
     /// The bin's answer to [`EditorWorkspaceEvent::DiffRequested`]: `path`'s
-    /// WIP diff, already built into the bin's `MainDiffView` (opaque here —
-    /// `hooks.render_hunks` downcasts it). Same staleness guard the old
-    /// in-crate marshal-back applied to the content+diff pair.
-    pub fn seed_diff(
+    /// WIP diff. Admission precedes the host's typed installation, so it can
+    /// adopt an unchanged read without losing native measurements or scroll.
+    pub fn seed_diff<D: Any>(
         &mut self,
         req: u64,
         path: &Path,
-        diff: Option<Box<dyn Any>>,
+        diff: Option<D>,
+        install: impl FnOnce(&mut Option<Box<dyn Any>>, Option<D>),
         cx: &mut Context<Self>,
     ) {
         if self.file_req != req || self.dirty || self.open_path.as_deref() != Some(path) {
             return;
         }
-        self.diff = diff;
+        install(&mut self.diff, diff);
         cx.notify();
     }
 

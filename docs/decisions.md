@@ -1,7 +1,7 @@
 # Decision Log
 
 > **Status:** Active — append-only  
-> **Last updated:** 2026-10-09
+> **Last updated:** 2026-10-10
 
 ADR にするほどではないが、再計測や同じ失敗を避けるために残すべき決定と実測事実のログです。ADR を置き換えるものではありません。
 
@@ -15,6 +15,7 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-10 | gpui と同じ Zed source の sibling crates を公開 fork `TomiXRM/zed` の `caf5007618c309a8ea66002d44a9c9ab629a2d35` に統一して pin する。diff list は未計測行の推定高さと end intent を opt-in する | #1122 / [ADR-0222](adr/0222-diff-list-estimated-height.md)。upstream `list` に estimated-height API がないため fork が必要。upstream PR 待ちの公開 fix とし、一時 path patch や二重 gpui source を残さない。 |
 | 2026-10-09 | #1098 の実サイズ snap だけでは完全描画を保証しないため、既存 `attach_modal_layer` を queue / footer の後、toast / platform dropdown の前に配置する。collector 内の Z_ORDER、card の実サイズ、handler / state は維持し、footer 高さの差引きや新しい deferred 機構は追加しない | 下段の bounds / 中心 hover 測定は通ったが、default 実アプリの table 下端で Copy URL が footer に上書きされていた。実 paint regression の変更前は Copy bounds y846.5〜872 / order276 に対して opaque footer y863〜883 / order277 で失敗した。変更後の `pr_menu_bounds` は全64組で全4行が実 paint mask 内にあり、重なる footer より後に描かれること、Copy hover、outside dismiss を検証した。関連 modal / context-menu native suite と workspace / clippy / fmt / 22 gates / default build も通過した。Tier B は default 実アプリの EN100・1392×883 と JA167%・940×660 で、実100 PRの table 下端・sidebar 末尾の全4行・Copy の hover・Escape・outside dismiss を window ID 指定の撮影と入力で確認した。両 app は Cmd+Q、元の Child の exit 0 / reap、exact PID 消失を確認した。browser / host clipboard action は実行していない。Peek の handler dispatch は通るが Compare の可視化は別の #1102 として記録した。 |
 | 2026-10-09 | PR context menu は 2 行分の推定高さを廃止し、既存 sidebar card と同じ pinned GPUI `anchored().snap_to_window_with_margin(px(8.))` で実 layout の card 全体を window 内に収める。共通 `clamp_menu_pos` は anchor の最小余白だけに使い、4 行の文字・scaled padding・固定 border を再計算 / 二重 scale しない。他の menu と PR action は変更しない | #1098。Tier A `pr_menu_bounds` の変更前は EN100・1392×883・sidebar の下端右クリックで実 Jump 行が y=860.5、高さ25.5、下端886となり viewport883を超えた。変更後は sidebar / table × EN / JA × 100 / 167% × 1392×883 / 940×660 × 四隅で全4行の実 bounds、4行目 Copy の hover hitbox、外側 click dismiss が通った。browser / clipboard action は押していない。実アプリの Tier B Escape・action・比較撮影と全 gate はこの測定には含めない。 |
 | 2026-10-09 | #1095 の PR triage table は title / branch に未拡大 320px の最小幅、共通 gutter・avatar・固定 metadata を足した未拡大 886px の最小 table 幅を持ち、狭幅では header と `uniform_list` を単一の X viewport でスクロールする。広幅では従来どおり title が伸びる。Y は既存 session-owned `dashboard_scroll`、X は同じ `PrModeState` の `ScrollHandle` とし、双方の axis remapping を止める | 実 940×660・JA・1667 permille の 100 PR 画面で title 幅がゼロになり、見出しが filter / row に重なった。Finder の列表示のように幅を保って情報へ到達させ、metadata を隠す breakpoint・全行 eager render・第二の model は作らない。既存 horizontal overflow と pinned gpui-component `Scrollbar::horizontal` を再利用する。overflow 時だけ Always の thumb を表示し、固定 16 logical px の専用 lane は常に確保する（library の幅は zoom 非依存、最終行を覆わないため）。hover / click / AX / owner・revision guard / range±2 の lazy acquisition / 自然な行高を保持する。空・loading・stale の既存表現と filter strip は横へ動かさない。新規 control / write は無く、disabled・pressed・安全 pipeline の変更は非該当。[ADR-0200 §3](adr/0200-pr-workspace-layout.md#3-the-home-screen-is-a-table) の幅不足だけを補う。Tier A `pr_dashboard_responsive` は実 renderer・wheel・100 行で EN/JA×100%/167%×940/1440 を検証する予定。この worker は未実行、native focus・context menu・scrollbar drag・実 GitHub lazy transport と Tier B before/after は親の serialized gate で確認する。 |

@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- 大きな diff の未計測行を高さ 0 として扱い、scrollbar の範囲が誤ったり末尾に届かなかったりする問題を修正しました。末尾方向への大きなホイール入力 1 回で実際の最終行に到達し、thread の開閉、同じファイルの再クリック、Editor の未変更 reload、幅変更でも読んでいる位置を保ちます。(#1122)
 - Pull 前の remote-tracking refs が古い場合に、未取得の更新があるのに「すでに最新です」と表示していた問題を修正しました。clean / dirty の両方で既存の安全な fetch を完了してから確認または最新の案内を出し、fetch 失敗時は最新と判断しません。fetch 由来の未変更 checkout の確認は watcher の reload で消えず、外部の HEAD / 作業ファイル変更や後から始めた別の操作には古い確認を押し付けません。(#1087)
 - Pull が進行中の silent auto-fetch に参加した場合も、fetch 失敗を現在の tab の footer と error toast に一度だけ表示するようにしました。通知は既存の Operation Log の記録・表示 owner に集約し、ユーザーの Pull 要求を持たない background fetch と離れた tab は静かなまま、一つの durable receipt を残します。(#1087)
 - Branch の右クリックメニューも、未fetchの `behind=0` だけで Pull / Pull ff-only を無効化したり「最新」と表示したりしないようにしました。busy・detached HEAD・upstream 未設定などの構造的な制約は維持します。(#1087)

@@ -153,9 +153,11 @@ impl MainDiffView {
         if same {
             let rows = self.rows.clone();
             let highlighted = self.highlighted;
+            let height_source = self.height_source;
             *self = next;
             self.rows = rows;
             self.highlighted = highlighted;
+            self.height_source = height_source;
         } else {
             *self = next;
         }

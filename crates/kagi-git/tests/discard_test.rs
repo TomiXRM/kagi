@@ -1114,6 +1114,94 @@ fn discard_symlink_backup_round_trip_preserves_types_targets_and_receipts() {
     );
 }
 
+/// Reproduce Linux checkout semantics on macOS too. An empty-baseline checkout
+/// calls this entry ADDED; with core.ignorecase=false libgit2 does not unlink
+/// the existing symlink before opening the destination with O_TRUNC.
+#[cfg(unix)]
+#[test]
+fn discard_file_to_symlink_with_matching_index_stat_cache() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    use kagi_git::{Backend, Operation, OperationOutcome};
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::symlink;
+
+    let tmp = TempDir::new().unwrap();
+    let d = build_repo(&tmp);
+    git(&d, &["config", "core.ignorecase", "false"]);
+    git(&d, &["config", "core.symlinks", "true"]);
+    let outside = TempDir::new().unwrap();
+    let sentinel = outside.path().join("sentinel");
+    let secret = b"EXTERNAL-SENTINEL-MUST-NOT-BE-TRUNCATED\n";
+    std::fs::write(&sentinel, secret).unwrap();
+    // The link's lstat size and mtime match the old regular entry exactly.
+    let expected = vec![b'r'; sentinel.as_os_str().as_bytes().len()];
+    let path = d.join("file-to-link");
+    std::fs::write(&path, &expected).unwrap();
+    git(&d, &["add", "file-to-link"]);
+    git(&d, &["commit", "-qm", "regular file"]);
+    let repo = Repository::open(&d).unwrap();
+    let entry = repo
+        .index()
+        .unwrap()
+        .get_path(Path::new("file-to-link"), 0)
+        .unwrap();
+    let index_before = std::fs::read(d.join(".git/index")).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    symlink(&sentinel, &path).unwrap();
+    let time =
+        filetime::FileTime::from_unix_time(entry.mtime.seconds() as i64, entry.mtime.nanoseconds());
+    filetime::set_symlink_file_times(&path, time, time).unwrap();
+    let metadata = std::fs::symlink_metadata(&path).unwrap();
+    assert_eq!(metadata.len(), entry.file_size as u64);
+    assert_eq!(
+        filetime::FileTime::from_last_modification_time(&metadata),
+        time
+    );
+    write_file(&d, "tracked.txt", "unselected edit\n");
+
+    let op = Operation::Discard {
+        paths: vec!["file-to-link".into()],
+    };
+    let mut backend = Backend::open(&d).unwrap();
+    backend.set_auto_snapshot(false);
+    let plan = backend.plan(&op).unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    let report = backend.run_recorded(&op, &plan);
+    let OperationOutcome::Discard(outcome) = report.result.unwrap() else {
+        panic!("not discard");
+    };
+    assert!(!outcome.is_partial(), "{outcome:?}");
+    assert!(std::fs::symlink_metadata(&path).unwrap().is_file());
+    assert_eq!(std::fs::read(&path).unwrap(), expected);
+    assert_eq!(std::fs::read(&sentinel).unwrap(), secret);
+    assert_eq!(read_file(&d, "tracked.txt"), "unselected edit\n");
+    assert_eq!(std::fs::read(d.join(".git/index")).unwrap(), index_before);
+    assert_eq!(outcome.backups.len(), 1);
+    let backup = &outcome.backups[0];
+    assert_eq!(
+        backend.read_backup(&backup.reference).unwrap(),
+        sentinel.as_os_str().as_bytes()
+    );
+    assert_eq!(
+        repo.find_reference(&backup.reference)
+            .unwrap()
+            .peel_to_tree()
+            .unwrap()
+            .get_name("file")
+            .unwrap()
+            .filemode(),
+        0o120000
+    );
+    let receipts = kagi_git::oplog::read_oplog_tail(10);
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(
+        receipts[0].backup_refs,
+        report.recording.entry().backup_refs
+    );
+}
+
 #[test]
 fn discard_backup_reader_preserves_legacy_blob_roots_and_rejects_wrong_trees() {
     if !crate::test_support::run_isolated() {

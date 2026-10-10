@@ -226,6 +226,9 @@ impl Backend {
             Operation::PushTag { name, remote } => {
                 ops::preflight_push_tag(&self.repo, plan, remote, name)
             }
+            Operation::RenameBranch { old_name, new_name } => {
+                ops::preflight_rename_branch(&self.repo, plan, old_name, new_name)
+            }
             Operation::Commit { .. } | Operation::MergeCommit { .. } => {
                 ops::preflight_commit(&self.repo, plan)
             }
@@ -471,7 +474,7 @@ impl Backend {
                 .execute_set_upstream(plan, branch_name, upstream)
                 .map(|()| OperationOutcome::Unit),
             Operation::RenameBranch { old_name, new_name } => self
-                .execute_rename_branch(plan, old_name, new_name)
+                .execute_rename_branch(plan, old_name, new_name, partial_after)
                 .map(|()| OperationOutcome::Unit),
             Operation::UndoCommit => self.execute_undo_commit().map(OperationOutcome::Undo),
             Operation::Amend { mode, message } => self

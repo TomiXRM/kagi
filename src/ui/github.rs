@@ -364,13 +364,16 @@ impl KagiApp {
         {
             return;
         }
-        self.show_graph_mode(cx);
+        self.show_graph_for_pr_peek(cx);
         self.inspector_visible = true;
         if let CompareTarget::Commit(head) = &view.target {
             if let Some(row) = self.row_for_commit_id(head) {
                 if self.ui().selected != Some(row) {
                     self.select(row);
                 }
+            } else {
+                // An unloaded PR head has no commit identity in this Graph.
+                self.with_ui(|ui| ui.selected = None);
             }
         }
         // CommitPanel outranks Compare in the right slot. Hide its gate, not

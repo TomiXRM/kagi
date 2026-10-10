@@ -295,10 +295,58 @@ pub fn scenario_pr_peek_visible_edges(cx: &mut VisualTestAppContext) {
                         .iter()
                         .all(|row| row.id != head)));
                     assert!(cx.read(|cx| app.read(cx).ui().selected.is_none()));
+                    if !panel_open {
+                        app.update(cx, |app, _| {
+                            let row = app
+                                .view()
+                                .rows
+                                .iter()
+                                .position(|row| row.id != head)
+                                .expect("loaded unrelated commit X");
+                            app.select(row);
+                        });
+                        cx.read(|cx| {
+                            let app = app.read(cx);
+                            assert!(app.ui().selected.is_some());
+                            assert!(
+                                app.ui()
+                                    .selected
+                                    .and_then(|row| app.view().details.get(row))
+                                    .is_some(),
+                                "X has real commit detail"
+                            );
+                        });
+                    }
                     app.update(cx, |app, _| app.inspector_visible = false);
                     open_pr_context(cx, &app, &head);
                     peek_from_row(cx, &app, window, control);
                     assert_compare_consumer(cx, &app, window, &base, &head);
+                    for control in [
+                        "compare-banner-#77 peek-visible",
+                        "inspector-message-scroll",
+                        "create-branch-btn",
+                        "cherry-pick-btn",
+                    ] {
+                        e2e::clear_control_bounds(window.window_id(), control);
+                    }
+                    app.update(cx, |app, _| app.ui_mut().unwrap().main_diff = None);
+                    paint(cx, window);
+                    assert!(
+                        e2e::control_bounds(window.window_id(), "compare-banner-#77 peek-visible")
+                            .is_some(),
+                        "the drawn Compare banner identifies the PR"
+                    );
+                    for control in [
+                        "inspector-message-scroll",
+                        "create-branch-btn",
+                        "cherry-pick-btn",
+                    ] {
+                        assert!(
+                            e2e::control_bounds(window.window_id(), control).is_none(),
+                            "unloaded PR head must not draw commit X's detail/action: {control}"
+                        );
+                    }
+                    assert!(cx.read(|cx| app.read(cx).ui().selected.is_none()));
                     if let Some((panel, draft)) = &retained_panel {
                         cx.read(|cx| {
                             let current = app
@@ -332,6 +380,68 @@ pub fn scenario_pr_peek_visible_edges(cx: &mut VisualTestAppContext) {
         }
     }
     eprintln!("[gui-e2e] PASS pr_peek_visible_edges");
+}
+
+pub fn scenario_pr_peek_preserves_tabs_drafts(cx: &mut VisualTestAppContext) {
+    let _offline = crate::pr_fields_focus::OfflineGh::install();
+    let (_fixture, repo, base, head) = peek_fixture();
+    let before = repository_state(&repo);
+    let (app, window) = mount(cx, &repo);
+    open_pr_context(cx, &app, &head);
+    let mut draft_pr = pull_request(76, "Draft stays on its PR", "peek-visible");
+    draft_pr.head_sha = head.0.clone();
+    e2e::queue_github_pr_conversation(gpui::Task::ready((
+        Ok((Vec::new(), Vec::new())),
+        Ok(Vec::new()),
+    )));
+    app.update(cx, |app, cx| app.pr_mode_open(&draft_pr, cx));
+    cx.run_until_parked();
+    paint(cx, window);
+    let draft = "Draft for #76\nexact text 日本語";
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            let input = app.pr_comment_input.clone().expect("real PR composer");
+            input.update(cx, |state, cx| state.replace(draft.to_owned(), window, cx));
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.pr_mode_home(cx));
+    paint(cx, window);
+    cx.read(|cx| {
+        let mode = app.read(cx).pr_mode().expect("PR workspace");
+        assert_eq!(mode.tabs.len(), 1);
+        assert_eq!(mode.tabs[0].comment_draft, draft);
+    });
+    peek_from_row(cx, &app, window, "pr-home-row-77");
+    assert_compare_consumer(cx, &app, window, &base, &head);
+    app.update(cx, |app, cx| app.show_pr_mode(cx));
+    paint(cx, window);
+    cx.read(|cx| {
+        let mode = app.read(cx).pr_mode().expect("restored PR workspace");
+        assert_eq!(mode.tabs.len(), 1, "Peek must preserve open PR tabs");
+        assert_eq!(mode.tabs[0].pr.key(), draft_pr.key());
+        assert_eq!(
+            mode.tabs[0].comment_draft, draft,
+            "Peek must preserve the exact draft"
+        );
+    });
+    app.update(cx, |app, cx| app.pr_mode_open(&draft_pr, cx));
+    paint(cx, window);
+    cx.read(|cx| {
+        let input = app
+            .read(cx)
+            .pr_comment_input
+            .as_ref()
+            .expect("restored composer");
+        assert_eq!(input.read(cx).value().as_ref(), draft);
+    });
+    // The explicit Graph button remains a mode exit, unlike read-only Peek.
+    app.update(cx, |app, cx| app.show_graph_mode(cx));
+    assert!(cx.read(|cx| app.read(cx).pr_mode().is_none()));
+    assert_eq!(repository_state(&repo), before);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS pr_peek_preserves_tabs_drafts");
 }
 
 fn dirty_editor(

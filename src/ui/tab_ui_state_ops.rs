@@ -231,6 +231,10 @@ impl super::KagiApp {
     pub fn pr_mode(&self) -> Option<&super::pr_mode::PrModeState> {
         self.ui().pr_mode.as_ref()
     }
+    /// Retained PR tabs do not take over Graph while Peek is on screen.
+    pub(crate) fn pr_mode_visible(&self) -> bool {
+        self.pr_mode().is_some_and(|mode| mode.visible)
+    }
     /// Foreground writer for [`Self::pr_mode`]. A background completion must
     /// write through the owner it froze at spawn, never through this.
     pub(crate) fn pr_mode_mut(&mut self) -> Option<&mut super::pr_mode::PrModeState> {

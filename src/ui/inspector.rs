@@ -337,6 +337,12 @@ pub(super) fn render_inspector(
         div()
             .id("compare-banner")
             .flex()
+            .when(cfg!(feature = "gui-e2e"), |banner| {
+                banner.relative().child(super::e2e::measure_inside(format!(
+                    "compare-banner-{}",
+                    title.as_ref()
+                )))
+            })
             .flex_row()
             .items_center()
             .justify_between()
@@ -1066,11 +1072,12 @@ fn action_button(
         .on_click(click);
     // `color_branch` is the only "primary" action here; the cherry-pick accent
     // keeps the default (neutral) Button look.
-    if color == theme().color_branch {
+    let btn = if color == theme().color_branch {
         btn.primary()
     } else {
         btn
-    }
+    };
+    super::e2e::measure_control(id, btn)
 }
 
 /// One flat changed-file row (badge + path + diffstat), clickable to open the

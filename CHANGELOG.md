@@ -7,7 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
-- PR table／sidebar の Peek が成功しても PR workspace や WIP の Commit Panel に隠れ、比較した変更ファイルが見えない問題を修正しました。既存の Graph／Inspector の Compare を表示し、graph 未取得の PR head でもファイルから main diff を開けます。dirty Editor は既存の確認を経由し、Cancel・古い tab／editor／input の承認では buffer を捨てません。保持中の Commit Panel と未送信 draft、read failure 時の表示文脈は維持し、fetch・checkout・repository write は行いません。(#1102)
+- PR table／sidebar の Peek が成功しても PR workspace や WIP の Commit Panel に隠れ、比較した変更ファイルが見えない問題を修正しました。既存の Graph／Inspector の Compare を表示し、graph 未取得の PR head でもファイルから main diff を開けます。PR head が graph 未取得の場合は以前の commit 選択を解除し、別 commit の情報や操作ボタンを表示しません。Peek では開いている PR tab と未送信 comment draft を保持し、PRs に戻るとそのまま復元します。dirty Editor は既存の確認を経由し、Cancel・古い tab／editor／input の承認では buffer を捨てません。保持中の Commit Panel と未送信 draft、read failure 時の表示文脈は維持し、fetch・checkout・repository write は行いません。(#1102)
 - Pull 前の remote-tracking refs が古い場合に、未取得の更新があるのに「すでに最新です」と表示していた問題を修正しました。clean / dirty の両方で既存の安全な fetch を完了してから確認または最新の案内を出し、fetch 失敗時は最新と判断しません。fetch 由来の未変更 checkout の確認は watcher の reload で消えず、外部の HEAD / 作業ファイル変更や後から始めた別の操作には古い確認を押し付けません。(#1087)
 - Pull が進行中の silent auto-fetch に参加した場合も、fetch 失敗を現在の tab の footer と error toast に一度だけ表示するようにしました。通知は既存の Operation Log の記録・表示 owner に集約し、ユーザーの Pull 要求を持たない background fetch と離れた tab は静かなまま、一つの durable receipt を残します。(#1087)
 - Branch の右クリックメニューも、未fetchの `behind=0` だけで Pull / Pull ff-only を無効化したり「最新」と表示したりしないようにしました。busy・detached HEAD・upstream 未設定などの構造的な制約は維持します。(#1087)

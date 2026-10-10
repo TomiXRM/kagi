@@ -2245,6 +2245,10 @@ mod macos {
                 Box::new(crate::pr_peek_visible::scenario_pr_peek_visible_edges),
             ),
             (
+                "pr_peek_preserves_tabs_drafts",
+                Box::new(crate::pr_peek_visible::scenario_pr_peek_preserves_tabs_drafts),
+            ),
+            (
                 "pr_peek_dirty_guard",
                 Box::new(crate::pr_peek_visible::scenario_pr_peek_dirty_guard),
             ),

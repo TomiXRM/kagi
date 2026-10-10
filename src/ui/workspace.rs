@@ -166,7 +166,7 @@ impl WorkspaceItem for PrModeItem {
         Some(CenterPane::PrMode)
     }
     fn is_open(&self, app: &KagiApp) -> bool {
-        app.pr_mode().is_some()
+        app.pr_mode_visible()
     }
     fn render(
         &self,
@@ -652,7 +652,7 @@ pub struct WorkspaceInputs {
     pub ecosystem_open: bool,
     /// `branch_cleanup_open` (ADR-0128).
     pub branch_cleanup_open: bool,
-    /// `pr_mode.is_some()` (GitHub Phase 1c).
+    /// PR workspace visibility, independent of retained tabs (GitHub Phase 1c).
     pub pr_mode: bool,
     /// Read-only Issues workspace is open.
     pub issues_mode: bool,

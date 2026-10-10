@@ -641,7 +641,7 @@ impl Render for KagiApp {
                 // list + diff pane — navigate that, not the main commit list.
                 if this.ui().file_history.is_some() {
                     this.step_file_history_selection(-1, cx);
-                } else if this.pr_mode().is_some() {
+                } else if this.pr_mode_visible() {
                     this.pr_mode_step(-1, cx);
                 } else if this.ui().ecosystem.is_none() && this.ui().editor_workspace.is_some() {
                     // T-WS-EDITOR-001 feedback: Editor mode steps its file
@@ -660,7 +660,7 @@ impl Render for KagiApp {
                 }
                 if this.ui().file_history.is_some() {
                     this.step_file_history_selection(1, cx);
-                } else if this.pr_mode().is_some() {
+                } else if this.pr_mode_visible() {
                     this.pr_mode_step(1, cx);
                 } else if this.ui().ecosystem.is_none() && this.ui().editor_workspace.is_some() {
                     this.step_editor_ws_selection(1, window, cx);
@@ -696,12 +696,12 @@ impl Render for KagiApp {
                 }
             }))
             .on_action(cx.listener(|this, _: &PrModePrevPane, window, cx| {
-                if this.root_has_focus(window) && this.pr_mode().is_some() {
+                if this.root_has_focus(window) && this.pr_mode_visible() {
                     this.pr_mode_cycle_focus(-1, cx);
                 }
             }))
             .on_action(cx.listener(|this, _: &PrModeNextPane, window, cx| {
-                if this.root_has_focus(window) && this.pr_mode().is_some() {
+                if this.root_has_focus(window) && this.pr_mode_visible() {
                     this.pr_mode_cycle_focus(1, cx);
                 }
             }))

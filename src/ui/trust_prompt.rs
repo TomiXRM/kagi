@@ -147,19 +147,28 @@ pub(crate) fn render_trust_repo_modal(
         .when_some(modal.error.clone(), |card, error| {
             card.child(
                 div()
-                    .id("trust-repo-error")
-                    .max_h(theme::scaled_px(180.))
-                    .overflow_y_scroll()
-                    .text_sm()
-                    .text_color(rgb(current_theme().color_blocker))
-                    .child(SharedString::from(error.clone())),
+                    .flex()
+                    .flex_row()
+                    .items_start()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id("trust-repo-error")
+                            .flex_1()
+                            .min_w_0()
+                            .max_h(theme::scaled_px(180.))
+                            .overflow_y_scroll()
+                            .text_sm()
+                            .text_color(rgb(current_theme().color_blocker))
+                            .child(SharedString::from(error.clone())),
+                    )
+                    .child(super::modal_copy::modal_copy_button(
+                        "trust-repo-copy-error",
+                        Msg::ModalCopyAll.t(),
+                        error,
+                        cx,
+                    )),
             )
-            .child(super::modal_copy::modal_copy_button(
-                "trust-repo-copy-error",
-                Msg::ModalCopyAll.t(),
-                error,
-                cx,
-            ))
         })
         .child(
             div()

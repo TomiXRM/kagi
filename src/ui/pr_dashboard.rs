@@ -389,10 +389,10 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                 .when(cfg!(feature = "gui-e2e"), |area| {
                     area.child(super::e2e::measure_inside("pr-home-table"))
                 })
-                // Overlay modes need no lane. Always keeps the last row clear
-                // of the pinned scrollbar's fixed 16 logical px track.
+                // Non-auto-hide macOS settings map to Hover in gpui-kit.
+                // Keep its hitbox clear of rows and make that table bar persistent.
                 .when(
-                    gpui_component::Theme::global(cx).scrollbar_show == ScrollbarShow::Always,
+                    gpui_component::Theme::global(cx).scrollbar_show != ScrollbarShow::Scrolling,
                     |area| area.pb(px(16.)),
                 )
                 .child(
@@ -414,7 +414,10 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                         })
                         .child(table),
                 )
-                .child(Scrollbar::horizontal(&horizontal_scroll)),
+                .child(Scrollbar::horizontal(&horizontal_scroll).when(
+                    gpui_component::Theme::global(cx).scrollbar_show != ScrollbarShow::Scrolling,
+                    |bar| bar.scrollbar_show(ScrollbarShow::Always),
+                )),
         );
     }
 

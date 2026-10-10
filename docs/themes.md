@@ -9,6 +9,9 @@ dedicated neutral `#8e8e8e`, not its readable `text_muted` label colour. Focus
 continues to use the accent ring. Other built-ins and custom themes retain the
 `text_muted` input-boundary mapping; `surface` supplies decorative chrome
 separators, and the stronger markdown-table border bridge is unchanged.
+The same `colors.input` boundary colours Default-outline buttons (modal
+Secondary and inspector/oplog/conflict actions), Radio, Select, Combobox,
+NumberInput and DatePicker; these are not separate token overrides.
 
 ## Where theme files live
 

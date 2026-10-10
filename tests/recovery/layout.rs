@@ -952,6 +952,8 @@ pub fn scenario_pr_dashboard_responsive(cx: &mut VisualTestAppContext) {
             for (zoom, policy) in [
                 (1., ScrollbarShow::Scrolling),
                 (1.667, ScrollbarShow::Scrolling),
+                (1., ScrollbarShow::Hover),
+                (1.667, ScrollbarShow::Hover),
                 (1., ScrollbarShow::Always),
                 (1.667, ScrollbarShow::Always),
             ] {
@@ -1004,13 +1006,13 @@ pub fn scenario_pr_dashboard_responsive(cx: &mut VisualTestAppContext) {
                     (viewport.size.width - table.size.width).abs() <= px(EPS),
                     "overlay scrollbar must not reserve a side lane"
                 );
-                let lane = if policy == ScrollbarShow::Always {
-                    px(16.)
-                } else {
+                let lane = if policy == ScrollbarShow::Scrolling {
                     px(0.)
+                } else {
+                    px(16.)
                 };
                 assert!((table.bottom() - viewport.bottom() - lane).abs() <= px(EPS),
-                    "only Always policy reserves the bottom lane: {policy:?}, {viewport:?}, {table:?}");
+                    "non-auto-hide policies reserve the bottom lane: {policy:?}, {viewport:?}, {table:?}");
                 eprintln!("[gui-e2e] chrome apple-light {dimensions:?}/{locale}@{zoom}/{policy:?}: table={table:?}, viewport={viewport:?}, header-border={:?}", e2e::chrome_border("pr-table-header"));
                 let row = e2e::control_bounds(win.window_id(), &format!("pr-home-row-{first}"))
                     .expect("first row");
@@ -1074,5 +1076,5 @@ pub fn scenario_pr_dashboard_responsive(cx: &mut VisualTestAppContext) {
     }
     theme::set_active(&before_theme.slug);
     cx.update(theme::sync_gpui_component_theme);
-    eprintln!("[gui-e2e] PASS pr_dashboard_responsive: aligned columns, shared X wheel, independent Y tail, neutral boundaries, overlay/Always lane geometry, 16 width/locale/zoom/policy cells");
+    eprintln!("[gui-e2e] PASS pr_dashboard_responsive: aligned columns, shared X wheel, independent Y tail, neutral boundaries, Scrolling/Hover/Always lane geometry, 24 width/locale/zoom/policy cells");
 }

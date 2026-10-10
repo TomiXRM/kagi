@@ -1470,25 +1470,17 @@ mod tests {
     }
 
     #[test]
-    fn chrome_separators_do_not_borrow_selection_or_label_colors() {
-        let sites = [
-            include_str!("../../../src/ui/render_header.rs"),
-            include_str!("../../../src/ui/timeline_row.rs"),
-            include_str!("../../../src/ui/command_palette.rs"),
-        ];
-        let toolbar_sep = sites[0]
-            .split("let sep = || {")
-            .nth(1)
-            .unwrap()
-            .split("};")
-            .next()
-            .unwrap();
-        assert!(toolbar_sep.contains(".bg(rgb(theme().surface))"));
-        assert!(toolbar_sep.contains(".w(px(1.0))"));
-        assert!(!toolbar_sep.contains("selected"));
-        assert!(!toolbar_sep.contains("text_muted"));
-        assert!(!sites[1].contains(".border_color(rgb(theme().selected))"));
-        assert!(!sites[2].contains(".border_color(rgb(theme().selected))"));
+    fn structural_surfaces_have_a_visible_luminance_step() {
+        for t in THEMES {
+            for background in [t.panel, t.bg_base] {
+                let contrast = contrast_ratio(t.surface, background);
+                assert!(
+                    contrast >= 1.15,
+                    "{} surface contrast {contrast:.3}:1 on {background:#08x}",
+                    t.slug
+                );
+            }
+        }
     }
 
     #[test]

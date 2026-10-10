@@ -60,6 +60,13 @@ impl KagiApp {
         repo: std::path::PathBuf,
         cx: &mut Context<Self>,
     ) {
+        #[cfg(feature = "gui-e2e")]
+        let injected = super::e2e::take_github_pr_fetch();
+        #[cfg(not(feature = "gui-e2e"))]
+        let injected = None;
+        if injected.is_none() && !kagi_git::github::gh_available() {
+            return;
+        }
         // Shared evidence is always Open, independent of workspace strip intent.
         let generation = {
             let Some(ui) = self.ui.get_mut(&owner) else {
@@ -72,6 +79,7 @@ impl KagiApp {
             None,
             None,
             kagi_domain::list_filter::StateFilter::Open,
+            injected,
             cx,
         );
         cx.notify();

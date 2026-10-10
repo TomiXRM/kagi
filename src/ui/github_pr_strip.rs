@@ -129,10 +129,10 @@ pub(super) fn pr_list_task(
     base_repo: Option<String>,
     cursor: Option<String>,
     state: StateFilter,
+    injected: Option<gpui::Task<Result<PrListSnapshot, PrFetchError>>>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::Task<Result<PrListSnapshot, PrFetchError>> {
-    #[cfg(feature = "gui-e2e")]
-    if let Some(task) = super::e2e::take_github_pr_fetch() {
+    if let Some(task) = injected {
         return task;
     }
     cx.background_executor().spawn(async move {
@@ -151,11 +151,18 @@ impl KagiApp {
         let (Some(owner), Some(repo)) = (self.active_session(), self.repo_path.clone()) else {
             return;
         };
+        #[cfg(feature = "gui-e2e")]
+        let injected = super::e2e::take_github_pr_fetch();
+        #[cfg(not(feature = "gui-e2e"))]
+        let injected = None;
+        if injected.is_none() && !kagi_git::github::gh_available() {
+            return;
+        }
         let Some(ui) = self.ui.get_mut(&owner) else {
             return;
         };
         let generation = ui.begin_pr_strip_request(state);
-        let task = pr_list_task(repo.clone(), None, None, state, cx);
+        let task = pr_list_task(repo.clone(), None, None, state, injected, cx);
         cx.notify();
         cx.spawn(async move |this, acx| {
             let result = task.await;
@@ -205,11 +212,16 @@ impl KagiApp {
         else {
             return;
         };
+        #[cfg(feature = "gui-e2e")]
+        let injected = super::e2e::take_github_pr_fetch();
+        #[cfg(not(feature = "gui-e2e"))]
+        let injected = None;
         let task = pr_list_task(
             repo,
             Some(request.base_repo.clone()),
             Some(request.cursor.clone()),
             request.state,
+            injected,
             cx,
         );
         cx.notify();

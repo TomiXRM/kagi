@@ -78,6 +78,19 @@ fn is_sparse_excluded(index: &git2::Index, path: &Path) -> bool {
     })
 }
 
+/// Test the directory entry itself, not a symlink's destination. Only a
+/// genuinely missing entry may be staged as a deletion; other I/O errors abort.
+fn worktree_entry_present(path: &Path) -> Result<bool, GitError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(GitError::Other(format!(
+            "cannot inspect working tree entry '{}': {error}",
+            path.display()
+        ))),
+    }
+}
+
 pub(crate) fn stage_file(repo: &Repository, path: &Path) -> Result<(), GitError> {
     let workdir = repo
         .workdir()
@@ -88,8 +101,9 @@ pub(crate) fn stage_file(repo: &Repository, path: &Path) -> Result<(), GitError>
         .index()
         .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
 
-    if abs_path.exists() {
-        // File exists in working tree — stage it.
+    if worktree_entry_present(&abs_path)? {
+        // libgit2 stages symlinks as mode 120000 with raw read_link bytes,
+        // without following the target (even when it is missing).
         index
             .add_path(path)
             .map_err(|e| GitError::Other(format!("index.add_path failed: {}", e.message())))?;
@@ -487,14 +501,15 @@ pub(crate) fn stage_files(
         // (#675). Refuse the whole batch rather than skipping the offending
         // paths — a partially applied stage is harder to reason about than one
         // that did not happen.
-        if !workdir.join(path).exists() && is_sparse_excluded(&index, path) {
+        let present = worktree_entry_present(&workdir.join(path))?;
+        if !present && is_sparse_excluded(&index, path) {
             return Err(GitError::Blocked(Box::new(PlanNote::Common(
                 CommonNote::SparseExcludedPath {
                     path: path.display().to_string(),
                 },
             ))));
         }
-        if workdir.join(path).exists() {
+        if present {
             index.add_path(path).map_err(|e| {
                 GitError::Other(format!(
                     "index.add_path({}) failed: {}",

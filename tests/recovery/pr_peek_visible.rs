@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use gpui::{point, px, AnyWindowHandle, Entity, Modifiers, MouseButton, VisualTestAppContext};
 use kagi::ui::diff_view::{CompareTarget, DiffRow, MainDiffSource};
 use kagi::ui::{e2e, theme, KagiApp};
+use kagi_domain::github::PrListSnapshot;
 use kagi_git::CommitId;
 
 use crate::evidence_support::pull_request;
@@ -118,7 +119,11 @@ pub fn scenario_pr_peek_visible_table(cx: &mut VisualTestAppContext) {
     let (app, window) = mount(cx, &repo);
     let mut pr = pull_request(77, "Peek visibility", "peek-visible");
     pr.head_sha = head.0.clone();
-    e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(vec![pr])));
+    e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(PrListSnapshot {
+        base_repo: pr.base_repo.clone(),
+        prs: vec![pr],
+        next_cursor: None,
+    })));
     app.update(cx, |app, cx| {
         app.refresh_github_prs(cx);
         app.show_pr_mode(cx);
@@ -211,7 +216,11 @@ fn assert_compare_consumer(
 fn open_pr_context(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, head: &CommitId) {
     let mut pr = pull_request(77, "Peek visibility", "peek-visible");
     pr.head_sha = head.0.clone();
-    e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(vec![pr])));
+    e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(PrListSnapshot {
+        base_repo: pr.base_repo.clone(),
+        prs: vec![pr],
+        next_cursor: None,
+    })));
     app.update(cx, |app, cx| {
         app.github_host_logins
             .insert(Some("github.com".into()), "alice".into());
@@ -613,7 +622,11 @@ pub fn scenario_pr_peek_dirty_guard(cx: &mut VisualTestAppContext) {
                 "tab" => {
                     let other = build_fixture();
                     let other_before = repository_state(other.path());
-                    e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(Vec::new())));
+                    e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(PrListSnapshot {
+                        base_repo: "github.com/example/repo".into(),
+                        prs: Vec::new(),
+                        next_cursor: None,
+                    })));
                     app.update(cx, |app, cx| {
                         assert!(app.open_repository(other.path().to_path_buf(), cx));
                     });
@@ -725,7 +738,11 @@ pub fn scenario_pr_peek_read_failure_context(cx: &mut VisualTestAppContext) {
             let (editor, edited) = dirty_editor(cx, &app, window);
             if missing {
                 let pr = pull_request(77, "Unfetched Peek", "not-fetched");
-                e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(vec![pr])));
+                e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(PrListSnapshot {
+                    base_repo: pr.base_repo.clone(),
+                    prs: vec![pr],
+                    next_cursor: None,
+                })));
                 app.update(cx, |app, cx| {
                     app.refresh_github_prs(cx);
                     app.show_pr_mode(cx);

@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::KagiApp;
+use kagi_domain::github::PrListSnapshot;
 
 use crate::evidence_support::pull_request;
 use crate::macos::{build_fixture, git, mount, unmount};
@@ -270,8 +271,9 @@ pub fn scenario_pr_same_number(cx: &mut VisualTestAppContext) {
     );
 
     // A successful list refresh replaces the PR facts, not either PR's
-    // composer. Hold it across a PR switch so B's accepted background
-    // update cannot overwrite the live box now belonging to A.
+    // composer. Hold it across a PR switch while A's live box is edited.
+    // The session's list belongs to A; B's facts cannot arrive through A's
+    // shared page because each page belongs to exactly one repository.
     let (refresh, answer) = crate::evidence_support::deferred(cx);
     kagi::ui::e2e::queue_github_pr_fetch(refresh);
     let refresh_generation = app.update(cx, |app, cx| {
@@ -298,9 +300,13 @@ pub fn scenario_pr_same_number(cx: &mut VisualTestAppContext) {
         );
         assert!(ui.github_prs_loading, "the producer is still held");
     });
-    let mut refreshed_b = b7.clone();
-    refreshed_b.title = "B refreshed while A composes".into();
-    answer.send(Ok(vec![a7.clone(), refreshed_b]));
+    let mut refreshed_a = a7.clone();
+    refreshed_a.title = "A refreshed while A composes".into();
+    answer.send(Ok(PrListSnapshot {
+        base_repo: a7.base_repo.clone(),
+        prs: vec![refreshed_a],
+        next_cursor: None,
+    }));
     paint(cx, window);
     cx.read(|cx| {
         let app = app.read(cx);
@@ -310,9 +316,9 @@ pub fn scenario_pr_same_number(cx: &mut VisualTestAppContext) {
         assert_eq!(ui.github_prs_gen, refresh_generation);
         assert!(!ui.github_prs_loading, "the held completion was accepted");
         assert!(ui.github_error.is_none(), "the refresh succeeded");
-        let b = ui.github_prs.iter().find(|pr| pr.is(&b7.key())).unwrap();
+        let a = ui.github_prs.iter().find(|pr| pr.is(&a7.key())).unwrap();
         assert_eq!(
-            b.title, "B refreshed while A composes",
+            a.title, "A refreshed while A composes",
             "the accepted Open collection carries the distinct refreshed title"
         );
     });
@@ -335,7 +341,7 @@ pub fn scenario_pr_same_number(cx: &mut VisualTestAppContext) {
     assert!(
         list.rows
             .values()
-            .any(|(label, _)| { label.contains("B refreshed while A composes") }),
+            .any(|(label, _)| { label.contains("A refreshed while A composes") }),
         "a freshly drawn PR row exposes the distinct refreshed title"
     );
     let title = kagi::ui::e2e::control_bounds(window.window_id(), "pr-home-title-7")

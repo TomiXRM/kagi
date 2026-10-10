@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Smart Commit のモデル一覧は共有 modal body／window 高さに追従する list 上限を使い、低い window でも Cancel 行へはみ出さないようにしました。fake Ollama の試験専用同期には追加 dependency を使いません。(#1080 review)
+- Smart Commit でローカルモデルが0件の場合、Generate／初回同意の後に既存のルールベース生成を実際に1回実行し、EN／JA で下書きの挿入を報告します。開始した tab 以外には適用せず、以前の LLM 応答による二重適用も防ぎます。(#1082)
+- Smart Commit のモデル選択に1つの list Tab stop、矢印／Home／End／Page key と選択先への scroll、focus ring と AX の選択状態を追加しました。Enter／Space だけでモデルを保存して生成を開始でき、Escape・一覧表示だけでは生成しません。(#1080)
 - macOS の Kagi メニューに Services、Hide Kagi（⌘H）、Hide Others（⌥⌘H）、Show All を標準順序で追加しました。Services と application visibility は GPUI の OS API に委譲し、Hide は window／編集中の state を破棄しません。Linux／FreeBSD のメニューと Quit の settings flush は変更しません。(#1083)
 - macOS visibility commands は command palette／in-app dropdown からも platform API に届くよう修正し、native menu と JA palette は同じ registry label path を使います。(#1083 review)
 - Command Palette は狭い／低い window と高 zoom でも検索欄と結果を viewport 内に保ち、結果だけを独立して scroll します。長いテーマ名は省略表示し、完全な名前を tooltip／AX に残して shortcut 欄を保持します。(#1084)

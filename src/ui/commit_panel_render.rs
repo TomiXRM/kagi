@@ -922,7 +922,7 @@ impl CommitPanelView {
 
     fn defer_smart_suggest(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.defer_owned(window, cx, |app, owner, window, cx| {
-            app.smart_suggest(owner, window, cx)
+            app.smart_suggest(owner, window, cx);
         });
     }
 

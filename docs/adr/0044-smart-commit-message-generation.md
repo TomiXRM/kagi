@@ -115,3 +115,38 @@ pub fn generate_message(backend: &MessageBackend, input: &GenInput) -> Result<St
 - trait なし・enum dispatch でバックエンド追加は分岐追加で済む
 - ureq 再利用で依存純度を保つ
 - T-COMMIT-015/016 は **unblocked**(本決定が backend 仕様)
+
+## Amendment — 2026-10-11: keyboard model confirmation (#1080)
+
+The dense modal target list reuses Kagi's `RowFocus` / `RowList` and
+`list_a11y` listbox/options, rather than a second handmade keyboard control.
+Rest/hover, focus-visible ring and selected wash are required; loading/error
+are not list states because capability detection finishes before opening it.
+One list Tab stop, arrows/Home/End/Page keys and reveal-on-move are required.
+Enter/Space explicitly confirm the focused row through `choose_smart_model`;
+Escape cancels. A single model still requires confirmation, and opening or
+adding rows never generates. Full names remain in AX when visual text truncates.
+The initiating session owns consent and model confirmation: a background or
+closed owner's modal must not apply a draft to the active tab.
+
+
+## Amendment — 2026-10-11: empty-model fallback (#1082)
+
+An empty accepted model list runs the existing owner-bound `smart_suggest`
+once, both from Generate and after first-time consent. Only successful draft
+insertion reports “No local models found — rule-based draft inserted”, through
+EN/JA `Msg`; there is no generation HTTP request and no empty picker.
+Consent carries its initiating session through confirmation; departure cannot
+redirect insertion to another tab. An explicit rule-based suggestion advances
+the panel's existing generation revision and clears a pending draft, preventing
+an older LLM completion from applying a second result.
+
+
+Review clarification (#1080): the picker uses #454's `modal_body()` and
+`modal_list_max_h()` rather than a fixed pixel list ceiling. The middle section
+clips/shrinks inside the modal while the Cancel action remains fixed.
+Model rows use the same zoom-scaled `MODAL_LIST_ROW_H` as that height helper,
+with the fixed keyboard-ring width removed from the text's line box; one
+model therefore fits completely rather than receiving an 18px viewport for
+an independently padded taller row.
+

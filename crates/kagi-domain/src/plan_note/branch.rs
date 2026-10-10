@@ -24,6 +24,11 @@ pub enum BranchNote {
     /// warning (`plan_rename_branch`, unconditional) — the remote branch name
     /// is not renamed automatically.
     RenameRemoteNotRenamed,
+    /// Local config keys displayed for approval; digest binds every ordered
+    /// source/destination value and its include origin to the confirmation.
+    RenameConfig { keys: Vec<String>, digest: String },
+    /// Refuse before mutation when branch config changed after approval.
+    RenameConfigChanged,
     /// blocker (`plan_delete_branch`) — the branch is the current HEAD branch.
     DeleteCurrentBranch { name: String },
     /// blocker — any main/linked worktree has the branch checked out.
@@ -66,6 +71,13 @@ impl BranchNote {
             }
             BranchNote::RenameRemoteNotRenamed => {
                 crate::advice_template_en!(BranchRenameRemoteNotRenamed).to_string()
+            }
+            BranchNote::RenameConfig { keys, .. } => format!(
+                crate::advice_template_en!(BranchRenameConfig),
+                if keys.is_empty() { "none".into() } else { keys.join(", ") }
+            ),
+            BranchNote::RenameConfigChanged => {
+                crate::advice_template_en!(BranchRenameConfigChanged).into()
             }
             BranchNote::DeleteCurrentBranch { name } => format!(
                 crate::advice_template_en!(BranchDeleteCurrentBranch),

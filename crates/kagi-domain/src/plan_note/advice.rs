@@ -307,6 +307,12 @@ macro_rules! advice_template_en {
     (BranchRenameRemoteNotRenamed) => {
         "Remote branch names are not renamed automatically; only local branch config is carried over."
     };
+    (BranchRenameConfig) => {
+        "Local branch config keys to move: {}."
+    };
+    (BranchRenameConfigChanged) => {
+        "Local branch config changed after confirmation. Review a new rename plan."
+    };
     (BranchDeleteCurrentBranch) => {
         "Branch '{}' is the currently checked-out branch. Checkout a different branch before deleting this one."
     };

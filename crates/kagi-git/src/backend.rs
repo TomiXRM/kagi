@@ -1643,8 +1643,24 @@ impl Backend {
         plan: &OperationPlan,
         old_name: &str,
         new_name: &str,
+        partial_after: &mut Option<ops::StateSummary>,
     ) -> Result<(), GitError> {
-        ops::execute_rename_branch(&self.repo, plan, old_name, new_name)
+        let result = ops::execute_rename_branch(&self.repo, plan, old_name, new_name);
+        if result.is_err()
+            && self
+                .repo
+                .find_branch(old_name, git2::BranchType::Local)
+                .is_err()
+            && self
+                .repo
+                .find_branch(new_name, git2::BranchType::Local)
+                .is_ok()
+        {
+            // Config migration can fail after the ref-only rename. Record the
+            // observed after-state instead of claiming that nothing was applied.
+            *partial_after = self.current_state().ok();
+        }
+        result
     }
 
     pub fn validate_branch_rename(

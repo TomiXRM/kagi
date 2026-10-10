@@ -5,13 +5,14 @@
 ## Decision
 
 ### Rename
-- **local branch のみ**。`git check-ref-format` 相当の validation(git2 Branch::rename が検証)
+- **local branch のみ**。`git check-ref-format` 相当の validation を実行し、ref-only の `Reference::rename` を使う。
 - **current branch の rename は許可**(`git branch -m` 同等の ref-only 操作で安全。
   HEAD の symbolic ref も追従させる)。dirty でも safe(WT 不変)だが R6 に従い warning 表示のみ
 - upstream tracking 設定(branch.<name>.*)は新名へ引き継ぐ。**remote branch 名は自動 rename しない**
   (plan に「remote 上の名前は変わらない」を明示)
-- gh 重複キー問題(2026-06-13 の delete バグ)と同型の config 移行に注意: 寛容な
-  read→rewrite で移すこと
+- #1129 (2026-10-11): repo-local の exact `branch "<old>"` subsection だけを移す。`foo.bar` は `foo` の設定ではない。複数値の順序・quotes／escapes・未知のキーを含む全値を保持するため、Git の `config --file <origin> --rename-section` で header だけを変更する。local include は元ファイルで移し、global／system は列挙も変更もしない。既存 destination 設定は消さない。
+- plan は移動キーと source／destination の ordered values・include origin の digest を保持する。preflight と execute が再照合し、確認後の変更や identity 欠落は ref 書込み前に拒否する。完了後は config 値と ref を検証する。ref rename 後の config 書込み失敗は観測した after-state を一件の Partial receipt に残す。
+- linked worktree の local branch rename も同じ経路を使い、`Reference::rename` が全 worktree の HEAD を追従させる。別の worktree-branch rename／remote rename executor は存在しない。
 
 ### Delete
 - 既存 plan_delete_branch / execute_delete_branch(ADR-0014: merged-only guard、unmerged=blocker、

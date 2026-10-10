@@ -1,7 +1,7 @@
 # Decision Log
 
 > **Status:** Active — append-only  
-> **Last updated:** 2026-10-10
+> **Last updated:** 2026-10-11
 
 ADR にするほどではないが、再計測や同じ失敗を避けるために残すべき決定と実測事実のログです。ADR を置き換えるものではありません。
 
@@ -15,6 +15,7 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-11 | Branch rename は `Reference::rename` の ref-only 経路と、repo-local origin ごとの Git `config --rename-section` を使う。plan は exact section/subsection の ordered values と include origin の SHA-256・移動キーを保持し、preflight／execute が照合、完了後に同じ ordered values を検証する | #1129。libgit2 `Branch::rename` と Kagi の prefix＋`set_str` rewrite は multivar を落とし、`foo.bar` を巻き込む。Git の parsed subsection rename は raw values／quotes／escapes を再直列化せず header だけを移し、destination 設定も消さない。global／system は列挙・書込み対象外。linked worktree も同じ local-branch 経路で全 HEAD を追従し、remote rename 専用操作は存在しない。[ADR-0053](adr/0053-branch-rename-delete-safety.md)。 |
 | 2026-10-10 | #1131 の backend 回帰は既存 `tests/support/isolated.rs` でテストごとに child process と専用 `KAGI_LOG_DIR` を所有する。単独 cargo 実行でも Refused 一件を検証し、whole-file hunk は born／unborn の literal 名でも Stage→Unstage と各一件の receipt を検証する | origin/dev 統合後の receipt 件数 0 は Backend の finalizer 消失ではなく、suite が外部設定した log directory に依存していたため。oplog の「tests must set KAGI_LOG_DIR」安全ガードは維持し、HOME fallback・環境変数の process-global 書換え・UI の二重記録で埋め合わせない。追加／削除 hunk は捕捉済み patch を使い、#1130 の whole-file Unstage triple と別の hunk receipt ownership を保持する。 |
 | 2026-10-10 | #1131 review: Unstage の照合も表示と同じ forward HEAD→index diff で行い、照合済みの一 hunk の raw patch を反転して適用する。HEAD receipt は `Head::display()`、実行 Failed の footer/toast は `op_failed` の EN/JA wrapper を使う。file↔symlink の二 delta 表示には hunk approval/button を付けず whole-file 操作へ委ねる | 下段 #1131 の「reverse diff で両側交換照合」を置換。xdiff の LCS は逆向きで同じ分割になるとは限らず、未変更の行交換を誤拒否する。反転は raw Git path quoting・mode・EOF marker を保持し、再 diff はしない。typechange の片側表示は全体の承認ではなく、変更していないユーザーへ HunkChanged を出すより hunk 操作を提示しない。 |
 | 2026-10-10 | Hunk の承認は range と raw patch の old/new 各側 SHA-256 を display read から UI → plan → preflight に渡す。context/change と EOF marker を含め、unstage は両側を交換して照合する。preflight が保持した同じ diff を index に適用し、Backend が一件の receipt を所有する | #1131。range 番号だけでは APPROVED → NOT_APPROVED の差替えを見逃す。lossy UTF-8 表示より前の bytes を使い、隣の hunk の変更を不必要に拒否せず、欠落 identity は承認できない。Untracked delta は捕捉済み patch から Added delta に変換し、worktree を再読込して stage_file に渡さない。UI は既存 HunkChanged の EN/JA 表示と拒否後 diff refresh を使う。 |

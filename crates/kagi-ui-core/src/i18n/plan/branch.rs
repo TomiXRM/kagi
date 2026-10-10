@@ -22,6 +22,9 @@ pub(crate) const ADVICE_BRANCH_RENAME_REF_ONLY_DIRTY: &str =
     "リネームは ref だけを変更します。作業ツリーは変わりません。";
 pub(crate) const ADVICE_BRANCH_RENAME_REMOTE_NOT_RENAMED: &str =
     "remote branch はリネームされません。local の設定だけ引き継ぎます。";
+pub(crate) const ADVICE_BRANCH_RENAME_CONFIG: &str = "引き継ぐ local branch の設定キー: {}。";
+pub(crate) const ADVICE_BRANCH_RENAME_CONFIG_CHANGED: &str =
+    "確認後に local branch の設定が変わりました。リネームの計画を作り直して確認してください。";
 pub(crate) const ADVICE_BRANCH_DELETE_CURRENT_BRANCH: &str =
     "checkout 中の branch は削除できません。別の branch に切り替えてください。\nbranch `{}`";
 pub(crate) const ADVICE_BRANCH_DELETE_BRANCH_CHECKED_OUT: &str =
@@ -48,6 +51,17 @@ pub fn note_ja(note: &BranchNote) -> String {
         }
         BranchNote::RenameRemoteNotRenamed => {
             super::advice_text(Msg::AdviceBranchRenameRemoteNotRenamed, &[])
+        }
+        BranchNote::RenameConfig { keys, .. } => {
+            let keys = if keys.is_empty() {
+                "なし".into()
+            } else {
+                keys.join(", ")
+            };
+            super::advice_text(Msg::AdviceBranchRenameConfig, &[&keys])
+        }
+        BranchNote::RenameConfigChanged => {
+            super::advice_text(Msg::AdviceBranchRenameConfigChanged, &[])
         }
         BranchNote::DeleteCurrentBranch { name } => {
             super::advice_text(Msg::AdviceBranchDeleteCurrentBranch, &[name])

@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Branch rename は exact な repo-local subsection とその include 元だけを移し、複数の `merge` 値の順序・quotes／escapes・`pushRemote`／`rebase`／`description` を保つようにしました。`foo.bar` など別の branch や global／system 設定は変更しません。plan に移動する設定キーを示し、確認後の source／destination 設定の変更は ref 書込み前に拒否して一件の操作記録を残します。(#1129)
 - Stage hunk / Unstage hunk は表示時の range と raw patch（context・改行を含む）の内容を承認対象にし、同じ range でも内容が変わった場合は index・HEAD・作業ファイルを書き換えず拒否します。EN／JA の理由を footer / toast に表示し、diff を再読込し、一件の Refused 操作記録を残します。(#1131)
 - Unstage hunk は逆向きの diff を再計算せず、表示・照合済みの patch を反転するため、行の入替えも変更のない承認で解除できます。操作記録の HEAD は読みやすい branch 表記に揃え、実行失敗も EN／JA の footer / toast を維持します。file↔symlink の型変更は片側 hunk のボタンを出さず、既存のファイル単位 Stage / Unstage を使います。(#1131 review)
 - Hunk 操作の backend 回帰はテストごとの隔離 log directory を使い、外部の環境設定なしでも拒否一件の操作記録を確認できるようにしました。untracked／added／deleted と unborn の whole-file hunk も index だけを Stage / Unstage し、literal 名の隣のファイルや作業ファイルを保持する回帰を追加しました。(#1131 integration)

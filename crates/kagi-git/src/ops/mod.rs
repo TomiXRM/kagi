@@ -115,6 +115,7 @@ mod discard;
 mod fetch;
 mod force_lease;
 mod history;
+pub(crate) mod hunk_staging;
 mod merge;
 mod merge_into;
 mod oplog_restore;

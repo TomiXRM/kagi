@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Stage hunk / Unstage hunk は表示時の range と raw patch（context・改行を含む）の内容を承認対象にし、同じ range でも内容が変わった場合は index・HEAD・作業ファイルを書き換えず拒否します。EN／JA の理由を footer / toast に表示し、diff を再読込し、一件の Refused 操作記録を残します。(#1131)
+- Unstage hunk は逆向きの diff を再計算せず、表示・照合済みの patch を反転するため、行の入替えも変更のない承認で解除できます。操作記録の HEAD は読みやすい branch 表記に揃え、実行失敗も EN／JA の footer / toast を維持します。file↔symlink の型変更は片側 hunk のボタンを出さず、既存のファイル単位 Stage / Unstage を使います。(#1131 review)
+- Hunk 操作の backend 回帰はテストごとの隔離 log directory を使い、外部の環境設定なしでも拒否一件の操作記録を確認できるようにしました。untracked／added／deleted と unborn の whole-file hunk も index だけを Stage / Unstage し、literal 名の隣のファイルや作業ファイルを保持する回帰を追加しました。(#1131 integration)
 - Commit／Amend の private index は stat-cache と skip-worktree flag を保持し、sparse なファイルを hook に削除として見せたり、全 tracked file を再 hash したりしないようにしました。empty commit の message-only Amend と HEAD の差分をなくす staged／both Amend を維持し、署名設定は Git の conditional include を含む実際の CLI policy に揃えます。(#1132／#1133 review)
 - `commit.gpgsign=true` の Commit／fixup・全 Amend mode・解決済み MergeCommit は、system Git の `gpg.format`／署名鍵設定を使って署名します。鍵が無い場合は HEAD と元 index を進めず、Git の理由を操作記録と EN／JA の失敗表示に残します。成功後も要求された署名 header を確認し、hook による unsigned HEAD への置換を成功として扱いません。使い捨て SSH 鍵による署名と `git verify-commit` の backend 回帰を追加しました。(#1133)
 - Commit／fixup・Amend・解決済み merge の Commit は user の Git hook を実行し、`core.hooksPath` を尊重するようにしました。拒否 hook の stderr は操作記録と EN／JA の失敗 footer／toast に残し、HEAD と元 index を保持します。承認時の staged identity を再照合した private index で実行し、完了後に HEAD の tree と parents を検証します。(#1132)

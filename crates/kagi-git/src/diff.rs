@@ -428,10 +428,25 @@ pub(crate) fn patch_to_file_diff(
         _ => ChangeKind::Modified,
     };
     let is_binary = delta.old_file().is_binary() || delta.new_file().is_binary();
-    let hunks = match patch {
+    let mut hunks = match patch {
         Some(patch) if !is_binary => patch_hunks(&patch)?,
         _ => Vec::new(),
     };
+    // File↔symlink transitions are represented as deletion + addition for
+    // this same path. A displayed half is not approval of the whole change;
+    // keep the existing whole-file controls, but offer no hunk mutation.
+    if diff
+        .deltas()
+        .filter(|delta| {
+            delta.new_file().path() == Some(path) || delta.old_file().path() == Some(path)
+        })
+        .count()
+        != 1
+    {
+        for hunk in &mut hunks {
+            hunk.content_identity = None;
+        }
+    }
     Ok(FileDiff {
         old_path,
         new_path,
@@ -443,6 +458,7 @@ pub(crate) fn patch_to_file_diff(
 
 /// The hunk/line extraction shared by every `git2::Patch` → [`FileDiff`] path.
 pub(crate) fn patch_hunks(patch: &git2::Patch<'_>) -> Result<Vec<Hunk>, GitError> {
+    use sha2::Digest;
     let num_hunks = patch.num_hunks();
     let mut hunks = Vec::with_capacity(num_hunks);
 
@@ -455,6 +471,7 @@ pub(crate) fn patch_hunks(patch: &git2::Patch<'_>) -> Result<Vec<Hunk>, GitError
         let new_range = (diff_hunk.new_start(), diff_hunk.new_lines());
 
         let mut lines = Vec::with_capacity(line_count);
+        let mut identity = HunkContentHasher::default();
 
         for l_idx in 0..line_count {
             let diff_line = patch.line_in_hunk(h_idx, l_idx).map_err(|e| {
@@ -465,6 +482,7 @@ pub(crate) fn patch_hunks(patch: &git2::Patch<'_>) -> Result<Vec<Hunk>, GitError
                     e.message()
                 ))
             })?;
+            identity.line(&diff_line);
 
             let kind = match diff_line.origin() {
                 '+' | '>' => DiffLineKind::Added,
@@ -486,8 +504,70 @@ pub(crate) fn patch_hunks(patch: &git2::Patch<'_>) -> Result<Vec<Hunk>, GitError
             old_range,
             new_range,
             lines,
+            content_identity: Some((
+                identity.old.finalize().into(),
+                identity.new.finalize().into(),
+            )),
         });
     }
 
     Ok(hunks)
+}
+
+#[derive(Default)]
+struct HunkContentHasher {
+    old: sha2::Sha256,
+    new: sha2::Sha256,
+}
+
+impl HunkContentHasher {
+    fn line(&mut self, line: &git2::DiffLine<'_>) {
+        use sha2::Digest;
+        // Hash raw bytes before lossy UTF-8 conversion. Side-local tags retain
+        // context/change and missing-LF identity and are reversible.
+        let origin = line.origin();
+        let tag = match origin {
+            ' ' => 0u8,
+            '+' | '-' => 1,
+            _ => 2,
+        };
+        let hash_line = |digest: &mut sha2::Sha256| {
+            digest.update([tag]);
+            digest.update((line.content().len() as u64).to_be_bytes());
+            digest.update(line.content());
+        };
+        if matches!(origin, ' ' | '-' | '=' | '>') {
+            hash_line(&mut self.old);
+        }
+        if matches!(origin, ' ' | '+' | '=' | '<') {
+            hash_line(&mut self.new);
+        }
+    }
+}
+
+/// Recompute an approval without allocating display lines during preflight.
+pub(crate) fn patch_hunk_approval(
+    patch: &git2::Patch<'_>,
+    h_idx: usize,
+) -> Result<kagi_domain::diff::HunkApproval, GitError> {
+    use sha2::Digest;
+    let (hunk, count) = patch
+        .hunk(h_idx)
+        .map_err(|e| GitError::Other(format!("patch.hunk failed: {}", e.message())))?;
+    let mut identity = HunkContentHasher::default();
+    for line in 0..count {
+        identity.line(
+            &patch.line_in_hunk(h_idx, line).map_err(|e| {
+                GitError::Other(format!("patch.line_in_hunk failed: {}", e.message()))
+            })?,
+        );
+    }
+    Ok(kagi_domain::diff::HunkApproval {
+        range: kagi_domain::diff::HunkRange {
+            old: (hunk.old_start(), hunk.old_lines()),
+            new: (hunk.new_start(), hunk.new_lines()),
+        },
+        old_digest: identity.old.finalize().into(),
+        new_digest: identity.new.finalize().into(),
+    })
 }

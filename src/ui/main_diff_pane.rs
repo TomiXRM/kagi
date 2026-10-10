@@ -179,6 +179,7 @@ impl Render for MainDiffPane {
                 &self.view.source,
                 self.app.clone(),
                 self.owner,
+                self.view.hunk_approvals.clone(),
             ),
             cx,
         )

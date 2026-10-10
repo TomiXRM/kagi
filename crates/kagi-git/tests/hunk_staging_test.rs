@@ -10,9 +10,11 @@ use std::path::Path;
 
 #[path = "../../../tests/support/git_fixture.rs"]
 mod git_fixture;
+#[path = "../../../tests/support/isolated.rs"]
+mod isolated;
 use git_fixture::{commit_all, git_command, git_output, init_repo};
 
-use kagi_domain::diff::HunkRange;
+use kagi_domain::diff::HunkApproval;
 use kagi_domain::plan_note::{CommonNote, PlanNote};
 use kagi_git::{Backend, GitError};
 use tempfile::TempDir;
@@ -60,13 +62,13 @@ impl Repo {
     fn backend(&self) -> Backend {
         Backend::open(self.path()).expect("open")
     }
-    fn unstaged(&self) -> Vec<HunkRange> {
+    fn unstaged(&self) -> Vec<HunkApproval> {
         let diff = self.backend().unstaged_file_diff(Path::new(FILE)).unwrap();
-        diff.hunks.iter().map(|h| h.range()).collect()
+        diff.hunks.iter().map(|h| h.approval().unwrap()).collect()
     }
-    fn staged(&self) -> Vec<HunkRange> {
+    fn staged(&self) -> Vec<HunkApproval> {
         let diff = self.backend().staged_file_diff(Path::new(FILE)).unwrap();
-        diff.hunks.iter().map(|h| h.range()).collect()
+        diff.hunks.iter().map(|h| h.approval().unwrap()).collect()
     }
     /// The staged content of the file, byte for byte.
     fn index_text(&self) -> String {
@@ -93,6 +95,9 @@ fn show_index(repo: &Path, file: &str) -> String {
 
 #[test]
 fn staging_one_hunk_stages_exactly_that_edit() {
+    if !isolated::run_isolated() {
+        return;
+    }
     let repo = Repo::new();
     let hunks = repo.unstaged();
     assert_eq!(hunks.len(), 2, "two separate edits diff as two hunks");
@@ -121,6 +126,9 @@ fn staging_one_hunk_stages_exactly_that_edit() {
 
 #[test]
 fn unstaging_one_hunk_takes_exactly_that_edit_out() {
+    if !isolated::run_isolated() {
+        return;
+    }
     let repo = Repo::new();
     let hunks = repo.unstaged();
     let backend = repo.backend();
@@ -157,6 +165,9 @@ fn unstaging_one_hunk_takes_exactly_that_edit_out() {
 
 #[test]
 fn a_hunk_drawn_before_the_file_moved_is_refused() {
+    if !isolated::run_isolated() {
+        return;
+    }
     let repo = Repo::new();
     let drawn = repo.unstaged();
     // Two lines inserted above: both hunks move down, so neither drawn header
@@ -177,6 +188,9 @@ fn a_hunk_drawn_before_the_file_moved_is_refused() {
 
 #[test]
 fn an_unstage_of_a_hunk_no_longer_staged_is_refused() {
+    if !isolated::run_isolated() {
+        return;
+    }
     let repo = Repo::new();
     let hunks = repo.unstaged();
     repo.backend()
@@ -189,10 +203,8 @@ fn an_unstage_of_a_hunk_no_longer_staged_is_refused() {
     repo.backend()
         .stage_hunk(Path::new(FILE), hunks[0])
         .unwrap();
-    let stale = HunkRange {
-        old: (drawn[0].old.0 + 1, drawn[0].old.1),
-        new: drawn[0].new,
-    };
+    let mut stale = drawn[0];
+    stale.range.old.0 += 1;
     let before = repo.index_text();
     let err = repo
         .backend()
@@ -204,6 +216,9 @@ fn an_unstage_of_a_hunk_no_longer_staged_is_refused() {
 
 #[test]
 fn an_untracked_file_is_its_one_hunk() {
+    if !isolated::run_isolated() {
+        return;
+    }
     let repo = Repo::new();
     std::fs::write(repo.path().join("new.txt"), "a\nb\n").unwrap();
     let backend = repo.backend();
@@ -211,14 +226,412 @@ fn an_untracked_file_is_its_one_hunk() {
     assert_eq!(diff.hunks.len(), 1);
 
     backend
-        .stage_hunk(Path::new("new.txt"), diff.hunks[0].range())
+        .stage_hunk(Path::new("new.txt"), diff.hunks[0].approval().unwrap())
         .expect("stage the whole new file");
     assert_eq!(show_index(repo.path(), "new.txt"), "a\nb\n");
 
     let staged = backend.staged_file_diff(Path::new("new.txt")).unwrap();
     backend
-        .unstage_hunk(Path::new("new.txt"), staged.hunks[0].range())
+        .unstage_hunk(Path::new("new.txt"), staged.hunks[0].approval().unwrap())
         .expect("unstage the whole new file");
     let listed = git_output(repo.path(), &["ls-files", "--", "new.txt"]);
     assert!(listed.is_empty(), "new.txt is untracked again");
+}
+
+#[test]
+fn same_range_different_content_is_refused_for_stage() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    let repo = Repo::new();
+    std::fs::write(repo.path().join(FILE), "one\ntwo\nthree\n").unwrap();
+    commit_all(repo.path(), "three-line base");
+    std::fs::write(repo.path().join(FILE), "one\nAPPROVED\nthree\n").unwrap();
+    let drawn = repo.unstaged()[0];
+    std::fs::write(repo.path().join(FILE), "one\nNOT_APPROVED\nthree\n").unwrap();
+    assert_eq!(
+        repo.unstaged()[0].range,
+        drawn.range,
+        "the range did not move"
+    );
+    let snapshot = unchanged_snapshot(&repo);
+    let before = repo.index_text();
+    let result = repo.backend().stage_hunk(Path::new(FILE), drawn);
+    assert_eq!(
+        repo.index_text(),
+        before,
+        "refusal must not stage NOT_APPROVED content; result={result:?}"
+    );
+    assert!(is_hunk_changed(&result.unwrap_err()));
+    assert_refusal_unchanged(&repo, snapshot, "stage");
+}
+
+fn unchanged_snapshot(repo: &Repo) -> (String, Vec<u8>, Vec<u8>, usize) {
+    (
+        git_output(repo.path(), &["rev-parse", "HEAD"]),
+        std::fs::read(repo.path().join(".git/index")).unwrap(),
+        std::fs::read(repo.path().join(FILE)).unwrap(),
+        kagi_git::read_oplog_tail_for_repo(repo.path(), 100).len(),
+    )
+}
+
+fn assert_refusal_unchanged(repo: &Repo, before: (String, Vec<u8>, Vec<u8>, usize), op: &str) {
+    let after = unchanged_snapshot(repo);
+    assert_eq!(after.0, before.0, "HEAD unchanged");
+    assert_eq!(after.1, before.1, "index bytes unchanged");
+    assert_eq!(after.2, before.2, "worktree bytes unchanged");
+    assert_eq!(after.3, before.3 + 1, "exactly one receipt");
+    let entries = kagi_git::read_oplog_tail_for_repo(repo.path(), 1);
+    assert_eq!(entries[0].op, op);
+    assert!(
+        matches!(&entries[0].outcome, kagi_git::OpOutcome::Refused { blockers }
+        if blockers.len() == 1 && blockers[0].contains("has changed since the diff was drawn"))
+    );
+}
+
+#[test]
+fn same_range_different_content_is_refused_for_unstage() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    let repo = Repo::new();
+    std::fs::write(repo.path().join(FILE), "one\ntwo\nthree\n").unwrap();
+    commit_all(repo.path(), "three-line base");
+    std::fs::write(repo.path().join(FILE), "one\nAPPROVED\nthree\n").unwrap();
+    git_output(repo.path(), &["add", "--", FILE]);
+    let drawn = repo.staged()[0];
+    std::fs::write(repo.path().join(FILE), "one\nNOT_APPROVED\nthree\n").unwrap();
+    git_output(repo.path(), &["add", "--", FILE]);
+    assert_eq!(
+        repo.staged()[0].range,
+        drawn.range,
+        "the range did not move"
+    );
+    let before = unchanged_snapshot(&repo);
+    let err = repo
+        .backend()
+        .unstage_hunk(Path::new(FILE), drawn)
+        .unwrap_err();
+    assert!(is_hunk_changed(&err), "{err:?}");
+    assert_refusal_unchanged(&repo, before, "unstage");
+}
+
+#[test]
+fn context_only_changes_are_refused_for_stage_and_unstage() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    for staged in [false, true] {
+        let repo = Repo::new();
+        if staged {
+            git_output(repo.path(), &["add", "--", FILE]);
+        }
+        let drawn = if staged {
+            repo.staged()[0]
+        } else {
+            repo.unstaged()[0]
+        };
+        // Preserve TWO/EIGHTEEN and their ranges; change only context present
+        // identically on both patch sides.
+        let base = original().replace("line 1\n", "changed context\n");
+        std::fs::write(repo.path().join(FILE), base).unwrap();
+        if staged {
+            commit_all(repo.path(), "new context in HEAD");
+        } else {
+            git_output(repo.path(), &["add", "--", FILE]);
+        }
+        std::fs::write(
+            repo.path().join(FILE),
+            edited().replace("line 1\n", "changed context\n"),
+        )
+        .unwrap();
+        if staged {
+            git_output(repo.path(), &["add", "--", FILE]);
+        }
+        let current = if staged {
+            repo.staged()[0]
+        } else {
+            repo.unstaged()[0]
+        };
+        assert_eq!(drawn.range, current.range, "context change preserves range");
+        let before = unchanged_snapshot(&repo);
+        let result = if staged {
+            repo.backend().unstage_hunk(Path::new(FILE), drawn)
+        } else {
+            repo.backend().stage_hunk(Path::new(FILE), drawn)
+        };
+        assert!(is_hunk_changed(&result.unwrap_err()));
+        assert_refusal_unchanged(&repo, before, if staged { "unstage" } else { "stage" });
+    }
+}
+
+#[test]
+fn missing_final_newline_approvals_apply_in_both_directions() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    let repo = Repo::new();
+    std::fs::write(repo.path().join(FILE), "one\nAPPROVED").unwrap();
+    let approved = repo.unstaged()[0];
+    repo.backend()
+        .stage_hunk(Path::new(FILE), approved)
+        .unwrap();
+    assert_eq!(repo.index_text(), "one\nAPPROVED");
+    let approved = repo.staged()[0];
+    repo.backend()
+        .unstage_hunk(Path::new(FILE), approved)
+        .unwrap();
+    assert_eq!(repo.index_text(), original());
+    assert_eq!(repo.worktree_text(), "one\nAPPROVED");
+}
+
+#[test]
+fn raw_byte_and_final_newline_drift_are_refused_in_both_directions() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    for (approved, changed) in [
+        (
+            b"one\nAPPROVED\nthree\n".as_slice(),
+            b"one\nAPPROVED\nthree".as_slice(),
+        ),
+        (
+            b"one\n\xff\nthree\n".as_slice(),
+            b"one\n\xfe\nthree\n".as_slice(),
+        ),
+    ] {
+        for staged in [false, true] {
+            let repo = Repo::new();
+            std::fs::write(repo.path().join(FILE), "one\ntwo\nthree\n").unwrap();
+            commit_all(repo.path(), "three-line base");
+            std::fs::write(repo.path().join(FILE), approved).unwrap();
+            if staged {
+                git_output(repo.path(), &["add", "--", FILE]);
+            }
+            // Keep the actual long-lived backend open across the external edit.
+            let backend = repo.backend();
+            let drawn = if staged {
+                backend.staged_file_diff(Path::new(FILE)).unwrap()
+            } else {
+                backend.unstaged_file_diff(Path::new(FILE)).unwrap()
+            }
+            .hunks[0]
+                .approval()
+                .unwrap();
+            std::fs::write(repo.path().join(FILE), changed).unwrap();
+            if staged {
+                git_output(repo.path(), &["add", "--", FILE]);
+            }
+            let current = if staged {
+                repo.staged()[0]
+            } else {
+                repo.unstaged()[0]
+            };
+            assert_eq!(current.range, drawn.range, "range is unchanged");
+            let before = unchanged_snapshot(&repo);
+            let result = if staged {
+                backend.unstage_hunk(Path::new(FILE), drawn)
+            } else {
+                backend.stage_hunk(Path::new(FILE), drawn)
+            };
+            assert!(is_hunk_changed(&result.unwrap_err()));
+            assert_refusal_unchanged(&repo, before, if staged { "unstage" } else { "stage" });
+        }
+    }
+}
+
+#[test]
+fn unchanged_swapped_lines_unstage_without_rediffing_in_reverse() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    let repo = Repo::new();
+    std::fs::write(repo.path().join(FILE), "x\nA\ny\nz\n").unwrap();
+    commit_all(repo.path(), "swap base");
+    std::fs::write(repo.path().join(FILE), "x\ny\nA\nz\n").unwrap();
+    git_output(repo.path(), &["add", "--", FILE]);
+    let approved = repo.staged()[0];
+    repo.backend()
+        .unstage_hunk(Path::new(FILE), approved)
+        .expect("unchanged displayed swap is approved");
+    assert_eq!(repo.index_text(), "x\nA\ny\nz\n");
+    assert_eq!(repo.worktree_text(), "x\ny\nA\nz\n");
+}
+
+#[test]
+fn hunk_receipt_uses_human_head_display() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    let repo = Repo::new();
+    let approved = repo.unstaged()[0];
+    let report = repo
+        .backend()
+        .stage_hunk_recorded(Path::new(FILE), approved, false);
+    assert_receipt_appended(&report);
+    report.result.unwrap();
+    let entry = report.recording.entry();
+    assert_eq!(entry.before.head, "branch: main");
+    let kagi_git::OpOutcome::Success { after } = &entry.outcome else {
+        panic!("success receipt")
+    };
+    assert_eq!(after.head, "branch: main");
+}
+
+#[cfg(unix)]
+#[test]
+fn typechange_hunks_have_no_local_mutation_approval() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    for from_symlink in [false, true] {
+        let repo = Repo::new();
+        if from_symlink {
+            std::fs::remove_file(repo.path().join(FILE)).unwrap();
+            std::os::unix::fs::symlink("old-target", repo.path().join(FILE)).unwrap();
+            commit_all(repo.path(), "symlink base");
+            std::fs::remove_file(repo.path().join(FILE)).unwrap();
+            std::fs::write(repo.path().join(FILE), "new file\n").unwrap();
+        } else {
+            std::fs::remove_file(repo.path().join(FILE)).unwrap();
+            std::os::unix::fs::symlink("new-target", repo.path().join(FILE)).unwrap();
+        }
+        let backend = repo.backend();
+        let diff = backend.unstaged_file_diff(Path::new(FILE)).unwrap();
+        assert!(!diff.hunks.is_empty());
+        assert!(
+            diff.hunks.iter().all(|h| h.approval().is_none()),
+            "typechange needs whole-file staging"
+        );
+        git_output(repo.path(), &["add", "--", FILE]);
+        let diff = backend.staged_file_diff(Path::new(FILE)).unwrap();
+        assert!(!diff.hunks.is_empty());
+        assert!(
+            diff.hunks.iter().all(|h| h.approval().is_none()),
+            "typechange needs whole-file unstaging"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn reverse_approval_preserves_quoted_paths_executable_mode_and_missing_lf() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    use std::os::unix::fs::PermissionsExt;
+    let repo = Repo::new();
+    let file = Path::new("quoted \" path.txt");
+    std::fs::write(repo.path().join(file), "base\n").unwrap();
+    std::fs::set_permissions(
+        repo.path().join(file),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    commit_all(repo.path(), "quoted executable base");
+    std::fs::write(repo.path().join(file), "approved").unwrap();
+    let backend = repo.backend();
+    let approved = backend.unstaged_file_diff(file).unwrap().hunks[0]
+        .approval()
+        .unwrap();
+    backend.stage_hunk(file, approved).unwrap();
+    let approved = backend.staged_file_diff(file).unwrap().hunks[0]
+        .approval()
+        .unwrap();
+    backend.unstage_hunk(file, approved).unwrap();
+    assert_eq!(show_index(repo.path(), file.to_str().unwrap()), "base\n");
+    assert!(git_output(
+        repo.path(),
+        &["ls-files", "--stage", "--", file.to_str().unwrap()]
+    )
+    .starts_with("100755 "));
+    assert_eq!(std::fs::read(repo.path().join(file)).unwrap(), b"approved");
+}
+
+#[test]
+fn a_deleted_file_can_be_unstaged_from_its_approved_hunk() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    let repo = Repo::new();
+    std::fs::remove_file(repo.path().join(FILE)).unwrap();
+    let backend = repo.backend();
+    let approved = backend.unstaged_file_diff(Path::new(FILE)).unwrap().hunks[0]
+        .approval()
+        .unwrap();
+    backend.stage_hunk(Path::new(FILE), approved).unwrap();
+    let approved = backend.staged_file_diff(Path::new(FILE)).unwrap().hunks[0]
+        .approval()
+        .unwrap();
+    backend.unstage_hunk(Path::new(FILE), approved).unwrap();
+    assert_eq!(repo.index_text(), original());
+    assert!(
+        !repo.path().join(FILE).exists(),
+        "unstaging never restores the worktree file"
+    );
+}
+
+#[test]
+fn whole_file_hunks_preserve_literal_neighbours_in_born_and_unborn_repos() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    for unborn in [false, true] {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path();
+        init_repo(repo, "main");
+        if !unborn {
+            std::fs::write(repo.join("base.txt"), "base\n").unwrap();
+            commit_all(repo, "base");
+        }
+        let head = std::fs::read(repo.join(".git/HEAD")).unwrap();
+        let branch = std::fs::read(repo.join(".git/refs/heads/main")).ok();
+        std::fs::write(repo.join("a[b].txt"), "selected\n").unwrap();
+        std::fs::write(repo.join("ab.txt"), "neighbour\n").unwrap();
+        let backend = Backend::open(repo).unwrap();
+        backend.stage_file(Path::new("ab.txt")).unwrap();
+        let neighbour = git_output(repo, &["ls-files", "--stage", "--", "ab.txt"]);
+        let selected = Path::new("a[b].txt");
+        let diff = backend.unstaged_file_diff(selected).unwrap();
+        assert_eq!(diff.change, kagi_domain::status::ChangeKind::Added);
+        let report =
+            backend.stage_hunk_recorded(selected, diff.hunks[0].approval().unwrap(), false);
+        assert_receipt_appended(&report);
+        report.result.unwrap();
+        assert_eq!(show_index(repo, "a[b].txt"), "selected\n");
+        let diff = backend.staged_file_diff(selected).unwrap();
+        assert_eq!(diff.change, kagi_domain::status::ChangeKind::Added);
+        let report = backend.stage_hunk_recorded(selected, diff.hunks[0].approval().unwrap(), true);
+        assert_receipt_appended(&report);
+        report.result.unwrap();
+        assert!(
+            git_output(repo, &["--literal-pathspecs", "ls-files", "--", "a[b].txt"]).is_empty()
+        );
+        assert_eq!(
+            git_output(repo, &["ls-files", "--stage", "--", "ab.txt"]),
+            neighbour
+        );
+        assert_eq!(std::fs::read(repo.join("a[b].txt")).unwrap(), b"selected\n");
+        assert_eq!(std::fs::read(repo.join("ab.txt")).unwrap(), b"neighbour\n");
+        assert_eq!(std::fs::read(repo.join(".git/HEAD")).unwrap(), head);
+        assert_eq!(
+            std::fs::read(repo.join(".git/refs/heads/main")).ok(),
+            branch
+        );
+        let entries = kagi_git::read_oplog_tail_for_repo(repo, 100);
+        assert_eq!(
+            entries.len(),
+            2,
+            "one receipt for stage and one for unstage"
+        );
+        assert!(entries
+            .iter()
+            .all(|entry| matches!(entry.outcome, kagi_git::OpOutcome::Success { .. })));
+    }
+}
+
+fn assert_receipt_appended(report: &kagi_git::backend::HunkReport) {
+    if let kagi_git::backend::recording::Recording::Failed { error, .. } = &report.recording {
+        panic!("hunk receipt append failed: {error}");
+    }
 }

@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Command Palette は狭い／低い window と高 zoom でも検索欄と結果を viewport 内に保ち、結果だけを独立して scroll します。長いテーマ名は省略表示し、完全な名前を tooltip／AX に残して shortcut 欄を保持します。(#1084)
+- Trust Repository の承認保存失敗は modal に repository・失敗段階・理由の全文を保持し、コピーと Retry／Cancel を提供します。保存失敗時は untrusted session を維持し、保存後の reopen 失敗でも既存 session を失いません。EN／JA の native 回帰を追加しました。(#1081)
 - 外部 filter の拒否は内容を取り込む Stage と index から復元する Discard に限定し、filter 対象の削除 Stage（単体・一括）と untracked file の raw backup→Discard は維持します。無効化した sparse-checkout の残存設定・patterns と別 worktree の patterns は Sync を妨げず、手動 skip-worktree entry と Sync の filter 拒否には専用の EN／JA 案内を表示します。(#1136／#1137 review)
 - Sync to remote は HEAD の強制 checkout 前に、cone／non-cone sparse-checkout、未初期化／dirty submodule、変更対象の LFS／外部 filter を plan・preflight で EN／JA の理由付きで拒否します。incoming tree の `.gitattributes` と承認後の設定変更も確認し、backup ref・index・作業ファイルを書き換えません。通常 repo の保全と非 HEAD branch の ref-only Sync は維持します。(#1137)
 - Stage（単体・一括・hunk）と Discard は外部 filter 属性を持つ path を書込み前に EN／JA の理由で拒否します。LFS pointer を生の作業ファイルで置換せず、`.gitattributes`／`.git/info/attributes` と `diff=lfs`／`merge=lfs` も確認します。git-lfs や任意の clean／smudge command は実行せず、Git での操作を案内します。HEAD／index の内容だけを使う Unstage は維持します。(#1136)

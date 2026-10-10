@@ -36,7 +36,10 @@ impl KagiApp {
         }
         let repo_path = session.path().to_path_buf();
         klog!("repo untrusted (foreign owner): {}", repo_path.display());
-        self.set_trust_repo_modal(TrustRepoModal { repo_path });
+        self.set_trust_repo_modal(TrustRepoModal {
+            repo_path,
+            error: None,
+        });
     }
 
     /// Confirm trust: persist the grant (`trusted_repos`) and re-open the
@@ -47,19 +50,46 @@ impl KagiApp {
         let Some(modal) = self.trust_repo_modal().cloned() else {
             return;
         };
-        match kagi_git::trust::trust_repo(&modal.repo_path) {
+        let error = match kagi_git::trust::trust_repo(&modal.repo_path) {
             Ok(()) => {
                 klog!("repo trusted: {}", modal.repo_path.display());
-                let session = kagi_git::session::RepoSession::open(&modal.repo_path).ok();
-                if let Some(ui) = self.ui_mut() {
-                    ui.repo_session = session;
+                match kagi_git::session::RepoSession::open(&modal.repo_path) {
+                    Ok(session) => {
+                        if let Some(ui) = self.ui_mut() {
+                            ui.repo_session = Some(session);
+                        }
+                        None
+                    }
+                    Err(e) => Some(format!(
+                        "{}\n\n{e}",
+                        Msg::TrustRepoReopenFailed.t().replacen(
+                            "{}",
+                            &modal.repo_path.display().to_string(),
+                            1
+                        )
+                    )),
                 }
             }
             Err(e) => {
                 klog!("trust grant failed: {e}");
+                Some(format!(
+                    "{}\n\n{e}",
+                    Msg::TrustRepoSaveFailed.t().replacen(
+                        "{}",
+                        &modal.repo_path.display().to_string(),
+                        1
+                    )
+                ))
             }
+        };
+        if let Some(error) = error {
+            self.set_trust_repo_modal(TrustRepoModal {
+                repo_path: modal.repo_path,
+                error: Some(error),
+            });
+        } else {
+            self.clear_trust_repo_modal();
         }
-        self.clear_trust_repo_modal();
         cx.notify();
     }
 
@@ -114,6 +144,32 @@ pub(crate) fn render_trust_repo_modal(
                 .text_color(rgb(current_theme().text_label))
                 .child(SharedString::from(modal.repo_path.display().to_string())),
         )
+        .when_some(modal.error.clone(), |card, error| {
+            card.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_start()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id("trust-repo-error")
+                            .flex_1()
+                            .min_w_0()
+                            .max_h(theme::scaled_px(180.))
+                            .overflow_y_scroll()
+                            .text_sm()
+                            .text_color(rgb(current_theme().color_blocker))
+                            .child(SharedString::from(error.clone())),
+                    )
+                    .child(super::modal_copy::modal_copy_button(
+                        "trust-repo-copy-error",
+                        Msg::ModalCopyAll.t(),
+                        error,
+                        cx,
+                    )),
+            )
+        })
         .child(
             div()
                 .flex()
@@ -135,7 +191,11 @@ pub(crate) fn render_trust_repo_modal(
                     "trust-repo-confirm",
                     modal_button(
                         "trust-repo-confirm",
-                        Msg::TrustRepoConfirm.t(),
+                        if modal.error.is_some() {
+                            Msg::TrustRepoRetry.t()
+                        } else {
+                            Msg::TrustRepoConfirm.t()
+                        },
                         ModalButtonKind::Primary,
                         None,
                         confirm,

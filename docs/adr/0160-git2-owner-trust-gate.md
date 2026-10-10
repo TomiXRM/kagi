@@ -98,3 +98,25 @@ an untrusted repo simply stays read-only there.
   write-refusal path (so a repo dismissed once still offers a grant on the next
   write attempt) is a small UI follow-up; the git-layer block protects writes
   either way. Both need GUI eyeballing (a subagent cannot exercise the GUI).
+
+## Amendment — 2026-10-11: Trust failure feedback (#1081)
+
+The security confirmation (open density) retains an error state until the user
+retries successfully or cancels. Saving the grant and reopening the session are
+separate failure stages, named with the repository in EN/JA. The complete reason
+is scrollable and copyable through Kagi's existing modal copy helper; this is the
+explicit-acknowledgement exception to ordinary oplog/toast operation errors.
+Only a successful reopen replaces the session and closes the modal. A save
+failure leaves the old untrusted backend intact; a reopen failure preserves the
+old session even though the grant was saved.
+
+State contract: existing modal buttons keep rest/hover/pressed/focus-visible and
+Enter/Esc routing. Error adds full detail, Copy, Retry and Cancel; selected,
+loading, empty and disabled are inapplicable to this synchronous confirmation.
+The bounded detail scroller keeps the action row outside it; colours use the
+existing blocker token and spacing/geometry follow the existing zoomed card.
+No new handmade interactive controls or trust/write-gate changes are introduced.
+Native `trust_failure_feedback` covers directory-store failure, untrusted write
+refusal, copy, repaired-store retry and a removed-git-directory reopen failure
+with retained session in EN/JA. Real-window Apple Light 100%/167% review remains
+the integrating agent's responsibility.

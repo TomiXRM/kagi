@@ -609,11 +609,11 @@ pub(super) fn render_composer(
                         // The verdicts carry their colour; a plain comment is the
                         // composer's own amber submit.
                         .child(
-                            super::button_style::KagiButton::accent_icon(
+                            super::button_style::KagiButton::icon(
                                 "pr-review-request-changes",
                                 "icons/review-request-changes.svg",
                                 Msg::PrReviewRequestChanges.t(),
-                                theme().color_warning,
+                                super::button_style::ButtonRole::Warning,
                                 cx,
                             )
                             .small()
@@ -621,11 +621,11 @@ pub(super) fn render_composer(
                             .on_click(request_changes),
                         )
                         .child(
-                            super::button_style::KagiButton::accent_icon(
+                            super::button_style::KagiButton::icon(
                                 "pr-review-approve",
                                 "icons/review-approve.svg",
                                 Msg::PrReviewApprove.t(),
-                                theme().color_success,
+                                super::button_style::ButtonRole::Success,
                                 cx,
                             )
                             .small()

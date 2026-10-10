@@ -42,14 +42,14 @@ use gpui::{
     canvas, div, prelude::*, px, relative, rgb, uniform_list, AnyElement, Bounds, Context, Pixels,
     SharedString, UniformListScrollHandle, Window,
 };
-use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::button::Button;
 use gpui_component::input::Input;
 use gpui_component::scroll::Scrollbar;
 use gpui_component::{Disableable as _, Sizable as _};
 
 use kagi_git::resolution::{LineOrder, LineOrigin, Region, SelectionSide, TriState};
 
-use super::button_style::KagiButton;
+use super::button_style::{ButtonRole, KagiButton};
 use super::conflict_view::ConflictMode;
 use super::conflict_view::ConflictView;
 use super::conflict_view::EditorChrome;
@@ -155,14 +155,14 @@ fn render_toolbar(
         .child(tool_button(
             "editor-prev",
             Msg::EditorPrevHunk.t(),
-            theme().text_sub,
+            ButtonRole::NeutralTinted,
             prev,
             cx,
         ))
         .child(tool_button(
             "editor-next",
             Msg::EditorNextHunk.t(),
-            theme().text_sub,
+            ButtonRole::NeutralTinted,
             next,
             cx,
         ))
@@ -170,7 +170,7 @@ fn render_toolbar(
             "editor-open-external",
             "icons/external-link.svg",
             Msg::EditorOpenExternal.t(),
-            theme().text_sub,
+            ButtonRole::NeutralTinted,
             open_ext,
             cx,
         ))
@@ -184,9 +184,9 @@ fn render_toolbar(
                 Msg::EditorReset.t()
             },
             if reset_armed {
-                theme().color_blocker
+                ButtonRole::Danger
             } else {
-                theme().color_warning
+                ButtonRole::Warning
             },
             reset,
             cx,
@@ -194,35 +194,18 @@ fn render_toolbar(
         .into_any_element()
 }
 
-fn tool_button<H>(id: &str, label: &str, accent: u32, handler: H, cx: &gpui::App) -> Button
+fn tool_button<H>(id: &str, label: &str, role: ButtonRole, handler: H, cx: &gpui::App) -> Button
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    outline_if_neutral(
-        KagiButton::accent(
-            SharedString::from(id.to_string()),
-            SharedString::from(label.to_string()),
-            accent,
-            cx,
-        ),
-        accent,
+    KagiButton::new(
+        SharedString::from(id.to_string()),
+        SharedString::from(label.to_string()),
+        role,
         cx,
     )
     .small()
     .on_click(handler)
-}
-
-/// `apply_accent` maps a neutral accent to the *ghost* variant: no border, no
-/// fill, so prev/next/external were indistinguishable from the toolbar
-/// background (user report). `.outline()` draws a border too close to the
-/// surface to help, so neutral buttons get the same tinted chip the accent
-/// actions use — a visible fill, in a neutral hue.
-fn outline_if_neutral(btn: Button, accent: u32, cx: &gpui::App) -> Button {
-    if accent == theme().text_sub || accent == theme().text_muted {
-        btn.custom(super::button_style::tinted_action_variant(accent, cx))
-    } else {
-        btn
-    }
 }
 
 /// An icon button with a compact text label beside the glyph (POLISH-040/041).
@@ -230,22 +213,18 @@ fn icon_button<H>(
     id: &str,
     icon_path: &'static str,
     label: &str,
-    accent: u32,
+    role: ButtonRole,
     handler: H,
     cx: &gpui::App,
 ) -> Button
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    outline_if_neutral(
-        KagiButton::accent_icon(
-            SharedString::from(id.to_string()),
-            icon_path,
-            SharedString::from(label.to_string()),
-            accent,
-            cx,
-        ),
-        accent,
+    KagiButton::icon(
+        SharedString::from(id.to_string()),
+        icon_path,
+        SharedString::from(label.to_string()),
+        role,
         cx,
     )
     .small()
@@ -1471,7 +1450,7 @@ fn render_result_pane(
             tool_button(
                 "editor-save",
                 Msg::EditorSave.t(),
-                theme().color_success,
+                ButtonRole::Success,
                 save,
                 cx,
             )

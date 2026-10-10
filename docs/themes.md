@@ -201,6 +201,31 @@ file: “Couldn't load theme `<filename>`: `<reason>`”.
 VS Code (or other editor) theme files are not read; convert them by mapping their
 colours onto the tokens below.
 
+## Button operation roles
+
+Callers choose `ButtonRole` from the operation, never by matching an RGB value.
+Themes may intentionally reuse colours (Color Vision uses blue for both branch
+and success, orange for both remote and blocker); that cannot change hierarchy.
+The existing `KagiButton` delegates geometry, focus, disabled and interaction
+handling to the pinned gpui-component Button. No new control is introduced.
+
+| Operation role | Theme token | Button presentation |
+|---|---|---|
+| `Primary` | `color_branch` | Filled Primary (for the main confirm/Commit action). |
+| `SideCurrent` | `color_branch` | Filled Primary (Keep Current / Keep Directory). |
+| `SideIncoming` | `color_remote` | Filled Info (Take Incoming / Keep File). |
+| `Success` | `color_success` | Translucent tinted action (Stage / Save / Continue / Approve). |
+| `Warning` | `color_warning` | Translucent tinted action (Unstage / Reset before arming / Request Changes). |
+| `Danger` | `color_blocker` | Translucent tinted action (Abort / armed Reset / destructive modal confirm). |
+| `Neutral` | `text_sub` | Ghost (Keep Both / paging / external raw-side action). |
+| `NeutralTinted` | `text_sub` | Neutral tinted chip (editor navigation / external editor action). |
+
+These are dense conflict/tool/action-row controls, keeping their current sizes;
+the reference is Kagi's existing Apple-theme filled side choice versus tinted
+Stage/Discard, not a new palette. Rest, hover, pressed, focus-visible and disabled
+remain the native Button states; side choices have no selected/loading/error
+state of their own. Existing gates, handlers and plan/confirm safety flow remain.
+
 ## Token reference
 
 Every token a theme defines. The middle column is the default theme's

@@ -1,7 +1,7 @@
 //! REFS-first confirmation for Operation Log ref restore. The executable plan
 //! remains untouched; this card only presents its once-decoded ref rows.
 
-use crate::ui::button_style::KagiButton;
+use crate::ui::button_style::{ButtonRole, KagiButton};
 use crate::ui::dialog_a11y::{apply_dialog, dialog_a11y, DialogHandler};
 use crate::ui::modal_command::{equivalent_command, plan_ready};
 use crate::ui::modal_copy::modal_copy_button;
@@ -545,10 +545,10 @@ pub(crate) fn render(
             ));
     if !blocked {
         let button = if modal.confirm_armed {
-            KagiButton::accent(
+            KagiButton::new(
                 "plan-confirm",
                 SharedString::from(label),
-                theme().color_blocker,
+                ButtonRole::Danger,
                 cx,
             )
         } else {

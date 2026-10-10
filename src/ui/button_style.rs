@@ -1,7 +1,7 @@
 //! Shared button variants for Kagi's theme tokens.
 
 use gpui::{div, prelude::*, rgb, ElementId, Hsla, Role, SharedString, Window};
-use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
+use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariant, ButtonVariants as _};
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{ActiveTheme as _, Sizable as _};
 
@@ -32,6 +32,78 @@ pub fn tinted_action_variant(base: u32, cx: &gpui::App) -> ButtonCustomVariant {
         .active(active)
 }
 
+/// An operation's hierarchy is independent of its palette's RGB values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ButtonRole {
+    Primary,
+    SideCurrent,
+    SideIncoming,
+    Success,
+    Warning,
+    Danger,
+    Neutral,
+    NeutralTinted,
+}
+
+impl ButtonRole {
+    fn accent(self, t: &super::theme::Theme) -> u32 {
+        match self {
+            Self::Primary | Self::SideCurrent => t.color_branch,
+            Self::SideIncoming => t.color_remote,
+            Self::Success => t.color_success,
+            Self::Warning => t.color_warning,
+            Self::Danger => t.color_blocker,
+            Self::Neutral | Self::NeutralTinted => t.text_sub,
+        }
+    }
+
+    fn filled_variant(self) -> Option<ButtonVariant> {
+        match self {
+            Self::Primary | Self::SideCurrent => Some(ButtonVariant::Primary),
+            Self::SideIncoming => Some(ButtonVariant::Info),
+            Self::Neutral => Some(ButtonVariant::Ghost),
+            Self::Success | Self::Warning | Self::Danger | Self::NeutralTinted => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod role_tests {
+    use super::*;
+
+    #[test]
+    fn button_roles_do_not_collide_with_palette_colors() {
+        for t in super::super::theme::THEMES {
+            assert_eq!(
+                ButtonRole::SideCurrent.filled_variant(),
+                Some(ButtonVariant::Primary),
+                "{}: Keep Current must be a filled Primary",
+                t.slug,
+            );
+            assert_eq!(
+                ButtonRole::SideIncoming.filled_variant(),
+                Some(ButtonVariant::Info),
+                "{}: Take Incoming must be a filled Info",
+                t.slug,
+            );
+            assert_eq!(
+                ButtonRole::Primary.filled_variant(),
+                Some(ButtonVariant::Primary)
+            );
+            assert_eq!(ButtonRole::Success.filled_variant(), None);
+            assert_eq!(ButtonRole::Warning.filled_variant(), None);
+            assert_eq!(ButtonRole::Danger.filled_variant(), None);
+            assert_eq!(
+                ButtonRole::Neutral.filled_variant(),
+                Some(ButtonVariant::Ghost)
+            );
+            assert_eq!(ButtonRole::NeutralTinted.filled_variant(), None);
+            assert_eq!(ButtonRole::SideCurrent.accent(t), t.color_branch);
+            assert_eq!(ButtonRole::SideIncoming.accent(t), t.color_remote);
+        }
+    }
+}
+
 /// Kagi-owned constructors for gpui-component buttons.
 ///
 /// Use these for semantic action buttons instead of calling
@@ -41,42 +113,36 @@ pub fn tinted_action_variant(base: u32, cx: &gpui::App) -> ButtonCustomVariant {
 pub struct KagiButton;
 
 impl KagiButton {
-    pub fn accent(
+    pub fn new(
         id: impl Into<ElementId>,
         label: impl Into<SharedString>,
-        accent: u32,
+        role: ButtonRole,
         cx: &gpui::App,
     ) -> Button {
-        apply_accent(Button::new(id).label(label), accent, cx)
+        apply_role(Button::new(id).label(label), role, cx)
     }
 
-    pub fn accent_icon(
+    pub fn icon(
         id: impl Into<ElementId>,
         icon_path: &'static str,
         label: impl Into<SharedString>,
-        accent: u32,
+        role: ButtonRole,
         cx: &gpui::App,
     ) -> Button {
-        apply_accent(
+        apply_role(
             Button::new(id)
                 .icon(gpui_component::Icon::empty().path(icon_path))
                 .label(label),
-            accent,
+            role,
             cx,
         )
     }
 }
 
-pub fn apply_accent(btn: Button, accent: u32, cx: &gpui::App) -> Button {
-    let t = theme();
-    if accent == t.color_success || accent == t.color_warning || accent == t.color_blocker {
-        btn.custom(tinted_action_variant(accent, cx))
-    } else if accent == t.color_branch {
-        btn.primary()
-    } else if accent == t.color_remote {
-        btn.info()
-    } else {
-        btn.ghost()
+pub fn apply_role(btn: Button, role: ButtonRole, cx: &gpui::App) -> Button {
+    match role.filled_variant() {
+        Some(variant) => btn.with_variant(variant),
+        None => btn.custom(tinted_action_variant(role.accent(&theme()), cx)),
     }
 }
 
@@ -202,8 +268,8 @@ fn modal_button_with_tab_stop(
     }
     let button = match kind {
         ModalButtonKind::Cancel => Button::new(id).label(label).ghost(),
-        ModalButtonKind::Primary => Button::new(id).label(label).primary(),
-        ModalButtonKind::Destructive => KagiButton::accent(id, label, theme().color_blocker, cx),
+        ModalButtonKind::Primary => KagiButton::new(id, label, ButtonRole::Primary, cx),
+        ModalButtonKind::Destructive => KagiButton::new(id, label, ButtonRole::Danger, cx),
         ModalButtonKind::Secondary => Button::new(id).label(label),
     };
     button

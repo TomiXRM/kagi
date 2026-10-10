@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Create Branch は実行に成功して branch の存在を確認したときだけダイアログを閉じ、次のキーボード操作をウィンドウへ戻すようにしました。失敗した名前とエラー、通常の再読み込み中の未送信入力は保持します。チェックアウトの選択、IME の確定 Enter、1 回の作成につき 1 件の操作記録は維持します。(#1092)
 - Pull / Pull ff-only の確認タイトルは upstream の表示名を分割せず、設定済み remote 名をそのまま示すようにしました。`team/origin` を `team` に切らず、local upstream の `.` も正しく表示します。完全な upstream ref / OID・承認照合・fetch / push の既存解決規則は変えません。(#1105)
 - Pull 前の remote-tracking refs が古い場合に、未取得の更新があるのに「すでに最新です」と表示していた問題を修正しました。clean / dirty の両方で既存の安全な fetch を完了してから確認または最新の案内を出し、fetch 失敗時は最新と判断しません。fetch 由来の未変更 checkout の確認は watcher の reload で消えず、外部の HEAD / 作業ファイル変更や後から始めた別の操作には古い確認を押し付けません。(#1087)
 - Pull が進行中の silent auto-fetch に参加した場合も、fetch 失敗を現在の tab の footer と error toast に一度だけ表示するようにしました。通知は既存の Operation Log の記録・表示 owner に集約し、ユーザーの Pull 要求を持たない background fetch と離れた tab は静かなまま、一つの durable receipt を残します。(#1087)

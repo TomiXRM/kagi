@@ -47,6 +47,8 @@ pub enum TagNote {
     NotFound { name: String },
     /// blocker (`plan_push_tag`) — the repository has no remote to push to.
     NoRemote,
+    /// Approval no longer matches the transport or local tag object.
+    PushIdentityChanged,
     /// warning (`plan_push_tag`) — this leaves the machine. Said out loud
     /// because every other tag operation is purely local.
     PushRemoteSideEffect { remote: String, name: String },
@@ -60,6 +62,10 @@ impl TagNote {
     pub fn message_en(&self) -> String {
         match self {
             TagNote::NameError(e) => e.message_en(),
+            TagNote::PushIdentityChanged => {
+                "The approved tag or push destination changed. Refresh the plan before pushing."
+                    .to_string()
+            }
             TagNote::CommitMissing { sha } => {
                 format!("Commit '{}' does not exist in this repository.", sha)
             }

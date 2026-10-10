@@ -966,6 +966,7 @@ pub fn plan_conflict_continue(
     };
 
     Ok(OperationPlan {
+        tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Conflicts(ConflictsTitle::Continue { op }),
@@ -1695,6 +1696,7 @@ pub fn plan_conflict_skip(
     };
 
     Ok(OperationPlan {
+        tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::Ready,
         title: PlanTitle::Conflicts(ConflictsTitle::Skip { op }),

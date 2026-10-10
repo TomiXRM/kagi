@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- PushTag は承認した remote 名・すべての push URL・tag object OID と peeled target を固定し、確認後の送信先や tag の差替えを送信前に EN／JA の理由付きで拒否します。annotated tag も承認した object を明示 refspec で送り、複数 push URL と remote 固有の Git 設定を維持します。remote の既存 tag は force せず、各試行を一件だけ記録し、reconcile も remote 名を保持します。(#1135)
 - MCP `kagi_commit_show` は graph の 2000 件表示予算から独立して revision を解決します。古い完全 SHA・一意な短縮 SHA・tag を参照でき、曖昧な prefix は候補の完全 SHA と長い prefix の案内を返して拒否します。blob／tree は commit として返しません。(#1134, #1139)
 - Unstage は単体・一括とも選択した literal path の index entry だけを HEAD の OID／mode に戻すようにしました。`[]`・`*`・`?`・先頭 `#`・POSIX の `\` を名前として扱い、未選択ファイルの staged 内容や作業ファイルを書き換えません。対象の index 内容が plan 後に変われば拒否し、conflict stage の解除・directory から file への変更も正しく処理します。一括失敗時の cached index は再読込し、途中の変更が次の Stage に混ざらないようにしました。Editor の実ファイルメニューと backend の回帰を追加しました。(#1130)
 - 複数 commit の cherry-pick を中止すると、先行する成功済み pick が残っていた問題を修正しました。sequencer が記録した開始 HEAD へ index・作業ファイルとともに復元し、開始点が不明な場合や HEAD が sequencer の安全基準から移動した場合は成功扱いせず EN/JA の理由で拒否します。無関係な手動 commit・未追跡ファイル・tracked file の未 stage 編集を保持し、単一 pick の中止と解決バッファーの退避・操作記録は維持します。(#1127)

@@ -96,6 +96,7 @@ pub fn plan_pull_remote(
     }
 
     OperationPlan {
+        tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::Ready,
         title,
@@ -309,6 +310,7 @@ pub fn plan_pull(repo: &Repository) -> Result<OperationPlan, GitError> {
         None
     };
     Ok(OperationPlan {
+        tag_push_identity: None,
         approved_index_digest: None, // ADR-0129 F-1: the UI's pull no-op detection keyed on the title text
         // ("up to date (local knowledge…"); the semantic state now travels
         // with the plan instead.
@@ -731,6 +733,7 @@ pub(crate) fn plan_pull_branch_ff_with_status(
     };
     Ok((
         OperationPlan {
+            tag_push_identity: None,
             approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             title: PlanTitle::Pull(PullTitle::PullBranchFf {

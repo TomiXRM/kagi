@@ -135,6 +135,7 @@ pub fn plan_force_with_lease_push(repo: &Repository) -> Result<OperationPlan, Gi
     }
 
     Ok(OperationPlan {
+        tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::ForceLease(ForceLeaseTitle::ForceLeasePush {

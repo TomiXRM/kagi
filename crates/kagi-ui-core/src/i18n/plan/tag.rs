@@ -31,6 +31,10 @@ fn name_error_ja(err: &TagNameError) -> String {
 pub fn note_ja(note: &TagNote) -> String {
     match note {
         TagNote::NameError(e) => name_error_ja(e),
+        TagNote::PushIdentityChanged => {
+            "承認した tag または push 先が変更されました。計画を更新してから push してください。"
+                .to_string()
+        }
         TagNote::CommitMissing { sha } => {
             format!("commit がこのリポジトリにありません。\ncommit `{}`", sha)
         }

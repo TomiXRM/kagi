@@ -2414,6 +2414,12 @@ mod macos {
                 Box::new(crate::workspace_mode_toolbar::scenario_workspace_mode_toolbar),
             ),
             (
+                "markdown_preparation_edges",
+                Box::new(
+                    crate::workspace_mode_toolbar::markdown_preparation_edges::scenario_markdown_preparation_edges,
+                ),
+            ),
+            (
                 "toolbar_a11y_disabled",
                 Box::new(crate::workspace_mode_toolbar::scenario_toolbar_a11y_disabled),
             ),

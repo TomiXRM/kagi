@@ -1,11 +1,10 @@
 //! #454 visual check: launch the real app with one modal already open, so a
 //! screenshot can be taken of the actual card.
 //!
-//! Why an example and not a scenario in `tests/gui_e2e_runner.rs`: the runner
-//! drives `VisualTestAppContext`, whose platform wrapper renders windows
-//! offscreen — `screencapture` cannot see them, and the pinned gpui has no
-//! `render_to_image` for a Mac window (ADR-0166 §3). This binary uses the same
-//! real platform as `main.rs`, so the window is a normal on-screen window.
+//! Unlike the offscreen Tier A runner, this example opens a normal on-screen
+//! window for live visual inspection and system screenshot tools. The runner
+//! can also capture native Metal frames when built with `gui-e2e`, which
+//! forwards the platform test-support feature (ADR-0166 amendment, #1076).
 //!
 //! ```text
 //! cargo run --example modal_shot -- <repo-path> amend|discard

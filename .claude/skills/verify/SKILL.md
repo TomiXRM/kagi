@@ -56,6 +56,12 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+`primary_button_states` (#1076) sends real hover / mouse-down events to a
+modal Primary and compares native Metal fill pixels for every built-in theme.
+The `gui-e2e` feature forwards `gpui_platform/test-support` as well as GPUI's:
+without the platform feature `Window::render_to_image` returns the default
+not-implemented error. Default application builds keep capture disabled.
+
 ```bash
 # One scenario: the substring the scenario name contains.
 KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='bottom_panel' \

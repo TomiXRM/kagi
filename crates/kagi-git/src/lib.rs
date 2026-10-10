@@ -198,7 +198,7 @@ pub use snapshot::{
 #[allow(unused_imports)]
 pub use staging::{commit_preview, staged_file_diff, unstaged_file_diff, CommitPreview};
 #[allow(unused_imports)]
-pub(crate) use staging::{stage_file, stage_files, unstage_file, unstage_files};
+pub(crate) use staging::{stage_file, stage_files};
 #[allow(unused_imports)]
 pub use status::{
     working_tree_status, working_tree_status_repairing_stat_cache, ChangeKind, FileStatus,

@@ -1,6 +1,6 @@
 //! Hunk-level stage / unstage (#842, Refs #357).
 //!
-//! Like [`crate::staging::stage_file`] / [`crate::staging::unstage_file`],
+//! Like [`crate::Backend::stage_file`] / [`crate::Backend::unstage_file`],
 //! these change **only the index's staged content** — the working tree is
 //! never touched. A hunk is named by its header numbers ([`HunkRange`]): the
 //! diff is re-read with the same options the Commit Panel diff uses, and only
@@ -123,7 +123,10 @@ pub(crate) fn unstage_hunk(
         ),
     };
     if shown.change != ChangeKind::Modified || head_tree.is_none() {
-        return staging::unstage_file(repo, path);
+        let plan = crate::ops::unstage::plan_unstage(repo, std::iter::once(path))?;
+        crate::ops::unstage::preflight_unstage(repo, &plan)?;
+        crate::ops::unstage::execute_unstage(repo, &plan)?;
+        return Ok(());
     }
     let mut opts = pathspec_options(path)?;
     opts.reverse(true);

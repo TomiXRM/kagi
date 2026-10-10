@@ -365,6 +365,12 @@ impl Backend {
         Ok(count)
     }
 
+    /// Resolve a unique revision from the object database and peel tags to commits.
+    /// This read is not limited by the snapshot's graph display budget.
+    pub fn resolve_commit(&self, revision: &str) -> Result<crate::Commit, GitError> {
+        crate::revision::resolve_commit(&self.repo, revision)
+    }
+
     pub fn snapshot(&mut self, commit_limit: usize) -> Result<RepoSnapshot, GitError> {
         snapshot::snapshot(&mut self.repo, commit_limit)
     }

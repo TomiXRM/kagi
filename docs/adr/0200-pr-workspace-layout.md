@@ -562,10 +562,11 @@ Issues（thread / home 一覧 / composer）と PR（feed / composer / home 表�
   pagination, the six paging cases and both periodic cases. This records local
   acceptance of that source, not hosted CI, merge or subsequent documentation.
 - **Consumer evidence.** Domain/transport/receiver/detail tests cover page
-  metadata, frozen cursors, races, retry, dedupe and payload ownership. The nine
+  metadata, frozen cursors, races, retry, dedupe and payload ownership. The ten
   scoped native scenarios are the six `pr_pagination` cases, `pr_same_number`,
-  `pr_paging_survives_periodic_tick` and
-  `pr_periodic_pending_sidebar_and_other_collections`. They exercise actual
+  `pr_paging_survives_periodic_tick`,
+  `pr_periodic_pending_sidebar_and_other_collections`, and
+  `pr_single_page_periodic_scroll_retention` (single-page Open list, real wheel to mid-table, 61-s ticker, anchor/offset unchanged). They exercise actual
   table/sidebar demand, clipped retry, filters, retained Closed/All visits,
   interrupted first reads and live composing inputs. The periodic cases start
   the real producer/ticker and assert retained 120-row membership/anchor and

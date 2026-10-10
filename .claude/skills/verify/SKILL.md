@@ -1176,15 +1176,16 @@ The current suite covers:
   leaving PR mode cannot restore that collection. Pair with
   `KAGI_GUI_E2E_ONLY=github_evidence_` for session restore/background/detach.
 - PR bounded cursor paging
-  (`KAGI_GUI_E2E_ONLY='pr_pagination,pr_same_number,pr_paging_survives_periodic_tick,pr_periodic_pending_sidebar_and_other_collections'`
+  (`KAGI_GUI_E2E_ONLY='pr_pagination,pr_same_number,pr_paging_survives_periodic_tick,pr_periodic_pending_sidebar_and_other_collections,pr_single_page_periodic_scroll_retention'`
   with `KAGI_GUI_E2E_KEEP_GOING=1`, `tests/recovery/pr_pagination.rs`,
   `tests/recovery/pr_pagination_periodic.rs` and
-  `tests/recovery/pr_same_number.rs`): run all nine scenarios — `pr_pagination`,
+  `tests/recovery/pr_same_number.rs`): run all ten scenarios — `pr_pagination`,
   `pr_pagination_races`, `pr_pagination_closed_tab_retention`,
   `pr_pagination_all_tab_retention`, `pr_pagination_pending_closed_tab_return`,
   `pr_pagination_pending_all_tab_return`, `pr_same_number`,
-  `pr_paging_survives_periodic_tick`, and
-  `pr_periodic_pending_sidebar_and_other_collections`. The six original paging
+  `pr_paging_survives_periodic_tick`,
+  `pr_periodic_pending_sidebar_and_other_collections`, and
+  `pr_single_page_periodic_scroll_retention` (single-page Open list, real wheel to mid-table, 61-s ticker, anchor/offset unchanged). The six original paging
   cases cover first100 → final120 unique fixture rows, real clipped-tail demand, a failed append's
   native retry click, dedupe, stable anchor and context-menu identity. After
   proving the menu survived append, dismiss it through an actual outside click

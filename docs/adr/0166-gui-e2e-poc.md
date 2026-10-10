@@ -238,6 +238,17 @@ mount するには意図的な seam が要る = これは issue の論点 #1 そ
   採用提案 #3 の通り screenshot は triage 信号で合否 oracle ではないため、capture は
   **best-effort**（失敗を許容しログのみ）にし、決定論的 assertion を合否とした。PNG が
   要る場合は upstream の `render_to_image`(mac) 実装 or ScreenCaptureKit 経路が必要。
+
+#### Amendment (2026-10-10, #1076): native Metal capture
+
+現在の pinned fork `caf5007618c309a8ea66002d44a9c9ab629a2d35` は実 Mac
+window の `render_to_image` を実装している。上記は旧 PoC の実測記録であり、
+現在の制約ではない。`gui-e2e` は `gpui_platform/test-support` も forwarding
+し、macOS override をコンパイルする。通常 build には capture を追加しない。
+`primary_button_states` は real mouse events 後の native fill pixel を assertion
+に使う。既存 screenshot helper は native capture を試み、対応しない platform の
+失敗は引き続き best-effort とする。capture 成功は安全性・focus・IME の証明ではない。
+
 - **opt-in**: runner は `KAGI_GUI_E2E=1` の時のみシナリオを走らせ、未設定/`cargo test
   --workspace` では SKIP して exit 0（§CI「required gate にしない / evidence lane」に一致）。
   非 macOS は no-op 成功。

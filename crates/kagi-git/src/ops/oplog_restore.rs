@@ -335,6 +335,7 @@ fn plan_oplog_restore(
         dirty,
     };
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::OplogRestore(title),
         current: summary.clone(),

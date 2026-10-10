@@ -178,6 +178,7 @@ pub fn plan_pr_edit(pr: &PullRequest, edit: &PrFieldEdit) -> OperationPlan {
         }));
     }
     OperationPlan {
+        approved_index_digest: None,
         disposition: if blockers.is_empty() {
             PlanDisposition::Ready
         } else {

@@ -164,6 +164,7 @@ mod tests {
 
         let deep = "crates/kagi-git/src/ops/very/deeply/nested/file.rs".to_string();
         let mut plan = OperationPlan {
+            approved_index_digest: None,
             title: PlanTitle::Discard {
                 single: None,
                 count: 2,
@@ -271,6 +272,7 @@ mod tests {
 
         let command = "git push origin main";
         let mut plan = OperationPlan {
+            approved_index_digest: None,
             title: PlanTitle::Push(PushTitle::Push {
                 branch: "main".into(),
                 remote: "origin".into(),

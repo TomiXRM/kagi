@@ -966,6 +966,7 @@ pub fn plan_conflict_continue(
     };
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Conflicts(ConflictsTitle::Continue { op }),
         current,
@@ -1609,16 +1610,18 @@ fn prefilled_merge_message(repo: &Repository, op: &ConflictOp, current_branch: &
 /// index still has unmerged entries (a defensive re-check of the gate).
 ///
 /// Returns the new merge commit's [`CommitId`].
-pub(crate) fn execute_merge_commit(repo: &Repository, message: &str) -> Result<CommitId, GitError> {
+pub(crate) fn execute_merge_commit(
+    repo: &Repository,
+    plan: &OperationPlan,
+    message: &str,
+) -> Result<CommitId, GitError> {
     if message.trim().is_empty() {
         return Err(GitError::Other(
             "merge commit message must not be empty".to_string(),
         ));
     }
 
-    let mut index = repo
-        .index()
-        .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
+    let mut index = crate::ops::approved_commit_index(repo, plan)?;
     if index.has_conflicts() {
         return Err(GitError::Other(
             "Refusing to create the merge commit: the index still has unmerged entries. Save every file first.".to_string(),
@@ -1692,6 +1695,7 @@ pub fn plan_conflict_skip(
     };
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::Ready,
         title: PlanTitle::Conflicts(ConflictsTitle::Skip { op }),
         current,

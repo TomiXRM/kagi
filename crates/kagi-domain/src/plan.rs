@@ -440,6 +440,9 @@ pub struct OperationPlan {
     /// Frozen local Pull operand, checked before and after execution's fetch.
     /// `None` for non-Pull and remote-snapshot plans.
     pub pull_identity: Option<PullIdentity>,
+    /// Read-only digest of approved index paths, OIDs, modes and conflict stages.
+    /// Required for commit and staged/both amend; never includes stat-cache data.
+    pub approved_index_digest: Option<String>,
     /// Working-tree classification digest at plan time (#295). `Some` for the
     /// operations whose blockers depend on the working tree (discard, merge,
     /// stash apply/pop); `None` where only HEAD matters. `preflight_check`

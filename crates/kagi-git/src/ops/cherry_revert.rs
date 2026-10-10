@@ -173,6 +173,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             dirty: current.dirty.clone(),
         };
         return Ok(OperationPlan {
+            approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             title: PlanTitle::CherryRevert(CherryRevertTitle::CherryPick {
                 sha: id.short().to_string(),
@@ -252,6 +253,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             dirty: current.dirty.clone(),
         };
         return Ok(OperationPlan {
+            approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             title: PlanTitle::CherryRevert(CherryRevertTitle::CherryPick {
                 sha: id.short().to_string(),
@@ -353,6 +355,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
             dirty: current.dirty.clone(),
         };
         return Ok(OperationPlan {
+            approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             title: PlanTitle::CherryRevert(CherryRevertTitle::CherryPick {
                 sha: id.short().to_string(),
@@ -407,6 +410,7 @@ pub fn plan_cherry_pick(repo: &Repository, id: &CommitId) -> Result<OperationPla
     };
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::CherryRevert(CherryRevertTitle::CherryPick {
             sha: id.short().to_string(),
@@ -712,6 +716,7 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
 
     let blocked_plan =
         |blockers: Vec<PlanNote>, warnings: Vec<PlanNote>, current: StateSummary| OperationPlan {
+            approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             title: title.clone(),
             current: current.clone(),
@@ -844,6 +849,7 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
     };
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title,
         current,

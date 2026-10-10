@@ -1209,6 +1209,12 @@ mod macos {
                 ),
             ),
             (
+                "create_branch_execution_failure_keeps_input",
+                Box::new(
+                    crate::recovery_operations::scenario_create_branch_execution_failure_keeps_input,
+                ),
+            ),
+            (
                 "run_success_unrecorded_keeps_partial_footer",
                 Box::new(
                     crate::recovery_operations::scenario_run_success_unrecorded_keeps_partial_footer,
@@ -2421,6 +2427,12 @@ mod macos {
             (
                 "workspace_mode_toolbar",
                 Box::new(crate::workspace_mode_toolbar::scenario_workspace_mode_toolbar),
+            ),
+            (
+                "markdown_preparation_edges",
+                Box::new(
+                    crate::workspace_mode_toolbar::markdown_preparation_edges::scenario_markdown_preparation_edges,
+                ),
             ),
             (
                 "toolbar_a11y_disabled",

@@ -61,7 +61,11 @@ fn thread_shell(back: AnyElement, content: AnyElement) -> AnyElement {
 
 /// Render the body followed by chronological comments, without a nested scroll
 /// container. The active session is the sole source of selection and detail.
-pub(super) fn render_thread(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
+pub(super) fn render_thread(
+    app: &KagiApp,
+    window: &mut gpui::Window,
+    cx: &mut Context<KagiApp>,
+) -> AnyElement {
     let ui = app.ui();
     let Some(number) = ui.selected_github_issue else {
         return status(
@@ -123,7 +127,7 @@ pub(super) fn render_thread(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElem
     thread_shell(
         back_to_issues(cx),
         content
-            .child(render_conversation(app, issue, cx))
+            .child(render_conversation(app, issue, window, cx))
             .into_any_element(),
     )
 }
@@ -131,6 +135,7 @@ pub(super) fn render_thread(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElem
 fn render_conversation(
     app: &KagiApp,
     issue: &kagi_domain::github::Issue,
+    window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
     let number = issue.number;
@@ -155,12 +160,17 @@ fn render_conversation(
             format!("issue-thread-body-{number}"),
             &issue.author,
             &issue.created_at,
+            &issue.body,
             if issue.body.trim().is_empty() {
-                Msg::IssueNoDescription.t()
+                super::timeline_row::BodyMarkdownFormat::Placeholder {
+                    text: Msg::IssueNoDescription.t(),
+                    italic: false,
+                }
             } else {
-                &issue.body
+                super::timeline_row::BodyMarkdownFormat::Original
             },
             Some((&format!("#{} {}", number, issue.title), state, state_color)),
+            window,
             cx,
         ));
     if !issue.comments.is_empty() {
@@ -189,7 +199,9 @@ fn render_conversation(
             &comment.author,
             &comment.created_at,
             &comment.body,
+            super::timeline_row::BodyMarkdownFormat::Original,
             None,
+            window,
             cx,
         ));
     }
@@ -204,7 +216,9 @@ fn post(
     author: &str,
     created_at: &str,
     body: &str,
+    format: super::timeline_row::BodyMarkdownFormat,
     issue_meta: Option<(&str, &'static str, u32)>,
+    window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
     let content = super::timeline_row::content_column()
@@ -227,7 +241,10 @@ fn post(
             super::timeline_row::body_markdown(
                 SharedString::from(format!("{id}-md")),
                 body,
+                format,
                 super::timeline_row::markdown_style(15., cx),
+                window,
+                cx,
             ),
         ))
         .children(issue_meta.map(|(_, label, color)| super::timeline_row::state_dot(label, color)));

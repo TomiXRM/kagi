@@ -52,9 +52,9 @@ use super::log::CommitId;
 // #704 / #707: the abort family and the ADR-0058 terminology moved to their
 // own modules, re-exported here so `conflicts::…` stays the one path callers
 // name.
-pub(crate) use super::conflict_abort::{execute_conflict_abort, execute_stash_conflict_abort};
-pub use super::conflict_abort::{plan_conflict_abort, AbortOutcome};
 pub use super::conflict_labels::{side_labels, SideLabel, SideLabels};
+pub(crate) use super::ops::conflict_abort::{execute_conflict_abort, execute_stash_conflict_abort};
+pub use super::ops::conflict_abort::{plan_conflict_abort, AbortOutcome};
 use super::ops::{OperationPlan, StateSummary};
 use super::resolution::ResolutionBuffer;
 use super::status::working_tree_status;

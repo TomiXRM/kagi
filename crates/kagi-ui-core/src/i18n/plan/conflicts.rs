@@ -13,6 +13,8 @@ pub(crate) const ADVICE_CONFLICTS_REPOSITORY_IDENTITY_CHANGED: &str =
     "計画後にリポジトリの識別情報が変わりました。リポジトリを開き直して、操作をやり直してください。";
 pub(crate) const ADVICE_CONFLICTS_CONFLICT_GONE: &str =
     "conflict は既に終了しています。リポジトリを再読み込みしてください。";
+pub(crate) const ADVICE_CONFLICTS_ABORT_START_UNAVAILABLE: &str =
+    "中止を拒否しました。操作の開始記録から sequence 開始前の HEAD を確認できません。リポジトリは変更していません。手動で復旧する前に sequencer の状態を確認してください。";
 pub(crate) const ADVICE_CONFLICTS_RESOLUTION_MARKERS: &str =
     "解決用バッファーに conflict marker が残っています。すべて削除してから保存してください。";
 pub(crate) const ADVICE_CONFLICTS_UNRESOLVED_FILES: &str =
@@ -44,6 +46,9 @@ pub fn note_ja(note: &ConflictsNote) -> String {
             super::advice_text(Msg::AdviceConflictsRepositoryIdentityChanged, &[])
         }
         ConflictsNote::ConflictGone => super::advice_text(Msg::AdviceConflictsConflictGone, &[]),
+        ConflictsNote::AbortStartUnavailable => {
+            super::advice_text(Msg::AdviceConflictsAbortStartUnavailable, &[])
+        }
         ConflictsNote::ResolutionMarkers => {
             super::advice_text(Msg::AdviceConflictsResolutionMarkers, &[])
         }
@@ -99,7 +104,7 @@ pub fn recovery_ja(recovery: &ConflictsRecovery) -> String {
             op
         ),
         ConflictsRecovery::Abort { op } => format!(
-            "Abort は ORIG_HEAD から {} 実行前の状態を復元します。HEAD 移動はすべて reflog に残ります。",
+            "Abort は記録された {} 実行前の状態を復元します。HEAD 移動はすべて reflog に残ります。",
             op
         ),
         ConflictsRecovery::Skip { op } => format!(

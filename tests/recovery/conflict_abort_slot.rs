@@ -1,11 +1,107 @@
 //! #755: the window's single modal slot around the conflict Abort
 //! confirmation — which focus its Escape resolves against, and which reload is
 //! allowed to sweep it.
-use crate::app_conflict::{click_control, content_fixture};
+use crate::app_conflict::{click_control, content_fixture, wait_idle};
 use crate::macos::{mount, unmount};
 use gpui::{Focusable, VisualTestAppContext};
 use kagi_git::oplog::read_oplog_tail_for_repo;
 use std::path::Path;
+
+#[path = "../support/cherry_pick_sequence.rs"]
+mod cherry_pick_sequence;
+
+/// The native confirmation and its receipt must describe the entire sequence.
+pub fn scenario_cherry_pick_abort_sequence(cx: &mut VisualTestAppContext) {
+    use kagi::ui::i18n::{self, Lang};
+    use kagi_git::oplog::OpOutcome;
+    struct RestoreLanguage {
+        lang: Lang,
+        _saved: crate::gui_isolation::SavedKeys,
+    }
+    impl Drop for RestoreLanguage {
+        fn drop(&mut self) {
+            i18n::set_lang(self.lang);
+        }
+    }
+    let _language = RestoreLanguage {
+        lang: i18n::lang(),
+        _saved: crate::gui_isolation::SavedKeys::keep(&["lang"]),
+    };
+    for (lang, unavailable) in [
+        (Lang::En, "pre-sequence HEAD cannot be established"),
+        (Lang::Ja, "sequence 開始前の HEAD を確認できません"),
+    ] {
+        i18n::set_lang(lang);
+        for missing_start in [false, true] {
+            let fixture = cherry_pick_sequence::Fixture::new(true, false);
+            let repo = fixture.path().canonicalize().unwrap();
+            if missing_start {
+                std::fs::remove_file(repo.join(".git/sequencer/head")).unwrap();
+            }
+            let (app, window) = mount(cx, &repo);
+            app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+            cx.run_until_parked();
+            click_control(cx, window, "conflict-abort");
+            cx.run_until_parked();
+            cx.read(|cx| {
+                let state = app.read(cx);
+                let modal = state.conflict_abort_modal().expect("abort confirmation");
+                if missing_start {
+                    assert!(modal
+                        .plan
+                        .blockers
+                        .iter()
+                        .any(|note| i18n::plan::plan_note_text(note).contains(unavailable)));
+                } else {
+                    assert!(modal.plan.predicted.head.contains(&fixture.start[..7]));
+                }
+            });
+            draw(cx, window);
+            cx.simulate_keystrokes(window, "enter");
+            wait_idle(cx, &app);
+            let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+                .into_iter()
+                .filter(|entry| entry.op == "cherry-pick-abort")
+                .collect();
+            assert_eq!(entries.len(), 1);
+            let backend = kagi_git::Backend::open(&repo).unwrap();
+            if missing_start {
+                assert!(matches!(entries[0].outcome, OpOutcome::Refused { .. }));
+                assert!(repo.join(".git/sequencer").exists());
+                cx.read(|cx| {
+                    let state = app.read(cx);
+                    let toast = state
+                        .toast_stack
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .toasts()
+                        .last()
+                        .unwrap();
+                    assert!(toast.message.contains(unavailable), "{}", toast.message);
+                });
+            } else {
+                assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
+                assert!(backend.conflict_snapshot().unwrap().is_none());
+                let repository = git2::Repository::open(&repo).unwrap();
+                assert_eq!(
+                    repository.head().unwrap().target().unwrap().to_string(),
+                    fixture.start
+                );
+                assert!(repository.statuses(None).unwrap().is_empty());
+                assert!(entries[0]
+                    .ref_moves
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .any(|movement| movement.new.as_deref() == Some(fixture.start.as_str())));
+            }
+            drop(backend);
+            unmount(cx, app, window);
+        }
+    }
+    eprintln!("[gui-e2e] PASS cherry_pick_abort_sequence");
+}
 
 fn draw(cx: &mut VisualTestAppContext, window: gpui::AnyWindowHandle) {
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())

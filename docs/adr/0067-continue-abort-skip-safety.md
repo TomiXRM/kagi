@@ -26,6 +26,17 @@ Conflict Mode 中の Continue / Abort / Skip / Mark resolved / Save は **直接
 - `cleanup_state` + ORIG_HEAD 復帰(force/reset --hard/clean 不使用、ADR-0056/0057)。buffer は
   oplog 参照付きで退避(完全には消さない)
 
+### Cherry-pick / revert sequence abort の開始点 (#1127)
+
+`sequencer/head` が sequence 全体の開始 HEAD。先行 pick 済みの現在 HEAD や、
+cherry-pick が更新しない古い ORIG_HEAD へ戻さない。開始記録を conflict revision
+に含め、確認後の差替えを拒否する。live sequencer の開始記録が欠損・不正、
+または commit を読めない場合は EN/JA の blocker で mutation 前に拒否する。
+sequencer を使わない単一 pick は現在 HEAD が開始点。復元は既存の touched-path
+checkout・index 復元・ref CAS と buffer 退避・receipt を共有し、適用結果の
+手編集 guard は現在 HEAD（先行 pick を含む）へ replay して再構成する。
+
+
 ### Rebase abort の比較基準 (#534)
 
 復元先は ORIG_HEAD のまま。非競合ファイルの手編集保護に使う適用結果は、

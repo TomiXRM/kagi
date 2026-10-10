@@ -116,6 +116,8 @@ pub(crate) fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>,
         // frozen request and the live preflight both pass and the abort then
         // restores somewhere the user was never shown.
         "ORIG_HEAD",
+        "sequencer/head",
+        "sequencer/todo",
         "rebase-merge/head-name",
         "rebase-apply/head-name",
         "rebase-merge/done",
@@ -138,7 +140,7 @@ pub(crate) fn observation(repo: &Repository) -> Result<Option<ConflictSnapshot>,
     // by the restore. Absent / symbolic / unreadable are their own markers: an
     // abort must not silently create or overwrite a ref that appeared since.
     parts.push(b"restore-ref".to_vec());
-    match crate::conflict_abort::restore_ref(repo, &session) {
+    match crate::ops::conflict_abort::restore_ref(repo, &session) {
         Some(restore) => {
             parts.push(restore.name.into_bytes());
             parts.push(

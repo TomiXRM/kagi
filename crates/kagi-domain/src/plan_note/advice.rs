@@ -262,6 +262,9 @@ macro_rules! advice_template_en {
     (ConflictsConflictGone) => {
         "the conflict is no longer present"
     };
+    (ConflictsAbortStartUnavailable) => {
+        "abort refused: pre-sequence HEAD cannot be established from the operation's start record; no repository state was changed. Inspect the sequencer state before recovering manually."
+    };
     (ConflictsResolutionMarkers) => {
         "conflict markers remain in the resolution buffer"
     };

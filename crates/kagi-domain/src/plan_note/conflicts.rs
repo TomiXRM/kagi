@@ -21,6 +21,8 @@ pub enum ConflictsNote {
     RepositoryIdentityChanged,
     /// blocker (save/resolve/abort) — the observed conflict ended before execution.
     ConflictGone,
+    /// blocker (abort) — the sequencer's pre-operation commit is missing or invalid.
+    AbortStartUnavailable,
     /// blocker (save) — the resolution draft still contains conflict markers.
     ResolutionMarkers,
     /// blocker (continue) — one or more files have no resolution draft.
@@ -66,6 +68,9 @@ impl ConflictsNote {
                 crate::advice_template_en!(ConflictsRepositoryIdentityChanged).into()
             }
             ConflictsNote::ConflictGone => crate::advice_template_en!(ConflictsConflictGone).into(),
+            ConflictsNote::AbortStartUnavailable => {
+                crate::advice_template_en!(ConflictsAbortStartUnavailable).into()
+            }
             ConflictsNote::ResolutionMarkers => {
                 crate::advice_template_en!(ConflictsResolutionMarkers).into()
             }
@@ -152,7 +157,7 @@ impl ConflictsRecovery {
                 op
             ),
             ConflictsRecovery::Abort { op } => format!(
-                "Abort restores the pre-{} state from ORIG_HEAD. If you change your mind, the reflog still records every HEAD movement.",
+                "Abort restores the recorded pre-{} state. If you change your mind, the reflog still records every HEAD movement.",
                 op
             ),
             ConflictsRecovery::Skip { op } => format!(
@@ -337,13 +342,13 @@ mod tests {
     }
 
     #[test]
-    fn abort_recovery_matches_legacy_string() {
+    fn abort_recovery_names_recorded_start() {
         assert_eq!(
             ConflictsRecovery::Abort {
                 op: "rebase".to_string()
             }
             .message_en(),
-            "Abort restores the pre-rebase state from ORIG_HEAD. If you change your mind, \
+            "Abort restores the recorded pre-rebase state. If you change your mind, \
              the reflog still records every HEAD movement."
         );
     }

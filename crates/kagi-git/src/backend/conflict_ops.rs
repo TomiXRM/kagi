@@ -32,7 +32,7 @@ enum ConflictPreparedAction {
         session: Box<conflicts::ConflictSession>,
         /// #707 review: the ref the restore will rewrite and the OID it held
         /// when planned, so the write is a compare-and-swap.
-        restore: Option<crate::conflict_abort::RestoreRef>,
+        restore: Option<crate::ops::conflict_abort::RestoreRef>,
     },
 }
 
@@ -303,8 +303,17 @@ impl Backend {
                         "conflict operation changed since it was observed".into(),
                     ));
                 }
+                if !matches!(snapshot.session.op, conflicts::ConflictOp::StashConflict) {
+                    crate::ops::conflict_abort::preflight_conflict_abort(
+                        &backend.repo,
+                        &snapshot.session,
+                    )?;
+                }
                 ConflictPreparedAction::Abort {
-                    restore: crate::conflict_abort::restore_ref(&backend.repo, &snapshot.session),
+                    restore: crate::ops::conflict_abort::restore_ref(
+                        &backend.repo,
+                        &snapshot.session,
+                    ),
                     session: Box::new(snapshot.session.clone()),
                 }
             }
@@ -470,14 +479,14 @@ impl Backend {
                         let buffer = backend.resolution_buffer_from_repo_with_autosave()?;
                         let stash = matches!(session.op, conflicts::ConflictOp::StashConflict);
                         let restored = if stash {
-                            crate::conflict_abort::execute_stash_conflict_abort_with_progress(
+                            crate::ops::conflict_abort::execute_stash_conflict_abort_with_progress(
                                 &backend.repo,
                                 session,
                                 &buffer,
                                 |value| progress = value,
                             )?
                         } else {
-                            crate::conflict_abort::execute_conflict_abort_expecting(
+                            crate::ops::conflict_abort::execute_conflict_abort_expecting(
                                 &backend.repo,
                                 session,
                                 &buffer,

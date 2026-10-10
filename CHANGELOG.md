@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Discard の file→symlink 型変更に、`core.ignorecase=false`（Linux の通常設定、macOS で明示設定した場合も含む）では外部 symlink target を切り詰め、index の内容で上書きし得る潜在的なデータ損失の不具合がありました。全 backup ref の保存後、承認済み entry の型が index と異なる場合は symlink 自体を unlink してから復元するよう修正しました。型・link target bytes・regular content を古い stat-cache に依存せず検証し、実 index・未選択ファイル・外部 target・一件の receipt を保持する backend 回帰を追加しました。(PR #1157 Linux CI follow-up)
 - Branch rename は exact な repo-local subsection とその include 元だけを移し、複数の `merge` 値の順序・quotes／escapes・`pushRemote`／`rebase`／`description` を保つようにしました。`foo.bar` など別の branch や global／system 設定は変更しません。plan に移動する設定キーを示し、確認後の source／destination 設定の変更は ref 書込み前に拒否して一件の操作記録を残します。(#1129)
 - Branch rename の include 元は canonical な Git directory 内に限定し、共有ファイル・作業ファイル・外部へ向く symlink は plan の EN／JA blocker で拒否します。対象 branch 名の `onbranch` include や Git がリネームできない header も ref 書込み前に拒否し、worktree 固有の `config.worktree` は複数値を保って移動します。(#1129 review)
 - 未追跡ファイルを除外する Stash Push の After は「N untracked retained」／「未追跡ファイル N 件を保持」を表示し、既存の除外 warning と一致するようにしました。tracked の staged／unstaged 両方を退避し、include-untracked 時だけ未追跡ファイルも取り除く予測を実 Git の status と照合します。ブロック中の計画は変更なしのままです。(#1140)

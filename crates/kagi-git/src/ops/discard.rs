@@ -302,6 +302,111 @@ fn preflight_discard(
     Ok(rels)
 }
 
+fn discard_uses_symlinks(repo: &Repository) -> Result<bool, git2::Error> {
+    match repo.config()?.get_bool("core.symlinks") {
+        Ok(value) => Ok(value),
+        Err(e) if e.code() == git2::ErrorCode::NotFound => Ok(true),
+        Err(e) => Err(e),
+    }
+}
+
+/// Empty-baseline checkout sees selected entries as additions, not typechanges.
+/// libgit2 only unlinks their old destination when core.ignorecase is true;
+/// otherwise its regular-file writer can follow and truncate a symlink.
+fn remove_discard_typechanges(repo: &Repository, workdir: &Path) -> Result<(), git2::Error> {
+    let index = repo.index()?;
+    let symlinks = discard_uses_symlinks(repo)?;
+    for entry in index.iter() {
+        let rel =
+            std::str::from_utf8(&entry.path).map_err(|e| git2::Error::from_str(&e.to_string()))?;
+        let abs = workdir.join(rel);
+        let metadata = match std::fs::symlink_metadata(&abs) {
+            Ok(metadata) => metadata,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                return Err(git2::Error::from_str(&format!(
+                    "discard: inspect '{rel}': {e}"
+                )))
+            }
+        };
+        let want_symlink = entry.mode == 0o120000 && symlinks;
+        if metadata.file_type().is_symlink() != want_symlink {
+            // No recursive deletion or dereferencing: directories fail closed.
+            std::fs::remove_file(&abs)
+                .map_err(|e| git2::Error::from_str(&format!("discard: unlink '{rel}': {e}")))?;
+        }
+    }
+    Ok(())
+}
+
+/// Verify actual entry types and bytes without consulting the real index cache.
+/// Regular files still use libgit2's clean/EOL rules, but a fresh stat-less
+/// index forces content hashing instead of trusting matching size/timestamps.
+fn verify_discard_tracked(repo: &Repository, workdir: &Path) -> Result<Vec<String>, git2::Error> {
+    let selected = repo.index()?;
+    let symlinks = discard_uses_symlinks(repo)?;
+    let mut regular = git2::Index::new()?;
+    let mut leftover = Vec::new();
+    for mut entry in selected.iter() {
+        let rel =
+            std::str::from_utf8(&entry.path).map_err(|e| git2::Error::from_str(&e.to_string()))?;
+        let abs = workdir.join(rel);
+        let metadata = match std::fs::symlink_metadata(&abs) {
+            Ok(metadata) => metadata,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                leftover.push(rel.to_string());
+                continue;
+            }
+            Err(e) => {
+                return Err(git2::Error::from_str(&format!(
+                    "discard verify: inspect '{rel}': {e}"
+                )))
+            }
+        };
+        let want_symlink = entry.mode == 0o120000 && symlinks;
+        if metadata.file_type().is_symlink() != want_symlink
+            || (!want_symlink && !metadata.is_file())
+        {
+            leftover.push(rel.to_string());
+        } else if want_symlink {
+            let target = std::fs::read_link(&abs).map_err(|e| {
+                git2::Error::from_str(&format!("discard verify: read link '{rel}': {e}"))
+            })?;
+            #[cfg(unix)]
+            let bytes = {
+                use std::os::unix::ffi::OsStrExt;
+                target.as_os_str().as_bytes()
+            };
+            #[cfg(not(unix))]
+            let bytes = target
+                .to_str()
+                .ok_or_else(|| {
+                    git2::Error::from_str(&format!("discard verify: non-UTF-8 link target '{rel}'"))
+                })?
+                .as_bytes();
+            if git2::Oid::hash_object(git2::ObjectType::Blob, bytes)? != entry.id {
+                leftover.push(rel.to_string());
+            }
+        } else {
+            entry.ctime = git2::IndexTime::new(0, 0);
+            entry.mtime = git2::IndexTime::new(0, 0);
+            entry.dev = 0;
+            entry.ino = 0;
+            entry.file_size = 0;
+            regular.add(&entry)?;
+        }
+    }
+    let mut options = git2::DiffOptions::new();
+    options.update_index(false);
+    let diff = repo.diff_index_to_workdir(Some(&regular), Some(&mut options))?;
+    for delta in diff.deltas() {
+        if let Some(path) = delta.old_file().path() {
+            leftover.push(path.to_string_lossy().into_owned());
+        }
+    }
+    Ok(leftover)
+}
+
 /// Execute a discard following the **mandatory** ADR-0046 order:
 ///
 /// 1. **backup** — write each target's CURRENT working-tree content into the ODB
@@ -311,8 +416,8 @@ fn preflight_discard(
 ///    `checkout_index` + `force()` (`git checkout -- <path>` semantics); *untracked*
 ///    targets are DELETED from disk (ADR-0083 — recoverable via the step-1 backup,
 ///    so this is not `git clean`). The index and refs are never touched.
-/// 3. **verify** — re-read status and confirm each target left the unstaged set
-///    (tracked) or is gone from disk (untracked).
+/// 3. **verify** — inspect each target's type and content against the index
+///    (tracked) or confirm its directory entry is absent (untracked).
 ///
 /// Returns the [`DiscardOutcome`] (the path→blob backup list) so the caller can
 /// record it in the oplog as the recovery handle. The caller MUST have rejected
@@ -514,6 +619,15 @@ pub(crate) fn execute_discard(
     // ── 2a. checkout only the approved index entries (restore WT). ──
     // update_index(false): the repository's staged content is NEVER modified.
     if let Some(checkout_repo) = &checkout_repo {
+        // All backups are pinned before the first unlink. Treat failures here
+        // like checkout failures: earlier selected entries may already be gone.
+        if let Err(e) = remove_discard_typechanges(checkout_repo, &workdir) {
+            return Ok(DiscardOutcome {
+                backups,
+                unverified: rels.clone(),
+                error: Some(e.to_string()),
+            });
+        }
         let mut cb = git2::build::CheckoutBuilder::new();
         cb.force();
         cb.update_index(false);
@@ -571,27 +685,30 @@ pub(crate) fn execute_discard(
         }
     }
 
-    // ── 3. VERIFY — tracked targets left the unstaged set; untracked are gone. ──
-    let status = working_tree_status(repo)?;
-    let still_unstaged: std::collections::HashSet<&Path> =
-        status.unstaged.iter().map(|f| f.path.as_path()).collect();
-    let still_untracked: std::collections::HashSet<&Path> =
-        status.untracked.iter().map(PathBuf::as_path).collect();
-    let mut leftover: Vec<&String> = tracked_rels
-        .iter()
-        .copied()
-        .filter(|r| still_unstaged.contains(Path::new(r.as_str())))
-        .collect();
-    leftover.extend(
-        untracked_rels
-            .iter()
-            .copied()
-            .filter(|r| still_untracked.contains(Path::new(r.as_str()))),
-    );
-    if !leftover.is_empty() {
+    // ── 3. VERIFY — check types/content, never stale real-index status. ──
+    let mut unverified = if let Some(checkout_repo) = &checkout_repo {
+        match verify_discard_tracked(checkout_repo, &workdir) {
+            Ok(leftover) => leftover,
+            Err(e) => {
+                return Ok(DiscardOutcome {
+                    backups,
+                    unverified: rels.clone(),
+                    error: Some(e.to_string()),
+                });
+            }
+        }
+    } else {
+        Vec::new()
+    };
+    for rel in &untracked_rels {
+        match std::fs::symlink_metadata(workdir.join(rel)) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            _ => unverified.push((*rel).clone()),
+        }
+    }
+    if !unverified.is_empty() {
         // #281: verify runs AFTER the working tree was rewritten — return the
         // partial outcome so the backup blob SHAs reach the oplog.
-        let unverified: Vec<String> = leftover.iter().map(|s| (*s).clone()).collect();
         return Ok(DiscardOutcome {
             backups,
             error: Some(format!(

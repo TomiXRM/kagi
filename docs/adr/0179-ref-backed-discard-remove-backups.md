@@ -64,6 +64,27 @@ with `core.fileMode=false` or on non-Unix platforms the index mode is retained
 (new regular files default to 100644). The reader validates the single-entry
 tree format and allowed file modes.
 
+Discard restores only approved entries through an isolated repository handle
+with an in-memory index; the real index is never written. After every backup
+is pinned, a worktree entry whose type differs from the selected index entry
+is unlinked before forced checkout (respecting `core.symlinks=false` emulation).
+This is required even with `force()`: libgit2's empty-baseline checkout treats
+these entries as additions. A 100644 regular-file target gets UPDATE_BLOB
+without REMOVE; 100755 and LINK targets also get REMOVE. The regular-file
+writer only removes an existing destination automatically when
+`core.ignorecase=true`. With `core.ignorecase=false` (Linux's usual default,
+or explicitly configured on macOS), it otherwise opens through an existing
+symlink, truncates its target, and overwrites it with the index blob content.
+No recursive deletion is used.
+
+Verification reads directory-entry metadata and exact symlink target bytes,
+not the real index's potentially stale status/stat cache. Regular content is
+compared through libgit2's clean/EOL rules against a fresh stat-less in-memory
+index, preserving normalization checks without trusting size or timestamps.
+Untracked entries must be absent according to `symlink_metadata`, including
+dangling links. Every failure after unlink/checkout retains the backups in a
+Partial outcome and the operation still owns one receipt.
+
 There is currently **no filesystem file-backup restore consumer** in the
 UI/MCP/CLI/backend: this correction does not add a restore API. Manual Unix Git
 recovery can export the tree into an empty directory using a private

@@ -86,3 +86,12 @@ group heading・inactive window の文字/操作の減衰・Inter と system fon
 font の別監査は #1068。custom override の検証で使った緑色 sidebar は preset と
 混同させないよう、実機検証終了時に通常 Apple Light に戻す。
 
+
+## Amendment — 2026-10-11: readable body links (#1077)
+
+Apple Light's vivid `color_branch = #0088ff` remains a filled ref/Primary
+accent; it is 3.520:1 against the white body background and is not the body-link
+foreground. A separate `link = #0066cc` maps to TextView's `colors.link` and
+gives 5.567:1 on white. Apple Dark's existing yellow link is already readable
+and remains unchanged. Underline, activation, selection and geometry are not
+altered.

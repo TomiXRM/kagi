@@ -25,6 +25,7 @@ pub const CATPPUCCIN_MOCHA: Theme = Theme {
 
     color_head: 0xf38ba8,
     color_branch: 0x89b4fa,
+    link: 0x89b4fa,
     selection_tint: 0x89b4fa,
     color_remote: 0xa6e3a1,
     color_tag: 0xfab387,

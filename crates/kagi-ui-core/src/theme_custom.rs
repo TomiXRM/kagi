@@ -434,7 +434,7 @@ macro_rules! theme_fields {
 theme_fields! {
     rgb: [
         bg_base, bg_row_alt, surface, selected, panel, sidebar, modal, modal_overlay,
-        text_main, text_sub, text_muted, text_label,
+        text_main, text_sub, text_muted, text_label, link,
         color_head, color_branch, color_remote, color_tag, selection_tint,
         color_success, color_warning, color_blocker, color_blocker_muted,
         diff_added_bg, diff_removed_bg, diff_hunk,
@@ -558,6 +558,21 @@ mod tests {
         assert_eq!(t.text_main, base.text_main);
         assert_eq!(t.lane_hsl, base.lane_hsl);
         assert_eq!(t.dark, base.dark);
+    }
+
+    #[test]
+    fn body_link_token_inherits_and_overrides_independently() {
+        let inherited = parse_theme(
+            r##"{"slug":"my-light","name":"My Light","extends":"apple-light","color_branch":"#ff9900"}"##,
+        ).expect("link inherits without following the filled accent");
+        assert_eq!(inherited.link, 0x0066cc);
+        assert_eq!(inherited.color_branch, 0xff9900);
+        let explicit = parse_theme(
+            r##"{"slug":"my-link","name":"My Link","extends":"apple-light","link":"#773399"}"##,
+        )
+        .expect("body-link override parses");
+        assert_eq!(explicit.link, 0x773399);
+        assert_eq!(explicit.color_branch, 0x0088ff);
     }
 
     #[test]

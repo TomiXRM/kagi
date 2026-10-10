@@ -113,6 +113,7 @@ theme from scratch:
   "text_sub": "#a6adc8",
   "text_muted": "#585b70",
   "text_label": "#6c7086",
+  "link": "#89b4fa",
   "color_head": "#f38ba8",
   "color_branch": "#89b4fa",
   "color_remote": "#a6e3a1",
@@ -233,6 +234,24 @@ the same contrast-preserving derivation as Primary; upstream preset Info colours
 cannot leak into side choices. Success/danger tints and generic info notices keep
 their existing token meanings.
 
+## Body links
+
+`link` is a body-text foreground token mapped directly to gpui-component's
+`colors.link` (Issue composer previews, Issue/PR descriptions and conversation
+TextViews). It is not the filled `color_branch` accent. Built-ins target at least
+4.5:1 over `bg_base`; Apple Light uses `#0066cc` (5.567:1 on white), while its
+ref chips and Primary fill stay `#0088ff`. Already-readable dark palettes,
+including Apple Dark, keep their prior link colour. Latte, One Light, Pinky Boo,
+Flower Road and IBM PC also have a separately readable link shade.
+
+Custom themes inherit `link` with `extends`, or set `"link": "#rrggbb"` explicitly.
+Changing only `color_branch` no longer changes body links. A standalone complete
+theme must supply `link`; choose it against your actual body background, since
+explicit custom colours are not silently corrected. Underlining, activation,
+selection tint, typography and geometry are unchanged. Reference: macOS body
+links, not filled ref chips; required rest/selection states keep the existing
+TextView behavior (no separate button/loading state).
+
 ## Token reference
 
 Every token a theme defines. The middle column is the default theme's
@@ -261,8 +280,9 @@ selection wash is `selection_tint` at 30 % opacity.
 | `text_sub` | `#a6adc8` | Secondary text: commit author/stat columns, header text, progress notes; scrollbar thumb hover; active line number. |
 | `text_muted` | `#585b70` | Dimmed text and disabled menu items, divider/input borders, scrollbar thumb, line numbers, inline-code chip tint, unknown change-kind badge. |
 | `text_label` | `#6c7086` | Field and section labels (Unstaged/Staged headers, modal input labels, conflict section titles, issue comment count). |
+| `link` | `#89b4fa` | Body-link foreground in gpui-component TextView (`colors.link`): Issue composer preview and Issue/PR body/conversation links; independent of filled ref/Primary accent. |
 | `color_head` | `#f38ba8` | HEAD branch badge in the graph and inspector, merge line of the activity chart, link values in the commit trailer table. |
-| `color_branch` | `#89b4fa` | Local branch/worktree badges and the main accent: primary buttons, focus ring, links, checkbox, info notices, drag handles, the "current" side of conflicts, loading dots. |
+| `color_branch` | `#89b4fa` | Local branch/worktree badges and the main accent: primary buttons, focus ring, checkbox, info notices, drag handles, the "current" side of conflicts, loading dots. |
 | `color_remote` | `#a6e3a1` | Remote-branch badges, the "incoming" side and its buttons in the conflict views, info-style buttons. |
 | `color_tag` | `#fab387` | Tag badges, icon of the create-tag and push-tag dialogs. |
 | `selection_tint` | `#89b4fa` | Text selection in inputs and selectable text, selected lines in the unified and split diff views (at 30 % opacity). |

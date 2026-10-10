@@ -30,6 +30,7 @@ pub const APPLE_DARK: Theme = Theme {
     // the dark theme adopts it (ADR-0126) — the light theme keeps blue.
     color_head: 0xff375f,   // pink
     color_branch: 0xffd600, // yellow (accent)
+    link: 0xffd600,
     selection_tint: 0xffd600,
     color_remote: 0x30d158, // green
     color_tag: 0xff9230,    // orange

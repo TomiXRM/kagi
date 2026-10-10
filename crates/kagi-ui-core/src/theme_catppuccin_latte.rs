@@ -25,6 +25,7 @@ pub const CATPPUCCIN_LATTE: Theme = Theme {
 
     color_head: 0xd20f39,   // red
     color_branch: 0x1e66f5, // blue
+    link: 0x1b60e7,         // body foreground needs more contrast than the filled accent
     selection_tint: 0x1e66f5,
     color_remote: 0x40a02b, // green
     color_tag: 0xfe640b,    // peach

@@ -80,6 +80,8 @@ pub struct Theme {
     pub text_muted: u32,
     /// Field labels in the detail panel.
     pub text_label: u32,
+    /// Body-link foreground, independent of filled ref/Primary accents.
+    pub link: u32,
 
     // ── Ref / decoration colours ─────────────────────────────────
     pub color_head: u32,
@@ -1132,7 +1134,7 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     // accent tint at that alpha is both visible and safe for legibility.
     gc.colors.selection = to_hsla(k.selection_tint).alpha(SELECTION_ALPHA);
 
-    // ── Primary / accent (Checkbox checked, focus ring, links) ──
+    // ── Primary / accent (Checkbox checked, focus ring) ────────
     gc.colors.primary = to_hsla(k.color_branch);
     let primary_foreground = primary_button_foreground(&k);
     gc.colors.primary_foreground = to_hsla(primary_foreground);
@@ -1153,7 +1155,7 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     // the band `code_chip_is_visible_but_not_a_block` pins.
     gc.colors.accent = to_hsla(k.text_muted).alpha(CODE_CHIP_ALPHA);
     gc.colors.accent_foreground = to_hsla(k.text_main);
-    gc.colors.link = to_hsla(k.color_branch);
+    gc.colors.link = to_hsla(k.link);
 
     // ── Secondary / title-bar controls (gpui-component TitleBar) ──
     gc.colors.secondary = to_hsla(k.surface);
@@ -1437,6 +1439,50 @@ pub(crate) const LANE_PALETTE_LIGHT: [(f32, f32, f32); 8] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn body_links_meet_wcag_aa_in_every_theme() {
+        for t in THEMES {
+            let mut gc = gpui_component::Theme::default();
+            apply_gpui_component_theme(t, &mut gc);
+            assert_eq!(
+                gc.colors.link,
+                to_hsla(t.link),
+                "{}: owned body-link token",
+                t.slug
+            );
+            assert!(
+                contrast_ratio(t.link, t.bg_base) >= 4.5,
+                "{}: link palette",
+                t.slug
+            );
+            let link = u32::from(gc.colors.link.to_rgb()) >> 8;
+            let contrast = contrast_ratio(link, t.bg_base);
+            assert!(
+                contrast >= 4.5,
+                "{}: body link {link:#08x} is only {contrast:.2}:1 on {:#08x}",
+                t.slug,
+                t.bg_base,
+            );
+        }
+    }
+
+    #[test]
+    fn body_link_override_is_independent_of_ref_and_primary_palettes() {
+        let mut custom = crate::theme_apple_light::APPLE_LIGHT.clone();
+        assert_eq!(custom.link, 0x0066cc);
+        assert_eq!(custom.color_branch, 0x0088ff);
+        custom.link = 0x773399;
+        let mut gc = gpui_component::Theme::default();
+        apply_gpui_component_theme(&custom, &mut gc);
+        assert_eq!(gc.colors.link, to_hsla(custom.link));
+        assert_eq!(gc.colors.primary, to_hsla(0x0088ff));
+        assert_eq!(gc.colors.button_primary, to_hsla(0x0088ff));
+        custom.color_branch = 0xff9900;
+        apply_gpui_component_theme(&custom, &mut gc);
+        assert_eq!(gc.colors.link, to_hsla(0x773399));
+        assert_eq!(gc.colors.button_primary, to_hsla(0xff9900));
+    }
 
     #[test]
     fn incoming_button_tokens_follow_remote_in_every_theme() {

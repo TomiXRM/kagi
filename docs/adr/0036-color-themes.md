@@ -59,3 +59,13 @@ upstream mode preset. The resting fill exactly matches Incoming pane/marker;
 foreground and hover/active use the same contrast-preserving opaque-fill
 derivation as Primary. Generic `info` notices keep their prior branch colour,
 and status/destructive tinted actions are unchanged.
+
+## Amendment — 2026-10-11: independent body-link foreground (#1077)
+
+`Theme.link` is a distinct RGB token copied into gpui-component `colors.link`,
+not inferred from `color_branch`. Built-ins meet 4.5:1 on their body `bg_base`.
+Apple Light uses `#0066cc`; already-legible dark themes keep their prior colour.
+Other insufficient body-link shades change only this token, never the ref-chip
+or Primary palette. Custom themes inherit or explicitly override `link`; full
+standalone files require it. Existing TextView underlining, activation and
+selection remain unchanged. See [the body-link guide](../themes.md#body-links).

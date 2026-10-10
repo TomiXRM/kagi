@@ -25,6 +25,7 @@ pub const MONOKAI: Theme = Theme {
 
     color_head: 0xff3d6f,   // vivid pink (ref keyword #ff668c, boosted)
     color_branch: 0x5a9fff, // vivid blue
+    link: 0x5a9fff,
     selection_tint: 0x5a9fff,
     color_remote: 0xa8e05a, // vivid green (ref function #a4d671)
     color_tag: 0xff8c1a,    // punchy warm orange

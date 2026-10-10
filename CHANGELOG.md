@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- 本文リンクの `link` token を ref／Primary の塗り色から分離しました。Apple Light の Issue composer preview／Issue・PR 本文リンクは白地で読みやすい青になり、全組み込みテーマで 4.5:1 以上の contrast を保ちます。既に読める Dark の色、ref chip・Primary palette、下線・選択・リンク操作は維持します。自作テーマでは `link` を継承または明示できます。(#1077)
 - Conflict の Take Incoming／Keep File の背景色を全テーマの `color_remote` に合わせました。Apple Light の Incoming pane／marker と同じ緑を使い、文字・hover・押下も Kagi の theme bridge で読みやすく導出します。status／破壊的操作の色は変更しません。(#1078)
 - Conflict の Keep Current／Take Incoming は色値の一致ではなく操作 role で filled Primary／Info を選ぶようにしました。Color Vision と同色を共有する自作テーマでも、Stage／警告／破壊的操作の tint と側選択の階層が混同されません。既存の色覚対応 palette と安全フローは維持します。(#1079)
 - 外部 filter の拒否は内容を取り込む Stage と index から復元する Discard に限定し、filter 対象の削除 Stage（単体・一括）と untracked file の raw backup→Discard は維持します。無効化した sparse-checkout の残存設定・patterns と別 worktree の patterns は Sync を妨げず、手動 skip-worktree entry と Sync の filter 拒否には専用の EN／JA 案内を表示します。(#1136／#1137 review)

@@ -25,6 +25,7 @@ pub const IBM_PC: Theme = Theme {
 
     color_head: 0xff5555,
     color_branch: 0x5555ff,
+    link: 0x6666ff, // lighter blue for readable body text on black
     selection_tint: 0x5555ff,
     color_remote: 0x55ff55,
     color_tag: 0xffff55,

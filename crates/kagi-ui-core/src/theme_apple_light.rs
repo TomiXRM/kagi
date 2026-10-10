@@ -28,6 +28,7 @@ pub const APPLE_LIGHT: Theme = Theme {
     // Ref chips render solid with white text → vivid Default (light) set.
     color_head: 0xff2d55,   // pink
     color_branch: 0x0088ff, // blue
+    link: 0x0066cc,         // readable body-link blue on white; ref/Primary stays vivid
     selection_tint: 0x0088ff,
     color_remote: 0x34c759, // green
     color_tag: 0xff8d28,    // orange

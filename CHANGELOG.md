@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- 未追跡ファイルを除外する Stash Push の After は「N untracked retained」／「未追跡ファイル N 件を保持」を表示し、既存の除外 warning と一致するようにしました。tracked の staged／unstaged 両方を退避し、include-untracked 時だけ未追跡ファイルも取り除く予測を実 Git の status と照合します。ブロック中の計画は変更なしのままです。(#1140)
+- Stash Push の保持予測と除外 warning は、index で削除済みの同じ path が未追跡として現れる場合を除くようにしました。Git が HEAD の内容へ戻す path を「未追跡として保持」と表示せず、通常の未追跡ファイルだけを数えます。実行後の検証も同じ path 方針を使い、正しい復元を誤って Partial と判定しません。(#1140 review)
+- Stash Push は最初の commit がない repository を計画時に EN／JA の理由でブロックし、After は変更なしを示します。preflight でも HEAD commit を再確認し、実行時の guard と未変更の Refused 操作記録を維持します。(#1141)
 - Discard の backup ref は一件の tree entry に mode（120000／100644／100755）と内容を保持し、symlink の target を lossy UTF-8 に変換せず生の bytes で保存します。外部 target を読み書きせず、Git の tree export で dangling／非 UTF-8 target／tracked typechange も元の型へ回復できる backend 回帰を追加しました。既存の blob ref は従来どおり読め、oplog の blob OID・表示契約・一件の receipt は維持します。Kagi 内の file-backup 復元 UI／executor は追加していません。(#1138)
 - Discard backup の executable mode は Git と同じ owner-execute bit だけで判定し、`core.fileMode=false` の場合は index の mode を保持します。group-only executable と両方向の mode 差替えを回帰で検証し、既存の linked-worktree native 試験も tree entry の mode・blob・内容を検証する形へ更新しました。(#1138 review)
 - Commit／Amend／解決済み MergeCommit と user-visible libgit2 writer は実行と同じ Git CLI で作者・コミッターの identity を確認し、未設定なら user.name／user.email の設定を促す EN／JA の blocker を表示します。承認後も再確認し、checkout 前に identity を確定するため途中変更を残しません。user commit には仮 identity を使わず、内部の `refs/kagi/` snapshot／savepoint／backup だけは専用の application identity で identity 未設定でも復旧情報を保持します。ruleset の作者 email も Git の有効な identity を使い、backend fixture の identity は repo-local に明示します。

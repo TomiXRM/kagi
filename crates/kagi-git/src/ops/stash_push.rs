@@ -9,11 +9,12 @@ use kagi_domain::plan_note::{OpPhrase, StashNote, StashRecovery, StashTitle};
 /// Analyse whether a stash push is safe and return an [`OperationPlan`].
 ///
 /// Stash push is a **Guarded-class** operation (ADR-0004): it modifies the
-/// working tree and index by saving all local modifications to a new stash
-/// entry, leaving the working tree clean.
+/// working tree and index by saving tracked modifications to a new stash
+/// entry, optionally including untracked files.
 ///
 /// # Blocker conditions
 ///
+/// - HEAD is unborn — Git requires an initial commit to create a stash.
 /// - There are no local modifications (staged, unstaged, untracked all empty) —
 ///   nothing to stash.
 /// - The repository is in a conflict state — stash cannot be created during
@@ -26,8 +27,8 @@ use kagi_domain::plan_note::{OpPhrase, StashNote, StashRecovery, StashTitle};
 ///
 /// # Predicted state
 ///
-/// - Working tree will be clean after the push.
-/// - Stash count will increase by 1.
+/// - Tracked changes are removed; excluded untracked files remain.
+/// - Stash count increases by 1 only when the plan is executable.
 ///
 /// # Errors
 ///
@@ -73,6 +74,9 @@ pub fn plan_stash_push(
     let mut blockers: Vec<PlanNote> = Vec::new();
     super::add_git_identity_blocker(repo, &mut blockers)?;
     let mut warnings: Vec<PlanNote> = Vec::new();
+    if matches!(head, Head::Unborn { .. }) {
+        blockers.push(PlanNote::Stash(StashNote::HeadRequired));
+    }
 
     // Nothing to stash.
     // When include_untracked=false, untracked files don't count as "something to stash".
@@ -100,19 +104,38 @@ pub fn plan_stash_push(
         }));
     }
 
-    // When include_untracked=false, warn that untracked files will NOT be stashed.
-    if !include_untracked && !status.untracked.is_empty() {
+    // Git restores HEAD paths deleted from the index even when those paths
+    // also appear as untracked (e.g. `git rm --cached`). Only genuinely
+    // retained untracked paths belong in the exclusion warning and After.
+    let retained_untracked_count = if include_untracked {
+        0
+    } else {
+        status
+            .untracked
+            .iter()
+            .filter(|path| stash_push_retains_untracked(&status.staged, path))
+            .count()
+    };
+    if retained_untracked_count > 0 {
         warnings.push(PlanNote::Stash(StashNote::UntrackedExcluded {
-            count: status.untracked.len(),
+            count: retained_untracked_count,
         }));
     }
 
     // ── 5. Predicted StateSummary ─────────────────────────────
-    // After push: working tree is clean, stash count +1.
+    // Only excluded untracked files remain dirty after a successful push.
     let msg_label = message.unwrap_or("(no message)");
-    let predicted = StateSummary {
-        head: head_display.clone(),
-        dirty: "clean".to_string(),
+    let predicted = if blockers.is_empty() {
+        StateSummary {
+            head: head_display.clone(),
+            dirty: if retained_untracked_count > 0 {
+                format!("{retained_untracked_count} untracked retained")
+            } else {
+                "clean".to_string()
+            },
+        }
+    } else {
+        current.clone()
     };
 
     // ── 6. Recovery guidance ──────────────────────────────────
@@ -148,6 +171,14 @@ pub fn plan_stash_push(
         destructive: false,
         equivalent_command: None,
     })
+}
+
+/// HEAD paths removed from the index are restored by stash push, not retained
+/// as untracked. Planning and verification must use the same path policy.
+pub(crate) fn stash_push_retains_untracked(staged: &[FileStatus], path: &Path) -> bool {
+    !staged
+        .iter()
+        .any(|entry| entry.change == ChangeKind::Deleted && entry.path == path)
 }
 
 // ────────────────────────────────────────────────────────────

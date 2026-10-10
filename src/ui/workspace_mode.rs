@@ -593,7 +593,7 @@ impl KagiApp {
             || self.ui().branch_cleanup_open
         {
             WorkspaceMode::Takeover
-        } else if self.pr_mode().is_some() {
+        } else if self.pr_mode_visible() {
             WorkspaceMode::Prs
         } else if self.issues_mode_open() {
             WorkspaceMode::Issues
@@ -609,6 +609,20 @@ impl KagiApp {
     pub fn show_graph_mode(&mut self, cx: &mut Context<Self>) {
         self.sidebar.swipe.cancel();
         self.leave_takeovers(WorkspaceMode::Graph);
+        self.finish_show_graph_mode(cx);
+    }
+
+    /// Read-only Peek borrows Graph; PRs restores the retained workspace.
+    pub(crate) fn show_graph_for_pr_peek(&mut self, cx: &mut Context<Self>) {
+        self.sidebar.swipe.cancel();
+        self.leave_takeovers(WorkspaceMode::Prs);
+        if let Some(mode) = self.pr_mode_mut() {
+            mode.visible = false;
+        }
+        self.finish_show_graph_mode(cx);
+    }
+
+    fn finish_show_graph_mode(&mut self, cx: &mut Context<Self>) {
         if let Some(ev) = self.ui().editor_workspace.clone() {
             if ev.read(cx).any_dirty() {
                 self.open_editor_dirty_guard(EditorPendingIntent::Close, cx);
@@ -629,7 +643,7 @@ impl KagiApp {
     pub fn show_pr_mode(&mut self, cx: &mut Context<Self>) {
         self.sidebar.swipe.cancel();
         self.leave_takeovers(WorkspaceMode::Prs);
-        if self.pr_mode().is_none() {
+        if !self.pr_mode_visible() {
             self.toggle_pr_mode(cx);
         }
         klog!("mode: prs");

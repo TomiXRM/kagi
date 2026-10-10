@@ -160,6 +160,9 @@ mod home_p2;
 #[path = "recovery/home_rows.rs"]
 mod home_rows;
 #[cfg(target_os = "macos")]
+#[path = "recovery/home_search_incomplete.rs"]
+mod home_search_incomplete;
+#[cfg(target_os = "macos")]
 #[path = "recovery/home_work.rs"]
 mod home_work;
 #[cfg(target_os = "macos")]
@@ -344,6 +347,10 @@ mod evidence_support;
 #[cfg(target_os = "macos")]
 #[path = "recovery/github_evidence_owner.rs"]
 mod github_evidence_owner;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/pr_peek_visible.rs"]
+mod pr_peek_visible;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/cleanup_evidence_owner.rs"]
@@ -1177,6 +1184,18 @@ mod macos {
             (
                 "home_list_place",
                 Box::new(crate::home_list_place::scenario_home_list_place),
+            ),
+            (
+                "home_search_incomplete_repos",
+                Box::new(crate::home_search_incomplete::scenario_home_search_incomplete_repos),
+            ),
+            (
+                "home_search_incomplete_refreshing",
+                Box::new(crate::home_search_incomplete::scenario_home_search_incomplete_refreshing),
+            ),
+            (
+                "home_search_incomplete_work",
+                Box::new(crate::home_search_incomplete::scenario_home_search_incomplete_work),
             ),
             (
                 "home_review_avatar_host",
@@ -2253,6 +2272,26 @@ mod macos {
             (
                 "file_menu_focus_after_open_repository",
                 Box::new(crate::file_menu_owner::scenario_file_menu_focus_after_open_repository),
+            ),
+            (
+                "pr_peek_visible_table",
+                Box::new(crate::pr_peek_visible::scenario_pr_peek_visible_table),
+            ),
+            (
+                "pr_peek_visible_edges",
+                Box::new(crate::pr_peek_visible::scenario_pr_peek_visible_edges),
+            ),
+            (
+                "pr_peek_preserves_tabs_drafts",
+                Box::new(crate::pr_peek_visible::scenario_pr_peek_preserves_tabs_drafts),
+            ),
+            (
+                "pr_peek_dirty_guard",
+                Box::new(crate::pr_peek_visible::scenario_pr_peek_dirty_guard),
+            ),
+            (
+                "pr_peek_read_failure_context",
+                Box::new(crate::pr_peek_visible::scenario_pr_peek_read_failure_context),
             ),
             (
                 "github_evidence_restores",

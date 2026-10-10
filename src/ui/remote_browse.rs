@@ -759,11 +759,11 @@ fn render_directory_list(
         window,
         cx,
     ));
-    if modal.focus_accepted_read.replace(false) {
-        if !modal.row_focus.borrow().focus_first(&scroll, window, cx) {
-            if let Some(fallback) = fallback {
-                fallback.focus(window, cx);
-            }
+    if modal.focus_accepted_read.replace(false)
+        && !modal.row_focus.borrow().focus_first(&scroll, window, cx)
+    {
+        if let Some(fallback) = fallback {
+            fallback.focus(window, cx);
         }
     }
     if let Some(key) = modal.row_focus.borrow().focused(window) {
@@ -869,6 +869,8 @@ fn render_directory_list(
                 });
             })
             .child(SharedString::from(text));
+        #[cfg(feature = "gui-e2e")]
+        let row = super::e2e::measure_control(format!("remote-dir-row-{ix}"), row);
         row.into_any_element()
     })
     .w_full()

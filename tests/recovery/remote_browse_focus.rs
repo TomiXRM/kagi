@@ -316,6 +316,27 @@ pub fn scenario_remote_browse_keyboard_rows(cx: &mut VisualTestAppContext) {
             Lang::Ja => "親",
         }));
 
+        // Repeated Down must reveal selection beyond the initial viewport,
+        // and Enter must use that exact row rather than the current directory.
+        for _ in 0..40 {
+            press(cx, window, "down");
+        }
+        assert_eq!(focused(cx, &app, window), Some(40));
+        assert_revealed(cx, &app, 40);
+        let control = kagi::ui::e2e::control_bounds(window.window_id(), "remote-dir-row-40")
+            .expect("the selected row control must be drawn");
+        let viewport = cx.read(|cx| e2e_transport::viewport(app.read(cx).remote_browse().unwrap()));
+        assert!(
+            control.top() >= viewport.top() && control.bottom() <= viewport.bottom(),
+            "selected control {control:?} must be wholly inside {viewport:?}"
+        );
+        navigate_listing(cx, window, "/home/dev/dir-039", "nested/\n", "enter");
+        assert_eq!(
+            cx.read(|cx| app.read(cx).remote_browse().unwrap().cwd.clone()),
+            "/home/dev/dir-039"
+        );
+        navigate_listing(cx, window, "/home/dev", &listing, "enter");
+
         press(cx, window, "down");
         assert_eq!(focused(cx, &app, window), Some(1));
         press(cx, window, "pagedown");

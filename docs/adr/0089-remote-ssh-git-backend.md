@@ -120,6 +120,12 @@ the virtual list and transfer focus only for the current modal generation.
 Closing/reopening cannot accept an earlier modal's result or focus. The picker
 remains read-only; reaching a repo does not stage or write repository state.
 
+The native `remote_browse_keyboard_rows` regression uses 300 directories in
+EN and JA. Forty consecutive Down presses must select row 40, whose measured
+control bounds must fit wholly inside the list viewport; Enter then navigates
+to `dir-039`, not the current directory. A negative control with the RowList
+action context removed fails with selection still at row 0.
+
 
 ## Alternatives considered
 - **Pure-Rust SSH (`russh`)** — full control and no external `ssh` dependency,

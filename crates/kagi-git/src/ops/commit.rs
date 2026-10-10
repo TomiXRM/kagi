@@ -45,7 +45,29 @@ fn check_commit_index(index: &git2::Index, plan: &OperationPlan) -> Result<(), G
     Ok(())
 }
 
+/// Ask Git itself, preserving the exact config and environment used by commit.
+pub(crate) fn check_commit_identity(repo: &Repository) -> Result<(), GitError> {
+    match super::check_git_identity(repo) {
+        Err(GitError::Blocked(_)) => Err(GitError::Blocked(Box::new(PlanNote::Commit(
+            CommitNote::IdentityUnavailable,
+        )))),
+        result => result,
+    }
+}
+
+pub(crate) fn add_commit_identity_blocker(
+    repo: &Repository,
+    blockers: &mut Vec<PlanNote>,
+) -> Result<(), GitError> {
+    match check_commit_identity(repo) {
+        Err(GitError::Blocked(note)) => blockers.push(*note),
+        result => result?,
+    }
+    Ok(())
+}
+
 pub fn preflight_commit(repo: &Repository, plan: &OperationPlan) -> Result<(), GitError> {
+    check_commit_identity(repo)?;
     check_commit_index(&read_commit_index(repo)?, plan)
 }
 
@@ -57,6 +79,7 @@ pub(crate) fn approved_commit_index(
 ) -> Result<git2::Index, GitError> {
     let index = read_commit_index(repo)?;
     check_commit_index(&index, plan).map_err(|error| GitError::Preflight(Box::new(error)))?;
+    check_commit_identity(repo).map_err(|error| GitError::Preflight(Box::new(error)))?;
     Ok(index)
 }
 
@@ -122,6 +145,7 @@ pub fn plan_commit(repo: &Repository, message: &str) -> Result<OperationPlan, Gi
     // legacy strings for oplog/klog/EN display (golden-tested in kagi-domain).
     let mut blockers: Vec<PlanNote> = Vec::new();
     let mut warnings: Vec<PlanNote> = Vec::new();
+    add_commit_identity_blocker(repo, &mut blockers)?;
 
     // Empty message.
     if message.trim().is_empty() {
@@ -234,7 +258,7 @@ pub fn plan_commit(repo: &Repository, message: &str) -> Result<OperationPlan, Gi
     // findings from the cached branch ruleset. Cache-only — never a network
     // call at plan time; a no-op when nothing is cached / `gh` is unavailable.
     crate::ruleset::augment_commit_plan(&mut plan, repo, &status, &branch_name, message);
-    preflight_commit(repo, &plan)?;
+    check_commit_index(&read_commit_index(repo)?, &plan)?;
 
     Ok(plan)
 }

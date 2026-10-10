@@ -11,7 +11,7 @@ pub const ONE_LIGHT: Theme = Theme {
 
     bg_base: 0xfafafa,
     bg_row_alt: 0xf0f0f1,
-    surface: 0xeaeaeb,
+    surface: 0xe0e0e1, // ≥1.15:1 structural step from panel
     selected: 0xd4e2fb,
     inactive_selected: 0xdbdbdb,
     panel: 0xf0f0f0,

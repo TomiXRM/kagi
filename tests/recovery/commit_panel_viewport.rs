@@ -1,5 +1,5 @@
 //! #1167: the commit composer must not displace its primary actions.
-use crate::macos::{build_fixture, unmount};
+use crate::macos::{build_fixture, git, unmount};
 use crate::recovery_layout::{draw, GlobalSettings};
 use gpui::{
     point, px, size, Focusable, ScrollDelta, ScrollWheelEvent, TouchPhase, VisualTestAppContext,
@@ -76,6 +76,9 @@ pub fn scenario_commit_panel_viewport(cx: &mut VisualTestAppContext) {
                 }
             }
             let files = e2e::control_bounds(window.window_id(), "cp-files").unwrap();
+            if zoom == 1. {
+                assert_eq!(files.size.width, px(324.), "recorded desktop panel width");
+            }
             let composer = e2e::control_bounds(window.window_id(), "cp-body").unwrap();
             let generate = e2e::control_bounds(window.window_id(), "cp-smart-suggest").unwrap();
             let commit = e2e::control_bounds(window.window_id(), "cp-commit-action").unwrap();
@@ -170,5 +173,72 @@ pub fn scenario_commit_panel_viewport(cx: &mut VisualTestAppContext) {
             unmount(cx, app, window.into());
         }
     }
+    right_edge_matrix(cx);
     eprintln!("[gui-e2e] PASS commit_panel_viewport");
+}
+
+fn right_edge_matrix(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let path = format!("{}.txt", "long-file-name-".repeat(12));
+    std::fs::write(fixture.path().join(&path), "staged\n").unwrap();
+    git(fixture.path(), &["add", "--", &path]);
+    std::fs::write(fixture.path().join(&path), "unstaged\n").unwrap();
+    for (width, height, zoom) in [(1392., 883., 1.), (940., 660., 1.67)] {
+        for locale in ["en", "ja"] {
+            std::env::set_var("KAGI_LANG", locale);
+            i18n::init_lang();
+            theme::set_zoom(zoom);
+            let state = e2e::app_state(fixture.path()).unwrap();
+            let captured = Rc::new(RefCell::new(None));
+            let output = captured.clone();
+            let window =
+                crate::macos::open_offscreen(cx, size(px(width), px(height)), move |window, cx| {
+                    e2e::mount_root(state, window, cx, &output)
+                });
+            let app = captured.borrow().clone().unwrap();
+            cx.update_window(window.into(), |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    // A user-widened panel must adapt when zoom/viewport changes.
+                    if zoom > 1. {
+                        app.panel_width = 480.;
+                    }
+                    app.open_commit_panel(window, cx);
+                });
+            })
+            .unwrap();
+            let panel = cx
+                .read(|cx| app.read(cx).ui().commit_panel.clone())
+                .unwrap();
+            for tree in [false, true] {
+                panel.update(cx, |panel, cx| {
+                    panel.state.tree_view = tree;
+                    cx.notify();
+                });
+                for _ in 0..4 {
+                    cx.run_until_parked();
+                    draw(cx, window.into(), (width, height));
+                }
+                for name in [
+                    "cp-files",
+                    "cp-view-tree",
+                    "cp-row-unstage",
+                    "cp-row-stage",
+                    "cp-amend-btn",
+                ] {
+                    let bounds = e2e::control_bounds(window.window_id(), name)
+                        .unwrap_or_else(|| panic!("missing {name}"));
+                    eprintln!("commit-panel right edge {locale}/{width}x{height}@{zoom}/tree={tree} {name}: {bounds:?}");
+                    assert!(
+                        bounds.left() >= px(0.) && bounds.right() <= px(width),
+                        "{name} outside window: {bounds:?}"
+                    );
+                    if name == "cp-files" && zoom == 1. {
+                        assert_eq!(bounds.size.width, px(324.), "recorded desktop panel width");
+                    }
+                }
+            }
+            drop(panel);
+            unmount(cx, app, window.into());
+        }
+    }
 }

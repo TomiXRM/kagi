@@ -749,6 +749,11 @@ impl KagiApp {
                 .and_then(|item| item.render(self, &layout, None, window, cx))
         };
         if let Some(el) = right_element {
+            let right_width = if right_pane == Some(workspace::RightPane::CommitPanel) {
+                self.commit_panel_viewport_width(window)
+            } else {
+                self.panel_width
+            };
             let pane = div()
                 .flex()
                 .flex_row()
@@ -760,7 +765,7 @@ impl KagiApp {
                     "right-pane-clip",
                     super::panel_motion::Axis::Horizontal,
                     super::panel_motion::Anchor::Start,
-                    theme::scaled_px(self.panel_width + 4.),
+                    theme::scaled_px(right_width + 4.),
                     right_fraction,
                     pane,
                 )

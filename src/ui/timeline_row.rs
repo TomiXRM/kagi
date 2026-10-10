@@ -54,7 +54,8 @@ pub(super) fn row(
         .px(theme::scaled_px(GUTTER))
         .py(theme::scaled_px(ROW_PY))
         .border_b_1()
-        .border_color(rgb(theme().selected))
+        .border_color(rgb(theme().surface))
+        .map(|row| super::e2e::probe_chrome_border("timeline-row", row))
         .text_color(rgb(theme().text_main))
         .child(kagi_ui_core::commit_header::avatar_circle_with_initials(
             AVATAR,

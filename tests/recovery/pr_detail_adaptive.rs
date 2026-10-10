@@ -320,6 +320,19 @@ fn retained(
     geometry(cx, win, (1392., 883.), false);
 }
 pub fn scenario_pr_detail_adaptive(cx: &mut VisualTestAppContext) {
+    run(cx, false);
+}
+
+/// #1172: dashboard inputs must not survive native resize and PR departure.
+pub fn scenario_pr_detail_lifecycle(cx: &mut VisualTestAppContext) {
+    let before = cx.read(|cx| cx.leak_detector_snapshot());
+    run(cx, true);
+    cx.update(|_| {});
+    cx.run_until_parked();
+    cx.read(|cx| cx.assert_no_new_leaks(&before));
+}
+
+fn run(cx: &mut VisualTestAppContext, lifecycle: bool) {
     let _restore = GlobalSettings::capture();
     let _gh = OfflineGh::install();
     let fixture = build_fixture();
@@ -359,6 +372,17 @@ pub fn scenario_pr_detail_adaptive(cx: &mut VisualTestAppContext) {
         ] {
             theme::set_zoom(zoom);
             let (app, win) = open(cx, &repo, dimensions);
+            if lifecycle {
+                e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(
+                    crate::evidence_support::pr_page(vec![pr_at(&head)], "", None),
+                )));
+                app.update(cx, |a, cx| a.refresh_github_prs(cx));
+                cx.run_until_parked();
+                app.update(cx, |a, cx| a.show_pr_mode(cx));
+                cx.run_until_parked();
+                draw(cx, win, dimensions);
+                assert!(bounds(win, "pr-home-row-7").size.height > px(0.));
+            }
             e2e::queue_github_pr_conversation(gpui::Task::ready((
                 Ok((vec![], vec![])),
                 Ok(vec![kagi_domain::review_thread::ReviewThread {
@@ -397,6 +421,28 @@ pub fn scenario_pr_detail_adaptive(cx: &mut VisualTestAppContext) {
                 }
             }
             retained(cx, &app, win, dimensions);
+            if lifecycle {
+                // Change zoom with the same native window and input entities.
+                let mut before = snapshot(cx, &app);
+                theme::set_zoom(1.667);
+                geometry(cx, win, (1392., 883.), false);
+                let after = snapshot(cx, &app);
+                // Zoom reflows the pixel offset within the same logical row.
+                before.top_offset = after.top_offset;
+                assert_eq!(after, before, "zoom resets PR state");
+                key(cx, &app, win, "escape");
+                cx.run_until_parked();
+                draw(cx, win, (1392., 883.));
+                assert!(cx.read(|cx| app.read(cx).pr_mode().unwrap().active.is_none()));
+                // Home's pointer route is also part of the combined lifecycle.
+                app.update(cx, |a, cx| a.pr_mode_open(&pr_at(&head), cx));
+                geometry(cx, win, (1392., 883.), false);
+                let home = bounds(win, "pr-mode-home");
+                cx.simulate_click(win, home.center(), gpui::Modifiers::none());
+                cx.run_until_parked();
+                draw(cx, win, (1392., 883.));
+                assert!(cx.read(|cx| app.read(cx).pr_mode().unwrap().active.is_none()));
+            }
             unmount(cx, app, win);
         }
     }

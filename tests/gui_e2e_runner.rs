@@ -1940,6 +1940,10 @@ mod macos {
                 Box::new(crate::pr_detail_adaptive::scenario_pr_detail_adaptive),
             ),
             (
+                "pr_detail_lifecycle",
+                Box::new(crate::pr_detail_adaptive::scenario_pr_detail_lifecycle),
+            ),
+            (
                 "pr_diff_extent_unified",
                 Box::new(crate::pr_diff_extent::scenario_pr_diff_extent_unified),
             ),

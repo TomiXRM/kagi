@@ -67,9 +67,9 @@ impl KagiApp {
                     theme().text_muted
                 };
                 let bg_color = if is_active {
-                    theme().selected
+                    theme().selected_for_window(self.window_active)
                 } else {
-                    theme().panel
+                    rgb(theme().panel).into()
                 };
                 div()
                     .px_3()
@@ -77,7 +77,7 @@ impl KagiApp {
                     .flex()
                     .items_center()
                     .flex_shrink_0()
-                    .bg(rgb(bg_color))
+                    .bg(bg_color)
                     .text_sm()
                     .text_color(rgb(text_color))
                     .hover(|s| s.bg(rgb(theme().surface)))
@@ -211,11 +211,11 @@ impl KagiApp {
                 } else {
                     theme().text_muted
                 }))
-                .bg(rgb(if active {
-                    theme().selected
+                .bg(if active {
+                    theme().selected_for_window(self.window_active)
                 } else {
-                    theme().panel
-                }))
+                    rgb(theme().panel).into()
+                })
                 .hover(|s| s.cursor_pointer().bg(rgb(theme().surface)))
                 .on_click(click)
                 .child(SharedString::from(g.label()))

@@ -1061,7 +1061,7 @@ pub fn render_body(
     let center = match mode.selected_file.and_then(|i| mode.session.files.get(i)) {
         Some(file) if file.kind == ConflictKind::Content => {
             let path = file.path.clone();
-            super::conflict_editor::render_editor(mode, chrome, &path, cx)
+            super::conflict_editor::render_editor(mode, chrome, &path, window_active, cx)
         }
         _ => render_center(mode, chrome.writer_busy, cx),
     };

@@ -13,7 +13,7 @@ pub const MONOKAI: Theme = Theme {
     bg_row_alt: 0x221e24,
     surface: 0x3a3540,
     selected: 0x4a4454,
-    inactive_selected: 0x3a3540,
+    inactive_selected: 0x484848,
     panel: 0x1f1b21,
     sidebar: 0x1a161c,
     modal: 0x3a3540,

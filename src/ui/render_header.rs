@@ -472,7 +472,13 @@ impl KagiApp {
                 // place while the extra fraction belongs to the ring.
                 .py(px((f32::from(theme::scaled_px(2.0)) - 2.0).max(0.0)))
                 .rounded_md()
-                .hover(|style| style.bg(rgb(theme().selected)))
+                .hover(|style| {
+                    style.bg(rgb(if window_active {
+                        theme().selected
+                    } else {
+                        theme().surface
+                    }))
+                })
                 .cursor(if enabled {
                     gpui::CursorStyle::PointingHand
                 } else {
@@ -616,7 +622,14 @@ impl KagiApp {
                             .mr_2()
                             .p(keyboard_nav::inset(4.0))
                             .rounded_md()
-                            .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
+                            .hover(|st| {
+                                st.bg(rgb(if window_active {
+                                    theme().selected
+                                } else {
+                                    theme().surface
+                                }))
+                                .cursor_pointer()
+                            })
                             .child(icon);
                         #[cfg(feature = "gui-e2e")]
                         let refresh = refresh.on_key_down(|event, _, _| {

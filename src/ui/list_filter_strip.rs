@@ -135,7 +135,7 @@ impl KagiApp {
 }
 
 // Extracted from pr_dashboard's filter/sort chips: one shared chrome.
-fn chip(id: &'static str, active: bool) -> gpui::Stateful<gpui::Div> {
+fn chip(id: &'static str, active: bool, window_active: bool) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .flex_shrink_0()
@@ -144,7 +144,9 @@ fn chip(id: &'static str, active: bool) -> gpui::Stateful<gpui::Div> {
         .rounded_sm()
         .border_1()
         .border_color(rgb(theme().selected))
-        .when(active, |el| el.bg(rgb(theme().selected)))
+        .when(active, |el| {
+            el.bg(theme().selected_for_window(window_active))
+        })
         .text_xs()
         .text_color(rgb(if active {
             theme().text_main
@@ -167,7 +169,7 @@ fn menu_chip(
     let owner = app.active_session();
     super::e2e::measure_control(
         id,
-        chip(id, active)
+        chip(id, active, app.window_active)
             .child(safe_text(&label))
             .on_click(
                 cx.listener(move |app, event: &gpui::ClickEvent, window, cx| {
@@ -327,7 +329,7 @@ pub(super) fn render_strip(
         ))
         .child(super::e2e::measure_control(
             "list-filter-direction",
-            chip("list-filter-direction", false)
+            chip("list-filter-direction", false, app.window_active)
                 .child(SharedString::from(match order.direction {
                     SortDirection::Ascending => Msg::ListSortAscending.t(),
                     SortDirection::Descending => Msg::ListSortDescending.t(),
@@ -340,7 +342,7 @@ pub(super) fn render_strip(
         ))
         .child(super::e2e::measure_control(
             "list-filter-clear",
-            chip("list-filter-clear", false)
+            chip("list-filter-clear", false, app.window_active)
                 .child(SharedString::from(Msg::ListFilterClear.t()))
                 .on_click(cx.listener(move |app, _, window, cx| {
                     if app.active_session() != owner {
@@ -360,7 +362,7 @@ pub(super) fn render_strip(
                 })),
         ))
         .child(
-            chip("list-filter-refresh", false)
+            chip("list-filter-refresh", false, app.window_active)
                 .child(SharedString::from(Msg::PrRefresh.t()))
                 .on_click(cx.listener(move |app, _, _, cx| {
                     if app.active_session() != owner {

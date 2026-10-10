@@ -1410,6 +1410,12 @@ impl KagiApp {
                 cx.notify();
             });
         }
+        if let Some(view) = &self.ui().commit_panel {
+            view.update(cx, |view, cx| {
+                view.window_active_override = Some(active);
+                cx.notify();
+            });
+        }
         cx.notify();
     }
 

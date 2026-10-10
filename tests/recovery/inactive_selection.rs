@@ -68,8 +68,8 @@ pub fn scenario_inactive_selection(cx: &mut VisualTestAppContext) {
         );
         assert_eq!(
             &inactive[..3],
-            &[220, 220, 220],
-            "{name}: actual inactive fill must be #dcdcdc"
+            &[211, 211, 211],
+            "{name}: actual inactive fill must be #d3d3d3"
         );
         app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
         cx.run_until_parked();

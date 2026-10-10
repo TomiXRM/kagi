@@ -204,6 +204,7 @@ impl Render for KagiApp {
             );
         }
         self.window_active = self.window_active_for_render(window);
+        theme::sync_window_selection_theme(self.window_active, cx);
         if self.window_activation_subscription.is_none() {
             self.window_activation_subscription =
                 Some(cx.observe_window_activation(window, |_, _, cx| cx.notify()));

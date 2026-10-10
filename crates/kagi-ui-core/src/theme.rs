@@ -198,7 +198,7 @@ pub struct SyntaxPalette {
 }
 
 impl Theme {
-    /// Active selection, overridden by the native accent bridge on Apple Light.
+    /// Active (key-window) selection fill.
     pub fn ui_selected(&self) -> Hsla {
         rgb(self.selected).into()
     }
@@ -1113,6 +1113,11 @@ pub fn sync_gpui_component_theme(cx: &mut App) {
     apply_gpui_component_theme(&k, gc);
 }
 
+/// Resolve the pinned component library's shared list role for this window's frame.
+pub fn sync_window_selection_theme(active: bool, cx: &mut App) {
+    gpui_component::Theme::global_mut(cx).colors.list_active = theme().selected_for_window(active);
+}
+
 fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     // ── Base preset (gpui-component 0.5.2) ──────────────────────
     // 0.5.2 grew ~40 new `ThemeColor` fields (the `button_*` family,
@@ -1230,7 +1235,7 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
 
     // ── List / sidebar (PopupMenu, ListItem, Sidebar) ───────────
     gc.colors.list = to_hsla(k.bg_base);
-    gc.colors.list_active = to_hsla(k.selected);
+    gc.colors.list_active = k.selected_for_window(true);
     gc.colors.list_hover = to_hsla(k.surface);
     gc.colors.sidebar = to_hsla(k.sidebar);
     gc.colors.sidebar_foreground = to_hsla(k.text_main);
@@ -2235,6 +2240,26 @@ mod inactive_selection_tests {
                 "{}: primary label must read on inactive selection",
                 theme.slug
             );
+            for (role, background) in [
+                ("sidebar", theme.sidebar),
+                ("base", theme.bg_base),
+                ("alternate", theme.bg_row_alt),
+                ("hover", theme.surface),
+            ] {
+                // Latte's unchanged label and hover luminances leave no 4.5:1
+                // label fill reaching 1.15:1 against hover; #c3c3c3 gives 4.531
+                // for the label and 1.142 against hover. Readability wins.
+                let minimum = if theme.slug == "catppuccin-latte" && role == "hover" {
+                    1.14
+                } else {
+                    1.15
+                };
+                assert!(
+                    contrast_ratio(theme.inactive_selected, background) >= minimum,
+                    "{}: inactive selection must differ from {role}",
+                    theme.slug
+                );
+            }
             assert_eq!(
                 theme.selected_for_window(false),
                 rgb(theme.inactive_selected).into()
@@ -2248,7 +2273,7 @@ mod inactive_selection_tests {
         let theme = THEMES.iter().find(|t| t.slug == "apple-light").unwrap();
         assert_eq!(
             u32::from(theme.selected_for_window(false).to_rgb()) >> 8,
-            0xdcdcdc
+            0xd3d3d3
         );
         assert_ne!(
             theme.selected_for_window(false),

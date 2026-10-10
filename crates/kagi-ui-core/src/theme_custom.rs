@@ -543,7 +543,7 @@ mod tests {
     fn inactive_selection_inherits_overrides_and_defaults_for_legacy_files() {
         let inherited =
             parse_theme(r#"{"slug":"mine","name":"Mine","extends":"apple-light"}"#).unwrap();
-        assert_eq!(inherited.inactive_selected, 0xdcdcdc);
+        assert_eq!(inherited.inactive_selected, 0xd3d3d3);
         let explicit = parse_theme(r##"{"slug":"mine","name":"Mine","extends":"apple-light","inactive_selected":"#dddddd"}"##).unwrap();
         assert_eq!(explicit.inactive_selected, 0xdddddd);
         let mut file = file_json(&THEMES[0], "legacy", "Legacy");

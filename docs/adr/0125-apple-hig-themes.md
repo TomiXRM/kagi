@@ -100,10 +100,15 @@ altered.
 
 Selection presentation reads GPUI window activation, with an observer requesting
 repaint on activation changes. `inactive_selected` is independent of the active
-accent: Apple Light `#dcdcdc`, Apple Dark's existing neutral `#3a3a3c`, other
-presets their surface. Primary labels must meet 4.5:1 on this fill. Conflict
-file rows, repository/Home tabs, workspace mode chrome and PR/Issue sidebar rows
+accent: Apple Light `#d3d3d3`, Apple Dark's existing neutral `#3a3a3c`, other
+presets distinct neutral steps. Primary labels must meet 4.5:1 on this fill.
+Graph commit/WIP rows (including accent-bar dimming), conflict/CommitPanel/
+Inspector/PR file rows, repository/Home/bottom tabs, toolbar workspace-mode
+buttons, sidebar, Home/filter/mode selectors and component list selections
 retain selected IDs and geometry. Git status, ref and lane colours remain semantic.
+Selection differs from every surrounding base/sidebar/alternate/hover role by
+at least 1.15:1, except Latte hover (1.14 floor to preserve its primary-label
+contrast); measured ratios and the exception are recorded in `docs/decisions.md`.
 The native regression overrides only the activation input under `gui-e2e`,
 measuring rendered Metal pixels without taking the user's foreground.
 Pane-focus attenuation is not conflated with window activation in this change.

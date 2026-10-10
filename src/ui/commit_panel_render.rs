@@ -303,7 +303,7 @@ fn render_cp_file_row(
         }
     });
     file_row.child(
-        KagiButton::new((btn_id, fi), label, role, cx)
+        KagiButton::styled((btn_id, fi), label, role, cx)
             .xsmall()
             .ml_2()
             .flex_shrink_0()
@@ -1211,7 +1211,7 @@ impl CommitPanelView {
         // One Button in both states (`.disabled`), so enabling it does not change
         // the footer's height, and the disabled form still reads as a button
         // rather than blending into the footer background.
-        let commit_btn = KagiButton::new("cp-commit-btn", commit_label, ButtonRole::Primary, cx)
+        let commit_btn = KagiButton::styled("cp-commit-btn", commit_label, ButtonRole::Primary, cx)
             .small()
             .mt_1()
             .w_full()

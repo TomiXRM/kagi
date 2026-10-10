@@ -545,7 +545,7 @@ pub(crate) fn render(
             ));
     if !blocked {
         let button = if modal.confirm_armed {
-            KagiButton::new(
+            KagiButton::styled(
                 "plan-confirm",
                 SharedString::from(label),
                 ButtonRole::Danger,

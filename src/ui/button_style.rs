@@ -113,7 +113,7 @@ mod role_tests {
 pub struct KagiButton;
 
 impl KagiButton {
-    pub fn new(
+    pub fn styled(
         id: impl Into<ElementId>,
         label: impl Into<SharedString>,
         role: ButtonRole,
@@ -268,8 +268,8 @@ fn modal_button_with_tab_stop(
     }
     let button = match kind {
         ModalButtonKind::Cancel => Button::new(id).label(label).ghost(),
-        ModalButtonKind::Primary => KagiButton::new(id, label, ButtonRole::Primary, cx),
-        ModalButtonKind::Destructive => KagiButton::new(id, label, ButtonRole::Danger, cx),
+        ModalButtonKind::Primary => KagiButton::styled(id, label, ButtonRole::Primary, cx),
+        ModalButtonKind::Destructive => KagiButton::styled(id, label, ButtonRole::Danger, cx),
         ModalButtonKind::Secondary => Button::new(id).label(label),
     };
     button

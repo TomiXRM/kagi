@@ -1978,7 +1978,7 @@ fn choose_button<H>(label: String, role: ButtonRole, handler: H, cx: &gpui::App)
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    KagiButton::new(
+    KagiButton::styled(
         SharedString::from(format!("conflict-choose-{}", label)),
         SharedString::from(label),
         role,

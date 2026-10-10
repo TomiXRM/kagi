@@ -1136,7 +1136,7 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
 
     // ── Primary / accent (Checkbox checked, focus ring) ────────
     gc.colors.primary = to_hsla(k.color_branch);
-    let primary_foreground = primary_button_foreground(&k);
+    let primary_foreground = primary_button_foreground(k);
     gc.colors.primary_foreground = to_hsla(primary_foreground);
     // Keep these generic tokens unchanged: outline Primary uses their tint;
     // filled Primary has its own interaction tokens below.
@@ -1197,7 +1197,7 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     gc.colors.button_danger_foreground = to_hsla(0xffffff);
     gc.colors.button_danger_hover = to_hsla(k.color_blocker);
     gc.colors.button_danger_active = to_hsla(k.color_blocker);
-    let warning_foreground = filled_button_foreground(k.color_warning, &k);
+    let warning_foreground = filled_button_foreground(k.color_warning, k);
     gc.colors.button_warning = to_hsla(k.color_warning);
     gc.colors.button_warning_foreground = to_hsla(warning_foreground);
     gc.colors.button_warning_hover = to_hsla(k.color_warning);
@@ -1260,7 +1260,7 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     // via [`highlight_theme`] — previously only these five editor surfaces were
     // overridden and `style.syntax` kept gpui-component's bundled palette, so
     // every dark theme highlighted code identically.
-    gc.highlight_theme = highlight_theme(&k);
+    gc.highlight_theme = highlight_theme(k);
 
     // ── Tokens (0.5.2) ──────────────────────────────────────────
     // Widgets increasingly read `theme().tokens.*` (Radio, Select popup, …),

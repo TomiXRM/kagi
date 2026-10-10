@@ -390,7 +390,7 @@ pub(super) fn page_button(
         .items_start()
         .child(super::e2e::measure_control(
             id,
-            super::button_style::KagiButton::new(
+            super::button_style::KagiButton::styled(
                 id,
                 label,
                 super::button_style::ButtonRole::Neutral,

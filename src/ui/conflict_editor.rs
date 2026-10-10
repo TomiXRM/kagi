@@ -198,7 +198,7 @@ fn tool_button<H>(id: &str, label: &str, role: ButtonRole, handler: H, cx: &gpui
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    KagiButton::new(
+    KagiButton::styled(
         SharedString::from(id.to_string()),
         SharedString::from(label.to_string()),
         role,

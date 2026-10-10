@@ -75,6 +75,7 @@ pub fn plan_clone(request: &CloneRequest) -> OperationPlan {
         warnings.push(PlanNote::Clone(CloneNote::ForkAddsUpstream));
     }
     OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Clone(CloneTitle::Clone {
             source: request.source.clone(),

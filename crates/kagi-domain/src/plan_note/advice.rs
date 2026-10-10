@@ -97,6 +97,9 @@ macro_rules! advice_template_en {
     (CommitNothingStaged) => {
         "Nothing to commit: no files are staged. Use stage_file() to stage changes before committing."
     };
+    (CommitStagedContentChanged) => {
+        "Staged content changed since confirmation. Nothing was committed. Review the staged changes and confirm a new plan."
+    };
     (CommitConflictedFiles) => {
         "Repository has {} conflicted file(s). Resolve all conflicts before committing."
     };

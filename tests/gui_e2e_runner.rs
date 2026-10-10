@@ -1543,6 +1543,10 @@ mod macos {
                 Box::new(crate::op_queue::scenario_queue_commit_runs_after_checkout),
             ),
             (
+                "commit_index_identity_refusal",
+                Box::new(crate::op_queue::scenario_commit_index_identity_refusal),
+            ),
+            (
                 "queue_commit_confirms_changed_draft",
                 Box::new(crate::op_queue::scenario_queue_commit_confirms_changed_draft),
             ),

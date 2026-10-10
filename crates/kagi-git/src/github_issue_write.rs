@@ -127,6 +127,7 @@ fn issue_plan(
         blockers.push(PlanNote::Github(GithubNote::CommentBodyEmpty));
     }
     OperationPlan {
+        approved_index_digest: None,
         disposition: if blockers.is_empty() {
             PlanDisposition::Ready
         } else {

@@ -109,6 +109,7 @@ pub fn plan_create_tag(
     };
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Tag(TagTitle::CreateTag {
             name: name.to_string(),
@@ -233,6 +234,7 @@ pub fn plan_push_tag(repo: &Repository, name: &str) -> Result<OperationPlan, Git
     });
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Tag(TagTitle::PushTag {
             name: name.to_string(),

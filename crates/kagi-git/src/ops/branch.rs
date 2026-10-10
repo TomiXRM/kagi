@@ -129,6 +129,7 @@ pub fn plan_create_branch(
     };
 
     let mut plan = OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Branch(BranchTitle::CreateBranch {
             name: name.to_string(),
@@ -331,6 +332,7 @@ pub fn plan_rename_branch(
     warnings.push(PlanNote::Branch(BranchNote::RenameRemoteNotRenamed));
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Branch(BranchTitle::RenameBranch {
             old: old_name.to_string(),
@@ -557,6 +559,7 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
                 dirty: current.dirty.clone(),
             };
             return Ok(OperationPlan {
+                approved_index_digest: None,
                 disposition: PlanDisposition::for_blockers(&blockers),
                 title: PlanTitle::Branch(BranchTitle::DeleteBranch {
                     name: name.to_string(),
@@ -712,6 +715,7 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
     };
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Branch(BranchTitle::DeleteBranch {
             name: name.to_string(),

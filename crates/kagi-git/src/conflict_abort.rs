@@ -108,6 +108,7 @@ pub fn plan_conflict_abort(
     };
 
     Ok(OperationPlan {
+        approved_index_digest: None,
         disposition: PlanDisposition::Ready,
         title: PlanTitle::Conflicts(ConflictsTitle::Abort { op }),
         current,

@@ -1,10 +1,8 @@
 //! CommitNote / CommitTitle / CommitRecovery — ADR-0129 Phase 2.
 //!
-//! Source of truth is `crates/kagi-git/src/staging.rs::plan_commit` (a
-//! producer that lives outside `ops/` — see the appendix's "staging.rs(ops
-//! 外)" row, discovered mid-Phase-1). `backend.rs::plan_merge_commit` reuses
-//! `plan_commit`, permits an unchanged tree for an active merge, and uses the
-//! [`CommitTitle::FinalizeMergeCommit`] variant added here.
+//! Source of truth is `crates/kagi-git/src/ops/commit.rs::plan_commit`.
+//! `backend.rs::plan_merge_commit` reuses the plan, permits an unchanged tree
+//! for an active merge, and uses [`CommitTitle::FinalizeMergeCommit`].
 
 /// The `"{n} modified" / "{n} untracked"` fragment of the leftover-changes
 /// warning. Only the non-zero parts are rendered, joined by `", "`, exactly
@@ -32,7 +30,7 @@ impl CommitLeftoverParts {
     }
 }
 
-/// Plan notes for the commit op family (`staging.rs::plan_commit`).
+/// Plan notes for the commit op family (`ops/commit.rs::plan_commit`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommitNote {
     /// blocker — the commit message is empty after trimming.
@@ -41,6 +39,8 @@ pub enum CommitNote {
     NothingStaged,
     /// blocker — the repository has conflicted files.
     ConflictedFiles { count: usize },
+    /// Preflight refusal — the approved staged content no longer matches.
+    StagedContentChanged,
     /// warning — unstaged/untracked changes will not be part of this commit.
     LeftoverNotIncluded {
         count: usize,
@@ -57,6 +57,9 @@ impl CommitNote {
             CommitNote::NothingStaged => {
                 crate::advice_template_en!(CommitNothingStaged).to_string()
             }
+            CommitNote::StagedContentChanged => {
+                crate::advice_template_en!(CommitStagedContentChanged).to_string()
+            }
             CommitNote::ConflictedFiles { count } => {
                 format!(crate::advice_template_en!(CommitConflictedFiles), count)
             }
@@ -69,7 +72,7 @@ impl CommitNote {
     }
 }
 
-/// Plan titles for the commit op family (`staging.rs::plan_commit` +
+/// Plan titles for the commit op family (`ops/commit.rs::plan_commit` +
 /// `backend.rs::plan_merge_commit`'s override).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommitTitle {
@@ -90,7 +93,7 @@ impl CommitTitle {
     }
 }
 
-/// Recovery kinds for the commit op family (`staging.rs::plan_commit`).
+/// Recovery kinds for the commit op family (`ops/commit.rs::plan_commit`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommitRecovery {
     /// The sole commit recovery template: amend / revert HEAD, listing the

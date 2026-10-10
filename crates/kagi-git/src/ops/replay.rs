@@ -69,6 +69,7 @@ pub fn plan_replay_onto(
                   from: String,
                   preview_commits: Vec<String>| {
         Ok(OperationPlan {
+            approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
             title: PlanTitle::Rebase(title.clone()),
             current: StateSummary {

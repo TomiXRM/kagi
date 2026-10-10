@@ -546,7 +546,19 @@ impl KagiApp {
                             op_name,
                             failure_message.as_deref().unwrap_or_default()
                         );
-                        app.present_recorded(&report.recording, cx);
+                        let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(
+                            &report.recording,
+                        );
+                        // The receipt and footer contract stay English; the
+                        // existing preview override carries the typed reason
+                        // to the toast in the same language as the failure UI.
+                        let preview = report
+                            .result
+                            .as_ref()
+                            .err()
+                            .and_then(|error| error.blocker())
+                            .and(failure_message.clone());
+                        app.record_op_impl(entry, cx, false, preview);
                         None
                     };
                     let notice_override = presentation.outcome_notice.clone();

@@ -222,6 +222,15 @@ impl Backend {
             // also gated: a confirmed commit plan captures the pre-commit HEAD.
             _ => self.preflight_check(plan),
         }
+        .and_then(|()| match op {
+            Operation::Commit { .. } | Operation::MergeCommit { .. } => {
+                ops::preflight_commit(&self.repo, plan)
+            }
+            Operation::Amend { mode, .. } if mode.includes_staged() => {
+                ops::preflight_amend(&self.repo, plan)
+            }
+            _ => Ok(()),
+        })
         .and_then(|()| {
             // A display plan is not authority to omit required safety fields. Derive
             // the family requirements again before any snapshot or mutation (#502).
@@ -242,6 +251,7 @@ impl Backend {
                 || fresh.destructive != plan.destructive
                 || fresh.worktree_digest.is_some() != plan.worktree_digest.is_some()
                 || fresh.pull_identity != plan.pull_identity
+                || fresh.approved_index_digest != plan.approved_index_digest
             {
                 return Err(GitError::Other(
                     "plan safety requirements differ; please re-plan".into(),
@@ -318,11 +328,11 @@ impl Backend {
             evidence.started = true;
         }
         let result: Result<OperationOutcome, GitError> = match op {
-            Operation::Commit { message } => {
-                self.execute_commit(message).map(OperationOutcome::Commit)
-            }
+            Operation::Commit { message } => self
+                .execute_commit(plan, message)
+                .map(OperationOutcome::Commit),
             Operation::MergeCommit { message } => self
-                .execute_merge_commit(message)
+                .execute_merge_commit(plan, message)
                 .map(OperationOutcome::Commit),
             Operation::Checkout { branch } => self
                 .execute_checkout(branch)
@@ -452,7 +462,7 @@ impl Backend {
                 .map(|()| OperationOutcome::Unit),
             Operation::UndoCommit => self.execute_undo_commit().map(OperationOutcome::Undo),
             Operation::Amend { mode, message } => self
-                .execute_amend(*mode, message.as_deref())
+                .execute_amend(plan, *mode, message.as_deref())
                 .map(OperationOutcome::Amend),
             Operation::DeleteBranch { name } => {
                 self.execute_delete_branch(plan, name, backup_refs, partial_after)
